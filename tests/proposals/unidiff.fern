@@ -48,63 +48,63 @@ function is_keep(e: Edit): boolean {
 }
 
 function lcs_table(a: string[], b: string[]): i32[] {
-  let n: i32 = a.len();
-  let m: i32 = b.len();
+  let n = a.len();
+  let m = b.len();
   let t: i32[] = [];
   for k in 0..(n + 1) * (m + 1) {
     t = t.append(0);
   }
-  let i: i32 = n - 1;
+  let i = n - 1;
   while (i >= 0) {
-    let j: i32 = m - 1;
+    let j = m - 1;
     while (j >= 0) {
-      let v: i32 = 0;
+      let v = 0;
       if (a[i] == b[j]) {
         v = t[(i + 1) * (m + 1) + (j + 1)] + 1;
       } else {
-        let down: i32 = t[(i + 1) * (m + 1) + j];
-        let right: i32 = t[i * (m + 1) + (j + 1)];
+        let down = t[(i + 1) * (m + 1) + j];
+        let right = t[i * (m + 1) + (j + 1)];
         v = down;
         if (right > v) {
           v = right;
         }
       }
       t = t.with(i * (m + 1) + j, v);
-      j = j - 1;
+      j -= 1;
     }
-    i = i - 1;
+    i -= 1;
   }
   return t;
 }
 
 function diff(a: string[], b: string[]): Edit[] {
-  let m: i32 = b.len();
-  let t: i32[] = lcs_table(a, b);
+  let m = b.len();
+  let t = lcs_table(a, b);
   let edits: Edit[] = [];
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let i = 0;
+  let j = 0;
   while (i < a.len() || j < b.len()) {
     if (i < a.len() && j < b.len() && a[i] == b[j]) {
       edits = edits.append(Keep(i, j));
-      i = i + 1;
-      j = j + 1;
+      i += 1;
+      j += 1;
     } else if (i < a.len() && (j == b.len()
       || t[(i + 1) * (m + 1) + j] >= t[i * (m + 1) + (j + 1)])) {
       edits = edits.append(Del(i));
-      i = i + 1;
+      i += 1;
     } else {
       edits = edits.append(Ins(j));
-      j = j + 1;
+      j += 1;
     }
   }
   return edits;
 }
 
 function keep_count(edits: Edit[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for k in 0..edits.len() {
     if (is_keep(edits[k])) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
@@ -124,38 +124,38 @@ struct Hunk {
 
 function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
   let out: Hunk[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < edits.len()) {
     if (is_keep(edits[k])) {
-      k = k + 1;
+      k += 1;
       continue;
     }
-    let start: i32 = k;
-    let back: i32 = 0;
+    let start = k;
+    let back = 0;
     while (start > 0 && back < context() && is_keep(edits[start - 1])) {
-      start = start - 1;
-      back = back + 1;
+      start -= 1;
+      back += 1;
     }
-    let end: i32 = k;
-    let run: i32 = 0;
-    let p: i32 = k;
+    let end = k;
+    let run = 0;
+    let p = k;
     while (p < edits.len()) {
       if (!is_keep(edits[p])) {
         end = p;
         run = 0;
       } else {
-        run = run + 1;
+        run += 1;
         if (run > 2 * context()) {
           break;
         }
       }
-      p = p + 1;
+      p += 1;
     }
-    let stop: i32 = end + 1;
-    let fwd: i32 = 0;
+    let stop = end + 1;
+    let fwd = 0;
     while (stop < edits.len() && fwd < context() && is_keep(edits[stop])) {
-      stop = stop + 1;
-      fwd = fwd + 1;
+      stop += 1;
+      fwd += 1;
     }
     out = out.append(build_hunk(edits, a, b, start, stop));
     k = stop;
@@ -165,13 +165,13 @@ function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
 
 function build_hunk(edits: Edit[], a: string[], b: string[], start: i32, stop: i32): Hunk {
   let lines: string[] = [];
-  let a_count: i32 = 0;
-  let b_count: i32 = 0;
-  let a_first: i32 = -1;
-  let b_first: i32 = -1;
+  let a_count = 0;
+  let b_count = 0;
+  let a_first = -1;
+  let b_first = -1;
   for k in start..stop {
-    let ai: i32 = edit_a(edits[k]);
-    let bi: i32 = edit_b(edits[k]);
+    let ai = edit_a(edits[k]);
+    let bi = edit_b(edits[k]);
     if (ai >= 0 && a_first < 0) {
       a_first = ai;
     }
@@ -181,24 +181,24 @@ function build_hunk(edits: Edit[], a: string[], b: string[], start: i32, stop: i
     match (edits[k]) {
       Keep(x, _) => {
         lines = lines.append(" " + a[x]);
-        a_count = a_count + 1;
-        b_count = b_count + 1;
+        a_count += 1;
+        b_count += 1;
       },
       Del(x) => {
         lines = lines.append("-" + a[x]);
-        a_count = a_count + 1;
+        a_count += 1;
       },
       Ins(y) => {
         lines = lines.append("+" + b[y]);
-        b_count = b_count + 1;
+        b_count += 1;
       }
     }
   }
-  let a_start: i32 = 0;
+  let a_start = 0;
   if (a_count > 0) {
     a_start = a_first + 1;
   }
-  let b_start: i32 = 0;
+  let b_start = 0;
   if (b_count > 0) {
     b_start = b_first + 1;
   }
@@ -214,11 +214,11 @@ function hunk_header(h: Hunk): string {
 }
 
 function render(a: string[], b: string[], a_name: string, b_name: string): string {
-  let hs: Hunk[] = hunks_of(diff(a, b), a, b);
+  let hs = hunks_of(diff(a, b), a, b);
   if (hs.len() == 0) {
     return "";
   }
-  let out: string = "--- " + a_name + "\n+++ " + b_name + "\n";
+  let out = "--- " + a_name + "\n+++ " + b_name + "\n";
   for i in 0..hs.len() {
     out = out + hunk_header(hs[i]) + "\n";
     for k in 0..hs[i].lines.len() {
@@ -232,10 +232,10 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
   if (diff_text.len() == 0) {
     return Ok(a);
   }
-  let lines: string[] = diff_text.split("\n");
+  let lines = diff_text.split("\n");
   let out: string[] = [];
-  let cursor: i32 = 0;
-  let i: i32 = 0;
+  let cursor = 0;
+  let i = 0;
   if (lines.len() < 2 || !lines[0].starts_with("--- ")
     || !lines[1].starts_with("+++ ")) {
     return Err("missing file headers");
@@ -243,13 +243,13 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
   i = 2;
   while (i < lines.len()) {
     if (lines[i].len() == 0) {
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (!lines[i].starts_with("@@ ")) {
       return Err("expected a hunk header, got \"" + lines[i] + "\"");
     }
-    let hdr: Result[i32[], string] = parse_header(lines[i]);
+    let hdr = parse_header(lines[i]);
     let nums: i32[] = [];
     match (hdr) {
       Err(e) => {
@@ -259,11 +259,11 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
         nums = v;
       }
     }
-    i = i + 1;
-    let a_start: i32 = nums[0];
-    let a_count: i32 = nums[1];
-    let b_count: i32 = nums[3];
-    let upto: i32 = a_start - 1;
+    i += 1;
+    let a_start = nums[0];
+    let a_count = nums[1];
+    let b_count = nums[3];
+    let upto = a_start - 1;
     if (a_count == 0) {
       upto = a_start;
     }
@@ -276,42 +276,42 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
         return Err("hunk starts past the end");
       }
       out = out.append(a[cursor]);
-      cursor = cursor + 1;
+      cursor += 1;
     }
-    let seen_a: i32 = 0;
-    let seen_b: i32 = 0;
+    let seen_a = 0;
+    let seen_b = 0;
     while (i < lines.len() && (seen_a < a_count || seen_b < b_count)) {
-      let ln: string = lines[i];
+      let ln = lines[i];
       if (ln.len() == 0) {
         return Err("hunk ended early: " + seen_a.to_string() + "/"
           + a_count.to_string() + " old, " + seen_b.to_string() + "/"
           + b_count.to_string() + " new");
       }
       let tag: str = ln.take(1);
-      let body: string = ln.drop(1).to_owned();
+      let body = ln.drop(1).to_owned();
       if (tag == " ") {
         if (cursor >= a.len() || a[cursor] != body) {
           return Err("context line " + (cursor + 1).to_string()
             + " does not match: \"" + body + "\"");
         }
         out = out.append(body);
-        cursor = cursor + 1;
-        seen_a = seen_a + 1;
-        seen_b = seen_b + 1;
+        cursor += 1;
+        seen_a += 1;
+        seen_b += 1;
       } else if (tag == "-") {
         if (cursor >= a.len() || a[cursor] != body) {
           return Err("deleted line " + (cursor + 1).to_string()
             + " does not match: \"" + body + "\"");
         }
-        cursor = cursor + 1;
-        seen_a = seen_a + 1;
+        cursor += 1;
+        seen_a += 1;
       } else if (tag == "+") {
         out = out.append(body);
-        seen_b = seen_b + 1;
+        seen_b += 1;
       } else {
         return Err("unknown line prefix \"" + tag + "\"");
       }
-      i = i + 1;
+      i += 1;
     }
     if (seen_a != a_count || seen_b != b_count) {
       return Err("hunk header says " + a_count.to_string() + "/"
@@ -321,23 +321,23 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
   }
   while (cursor < a.len()) {
     out = out.append(a[cursor]);
-    cursor = cursor + 1;
+    cursor += 1;
   }
   return Ok(out);
 }
 
 function parse_header(h: string): Result[i32[], string] {
-  let parts: string[] = h.split(" ");
+  let parts = h.split(" ");
   if (parts.len() < 4) {
     return Err("malformed hunk header: " + h);
   }
-  let old_side: string = parts[1];
-  let new_side: string = parts[2];
+  let old_side = parts[1];
+  let new_side = parts[2];
   if (!old_side.starts_with("-") || !new_side.starts_with("+")) {
     return Err("malformed hunk header: " + h);
   }
-  let a_nums: string[] = old_side.drop(1).split(",");
-  let b_nums: string[] = new_side.drop(1).split(",");
+  let a_nums = old_side.drop(1).split(",");
+  let b_nums = new_side.drop(1).split(",");
   if (a_nums.len() != 2 || b_nums.len() != 2) {
     return Err("malformed hunk ranges: " + h);
   }
@@ -410,9 +410,9 @@ function corpus(): Pair[] {
 }
 
 function test_the_diff_round_trips(): test.TestOutcome {
-  let cs: Pair[] = corpus();
+  let cs = corpus();
   for i in 0..cs.len() {
-    let text: string = render(cs[i].a, cs[i].b, "a", "b");
+    let text = render(cs[i].a, cs[i].b, "a", "b");
     match (apply(cs[i].a, text)) {
       Err(e) => {
         return test.fail("\"" + cs[i].name + "\": applying failed: " + e);
@@ -441,14 +441,14 @@ function same(x: string[], y: string[]): boolean {
 }
 
 function test_no_difference_prints_nothing(): test.TestOutcome {
-  let cs: Pair[] = corpus();
+  let cs = corpus();
   for i in 0..cs.len() {
-    let text: string = render(cs[i].a, cs[i].a, "a", "a");
+    let text = render(cs[i].a, cs[i].a, "a", "a");
     if (text.len() != 0) {
       return test.fail("\"" + cs[i].name + "\" against itself produced:\n"
         + text);
     }
-    let edits: Edit[] = diff(cs[i].a, cs[i].a);
+    let edits = diff(cs[i].a, cs[i].a);
     if (keep_count(edits) != cs[i].a.len()) {
       return test.fail("\"" + cs[i].name + "\" against itself kept "
         + keep_count(edits).to_string() + " of "
@@ -459,23 +459,23 @@ function test_no_difference_prints_nothing(): test.TestOutcome {
 }
 
 function test_hunk_headers_match_their_bodies(): test.TestOutcome {
-  let cs: Pair[] = corpus();
+  let cs = corpus();
   for i in 0..cs.len() {
-    let hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
+    let hs = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
     for k in 0..hs.len() {
-      let old_n: i32 = 0;
-      let new_n: i32 = 0;
+      let old_n = 0;
+      let new_n = 0;
       for l in 0..hs[k].lines.len() {
         let tag: str = hs[k].lines[l].take(1);
         if (tag == " ") {
-          old_n = old_n + 1;
-          new_n = new_n + 1;
+          old_n += 1;
+          new_n += 1;
         }
         if (tag == "-") {
-          old_n = old_n + 1;
+          old_n += 1;
         }
         if (tag == "+") {
-          new_n = new_n + 1;
+          new_n += 1;
         }
       }
       if (old_n != hs[k].a_count || new_n != hs[k].b_count) {
@@ -483,7 +483,7 @@ function test_hunk_headers_match_their_bodies(): test.TestOutcome {
           + ": " + hunk_header(hs[k]) + " but the body has "
           + old_n.to_string() + "/" + new_n.to_string());
       }
-      let changed: boolean = false;
+      let changed = false;
       for l in 0..hs[k].lines.len() {
         let t2: str = hs[k].lines[l].take(1);
         if (t2 == "-" || t2 == "+") {
@@ -500,13 +500,13 @@ function test_hunk_headers_match_their_bodies(): test.TestOutcome {
 }
 
 function test_the_edit_script_is_minimal(): test.TestOutcome {
-  let cs: Pair[] = corpus();
+  let cs = corpus();
   for i in 0..cs.len() {
     if (cs[i].a.len() > 12) {
       continue;
     }
-    let want: i32 = brute_force_lcs(cs[i].a, cs[i].b);
-    let got: i32 = keep_count(diff(cs[i].a, cs[i].b));
+    let want = brute_force_lcs(cs[i].a, cs[i].b);
+    let got = keep_count(diff(cs[i].a, cs[i].b));
     if (got != want) {
       return test.fail("\"" + cs[i].name + "\": kept " + got.to_string()
         + " lines, but the longest common subsequence is "
@@ -517,11 +517,11 @@ function test_the_edit_script_is_minimal(): test.TestOutcome {
 }
 
 function brute_force_lcs(a: string[], b: string[]): i32 {
-  let n: i32 = a.len();
-  let best: i32 = 0;
-  let total: i32 = 1;
+  let n = a.len();
+  let best = 0;
+  let total = 1;
   for k in 0..n {
-    total = total * 2;
+    total *= 2;
   }
   for mask in 0..total {
     let pick: string[] = [];
@@ -538,31 +538,31 @@ function brute_force_lcs(a: string[], b: string[]): i32 {
 }
 
 function is_subsequence(needle: string[], hay: string[]): boolean {
-  let j: i32 = 0;
+  let j = 0;
   for i in 0..hay.len() {
     if (j < needle.len() && needle[j] == hay[i]) {
-      j = j + 1;
+      j += 1;
     }
   }
   return j == needle.len();
 }
 
 function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
-  let cs: Pair[] = corpus();
+  let cs = corpus();
   for i in 0..cs.len() {
-    let fwd: Edit[] = diff(cs[i].a, cs[i].b);
-    let rev: Edit[] = diff(cs[i].b, cs[i].a);
-    let fwd_del: i32 = count_kind(fwd, 1);
-    let fwd_ins: i32 = count_kind(fwd, 2);
-    let rev_del: i32 = count_kind(rev, 1);
-    let rev_ins: i32 = count_kind(rev, 2);
+    let fwd = diff(cs[i].a, cs[i].b);
+    let rev = diff(cs[i].b, cs[i].a);
+    let fwd_del = count_kind(fwd, 1);
+    let fwd_ins = count_kind(fwd, 2);
+    let rev_del = count_kind(rev, 1);
+    let rev_ins = count_kind(rev, 2);
     if (fwd_del != rev_ins || fwd_ins != rev_del) {
       return test.fail("\"" + cs[i].name + "\": forward is -"
         + fwd_del.to_string() + "/+" + fwd_ins.to_string()
         + " but reverse is -" + rev_del.to_string() + "/+"
         + rev_ins.to_string());
     }
-    let keeps: i32 = keep_count(fwd);
+    let keeps = keep_count(fwd);
     if (keeps + fwd_del != cs[i].a.len()) {
       return test.fail("\"" + cs[i].name + "\": kept + deleted != |a|");
     }
@@ -574,22 +574,22 @@ function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
 }
 
 function count_kind(edits: Edit[], kind: i32): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for k in 0..edits.len() {
     match (edits[k]) {
       Del(_) => {
         if (kind == 1) {
-          n = n + 1;
+          n += 1;
         }
       },
       Ins(_) => {
         if (kind == 2) {
-          n = n + 1;
+          n += 1;
         }
       },
       Keep(_, _) => {
         if (kind == 0) {
-          n = n + 1;
+          n += 1;
         }
       }
     }
@@ -600,7 +600,7 @@ function count_kind(edits: Edit[], kind: i32): i32 {
 function test_a_mismatched_patch_is_refused(): test.TestOutcome {
   let a: string[] = ["one", "two", "three", "four"];
   let b: string[] = ["one", "TWO", "three", "four"];
-  let good: string = render(a, b, "a", "b");
+  let good = render(a, b, "a", "b");
   let others: string[][] = [
     ["one", "different", "three", "four"],
     ["totally", "unrelated"],
@@ -633,26 +633,26 @@ function test_a_mismatched_patch_is_refused(): test.TestOutcome {
 }
 
 function test_context_is_bounded(): test.TestOutcome {
-  let cs: Pair[] = corpus();
+  let cs = corpus();
   for i in 0..cs.len() {
-    let hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
+    let hs = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
     for k in 0..hs.len() {
-      let lead: i32 = 0;
+      let lead = 0;
       for l in 0..hs[k].lines.len() {
         if (hs[k].lines[l].take(1) != " ") {
           break;
         }
-        lead = lead + 1;
+        lead += 1;
       }
       if (lead > context()) {
         return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
           + " leads with " + lead.to_string() + " context lines");
       }
-      let trail: i32 = 0;
-      let l2: i32 = hs[k].lines.len() - 1;
+      let trail = 0;
+      let l2 = hs[k].lines.len() - 1;
       while (l2 >= 0 && hs[k].lines[l2].take(1) == " ") {
-        trail = trail + 1;
-        l2 = l2 - 1;
+        trail += 1;
+        l2 -= 1;
       }
       if (trail > context()) {
         return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
@@ -674,8 +674,8 @@ function main(): i32 {
     "and keeps going", "line five", "line six",
     "line six and a half", "line seven",
   ];
-  let text: string = render(a, b, "before.txt", "after.txt");
-  let out: string[] = text.split("\n");
+  let text = render(a, b, "before.txt", "after.txt");
+  let out = text.split("\n");
   for i in 0..out.len() {
     if (out[i].len() > 0) {
       eprint("  " + out[i]);
@@ -694,7 +694,7 @@ function main(): i32 {
     }
   }
 
-  let r: test.TestRunner = test.new("unidiff");
+  let r = test.new("unidiff");
   r = r.it("the diff round trips", test_the_diff_round_trips);
   r = r.it("no difference prints nothing", test_no_difference_prints_nothing);
   r = r.it("hunk headers match their bodies", test_hunk_headers_match_their_bodies);

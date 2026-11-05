@@ -11,7 +11,7 @@ import "std/test";
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
@@ -33,7 +33,7 @@ function fill(own g: Gen, n: i32, lo: f32, hi: f32): Fill {
 }
 
 function all_bits(xs: [f32], n: i32): string {
-  let s: string = "";
+  let s = "";
   for i in 0..n {
     s = s + " " + f32_bits(xs[i]).to_string();
   }
@@ -48,39 +48,39 @@ function mdct_case(own g: Gen, own t: crc32.Crc32): (Gen, crc32.Crc32) {
   let (g1, shift0) = rnd(g);
   let (g2, s0) = rnd(g1);
   let (g3, ia0) = rnd(g2);
-  let shift: i32 = shift0 % 4;
-  let stride: i32 = 1 << s0 % 4;
-  let ia: i32 = ia0 % 3;
+  let shift = shift0 % 4;
+  let stride = 1 << s0 % 4;
+  let ia = ia0 % 3;
   let (g4, oa0) = rnd(g3);
   let (g5, sa0) = rnd(g4);
-  let oa: i32 = oa0 % stride;
-  let sa: i32 = sa0 % 3;
-  let n2: i32 = 960 >> shift;
-  let input: Fill = fill(g5, ia + n2 + 120, -1000.0f32, 1000.0f32);
+  let oa = oa0 % stride;
+  let sa = sa0 % 3;
+  let n2 = 960 >> shift;
+  let input = fill(g5, ia + n2 + 120, -1000.0f32, 1000.0f32);
   let out: f32[] = [];
   for i in 0..stride * n2 {
     out = out.append(0.0f32);
   }
-  let syn: Fill = fill(input.g, sa + n2 + 120, -1000.0f32, 1000.0f32);
-  let freq: f32[] = mdct.forward(input.xs, ia, out, oa, shift, stride);
+  let syn = fill(input.g, sa + n2 + 120, -1000.0f32, 1000.0f32);
+  let freq = mdct.forward(input.xs, ia, out, oa, shift, stride);
   t = line(t, "f " + shift.to_string() + " " + stride.to_string() + " " + ia.to_string() + " " + oa.to_string() + " " + sa.to_string() + " |" + all_bits(freq, stride * n2));
-  let time: f32[] = mdct.backward(freq, oa, syn.xs, sa, shift, stride);
+  let time = mdct.backward(freq, oa, syn.xs, sa, shift, stride);
   t = line(t, "b |" + all_bits(time, sa + n2 + 120));
   return (syn.g, t);
 }
 
 function fft_case(own g: Gen, own t: crc32.Crc32): (Gen, crc32.Crc32) {
   let (g1, s0) = rnd(g);
-  let s: i32 = s0 % 4;
-  let n: i32 = 480 >> s;
-  let input: Fill = fill(g1, 2 * n, -1.0f32, 1.0f32);
+  let s = s0 % 4;
+  let n = 480 >> s;
+  let input = fill(g1, 2 * n, -1.0f32, 1.0f32);
   t = line(t, "t " + s.to_string() + " |" + all_bits(mdct.fft(input.xs, s), 2 * n));
   return (input.g, t);
 }
 
 function trace(seed: u32, cases: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let t: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let t = crc32.new();
   for c in 0..cases {
     let (g1, t1) = mdct_case(g, t);
     let (g2, t2) = fft_case(g1, t1);
@@ -99,7 +99,7 @@ function test_long_script(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/mdct");
+  let r = test.new("std/opus/mdct");
   r = r.it("a short script gives the libopus trace", test_short_script);
   r = r.it("a long script gives the libopus trace", test_long_script);
   return r.finish();

@@ -13,31 +13,31 @@ struct Entry {
 }
 
 function token_at(s: string, at: i32): Option[(string, i32)] {
-  let i: i32 = at;
+  let i = at;
   while (i < s.len() && s[i] as i32 == 32) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= s.len()) {
     return None;
   }
-  let open: i32 = s[i] as i32;
+  let open = s[i] as i32;
   if (open == 91 || open == 34) {
-    let close: i32 = 93;
+    let close = 93;
     if (open == 34) {
       close = 34;
     }
-    let j: i32 = i + 1;
+    let j = i + 1;
     while (j < s.len() && s[j] as i32 != close) {
-      j = j + 1;
+      j += 1;
     }
     if (j >= s.len()) {
       return None;
     }
     return Some(("" + slice_unchecked(s, i + 1, j), j + 1));
   }
-  let j: i32 = i;
+  let j = i;
   while (j < s.len() && s[j] as i32 != 32) {
-    j = j + 1;
+    j += 1;
   }
   return Some(("" + slice_unchecked(s, i, j), j));
 }
@@ -47,7 +47,7 @@ function all_digits(s: string): boolean {
     return false;
   }
   for i in 0..s.len() {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
@@ -56,7 +56,7 @@ function all_digits(s: string): boolean {
 }
 
 function to_int(s: string): i32 {
-  let v: i32 = 0;
+  let v = 0;
   for i in 0..s.len() {
     v = v * 10 + (s[i] as i32 - 48);
   }
@@ -65,7 +65,7 @@ function to_int(s: string): i32 {
 
 function parse_line(line: string): Option[Entry] {
   let fields: string[] = [];
-  let at: i32 = 0;
+  let at = 0;
   for k in 0..7 {
     match (token_at(line, at)) {
       None => {
@@ -86,7 +86,7 @@ function parse_line(line: string): Option[Entry] {
   if (!all_digits(fields[5])) {
     return None;
   }
-  let size: i32 = -1;
+  let size = -1;
   if (fields[6] != "-") {
     if (!all_digits(fields[6])) {
       return None;
@@ -101,7 +101,7 @@ function parse_line(line: string): Option[Entry] {
 }
 
 function format_line(e: Entry): string {
-  let size: string = "-";
+  let size = "-";
   if (e.bytes >= 0) {
     size = e.bytes.to_string();
   }
@@ -135,25 +135,25 @@ function tally(lines: string[]): Report {
         };
       },
       Some(e) => {
-        let inf: i32 = r.info;
-        let ok: i32 = r.ok;
-        let red: i32 = r.redirect;
-        let ce: i32 = r.client_err;
-        let se: i32 = r.server_err;
+        let inf = r.info;
+        let ok = r.ok;
+        let red = r.redirect;
+        let ce = r.client_err;
+        let se = r.server_err;
         if (e.status >= 500) {
-          se = se + 1;
+          se += 1;
         } else if (e.status >= 400) {
-          ce = ce + 1;
+          ce += 1;
         } else if (e.status >= 300) {
-          red = red + 1;
+          red += 1;
         } else if (e.status >= 200) {
-          ok = ok + 1;
+          ok += 1;
         } else {
-          inf = inf + 1;
+          inf += 1;
         }
-        let b: i32 = r.bytes;
+        let b = r.bytes;
         if (e.bytes > 0) {
-          b = b + e.bytes;
+          b += e.bytes;
         }
         r = Report {
           ...r, total: r.total + 1, info: inf, ok: ok,
@@ -170,14 +170,14 @@ function error_rate_bp(r: Report): i32 {
   if (r.total == 0) {
     return 0;
   }
-  let errs: i32 = r.client_err + r.server_err + r.malformed;
+  let errs = r.client_err + r.server_err + r.malformed;
   return errs * 10000 / r.total;
 }
 
 function pct(bp: i32): string {
-  let whole: i32 = bp / 100;
-  let frac: i32 = bp % 100;
-  let pad: string = "";
+  let whole = bp / 100;
+  let frac = bp % 100;
+  let pad = "";
   if (frac < 10) {
     pad = "0";
   }
@@ -210,14 +210,14 @@ function bad_lines(): string[] {
 }
 
 function test_parsing_then_formatting_returns_the_line(): test.TestOutcome {
-  let ls: string[] = good_lines();
+  let ls = good_lines();
   for i in 0..ls.len() {
     match (parse_line(ls[i])) {
       None => {
         return test.fail("rejected a well-formed line: " + ls[i]);
       },
       Some(e) => {
-        let back: string = format_line(e);
+        let back = format_line(e);
         if (back != ls[i]) {
           return test.fail("round trip changed the line:\n    in:  "
             + ls[i] + "\n    out: " + back);
@@ -229,7 +229,7 @@ function test_parsing_then_formatting_returns_the_line(): test.TestOutcome {
 }
 
 function test_grouped_fields_keep_their_spaces(): test.TestOutcome {
-  let line: string = good_lines()[0];
+  let line = good_lines()[0];
   match (parse_line(line)) {
     None => {
       return test.fail("the reference line did not parse");
@@ -256,7 +256,7 @@ function test_grouped_fields_keep_their_spaces(): test.TestOutcome {
 }
 
 function test_a_malformed_line_is_rejected_outright(): test.TestOutcome {
-  let ls: string[] = bad_lines();
+  let ls = bad_lines();
   for i in 0..ls.len() {
     match (parse_line(ls[i])) {
       Some(e) => {
@@ -270,10 +270,10 @@ function test_a_malformed_line_is_rejected_outright(): test.TestOutcome {
 }
 
 function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
-  let ls: string[] = good_lines();
+  let ls = good_lines();
   for i in 0..ls.len() {
     for k in 0..ls[i].len() + 1 {
-      let prefix: string = "" + slice_unchecked(ls[i], 0, k);
+      let prefix = "" + slice_unchecked(ls[i], 0, k);
       match (parse_line(prefix)) {
         None => {},
         Some(e) => {
@@ -287,9 +287,9 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
       }
     }
   }
-  let line: string = good_lines()[0];
-  let mid_bracket: string = "" + slice_unchecked(line, 0, 30);
-  let mid_quote: string = "" + slice_unchecked(line, 0, 60);
+  let line = good_lines()[0];
+  let mid_bracket = "" + slice_unchecked(line, 0, 30);
+  let mid_quote = "" + slice_unchecked(line, 0, 60);
   match (parse_line(mid_bracket)) {
     Some(e) => {
       return test.fail("a prefix cut inside the timestamp parsed");
@@ -306,8 +306,8 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
 }
 
 function test_an_absent_size_is_not_zero(): test.TestOutcome {
-  let absent: string = "1.2.3.4 - - [x] \"GET / HTTP/1.1\" 304 -";
-  let zero: string = "1.2.3.4 - - [x] \"GET / HTTP/1.1\" 200 0";
+  let absent = "1.2.3.4 - - [x] \"GET / HTTP/1.1\" 304 -";
+  let zero = "1.2.3.4 - - [x] \"GET / HTTP/1.1\" 200 0";
   match (parse_line(absent)) {
     None => {
       return test.fail("a `-` size was rejected");
@@ -328,7 +328,7 @@ function test_an_absent_size_is_not_zero(): test.TestOutcome {
       }
     }
   }
-  let r: Report = tally([absent, zero]);
+  let r = tally([absent, zero]);
   if (r.bytes != 0) {
     return test.fail("two zero-byte responses summed to "
       + r.bytes.to_string());
@@ -337,11 +337,11 @@ function test_an_absent_size_is_not_zero(): test.TestOutcome {
 }
 
 function test_every_line_is_counted_exactly_once(): test.TestOutcome {
-  let ls: string[] = good_lines();
+  let ls = good_lines();
   for i in 0..bad_lines().len() {
     ls = ls.append(bad_lines()[i]);
   }
-  let r: Report = tally(ls);
+  let r = tally(ls);
   if (r.total != ls.len()) {
     return test.fail("tallied " + r.total.to_string() + " of "
       + ls.len().to_string() + " lines");
@@ -353,7 +353,7 @@ function test_every_line_is_counted_exactly_once(): test.TestOutcome {
       + " but the total is " + r.total.to_string()
       + " — a status fell between the bands");
   }
-  let info: Report = tally(["1.2.3.4 - - [x] \"GET / HTTP/1.1\" 100 0"]);
+  let info = tally(["1.2.3.4 - - [x] \"GET / HTTP/1.1\" 100 0"]);
   if (info.info + info.ok + info.redirect + info.client_err + info.server_err
     + info.malformed != info.total) {
     return test.fail("a 1xx status is counted in no band");
@@ -365,25 +365,25 @@ function test_every_line_is_counted_exactly_once(): test.TestOutcome {
 }
 
 function test_the_error_rate_matches_an_independent_count(): test.TestOutcome {
-  let ls: string[] = good_lines();
+  let ls = good_lines();
   for i in 0..bad_lines().len() {
     ls = ls.append(bad_lines()[i]);
   }
-  let errs: i32 = 0;
+  let errs = 0;
   for i in 0..ls.len() {
     match (parse_line(ls[i])) {
       None => {
-        errs = errs + 1;
+        errs += 1;
       },
       Some(e) => {
         if (e.status >= 400) {
-          errs = errs + 1;
+          errs += 1;
         }
       }
     }
   }
-  let r: Report = tally(ls);
-  let want: i32 = errs * 10000 / ls.len();
+  let r = tally(ls);
+  let want = errs * 10000 / ls.len();
   if (error_rate_bp(r) != want) {
     return test.fail("rate " + pct(error_rate_bp(r)) + ", counted "
       + errs.to_string() + " of " + ls.len().to_string() + " = "
@@ -434,11 +434,11 @@ function test_awkward_requests_survive(): test.TestOutcome {
 
 function main(): i32 {
   eprint("logparse — common log format, with grouping honoured");
-  let ls: string[] = good_lines();
+  let ls = good_lines();
   for i in 0..bad_lines().len() {
     ls = ls.append(bad_lines()[i]);
   }
-  let r: Report = tally(ls);
+  let r = tally(ls);
   eprint("  " + r.total.to_string() + " lines, " + r.malformed.to_string()
     + " unparseable");
   eprint("  1xx " + r.info.to_string() + "  2xx " + r.ok.to_string()
@@ -458,7 +458,7 @@ function main(): i32 {
     }
   }
 
-  let t: test.TestRunner = test.new("logparse");
+  let t = test.new("logparse");
   t = t.it("parsing then formatting returns the line", test_parsing_then_formatting_returns_the_line);
   t = t.it("grouped fields keep their spaces", test_grouped_fields_keep_their_spaces);
   t = t.it("a malformed line is rejected outright", test_a_malformed_line_is_rejected_outright);

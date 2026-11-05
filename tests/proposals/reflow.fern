@@ -15,34 +15,34 @@ function is_space_byte(b: u8): boolean {
 }
 
 function is_blank(line: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < line.len()) {
     if (!is_space_byte(line[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function indent_of(line: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < line.len() && is_space_byte(line[i])) {
-    i = i + 1;
+    i += 1;
   }
   return line.take(i).to_owned();
 }
 
 function words_of(line: string): string[] {
-  let out: string[] = no_words();
-  let i: i32 = 0;
+  let out = no_words();
+  let i = 0;
   while (i < line.len()) {
     while (i < line.len() && is_space_byte(line[i])) {
-      i = i + 1;
+      i += 1;
     }
-    let start: i32 = i;
+    let start = i;
     while (i < line.len() && !is_space_byte(line[i])) {
-      i = i + 1;
+      i += 1;
     }
     if (i > start) {
       out = out.append(line.drop(start).take(i - start).to_owned());
@@ -52,46 +52,46 @@ function words_of(line: string): string[] {
 }
 
 function concat(a: string[], b: string[]): string[] {
-  let out: string[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function join_lines(lines: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < lines.len()) {
     if (i > 0) {
-      out = out + "\n";
+      out += "\n";
     }
-    out = out + lines[i];
-    i = i + 1;
+    out += lines[i];
+    i += 1;
   }
   return out;
 }
 
 function parse(text: string): Block[] {
-  let lines: string[] = text.split("\n");
+  let lines = text.split("\n");
   let blocks: Block[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < lines.len()) {
     if (is_blank(lines[i])) {
-      let n: i32 = 0;
+      let n = 0;
       while (i < lines.len() && is_blank(lines[i])) {
-        n = n + 1;
-        i = i + 1;
+        n += 1;
+        i += 1;
       }
       blocks = blocks.append(Block { kind: "blank", indent: "", words: no_words(), count: n });
     } else {
-      let ind: string = indent_of(lines[i]);
-      let ws: string[] = no_words();
+      let ind = indent_of(lines[i]);
+      let ws = no_words();
       while (i < lines.len() && !is_blank(lines[i]) && indent_of(lines[i]) == ind) {
         ws = concat(ws, words_of(lines[i]));
-        i = i + 1;
+        i += 1;
       }
       blocks = blocks.append(Block { kind: "para", indent: ind, words: ws, count: 0 });
     }
@@ -100,7 +100,7 @@ function parse(text: string): Block[] {
 }
 
 function avail_for(indent: string, width: i32): i32 {
-  let a: i32 = width - indent.len();
+  let a = width - indent.len();
   if (a < 1) {
     a = 1;
   }
@@ -108,10 +108,10 @@ function avail_for(indent: string, width: i32): i32 {
 }
 
 function wrap(indent: string, words: string[], width: i32): string[] {
-  let avail: i32 = avail_for(indent, width);
+  let avail = avail_for(indent, width);
   let lines: string[] = [];
-  let cur: string = "";
-  let i: i32 = 0;
+  let cur = "";
+  let i = 0;
   while (i < words.len()) {
     if (cur.len() == 0) {
       cur = words[i];
@@ -121,7 +121,7 @@ function wrap(indent: string, words: string[], width: i32): string[] {
       lines = lines.append(indent + cur);
       cur = words[i];
     }
-    i = i + 1;
+    i += 1;
   }
   if (cur.len() > 0) {
     lines = lines.append(indent + cur);
@@ -130,52 +130,52 @@ function wrap(indent: string, words: string[], width: i32): string[] {
 }
 
 function reflow(text: string, width: i32): string {
-  let blocks: Block[] = parse(text);
+  let blocks = parse(text);
   let lines: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < blocks.len()) {
     if (blocks[i].kind == "blank") {
-      let n: i32 = 0;
+      let n = 0;
       while (n < blocks[i].count) {
         lines = lines.append("");
-        n = n + 1;
+        n += 1;
       }
     } else {
       lines = concat(lines, wrap(blocks[i].indent, blocks[i].words, width));
     }
-    i = i + 1;
+    i += 1;
   }
   return join_lines(lines);
 }
 
 function join_range(words: string[], from: i32, to: i32): string {
-  let out: string = "";
-  let i: i32 = from;
+  let out = "";
+  let i = from;
   while (i < to) {
     if (i > from) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + words[i];
-    i = i + 1;
+    out += words[i];
+    i += 1;
   }
   return out;
 }
 
 function bf_wrap(indent: string, words: string[], width: i32): string[] {
-  let avail: i32 = avail_for(indent, width);
+  let avail = avail_for(indent, width);
   let lines: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < words.len()) {
-    let best: i32 = 1;
-    let k: i32 = 1;
+    let best = 1;
+    let k = 1;
     while (i + k <= words.len()) {
       if (join_range(words, i, i + k).len() <= avail) {
         best = k;
       }
-      k = k + 1;
+      k += 1;
     }
     lines = lines.append(indent + join_range(words, i, i + best));
-    i = i + best;
+    i += best;
   }
   return lines;
 }
@@ -203,12 +203,12 @@ function widths(): i32[] {
 }
 
 function all_words(text: string): string[] {
-  let out: string[] = no_words();
-  let lines: string[] = text.split("\n");
-  let i: i32 = 0;
+  let out = no_words();
+  let lines = text.split("\n");
+  let i = 0;
   while (i < lines.len()) {
     out = concat(out, words_of(lines[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -217,25 +217,25 @@ function words_equal(a: string[], b: string[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function show_words(ws: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < ws.len()) {
     if (i > 0) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + ws[i];
-    i = i + 1;
+    out += ws[i];
+    i += 1;
   }
   return out;
 }
@@ -245,98 +245,98 @@ function count_lines(text: string): i32 {
 }
 
 function test_the_word_sequence_is_unchanged(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ws.len()) {
-      let before: string[] = all_words(ds[i]);
-      let after: string[] = all_words(reflow(ds[i], ws[j]));
+      let before = all_words(ds[i]);
+      let after = all_words(reflow(ds[i], ws[j]));
       if (!words_equal(before, after)) {
         return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
           + ": words were [" + show_words(before) + "] and became ["
           + show_words(after) + "]");
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_no_line_is_wider_than_asked_unless_it_is_one_word(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ws.len()) {
-      let lines: string[] = reflow(ds[i], ws[j]).split("\n");
-      let k: i32 = 0;
+      let lines = reflow(ds[i], ws[j]).split("\n");
+      let k = 0;
       while (k < lines.len()) {
         if (lines[k].len() > ws[j] && words_of(lines[k]).len() != 1) {
           return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
             + ": line \"" + lines[k] + "\" is " + lines[k].len().to_string()
             + " wide and holds " + words_of(lines[k]).len().to_string() + " words");
         }
-        k = k + 1;
+        k += 1;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_every_line_is_full(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ws.len()) {
-      let blocks: Block[] = parse(ds[i]);
-      let b: i32 = 0;
+      let blocks = parse(ds[i]);
+      let b = 0;
       while (b < blocks.len()) {
         if (blocks[b].kind == "para") {
-          let limit: i32 = blocks[b].indent.len() + avail_for(blocks[b].indent, ws[j]);
-          let lines: string[] = wrap(blocks[b].indent, blocks[b].words, ws[j]);
-          let k: i32 = 0;
+          let limit = blocks[b].indent.len() + avail_for(blocks[b].indent, ws[j]);
+          let lines = wrap(blocks[b].indent, blocks[b].words, ws[j]);
+          let k = 0;
           while (k + 1 < lines.len()) {
-            let next_word: string = words_of(lines[k + 1])[0];
+            let next_word = words_of(lines[k + 1])[0];
             if (lines[k].len() + 1 + next_word.len() <= limit) {
               return test.fail("doc " + i.to_string() + " at width "
                 + ws[j].to_string() + ": \"" + next_word
                 + "\" would have fitted on \"" + lines[k] + "\"");
             }
-            k = k + 1;
+            k += 1;
           }
         }
-        b = b + 1;
+        b += 1;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_blank_runs_and_indents_survive(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ws.len()) {
-      let before: Block[] = parse(ds[i]);
-      let after: Block[] = parse(reflow(ds[i], ws[j]));
+      let before = parse(ds[i]);
+      let after = parse(reflow(ds[i], ws[j]));
       if (before.len() != after.len()) {
         return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
           + ": " + before.len().to_string() + " blocks became "
           + after.len().to_string());
       }
-      let b: i32 = 0;
+      let b = 0;
       while (b < before.len()) {
         if (before[b].kind != after[b].kind) {
           return test.fail("doc " + i.to_string() + " block " + b.to_string()
@@ -352,92 +352,92 @@ function test_blank_runs_and_indents_survive(): test.TestOutcome {
             + ": indent of " + before[b].indent.len().to_string()
             + " became " + after[b].indent.len().to_string());
         }
-        b = b + 1;
+        b += 1;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_reflowing_twice_changes_nothing(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ws.len()) {
-      let once: string = reflow(ds[i], ws[j]);
-      let twice: string = reflow(once, ws[j]);
+      let once = reflow(ds[i], ws[j]);
+      let twice = reflow(once, ws[j]);
       if (once != twice) {
         return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
           + " is not a fixed point:\n--- once ---\n" + once
           + "\n--- twice ---\n" + twice);
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_a_wider_target_never_needs_more_lines(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 1;
+    let j = 1;
     while (j < ws.len()) {
-      let narrow: i32 = count_lines(reflow(ds[i], ws[j - 1]));
-      let wide: i32 = count_lines(reflow(ds[i], ws[j]));
+      let narrow = count_lines(reflow(ds[i], ws[j - 1]));
+      let wide = count_lines(reflow(ds[i], ws[j]));
       if (wide > narrow) {
         return test.fail("doc " + i.to_string() + ": width " + ws[j - 1].to_string()
           + " gives " + narrow.to_string() + " lines but width "
           + ws[j].to_string() + " gives " + wide.to_string());
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_greedy_fill_matches_the_brute_force_one(): test.TestOutcome {
-  let ds: string[] = docs();
-  let ws: i32[] = widths();
-  let i: i32 = 0;
+  let ds = docs();
+  let ws = widths();
+  let i = 0;
   while (i < ds.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ws.len()) {
-      let blocks: Block[] = parse(ds[i]);
-      let b: i32 = 0;
+      let blocks = parse(ds[i]);
+      let b = 0;
       while (b < blocks.len()) {
         if (blocks[b].kind == "para") {
-          let fast: string[] = wrap(blocks[b].indent, blocks[b].words, ws[j]);
-          let slow: string[] = bf_wrap(blocks[b].indent, blocks[b].words, ws[j]);
+          let fast = wrap(blocks[b].indent, blocks[b].words, ws[j]);
+          let slow = bf_wrap(blocks[b].indent, blocks[b].words, ws[j]);
           if (!words_equal(fast, slow)) {
             return test.fail("doc " + i.to_string() + " block " + b.to_string()
               + " at width " + ws[j].to_string() + ": greedy gave\n"
               + join_lines(fast) + "\nbrute force gave\n" + join_lines(slow));
           }
         }
-        b = b + 1;
+        b += 1;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_an_indent_change_starts_a_new_paragraph(): test.TestOutcome {
-  let src: string = "alpha beta\n    gamma delta\nepsilon";
-  let out: string = reflow(src, 40);
+  let src = "alpha beta\n    gamma delta\nepsilon";
+  let out = reflow(src, 40);
   if (out != "alpha beta\n    gamma delta\nepsilon") {
     return test.fail("expected three separately indented lines, got:\n" + out);
   }
-  let blocks: Block[] = parse(src);
+  let blocks = parse(src);
   if (blocks.len() != 3) {
     return test.fail("expected 3 blocks, got " + blocks.len().to_string());
   }
@@ -448,14 +448,14 @@ function test_an_indent_change_starts_a_new_paragraph(): test.TestOutcome {
 }
 
 function test_an_indent_wider_than_the_target(): test.TestOutcome {
-  let src: string = "        deeply indented words here";
-  let out: string = reflow(src, 4);
-  let lines: string[] = out.split("\n");
+  let src = "        deeply indented words here";
+  let out = reflow(src, 4);
+  let lines = out.split("\n");
   if (lines.len() != 4) {
     return test.fail("expected one word per line, got " + lines.len().to_string()
       + " lines:\n" + out);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < lines.len()) {
     if (words_of(lines[i]).len() != 1) {
       return test.fail("line \"" + lines[i] + "\" holds "
@@ -464,7 +464,7 @@ function test_an_indent_wider_than_the_target(): test.TestOutcome {
     if (indent_of(lines[i]).len() != 8) {
       return test.fail("line \"" + lines[i] + "\" lost the 8-column indent");
     }
-    i = i + 1;
+    i += 1;
   }
   if (!words_equal(all_words(src), all_words(out))) {
     return test.fail("words were lost: [" + show_words(all_words(out)) + "]");
@@ -484,20 +484,20 @@ function main(): i32 {
     + "Back to the left margin for a closing remark.";
 
   let ws: i32[] = [28, 44];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ws.len()) {
     eprint("");
     eprint("  --- width " + ws[i].to_string() + " ---");
-    let lines: string[] = reflow(demo, ws[i]).split("\n");
-    let k: i32 = 0;
+    let lines = reflow(demo, ws[i]).split("\n");
+    let k = 0;
     while (k < lines.len()) {
       eprint("  |" + lines[k]);
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let r: test.TestRunner = test.new("reflow");
+  let r = test.new("reflow");
   r = r.it("the word sequence is unchanged", test_the_word_sequence_is_unchanged);
   r = r.it("no line is wider than asked unless it is one word", test_no_line_is_wider_than_asked_unless_it_is_one_word);
   r = r.it("every line is full", test_every_line_is_full);

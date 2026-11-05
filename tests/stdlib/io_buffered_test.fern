@@ -111,7 +111,7 @@ function test_buf_writer_write_u64(): test.TestOutcome {
 }
 
 function i64_widths(b0: io.BufWriter): Result[boolean, IoError] {
-  let b: io.BufWriter = b0.write_i64(0 - 5 as i64)?;
+  let b = b0.write_i64(-5i64)?;
   let two = b.buffered();
   b = b.write_i64(42 as i64)?;
   let four = b.buffered();

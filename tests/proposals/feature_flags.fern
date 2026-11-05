@@ -2,19 +2,19 @@ import "std/test";
 import "std/i32";
 
 function fnv1a(s: string): i32 {
-  let h: i32 = 0 - 2128831035;
+  let h: i32 = -2128831035;
   for i in 0..s.len() {
     h = h ^ s[i] as i32;
-    h = h * 16777619;
+    h *= 16777619;
   }
   return h;
 }
 
 function bucket_of(flag_key: string, user_id: string): i32 {
-  let h: i32 = fnv1a(flag_key + ":" + user_id);
-  let b: i32 = h % 10000;
+  let h = fnv1a(flag_key + ":" + user_id);
+  let b = h % 10000;
   if (b < 0) {
-    b = b + 10000;
+    b += 10000;
   }
   return b;
 }
@@ -106,21 +106,21 @@ function users(n: i32): User[] {
 }
 
 function count_on(f: Flag, us: User[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for i in 0..us.len() {
     if (is_on(f, us[i])) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
 }
 
 function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
-  let us: User[] = users(500);
+  let us = users(500);
   let steps: i32[] = [0, 1, 100, 1000, 2500, 5000, 7500, 9000, 9999, 10000];
   for s in 1..steps.len() {
-    let lo: Flag = plain("checkout-v2", steps[s - 1]);
-    let hi: Flag = plain("checkout-v2", steps[s]);
+    let lo = plain("checkout-v2", steps[s - 1]);
+    let hi = plain("checkout-v2", steps[s]);
     for i in 0..us.len() {
       if (is_on(lo, us[i]) && !is_on(hi, us[i])) {
         return test.fail(us[i].id + " was in at "
@@ -137,10 +137,10 @@ function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
 }
 
 function test_bucketing_is_stable(): test.TestOutcome {
-  let us: User[] = users(200);
+  let us = users(200);
   for i in 0..us.len() {
-    let a: i32 = bucket_of("search-ranking", us[i].id);
-    let b: i32 = bucket_of("search-ranking", us[i].id);
+    let a = bucket_of("search-ranking", us[i].id);
+    let b = bucket_of("search-ranking", us[i].id);
     if (a != b) {
       return test.fail("the same pair bucketed twice differently");
     }
@@ -148,7 +148,7 @@ function test_bucketing_is_stable(): test.TestOutcome {
       return test.fail(us[i].id + " bucketed to " + a.to_string()
         + ", outside [0, 10000)");
     }
-    let f1: Flag = plain("search-ranking", 1000);
+    let f1 = plain("search-ranking", 1000);
     let f2: Flag = Flag {
       key: "search-ranking", enabled: true, rollout_bp: 9000,
       rules: [Rule { attr: "plan", want: "pro", variant: "on" }],
@@ -162,7 +162,7 @@ function test_bucketing_is_stable(): test.TestOutcome {
 }
 
 function test_the_extremes_are_exact(): test.TestOutcome {
-  let us: User[] = users(1000);
+  let us = users(1000);
   if (count_on(plain("f", 0), us) != 0) {
     return test.fail("a 0% rollout let " + count_on(plain("f", 0), us).to_string()
       + " users in");
@@ -175,12 +175,12 @@ function test_the_extremes_are_exact(): test.TestOutcome {
 }
 
 function test_the_rollout_is_roughly_uniform(): test.TestOutcome {
-  let us: User[] = users(4000);
+  let us = users(4000);
   let points: i32[] = [1000, 2500, 5000, 7500, 9000];
   for p in 0..points.len() {
-    let bp: i32 = points[p];
-    let got: i32 = count_on(plain("uniformity", bp), us) * 10000 / us.len();
-    let slack: i32 = 400;
+    let bp = points[p];
+    let got = count_on(plain("uniformity", bp), us) * 10000 / us.len();
+    let slack = 400;
     if (got < bp - slack || got > bp + slack) {
       return test.fail("a " + bp.to_string() + "bp rollout let in "
         + got.to_string() + "bp of 4000 users");
@@ -190,23 +190,23 @@ function test_the_rollout_is_roughly_uniform(): test.TestOutcome {
 }
 
 function test_flags_bucket_independently(): test.TestOutcome {
-  let us: User[] = users(1000);
-  let a: Flag = plain("alpha", 5000);
-  let b: Flag = plain("beta", 5000);
-  let both: i32 = 0;
-  let neither: i32 = 0;
-  let only_a: i32 = 0;
+  let us = users(1000);
+  let a = plain("alpha", 5000);
+  let b = plain("beta", 5000);
+  let both = 0;
+  let neither = 0;
+  let only_a = 0;
   for i in 0..us.len() {
-    let ia: boolean = is_on(a, us[i]);
-    let ib: boolean = is_on(b, us[i]);
+    let ia = is_on(a, us[i]);
+    let ib = is_on(b, us[i]);
     if (ia && ib) {
-      both = both + 1;
+      both += 1;
     }
     if (!ia && !ib) {
-      neither = neither + 1;
+      neither += 1;
     }
     if (ia && !ib) {
-      only_a = only_a + 1;
+      only_a += 1;
     }
   }
   if (only_a < 150) {
@@ -223,9 +223,9 @@ function test_flags_bucket_independently(): test.TestOutcome {
 }
 
 function test_precedence(): test.TestOutcome {
-  let u: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
-  let pro: Rule = Rule { attr: "plan", want: "pro", variant: "on" };
-  let free_rule: Rule = Rule { attr: "plan", want: "free", variant: "off" };
+  let u = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
+  let pro = Rule { attr: "plan", want: "pro", variant: "on" };
+  let free_rule = Rule { attr: "plan", want: "free", variant: "off" };
 
   let disabled: Flag = Flag {
     key: "f", enabled: false, rollout_bp: 10000,
@@ -276,7 +276,7 @@ function test_precedence(): test.TestOutcome {
   if (evaluate(falls, u) != "on") {
     return test.fail("a non-matching rule did not fall through to the rollout");
   }
-  let bare: User = user("user-7");
+  let bare = user("user-7");
   let missing: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0,
     rules: [Rule { attr: "plan", want: "", variant: "on" }],
@@ -308,10 +308,10 @@ function test_overrides_match_whole_ids(): test.TestOutcome {
 function test_the_hash_sees_the_whole_key(): test.TestOutcome {
   let pairs_a: string[] = ["abc", "abc", "abc", "ab", "xy"];
   let pairs_b: string[] = ["abd", "bbc", "acb", "abc", "yx"];
-  let differ: i32 = 0;
+  let differ = 0;
   for i in 0..pairs_a.len() {
     if (fnv1a(pairs_a[i]) != fnv1a(pairs_b[i])) {
-      differ = differ + 1;
+      differ += 1;
     }
   }
   if (differ != pairs_a.len()) {
@@ -329,27 +329,27 @@ function test_the_hash_sees_the_whole_key(): test.TestOutcome {
 
 function main(): i32 {
   eprint("feature_flags — stable bucketing with monotone rollouts");
-  let us: User[] = users(1000);
+  let us = users(1000);
   let steps: i32[] = [0, 500, 1000, 2500, 5000, 7500, 10000];
-  let prev: i32 = 0;
+  let prev = 0;
   for s in 0..steps.len() {
-    let f: Flag = plain("checkout-v2", steps[s]);
-    let n: i32 = count_on(f, us);
+    let f = plain("checkout-v2", steps[s]);
+    let n = count_on(f, us);
     eprint("  rollout " + steps[s].to_string() + "bp -> " + n.to_string()
       + "/1000 users in (+" + (n - prev).to_string() + ")");
     prev = n;
   }
-  let a: Flag = plain("alpha", 5000);
-  let b: Flag = plain("beta", 5000);
-  let both: i32 = 0;
+  let a = plain("alpha", 5000);
+  let b = plain("beta", 5000);
+  let both = 0;
   for i in 0..us.len() {
     if (is_on(a, us[i]) && is_on(b, us[i])) {
-      both = both + 1;
+      both += 1;
     }
   }
   eprint("  two independent 50% flags overlap on " + both.to_string()
     + "/1000 (a shared cohort would be ~500)");
-  let pro: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
+  let pro = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
   let staged: Flag = Flag {
     key: "checkout-v2", enabled: true, rollout_bp: 0,
     rules: [Rule { attr: "plan", want: "pro", variant: "on" }],
@@ -358,7 +358,7 @@ function main(): i32 {
   eprint("  user-7 (plan=pro, rule says on, force_off says off) -> "
     + evaluate(staged, pro));
 
-  let r: test.TestRunner = test.new("feature_flags");
+  let r = test.new("feature_flags");
   r = r.it("raising a rollout only ever adds users", test_raising_a_rollout_only_ever_adds_users);
   r = r.it("bucketing is stable", test_bucketing_is_stable);
   r = r.it("the extremes are exact", test_the_extremes_are_exact);

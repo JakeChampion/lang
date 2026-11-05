@@ -8,8 +8,8 @@ function parse_pair(seg: string): Option[Cookie] {
   let Some(at) = seg.index_of("=") else {
     return None;
   };
-  let name: string = seg.take(at).trim().to_owned();
-  let value: string = seg.drop(at + 1).trim().to_owned();
+  let name = seg.take(at).trim().to_owned();
+  let value = seg.drop(at + 1).trim().to_owned();
   if (name.len() == 0) {
     return None;
   }
@@ -18,8 +18,8 @@ function parse_pair(seg: string): Option[Cookie] {
 
 function parse(header: string): Cookie[] {
   let out: Cookie[] = [];
-  let segs: string[] = header.split(";");
-  let i: i32 = 0;
+  let segs = header.split(";");
+  let i = 0;
   while (i < segs.len()) {
     match (parse_pair(segs[i])) {
       Some(c) => {
@@ -27,53 +27,53 @@ function parse(header: string): Cookie[] {
       },
       None => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function first(cs: Cookie[], name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       return Some(cs[i].value);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 function all(cs: Cookie[], name: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       out = out.append(cs[i].value);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function serialize(cs: Cookie[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < cs.len()) {
     if (i > 0) {
-      out = out + "; ";
+      out += "; ";
     }
     out = out + cs[i].name + "=" + cs[i].value;
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function render(cs: Cookie[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < cs.len()) {
     out = out + cs[i].name + "\x1f" + cs[i].value + "\x1e";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -84,51 +84,51 @@ function pads(): string[] {
 
 function test_whitespace_is_tolerated_everywhere(): test.TestOutcome {
   let inputs: string[] = ["a=1;b=2", "sid=abc;theme=dark", "x=1;y=2;z=3"];
-  let p: string[] = pads();
-  let n: i32 = 0;
-  let ii: i32 = 0;
+  let p = pads();
+  let n = 0;
+  let ii = 0;
   while (ii < inputs.len()) {
-    let want: string = render(parse(inputs[ii]));
-    let segs: string[] = inputs[ii].split(";");
+    let want = render(parse(inputs[ii]));
+    let segs = inputs[ii].split(";");
 
-    let a: i32 = 0;
+    let a = 0;
     while (a < p.len()) {
-      let b: i32 = 0;
+      let b = 0;
       while (b < p.len()) {
-        let c: i32 = 0;
+        let c = 0;
         while (c < p.len()) {
-          let d: i32 = 0;
+          let d = 0;
           while (d < p.len()) {
-            let built: string = "";
-            let s: i32 = 0;
+            let built = "";
+            let s = 0;
             while (s < segs.len()) {
               if (s > 0) {
-                built = built + ";";
+                built += ";";
               }
-              let nm: string = "";
-              let vl: string = segs[s].to_owned();
+              let nm = "";
+              let vl = segs[s].to_owned();
               if let Some(at) = segs[s].index_of("=") {
                 nm = segs[s].take(at).to_owned();
                 vl = segs[s].drop(at + 1).to_owned();
               }
               built = built + p[a] + nm + p[b] + "=" + p[c] + vl + p[d];
-              s = s + 1;
+              s += 1;
             }
-            let got: string = render(parse(built));
+            let got = render(parse(built));
             if (got != want) {
               return test.fail("padding changed the parse of \""
                 + inputs[ii] + "\": \"" + built + "\" gave a different result");
             }
-            n = n + 1;
-            d = d + 1;
+            n += 1;
+            d += 1;
           }
-          c = c + 1;
+          c += 1;
         }
-        b = b + 1;
+        b += 1;
       }
-      a = a + 1;
+      a += 1;
     }
-    ii = ii + 1;
+    ii += 1;
   }
   if (n < 1000) {
     return test.fail("sweep only covered " + n.to_string() + " spellings");
@@ -137,7 +137,7 @@ function test_whitespace_is_tolerated_everywhere(): test.TestOutcome {
 }
 
 function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
-  let cs: Cookie[] = parse("greeting=hello world; pad=a  b");
+  let cs = parse("greeting=hello world; pad=a  b");
   match (first(cs, "greeting")) {
     Some(v) => {
       if (v != "hello world") {
@@ -158,7 +158,7 @@ function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
       return test.fail("pad missing");
     }
   }
-  let padded: Cookie[] = parse("  greeting  =  hello world  ;  pad = a  b  ");
+  let padded = parse("  greeting  =  hello world  ;  pad = a  b  ");
   if (render(padded) != render(cs)) {
     return test.fail("padding disturbed an inner-space value: \""
       + render(padded) + "\" vs \"" + render(cs) + "\"");
@@ -168,9 +168,9 @@ function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
 
 function test_only_the_first_equals_separates(): test.TestOutcome {
   let cases: string[] = ["t=a=b", "t=YWJjZA==", "t====", "t=a=b=c=d"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cases.len()) {
-    let want: string = cases[i].drop(2).to_owned();
+    let want = cases[i].drop(2).to_owned();
     match (first(parse(cases[i]), "t")) {
       Some(v) => {
         if (v != want) {
@@ -182,13 +182,13 @@ function test_only_the_first_equals_separates(): test.TestOutcome {
         return test.fail("\"" + cases[i] + "\" parsed to nothing");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_empty_value_differs_from_no_equals(): test.TestOutcome {
-  let withEq: Cookie[] = parse("a=");
+  let withEq = parse("a=");
   if (withEq.len() != 1) {
     return test.fail("\"a=\" produced " + withEq.len().to_string() + " cookies, want 1");
   }
@@ -202,7 +202,7 @@ function test_empty_value_differs_from_no_equals(): test.TestOutcome {
       return test.fail("\"a=\" lost its name");
     }
   }
-  let noEq: Cookie[] = parse("a");
+  let noEq = parse("a");
   if (noEq.len() != 0) {
     return test.fail("\"a\" should be ignored, produced " + noEq.len().to_string());
   }
@@ -216,24 +216,24 @@ function test_empty_value_differs_from_no_equals(): test.TestOutcome {
 }
 
 function test_empty_segments_are_skipped(): test.TestOutcome {
-  let want: string = render(parse("a=1;b=2"));
+  let want = render(parse("a=1;b=2"));
   let variants: string[] = [
     "a=1;;b=2", "a=1;b=2;", ";a=1;b=2", "a=1; ;b=2",
     "a=1;;;b=2;;", "a=1;junk;b=2", "  ;a=1;  ;b=2;  ",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < variants.len()) {
-    let got: string = render(parse(variants[i]));
+    let got = render(parse(variants[i]));
     if (got != want) {
       return test.fail("\"" + variants[i] + "\" did not parse as \"a=1;b=2\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_duplicates_are_kept_in_order(): test.TestOutcome {
-  let cs: Cookie[] = parse("id=first; other=x; id=second; id=third");
+  let cs = parse("id=first; other=x; id=second; id=third");
   if (cs.len() != 4) {
     return test.fail("wanted 4 cookies, got " + cs.len().to_string());
   }
@@ -247,7 +247,7 @@ function test_duplicates_are_kept_in_order(): test.TestOutcome {
       return test.fail("id missing");
     }
   }
-  let every: string[] = all(cs, "id");
+  let every = all(cs, "id");
   if (every.len() != 3) {
     return test.fail("all(id) returned " + every.len().to_string() + ", want 3");
   }
@@ -286,10 +286,10 @@ function test_round_trip_through_the_canonical_form(): test.TestOutcome {
     "a=1;b=2", "  a = 1 ;; b = 2  ", "t=YWJjZA==",
     "greeting=hello world", "id=x;id=y", "a=", "solo=1",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < inputs.len()) {
-    let once: Cookie[] = parse(inputs[i]);
-    let twice: Cookie[] = parse(serialize(once));
+    let once = parse(inputs[i]);
+    let twice = parse(serialize(once));
     if (render(once) != render(twice)) {
       return test.fail("round trip changed \"" + inputs[i] + "\": \""
         + render(once) + "\" -> \"" + render(twice) + "\"");
@@ -297,16 +297,16 @@ function test_round_trip_through_the_canonical_form(): test.TestOutcome {
     if (serialize(once) != serialize(twice)) {
       return test.fail("serialize is not idempotent for \"" + inputs[i] + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_values_are_byte_transparent(): test.TestOutcome {
   let vals: string[] = ["a,b", "a b", "{\"j\":1}", "%20", "café", "a/b+c", "\t"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < vals.len()) {
-    let want: string = vals[i].trim().to_owned();
+    let want = vals[i].trim().to_owned();
     match (first(parse("k=" + vals[i]), "k")) {
       Some(v) => {
         if (v != want) {
@@ -317,13 +317,13 @@ function test_values_are_byte_transparent(): test.TestOutcome {
         return test.fail("value \"" + vals[i] + "\" lost the cookie");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_order_is_preserved(): test.TestOutcome {
-  let cs: Cookie[] = parse("z=1; m=2; a=3");
+  let cs = parse("z=1; m=2; a=3");
   if (cs.len() != 3) {
     return test.fail("wanted 3, got " + cs.len().to_string());
   }
@@ -352,20 +352,20 @@ function test_empty_and_degenerate_headers(): test.TestOutcome {
 function main(): i32 {
   eprint("cookies — RFC 6265 Cookie-header parsing with whitespace tolerance");
 
-  let raw: string = "  sid = abc123 ;; theme=dark ; token=YWJjZA== ; note=hello world ;";
-  let cs: Cookie[] = parse(raw);
+  let raw = "  sid = abc123 ;; theme=dark ; token=YWJjZA== ; note=hello world ;";
+  let cs = parse(raw);
   eprint("input:      " + raw);
   eprint("parsed:     " + cs.len().to_string() + " cookies");
-  let i: i32 = 0;
+  let i = 0;
   while (i < cs.len()) {
     eprint("  " + cs[i].name + " => \"" + cs[i].value + "\"");
-    i = i + 1;
+    i += 1;
   }
   eprint("canonical:  " + serialize(cs));
   eprint("token:      " + match (first(cs, "token")) { Some(v) => v, None => "(none)" });
   eprint("missing:    " + match (first(cs, "nope")) { Some(v) => v, None => "(none)" });
 
-  let r: test.TestRunner = test.new("cookies");
+  let r = test.new("cookies");
   r = r.it("whitespace is tolerated everywhere", test_whitespace_is_tolerated_everywhere);
   r = r.it("whitespace inside a value is preserved", test_whitespace_inside_a_value_is_preserved);
   r = r.it("only the first equals separates", test_only_the_first_equals_separates);

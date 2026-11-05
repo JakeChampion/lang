@@ -21,7 +21,7 @@ function bucket(v: i32, lo: i32, hi: i32): i32 {
 }
 
 function min_of(xs: i32[]): i32 {
-  let m: i32 = xs[0];
+  let m = xs[0];
   for i in 0..xs.len() {
     if (xs[i] < m) {
       m = xs[i];
@@ -31,7 +31,7 @@ function min_of(xs: i32[]): i32 {
 }
 
 function max_of(xs: i32[]): i32 {
-  let m: i32 = xs[0];
+  let m = xs[0];
   for i in 0..xs.len() {
     if (xs[i] > m) {
       m = xs[i];
@@ -44,12 +44,12 @@ function spark(xs: i32[]): string {
   if (xs.len() == 0) {
     return "";
   }
-  let lo: i32 = min_of(xs);
-  let hi: i32 = max_of(xs);
-  let bs: string[] = blocks();
-  let out: string = "";
+  let lo = min_of(xs);
+  let hi = max_of(xs);
+  let bs = blocks();
+  let out = "";
   for i in 0..xs.len() {
-    out = out + bs[bucket(xs[i], lo, hi)];
+    out += bs[bucket(xs[i], lo, hi)];
   }
   return out;
 }
@@ -57,8 +57,8 @@ function spark(xs: i32[]): string {
 function test_one_codepoint_per_sample(): test.TestOutcome {
   let series: i32[][] = [[1], [1, 2], [5, 3, 9, 1], [0, 0, 0, 0, 0, 0]];
   for i in 0..series.len() {
-    let s: string = spark(series[i]);
-    let want: i32 = series[i].len();
+    let s = spark(series[i]);
+    let want = series[i].len();
     if (s.codepoint_count() != want) {
       return test.fail("series " + i.to_string() + ": wanted "
         + want.to_string() + " codepoints, got "
@@ -73,18 +73,18 @@ function test_one_codepoint_per_sample(): test.TestOutcome {
 }
 
 function test_output_is_valid_utf8_blocks(): test.TestOutcome {
-  let s: string = spark([3, 1, 4, 1, 5, 9, 2, 6]);
+  let s = spark([3, 1, 4, 1, 5, 9, 2, 6]);
   if (!utf8.is_valid(s)) {
     return test.fail("sparkline is not valid UTF-8");
   }
-  let bs: string[] = blocks();
+  let bs = blocks();
   for i in 0..s.codepoint_count() {
     match (utf8.char_at(s, i)) {
       None => {
         return test.fail("no char at index " + i.to_string());
       },
       Some(ch) => {
-        let known: boolean = false;
+        let known = false;
         for k in 0..bs.len() {
           if (bs[k] == ch) {
             known = true;
@@ -101,8 +101,8 @@ function test_output_is_valid_utf8_blocks(): test.TestOutcome {
 
 function test_extremes_map_to_extreme_blocks(): test.TestOutcome {
   let xs: i32[] = [10, 50, 90];
-  let s: string = spark(xs);
-  let bs: string[] = blocks();
+  let s = spark(xs);
+  let bs = blocks();
   match (utf8.char_at(s, 0)) {
     None => {
       return test.fail("no first char");
@@ -128,11 +128,11 @@ function test_extremes_map_to_extreme_blocks(): test.TestOutcome {
 
 function test_rendering_is_order_preserving(): test.TestOutcome {
   let xs: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-  let lo: i32 = min_of(xs);
-  let hi: i32 = max_of(xs);
-  let prev: i32 = -1;
+  let lo = min_of(xs);
+  let hi = max_of(xs);
+  let prev = -1;
   for i in 0..xs.len() {
-    let b: i32 = bucket(xs[i], lo, hi);
+    let b = bucket(xs[i], lo, hi);
     if (b < prev) {
       return test.fail("bucket fell from " + prev.to_string() + " to "
         + b.to_string() + " on rising input");
@@ -143,11 +143,11 @@ function test_rendering_is_order_preserving(): test.TestOutcome {
 }
 
 function test_a_flat_series_renders_flat(): test.TestOutcome {
-  let s: string = spark([7, 7, 7, 7]);
+  let s = spark([7, 7, 7, 7]);
   if (s.codepoint_count() != 4) {
     return test.fail("flat series lost bars");
   }
-  let bs: string[] = blocks();
+  let bs = blocks();
   for i in 0..4 {
     match (utf8.char_at(s, i)) {
       None => {
@@ -164,7 +164,7 @@ function test_a_flat_series_renders_flat(): test.TestOutcome {
 }
 
 function test_empty_series(): test.TestOutcome {
-  let s: string = spark([]);
+  let s = spark([]);
   if (s.len() != 0) {
     return test.fail("empty series emitted bytes");
   }
@@ -192,11 +192,11 @@ function main(): i32 {
   eprint("  falling  " + spark([8, 7, 6, 5, 4, 3, 2, 1]));
   eprint("  noisy    " + spark([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]));
   eprint("  flat     " + spark([7, 7, 7, 7, 7]));
-  let s: string = spark([3, 1, 4, 1, 5]);
+  let s = spark([3, 1, 4, 1, 5]);
   eprint("  (5 bars = " + s.codepoint_count().to_string()
     + " codepoints, " + s.len().to_string() + " bytes)");
 
-  let r: test.TestRunner = test.new("sparkline");
+  let r = test.new("sparkline");
   r = r.it("one codepoint per sample", test_one_codepoint_per_sample);
   r = r.it("output is valid utf-8 blocks", test_output_is_valid_utf8_blocks);
   r = r.it("extremes map to extreme blocks", test_extremes_map_to_extreme_blocks);

@@ -60,7 +60,7 @@ function test_in_range_i32_boundary_pass(): test.TestOutcome {
 }
 
 function test_in_range_i32_below_fails(): test.TestOutcome {
-  match (test.assert_in_range(0 - 1, 0, 100)) {
+  match (test.assert_in_range(-1, 0, 100)) {
     Fail(msg) => {
       if (!msg.contains("< lower bound")) {
         return test.fail("failure msg should name lower-bound side");

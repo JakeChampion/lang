@@ -1066,7 +1066,7 @@ function word(n: i32): i32[] {
 // One record of a netd getaddrinfo reply: the fields, the sockaddr and the
 // canonical name.
 function netd_record(family: i32, sockaddr: i32[], name: string): i32[] {
-  let out: i32[] = word(1).concat(word(0)).concat(word(family)).concat(word(1)).concat(word(6)).concat(word(sockaddr.len()));
+  let out = word(1).concat(word(0)).concat(word(family)).concat(word(1)).concat(word(6)).concat(word(sockaddr.len()));
   out = out.concat(sockaddr).concat(word(name.len()));
   for b in name.as_bytes() {
     out = out.append(b as i32);
@@ -1094,28 +1094,28 @@ function netd_answer(r: dns.NetdReply): string {
 }
 
 function test_netd_request(): test.TestOutcome {
-  let line: string = "";
+  let line = "";
   if let Some(b) = dns.netd_request("example.com") {
     line = string_from_bytes_unchecked(b.take(b.len() - 1)) + " NUL " + (b[b.len() - 1] == 0u8).to_string();
   }
-  let refused: string = dns.netd_request("a b").is_some().to_string() + " " + dns.netd_request("").is_some().to_string() + " " + dns.netd_request("a\nb").is_some().to_string();
+  let refused = dns.netd_request("a b").is_some().to_string() + " " + dns.netd_request("").is_some().to_string() + " " + dns.netd_request("a\nb").is_some().to_string();
   return test.assert_eq(line + ", " + refused, "getaddrinfo example.com ^ 1024 0 1 0 0 NUL true, false false false");
 }
 
 function test_netd_reply(): test.TestOutcome {
   let v4: i32[] = [2, 0, 0, 0, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
   let v6: i32[] = [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0];
-  let whole: u8[] = bytes([50, 50, 50, 0].concat(netd_record(2, v4, "localhost")).concat(netd_record(10, v6, "")).concat(word(0)));
-  let more: i32 = 0;
+  let whole = bytes([50, 50, 50, 0].concat(netd_record(2, v4, "localhost")).concat(netd_record(10, v6, "")).concat(word(0)));
+  let more = 0;
   for n in 0..whole.len() {
     if (netd_answer(dns.netd_reply(whole.take(n))) == "more") {
-      more = more + 1;
+      more += 1;
     }
   }
-  let failed: string = netd_answer(dns.netd_reply(bytes([52, 48, 49, 0].concat(word(8)))));
-  let empty: string = netd_answer(dns.netd_reply(bytes([50, 50, 50, 0].concat(word(0)))));
-  let foreign: string = netd_answer(dns.netd_reply(bytes([53, 48, 48, 0])));
-  let got: string = netd_answer(dns.netd_reply(whole)) + ", " + (more == whole.len()).to_string() + ", " + failed + ", " + empty + ", " + foreign;
+  let failed = netd_answer(dns.netd_reply(bytes([52, 48, 49, 0].concat(word(8)))));
+  let empty = netd_answer(dns.netd_reply(bytes([50, 50, 50, 0].concat(word(0)))));
+  let foreign = netd_answer(dns.netd_reply(bytes([53, 48, 48, 0])));
+  let got = netd_answer(dns.netd_reply(whole)) + ", " + (more == whole.len()).to_string() + ", " + failed + ", " + empty + ", " + foreign;
   return test.assert_eq(got, "127.0.0.1 ::1, true, " + dns.NoSuchName.message() + ", " + dns.NoData.message() + ", " + dns.Malformed.message());
 }
 

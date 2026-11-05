@@ -18,30 +18,30 @@ function next_stop(col: i32, ts: i32): i32 {
 }
 
 function spaces(n: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < n) {
-    out = out + " ";
-    i = i + 1;
+    out += " ";
+    i += 1;
   }
   return out;
 }
 
 function expand(line: string, ts: i32): string {
-  let out: string = "";
-  let col: i32 = 0;
-  let i: i32 = 0;
+  let out = "";
+  let col = 0;
+  let i = 0;
   while (i < line.len()) {
-    let c: u8 = line[i];
+    let c = line[i];
     if (is_tab(c)) {
-      let target: i32 = next_stop(col, ts);
-      out = out + spaces(target - col);
+      let target = next_stop(col, ts);
+      out += spaces(target - col);
       col = target;
     } else {
-      out = out + slice_unchecked(line, i, i + 1).to_owned();
-      col = col + 1;
+      out += slice_unchecked(line, i, i + 1).to_owned();
+      col += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -50,58 +50,58 @@ function unexpand(line: string, ts: i32): string {
   if (ts < 1) {
     return line;
   }
-  let blank_len: i32 = 0;
-  let col: i32 = 0;
+  let blank_len = 0;
+  let col = 0;
   while (blank_len < line.len()) {
-    let c: u8 = line[blank_len];
+    let c = line[blank_len];
     if (is_space(c)) {
-      col = col + 1;
+      col += 1;
     } else if (is_tab(c)) {
       col = next_stop(col, ts);
     } else {
       break;
     }
-    blank_len = blank_len + 1;
+    blank_len += 1;
   }
-  let target: i32 = col;
+  let target = col;
 
-  let out: string = "";
-  let at: i32 = 0;
+  let out = "";
+  let at = 0;
   while (next_stop(at, ts) <= target) {
-    out = out + "\t";
+    out += "\t";
     at = next_stop(at, ts);
   }
-  out = out + spaces(target - at);
+  out += spaces(target - at);
   return out + line.drop(blank_len).to_owned();
 }
 
 function columns_of(line: string, ts: i32): i32[] {
   let out: i32[] = [];
-  let col: i32 = 0;
-  let i: i32 = 0;
+  let col = 0;
+  let i = 0;
   while (i < line.len()) {
-    let c: u8 = line[i];
+    let c = line[i];
     if (is_tab(c)) {
       col = next_stop(col, ts);
     } else {
       if (!is_space(c)) {
         out = out.append(col);
       }
-      col = col + 1;
+      col += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function visible_of(line: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < line.len()) {
     if (!is_tab(line[i]) && !is_space(line[i])) {
-      out = out + slice_unchecked(line, i, i + 1).to_owned();
+      out += slice_unchecked(line, i, i + 1).to_owned();
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -110,23 +110,23 @@ function same_columns(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function has_tab(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (is_tab(s[i])) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -161,14 +161,14 @@ function stops(): i32[] {
 }
 
 function test_a_tab_advances_to_the_next_stop(): test.TestOutcome {
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let col: i32 = 0;
+    let ts = ss[si];
+    let col = 0;
     while (col < ts * 3 + 2) {
-      let got: i32 = next_stop(col, ts);
-      let want: i32 = col + (ts - col % ts);
+      let got = next_stop(col, ts);
+      let want = col + (ts - col % ts);
       if (got != want) {
         return test.fail("ts=" + ts.to_string() + " col=" + col.to_string()
           + ": next stop is " + got.to_string() + ", want " + want.to_string());
@@ -180,28 +180,28 @@ function test_a_tab_advances_to_the_next_stop(): test.TestOutcome {
         return test.fail("ts=" + ts.to_string() + " col=" + col.to_string()
           + ": landed on " + got.to_string() + ", not a multiple of the stop");
       }
-      let width: i32 = got - col;
+      let width = got - col;
       if (width < 1 || width > ts) {
         return test.fail("ts=" + ts.to_string() + " col=" + col.to_string()
           + ": expansion is " + width.to_string() + " spaces");
       }
-      col = col + 1;
+      col += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
 
 function test_expand_moves_nothing(): test.TestOutcome {
-  let lines: string[] = corpus();
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let lines = corpus();
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let i: i32 = 0;
+    let ts = ss[si];
+    let i = 0;
     while (i < lines.len()) {
-      let src: string = lines[i];
-      let out: string = expand(src, ts);
+      let src = lines[i];
+      let out = expand(src, ts);
       if (!same_columns(columns_of(src, ts), columns_of(out, ts))) {
         return test.fail("ts=" + ts.to_string() + " on `" + src
           + "`: expand moved a character");
@@ -210,48 +210,48 @@ function test_expand_moves_nothing(): test.TestOutcome {
         return test.fail("ts=" + ts.to_string() + " on `" + src
           + "`: expand changed the visible characters");
       }
-      i = i + 1;
+      i += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
 
 function test_expand_leaves_no_tabs_and_is_idempotent(): test.TestOutcome {
-  let lines: string[] = corpus();
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let lines = corpus();
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let i: i32 = 0;
+    let ts = ss[si];
+    let i = 0;
     while (i < lines.len()) {
-      let once: string = expand(lines[i], ts);
+      let once = expand(lines[i], ts);
       if (has_tab(once)) {
         return test.fail("ts=" + ts.to_string() + " on `" + lines[i]
           + "`: a tab survived expansion");
       }
-      let twice: string = expand(once, ts);
+      let twice = expand(once, ts);
       if (twice != once) {
         return test.fail("ts=" + ts.to_string() + " on `" + lines[i]
           + "`: expand is not idempotent");
       }
-      i = i + 1;
+      i += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
 
 function test_unexpand_moves_nothing(): test.TestOutcome {
-  let lines: string[] = corpus();
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let lines = corpus();
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let i: i32 = 0;
+    let ts = ss[si];
+    let i = 0;
     while (i < lines.len()) {
-      let src: string = lines[i];
-      let out: string = unexpand(src, ts);
+      let src = lines[i];
+      let out = unexpand(src, ts);
       if (!same_columns(columns_of(src, ts), columns_of(out, ts))) {
         return test.fail("ts=" + ts.to_string() + " on `" + src
           + "`: unexpand moved a character");
@@ -260,64 +260,64 @@ function test_unexpand_moves_nothing(): test.TestOutcome {
         return test.fail("ts=" + ts.to_string() + " on `" + src
           + "`: unexpand changed the visible characters");
       }
-      i = i + 1;
+      i += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
 
 function test_the_rendering_survives_the_round_trip(): test.TestOutcome {
-  let lines: string[] = corpus();
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let lines = corpus();
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let i: i32 = 0;
+    let ts = ss[si];
+    let i = 0;
     while (i < lines.len()) {
-      let e: string = expand(lines[i], ts);
-      let back: string = expand(unexpand(e, ts), ts);
+      let e = expand(lines[i], ts);
+      let back = expand(unexpand(e, ts), ts);
       if (back != e) {
         return test.fail("ts=" + ts.to_string() + " on `" + lines[i]
           + "`\n  expand      `" + e + "`\n  round trip  `" + back + "`");
       }
-      i = i + 1;
+      i += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
 
 function test_unexpand_touches_only_the_leading_run(): test.TestOutcome {
   let cases: string[] = ["a        b", "ab      cd", "x   y", "a\tb"];
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let i: i32 = 0;
+    let ts = ss[si];
+    let i = 0;
     while (i < cases.len()) {
-      let src: string = cases[i];
-      let out: string = unexpand(src, ts);
+      let src = cases[i];
+      let out = unexpand(src, ts);
       if (out != src) {
         return test.fail("ts=" + ts.to_string() + ": unexpand changed `" + src
           + "` to `" + out + "` — it touched something after the leading run");
       }
-      i = i + 1;
+      i += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
 
 function test_the_byte_counts_move_the_right_way(): test.TestOutcome {
-  let lines: string[] = corpus();
-  let ss: i32[] = stops();
-  let si: i32 = 0;
+  let lines = corpus();
+  let ss = stops();
+  let si = 0;
   while (si < ss.len()) {
-    let ts: i32 = ss[si];
-    let i: i32 = 0;
+    let ts = ss[si];
+    let i = 0;
     while (i < lines.len()) {
-      let src: string = lines[i];
+      let src = lines[i];
       if (unexpand(src, ts).len() > src.len()) {
         return test.fail("ts=" + ts.to_string() + " on `" + src
           + "`: unexpand made the line longer");
@@ -326,9 +326,9 @@ function test_the_byte_counts_move_the_right_way(): test.TestOutcome {
         return test.fail("ts=" + ts.to_string() + " on `" + src
           + "`: expand made the line shorter");
       }
-      i = i + 1;
+      i += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return test.pass();
 }
@@ -365,17 +365,17 @@ function main(): i32 {
   eprint("tabstops — expand and unexpand, without moving anything");
 
   let sample: string[] = ["\tif (x) {", "\t\treturn 1;", "\t}", "abc\tdef\tghi"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < sample.len()) {
-    let e: string = expand(sample[i], 4);
+    let e = expand(sample[i], 4);
     eprint("  ts=4 `" + sample[i] + "` -> `" + e + "`");
-    i = i + 1;
+    i += 1;
   }
-  let wide: string = expand("\tif (x) {", 8);
+  let wide = expand("\tif (x) {", 8);
   eprint("  ts=8 `\tif (x) {` -> `" + wide + "`");
   eprint("  round trip at ts=4: `" + expand(unexpand(expand("  \tx", 4), 4), 4) + "`");
 
-  let t: test.TestRunner = test.new("tabstops");
+  let t = test.new("tabstops");
   t = t.it("a tab advances to the next stop", test_a_tab_advances_to_the_next_stop);
   t = t.it("expand moves nothing", test_expand_moves_nothing);
   t = t.it("expand leaves no tabs and is idempotent", test_expand_leaves_no_tabs_and_is_idempotent);

@@ -15,7 +15,7 @@ const LAST: i32[] = [176, 176, 176, 176, 176, 176, 96, 54, 37, 28, 24, 19, 18, 1
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
@@ -25,8 +25,8 @@ function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
 }
 
 function reach(a: i32, b: i32): boolean {
-  let mn: i32 = a;
-  let mx: i32 = b;
+  let mn = a;
+  let mx = b;
   if (b < a) {
     mn = b;
     mx = a;
@@ -42,7 +42,7 @@ function fits(n: i32, k: i32): boolean {
 }
 
 function all_bits(xs: [f32], n: i32): string {
-  let s: string = "";
+  let s = "";
   for i in 0..n {
     s = s + " " + f32_bits(xs[i]).to_string();
   }
@@ -54,18 +54,18 @@ function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
 }
 
 function trace(seed: u32, cases: i32): u32 {
-  let t: crc32.Crc32 = crc32.new();
-  let g: Gen = Gen { x: seed };
+  let t = crc32.new();
+  let g = Gen { x: seed };
   let ns: i32[] = [];
   let ks: i32[] = [];
   let sps: i32[] = [];
   let bs: i32[] = [];
   let gs: f32[] = [];
-  let e: range.Encoder = range.encoder(60000);
+  let e = range.encoder(60000);
   for c in 0..cases {
     let (g1, r1) = rnd(g);
     g = g1;
-    let n: i32 = 0;
+    let n = 0;
     if (r1 % 2 == 1) {
       let (g2, r2) = rnd(g);
       g = g2;
@@ -77,7 +77,7 @@ function trace(seed: u32, cases: i32): u32 {
     }
     let (g3, r3) = rnd(g);
     g = g3;
-    let k: i32 = 1 + r3 % 128;
+    let k = 1 + r3 % 128;
     while (!fits(n, k)) {
       let (g4, r4) = rnd(g);
       g = g4;
@@ -85,14 +85,14 @@ function trace(seed: u32, cases: i32): u32 {
     }
     let (g5, r5) = rnd(g);
     g = g5;
-    let b: i32 = 1 << r5 % 4;
+    let b = 1 << r5 % 4;
     while (n % b != 0) {
       b = b >> 1;
     }
     let (g6, r6) = rnd(g);
-    let spread: i32 = r6 % 4;
+    let spread = r6 % 4;
     let (g7, r7) = rnd(g6);
-    let resynth: boolean = r7 % 2 == 1;
+    let resynth = r7 % 2 == 1;
     let (g8, gain) = frand(g7, 0.25f32, 2.0f32);
     g = g8;
     let v: f32[] = [];
@@ -109,14 +109,14 @@ function trace(seed: u32, cases: i32): u32 {
       v = v.append(a);
       w = w.append(cw);
     }
-    let q: vq.Quant = vq.alg_quant(e, v, n, k, spread, b, gain, resynth);
+    let q = vq.alg_quant(e, v, n, k, spread, b, gain, resynth);
     e = q.e;
-    let rs: i32 = 0;
+    let rs = 0;
     if (resynth) {
       rs = 1;
     }
     t = line(t, "q " + n.to_string() + " " + k.to_string() + " " + spread.to_string() + " " + b.to_string() + " " + rs.to_string() + " " + q.mask.to_string() + " tell " + e.tell_frac().to_string() + " |" + all_bits(q.x, n));
-    let w2: f32[] = vq.renormalise_vector(w, n, gain);
+    let w2 = vq.renormalise_vector(w, n, gain);
     t = line(t, "r" + all_bits(w2, n) + " t " + vq.stereo_itheta(q.x, w2, true, n).to_string() + " " + vq.stereo_itheta(q.x, w2, false, n).to_string());
     ns = ns.append(n);
     ks = ks.append(k);
@@ -124,9 +124,9 @@ function trace(seed: u32, cases: i32): u32 {
     bs = bs.append(b);
     gs = gs.append(gain);
   }
-  let d: range.Decoder = range.decoder(e.done().bytes());
+  let d = range.decoder(e.done().bytes());
   for c in 0..cases {
-    let u: vq.Unquant = vq.alg_unquant(d, ns[c], ks[c], sps[c], bs[c], gs[c]);
+    let u = vq.alg_unquant(d, ns[c], ks[c], sps[c], bs[c], gs[c]);
     d = u.d;
     t = line(t, "u " + u.mask.to_string() + " |" + all_bits(u.x, ns[c]));
   }
@@ -151,10 +151,10 @@ function ramp(): f32[] {
 
 // The rotation after the decode undoes the rotation before the search.
 function test_rotation_round_trip(): test.TestOutcome {
-  let x: f32[] = ramp();
-  let y: f32[] = vq.exp_rotation(vq.exp_rotation(ramp(), 48, 1, 2, 5, vq.SPREAD_NORMAL), 48, -1, 2, 5, vq.SPREAD_NORMAL);
+  let x = ramp();
+  let y = vq.exp_rotation(vq.exp_rotation(ramp(), 48, 1, 2, 5, vq.SPREAD_NORMAL), 48, -1, 2, 5, vq.SPREAD_NORMAL);
   for i in 0..48 {
-    let d: f32 = y[i] - x[i];
+    let d = y[i] - x[i];
     if (d > 0.0001f32 || d < -0.0001f32) {
       return test.fail("value " + i.to_string() + " moved by " + d.to_string());
     }
@@ -163,7 +163,7 @@ function test_rotation_round_trip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/vq");
+  let r = test.new("std/opus/vq");
   r = r.it("a short script gives the libopus trace", test_short_script);
   r = r.it("a long script gives the libopus trace", test_long_script);
   r = r.it("the inverse rotation undoes the rotation", test_rotation_round_trip);

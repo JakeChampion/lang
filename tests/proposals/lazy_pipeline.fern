@@ -23,19 +23,19 @@ struct Run { out: i32[], src: Src, applied: i32 }
 
 function run(src: Src, stages: Stage[], n: i32): Run {
   let out: i32[] = [];
-  let s: Src = src;
-  let applied: i32 = 0;
+  let s = src;
+  let applied = 0;
   while (out.len() < n) {
     let p: (i32, Src) = pull(s);
     s = p.1;
-    let v: i32 = p.0;
-    let keep: boolean = true;
+    let v = p.0;
+    let keep = true;
     for k in 0..stages.len() {
       if (keep) {
         match (stages[k]) {
           Map(f) => {
             v = f(v);
-            applied = applied + 1;
+            applied += 1;
           },
           Filter(g) => {
             if (!g(v)) {
@@ -54,7 +54,7 @@ function run(src: Src, stages: Stage[], n: i32): Run {
 
 function eager(src: Src, stages: Stage[], n: i32, prefix: i32): i32[] {
   let vals: i32[] = [];
-  let s: Src = src;
+  let s = src;
   for i in 0..prefix {
     let p: (i32, Src) = pull(s);
     vals = vals.append(p.0);
@@ -86,12 +86,12 @@ function eager(src: Src, stages: Stage[], n: i32, prefix: i32): i32[] {
 }
 
 function show(xs: i32[]): string {
-  let s: string = "[";
+  let s = "[";
   for i in 0..xs.len() {
     if (i > 0) {
-      s = s + ", ";
+      s += ", ";
     }
-    s = s + xs[i].to_string();
+    s += xs[i].to_string();
   }
   return s + "]";
 }
@@ -110,7 +110,7 @@ function same(a: i32[], b: i32[]): boolean {
 
 function test_the_source_is_pulled_exactly_as_far_as_needed(): test.TestOutcome {
   let st: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0)];
-  let r: Run = run(naturals(), st, 5);
+  let r = run(naturals(), st, 5);
   let want: i32[] = [0, 2, 4, 6, 8];
   if (!same(r.out, want)) {
     return test.fail("took " + show(r.out) + ", wanted " + show(want));
@@ -124,7 +124,7 @@ function test_the_source_is_pulled_exactly_as_far_as_needed(): test.TestOutcome 
 
 function test_take_zero_pulls_nothing(): test.TestOutcome {
   let st: Stage[] = [Stage.Map((x: i32) => x * 2), Stage.Filter((x: i32) => x > 100)];
-  let r: Run = run(naturals(), st, 0);
+  let r = run(naturals(), st, 0);
   if (r.out.len() != 0) {
     return test.fail("take 0 returned " + show(r.out));
   }
@@ -139,7 +139,7 @@ function test_take_zero_pulls_nothing(): test.TestOutcome {
 
 function test_a_stage_after_a_rejecting_filter_never_runs(): test.TestOutcome {
   let st: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0), Stage.Map((x: i32) => x * 2)];
-  let r: Run = run(naturals(), st, 3);
+  let r = run(naturals(), st, 3);
   let want: i32[] = [0, 4, 8];
   if (!same(r.out, want)) {
     return test.fail("took " + show(r.out) + ", wanted " + show(want));
@@ -166,8 +166,8 @@ function test_the_lazy_pipeline_agrees_with_an_eager_one(): test.TestOutcome {
     [Stage.Filter((x: i32) => x % 17 == 0)],
   ];
   for i in 0..pipes.len() {
-    let lazy: i32[] = run(naturals(), pipes[i], 6).out;
-    let eag: i32[] = eager(naturals(), pipes[i], 6, 200);
+    let lazy = run(naturals(), pipes[i], 6).out;
+    let eag = eager(naturals(), pipes[i], 6, 200);
     if (!same(lazy, eag)) {
       return test.fail(names[i] + ": lazy gave " + show(lazy)
         + ", eager gave " + show(eag));
@@ -178,13 +178,13 @@ function test_the_lazy_pipeline_agrees_with_an_eager_one(): test.TestOutcome {
 
 function test_the_source_resumes_where_it_stopped(): test.TestOutcome {
   let st: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0)];
-  let first: Run = run(naturals(), st, 5);
-  let second: Run = run(first.src, st, 5);
-  let joined: i32[] = first.out;
+  let first = run(naturals(), st, 5);
+  let second = run(first.src, st, 5);
+  let joined = first.out;
   for i in 0..second.out.len() {
     joined = joined.append(second.out[i]);
   }
-  let whole: Run = run(naturals(), st, 10);
+  let whole = run(naturals(), st, 10);
   if (!same(joined, whole.out)) {
     return test.fail("5 then 5 gave " + show(joined) + ", 10 at once gave "
       + show(whole.out));
@@ -200,8 +200,8 @@ function test_the_source_resumes_where_it_stopped(): test.TestOutcome {
 function test_fusing_two_maps_changes_the_cost_and_not_the_answer(): test.TestOutcome {
   let two: Stage[] = [Stage.Map((x: i32) => x + 1), Stage.Map((x: i32) => x * 2)];
   let one: Stage[] = [Stage.Map((x: i32) => (x + 1) * 2)];
-  let a: Run = run(naturals(), two, 6);
-  let b: Run = run(naturals(), one, 6);
+  let a = run(naturals(), two, 6);
+  let b = run(naturals(), one, 6);
   if (!same(a.out, b.out)) {
     return test.fail("map;map gave " + show(a.out) + ", the fused map gave "
       + show(b.out));
@@ -220,13 +220,13 @@ function test_fusing_two_maps_changes_the_cost_and_not_the_answer(): test.TestOu
 function test_stage_order_is_observable(): test.TestOutcome {
   let fm: Stage[] = [Stage.Filter((x: i32) => x % 2 == 1), Stage.Map((x: i32) => x * 2)];
   let mf: Stage[] = [Stage.Map((x: i32) => x * 2), Stage.Filter((x: i32) => x % 2 == 1)];
-  let a: Run = run(naturals(), fm, 4);
+  let a = run(naturals(), fm, 4);
   let want: i32[] = [2, 6, 10, 14];
   if (!same(a.out, want)) {
     return test.fail("filter then map gave " + show(a.out) + ", wanted "
       + show(want));
   }
-  let b: i32[] = eager(naturals(), mf, 4, 200);
+  let b = eager(naturals(), mf, 4, 200);
   if (b.len() != 0) {
     return test.fail("map then filter gave " + show(b)
       + ", but doubling first leaves nothing odd to keep");
@@ -236,7 +236,7 @@ function test_stage_order_is_observable(): test.TestOutcome {
 
 function test_a_different_infinite_source_is_the_same_machinery(): test.TestOutcome {
   let none: Stage[] = [];
-  let r: Run = run(fibonacci(), none, 10);
+  let r = run(fibonacci(), none, 10);
   let want: i32[] = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
   if (!same(r.out, want)) {
     return test.fail("fibonacci gave " + show(r.out) + ", wanted " + show(want));
@@ -245,7 +245,7 @@ function test_a_different_infinite_source_is_the_same_machinery(): test.TestOutc
     return test.fail("10 elements cost " + r.src.pulls.to_string() + " pulls");
   }
   let even: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0)];
-  let e: Run = run(fibonacci(), even, 5);
+  let e = run(fibonacci(), even, 5);
   let wante: i32[] = [0, 2, 8, 34, 144];
   if (!same(e.out, wante)) {
     return test.fail("even fibonacci gave " + show(e.out) + ", wanted "
@@ -258,23 +258,23 @@ function main(): i32 {
   eprint("lazy_pipeline — map, filter and take over an infinite source");
 
   let evens: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0), Stage.Map((x: i32) => x * x)];
-  let r: Run = run(naturals(), evens, 6);
+  let r = run(naturals(), evens, 6);
   eprint("  squares of the first 6 even naturals: " + show(r.out));
   eprint("    " + r.src.pulls.to_string() + " pulls, " + r.applied.to_string()
     + " map applications");
 
-  let more: Run = run(r.src, evens, 4);
+  let more = run(r.src, evens, 4);
   eprint("  resuming for 4 more: " + show(more.out) + " ("
     + more.src.pulls.to_string() + " pulls in total)");
 
   let fib: Run = run(fibonacci(), [Stage.Filter((x: i32) => x % 2 == 0)], 6);
   eprint("  even fibonacci numbers: " + show(fib.out));
 
-  let nothing: Run = run(naturals(), evens, 0);
+  let nothing = run(naturals(), evens, 0);
   eprint("  taking 0 from an infinite source: " + show(nothing.out) + ", "
     + nothing.src.pulls.to_string() + " pulls");
 
-  let t: test.TestRunner = test.new("lazy_pipeline");
+  let t = test.new("lazy_pipeline");
   t = t.it("the source is pulled exactly as far as needed", test_the_source_is_pulled_exactly_as_far_as_needed);
   t = t.it("take 0 pulls nothing", test_take_zero_pulls_nothing);
   t = t.it("a stage after a rejecting filter never runs", test_a_stage_after_a_rejecting_filter_never_runs);

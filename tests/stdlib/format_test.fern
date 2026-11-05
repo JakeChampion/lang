@@ -154,7 +154,7 @@ function test_bytes_one_mib(): test.TestOutcome {
 }
 
 function test_bytes_negative(): test.TestOutcome {
-  return test.assert_eq(format.bytes(0 - 2048), "-2 KiB");
+  return test.assert_eq(format.bytes(-2048), "-2 KiB");
 }
 
 function test_bytes_past_two_gib(): test.TestOutcome {
@@ -197,7 +197,7 @@ function test_duration_past_i32(): test.TestOutcome {
 }
 
 function test_duration_negative(): test.TestOutcome {
-  return test.assert_eq(format.duration(time.duration_millis(0 - 1500)), "-1s 500ms");
+  return test.assert_eq(format.duration(time.duration_millis(-1500)), "-1s 500ms");
 }
 
 function test_duration_round_trips_parse(): test.TestOutcome {

@@ -200,7 +200,7 @@ function errors_and_limits(): test.TestOutcome {
   let valid = match (deflate.inflate_reader(input, 3)) { Ok(v) => v, Err(_) => { return test.fail("open"); } };
   let bad_request = match (valid.read(0, never_cancel)) { Err(deflate.ReadRequest) => true, _ => false };
   let large_request = match (valid.read(32769, never_cancel)) { Err(deflate.ReadRequest) => true, _ => false };
-  let negative = match (deflate.inflate_reader(input, 0 - 1)) { Err(deflate.ReadRequest) => true, _ => false };
+  let negative = match (deflate.inflate_reader(input, -1)) { Err(deflate.ReadRequest) => true, _ => false };
   let after = match (valid.read(3, never_cancel)) { Ok(v) => same(v.bytes, "abc".bytes()) && v.done, _ => false };
   let reserved = deflate.Malformed("a reserved block type").message();
   let length = deflate.Malformed("a stored block's length and its complement disagree").message();

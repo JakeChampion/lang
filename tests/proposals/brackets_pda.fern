@@ -157,53 +157,53 @@ function verdict_text(v: Verdict): string {
 
 function analyze(src: string): Report {
   let stack: Frame[] = [];
-  let mode: i32 = st_text();
-  let str_start: i32 = 0;
-  let max_depth: i32 = 0;
-  let opens: i32 = 0;
-  let i: i32 = 0;
-  let n: i32 = src.len();
+  let mode = st_text();
+  let str_start = 0;
+  let max_depth = 0;
+  let opens = 0;
+  let i = 0;
+  let n = src.len();
 
   while (i < n) {
-    let b: i32 = src[i] as i32;
+    let b = src[i] as i32;
 
     if (mode == st_comment()) {
       if (b == 10) {
         mode = st_text();
       }
-      i = i + 1;
+      i += 1;
       continue;
     }
 
     if (mode == st_string()) {
       if (b == 92) {
-        i = i + 2;
+        i += 2;
         continue;
       }
       if (b == 34) {
         mode = st_text();
       }
-      i = i + 1;
+      i += 1;
       continue;
     }
 
     if (b == 34) {
       mode = st_string();
       str_start = i;
-      i = i + 1;
+      i += 1;
       continue;
     }
 
     if (b == 47 && i + 1 < n && src[i + 1] as i32 == 47) {
       mode = st_comment();
-      i = i + 2;
+      i += 2;
       continue;
     }
 
     match (opener_of(b)) {
       Some(k) => {
         stack = stack.append(Frame { kind: k, pos: i });
-        opens = opens + 1;
+        opens += 1;
         if (stack.len() > max_depth) {
           max_depth = stack.len();
         }
@@ -235,7 +235,7 @@ function analyze(src: string): Report {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
 
   if (mode == st_string()) {
@@ -290,9 +290,9 @@ function broken_corpus(): string[] {
 }
 
 function test_corpus_is_balanced(): test.TestOutcome {
-  let xs: string[] = balanced_corpus();
+  let xs = balanced_corpus();
   for i in 0..xs.len() {
-    let r: Report = analyze(xs[i]);
+    let r = analyze(xs[i]);
     if (verdict_code(r.verdict) != 0) {
       return test.fail("expected balanced for input " + i.to_string()
         + ": " + verdict_text(r.verdict));
@@ -302,10 +302,10 @@ function test_corpus_is_balanced(): test.TestOutcome {
 }
 
 function test_concatenation_is_closed(): test.TestOutcome {
-  let xs: string[] = balanced_corpus();
+  let xs = balanced_corpus();
   for i in 0..xs.len() {
     for j in 0..xs.len() {
-      let joined: string = xs[i] + "\n" + xs[j];
+      let joined = xs[i] + "\n" + xs[j];
       if (!is_balanced(joined)) {
         return test.fail("concat of " + i.to_string() + " and "
           + j.to_string() + " is not balanced: "
@@ -317,14 +317,14 @@ function test_concatenation_is_closed(): test.TestOutcome {
 }
 
 function test_wrapping_lifts_depth(): test.TestOutcome {
-  let xs: string[] = balanced_corpus();
+  let xs = balanced_corpus();
   let opens: string[] = ["(", "[", "{", "<"];
   let closes: string[] = [")", "]", "}", ">"];
   for i in 0..xs.len() {
-    let inner: Report = analyze(xs[i]);
+    let inner = analyze(xs[i]);
     for k in 0..opens.len() {
-      let wrapped: string = opens[k] + "\n" + xs[i] + "\n" + closes[k];
-      let outer: Report = analyze(wrapped);
+      let wrapped = opens[k] + "\n" + xs[i] + "\n" + closes[k];
+      let outer = analyze(wrapped);
       if (verdict_code(outer.verdict) != 0) {
         return test.fail("wrapping input " + i.to_string() + " in "
           + opens[k] + " broke it: " + verdict_text(outer.verdict));
@@ -341,11 +341,11 @@ function test_wrapping_lifts_depth(): test.TestOutcome {
 }
 
 function test_broken_inputs_are_refused(): test.TestOutcome {
-  let xs: string[] = broken_corpus();
+  let xs = broken_corpus();
   let want_code: i32[] = [1, 2, 3, 2, 4];
   let want_pos: i32[] = [0, 1, 0, 2, 2];
   for i in 0..xs.len() {
-    let v: Verdict = check(xs[i]);
+    let v = check(xs[i]);
     if (verdict_code(v) != want_code[i]) {
       return test.fail("input " + i.to_string() + ": wanted code "
         + want_code[i].to_string() + ", got "
@@ -377,15 +377,15 @@ function test_quoting_suppresses_brackets(): test.TestOutcome {
 }
 
 function test_deep_nesting_reaches_depth(): test.TestOutcome {
-  let depth: i32 = 200;
-  let s: string = "";
+  let depth = 200;
+  let s = "";
   for i in 0..depth {
-    s = s + "(";
+    s += "(";
   }
   for i in 0..depth {
-    s = s + ")";
+    s += ")";
   }
-  let r: Report = analyze(s);
+  let r = analyze(s);
   if (verdict_code(r.verdict) != 0) {
     return test.fail("deep nest not balanced: " + verdict_text(r.verdict));
   }
@@ -417,7 +417,7 @@ function test_counting_is_not_enough(): test.TestOutcome {
 }
 
 function report_line(src: string, label: string): string {
-  let r: Report = analyze(src);
+  let r = analyze(src);
   return label + ": " + verdict_text(r.verdict) + " (depth "
     + r.max_depth.to_string() + ", " + r.opens.to_string() + " opens)";
 }
@@ -429,7 +429,7 @@ function main(): i32 {
   eprint(report_line("{ \"a ) b\" }", "quoted closer"));
   eprint(report_line("(((", "run of openers"));
 
-  let r: test.TestRunner = test.new("brackets_pda");
+  let r = test.new("brackets_pda");
   r = r.it("corpus is balanced", test_corpus_is_balanced);
   r = r.it("concatenation is closed", test_concatenation_is_closed);
   r = r.it("wrapping lifts depth", test_wrapping_lifts_depth);

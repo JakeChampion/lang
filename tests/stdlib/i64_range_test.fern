@@ -14,11 +14,11 @@ function test_abs_diff_reversed(): test.TestOutcome {
 }
 
 function test_abs_diff_mixed_sign(): test.TestOutcome {
-  return test.assert_eq((0 as i64).abs_diff(0 - 7 as i64), 7 as i64);
+  return test.assert_eq((0 as i64).abs_diff(-7i64), 7 as i64);
 }
 
 function test_abs_diff_both_negative(): test.TestOutcome {
-  return test.assert_eq((0 - 100 as i64).abs_diff(0 - 40 as i64), 60 as i64);
+  return test.assert_eq((-100i64).abs_diff(-40i64), 60 as i64);
 }
 
 function test_abs_diff_equal(): test.TestOutcome {
