@@ -2896,8 +2896,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 8\n");
   s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
-  s = s.write("__fern_image_lo: .quad 0\n");
-  s = s.write("__fern_image_hi: .quad 0\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("__fern_image_lo: .quad 0\n");
+    s = s.write("__fern_image_hi: .quad 0\n");
+  }
   s = s.write("    .align 8\n");
   if (s.has_need("alloc_count")) {
     s = s.write("    .globl __fern_alloc_count\n");
@@ -3230,11 +3232,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_raw_free:\n");
   s = s.write("    testq %rdi, %rdi\n");
   s = s.write("    jz .Lrawfree_ret\n");
-  s = s.write("    cmpq __fern_image_lo(%rip), %rdi\n");
-  s = s.write("    jb .Lrawfree_own\n");
-  s = s.write("    cmpq __fern_image_hi(%rip), %rdi\n");
-  s = s.write("    jb .Lrawfree_ret\n");
-  s = s.write(".Lrawfree_own:\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("    cmpq __fern_image_lo(%rip), %rdi\n");
+    s = s.write("    jb .Lrawfree_own\n");
+    s = s.write("    cmpq __fern_image_hi(%rip), %rdi\n");
+    s = s.write("    jb .Lrawfree_ret\n");
+    s = s.write(".Lrawfree_own:\n");
+  }
   s = s.write("    cmpq __fern_heap_base(%rip), %rdi\n");
   s = s.write("    jb .Lrawfree_bad\n");
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
