@@ -131,12 +131,12 @@ function admission(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return false;
     });
-    if (polls.get() != 0 || match (result) { Err(matrix_model.ModelError.Intent()) => false, _ => true }) {
+    if (polls.get() != 0 || match (result) { Err(matrix_model.ModelError.Intent) => false, _ => true }) {
       return test.fail("explicit relative request precedes callbacks");
     }
   }
   let limits = matrix_model.ModelLimits { profile: envelope.default_limits(), curve: tag_data.CurveLimits { max_bytes: 0, max_samples: 4096 } };
-  if (match (matrix_model.read(frozen(), envelope.Intent.Relative, limits, never)) { Err(matrix_model.ModelError.Limit()) => false, _ => true }) {
+  if (match (matrix_model.read(frozen(), envelope.Intent.Relative, limits, never)) { Err(matrix_model.ModelError.Limit) => false, _ => true }) {
     return test.fail("caller curve limit admission");
   }
   return test.assert_true(rejects([], matrix_model.ModelError.Envelope(envelope.IccError.Truncated)) && rejects(put32(frozen(), 36, 0i64), matrix_model.ModelError.Envelope(envelope.IccError.Signature)));
@@ -210,7 +210,7 @@ function every_cancel(): test.TestOutcome {
       count.set(count.get() + 1);
       return count.get() == stop;
     });
-    if (count.get() != stop || match (result) { Err(matrix_model.ModelError.Cancelled()) => false, _ => true }) {
+    if (count.get() != stop || match (result) { Err(matrix_model.ModelError.Cancelled) => false, _ => true }) {
       return test.fail("every layered cancellation point and partial result cleanup");
     }
   }

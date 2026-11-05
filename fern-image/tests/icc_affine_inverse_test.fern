@@ -93,7 +93,7 @@ function admission(): test.TestOutcome {
     }
   }
   for input in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
-    if (match (evaluate(1, [65536, 65536, 0], input)) { Err(affine_inverse.InvertError.Input()) => false, _ => true }) {
+    if (match (evaluate(1, [65536, 65536, 0], input)) { Err(affine_inverse.InvertError.Input) => false, _ => true }) {
       return test.fail("finite normalized inverse input");
     }
   }
@@ -109,7 +109,7 @@ function cancellation(): test.TestOutcome {
         return polls.get() == stop;
       });
       if (stop < 3) {
-        if (polls.get() != stop || match (result) { Err(affine_inverse.InvertError.Cancelled()) => false, _ => true }) {
+        if (polls.get() != stop || match (result) { Err(affine_inverse.InvertError.Cancelled) => false, _ => true }) {
           return test.fail("every affine inverse cancellation poll");
         }
       } else if (polls.get() != 2 || match (result) { Ok(_) => false, _ => true }) {

@@ -153,8 +153,8 @@ function admission(): test.TestOutcome {
     return test.fail("graph");
   };
   let exact = match (collect(graph, 2, limits, 72)) { Ok(v) => v.value.len() == 2, _ => false };
-  let scratch = match (collect(graph, 2, pipeline.Limits { ...limits, max_scratch_bytes: 143 }, 72)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
-  let work = match (collect(graph, 2, pipeline.Limits { ...limits, max_samples: 17 }, 72)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let scratch = match (collect(graph, 2, pipeline.Limits { ...limits, max_scratch_bytes: 143 }, 72)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
+  let work = match (collect(graph, 2, pipeline.Limits { ...limits, max_samples: 17 }, 72)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
   let fallback_limits = pipeline.Limits { ...pipeline.default_limits(), max_scratch_bytes: 1064, max_samples: 133 };
   let Ok(fallback) = pipeline.solid(4, 1, pixels.RGBA8, color.rgb(17, 23, 99), fallback_limits) else {
     return test.fail("fallback source");
@@ -226,7 +226,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let rejected = match (pipeline.fold_rows_fused(graph, 0, 2, limits, 4096, cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Cancelled())) => true, _ => false };
+    let rejected = match (pipeline.fold_rows_fused(graph, 0, 2, limits, 4096, cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Cancelled)) => true, _ => false };
     if (!rejected || polls.get() != stop) {
       return test.fail("cancellation phase");
     }
@@ -248,9 +248,9 @@ function depth(): test.TestOutcome {
   let Ok(output) = collect(graph, 1, limits, 256) else {
     return test.fail("fold");
   };
-  let rejected = match (pipeline.nearest(graph, 4, 4, limits)) { Err(pipeline.InvalidGraph()) => true, _ => false };
+  let rejected = match (pipeline.nearest(graph, 4, 4, limits)) { Err(pipeline.InvalidGraph) => true, _ => false };
   let invalid = pipeline.Graph { nodes: graph.nodes.with(1, pipeline.Node { ...graph.nodes[1], operation: pipeline.NearestSource(1) }) };
-  let hidden = match (collect(invalid, 1, limits, 256)) { Err(pipeline.GraphFailure(pipeline.InvalidGraph())) => true, _ => false };
+  let hidden = match (collect(invalid, 1, limits, 256)) { Err(pipeline.GraphFailure(pipeline.InvalidGraph)) => true, _ => false };
   return test.assert_true(rejected && hidden && output.stats.misses == 2 && output.stats.peak_cache_entries == 2
     && output.value[0].data[0] == 10 && output.value[0].data[3] == 0 && input.data[0] == 10);
 }

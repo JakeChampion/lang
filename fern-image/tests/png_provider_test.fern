@@ -58,9 +58,9 @@ function session_goldens(): test.TestOutcome {
     let Ok(repeated) = decoder.read(1, never_cancel) else {
       return test.fail("repeat");
     };
-    let backwards = match (decoder.read(0, never_cancel)) { Err(png.DecoderAccess()) => true, _ => false };
-    let low = match (decoder.read(-1, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
-    let high = match (decoder.read(2, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
+    let backwards = match (decoder.read(0, never_cancel)) { Err(png.DecoderAccess) => true, _ => false };
+    let low = match (decoder.read(-1, never_cancel)) { Err(png.DecoderBounds) => true, _ => false };
+    let high = match (decoder.read(2, never_cancel)) { Err(png.DecoderBounds) => true, _ => false };
     let Ok(fresh) = png.open_rows(data, pixels.default_limits(), png.default_row_limits(), never_cancel) else {
       return test.fail("fresh");
     };
@@ -139,12 +139,12 @@ function admission(): test.TestOutcome {
   let setup = match (pipeline.required_setup_samples(graph, limits)) { Ok(v) => v == 14, _ => false };
   let cache = match (pipeline.required_cache(graph, limits)) { Ok(v) => v == 12, _ => false };
   let exact = match (collect(graph, limits, 12, true, never_cancel)) { Ok(v) => v.value.len() == 2, _ => false };
-  let work = match (collect(graph, pipeline.Limits { ...limits, max_samples: 17 }, 12, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
-  let memory = match (collect(graph, pipeline.Limits { ...limits, max_scratch_bytes: 195 }, 12, false, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
-  let short_cache = match (collect(graph, limits, 11, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
-  let codec_memory = match (provider.source(input, pixels.default_limits(), png.RowLimits { ...codec_limits, max_payload_bytes: 183i64 }, limits)) { Err(pipeline.Budget()) => true, _ => false };
-  let codec_work = match (provider.source(input, pixels.default_limits(), png.RowLimits { ...codec_limits, max_row_work: 13i64 }, limits)) { Err(pipeline.Budget()) => true, _ => false };
-  let unsupported = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Err(pipeline.AccessPattern()) => true, _ => false };
+  let work = match (collect(graph, pipeline.Limits { ...limits, max_samples: 17 }, 12, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
+  let memory = match (collect(graph, pipeline.Limits { ...limits, max_scratch_bytes: 195 }, 12, false, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
+  let short_cache = match (collect(graph, limits, 11, true, never_cancel)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
+  let codec_memory = match (provider.source(input, pixels.default_limits(), png.RowLimits { ...codec_limits, max_payload_bytes: 183i64 }, limits)) { Err(pipeline.Budget) => true, _ => false };
+  let codec_work = match (provider.source(input, pixels.default_limits(), png.RowLimits { ...codec_limits, max_row_work: 13i64 }, limits)) { Err(pipeline.Budget) => true, _ => false };
+  let unsupported = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Err(pipeline.AccessPattern) => true, _ => false };
   return test.assert_true(scratch && setup && cache && exact && work && memory && short_cache && codec_memory && codec_work && unsupported);
 }
 
@@ -170,7 +170,7 @@ function codec_errors(): test.TestOutcome {
     calls.set(calls.get() + 1);
     return Ok(n + 1);
   };
-  let budget = match (pipeline.fold_rows(graph, 0, 1, pipeline.default_limits(), 0, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let budget = match (pipeline.fold_rows(graph, 0, 1, pipeline.default_limits(), 0, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
   let invalid = match (pipeline.fold_rows(graph, 0, 1, pipeline.default_limits(), 12, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => e == "PNG Scanline", _ => false };
   return test.assert_true(good && budget && invalid && calls.get() == 0);
 }
@@ -224,7 +224,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let result = match (collect(graph, limits, cache, true, cancel)) { Err(pipeline.GraphFailure(pipeline.Cancelled())) => true, _ => false };
+    let result = match (collect(graph, limits, cache, true, cancel)) { Err(pipeline.GraphFailure(pipeline.Cancelled)) => true, _ => false };
     if (!result || polls.get() != stop) {
       return test.fail("cancellation phase");
     }

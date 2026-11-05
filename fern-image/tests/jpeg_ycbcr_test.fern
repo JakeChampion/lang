@@ -68,26 +68,26 @@ function admission(): test.TestOutcome {
   let one: u8[] = [128];
   let empty: u8[] = [];
   match (ycbcr.convert_row(empty, empty, empty, 3, cancel)) {
-    Err(ycbcr.Shape()) => {},
+    Err(ycbcr.Shape) => {},
     _ => {
       return test.fail("empty row");
     }
   }
   match (ycbcr.convert_row(one, empty, one, 3, cancel)) {
-    Err(ycbcr.Shape()) => {},
+    Err(ycbcr.Shape) => {},
     _ => {
       return test.fail("Cb width");
     }
   }
   match (ycbcr.convert_row(one, one, empty, 3, cancel)) {
-    Err(ycbcr.Shape()) => {},
+    Err(ycbcr.Shape) => {},
     _ => {
       return test.fail("Cr width");
     }
   }
   for limit in [-1, 0, 1, 2] {
     match (ycbcr.convert_row(one, one, one, limit, cancel)) {
-      Err(ycbcr.Limit()) => {},
+      Err(ycbcr.Limit) => {},
       _ => {
         return test.fail("one-less output admission");
       }
@@ -149,7 +149,7 @@ function cancellation(): test.TestOutcome {
       return observed.get() == stop;
     };
     match (ycbcr.convert_row(y, cb, cr, 771, cancel)) {
-      Err(ycbcr.Cancelled()) => {},
+      Err(ycbcr.Cancelled) => {},
       _ => {
         return test.fail("every cancellation offset");
       }

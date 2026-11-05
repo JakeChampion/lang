@@ -316,7 +316,7 @@ function open_prepared(prepared: Prepared, plan: RowPlan, cancelled: () => boole
       return Err(DecoderAccess);
     }
     while (cursor.next <= y) {
-      let bytes = match (unfilter_row(filtered, layout, cursor.next, cursor.previous, cancelled)) { Ok(v) => v, Err(UnfilterError.InvalidFilter()) => { return Err(DecoderCodec(PngError.Scanline)); }, Err(UnfilterError.Interrupted()) => { return Err(DecoderCancelled); } };
+      let bytes = match (unfilter_row(filtered, layout, cursor.next, cursor.previous, cancelled)) { Ok(v) => v, Err(UnfilterError.InvalidFilter) => { return Err(DecoderCodec(PngError.Scanline)); }, Err(UnfilterError.Interrupted) => { return Err(DecoderCancelled); } };
       cursor = RowCursor { next: cursor.next + 1, previous: bytes };
       state.set(cursor);
     }

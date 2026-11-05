@@ -237,7 +237,7 @@ function scan_header(input: [u8], limits: BlockLimits, cancelled: () => boolean)
   if (limits.max_mcus <= 0 || limits.max_blocks <= 0 || limits.max_mcus > 1048576 || limits.max_blocks > 1048576) {
     return Err(EntropyLimit);
   }
-  return match (header.parse(input, limits.headers, cancelled)) { Ok(h) => Ok(h), Err(header.Cancelled()) => Err(EntropyCancelled), Err(e) => Err(EntropyHeader(e)) };
+  return match (header.parse(input, limits.headers, cancelled)) { Ok(h) => Ok(h), Err(header.Cancelled) => Err(EntropyCancelled), Err(e) => Err(EntropyHeader(e)) };
 }
 
 function finish(input: [u8], cursor: Cell[BitCursor], cancelled: () => boolean): Result[void, EntropyError] {

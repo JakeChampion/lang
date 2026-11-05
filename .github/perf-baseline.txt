@@ -228,6 +228,7 @@ x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12766
 x86_64/deflate_encode.ir	41579468
+# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 x86_64/deflate_encode.text	7125
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
@@ -542,6 +543,7 @@ aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
+# 2026-11-05: PR #14207, perf-aarch64 job 126960803294 reports sort_ints.text 7.5% and sort_ints.ir 18.0% lower.
 aarch64/sort_ints.text	2012
 aarch64/sort_ints.ir	24753301
 aarch64/sort_strings.text	3451
