@@ -25,7 +25,7 @@ function plane_error(error: planes.PlaneError): RgbError {
 }
 
 function component_row(source: planes.SamplePlane, grid: chroma.FrameGrid, row: i32, filter: chroma.Filter, cancelled: () => boolean): Result[u8[], RgbError] {
-  return match (chroma.reconstruct_row(source, grid, row, filter, grid.width, cancelled)) { Ok(value) => Ok(value), Err(chroma.ChromaError.Cancelled()) => Err(RgbError.Cancelled), Err(error) => Err(RgbError.Chroma(error)) };
+  return match (chroma.reconstruct_row(source, grid, row, filter, grid.width, cancelled)) { Ok(value) => Ok(value), Err(chroma.ChromaError.Cancelled) => Err(RgbError.Cancelled), Err(error) => Err(RgbError.Chroma(error)) };
 }
 
 // The named byte sum excludes tables, block temporaries, capacity, and allocator overhead.
@@ -69,7 +69,7 @@ pub function decode(input: [u8], filter: chroma.Filter, limits: RgbLimits, cance
     let y = component_row(decoded.planes[0], grid, row, filter, cancelled)?;
     let cb = component_row(decoded.planes[1], grid, row, filter, cancelled)?;
     let cr = component_row(decoded.planes[2], grid, row, filter, cancelled)?;
-    let rgb = match (ycbcr.convert_row(y, cb, cr, plan.layout.stride, cancelled)) { Ok(v) => v, Err(ycbcr.ConvertError.Cancelled()) => { return Err(RgbError.Cancelled); }, Err(e) => { return Err(RgbError.Conversion(e)); } };
+    let rgb = match (ycbcr.convert_row(y, cb, cr, plan.layout.stride, cancelled)) { Ok(v) => v, Err(ycbcr.ConvertError.Cancelled) => { return Err(RgbError.Cancelled); }, Err(e) => { return Err(RgbError.Conversion(e)); } };
     for x in 0..plan.layout.width {
       if (x % 64 == 0 && cancelled()) {
         return Err(RgbError.Cancelled);

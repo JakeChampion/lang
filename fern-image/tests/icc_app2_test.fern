@@ -153,7 +153,7 @@ function cancellation(): test.TestOutcome {
         count.set(count.get() + 1);
         return count.get() == stop;
       });
-      if (count.get() != stop || match (result) { Err(icc_app2.App2Error.Cancelled()) => false, _ => true }) {
+      if (count.get() != stop || match (result) { Err(icc_app2.App2Error.Cancelled) => false, _ => true }) {
         return test.fail("every unit poll including partial private output cleanup");
       }
     }
@@ -188,7 +188,7 @@ function profile_separation(): test.TestOutcome {
     return test.fail("assembly and explicit structural inspection remain separate");
   }
   let empty = match (icc_app2.assemble([payload(1, 1, [])], icc_app2.default_limits(), never)) { Ok(Some(v)) => v, _ => { return test.fail("complete empty assembly"); } };
-  return test.assert_true(match (envelope.inspect(empty[:], envelope.default_limits(), never)) { Err(envelope.IccError.Truncated()) => true, _ => false });
+  return test.assert_true(match (envelope.inspect(empty[:], envelope.default_limits(), never)) { Err(envelope.IccError.Truncated) => true, _ => false });
 }
 
 function main(): i32 {

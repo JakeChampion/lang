@@ -884,10 +884,10 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
         return test.fail(text);
       }
     },
-    Ok(net.Elapsed()) => {
+    Ok(net.Elapsed) => {
       return test.fail("elapsed");
     },
-    Ok(net.Abandoned()) => {
+    Ok(net.Abandoned) => {
       return test.fail("abandoned");
     },
     Err(e) => {
@@ -898,10 +898,10 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
     Ok(net.Chunk(bytes)) => {
       return test.assert_eq(bytes.len(), 0);
     },
-    Ok(net.Elapsed()) => {
+    Ok(net.Elapsed) => {
       return test.fail("the connection stayed open");
     },
-    Ok(net.Abandoned()) => {
+    Ok(net.Abandoned) => {
       return test.fail("abandoned");
     },
     Err(e) => {

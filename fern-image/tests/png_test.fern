@@ -42,7 +42,7 @@ function roundtrip(data: u8[]): boolean {
   let Ok(decoded) = png.decode(encoded, pixels.default_limits()) else {
     return false;
   };
-  let limited = match (png.encode(image, 1)) { Ok(_) => false, Err(png.PngError.Limit()) => true, Err(_) => false };
+  let limited = match (png.encode(image, 1)) { Ok(_) => false, Err(png.PngError.Limit) => true, Err(_) => false };
   return bytes_equal(decoded.data, image.data) && limited;
 }
 
@@ -52,13 +52,13 @@ function roundtrips(): test.TestOutcome {
 
 function malformed(): test.TestOutcome {
   let stream = fixtures.rgb0();
-  let signature = match (png.decode(stream.with(0, 0), pixels.default_limits())) { Err(png.Signature()) => true, _ => false };
-  let crc = match (png.decode(stream.with(stream.len() - 1, 1), pixels.default_limits())) { Err(png.Crc()) => true, _ => false };
-  let length = match (png.decode(stream.with(8, 127), pixels.default_limits())) { Err(png.Length()) => true, _ => false };
-  let order = match (png.decode(stream.append(0), pixels.default_limits())) { Err(png.Order()) => true, _ => false };
-  let unsupported = match (png.decode(fixtures.unsupported(), pixels.default_limits())) { Err(png.Unsupported()) => true, _ => false };
-  let filter = match (png.decode(fixtures.bad_filter(), pixels.default_limits())) { Err(png.Scanline()) => true, _ => false };
-  let compressed = match (png.decode(fixtures.compressed_trailing(), pixels.default_limits())) { Err(png.Compressed()) => true, _ => false };
+  let signature = match (png.decode(stream.with(0, 0), pixels.default_limits())) { Err(png.Signature) => true, _ => false };
+  let crc = match (png.decode(stream.with(stream.len() - 1, 1), pixels.default_limits())) { Err(png.Crc) => true, _ => false };
+  let length = match (png.decode(stream.with(8, 127), pixels.default_limits())) { Err(png.Length) => true, _ => false };
+  let order = match (png.decode(stream.append(0), pixels.default_limits())) { Err(png.Order) => true, _ => false };
+  let unsupported = match (png.decode(fixtures.unsupported(), pixels.default_limits())) { Err(png.Unsupported) => true, _ => false };
+  let filter = match (png.decode(fixtures.bad_filter(), pixels.default_limits())) { Err(png.Scanline) => true, _ => false };
+  let compressed = match (png.decode(fixtures.compressed_trailing(), pixels.default_limits())) { Err(png.Compressed) => true, _ => false };
   if (!signature) {
     return test.fail("signature rejection");
   }
@@ -85,9 +85,9 @@ function malformed(): test.TestOutcome {
 
 function budgets(): test.TestOutcome {
   let stream = fixtures.rgb0();
-  let pixel_limit = match (png.decode(stream, pixels.Limits { max_pixels: 3, max_bytes: 100 })) { Err(png.PngError.Limit()) => true, _ => false };
-  let byte_limit = match (png.decode(stream, pixels.Limits { max_pixels: 4, max_bytes: 12 })) { Err(png.PngError.Limit()) => true, _ => false };
-  let compressed = match (compression.decode([120 as u8, 156 as u8], 0)) { Err(compression.CompressionError.Truncated()) => true, _ => false };
+  let pixel_limit = match (png.decode(stream, pixels.Limits { max_pixels: 3, max_bytes: 100 })) { Err(png.PngError.Limit) => true, _ => false };
+  let byte_limit = match (png.decode(stream, pixels.Limits { max_pixels: 4, max_bytes: 12 })) { Err(png.PngError.Limit) => true, _ => false };
+  let compressed = match (compression.decode([120 as u8, 156 as u8], 0)) { Err(compression.CompressionError.Truncated) => true, _ => false };
   return test.assert_true(pixel_limit && byte_limit && compressed);
 }
 

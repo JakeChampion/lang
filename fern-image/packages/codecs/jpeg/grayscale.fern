@@ -12,7 +12,7 @@ pub function default_limits(): entropy.BlockLimits {
 }
 
 function entropy_error(error: entropy.EntropyError): DecodeError {
-  return match (error) { entropy.EntropyCancelled => DecodeCancelled, entropy.EntropyHeader(header.Unsupported()) => DecodeUnsupported, _ => DecodeEntropy(error) };
+  return match (error) { entropy.EntropyCancelled => DecodeCancelled, entropy.EntropyHeader(header.Unsupported) => DecodeUnsupported, _ => DecodeEntropy(error) };
 }
 
 function transform_error(error: idct.IdctError): DecodeError {

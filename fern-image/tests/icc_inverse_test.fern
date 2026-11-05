@@ -72,7 +72,7 @@ function precedence(): test.TestOutcome {
     }
   }
   for input in [-0.01, 1.01, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000)] {
-    if (match (evaluate(para(-1, []), input)) { Err(inverse.InvertError.Input()) => false, _ => true }) {
+    if (match (evaluate(para(-1, []), input)) { Err(inverse.InvertError.Input) => false, _ => true }) {
       return test.fail("finite normalized input before route selection");
     }
   }
@@ -116,7 +116,7 @@ function cancellation(): test.TestOutcome {
         return polls.get() == stop;
       });
       if (stop <= expected_polls) {
-        if (polls.get() != stop || match (result) { Err(inverse.InvertError.Cancelled()) => false, _ => true }) {
+        if (polls.get() != stop || match (result) { Err(inverse.InvertError.Cancelled) => false, _ => true }) {
           return test.fail("every delegated cancellation poll");
         }
       } else if (polls.get() != expected_polls || match (result) { Ok(_) => false, _ => true }) {
@@ -135,7 +135,7 @@ function ownership(): test.TestOutcome {
     return false;
   });
   if (!exact(result, 0.5) || samples[0] != 0 || shared.get()[0] != -1 || !exact(evaluate(tag_data.Samples(samples), 0.5), 0.5)
-    || match (evaluate(tag_data.Samples(shared.get()), 0.5)) { Err(inverse.InvertError.Value()) => false, _ => true }) {
+    || match (evaluate(tag_data.Samples(shared.get()), 0.5)) { Err(inverse.InvertError.Value) => false, _ => true }) {
     return test.fail("sample COW and fresh admission");
   }
   let values = [131072];
@@ -155,9 +155,9 @@ function selected_policies(): test.TestOutcome {
 
 function unchanged_components(): test.TestOutcome {
   let data = tag_data.ParametricData { function_type: 1, coefficients: [131072, 65536, 0] };
-  return test.assert_true(match (curv_inverse.invert(tag_data.Parametric(data), 0.25, curv_eval.default_limits(), never)) { Err(curv_inverse.InvertError.Unsupported()) => true, _ => false }
-    && match (power_inverse.invert(data, 0.25, never)) { Err(parametric_eval.EvalError.Unsupported()) => true, _ => false }
-    && match (affine_inverse.invert(tag_data.ParametricData { function_type: 3, coefficients: [] }, 0.25, never)) { Err(affine_inverse.InvertError.Unsupported()) => true, _ => false });
+  return test.assert_true(match (curv_inverse.invert(tag_data.Parametric(data), 0.25, curv_eval.default_limits(), never)) { Err(curv_inverse.InvertError.Unsupported) => true, _ => false }
+    && match (power_inverse.invert(data, 0.25, never)) { Err(parametric_eval.EvalError.Unsupported) => true, _ => false }
+    && match (affine_inverse.invert(tag_data.ParametricData { function_type: 3, coefficients: [] }, 0.25, never)) { Err(affine_inverse.InvertError.Unsupported) => true, _ => false });
 }
 
 pub function main(): i32 {

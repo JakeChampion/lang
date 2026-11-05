@@ -137,8 +137,8 @@ function admission(): test.TestOutcome {
   let scratch = match (pipeline.required_scratch(input, limits)) { Ok(v) => v == 96, _ => false };
   let setup = match (pipeline.required_setup_samples(input, limits)) { Ok(v) => v == 8, _ => false };
   let work = match (pipeline.required_samples(input, limits)) { Ok(v) => v == 6, _ => false };
-  let budget = match (collect(input, 2, pipeline.Limits { ...limits, max_samples: 19 }, 0, true)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
-  let memory = match (collect(input, 2, pipeline.Limits { ...limits, max_scratch_bytes: 95 }, 0, true)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let budget = match (collect(input, 2, pipeline.Limits { ...limits, max_samples: 19 }, 0, true)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
+  let memory = match (collect(input, 2, pipeline.Limits { ...limits, max_scratch_bytes: 95 }, 0, true)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
   if (counts.opens.get() != 0 || counts.reads.get() != 0) {
     return test.fail("late admission");
   }
@@ -148,7 +148,7 @@ function admission(): test.TestOutcome {
   let plan = match (regions.cached_plan(input, region, tile_limits, 0)) { Ok(v) => v.scratch_bytes == 112 && v.samples == 22, _ => false };
   let tile = match (regions.render_cached_tile_fused(input, region, tile_limits, 0, never_cancel)) { Ok(_) => true, _ => false };
   let before_uncached = counts.opens.get();
-  let uncached_budget = match (regions.render_tile(input, region, pipeline.Limits { ...tile_limits, max_samples: 29 }, never_cancel)) { Err(pipeline.Budget()) => true, _ => false };
+  let uncached_budget = match (regions.render_tile(input, region, pipeline.Limits { ...tile_limits, max_samples: 29 }, never_cancel)) { Err(pipeline.Budget) => true, _ => false };
   if (counts.opens.get() != before_uncached) {
     return test.fail("uncached setup admission");
   }
@@ -160,8 +160,8 @@ function admission(): test.TestOutcome {
   let Ok(forward) = graph(pixels.RGBA8, pipeline.ForwardRows, 0, forward_counts) else {
     return test.fail("forward");
   };
-  let unsupported = match (pipeline.render_row(forward, 0, pipeline.default_limits(), never_cancel)) { Err(pipeline.AccessPattern()) => true, _ => false };
-  let insufficient = match (collect(forward, 2, pipeline.default_limits(), 31, false)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
+  let unsupported = match (pipeline.render_row(forward, 0, pipeline.default_limits(), never_cancel)) { Err(pipeline.AccessPattern) => true, _ => false };
+  let insufficient = match (collect(forward, 2, pipeline.default_limits(), 31, false)) { Err(pipeline.GraphFailure(pipeline.Budget)) => true, _ => false };
   return test.assert_true(scratch && setup && work && budget && memory && exact && plan && tile
     && uncached_budget && uncached_plan && uncached_tile && fresh_rows && unsupported && insufficient && forward_counts.opens.get() == 0);
 }
@@ -185,7 +185,7 @@ function malformed_rows(): test.TestOutcome {
     pipeline.ProviderSpec { ...base, samples_per_row: 3 }, pipeline.ProviderSpec { ...base, setup_samples: -1 },
     pipeline.ProviderSpec { ...base, storage_bytes: 2147483647 },
   ] {
-    let rejected = match (pipeline.from_provider(4, 4, pixels.RGBA8, bad, pipeline.default_limits())) { Err(pipeline.Budget()) => true, _ => false };
+    let rejected = match (pipeline.from_provider(4, 4, pixels.RGBA8, bad, pipeline.default_limits())) { Err(pipeline.Budget) => true, _ => false };
     if (!rejected) {
       return test.fail("source declaration admission");
     }
@@ -245,7 +245,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let result = match (pipeline.fold_rows_fused(input, 0, 3, limits, cache, cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Cancelled())) => true, _ => false };
+    let result = match (pipeline.fold_rows_fused(input, 0, 3, limits, cache, cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Cancelled)) => true, _ => false };
     if (!result || polls.get() != stop) {
       return test.fail("provider cancellation phase");
     }
@@ -293,7 +293,7 @@ function depth(): test.TestOutcome {
     return test.fail("fold");
   };
   let invalid = pipeline.Graph { nodes: input.nodes.append(pipeline.Node { ...input.nodes[63], operation: pipeline.NearestSource(63) }) };
-  let rejected = match (collect(invalid, 2, limits, cache, true)) { Err(pipeline.GraphFailure(pipeline.InvalidGraph())) => true, _ => false };
+  let rejected = match (collect(invalid, 2, limits, cache, true)) { Err(pipeline.GraphFailure(pipeline.InvalidGraph)) => true, _ => false };
   return test.assert_true(cache == 2048 && output.stats.rows == 2 && output.stats.misses == 4
     && output.value[0].data[0] == 10 && output.value[1].data[0] == 14
     && rejected && counts.opens.get() == 1 && counts.backwards.get() == 0);

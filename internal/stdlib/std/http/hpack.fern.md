@@ -545,7 +545,7 @@ function __string(st: Decoder, block: u8[]): Decoder {
     Ok(out) => {
       return Decoder { ...st, text: string_from_bytes_unchecked(out), at: from + n };
     },
-    Err(huffman.ExceedsRoom()) => {
+    Err(huffman.ExceedsRoom) => {
       return __failed(st, TooLarge(st.max_list));
     },
     Err(_) => {

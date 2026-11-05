@@ -235,7 +235,7 @@ function on_message(state: Stats, session_id: string, connection: websocket.Conn
         Ok(response) => {
           let sent = connection.send_binary(response);
         },
-        Err(Rendering(fractal.RenderError.Cancelled())) => {
+        Err(Rendering(fractal.RenderError.Cancelled)) => {
           if let Ok(tile) = parse_request(request) {
             let sent = connection.send_text(f"{{\"cancelled\":{tile.id}}}");
           }

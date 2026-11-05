@@ -143,7 +143,7 @@ function cancellation(): test.TestOutcome {
         seen.set(seen.get() + 1);
         return seen.get() == stop;
       })) {
-        Err(chroma.ChromaError.Cancelled()) => {},
+        Err(chroma.ChromaError.Cancelled) => {},
         _ => {
           return test.fail("every cancellation offset");
         }
