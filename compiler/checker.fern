@@ -22667,8 +22667,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 
 // The struct declarations a type name resolves against, and the types with
 // a method that consumes its receiver.
-// no_handle and handle hold the declared type names already decided, so a
-// type is walked once for the module.
+// no_handle and handle hold the current declaration classification.
 struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex }
 
 function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
@@ -22683,8 +22682,6 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
       }
     }
   }
-  let none: string[] = [];
-  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(none), handle: util.name_index(none) };
   let decl_names: string[] = [];
   for sd in mod.structs {
     if (sd.enum_owner.len() == 0) {
@@ -22697,20 +22694,33 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
   for al in mod.aliases {
     decl_names = decl_names.append(al.name);
   }
-  let yes: string[] = [];
   let no: string[] = [];
-  for name in decl_names {
-    if (dx.no_handle.has(name) || dx.handle.has(name)) {
-      continue;
+  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(decl_names), handle: util.name_index(no) };
+  return ow_classify_decls(dx, decl_names);
+}
+
+function ow_classify_decls(dx: OwnDecls, yes: string[]): OwnDecls {
+  let no: string[] = [];
+  // Start with every declaration, then remove handle holders until stable.
+  // Each field query uses the complete index instead of expanding a shared
+  // child again. A recursive component stays handle-free only if all its
+  // other fields and arguments stay handle-free.
+  while (true) {
+    let next: string[] = [];
+    for name in yes {
+      if (!dx.consuming.has(name) && !util.has_str(semtypes.fd_handle_names(), name) && ow_decl_holds_no_handle(name, dx, [name])) {
+        next = next.append(name);
+      } else {
+        no = no.append(name);
+      }
     }
-    if (ow_decl_holds_no_handle(name, dx, [name])) {
-      yes = yes.append(name);
-    } else {
-      no = no.append(name);
-    }
+    let stable: boolean = next.len() == yes.len();
+    yes = next;
     dx = OwnDecls { ...dx, no_handle: util.name_index(yes), handle: util.name_index(no) };
+    if (stable) {
+      return dx;
+    }
   }
-  return dx;
 }
 
 // A type that cannot hold a handle: a number, a boolean, a char, a string,

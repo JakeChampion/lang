@@ -1324,6 +1324,9 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
 		{"e082-shared-struct-graph-view", e082SharedChain("str"), []string{"E082"}},
 		{"e082-recursive-viewless-enum", "enum L { Cons(i32, L), Nil }\nfunction f(): i32 { let l: L = Cons(1, Nil); let g = (): i32 => match (l) { Cons(x, r) => x, Nil => 0 }; return g(); }\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-shared-struct-graph-handle", sharedStructChain("Handle", "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\n"+borrowedGraphConsumer), []string{"E051"}},
+		{"e051-shared-struct-graph-value", sharedStructChain("i32", borrowedGraphConsumer), nil},
+		{"e051-recursive-struct-graph-handle", "struct S0 { next: S1 }\nstruct S1 { back: S0, h: Handle }\nstruct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\n" + borrowedGraphConsumer, []string{"E051"}},
 		{"e065-callee-var-binding", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { let s: string = mk(); let t: str = idv(slice_unchecked(s, 0, 1)); return t; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"len-method-string-sink", "function main(): i32 { let s: string = \"hello\"; let b: boolean = s.len(); return 0; }\n", []string{"E003"}},
 		{"len-method-array-sink", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let b: boolean = xs.len(); return 0; }\n", []string{"E003"}},
@@ -2643,13 +2646,19 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 var mainBodyRE = regexp.MustCompile(`(?s)function main\(\):\s*i32\s*\{(.*)\}\s*$`)
 
 func e082SharedChain(leaf string) string {
+	return sharedStructChain(leaf, "function h(s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let g = (): i32 => h(s); return g(); }\nfunction main(): i32 { return 0; }\n")
+}
+
+const borrowedGraphConsumer = "function pass(s: S0): S0 { return s; }\nfunction eat(own s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let x: S0 = pass(s); return eat(x); }\nfunction main(): i32 { return 0; }\n"
+
+func sharedStructChain(leaf, body string) string {
 	var b strings.Builder
 	const depth = 40
 	for i := 0; i < depth; i++ {
 		fmt.Fprintf(&b, "struct S%d { a: S%d, b: S%d }\n", i, i+1, i+1)
 	}
 	fmt.Fprintf(&b, "struct S%d { x: %s }\n", depth, leaf)
-	b.WriteString("function h(s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let g = (): i32 => h(s); return g(); }\nfunction main(): i32 { return 0; }\n")
+	b.WriteString(body)
 	return b.String()
 }
 
