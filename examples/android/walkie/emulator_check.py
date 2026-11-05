@@ -14,9 +14,11 @@ not in front keeps running as a second phone would. Then it:
 2. waits until both made their keys, then taps MATCH in each copy;
 3. holds the talk button of the first copy, then of the second, and requires
    that each copy transmits and the other hears it;
-4. presses BACK in the second copy, waits 20 seconds, and requires that the
-   second copy went to the background, that neither copy lost its peer, and
-   that both still run with no crash in logcat;
+4. presses BACK in the second copy, taps TALK in a notification and then
+   STOP TALKING, and requires that the copy of that notification transmits
+   and the other copy hears it. Then it waits 20 seconds, and requires that
+   the second copy went to the background, that neither copy lost its peer,
+   and that both still run with no crash in logcat;
 5. stops both copies and starts them again, and requires that each copy
    kept the identity of the other and connects with no string to compare;
 6. starts the first copy alone, opens SETTINGS, SERVER and PHONE KEYBOARD,
@@ -197,6 +199,35 @@ def talk(package, talker, listener, w, h):
     wait_for(package + " stops after the release", lambda log: last_state(log, talker) == "CONNECTED_LISTENING", 10)
 
 
+def tap_notice_button(label, out):
+    """Opens the notifications and taps the first button with the text
+    label. It gives the pid of the copy that logs the tap."""
+    adb("shell", "cmd", "statusbar", "expand-notifications")
+    time.sleep(1.5)
+    adb("shell", "uiautomator", "dump", "/sdcard/notices.xml")
+    dump = adb("shell", "cat", "/sdcard/notices.xml")
+    m = re.search(r'text="' + re.escape(label) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump, re.IGNORECASE)
+    if m is None:
+        Path(out, "notices.xml").write_text(dump)
+        raise Failure("no " + label + " button in the notifications")
+    x1, y1, x2, y2 = (int(g) for g in m.groups())
+    adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+    adb("shell", "cmd", "statusbar", "collapse")
+
+
+def talk_from_notice(a, b, out):
+    """TALK in a notification makes its copy transmit while it is not in
+    front, and STOP TALKING makes it listen again."""
+    tap_notice_button("Talk", out)
+    wait_for("a copy talks from its notification", lambda log: has(log, a, "walkie: talk from the notification true") or has(log, b, "walkie: talk from the notification true"), 10)
+    log = logcat()
+    talker, listener = (a, b) if has(log, a, "walkie: talk from the notification true") else (b, a)
+    mark = len(lines_of(log, listener))
+    wait_for("the other copy hears the notification talk", lambda log: any("walkie: hearing the peer" in line for line in lines_of(log, listener)[mark:]), 10)
+    tap_notice_button("Stop talking", out)
+    wait_for("the copy stops talking from its notification", lambda log: last_state(log, talker) == "CONNECTED_LISTENING", 10)
+
+
 def save(out):
     log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
@@ -273,6 +304,7 @@ def run(apk, second_apk, out):
     screenshot(f"{out}/second.png")
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     wait_for("BACK moves the second copy to the background", lambda log: has(log, b, "walkie: to the background"), 10)
+    talk_from_notice(a, b, out)
     time.sleep(20)
     log = logcat()
     if pid(FIRST) != a or pid(SECOND) != b:

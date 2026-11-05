@@ -86,6 +86,10 @@ the connection, and the phone still hears the other phone, also with the
 screen off. A wake lock and a Wi-Fi lock keep the CPU and the radio awake
 while the service runs. DISCONNECT in the notification ends the session.
 
+To talk while the app is in the background, tap TALK in the notification. The
+phone talks until you tap STOP TALKING. The talk button of the app also stops
+it.
+
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
 copy opens port 47121, and each copy sends its beacons to both ports. Show
