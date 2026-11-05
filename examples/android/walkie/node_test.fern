@@ -6,6 +6,7 @@ import "std/net";
 import "std/test";
 import "./lan";
 import "./node";
+import "./secure";
 import "./session";
 
 const STEP_MS: i64 = 10i64;
@@ -142,7 +143,7 @@ function run(nw: Network, cues: Cue[], end: i64): Sim {
       }
     }
     for i in 0..2 {
-      nodes = nodes.with(i, node.voice(node.tick(nodes[i], s.now), voice));
+      nodes = nodes.with(i, node.voice(node.tick(node.fresh(nodes[i], entropy(i, s.now)), s.now), voice));
     }
     s = Sim { ...s, nodes: nodes };
     for i in 0..2 {
@@ -163,6 +164,17 @@ function run(nw: Network, cues: Cue[], end: i64): Sim {
   return s;
 }
 
+// The random bytes of node `k` for the tick at `now`, different each time.
+function entropy(k: i32, now: i64): u8[] {
+  let out: u8[] = [];
+  let v: i64 = now * 2654435761i64 + (k as i64 + 1i64) * 40503i64;
+  for i in 0..node.RANDOM_BYTES {
+    v = v * 6364136223846793005i64 + 1442695040888963407i64;
+    out = out.append((v >> 33i64 & 255i64) as u8);
+  }
+  return out;
+}
+
 function seed(k: i32): u8[] {
   let out: u8[] = [];
   for i in 0..node.SEED_BYTES {
@@ -171,10 +183,18 @@ function seed(k: i32): u8[] {
   return out;
 }
 
+// The send and receive epochs of the voice keys of `n`, as "send/receive".
+function epochs(n: node.Node): string {
+  if let Some(c) = n.chan {
+    return secure.send_epoch(c).to_string() + "/" + secure.recv_epoch(c).to_string();
+  }
+  return "none";
+}
+
 function summary(s: Sim, end: i64): string {
   let a: node.Node = s.nodes[0];
   let b: node.Node = s.nodes[1];
-  return "lost [" + s.lost[0] + "] [" + s.lost[1] + "], heard " + s.heard[0].to_string() + " " + s.heard[1].to_string() + ", overlap " + s.overlap.to_string() + ", buttons " + node.button(a, end) + " / " + node.button(b, end) + ", codes " + a.link.sas + " " + b.link.sas;
+  return "lost [" + s.lost[0] + "] [" + s.lost[1] + "], heard " + s.heard[0].to_string() + " " + s.heard[1].to_string() + ", overlap " + s.overlap.to_string() + ", buttons " + node.button(a, end) + " / " + node.button(b, end) + ", codes " + a.link.sas + " " + b.link.sas + ", epochs " + epochs(a) + " " + epochs(b);
 }
 
 // Node 5 confirms at 3 s, and node 9 confirms 8 s later. Node 5, the floor
@@ -185,13 +205,14 @@ function talk_script(): Cue[] {
 }
 
 // The two nodes stay connected through the script. Each hears at least
-// `min_a` and `min_b` frames of the 750 and 250 that the other sends.
+// `min_a` and `min_b` frames of the 750 and 250 that the other sends. Each
+// transmission has its own voice key: node 5 talks twice and node 9 once.
 function check_talk(nw: Network, min_heard_by_b: i32, min_heard_by_a: i32): test.TestOutcome {
   let end: i64 = 100000i64;
   let s: Sim = run(nw, talk_script(), end);
   let a: node.Node = s.nodes[0];
   let b: node.Node = s.nodes[1];
-  let ok: boolean = s.lost[0] == "" && s.lost[1] == "" && !s.overlap && session.connected(a.sess) && session.connected(b.sess) && a.link.sas.len() == 6 && a.link.sas == b.link.sas && s.heard[1] >= min_heard_by_b && s.heard[0] >= min_heard_by_a && s.heard[1] <= 750 && s.heard[0] <= 250 && node.button(a, end) == "HOLD TO TALK" && node.button(b, end) == "HOLD TO TALK";
+  let ok: boolean = s.lost[0] == "" && s.lost[1] == "" && !s.overlap && session.connected(a.sess) && session.connected(b.sess) && a.link.sas.len() == 6 && a.link.sas == b.link.sas && s.heard[1] >= min_heard_by_b && s.heard[0] >= min_heard_by_a && s.heard[1] <= 750 && s.heard[0] <= 250 && node.button(a, end) == "HOLD TO TALK" && node.button(b, end) == "HOLD TO TALK" && epochs(a) == "2/1" && epochs(b) == "1/2";
   if (!ok) {
     return test.fail(summary(s, end));
   }

@@ -458,7 +458,7 @@ function restart(own s: App): App {
 // The network, the timers and the microphone, after each event.
 function pump(s: App, now: i64): App {
   let t: App = receive_all(s, now);
-  t = App { ...t, node: node.tick(t.node, now) };
+  t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   t = speak(sync_mic(t, now));
   return flush(t);
 }

@@ -366,8 +366,9 @@ function test_rejected_key_bundle_clears_aliases(): test.TestOutcome {
   return test.assert_eq(size, 0);
 }
 
+// A voice frame of epoch 0 with sequence number `seq`, sealed by hand.
 function voice_at(c: secure.Channel, seq: i64): u8[] {
-  let head: u8[] = [secure.VOICE as u8];
+  let head: u8[] = [secure.VOICE as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
   let nonce: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8];
   for k in 0..8 {
     let byte = (seq >> (56 - 8 * k) as i64 & 255 as i64) as u8;
@@ -393,6 +394,10 @@ function voice_at(c: secure.Channel, seq: i64): u8[] {
 
 function test_sequence_boundaries_do_not_change_the_window(): test.TestOutcome {
   let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (b0, inside) = secure.open_voice(b, voice_at(a, 5 as i64));
+  if (voiced(inside) != "ok:boundary@5") {
+    return test.fail("a hand-sealed frame inside the range did not open: " + voiced(inside));
+  }
   let refused = 0;
   for seq in [0 - 1 as i64, 9223372036854775807i64] {
     let frame = voice_at(a, seq);
@@ -406,6 +411,82 @@ function test_sequence_boundaries_do_not_change_the_window(): test.TestOutcome {
   secure.close(a1);
   secure.close(b1);
   return test.assert_eq(refused.to_string() + " " + voiced(got), "2 ok:ok@0");
+}
+
+// One rekey of the direction from `speaker` to `listener`: the offer, the
+// accept and the completion.
+function rekey(speaker: secure.Channel, listener: secure.Channel, seed: string): (secure.Channel, secure.Channel) {
+  let Some(o) = secure.offer(speaker, bytes(seed + " speaker", 32)) else {
+    return (speaker, listener);
+  };
+  let (l1, public) = secure.accept_offer(listener, o.epoch, o.public, bytes(seed + " listener", 32));
+  let s1 = secure.complete_offer(speaker, o, o.epoch, public);
+  return (s1, l1);
+}
+
+// A rekey moves both sides to epoch 1. A frame that was in flight under the
+// key of epoch 0 still opens, and a frame two epochs old does not.
+function test_rekey_moves_the_voice_key(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (a1, early) = secure.seal_voice(a, "early".as_bytes());
+  let (a2, b1) = rekey(a1, b, "one");
+  let (a3, late) = secure.seal_voice(a2, "late".as_bytes());
+  let (b2, got_late) = secure.open_voice(b1, late);
+  let (b3, got_early) = secure.open_voice(b2, early);
+  let (a4, b4) = rekey(a3, b3, "two");
+  let (a5, last) = secure.seal_voice(a4, "last".as_bytes());
+  let (b5, got_last) = secure.open_voice(b4, last);
+  let (b6, stale) = secure.open_voice(b5, early);
+  let epochs: string = secure.send_epoch(a5).to_string() + "/" + secure.recv_epoch(b6).to_string();
+  return test.assert_eq(epochs + " " + voiced(got_late) + " " + voiced(got_early) + " " + voiced(got_last) + " " + voiced(stale), "2/2 ok:late@1 ok:early@0 ok:last@2 refused");
+}
+
+// An offer for another epoch, and a low-order public key, change nothing.
+function test_rekey_refuses_a_wrong_offer(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let Some(o) = secure.offer(a, bytes("speaker", 32)) else {
+    return test.fail("no offer");
+  };
+  let (b1, skipped) = secure.accept_offer(b, o.epoch + 1, o.public, bytes("listener", 32));
+  let zero: u8[] = [];
+  for k in 0..32 {
+    zero = zero.append(0 as u8);
+  }
+  let (b2, low) = secure.accept_offer(b1, o.epoch, zero, bytes("listener", 32));
+  secure.close_offer(o);
+  return test.assert_eq(skipped.len().to_string() + " " + low.len().to_string() + " " + secure.recv_epoch(b2).to_string(), "0 0 0");
+}
+
+// An offer is used once: its private key is gone after the completion.
+function test_offer_is_used_once(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let Some(o) = secure.offer(a, bytes("speaker", 32)) else {
+    return test.fail("no offer");
+  };
+  let (b1, public) = secure.accept_offer(b, o.epoch, o.public, bytes("listener", 32));
+  let a1 = secure.complete_offer(a, o, o.epoch, public);
+  let a2 = secure.complete_offer(a1, o, o.epoch, public);
+  return test.assert_eq(o.private.get().len().to_string() + " " + secure.send_epoch(a2).to_string(), "0 1");
+}
+
+// The two directions rekey on their own, also at the same time.
+function test_directions_rekey_on_their_own(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let Some(oa) = secure.offer(a, bytes("a speaker", 32)) else {
+    return test.fail("no offer");
+  };
+  let Some(ob) = secure.offer(b, bytes("b speaker", 32)) else {
+    return test.fail("no offer");
+  };
+  let (b1, pb) = secure.accept_offer(b, oa.epoch, oa.public, bytes("b listener", 32));
+  let (a1, pa) = secure.accept_offer(a, ob.epoch, ob.public, bytes("a listener", 32));
+  let a2 = secure.complete_offer(a1, oa, oa.epoch, pb);
+  let b2 = secure.complete_offer(b1, ob, ob.epoch, pa);
+  let (a3, to_b) = secure.seal_voice(a2, "to b".as_bytes());
+  let (b3, to_a) = secure.seal_voice(b2, "to a".as_bytes());
+  let (b4, got_b) = secure.open_voice(b3, to_b);
+  let (a4, got_a) = secure.open_voice(a3, to_a);
+  return test.assert_eq(voiced(got_b) + " " + voiced(got_a), "ok:to b@0 ok:to a@0");
 }
 
 function test_initiator_must_commit_before_a_key_reply(): test.TestOutcome {
@@ -446,6 +527,10 @@ function main(): i32 {
   r = r.it("a swapped encapsulation key changes the string", test_swapped_encapsulation_key_changes_the_string);
   r = r.it("the ML-KEM secrets are erased", test_kem_secrets_are_erased);
   r = r.it("the ML-KEM part needs its random bytes", test_kem_random_is_required);
+  r = r.it("a rekey moves the voice key", test_rekey_moves_the_voice_key);
+  r = r.it("a rekey refuses a wrong offer", test_rekey_refuses_a_wrong_offer);
+  r = r.it("an offer is used once", test_offer_is_used_once);
+  r = r.it("the two directions rekey on their own", test_directions_rekey_on_their_own);
   r = r.it("a changed frame is refused", test_changed_frame_is_refused);
   r = r.it("a control frame opens once, in any order", test_control_replay_is_refused_and_order_is_free);
   r = r.it("voice frames open once inside the window", test_voice_window);

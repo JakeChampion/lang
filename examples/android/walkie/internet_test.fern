@@ -8,6 +8,7 @@ import "./internet";
 import "./lan";
 import "./node";
 import "./rooms";
+import "./secure";
 import "./session";
 
 const STEP_MS: i64 = 10i64;
@@ -40,6 +41,17 @@ function random(seed: string): u8[] {
   let out: u8[] = [];
   for k in 0..rooms.RANDOM_LEN {
     out = out.append(h[k]);
+  }
+  return out;
+}
+
+// The random bytes of node `k` for the tick at `now`, different each time.
+function entropy(k: i32, now: i64): u8[] {
+  let out: u8[] = [];
+  let v: i64 = now * 2654435761i64 + (k as i64 + 1i64) * 40503i64;
+  for i in 0..node.RANDOM_BYTES {
+    v = v * 6364136223846793005i64 + 1442695040888963407i64;
+    out = out.append((v >> 33i64 & 255i64) as u8);
   }
   return out;
 }
@@ -145,7 +157,7 @@ function run(end: i64): Sim {
       if (i == 0 && s.now == 15000i64) {
         n = node.release(n, s.now);
       }
-      nodes = nodes.with(i, node.voice(node.tick(n, s.now), voice));
+      nodes = nodes.with(i, node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice));
     }
     s = Sim { ...s, nodes: nodes };
     if (s.now == 10000i64) {
@@ -157,6 +169,17 @@ function run(end: i64): Sim {
   return s;
 }
 
+// The epoch of the voice key that `n` sends with, or receives with.
+function epoch_of(n: node.Node, sending: boolean): i32 {
+  if let Some(c) = n.chan {
+    if (sending) {
+      return secure.send_epoch(c);
+    }
+    return secure.recv_epoch(c);
+  }
+  return 0 - 1;
+}
+
 function test_two_phones_talk_through_the_relay(): test.TestOutcome {
   let s: Sim = run(20000i64);
   let a: node.Node = s.nodes[0];
@@ -164,8 +187,10 @@ function test_two_phones_talk_through_the_relay(): test.TestOutcome {
   let rooms_ok: boolean = s.rooms.len() == 2 && s.rooms[0].code == s.rooms[1].code;
   let paired: boolean = a.link.sas.len() == 6 && a.link.sas == b.link.sas && session.connected(a.sess) && session.connected(b.sess);
   // 500 frames in 10 s: B moves at 10 s and must still hear the second half.
-  let got: string = rooms_ok.to_string() + " " + paired.to_string() + " " + (s.heard[1] >= 480).to_string() + " " + (s.heard[1] <= 500).to_string();
-  if (got != "true true true true") {
+  // The transmission rekeys A's voice through the relay.
+  let rekeyed: boolean = epoch_of(a, true) == 1 && epoch_of(b, false) == 1;
+  let got: string = rooms_ok.to_string() + " " + paired.to_string() + " " + (s.heard[1] >= 480).to_string() + " " + (s.heard[1] <= 500).to_string() + " " + rekeyed.to_string();
+  if (got != "true true true true true") {
     return test.fail(got + ": heard " + s.heard[1].to_string() + ", codes " + a.link.sas + " " + b.link.sas);
   }
   return test.pass();

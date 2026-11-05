@@ -157,6 +157,21 @@ reason the initiator holds the ML-KEM key pair: the side that encapsulates
 chooses its value after it sees the key. The first message is 1217 bytes, so
 a phone with an older build cannot pair with this build.
 
+Each transmission gives the voice of the speaker a new key. When the
+speaker presses the button, its phone offers a new X25519 public key on the
+control channel. The other phone accepts with a new key of its own, and both
+put the shared secret into the key chain of that direction. Then both erase
+the private keys, the old chain and the key before the last. A voice frame
+carries the epoch of its key, so the frames in flight still open.
+
+The offer goes again each half second until the accept comes. The two
+directions rekey on their own.
+
+So a recording of a transmission stays secret when a phone is taken later.
+A party that took the keys and only listens loses them at the next
+transmission. The control keys stay the same for the session. Thus a party
+that took them and changes the traffic can still take part in a rekey.
+
 Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. Both go over datagrams, so a frame can be lost
 or arrive out of order. Each frame opens once, inside a window of 64

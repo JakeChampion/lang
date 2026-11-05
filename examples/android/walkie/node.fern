@@ -4,6 +4,7 @@
 // sends the datagrams in `out`, plays the frames in `heard`, and runs the
 // microphone while `capture` is true. A host test runs two nodes on a
 // simulated network.
+import "std/crypto";
 import "std/net";
 import "std/opus/celt_encoder";
 import "./lan";
@@ -30,6 +31,16 @@ pub struct Node {
   rx: voice.Receiver,
   notice: string,
   heard_at: i64,
+  // Fresh random bytes from the app for the rekeys, which the copies of the
+  // node share, and the rekey of this side's voice: due at the next tick,
+  // or offered and not accepted yet.
+  random: Cell[u8[]],
+  rekey_due: boolean,
+  offer: Option[secure.Offer],
+  offer_at: i64,
+  // The last accept that this side sent, for an offer that comes again.
+  accepted: i32,
+  accepted_key: u8[],
   // The outputs since the app last took them.
   out: Datagram[],
   heard: i32[][],
@@ -38,10 +49,14 @@ pub struct Node {
 
 pub const SEED_BYTES: i32 = 48 + secure.KEM_RANDOM;
 
+// The random bytes that the app gives with `fresh` before each tick: enough
+// for one offer and one accept.
+pub const RANDOM_BYTES: i32 = 64;
+
 // A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
   let (s1, _) = session.step(session.new(), session.Start(session.Offline), now);
-  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, random: cell_new([]), rekey_due: false, offer: None, offer_at: 0i64, accepted: 0, accepted_key: [], out: [], heard: [], logs: [] };
 }
 
 // The node with its outputs taken.
@@ -56,6 +71,12 @@ pub function close(own n: Node): void {
     },
     None => {}
   }
+  if let Some(o) = n.offer {
+    secure.close_offer(o);
+  }
+  let pool = n.random.get();
+  n.random.set([]);
+  crypto.erase(pool);
   let closed: lan.Link = lan.close(n.link);
 }
 
@@ -153,6 +174,12 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
         match (plain) {
           Some(b) => {
             match (protocol.decode(b)) {
+              Some(protocol.KeyOffer(epoch, public)) => {
+                return offered(t, epoch, public);
+              },
+              Some(protocol.KeyAccept(epoch, public)) => {
+                return accepted(t, epoch, public);
+              },
               Some(m) => {
                 return act(t, session.Received(m), now);
               },
@@ -218,7 +245,7 @@ function action(n: Node, a: session.Action): Node {
       return send_frame(n, lan.CONTROL, protocol.encode(m));
     },
     session.Capture(on) => {
-      return Node { ...n, capture: on, pending: [] };
+      return Node { ...n, capture: on, pending: [], rekey_due: n.rekey_due || on };
     },
     session.Notice(text) => {
       return log(Node { ...n, notice: text }, text);
@@ -242,7 +269,8 @@ function send_frame(n: Node, kind: i32, plain: u8[]): Node {
   return n;
 }
 
-// The beacons, the handshake resends and the session timers at `now`.
+// The beacons, the handshake resends, the session timers and the rekey at
+// `now`.
 pub function tick(n: Node, now: i64): Node {
   let (l1, beacons) = lan.beacon(n.link, now);
   let out: Datagram[] = n.out;
@@ -250,7 +278,83 @@ pub function tick(n: Node, now: i64): Node {
     out = out.append(Datagram { broadcast: true, data: b });
   }
   let (l2, again) = lan.resend(l1, now);
-  return act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now);
+  return rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now);
+}
+
+// The node with `random`, fresh random bytes for the rekeys, in place of the
+// bytes it did not use. The app gives RANDOM_BYTES before each tick.
+pub function fresh(n: Node, own random: u8[]): Node {
+  let old = n.random.get();
+  n.random.set(random);
+  crypto.erase(old);
+  return n;
+}
+
+// 32 of the random bytes, which leave the node. Too few gives none.
+function draw(n: Node): u8[] {
+  let pool = n.random.get();
+  if (pool.len() < 32) {
+    return [];
+  }
+  let out: u8[] = part(pool, 0, 32);
+  n.random.set(part(pool, 32, pool.len() - 32));
+  crypto.erase(pool);
+  return out;
+}
+
+// A transmission starts with an offer of a new key for this side's voice.
+// The offer goes again after each RESEND_MS until the peer accepts it.
+function rekeying(n: Node, now: i64): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  if let Some(o) = n.offer {
+    if (now < n.offer_at) {
+      return n;
+    }
+    return send_frame(Node { ...n, offer_at: now + lan.RESEND_MS }, lan.CONTROL, protocol.encode(protocol.KeyOffer(o.epoch, o.public)));
+  }
+  if (!n.rekey_due) {
+    return n;
+  }
+  let Some(o) = secure.offer(c, draw(n)) else {
+    return n;
+  };
+  let next: Node = Node { ...n, rekey_due: false, offer: Some(o), offer_at: now + lan.RESEND_MS };
+  return send_frame(next, lan.CONTROL, protocol.encode(protocol.KeyOffer(o.epoch, o.public)));
+}
+
+// The peer offers a new key for its voice. The first offer of the next epoch
+// gets an accept with a new key of this side. The same offer again gets the
+// same accept, because the first one can be lost.
+function offered(n: Node, epoch: i32, public: u8[]): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  if (epoch == n.accepted && n.accepted_key.len() > 0) {
+    return send_frame(n, lan.CONTROL, protocol.encode(protocol.KeyAccept(epoch, n.accepted_key)));
+  }
+  let (c1, mine) = secure.accept_offer(c, epoch, public, draw(n));
+  if (mine.len() == 0) {
+    return n;
+  }
+  let u: Node = log(Node { ...n, chan: Some(c1), accepted: epoch, accepted_key: mine }, "the peer's voice has key " + epoch.to_string());
+  return send_frame(u, lan.CONTROL, protocol.encode(protocol.KeyAccept(epoch, mine)));
+}
+
+// The peer accepts this side's offer: this side sends with the new key.
+function accepted(n: Node, epoch: i32, public: u8[]): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  let Some(o) = n.offer else {
+    return n;
+  };
+  if (o.epoch != epoch) {
+    return n;
+  }
+  let c1 = secure.complete_offer(c, o, epoch, public);
+  return log(Node { ...n, chan: Some(c1), offer: None }, "this side's voice has key " + secure.send_epoch(c1).to_string());
 }
 
 // Microphone samples at `voice.RATE`. Each full frame goes to the peer as

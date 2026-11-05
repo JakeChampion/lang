@@ -23,6 +23,15 @@
 // datagrams, which can be lost or reordered. A frame is sealed with
 // ChaCha20-Poly1305, and its nonce is its sequence number. A frame of either
 // channel is accepted once inside a window of 64 numbers.
+//
+// A voice direction gets a new key at the start of each transmission. The
+// speaker offers a new X25519 public key, and the listener accepts with one
+// of its own. Both put the shared secret into the chain of the direction, and
+// they erase the private keys and the key before the last. A frame carries
+// the epoch of its key, so the receiver also opens the frames that were in
+// flight. Thus a recording of a transmission stays secret after a later
+// compromise, and a passive party that took the keys loses them at the next
+// transmission.
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
 import "std/crypto/mlkem768";
@@ -66,8 +75,13 @@ pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u
 
 // One direction of one channel: its key and its sequence state. For a voice
 // receiver, `high` is the highest number seen and `seen` marks the numbers
-// below it in the window.
-struct Way { key: u8[], next: i64, high: i64, seen: boolean[] }
+// below it in the window. `epoch` counts the rekeys, `chain` makes the key of
+// the next epoch, and a receiver keeps the key of the epoch before in `old`.
+struct Way { key: u8[], next: i64, high: i64, seen: boolean[], epoch: i32, old: u8[], chain: u8[] }
+
+// The speaker's half of a rekey: an X25519 key pair for the next epoch of
+// its sending direction, used once.
+pub struct Offer { epoch: i32, private: Cell[u8[]], public: u8[] }
 
 // Copies share sequence state and keys. Use a channel from one event loop.
 pub struct Channel { send_ctl: Cell[Way], recv_ctl: Cell[Way], send_voice: Cell[Way], recv_voice: Cell[Way], sas: string }
@@ -288,7 +302,15 @@ function way(own key: u8[]): Way {
   for k in 0..WINDOW {
     seen = seen.append(false);
   }
-  return Way { key: key, next: 0 as i64, high: 0 - 1 as i64, seen: seen };
+  // A drained or closed slot gives a way that seals and opens nothing.
+  if (key.len() != 32) {
+    crypto.erase(key);
+    return Way { key: [], next: 0 as i64, high: 0 - 1 as i64, seen: seen, epoch: 0, old: [], chain: [] };
+  }
+  let first: u8[] = crypto.hkdf_sha256_expand(key, text("key"), 32);
+  let chain: u8[] = crypto.hkdf_sha256_expand(key, text("chain"), 32);
+  crypto.erase(key);
+  return Way { key: first, next: 0 as i64, high: 0 - 1 as i64, seen: seen, epoch: 0, old: [], chain: chain };
 }
 
 function take_key(slot: Cell[u8[]]): u8[] {
@@ -318,11 +340,13 @@ pub function close_keys(k: Keys): void {
   crypto.erase(recv_voice);
 }
 
-// The 12-byte nonce of sequence number `seq`, and the 9 bytes that start a
-// frame: the channel and the number. Those bytes are the associated data, so
-// a frame cannot move to the other channel.
-function head(kind: i32, seq: i64): u8[] {
-  let out: u8[] = [kind as u8];
+// The 12-byte nonce of sequence number `seq`, and the 13 bytes that start a
+// frame: the channel, the epoch of the key and the number. Those bytes are
+// the associated data, so a frame cannot move to the other channel.
+const HEAD: i32 = 13;
+
+function head(kind: i32, epoch: i32, seq: i64): u8[] {
+  let out: u8[] = [kind as u8, (epoch >> 24 & 255) as u8, (epoch >> 16 & 255) as u8, (epoch >> 8 & 255) as u8, (epoch & 255) as u8];
   for k in 0..8 {
     out = out.append((seq >> (56 - 8 * k) as i64 & 255 as i64) as u8);
   }
@@ -341,7 +365,7 @@ function seal_way(w: Way, kind: i32, plain: [u8]): (Way, u8[]) {
   if (w.next < 0 as i64 || w.next == MAX_SEQUENCE) {
     return (w, []);
   }
-  let h: u8[] = head(kind, w.next);
+  let h: u8[] = head(kind, w.epoch, w.next);
   match (chacha20poly1305.key(w.key)) {
     Ok(key) => {
       match (key.seal(nonce(w.next), plain, h)) {
@@ -356,21 +380,34 @@ function seal_way(w: Way, kind: i32, plain: [u8]): (Way, u8[]) {
   return (w, []);
 }
 
+// The key of the epoch in the head of `frame`: the current key, or the key
+// of the epoch before. Another epoch gives an empty key.
+function frame_key(w: Way, frame: [u8]): u8[] {
+  let epoch: i32 = frame[1] as i32 << 24 | frame[2] as i32 << 16 | frame[3] as i32 << 8 | frame[4] as i32;
+  if (epoch == w.epoch) {
+    return w.key;
+  }
+  if (epoch == w.epoch - 1) {
+    return w.old;
+  }
+  return [];
+}
+
 // The plain bytes of `frame` on this way, without the replay check.
 function open_frame(w: Way, kind: i32, frame: [u8]): Option[(i64, u8[])] {
-  if (frame.len() < 9 + 16 || frame[0] as i32 != kind) {
+  if (frame.len() < HEAD + 16 || frame[0] as i32 != kind) {
     return None;
   }
   let seq: i64 = 0 as i64;
-  for k in 1..9 {
+  for k in 5..HEAD {
     seq = seq << 8 as i64 | frame[k] as i64;
   }
   if (seq < 0 as i64 || seq == MAX_SEQUENCE) {
     return None;
   }
-  match (chacha20poly1305.key(w.key)) {
+  match (chacha20poly1305.key(frame_key(w, frame))) {
     Ok(key) => {
-      match (key.open(nonce(seq), frame[9:frame.len()], frame[0:9])) {
+      match (key.open(nonce(seq), frame[HEAD:frame.len()], frame[0:HEAD])) {
         Ok(plain) => {
           return Some((seq, plain));
         },
@@ -461,11 +498,118 @@ pub function close(own c: Channel): void {
 
 function close_way(state: Cell[Way]): void {
   let old = state.get();
-  state.set(Way { key: [], next: 0 as i64, high: 0 - 1 as i64, seen: [] });
+  state.set(Way { key: [], next: 0 as i64, high: 0 - 1 as i64, seen: [], epoch: 0, old: [], chain: [] });
   erase_way(old);
 }
 
 function erase_way(own w: Way): void {
-  let Way { key, next: _, high: _, seen: _ } = w;
+  let Way { key, next: _, high: _, seen: _, epoch: _, old, chain } = w;
   crypto.erase(key);
+  crypto.erase(old);
+  crypto.erase(chain);
+}
+
+// The epoch of the key that this side sends voice with, and of the key that
+// it receives voice with.
+pub function send_epoch(c: Channel): i32 {
+  return c.send_voice.get().epoch;
+}
+
+pub function recv_epoch(c: Channel): i32 {
+  return c.recv_voice.get().epoch;
+}
+
+// The speaker's offer for the next epoch of its sending direction, from 32
+// random bytes.
+pub function offer(c: Channel, own random: u8[]): Option[Offer] {
+  let epoch: i32 = c.send_voice.get().epoch + 1;
+  match (x25519.public_key(random)) {
+    Ok(public) => {
+      return Some(Offer { epoch: epoch, private: cell_new(random), public: public });
+    },
+    Err(_) => {}
+  }
+  crypto.erase(random);
+  return None;
+}
+
+pub function close_offer(o: Offer): void {
+  let secret = o.private.get();
+  o.private.set([]);
+  crypto.erase(secret);
+}
+
+function be32(v: i32): u8[] {
+  return [(v >> 24 & 255) as u8, (v >> 16 & 255) as u8, (v >> 8 & 255) as u8, (v & 255) as u8];
+}
+
+// The chain and the key of `epoch`, from the chain before, the shared secret
+// and the two public keys, the speaker's first.
+function next_epoch(chain: [u8], epoch: i32, own shared: u8[], speaker: [u8], listener: [u8]): (u8[], u8[]) {
+  let prk: u8[] = crypto.hkdf_sha256_extract(chain, shared);
+  crypto.erase(shared);
+  let info: u8[] = cat(cat(be32(epoch), speaker), listener);
+  let next: u8[] = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey chain"), info), 32);
+  let key: u8[] = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey key"), info), 32);
+  crypto.erase(prk);
+  return (next, key);
+}
+
+// The way with the key of a new epoch. A receiving way keeps the key of the
+// epoch before for the frames in flight. The older keys and the old chain
+// are erased.
+function rekeyed(own w: Way, epoch: i32, own chain: u8[], own key: u8[], keep: boolean): Way {
+  let Way { key: last, next, high, seen, epoch: _, old, chain: spent } = w;
+  crypto.erase(old);
+  crypto.erase(spent);
+  let before: u8[] = [];
+  if (keep) {
+    before = last;
+  } else {
+    crypto.erase(last);
+  }
+  return Way { key: key, next: next, high: high, seen: seen, epoch: epoch, old: before, chain: chain };
+}
+
+// The listener's answer to the offer of `epoch` from `speaker`, from 32
+// random bytes: the channel with the new receive key, and this side's public
+// key to send back. An offer for another epoch gives no key.
+pub function accept_offer(c: Channel, epoch: i32, speaker: [u8], own random: u8[]): (Channel, u8[]) {
+  let w = c.recv_voice.get();
+  if (epoch != w.epoch + 1) {
+    crypto.erase(random);
+    return (c, []);
+  }
+  let public: u8[] = [];
+  if let Ok(p) = x25519.public_key(random) {
+    public = p;
+  }
+  let result = x25519.x25519(random, speaker);
+  crypto.erase(random);
+  let Ok(shared) = result else {
+    return (c, []);
+  };
+  let (chain, key) = next_epoch(w.chain, epoch, shared, speaker, public);
+  c.recv_voice.set(rekeyed(w, epoch, chain, key, true));
+  return (c, public);
+}
+
+// The speaker's side after the accept of `epoch` from `listener`: the
+// channel with the new send key. The offer is used up either way.
+pub function complete_offer(c: Channel, o: Offer, epoch: i32, listener: [u8]): Channel {
+  let secret = o.private.get();
+  o.private.set([]);
+  let w = c.send_voice.get();
+  if (epoch != o.epoch || epoch != w.epoch + 1) {
+    crypto.erase(secret);
+    return c;
+  }
+  let result = x25519.x25519(secret, listener);
+  crypto.erase(secret);
+  let Ok(shared) = result else {
+    return c;
+  };
+  let (chain, key) = next_epoch(w.chain, epoch, shared, o.public, listener);
+  c.send_voice.set(rekeyed(w, epoch, chain, key, false));
+  return c;
 }
