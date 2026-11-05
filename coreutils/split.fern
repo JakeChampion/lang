@@ -706,7 +706,7 @@ function sized(s: Src, r: Reader): (Src, i64) {
   return spool(rest, first);
 }
 
-function split_lines(s: Settings, o: Out, src: Src): Out {
+function split_lines(s: Settings, own o: Out, src: Src): Out {
   let out = o;
   let input = src;
   let left = s.units;
@@ -747,7 +747,7 @@ function split_lines(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-function split_bytes(s: Settings, o: Out, src: Src): Out {
+function split_bytes(s: Settings, own o: Out, src: Src): Out {
   let out = o;
   let input = src;
   let left = s.units;
@@ -786,7 +786,7 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-function split_line_bytes(s: Settings, o: Out, src: Src): Out {
+function split_line_bytes(s: Settings, own o: Out, src: Src): Out {
   let out = o;
   let input = src;
   let buf: u8[] = [];
@@ -900,7 +900,7 @@ function chunk_end(k: u64, n: u64, size: u64): u64 {
   return k * each + bonus;
 }
 
-function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
+function split_chunk_bytes(s: Settings, own o: Out, src: Src, size: i64): Out {
   let out = o;
   let input = src;
   let total = size as u64;
@@ -935,7 +935,7 @@ function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
   return out_end(out);
 }
 
-function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
+function split_chunk_lines(s: Settings, own o: Out, src: Src, size: i64): Out {
   let out = o;
   let input = src;
   let total = size as u64;
@@ -1022,7 +1022,7 @@ function src_pushback(s: Src, rest: u8[]): Src {
   return Src { ...s, mem: rest, pos: 0 };
 }
 
-function split_round(s: Settings, o: Out, src: Src): Out {
+function split_round(s: Settings, own o: Out, src: Src): Out {
   let out = o;
   let input = src;
   if (s.chunk_k != 0 as u64) {
@@ -1120,7 +1120,7 @@ function round_block(): i32 {
   return 262144;
 }
 
-function split_round_one(s: Settings, o: Out, src: Src): Out {
+function split_round_one(s: Settings, own o: Out, src: Src): Out {
   let out = o;
   let input = src;
   let slot = 1 as u64;

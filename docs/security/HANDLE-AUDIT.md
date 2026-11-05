@@ -96,6 +96,7 @@ A `Socket` held as a `Socket` is refused the same way. A descriptor held as an `
 | A local initialised from a call whose result cannot hold a handle, passed to an `own` parameter | accepted | `local_from_handle_free_call_is_fresh` |
 | A local read out of a borrowed structure, passed to an `own` parameter at its last use, when its type cannot hold a handle | accepted | `local_read_from_borrowed_struct_moves_at_last_use` |
 | A handle read out of a borrowed structure, passed to an `own` parameter at its last use | `E051` | `diag_e051_handle_local_read_from_borrowed_struct` |
+| A fresh local that an assignment gives a borrowed handle, or an alias of a borrowed parameter, passed to an `own` parameter or consumed by a method | `E051` | `diag_e051_fresh_local_reassigned_from_a_borrow` |
 
 The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
 A variant constructor carries its payload, so its result borrows what the payload borrows.
@@ -108,6 +109,10 @@ A declared struct or enum whose fields cannot hold a handle cannot hold one eith
 At its last use, a fresh local passes to an `own` parameter.
 An unpack or an alias of a fresh local passes too.
 A local read out of a borrowed structure is none of these.
+A fresh local stays fresh only while each assignment to it stores an owned value.
+An owned value is a fresh value, an unpack, another fresh local, a payload a match took, or a self-update of the local.
+A call whose result borrows from no argument but the local itself also stores an owned value, as in `o = settle(o)`.
+An assignment of a borrowed value makes the local a second name for that value, so the local cannot move after it.
 
 That local passes too when its type cannot hold a handle, because the move costs only a retain.
 A `let`, an assignment and a `return` get the same answer.

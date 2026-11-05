@@ -311,7 +311,7 @@ function code_coarse(own e: range.Encoder, qi0: i32, left: i32, at: i32): (range
   return (e, -1);
 }
 
-function coarse_pass(e0: range.Encoder, start: i32, end: i32, bands: [f32], old0: f32[], error0: f32[], budget: i32, tell0: i32, channels: i32, lm: i32, intra: boolean, max_decay: f32, lfe: boolean): Pass {
+function coarse_pass(own e0: range.Encoder, start: i32, end: i32, bands: [f32], old0: f32[], error0: f32[], budget: i32, tell0: i32, channels: i32, lm: i32, intra: boolean, max_decay: f32, lfe: boolean): Pass {
   let e = e0;
   let old = old0;
   let error = error0;
@@ -405,12 +405,12 @@ pub function quant_coarse_energy(e: range.Encoder, r: CoarseRequest, bands: [f32
   let max_decay = max_decay_of(r);
   let first = Pass { e: e, old: old, error: error, badness: 0 };
   if (two_pass || intra) {
-    first = coarse_pass(e, r.start, r.end, bands, old, error, r.budget, tell, r.channels, r.lm, true, max_decay, r.lfe);
+    first = coarse_pass(range.Encoder { ...e }, r.start, r.end, bands, old, error, r.budget, tell, r.channels, r.lm, true, max_decay, r.lfe);
   }
   let chosen = first;
   if (!intra) {
     let tell_intra = first.e.tell_frac();
-    let second = coarse_pass(e, r.start, r.end, bands, old, error, r.budget, tell, r.channels, r.lm, false, max_decay, r.lfe);
+    let second = coarse_pass(range.Encoder { ...e }, r.start, r.end, bands, old, error, r.budget, tell, r.channels, r.lm, false, max_decay, r.lfe);
     chosen = second;
     if (two_pass && intra_wins(first, second, intra_bias, tell_intra)) {
       chosen = first;

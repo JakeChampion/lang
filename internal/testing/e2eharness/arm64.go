@@ -89,9 +89,9 @@ func LookupArm64Tooling() (gcc, qemu string, ok bool) {
 
 func RunArm64Bin(qemu, binPath string, args ...string) *exec.Cmd {
 	if qemu == "" {
-		return exec.Command(binPath, args...)
+		return WithoutCoreDump(exec.Command(binPath, args...))
 	}
-	return exec.Command(qemu, append([]string{binPath}, args...)...)
+	return WithoutCoreDump(exec.Command(qemu, append([]string{binPath}, args...)...))
 }
 
 func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) {
