@@ -5391,6 +5391,9 @@ func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 }
 
 func demangle(s string) string {
+	if rest, ok := strings.CutPrefix(s, ast.EntryShadowPrefix); ok {
+		return rest
+	}
 	if len(s) < 2 {
 		return s
 	}
@@ -8746,7 +8749,7 @@ func argSubject(n *ast.Call, num int) string {
 		name = n.Method.Field
 	} else if n.SourceCallee != "" {
 		name = n.SourceCallee
-	} else if id, ok := n.Callee.(*ast.Ident); ok && !strings.HasPrefix(id.Name, "__") {
+	} else if id, ok := n.Callee.(*ast.Ident); ok && (!strings.HasPrefix(id.Name, "__") || strings.HasPrefix(id.Name, ast.EntryShadowPrefix)) {
 		name = demangle(id.Name)
 	}
 	if name == "" {

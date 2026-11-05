@@ -31,7 +31,7 @@ func sourceNamed(prog *ast.Program, errs []error) {
 func importedDeclNames(prog *ast.Program) map[string]bool {
 	out := map[string]bool{}
 	add := func(name, module string) {
-		if module != "" && module != prog.EntryModule && strings.Index(name, "__") > 0 {
+		if strings.HasPrefix(name, ast.EntryShadowPrefix) || module != "" && module != prog.EntryModule && strings.Index(name, "__") > 0 {
 			out[name] = true
 		}
 	}

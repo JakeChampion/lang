@@ -229,3 +229,10 @@ var Ungated = map[string]bool{
 
 	"string_from_bytes_range_unchecked": true,
 }
+
+// IsBuiltin reports a builtin function of the language: each one is in
+// BuiltinCaps or in Ungated.
+func IsBuiltin(name string) bool {
+	_, tagged := BuiltinCaps[name]
+	return tagged || Ungated[name]
+}

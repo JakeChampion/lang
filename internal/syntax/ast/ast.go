@@ -2112,6 +2112,11 @@ type ImplDecl struct {
 func (s *TraitDecl) Pos() Position { return s.P }
 func (s *ImplDecl) Pos() Position  { return s.P }
 
+// EntryShadowPrefix starts the bundle name of an entry-module function that
+// has the name of a builtin. The function shadows the builtin in the entry
+// module, as a function of an imported module does under its module prefix.
+const EntryShadowPrefix = "__entry__"
+
 type Program struct {
 	Funcs             []*FuncDecl
 	Structs           []*StructDecl

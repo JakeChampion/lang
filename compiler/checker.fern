@@ -13842,7 +13842,7 @@ function payload_count_message(variant: string, want: i32, got: i32): string {
 function arg_subject(c: ast.ExprCall, n: i32): string {
   let arg = "argument " + util.i32_to_string(n);
   if let ast.ExprIdent(id) = c.callee {
-    if (!util.str_has_prefix(id.name, "__")) {
+    if (!util.str_has_prefix(id.name, "__") || util.str_has_prefix(id.name, util.ENTRY_SHADOW_PREFIX)) {
       return arg + " to \"" + util.demangle(id.name) + "\"";
     }
   }
@@ -26742,6 +26742,9 @@ function imported_decl_names(mod: parser.Module): string[] {
 }
 
 function with_mangled(out: string[], name: string, prefix: string): string[] {
+  if (util.str_has_prefix(name, util.ENTRY_SHADOW_PREFIX)) {
+    return out.append(name);
+  }
   if (prefix.len() == 0 || !util.str_has_prefix(name, prefix + "__")) {
     return out;
   }
