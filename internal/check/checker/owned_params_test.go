@@ -3168,3 +3168,125 @@ function main(): i32 { return 0; }`
 func TestOwnGuardIgnoresAMethodReceiver(t *testing.T) {
 	wantOK(t, "method-receiver-result", cellTakeSrc)
 }
+
+// A tuple payload of a fresh call is owned, a handle in it included, as a
+// single payload is (#14237).
+const tuplePayloadSrc = `
+struct D { buf: u8[], rng: u32 }
+function (own d: D) step(): D { return d; }
+function start(own d: D): Result[(D, i32[]), string] { return Ok((d, [1])); }
+function eat(own d: D, own xs: i32[]): i32 { return d.buf.len() + xs.len(); }
+`
+
+func TestOwnGuardAllowsATuplePayloadOfAFreshCall(t *testing.T) {
+	wantOK(t, "tuple-payload", tuplePayloadSrc+`
+function f(own d: D): i32 {
+    match (start(d)) {
+        Ok((a, b)) => { return eat(a, b); },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+	wantOK(t, "destructured-payload", tuplePayloadSrc+`
+function f(own d: D): i32 {
+    match (start(d)) {
+        Ok(p) => {
+            let (a, b) = p;
+            return eat(a, b);
+        },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardRejectsATuplePayloadOfABorrowedValue(t *testing.T) {
+	wantE051(t, "borrowed-tuple-payload", tuplePayloadSrc+`
+function f(r: Result[(D, i32[]), string]): i32 {
+    match (r) {
+        Ok((a, b)) => { return eat(a, b); },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+}
+
+// An argument before the moved one may read a scalar field of it: the read
+// gives a copy before the call takes the value (#14238).
+const fieldReadSrc = `
+struct C { n: i32, xs: i32[] }
+function g(n: i32, own c: C): i32 { return n + c.xs.len(); }
+function k(xs: [i32], own c: C): i32 { return xs.len() + c.n; }
+function make(): C { return C { n: 1, xs: [1] }; }
+function made(): Result[C, string] { return Ok(make()); }
+`
+
+func TestOwnGuardAllowsAScalarFieldReadBeforeTheMove(t *testing.T) {
+	wantOK(t, "local", fieldReadSrc+`
+function f(): i32 { let c = make(); return g(c.n, c); }
+function main(): i32 { return 0; }`)
+	wantOK(t, "payload-in-a-returning-branch", fieldReadSrc+`
+function f(): i32 {
+    match (made()) {
+        Ok(c) => {
+            if (c.n > 0) {
+                return g(c.n, c);
+            }
+            return g(0, c);
+        },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardRejectsABorrowedFieldReadBeforeTheMove(t *testing.T) {
+	wantE051(t, "borrowed-field", fieldReadSrc+`
+function f(): i32 { let c = make(); return k(c.xs, c); }
+function main(): i32 { return 0; }`)
+}
+
+const spreadSrc = `struct A { sock: Option[Socket], d: string }
+function take(own a: A): A { return a; }
+`
+
+func TestOwnGuardAllowsASpreadOfAnOwnedValue(t *testing.T) {
+	wantOK(t, "own-param", spreadSrc+`
+function f(own s: A): A { let t: A = A { ...s, d: "x" }; return take(t); }
+function main(): i32 { return 0; }`)
+	wantOK(t, "fresh-local", spreadSrc+`
+function f(): A { let s: A = A { sock: None, d: "" }; let t: A = A { ...s, d: "x" }; return take(t); }
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardRejectsASpreadThatDoesNotTakeItsBase(t *testing.T) {
+	wantE051(t, "borrowed-param", spreadSrc+`
+function f(s: A): A { let t: A = A { ...s, d: "x" }; return take(t); }
+function main(): i32 { return 0; }`)
+	wantE051(t, "base-read-later", spreadSrc+`
+function f(own s: A): A { let t: A = A { ...s, d: "x" }; print(s.d); return take(t); }
+function main(): i32 { return 0; }`)
+	wantE051(t, "field-names-base", spreadSrc+`
+function f(own s: A): A { let t: A = A { ...s, d: s.d }; return take(t); }
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardAllowsSeveralScalarFieldReadsBeforeTheMove(t *testing.T) {
+	wantOK(t, "several-scalar-field-reads", fieldReadSrc+`
+function many(a: i32, b: i32, own c: C): i32 { return a + b + c.xs.len(); }
+function f(): i32 { let c = make(); return many(c.n, c.n, c); }
+function main(): i32 { return 0; }`)
+}
+
+const scalarCallConsumeSrc = `struct C { n: i32 }
+function (own c: C) close(): i32 { return c.n; }
+function make(): C { return C { n: 1 }; }
+function first(own p: (C, i32)): i32 { let (c, n) = p; return c.close() + n; }
+function last(n: i32, own c: C): i32 { return n + c.close(); }
+function f(): i32 { let c = make(); return last(first((c, 0)), c); }
+function main(): i32 { return 0; }
+`
+
+func TestOwnGuardRejectsAConsumeHiddenInAScalarArgument(t *testing.T) {
+	wantE051(t, "consume-through-earlier-tuple", scalarCallConsumeSrc)
+}

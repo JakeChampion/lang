@@ -1,0 +1,197 @@
+// The ways in which two phones find each other, which the settings screen
+// chooses. AUTOMATIC uses all three at once. Each other mode uses one, so a
+// test of one way does not need the other ways turned off on the phone.
+//
+// The rules here have no Android code, so the host tests them.
+import "std/net";
+import "./internet";
+
+pub enum Mode { Automatic, SameWifi, WifiDirect, InternetRoom }
+
+// The modes in the order of the settings screen.
+pub function all(): Mode[] {
+  return [Automatic, SameWifi, WifiDirect, InternetRoom];
+}
+
+// The position of `m` in `all`.
+pub function index(m: Mode): i32 {
+  match (m) {
+    Automatic => {
+      return 0;
+    },
+    SameWifi => {
+      return 1;
+    },
+    WifiDirect => {
+      return 2;
+    },
+    InternetRoom => {
+      return 3;
+    }
+  }
+}
+
+// The mode at position `k` of `all`, or AUTOMATIC.
+pub function at(k: i32): Mode {
+  let list: Mode[] = all();
+  if (k < 0 || k >= list.len()) {
+    return Automatic;
+  }
+  return list[k];
+}
+
+// The name on the settings screen.
+pub function name(m: Mode): string {
+  match (m) {
+    Automatic => {
+      return "AUTOMATIC";
+    },
+    SameWifi => {
+      return "SAME WI-FI";
+    },
+    WifiDirect => {
+      return "WI-FI DIRECT";
+    },
+    InternetRoom => {
+      return "INTERNET ROOM";
+    }
+  }
+}
+
+// The short name on the button that opens the settings screen.
+pub function short_name(m: Mode): string {
+  match (m) {
+    Automatic => {
+      return "AUTO";
+    },
+    SameWifi => {
+      return "WI-FI";
+    },
+    WifiDirect => {
+      return "DIRECT";
+    },
+    InternetRoom => {
+      return "ROOM";
+    }
+  }
+}
+
+// What the mode does, under its name on the settings screen.
+pub function help(m: Mode): string {
+  match (m) {
+    Automatic => {
+      return "all three at once";
+    },
+    SameWifi => {
+      return "one Wi-Fi network";
+    },
+    WifiDirect => {
+      return "invite, no network";
+    },
+    InternetRoom => {
+      return "a room on the server";
+    }
+  }
+}
+
+// True when the phone looks for the other phone on its Wi-Fi network.
+pub function uses_wifi(m: Mode): boolean {
+  return index(m) == 0 || index(m) == 1;
+}
+
+// True when the phone looks for Wi-Fi Direct peers.
+pub function uses_direct(m: Mode): boolean {
+  return index(m) == 0 || index(m) == 2;
+}
+
+// True when the phone can make or join a room. A build with no server has
+// no rooms.
+pub function uses_rooms(m: Mode, server: string): boolean {
+  return server.len() > 0 && (index(m) == 0 || index(m) == 3);
+}
+
+// True when the settings screen can choose `m` in a build with `server`.
+pub function available(m: Mode, server: string): boolean {
+  return index(m) != 3 || server.len() > 0;
+}
+
+// The addresses that a beacon goes to: the broadcast address of the Wi-Fi
+// network, and the subnet of the Wi-Fi Direct group when there is one.
+pub function beacon_targets(m: Mode, group: Option[net.IpAddr]): net.IpAddr[] {
+  let out: net.IpAddr[] = [];
+  if (uses_wifi(m)) {
+    out = out.append(net.V4([255u8, 255u8, 255u8, 255u8]));
+  }
+  if let Some(g) = group {
+    if (uses_direct(m)) {
+      out = out.append(g);
+    }
+  }
+  return out;
+}
+
+// True when `from` is in the subnet a.b.c.0/24 of the group's broadcast
+// address a.b.c.255.
+pub function in_group(group: Option[net.IpAddr], from: net.SocketAddr): boolean {
+  let Some(net.V4(g)) = group else {
+    return false;
+  };
+  let net.V4(f) = from.ip else {
+    return false;
+  };
+  return g.len() == 4 && f.len() == 4 && f[0] == g[0] && f[1] == g[1] && f[2] == g[2];
+}
+
+// True when the phone takes a datagram from `from`. In a room it comes from
+// the relay. The internet mode takes nothing before a room, and Wi-Fi Direct
+// takes only the subnet of its group.
+pub function accepts(m: Mode, room: Option[internet.Room], group: Option[net.IpAddr], from: net.SocketAddr): boolean {
+  if let Some(r) = room {
+    return from.eq(r.relay);
+  }
+  if (index(m) == 3) {
+    return false;
+  }
+  if (index(m) == 2) {
+    return in_group(group, from);
+  }
+  return true;
+}
+
+// The mode as one byte in the file of the app, and back. A byte that names
+// no mode is AUTOMATIC.
+pub function to_byte(m: Mode): u8 {
+  return index(m) as u8;
+}
+
+pub function of_bytes(b: [u8]): Mode {
+  if (b.len() != 1) {
+    return Automatic;
+  }
+  return at(b[0] as i32);
+}
+
+// True when `name` is a host name or an IPv4 address that the keyboard of
+// the server can type: at most 253 characters of a-z, 0-9, "." and "-", with
+// a letter or a digit first and last. The empty name is valid, and selects
+// the server of the build.
+pub function valid_host(name: string): boolean {
+  let b: [u8] = name.as_bytes();
+  if (b.len() == 0) {
+    return true;
+  }
+  if (b.len() > 253 || !host_end(b[0]) || !host_end(b[b.len() - 1])) {
+    return false;
+  }
+  for c in b {
+    if (!host_end(c) && c != 46u8 && c != 45u8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True for a-z and 0-9.
+function host_end(c: u8): boolean {
+  return c >= 97u8 && c <= 122u8 || c >= 48u8 && c <= 57u8;
+}

@@ -1166,7 +1166,13 @@ pub function is_ident(s: string): boolean {
   return true;
 }
 
+// The prefix of an entry-module function that shadows a builtin.
+pub const ENTRY_SHADOW_PREFIX: string = "__entry__";
+
 pub function demangle(name: string): string {
+  if (str_has_prefix(name, ENTRY_SHADOW_PREFIX)) {
+    return slice_unchecked(name, ENTRY_SHADOW_PREFIX.len(), name.len()) + "";
+  }
   let cut = dunder_at(name);
   if (cut < 0) {
     return name;

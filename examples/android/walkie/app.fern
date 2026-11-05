@@ -14,6 +14,7 @@ import "std/net";
 import "std/rand";
 import "./internet";
 import "./lan";
+import "./modes";
 import "./node";
 import "./pcm";
 import "./rooms";
@@ -65,6 +66,17 @@ struct App {
   dir: string,
   id_seed: u8[],
   pins: u8[][],
+  // The way to find the other phone, and whether the settings screen shows.
+  mode: modes.Mode,
+  menu: boolean,
+  // The room server that the user typed, or "" for the server of the build,
+  // and the name while the user types it.
+  server: string,
+  host_edit: Option[string],
+  // The wake lock and the Wi-Fi lock, while the foreground service runs.
+  awake: Option[android.Awake],
+  // Whether the notification shows the phone as talking.
+  noticed: boolean,
 }
 
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
@@ -79,8 +91,17 @@ pub function talk_bind(env: usize, thiz: usize, intent: usize): usize {
 
 @jni("dev.fern.walkie.Talk", "int onStartCommand(android.content.Intent, int, int)")
 pub function talk_command(env: usize, thiz: usize, intent: usize, flags: i32, id: i32): i32 {
-  let n: android.Notice = android.Notice { channel: "walkie", channel_name: "Walkie-talkie", title: "Fern Walkie", text: "The walkie-talkie is on.", stop: "Disconnect" };
-  return android.service_command(env, thiz, intent, n);
+  return android.service_command(env, thiz, intent, notice(false));
+}
+
+// The notification of the service. Its TALK action talks while the app is
+// in the background, and a second tap stops.
+function notice(talking: boolean): android.Notice {
+  let n: android.Notice = android.Notice { channel: "walkie", channel_name: "Walkie-talkie", title: "Fern Walkie", text: "The walkie-talkie is on.", action: "Talk", stop: "Disconnect" };
+  if (talking) {
+    return android.Notice { ...n, text: "Talking. The other phone hears you.", action: "Stop talking" };
+  }
+  return n;
 }
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
@@ -166,6 +187,52 @@ function load_pins(dir: string): u8[][] {
   return out;
 }
 
+// The mode that the settings screen chose, as the file of the app holds it.
+function load_mode(dir: string): modes.Mode {
+  if (dir.len() == 0) {
+    return modes.Automatic;
+  }
+  let Ok(b) = read_file_bytes(dir + "/mode") else {
+    return modes.Automatic;
+  };
+  return modes.of_bytes(b);
+}
+
+// The room server that the user typed, as the file of the app holds it.
+function load_server(dir: string): string {
+  if (dir.len() == 0) {
+    return "";
+  }
+  let Ok(b) = read_file_bytes(dir + "/server") else {
+    return "";
+  };
+  let name: string = string_from_bytes_unchecked(b);
+  if (!modes.valid_host(name)) {
+    return "";
+  }
+  return name;
+}
+
+function save_server(dir: string, name: string): void {
+  if (dir.len() > 0) {
+    let written = write_file(dir + "/server", name);
+  }
+}
+
+// The room server: the one that the user typed, or the server of the build.
+function server_of(s: App): string {
+  if (s.server.len() > 0) {
+    return s.server;
+  }
+  return server_host.SERVER_HOST;
+}
+
+function save_mode(dir: string, m: modes.Mode): void {
+  if (dir.len() > 0) {
+    let written = write_file_bytes(dir + "/mode", [modes.to_byte(m)]);
+  }
+}
+
 // The file of known phones again, when the node learned a phone.
 function save_pins(s: App): App {
   if (s.node.pins.len() == s.pins.len() || s.dir.len() == 0) {
@@ -197,10 +264,12 @@ function app_main(ctx: usize): usize {
   let dir: string = android.data_dir(ctx);
   let id_seed: u8[] = identity_seed(dir);
   let pins: u8[][] = load_pins(dir);
+  let mode: modes.Mode = load_mode(dir);
+  let server: string = load_server(dir);
   let n: node.Node = fresh_node(notice, id_seed, pins);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
-  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins };
+  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -236,14 +305,26 @@ function event(own s: App, e: android.Event): App {
     android.WindowDestroyed(_) => {
       return App { ...s, window: 0 as usize };
     },
-    android.Resume => {
-      return resumed(s);
-    },
     android.Touch(action, x, y) => {
       return touch(s, action, x, y);
     },
     android.Key(code, action) => {
       return key(s, code, action);
+    },
+    _ => {
+      return lifecycle_event(s, e);
+    }
+  }
+}
+
+// The activity and the foreground service.
+function lifecycle_event(own s: App, e: android.Event): App {
+  match (e) {
+    android.Resume => {
+      return resumed(s);
+    },
+    android.ServiceAction => {
+      return toggle_talk(s);
     },
     android.ServiceStopped => {
       return leave(App { ...s, serving: false });
@@ -317,9 +398,10 @@ function nearby_permission(ctx: usize): string {
   return LOCATION;
 }
 
-// Starts Wi-Fi Direct once the app may look for nearby devices.
+// Starts Wi-Fi Direct once the app may look for nearby devices, when the
+// mode uses it.
 function start_direct(own s: App): App {
-  if (s.p2p.is_some() || !android.has_permission(s.ctx, nearby_permission(s.ctx))) {
+  if (!modes.uses_direct(s.mode) || s.p2p.is_some() || !android.has_permission(s.ctx, nearby_permission(s.ctx))) {
     return s;
   }
   match (android.p2p_start(s.ctx, RECEIVER)) {
@@ -355,7 +437,8 @@ function invite(own s: App, k: i32): App {
 }
 
 // Asks for the microphone once the activity is in front. With the
-// microphone, it starts the foreground service.
+// microphone, it starts the foreground service, and keeps the CPU and the
+// Wi-Fi awake while the screen is off.
 function resumed(own s: App): App {
   let mic: boolean = android.has_permission(s.ctx, MIC);
   let nearby: string = nearby_permission(s.ctx);
@@ -363,17 +446,32 @@ function resumed(own s: App): App {
     android.request_permissions(s.ctx, [MIC, nearby]);
   }
   let serving: boolean = s.serving;
+  let awake: Option[android.Awake] = s.awake;
   if (mic && !serving) {
     serving = android.start_service(s.ctx, SERVICE);
     log.info("walkie: foreground service " + serving.to_string());
   }
-  return start_direct(App { ...s, asked: true, serving: serving, drawn: "" });
+  if (serving && awake.is_none()) {
+    awake = Some(android.stay_awake(s.ctx, "fern:walkie"));
+    log.info("walkie: awake with the screen off");
+  }
+  return start_direct(App { ...s, asked: true, serving: serving, awake: awake, drawn: "" });
 }
 
-// The back key leaves the session.
+// The keys type the name of the server while its keyboard shows. The back
+// key closes the settings screen, and otherwise moves the app to the
+// background, where it still hears the other phone. DISCONNECT in the
+// notification leaves the session.
 function key(own s: App, code: i32, action: i32): App {
+  if let Some(name) = s.host_edit {
+    return host_key(s, code, action, name);
+  }
+  if (code == 4 && action == 1 && s.menu) {
+    return App { ...s, menu: false, drawn: "" };
+  }
   if (code == 4 && action == 1) {
-    return leave(s);
+    android.to_background(s.ctx);
+    log.info("walkie: to the background");
   }
   return s;
 }
@@ -386,7 +484,10 @@ function destroyed(own s: App): App {
   if let Some(p) = s.p2p {
     android.p2p_stop(s.ctx, p);
   }
-  return App { ...s, serving: false, p2p: None };
+  if let Some(a) = s.awake {
+    android.release_awake(s.ctx, a);
+  }
+  return App { ...s, serving: false, p2p: None, awake: None };
 }
 
 // Leaves the session and closes the app.
@@ -410,8 +511,11 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     return s;
   }
   let down: boolean = action == 0;
-  if let Some(code) = s.entering {
-    return keypad_touch(s, w, h, x, y, down, code);
+  if (overlay(s)) {
+    return overlay_touch(s, w, h, x, y, down);
+  }
+  if (down && mode_button_shows(s) && screen.contains(screen.mode_button(w, h), x, y)) {
+    return App { ...s, menu: true, drawn: "" };
   }
   match (s.node.link.phase) {
     lan.Verifying => {
@@ -429,9 +533,141 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   return talk_touch(s, w, h, action, x, y);
 }
 
-// The room buttons show while the phone searches, with no room yet.
+// True while the keyboard of the server, the settings screen or the keypad
+// shows.
+function overlay(s: App): boolean {
+  return s.host_edit.is_some() || s.menu || s.entering.is_some();
+}
+
+// A touch on the keyboard of the server, the settings screen or the keypad.
+function overlay_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean): App {
+  if let Some(name) = s.host_edit {
+    return host_touch(s, w, h, x, y, down, name);
+  }
+  if let Some(code) = s.entering {
+    if (!s.menu) {
+      return keypad_touch(s, w, h, x, y, down, code);
+    }
+  }
+  return menu_touch(s, w, h, x, y, down);
+}
+
+// The room buttons show while the phone searches, with no room yet, when the
+// mode uses rooms.
 function room_buttons(s: App): boolean {
-  return server_host.SERVER_HOST.len() > 0 && s.room.is_none() && s.entering.is_none();
+  return modes.uses_rooms(s.mode, server_of(s)) && s.room.is_none() && s.entering.is_none();
+}
+
+// The settings button shows while the phone searches, before a room.
+function mode_button_shows(s: App): boolean {
+  if let lan.Searching = s.node.link.phase {
+    return s.room.is_none() && s.entering.is_none();
+  }
+  return false;
+}
+
+// A row of the settings screen chooses its mode, the card of the server opens
+// its keyboard, and BACK closes the screen.
+function menu_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean): App {
+  if (!down) {
+    return s;
+  }
+  if (screen.contains(screen.back_button(w, h), x, y)) {
+    return App { ...s, menu: false, drawn: "" };
+  }
+  if (screen.contains(screen.server_row(w, h), x, y)) {
+    return App { ...s, host_edit: Some(s.server), drawn: "" };
+  }
+  let k: i32 = screen.mode_at(w, h, x, y);
+  if (k < 0 || !modes.available(modes.at(k), server_of(s))) {
+    return s;
+  }
+  return choose(s, modes.at(k));
+}
+
+// A key of the keyboard of the server, CANCEL, SAVE, or the button that opens
+// the keyboard of the phone. An empty name uses
+// the server of the build again. A mode that the new server cannot give
+// changes to AUTOMATIC.
+function host_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, name: string): App {
+  if (!down) {
+    return s;
+  }
+  if (screen.contains(screen.room_button(w, h), x, y)) {
+    return close_host(s);
+  }
+  if (screen.contains(screen.join_button(w, h), x, y)) {
+    return save_host(s, name);
+  }
+  if (screen.contains(screen.phone_keys_button(w, h), x, y)) {
+    android.show_keyboard(s.ctx, true);
+    return s;
+  }
+  let k: i32 = screen.host_key_at(w, h, x, y);
+  if (k < 0) {
+    return s;
+  }
+  return App { ...s, host_edit: Some(screen.host_typed(name, k)), drawn: "" };
+}
+
+// A key of the keyboard of the phone: a letter, a digit, "." or "-" types,
+// DEL deletes, ENTER saves, and BACK cancels.
+function host_key(own s: App, code: i32, action: i32, name: string): App {
+  // KEYCODE_BACK when it comes up, and KEYCODE_ENTER when it goes down
+  if (code == 4 && action == 1) {
+    return close_host(s);
+  }
+  if (action != 0) {
+    return s;
+  }
+  if (code == 66) {
+    return save_host(s, name);
+  }
+  let k: i32 = screen.host_key_of_code(code);
+  if (k < 0) {
+    return s;
+  }
+  return App { ...s, host_edit: Some(screen.host_typed(name, k)), drawn: "" };
+}
+
+// Closes the keyboard of the server, and the keyboard of the phone.
+function close_host(own s: App): App {
+  android.show_keyboard(s.ctx, false);
+  return App { ...s, host_edit: None, drawn: "" };
+}
+
+function save_host(own s: App, name: string): App {
+  if (!modes.valid_host(name)) {
+    return App { ...s, node: node.noticed(s.node, "that is not a host name"), drawn: "" };
+  }
+  save_server(s.dir, name);
+  android.show_keyboard(s.ctx, false);
+  log.info("walkie: server " + name);
+  let quiet: node.Node = node.noticed(s.node, "");
+  let t: App = App { ...s, server: name, host_edit: None, node: quiet, drawn: "" };
+  if (modes.available(t.mode, server_of(t))) {
+    return t;
+  }
+  return choose(t, modes.Automatic);
+}
+
+// Starts the search again in mode `m`. Wi-Fi Direct stops when `m` does not
+// use it, and starts when it does.
+function choose(own s: App, m: modes.Mode): App {
+  save_mode(s.dir, m);
+  log.info("walkie: mode " + modes.name(m));
+  return start_direct(restart(drop_direct(App { ...s, mode: m, menu: false })));
+}
+
+// Stops Wi-Fi Direct when the mode does not use it.
+function drop_direct(own s: App): App {
+  if (modes.uses_direct(s.mode)) {
+    return s;
+  }
+  if let Some(p) = s.p2p {
+    android.p2p_stop(s.ctx, p);
+  }
+  return App { ...s, p2p: None, peers: [], group_broadcast: None };
 }
 
 function search_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
@@ -467,7 +703,7 @@ function keypad_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean,
 
 // Asks the server for a room with `line`, and keeps the room it gives.
 function enter_room(own s: App, line: string, code: string): App {
-  let host: string = server_host.SERVER_HOST;
+  let host: string = server_of(s);
   let Some(relay) = internet.relay_of(host) else {
     return App { ...s, node: node.noticed(s.node, "cannot find the server " + host), drawn: "" };
   };
@@ -511,6 +747,25 @@ function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): Ap
   return s;
 }
 
+// The TALK action of the notification: talk, or stop talking.
+function toggle_talk(own s: App): App {
+  let now: i64 = now_ms();
+  log.info("walkie: talk from the notification " + (!s.pressed).to_string());
+  if (s.pressed) {
+    return App { ...s, pressed: false, node: node.release(s.node, now) };
+  }
+  return App { ...s, pressed: true, node: node.press(s.node, now) };
+}
+
+// Shows the talk state in the notification when it changed.
+function sync_notice(s: App): App {
+  if (!s.serving || s.pressed == s.noticed) {
+    return s;
+  }
+  android.update_notice(s.ctx, SERVICE, notice(s.pressed));
+  return App { ...s, noticed: s.pressed };
+}
+
 function restart(own s: App): App {
   node.close(s.node);
   return App { ...s, node: fresh_node("", s.id_seed, s.pins), pressed: false, drawn: "", room: None, entering: None };
@@ -521,7 +776,7 @@ function pump(s: App, now: i64): App {
   let t: App = receive_all(s, now);
   t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   t = speak(sync_mic(t, now));
-  return save_pins(flush(t));
+  return sync_notice(save_pins(flush(t)));
 }
 
 function receive_all(s: App, now: i64): App {
@@ -536,7 +791,7 @@ function receive_all(s: App, now: i64): App {
   for k in 0..64 {
     match (net.recv_from(sock, buf)) {
       Ok((len, from)) => {
-        if (from_room(s.room, from)) {
+        if (modes.accepts(s.mode, s.room, s.group_broadcast, from)) {
           n = node.receive(n, buf, len, from, now);
         }
       },
@@ -582,23 +837,14 @@ function speak(s: App): App {
   return App { ...s, up: up, agc: agc, node: node.voice(s.node, loud) };
 }
 
-// In a room, a datagram counts only when it comes from the relay, so that a
-// phone on the same network cannot take the place of the peer.
-function from_room(room: Option[internet.Room], from: net.SocketAddr): boolean {
-  if let Some(r) = room {
-    return from.eq(r.relay);
-  }
-  return true;
-}
-
-// The datagrams of the node: in a room each one goes to the relay, and on a
-// LAN the beacons go to the broadcast address.
-function send_out(sock: Socket, n: node.Node, room: Option[internet.Room], group: Option[net.IpAddr]): void {
+// The datagrams of the node: in a room each one goes to the relay, and
+// otherwise the beacons go to the broadcast addresses of the mode.
+function send_out(sock: Socket, n: node.Node, room: Option[internet.Room], targets: [net.IpAddr]): void {
   for d in n.out {
     if let Some(r) = room {
       let relayed: Result[i32, net.NetError] = net.send_to(sock, internet.wrap(r, d.data), r.relay);
     } else if (d.broadcast) {
-      beacon(sock, d.data, group);
+      beacon(sock, d.data, targets);
     } else {
       let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
     }
@@ -609,7 +855,7 @@ function send_out(sock: Socket, n: node.Node, room: Option[internet.Room], group
 function flush(s: App): App {
   let n: node.Node = s.node;
   if let Some(sock) = s.sock {
-    send_out(sock, n, s.room, s.group_broadcast);
+    send_out(sock, n, s.room, modes.beacon_targets(s.mode, s.group_broadcast));
   }
   let down: pcm.Resampler = s.down;
   let queue: i32[] = s.queue;
@@ -629,13 +875,8 @@ function flush(s: App): App {
   return App { ...s, down: down, queue: queue, node: node.drained(n) };
 }
 
-// A beacon goes to the broadcast address on each walkie port, and to the
-// subnet of the Wi-Fi Direct group when there is one.
-function beacon(sock: Socket, data: u8[], group: Option[net.IpAddr]): void {
-  let to: net.IpAddr[] = [net.V4([255u8, 255u8, 255u8, 255u8])];
-  if let Some(g) = group {
-    to = to.append(g);
-  }
+// A beacon goes to each address on each walkie port.
+function beacon(sock: Socket, data: u8[], to: [net.IpAddr]): void {
   for ip in to {
     for port in [lan.PORT, lan.SECOND_PORT] {
       let sent: Result[i32, net.NetError] = net.send_to(sock, data, net.socket_addr(ip, port));
@@ -670,23 +911,81 @@ function view(s: App, label: string): ui.View {
   for p in s.peers {
     peers = peers.append(ui.Peer { name: p.name, invited: p.status == 1 });
   }
-  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering };
+  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering, mode_label: mode_label(s), menu: menu_of(s), available: available_modes(s), server: server_label(s), editing: s.host_edit };
+}
+
+function mode_label(s: App): string {
+  if (mode_button_shows(s)) {
+    return "MODE: " + modes.short_name(s.mode);
+  }
+  return "";
+}
+
+function menu_of(s: App): Option[i32] {
+  if (s.menu) {
+    return Some(modes.index(s.mode));
+  }
+  return None;
+}
+
+function available_modes(s: App): boolean[] {
+  let out: boolean[] = [];
+  for m in modes.all() {
+    out = out.append(modes.available(m, server_of(s)));
+  }
+  return out;
+}
+
+// The server on its card of the settings screen.
+function server_label(s: App): string {
+  if (s.server.len() > 0) {
+    return s.server;
+  }
+  if (server_host.SERVER_HOST.len() > 0) {
+    return server_host.SERVER_HOST + " (built in)";
+  }
+  return "none: tap to type one";
 }
 
 // In a room, the phone waits for the other phone there, not on this Wi-Fi.
+// A mode with one way says what the user does for it.
 function status_text(s: App): string {
-  if let Some(r) = s.room {
-    if let lan.Searching = s.node.link.phase {
-      return "waiting for the other phone to join";
-    }
+  if (s.host_edit.is_some()) {
+    return "type the host name of the room server, or clear it to use the server of the app";
+  }
+  if (s.menu) {
+    return "how does this phone find the other phone?";
+  }
+  if let lan.Searching = s.node.link.phase {
+    return searching_text(s);
   }
   return node.status(s.node);
+}
+
+function searching_text(s: App): string {
+  if (s.room.is_some()) {
+    return "waiting for the other phone to join";
+  }
+  match (s.mode) {
+    modes.InternetRoom => {
+      return "make a room, or join the room of the other phone";
+    },
+    modes.WifiDirect => {
+      if (s.group_broadcast.is_some()) {
+        return "looking for the other phone in the group";
+      }
+      return "tap the other phone to invite it";
+    },
+    _ => {
+      return node.status(s.node);
+    }
+  }
 }
 
 function draw(s: App): App {
   let n: node.Node = s.node;
   let label: string = node.button(n, now_ms());
-  let key: string = status_text(s) + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s);
+  let key: string = status_text(s) + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s) + "|" + mode_label(s) + s.menu.to_string() + "|" + server_label(s) + "|" + s.host_edit.unwrap_or("^");
   if (s.window == 0 as usize || key == s.drawn) {
     return s;
   }
@@ -701,10 +1000,16 @@ function draw(s: App): App {
 }
 
 function title(s: App): string {
-  if let Some(r) = s.room {
-    return "Walkie  ROOM " + r.code;
+  if (s.host_edit.is_some()) {
+    return "SERVER";
   }
-  return "Walkie";
+  if (s.menu) {
+    return "SETTINGS";
+  }
+  if let Some(r) = s.room {
+    return "WALKIE  " + r.code;
+  }
+  return "WALKIE";
 }
 
 // The room and the typed code as they show, so that a change draws again.
