@@ -1,8 +1,8 @@
 function __fern_ring_drop(blk: usize, ent: usize): i32 {
-  let pb: usize = __load_i64(blk + 160) as usize;
-  let h: i32 = __fern_ring_u16(ent, 8);
+  let pb = __load_i64(blk + 160) as usize;
+  let h = __fern_ring_u16(ent, 8);
   while (h != 0) {
-    let nxt: i32 = __fern_ring_u16(pb + 4096 + (h - 1) as usize * 8, 0);
+    let nxt = __fern_ring_u16(pb + 4096 + (h - 1) as usize * 8, 0);
     __fern_ring_give(blk, h - 1);
     h = nxt;
   }

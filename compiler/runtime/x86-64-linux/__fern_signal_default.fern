@@ -1,5 +1,5 @@
 function __fern_signal_default(sig: i32): i32 {
-  let act: usize = __raw_scratch(32);
+  let act = __raw_scratch(32);
   __raw_store_ptr(act, 0, 0);
   __raw_store_ptr(act, 1, 0);
   __raw_store_ptr(act, 2, 0);

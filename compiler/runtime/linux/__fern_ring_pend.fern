@@ -1,7 +1,7 @@
 function __fern_ring_pend(blk: usize, fd: i32): i32 {
-  let np: i32 = __load_i32(blk + 72);
+  let np = __load_i32(blk + 72);
   if (np >= __load_i32(blk + 112) * 2) {
-    return 0 - 16;
+    return -16;
   }
   __store_i32(blk + 4096 + np as usize * 4, fd);
   __store_i32(blk + 72, np + 1);

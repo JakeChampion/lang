@@ -1,24 +1,24 @@
 function __fern_stat(path: string): Result[FileStat, IoError] {
-  let plen: i32 = path.len();
-  let pathz: usize = __raw_alloc(plen + 1);
-  let i: i32 = 0;
+  let plen = path.len();
+  let pathz = __raw_alloc(plen + 1);
+  let i = 0;
   while (i < plen) {
     __raw_store8(pathz, i, path[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   __raw_store8(pathz, plen, 0);
-  let buf: usize = __raw_scratch(256);
-  let rc: i32 = __syscall5(291, -100, pathz as i64, 0, 4095, buf as i64) as i32;
-  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let buf = __raw_scratch(256);
+  let rc = __syscall5(291, -100, pathz as i64, 0, 4095, buf as i64) as i32;
+  let pathz_own = __raw_string(pathz, plen + 1);
   if (rc < 0) {
-    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+    return Err(__fern_io_error(-rc, __fern_path_copy(pathz_own, plen)));
   }
-  let mode: i32 = __load_i32(buf + 28) & 65535;
-  let mfmt: i32 = mode & 61440;
-  let isf: boolean = mfmt == 32768;
-  let isd: boolean = mfmt == 16384;
-  let bt: i64 = 0 as i64;
-  let btn: i64 = 0 as i64;
+  let mode = __load_i32(buf + 28) & 65535;
+  let mfmt = mode & 61440;
+  let isf = mfmt == 32768;
+  let isd = mfmt == 16384;
+  let bt = 0 as i64;
+  let btn = 0 as i64;
   if ((__load_i32(buf + 0) & 2048) != 0) {
     bt = __load_i64(buf + 80);
     btn = __load_i32(buf + 88) as i64;

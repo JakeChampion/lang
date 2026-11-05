@@ -259,7 +259,7 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const typed = "let p: usize = __raw_alloc(la + lb);"
+	const typed = "let p = __raw_alloc(la + lb);"
 	if strings.Count(string(src), typed) != 1 {
 		t.Fatalf("runtime bundle does not contain the string concatenation allocation")
 	}

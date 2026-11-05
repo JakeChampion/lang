@@ -5,14 +5,14 @@ function __fern_sp_drain(fd: i32, buf: usize): i32 {
     if (got >= 65536) {
       done = 1;
     } else {
-      let n: i32 = __syscall3(63, fd as i64, (buf + got) as i64, (65536 - got) as i64) as i32;
-      if (n == 0 - 4) {
+      let n = __syscall3(63, fd as i64, (buf + got) as i64, (65536 - got) as i64) as i32;
+      if (n == -4) {
         done = 0;
       } else {
         if (n <= 0) {
           done = 1;
         } else {
-          got = got + n;
+          got += n;
         }
       }
     }
