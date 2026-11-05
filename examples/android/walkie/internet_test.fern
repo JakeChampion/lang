@@ -1,0 +1,187 @@
+// Two walkie-talkie nodes in one room of the server: each datagram goes to
+// the relay of `rooms` with the token of its node, and the relay sends it on.
+// The clock steps 10 ms at a time, and each leg of the trip takes 10 ms.
+import "std/crypto";
+import "std/net";
+import "std/test";
+import "./internet";
+import "./lan";
+import "./node";
+import "./rooms";
+import "./session";
+
+const STEP_MS: i64 = 10i64;
+
+// A datagram that arrives at `at`: at the relay from `from` when `to` is -1,
+// or at node `to`.
+struct Flight { at: i64, to: i32, from: net.SocketAddr, data: u8[] }
+
+struct Sim {
+  nodes: node.Node[],
+  rooms: internet.Room[],
+  table: rooms.Rooms,
+  // The address of each phone. Node 1 moves to a new address at `move_at`.
+  addrs: net.SocketAddr[],
+  flights: Flight[],
+  now: i64,
+  heard: i32[],
+}
+
+function addr(last: i32, port: i32): net.SocketAddr {
+  return net.socket_addr(net.ipv4(198, 51, 100, last), port);
+}
+
+function relay_addr(): net.SocketAddr {
+  return net.socket_addr(net.ipv4(203, 0, 113, 1), rooms.PORT);
+}
+
+function random(seed: string): u8[] {
+  let h: u8[] = crypto.sha256(seed.as_bytes());
+  let out: u8[] = [];
+  for k in 0..rooms.RANDOM_LEN {
+    out = out.append(h[k]);
+  }
+  return out;
+}
+
+function seed(k: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..node.SEED_BYTES {
+    out = out.append(((i * 7 + k * 31) % 256) as u8);
+  }
+  return out;
+}
+
+// A room that node 0 makes and node 1 joins.
+function start(): Sim {
+  let made: rooms.Answer = rooms.answer(rooms.empty(), "198.51.100.1", "CREATE", 0i64, random("a"));
+  let code: string = "";
+  if let rooms.Created(c, _) = made.reply {
+    code = c;
+  }
+  let joined: rooms.Answer = rooms.answer(made.rooms, "198.51.100.2", "JOIN " + code, 0i64, random("b"));
+  let r0: internet.Room[] = [];
+  for reply in [made.reply, joined.reply] {
+    if let Some(r) = internet.room_of(reply, code, relay_addr()) {
+      r0 = r0.append(r);
+    }
+  }
+  return Sim { nodes: [node.new(5i64, seed(1), 0i64), node.new(9i64, seed(2), 0i64)], rooms: r0, table: joined.rooms, addrs: [addr(1, 47120), addr(2, 47120)], flights: [], now: 0i64, heard: [0, 0] };
+}
+
+function owner_of(s: Sim, a: net.SocketAddr): i32 {
+  for i in 0..s.addrs.len() {
+    if (s.addrs[i].eq(a)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function deliver(s0: Sim): Sim {
+  let s: Sim = s0;
+  let left: Flight[] = [];
+  let later: Flight[] = [];
+  for f in s.flights {
+    if (f.at > s.now) {
+      left = left.append(f);
+    } else if (f.to < 0) {
+      let r: rooms.Relayed = rooms.relay(s.table, f.from, f.data, f.data.len(), s.now);
+      s = Sim { ...s, table: r.rooms };
+      if let Some(fw) = r.out {
+        later = later.append(Flight { at: s.now + STEP_MS, to: owner_of(s, fw.to), from: relay_addr(), data: fw.data });
+      }
+    } else if (f.to >= 0) {
+      s = Sim { ...s, nodes: s.nodes.with(f.to, node.receive(s.nodes[f.to], f.data, f.data.len(), f.from, s.now)) };
+    }
+  }
+  return Sim { ...s, flights: left.concat(later) };
+}
+
+function send(s: Sim, i: i32): Sim {
+  let flights: Flight[] = s.flights;
+  for d in s.nodes[i].out {
+    flights = flights.append(Flight { at: s.now + STEP_MS, to: -1, from: s.addrs[i], data: internet.wrap(s.rooms[i], d.data) });
+  }
+  let n: node.Node = s.nodes[i];
+  return Sim { ...s, flights: flights, heard: s.heard.with(i, s.heard[i] + n.heard.len()), nodes: s.nodes.with(i, node.drained(n)) };
+}
+
+function shows_code(n: node.Node): boolean {
+  match (n.link.phase) {
+    lan.Verifying => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function tone(): i32[] {
+  let out: i32[] = [];
+  for k in 0..160 {
+    out = out.append((k % 32 - 16) * 1000);
+  }
+  return out;
+}
+
+// Both users confirm when the code shows. Node 0 holds the button from 5 s to
+// 15 s, and node 1 moves to a new address at 10 s.
+function run(end: i64): Sim {
+  let s: Sim = start();
+  let voice: i32[] = tone();
+  while (s.now <= end) {
+    s = deliver(s);
+    let nodes: node.Node[] = s.nodes;
+    for i in 0..2 {
+      let n: node.Node = nodes[i];
+      if (shows_code(n)) {
+        n = node.confirm(n, s.now);
+      }
+      if (i == 0 && s.now == 5000i64) {
+        n = node.press(n, s.now);
+      }
+      if (i == 0 && s.now == 15000i64) {
+        n = node.release(n, s.now);
+      }
+      nodes = nodes.with(i, node.voice(node.tick(n, s.now), voice));
+    }
+    s = Sim { ...s, nodes: nodes };
+    if (s.now == 10000i64) {
+      s = Sim { ...s, addrs: s.addrs.with(1, addr(7, 40000)) };
+    }
+    s = send(send(s, 0), 1);
+    s = Sim { ...s, now: s.now + STEP_MS };
+  }
+  return s;
+}
+
+function test_two_phones_talk_through_the_relay(): test.TestOutcome {
+  let s: Sim = run(20000i64);
+  let a: node.Node = s.nodes[0];
+  let b: node.Node = s.nodes[1];
+  let rooms_ok: boolean = s.rooms.len() == 2 && s.rooms[0].code == s.rooms[1].code;
+  let paired: boolean = a.link.sas.len() == 6 && a.link.sas == b.link.sas && session.connected(a.sess) && session.connected(b.sess);
+  // 500 frames in 10 s: B moves at 10 s and must still hear the second half.
+  let got: string = rooms_ok.to_string() + " " + paired.to_string() + " " + (s.heard[1] >= 480).to_string() + " " + (s.heard[1] <= 500).to_string();
+  if (got != "true true true true") {
+    return test.fail(got + ": heard " + s.heard[1].to_string() + ", codes " + a.link.sas + " " + b.link.sas);
+  }
+  return test.pass();
+}
+
+// The relay sends nothing that a phone without a room token sends.
+function test_a_stranger_reaches_nobody(): test.TestOutcome {
+  let s: Sim = start();
+  let stranger = internet.Room { code: "", token: random("z").take(rooms.TOKEN_LEN), relay: relay_addr() };
+  let r: rooms.Relayed = rooms.relay(s.table, addr(9, 5000), internet.wrap(stranger, [247u8, 1u8]), 19, 0i64);
+  return test.assert_eq(r.out.is_some().to_string(), "false");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie internet");
+  r = r.it("two phones talk through the relay, and one moves", test_two_phones_talk_through_the_relay);
+  r = r.it("a stranger reaches nobody", test_a_stranger_reaches_nobody);
+  return r.finish();
+}

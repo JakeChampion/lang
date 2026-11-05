@@ -1,0 +1,4 @@
+// The host name of the room server of the internet mode. The nightly build
+// writes it from the WALKIE_SERVER repository variable. An empty name hides
+// the room buttons.
+pub const SERVER_HOST: string = "";

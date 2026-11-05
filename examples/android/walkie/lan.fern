@@ -1,7 +1,8 @@
-// The transport of the LAN build: UDP datagrams between two phones on the
-// same Wi-Fi network. Each phone sends a beacon to the broadcast address
-// until it hears another phone. Then the two run the key exchange of
-// `secure`, and the users compare the authentication string.
+// The transport of the app: UDP datagrams between two phones on the same
+// network, or through the relay of a room. Each phone sends a beacon to the
+// broadcast address, or to the relay, until it hears another phone. Then the
+// two run the key exchange of `secure`, and the users compare the
+// authentication string.
 //
 // A datagram is the byte 247, a kind, the sender's node ID in 8 bytes, and
 // the body. The node with the smaller ID starts the key exchange and is the

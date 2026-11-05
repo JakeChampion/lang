@@ -5,11 +5,11 @@ push-to-talk, an offline mode over Wi-Fi Direct and an internet mode through
 rooms. It is a NativeActivity app with no Java source, and `fern -apk`
 writes its APK.
 
-## The LAN build
+## The app
 
-`app.fern` is a first build for two phones on the same Wi-Fi network. It
-sends Opus voice at 16 kHz, about 24 kbit/s. Wi-Fi Direct and the internet
-rooms come after it. A phone with an older build of the app refuses the
+`app.fern` connects two phones in three ways: on the same Wi-Fi network, over
+Wi-Fi Direct, and in a room of the room server. It sends Opus voice at
+16 kHz, about 24 kbit/s. A phone with an older build of the app refuses the
 session, because the older build sends raw audio.
 
 The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-walkie.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
@@ -45,6 +45,17 @@ With no shared Wi-Fi network, the phones connect over Wi-Fi Direct:
 3. The other phone asks its user to accept the invitation. Accept it.
 4. The two phones then make a group. They send the beacons on the group
    too, and the code check and the talk button work as on a Wi-Fi network.
+
+When the phones are on different networks, they meet in a room on the room
+server. The app shows the room buttons when its build names a server (see
+`server_host.fern`).
+
+1. On one phone, tap NEW ROOM. The phone shows the code of the room in its
+   title.
+2. Tell the code to the other user. On the other phone, tap JOIN ROOM, type
+   the code on the keypad, and tap JOIN.
+3. The phones find each other through the relay of the server. The code
+   check and the talk button work as on a Wi-Fi network.
 
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
@@ -168,6 +179,16 @@ that changes network keeps its room. The relay cannot read the voice,
 because the phones seal it with the keys of their own exchange. A relay that
 changes the datagrams of the key exchange gives the two phones different
 codes. The users then see that the codes are not the same.
+
+`internet.fern` is the side of the app. It asks the server for a room over
+TLS. It puts the token in front of each datagram to the relay. In a room, the
+app takes a datagram only from the relay. So a phone on the same network
+cannot take the place of the peer. `internet_test.fern` runs two nodes in one
+room through the relay table, and one node moves to a new address.
+
+The nightly build writes `server_host.fern` from the `WALKIE_SERVER`
+repository variable. Set the variable to the DNS name of the server, and the
+next nightly APK shows the room buttons.
 
 `rooms.fern` holds the room table and does no I/O. `rooms_test.fern` tests
 it. `TestWalkieRelayServer` runs the server on the host. Two clients make and

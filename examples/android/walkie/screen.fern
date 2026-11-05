@@ -3,9 +3,12 @@
 //
 // The top of the screen holds the status lines. The talk button fills the
 // lower half. While the users compare the authentication string, two
-// buttons in the middle confirm or reject it.
+// buttons in the middle confirm or reject it. Below the talk button, the room
+// buttons make or join a room of the internet mode. A keypad takes the code
+// of a room.
 
 import "std/string";
+import "./rooms";
 
 pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
 
@@ -87,4 +90,65 @@ pub function peer_row(w: i32, h: i32, k: i32): Rect {
 // The x of `text_w` pixels of text in the middle of `r`.
 pub function center_x(r: Rect, text_w: i32): i32 {
   return r.x + (r.w - text_w) / 2;
+}
+
+// The button that makes a room, and the button that joins one, in the row
+// below the talk button.
+pub function room_button(w: i32, h: i32): Rect {
+  return Rect { x: w / 10, y: h * 91 / 100, w: w * 7 / 20, h: h * 7 / 100 };
+}
+
+pub function join_button(w: i32, h: i32): Rect {
+  return Rect { x: w * 11 / 20, y: h * 91 / 100, w: w * 7 / 20, h: h * 7 / 100 };
+}
+
+// The keypad for the code of a room: a key for each letter of the code, and
+// a last key that deletes a letter. It fills the place of the talk button and
+// of the peer list.
+pub const KEY_COLS: i32 = 8;
+
+pub const KEY_ROWS: i32 = 4;
+
+pub const DELETE_KEY: i32 = 31;
+
+pub function key_rect(w: i32, h: i32, k: i32): Rect {
+  let cell_w: i32 = w * 9 / 10 / KEY_COLS;
+  let cell_h: i32 = h * 6 / 10 / KEY_ROWS;
+  let x: i32 = w / 20 + k % KEY_COLS * cell_w;
+  let y: i32 = h * 3 / 10 + k / KEY_COLS * cell_h;
+  return Rect { x: x + cell_w / 20, y: y + cell_h / 20, w: cell_w * 9 / 10, h: cell_h * 9 / 10 };
+}
+
+// The key at (x, y), or -1.
+pub function key_at(w: i32, h: i32, x: f32, y: f32): i32 {
+  for k in 0..DELETE_KEY + 1 {
+    if (contains(key_rect(w, h, k), x, y)) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The label of key `k`.
+pub function key_label(k: i32): string {
+  if (k == DELETE_KEY) {
+    return "DEL";
+  }
+  let letters: [u8] = rooms.ALPHABET.as_bytes();
+  return string_from_bytes_unchecked([letters[k]]);
+}
+
+// The code after a press of key `k`: a letter adds itself up to the length of
+// a code, and DEL takes off the last letter.
+pub function typed(code: string, k: i32): string {
+  if (k == DELETE_KEY) {
+    if (code.len() == 0) {
+      return code;
+    }
+    return code.take(code.len() - 1);
+  }
+  if (k < 0 || k > DELETE_KEY || code.len() >= rooms.CODE_LEN) {
+    return code;
+  }
+  return code + key_label(k);
 }

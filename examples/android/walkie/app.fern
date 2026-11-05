@@ -1,7 +1,8 @@
-// The walkie-talkie app, LAN build. Two phones on the same Wi-Fi network find
-// each other by UDP broadcast, run the key exchange, and the users compare
-// the six-digit string. Then one holds the button to talk, and the other
-// hears. The voice is Opus at 16 kHz, about 24 kbit/s.
+// The walkie-talkie app. Two phones find each other by UDP broadcast on a
+// Wi-Fi network or a Wi-Fi Direct group, or through the relay of a room on
+// the room server. They run the key exchange, and the users compare the
+// six-digit string. Then one holds the button to talk, and the other hears.
+// The voice is Opus at 16 kHz, about 24 kbit/s.
 //
 // `node` holds the logic. This file does its input and output: the socket,
 // the microphone, the speaker, the touches and the screen.
@@ -11,10 +12,13 @@ import "std/android/draw";
 import "std/log";
 import "std/net";
 import "std/rand";
+import "./internet";
 import "./lan";
 import "./node";
 import "./pcm";
+import "./rooms";
 import "./screen";
+import "./server_host";
 import "./voice";
 
 const MIC: string = "android.permission.RECORD_AUDIO";
@@ -49,6 +53,9 @@ struct App {
   p2p: Option[android.P2p],
   peers: android.P2pPeer[],
   group_broadcast: Option[net.IpAddr],
+  // The room of the internet mode, and the code that the user types.
+  room: Option[internet.Room],
+  entering: Option[string],
 }
 
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
@@ -129,7 +136,7 @@ function app_main(ctx: usize): usize {
   android.keep_screen_on(ctx, true);
   let n: node.Node = fresh_node(notice);
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -339,6 +346,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     return s;
   }
   let down: boolean = action == 0;
+  if let Some(code) = s.entering {
+    return keypad_touch(s, w, h, x, y, down, code);
+  }
   match (s.node.link.phase) {
     lan.Verifying => {
       return verify_touch(s, w, h, x, y, down);
@@ -348,10 +358,65 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
       if (down && k >= 0) {
         return invite(s, k);
       }
+      return search_touch(s, w, h, action, x, y);
     },
     _ => {}
   }
   return talk_touch(s, w, h, action, x, y);
+}
+
+// The room buttons show while the phone searches, with no room yet.
+function room_buttons(s: App): boolean {
+  return server_host.SERVER_HOST.len() > 0 && s.room.is_none() && s.entering.is_none();
+}
+
+function search_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
+  if (action != 0 || !room_buttons(s)) {
+    return talk_touch(s, w, h, action, x, y);
+  }
+  if (screen.contains(screen.room_button(w, h), x, y)) {
+    return enter_room(s, "CREATE", "");
+  }
+  if (screen.contains(screen.join_button(w, h), x, y)) {
+    return App { ...s, entering: Some(""), drawn: "" };
+  }
+  return talk_touch(s, w, h, action, x, y);
+}
+
+// A key of the keypad, CANCEL, or JOIN when the code is whole.
+function keypad_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, code: string): App {
+  if (!down) {
+    return s;
+  }
+  if (screen.contains(screen.room_button(w, h), x, y)) {
+    return App { ...s, entering: None, drawn: "" };
+  }
+  if (screen.contains(screen.join_button(w, h), x, y) && code.len() == rooms.CODE_LEN) {
+    return enter_room(App { ...s, entering: None }, "JOIN " + code, code);
+  }
+  let k: i32 = screen.key_at(w, h, x, y);
+  if (k < 0) {
+    return s;
+  }
+  return App { ...s, entering: Some(screen.typed(code, k)), drawn: "" };
+}
+
+// Asks the server for a room with `line`, and keeps the room it gives.
+function enter_room(own s: App, line: string, code: string): App {
+  let host: string = server_host.SERVER_HOST;
+  let Some(relay) = internet.relay_of(host) else {
+    return App { ...s, node: node.noticed(s.node, "cannot find the server " + host), drawn: "" };
+  };
+  let reply: rooms.Reply = internet.ask(host, line);
+  if let Some(r) = internet.room_of(reply, code, relay) {
+    log.info("walkie: room " + r.code + " on " + relay.to_string());
+    return App { ...s, room: Some(r), node: node.noticed(s.node, "room " + r.code + ": the other phone joins with this code"), drawn: "" };
+  }
+  let why: string = "the server refused";
+  if let rooms.Refused(text) = reply {
+    why = text;
+  }
+  return App { ...s, node: node.noticed(s.node, "no room: " + why), drawn: "" };
 }
 
 // SAME or DIFFERENT, while the users compare the strings.
@@ -384,7 +449,7 @@ function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): Ap
 
 function restart(own s: App): App {
   node.close(s.node);
-  return App { ...s, node: fresh_node(""), pressed: false, drawn: "" };
+  return App { ...s, node: fresh_node(""), pressed: false, drawn: "", room: None, entering: None };
 }
 
 // The network, the timers and the microphone, after each event.
@@ -407,7 +472,9 @@ function receive_all(s: App, now: i64): App {
   for k in 0..64 {
     match (net.recv_from(sock, buf)) {
       Ok((len, from)) => {
-        n = node.receive(n, buf, len, from, now);
+        if (from_room(s.room, from)) {
+          n = node.receive(n, buf, len, from, now);
+        }
       },
       Err(_) => {
         return App { ...s, node: n };
@@ -449,17 +516,34 @@ function speak(s: App): App {
   return App { ...s, up: up, node: node.voice(s.node, wire) };
 }
 
+// In a room, a datagram counts only when it comes from the relay, so that a
+// phone on the same network cannot take the place of the peer.
+function from_room(room: Option[internet.Room], from: net.SocketAddr): boolean {
+  if let Some(r) = room {
+    return from.eq(r.relay);
+  }
+  return true;
+}
+
+// The datagrams of the node: in a room each one goes to the relay, and on a
+// LAN the beacons go to the broadcast address.
+function send_out(sock: Socket, n: node.Node, room: Option[internet.Room], group: Option[net.IpAddr]): void {
+  for d in n.out {
+    if let Some(r) = room {
+      let relayed: Result[i32, net.NetError] = net.send_to(sock, internet.wrap(r, d.data), r.relay);
+    } else if (d.broadcast) {
+      beacon(sock, d.data, group);
+    } else {
+      let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
+    }
+  }
+}
+
 // Sends the datagrams of the node, plays its frames and writes its log lines.
 function flush(s: App): App {
   let n: node.Node = s.node;
   if let Some(sock) = s.sock {
-    for d in n.out {
-      if (d.broadcast) {
-        beacon(sock, d.data, s.group_broadcast);
-      } else {
-        let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
-      }
-    }
+    send_out(sock, n, s.room, s.group_broadcast);
   }
   let down: pcm.Resampler = s.down;
   for f in n.heard {
@@ -544,7 +628,7 @@ function draw(s: App): App {
   let n: node.Node = s.node;
   let label: string = node.button(n, now_ms());
   let status: string = node.status(n);
-  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s);
+  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s);
   if (s.window == 0 as usize || key == s.drawn) {
     return s;
   }
@@ -561,7 +645,7 @@ function draw(s: App): App {
   let line: i32 = draw.text_height(sc) * 3 / 2;
   let white: i32 = android.rgb(230, 230, 230);
   f.fill(0, 0, fw, fh, android.rgb(0, 0, 0));
-  f.text(fw / 20, line, "Fern Walkie (LAN)", sc, white);
+  f.text(fw / 20, line, title(s), sc, white);
   let y: i32 = 2 * line;
   for l in screen.wrap(status, chars) {
     f.text(fw / 20, y, l, sc, android.rgb(160, 160, 160));
@@ -585,8 +669,14 @@ function draw(s: App): App {
     },
     lan.Searching => {
       draw_peers(f, s, sc);
+      draw_room_buttons(f, s, sc);
     },
     _ => {}
+  }
+  if let Some(code) = s.entering {
+    draw_keypad(f, code, sc);
+    android.post(f);
+    return App { ...s, drawn: key };
   }
   let b: screen.Rect = screen.talk_button(fw, fh);
   f.fill(b.x, b.y, b.w, b.h, button_color(label));
@@ -594,4 +684,53 @@ function draw(s: App): App {
   f.text(screen.center_x(b, draw.text_width(label, bs)), b.y + b.h / 2 - draw.text_height(bs) / 2, label, bs, white);
   android.post(f);
   return App { ...s, drawn: key };
+}
+
+function title(s: App): string {
+  if let Some(r) = s.room {
+    return "Fern Walkie (room " + r.code + ")";
+  }
+  return "Fern Walkie";
+}
+
+// The room and the typed code as they show, so that a change draws again.
+function room_key(s: App): string {
+  let out: string = "";
+  if let Some(r) = s.room {
+    out = r.code;
+  }
+  if let Some(code) = s.entering {
+    out = out + "/" + code;
+  }
+  return out;
+}
+
+function draw_button(f: android.Frame, r: screen.Rect, label: string, color: i32, sc: i32): void {
+  f.fill(r.x, r.y, r.w, r.h, color);
+  let bs: i32 = fit_scale(label, r.w * 9 / 10, sc);
+  f.text(screen.center_x(r, draw.text_width(label, bs)), r.y + r.h / 2 - draw.text_height(bs) / 2, label, bs, android.rgb(230, 230, 230));
+}
+
+function draw_room_buttons(f: android.Frame, s: App, sc: i32): void {
+  if (!room_buttons(s)) {
+    return;
+  }
+  draw_button(f, screen.room_button(f.width, f.height), "NEW ROOM", android.rgb(60, 110, 60), sc);
+  draw_button(f, screen.join_button(f.width, f.height), "JOIN ROOM", android.rgb(60, 60, 110), sc);
+}
+
+// The typed code, the keys, CANCEL and JOIN.
+function draw_keypad(f: android.Frame, code: string, sc: i32): void {
+  let big: i32 = sc * 3;
+  let shown: string = code + "______".take(rooms.CODE_LEN - code.len());
+  f.text((f.width - draw.text_width(shown, big)) / 2, f.height / 5, shown, big, android.rgb(230, 230, 230));
+  for k in 0..screen.DELETE_KEY + 1 {
+    draw_button(f, screen.key_rect(f.width, f.height, k), screen.key_label(k), android.rgb(70, 70, 70), sc * 2);
+  }
+  draw_button(f, screen.room_button(f.width, f.height), "CANCEL", android.rgb(110, 60, 60), sc);
+  let join: i32 = android.rgb(50, 50, 50);
+  if (code.len() == rooms.CODE_LEN) {
+    join = android.rgb(60, 60, 110);
+  }
+  draw_button(f, screen.join_button(f.width, f.height), "JOIN", join, sc);
 }

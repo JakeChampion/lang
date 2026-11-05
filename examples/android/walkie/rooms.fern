@@ -13,7 +13,7 @@ pub const PORT: i32 = 47130;
 pub const CODE_LEN: i32 = 6;
 
 // No 0, O, 1, I or L: a user reads the code to the other user.
-const ALPHABET: string = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+pub const ALPHABET: string = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 pub const TOKEN_LEN: i32 = 16;
 
