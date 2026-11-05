@@ -98,6 +98,16 @@ function test_keypad_types_a_code(): test.TestOutcome {
   return test.assert_eq(full + " " + code + " [" + empty + "] " + screen.key_label(screen.DELETE_KEY), "A9BCDE A9BCDJ [] DEL");
 }
 
+// A touch counts on the round talk button, and not in the corners of its
+// square.
+function test_talk_button_is_round(): test.TestOutcome {
+  let r: screen.Rect = screen.talk_button(1080, 2400);
+  let mid_x: f32 = (r.x + r.w / 2) as f32;
+  let mid_y: f32 = (r.y + r.h / 2) as f32;
+  let s: string = screen.in_circle(r, mid_x, mid_y).to_string() + " " + screen.in_circle(r, (r.x + 2) as f32, (r.y + 2) as f32).to_string() + " " + (r.w == r.h).to_string();
+  return test.assert_eq(s, "true false true");
+}
+
 function test_contains_is_half_open(): test.TestOutcome {
   let r: screen.Rect = screen.Rect { x: 10, y: 20, w: 5, h: 5 };
   let s: string = screen.contains(r, 10.0f32, 20.0f32).to_string() + " " + screen.contains(r, 15.0f32, 22.0f32).to_string() + " " + screen.contains(r, 14.5f32, 24.9f32).to_string();
@@ -137,6 +147,7 @@ function main(): i32 {
   r = r.it("the peer rows fit above the talk button", test_peer_rows_fit_above_the_talk_button);
   r = r.it("the room buttons and the keypad fit", test_room_buttons_and_keypad_fit);
   r = r.it("the keypad types a code", test_keypad_types_a_code);
+  r = r.it("the talk button is round", test_talk_button_is_round);
   r = r.it("contains is half-open", test_contains_is_half_open);
   r = r.it("the text scale follows the width", test_text_scale);
   r = r.it("text wraps at spaces", test_wrap);

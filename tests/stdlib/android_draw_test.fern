@@ -29,6 +29,44 @@ function count(f: draw.Frame, color: i32): i32 {
   return n;
 }
 
+// The disc covers about pi (r - 0.5)^2 pixels fully, has a smooth edge, and
+// leaves the pixels outside it alone.
+function test_disc(): test.TestOutcome {
+  let f: draw.Frame = frame(40, 40);
+  defer free_frame(f);
+  let white: i32 = draw.rgb(255, 255, 255);
+  f.disc(20, 20, 10, white);
+  let full: i32 = count(f, white);
+  let black: i32 = count(f, draw.rgb(0, 0, 0));
+  let edge: i32 = 40 * 40 - full - black;
+  let corners: boolean = f.pixel(10, 10) == draw.rgb(0, 0, 0) && f.pixel(20, 20) == white;
+  return test.assert_eq((full > 260 && full < 300).to_string() + " " + (edge > 20).to_string() + " " + corners.to_string(), "true true true");
+}
+
+// A ring leaves its middle alone.
+function test_ring(): test.TestOutcome {
+  let f: draw.Frame = frame(40, 40);
+  defer free_frame(f);
+  let white: i32 = draw.rgb(255, 255, 255);
+  f.ring(20, 20, 15, 3, white);
+  let middle: boolean = f.pixel(20, 20) == draw.rgb(0, 0, 0);
+  let band: boolean = f.pixel(20, 6) == white && f.pixel(6, 20) == white;
+  return test.assert_eq(middle.to_string() + " " + band.to_string(), "true true");
+}
+
+// A rounded rectangle fills its middle and its sides, and not the tips of
+// its corners.
+function test_round_rect(): test.TestOutcome {
+  let f: draw.Frame = frame(60, 30);
+  defer free_frame(f);
+  let white: i32 = draw.rgb(255, 255, 255);
+  f.round_rect(5, 5, 50, 20, 8, white);
+  let inside: boolean = f.pixel(30, 15) == white && f.pixel(30, 5) == white && f.pixel(5, 15) == white;
+  let tips: boolean = f.pixel(5, 5) == draw.rgb(0, 0, 0) && f.pixel(54, 24) == draw.rgb(0, 0, 0);
+  let outside: boolean = f.pixel(4, 15) == draw.rgb(0, 0, 0) && f.pixel(55, 15) == draw.rgb(0, 0, 0);
+  return test.assert_eq(inside.to_string() + " " + tips.to_string() + " " + outside.to_string(), "true true true");
+}
+
 function test_rgb(): test.TestOutcome {
   return test.assert_eq(draw.rgb(1, 2, 3), 0 - 16777216 | 3 << 16 | 2 << 8 | 1);
 }
@@ -96,6 +134,9 @@ function test_text_outside_is_clipped(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.new("std/android/draw");
   r = r.it("rgb packs red, green and blue", test_rgb);
+  r = r.it("a disc has a smooth edge", test_disc);
+  r = r.it("a ring leaves its middle alone", test_ring);
+  r = r.it("a rounded rectangle rounds its corners", test_round_rect);
   r = r.it("fill clips to the frame", test_fill_clips);
   r = r.it("text draws inside its cells", test_text_draws_inside_its_cells);
   r = r.it("a space draws nothing", test_space_draws_nothing);

@@ -83,3 +83,8 @@ func TestWalkieRooms(t *testing.T) {
 func TestWalkieInternet(t *testing.T) {
 	runWalkieTest(t, "internet_test.fern")
 }
+
+// The look of the screen: each screen drawn on a frame in memory.
+func TestWalkieUi(t *testing.T) {
+	runWalkieTest(t, "ui_test.fern")
+}

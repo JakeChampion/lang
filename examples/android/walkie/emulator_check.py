@@ -10,7 +10,7 @@ not in front keeps running as a second phone would. Then it:
 
 1. starts both copies, and requires the start line of each: one on port
    47120 and one on 47121, and that each one runs its foreground service;
-2. waits until both made their keys, then taps SAME in each copy;
+2. waits until both made their keys, then taps MATCH in each copy;
 3. holds the talk button of the first copy, then of the second, and requires
    that each copy transmits and the other hears it;
 4. waits 20 seconds, and requires that neither copy lost its peer and that
@@ -116,7 +116,7 @@ def confirm(package, p, w, h):
     to_front(package)
     check_node(logcat(), p)
     # The middle of screen.same_button.
-    adb("shell", "input", "tap", str(w // 10 + w * 7 // 40), str(h * 3 // 10 + h // 16))
+    adb("shell", "input", "tap", str(w // 10 + w * 37 // 200), str(h * 33 // 100 + h * 3 // 100))
     wait_for(package + " confirms the code", lambda log: has(log, p, "walkie: the string is confirmed"), 10)
 
 
@@ -125,7 +125,7 @@ def talk(package, talker, listener, w, h):
     check_node(logcat(), talker)
     mark = len(lines_of(logcat(), listener))
     # A long press in the middle of screen.talk_button.
-    adb("shell", "input", "swipe", str(w // 2), str(h * 7 // 10), str(w // 2), str(h * 7 // 10), "4000")
+    adb("shell", "input", "swipe", str(w // 2), str(h * 68 // 100), str(w // 2), str(h * 68 // 100), "4000")
     log = logcat()
     if not has(log, talker, "walkie: state TRANSMITTING"):
         raise Failure(package + " did not transmit while its button was held")

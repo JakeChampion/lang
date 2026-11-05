@@ -8,7 +8,6 @@
 // the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/audio";
-import "std/android/draw";
 import "std/log";
 import "std/net";
 import "std/rand";
@@ -19,6 +18,7 @@ import "./pcm";
 import "./rooms";
 import "./screen";
 import "./server_host";
+import "./ui";
 import "./voice";
 
 const MIC: string = "android.permission.RECORD_AUDIO";
@@ -435,7 +435,7 @@ function verify_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean)
 function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
   let now: i64 = now_ms();
   let down: boolean = action == 0;
-  if (down && screen.contains(screen.talk_button(w, h), x, y)) {
+  if (down && screen.in_circle(screen.talk_button(w, h), x, y)) {
     if (node.ended(s.node)) {
       return restart(s);
     }
@@ -571,50 +571,6 @@ function beacon(sock: Socket, data: u8[], group: Option[net.IpAddr]): void {
   }
 }
 
-// The Wi-Fi Direct peers, one row each, while the phone looks for a peer.
-function draw_peers(f: android.Frame, s: App, sc: i32): void {
-  let white: i32 = android.rgb(230, 230, 230);
-  for k in 0..s.peers.len() {
-    if (k < screen.PEER_ROWS) {
-      let row: screen.Rect = screen.peer_row(f.width, f.height, k);
-      let label: string = s.peers[k].name;
-      if (s.peers[k].status == 1) {
-        label = label + " (invited)";
-      }
-      f.fill(row.x, row.y, row.w, row.h, android.rgb(60, 60, 110));
-      f.text(row.x + row.w / 30, row.y + row.h / 2 - draw.text_height(sc) / 2, label, sc, white);
-    }
-  }
-}
-
-function button_color(label: string): i32 {
-  if (label == "TALKING") {
-    return android.rgb(40, 170, 80);
-  }
-  if (label == "WAIT" || label == "WAITING") {
-    return android.rgb(200, 160, 30);
-  }
-  if (label == "LISTENING") {
-    return android.rgb(40, 110, 200);
-  }
-  if (label == "HOLD TO TALK") {
-    return android.rgb(70, 70, 70);
-  }
-  if (label == "TAP TO SEARCH AGAIN") {
-    return android.rgb(90, 90, 90);
-  }
-  return android.rgb(50, 50, 50);
-}
-
-// The largest scale up to `cap` at which `text` fits in `w` pixels.
-function fit_scale(text: string, w: i32, cap: i32): i32 {
-  let sc: i32 = cap;
-  while (sc > 1 && draw.text_width(text, sc) > w) {
-    sc = sc - 1;
-  }
-  return sc;
-}
-
 // The peers as they show, so that a change draws the screen again.
 function peer_key(s: App): string {
   let out: string = "";
@@ -624,11 +580,41 @@ function peer_key(s: App): string {
   return out;
 }
 
+// The screen as `ui` draws it.
+function view(s: App, label: string): ui.View {
+  let n: node.Node = s.node;
+  let code: string = "";
+  let searching: boolean = false;
+  match (n.link.phase) {
+    lan.Verifying => {
+      code = n.link.sas;
+    },
+    lan.Searching => {
+      searching = true;
+    },
+    _ => {}
+  }
+  let peers: ui.Peer[] = [];
+  for p in s.peers {
+    peers = peers.append(ui.Peer { name: p.name, invited: p.status == 1 });
+  }
+  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering };
+}
+
+// In a room, the phone waits for the other phone there, not on this Wi-Fi.
+function status_text(s: App): string {
+  if let Some(r) = s.room {
+    if let lan.Searching = s.node.link.phase {
+      return "waiting for the other phone to join";
+    }
+  }
+  return node.status(s.node);
+}
+
 function draw(s: App): App {
   let n: node.Node = s.node;
   let label: string = node.button(n, now_ms());
-  let status: string = node.status(n);
-  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s);
+  let key: string = status_text(s) + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s);
   if (s.window == 0 as usize || key == s.drawn) {
     return s;
   }
@@ -637,60 +623,16 @@ function draw(s: App): App {
   if (f.width == 0) {
     return s;
   }
-  let fw: i32 = f.width;
-  let fh: i32 = f.height;
-  let cell: i32 = draw.text_width("x", 1);
-  let sc: i32 = screen.text_scale(fw, cell);
-  let chars: i32 = screen.line_chars(fw, cell, sc);
-  let line: i32 = draw.text_height(sc) * 3 / 2;
-  let white: i32 = android.rgb(230, 230, 230);
-  f.fill(0, 0, fw, fh, android.rgb(0, 0, 0));
-  f.text(fw / 20, line, title(s), sc, white);
-  let y: i32 = 2 * line;
-  for l in screen.wrap(status, chars) {
-    f.text(fw / 20, y, l, sc, android.rgb(160, 160, 160));
-    y = y + line;
-  }
-  for l in screen.wrap(n.notice, chars) {
-    f.text(fw / 20, y, l, sc, android.rgb(230, 120, 80));
-    y = y + line;
-  }
-  match (n.link.phase) {
-    lan.Verifying => {
-      let big: i32 = sc * 3;
-      let cw: i32 = draw.text_width(n.link.sas, big);
-      f.text((fw - cw) / 2, fh / 5, n.link.sas, big, white);
-      let same: screen.Rect = screen.same_button(fw, fh);
-      let differ: screen.Rect = screen.differ_button(fw, fh);
-      f.fill(same.x, same.y, same.w, same.h, android.rgb(40, 150, 70));
-      f.fill(differ.x, differ.y, differ.w, differ.h, android.rgb(170, 50, 50));
-      f.text(screen.center_x(same, draw.text_width("SAME", sc)), same.y + same.h / 2 - draw.text_height(sc) / 2, "SAME", sc, white);
-      f.text(screen.center_x(differ, draw.text_width("DIFFERENT", sc)), differ.y + differ.h / 2 - draw.text_height(sc) / 2, "DIFFERENT", sc, white);
-    },
-    lan.Searching => {
-      draw_peers(f, s, sc);
-      draw_room_buttons(f, s, sc);
-    },
-    _ => {}
-  }
-  if let Some(code) = s.entering {
-    draw_keypad(f, code, sc);
-    android.post(f);
-    return App { ...s, drawn: key };
-  }
-  let b: screen.Rect = screen.talk_button(fw, fh);
-  f.fill(b.x, b.y, b.w, b.h, button_color(label));
-  let bs: i32 = fit_scale(label, b.w * 9 / 10, sc * 2);
-  f.text(screen.center_x(b, draw.text_width(label, bs)), b.y + b.h / 2 - draw.text_height(bs) / 2, label, bs, white);
+  ui.render(f, view(s, label));
   android.post(f);
   return App { ...s, drawn: key };
 }
 
 function title(s: App): string {
   if let Some(r) = s.room {
-    return "Fern Walkie (room " + r.code + ")";
+    return "Walkie  ROOM " + r.code;
   }
-  return "Fern Walkie";
+  return "Walkie";
 }
 
 // The room and the typed code as they show, so that a change draws again.
@@ -703,34 +645,4 @@ function room_key(s: App): string {
     out = out + "/" + code;
   }
   return out;
-}
-
-function draw_button(f: android.Frame, r: screen.Rect, label: string, color: i32, sc: i32): void {
-  f.fill(r.x, r.y, r.w, r.h, color);
-  let bs: i32 = fit_scale(label, r.w * 9 / 10, sc);
-  f.text(screen.center_x(r, draw.text_width(label, bs)), r.y + r.h / 2 - draw.text_height(bs) / 2, label, bs, android.rgb(230, 230, 230));
-}
-
-function draw_room_buttons(f: android.Frame, s: App, sc: i32): void {
-  if (!room_buttons(s)) {
-    return;
-  }
-  draw_button(f, screen.room_button(f.width, f.height), "NEW ROOM", android.rgb(60, 110, 60), sc);
-  draw_button(f, screen.join_button(f.width, f.height), "JOIN ROOM", android.rgb(60, 60, 110), sc);
-}
-
-// The typed code, the keys, CANCEL and JOIN.
-function draw_keypad(f: android.Frame, code: string, sc: i32): void {
-  let big: i32 = sc * 3;
-  let shown: string = code + "______".take(rooms.CODE_LEN - code.len());
-  f.text((f.width - draw.text_width(shown, big)) / 2, f.height / 5, shown, big, android.rgb(230, 230, 230));
-  for k in 0..screen.DELETE_KEY + 1 {
-    draw_button(f, screen.key_rect(f.width, f.height, k), screen.key_label(k), android.rgb(70, 70, 70), sc * 2);
-  }
-  draw_button(f, screen.room_button(f.width, f.height), "CANCEL", android.rgb(110, 60, 60), sc);
-  let join: i32 = android.rgb(50, 50, 50);
-  if (code.len() == rooms.CODE_LEN) {
-    join = android.rgb(60, 60, 110);
-  }
-  draw_button(f, screen.join_button(f.width, f.height), "JOIN", join, sc);
 }

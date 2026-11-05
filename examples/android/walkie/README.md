@@ -29,8 +29,8 @@ Use it:
    Allow the microphone when the app asks.
 2. Each phone sends a UDP beacon to the broadcast address on port 47120. When
    the phones find each other, they make keys and show a six-digit code.
-3. Compare the codes, and tap SAME on each phone when they are the same. Tap
-   DIFFERENT when they are not: then a third device can be in the middle.
+3. Compare the codes, and tap MATCH on each phone when they are the same. Tap
+   NO MATCH when they are not: then a third device can be in the middle.
 4. The first phone to confirm shows WAITING until the other phone confirms.
 5. Hold the button to talk. The other phone shows LISTENING and plays the
    voice. Only one phone can talk at a time.
@@ -87,7 +87,7 @@ with no loss and with 5% and 20% loss. Each node must stay connected and hear
 most of the voice of the other. The two must never talk at the same time.
 
 `emulator_check.py` runs two copies of the APK on the Android emulator in CI,
-with the freezer of cached apps off. It taps SAME in each copy, holds the
+with the freezer of cached apps off. It taps MATCH in each copy, holds the
 talk button of each, and reads the result in logcat.
 
 ## `protocol.fern`
@@ -100,6 +100,19 @@ The session engine. It holds the state machine and the push-to-talk floor,
 and it does not know the transport. `step` takes the session, one event and
 the time, and gives the next session and its actions. `session_test.fern`
 runs two engines on a simulated link.
+
+## `ui.fern`
+
+The look of the screen: a dark theme with one accent colour for each state.
+The round talk button has a ring in the colour of the state. It fills while
+the phone talks or listens. A dot beside the status has the same colour. The
+code to compare shows in two groups of three digits, over a MATCH pill and a
+NO MATCH outline.
+
+`ui.fern` draws a view of the app on a frame and does no other I/O.
+`ui_test.fern` draws each screen on a frame in memory and checks the colours
+of its buttons. With `WALKIE_UI_PNG` set to a directory, it also writes each
+screen there as a PNG file.
 
 ## `lan.fern`, `pcm.fern` and `screen.fern`
 
