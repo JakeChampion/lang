@@ -19394,9 +19394,42 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
   }
   let inner: string[] = seen.append(name);
   if let ast.ExprIdent(src) = e {
-    return lu_fresh_bound(fx, src.name) || lu_fresh_init_in(fx, src.name, inner);
+    return lu_assigned_name_owned(fx, src, inner);
   }
   return lu_unpack_expr_in(fx, e, inner);
+}
+
+function lu_assigned_name_owned(fx: LuFn, src: ast.ExprIdent, seen: string[]): boolean {
+  return lu_fresh_bound(fx, src.name) || lu_fresh_init_in(fx, src.name, seen) || lu_payload_elem_local(fx, src);
+}
+
+// A local that the tuple pattern of a match arm binds, as `d1` in
+// `Ok((d1, v))`, read once here. The parser lowers the pattern to
+// `let d1 = p_e0` after an unpack of the payload p. The local and its element
+// each have one read, and the match took p from a fresh call, so the arm
+// declares each afresh on each round of a loop.
+function lu_payload_elem_local(fx: LuFn, id: ast.ExprIdent): boolean {
+  if (lu_occ_count(fx, id.name) != 1 || !lu_sole_last_read(fx, id, 1)) {
+    return false;
+  }
+  let Some(init) = lu_init_of(fx, id.name) else {
+    return false;
+  };
+  let ast.ExprIdent(elem) = init else {
+    return false;
+  };
+  if (lu_occ_count(fx, elem.name) != 1 || !lu_sole_last_read(fx, elem, 1)) {
+    return false;
+  }
+  for u in fx.facts.unpacked {
+    if (u.name == elem.name) {
+      let ast.ExprIdent(src) = u.init else {
+        return false;
+      };
+      return lu_occ_count(fx, src.name) == 1 && lu_fresh_bound(fx, src.name);
+    }
+  }
+  return false;
 }
 
 // A local declared once, outside a loop, from an own parameter at its last
@@ -20223,7 +20256,7 @@ function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
       if (rt == LU_LIVE) {
         return LU_LIVE;
       }
-      if (f.origin == "block" || f.origin == "unsafe") {
+      if (lu_if_always_runs(f)) {
         return rt;
       }
       if (f.else_body.len() == 0) {
@@ -20243,6 +20276,14 @@ function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
     }
   }
   return LU_NOT_BRANCH;
+}
+
+// A block, an unsafe block, or an `if (true)`: the then body always runs.
+function lu_if_always_runs(f: ast.StmtIf): boolean {
+  if let ast.ExprBool(b) = f.cond {
+    return b.value;
+  }
+  return f.origin == "block" || f.origin == "unsafe";
 }
 
 // A statement that calls a function which never returns.
