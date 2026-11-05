@@ -1930,26 +1930,22 @@ func with_view {
 }
 
 modes 1 result i64
-v0:i64 v1:i64 v2:i64 v3:i64 v4:i64 v5:i64 v6:i64 v7:i64 v8:i64 v9:boolean v10:i64 v11:i64
+v0:i64 v1:i64 v2:i64 v3:i64 v4:i64 v5:boolean v6:i64 v7:i64
 func wide_literal_tree {
   b0:
     v0 = param 0
-    v1 = const_int 0
+    v1 = const_int -1
     v2 = const_int 1
-    v3 = binary - v1 v2
-    v4 = const_int 1
-    v5 = binary + v0 v4
-    v6 = const_int 0
-    v7 = const_int 2
-    v8 = binary - v6 v7
-    v9 = binary < v5 v8
-    brif v9 b1 b2
+    v3 = binary + v0 v2
+    v4 = const_int -2
+    v5 = binary < v3 v4
+    brif v5 b1 b2
   b1:
-    v10 = const_int 2
-    v11 = binary * v3 v10
-    ret v11
+    v6 = const_int 2
+    v7 = binary * v1 v6
+    ret v7
   b2:
-    ret v5
+    ret v3
 }
 
 modes 2 1 result i32

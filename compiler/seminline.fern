@@ -20,10 +20,10 @@ function max_leaf_blocks(): i32 {
 }
 
 function code_blocks(g: ssa.SFunc): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for b in g.blocks {
     if (b.term.kind_tag != 2 || !only_constants(b.insts)) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
@@ -76,37 +76,37 @@ struct Rewrite { f: ssasem.Func, changed: boolean }
 
 // roots[i] is the function that funcs0[i] is a copy of, or i.
 pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean, roots: i32[]): Inlined {
-  let ix: util.NameIndex = util.name_index(names);
-  let calls: i32[] = call_counts_by_root(funcs0, ix, roots);
-  let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
-  let done: Rounds = splice_rounds(funcs0, rewrite, modes, sp);
-  let rounds: Inlined = done.out;
+  let ix = util.name_index(names);
+  let calls = call_counts_by_root(funcs0, ix, roots);
+  let sp = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
+  let done = splice_rounds(funcs0, rewrite, modes, sp);
+  let rounds = done.out;
   sp = grown_leaves(rounds, done.sp);
-  let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
-  let scalars: Scalars = scalar_all(rounds, names, rewrite, uncalled, modes);
-  let laid: Inlined = fields_all(scalars.out, names, rewrite);
-  let out: Inlined = scrutinee_reads_all(split_all(paired_all(laid, names, rewrite, uncalled), rewrite, scalars.modes));
+  let ctors = constructor_leaves(rounds.funcs, sp);
+  let scalars = scalar_all(rounds, names, rewrite, uncalled, modes);
+  let laid = fields_all(scalars.out, names, rewrite);
+  let out = scrutinee_reads_all(split_all(paired_all(laid, names, rewrite, uncalled), rewrite, scalars.modes));
   dump_wanted(out.funcs);
   return Inlined { ...out, modes: scalars.modes, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
 
 function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], inlinable: boolean[], unnamed: boolean[], always: boolean[], size: boolean): Spliceable {
-  let cycle: i32[] = ownership.cycles(callees_of_all(funcs0, ix));
+  let cycle = ownership.cycles(callees_of_all(funcs0, ix));
   let leaves: boolean[] = [];
   let once: boolean[] = [];
   let shared: boolean[] = [];
   let small: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs0.len()) {
-    let f: ssasem.Func = funcs0[i];
-    let is_leaf: boolean = leaf_spliceable(f, inlinable[i], size);
-    let other: boolean = !is_leaf && inlinable[i] && unnamed[i];
-    let is_shared: boolean = !size && !is_leaf && inlinable[i] && shared_body(f, calls[i], cycle[i], unnamed[i]);
+    let f = funcs0[i];
+    let is_leaf = leaf_spliceable(f, inlinable[i], size);
+    let other = !is_leaf && inlinable[i] && unnamed[i];
+    let is_shared = !size && !is_leaf && inlinable[i] && shared_body(f, calls[i], cycle[i], unnamed[i]);
     small = small.append(is_shared && small_shared_body(f));
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
     once = once.append(is_shared || other && once_spliceable(f, calls[i]));
-    i = i + 1;
+    i += 1;
   }
   return Spliceable { ix: ix, owners: resource_owners(funcs0), leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, always: always, cycle: cycle, size: size };
 }
@@ -127,13 +127,13 @@ function dump_wanted(funcs: ssasem.Func[]): void {
 function dump_func(f: ssasem.Func): void {
   eprint("FUNC " + f.graph.name + " entry=" + util.i32_to_string(f.graph.entry) + " nvals=" + util.i32_to_string(f.graph.nvals));
   for b in f.graph.blocks {
-    let preds: string = "";
+    let preds = "";
     for p in b.preds {
       preds = preds + util.i32_to_string(p) + ",";
     }
     eprint("BLOCK " + util.i32_to_string(b.id) + " preds=" + preds);
     for ins in b.insts {
-      let args: string = "";
+      let args = "";
       for a in ins.args {
         args = args + util.i32_to_string(a) + ",";
       }
@@ -203,10 +203,10 @@ function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolea
   if (sp.size) {
     return tiny;
   }
-  let no_ctors: boolean[] = none_of(tiny.len());
-  let words: boolean[] = returned_words(sofar.funcs, sp.ix, sp.owners);
+  let no_ctors = none_of(tiny.len());
+  let words = returned_words(sofar.funcs, sp.ix, sp.owners);
   for i in 0..sofar.funcs.len() {
-    let f: ssasem.Func = sofar.funcs[i];
+    let f = sofar.funcs[i];
     if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
       && !calls_spliceable(f, sp, no_ctors, tiny, i) && !calls_with_read_word(f, sofar.funcs, sp.ix, words, sp.owners)) {
       tiny = tiny.with(i, true);
@@ -269,7 +269,7 @@ function owns_resource(t: typeinfo.Type, owners: ResourceOwners): boolean {
 }
 
 function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
-  let owners: ResourceOwners = ResourceOwners { names: util.name_index([]), types: util.name_index([]) };
+  let owners = ResourceOwners { names: util.name_index([]), types: util.name_index([]) };
   for f in funcs {
     for finalizer in f.finalizers {
       if (!owners.names.has(finalizer.receiver)) {
@@ -281,10 +281,10 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
     return owners;
   }
   let shapes: OwnerShape[] = [];
-  let seen: util.NameIndex = util.name_index([]);
+  let seen = util.name_index([]);
   for f in funcs {
     for r in f.records.list {
-      let key: string = ssasem.type_key(r.ty);
+      let key = ssasem.type_key(r.ty);
       if (!seen.has(key)) {
         seen = seen.added(key);
         let fields: typeinfo.Type[] = [];
@@ -296,7 +296,7 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
       }
     }
     for e in f.enums {
-      let key: string = ssasem.type_key(e.ty);
+      let key = ssasem.type_key(e.ty);
       if (!seen.has(key)) {
         seen = seen.added(key);
         let fields: typeinfo.Type[] = [];
@@ -309,12 +309,12 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
       }
     }
   }
-  let environments: util.NameIndex = util.name_index([]);
+  let environments = util.name_index([]);
   for f in funcs {
     for rows in [f.envs, f.dyns] {
       for row in rows {
-        let key: string = ssasem.type_key(row.fn_ty);
-        let edge: string = key + "=" + ssasem.type_key(row.env_ty);
+        let key = ssasem.type_key(row.fn_ty);
+        let edge = key + "=" + ssasem.type_key(row.env_ty);
         if (!environments.has(edge)) {
           environments = environments.added(edge);
           shapes = shapes.append(OwnerShape { key: key, fields: [row.env_ty] });
@@ -322,7 +322,7 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
       }
     }
   }
-  let more: boolean = true;
+  let more = true;
   while (more) {
     more = false;
     for shape in shapes {
@@ -348,8 +348,8 @@ function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameInd
   if (!has_word_seed(f, funcs, ix, words, owners)) {
     return [];
   }
-  let read: boolean[] = none_of(f.values.len());
-  let more: boolean = true;
+  let read = none_of(f.values.len());
+  let more = true;
   while (more) {
     more = false;
     for b in f.graph.blocks {
@@ -432,18 +432,18 @@ function can_hold_word(t: typeinfo.Type): boolean {
 
 // Follow return values through known callees before the splice rounds.
 function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): boolean[] {
-  let words: boolean[] = none_of(funcs.len());
-  let more: boolean = true;
+  let words = none_of(funcs.len());
+  let more = true;
   while (more) {
     more = false;
     for i in 0..funcs.len() {
       if (!words[i]) {
-        let read: boolean[] = read_word_values(funcs[i], funcs, ix, words, owners);
+        let read = read_word_values(funcs[i], funcs, ix, words, owners);
         if (read.len() == 0) {
           continue;
         }
         for b in funcs[i].graph.blocks {
-          let returned: boolean = b.term.kind_tag == 1 && b.term.value >= 0 && read[b.term.value];
+          let returned = b.term.kind_tag == 1 && b.term.value >= 0 && read[b.term.value];
           for ins in b.insts {
             if (ins.kind_tag == ssasem.call() && sempair.pair_set_slot(ins.str) >= 0 && reads_any(ins.args, read)) {
               returned = true;
@@ -462,7 +462,7 @@ function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: Resour
 }
 
 function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
-  let read: boolean[] = read_word_values(f, funcs, ix, words, owners);
+  let read = read_word_values(f, funcs, ix, words, owners);
   if (read.len() == 0) {
     return false;
   }
@@ -477,7 +477,7 @@ function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.Nam
 }
 
 function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == ssasem.call() && raw_word_read(ins.str)) {
     return true;
   }
@@ -489,7 +489,7 @@ function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: u
     return false;
   }
   if (k == ssasem.call() || k == ssasem.call_value()) {
-    let at: i32 = called(ins, ix);
+    let at = called(ins, ix);
     if (at < 0 && k == ssasem.call_value()) {
       at = closure_callee(f, ins, ix);
     }
@@ -534,7 +534,7 @@ function reads_any(args: i32[], read: boolean[]): boolean {
 function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once: boolean[], self: i32): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      let j: i32 = called(ins, sp.ix);
+      let j = called(ins, sp.ix);
       if (j >= 0 && j != self && (sp.leaves[j] || ctors[j] || once[j])) {
         return true;
       }
@@ -559,22 +559,22 @@ function unpacker(f: ssasem.Func): boolean {
 // cons leaves. Blocks are not stored in control-flow order, so this walks the
 // successors depth first and looks for an edge back to a block on the path.
 function loops(g: ssa.SFunc): boolean {
-  let at: i32[] = ssa.block_positions(g);
-  let state: i32[] = __alloc_i32(g.blocks.len());
-  let path: i32[] = __alloc_i32(g.blocks.len());
-  let next: i32[] = __alloc_i32(g.blocks.len());
+  let at = ssa.block_positions(g);
+  let state = __alloc_i32(g.blocks.len());
+  let path = __alloc_i32(g.blocks.len());
+  let next = __alloc_i32(g.blocks.len());
   path = path.with(0, g.entry);
   state = state.with(at[g.entry], 1);
-  let depth: i32 = 1;
+  let depth = 1;
   while (depth > 0) {
-    let top: i32 = depth - 1;
-    let succ: i32[] = term_successors(g.blocks[at[path[top]]].term);
+    let top = depth - 1;
+    let succ = term_successors(g.blocks[at[path[top]]].term);
     if (next[top] >= succ.len()) {
       state = state.with(at[path[top]], 2);
       depth = top;
       continue;
     }
-    let s: i32 = succ[next[top]];
+    let s = succ[next[top]];
     next = next.with(top, next[top] + 1);
     if (state[at[s]] == 1) {
       return true;
@@ -583,7 +583,7 @@ function loops(g: ssa.SFunc): boolean {
       state = state.with(at[s], 1);
       path = path.with(depth, s);
       next = next.with(depth, 0);
-      depth = depth + 1;
+      depth += 1;
     }
   }
   return false;
@@ -603,11 +603,11 @@ function term_successors(t: ssa.STerm): i32[] {
 // reads a part of it.
 function only_taken_apart(g: ssa.SFunc, v: i32): boolean {
   let work: i32[] = [v];
-  let read: boolean = false;
-  let next: i32 = 0;
+  let read = false;
+  let next = 0;
   while (next < work.len()) {
-    let w: i32 = work[next];
-    next = next + 1;
+    let w = work[next];
+    next += 1;
     for b in g.blocks {
       for ins in b.insts {
         if (!has_arg(ins.args, w)) {
@@ -669,7 +669,7 @@ function kept_out(funcs: ssasem.Func[], callees: i32[][], calls: i32[], shared: 
     if (!shared[h] || !small_branch_body(funcs[h])) {
       continue;
     }
-    let host: i32 = count_insts(funcs[h].graph);
+    let host = count_insts(funcs[h].graph);
     for g in callees[h] {
       if (g >= 0 && g != h && once[g] && !shared[g] && calls[g] == 1 && host + count_insts(funcs[g].graph) > max_shared_insts()) {
         once = once.with(g, false);
@@ -684,11 +684,11 @@ function small_shared_body(f: ssasem.Func): boolean {
 }
 
 function record_leaf(f: ssasem.Func): boolean {
-  return scalar_record(f, f.result) && leaf_body_limit(f, 0 - 1, max_once_insts());
+  return scalar_record(f, f.result) && leaf_body_limit(f, -1, max_once_insts());
 }
 
 function scalar_record(f: ssasem.Func, t: typeinfo.Type): boolean {
-  let at: i32 = semrecords.find(f.records, t);
+  let at = semrecords.find(f.records, t);
   if (at < 0 || ssasem.has_finalizer(f, t)) {
     return false;
   }
@@ -701,11 +701,11 @@ function scalar_record(f: ssasem.Func, t: typeinfo.Type): boolean {
 }
 
 function returns_boxes(f: ssasem.Func): boolean {
-  let defs: Defs = defs_of(f.graph);
-  let boxed: boolean = false;
+  let defs = defs_of(f.graph);
+  let boxed = false;
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1) {
-      let r: Returned = returned(defs, b.term.value, 0);
+      let r = returned(defs, b.term.value, 0);
       if (!r.ok) {
         return false;
       }
@@ -718,11 +718,11 @@ function returns_boxes(f: ssasem.Func): boolean {
 struct Returned { ok: boolean, boxed: boolean }
 
 function returned(defs: Defs, v: i32, depth: i32): Returned {
-  let d: ssa.SInst = def_inst(defs, through_copies(defs, v));
+  let d = def_inst(defs, through_copies(defs, v));
   if (d.kind_tag == 8 && depth < 8) {
-    let boxed: boolean = false;
+    let boxed = false;
     for a in d.args {
-      let r: Returned = returned(defs, a, depth + 1);
+      let r = returned(defs, a, depth + 1);
       if (!r.ok) {
         return r;
       }
@@ -760,35 +760,35 @@ struct Spliceable { ix: util.NameIndex, owners: ResourceOwners, leaves: boolean[
 struct Rounds { out: Inlined, sp: Spliceable }
 
 function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][], sp: Spliceable): Rounds {
-  let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: [], laid: [] };
+  let out = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: [], laid: [] };
   let alone: boolean[] = [];
   for i in 0..funcs0.len() {
     out = Inlined { ...out, rewritten: out.rewritten.append(false) };
     alone = alone.append(sp.once[i] && !sp.shared[i]);
   }
-  let once: boolean[] = alone;
-  let sizes: i32[] = sizes_of(funcs0);
-  let callees: i32[][] = callees_of_all(funcs0, sp.ix);
-  let folded: boolean = false;
-  let round: i32 = 0;
-  let more: boolean = true;
-  let s: Spliceable = sp;
+  let once = alone;
+  let sizes = sizes_of(funcs0);
+  let callees = callees_of_all(funcs0, sp.ix);
+  let folded = false;
+  let round = 0;
+  let more = true;
+  let s = sp;
   while (more && round < 16) {
     s = grown_leaves(out, s);
     if (folded) {
       s = grown_shared(out, s);
       once = s.once;
     }
-    let ctors: boolean[] = constructor_leaves(out.funcs, s);
+    let ctors = constructor_leaves(out.funcs, s);
     s = Spliceable { ...s, once: kept_out(out.funcs, callees, s.calls, s.shared, s.once) };
     once = kept_out(out.funcs, callees, s.calls, s.shared, grown_unpackers(out, s, ctors, grown_forced(out, s, once)));
     let ready: boolean[] = [];
-    let j: i32 = 0;
+    let j = 0;
     while (j < out.funcs.len()) {
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, s.small, j));
-      j = j + 1;
+      j += 1;
     }
-    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
+    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
     more = next.changed;
     sizes = next.sizes;
     callees = next.callees;
@@ -798,13 +798,13 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       more = true;
     }
     out = next.out;
-    round = round + 1;
+    round += 1;
   }
-  let tiny: boolean[] = none_of(out.funcs.len());
-  let none: boolean[] = none_of(out.funcs.len());
+  let tiny = none_of(out.funcs.len());
+  let none = none_of(out.funcs.len());
   for _ in 0..4 {
     tiny = grown_tiny(out, s, tiny);
-    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small);
+    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small);
     sizes = next.sizes;
     callees = next.callees;
     out = next.out;
@@ -812,7 +812,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       break;
     }
   }
-  let merged: boolean[] = s.once;
+  let merged = s.once;
   for j in 0..once.len() {
     if ((once[j] || tiny[j]) && !merged[j]) {
       merged = merged.with(j, true);
@@ -825,13 +825,13 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
   if (sp.size) {
     return sp;
   }
-  let leaves: boolean[] = sp.leaves;
-  let i: i32 = 0;
+  let leaves = sp.leaves;
+  let i = 0;
   while (i < sofar.funcs.len()) {
     if (!leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && (leaf(sofar.funcs[i]) || updater(sofar.funcs[i]))) {
       leaves = leaves.with(i, true);
     }
-    i = i + 1;
+    i += 1;
   }
   return Spliceable { ...sp, leaves: leaves };
 }
@@ -840,17 +840,17 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
   if (sp.size) {
     return sp;
   }
-  let shared: boolean[] = sp.shared;
-  let once: boolean[] = sp.once;
-  let small: boolean[] = sp.small;
-  let i: i32 = 0;
+  let shared = sp.shared;
+  let once = sp.once;
+  let small = sp.small;
+  let i = 0;
   while (i < sofar.funcs.len()) {
     if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && shared_body(sofar.funcs[i], sp.calls[i], sp.cycle[i], sp.unnamed[i])) {
       shared = shared.with(i, true);
       once = once.with(i, true);
       small = small.with(i, small_shared_body(sofar.funcs[i]));
     }
-    i = i + 1;
+    i += 1;
   }
   return Spliceable { ...sp, shared: shared, once: once, small: small };
 }
@@ -858,14 +858,14 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
 struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][] }
 
 function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
-  let funcs: ssasem.Func[] = prev.funcs;
-  let words: boolean[] = returned_words(funcs, ix, owners);
-  let rewritten: boolean[] = prev.rewritten;
-  let changed: boolean = false;
-  let i: i32 = 0;
+  let funcs = prev.funcs;
+  let words = returned_words(funcs, ix, owners);
+  let rewritten = prev.rewritten;
+  let changed = false;
+  let i = 0;
   while (i < funcs.len()) {
     if (rewrite[i] && (sizes[i] <= max_caller_insts() || sizes[i] <= max_box_saving_caller_insts() && any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready)) {
-      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], i, funcs, sizes, ix, words, owners, ready, ctors, shared, small, false);
+      let spliced = splice_calls(funcs[i], sizes[i], i, funcs, sizes, ix, words, owners, ready, ctors, shared, small, false);
       if (spliced.changed) {
         spliced = Rewrite { ...spliced, f: semdead.prune(split_constructions(spliced.f, modes[i]).f).f };
       }
@@ -877,7 +877,7 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
         changed = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes, callees: callees };
 }
@@ -885,9 +885,9 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
 struct Scalars { out: Inlined, modes: i32[][] }
 
 function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[], modes: i32[][]): Scalars {
-  let s: sempair.Scalarized = sempair.scalar_params(prev.funcs, names, rewrite, unnamed, modes);
-  let funcs: ssasem.Func[] = s.funcs;
-  let rewritten: boolean[] = prev.rewritten;
+  let s = sempair.scalar_params(prev.funcs, names, rewrite, unnamed, modes);
+  let funcs = s.funcs;
+  let rewritten = prev.rewritten;
   for i in 0..funcs.len() {
     if (s.changed[i]) {
       funcs = funcs.with(i, drop_unread(funcs[i]).f);
@@ -898,9 +898,9 @@ function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed:
 }
 
 function fields_all(prev: Inlined, names: string[], rewrite: boolean[]): Inlined {
-  let l: sempair.Laid = sempair.laid_fields(prev.funcs, names, rewrite);
-  let funcs: ssasem.Func[] = l.funcs;
-  let rewritten: boolean[] = prev.rewritten;
+  let l = sempair.laid_fields(prev.funcs, names, rewrite);
+  let funcs = l.funcs;
+  let rewritten = prev.rewritten;
   for i in 0..funcs.len() {
     if (l.changed[i]) {
       funcs = funcs.with(i, drop_unread(funcs[i]).f);
@@ -911,31 +911,31 @@ function fields_all(prev: Inlined, names: string[], rewrite: boolean[]): Inlined
 }
 
 function paired_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[]): Inlined {
-  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, unnamed);
-  let funcs: ssasem.Func[] = p.funcs;
-  let rewritten: boolean[] = prev.rewritten;
-  let i: i32 = 0;
+  let p = sempair.pair_returns(prev.funcs, names, rewrite, unnamed);
+  let funcs = p.funcs;
+  let rewritten = prev.rewritten;
+  let i = 0;
   while (i < funcs.len()) {
     if (p.changed[i]) {
       funcs = funcs.with(i, drop_unread(funcs[i]).f);
       rewritten = rewritten.with(i, true);
     }
-    i = i + 1;
+    i += 1;
   }
   return Inlined { ...prev, funcs: funcs, rewritten: rewritten };
 }
 
 function split_all(prev: Inlined, rewrite: boolean[], modes: i32[][]): Inlined {
-  let funcs: ssasem.Func[] = prev.funcs;
-  let rewritten: boolean[] = prev.rewritten;
-  let i: i32 = 0;
+  let funcs = prev.funcs;
+  let rewritten = prev.rewritten;
+  let i = 0;
   while (i < funcs.len()) {
     if (rewrite[i]) {
-      let split: Rewrite = split_constructions(funcs[i], modes[i]);
+      let split = split_constructions(funcs[i], modes[i]);
       funcs = funcs.with(i, split.f);
       rewritten = rewritten.with(i, rewritten[i] || split.changed);
     }
-    i = i + 1;
+    i += 1;
   }
   return Inlined { ...prev, funcs: funcs, rewritten: rewritten };
 }
@@ -964,11 +964,11 @@ function loops_view(f: ssasem.Func): boolean {
 }
 
 function call_counts(funcs: ssasem.Func[], ix: util.NameIndex): i32[] {
-  let out: i32[] = __alloc_i32(funcs.len());
+  let out = __alloc_i32(funcs.len());
   for f in funcs {
     for b in f.graph.blocks {
       for ins in b.insts {
-        let j: i32 = called(ins, ix);
+        let j = called(ins, ix);
         if (j >= 0) {
           out = out.with(j, out[j] + 1);
         }
@@ -983,15 +983,15 @@ function call_counts(funcs: ssasem.Func[], ix: util.NameIndex): i32[] {
 // counts once, and a copy counts its root's callers too. So a clone is
 // spliced only where its root would be, and its callees as before.
 function call_counts_by_root(funcs: ssasem.Func[], ix: util.NameIndex, roots: i32[]): i32[] {
-  let counts: i32[] = call_counts(funcs, ix);
+  let counts = call_counts(funcs, ix);
   for k in 0..funcs.len() {
-    let r: i32 = roots[k];
+    let r = roots[k];
     if (r != k) {
-      let mine: Sparse = sparse_calls(funcs[k], ix);
-      let theirs: Sparse = sparse_calls(funcs[r], ix);
+      let mine = sparse_calls(funcs[k], ix);
+      let theirs = sparse_calls(funcs[r], ix);
       for at in 0..mine.callees.len() {
-        let j: i32 = mine.callees[at];
-        let both: i32 = sparse_count(theirs, j);
+        let j = mine.callees[at];
+        let both = sparse_count(theirs, j);
         if (mine.counts[at] < both) {
           both = mine.counts[at];
         }
@@ -999,7 +999,7 @@ function call_counts_by_root(funcs: ssasem.Func[], ix: util.NameIndex, roots: i3
       }
     }
   }
-  let out: i32[] = counts;
+  let out = counts;
   for k in 0..funcs.len() {
     if (roots[k] != k) {
       out = out.with(k, counts[k] + counts[roots[k]]);
@@ -1011,12 +1011,12 @@ function call_counts_by_root(funcs: ssasem.Func[], ix: util.NameIndex, roots: i3
 struct Sparse { callees: i32[], counts: i32[] }
 
 function sparse_calls(f: ssasem.Func, ix: util.NameIndex): Sparse {
-  let out: Sparse = Sparse { callees: [], counts: [] };
+  let out = Sparse { callees: [], counts: [] };
   for b in f.graph.blocks {
     for ins in b.insts {
-      let j: i32 = called(ins, ix);
+      let j = called(ins, ix);
       if (j >= 0) {
-        let at: i32 = util.index_of_i32(out.callees, j);
+        let at = util.index_of_i32(out.callees, j);
         if (at < 0) {
           out = Sparse { callees: out.callees.append(j), counts: out.counts.append(1) };
         } else {
@@ -1029,7 +1029,7 @@ function sparse_calls(f: ssasem.Func, ix: util.NameIndex): Sparse {
 }
 
 function sparse_count(s: Sparse, j: i32): i32 {
-  let at: i32 = util.index_of_i32(s.callees, j);
+  let at = util.index_of_i32(s.callees, j);
   if (at < 0) {
     return 0;
   }
@@ -1046,7 +1046,7 @@ pub function own_roots(n: i32): i32[] {
 
 function called(ins: ssa.SInst, ix: util.NameIndex): i32 {
   if (ins.kind_tag != ssasem.call()) {
-    return 0 - 1;
+    return -1;
   }
   return ix.find(ins.str);
 }
@@ -1055,7 +1055,7 @@ function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], shared: boo
   let whole: boolean[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      let j: i32 = called(ins, ix);
+      let j = called(ins, ix);
       if (j >= 0 && j != self && once[j]) {
         if (!shared[j]) {
           return true;
@@ -1076,7 +1076,7 @@ function spliceable(f: ssasem.Func, limit: i32): boolean {
   if (f.graph.takes_env || f.graph.blocks.len() == 0 || f.graph.blocks[f.graph.entry].preds.len() > 0) {
     return false;
   }
-  let returns: boolean = false;
+  let returns = false;
   for b in f.graph.blocks {
     if (b.term.kind_tag < 1 || b.term.kind_tag > 4) {
       return false;
@@ -1087,15 +1087,15 @@ function spliceable(f: ssasem.Func, limit: i32): boolean {
 }
 
 pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
-  let any: boolean = false;
+  let any = false;
   for changed in rewrite {
     any = any || changed;
   }
   if (!any) {
     return funcs;
   }
-  let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
+  let ix = util.name_index(names);
+  let candidates = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   let callbacks: boolean[] = [];
   for ci in 0..candidates.len() {
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
@@ -1108,14 +1108,14 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
 // the small functions those closures call: the only bodies a splice can use.
 // Its cost follows the rewritten functions, not the module.
 pub function inline_made_closures(funcs: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
-  let ix: util.NameIndex = util.name_index(names);
-  let picked: boolean[] = rewrite;
+  let ix = util.name_index(names);
+  let picked = rewrite;
   let todo: i32[] = [];
   for i in 0..funcs.len() {
     if (rewrite[i]) {
       for b in funcs[i].graph.blocks {
         for ins in b.insts {
-          let j: i32 = 0 - 1;
+          let j: i32 = -1;
           if (ins.kind_tag == ssasem.closure_new() && ins.args.len() == 0) {
             j = ix.find(ins.str);
           }
@@ -1127,18 +1127,18 @@ pub function inline_made_closures(funcs: ssasem.Func[], names: string[], modes: 
       }
     }
   }
-  let at: i32 = 0;
+  let at = 0;
   while (at < todo.len()) {
     for b in funcs[todo[at]].graph.blocks {
       for ins in b.insts {
-        let j: i32 = called(ins, ix);
+        let j = called(ins, ix);
         if (j >= 0 && !picked[j] && count_insts(funcs[j].graph) <= max_leaf_insts()) {
           picked = picked.with(j, true);
           todo = todo.append(j);
         }
       }
     }
-    at = at + 1;
+    at += 1;
   }
   let index: i32[] = [];
   let sub: ssasem.Func[] = [];
@@ -1156,8 +1156,8 @@ pub function inline_made_closures(funcs: ssasem.Func[], names: string[], modes: 
       sub_rewrite = sub_rewrite.append(rewrite[i]);
     }
   }
-  let made: ssasem.Func[] = inline_closures(sub, sub_names, sub_modes, sub_inlinable, sub_rewrite);
-  let out: ssasem.Func[] = funcs;
+  let made = inline_closures(sub, sub_names, sub_modes, sub_inlinable, sub_rewrite);
+  let out = funcs;
   for k in 0..index.len() {
     if (sub_rewrite[k]) {
       out = out.with(index[k], made[k]);
@@ -1169,26 +1169,26 @@ pub function inline_made_closures(funcs: ssasem.Func[], names: string[], modes: 
 // Splices into each rewritten function the capture-free closures it calls,
 // from candidates whose own leaves the inliner has already spliced.
 pub function splice_closures(funcs: ssasem.Func[], candidates: ssasem.Func[], ix: util.NameIndex, inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
-  let owners: ResourceOwners = resource_owners(candidates);
-  let words: boolean[] = returned_words(candidates, ix, owners);
+  let owners = resource_owners(candidates);
+  let words = returned_words(candidates, ix, owners);
   let leaves: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
-    let env: i32 = unused_environment(candidates[i]);
+    let env = unused_environment(candidates[i]);
     leaves = leaves.append(inlinable[i] && env >= 0 && leaf_body(candidates[i], env));
-    i = i + 1;
+    i += 1;
   }
-  let sizes: i32[] = sizes_of(candidates);
+  let sizes = sizes_of(candidates);
   let out: ssasem.Func[] = [];
   i = 0;
   while (i < funcs.len()) {
-    let f: ssasem.Func = funcs[i];
-    let size: i32 = count_insts(f.graph);
+    let f = funcs[i];
+    let size = count_insts(f.graph);
     if (rewrite[i] && size <= max_caller_insts()) {
       f = drop_unread(splice_calls(f, size, i, candidates, sizes, ix, words, owners, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
     }
     out = out.append(f);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1201,7 +1201,7 @@ function parameter_value(f: ssasem.Func, index: i32): i32 {
       }
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function reads(g: ssa.SFunc, value: i32): boolean {
@@ -1221,13 +1221,13 @@ function reads(g: ssa.SFunc, value: i32): boolean {
 }
 
 function unused_environment(f: ssasem.Func): i32 {
-  let contract: ssasem.Contract = ssasem.Contract { name: f.graph.name, params: f.params, modes: [], result: f.result };
+  let contract = ssasem.Contract { name: f.graph.name, params: f.params, modes: [], result: f.result };
   if (!ssasem.closure_env(contract) || ssasem.closure_captures(contract).len() != 0) {
-    return 0 - 1;
+    return -1;
   }
-  let env: i32 = parameter_value(f, 0);
+  let env = parameter_value(f, 0);
   if (env < 0 || reads(f.graph, env)) {
-    return 0 - 1;
+    return -1;
   }
   return env;
 }
@@ -1264,7 +1264,7 @@ function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
 }
 
 function member_read(f: ssasem.Func, ins: ssa.SInst): boolean {
-  let e: i32 = semrecords.find_enum(f.enums, f.values[ins.args[0]]);
+  let e = semrecords.find_enum(f.enums, f.values[ins.args[0]]);
   return e >= 0 && f.enums[e].layout == semrecords.layout_member();
 }
 
@@ -1275,27 +1275,27 @@ function member_read(f: ssasem.Func, ins: ssa.SInst): boolean {
 // ownership walk sees one reader of the box and can take the field.
 function scrutinee_reads_all(out: Inlined): Inlined {
   let funcs: ssasem.Func[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < out.funcs.len()) {
-    let f: ssasem.Func = out.funcs[i];
+    let f = out.funcs[i];
     if (out.rewritten[i]) {
       f = scrutinee_reads(f);
     }
     funcs = funcs.append(f);
-    i = i + 1;
+    i += 1;
   }
   return Inlined { ...out, funcs: funcs };
 }
 
 function scrutinee_reads(f: ssasem.Func): ssasem.Func {
-  let narrowed: ssa.SInst[] = narrowings(f);
-  let changed: boolean = false;
+  let narrowed = narrowings(f);
+  let changed = false;
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
       if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.args[0] >= 0 && narrowed[ins.args[0]].result >= 0) {
-        let n: ssa.SInst = narrowed[ins.args[0]];
+        let n = narrowed[ins.args[0]];
         insts = insts.append(ssa.SInst { ...ins, kind_tag: ssasem.variant_get(), args: [n.args[0]], str: n.str });
         changed = true;
       } else {
@@ -1313,7 +1313,7 @@ function scrutinee_reads(f: ssasem.Func): ssasem.Func {
 // For each value that narrows a struct-union to a member, its definition;
 // a definition with no result for every other value.
 function narrowings(f: ssasem.Func): ssa.SInst[] {
-  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
   while (out.len() < f.graph.nvals) {
     out = out.append(none);
@@ -1468,18 +1468,18 @@ function void_type(t: typeinfo.Type): boolean {
 }
 
 function leaf(f: ssasem.Func): boolean {
-  return leaf_body(f, 0 - 1);
+  return leaf_body(f, -1);
 }
 
 function updater(f: ssasem.Func): boolean {
   if (!updater_shape(f)) {
     return false;
   }
-  let b: ssa.SBlock = f.graph.blocks[0];
-  let built: i32 = 0 - 1;
-  let n: i32 = 0;
+  let b = f.graph.blocks[0];
+  let built: i32 = -1;
+  let n = 0;
   for ins in b.insts {
-    let role: i32 = updater_role(f, ins);
+    let role = updater_role(f, ins);
     if (role < 0 || role == 2 && built >= 0) {
       return false;
     }
@@ -1487,7 +1487,7 @@ function updater(f: ssasem.Func): boolean {
       built = ins.result;
     }
     if (role > 0) {
-      n = n + 1;
+      n += 1;
     }
   }
   return built >= 0 && b.term.value == built && n <= max_leaf_insts();
@@ -1498,7 +1498,7 @@ function updater_shape(f: ssasem.Func): boolean {
 }
 
 function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == ssasem.param() || line_mark(k)) {
     return 0;
   }
@@ -1508,7 +1508,7 @@ function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
   if (k == ssasem.record_new() && record_param(f, ssasem.update_base(ins))) {
     return 2;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function record_param(f: ssasem.Func, v: i32): boolean {
@@ -1525,12 +1525,12 @@ function record_param(f: ssasem.Func, v: i32): boolean {
 
 function constructor_leaves(funcs: ssasem.Func[], sp: Spliceable): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     out = out.append(sp.inlinable[i] && !sp.leaves[i] && (!sp.once[i] || sp.shared[i]) && constructor_body(funcs[i]));
-    i = i + 1;
+    i += 1;
   }
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
     i = 0;
@@ -1539,7 +1539,7 @@ function constructor_leaves(funcs: ssasem.Func[], sp: Spliceable): boolean[] {
         out = out.with(i, false);
         changed = true;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
@@ -1552,8 +1552,8 @@ function constructor_body(f: ssasem.Func): boolean {
   if (f.graph.blocks[f.graph.entry].preds.len() > 0) {
     return false;
   }
-  let returned: i32 = 0 - 1;
-  let n: i32 = 0;
+  let returned: i32 = -1;
+  let n = 0;
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1) {
       if (returned >= 0 || b.term.value < 0) {
@@ -1571,7 +1571,7 @@ function constructor_body(f: ssasem.Func): boolean {
         return false;
       }
       if (ins.kind_tag != ssasem.param() && !line_mark(ins.kind_tag)) {
-        n = n + 1;
+        n += 1;
       }
     }
   }
@@ -1606,7 +1606,7 @@ function calls_constructors(f: ssasem.Func, ix: util.NameIndex, ctors: boolean[]
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
-        let j: i32 = ix.find(ins.str);
+        let j = ix.find(ins.str);
         if (j < 0 || j == self || !ctors[j]) {
           return false;
         }
@@ -1626,36 +1626,36 @@ function literal_args(b: ssa.SBlock, k: i32): boolean {
 }
 
 function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
-  let j: i32 = k - 1;
+  let j = k - 1;
   while (j >= 0) {
     if (b.insts[j].result == v) {
       return literal_kind(b.insts[j].kind_tag);
     }
-    j = j - 1;
+    j -= 1;
   }
   return false;
 }
 
 function none_of(n: i32): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(false);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
-  let records: i32 = 0;
+  let records = 0;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result >= 0 && ins.result != ignored) {
-        let t: typeinfo.Type = f.values[ins.result];
+        let t = f.values[ins.result];
         if (record(t)) {
-          records = records + 1;
+          records += 1;
         } else if (!leaf_word(f, t) && !void_type(t) && !read_view_param(f, ins) && !lent_to_kernels(f, ins)) {
-          return 0 - 1;
+          return -1;
         }
       }
     }
@@ -1677,13 +1677,13 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
   if (!leaf_word(f, f.result)) {
     return false;
   }
-  let records: i32 = leaf_value_records(f, ignored);
+  let records = leaf_value_records(f, ignored);
   if (records < 0) {
     return false;
   }
-  let record_sources: i32 = 0;
-  let n: i32 = 0;
-  let returns: boolean = false;
+  let record_sources = 0;
+  let n = 0;
+  let returns = false;
   for b in f.graph.blocks {
     if (b.term.kind_tag < 1 || b.term.kind_tag > 4) {
       return false;
@@ -1698,13 +1698,13 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
       }
       if (ins.kind_tag == ssasem.param()) {
         if (ins.result != ignored && record(f.values[ins.result])) {
-          record_sources = record_sources + 1;
+          record_sources += 1;
         }
       } else if (!line_mark(ins.kind_tag)) {
         if ((ins.kind_tag == ssasem.variant_get() || ins.kind_tag == ssasem.record_new()) && record(f.values[ins.result])) {
-          record_sources = record_sources + 1;
+          record_sources += 1;
         }
-        n = n + 1;
+        n += 1;
       }
     }
   }
@@ -1712,19 +1712,19 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
 }
 
 function ready_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex, ready: boolean[], closures: boolean): i32 {
-  let j: i32 = called(ins, ix);
+  let j = called(ins, ix);
   if (closures) {
     j = closure_callee(f, ins, ix);
   }
   if (j < 0 || !ready[j]) {
-    return 0 - 1;
+    return -1;
   }
   return j;
 }
 
 function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32 {
   if (ins.kind_tag != ssasem.call_value() || ins.args.len() == 0) {
-    return 0 - 1;
+    return -1;
   }
   for b in f.graph.blocks {
     for d in b.insts {
@@ -1733,42 +1733,42 @@ function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32
       }
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
-  let f: ssasem.Func = f0;
-  let fsize: i32 = size;
-  let done: i32 = 0;
+  let f = f0;
+  let fsize = size;
+  let done = 0;
   let swap: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.graph.blocks.len() && done < max_splices()) {
-    let k: i32 = 0;
-    let spliced: boolean = false;
+    let k = 0;
+    let spliced = false;
     while (k < f.graph.blocks[bi].insts.len() && !spliced && done < max_splices()) {
-      let at: i32 = ready_callee(f, f.graph.blocks[bi].insts[k], ix, ready, closures);
+      let at = ready_callee(f, f.graph.blocks[bi].insts[k], ix, ready, closures);
       if (at >= 0 && ctors[at] && !shared[at] && !literal_args(f.graph.blocks[bi], k)) {
-        at = 0 - 1;
+        at = -1;
       }
       if (at >= 0 && shared[at] && !small_branch_body(funcs[at])) {
         f = renamed(f, swap);
         swap = [];
-        let r: i32 = f.graph.blocks[bi].insts[k].result;
+        let r = f.graph.blocks[bi].insts[k].result;
         if (!shared_call_saves_box(f, funcs[at], r, small[at], ix, shared)) {
-          at = 0 - 1;
+          at = -1;
         }
       }
       // Every splice path must keep an owner alive through a borrowed-word call.
       if (at >= 0 && at != self && !calls_with_read_word(funcs[at], funcs, ix, words, owners)
         && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0
         || fsize + sizes[at] <= max_box_saving_caller_insts() && saves_box(funcs, sizes, at, shared))) {
-        done = done + 1;
+        done += 1;
         if (straight(funcs[at])) {
-          let ip: InPlace = splice_in_place(f, bi, k, funcs[at]);
+          let ip = splice_in_place(f, bi, k, funcs[at]);
           f = ip.f;
           if (ip.from >= 0) {
             while (swap.len() <= ip.from) {
-              swap = swap.append(0 - 1);
+              swap = swap.append(-1);
             }
             swap = swap.with(ip.from, ip.to);
           }
@@ -1780,22 +1780,22 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
         fsize = count_insts(f.graph);
         spliced = true;
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return Rewrite { f: renamed(f, swap), changed: done > 0 };
 }
 
 function shared_call_saves_box(f: ssasem.Func, callee: ssasem.Func, r: i32, small: boolean, ix: util.NameIndex, shared: boolean[]): boolean {
-  let apart: boolean = small && !whole_at(sempair.whole_values(f, ix, shared, false), r);
-  let projected: boolean = record_leaf(callee) && reads_parts_of(f, r);
+  let apart = small && !whole_at(sempair.whole_values(f, ix, shared, false), r);
+  let projected = record_leaf(callee) && reads_parts_of(f, r);
   return apart || projected || returned_only(f, r) && takes_apart(f, r);
 }
 
 function returned_only(f: ssasem.Func, v: i32): boolean {
-  let names: i32[] = copies_of(f, v);
-  let returned: boolean = false;
+  let names = copies_of(f, v);
+  let returned = false;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != 7 && (named_arg(ins.args, names) || util.index_of_i32(names, ssasem.update_base(ins)) >= 0)) {
@@ -1819,7 +1819,7 @@ function copies_of(f: ssasem.Func, v: i32): i32[] {
 
 function aliases_of(f: ssasem.Func, v: i32, phis: boolean): i32[] {
   let names: i32[] = [v];
-  let grew: boolean = true;
+  let grew = true;
   while (grew) {
     grew = false;
     for b in f.graph.blocks {
@@ -1866,7 +1866,7 @@ function whole_at(whole: boolean[], v: i32): boolean {
 // caller reads its fields. Such a phi is a whole use until the call is
 // spliced, but the field read still makes the bounded splice useful.
 function reads_parts_of(f: ssasem.Func, v: i32): boolean {
-  let names: i32[] = aliases_of(f, v, true);
+  let names = aliases_of(f, v, true);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.record_get() && named_arg(ins.args, names)) {
@@ -1878,7 +1878,7 @@ function reads_parts_of(f: ssasem.Func, v: i32): boolean {
 }
 
 function next_block_id(g: ssa.SFunc): i32 {
-  let hi: i32 = 0;
+  let hi = 0;
   for b in g.blocks {
     if (b.id >= hi) {
       hi = b.id + 1;
@@ -1902,17 +1902,17 @@ function term_targets(t: ssa.STerm): i32[] {
 }
 
 function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
-  let g: ssa.SFunc = f.graph;
-  let b: ssa.SBlock = g.blocks[bi];
-  let call: ssa.SInst = b.insts[k];
-  let base: i32 = g.nvals;
-  let first: i32 = next_block_id(g);
-  let cont: i32 = first + callee.graph.blocks.len();
+  let g = f.graph;
+  let b = g.blocks[bi];
+  let call = b.insts[k];
+  let base = g.nvals;
+  let first = next_block_id(g);
+  let cont = first + callee.graph.blocks.len();
   let vmap: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < callee.graph.nvals) {
     vmap = vmap.append(base + v);
-    v = v + 1;
+    v += 1;
   }
   for cb in callee.graph.blocks {
     for ins in cb.insts {
@@ -1921,14 +1921,14 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
       }
     }
   }
-  let pos: i32[] = block_positions(callee.graph);
-  let entry_id: i32 = callee.graph.blocks[callee.graph.entry].id;
+  let pos = block_positions(callee.graph);
+  let entry_id = callee.graph.blocks[callee.graph.entry].id;
   let copied: ssa.SBlock[] = [];
   let rets: i32[] = [];
   let ret_vals: i32[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < callee.graph.blocks.len()) {
-    let cb: ssa.SBlock = callee.graph.blocks[j];
+    let cb = callee.graph.blocks[j];
     let insts: ssa.SInst[] = [];
     for ins in cb.insts {
       if (ins.kind_tag == ssasem.param()) {
@@ -1943,7 +1943,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     if (cb.id == entry_id) {
       preds = [b.id];
     }
-    let t: ssa.STerm = cb.term;
+    let t = cb.term;
     if (t.kind_tag == 1) {
       rets = rets.append(first + j);
       if (t.value >= 0) {
@@ -1956,20 +1956,20 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
       t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + position_of(pos, t.t), f: first + position_of(pos, t.f) };
     }
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
-    j = j + 1;
+    j += 1;
   }
-  let values: typeinfo.Type[] = util.append_all(f.values, callee.values);
-  let swap: i32[] = result_swap(call, rets, ret_vals, values);
+  let values = util.append_all(f.values, callee.values);
+  let swap = result_swap(call, rets, ret_vals, values);
   let head: ssa.SInst[] = [];
   let tail: ssa.SInst[] = [];
-  let kind: i32 = 8;
+  let kind = 8;
   if (rets.len() == 1) {
     kind = 7;
   }
   if (call.result >= 0 && ret_vals.len() > 0 && swap.len() == 0) {
     tail = tail.append(ssa.SInst { kind_tag: kind, result: call.result, args: ret_vals, imm: 0, str: "" });
   }
-  let p: i32 = 0;
+  let p = 0;
   while (p < b.insts.len()) {
     if (p < k) {
       head = head.append(b.insts[p]);
@@ -1977,10 +1977,10 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     if (p > k) {
       tail = tail.append(b.insts[p]);
     }
-    p = p + 1;
+    p += 1;
   }
   let blocks: ssa.SBlock[] = [];
-  let targets: i32[] = term_targets(b.term);
+  let targets = term_targets(b.term);
   for ob in g.blocks {
     if (ob.id == b.id) {
       blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: br(first + position_of(pos, entry_id)) });
@@ -2002,7 +2002,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     blocks = blocks.append(cb);
   }
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
-  let joined: ssasem.Func = with_tables(f, callee, vmap);
+  let joined = with_tables(f, callee, vmap);
   return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) };
 }
 
@@ -2013,16 +2013,16 @@ function straight(f: ssasem.Func): boolean {
 struct InPlace { f: ssasem.Func, from: i32, to: i32 }
 
 function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): InPlace {
-  let g: ssa.SFunc = f.graph;
-  let b: ssa.SBlock = g.blocks[bi];
-  let call: ssa.SInst = b.insts[k];
-  let base: i32 = g.nvals;
-  let cb: ssa.SBlock = callee.graph.blocks[0];
+  let g = f.graph;
+  let b = g.blocks[bi];
+  let call = b.insts[k];
+  let base = g.nvals;
+  let cb = callee.graph.blocks[0];
   let vmap: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < callee.graph.nvals) {
     vmap = vmap.append(base + v);
-    v = v + 1;
+    v += 1;
   }
   for ins in cb.insts {
     if (ins.kind_tag == ssasem.param()) {
@@ -2030,10 +2030,10 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
     }
   }
   let insts: ssa.SInst[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < k) {
     insts = insts.append(b.insts[p]);
-    p = p + 1;
+    p += 1;
   }
   for ins in cb.insts {
     if (ins.kind_tag == ssasem.param()) {
@@ -2045,19 +2045,19 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
   if (cb.term.value >= 0) {
     ret_vals = [vmap[cb.term.value]];
   }
-  let values: typeinfo.Type[] = util.append_all(f.values, callee.values);
-  let swap: i32[] = result_swap(call, [0], ret_vals, values);
+  let values = util.append_all(f.values, callee.values);
+  let swap = result_swap(call, [0], ret_vals, values);
   if (call.result >= 0 && ret_vals.len() > 0 && swap.len() == 0) {
     insts = insts.append(ssa.SInst { kind_tag: 7, result: call.result, args: ret_vals, imm: 0, str: "" });
   }
   p = k + 1;
   while (p < b.insts.len()) {
     insts = insts.append(b.insts[p]);
-    p = p + 1;
+    p += 1;
   }
-  let joined: ssasem.Func = with_tables(f, callee, vmap);
-  let blocks: ssa.SBlock[] = g.blocks.with(bi, ssa.SBlock { ...b, insts: insts });
-  let out: ssasem.Func = ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals }, values: values };
+  let joined = with_tables(f, callee, vmap);
+  let blocks = g.blocks.with(bi, ssa.SBlock { ...b, insts: insts });
+  let out = ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals }, values: values };
   if (swap.len() == 0) {
     return InPlace { f: out, from: 0 - 1, to: 0 - 1 };
   }
@@ -2069,7 +2069,7 @@ function renamed(f: ssasem.Func, swap: i32[]): ssasem.Func {
 }
 
 function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.Func {
-  let calls: ssasem.Contract[] = f.calls;
+  let calls = f.calls;
   for c in callee.calls {
     if (ssasem.find_contract_in(calls, c.name) < 0) {
       calls = calls.append(c);
@@ -2081,41 +2081,41 @@ function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.F
       fresh = fresh.append(r);
     }
   }
-  let table: semrecords.Records = f.records;
+  let table = f.records;
   if (fresh.len() > 0) {
-    let records: semrecords.Record[] = f.records.list;
+    let records = f.records.list;
     for r in fresh {
       records = records.append(r);
     }
     table = semrecords.records_of(records);
   }
-  let enums: semrecords.Enum[] = f.enums;
+  let enums = f.enums;
   for e in callee.enums {
     if (semrecords.find_enum(enums, e.ty) < 0) {
       enums = enums.append(e);
     }
   }
-  let anchors: ssasem.Anchor[] = f.anchors;
+  let anchors = f.anchors;
   for a in callee.anchors {
     if (!ssasem.anchored(anchors, a.name)) {
       anchors = anchors.append(a);
     }
   }
-  let dbg_vals: i32[] = f.dbg_vals;
-  let dbg_names: string[] = f.dbg_names;
-  let i: i32 = 0;
+  let dbg_vals = f.dbg_vals;
+  let dbg_names = f.dbg_names;
+  let i = 0;
   while (i < callee.dbg_vals.len()) {
     dbg_vals = dbg_vals.append(mapped(vmap, callee.dbg_vals[i]));
     dbg_names = dbg_names.append(callee.dbg_names[i]);
-    i = i + 1;
+    i += 1;
   }
   return ssasem.Func { ...f, calls: calls, records: table, enums: enums, schema_checked: f.schema_checked && fresh.len() == 0 && enums.len() == f.enums.len(), envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names, source_positions: sourcepos.merge(f.source_positions, callee.source_positions, vmap) };
 }
 
 function with_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
-  let out: ssasem.EnvRow[] = rows;
+  let out = rows;
   for m in more {
-    let seen: boolean = false;
+    let seen = false;
     for r in out {
       if (semtypes.equal(r.fn_ty, m.fn_ty) && semtypes.equal(r.env_ty, m.env_ty)) {
         seen = true;
@@ -2136,32 +2136,32 @@ function mapped(vmap: i32[], v: i32): i32 {
 }
 
 function index_of(xs: i32[], x: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == x) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function block_positions(g: ssa.SFunc): i32[] {
-  let at: i32[] = __alloc_i32(next_block_id(g));
-  let j: i32 = 0;
+  let at = __alloc_i32(next_block_id(g));
+  let j = 0;
   while (j < g.blocks.len()) {
-    let id: i32 = g.blocks[j].id;
+    let id = g.blocks[j].id;
     if (id >= 0 && at[id] == 0) {
       at = at.with(id, j + 1);
     }
-    j = j + 1;
+    j += 1;
   }
   return at;
 }
 
 function position_of(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
-    return 0 - 1;
+    return -1;
   }
   return at[id] - 1;
 }
@@ -2175,13 +2175,13 @@ function no_inst(): ssa.SInst {
 function defs_of(g: ssa.SFunc): Defs {
   let insts: ssa.SInst[] = [];
   let blocks: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < g.nvals) {
     insts = insts.append(no_inst());
-    blocks = blocks.append(0 - 1);
-    v = v + 1;
+    blocks = blocks.append(-1);
+    v += 1;
   }
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < g.blocks.len()) {
     for ins in g.blocks[bi].insts {
       if (ins.result >= 0 && ins.result < insts.len()) {
@@ -2189,7 +2189,7 @@ function defs_of(g: ssa.SFunc): Defs {
         blocks = blocks.with(ins.result, bi);
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return Defs { insts: insts, blocks: blocks };
 }
@@ -2208,13 +2208,13 @@ function builds(k: i32): boolean {
 struct Part { ok: boolean, value: i32, flag: i32, filler: boolean }
 
 function part(built: ssa.SInst, read: ssa.SInst): Part {
-  let none: Part = Part { ok: false, value: 0 - 1, flag: 0 - 1, filler: false };
-  let k: i32 = read.kind_tag;
+  let none = Part { ok: false, value: 0 - 1, flag: 0 - 1, filler: false };
+  let k = read.kind_tag;
   if (k == ssasem.variant_is()) {
     if (built.kind_tag != ssasem.variant_new()) {
       return none;
     }
-    let flag: i32 = 0;
+    let flag = 0;
     if (built.str == read.str) {
       flag = 1;
     }
@@ -2247,17 +2247,17 @@ function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
   if (!reads_parts(f0.graph)) {
     return Rewrite { f: f0, changed: false };
   }
-  let f: ssasem.Func = f0;
-  let round: i32 = 0;
-  let changed: boolean = true;
-  let rewritten: boolean = false;
+  let f = f0;
+  let round = 0;
+  let changed = true;
+  let rewritten = false;
   while (changed && round < 8) {
-    let split: Rewrite = split_round(f, modes);
-    let swept: Rewrite = drop_unread(split.f);
+    let split = split_round(f, modes);
+    let swept = drop_unread(split.f);
     changed = split.changed || swept.changed;
     f = swept.f;
     rewritten = rewritten || changed;
-    round = round + 1;
+    round += 1;
   }
   if (rewritten) {
     f = ssasem.Func { ...f, graph: ssa.prune_trivial_phis(f.graph).f };
@@ -2266,16 +2266,16 @@ function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
 }
 
 function split_round(f: ssasem.Func, modes: i32[]): Rewrite {
-  let defs: Defs = defs_of(f.graph);
+  let defs = defs_of(f.graph);
   let swap: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < f.graph.nvals) {
-    swap = swap.append(0 - 1);
-    v = v + 1;
+    swap = swap.append(-1);
+    v += 1;
   }
-  let chained: boolean[] = chained_rebuilds(f, defs, modes);
-  let e: Edits = Edits { defs: defs, base: f.values.len(), added: [], swap: swap, entry: [], heads: [], kept: kept_values(f.graph), chained: chained };
-  let any: boolean = false;
+  let chained = chained_rebuilds(f, defs, modes);
+  let e = Edits { defs: defs, base: f.values.len(), added: [], swap: swap, entry: [], heads: [], kept: kept_values(f.graph), chained: chained };
+  let any = false;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (sempair.reads_apart(ins.kind_tag) && ins.args.len() == 1 && splittable(f, e.defs, ins.args[0])) {
@@ -2302,7 +2302,7 @@ function reads_parts(g: ssa.SFunc): boolean {
 }
 
 function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
-  let k: i32 = def_inst(defs, through_copies(defs, v)).kind_tag;
+  let k = def_inst(defs, through_copies(defs, v)).kind_tag;
   if (!builds(k) && k != 8) {
     return false;
   }
@@ -2310,15 +2310,15 @@ function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
 }
 
 function through_copies(defs: Defs, v: i32): i32 {
-  let x: i32 = v;
-  let steps: i32 = 0;
+  let x = v;
+  let steps = 0;
   while (steps < 64) {
-    let d: ssa.SInst = def_inst(defs, x);
+    let d = def_inst(defs, x);
     if (d.kind_tag != 7 || d.args.len() != 1) {
       return x;
     }
     x = d.args[0];
-    steps = steps + 1;
+    steps += 1;
   }
   return x;
 }
@@ -2328,16 +2328,16 @@ function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
 }
 
 function kept_values(g: ssa.SFunc): boolean[] {
-  let kept: boolean[] = used_whole(g);
-  let copy_b: i32[] = __alloc_i32(g.nvals);
-  let copy_k: i32[] = __alloc_i32(g.nvals);
+  let kept = used_whole(g);
+  let copy_b = __alloc_i32(g.nvals);
+  let copy_k = __alloc_i32(g.nvals);
   let work: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < g.blocks.len()) {
-    let insts: ssa.SInst[] = g.blocks[bi].insts;
-    let k: i32 = 0;
+    let insts = g.blocks[bi].insts;
+    let k = 0;
     while (k < insts.len()) {
-      let ins: ssa.SInst = insts[k];
+      let ins = insts[k];
       if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.result >= 0 && ins.result < g.nvals) {
         copy_b = copy_b.with(ins.result, bi + 1);
         copy_k = copy_k.with(ins.result, k);
@@ -2345,14 +2345,14 @@ function kept_values(g: ssa.SFunc): boolean[] {
           work = work.append(ins.result);
         }
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let at: i32 = 0;
+  let at = 0;
   while (at < work.len()) {
-    let v: i32 = work[at];
-    at = at + 1;
+    let v = work[at];
+    at += 1;
     for a in g.blocks[copy_b[v] - 1].insts[copy_k[v]].args {
       if (a >= 0 && a < g.nvals && !kept[a]) {
         kept = kept.with(a, true);
@@ -2366,7 +2366,7 @@ function kept_values(g: ssa.SFunc): boolean[] {
 }
 
 function used_whole(g: ssa.SFunc): boolean[] {
-  let kept: boolean[] = __alloc_bool(g.nvals);
+  let kept = __alloc_bool(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
       if (!sempair.reads_apart(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
@@ -2388,7 +2388,7 @@ function marked(flags: boolean[], v: i32): boolean {
 }
 
 function all_kept(own kept: boolean[], vs: i32[]): boolean[] {
-  let out: boolean[] = kept;
+  let out = kept;
   for v in vs {
     if (v >= 0 && v < out.len()) {
       out = out.with(v, true);
@@ -2402,13 +2402,13 @@ function resolve(f: ssasem.Func, own e: Edits, read: ssa.SInst): Edits {
   if (!feasible.0) {
     return e;
   }
-  let w: Walk = part_of(f, Walk { e: e, value: 0 - 1, phis: [], parts: [] }, read, read.args[0], 0);
+  let w = part_of(f, Walk { e: e, value: 0 - 1, phis: [], parts: [] }, read, read.args[0], 0);
   return Edits { ...w.e, swap: w.e.swap.with(read.result, w.value) };
 }
 
 function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i32, phis: i32[]): (boolean, i32[]) {
-  let x: i32 = through_copies(e.defs, v);
-  let d: ssa.SInst = def_inst(e.defs, x);
+  let x = through_copies(e.defs, v);
+  let d = def_inst(e.defs, x);
   if (depth > 32 || blocked(f, e, read, x)) {
     return (false, phis);
   }
@@ -2418,7 +2418,7 @@ function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i3
   if (d.kind_tag != 8 || index_of(phis, x) >= 0) {
     return (d.kind_tag == 8 || d.kind_tag == ssasem.zero(), phis);
   }
-  let seen: i32[] = phis.append(x);
+  let seen = phis.append(x);
   for a in d.args {
     let step: (boolean, i32[]) = resolvable(f, e, read, a, depth + 1, seen);
     seen = step.1;
@@ -2436,28 +2436,28 @@ function blocked(f: ssasem.Func, e: Edits, read: ssa.SInst, x: i32): boolean {
 struct Walk { e: Edits, value: i32, phis: i32[], parts: i32[] }
 
 function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i32): Walk {
-  let ty: typeinfo.Type = f.values[read.result];
-  let x: i32 = through_copies(w.e.defs, v);
-  let d: ssa.SInst = def_inst(w.e.defs, x);
+  let ty = f.values[read.result];
+  let x = through_copies(w.e.defs, v);
+  let d = def_inst(w.e.defs, x);
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
-    let p: Part = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
+    let p = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
     if (builds(d.kind_tag)) {
       p = part(d, read);
     }
     return part_value(w, p, ty);
   }
-  let seen: i32 = index_of(w.phis, x);
+  let seen = index_of(w.phis, x);
   if (seen >= 0) {
     return Walk { ...w, value: w.parts[seen] };
   }
-  let made: i32 = made_part(w.e, x, read, ty);
+  let made = made_part(w.e, x, read, ty);
   if (made >= 0) {
     return Walk { ...w, value: made };
   }
-  let e0: Edits = w.e;
-  let d0: Defs = e0.defs;
-  let nv: i32 = e0.base + e0.added.len();
-  let pb: i32 = d0.blocks[x];
+  let e0 = w.e;
+  let d0 = e0.defs;
+  let nv = e0.base + e0.added.len();
+  let pb = d0.blocks[x];
   let cur: Walk = Walk {
     e: Edits { ...e0, defs: Defs { insts: d0.insts.append(no_inst()), blocks: d0.blocks.append(pb) }, added: e0.added.append(ty) },
     value: 0 - 1, phis: w.phis.append(x), parts: w.parts.append(nv),
@@ -2467,9 +2467,9 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
     cur = part_of(f, cur, read, a, depth + 1);
     args = args.append(cur.value);
   }
-  let ins: ssa.SInst = ssa.SInst { kind_tag: 8, result: nv, args: args, imm: 0, str: "" };
-  let e1: Edits = cur.e;
-  let d1: Defs = e1.defs;
+  let ins = ssa.SInst { kind_tag: 8, result: nv, args: args, imm: 0, str: "" };
+  let e1 = cur.e;
+  let d1 = e1.defs;
   return Walk { ...cur, e: Edits { ...e1, defs: Defs { ...d1, insts: d1.insts.with(nv, ins) }, heads: e1.heads.append(Head { block: pb, ins: ins, of: x, read: read }) }, value: nv };
 }
 
@@ -2479,12 +2479,12 @@ function made_part(e: Edits, x: i32, read: ssa.SInst, ty: typeinfo.Type): i32 {
       return h.ins.result;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function chained_rebuilds(f: ssasem.Func, defs: Defs, modes: i32[]): boolean[] {
-  let rebuilt: boolean[] = rebuilt_values(f, defs);
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let rebuilt = rebuilt_values(f, defs);
+  let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (builds(ins.kind_tag) && marked(rebuilt, ins.result) && rebuilds_owned(f, defs, ins, modes)) {
@@ -2497,9 +2497,9 @@ function chained_rebuilds(f: ssasem.Func, defs: Defs, modes: i32[]): boolean[] {
 
 function rebuilds_owned(f: ssasem.Func, defs: Defs, built: ssa.SInst, modes: i32[]): boolean {
   for a in built.args {
-    let donor: i32 = rebuilt_from(f, defs, a, built.result);
+    let donor = rebuilt_from(f, defs, a, built.result);
     if (donor >= 0) {
-      let param: boolean = donor < f.graph.nparams && donor < modes.len();
+      let param = donor < f.graph.nparams && donor < modes.len();
       return def_inst(defs, donor).kind_tag == ssasem.call() || param && modes[donor] == ssasem.counted_mode();
     }
   }
@@ -2507,7 +2507,7 @@ function rebuilds_owned(f: ssasem.Func, defs: Defs, built: ssa.SInst, modes: i32
 }
 
 function rebuilt_values(f: ssasem.Func, defs: Defs): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (builds(ins.kind_tag)) {
@@ -2521,9 +2521,9 @@ function rebuilt_values(f: ssasem.Func, defs: Defs): boolean[] {
 }
 
 function rebuilt_from(f: ssasem.Func, defs: Defs, a: i32, built: i32): i32 {
-  let src: ssa.SInst = def_inst(defs, through_copies(defs, a));
+  let src = def_inst(defs, through_copies(defs, a));
   if (!sempair.reads_apart(src.kind_tag) || src.args.len() != 1 || !semtypes.equal(f.values[src.args[0]], f.values[built])) {
-    return 0 - 1;
+    return -1;
   }
   return through_copies(defs, src.args[0]);
 }
@@ -2532,22 +2532,22 @@ function part_value(own w: Walk, p: Part, ty: typeinfo.Type): Walk {
   if (p.value >= 0) {
     return Walk { ...w, value: p.value };
   }
-  let e0: Edits = w.e;
-  let d0: Defs = e0.defs;
-  let nv: i32 = e0.base + e0.added.len();
-  let ins: ssa.SInst = ssa.SInst { kind_tag: 2, result: nv, args: [], imm: p.flag, str: "" };
+  let e0 = w.e;
+  let d0 = e0.defs;
+  let nv = e0.base + e0.added.len();
+  let ins = ssa.SInst { kind_tag: 2, result: nv, args: [], imm: p.flag, str: "" };
   if (p.filler) {
     ins = ssa.SInst { kind_tag: ssasem.zero(), result: nv, args: [], imm: 0, str: "" };
   }
-  return Walk { ...w, e: Edits { ...e0, defs: Defs { insts: d0.insts.append(ins), blocks: d0.blocks.append(0 - 1) }, added: e0.added.append(ty), entry: e0.entry.append(ins) }, value: nv };
+  return Walk { ...w, e: Edits { ...e0, defs: Defs { insts: d0.insts.append(ins), blocks: d0.blocks.append(-1) }, added: e0.added.append(ty), entry: e0.entry.append(ins) }, value: nv };
 }
 
 function applied(f: ssasem.Func, e: Edits): ssasem.Func {
-  let g: ssa.SFunc = f.graph;
+  let g = f.graph;
   let blocks: ssa.SBlock[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < g.blocks.len()) {
-    let b: ssa.SBlock = g.blocks[bi];
+    let b = g.blocks[bi];
     let insts: ssa.SInst[] = [];
     for h in e.heads {
       if (h.block == bi) {
@@ -2559,17 +2559,17 @@ function applied(f: ssasem.Func, e: Edits): ssasem.Func {
       entry = e.entry;
     }
     insts = util.append_all(insts, block_insts(b, entry, e.swap));
-    let t: ssa.STerm = b.term;
+    let t = b.term;
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(e.swap, t.cond), value: swapped(e.swap, t.value) } });
-    bi = bi + 1;
+    bi += 1;
   }
-  let values: typeinfo.Type[] = util.append_all(f.values, e.added);
+  let values = util.append_all(f.values, e.added);
   return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: values.len() }, values: values };
 }
 
 function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[] {
   let insts: ssa.SInst[] = [];
-  let placed: boolean = entry.len() == 0;
+  let placed = entry.len() == 0;
   for ins in b.insts {
     if (!placed && ins.kind_tag != ssasem.param()) {
       insts = util.append_all(insts, entry);
@@ -2588,11 +2588,11 @@ function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[
 }
 
 function swapped(swap: i32[], v: i32): i32 {
-  let x: i32 = v;
-  let steps: i32 = 0;
+  let x = v;
+  let steps = 0;
   while (x >= 0 && x < swap.len() && swap[x] >= 0 && steps < 64) {
     x = swap[x];
-    steps = steps + 1;
+    steps += 1;
   }
   return x;
 }
@@ -2603,7 +2603,7 @@ function result_swap(call: ssa.SInst, rets: i32[], ret_vals: i32[], values: type
     return swap;
   }
   while (swap.len() <= call.result) {
-    swap = swap.append(0 - 1);
+    swap = swap.append(-1);
   }
   return swap.with(call.result, ret_vals[0]);
 }
@@ -2622,14 +2622,14 @@ function swapped_blocks(blocks: ssa.SBlock[], swap: i32[]): ssa.SBlock[] {
     for ins in b.insts {
       insts = insts.append(swapped_inst(swap, ins));
     }
-    let t: ssa.STerm = b.term;
+    let t = b.term;
     out = out.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(swap, t.cond), value: swapped(swap, t.value) } });
   }
   return out;
 }
 
 function swapped_inst(swap: i32[], ins: ssa.SInst): ssa.SInst {
-  let base: i32 = ssasem.update_base(ins);
+  let base = ssasem.update_base(ins);
   if (base >= 0) {
     return ssa.SInst { ...ins, args: swapped_all(swap, ins.args), imm: swapped(swap, base) + 1 };
   }
@@ -2682,7 +2682,7 @@ function callees_of(f: ssasem.Func, ix: util.NameIndex): i32[] {
   let out: i32[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      let j: i32 = called(ins, ix);
+      let j = called(ins, ix);
       if (j >= 0) {
         out = out.append(j);
       }
@@ -2725,21 +2725,21 @@ function any_ready(callees: i32[], ready: boolean[]): boolean {
 }
 
 function sizes_of(funcs: ssasem.Func[]): i32[] {
-  let out: i32[] = __alloc_i32(funcs.len());
-  let i: i32 = 0;
+  let out = __alloc_i32(funcs.len());
+  let i = 0;
   while (i < funcs.len()) {
     out = out.with(i, count_insts(funcs[i].graph));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function count_insts(g: ssa.SFunc): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (!line_mark(ins.kind_tag)) {
-        n = n + 1;
+        n += 1;
       }
     }
   }
@@ -2747,20 +2747,20 @@ function count_insts(g: ssa.SFunc): i32 {
 }
 
 function drop_unread(f: ssasem.Func): Rewrite {
-  let g: ssa.SFunc = f.graph;
-  let built: typeinfo.Type[] = built_types(g, f);
+  let g = f.graph;
+  let built = built_types(g, f);
   if (built.len() == 0 && !has_static_closure(g)) {
     return Rewrite { f: f, changed: false };
   }
-  let reads: i32[] = read_counts(f);
+  let reads = read_counts(f);
   if (!any_unread(f, built, reads)) {
     return Rewrite { f: f, changed: false };
   }
-  let gone: boolean[] = unread_closure(f, built, reads);
-  let defs: Defs = defs_of(g);
-  let dom: ssadeps.Dom = ssadeps.dominates(g);
+  let gone = unread_closure(f, built, reads);
+  let defs = defs_of(g);
+  let dom = ssadeps.dominates(g);
   let blocks: ssa.SBlock[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   for b in g.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
@@ -2769,7 +2769,7 @@ function drop_unread(f: ssasem.Func): Rewrite {
       }
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
-    bi = bi + 1;
+    bi += 1;
   }
   return Rewrite { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, changed: true };
 }
@@ -2778,10 +2778,10 @@ function drop_unread(f: ssasem.Func): Rewrite {
 // A chain of record updates read only through one another goes in one
 // round, so the update that survives it finds its root below.
 function unread_closure(f: ssasem.Func, built: typeinfo.Type[], reads0: i32[]): boolean[] {
-  let g: ssa.SFunc = f.graph;
-  let gone: boolean[] = __alloc_bool(g.nvals);
-  let reads: i32[] = reads0;
-  let changed: boolean = true;
+  let g = f.graph;
+  let gone = __alloc_bool(g.nvals);
+  let reads = reads0;
+  let changed = true;
   while (changed) {
     changed = false;
     for b in g.blocks {
@@ -2801,8 +2801,8 @@ function unread_closure(f: ssasem.Func, built: typeinfo.Type[], reads0: i32[]): 
 
 // read_counts without the reads the gone instructions make.
 function read_counts_outside(f: ssasem.Func, gone: boolean[]): i32[] {
-  let g: ssa.SFunc = f.graph;
-  let reads: i32[] = __alloc_i32(g.nvals);
+  let g = f.graph;
+  let reads = __alloc_i32(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
       if (ins.result >= 0 && ins.result < gone.len() && gone[ins.result]) {
@@ -2827,11 +2827,11 @@ function read_counts_outside(f: ssasem.Func, gone: boolean[]): i32[] {
 // path reaches the same root and the root is in scope. Otherwise the update
 // has no base and builds a fresh box.
 function rebased(f: ssasem.Func, defs: Defs, dom: ssadeps.Dom, gone: boolean[], bi: i32, ins: ssa.SInst): ssa.SInst {
-  let base: i32 = ssasem.update_base(ins);
+  let base = ssasem.update_base(ins);
   if (base < 0 || base >= gone.len() || !gone[base]) {
     return ins;
   }
-  let root: i32 = donor_root(defs, gone, base, 0);
+  let root = donor_root(defs, gone, base, 0);
   if (root < 0 || !semtypes.equal(f.values[root], f.values[ins.result]) || !in_scope(defs, dom, root, bi)) {
     return ssa.SInst { ...ins, imm: 0 };
   }
@@ -2844,16 +2844,16 @@ function in_scope(defs: Defs, dom: ssadeps.Dom, v: i32, bi: i32): boolean {
 
 function donor_root(defs: Defs, gone: boolean[], v: i32, depth: i32): i32 {
   if (v < 0 || v >= gone.len() || depth > 64) {
-    return 0 - 1;
+    return -1;
   }
   if (!gone[v]) {
     return v;
   }
-  let d: ssa.SInst = def_inst(defs, v);
+  let d = def_inst(defs, v);
   if (builds(d.kind_tag)) {
-    let b: i32 = ssasem.update_base(d);
+    let b = ssasem.update_base(d);
     if (b < 0) {
-      return 0 - 1;
+      return -1;
     }
     return donor_root(defs, gone, b, depth + 1);
   }
@@ -2861,13 +2861,13 @@ function donor_root(defs: Defs, gone: boolean[], v: i32, depth: i32): i32 {
     return donor_root(defs, gone, d.args[0], depth + 1);
   }
   if (d.kind_tag != 8) {
-    return 0 - 1;
+    return -1;
   }
-  let root: i32 = 0 - 1;
+  let root: i32 = -1;
   for a in d.args {
-    let x: i32 = donor_root(defs, gone, a, depth + 1);
+    let x = donor_root(defs, gone, a, depth + 1);
     if (x < 0 || root >= 0 && x != root) {
-      return 0 - 1;
+      return -1;
     }
     root = x;
   }
@@ -2909,12 +2909,12 @@ function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
 }
 
 function read_counts(f: ssasem.Func): i32[] {
-  let g: ssa.SFunc = f.graph;
+  let g = f.graph;
   let reads: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < g.nvals) {
     reads = reads.append(0);
-    v = v + 1;
+    v += 1;
   }
   for b in g.blocks {
     for ins in b.insts {
@@ -2957,10 +2957,10 @@ function renamed_source(source: sourcepos.SourceInfo, swap: i32[]): sourcepos.So
     return source;
   }
   let map: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < source.values.len()) {
     map = map.append(swapped(swap, i));
-    i = i + 1;
+    i += 1;
   }
   return sourcepos.renamed(source, map);
 }

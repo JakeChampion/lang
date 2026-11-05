@@ -19,12 +19,12 @@ function require(ok: boolean, id: i32): void {
 
 function site_matches(b: irtables.LowerResult, site: incoming.Site): i32 {
   let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(93); } };
-  let found: i32 = 0;
+  let found = 0;
   for block in lifted.func.blocks {
     for op in block.insts {
       if (block.id == site.block && op.result == site.call) {
         require(op.kind_tag == 11 && op.str == site.consumer && op.args.len() == 2 && op.args[0] == site.argument && op.args[1] == site.incoming, 94);
-        found = found + 1;
+        found += 1;
       }
     }
   }
@@ -32,17 +32,17 @@ function site_matches(b: irtables.LowerResult, site: incoming.Site): i32 {
 }
 
 function check_sites(sub: ircore.Sub, name: string, consumer: string, sites: incoming.Site[]): void {
-  let input: i32 = 0;
+  let input = 0;
   for site in sites {
     require(site.input == input && site.consumer == consumer && site.parameter == 0 && site.words == 3, 92);
-    let found: i32 = 0;
+    let found = 0;
     for b in util.append_all(sub.bodies, sub.extra) {
       if (b.name == name) {
-        found = found + site_matches(b, site);
+        found += site_matches(b, site);
       }
     }
     require(found == 1, 95);
-    input = input + 1;
+    input += 1;
   }
 }
 
@@ -88,10 +88,10 @@ function contract_controls(sub: ircore.Sub, subject: string): void {
       let wrong = if (subject == "handoff") { "incoming wrapper requires scalar and three consuming parameters" } else { if (subject == "parent") { "origin callee ABI differs from caller" } else { "incoming consumer ABI differs from wrapper" } };
       expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, modes: [] }) }, "handoff", "replace", wrong);
       expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, params: [] }) }, "handoff", "replace", wrong);
-      let i: i32 = 0;
+      let i = 0;
       for mode in c.modes {
         expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, modes: c.modes.with(i, 2) }) }, "handoff", "replace", wrong);
-        i = i + 1;
+        i += 1;
       }
       if (subject == "handoff") {
         for slot in [0, 1, 2, 3] {

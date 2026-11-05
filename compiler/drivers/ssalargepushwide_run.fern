@@ -115,7 +115,7 @@ function partitions(): void {
     require(ranges.valid(r) && ranges.expected_class(r) == row.index && ranges.rounded(r) == row.rounded, "reference class " + index.to_string());
     require(bins[row.index] == row.rounded, "ordered capacity");
     next = r.high + 1 as i64;
-    index = index + 1;
+    index += 1;
   }
   require(next == 17179869185 as i64, "complete integer input domain");
   let all = ranges.Interval { low: 0, high: 17179869184 };
@@ -260,7 +260,7 @@ function reference_cases(): void {
   for row in rows {
     require(row.id == next, "reference ordinal");
     reference_case(row);
-    next = next + 1;
+    next += 1;
   }
   require(next == 4474, "complete reference execution");
 }

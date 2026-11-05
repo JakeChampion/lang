@@ -14,8 +14,8 @@ struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos:
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
-  let ru: Reused = reuse(f);
-  let sk: Sunk = sink_rereads(ru.s.f, ru.reads, false);
+  let ru = reuse(f);
+  let sk = sink_rereads(ru.s.f, ru.reads, false);
   return Sunk { f: sk.f, reread: ru.s.reread + sk.reread };
 }
 
@@ -24,33 +24,33 @@ pub function sink(f: ssasem.Func): Sunk {
 // which `sink` runs before: a record or variant parameter declared
 // borrowed that a callee consumes is counted by then.
 pub function sink_past_lent(f: ssasem.Func): Sunk {
-  let sk: Sunk = sink_rereads(f, None, true);
-  let late: semlatehold.Late = semlatehold.reread_before_spends(sk.f);
+  let sk = sink_rereads(f, None, true);
+  let late = semlatehold.reread_before_spends(sk.f);
   return Sunk { f: late.f, reread: sk.reread + late.reread };
 }
 
 struct Reused { s: Sunk, reads: Option[Reads] }
 
 function reuse(f: ssasem.Func): Reused {
-  let g: ssa.SFunc = f.graph;
-  let at: i32[] = projection_blocks(g, f.values);
+  let g = f.graph;
+  let at = projection_blocks(g, f.values);
   if (at.len() == 0 || !repeated_across(g, f.values, at)) {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: None };
   }
-  let rd: Reads = reads_of(f, at, false);
+  let rd = reads_of(f, at, false);
   if (!rd.flow.ok) {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
   }
-  let reads: ssa.SInst[] = counted_reads(g, f.values);
-  let slots: semcse.Slots = semcse.read_slots(reads);
-  let same: i32[] = semcse.identity(f.values.len());
-  let n: i32 = 0;
+  let reads = counted_reads(g, f.values);
+  let slots = semcse.read_slots(reads);
+  let same = semcse.identity(f.values.len());
+  let n = 0;
   for r in reads {
-    let bi: i32 = rd.at[r.result];
-    let first: i32 = earlier_read(rd, reads, slots, r, bi, same, f.values);
+    let bi = rd.at[r.result];
+    let first = earlier_read(rd, reads, slots, r, bi, same, f.values);
     if (first >= 0) {
       same = same.with(r.result, first);
-      n = n + 1;
+      n += 1;
     }
   }
   if (n == 0) {
@@ -72,17 +72,17 @@ function counted_reads(g: ssa.SFunc, values: typeinfo.Type[]): ssa.SInst[] {
 }
 
 function earlier_read(rd: Reads, reads: ssa.SInst[], slots: semcse.Slots, r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
-  let i: i32 = slots.head[semcse.slot_hash(r) & slots.head.len() - 1];
+  let i = slots.head[semcse.slot_hash(r) & slots.head.len() - 1];
   while (i >= 0) {
-    let u: ssa.SInst = reads[i];
-    let ub: i32 = rd.at[u.result];
+    let u = reads[i];
+    let ub = rd.at[u.result];
     if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
       && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0) && !field_kept_apart(rd, r, bi))) {
       return semcse.stand_in(same, u.result);
     }
     i = slots.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
@@ -90,53 +90,53 @@ function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
 }
 
 function sink_rereads(f: ssasem.Func, known: Option[Reads], lent: boolean): Sunk {
-  let g: ssa.SFunc = f.graph;
-  let at: i32[] = crossing_projections(g, f.values);
+  let g = f.graph;
+  let at = crossing_projections(g, f.values);
   if (at.len() == 0) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd: Reads = reads_at(f, at, known, lent);
+  let rd = reads_at(f, at, known, lent);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
-  let values: typeinfo.Type[] = f.values;
-  let blocks: ssa.SBlock[] = g.blocks;
+  let values = f.values;
+  let blocks = g.blocks;
   let edits: PhiEdit[] = [];
-  let reread: i32 = 0;
-  let bi: i32 = 0;
+  let reread = 0;
+  let bi = 0;
   for b in g.blocks {
     if (rd.dom.pre[bi] >= 0 && rereads_any(rd, g, bi, b)) {
-      let s: Sinking = sink_block(rd, g, bi, b, values);
+      let s = sink_block(rd, g, bi, b, values);
       values = s.values;
-      reread = reread + s.added;
+      reread += s.added;
       blocks = blocks.with(bi, s.b);
       for e in s.edits {
         edits = edits.append(e);
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (reread == 0) {
     return Sunk { f: f, reread: 0 };
   }
   for e in edits {
-    let b: ssa.SBlock = blocks[e.block];
-    let ins: ssa.SInst = b.insts[e.phi];
+    let b = blocks[e.block];
+    let ins = b.insts[e.phi];
     blocks = blocks.with(e.block, ssa.SBlock { ...b, insts: b.insts.with(e.phi, ssa.SInst { ...ins, args: ins.args.with(e.slot, e.value) }) });
   }
-  let graph: ssa.SFunc = ssa.SFunc { ...g, nvals: values.len(), blocks: blocks };
+  let graph = ssa.SFunc { ...g, nvals: values.len(), blocks: blocks };
   return Sunk { f: ssasem.Func { ...f, graph: graph, values: values }, reread: reread };
 }
 
 function successors(t: ssa.STerm): i32[] {
   let out: i32[] = [];
-  let k: i32 = 0;
-  let id: i32 = ssa.successor_id(t, k);
+  let k = 0;
+  let id = ssa.successor_id(t, k);
   while (id >= 0) {
     if (util.index_of_i32(out, id) < 0) {
       out = out.append(id);
     }
-    k = k + 1;
+    k += 1;
     id = ssa.successor_id(t, k);
   }
   return out;
@@ -164,13 +164,13 @@ function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean
 // when its callee's contract borrows it, and keeps the spends of every
 // argument in strict.
 function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
-  let g: ssa.SFunc = f.graph;
+  let g = f.graph;
   let deps: i32[][] = [];
   while (deps.len() < f.values.len()) {
     deps = deps.append([]);
   }
-  let t: Tree = projection_tree(g, f.values, deps);
-  let pos: i32[] = ssa.block_positions(g);
+  let t = projection_tree(g, f.values, deps);
+  let pos = ssa.block_positions(g);
   let strict: i32[][] = [];
   if (lent) {
     strict = spent_by(f, false, t.parent, deps, pos);
@@ -179,18 +179,18 @@ function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
-  let par: i32[] = __alloc_i32(values.len());
-  let parent: boolean[] = __alloc_bool(values.len());
-  let kids: i32[][] = deps;
-  let first: i32[] = semcse.identity(values.len());
-  let field: i32[] = util.minus_ones(values.len());
+  let par = __alloc_i32(values.len());
+  let parent = __alloc_bool(values.len());
+  let kids = deps;
+  let first = semcse.identity(values.len());
+  let field = util.minus_ones(values.len());
   for b in g.blocks {
     let seen: ssa.SInst[] = [];
     for ins in b.insts {
       if (counted_projection(ins, values)) {
         first = first.with(ins.result, twin_of(seen, ins, first, values));
         seen = seen.append(ins);
-        let p: i32 = first[ins.args[0]];
+        let p = first[ins.args[0]];
         par = par.with(ins.result, ins.args[0]);
         parent = parent.with(ins.args[0], true).with(ins.result, true);
         kids = kids.with(p, kids[p].append(ins.result));
@@ -211,43 +211,43 @@ function twin_of(seen: ssa.SInst[], ins: ssa.SInst, first: i32[], values: typein
 }
 
 function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
-  let grown: i32[][] = deps;
-  let bi: i32 = 0;
+  let grown = deps;
+  let bi = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (grows(ins.kind_tag) && ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < grown.len()) {
         grown = grown.with(ins.args[0], grown[ins.args[0]].append(bi));
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return grown;
 }
 
 // An update of any read of a slot counts for that slot's first read.
 function updated_by(g: ssa.SFunc, deps: i32[][], first: i32[]): i32[][] {
-  let updated: i32[][] = deps;
-  let bi: i32 = 0;
+  let updated = deps;
+  let bi = 0;
   for b in g.blocks {
     for ins in b.insts {
-      let base: i32 = ssasem.update_base(ins);
+      let base = ssasem.update_base(ins);
       if (ins.kind_tag == ssasem.with() && ins.args.len() == 3) {
         base = ins.args[0];
       }
       if (base >= 0 && base < updated.len()) {
-        let x: i32 = first[base];
+        let x = first[base];
         updated = updated.with(x, updated[x].append(bi));
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return updated;
 }
 
 function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][], pos: i32[]): i32[][] {
-  let g: ssa.SFunc = f.graph;
-  let spent: i32[][] = deps;
-  let bi: i32 = 0;
+  let g = f.graph;
+  let spent = deps;
+  let bi = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (spends(ins.kind_tag)) {
@@ -267,7 +267,7 @@ function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][
       spent = spend(spent, parent, b.term.value, bi);
     }
     spent = spend_phi_inputs(g, pos, b, spent, parent, bi);
-    bi = bi + 1;
+    bi += 1;
   }
   return spent;
 }
@@ -280,7 +280,7 @@ function lent_to(f: ssasem.Func, modes: i32[], args: i32[], k: i32): boolean {
 }
 
 function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
+  let at = ssasem.find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return [];
   }
@@ -292,10 +292,10 @@ function spends(k: i32): boolean {
 }
 
 function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {
-  let spent: i32[][] = spent0;
+  let spent = spent0;
   for sid in successors(b.term) {
-    let s: ssa.SBlock = g.blocks[pos[sid]];
-    let slot: i32 = util.index_of_i32(s.preds, b.id);
+    let s = g.blocks[pos[sid]];
+    let slot = util.index_of_i32(s.preds, b.id);
     for phi in s.insts {
       if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
         spent = spend(spent, parent, phi.args[slot], bi);
@@ -329,11 +329,11 @@ function read_arity(kind: i32): i32 {
 }
 
 function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
-  let at: i32[] = projection_blocks(g, values);
+  let at = projection_blocks(g, values);
   if (at.len() == 0) {
     return at;
   }
-  let bi: i32 = 0;
+  let bi = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (reads_across(g, b, ins, at)) {
@@ -343,16 +343,16 @@ function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
     if (returns_across(b, at, bi)) {
       return at;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return [];
 }
 
 function reads_across(g: ssa.SFunc, b: ssa.SBlock, ins: ssa.SInst, at: i32[]): boolean {
-  let slot: i32 = 0;
+  let slot = 0;
   for a in ins.args {
     if (a >= 0 && a < at.len() && at[a] >= 0) {
-      let from: i32 = b.id;
+      let from = b.id;
       if (ins.kind_tag == 8 && slot < b.preds.len()) {
         from = b.preds[slot];
       }
@@ -360,34 +360,34 @@ function reads_across(g: ssa.SFunc, b: ssa.SBlock, ins: ssa.SInst, at: i32[]): b
         return true;
       }
     }
-    slot = slot + 1;
+    slot += 1;
   }
   return false;
 }
 
 function returns_across(b: ssa.SBlock, at: i32[], bi: i32): boolean {
-  let v: i32 = b.term.value;
+  let v = b.term.value;
   return b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi;
 }
 
 function projection_blocks(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
   let at: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (counted_projection(ins, values)) {
         if (at.len() == 0) {
           at = __alloc_i32(values.len());
-          let k: i32 = 0;
+          let k = 0;
           while (k < at.len()) {
-            at = at.with(k, 0 - 1);
-            k = k + 1;
+            at = at.with(k, -1);
+            k += 1;
           }
         }
         at = at.with(ins.result, bi);
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return at;
 }
@@ -397,24 +397,24 @@ function repeated_across(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): bool
   while (by.len() < values.len()) {
     by = by.append([]);
   }
-  let reads: ssa.SInst[] = counted_reads(g, values);
-  let k: i32 = 0;
+  let reads = counted_reads(g, values);
+  let k = 0;
   for ins in reads {
-    let p: i32 = ins.args[0];
+    let p = ins.args[0];
     if (p >= 0 && p < by.len()) {
       if (repeats_one(reads, by[p], ins, at)) {
         return true;
       }
       by = by.with(p, by[p].append(k));
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
 
 function repeats_one(reads: ssa.SInst[], seen: i32[], ins: ssa.SInst, at: i32[]): boolean {
   for k in seen {
-    let r: ssa.SInst = reads[k];
+    let r = reads[k];
     if (r.kind_tag == ins.kind_tag && r.imm == ins.imm && r.str == ins.str && at[r.result] != at[ins.result]) {
       return true;
     }
@@ -436,8 +436,8 @@ function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
     return true;
   }
   for sid in successors(b.term) {
-    let s: ssa.SBlock = g.blocks[rd.pos[sid]];
-    let slot: i32 = util.index_of_i32(s.preds, b.id);
+    let s = g.blocks[rd.pos[sid]];
+    let slot = util.index_of_i32(s.preds, b.id);
     for phi in s.insts {
       if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len() && read_above(rd, bi, phi.args[slot])) {
         return true;
@@ -452,7 +452,7 @@ struct Sinking { b: ssa.SBlock, values: typeinfo.Type[], added: i32, edits: PhiE
 struct Rereads { old: i32[], fresh: i32[], insts: ssa.SInst[], values: typeinfo.Type[] }
 
 function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typeinfo.Type[]): Sinking {
-  let r: Rereads = Rereads { old: [], fresh: [], insts: [], values: values };
+  let r = Rereads { old: [], fresh: [], insts: [], values: values };
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
     if (ins.kind_tag == 6 || ins.kind_tag == 8) {
@@ -466,53 +466,53 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
       insts = insts.append(ssa.SInst { ...ins, args: args });
     }
   }
-  let term: ssa.STerm = b.term;
+  let term = b.term;
   if (b.term.kind_tag == 1) {
     r = reread(rd, g, bi, r, b.term.value);
     term = ssa.STerm { ...term, value: standing(r, b.term.value) };
   }
   let edits: PhiEdit[] = [];
   for sid in successors(b.term) {
-    let si: i32 = rd.pos[sid];
-    let s: ssa.SBlock = g.blocks[si];
-    let k: i32 = 0;
+    let si = rd.pos[sid];
+    let s = g.blocks[si];
+    let k = 0;
     while (k < s.insts.len()) {
-      let phi: ssa.SInst = s.insts[k];
+      let phi = s.insts[k];
       if (phi.kind_tag == 8) {
-        let slot: i32 = 0;
+        let slot = 0;
         while (slot < s.preds.len() && slot < phi.args.len()) {
           if (s.preds[slot] == b.id) {
             r = reread(rd, g, bi, r, phi.args[slot]);
-            let v: i32 = standing(r, phi.args[slot]);
+            let v = standing(r, phi.args[slot]);
             if (v != phi.args[slot]) {
               edits = edits.append(PhiEdit { block: si, phi: k, slot: slot, value: v });
             }
           }
-          slot = slot + 1;
+          slot += 1;
         }
       }
-      k = k + 1;
+      k += 1;
     }
   }
   if (r.insts.len() == 0) {
     return Sinking { b: b, values: values, added: 0, edits: [] };
   }
-  let lead: i32 = 0;
+  let lead = 0;
   while (lead < insts.len() && (insts[lead].kind_tag == 6 || insts[lead].kind_tag == 8)) {
-    lead = lead + 1;
+    lead += 1;
   }
   let out: ssa.SInst[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < lead) {
     out = out.append(insts[k]);
-    k = k + 1;
+    k += 1;
   }
   for ins in r.insts {
     out = out.append(ins);
   }
   while (k < insts.len()) {
     out = out.append(insts[k]);
-    k = k + 1;
+    k += 1;
   }
   return Sinking { b: ssa.SBlock { ...b, insts: out, term: term }, values: r.values, added: r.insts.len(), edits: edits };
 }
@@ -541,7 +541,7 @@ function child_grown_in(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   if (depth > 8) {
     return false;
   }
-  let x: i32 = rd.first[v];
+  let x = rd.first[v];
   if (util.index_of_i32(rd.updated[x], bi) >= 0) {
     // Keep the first read for consumed record and variant donors.
     // Array snapshots follow the same block-local rule as array updates.
@@ -639,7 +639,7 @@ function read_above_for(rd: Reads, spent: i32[][], bi: i32, v: i32, leaf: i32): 
   if (v < 0 || v >= rd.at.len() || rd.at[v] < 0 || rd.at[v] == bi) {
     return false;
   }
-  let p: i32 = rd.par[v];
+  let p = rd.par[v];
   if (!ssadeps.dom_holds(rd.dom, bi, rd.at[v]) || ssalive.live_out_has(rd.flow, bi, p)) {
     return false;
   }
@@ -658,10 +658,10 @@ function reread(rd: Reads, g: ssa.SFunc, bi: i32, own r: Rereads, v: i32): Rerea
   if (!read_above(rd, bi, v) || util.index_of_i32(r.old, v) >= 0) {
     return r;
   }
-  let def: ssa.SInst = read_of(g, rd, v);
+  let def = read_of(g, rd, v);
   r = reread(rd, g, bi, r, def.args[0]);
-  let id: i32 = r.values.len();
-  let get: ssa.SInst = ssa.SInst { ...def, result: id, args: def.args.with(0, standing(r, def.args[0])) };
+  let id = r.values.len();
+  let get = ssa.SInst { ...def, result: id, args: def.args.with(0, standing(r, def.args[0])) };
   return Rereads { old: r.old.append(v), fresh: r.fresh.append(id), insts: r.insts.append(get), values: r.values.append(r.values[v]) };
 }
 
@@ -675,7 +675,7 @@ function read_of(g: ssa.SFunc, rd: Reads, v: i32): ssa.SInst {
 }
 
 function standing(r: Rereads, v: i32): i32 {
-  let i: i32 = util.index_of_i32(r.old, v);
+  let i = util.index_of_i32(r.old, v);
   if (i >= 0) {
     return r.fresh[i];
   }

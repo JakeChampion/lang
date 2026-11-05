@@ -101,10 +101,10 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
 function controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
   expect(f, shape, refs, "", 5);
   let reasons = ["invalid allocation producer capacity or multiplicity", "unsupported allocation producer effect", "unsupported allocation producer effect", "unsupported allocation producer effect", "invalid allocation producer parameter", "invalid allocation producer parameter", "incomplete allocation producer initialization", "invalid allocation producer initialization", "invalid allocation producer initialization", "unsupported allocation producer effect", "unavailable allocation producer operand", "invalid allocation producer definition", "fresh allocation producer return required", "invalid allocation producer initialization", "invalid allocation producer initialization", "incomplete allocation producer initialization", "invalid allocation producer capacity or multiplicity", "unsupported allocation producer effect", "invalid allocation producer initialization"];
-  let i: i32 = 0;
+  let i = 0;
   for why in reasons {
     expect(changed(f, i), shape, refs, why, 10 + i);
-    i = i + 1;
+    i += 1;
   }
   let b = f.blocks[0];
   let term = ssa.STerm { ...b.term, value: 0 };
@@ -162,7 +162,7 @@ function sparse_controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
 function target_checks(target: string): void {
   let source = "struct Leaf { n: i32[] }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(own n: i32[]): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction boxed_result(p: Parent): i32 { return p.left.n[0] + p.right.n[0] - 3; }\nfunction main(): i32 { let p = parent(leaf([1]), leaf([2])); return boxed_result(p); }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
-  let count: i32 = 0;
+  let count = 0;
   for body in sub.bodies {
     if (body.name == "leaf" || body.name == "parent") {
       require(body.ok, 2);
@@ -174,7 +174,7 @@ function target_checks(target: string): void {
         controls(lifted.func, "Parent", [true, true]);
         sparse_controls(lifted.func, "Parent", [true, true]);
       }
-      count = count + 1;
+      count += 1;
     }
   }
   require(count == 2, 4);

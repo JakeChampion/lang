@@ -102,26 +102,26 @@ function suffix_instruction(f: ssa.SFunc, call: ssa.SInst, result: i32, mode: i3
 function straight(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let call = consumer_call(f);
   let blocks: ssa.SBlock[] = [];
-  let changed: i32 = 0;
+  let changed = 0;
   let nvals = f.nvals;
   for b in f.blocks {
     let insts = b.insts;
     let term = b.term;
     if (term.kind_tag == 1) {
-      changed = changed + 1;
+      changed += 1;
       if (mode < 2) {
         term = ssa.STerm { ...term, value: call.args[mode] };
       } else {
         let op = suffix_instruction(f, call, nvals, mode);
         insts = insts.append(op);
-        nvals = nvals + 1;
+        nvals += 1;
         if (mode == 2 || mode == 6) {
           term = ssa.STerm { ...term, value: op.result };
         }
         if (mode == 8) {
           insts = insts.append(copy(nvals, call.result));
           term = ssa.STerm { ...term, value: nvals };
-          nvals = nvals + 1;
+          nvals += 1;
         }
       }
     }
@@ -133,19 +133,19 @@ function straight(f: ssa.SFunc, mode: i32): ssa.SFunc {
 
 function branched(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let call = consumer_call(f);
-  let next: i32 = 0;
+  let next = 0;
   for b in f.blocks {
     if (b.id >= next) {
       next = b.id + 1;
     }
   }
   let blocks: ssa.SBlock[] = [];
-  let changed: i32 = 0;
+  let changed = 0;
   for b in f.blocks {
     if (b.term.kind_tag != 1) {
       blocks = blocks.append(b);
     } else {
-      changed = changed + 1;
+      changed += 1;
       let condition = if (mode == 4) { call.result } else { parameter(f, 0) };
       blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 3, cond: condition, t: next, f: next + 1 } });
       let jump = ssa.STerm { kind_tag: 2, value: 0, target: next + 2, cond: 0, t: 0, f: 0 };
@@ -168,18 +168,18 @@ function controls(sub: ircore.Sub, wrapper: ssa.SFunc): void {
   let invocation = reuse.check_invocations(straight(wrapper, 0), [body(sub, "parent")], body(sub, "replace"), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [body(sub, "require")]);
   require(invocation.ok && invocation.function_name == "replace" && invocation.message == "proved checked-capacity consumer invocation", 7);
   let reasons = ["continuation must return owned consumer result", "continuation must return owned consumer result", "continuation must return owned consumer result", "unsupported post-call continuation effect", "unsupported post-call continuation effect", "spent reference in wrapper continuation", "proved checked storage wrapper continuation", "caller origin producer binding", "proved checked storage wrapper continuation"];
-  let mode: i32 = 0;
+  let mode = 0;
   for why in reasons {
     expect(check(sub, straight(wrapper, mode)), "handoff", why);
     expect(check(sub, sparse_ids.rename(straight(wrapper, mode))), "handoff", why);
-    mode = mode + 1;
+    mode += 1;
   }
   let branches = ["proved checked storage wrapper continuation", "spent reference in wrapper continuation", "spent reference in wrapper continuation", "unavailable caller origin phi", "exact continuation Boolean required", "proved checked storage wrapper continuation"];
   mode = 0;
   for why in branches {
     expect(check(sub, branched(wrapper, mode)), "handoff", why);
     expect(check(sub, sparse_ids.rename(branched(wrapper, mode))), "handoff", why);
-    mode = mode + 1;
+    mode += 1;
   }
   expect(check(sub, cycling(wrapper)), "handoff", "unsupported caller origin cycle");
   expect(check(sub, sparse_ids.rename(cycling(wrapper))), "handoff", "unsupported caller origin cycle");
@@ -190,7 +190,7 @@ function controls(sub: ircore.Sub, wrapper: ssa.SFunc): void {
 }
 
 function cycling(f: ssa.SFunc): ssa.SFunc {
-  let next: i32 = 0;
+  let next = 0;
   for b in f.blocks {
     if (b.id >= next) {
       next = b.id + 1;

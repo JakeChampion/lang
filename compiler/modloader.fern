@@ -83,25 +83,25 @@ function display_import(): parser.Import {
 // dirname returns everything up to and including the last '/', or "" when
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
 pub function dirname(path: string): string {
-  let cut: i32 = 0;
-  let i: i32 = 0;
+  let cut = 0;
+  let i = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       cut = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return slice_unchecked(path, 0, cut) + "";
 }
 
 pub function base_name(path: string): string {
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return slice_unchecked(path, start, path.len()) + "";
 }
@@ -137,7 +137,7 @@ pub function no_buffers(): Buffers {
 }
 
 function read_text(bufs: Buffers, path: string): Result[string, IoError] {
-  let i: i32 = util.index_of_str(bufs.paths, util.clean_path(path));
+  let i = util.index_of_str(bufs.paths, util.clean_path(path));
   if (i >= 0) {
     return Ok(bufs.srcs[i]);
   }
@@ -145,11 +145,11 @@ function read_text(bufs: Buffers, path: string): Result[string, IoError] {
 }
 
 pub function read_module(bufs: Buffers, path: string): Resolved {
-  let plain: i32 = util.index_of_str(bufs.paths, util.clean_path(path));
+  let plain = util.index_of_str(bufs.paths, util.clean_path(path));
   if (plain >= 0) {
     return Resolved { ...res_none(), src: bufs.srcs[plain], ok: true, shown: path };
   }
-  let document: i32 = util.index_of_str(bufs.paths, util.clean_path(path + ".md"));
+  let document = util.index_of_str(bufs.paths, util.clean_path(path + ".md"));
   if (document >= 0) {
     return tangle_module(path, path + ".md", bufs.srcs[document]);
   }
@@ -163,7 +163,7 @@ pub function read_module(bufs: Buffers, path: string): Resolved {
       }
     }
   }
-  let doc: string = path + ".md";
+  let doc = path + ".md";
   match (read_text(bufs, doc)) {
     Ok(s) => {
       return tangle_module(path, doc, s);
@@ -201,13 +201,13 @@ pub function no_overlay(): Overlay {
 pub function embedded_sources(assets: (string, string)[], sealed: boolean): Overlay {
   let paths: string[] = [];
   let srcs: string[] = [];
-  let files: Buffers = no_buffers();
+  let files = no_buffers();
   for asset in assets {
-    let name: string = asset.0;
+    let name = asset.0;
     if (!util.is_stdlib_path(name) || !util.str_has_suffix(name, ".fern") && !util.str_has_suffix(name, ".fern.md")) {
       continue;
     }
-    let module: string = util.without_fern_ext(name);
+    let module = util.without_fern_ext(name);
     if (!util.has_str(paths, module)) {
       paths = paths.append(module);
       srcs = srcs.append(asset.1);
@@ -218,9 +218,9 @@ pub function embedded_sources(assets: (string, string)[], sealed: boolean): Over
 }
 
 pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
-  let oi: i32 = util.index_of_str(ov.paths, rel_path(path));
+  let oi = util.index_of_str(ov.paths, rel_path(path));
   if (oi >= 0) {
-    let source: string = "stdlib://" + rel_path(path) + ".fern";
+    let source = "stdlib://" + rel_path(path) + ".fern";
     if (util.has_str(ov.files.paths, util.clean_path(source)) || util.has_str(ov.files.paths, util.clean_path(source + ".md"))) {
       return read_module(ov.files, source);
     }
@@ -232,11 +232,11 @@ pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   if let Some(declared) = declared_module(ov, dir, path) {
     return declared;
   }
-  let direct: Resolved = res_read(ov, dir, rel_path(path));
+  let direct = res_read(ov, dir, rel_path(path));
   if (direct.ok || direct.err.len() > 0) {
     return direct;
   }
-  let man: Resolved = try_manifest(ov, dir, path);
+  let man = try_manifest(ov, dir, path);
   if (man.ok || man.err.len() > 0) {
     return man;
   }
@@ -247,7 +247,7 @@ function import_manifest(from: string, path: string): Option[(string, fern_toml.
   if (util.is_stdlib_path(path) || util.is_local(path)) {
     return None;
   }
-  let dir: string = manifest_dir(from);
+  let dir = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
       return Some((dir, fern_toml.parse(src)));
@@ -282,7 +282,7 @@ function load_dependency(ov: Overlay, m: fern_toml.Manifest, dir: string, path: 
       if (!util.is_dir(dd) && util.str_has_prefix(dd, store_root() + "/")) {
         return Resolved { ...res_none(), err: "dependency \"" + util.dep_name(path) + "\" is not in the package store — run `fern -fetch " + dir + "fern.toml` to download and verify it", err_path: dd };
       }
-      let rest: string = util.dep_subpath(path);
+      let rest = util.dep_subpath(path);
       if (rest.len() == 0) {
         return load_lib(ov, dd);
       }
@@ -297,7 +297,7 @@ function load_dependency(ov: Overlay, m: fern_toml.Manifest, dir: string, path: 
 }
 
 function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Result[Option[string], string] {
-  let kind: string = fern_toml.dep_kind(m, name);
+  let kind = fern_toml.dep_kind(m, name);
   if (kind.len() == 0) {
     return Ok(None);
   }
@@ -361,8 +361,8 @@ pub function manifest_dir(dir: string): string {
 }
 
 pub function find_manifest(dir: string): Option[string] {
-  let d: string = dir;
-  let steps: i32 = 0;
+  let d = dir;
+  let steps = 0;
   while (steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
@@ -378,13 +378,13 @@ pub function find_manifest(dir: string): Option[string] {
         return None;
       }
     }
-    steps = steps + 1;
+    steps += 1;
   }
   return None;
 }
 
 function load_lib(ov: Overlay, depdir: string): Resolved {
-  let deplib: string = "lib.fern";
+  let deplib = "lib.fern";
   match (read_file(depdir + "fern.toml")) {
     Ok(src) => {
       deplib = fern_toml.parse(src).lib;
@@ -398,14 +398,14 @@ pub function up_dir(dir: string): Option[string] {
   if (dir == "/") {
     return None;
   }
-  let up: string = util.clean_path(dir + "..");
+  let up = util.clean_path(dir + "..");
   if (up == "/") {
     return Some(up);
   }
   if (up == ".") {
     return Some("");
   }
-  up = up + "/";
+  up += "/";
   if (util.str_has_prefix(up, "../") && same_dir(dir, up)) {
     return None;
   }
@@ -428,8 +428,8 @@ function same_dir(a: string, b: string): boolean {
 }
 
 function vendor_dir(dir: string, name: string): Option[string] {
-  let d: string = dir;
-  let steps: i32 = 0;
+  let d = dir;
+  let steps = 0;
   while (steps < 64) {
     if (util.is_dir(d + "vendor/" + name)) {
       return Some(d + "vendor/" + name + "/");
@@ -442,26 +442,26 @@ function vendor_dir(dir: string, name: string): Option[string] {
         return None;
       }
     }
-    steps = steps + 1;
+    steps += 1;
   }
   return None;
 }
 
 function workspace_member_dir(dir: string, name: string): Option[string] {
-  let d: string = dir;
-  let steps: i32 = 0;
+  let d = dir;
+  let steps = 0;
   while (steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
-        let wm: fern_toml.Manifest = fern_toml.parse(src);
+        let wm = fern_toml.parse(src);
         if (wm.members.len() > 0) {
-          let mi: i32 = 0;
+          let mi = 0;
           while (mi < wm.members.len()) {
-            let memdir: string = d + wm.members[mi] + "/";
+            let memdir = d + wm.members[mi] + "/";
             if (member_name(memdir) == name) {
               return Some(memdir);
             }
-            mi = mi + 1;
+            mi += 1;
           }
           return None;
         }
@@ -476,7 +476,7 @@ function workspace_member_dir(dir: string, name: string): Option[string] {
         return None;
       }
     }
-    steps = steps + 1;
+    steps += 1;
   }
   return None;
 }
@@ -539,7 +539,7 @@ function locked_entry_dir(entry: fern_toml.LockEntry, dir: string): Result[strin
 }
 
 pub function store_root(): string {
-  let base: string = util.cache_base();
+  let base = util.cache_base();
   if (base.len() == 0) {
     return "";
   }
@@ -547,8 +547,8 @@ pub function store_root(): string {
 }
 
 pub function store_dir(hash: string): Option[string] {
-  let checked: Result[string, string] = fern_toml.validate_hash(hash);
-  let root: string = store_root();
+  let checked = fern_toml.validate_hash(hash);
+  let root = store_root();
   if (root.len() == 0) {
     return None;
   }
@@ -591,7 +591,7 @@ function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
   if (overlay_gives_stdlib(ov) || !util.is_stdlib_path(path)) {
     return false;
   }
-  let tree: string = "core";
+  let tree = "core";
   if (util.str_has_prefix(path, "std/")) {
     tree = "std";
   }
@@ -624,8 +624,8 @@ function resolved_ident(r: Resolved): string {
 function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: string, keys: string[], idents: string[]): parser.Module {
   let out: parser.Import[] = [];
   for imp in mod.imports {
-    let k: i32 = util.index_of_str(keys, import_key(ov, imp.path, dir, root));
-    let r: string = "";
+    let k = util.index_of_str(keys, import_key(ov, imp.path, dir, root));
+    let r = "";
     if (k >= 0) {
       r = idents[k];
     }
@@ -642,8 +642,8 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
   if (overlay_gives_stdlib(ov)) {
     return dir;
   }
-  let d: string = dir;
-  let steps: i32 = 0;
+  let d = dir;
+  let steps = 0;
   while (steps < 64) {
     if (util.is_dir(d + "std") || util.is_dir(d + "core")) {
       return d;
@@ -656,13 +656,13 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
         return dir;
       }
     }
-    steps = steps + 1;
+    steps += 1;
   }
   return dir;
 }
 
 function missing_line(ov: Overlay, imp: parser.Import, base: string, r: Resolved, entry_path: string, files: string[]): string {
-  let msg: string = unresolved_import(imp.path, r.err_path, r.err);
+  let msg = unresolved_import(imp.path, r.err_path, r.err);
   if (r.err.len() == 0 && util.is_stdlib_path(imp.path)) {
     if (stdlib_not_given(ov, base, imp.path)) {
       return "";
@@ -675,9 +675,9 @@ function missing_line(ov: Overlay, imp: parser.Import, base: string, r: Resolved
 struct GraphQueue { imports: parser.Import[], dirs: string[], display_queued: boolean }
 
 function graph_queue_module(q: GraphQueue, mod: parser.Module, dir: string): GraphQueue {
-  let imps: parser.Import[] = q.imports;
-  let dirs: string[] = q.dirs;
-  let display_queued: boolean = q.display_queued;
+  let imps = q.imports;
+  let dirs = q.dirs;
+  let display_queued = q.display_queued;
   for imp in mod.imports {
     imps = imps.append(imp);
     dirs = dirs.append(dir);
@@ -694,18 +694,18 @@ function graph_queue_module(q: GraphQueue, mod: parser.Module, dir: string): Gra
 }
 
 function graph_stdlib_dir(ov: Overlay, dir: string, root: string): string {
-  let sroot: string = root;
+  let sroot = root;
   if (sroot.len() == 0) {
     sroot = vendored_stdlib_dir(ov, dir);
   } else if (sroot[sroot.len() - 1] != b'/') {
-    sroot = sroot + "/";
+    sroot += "/";
   }
   return sroot;
 }
 
 pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
-  let edir: string = dirname(entry_path);
-  let sroot: string = graph_stdlib_dir(ov, edir, root);
+  let edir = dirname(entry_path);
+  let sroot = graph_stdlib_dir(ov, edir, root);
   let loaded: flatten.LoadedModule[] = [];
   let loaded_ids: string[] = [];
   let mod_dirs: string[] = [];
@@ -713,39 +713,39 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   let missing: string[] = [];
   let keys: string[] = [];
   let idents: string[] = [];
-  let queue: GraphQueue = graph_queue_module(GraphQueue { imports: [], dirs: [], display_queued: false }, entry, edir);
-  let qi: i32 = 0;
+  let queue = graph_queue_module(GraphQueue { imports: [], dirs: [], display_queued: false }, entry, edir);
+  let qi = 0;
   while (qi < queue.imports.len()) {
-    let imp: parser.Import = queue.imports[qi];
-    let path: string = imp.path;
-    let dir: string = queue.dirs[qi];
-    qi = qi + 1;
-    let key: string = import_key(ov, path, dir, sroot);
+    let imp = queue.imports[qi];
+    let path = imp.path;
+    let dir = queue.dirs[qi];
+    qi += 1;
+    let key = import_key(ov, path, dir, sroot);
     if (util.has_str(keys, key)) {
       continue;
     }
     keys = keys.append(key);
-    let base: string = import_base(path, dir, sroot);
-    let r: Resolved = resolve_module(ov, base, path);
+    let base = import_base(path, dir, sroot);
+    let r = resolve_module(ov, base, path);
     if (!r.ok) {
       idents = idents.append("");
-      let line: string = missing_line(ov, imp, base, r, entry_path, files);
+      let line = missing_line(ov, imp, base, r, entry_path, files);
       if (line.len() > 0) {
         missing = missing.append(line);
       }
       continue;
     }
-    let ident: string = resolved_ident(r);
+    let ident = resolved_ident(r);
     idents = idents.append(ident);
     if (util.has_str(loaded_ids, ident)) {
       continue;
     }
-    let origin: string = "";
+    let origin = "";
     if (r.shown == "stdlib://" + rel_path(path) + ".fern" || r.shown == base + rel_path(path) + ".fern") {
       origin = path;
     }
-    let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
-    let mdir: string = dir;
+    let m = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
+    let mdir = dir;
     if (!util.str_has_prefix(r.shown, "stdlib://")) {
       mdir = dirname(util.clean_path(r.shown));
     }
@@ -756,16 +756,16 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     queue = graph_queue_module(queue, m, mdir);
   }
   let stamped: flatten.LoadedModule[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < loaded.len()) {
     stamped = stamped.append(flatten.LoadedModule { ...loaded[i], mod: stamp_imports(ov, loaded[i].mod, mod_dirs[i], sroot, keys, idents) });
-    i = i + 1;
+    i += 1;
   }
   return Graph { entry: stamp_imports(ov, entry, edir, sroot, keys, idents), loaded: stamped, files: files, missing: missing };
 }
 
 pub function bundle(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, stdlib: string): parser.Module {
-  let root: string = graph_stdlib_dir(no_overlay(), dirname(entry_path), stdlib);
+  let root = graph_stdlib_dir(no_overlay(), dirname(entry_path), stdlib);
   let packages: string[] = [visibility.package_root(flatten.module_ident(entry_path), root, manifest_dir(dirname(entry_path)))];
   for lm in loaded {
     packages = packages.append(visibility.package_root(lm.ident, root, manifest_dir(dirname(lm.ident))));
@@ -776,7 +776,7 @@ pub function bundle(entry_path: string, entry: parser.Module, loaded: flatten.Lo
 pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
   match (read_file(dir + "builtins.fern")) {
     Ok(bsrc) => {
-      let bmod: parser.Module = parser.parse_module(lexer.tokenize(bsrc));
+      let bmod = parser.parse_module(lexer.tokenize(bsrc));
       return parser.Module {
         funcs: merged.funcs,
         structs: util.append_all(merged.structs, bmod.structs),
@@ -798,56 +798,56 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
 }
 
 pub function module_sig_string(mod: parser.Module): string {
-  let out: string = "";
-  let fi: i32 = 0;
+  let out = "";
+  let fi = 0;
   while (fi < mod.funcs.len()) {
-    let f: parser.FuncDecl = mod.funcs[fi];
+    let f = mod.funcs[fi];
     out = out + "fn " + f.receiver_type + "." + f.name + "(";
-    let pi: i32 = 0;
+    let pi = 0;
     while (pi < f.params.len()) {
       out = out + f.params[pi].type_name + ",";
-      pi = pi + 1;
+      pi += 1;
     }
     out = out + ")" + f.ret_type + ";";
-    fi = fi + 1;
+    fi += 1;
   }
-  let si: i32 = 0;
+  let si = 0;
   while (si < mod.structs.len()) {
-    let sd: parser.StructDecl = mod.structs[si];
+    let sd = mod.structs[si];
     out = out + "st " + sd.name + "{";
-    let di: i32 = 0;
+    let di = 0;
     while (di < sd.fields.len()) {
       out = out + sd.fields[di].name + ":" + sd.fields[di].type_name + ",";
-      di = di + 1;
+      di += 1;
     }
-    out = out + "}";
-    si = si + 1;
+    out += "}";
+    si += 1;
   }
   return out;
 }
 
 pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string {
-  let deps: string[] = import_closure_ns(parts, infmods, idx);
-  let out: string = "";
-  let j: i32 = 0;
+  let deps = import_closure_ns(parts, infmods, idx);
+  let out = "";
+  let j = 0;
   while (j < parts.len()) {
     if (util.has_str(deps, parts[j].ns)) {
       if (out.len() > 0) {
-        out = out + ",";
+        out += ",";
       }
-      out = out + parts[j].ns;
+      out += parts[j].ns;
     }
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
 
 pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModule[], idx: i32): Option[string] {
-  let path: string = entry_path;
+  let path = entry_path;
   if (!parts[idx].is_entry) {
-    let id: string = parts[idx].ident;
+    let id = parts[idx].ident;
     if (util.str_has_prefix(id, "stdlib://")) {
-      let source: Resolved = resolve_module(ov, "", slice_unchecked(id, 9, id.len()) + "");
+      let source = resolve_module(ov, "", slice_unchecked(id, 9, id.len()) + "");
       if (!source.ok) {
         return None;
       }
@@ -858,7 +858,7 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
   if (util.str_has_suffix(path, ".fern.md")) {
     path = slice_unchecked(path, 0, path.len() - 3) + "";
   }
-  let source: Resolved = read_module(ov.files, path);
+  let source = read_module(ov.files, path);
   if (source.ok) {
     return Some(source.src);
   }
@@ -878,7 +878,7 @@ pub function module_src_hash(ov: Overlay, entry_path: string, parts: flatten.Per
 }
 
 function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string {
-  let k: i32 = 0;
+  let k = 0;
   while (k < parts.len()) {
     if (imp.resolved.len() > 0) {
       if (parts[k].ident == imp.resolved) {
@@ -887,28 +887,28 @@ function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string 
     } else if (!parts[k].is_entry && parts[k].ns == util.mangle_prefix(base_name(imp.path))) {
       return parts[k].ns;
     }
-    k = k + 1;
+    k += 1;
   }
   return "";
 }
 
 pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string[] {
   let seen: string[] = [];
-  let grew: boolean = true;
+  let grew = true;
   while (grew) {
     grew = false;
-    let j: i32 = 0;
+    let j = 0;
     while (j < parts.len()) {
       if (j == idx || util.has_str(seen, parts[j].ns)) {
         for imp in infmods[j].imports {
-          let nm: string = import_part_ns(parts, imp);
+          let nm = import_part_ns(parts, imp);
           if (nm.len() > 0 && !util.has_str(seen, nm)) {
             seen = seen.append(nm);
             grew = true;
           }
         }
       }
-      j = j + 1;
+      j += 1;
     }
   }
   return seen;
@@ -918,12 +918,12 @@ pub struct FactHashes { per_mod: string[], global: string }
 
 function ident_tokens(s: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0 - 1;
-  let i: i32 = 0;
+  let start: i32 = -1;
+  let i = 0;
   while (i <= s.len()) {
-    let word: boolean = false;
+    let word = false;
     if (i < s.len()) {
-      let c: i32 = s[i] as i32;
+      let c = s[i] as i32;
       word = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c >= 48 && c <= 57 || c == 95;
     }
     if (word && start < 0) {
@@ -931,19 +931,19 @@ function ident_tokens(s: string): string[] {
     }
     if (!word && start >= 0) {
       out = out.append(slice_unchecked(s, start, i) + "");
-      start = 0 - 1;
+      start = -1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function roll131(s: string): i32 {
-  let b: i32 = 5381;
-  let i: i32 = 0;
+  let b = 5381;
+  let i = 0;
   while (i < s.len()) {
     b = b * 131 + s[i] as i32 + 7 & 1073741823;
-    i = i + 1;
+    i += 1;
   }
   return b * 131 + s.len() & 1073741823;
 }
@@ -957,22 +957,22 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
     }
     names = names.append(ns);
   }
-  let nb: i32 = infmods.len() + 1;
+  let nb = infmods.len() + 1;
   let sa: i32[] = [];
   let sb: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < nb) {
     sa = sa.append(0);
     sb = sb.append(0);
-    bi = bi + 1;
+    bi += 1;
   }
   let seen: Map[string, i32] = map_new(rows.len() + 1);
   for row in rows {
-    let toks: string[] = ident_tokens(row);
+    let toks = ident_tokens(row);
     let owners: i32[] = [];
-    let j: i32 = 0;
+    let j = 0;
     while (j < names.len()) {
-      let owned: boolean = false;
+      let owned = false;
       for t in toks {
         if (util.has_str(names[j], t)) {
           owned = true;
@@ -981,7 +981,7 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
       if (owned) {
         owners = owners.append(j);
       }
-      j = j + 1;
+      j += 1;
     }
     if (owners.len() == 0) {
       owners = [infmods.len()];
@@ -996,20 +996,20 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
     }
   }
   let per: string[] = [];
-  let pj: i32 = 0;
+  let pj = 0;
   while (pj < infmods.len()) {
     per = per.append(util.i32_to_string(sa[pj]) + "_" + util.i32_to_string(sb[pj]));
-    pj = pj + 1;
+    pj += 1;
   }
   return FactHashes { per_mod: per, global: util.i32_to_string(sa[infmods.len()]) + "_" + util.i32_to_string(sb[infmods.len()]) };
 }
 
 pub function fact_sig_hashes(infmods: parser.Module[], fh: FactHashes): string[] {
   let out: string[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < infmods.len()) {
     out = out.append(util.hash_key(module_sig_string(infmods[j]) + "|f" + fh.per_mod[j]));
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
@@ -1018,21 +1018,21 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
   if (src_hash == "?") {
     return "";
   }
-  let key: string = parts[idx].ns + "|" + src_hash;
-  let deps: string[] = import_closure_ns(parts, infmods, idx);
-  let j: i32 = 0;
+  let key = parts[idx].ns + "|" + src_hash;
+  let deps = import_closure_ns(parts, infmods, idx);
+  let j = 0;
   while (j < parts.len()) {
     if (util.has_str(deps, parts[j].ns)) {
       key = key + "#" + sighashes[j];
     }
-    j = j + 1;
+    j += 1;
   }
   if (parts[idx].is_entry) {
-    let ex: string = "";
-    let ei: i32 = 0;
+    let ex = "";
+    let ei = 0;
     while (ei < extra.len()) {
       ex = ex + extra[ei] + ",";
-      ei = ei + 1;
+      ei += 1;
     }
     key = key + "@" + util.hash_key(ex);
   }
@@ -1040,7 +1040,7 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
 }
 
 pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32, fh: FactHashes): string {
-  let key: string = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
+  let key = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
   if (key.len() == 0) {
     return "";
   }

@@ -71,11 +71,11 @@ pub function is_c_call_shim(name: string): boolean {
   if (slice_unchecked(name, 0, 8) != "__c_call") {
     return false;
   }
-  let d: str = slice_unchecked(name, 8, 9);
+  let d = slice_unchecked(name, 8, 9);
   if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") {
     return false;
   }
-  let rest: str = slice_unchecked(name, 9, name.len());
+  let rest = slice_unchecked(name, 9, name.len());
   return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
@@ -93,12 +93,12 @@ pub struct ProvidedResult { problems: irverify.Problem[], calls: i32 }
 
 pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverify.NameIndex): ProvidedResult {
   let out: irverify.Problem[] = [];
-  let calls: i32 = 0;
-  let k_calld: i32 = ir.kind_id("call_direct");
-  let i: i32 = 0;
+  let calls = 0;
+  let k_calld = ir.kind_id("call_direct");
+  let i = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
-      calls = calls + 1;
+      calls += 1;
       if (!irverify.index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
         out = out.append(irverify.Problem {
           fn_name: fn_name, op: i, kind: "call_direct",
@@ -107,7 +107,7 @@ pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverif
         });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return ProvidedResult { problems: out, calls: calls };
 }

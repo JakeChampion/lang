@@ -99,7 +99,7 @@ function class_at(c: i64, capacities: i32[]): i32 {
     if (bytes <= size as i64) {
       return index;
     }
-    index = index + 1;
+    index += 1;
   }
   return -2;
 }

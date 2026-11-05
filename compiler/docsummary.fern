@@ -15,42 +15,42 @@ function decoded(s: string, i: i32): (i32, i32) {
 }
 
 function words(s: string): string {
-  let out: string = "";
-  let gap: boolean = false;
-  let i: i32 = 0;
+  let out = "";
+  let gap = false;
+  let i = 0;
   while (i < s.len()) {
     let cp: (i32, i32) = decoded(s, i);
     if ((cp.0 as char).is_whitespace()) {
       gap = out.len() > 0;
     } else {
       if (gap) {
-        out = out + " ";
+        out += " ";
       }
-      out = out + slice_unchecked(s, i, i + cp.1);
+      out += slice_unchecked(s, i, i + cp.1);
       gap = false;
     }
-    i = i + cp.1;
+    i += cp.1;
   }
   return out;
 }
 
 function capitalize(s: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && s[i] != b' ') {
     let cp: (i32, i32) = decoded(s, i);
     if (cp.1 == 1 && s[i] as i32 >= 128) {
       return s;
     }
-    let c: char = cp.0 as char;
+    let c = cp.0 as char;
     if (c.to_lower() != c || cp.0 >= 48 && cp.0 <= 57) {
       return s;
     }
-    i = i + cp.1;
+    i += cp.1;
   }
   if (s.len() == 0) {
     return s;
   }
-  let first: i32 = s[0] as i32;
+  let first = s[0] as i32;
   if (first >= 128) {
     first = 65533;
   }
@@ -58,17 +58,17 @@ function capitalize(s: string): string {
 }
 
 pub function summary(intro: string): string {
-  let para: string = intro;
-  let end: i32 = util.index_of_sub(para, "\n\n");
+  let para = intro;
+  let end = util.index_of_sub(para, "\n\n");
   if (end >= 0) {
     para = slice_unchecked(para, 0, end) + "";
   }
-  let s: string = words(para);
-  let label: i32 = util.index_of_sub(s, " — ");
+  let s = words(para);
+  let label = util.index_of_sub(s, " — ");
   if (label >= 0) {
     s = slice_unchecked(s, label + 5, s.len()) + "";
   }
-  let sentence: i32 = util.index_of_sub(s, ". ");
+  let sentence = util.index_of_sub(s, ". ");
   if (sentence >= 0) {
     s = slice_unchecked(s, 0, sentence + 1) + "";
   }
@@ -76,16 +76,16 @@ pub function summary(intro: string): string {
 }
 
 function hex_value(s: string, p: i32): i32 {
-  let out: i32 = 0;
-  let i: i32 = p;
+  let out = 0;
+  let i = p;
   while (i < p + 6) {
-    let b: i32 = s[i] as i32;
-    let digit: i32 = b - 48;
+    let b = s[i] as i32;
+    let digit = b - 48;
     if (b >= 97) {
       digit = b - 87;
     }
     out = out * 16 + digit;
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -94,11 +94,11 @@ function printable(cp: i32): boolean {
   if (cp < 128) {
     return cp >= 32 && cp < 127;
   }
-  let ranges: string = docprintable.printable_ranges();
-  let lo: i32 = 0;
-  let hi: i32 = ranges.len() / 12;
+  let ranges = docprintable.printable_ranges();
+  let lo = 0;
+  let hi = ranges.len() / 12;
   while (lo < hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
+    let mid = lo + (hi - lo) / 2;
     if (cp < hex_value(ranges, mid * 12)) {
       hi = mid;
     } else if (cp > hex_value(ranges, mid * 12 + 6)) {
@@ -111,15 +111,15 @@ function printable(cp: i32): boolean {
 }
 
 function hex_escape(cp: i32, digits: i32, prefix: string): string {
-  let hex: string = "0123456789abcdef";
-  let out: string = "";
-  let value: i32 = cp;
-  let i: i32 = 0;
+  let hex = "0123456789abcdef";
+  let out = "";
+  let value = cp;
+  let i = 0;
   while (i < digits) {
-    let d: i32 = value & 15;
+    let d = value & 15;
     out = slice_unchecked(hex, d, d + 1) + out;
     value = value >> 4;
-    i = i + 1;
+    i += 1;
   }
   return prefix + out;
 }
@@ -162,17 +162,17 @@ function quoted_scalar(cp: i32, raw: string): string {
 }
 
 pub function quote(s: string): string {
-  let out: string = "\"";
-  let i: i32 = 0;
+  let out = "\"";
+  let i = 0;
   while (i < s.len()) {
     match (utf8.decode_at(s, i)) {
       Some(cp) => {
-        out = out + quoted_scalar(cp.0, slice_unchecked(s, i, i + cp.1));
-        i = i + cp.1;
+        out += quoted_scalar(cp.0, slice_unchecked(s, i, i + cp.1));
+        i += cp.1;
       },
       None => {
-        out = out + hex_escape(s[i] as i32, 2, "\\x");
-        i = i + 1;
+        out += hex_escape(s[i] as i32, 2, "\\x");
+        i += 1;
       }
     }
   }

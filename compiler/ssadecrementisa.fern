@@ -99,7 +99,7 @@ function split_at(line: string): i32 {
     if (line[at] == b' ' || line[at] == b'\t') {
       return at;
     }
-    at = at + 1;
+    at += 1;
   }
   return -1;
 }

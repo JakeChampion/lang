@@ -6,16 +6,16 @@ import "./util";
 struct UsedIn { refs: string[], users: string[] }
 
 function used_in(d: literate.Doc): UsedIn {
-  let u: UsedIn = UsedIn { refs: [], users: [] };
+  let u = UsedIn { refs: [], users: [] };
   for b in d.blocks {
     if (b.kind == literate.CHUNK) {
-      let k: i32 = b.first;
+      let k = b.first;
       while (k < b.first + b.count) {
-        let t: string = literate.trim(d.lines[k]);
+        let t = literate.trim(d.lines[k]);
         if (literate.is_ref(t)) {
           u = UsedIn { refs: u.refs.append(literate.ref_name(t)), users: u.users.append(b.name) };
         }
-        k = k + 1;
+        k += 1;
       }
     }
   }
@@ -24,12 +24,12 @@ function used_in(d: literate.Doc): UsedIn {
 
 function users_of(u: UsedIn, name: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < u.refs.len()) {
     if (u.refs[i] == name && !has(out, u.users[i])) {
       out = literate.insert_sorted(out, u.users[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -63,29 +63,29 @@ function label(name: string): string {
 }
 
 function labels(names: string[]): string {
-  let s: string = "";
+  let s = "";
   for n in names {
     if (s.len() > 0) {
-      s = s + ", ";
+      s += ", ";
     }
-    s = s + label(n);
+    s += label(n);
   }
   return s;
 }
 
 pub function weave(src: string): string {
-  let d: literate.Doc = literate.parse(src);
-  let u: UsedIn = used_in(d);
+  let d = literate.parse(src);
+  let u = used_in(d);
   let seen: string[] = [];
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < d.blocks.len()) {
-    let b: literate.Block = d.blocks[i];
+    let b = d.blocks[i];
     if (i > 0) {
-      out = out + "\n";
+      out += "\n";
     }
     if (b.kind == literate.CHUNK || b.kind == literate.FILE) {
-      let continuation: boolean = has(seen, b.name);
+      let continuation = has(seen, b.name);
       seen = seen.append(b.name);
       if (b.kind == literate.CHUNK) {
         out = out + "**" + label(b.name) + marker(continuation) + "**\n\n" + body_md(d, b) + note_md(b.name, users_of(u, b.name));
@@ -95,23 +95,23 @@ pub function weave(src: string): string {
     } else {
       out = out + b.raw + "\n";
     }
-    i = i + 1;
+    i += 1;
   }
   return out + index_md(src, d, u);
 }
 
 function body_md(d: literate.Doc, b: literate.Block): string {
-  let s: string = "```fern\n";
-  let k: i32 = b.first;
+  let s = "```fern\n";
+  let k = b.first;
   while (k < b.first + b.count) {
-    let text: string = d.lines[k];
-    let t: string = literate.trim(text);
+    let text = d.lines[k];
+    let t = literate.trim(text);
     if (literate.is_ref(t)) {
       s = s + literate.leading_ws(text) + label(literate.ref_name(t)) + "\n";
     } else {
       s = s + literate.de_escape(text) + "\n";
     }
-    k = k + 1;
+    k += 1;
   }
   return s + "```\n";
 }
@@ -124,14 +124,14 @@ function note_md(name: string, users: string[]): string {
 }
 
 function index_md(src: string, d: literate.Doc, u: UsedIn): string {
-  let names: string[] = sorted(literate.defined_chunks(d));
+  let names = sorted(literate.defined_chunks(d));
   if (names.len() < 2) {
     return "";
   }
-  let unused: string[] = literate.unused_chunks(src);
-  let s: string = "\n## Chunk index\n\n";
+  let unused = literate.unused_chunks(src);
+  let s = "\n## Chunk index\n\n";
   for n in names {
-    let users: string[] = users_of(u, n);
+    let users = users_of(u, n);
     if (n == "*") {
       s = s + "- " + label(n) + " — *(root)*\n";
     } else if (has(unused, n)) {
@@ -146,28 +146,28 @@ function index_md(src: string, d: literate.Doc, u: UsedIn): string {
 }
 
 pub function weave_html(src: string): string {
-  let d: literate.Doc = literate.parse(src);
-  let u: UsedIn = used_in(d);
+  let d = literate.parse(src);
+  let u = used_in(d);
   let seen: string[] = [];
-  let body: string = "";
+  let body = "";
   for b in d.blocks {
     if (b.kind == literate.CHUNK) {
-      let continuation: boolean = has(seen, b.name);
+      let continuation = has(seen, b.name);
       seen = seen.append(b.name);
-      body = body + chunk_html(d, b, continuation, users_of(u, b.name));
+      body += chunk_html(d, b, continuation, users_of(u, b.name));
     } else if (b.kind == literate.FILE) {
-      let continuation: boolean = has(seen, b.name);
+      let continuation = has(seen, b.name);
       seen = seen.append(b.name);
       body = body + "<section class=\"chunk file\">\n<div class=\"chunk-label\"><span class=\"chunk-name\">📄 <code>" + html_escape(b.name)
         + "</code></span>" + marker(continuation) + "</div>\n" + body_html(d, b) + "</section>\n";
     } else if (b.kind == literate.PROSE) {
-      body = body + markdown_to_html(b.raw);
+      body += markdown_to_html(b.raw);
     } else {
-      body = body + "<pre class=\"code display\"><code>";
+      body += "<pre class=\"code display\"><code>";
       for line in literate.split_lines(strip_fence(b.raw)) {
         body = body + highlight_fern(line) + "\n";
       }
-      body = body + "</code></pre>\n";
+      body += "</code></pre>\n";
     }
   }
   return "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
@@ -177,7 +177,7 @@ pub function weave_html(src: string): string {
 }
 
 function chunk_html(d: literate.Doc, b: literate.Block, continuation: boolean, users: string[]): string {
-  let id: string = "";
+  let id = "";
   if (!continuation) {
     id = " id=\"" + chunk_anchor(b.name) + "\"";
   }
@@ -190,17 +190,17 @@ function chunk_html(d: literate.Doc, b: literate.Block, continuation: boolean, u
 }
 
 function body_html(d: literate.Doc, b: literate.Block): string {
-  let s: string = "<pre class=\"code\"><code>";
-  let k: i32 = b.first;
+  let s = "<pre class=\"code\"><code>";
+  let k = b.first;
   while (k < b.first + b.count) {
-    let text: string = d.lines[k];
-    let t: string = literate.trim(text);
+    let text = d.lines[k];
+    let t = literate.trim(text);
     if (literate.is_ref(t)) {
       s = s + html_escape(literate.leading_ws(text)) + ref_link(literate.ref_name(t)) + "\n";
     } else {
       s = s + highlight_fern(literate.de_escape(text)) + "\n";
     }
-    k = k + 1;
+    k += 1;
   }
   return s + "</code></pre>\n";
 }
@@ -210,27 +210,27 @@ function ref_link(name: string): string {
 }
 
 function ref_links(names: string[]): string {
-  let s: string = "";
+  let s = "";
   for n in names {
     if (s.len() > 0) {
-      s = s + ", ";
+      s += ", ";
     }
-    s = s + ref_link(n);
+    s += ref_link(n);
   }
   return s;
 }
 
 function chunk_anchor(name: string): string {
   let buf: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
-    let c: u8 = name[i];
+    let c = name[i];
     if (is_alphanumeric(c)) {
       buf = buf.append(c);
     } else if (c < 128 || c >= 192) {
       buf = buf.append(b'-');
     }
-    i = i + 1;
+    i += 1;
   }
   return "chunk-" + string_from_bytes_unchecked(buf);
 }
@@ -240,25 +240,25 @@ function is_alphanumeric(c: u8): boolean {
 }
 
 function index_html(src: string, d: literate.Doc, u: UsedIn): string {
-  let names: string[] = sorted(literate.defined_chunks(d));
+  let names = sorted(literate.defined_chunks(d));
   if (names.len() == 0) {
     return "";
   }
-  let unused: string[] = literate.unused_chunks(src);
-  let s: string = "<section class=\"chunk-index\">\n<h2 id=\"chunk-index\">Chunk index</h2>\n<ul>\n";
+  let unused = literate.unused_chunks(src);
+  let s = "<section class=\"chunk-index\">\n<h2 id=\"chunk-index\">Chunk index</h2>\n<ul>\n";
   for n in names {
-    let users: string[] = users_of(u, n);
+    let users = users_of(u, n);
     s = s + "<li>" + ref_link(n);
     if (n == "*") {
-      s = s + " <span class=\"idx-note\">(root)</span>";
+      s += " <span class=\"idx-note\">(root)</span>";
     } else if (has(unused, n)) {
-      s = s + " <span class=\"idx-note\">(unused)</span>";
+      s += " <span class=\"idx-note\">(unused)</span>";
     } else if (users.len() > 0) {
       s = s + " <span class=\"idx-note\">used in " + ref_links(users) + "</span>";
     } else {
-      s = s + " <span class=\"idx-note\">(used by a file root)</span>";
+      s += " <span class=\"idx-note\">(used by a file root)</span>";
     }
-    s = s + "</li>\n";
+    s += "</li>\n";
   }
   return s + "</ul>\n</section>\n";
 }
@@ -267,7 +267,7 @@ function html_title(d: literate.Doc): string {
   for b in d.blocks {
     if (b.kind == literate.PROSE) {
       for line in literate.split_lines(b.raw) {
-        let h: string = literate.trim(line);
+        let h = literate.trim(line);
         if (util.str_has_prefix(h, "# ")) {
           return literate.trim(slice_unchecked(h, 2, h.len()) + "");
         }
@@ -282,10 +282,10 @@ function toc_html(d: literate.Doc): string {
   let texts: string[] = [];
   for b in d.blocks {
     if (b.kind == literate.PROSE) {
-      let in_fence: i32 = 0;
+      let in_fence = 0;
       for line in literate.split_lines(b.raw) {
-        let t: string = literate.trim(line);
-        let fl: i32 = run_len(t, b'`');
+        let t = literate.trim(line);
+        let fl = run_len(t, b'`');
         if (fl >= 3) {
           if (in_fence == 0) {
             in_fence = fl;
@@ -293,7 +293,7 @@ function toc_html(d: literate.Doc): string {
             in_fence = 0;
           }
         } else if (in_fence == 0 && heading_level(t) > 0) {
-          let n: i32 = heading_level(t);
+          let n = heading_level(t);
           levels = levels.append(n);
           texts = texts.append(literate.trim(slice_unchecked(t, n + 1, t.len()) + ""));
         }
@@ -303,47 +303,47 @@ function toc_html(d: literate.Doc): string {
   if (texts.len() < 2) {
     return "";
   }
-  let s: string = "<nav class=\"toc\"><div class=\"toc-title\">Contents</div>\n<ul>\n";
-  let i: i32 = 0;
+  let s = "<nav class=\"toc\"><div class=\"toc-title\">Contents</div>\n<ul>\n";
+  let i = 0;
   while (i < texts.len()) {
     s = s + "<li class=\"toc-l" + util.i32_to_string(levels[i]) + "\"><a href=\"#" + texts[i].slugify() + "\">" + inline_markdown(texts[i]) + "</a></li>\n";
-    i = i + 1;
+    i += 1;
   }
   return s + "</ul>\n</nav>\n";
 }
 
 function strip_fence(raw: string): string {
-  let lines: string[] = literate.split_lines(raw);
+  let lines = literate.split_lines(raw);
   if (lines.len() < 2 || !util.str_has_prefix(literate.trim(lines[0]), "```")) {
     return raw;
   }
-  let to: i32 = lines.len();
+  let to = lines.len();
   if (util.str_has_prefix(literate.trim(lines[to - 1]), "```")) {
-    to = to - 1;
+    to -= 1;
   }
-  let s: string = "";
-  let i: i32 = 1;
+  let s = "";
+  let i = 1;
   while (i < to) {
     if (i > 1) {
-      s = s + "\n";
+      s += "\n";
     }
-    s = s + lines[i];
-    i = i + 1;
+    s += lines[i];
+    i += 1;
   }
   return s;
 }
 
 pub function html_escape(s: string): string {
-  let out: string = "";
-  let from: i32 = 0;
-  let i: i32 = 0;
+  let out = "";
+  let from = 0;
+  let i = 0;
   while (i < s.len()) {
-    let rep: string = escape_of(s[i]);
+    let rep = escape_of(s[i]);
     if (rep.len() > 0) {
       out = out + slice_unchecked(s, from, i) + rep;
       from = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out + slice_unchecked(s, from, s.len());
 }
@@ -373,25 +373,25 @@ function flush_para(h: Html): Html {
   if (h.para.len() == 0) {
     return h;
   }
-  let joined: string = "";
+  let joined = "";
   for p in h.para {
     if (joined.len() > 0) {
-      joined = joined + " ";
+      joined += " ";
     }
-    joined = joined + p;
+    joined += p;
   }
   return Html { out: h.out + "<p>" + inline_markdown(joined) + "</p>\n", para: [] };
 }
 
 pub function markdown_to_html(prose: string): string {
-  let lines: string[] = literate.split_lines(prose);
-  let h: Html = Html { out: "", para: [] };
-  let i: i32 = 0;
+  let lines = literate.split_lines(prose);
+  let h = Html { out: "", para: [] };
+  let i = 0;
   while (i < lines.len()) {
-    let t: string = literate.trim(lines[i]);
+    let t = literate.trim(lines[i]);
     if (t.len() == 0) {
       h = flush_para(h);
-      i = i + 1;
+      i += 1;
     } else if (run_len(t, b'`') >= 3) {
       h = flush_para(h);
       let (code, next) = fenced_html(lines, i);
@@ -400,14 +400,14 @@ pub function markdown_to_html(prose: string): string {
     } else if (is_thematic_break(t)) {
       h = flush_para(h);
       h = Html { ...h, out: h.out + "<hr>\n" };
-      i = i + 1;
+      i += 1;
     } else if (heading_level(t) > 0) {
       h = flush_para(h);
-      let n: i32 = heading_level(t);
-      let text: string = literate.trim(slice_unchecked(t, n + 1, t.len()) + "");
-      let tag: string = "h" + util.i32_to_string(n);
+      let n = heading_level(t);
+      let text = literate.trim(slice_unchecked(t, n + 1, t.len()) + "");
+      let tag = "h" + util.i32_to_string(n);
       h = Html { ...h, out: h.out + "<" + tag + " id=\"" + text.slugify() + "\">" + inline_markdown(text) + "</" + tag + ">\n" };
-      i = i + 1;
+      i += 1;
     } else if (util.str_has_prefix(t, "> ")) {
       h = flush_para(h);
       let (quote, next) = quote_html(lines, i);
@@ -420,22 +420,22 @@ pub function markdown_to_html(prose: string): string {
       i = next;
     } else {
       h = Html { ...h, para: h.para.append(t) };
-      i = i + 1;
+      i += 1;
     }
   }
   return flush_para(h).out;
 }
 
 function fenced_html(lines: string[], i: i32): (string, i32) {
-  let t: string = literate.trim(lines[i]);
-  let open: i32 = run_len(t, b'`');
-  let lang: string = literate.trim(slice_unchecked(t, open, t.len()) + "");
-  let s: string = "<pre class=\"code display\"><code>";
-  let k: i32 = i + 1;
+  let t = literate.trim(lines[i]);
+  let open = run_len(t, b'`');
+  let lang = literate.trim(slice_unchecked(t, open, t.len()) + "");
+  let s = "<pre class=\"code display\"><code>";
+  let k = i + 1;
   while (k < lines.len()) {
-    let c: string = literate.trim(lines[k]);
+    let c = literate.trim(lines[k]);
     if (run_len(c, b'`') >= open && run_len(c, b'`') == c.len()) {
-      k = k + 1;
+      k += 1;
       break;
     }
     if (lang == "fern") {
@@ -443,38 +443,38 @@ function fenced_html(lines: string[], i: i32): (string, i32) {
     } else {
       s = s + html_escape(lines[k]) + "\n";
     }
-    k = k + 1;
+    k += 1;
   }
   return (s + "</code></pre>\n", k);
 }
 
 function quote_html(lines: string[], i: i32): (string, i32) {
-  let s: string = "";
-  let k: i32 = i;
+  let s = "";
+  let k = i;
   while (k < lines.len()) {
-    let q: string = literate.trim(lines[k]);
+    let q = literate.trim(lines[k]);
     if (!util.str_has_prefix(q, ">")) {
       break;
     }
     if (k > i) {
-      s = s + " ";
+      s += " ";
     }
-    s = s + inline_markdown(literate.trim(slice_unchecked(q, 1, q.len()) + ""));
-    k = k + 1;
+    s += inline_markdown(literate.trim(slice_unchecked(q, 1, q.len()) + ""));
+    k += 1;
   }
   return ("<blockquote>" + s + "</blockquote>\n", k);
 }
 
 function list_html(lines: string[], i: i32, unordered: boolean): (string, i32) {
-  let tag: string = "ol";
+  let tag = "ol";
   if (unordered) {
     tag = "ul";
   }
-  let s: string = "<" + tag + ">\n";
-  let k: i32 = i;
+  let s = "<" + tag + ">\n";
+  let k = i;
   while (k < lines.len()) {
-    let t: string = literate.trim(lines[k]);
-    let item: string = ordered_item(t);
+    let t = literate.trim(lines[k]);
+    let item = ordered_item(t);
     if (unordered) {
       if (!is_unordered_item(t)) {
         break;
@@ -484,21 +484,21 @@ function list_html(lines: string[], i: i32, unordered: boolean): (string, i32) {
       break;
     }
     s = s + "<li>" + inline_markdown(item) + "</li>\n";
-    k = k + 1;
+    k += 1;
   }
   return (s + "</" + tag + ">\n", k);
 }
 
 function run_len(t: string, c: u8): i32 {
-  let n: i32 = 0;
+  let n = 0;
   while (n < t.len() && t[n] == c) {
-    n = n + 1;
+    n += 1;
   }
   return n;
 }
 
 function heading_level(t: string): i32 {
-  let n: i32 = run_len(t, b'#');
+  let n = run_len(t, b'#');
   if (n >= 1 && n <= 6 && n < t.len() && t[n] == b' ') {
     return n;
   }
@@ -509,7 +509,7 @@ function is_thematic_break(t: string): boolean {
   if (t.len() < 3) {
     return false;
   }
-  let c: u8 = t[0];
+  let c = t[0];
   return (c == b'-' || c == b'*' || c == b'_') && run_len(t, c) == t.len();
 }
 
@@ -518,16 +518,16 @@ function is_unordered_item(t: string): boolean {
 }
 
 function ordered_item(t: string): string {
-  let n: i32 = 0;
+  let n = 0;
   while (n < t.len() && t[n] >= b'0' && t[n] <= b'9') {
-    n = n + 1;
+    n += 1;
   }
   if (n == 0 || n + 1 >= t.len() || t[n] != b'.' || !is_space(t[n + 1])) {
     return "";
   }
-  let k: i32 = n + 1;
+  let k = n + 1;
   while (k < t.len() && is_space(t[k])) {
-    k = k + 1;
+    k += 1;
   }
   return slice_unchecked(t, k, t.len()) + "";
 }
@@ -537,25 +537,25 @@ function is_space(c: u8): boolean {
 }
 
 pub function inline_markdown(s: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.len()) {
     if (s[i] != b'`') {
-      let j: i32 = i;
+      let j = i;
       while (j < s.len() && s[j] != b'`') {
-        j = j + 1;
+        j += 1;
       }
-      out = out + emphasis(slice_unchecked(s, i, j) + "");
+      out += emphasis(slice_unchecked(s, i, j) + "");
       i = j;
     } else {
-      let n: i32 = run_len(slice_unchecked(s, i, s.len()) + "", b'`');
-      let close: i32 = find_closer(s, i + n, n);
+      let n = run_len(slice_unchecked(s, i, s.len()) + "", b'`');
+      let close = find_closer(s, i + n, n);
       if (close >= 0) {
         out = out + "<code>" + html_escape(trim_code_span(slice_unchecked(s, i + n, close) + "")) + "</code>";
         i = close + n;
       } else {
-        out = out + slice_unchecked(s, i, i + n);
-        i = i + n;
+        out += slice_unchecked(s, i, i + n);
+        i += n;
       }
     }
   }
@@ -563,19 +563,19 @@ pub function inline_markdown(s: string): string {
 }
 
 function find_closer(s: string, from: i32, want: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < s.len()) {
     if (s[i] == b'`') {
-      let run: i32 = run_len(slice_unchecked(s, i, s.len()) + "", b'`');
+      let run = run_len(slice_unchecked(s, i, s.len()) + "", b'`');
       if (run == want) {
         return i;
       }
-      i = i + run;
+      i += run;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function trim_code_span(c: string): string {
@@ -590,14 +590,14 @@ function emphasis(seg: string): string {
 }
 
 function delimited(s: string, d: string, open: string, close: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  let dn: i32 = d.len();
+  let out = "";
+  let i = 0;
+  let dn = d.len();
   while (i < s.len()) {
     if (at(s, i, d)) {
-      let j: i32 = i + dn;
+      let j = i + dn;
       while (j < s.len() && s[j] != b'*') {
-        j = j + 1;
+        j += 1;
       }
       if (j > i + dn && at(s, j, d)) {
         out = out + open + slice_unchecked(s, i + dn, j) + close;
@@ -605,8 +605,8 @@ function delimited(s: string, d: string, open: string, close: string): string {
         continue;
       }
     }
-    out = out + slice_unchecked(s, i, i + 1);
-    i = i + 1;
+    out += slice_unchecked(s, i, i + 1);
+    i += 1;
   }
   return out;
 }
@@ -616,55 +616,55 @@ function at(s: string, i: i32, d: string): boolean {
 }
 
 function links(s: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.len()) {
     if (s[i] == b'[') {
-      let tc: i32 = index_from(s, i + 1, b']');
+      let tc = index_from(s, i + 1, b']');
       if (tc > i + 1 && tc + 1 < s.len() && s[tc + 1] == b'(') {
-        let uc: i32 = index_from(s, tc + 2, b')');
+        let uc = index_from(s, tc + 2, b')');
         if (uc > tc + 2) {
-          let text: string = slice_unchecked(s, i + 1, tc) + "";
-          let url: string = slice_unchecked(s, tc + 2, uc) + "";
+          let text = slice_unchecked(s, i + 1, tc) + "";
+          let url = slice_unchecked(s, tc + 2, uc) + "";
           if (safe_link_url(url)) {
             out = out + "<a href=\"" + url + "\">" + text + "</a>";
           } else {
-            out = out + text;
+            out += text;
           }
           i = uc + 1;
           continue;
         }
       }
     }
-    out = out + slice_unchecked(s, i, i + 1);
-    i = i + 1;
+    out += slice_unchecked(s, i, i + 1);
+    i += 1;
   }
   return out;
 }
 
 function index_from(s: string, from: i32, c: u8): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < s.len()) {
     if (s[i] == c) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function safe_link_url(url: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < url.len()) {
-    let c: u8 = url[i];
+    let c = url[i];
     if (c == b':') {
-      let scheme: string = (slice_unchecked(url, 0, i) + "").to_lower();
+      let scheme = (slice_unchecked(url, 0, i) + "").to_lower();
       return scheme == "http" || scheme == "https" || scheme == "mailto";
     }
     if (!is_alphanumeric(c) && c != b'+' && c != b'-' && c != b'.') {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -686,42 +686,42 @@ function span(cls: string, text: string): string {
 }
 
 pub function highlight_fern(line: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < line.len()) {
-    let j: i32 = token_end(line, i);
-    out = out + token_html(slice_unchecked(line, i, j) + "");
+    let j = token_end(line, i);
+    out += token_html(slice_unchecked(line, i, j) + "");
     i = j;
   }
   return out;
 }
 
 function token_end(line: string, i: i32): i32 {
-  let n: i32 = line.len();
-  let c: u8 = line[i];
-  let j: i32 = i + 1;
+  let n = line.len();
+  let c = line[i];
+  let j = i + 1;
   if (c == b'/' && j < n && line[j] == b'/') {
     return n;
   }
   if (c == b'"') {
     return string_end(line, j);
   }
-  let number: boolean = c >= b'0' && c <= b'9';
+  let number = c >= b'0' && c <= b'9';
   if (number || is_word(c)) {
     while (j < n && (is_word(line[j]) || number && line[j] == b'.')) {
-      j = j + 1;
+      j += 1;
     }
   }
   return j;
 }
 
 function string_end(line: string, j: i32): i32 {
-  let k: i32 = j;
+  let k = j;
   while (k < line.len() && line[k] != b'"') {
     if (line[k] == b'\\' && k + 1 < line.len()) {
-      k = k + 1;
+      k += 1;
     }
-    k = k + 1;
+    k += 1;
   }
   if (k < line.len()) {
     return k + 1;
@@ -730,7 +730,7 @@ function string_end(line: string, j: i32): i32 {
 }
 
 function token_html(t: string): string {
-  let c: u8 = t[0];
+  let c = t[0];
   if (t.len() > 1 && c == b'/' && t[1] == b'/') {
     return span("c", html_escape(t));
   }

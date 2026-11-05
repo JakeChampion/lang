@@ -105,9 +105,9 @@ function graph(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
       let bad = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0, str: "" };
       let formed = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, insts: b.insts.with(at, bad) }] } };
       check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: formed } }] }, false, "same formed origin, old body cannot rescue");
-      changed_count = changed_count + 1;
+      changed_count += 1;
     }
-    at = at + 1;
+    at += 1;
   }
   require(changed_count == 5, "all allocation, shape and field effects controlled");
   let contexts = [ssaprepare.Context { ...row.context, rc_free_debug: true }, ssaprepare.Context { ...row.context, sanitize: true }, ssaprepare.Context { ...row.context, leak_check: true }, ssaprepare.Context { ...row.context, architecture: "arm64" }, ssaprepare.Context { ...row.context, records: true }];

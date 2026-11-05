@@ -198,7 +198,19 @@ var censusRows = []censusRow{
 	{"inferred let decls", `\blet\s+[A-Za-z_][A-Za-z0-9_]*\s*=`, "let"},
 }
 
-var incrementRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*1\b`)
+// incrementRe matches `x = x + 1` and `x += 1`. Group 2 is empty for the second form.
+var incrementRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+=\s*1\b|=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*1\b)`)
+
+func incrementsByOne(ln string) int {
+	n := 0
+	for _, m := range incrementRe.FindAllStringSubmatch(ln, -1) {
+		if m[2] == "" || m[1] == m[2] {
+			n++
+		}
+	}
+	return n
+}
+
 var methodContainerRe = regexp.MustCompile(`^\s*(pub\s+)?(impl|trait)\b`)
 
 func methodDeclarationLines(s strippedSource) map[int]bool {
@@ -261,10 +273,8 @@ func takeCensus(t *testing.T, srcs []strippedSource) census {
 			if !strings.Contains(ln, "+") {
 				continue
 			}
-			for _, m := range incrementRe.FindAllStringSubmatch(ln, -1) {
-				if m[1] == m[2] {
-					c["increment by one"] = append(c["increment by one"], censusHit{file: s.name, line: i + 1, text: ln})
-				}
+			for range incrementsByOne(ln) {
+				c["increment by one"] = append(c["increment by one"], censusHit{file: s.name, line: i + 1, text: ln})
 			}
 		}
 	}
@@ -389,6 +399,26 @@ func assertNoLiteralResidue(t *testing.T, srcs []strippedSource) {
 			if bad != "" {
 				t.Errorf("%s:%d: %s literal survived the strip, so every count below it is unsound: %s", s.name, i+1, bad, ln)
 			}
+		}
+	}
+}
+
+func TestFeatureCensusIncrementByOne(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want int
+	}{
+		{"i = i + 1;", 1},
+		{"i += 1;", 1},
+		{"i+=1;", 1},
+		{"i = j + 1;", 0},
+		{"i += 10;", 0},
+		{"i += 1 + k;", 1},
+		{"i = i + 12;", 0},
+		{"i += 1; j = j + 1;", 2},
+	} {
+		if got := incrementsByOne(tc.line); got != tc.want {
+			t.Errorf("incrementsByOne(%q) = %d, want %d", tc.line, got, tc.want)
 		}
 	}
 }

@@ -77,7 +77,7 @@ pub function unique(row: ssaprepare.Emitted, fused: boolean, inverted: boolean, 
     for ins in blk.insts {
       if (ins.str == "__fern_rc_is_unique") {
         require(ins.args[0] == site.input && (fused || ins.result == site.result), 152);
-        count = count + 1;
+        count += 1;
       }
     }
   }
@@ -93,15 +93,15 @@ pub function pressure(row: ssaprepare.Emitted): void {
   for site in row.sites {
     if (previous_spill >= 0 && row.context.architecture == "x86-64") {
       require(site.cached == previous_spill, 162);
-      cached_results = cached_results + 1;
+      cached_results += 1;
     }
     previous_spill = -1;
     if (site.input_home < -1) {
-      input_spills = input_spills + 1;
+      input_spills += 1;
       require(site.text.contains(spill_address(row, site.input_home)), 159);
     }
     if (site.result_home < -1) {
-      result_spills = result_spills + 1;
+      result_spills += 1;
       previous_spill = site.result;
       require(site.text.contains(spill_address(row, site.result_home)), 160);
     }
@@ -128,7 +128,7 @@ pub function rotated(row: ssaprepare.Emitted): void {
   let count = 0;
   for fu in row.allocation.fusions {
     if (fu.unique) {
-      count = count + 1;
+      count += 1;
     }
   }
   require(count == 1, 157);

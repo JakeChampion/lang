@@ -12,16 +12,16 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
   }
-  let g: Graph = graph_of(f);
+  let g = graph_of(f);
   let blocks: ssa.SBlock[] = [];
-  let changed: boolean = false;
-  let b: i32 = 0;
+  let changed = false;
+  let b = 0;
   while (b < f.graph.blocks.len()) {
-    let blk: ssa.SBlock = f.graph.blocks[b];
+    let blk = f.graph.blocks[b];
     let insts: ssa.SInst[] = [];
-    let marked: boolean = false;
+    let marked = false;
     for ins in blk.insts {
-      let proof: i32 = proof_of(g, b, ins);
+      let proof = proof_of(g, b, ins);
       if (proof == PROOF_UNCHECKED) {
         insts = insts.append(ssa.SInst { ...ins, imm: 1 });
       } else if (proof == PROOF_NONE) {
@@ -34,7 +34,7 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
       changed = true;
     }
     blocks = blocks.append(blk);
-    b = b + 1;
+    b += 1;
   }
   if (!changed) {
     return f;
@@ -93,12 +93,12 @@ function group_proven(g: Graph, b: i32, idx: i32, base: i32): boolean {
   if (is_const(g, idx)) {
     return const_value(g, idx) >= 0 && below(g, b, idx, base, [], depth());
   }
-  let d: ssa.SInst = def_of(g, idx);
+  let d = def_of(g, idx);
   if (!binary(d, "|") || !g.i32s[root(g, idx)]) {
     return false;
   }
-  let top: i32 = d.args[0];
-  let sign: ssa.SInst = def_of(g, d.args[1]);
+  let top = d.args[0];
+  let sign = def_of(g, d.args[1]);
   if (!binary(sign, ">>") || !is_const(g, sign.args[1]) || const_value(g, sign.args[1]) != 31) {
     return false;
   }
@@ -110,7 +110,7 @@ function plus_of(g: Graph, top: i32, lo: i32): boolean {
   if (same(g, top, lo)) {
     return true;
   }
-  let d: ssa.SInst = def_of(g, top);
+  let d = def_of(g, top);
   return binary(d, "+") && same(g, d.args[0], lo) && is_const(g, d.args[1]) && const_value(g, d.args[1]) >= 0;
 }
 
@@ -134,23 +134,23 @@ function depth(): i32 {
 }
 
 function graph_of(f: ssasem.Func): Graph {
-  let n: i32 = f.values.len();
-  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let n = f.values.len();
+  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let defs: ssa.SInst[] = [];
   let home: i32[] = [];
   let i32s: boolean[] = [];
   let i64s: boolean[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < n) {
     defs = defs.append(none);
-    home = home.append(0 - 1);
+    home = home.append(-1);
     i32s = i32s.append(ssasem.is_i32(f.values[v]));
     i64s = i64s.append(ssasem.is_i64(f.values[v]));
-    v = v + 1;
+    v += 1;
   }
-  let widens: i32[] = __alloc_i32(n);
-  let nb: i32 = f.graph.blocks.len();
-  let b: i32 = 0;
+  let widens = __alloc_i32(n);
+  let nb = f.graph.blocks.len();
+  let b = 0;
   while (b < nb) {
     for ins in f.graph.blocks[b].insts {
       if (ins.result >= 0 && ins.result < n) {
@@ -159,25 +159,25 @@ function graph_of(f: ssasem.Func): Graph {
         widens = widens.with(ins.result, widening(f, ins));
       }
     }
-    b = b + 1;
+    b += 1;
   }
-  let at: i32[] = ssadeps.position_of(f.graph);
-  let g: Graph = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
+  let at = ssadeps.position_of(f.graph);
+  let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   b = 0;
   while (b < nb) {
-    let blk: ssa.SBlock = f.graph.blocks[b];
-    let before: i32 = g.rels.len();
+    let blk = f.graph.blocks[b];
+    let before = g.rels.len();
     if (blk.preds.len() == 1) {
-      let p: i32 = at[blk.preds[0]];
+      let p = at[blk.preds[0]];
       if (p >= 0) {
-        let term: ssa.STerm = f.graph.blocks[p].term;
+        let term = f.graph.blocks[p].term;
         if (term.kind_tag == 3 && term.t != term.f) {
           g = learn(g, term.cond, term.t == blk.id, 2);
         }
       }
     }
     g = Graph { ...g, first: g.first.append(before), count: g.count.append(g.rels.len() - before) };
-    b = b + 1;
+    b += 1;
   }
   return with_dominators(g, ssadeps.dominates(f.graph), nb);
 }
@@ -198,15 +198,15 @@ function learn(g: Graph, cond: i32, truth: boolean, hops: i32): Graph {
   if (cond < 0 || cond >= g.defs.len() || hops <= 0) {
     return g;
   }
-  let c: ssa.SInst = g.defs[cond];
+  let c = g.defs[cond];
   if (c.kind_tag == 10 && c.str == "!" && c.args.len() == 1) {
     return learn(g, c.args[0], !truth, hops - 1);
   }
   if (c.kind_tag != 9 || c.args.len() != 2) {
     return g;
   }
-  let x: i32 = c.args[0];
-  let y: i32 = c.args[1];
+  let x = c.args[0];
+  let y = c.args[1];
   if (!g.i32s[x] || !g.i32s[y]) {
     return g;
   }
@@ -238,33 +238,33 @@ function fact(g: Graph, lo: i32, hi: i32, held: boolean, strict: boolean): Graph
 function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
   let up: i32[] = [];
   let above: i32[] = [];
-  let b: i32 = 0;
+  let b = 0;
   while (b < nb) {
-    up = up.append(0 - 1);
-    above = above.append(0 - 1);
-    b = b + 1;
+    up = up.append(-1);
+    above = above.append(-1);
+    b += 1;
   }
   let order: i32[] = [];
   while (order.len() < 2 * nb) {
-    order = order.append(0 - 1);
+    order = order.append(-1);
   }
   b = 0;
   while (b < nb) {
     if (d.pre[b] >= 0 && d.pre[b] < 2 * nb) {
       order = order.with(d.pre[b], b);
     }
-    b = b + 1;
+    b += 1;
   }
   let stack: i32[] = [];
-  let sp: i32 = 0;
+  let sp = 0;
   for k in order {
     if (k < 0) {
       continue;
     }
     while (sp > 0 && !ssadeps.dom_holds(d, k, stack[sp - 1])) {
-      sp = sp - 1;
+      sp -= 1;
     }
-    let inherited: i32 = 0 - 1;
+    let inherited: i32 = -1;
     if (sp > 0) {
       inherited = up[stack[sp - 1]];
     }
@@ -279,16 +279,16 @@ function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
     } else {
       stack = stack.append(k);
     }
-    sp = sp + 1;
+    sp += 1;
   }
   return Graph { ...g, up: up, above: above };
 }
 
 function root(g: Graph, v: i32): i32 {
-  let hops: i32 = 0;
+  let hops = 0;
   while (v >= 0 && v < g.defs.len() && g.defs[v].kind_tag == 7 && g.defs[v].args.len() == 1 && hops < 8) {
     v = g.defs[v].args[0];
-    hops = hops + 1;
+    hops += 1;
   }
   return v;
 }
@@ -306,17 +306,17 @@ function equal(g: Graph, a: i32, b: i32, steps: i32): boolean {
   if (steps <= 0 || a < 0 || b < 0) {
     return false;
   }
-  let da: ssa.SInst = g.defs[a];
-  let db: ssa.SInst = g.defs[b];
+  let da = g.defs[a];
+  let db = g.defs[b];
   if (da.kind_tag != db.kind_tag || !projection(da.kind_tag) || da.imm != db.imm || da.str != db.str || da.args.len() != db.args.len()) {
     return false;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < da.args.len()) {
     if (!equal(g, da.args[k], db.args[k], steps - 1)) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return da.args.len() > 0;
 }
@@ -330,7 +330,7 @@ function def_of(g: Graph, v: i32): ssa.SInst {
 }
 
 function is_const(g: Graph, v: i32): boolean {
-  let r: i32 = root(g, v);
+  let r = root(g, v);
   return g.defs[r].kind_tag == 1 && g.i32s[r];
 }
 
@@ -343,23 +343,23 @@ function is_length(g: Graph, v: i32): boolean {
 }
 
 function is_length_of(g: Graph, v: i32, base: i32): boolean {
-  let d: ssa.SInst = def_of(g, v);
+  let d = def_of(g, v);
   if (d.kind_tag == ssasem.length() && d.args.len() == 1 && same(g, d.args[0], base)) {
     return true;
   }
-  let n: i32 = built_len(g, base, [], 24);
+  let n = built_len(g, base, [], 24);
   return n >= 0 && same(g, v, n);
 }
 
 function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
   if (steps <= 0) {
-    return 0 - 1;
+    return -1;
   }
   base = root(g, base);
   if (base < 0 || base >= g.defs.len()) {
-    return 0 - 1;
+    return -1;
   }
-  let d: ssa.SInst = g.defs[base];
+  let d = g.defs[base];
   if (d.kind_tag == ssasem.call() && d.args.len() == 1 && sized_alloc(d.str)) {
     return d.args[0];
   }
@@ -367,28 +367,28 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
     return built_len(g, d.args[0], assume, steps - 1);
   }
   if (d.kind_tag != 8 || d.args.len() == 0) {
-    return 0 - 1;
+    return -1;
   }
   if (assumed(assume, base)) {
-    return 0 - 2;
+    return -2;
   }
-  let inner: i32[] = assume.append(base);
-  let n: i32 = 0 - 1;
-  let back: boolean = false;
+  let inner = assume.append(base);
+  let n: i32 = -1;
+  let back = false;
   for o in d.args {
-    let m: i32 = built_len(g, o, inner, steps - 1);
-    if (m == 0 - 2) {
+    let m = built_len(g, o, inner, steps - 1);
+    if (m == -2) {
       back = true;
     } else if (m < 0) {
-      return 0 - 1;
+      return -1;
     } else if (n < 0) {
       n = m;
     } else if (!same(g, n, m)) {
-      return 0 - 1;
+      return -1;
     }
   }
   if (n < 0 && back && assume.len() > 0) {
-    return 0 - 2;
+    return -2;
   }
   return n;
 }
@@ -413,14 +413,14 @@ function assumed(assume: i32[], v: i32): boolean {
 // The largest value of `y & K` for a constant K of any width that fits an
 // i32, read through a cast to i32, or -1.
 function masked(g: Graph, x: i32): i32 {
-  let d: ssa.SInst = g.defs[x];
+  let d = g.defs[x];
   if (d.kind_tag == ssasem.cast() && d.args.len() == 1 && g.i32s[x]) {
     return masked(g, root(g, d.args[0]));
   }
   if (!binary(d, "&")) {
-    return 0 - 1;
+    return -1;
   }
-  let k: i32 = mask_const(g, d.args[1]);
+  let k = mask_const(g, d.args[1]);
   if (k < 0) {
     k = mask_const(g, d.args[0]);
   }
@@ -428,36 +428,36 @@ function masked(g: Graph, x: i32): i32 {
 }
 
 function mask_const(g: Graph, v: i32): i32 {
-  let d: ssa.SInst = def_of(g, v);
+  let d = def_of(g, v);
   if (d.kind_tag != 1) {
-    let n: i64 = folded(g, v, 4);
+    let n = folded(g, v, 4);
     if (n == NOT_FOLDED || n < 0i64) {
-      return 0 - 1;
+      return -1;
     }
     return n as i32;
   }
   if (d.str.len() > 0) {
-    let n: i64 = util.lit_to_i64(d.str);
+    let n = util.lit_to_i64(d.str);
     if (n >= 0i64 && n <= 2147483647i64) {
       return n as i32;
     }
-    return 0 - 1;
+    return -1;
   }
   if (d.imm >= 0) {
     return d.imm;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function literal_len(g: Graph, base: i32): i32 {
-  let d: ssa.SInst = def_of(g, base);
+  let d = def_of(g, base);
   if (d.kind_tag == ssasem.bytes_new()) {
     return d.imm;
   }
   if (d.kind_tag == ssasem.array_new()) {
     return d.args.len();
   }
-  return 0 - 1;
+  return -1;
 }
 
 function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): boolean {
@@ -465,7 +465,7 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
     return false;
   }
   x = root(g, x);
-  let d: ssa.SInst = g.defs[x];
+  let d = g.defs[x];
   if (small_below(g, b, x, base)) {
     return true;
   }
@@ -473,11 +473,11 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
     return true;
   }
   if (binary(d, "-") && is_const(g, d.args[1])) {
-    let c: i32 = const_value(g, d.args[1]);
+    let c = const_value(g, d.args[1]);
     if (c >= 1 && is_length_of(g, d.args[0], base)) {
       return true;
     }
-    let at: i32 = g.home[x];
+    let at = g.home[x];
     if (c >= 0 && below(g, at, d.args[0], base, assume, steps - 1) && nonneg(g, at, d.args[0], [], steps - 1)) {
       return true;
     }
@@ -486,8 +486,8 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
     if (assumed(assume, x)) {
       return true;
     }
-    let inner: i32[] = assume.append(x);
-    let all: boolean = d.args.len() > 0;
+    let inner = assume.append(x);
+    let all = d.args.len() > 0;
     for k in 0..d.args.len() {
       if (!below(g, edge_block(g, x, k, d.args[k]), d.args[k], base, inner, steps - 1)) {
         all = false;
@@ -501,11 +501,11 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   if (b < 0) {
     return false;
   }
-  let c: i32 = g.up[b];
+  let c = g.up[b];
   while (c >= 0) {
-    let k: i32 = g.first[c];
+    let k = g.first[c];
     while (k < g.first[c] + g.count[c]) {
-      let r: Rel = g.rels[k];
+      let r = g.rels[k];
       if (same(g, r.lo, x)) {
         if (r.strict && is_length_of(g, r.hi, base)) {
           return true;
@@ -514,7 +514,7 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
           return true;
         }
       }
-      k = k + 1;
+      k += 1;
     }
     c = g.above[c];
   }
@@ -532,16 +532,16 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   if (is_length(g, x) || masked(g, x) >= 0) {
     return true;
   }
-  let d: ssa.SInst = g.defs[x];
+  let d = g.defs[x];
   if (d.kind_tag == ssasem.call() && nonneg_call(d.str) || g.widens[x] == 1) {
     return true;
   }
-  let at: i32 = g.home[x];
+  let at = g.home[x];
   if (g.widens[x] == 2 && nonneg(g, at, d.args[0], assume, steps - 1)) {
     return true;
   }
   if (binary(d, "+")) {
-    let y: i32 = 0 - 1;
+    let y: i32 = -1;
     if (is_const(g, d.args[1]) && const_value(g, d.args[1]) == 1) {
       y = d.args[0];
     } else if (is_const(g, d.args[0]) && const_value(g, d.args[0]) == 1) {
@@ -553,7 +553,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     if (y >= 0 && counts_up_from(g, x, y, assume, steps - 1)) {
       return true;
     }
-    if (plus_fits(g, b, d, 0 - 1) && nonneg(g, b, plus_base(g, d), assume, steps - 1)) {
+    if (plus_fits(g, b, d, -1) && nonneg(g, b, plus_base(g, d), assume, steps - 1)) {
       return true;
     }
   }
@@ -566,8 +566,8 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     if (assumed(assume, x)) {
       return true;
     }
-    let inner: i32[] = assume.append(x);
-    let all: boolean = d.args.len() > 0;
+    let inner = assume.append(x);
+    let all = d.args.len() > 0;
     for k in 0..d.args.len() {
       if (!nonneg(g, edge_block(g, x, k, d.args[k]), d.args[k], inner, steps - 1)) {
         all = false;
@@ -581,22 +581,22 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   if (b < 0) {
     return false;
   }
-  let c: i32 = g.up[b];
+  let c = g.up[b];
   while (c >= 0) {
-    let k: i32 = g.first[c];
+    let k = g.first[c];
     while (k < g.first[c] + g.count[c]) {
-      let r: Rel = g.rels[k];
+      let r = g.rels[k];
       if (same(g, r.hi, x)) {
         if (is_const(g, r.lo)) {
-          let low: i32 = const_value(g, r.lo);
-          if (low >= 0 || r.strict && low == 0 - 1) {
+          let low = const_value(g, r.lo);
+          if (low >= 0 || r.strict && low == -1) {
             return true;
           }
         } else if (nonneg(g, b, r.lo, assume, steps - 1)) {
           return true;
         }
       }
-      k = k + 1;
+      k += 1;
     }
     c = g.above[c];
   }
@@ -608,15 +608,15 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
 // overflow. A range loop's counter is such a phi: -1 on entry, x on the back edge.
 function counts_up_from(g: Graph, x: i32, y: i32, assume: i32[], steps: i32): boolean {
   y = root(g, y);
-  let d: ssa.SInst = g.defs[y];
+  let d = g.defs[y];
   if (steps <= 0 || d.kind_tag != 8 || !g.i32s[y] || d.args.len() == 0 || assumed(assume, x)) {
     return false;
   }
-  let inner: i32[] = assume.append(x);
+  let inner = assume.append(x);
   for k in 0..d.args.len() {
-    let a: i32 = d.args[k];
-    let start: i64 = folded(g, a, steps);
-    let at: i32 = edge_block(g, y, k, a);
+    let a = d.args[k];
+    let start = folded(g, a, steps);
+    let at = edge_block(g, y, k, a);
     if (start != NOT_FOLDED) {
       if (start < 0i64 - 1i64 || start >= 2147483647i64) {
         return false;
@@ -635,7 +635,7 @@ function nonneg_call(name: string): boolean {
 
 // The block whose dominating facts hold for a phi's operand `k`: its predecessor on that edge.
 function edge_block(g: Graph, phi: i32, k: i32, operand: i32): i32 {
-  let ps: i32[] = g.preds[g.home[phi]];
+  let ps = g.preds[g.home[phi]];
   if (k < ps.len() && ps[k] >= 0) {
     return ps[k];
   }
@@ -646,7 +646,7 @@ function edge_block(g: Graph, phi: i32, k: i32, operand: i32): i32 {
 function small_max(g: Graph, v: i32): i32 {
   v = root(g, v);
   if (is_const(g, v)) {
-    return if (const_value(g, v) >= 0) { const_value(g, v) } else { 0 - 1 };
+    return if (const_value(g, v) >= 0) { const_value(g, v) } else { -1 };
   }
   return masked(g, v);
 }
@@ -659,25 +659,25 @@ function plus_base(g: Graph, d: ssa.SInst): i32 {
   if (small_max(g, d.args[0]) >= 0) {
     return d.args[1];
   }
-  return 0 - 1;
+  return -1;
 }
 
 // `a + k`, with k a small constant or mask, is below a length (of `base`, or
 // any when `base` is -1) when a dominating fact bounds `a` by that length
 // minus more than k. The same fact keeps the sum from overflowing.
 function plus_fits(g: Graph, b: i32, d: ssa.SInst, base: i32): boolean {
-  let a: i32 = plus_base(g, d);
+  let a = plus_base(g, d);
   if (a < 0 || b < 0) {
     return false;
   }
-  let k: i32 = small_max(g, d.args[1]);
+  let k = small_max(g, d.args[1]);
   if (a == d.args[1]) {
     k = small_max(g, d.args[0]);
   }
-  let c: i32 = g.up[b];
+  let c = g.up[b];
   while (c >= 0) {
     for i in g.first[c]..g.first[c] + g.count[c] {
-      let r: Rel = g.rels[i];
+      let r = g.rels[i];
       if (same(g, r.lo, a) && length_minus(g, r.hi, base) - (if (r.strict) { 0 } else { 1 }) >= k) {
         return true;
       }
@@ -689,14 +689,14 @@ function plus_fits(g: Graph, b: i32, d: ssa.SInst, base: i32): boolean {
 
 // n for a value `len - n` of a length (of `base`, or any when `base` is -1), or -1.
 function length_minus(g: Graph, v: i32, base: i32): i32 {
-  let d: ssa.SInst = def_of(g, v);
+  let d = def_of(g, v);
   if (!binary(d, "-") || !is_const(g, d.args[1]) || const_value(g, d.args[1]) < 0) {
-    return 0 - 1;
+    return -1;
   }
   if (base < 0 && is_length(g, d.args[0]) || base >= 0 && is_length_of(g, d.args[0], base)) {
     return const_value(g, d.args[1]);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function below_a_length(g: Graph, b: i32, y: i32): boolean {
@@ -704,15 +704,15 @@ function below_a_length(g: Graph, b: i32, y: i32): boolean {
     return false;
   }
   y = root(g, y);
-  let c: i32 = g.up[b];
+  let c = g.up[b];
   while (c >= 0) {
-    let k: i32 = g.first[c];
+    let k = g.first[c];
     while (k < g.first[c] + g.count[c]) {
-      let r: Rel = g.rels[k];
+      let r = g.rels[k];
       if (r.strict && same(g, r.lo, y)) {
         return true;
       }
-      k = k + 1;
+      k += 1;
     }
     c = g.above[c];
   }
@@ -728,16 +728,16 @@ function folded(g: Graph, v: i32, steps: i32): i64 {
   if (is_const(g, v)) {
     return const_value(g, v) as i64;
   }
-  let d: ssa.SInst = g.defs[v];
+  let d = g.defs[v];
   if (steps <= 0 || d.kind_tag != 9 || d.args.len() != 2 || !g.i32s[v]) {
     return NOT_FOLDED;
   }
-  let a: i64 = folded(g, d.args[0], steps - 1);
-  let b: i64 = folded(g, d.args[1], steps - 1);
+  let a = folded(g, d.args[0], steps - 1);
+  let b = folded(g, d.args[1], steps - 1);
   if (a == NOT_FOLDED || b == NOT_FOLDED) {
     return NOT_FOLDED;
   }
-  let out: i64 = fold_op(d.str, a, b);
+  let out = fold_op(d.str, a, b);
   if (out < -2147483648i64 || out > 2147483647i64) {
     return NOT_FOLDED;
   }
@@ -768,7 +768,7 @@ function fold_op(op: string, a: i64, b: i64): i64 {
 
 // A constant or a mask below a literal's length or a length a fact bounds.
 function small_below(g: Graph, b: i32, x: i32, base: i32): boolean {
-  let m: i32 = small_max(g, x);
+  let m = small_max(g, x);
   return m >= 0 && (m < literal_len(g, base) || length_at_least(g, b, base, m + 1));
 }
 
@@ -777,11 +777,11 @@ function length_at_least(g: Graph, b: i32, base: i32, n: i32): boolean {
   if (b < 0) {
     return false;
   }
-  let c: i32 = g.up[b];
+  let c = g.up[b];
   while (c >= 0) {
     for k in g.first[c]..g.first[c] + g.count[c] {
-      let r: Rel = g.rels[k];
-      let low: i64 = folded(g, r.lo, 4);
+      let r = g.rels[k];
+      let low = folded(g, r.lo, 4);
       if (low != NOT_FOLDED && is_length_of(g, r.hi, base)) {
         if (low >= n as i64 || r.strict && low >= (n - 1) as i64) {
           return true;
@@ -801,18 +801,18 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
     return false;
   }
   y = root(g, y);
-  let c: i32 = g.up[b];
+  let c = g.up[b];
   while (c >= 0) {
-    let k: i32 = g.first[c];
+    let k = g.first[c];
     while (k < g.first[c] + g.count[c]) {
-      let r: Rel = g.rels[k];
+      let r = g.rels[k];
       if (same(g, r.hi, y) && is_const(g, r.lo)) {
-        let low: i32 = const_value(g, r.lo);
+        let low = const_value(g, r.lo);
         if (low >= n || r.strict && low >= n - 1) {
           return true;
         }
       }
-      k = k + 1;
+      k += 1;
     }
     c = g.above[c];
   }
@@ -823,21 +823,21 @@ pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
   if (!any_pow2_quotient(f)) {
     return f;
   }
-  let g: Graph = graph_of(f);
-  let values: typeinfo.Type[] = f.values;
+  let g = graph_of(f);
+  let values = f.values;
   let blocks: ssa.SBlock[] = [];
-  let changed: boolean = false;
-  let b: i32 = 0;
+  let changed = false;
+  let b = 0;
   while (b < f.graph.blocks.len()) {
-    let blk: ssa.SBlock = f.graph.blocks[b];
+    let blk = f.graph.blocks[b];
     let insts: ssa.SInst[] = [];
-    let marked: boolean = false;
+    let marked = false;
     for ins in blk.insts {
-      let k: i32 = pow2_divisor(g, ins);
+      let k = pow2_divisor(g, ins);
       if (k > 0 && (g.i32s[ins.result] || g.i64s[ins.result]) && nonneg(g, b, ins.args[0], [], depth())) {
-        let c: i32 = values.len();
+        let c = values.len();
         values = values.append(f.values[ins.result]);
-        let op: string = "&";
+        let op = "&";
         let operand: i32 = (1 << k) - 1;
         if (ins.str == "/") {
           op = ">>";
@@ -855,7 +855,7 @@ pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
       changed = true;
     }
     blocks = blocks.append(blk);
-    b = b + 1;
+    b += 1;
   }
   if (!changed) {
     return f;
@@ -875,8 +875,8 @@ function any_pow2_quotient(f: ssasem.Func): boolean {
 }
 
 function small_const(g: Graph, v: i32): i32 {
-  let r: i32 = root(g, v);
-  let d: ssa.SInst = g.defs[r];
+  let r = root(g, v);
+  let d = g.defs[r];
   if (g.widens[r] != 0) {
     return small_const(g, d.args[0]);
   }
@@ -886,7 +886,7 @@ function small_const(g: Graph, v: i32): i32 {
   if (d.kind_tag == 1 && g.i64s[r] && d.str.len() > 0 && d.str.len() < 10 && util.is_all_digits(d.str)) {
     return util.digits_to_i32(d.str);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function int_const(t: typeinfo.Type, result: i32, n: i32): ssa.SInst {
@@ -918,14 +918,14 @@ function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
   if (!binary(ins, "/") && !binary(ins, "%")) {
     return 0;
   }
-  let d: i32 = small_const(g, ins.args[1]);
+  let d = small_const(g, ins.args[1]);
   if (d < 2 || (d & d - 1) != 0) {
     return 0;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (d > 1) {
     d = d >> 1;
-    k = k + 1;
+    k += 1;
   }
   return k;
 }
@@ -934,40 +934,40 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
   }
-  let defs: ssa.SInst[] = definitions(f);
-  let values: typeinfo.Type[] = f.values;
+  let defs = definitions(f);
+  let values = f.values;
   let blocks: ssa.SBlock[] = [];
-  let changed: boolean = false;
+  let changed = false;
   for blk in f.graph.blocks {
-    let plan: Probes = probes_of(f, defs, blk.insts);
+    let plan = probes_of(f, defs, blk.insts);
     if (!plan.any) {
       blocks = blocks.append(blk);
       continue;
     }
     let insts: ssa.SInst[] = [];
-    let p: i32 = 0;
-    let pos: i32 = 0;
+    let p = 0;
+    let pos = 0;
     while (pos < blk.insts.len()) {
-      let ins: ssa.SInst = blk.insts[pos];
+      let ins = blk.insts[pos];
       if (p < plan.at.len() && plan.at[p] == pos) {
-        let t: typeinfo.Type = f.values[ins.args[1]];
-        let v: i32 = values.len();
-        let idx: i32 = v;
+        let t = f.values[ins.args[1]];
+        let v = values.len();
+        let idx = v;
         if (plan.x[p] < 0) {
-          let c: i32 = plan.lo[p] + plan.span[p];
+          let c = plan.lo[p] + plan.span[p];
           if (plan.lo[p] < 0) {
-            c = 0 - 1;
+            c = -1;
           }
           insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: c, str: "" });
           values = values.append(t);
         } else {
-          let lo: i32 = plan.x[p];
+          let lo = plan.x[p];
           if (plan.lo[p] != 0) {
             insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: plan.lo[p], str: "" });
             insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [lo, v], imm: 0, str: "+" });
             values = values.append(t).append(t);
             lo = v + 1;
-            v = v + 2;
+            v += 2;
           }
           insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: plan.span[p], str: "" });
           insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [lo, v], imm: 0, str: "+" });
@@ -979,13 +979,13 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
         }
         insts = insts.append(ssa.SInst { ...ins, result: values.len(), args: [ins.args[0], idx], imm: ssasem.check_only() });
         values = values.append(f.values[ins.result]);
-        p = p + 1;
+        p += 1;
       }
       if (plan.unchecked[pos]) {
         ins = ssa.SInst { ...ins, imm: 1 };
       }
       insts = insts.append(ins);
-      pos = pos + 1;
+      pos += 1;
     }
     blocks = blocks.append(ssa.SBlock { ...blk, insts: insts });
     changed = true;
@@ -999,12 +999,12 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
 
 function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let defs: ssa.SInst[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < f.values.len()) {
     defs = defs.append(none);
-    v = v + 1;
+    v += 1;
   }
   for blk in f.graph.blocks {
     for ins in blk.insts {
@@ -1017,47 +1017,47 @@ function definitions(f: ssasem.Func): ssa.SInst[] {
 }
 
 function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
-  let out: Probes = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
-  let start: i32 = 0;
-  let pos: i32 = 0;
+  let out = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
+  let start = 0;
+  let pos = 0;
   while (pos <= insts.len()) {
     if (pos == insts.len() || !silent(f, insts[pos])) {
       out = probes_in_run(f, defs, insts, start, pos, out);
       start = pos + 1;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return out;
 }
 
 function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, own out: Probes): Probes {
   let reads: i32[] = [];
-  let k: i32 = start;
+  let k = start;
   while (k < end) {
-    let ins: ssa.SInst = insts[k];
+    let ins = insts[k];
     if (checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
       reads = reads.append(k);
     }
-    k = k + 1;
+    k += 1;
   }
-  let done: boolean[] = __alloc_bool(reads.len());
-  let i: i32 = 0;
+  let done = __alloc_bool(reads.len());
+  let i = 0;
   while (i < reads.len()) {
     if (done[i]) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let first: ssa.SInst = insts[reads[i]];
-    let x: i32 = offset_base(f, defs, first.args[1]);
-    let low: i32 = offset_of(f, defs, first.args[1]);
-    let high: i32 = low;
+    let first = insts[reads[i]];
+    let x = offset_base(f, defs, first.args[1]);
+    let low = offset_of(f, defs, first.args[1]);
+    let high = low;
     let members: i32[] = [reads[i]];
-    let j: i32 = i + 1;
+    let j = i + 1;
     while (j < reads.len()) {
-      let r: ssa.SInst = insts[reads[j]];
+      let r = insts[reads[j]];
       if (!done[j] && r.args[0] == first.args[0] && offset_base(f, defs, r.args[1]) == x) {
         done = done.with(j, true);
-        let c: i32 = offset_of(f, defs, r.args[1]);
+        let c = offset_of(f, defs, r.args[1]);
         if (c < low) {
           low = c;
         }
@@ -1066,29 +1066,29 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
         }
         members = members.append(reads[j]);
       }
-      j = j + 1;
+      j += 1;
     }
     if (members.len() >= 2) {
-      let m: i32 = 1;
+      let m = 1;
       if (high > low) {
         out = Probes { ...out, at: out.at.append(reads[i]), x: out.x.append(x), lo: out.lo.append(low), span: out.span.append(high - low) };
         m = 0;
       }
       while (m < members.len()) {
         out = Probes { ...out, unchecked: out.unchecked.with(members[m], true), any: true };
-        m = m + 1;
+        m += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (constant_index(f, defs, v)) {
-    return 0 - 1;
+    return -1;
   }
-  let c: i32 = constant_operand(f, defs, v);
+  let c = constant_operand(f, defs, v);
   if (c < 0) {
     return v;
   }
@@ -1099,7 +1099,7 @@ function offset_of(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (constant_index(f, defs, v)) {
     return defs[v].imm;
   }
-  let c: i32 = constant_operand(f, defs, v);
+  let c = constant_operand(f, defs, v);
   if (c < 0) {
     return 0;
   }
@@ -1111,19 +1111,19 @@ function constant_index(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
 }
 
 function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
-  let d: ssa.SInst = defs[v];
+  let d = defs[v];
   if (d.kind_tag != 9 || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
-    return 0 - 1;
+    return -1;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < 2) {
-    let a: ssa.SInst = defs[d.args[k]];
+    let a = defs[d.args[k]];
     if (a.kind_tag == 1 && ssasem.is_i32(f.values[d.args[k]])) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function scalar(f: ssasem.Func, v: i32): boolean {
@@ -1131,7 +1131,7 @@ function scalar(f: ssasem.Func, v: i32): boolean {
 }
 
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == 35 || k == ssasem.param()) {
     return true;
   }
@@ -1141,7 +1141,7 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.result < 0 || ins.result >= f.values.len()) {
     return false;
   }
-  let t: typeinfo.Type = f.values[ins.result];
+  let t = f.values[ins.result];
   if (k == 9) {
     return ins.str != "/" && ins.str != "%" && scalar(f, ins.result);
   }
@@ -1158,18 +1158,18 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
   if (!any_index_read(f)) {
     return f;
   }
-  let defs: ssa.SInst[] = definitions(f);
-  let values: typeinfo.Type[] = f.values;
+  let defs = definitions(f);
+  let values = f.values;
   let blocks: ssa.SBlock[] = [];
-  let changed: boolean = false;
+  let changed = false;
   let parts: i32[] = [];
   for blk in f.graph.blocks {
     let insts: ssa.SInst[] = [];
-    let fused: boolean = false;
+    let fused = false;
     for ins in blk.insts {
       let w: Word = match (word_of(f, defs, ins)) { Some(word) => word, None => { insts = insts.append(ins); continue; } };
       parts = word_parts(defs, ins.args, w, parts);
-      let v: i32 = values.len();
+      let v = values.len();
       let i32_t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
       insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: w.off, str: "" });
       if (w.x < 0) {
@@ -1179,7 +1179,7 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       }
       values = values.append(i32_t).append(i32_t);
       fused = true;
-      let l: Load = load_word(Load { insts: insts, values: values }, f.values[w.arr], w, v + 1, ins.result, view_words, swaps);
+      let l = load_word(Load { insts: insts, values: values }, f.values[w.arr], w, v + 1, ins.result, view_words, swaps);
       insts = l.insts;
       values = l.values;
     }
@@ -1193,7 +1193,7 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
     return f;
   }
   blocks = without_unused(blocks, parts, values.len());
-  let calls: ssasem.Contract[] = f.calls;
+  let calls = f.calls;
   for c in contracts {
     if (!has_contract(calls, c.name)) {
       calls = calls.append(c);
@@ -1207,16 +1207,16 @@ struct Load { insts: ssa.SInst[], values: typeinfo.Type[] }
 function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i32, view_words: string[], swaps: string[]): Load {
   let wide: typeinfo.Type = typeinfo.TypeI32 { width: w.bytes * 8, unsigned: false, is_char: false, polymorphic: false };
   let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
-  let insts: ssa.SInst[] = l.insts;
-  let values: typeinfo.Type[] = l.values;
-  let v: i32 = values.len();
-  let word: i32 = v;
+  let insts = l.insts;
+  let values = l.values;
+  let v = values.len();
+  let word = v;
   if (is_byte_view(t)) {
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr, first], imm: 0, str: view_words[w.bytes / 8] });
   } else {
-    let base: i32 = v;
+    let base = v;
     if (ssasem.is_text(t)) {
-      let d: Load = text_data(Load { insts: insts, values: values }, t, w.arr, addr_t);
+      let d = text_data(Load { insts: insts, values: values }, t, w.arr, addr_t);
       insts = d.insts;
       values = d.values;
       base = values.len() - 1;
@@ -1227,7 +1227,7 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
       values = values.append(addr_t).append(addr_t).append(addr_t);
       base = v + 2;
     }
-    let at: i32 = values.len();
+    let at = values.len();
     insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: at, args: [first], imm: 0, str: "" });
     insts = insts.append(ssa.SInst { kind_tag: 9, result: at + 1, args: [base, at], imm: 0, str: "+" });
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: at + 2, args: [at + 1], imm: 0, str: ["__load_i32", "__load_i64"][w.bytes / 8] });
@@ -1243,9 +1243,9 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
 }
 
 function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Type): Load {
-  let insts: ssa.SInst[] = l.insts;
-  let values: typeinfo.Type[] = l.values;
-  let s: i32 = arr;
+  let insts = l.insts;
+  let values = l.values;
+  let s = arr;
   if (ssasem.is_view(t)) {
     s = values.len();
     insts = insts.append(ssa.SInst { kind_tag: ssasem.str_as(), result: s, args: [arr], imm: 0, str: "" });
@@ -1256,9 +1256,9 @@ function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Typ
 }
 
 function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32, result: i32): ssa.SInst[] {
-  let v: i32 = loaded;
+  let v = loaded;
   if (w.big) {
-    let name: string = swaps[0];
+    let name = swaps[0];
     if (w.bytes == 8) {
       name = swaps[1];
     }
@@ -1273,7 +1273,7 @@ function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] 
     if (v == w.arr || v == w.x || v < 0 || v >= defs.len() || has_value(acc, v)) {
       continue;
     }
-    let d: ssa.SInst = defs[v];
+    let d = defs[v];
     let part: boolean = d.kind_tag == 1 || d.kind_tag == ssasem.cast() || d.kind_tag == 9 && (d.str == "|" || d.str == "<<" || d.str == "+")
       || d.kind_tag == ssasem.array_get() && d.imm == 1;
     if (part) {
@@ -1293,14 +1293,14 @@ function has_value(xs: i32[], v: i32): boolean {
 }
 
 function without_unused(blocks: ssa.SBlock[], parts: i32[], n: i32): ssa.SBlock[] {
-  let part: boolean[] = falses(n);
+  let part = falses(n);
   for v in parts {
     part = part.with(v, true);
   }
-  let dropped: boolean = true;
+  let dropped = true;
   while (dropped) {
     dropped = false;
-    let used: boolean[] = falses(n);
+    let used = falses(n);
     for blk in blocks {
       for ins in blk.insts {
         for a in ins.args {
@@ -1334,10 +1334,10 @@ function without_unused(blocks: ssa.SBlock[], parts: i32[], n: i32): ssa.SBlock[
 
 function falses(n: i32): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(false);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1366,12 +1366,12 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
   if (ins.kind_tag != 9 || ins.str != "|" || ins.result < 0) {
     return None;
   }
-  let t: typeinfo.Type = f.values[ins.result];
-  let n: i32 = word_width(t);
+  let t = f.values[ins.result];
+  let n = word_width(t);
   if (n == 0) {
     return None;
   }
-  let terms: i32[] = or_terms(defs, f.values, ins.result, t, []);
+  let terms = or_terms(defs, f.values, ins.result, t, []);
   if (terms.len() != n) {
     return None;
   }
@@ -1386,7 +1386,7 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
       }
     }
   }
-  let lo: i32 = parts[0].off;
+  let lo = parts[0].off;
   for p in parts {
     if (p.arr != parts[0].arr || p.x != parts[0].x) {
       return None;
@@ -1395,11 +1395,11 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
       lo = p.off;
     }
   }
-  let seen: boolean[] = falses(n);
-  let le: boolean = true;
-  let be: boolean = true;
+  let seen = falses(n);
+  let le = true;
+  let be = true;
   for p in parts {
-    let at: i32 = p.off - lo;
+    let at = p.off - lo;
     if (at >= n || seen[at]) {
       return None;
     }
@@ -1425,7 +1425,7 @@ function word_width(t: typeinfo.Type): i32 {
 }
 
 function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinfo.Type, acc: i32[]): i32[] {
-  let d: ssa.SInst = defs[v];
+  let d = defs[v];
   if (d.kind_tag == 9 && d.str == "|" && typeinfo.spelling(values[v]) == typeinfo.spelling(t) && acc.len() < 8) {
     return or_terms(defs, values, d.args[1], t, or_terms(defs, values, d.args[0], t, acc));
   }
@@ -1433,8 +1433,8 @@ function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinf
 }
 
 function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): Option[WordByte] {
-  let d: ssa.SInst = defs[v];
-  let shift: i32 = 0;
+  let d = defs[v];
+  let shift = 0;
   if (d.kind_tag == 9 && d.str == "<<") {
     shift = const_through_cast(defs, d.args[1]);
     if (shift <= 0) {
@@ -1445,18 +1445,18 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   if (d.kind_tag != ssasem.cast() || d.args.len() != 1 || typeinfo.spelling(f.values[d.result]) != typeinfo.spelling(t)) {
     return None;
   }
-  let g: ssa.SInst = defs[d.args[0]];
+  let g = defs[d.args[0]];
   if (!index_read(g) || !ssasem.is_u8(f.values[g.result])) {
     return None;
   }
-  let x: i32 = g.args[1];
-  let off: i32 = 0;
-  let a: ssa.SInst = defs[x];
+  let x = g.args[1];
+  let off = 0;
+  let a = defs[x];
   if (a.kind_tag == 1) {
     return Some(WordByte { arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift });
   }
   if (a.kind_tag == 9 && a.str == "+") {
-    let c: ssa.SInst = defs[a.args[1]];
+    let c = defs[a.args[1]];
     if (c.kind_tag == 1) {
       x = a.args[0];
       off = c.imm;
@@ -1466,19 +1466,19 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
 }
 
 function const_through_cast(defs: ssa.SInst[], v: i32): i32 {
-  let d: ssa.SInst = defs[v];
+  let d = defs[v];
   if (d.kind_tag == ssasem.cast() && d.args.len() == 1) {
     d = defs[d.args[0]];
   }
   if (d.kind_tag == 1 && d.str.len() > 0) {
-    let n: i64 = util.lit_to_i64(d.str);
+    let n = util.lit_to_i64(d.str);
     if (n > 0i64 && n < 64i64) {
       return n as i32;
     }
-    return 0 - 1;
+    return -1;
   }
   if (d.kind_tag == 1) {
     return d.imm;
   }
-  return 0 - 1;
+  return -1;
 }

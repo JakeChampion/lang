@@ -17,17 +17,17 @@ function main(): i32 {
     "(i32, string)[]", "Map[string, i32][]", "Bogus[]",
     "mod.Thing", "",
   ];
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < corpus.len()) {
-    let n: string = corpus[i];
-    let a: typeinfo.Type = checker.type_from_name_with_structs(n, structs);
-    let b: typeinfo.Type = checker.type_from_name_with_struct_names(n, snames);
-    let c: typeinfo.Type = checker.type_from_name_with_names_and_unions(n, snames, unames);
+    let n = corpus[i];
+    let a = checker.type_from_name_with_structs(n, structs);
+    let b = checker.type_from_name_with_struct_names(n, snames);
+    let c = checker.type_from_name_with_names_and_unions(n, snames, unames);
     out = out + n + " => structs=" + checker.type_debug(a)
       + " names=" + checker.type_debug(b)
       + " names+unions=" + checker.type_debug(c) + "\n";
-    i = i + 1;
+    i += 1;
   }
   write(out);
   return 0;

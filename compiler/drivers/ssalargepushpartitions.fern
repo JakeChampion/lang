@@ -29,12 +29,12 @@ function scalar_class(n: i32): i32 {
   let boundary = 1048576;
   let index = 0;
   while (n > cap) {
-    cap = cap + step;
-    index = index + 1;
+    cap += step;
+    index += 1;
     if (cap == boundary) {
-      step = step * 2;
+      step *= 2;
       if (boundary < 1073741824) {
-        boundary = boundary * 2;
+        boundary *= 2;
       }
     }
   }
@@ -55,7 +55,7 @@ function bins(): void {
       require(ranges.expected_class(cross) == -1 && scalar_class(cap + 1) == index + 1, "adjacent bin refusal");
     }
     low = cap + 1;
-    index = index + 1;
+    index += 1;
   }
 }
 
@@ -63,7 +63,7 @@ function arithmetic(n: i32): i64 {
   let x = if (n < 524288) { 524288 as i64 } else { n as i64 };
   let quantum = 1 as i64;
   while (quantum * (8 as i64) <= x) {
-    quantum = quantum * (2 as i64);
+    quantum *= 2 as i64;
   }
   let sum = x + quantum - 1 as i64;
   require(sum >= 0 as i64 && sum <= 2147483647 as i64, "bounded rounding numerator");
@@ -81,7 +81,7 @@ pub function audit(limit: i32): void {
       row(r);
     }
     next = r.high + 1;
-    at = at + 1;
+    at += 1;
   }
   require(next == 1073741825, "complete recycled input domain");
 }

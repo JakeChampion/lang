@@ -19,12 +19,12 @@ pub function task_runtime_roots(): string {
 }
 
 pub function sanitize_label(name: string): string {
-  let dot: i32 = __memchr(name, 46, 0);
+  let dot = __memchr(name, 46, 0);
   if (dot < 0) {
     return name;
   }
-  let out: string = "";
-  let start: i32 = 0;
+  let out = "";
+  let start = 0;
   while (dot >= 0) {
     out = out + slice_unchecked(name, start, dot) + "__";
     start = dot + 1;
@@ -34,15 +34,15 @@ pub function sanitize_label(name: string): string {
 }
 
 pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
-  let refs: string[] = astwalk.collect_lambda_idents(lm, []);
+  let refs = astwalk.collect_lambda_idents(lm, []);
   let caps: string[] = [];
-  let ri: i32 = 0;
+  let ri = 0;
   while (ri < refs.len()) {
-    let nm: string = refs[ri];
+    let nm = refs[ri];
     if (!util.has_str(caps, nm) && outer.has_local(nm)) {
       caps = caps.append(nm);
     }
-    ri = ri + 1;
+    ri += 1;
   }
   return caps;
 }
@@ -164,21 +164,21 @@ pub function (s: EmitState) svc(nr: i32): EmitState {
 }
 
 function record_syscall(t: EmitState, nr: i32): EmitState {
-  let at: i32 = 0;
+  let at = 0;
   while (at < t.syscalls.len() && t.syscalls[at] < nr) {
-    at = at + 1;
+    at += 1;
   }
   if (at < t.syscalls.len() && t.syscalls[at] == nr) {
     return t;
   }
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < t.syscalls.len()) {
     if (i == at) {
       out = out.append(nr);
     }
     out = out.append(t.syscalls[i]);
-    i = i + 1;
+    i += 1;
   }
   if (at == t.syscalls.len()) {
     out = out.append(nr);
@@ -237,9 +237,9 @@ pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): Em
   s = bpf_insn(s, 21, 1, arch);
   s = bpf_insn(s, 6, 0, "0x80000000");
   s = bpf_insn(s, 32, 0, "0");
-  let mapping: i32[] = mapping_calls(s.build_target);
-  let checked: boolean = mapping_checked(s, allowed);
-  let n: i32 = allowed.len();
+  let mapping = mapping_calls(s.build_target);
+  let checked = mapping_checked(s, allowed);
+  let n = allowed.len();
   for i in 0..n {
     let to_allow: i32 = if (checked) { n - i + 3 } else { n - i };
     let jt: i32 = if (checked && util.index_of_i32(mapping, allowed[i]) >= 0) { n - i } else { to_allow };
@@ -256,7 +256,7 @@ pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): Em
 
 // Whether the list holds a mapping call, so the filter carries the check block.
 function mapping_checked(s: EmitState, allowed: i32[]): boolean {
-  let mapping: i32[] = mapping_calls(s.build_target);
+  let mapping = mapping_calls(s.build_target);
   for nr in allowed {
     if (util.index_of_i32(mapping, nr) >= 0) {
       return true;
@@ -296,7 +296,7 @@ pub function (s: EmitState) with_named(name: string): EmitState {
 pub struct RuntimeUnits { roots: util.NameIndex, mods: parser.Module[], lowered: physicalbody.Lowered[] }
 
 pub function with_runtime_unit(s: EmitState, roots: string, m: parser.Module, lowered: physicalbody.Lowered): EmitState {
-  let u: RuntimeUnits = s.runtime_units;
+  let u = s.runtime_units;
   return EmitState { ...s, runtime_units: RuntimeUnits { roots: u.roots.added(roots), mods: u.mods.append(m), lowered: u.lowered.append(lowered) } };
 }
 
@@ -308,17 +308,17 @@ pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
 
 pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): string[] {
   let out: string[] = [];
-  let fi: i32 = lo;
+  let fi = lo;
   while (fi < hi) {
     if (cache.len() == 0 || !cache[fi].superseded) {
       out = out.append(sanitize_label(parser.decl_key(mod.funcs[fi])));
     }
-    fi = fi + 1;
+    fi += 1;
   }
-  let xi: i32 = mod.funcs.len();
+  let xi = mod.funcs.len();
   while (xi < cache.len()) {
     out = out.append(sanitize_label(cache[xi].name));
-    xi = xi + 1;
+    xi += 1;
   }
   return out;
 }
@@ -335,33 +335,33 @@ pub struct FloatAbi { names: irtables.SigReg, masks: string[] }
 pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): FloatAbi {
   let names: string[] = [];
   let masks: string[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < cache.len()) {
-    let inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
+    let inside = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (inside && !cache[fi].superseded && cache[fi].ok) {
-      let name: string = cache[fi].name;
+      let name = cache[fi].name;
       if (fi < mod.funcs.len()) {
         name = parser.decl_key(mod.funcs[fi]);
       }
-      let mask: string = float_mask_of(cache[fi]);
+      let mask = float_mask_of(cache[fi]);
       if (mask != "") {
         names = names.append(sanitize_label(name));
         masks = masks.append(mask);
       }
     }
-    fi = fi + 1;
+    fi += 1;
   }
   return FloatAbi { names: irtables.sig_reg_of(names), masks: masks };
 }
 
 function float_mask_of(r: irtables.LowerResult): string {
-  let mask: string = "";
-  let p: i32 = 0;
+  let mask = "";
+  let p = 0;
   while (p < r.n_params) {
-    mask = mask + slot_class(r, p);
-    p = p + 1;
+    mask += slot_class(r, p);
+    p += 1;
   }
-  let res: string = "x";
+  let res = "x";
   if (r.result_kind == irtables.result_f64()) {
     res = "f";
   } else if (r.result_kind == irtables.result_v128()) {
@@ -384,7 +384,7 @@ function slot_class(r: irtables.LowerResult, p: i32): string {
 }
 
 pub function (s: EmitState) float_mask(label: string): string {
-  let i: i32 = irtables.sig_reg_index(s.float_abi, label);
+  let i = irtables.sig_reg_index(s.float_abi, label);
   if (i < 0) {
     return "";
   }
@@ -404,12 +404,12 @@ pub function lane_param(mask: string, p: i32): boolean {
 }
 
 pub function has_lane_param(mask: string): boolean {
-  let p: i32 = 0;
+  let p = 0;
   while (p < mask.len() && mask[p] != b'|') {
     if (mask[p] == b'v') {
       return true;
     }
-    p = p + 1;
+    p += 1;
   }
   return false;
 }
@@ -421,20 +421,20 @@ pub function lane_result(mask: string): boolean {
 pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[], kt: ssa_lift.KindTable): UnitLeaves {
   let out: ssa.Leaf[] = [];
   let pre: Prelift[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < cache.len()) {
-    let p: Prelift = no_prelift();
-    let inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
+    let p = no_prelift();
+    let inside = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (fi < mod.funcs.len() && mod.funcs[fi].no_inline) {
       inside = false;
     }
     if (inside && !cache[fi].superseded && cache[fi].ok && cache[fi].ops.len() <= 160) {
-      let name: string = cache[fi].name;
+      let name = cache[fi].name;
       if (fi < mod.funcs.len()) {
         name = parser.decl_key(mod.funcs[fi]);
       }
       if let Ok(lifted) = ssa_lift.lift_with_lanes(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false, cache[fi].v128_slots) {
-        let f: ssa.Formed = ssa.register_form(lifted.func);
+        let f = ssa.register_form(lifted.func);
         for leaf in ssa.leaf_of(name, f.f) {
           out = out.append(leaf);
         }
@@ -442,21 +442,21 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
     }
     pre = pre.append(p);
-    fi = fi + 1;
+    fi += 1;
   }
-  let leaves: ssa.Leaves = ssa.leaves_of(out);
+  let leaves = ssa.leaves_of(out);
   return UnitLeaves { leaves: leaves, pre: unformed_callers(pre, leaves) };
 }
 
 function unformed_callers(own pre: Prelift[], leaves: ssa.Leaves): Prelift[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pre.len()) {
     if let Some(l) = pre[i].lifted {
       if (ssa.calls_leaf(l.func, leaves)) {
         pre = pre.with(i, Prelift { lifted: Some(l), formed: None });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return pre;
 }
@@ -660,12 +660,12 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
 }
 
 pub function add_shape_lit(s: EmitState, name: string): EmitState {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.shape_lits.len()) {
     if (s.shape_lits[i] == name) {
       return s;
     }
-    i = i + 1;
+    i += 1;
   }
   return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
 }
@@ -675,37 +675,37 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
     return s;
   }
   s = s.write("    .section .rodata\n");
-  let i: i32 = from;
+  let i = from;
   while (i < s.shape_lits.len()) {
-    let sym: string = shape_sym(s.shape_lits[i]);
+    let sym = shape_sym(s.shape_lits[i]);
     s = s.write(".weak " + sym + "\n");
     s = s.write(sym + ": .ascii \"" + escape_for_ascii(s.shape_lits[i]) + "\"\n");
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
 
 pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): string[] {
-  let seen: string[] = seen_in;
-  let i: i32 = 0;
-  let n: i32 = asm_text.len();
-  let state: i32 = 0;
+  let seen = seen_in;
+  let i = 0;
+  let n = asm_text.len();
+  let state = 0;
   while (i < n) {
-    let j: i32 = i;
+    let j = i;
     while (j < n && asm_text[j] != b'\n') {
-      j = j + 1;
+      j += 1;
     }
-    let line: string = slice_unchecked(asm_text, i, j) + "";
-    let drop: boolean = false;
+    let line = slice_unchecked(asm_text, i, j) + "";
+    let drop = false;
     if (state == 1) {
       drop = true;
       state = 2;
     } else if (state == 2) {
-      let k: i32 = 0;
+      let k = 0;
       while (k < line.len() && (slice_unchecked(line, k, k + 1) == " " || slice_unchecked(line, k, k + 1) == "\t")) {
-        k = k + 1;
+        k += 1;
       }
-      let body: string = slice_unchecked(line, k, line.len()) + "";
+      let body = slice_unchecked(line, k, line.len()) + "";
       if (body.len() == 0) {
         drop = true;
       } else if (body.len() > 2 && slice_unchecked(body, 0, 2) == ".L") {
@@ -717,7 +717,7 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
       }
     }
     if (state == 0 && !drop && line.len() > 6 && slice_unchecked(line, 0, 6) == ".weak ") {
-      let sym: string = slice_unchecked(line, 6, line.len()) + "";
+      let sym = slice_unchecked(line, 6, line.len()) + "";
       if (util.has_str(seen, sym)) {
         drop = true;
         state = 1;
@@ -735,9 +735,9 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): st
 }
 
 pub function dedupe_weak_defs(asm_text: string): string {
-  let h: usize = buf_new(asm_text.len());
-  let ignored: string[] = dedupe_weak_into(asm_text, [], h);
-  let text: string = buf_take(h);
+  let h = buf_new(asm_text.len());
+  let ignored = dedupe_weak_into(asm_text, [], h);
+  let text = buf_take(h);
   buf_free(h);
   return text;
 }
@@ -756,7 +756,7 @@ const BUF_CALL_NEEDS: string[] = [
 // The runtime pieces a call to the buffer helper `sym` needs.
 pub function (s: EmitState) buf_needs(sym: string): EmitState {
   s = s.need("heap").need("buf");
-  let extra: string = buf_call_need(sym);
+  let extra = buf_call_need(sym);
   if (extra != "") {
     return s.need(extra);
   }
@@ -861,7 +861,7 @@ pub function (s: EmitState) write(text: string): EmitState {
 }
 
 pub function (s: EmitState) take_text(): string {
-  let text: string = buf_take(s.out);
+  let text = buf_take(s.out);
   buf_free(s.out);
   return text;
 }
@@ -918,24 +918,24 @@ pub function (s: EmitState) branch(w: i64, label: string): EmitState {
 }
 
 pub function (s: EmitState) bind_local_typed(name: string, ty: Ty): EmitState {
-  let ln: string[] = s.local_names.append(name);
-  let lts: Ty[] = s.local_types.append(ty);
+  let ln = s.local_names.append(name);
+  let lts = s.local_types.append(ty);
   return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
 pub function (s: EmitState) local_type_of(name: string): Ty {
-  let i: i32 = s.local_names.len() - 1;
+  let i = s.local_names.len() - 1;
   while (i >= 0) {
     if (s.local_names[i] == name) {
       return s.local_types[i];
     }
-    i = i - 1;
+    i -= 1;
   }
   return ty_unknown();
 }
 
 pub function sysno(t: string, name: string): string {
-  let n: string = "-1";
+  let n = "-1";
   if (t == "x86-64-linux") {
     n = sysno_x86_64(name);
   } else if (t == "arm64-darwin") {
@@ -2261,7 +2261,7 @@ function statfs_bufsize_n(t: string): i32 {
 }
 
 pub function scratch_size(t: string, needs_statfs: boolean, minimum: i32): string {
-  let n: i32 = minimum;
+  let n = minimum;
   if (needs_statfs && statfs_bufsize_n(t) > n) {
     n = statfs_bufsize_n(t);
   }
@@ -2379,13 +2379,13 @@ pub function (s: EmitState) byte_copy_roots(): string {
   }
   let roots = "";
   if (append) {
-    roots = roots + " __fern_bytes_append_range";
+    roots += " __fern_bytes_append_range";
   }
   if (write) {
-    roots = roots + " __fern_bytes_write_range";
+    roots += " __fern_bytes_write_range";
   }
   if (back) {
-    roots = roots + " __fern_bytes_append_back";
+    roots += " __fern_bytes_append_back";
   }
   return roots;
 }
@@ -2401,7 +2401,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
   match (scrut) {
     ast.ExprIdent(id) => {
       if (s.has_local(id.name)) {
-        let lt: Ty = s.local_type_of(id.name);
+        let lt = s.local_type_of(id.name);
         if (is_option(lt)) {
           return option_inner(lt);
         }
@@ -2429,25 +2429,25 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
             return ty_array();
           }
-          let fi: i32 = 0;
+          let fi = 0;
           while (fi < s.funcs.len()) {
             if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-              let rt: string = s.funcs[fi].ret_type;
+              let rt = s.funcs[fi].ret_type;
               if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[" && rt[rt.len() - 1] == b']') {
                 return ty_from_name(slice_unchecked(rt, 7, rt.len() - 1));
               }
               if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Result[") {
-                let inner: string = "(" + slice_unchecked(rt, 7, rt.len() - 1) + ")";
+                let inner = "(" + slice_unchecked(rt, 7, rt.len() - 1) + ")";
                 return split_tuple_ret(inner).a;
               }
               return ty_unknown();
             }
-            fi = fi + 1;
+            fi += 1;
           }
           return ty_unknown();
         },
         ast.ExprFieldAccess(fa) => {
-          let rcv: Ty = infer_expr_type(fa.obj, s);
+          let rcv = infer_expr_type(fa.obj, s);
           if (ty_struct_name(rcv) == "Reader" && fa.field == "read_chunk_bytes") {
             return ty_array_i32();
           }
@@ -2470,20 +2470,20 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
             return ty_i32();
           }
           if (!ty_is_unknown(rcv)) {
-            let fi: i32 = 0;
+            let fi = 0;
             while (fi < s.funcs.len()) {
               if (s.funcs[fi].name == fa.field && ty_eq(struct_local_tag(s.funcs[fi].receiver_type, s), rcv)) {
-                let rt: string = s.funcs[fi].ret_type;
+                let rt = s.funcs[fi].ret_type;
                 if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Option[" && rt[rt.len() - 1] == b']') {
                   return ty_from_name(slice_unchecked(rt, 7, rt.len() - 1));
                 }
                 if (rt.len() >= 8 && slice_unchecked(rt, 0, 7) == "Result[") {
-                  let inner: string = "(" + slice_unchecked(rt, 7, rt.len() - 1) + ")";
+                  let inner = "(" + slice_unchecked(rt, 7, rt.len() - 1) + ")";
                   return split_tuple_ret(inner).a;
                 }
                 return ty_unknown();
               }
-              fi = fi + 1;
+              fi += 1;
             }
           }
           return ty_unknown();
@@ -2524,7 +2524,7 @@ pub function is_prim_recv_name(name: string, s: EmitState): boolean {
 }
 
 pub function recv_is_array(rt: string): boolean {
-  let n: i32 = rt.len();
+  let n = rt.len();
   if (n < 2) {
     return false;
   }
@@ -2532,27 +2532,27 @@ pub function recv_is_array(rt: string): boolean {
 }
 
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
-  let di: i32 = irtables.stab_first(s.struct_decls, struct_name);
+  let di = irtables.stab_first(s.struct_decls, struct_name);
   if (di >= 0) {
-    let sd: parser.StructDecl = s.struct_decls.decls[di];
-    let fi: i32 = 0;
+    let sd = s.struct_decls.decls[di];
+    let fi = 0;
     while (fi < sd.fields.len()) {
       if (sd.fields[fi].name == field) {
         return struct_local_tag(sd.fields[fi].type_name, s);
       }
-      fi = fi + 1;
+      fi += 1;
     }
   }
   return ty_unknown();
 }
 
 pub function struct_local_tag(type_name: string, s: EmitState): Ty {
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < type_name.len()) {
     if (type_name[bi] == b'[') {
       return ty_from_name(type_name);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (is_struct_decl_name(type_name, s)) {
     return ty_named(type_name);
@@ -3422,24 +3422,24 @@ pub function ty_from_name(name: string): Ty {
 pub struct TwoTags { a: Ty, b: Ty }
 
 pub function split_tuple_ret(tt: string): TwoTags {
-  let t: parser.TypeRef = parser.parse_type_ref(tt);
+  let t = parser.parse_type_ref(tt);
   if (!t.is_tuple || t.args.len() < 2) {
     return TwoTags { a: ty_i32(), b: ty_i32() };
   }
   if (t.args.len() == 2) {
     return TwoTags { a: ty_from_ref(t.args[0]), b: ty_from_ref(t.args[1]) };
   }
-  let rest: string = parser.render_type_ref(t.args[1]);
-  let k: i32 = 2;
+  let rest = parser.render_type_ref(t.args[1]);
+  let k = 2;
   while (k < t.args.len()) {
     rest = rest + ", " + parser.render_type_ref(t.args[k]);
-    k = k + 1;
+    k += 1;
   }
   return TwoTags { a: ty_from_ref(t.args[0]), b: ty_from_name(rest) };
 }
 
 pub function tuple_ret_tag_at(tt: string, idx: i32): Ty {
-  let t: parser.TypeRef = parser.parse_type_ref(tt);
+  let t = parser.parse_type_ref(tt);
   if (!t.is_tuple) {
     return ty_i32();
   }
@@ -3483,7 +3483,7 @@ pub function ty_friendly(t: Ty): string {
 }
 
 function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
-  let rt: Ty = infer_expr_type(fa.obj, s);
+  let rt = infer_expr_type(fa.obj, s);
   if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
     return ty_result(ty_array_i32());
   }
@@ -3545,7 +3545,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     return ty_array_string();
   }
   if (is_map(rt) && fa.field == "values") {
-    let vt: Ty = map_val(rt);
+    let vt = map_val(rt);
     if (ty_is_i32(vt)) {
       return ty_array_i32();
     }
@@ -3658,7 +3658,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     }
   }
   if (!ty_is_unknown(rt)) {
-    let mi: i32 = s.funcs_ix.chain(fa.field);
+    let mi = s.funcs_ix.chain(fa.field);
     while (mi >= 0) {
       if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type.len() > 0
         && ty_eq(struct_local_tag(s.funcs[mi].receiver_type, s), rt)) {
@@ -3805,13 +3805,13 @@ function builtin_string_names(): string[] {
 
 function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
   if (s.has_local(id.name)) {
-    let lt: Ty = s.local_type_of(id.name);
+    let lt = s.local_type_of(id.name);
     if (is_fn(lt)) {
       return fn_ret(lt);
     }
     return ty_unknown();
   }
-  let ctor_fn: i32 = 0 - 1;
+  let ctor_fn: i32 = -1;
   if (id.name == "Some" || id.name == "Ok" || id.name == "Err") {
     ctor_fn = top_level_fn(id.name, s);
   }
@@ -4040,7 +4040,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "str_split") {
     return ty_array_string();
   }
-  let fi: i32 = top_level_fn(id.name, s);
+  let fi = top_level_fn(id.name, s);
   if (fi >= 0) {
     return ty_from_name(s.funcs[fi].ret_type);
   }
@@ -4048,14 +4048,14 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
 }
 
 pub function top_level_fn(name: string, s: EmitState): i32 {
-  let fi: i32 = s.funcs_ix.chain(name);
+  let fi = s.funcs_ix.chain(name);
   while (fi >= 0) {
     if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
       return fi;
     }
     fi = s.funcs_ix.next[fi];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function infer_expr_call_type(c: ast.ExprCall, s: EmitState): Ty {
@@ -4081,7 +4081,7 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
     return infer_expr_type(u.operand, s);
   }
   if (u.op.len() >= 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-    let ct: str = slice_unchecked(u.op, 3, u.op.len());
+    let ct = slice_unchecked(u.op, 3, u.op.len());
     if (ct == "f64" || ct == "f32") {
       return ty_f64();
     }
@@ -4106,7 +4106,7 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
     return ty_from_name("Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]");
   }
   if (u.op == "try_") {
-    let ot: Ty = infer_expr_type(u.operand, s);
+    let ot = infer_expr_type(u.operand, s);
     match (ot) {
       TyResult(_) => {
         return result_inner(ot);
@@ -4128,8 +4128,8 @@ function infer_expr_binary_type(b: ast.ExprBinary, s: EmitState): Ty {
     return ty_bool();
   }
   if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-    let lt: Ty = infer_expr_type(b.left, s);
-    let rt: Ty = infer_expr_type(b.right, s);
+    let lt = infer_expr_type(b.left, s);
+    let rt = infer_expr_type(b.right, s);
     if (ty_is_string(lt) || ty_is_string(rt)) {
       return ty_string();
     }
@@ -4139,14 +4139,14 @@ function infer_expr_binary_type(b: ast.ExprBinary, s: EmitState): Ty {
     return ty_i32();
   }
   if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-    let slt: Ty = infer_expr_type(b.left, s);
+    let slt = infer_expr_type(b.left, s);
     if (ty_is_i32(slt)) {
       return infer_expr_type(b.right, s);
     }
     return slt;
   }
   if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
-    let clt: Ty = infer_expr_type(b.left, s);
+    let clt = infer_expr_type(b.left, s);
     if (ty_is_i32(clt)) {
       return ty_option(infer_expr_type(b.right, s));
     }
@@ -4176,7 +4176,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       if (a.elements.len() == 0) {
         return ty_array();
       }
-      let et: Ty = infer_expr_type(a.elements[0], s);
+      let et = infer_expr_type(a.elements[0], s);
       if (ty_is_string(et)) {
         return ty_array_string();
       }
@@ -4207,7 +4207,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       if (id.name == "None") {
         return ty_option(ty_unknown());
       }
-      let cfi: i32 = s.funcs_ix.chain(id.name);
+      let cfi = s.funcs_ix.chain(id.name);
       while (cfi >= 0) {
         if (s.funcs[cfi].name == id.name && s.funcs[cfi].receiver_type.len() == 0 && s.funcs[cfi].params.len() == 0) {
           return ty_from_name(s.funcs[cfi].ret_type);
@@ -4226,7 +4226,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return infer_expr_call_type(c, s);
     },
     ast.ExprIndex(x) => {
-      let at: Ty = infer_expr_type(x.array, s);
+      let at = infer_expr_type(x.array, s);
       if (ty_is_string(at)) {
         return ty_u8();
       }
@@ -4248,14 +4248,14 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return ty_unknown();
     },
     ast.ExprSlice(sl) => {
-      let src: Ty = infer_expr_type(sl.array, s);
+      let src = infer_expr_type(sl.array, s);
       if (ty_is_string(src)) {
         return ty_option(ty_unknown());
       }
       return src;
     },
     ast.ExprFieldAccess(fa) => {
-      let frt: Ty = infer_expr_type(fa.obj, s);
+      let frt = infer_expr_type(fa.obj, s);
       return field_type_tag_in(ty_struct_name(frt), fa.field, s);
     },
     ast.ExprUnknown(_) => {
@@ -4275,12 +4275,12 @@ pub function (s: EmitState) reset_locals(): EmitState {
 }
 
 pub function (s: EmitState) has_local(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.local_names.len()) {
     if (s.local_names[i] == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -4300,7 +4300,7 @@ pub function cfi_stub_label(s: EmitState, target: string): string {
 }
 
 pub function with_cfi_stub(s: EmitState, target: string, sig: i32): EmitState {
-  let at: i32 = util.index_of_str(s.cfi_stubs, target);
+  let at = util.index_of_str(s.cfi_stubs, target);
   if (at >= 0) {
     if (s.cfi_sigs[at] != sig) {
       eprint("internal error: the CFI stub of " + target + " takes signature words " + util.i32_to_string(s.cfi_sigs[at]) + " and " + util.i32_to_string(sig));
@@ -4312,11 +4312,11 @@ pub function with_cfi_stub(s: EmitState, target: string, sig: i32): EmitState {
 }
 
 pub function fresh_label(s: EmitState): LabelOut {
-  let name: string = ".L" + util.i32_to_string(s.label_n);
+  let name = ".L" + util.i32_to_string(s.label_n);
   if (s.str_ns.len() > 0) {
     name = ".L" + s.str_ns + "_" + util.i32_to_string(s.label_n);
   }
-  let ns: EmitState = EmitState { ...s, label_n: s.label_n + 1 };
+  let ns = EmitState { ...s, label_n: s.label_n + 1 };
   return LabelOut { state: ns, name: name };
 }
 
@@ -4358,12 +4358,12 @@ pub function (s: EmitState) cfi(kind: i32, reg: i32, off: i32): EmitState {
 }
 
 pub function name_has_comma(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
     if (name[i] == b',') {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -4371,11 +4371,11 @@ pub function name_has_comma(name: string): boolean {
 pub struct ConstAggOut { state: EmitState, idx: i32 }
 
 pub function add_const_agg(s: EmitState, packed: string): ConstAggOut {
-  let i: i32 = s.const_agg_ix.find(packed);
+  let i = s.const_agg_ix.find(packed);
   if (i >= 0) {
     return ConstAggOut { state: s, idx: i };
   }
-  let idx: i32 = s.const_aggs.len();
+  let idx = s.const_aggs.len();
   return ConstAggOut { state: EmitState { ...s, const_aggs: s.const_aggs.append(packed), const_agg_ix: s.const_agg_ix.added(packed) }, idx: idx };
 }
 
@@ -4406,44 +4406,44 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   if (ir.const_struct_is_bytes(packed)) {
     return ConstAggPack { state: s, text: "8|" + ir.const_struct_payload(packed) };
   }
-  let body: string = ir.const_struct_fn_body(packed);
+  let body = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
-    let target: string = "__fn_" + sanitize_label(body) + entry;
+    let target = "__fn_" + sanitize_label(body) + entry;
     if (s.harden) {
       s = with_cfi_stub(s, target, ir.const_struct_fn_sig(packed));
-      let stub: string = cfi_stub_label(s, target);
+      let stub = cfi_stub_label(s, target);
       return ConstAggPack { state: s, text: "1|" + stub };
     }
     return ConstAggPack { state: s, text: "1|" + target };
   }
-  let shp: ShapeRefOut = const_agg_shape(s, packed);
+  let shp = const_agg_shape(s, packed);
   s = shp.state;
-  let text: string = shp.label + "|";
-  let vals: string[] = ir.const_struct_values(packed);
-  let i: i32 = 0;
+  let text = shp.label + "|";
+  let vals = ir.const_struct_values(packed);
+  let i = 0;
   while (i < vals.len()) {
     if (i > 0) {
-      text = text + ",";
+      text += ",";
     }
-    let w: ConstAggPack = const_agg_word(s, vals[i], entry);
+    let w = const_agg_word(s, vals[i], entry);
     s = w.state;
-    text = text + w.text;
-    i = i + 1;
+    text += w.text;
+    i += 1;
   }
   return ConstAggPack { state: s, text: text };
 }
 
 function const_agg_word(own s: EmitState, word: string, entry: string): ConstAggPack {
-  let inner: string = ir.const_struct_ref(word);
+  let inner = ir.const_struct_ref(word);
   if (inner.len() == 0) {
     return ConstAggPack { state: s, text: word };
   }
   if (ir.const_struct_is_str(inner)) {
-    let lit: StringLitOut = add_string_lit(s, ir.const_str_text(inner));
+    let lit = add_string_lit(s, ir.const_str_text(inner));
     return ConstAggPack { state: lit.state, text: str_box_label(lit.state, lit.idx) };
   }
-  let pk: ConstAggPack = const_agg_pack(s, inner, entry);
-  let kout: ConstAggOut = add_const_agg(pk.state, pk.text);
+  let pk = const_agg_pack(s, inner, entry);
+  let kout = add_const_agg(pk.state, pk.text);
   return ConstAggPack { state: kout.state, text: const_agg_label(kout.state, kout.idx) };
 }
 
@@ -4471,24 +4471,24 @@ function slit_empty_buckets(): i32[] {
 }
 
 pub function string_lit_index(s: EmitState, v: string): i32 {
-  let i: i32 = s.slit_head[util.hash_bucket(v, s.slit_head.len())];
+  let i = s.slit_head[util.hash_bucket(v, s.slit_head.len())];
   while (i >= 0) {
     if (s.string_lits[i] == v) {
       return i;
     }
     i = s.slit_next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
-  let at: i32 = string_lit_index(s, v);
+  let at = string_lit_index(s, v);
   if (at >= 0) {
     return StringLitOut { state: s, idx: at };
   }
-  let b: i32 = util.hash_bucket(v, s.slit_head.len());
-  let idx: i32 = s.string_lits.len();
-  let ns: EmitState = EmitState { ...s, string_lits: s.string_lits.append(v), slit_next: s.slit_next.append(s.slit_head[b]), slit_head: s.slit_head.with(b, idx) };
+  let b = util.hash_bucket(v, s.slit_head.len());
+  let idx = s.string_lits.len();
+  let ns = EmitState { ...s, string_lits: s.string_lits.append(v), slit_next: s.slit_next.append(s.slit_head[b]), slit_head: s.slit_head.with(b, idx) };
   return StringLitOut { state: ns, idx: idx };
 }
 
@@ -4496,24 +4496,24 @@ pub function (s: EmitState) need(name: string): EmitState {
   if (s.holds(name)) {
     return s;
   }
-  let i: i32 = s.needed.len();
-  let cur: EmitState = EmitState { ...s, needed: s.needed.append(name) };
+  let i = s.needed.len();
+  let cur = EmitState { ...s, needed: s.needed.append(name) };
   while (i < cur.needed.len()) {
-    let deps: string[] = runtime_need_deps(cur.needed[i]);
-    let j: i32 = 0;
+    let deps = runtime_need_deps(cur.needed[i]);
+    let j = 0;
     while (j < deps.len()) {
       if (!cur.holds(deps[j])) {
         cur = EmitState { ...cur, needed: cur.needed.append(deps[j]) };
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
 
 pub function runtime_need_deps(name: string): string[] {
-  let deps: string[] = direct_need_deps(name);
+  let deps = direct_need_deps(name);
   if (validates_utf8(name)) {
     return deps.append("utf8_valid");
   }
@@ -4611,12 +4611,12 @@ function direct_need_deps(name: string): string[] {
 }
 
 function (s: EmitState) holds(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.needed.len()) {
     if (s.needed[i] == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -4634,25 +4634,25 @@ pub function (s: EmitState) has_need(name: string): boolean {
 
 // A pass settles unless a need it added was asked for before it was added.
 pub function settles(t: EmitState, before: i32, missed: usize): boolean {
-  let names: string = "\n" + buf_take(missed);
+  let names = "\n" + buf_take(missed);
   buf_free(missed);
-  let i: i32 = before;
+  let i = before;
   while (i < t.needed.len()) {
     if (util.contains(names, "\n" + t.needed[i] + "\n")) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function (s: EmitState) any_need(names: string[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (s.has_need(names[i])) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -4660,8 +4660,8 @@ pub function (s: EmitState) any_need(names: string[]): boolean {
 pub struct ScanShape { nibble: boolean, invert: boolean, range: boolean, bytes: i32[] }
 
 pub function scan_set_shape(members: string): ScanShape {
-  let inside: ScanShape = scan_shape_of(members, b'1', false);
-  let outside: ScanShape = scan_shape_of(members, b'0', true);
+  let inside = scan_shape_of(members, b'1', false);
+  let outside = scan_shape_of(members, b'0', true);
   if (scan_shape_cost(outside) < scan_shape_cost(inside)) {
     return outside;
   }
@@ -4680,14 +4680,14 @@ pub function scan_shape_cost(sh: ScanShape): i32 {
 
 function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
   let marked: i32[] = [];
-  let lo: i32 = 0;
-  let span: i32 = 0 - 1;
-  let run: i32 = 0;
-  let b: i32 = 0;
+  let lo = 0;
+  let span: i32 = -1;
+  let run = 0;
+  let b = 0;
   while (b < 256) {
     if (members[b] == mark) {
       marked = marked.append(b);
-      run = run + 1;
+      run += 1;
       if (run - 1 > span) {
         lo = b - run + 1;
         span = run - 1;
@@ -4695,10 +4695,10 @@ function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
     } else {
       run = 0;
     }
-    b = b + 1;
+    b += 1;
   }
-  let n: i32 = marked.len();
-  let nibble: ScanShape = ScanShape { nibble: true, invert: false, range: false, bytes: [] };
+  let n = marked.len();
+  let nibble = ScanShape { nibble: true, invert: false, range: false, bytes: [] };
   if (n == 0 || n == 256) {
     return nibble;
   }
@@ -4718,16 +4718,16 @@ function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
 }
 
 pub function utf8_tables(label: string): string {
-  let o: string = "    .section .rodata\n    .balign 16\n" + label + ":\n";
-  o = o + "    .byte 2, 2, 2, 2, 2, 2, 2, 2, 128, 128, 128, 128, 33, 1, 21, 73\n";
-  o = o + "    .byte 231, 163, 131, 131, 139, 203, 203, 203, 203, 203, 203, 203, 203, 219, 203, 203\n";
-  o = o + "    .byte 1, 1, 1, 1, 1, 1, 1, 1, 230, 174, 186, 186, 1, 1, 1, 1\n";
+  let o = "    .section .rodata\n    .balign 16\n" + label + ":\n";
+  o += "    .byte 2, 2, 2, 2, 2, 2, 2, 2, 128, 128, 128, 128, 33, 1, 21, 73\n";
+  o += "    .byte 231, 163, 131, 131, 139, 203, 203, 203, 203, 203, 203, 203, 203, 219, 203, 203\n";
+  o += "    .byte 1, 1, 1, 1, 1, 1, 1, 1, 230, 174, 186, 186, 1, 1, 1, 1\n";
   for c in [15, 96, 112, 128] {
-    let r: string = "    .byte " + util.i32_to_string(c);
-    let k: i32 = 1;
+    let r = "    .byte " + util.i32_to_string(c);
+    let k = 1;
     while (k < 16) {
       r = r + ", " + util.i32_to_string(c);
-      k = k + 1;
+      k += 1;
     }
     o = o + r + "\n";
   }
@@ -4736,33 +4736,33 @@ pub function utf8_tables(label: string): string {
 
 pub function scan_set_tables(members: string): string {
   let out: u8[] = [];
-  let half: i32 = 0;
+  let half = 0;
   while (half < 2) {
-    let lo: i32 = 0;
+    let lo = 0;
     while (lo < 16) {
-      let bits: i32 = 0;
-      let h: i32 = 0;
+      let bits = 0;
+      let h = 0;
       while (h < 8) {
         if (members[(half * 8 + h) * 16 + lo] == b'1') {
           bits = bits | 1 << h;
         }
-        h = h + 1;
+        h += 1;
       }
       out = out.append(bits as u8);
-      lo = lo + 1;
+      lo += 1;
     }
-    half = half + 1;
+    half += 1;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < 16) {
     out = out.append((1 << (k & 7)) as u8);
-    k = k + 1;
+    k += 1;
   }
   for m in [143, 128, 15] {
     k = 0;
     while (k < 16) {
       out = out.append(m as u8);
-      k = k + 1;
+      k += 1;
     }
   }
   k = 0;
@@ -4772,7 +4772,7 @@ pub function scan_set_tables(members: string): string {
     } else {
       out = out.append(0 as u8);
     }
-    k = k + 1;
+    k += 1;
   }
   for c in scan_set_shape(members).bytes {
     out = out.append(c as u8);
@@ -4782,9 +4782,9 @@ pub function scan_set_tables(members: string): string {
 
 pub function escape_for_ascii(s: string): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);
       out = out.append(34 as u8);
@@ -4801,9 +4801,9 @@ pub function escape_for_ascii(s: string): string {
       out = out.append(92 as u8);
       out = out.append(114 as u8);
     } else if (b < 32 || b >= 127) {
-      let o0: i32 = b % 8;
-      let o1: i32 = b / 8 % 8;
-      let o2: i32 = b / 64 % 8;
+      let o0 = b % 8;
+      let o1 = b / 8 % 8;
+      let o2 = b / 64 % 8;
       out = out.append(92 as u8);
       out = out.append((48 + o2) as u8);
       out = out.append((48 + o1) as u8);
@@ -4811,7 +4811,7 @@ pub function escape_for_ascii(s: string): string {
     } else {
       out = out.append(s[i] as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -4840,8 +4840,8 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
   if (!is_script_module(mod)) {
     return mod;
   }
-  let body: ast.Stmt[] = mod.top_stmts;
-  let ends_in_return: boolean = false;
+  let body = mod.top_stmts;
+  let ends_in_return = false;
   match (body[body.len() - 1]) {
     ast.StmtReturn(r) => {
       ends_in_return = true;
@@ -4886,13 +4886,13 @@ pub function assignable(want: Ty, got: Ty): boolean {
   if (ty_is_unknown(want) || ty_is_unknown(got)) {
     return true;
   }
-  let ww: boolean = is_wrapper(want);
-  let gw: boolean = is_wrapper(got);
+  let ww = is_wrapper(want);
+  let gw = is_wrapper(got);
   if (ww && gw) {
     return true;
   }
   if (ww || gw) {
-    let other: Ty = want;
+    let other = want;
     if (ww) {
       other = got;
     }
@@ -4905,7 +4905,7 @@ pub function assignable(want: Ty, got: Ty): boolean {
 }
 
 function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
-  let lex: string = kind;
+  let lex = kind;
   if (util.str_has_prefix(lex, "stmt: ")) {
     lex = slice_unchecked(lex, 6, lex.len()) + "";
   }
@@ -4924,7 +4924,7 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
     return util.Diag { related: [], length: 0, code: "E061", message: parser.BLOCK_VALUE_REQUIRED_MESSAGE, line: line, col: col, fix: None };
   }
-  let decl: string = decl_sentinel_text(kind);
+  let decl = decl_sentinel_text(kind);
   if (decl.len() > 0) {
     return util.Diag { related: [], length: 0, code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
   }
@@ -4932,7 +4932,7 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
 }
 
 function sentinel_message(kind: string): string {
-  let k: string = kind;
+  let k = kind;
   if (util.str_has_prefix(k, "stmt: ")) {
     k = slice_unchecked(k, 6, k.len()) + "";
   }
@@ -5139,7 +5139,7 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
 }
 
 function unknown_errors_stmts(stmts: ast.Stmt[], where: string, errs: util.Diag[]): util.Diag[] {
-  let a: UnkScan = UnkScan { where: where, errs: errs };
+  let a = UnkScan { where: where, errs: errs };
   for st in stmts {
     a = astwalk.fold_stmt_nodes(st, a, unknown_error_stmt_at, unknown_error_expr_at, astwalk.descend_all);
   }
@@ -5147,28 +5147,28 @@ function unknown_errors_stmts(stmts: ast.Stmt[], where: string, errs: util.Diag[
 }
 
 function unknown_errors_expr(e: ast.Expr, where: string, errs: util.Diag[]): util.Diag[] {
-  let a: UnkScan = UnkScan { where: where, errs: errs };
+  let a = UnkScan { where: where, errs: errs };
   a = astwalk.fold_expr_nodes(e, a, unknown_error_stmt_at, unknown_error_expr_at, astwalk.descend_all);
   return a.errs;
 }
 
 pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
-    let where: string = "in fn '" + mod.funcs[fi].name + "'";
+    let where = "in fn '" + mod.funcs[fi].name + "'";
     if (mod.funcs[fi].name.len() == 0) {
       where = "in malformed function declaration";
     }
-    let pi: i32 = 0;
+    let pi = 0;
     while (pi < mod.funcs[fi].params.len()) {
       if (mod.funcs[fi].params[pi].has_default) {
         errs = unknown_errors_expr(mod.funcs[fi].params[pi].default_value, where, errs);
       }
-      pi = pi + 1;
+      pi += 1;
     }
     errs = unknown_errors_stmts(mod.funcs[fi].body, where, errs);
-    fi = fi + 1;
+    fi += 1;
   }
   return unknown_errors_stmts(mod.top_stmts, "at top level", errs);
 }
@@ -5181,12 +5181,12 @@ function display_named(label: string): boolean {
   if (label.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < label.len()) {
     if (!lexer.is_alphanumeric(label[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -5198,18 +5198,18 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
         ast.ExprIdent(id) => {
           if ((id.name == "print" || id.name == "write" || id.name == "eprint")
             && c.args.len() == 1) {
-            let an: string = util.demangle(ast.expr_ty(c.args[0]));
+            let an = util.demangle(ast.expr_ty(c.args[0]));
             if (an == "string" || display_is_dyn(an)) {
               return [];
             }
             if (an.len() == 0) {
-              let at: Ty = infer_expr_type(c.args[0], st);
+              let at = infer_expr_type(c.args[0], st);
               if (ty_is_unknown(at) || ty_is_string(at)) {
                 return [];
               }
               an = util.demangle(ty_friendly(at));
             }
-            let tn: string = an;
+            let tn = an;
             if (!display_named(an)) {
               tn = "";
             }
@@ -5241,23 +5241,23 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
 
 pub function display_errs_module(mod: parser.Module, s: EmitState): util.Diag[] {
   let out: util.Diag[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[fi];
-    let ctx: DisplayCtx = DisplayCtx { st: s, fname: fd.name, diags: [] };
-    let si: i32 = 0;
+    let fd = mod.funcs[fi];
+    let ctx = DisplayCtx { st: s, fname: fd.name, diags: [] };
+    let si = 0;
     while (si < fd.body.len()) {
       ctx = astwalk.fold_stmt(fd.body[si], ctx, display_fold);
-      si = si + 1;
+      si += 1;
     }
     out = util.append_diags(out, ctx.diags);
-    fi = fi + 1;
+    fi += 1;
   }
-  let tctx: DisplayCtx = DisplayCtx { st: s, fname: "main", diags: [] };
-  let ti: i32 = 0;
+  let tctx = DisplayCtx { st: s, fname: "main", diags: [] };
+  let ti = 0;
   while (ti < mod.top_stmts.len()) {
     tctx = astwalk.fold_stmt(mod.top_stmts[ti], tctx, display_fold);
-    ti = ti + 1;
+    ti += 1;
   }
   return util.append_diags(out, tctx.diags);
 }
@@ -5265,7 +5265,7 @@ pub function display_errs_module(mod: parser.Module, s: EmitState): util.Diag[] 
 struct DisplayCtx { st: EmitState, fname: string, diags: util.Diag[] }
 
 function display_fold(e: ast.Expr, own acc: DisplayCtx): DisplayCtx {
-  let errs: util.Diag[] = display_arg_errs(e, acc.fname, acc.st);
+  let errs = display_arg_errs(e, acc.fname, acc.st);
   if (errs.len() == 0) {
     return acc;
   }
@@ -5278,7 +5278,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return CheckCtx { st: ctx.st, diags: util.append_diags(ctx.diags, display_arg_errs(ex.value, fname, ctx.st)) };
     },
     ast.StmtReturn(r) => {
-      let got: Ty = infer_expr_type(r.value, ctx.st);
+      let got = infer_expr_type(r.value, ctx.st);
       if (!assignable(want, got)) {
         return CheckCtx {
           st: ctx.st,
@@ -5299,10 +5299,10 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       if (v.name.len() >= 2 && slice_unchecked(v.name, 0, 2) == "__") {
         return CheckCtx { st: ctx.st.bind_local_typed(v.name, ty_unknown()), diags: ctx.diags };
       }
-      let got: Ty = infer_expr_type(v.init, ctx.st);
-      let bind_ty: Ty = got;
+      let got = infer_expr_type(v.init, ctx.st);
+      let bind_ty = got;
       if (v.type_name.len() > 0) {
-        let declared: Ty = ty_from_name(v.type_name);
+        let declared = ty_from_name(v.type_name);
         bind_ty = struct_local_tag(v.type_name, ctx.st);
         if (!assignable(declared, got)) {
           ctx = CheckCtx {
@@ -5323,8 +5323,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), diags: ctx.diags };
     },
     ast.StmtAssign(a) => {
-      let got: Ty = infer_expr_type(a.value, ctx.st);
-      let tt: Ty = ctx.st.local_type_of(a.target);
+      let got = infer_expr_type(a.value, ctx.st);
+      let tt = ctx.st.local_type_of(a.target);
       if (!assignable(tt, got)) {
         return CheckCtx {
           st: ctx.st,
@@ -5350,8 +5350,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return check_stmts(w.body, want, fname, ctx);
     },
     ast.StmtFor(fo) => {
-      let it: Ty = infer_expr_type(fo.iter, ctx.st);
-      let elem: Ty = ty_unknown();
+      let it = infer_expr_type(fo.iter, ctx.st);
+      let elem = ty_unknown();
       if (ty_is_array_i32(it)) {
         elem = ty_i32();
       }
@@ -5371,9 +5371,9 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return check_stmts(fo.body, want, fname, ctx);
     },
     ast.StmtMatch(m) => {
-      let ai: i32 = 0;
+      let ai = 0;
       while (ai < m.arms.len()) {
-        let actx: CheckCtx = ctx;
+        let actx = ctx;
         match (m.arms[ai].pattern) {
           ast.PatLiteral(literal) => {
             if (literal.at_binding.len() > 0) {
@@ -5382,7 +5382,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
           },
           ast.PatVariant(pv) => {
             if (pv.scalar_binding) {
-              let st: EmitState = ctx.st.bind_local_typed(pv.type_name, infer_expr_type(m.scrutinee, ctx.st));
+              let st = ctx.st.bind_local_typed(pv.type_name, infer_expr_type(m.scrutinee, ctx.st));
               if (pv.at_binding.len() > 0) {
                 st = st.bind_local_typed(pv.at_binding, infer_expr_type(m.scrutinee, ctx.st));
               }
@@ -5404,7 +5404,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
         }
         actx = check_stmts(m.arms[ai].body, want, fname, actx);
         ctx = CheckCtx { st: ctx.st, diags: actx.diags };
-        ai = ai + 1;
+        ai += 1;
       }
       return ctx;
     },
@@ -5416,20 +5416,20 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
 }
 
 function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
-  let name: string = pv.type_name;
-  let owner: string = "";
-  let dot: i32 = util.index_of_sub(name, ".");
+  let name = pv.type_name;
+  let owner = "";
+  let dot = util.index_of_sub(name, ".");
   if (dot >= 0) {
     owner = slice_unchecked(name, 0, dot) + "";
     name = slice_unchecked(name, dot + 1, name.len()) + "";
   }
-  let di: i32 = 0 - 1;
+  let di: i32 = -1;
   if (owner.len() > 0) {
     di = irtables.variant_decl_index(st.struct_decls, name, owner);
   } else {
     di = irtables.stab_first(st.struct_decls, name);
     if (di >= 0 && irtables.stab_next(st.struct_decls, di, name) >= 0) {
-      di = 0 - 1;
+      di = -1;
     }
   }
   let names: string[] = [];
@@ -5441,54 +5441,54 @@ function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
       names = names.append(extra);
     }
   }
-  let out: EmitState = st;
+  let out = st;
   if (di < 0 || st.struct_decls.decls[di].enum_owner.len() == 0) {
     for nm in names {
       out = out.bind_local_typed(nm, ty_unknown());
     }
     return out;
   }
-  let sd: parser.StructDecl = st.struct_decls.decls[di];
-  let payloaded: boolean = sd.fields.len() > 0 && sd.fields[0].name == "__ev";
+  let sd = st.struct_decls.decls[di];
+  let payloaded = sd.fields.len() > 0 && sd.fields[0].name == "__ev";
   if (!payloaded) {
     for nm in names {
       out = out.bind_local_typed(nm, struct_local_tag(sd.name, st));
     }
     return out;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < names.len()) {
     if (names.len() == sd.fields.len()) {
       out = out.bind_local_typed(names[k], struct_local_tag(sd.fields[k].type_name, st));
     } else {
       out = out.bind_local_typed(names[k], ty_unknown());
     }
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 pub function check_stmts(stmts: ast.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
-  let i: i32 = 0;
+  let i = 0;
   while (i < stmts.len()) {
     ctx = check_stmt(stmts[i], want, fname, ctx);
-    i = i + 1;
+    i += 1;
   }
   return ctx;
 }
 
 pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
-  let want: Ty = ty_from_name(fd.ret_type);
-  let s2: EmitState = s.reset_locals();
+  let want = ty_from_name(fd.ret_type);
+  let s2 = s.reset_locals();
   if (fd.receiver_type.len() > 0) {
     s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
   }
-  let pi: i32 = 0;
+  let pi = 0;
   while (pi < fd.params.len()) {
     s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
-    pi = pi + 1;
+    pi += 1;
   }
-  let ctx: CheckCtx = CheckCtx { st: s2, diags: [] };
+  let ctx = CheckCtx { st: s2, diags: [] };
   ctx = check_stmts(fd.body, want, fd.name, ctx);
   return ctx.diags;
 }
@@ -5497,22 +5497,22 @@ pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   if (envflag.on("FERN_ENTRY_CHECK_TRACE")) {
     eprint("entry check\n");
   }
-  let s: EmitState = new_state();
+  let s = new_state();
   s = with_funcs(EmitState { ...s, struct_decls: irtables.struct_tab(tm.structs) }, tm.funcs);
-  let errs: util.Diag[] = check_module(tm, s);
+  let errs = check_module(tm, s);
   s.release();
   return errs;
 }
 
 pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
-  let errs: util.Diag[] = parse_unknown_errors_module(mod);
+  let errs = parse_unknown_errors_module(mod);
   if (errs.len() > 0) {
     return errs;
   }
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     errs = util.append_diags(errs, check_func(mod.funcs[fi], s));
-    fi = fi + 1;
+    fi += 1;
   }
   errs = util.append_diags(errs, check_map_new_chain(mod));
   errs = util.append_diags(errs, check_undefined_calls(mod));
@@ -5548,16 +5548,16 @@ function map_chain_root_ctor(e: ast.Expr): string {
 }
 
 function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): util.Diag[] {
-  let out: util.Diag[] = errs;
+  let out = errs;
   match (e) {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprFieldAccess(fa) => {
           if ((fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
             || fa.field == "contains" || fa.field == "remove") && c.args.len() > 0) {
-            let mroot: string = map_chain_root_ctor(fa.obj);
+            let mroot = map_chain_root_ctor(fa.obj);
             if (mroot.len() > 0) {
-              let mism: boolean = false;
+              let mism = false;
               match (c.args[0]) {
                 ast.ExprNumber(_) => {
                   if (mroot == "map_new") {
@@ -5592,10 +5592,10 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
           out = map_chain_check_expr(c.callee, fname, out);
         }
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < c.args.len()) {
         out = map_chain_check_expr(c.args[i], fname, out);
-        i = i + 1;
+        i += 1;
       }
       return out;
     },
@@ -5618,26 +5618,26 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
       if (sl2.has_base) {
         out = map_chain_check_expr(sl2.base, fname, out);
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < sl2.field_values.len()) {
         out = map_chain_check_expr(sl2.field_values[i], fname, out);
-        i = i + 1;
+        i += 1;
       }
       return out;
     },
     ast.ExprArray(a) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < a.elements.len()) {
         out = map_chain_check_expr(a.elements[i], fname, out);
-        i = i + 1;
+        i += 1;
       }
       return out;
     },
     ast.ExprTuple(t) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < t.elements.len()) {
         out = map_chain_check_expr(t.elements[i], fname, out);
-        i = i + 1;
+        i += 1;
       }
       return out;
     },
@@ -5648,8 +5648,8 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
 }
 
 function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag[]): util.Diag[] {
-  let out: util.Diag[] = errs;
-  let i: i32 = 0;
+  let out = errs;
+  let i = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
       ast.StmtVar(v) => {
@@ -5679,13 +5679,13 @@ function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag
       },
       ast.StmtMatch(m) => {
         out = map_chain_check_expr(m.scrutinee, fname, out);
-        let ai: i32 = 0;
+        let ai = 0;
         while (ai < m.arms.len()) {
           if (m.arms[ai].has_guard) {
             out = map_chain_check_expr(m.arms[ai].guard, fname, out);
           }
           out = map_chain_check_stmts(m.arms[ai].body, fname, out);
-          ai = ai + 1;
+          ai += 1;
         }
       },
       ast.StmtDefer(d) => {
@@ -5693,17 +5693,17 @@ function map_chain_check_stmts(stmts: ast.Stmt[], fname: string, errs: util.Diag
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     errs = map_chain_check_stmts(mod.funcs[fi].body, mod.funcs[fi].name, errs);
-    fi = fi + 1;
+    fi += 1;
   }
   return errs;
 }
@@ -5711,12 +5711,12 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 struct CallGate { names: string[], names_ix: util.NameIndex, argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
 
 function callgate_name_in(names: string[], name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -5730,65 +5730,65 @@ function emitter_call_names(): string[] {
 }
 
 function callgate_known_names(mod: parser.Module): string[] {
-  let out: string[] = parser.builtin_function_names();
-  let ei: i32 = 0;
-  let extra: string[] = emitter_call_names();
+  let out = parser.builtin_function_names();
+  let ei = 0;
+  let extra = emitter_call_names();
   while (ei < extra.len()) {
     out = out.append(extra[ei]);
-    ei = ei + 1;
+    ei += 1;
   }
   out = out.append("Some");
   out = out.append("None");
   out = out.append("Ok");
   out = out.append("Err");
-  let sd: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
-  let si: i32 = 0;
+  let sd = parser.inject_builtin_enums(mod.structs);
+  let si = 0;
   while (si < sd.len()) {
     out = out.append(sd[si].name);
-    si = si + 1;
+    si += 1;
   }
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].receiver_type.len() > 0) {
       out = out.append(mod.funcs[fi].name);
     }
-    fi = fi + 1;
+    fi += 1;
   }
   out = astwalk.collect_bound_stmts(mod.top_stmts, out);
   return out;
 }
 
 function callgate_module_ns(name: string, names: string[], known: string[]): string {
-  let i: i32 = 1;
+  let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
-      let ns: string = slice_unchecked(name, 0, i) + "";
-      let pfx: string = ns + "__";
+      let ns = slice_unchecked(name, 0, i) + "";
+      let pfx = ns + "__";
       if (callgate_ns_present(pfx, names) || callgate_ns_present(pfx, known)) {
         return "";
       }
       return ns;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 function callgate_ns_present(pfx: string, names: string[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
-    let nm: string = names[i];
+    let nm = names[i];
     if (nm.len() > pfx.len() && util.str_has_prefix(nm, pfx)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function callgate_undefined_error(g: CallGate, where: string, name: string, line: i32, col: i32): util.Diag {
-  let out: string = where + ": cannot find \"" + name + "\" in this scope";
-  let ns: string = callgate_module_ns(name, g.names, g.known);
+  let out = where + ": cannot find \"" + name + "\" in this scope";
+  let ns = callgate_module_ns(name, g.names, g.known);
   if (ns.len() > 0) {
     out = out + " — no module '" + ns + "' was loaded (a std/ or core/ import is"
       + " skipped when no stdlib was given, so every call into it dangles)";
@@ -5802,8 +5802,8 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       match (c.callee) {
         ast.ExprIdent(id) => {
           if (!callgate_name_in(bound, id.name)) {
-            let ti: i32 = g.names_ix.find(id.name);
-            let found: boolean = ti >= 0;
+            let ti = g.names_ix.find(id.name);
+            let found = ti >= 0;
             if (found && g.check_arity && c.args.len() != g.argc[ti]) {
               errs = errs.append(util.Diag {
                 length: 0,
@@ -5822,10 +5822,10 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
           errs = callgate_expr(c.callee, g, where, bound, errs);
         }
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < c.args.len()) {
         errs = callgate_expr(c.args[i], g, where, bound, errs);
-        i = i + 1;
+        i += 1;
       }
       return errs;
     },
@@ -5846,26 +5846,26 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       return callgate_expr(sl.end, g, where, bound, errs);
     },
     ast.ExprArray(a) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < a.elements.len()) {
         errs = callgate_expr(a.elements[i], g, where, bound, errs);
-        i = i + 1;
+        i += 1;
       }
       return errs;
     },
     ast.ExprTuple(t) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < t.elements.len()) {
         errs = callgate_expr(t.elements[i], g, where, bound, errs);
-        i = i + 1;
+        i += 1;
       }
       return errs;
     },
     ast.ExprStructLit(sl) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < sl.field_values.len()) {
         errs = callgate_expr(sl.field_values[i], g, where, bound, errs);
-        i = i + 1;
+        i += 1;
       }
       if (sl.has_base) {
         errs = callgate_expr(sl.base, g, where, bound, errs);
@@ -5876,11 +5876,11 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       return callgate_expr(fa.obj, g, where, bound, errs);
     },
     ast.ExprLambda(lm) => {
-      let lb: string[] = bound;
-      let pi: i32 = 0;
+      let lb = bound;
+      let pi = 0;
       while (pi < lm.params.len()) {
         lb = lb.append(lm.params[pi].name);
-        pi = pi + 1;
+        pi += 1;
       }
       lb = astwalk.collect_bound_stmts(lm.body, lb);
       return callgate_stmts(lm.body, g, where, lb, errs);
@@ -5903,7 +5903,7 @@ function callgate_known_callee(name: string, known: string[]): boolean {
 }
 
 function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: string[], errs: util.Diag[]): util.Diag[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
       ast.StmtVar(v) => {
@@ -5933,13 +5933,13 @@ function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: st
       },
       ast.StmtMatch(m) => {
         errs = callgate_expr(m.scrutinee, g, where, bound, errs);
-        let ai: i32 = 0;
+        let ai = 0;
         while (ai < m.arms.len()) {
           if (m.arms[ai].has_guard) {
             errs = callgate_expr(m.arms[ai].guard, g, where, bound, errs);
           }
           errs = callgate_stmts(m.arms[ai].body, g, where, bound, errs);
-          ai = ai + 1;
+          ai += 1;
         }
       },
       ast.StmtDefer(d) => {
@@ -5947,62 +5947,62 @@ function callgate_stmts(stmts: ast.Stmt[], g: CallGate, where: string, bound: st
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return errs;
 }
 
 function callgate_free_names(mod: parser.Module): string[] {
   let names: string[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].receiver_type.len() == 0) {
       names = names.append(mod.funcs[fi].name);
     }
-    fi = fi + 1;
+    fi += 1;
   }
   return names;
 }
 
 function callgate_free_argc(mod: parser.Module): i32[] {
   let argc: i32[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].receiver_type.len() == 0) {
       argc = argc.append(mod.funcs[fi].params.len());
     }
-    fi = fi + 1;
+    fi += 1;
   }
   return argc;
 }
 
 function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
   let errs: util.Diag[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[fi];
+    let fd = mod.funcs[fi];
     let bound: string[] = [];
     if (fd.receiver_type.len() > 0) {
       bound = bound.append(fd.receiver_name);
     }
-    let pi: i32 = 0;
+    let pi = 0;
     while (pi < fd.params.len()) {
       bound = bound.append(fd.params[pi].name);
-      pi = pi + 1;
+      pi += 1;
     }
     bound = astwalk.collect_bound_stmts(fd.body, bound);
     errs = callgate_stmts(fd.body, g, "in fn '" + fd.name + "'", bound, errs);
-    fi = fi + 1;
+    fi += 1;
   }
   if (g.check_undef) {
-    let tb: string[] = astwalk.collect_bound_stmts(mod.top_stmts, []);
+    let tb = astwalk.collect_bound_stmts(mod.top_stmts, []);
     errs = callgate_stmts(mod.top_stmts, g, "at top level", tb, errs);
   }
   return errs;
 }
 
 pub function check_call_arity(mod: parser.Module): util.Diag[] {
-  let names: string[] = callgate_free_names(mod);
+  let names = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
     names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod), known: [],
     check_arity: true, check_undef: false,
@@ -6011,7 +6011,7 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 
 pub function check_decl_names(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name.len() == 0 && mod.funcs[i].is_const) {
       errs = errs.append(util.Diag {
@@ -6031,7 +6031,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    i = i + 1;
+    i += 1;
   }
   for td in mod.trait_decls {
     if (td.name.len() == 0) {
@@ -6043,7 +6043,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       }
     }
   }
-  let si: i32 = 0;
+  let si = 0;
   while (si < mod.structs.len()) {
     if (mod.structs[si].name.len() == 0) {
       errs = errs.append(util.Diag {
@@ -6054,7 +6054,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    si = si + 1;
+    si += 1;
   }
   for en in mod.enums {
     if (en.name.len() == 0) {
@@ -6070,7 +6070,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
 }
 
 pub function parse_errors(mod: parser.Module): util.Diag[] {
-  let errs: util.Diag[] = util.append_diags(parse_unknown_errors_module(mod), check_decl_names(mod));
+  let errs = util.append_diags(parse_unknown_errors_module(mod), check_decl_names(mod));
   errs = util.append_diags(errs, check_top_level_stmts(mod));
   let ordered: util.Diag[] = [];
   for d in errs {
@@ -6091,7 +6091,7 @@ pub function parse_errors_before_check(mod: parser.Module): util.Diag[] {
 
 function insert_by_position(ds: util.Diag[], d: util.Diag): util.Diag[] {
   let out: util.Diag[] = [];
-  let placed: boolean = false;
+  let placed = false;
   for e in ds {
     if (!placed && (d.line < e.line || d.line == e.line && d.col < e.col)) {
       out = out.append(d);
@@ -6126,13 +6126,13 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
   if (mod.top_stmts.len() == 0) {
     return errs;
   }
-  let has_main: boolean = false;
-  let fi: i32 = 0;
+  let has_main = false;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].receiver_type.len() == 0 && mod.funcs[fi].name == "main") {
       has_main = true;
     }
-    fi = fi + 1;
+    fi += 1;
   }
   if (!has_main) {
     return errs;
@@ -6188,7 +6188,7 @@ function is_parse_sentinel(st: ast.Stmt): boolean {
 }
 
 pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
-  let names: string[] = callgate_free_names(mod);
+  let names = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
     names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod),
     known: callgate_known_names(mod), check_arity: false, check_undef: true,
@@ -6222,14 +6222,14 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
   if (s.string_lits.len() <= first) {
     return s;
   }
-  let st: EmitState = s.write(const_data_section(s) + "    .balign 8\n");
-  let i: i32 = first;
+  let st = s.write(const_data_section(s) + "    .balign 8\n");
+  let i = first;
   while (i < st.string_lits.len()) {
     st = st.write("    .quad -1\n");
     st = st.write(str_box_label(st, i) + ":\n");
     st = st.write("    .quad " + str_lit_label(st, i) + "\n");
     st = st.write("    .quad " + util.i32_to_string(st.string_lits[i].len()) + "\n");
-    i = i + 1;
+    i += 1;
   }
   return st;
 }
@@ -6262,41 +6262,41 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
   if (s.const_aggs.len() <= first) {
     return s;
   }
-  let st: EmitState = s;
-  let cur: string = "";
-  let i: i32 = first;
+  let st = s;
+  let cur = "";
+  let i = first;
   while (i < st.const_aggs.len()) {
-    let e: string = st.const_aggs[i];
-    let array: boolean = const_agg_kind(e) == 1;
+    let e = st.const_aggs[i];
+    let array = const_agg_kind(e) == 1;
     if (only != 0 && const_agg_kind(e) != only) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let home: string = const_data_section(s);
+    let home = const_data_section(s);
     if (home != cur) {
       st = st.write(home + "    .balign 8\n");
       cur = home;
     }
     st = emit_const_agg_block(st, i, e, array);
-    i = i + 1;
+    i += 1;
   }
   return st;
 }
 
 function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean): EmitState {
-  let bar: i32 = 0;
+  let bar = 0;
   while (bar < e.len() && e[bar] != 124) {
-    bar = bar + 1;
+    bar += 1;
   }
-  let shp: string = slice_unchecked(e, 0, bar) + "";
+  let shp = slice_unchecked(e, 0, bar) + "";
   if (shp == "8") {
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
-  let vals: string[] = ir.const_struct_values(e);
+  let vals = ir.const_struct_values(e);
   if (shp == "o") {
     return st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
   }
-  let cap: i32 = vals.len() + 1;
+  let cap = vals.len() + 1;
   if (array) {
     cap = vals.len();
     shp = util.i32_to_string(vals.len());
@@ -6305,10 +6305,10 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   st = st.write("    .quad -1\n");
   st = st.write(const_agg_label(st, i) + ":\n");
   st = st.write("    .quad " + shp + "\n");
-  let vi: i32 = 0;
+  let vi = 0;
   while (vi < vals.len()) {
     st = emit_const_agg_field(st, i, vi, vals[vi]);
-    vi = vi + 1;
+    vi += 1;
   }
   return st;
 }
@@ -6329,26 +6329,26 @@ function const_agg_field_label(s: EmitState, idx: i32, vi: i32): string {
 }
 
 pub function emit_const_agg_refs(s: EmitState): EmitState {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.const_aggs.len()) {
-    let e: string = s.const_aggs[i];
+    let e = s.const_aggs[i];
     if (const_agg_kind(e) == 2 || ir.const_struct_type(e) == "0") {
-      let vals: string[] = ir.const_struct_values(e);
-      let vi: i32 = 0;
+      let vals = ir.const_struct_values(e);
+      let vi = 0;
       while (vi < vals.len()) {
         if (const_agg_holds_box(vals[vi])) {
           s = s.write("    .quad " + const_agg_field_label(s, i, vi) + "\n");
         }
-        vi = vi + 1;
+        vi += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
 
 function emit_const_bytes_block(st: EmitState, i: i32, words: string): EmitState {
-  let count: i32 = byteconst.count_words(words);
+  let count = byteconst.count_words(words);
   st = st.write("    .quad 0\n");
   st = st.write("    .quad -1\n");
   st = st.write(const_agg_label(st, i) + ":\n");
@@ -6365,7 +6365,7 @@ pub struct DynArg { reg: string, off: i32 }
 
 pub function shape_ref(own s: EmitState, name: string): ShapeRefOut {
   if (s.str_ns.len() == 0) {
-    let lo: StringLitOut = add_string_lit(s, name);
+    let lo = add_string_lit(s, name);
     return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };
   }
   return ShapeRefOut { state: add_shape_lit(s, name), label: shape_sym(name) };
@@ -6387,7 +6387,7 @@ pub function export_runtime_fns(s: EmitState, fns: parser.FuncDecl[]): EmitState
     return s;
   }
   for f in fns {
-    let label: string = "__fn_" + sanitize_label(f.name);
+    let label = "__fn_" + sanitize_label(f.name);
     s = s.write(".globl " + label + "\n.globl " + label + ".r\n");
   }
   return s;
@@ -6421,10 +6421,10 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_arr_dec.u", "__fn___fern_str_free.u",
     "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     s = s.write(".globl " + names[i] + "\n");
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -6435,18 +6435,18 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
   if (seen_vals.len() == 0) {
     return DbgVars { at: [], rows: [] };
   }
-  let d: DbgVars = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
-  let i: i32 = 0;
+  let d = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
+  let i = 0;
   while (i < r.dbg_slots.len()) {
     d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
-    i = i + 1;
+    i += 1;
   }
   return d;
 }
 
 function dbg_shape_type(s: EmitState, t: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < t.len()) {
     if (t[i] == b'%') {
       let a = __memchr(t, 123, i + 1);
@@ -6457,15 +6457,15 @@ function dbg_shape_type(s: EmitState, t: string): string {
       out = out + slice_unchecked(t, i, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
       i = b + 1;
     } else {
-      out = out + slice_unchecked(t, i, i + 1);
-      i = i + 1;
+      out += slice_unchecked(t, i, i + 1);
+      i += 1;
     }
   }
   return out;
 }
 
 function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
-  let out: string = "";
+  let out = "";
   while (i < end) {
     let j = __memchr(t, 44, i);
     if (j < 0 || j > end) {
@@ -6475,11 +6475,11 @@ function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
     let label = dbg_shape_label(s, shape);
     if (label != "") {
       if (out != "") {
-        out = out + ",";
+        out += ",";
       }
       let k = shape.len();
       while (k > 0 && shape[k - 1] != b'$') {
-        k = k - 1;
+        k -= 1;
       }
       out = out + slice_unchecked(shape, k, shape.len()) + "=" + label;
     }
@@ -6501,24 +6501,24 @@ function dbg_shape_label(s: EmitState, name: string): string {
 }
 
 function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
-  let param: string = "0";
+  let param = "0";
   if (r.dbg_slots[i] < r.n_params) {
     param = "1";
   }
   let done: i32[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < seen_slots.len()) {
-    let v: i32 = dbg_home(a, repl, locs, npos, seen_vals[j]);
+    let v = dbg_home(a, repl, locs, npos, seen_vals[j]);
     if (seen_slots[j] == r.dbg_slots[i] && v >= 0 && util.index_of_i32(done, v) < 0) {
       done = done.append(v);
-      let lo: i32 = a.def_pos[v] + 1;
-      let hi: i32 = a.hi[v] + 1;
+      let lo = a.def_pos[v] + 1;
+      let hi = a.hi[v] + 1;
       d = DbgVars {
         at: d.at.with(lo, true).with(hi, true),
         rows: d.rows.append(fn_label + "|" + r.dbg_names[i] + "|" + r.dbg_types[i] + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + locs[v]),
       };
     }
-    j = j + 1;
+    j += 1;
   }
   return d;
 }
@@ -6528,10 +6528,10 @@ function dbg_home(a: ssa.Alloc, repl: i32[], locs: string[], npos: i32, v: i32):
     v = repl[v];
   }
   if (v < 0 || v >= a.def_pos.len() || v >= locs.len() || locs[v] == "") {
-    return 0 - 1;
+    return -1;
   }
   if (a.def_pos[v] < 0 || a.hi[v] <= a.def_pos[v] || a.hi[v] >= npos) {
-    return 0 - 1;
+    return -1;
   }
   return v;
 }
@@ -6548,10 +6548,10 @@ pub function dbg_label(s: EmitState, d: DbgVars, fn_label: string, pos: i32): Em
 }
 
 pub function dbg_labels(s: EmitState, d: DbgVars, fn_label: string, lo: i32, hi: i32): EmitState {
-  let pos: i32 = lo;
+  let pos = lo;
   while (pos < hi) {
     s = dbg_label(s, d, fn_label, pos);
-    pos = pos + 1;
+    pos += 1;
   }
   return s;
 }
@@ -6587,8 +6587,8 @@ function emit_debug_row(own s: EmitState, row: string): EmitState {
 }
 
 pub function dbg_hex(bytes: i32[]): string {
-  let digits: string = "0123456789abcdef";
-  let out: string = "";
+  let digits = "0123456789abcdef";
+  let out = "";
   for b in bytes {
     out = out + slice_unchecked(digits, b >> 4 & 15, (b >> 4 & 15) + 1) + slice_unchecked(digits, b & 15, (b & 15) + 1);
   }
@@ -6596,11 +6596,11 @@ pub function dbg_hex(bytes: i32[]): string {
 }
 
 pub function dbg_sleb(b: i32[], v: i32): i32[] {
-  let more: boolean = true;
+  let more = true;
   while (more) {
-    let byte: i32 = v & 127;
+    let byte = v & 127;
     v = v >> 7;
-    if (v == 0 && (byte & 64) == 0 || v == 0 - 1 && (byte & 64) != 0) {
+    if (v == 0 && (byte & 64) == 0 || v == -1 && (byte & 64) != 0) {
       more = false;
     } else {
       byte = byte | 128;
@@ -6624,7 +6624,7 @@ pub function sha256_k(): u32[] {
 }
 
 pub function runtime_dir_roots(s: EmitState): string {
-  let out: string = "";
+  let out = "";
   if (s.has_need("open_dir")) {
     out = out + " " + "__fern_open_dir";
   }
@@ -6659,7 +6659,7 @@ pub function runtime_dir_roots(s: EmitState): string {
 }
 
 pub function runtime_sync_roots(s: EmitState): string {
-  let out: string = "";
+  let out = "";
   if (s.has_need("fd_fsync")) {
     out = out + " " + "__fern_fd_fsync";
   }

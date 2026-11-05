@@ -124,9 +124,9 @@ function refusal(p: semsource.Produced, body: Result[Option[irtables.Lowered], i
 function dump_if_asked(p: semsource.Produced): void {
   match (env("FERN_SEM_DUMP")) {
     Some(want) => {
-      let name: string = p.func.graph.name;
+      let name = p.func.graph.name;
       if (want == name || util.str_has_suffix(want, "*") && util.str_has_prefix(name, slice_unchecked(want, 0, want.len() - 1))) {
-        let modes: string = "";
+        let modes = "";
         for m in p.modes {
           modes = modes + " " + util.i32_to_string(m);
         }
@@ -169,12 +169,12 @@ function collected_bodies(bodies: Result[Option[irtables.Lowered], irtables.Lowe
 }
 
 function report_rows(r: Rows, prefix: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.why.len()) {
     if (r.why[i].len() > 0) {
       report(prefix + r.n1[i], r.why[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
@@ -201,43 +201,43 @@ function plan_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
 struct Planned { r: Rows, views: ssaunits.SchemaView[] }
 
 function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, changed: boolean[]): Planned {
-  let r: Rows = no_reuse();
+  let r = no_reuse();
   let keys: string[] = [];
   let funcs: ssasem.Func[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[i];
+    let fd = mod.funcs[i];
     keys = keys.append(parser.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
     r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(parser.decl_key(fd)) };
-    i = i + 1;
+    i += 1;
   }
-  let at: i32 = mod.funcs.len();
+  let at = mod.funcs.len();
   for p in built.instances {
-    let name: string = built.names[at];
+    let name = built.names[at];
     keys = keys.append(name);
     funcs = funcs.append(p.func);
     r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append("") };
-    at = at + 1;
+    at += 1;
   }
-  let writes: ssaunits.WriteRows = ssaunits.write_rows(keys, funcs);
-  let views: ssaunits.SchemaView[] = ssarc.schema_views(keys, funcs, writes);
+  let writes = ssaunits.write_rows(keys, funcs);
+  let views = ssarc.schema_views(keys, funcs, writes);
   let plans: ssaunits.Plan[] = [];
   i = 0;
   while (i < funcs.len()) {
     plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i]));
-    i = i + 1;
+    i += 1;
   }
-  let fresh: ssaunits.FreshRows = ssaunits.fresh_rows(keys, funcs, plans);
+  let fresh = ssaunits.fresh_rows(keys, funcs, plans);
   i = 0;
   while (i < funcs.len()) {
     plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh));
-    i = i + 1;
+    i += 1;
   }
-  let grows: ssaunits.GrowTable = ssaunits.grow_table(keys, funcs, plans);
-  let held: boolean = false;
+  let grows = ssaunits.grow_table(keys, funcs, plans);
+  let held = false;
   for k in 0..funcs.len() {
-    let forced: boolean[] = ssaunits.grow_holds(funcs[k], plans[k], grows);
+    let forced = ssaunits.grow_holds(funcs[k], plans[k], grows);
     if (ssaunits.count_true(forced) > 0) {
       plans = plans.with(k, ssaunits.with_fresh(held_plan(produced_at(built, mod, k), views[k], forced), funcs[k], fresh));
       held = true;
@@ -270,31 +270,31 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 
 function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned, prev: Rows, changed: boolean[]): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < inferred.r.plans.len()) {
-    let p: semsource.Produced = produced_at(built, mod, i);
-    let callees: string[] = ssaunits.grow_callees(p.func);
+    let p = produced_at(built, mod, i);
+    let callees = ssaunits.grow_callees(p.func);
     out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, callees) || !ssaunits.fresh_rows_agree(prev.fresh, inferred.r.fresh, callees)
       || !ssaunits.write_rows_agree(prev.writes, inferred.r.writes, callees));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function rows_lowered(mod: parser.Module, structs: irtables.StructTab, a_built: semsource.Built, a: Planned, b_built: semsource.Built, b: Planned, take_b: boolean[]): Rows {
-  let r: Rows = b.r;
-  let i: i32 = 0;
+  let r = b.r;
+  let i = 0;
   while (i < b.r.plans.len()) {
-    let p: semsource.Produced = produced_at(a_built, mod, i);
-    let pl: Planned = a;
+    let p = produced_at(a_built, mod, i);
+    let pl = a;
     if (i < take_b.len() && take_b[i]) {
       p = produced_at(b_built, mod, i);
       pl = b;
     }
-    let body: Result[Option[irtables.Lowered], irtables.LowerState] = produced_body(p, pl.r.plans[i], structs, pl.r.grows, pl.r.pure, pl.views[i], pl.r.susp);
+    let body = produced_body(p, pl.r.plans[i], structs, pl.r.grows, pl.r.pure, pl.views[i], pl.r.susp);
     let keep = match (body) { Ok(_) => true, Err(_) => false };
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(keep), why: r.why.append(refusal(p, body)) };
-    i = i + 1;
+    i += 1;
   }
   return r;
 }
@@ -304,19 +304,19 @@ function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
   if (!any_map_call(funcs)) {
     return util.name_index(none);
   }
-  let rows: util.NameIndex = util.name_index(keys);
-  let effects: util.NameIndex = util.name_index(effect_builtins());
+  let rows = util.name_index(keys);
+  let effects = util.name_index(effect_builtins());
   let bad: boolean[] = [];
   let callers: i32[][] = [];
   while (bad.len() < keys.len()) {
     bad = bad.append(false);
     callers = callers.append([]);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     for b in funcs[i].graph.blocks {
       for ins in b.insts {
-        let callee: i32 = 0 - 1;
+        let callee: i32 = -1;
         if (ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
           bad = bad.with(i, true);
         } else if (ins.kind_tag == ssasem.call()) {
@@ -331,7 +331,7 @@ function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return util.name_index(unmarked(keys, spread_marks(bad, callers)));
 }
@@ -350,7 +350,7 @@ function any_map_call(funcs: ssasem.Func[]): boolean {
 }
 
 function effect_builtins(): string[] {
-  let out: string[] = util.append_all(caps.ungated(), caps.frontend_ungated());
+  let out = util.append_all(caps.ungated(), caps.frontend_ungated());
   for c in caps.builtin_caps() {
     out = out.append(c.builtin);
   }
@@ -358,16 +358,16 @@ function effect_builtins(): string[] {
 }
 
 function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
-  let marks: boolean[] = seed;
+  let marks = seed;
   let work: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < marks.len()) {
     if (marks[i]) {
       work = work.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
-  let next: i32 = 0;
+  let next = 0;
   while (next < work.len()) {
     for c in callers[work[next]] {
       if (!marks[c]) {
@@ -375,19 +375,19 @@ function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
         work = work.append(c);
       }
     }
-    next = next + 1;
+    next += 1;
   }
   return marks;
 }
 
 function unmarked(keys: string[], marks: boolean[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < keys.len()) {
     if (!marks[i]) {
       out = out.append(keys[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -395,7 +395,7 @@ function unmarked(keys: string[], marks: boolean[]): string[] {
 struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
 function lowers_whole_module(built: semsource.Built, keep: boolean[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < keep.len()) {
     if (!keep[i]) {
       if (i >= built.decls.len()) {
@@ -406,7 +406,7 @@ function lowers_whole_module(built: semsource.Built, keep: boolean[]): boolean {
         return false;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -420,21 +420,21 @@ function plans_ok(plans: ssaunits.Plan[]): boolean[] {
 }
 
 function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Planned, structs: irtables.StructTab): Inference {
-  let resunk: semsource.Resunk = semsource.with_lent_rereads(semsource.with_inferred_modes(built));
-  let widened: semsource.Built = resunk.built;
-  let changed: boolean[] = semsource.changed_rows(built, widened);
+  let resunk = semsource.with_lent_rereads(semsource.with_inferred_modes(built));
+  let widened = resunk.built;
+  let changed = semsource.changed_rows(built, widened);
   for i in 0..changed.len() {
     if (i < resunk.moved.len() && resunk.moved[i]) {
       changed = changed.with(i, true);
     }
   }
   if (semsource.any_row_changed(changed)) {
-    let prev: Rows = declared.r;
+    let prev = declared.r;
     if (!sem_reuse_on()) {
       prev = no_reuse();
     }
-    let inferred: Planned = rows_planned(mod, widened, prev, changed);
-    let r: Rows = rows_lowered(mod, structs, built, declared, widened, inferred, relowered(widened, mod, inferred, prev, changed));
+    let inferred = rows_planned(mod, widened, prev, changed);
+    let r = rows_lowered(mod, structs, built, declared, widened, inferred, relowered(widened, mod, inferred, prev, changed));
     if (lowers_whole_module(widened, r.keep)) {
       return Inference { built: widened, rows: r, records: [] };
     }
@@ -443,14 +443,14 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
 }
 
 function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): Inference {
-  let built: semsource.Built = semsource.with_analyses(semsource.build_module_with(mod, opts));
+  let built = semsource.with_analyses(semsource.build_module_with(mod, opts));
   util.arr_push_cliff_report("sem:built", 0);
-  let records: parser.StructDecl[] = util.append_all(instance_records(built), laid_decls(structs, built));
+  let records = util.append_all(instance_records(built), laid_decls(structs, built));
   if (records.len() > 0) {
     structs = irtables.struct_tab(irtables.replaced_decls(structs.decls, records));
   }
-  let declared: Planned = rows_planned(mod, built, no_reuse(), []);
-  let inf: Inference = Inference { built: built, rows: no_reuse(), records: records };
+  let declared = rows_planned(mod, built, no_reuse(), []);
+  let inf = Inference { built: built, rows: no_reuse(), records: records };
   if (lowers_whole_module(built, plans_ok(declared.r.plans))) {
     inf = Inference { ...inferred_rows(mod, built, declared, structs), records: records };
   } else {
@@ -466,7 +466,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
   for p in util.append_all(built.decls, built.instances) {
     for rec in p.func.records.list {
       if let typeinfo.TypeStruct(r) = rec.ty {
-        let name: string = ssasem.type_key(rec.ty);
+        let name = ssasem.type_key(rec.ty);
         if (r.args.len() > 0 && !semtypes.is_env(rec.ty) && util.index_of_str(names, name) < 0) {
           names = names.append(name);
           let fields: parser.StructFieldDecl[] = [];
@@ -490,7 +490,7 @@ function laid_decls(structs: irtables.StructTab, built: semsource.Built): parser
     for fl in rec.fields {
       fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
     }
-    let at: i32 = irtables.decl_index_of(structs, ssasem.type_key(rec.ty));
+    let at = irtables.decl_index_of(structs, ssasem.type_key(rec.ty));
     if (at >= 0) {
       out = out.append(parser.StructDecl { ...structs.decls[at], fields: fields });
     }
@@ -507,7 +507,7 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
         continue;
       }
       for v in e.variants {
-        let name: string = ssasem.variant_key(e.ty, v.name);
+        let name = ssasem.variant_key(e.ty, v.name);
         if (name == v.name || !semrecords.inhabited(v) || util.index_of_str(names, name) >= 0) {
           continue;
         }
@@ -562,7 +562,7 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
   }
   let envs: ssasem.EnvRow[] = [];
   let dyns: ssasem.EnvRow[] = [];
-  let map_module: boolean = false;
+  let map_module = false;
   for p in util.append_all(built.decls, built.instances) {
     envs = helper_rows(envs, p.func.envs);
     dyns = helper_rows(dyns, p.func.dyns);
@@ -576,28 +576,28 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
 }
 
 function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies {
-  let helpers: ssarc.Helpers = module_helpers(built);
+  let helpers = module_helpers(built);
   let bodies: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let n = 0;
+  let i = 0;
   while (i < built.decls.len()) {
     if (built.decls[i].dropped) {
       bodies = bodies.append(Ok(None));
-      n = n + 1;
+      n += 1;
     } else if (r.keep[i]) {
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
-      n = n + 1;
+      n += 1;
     } else if (built.decls[i].template && (built.decls[i].ok || built.decls[i].bodyless)) {
       bodies = bodies.append(Ok(None));
-      n = n + 1;
+      n += 1;
     } else if (built.decls[i].bodyless) {
       bodies = bodies.append(Ok(None));
-      n = n + 1;
+      n += 1;
     } else {
       bodies = bodies.append(Err(declined_state(r.why[i])));
     }
-    i = i + 1;
+    i += 1;
   }
   return DeclarationBodies { helpers: helpers, bodies: bodies, count: n };
 }
@@ -607,25 +607,25 @@ struct InstanceBodies { helpers: ssarc.Helpers, bodies: Result[Option[irtables.L
 function instance_bodies(built: semsource.Built, r: Rows, helpers: ssarc.Helpers): InstanceBodies {
   let instances: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let instance_origins: physicalbody.Origin[] = [];
-  let unspliced: i32 = 0;
-  let at: i32 = 0;
+  let unspliced = 0;
+  let at = 0;
   while (at < built.instances.len()) {
     if (built.instances[at].dropped) {
-      unspliced = unspliced + 1;
+      unspliced += 1;
     } else if (r.keep[built.decls.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[built.decls.len() + at]);
       instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[built.decls.len() + at], helper: None });
     }
-    at = at + 1;
+    at += 1;
   }
   return InstanceBodies { helpers: helpers, bodies: instances, origins: instance_origins, unspliced: unspliced };
 }
 
 pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): ircore.Sub {
-  let inf: Inference = produced_rows(mod, structs, opts);
-  let built: semsource.Built = inf.built;
-  let r: Rows = inf.rows;
+  let inf = produced_rows(mod, structs, opts);
+  let built = inf.built;
+  let r = inf.rows;
   report_rows(r, "");
   let decl = declaration_bodies(built, r);
   let inst = instance_bodies(built, r, decl.helpers);
@@ -635,7 +635,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let instance_origins = inst.origins;
   let unspliced = inst.unspliced;
   util.arr_push_cliff_report("sem:substituted", 0);
-  let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len() - unspliced;
+  let refused_n = mod.funcs.len() - n + built.instances.len() - instances.len() - unspliced;
   if (refused_n > 0) {
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);
@@ -646,7 +646,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     + util.i32_to_string(instances.len() + unspliced) + " of "
     + util.i32_to_string(built.instances.len()) + " instances");
   let bodies = collected_bodies(decl.bodies);
-  let selected: SelectedHelpers = selected_helpers(built, helpers);
+  let selected = selected_helpers(built, helpers);
   let merged = ssarc.merge_helpers_mapped(collected_bodies(instances), selected.rows);
   let extra_origins = util.append_all(instance_origins, physicalbody.select_origins(selected.origins, merged.helper_indices));
   let kept = semndprune.unused_adapter_mapped(mod, bodies, merged.bodies);
@@ -656,23 +656,23 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let i = 0;
   while (i < bodies.len()) {
     declarations = declarations.append(built.names[i]);
-    i = i + 1;
+    i += 1;
   }
   let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(kept_origins, reached.indices) };
   return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: reached.bodies, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records, refused: ircore.fip_claim_diags(mod.funcs, kept.result.bodies) };
 }
 
 function physical_contracts(built: semsource.Built): ssasem.Contract[] {
-  let out: ssasem.Contract[] = built.contracts.list;
-  let i: i32 = 0;
+  let out = built.contracts.list;
+  let i = 0;
   for p in util.append_all(built.decls, built.instances) {
     if (p.ok && i < built.names.len()) {
-      let at: i32 = built.contracts.names.find(built.names[i]);
+      let at = built.contracts.names.find(built.names[i]);
       if (at >= 0 && !semtypes.equal(p.func.result, out[at].result) && scalar_result(p.func, out[at].result)) {
         out = out.with(at, ssasem.Contract { ...out[at], result: p.func.result });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -681,7 +681,7 @@ function scalar_result(f: ssasem.Func, original: typeinfo.Type): boolean {
   if (semscalarreturn.eligible(f, original)) {
     return true;
   }
-  let at: i32 = semrecords.find_enum(f.enums, original);
+  let at = semrecords.find_enum(f.enums, original);
   return at >= 0 && semscalarreturn.variant_in_lanes(f.enums[at]);
 }
 
@@ -696,10 +696,10 @@ function helper_origins(helpers: ssarc.Helpers): physicalbody.Origin[] {
     if (at < helpers.types.len() && helpers.types[at].row == row) {
       let entry = helpers.types[at];
       helper = Some(physicalbody.Helper { ty: entry.ty, children_only: entry.children_only });
-      at = at + 1;
+      at += 1;
     }
     out = out.append(physicalbody.Origin { producer: 0, symbol: irtables.helper_name(body), helper: helper });
-    row = row + 1;
+    row += 1;
   }
   return out;
 }
@@ -717,7 +717,7 @@ function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): Selec
   let producers: physicalbody.Metadata[] = [app];
   let origins = helper_origins(helpers);
   if (keys.len() > 0) {
-    let lowered: physicalbody.Lowered = runtime_module_lowering(keyhelpers.module(keys));
+    let lowered = runtime_module_lowering(keyhelpers.module(keys));
     origins = util.append_all(origins, physicalbody.lowered_origins(lowered, producers.len()));
     producers = producers.append(physicalbody.metadata(lowered));
     for body in lowered.bodies {
@@ -730,19 +730,19 @@ function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): Selec
 function contract_rows(cs: ssasem.Contracts, r: Rows): string[] {
   let out: string[] = [];
   for c in cs.list {
-    let row: string = "C:" + c.name + "(";
-    let j: i32 = 0;
+    let row = "C:" + c.name + "(";
+    let j = 0;
     while (j < c.params.len() || j < c.modes.len()) {
       if (j > 0) {
-        row = row + ",";
+        row += ",";
       }
       if (j < c.params.len()) {
-        row = row + typeinfo.spelling(c.params[j]);
+        row += typeinfo.spelling(c.params[j]);
       }
       if (j < c.modes.len()) {
         row = row + " " + util.i32_to_string(c.modes[j]);
       }
-      j = j + 1;
+      j += 1;
     }
     out = out.append(row + ")" + typeinfo.spelling(c.result));
   }
@@ -752,10 +752,10 @@ function contract_rows(cs: ssasem.Contracts, r: Rows): string[] {
   for name in r.pure.names {
     out = out.append("P:" + name);
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < r.susp.rows.names.len()) {
     out = out.append("S:" + r.susp.rows.names[k] + "|" + r.susp.classes[k]);
-    k = k + 1;
+    k += 1;
   }
   if (r.susp.indirect) {
     out = out.append("S:indirect");
@@ -770,15 +770,15 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
   let sites: semarrayreport.Site[] = [];
   let scales: semarrayreport.Site[] = [];
   let appends: semarrayreport.Site[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.plans.len()) {
     if (r.keep[i]) {
-      let p: semsource.Produced = produced_at(built, mod, i);
+      let p = produced_at(built, mod, i);
       sites = util.append_all(sites, ssarc.map_report(p.func, p.modes, r.plans[i], r.pure));
       scales = util.append_all(scales, ssarc.scale_report(p.func, r.plans[i]));
       appends = util.append_all(appends, ssarc.append_report(p.func, r.plans[i]));
     }
-    i = i + 1;
+    i += 1;
   }
   semarrayreport.write(sink, semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
   semarrayreport.write(sink, semarrayreport.render_kind("scale storage", semarrayreport.scale_storage_reasons(), scales));
@@ -787,7 +787,7 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
 }
 
 function structural_keys(seen: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
-  let out: typeinfo.Type[] = seen;
+  let out = seen;
   for t in f.values {
     if (ssasem.is_map(t) && ssasem.structural_map_key(ssasem.map_key(t))) {
       out = with_structural(out, ssasem.map_key(t));
@@ -800,13 +800,13 @@ function with_structural(seen: typeinfo.Type[], k: typeinfo.Type): typeinfo.Type
   if (!ssasem.structural_map_key(k)) {
     return seen;
   }
-  let name: string = ssasem.keyed_map_key_name(k);
+  let name = ssasem.keyed_map_key_name(k);
   for t in seen {
     if (ssasem.keyed_map_key_name(t) == name) {
       return seen;
     }
   }
-  let out: typeinfo.Type[] = seen;
+  let out = seen;
   if let typeinfo.TypeTuple(tup) = k {
     for e in tup.elements {
       out = with_structural(out, e);
@@ -824,10 +824,10 @@ pub function runtime_bodies(src: string): irtables.Lowered[] {
 
 function unpositioned(structs: parser.StructDecl[]): parser.StructDecl[] {
   let out: parser.StructDecl[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < structs.len()) {
     out = out.append(parser.StructDecl { ...structs[i], line: 0, col: 0 });
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -837,21 +837,21 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
 }
 
 pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowered {
-  let parsed: parser.Module = parser.infer_ret_types_module(source);
-  let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
-  let diags: util.Diag[] = checker.build_runtime_gate_diags(mod);
+  let parsed = parser.infer_ret_types_module(source);
+  let mod = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
+  let diags = checker.build_runtime_gate_diags(mod);
   if (diags.len() > 0) {
     eprint(util.pos_str("(runtime)", rtmodule.paths(), diags[0].line, diags[0].col) + ": " + diags[0].code + ": " + diags[0].message);
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
-  let im: parser.Module = gated_module(checker.annotate_module(mod));
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
+  let im = gated_module(checker.annotate_module(mod));
+  let inf = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
   if (inf.built.instances.len() > 0) {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
   let out: irtables.Lowered[] = [];
-  let helpers: ssarc.Helpers = ssarc.no_helpers(inf.built.contracts);
-  let i: i32 = 0;
+  let helpers = ssarc.no_helpers(inf.built.contracts);
+  let i = 0;
   while (i < im.funcs.len()) {
     match (inf.rows.body[i]) {
       Ok(body) => {
@@ -869,7 +869,7 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
       }
     }
     helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
-    i = i + 1;
+    i += 1;
   }
   let declaration_count = out.len();
   let completed = match (complete_runtime_helpers(out, helpers.rows)) { Ok(rows) => rows, Err(refusal) => { return runtime_refused(refusal.name, refusal.why); } };
@@ -885,7 +885,7 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
   for fd in im.funcs {
     tally("runtime " + fd.name, "produced");
     declarations = declarations.append(inf.built.names[i]);
-    i = i + 1;
+    i += 1;
   }
   return physicalbody.Lowered { bodies: completed.bodies, declarations: declarations, helper_types: helper_types, contracts: physical_contracts(inf.built), records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
 }
@@ -909,8 +909,8 @@ pub function gated_module(mod: parser.Module): parser.Module {
 }
 
 pub function view_escape_diags(mod: parser.Module): util.Diag[] {
-  let typed: parser.Module = parser.module_with_builtins_typed(checker.annotate_module(mod));
-  let im: parser.Module = gated_module(ircore.lift_lambdas_typed(typed));
+  let typed = parser.module_with_builtins_typed(checker.annotate_module(mod));
+  let im = gated_module(ircore.lift_lambdas_typed(typed));
   return semsource.check_views(im);
 }
 
@@ -922,7 +922,7 @@ pub function target_substitution(typed: parser.Module, target: string, opts: sem
   if (is_wasm(target)) {
     return substitution_of(wasm_gated(typed), semsource.BuildOpts { ...opts, debug_lines: false, stack_phi_joins: true });
   }
-  let lifted: parser.Module = ircore.lift_lambdas_typed(typed);
+  let lifted = ircore.lift_lambdas_typed(typed);
   return ircore.Sub { ...substitution_of(gated_module(lifted), opts), lifted: lifted, has_lifted: true };
 }
 
@@ -935,9 +935,9 @@ function wasm_gated(typed: parser.Module): parser.Module {
 }
 
 function substitution_of(im: parser.Module, opts: semsource.BuildOpts): ircore.Sub {
-  let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
+  let stab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
-  let sub: ircore.Sub = substitution(im, stab, opts);
+  let sub = substitution(im, stab, opts);
   return ircore.Sub { ...sub, rt_lower: runtime_module_lowering };
 }
 
@@ -956,12 +956,12 @@ pub function driven_shaken(annotated: parser.Module, target: string): Driven {
 }
 
 function driven_with(annotated: parser.Module, target: string, opts: semsource.BuildOpts): Driven {
-  let typed: parser.Module = checked_typed(annotated, target);
+  let typed = checked_typed(annotated, target);
   return Driven { full: parser.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, opts), checked: true } };
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
-  let t: Typed = typed_for(annotated, target);
+  let t = typed_for(annotated, target);
   if (t.errs.len() > 0) {
     eprint(util.format_diags(t.errs));
     exit(1);
@@ -972,9 +972,9 @@ function checked_typed(annotated: parser.Module, target: string): parser.Module 
 struct Typed { mod: parser.Module, errs: util.Diag[] }
 
 function typed_for(annotated: parser.Module, target: string): Typed {
-  let desc: platforms.Descriptor = platforms.for_target(target);
-  let folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
-  let typed: parser.Module = parser.module_with_builtins_typed(folded);
+  let desc = platforms.for_target(target);
+  let folded = constfold.fold_target_name(annotated, desc.environment, desc.isa);
+  let typed = parser.module_with_builtins_typed(folded);
   return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
 }
 
@@ -987,18 +987,18 @@ pub function verdict(mod: parser.Module, target: string): Verdict {
 }
 
 pub function verdict_ok(mod: parser.Module, target: string): boolean {
-  let t: Typed = typed_for(checker.annotate_module(mod), target);
+  let t = typed_for(checker.annotate_module(mod), target);
   if (t.errs.len() > 0) {
     return false;
   }
-  let im: parser.Module = verdict_module(t.mod, target);
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
-  let i: i32 = 0;
+  let im = verdict_module(t.mod, target);
+  let inf = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
+  let i = 0;
   while (i < inf.rows.keep.len()) {
     if (!inf.rows.keep[i] && inf.rows.why[i].len() > 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1011,28 +1011,28 @@ function verdict_module(mod: parser.Module, target: string): parser.Module {
 }
 
 pub function verdict_annotated(annotated: parser.Module, target: string): Verdict {
-  let t: Typed = typed_for(annotated, target);
+  let t = typed_for(annotated, target);
   if (t.errs.len() > 0) {
     return Verdict { ok: false, errors: t.errs, rows: [] };
   }
-  let im: parser.Module = verdict_module(t.mod, target);
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
+  let im = verdict_module(t.mod, target);
+  let inf = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
   let rows: VerdictRow[] = [];
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let ok = true;
+  let i = 0;
   while (i < inf.rows.keep.len()) {
-    let row: VerdictRow = verdict_row(im, inf, i);
+    let row = verdict_row(im, inf, i);
     if (row.state == "refused") {
       ok = false;
     }
     rows = rows.append(row);
-    i = i + 1;
+    i += 1;
   }
   return Verdict { ok: ok, errors: [], rows: rows };
 }
 
 function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
-  let name: string = inf.rows.n1[i];
+  let name = inf.rows.n1[i];
   if (i < im.funcs.len()) {
     name = parser.decl_key(im.funcs[i]);
   }
@@ -1042,7 +1042,7 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
   if (inf.rows.why[i].len() > 0) {
     return VerdictRow { name: name, state: "refused", why: inf.rows.why[i] };
   }
-  let p: semsource.Produced = produced_at(inf.built, im, i);
+  let p = produced_at(inf.built, im, i);
   if (p.bodyless) {
     return VerdictRow { name: name, state: "extern", why: "" };
   }
@@ -1053,11 +1053,11 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
 }
 
 pub function verdict_text(v: Verdict): string {
-  let out: string = "";
+  let out = "";
   if (v.errors.len() > 0) {
     out = util.format_diags(v.errors);
     if (!util.str_has_suffix(out, "\n")) {
-      out = out + "\n";
+      out += "\n";
     }
   }
   for row in v.rows {

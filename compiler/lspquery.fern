@@ -49,11 +49,11 @@ pub function hover_doc(p: Program, line: i32, col: i32): string {
     return "";
   }
   let d: SourceSpan = match (definition(p, line, col)) { Some(value) => value, None => { return ""; } };
-  let m: i32 = util.pos_file_index(d.line);
+  let m = util.pos_file_index(d.line);
   if (m < 0 || m >= p.srcs.len()) {
     return "";
   }
-  let comments: lexer.Comment[] = lexer.tokenize_full(p.srcs[m]).comments;
+  let comments = lexer.tokenize_full(p.srcs[m]).comments;
   return ferndoc.take_doc(comments, 0, d.line - util.line_base(m - 1)).doc;
 }
 
@@ -64,7 +64,7 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
     return false;
   }
   if let ast.ExprIdent(_) = f.expr {
-    let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
+    let fd = q.v.mod.funcs[f.fd];
     return match (binding_of(fd, q.site)) { Some(b) => is_param(b, fd), None => false };
   }
   return false;
@@ -73,16 +73,16 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
 pub function definition(p: Program, line: i32, col: i32): Option[SourceSpan] {
   let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return None; } };
   let f: Found = match (q.f) { Some(value) => value, None => { return type_def(p, q.v, checker.module_scope(q.v), type_candidates(q)); } };
-  let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
+  let fd = q.v.mod.funcs[f.fd];
   return node_def(p, q.v, scope_at(q.v, fd, q.site), fd, f, q.site);
 }
 
 pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Option[Found] }
 
 pub function query(p: Program, line: i32, col: i32): Option[Query] {
-  let view: View = view_of(p);
-  let m: i32 = util.pos_file_index(line);
-  let quals: flatten.Qualifiers = quals_of(view, m);
+  let view = view_of(p);
+  let m = util.pos_file_index(line);
+  let quals = quals_of(view, m);
   let site: Site = match (site_at(module_toks(p, m), quals, line, col)) { Some(value) => value, None => { return None; } };
   return Some(Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) });
 }
@@ -154,15 +154,15 @@ pub function quals_of(v: View, m: i32): flatten.Qualifiers {
 pub struct Site { name: string, qual: string, target: string, line: i32, col: i32, len: i32, name_col: i32, dot_col: i32, prev: string }
 
 pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): Option[Site] {
-  let i: i32 = ident_at(toks, q, line, col);
+  let i = ident_at(toks, q, line, col);
   if (i < 0) {
     return None;
   }
   if (!punct_before(toks, i, ".") && util.has_str(q.aliases, toks[i].text) && dot_ident_after(toks, i)) {
-    i = i + 2;
+    i += 2;
   }
-  let t: Tok = toks[i];
-  let site: Site = Site { name: t.text, qual: "", target: "", line: t.line, col: t.col, len: t.text.len(), name_col: t.col, dot_col: 0, prev: text_at(toks, i - 1) };
+  let t = toks[i];
+  let site = Site { name: t.text, qual: "", target: "", line: t.line, col: t.col, len: t.text.len(), name_col: t.col, dot_col: 0, prev: text_at(toks, i - 1) };
   if (!punct_before(toks, i, ".")) {
     return Some(site);
   }
@@ -170,11 +170,11 @@ pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): O
     return None;
   }
   site = Site { ...site, dot_col: toks[i - 1].col };
-  let qt: Tok = toks[i - 2];
+  let qt = toks[i - 2];
   if (!names_something(qt, q) || qt.line != t.line || punct_before(toks, i - 2, ".")) {
     return Some(site);
   }
-  let target: string = flatten.qualified_name(q, qt.text, t.text);
+  let target = flatten.qualified_name(q, qt.text, t.text);
   if (target.len() == 0) {
     return Some(site);
   }
@@ -182,15 +182,15 @@ pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): O
 }
 
 function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < toks.len()) {
-    let t: Tok = toks[i];
+    let t = toks[i];
     if (names_something(t, q) && t.line == line && col >= t.col && col < t.col + t.text.len()) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function names_something(t: Tok, q: flatten.Qualifiers): boolean {
@@ -233,7 +233,7 @@ function probe(site: Site): Probe {
 }
 
 function probe_expr(e: ast.Expr, own p: Probe): Probe {
-  let k: i32 = node_kind(e, p.site);
+  let k = node_kind(e, p.site);
   let prior: i32 = match (p.node) { Some(node) => node.kind, None => K_NONE };
   if (k > prior) {
     return Probe { ...p, node: Some(Node { kind: k, expr: e }) };
@@ -293,30 +293,30 @@ function after_dot(fa: ast.ExprFieldAccess, site: Site): boolean {
 }
 
 function names(n: string, name: string): boolean {
-  let s: string = lexical.source_name(n);
+  let s = lexical.source_name(n);
   return s == name || util.str_has_suffix(s, "__" + name);
 }
 
 pub struct Found { kind: i32, expr: ast.Expr, fd: i32 }
 
 function locate(v: checker.QueryView, site: Site): Option[Found] {
-  let m: i32 = util.pos_file_index(site.line);
-  let i: i32 = 0;
+  let m = util.pos_file_index(site.line);
+  let i = 0;
   while (i < v.mod.funcs.len()) {
-    let fd: parser.FuncDecl = v.mod.funcs[i];
+    let fd = v.mod.funcs[i];
     if (util.pos_file_index(fd.line) == m) {
-      let p: Probe = probe_all(fd.body, site);
+      let p = probe_all(fd.body, site);
       if let Some(node) = p.node {
         return Some(Found { kind: node.kind, expr: node.expr, fd: i });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 function probe_all(stmts: ast.Stmt[], site: Site): Probe {
-  let p: Probe = probe(site);
+  let p = probe(site);
   for st in stmts {
     p = astwalk.fold_stmt_nodes(st, p, probe_stmt, probe_expr, astwalk.descend_all);
   }
@@ -332,7 +332,7 @@ function holds_expr(e: ast.Expr, site: Site): boolean {
 }
 
 pub function access_site(fa: ast.ExprFieldAccess): Site {
-  let name: string = lexical.source_name(fa.field);
+  let name = lexical.source_name(fa.field);
   return Site { name: name, qual: "", target: "", line: fa.line, col: fa.col + 1, len: name.len(), name_col: fa.col + 1, dot_col: fa.col, prev: "." };
 }
 
@@ -341,8 +341,8 @@ pub function access_site(fa: ast.ExprFieldAccess): Site {
 // Some(Some(parts)) contains a located signature.
 pub function call_parts(v: checker.QueryView, site: Site): Option[Option[Parts]] {
   let f: Found = match (locate(v, site)) { Some(value) => value, None => { return None; } };
-  let fd: parser.FuncDecl = v.mod.funcs[f.fd];
-  let s: checker.Scope = scope_at(v, fd, site);
+  let fd = v.mod.funcs[f.fd];
+  let s = scope_at(v, fd, site);
   match (f.expr) {
     ast.ExprIdent(id) => {
       let local: boolean = match (binding_of(fd, site)) { Some(_) => true, None => false };
@@ -367,21 +367,21 @@ pub function call_parts(v: checker.QueryView, site: Site): Option[Option[Parts]]
 }
 
 pub function enclosing(mod: parser.Module, toks: Tok[], m: i32, line: i32, col: i32): i32 {
-  let best: i32 = 0 - 1;
-  let i: i32 = 0;
+  let best: i32 = -1;
+  let i = 0;
   while (i < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[i];
+    let fd = mod.funcs[i];
     if (declared_in(fd.line, m) && before(fd.line, fd.col, line, col) && (best < 0 || before(mod.funcs[best].line, mod.funcs[best].col, fd.line, fd.col))) {
       best = i;
     }
-    i = i + 1;
+    i += 1;
   }
   if (best < 0) {
     return best;
   }
-  let close: i32 = body_end(toks, after(toks, mod.funcs[best].line, mod.funcs[best].col));
+  let close = body_end(toks, after(toks, mod.funcs[best].line, mod.funcs[best].col));
   if (close < 0 || before(toks[close].line, toks[close].col, line, col)) {
-    return 0 - 1;
+    return -1;
   }
   return best;
 }
@@ -457,11 +457,11 @@ function scope_in_stmt(st: ast.Stmt, s: checker.Scope, site: Site): checker.Scop
 }
 
 function scope_in_match(m: ast.StmtMatch, s: checker.Scope, site: Site): checker.Scope {
-  let whole: typeinfo.Type = checker.expr_type(m.scrutinee, s);
+  let whole = checker.expr_type(m.scrutinee, s);
   for arm in m.arms {
-    let in_guard: boolean = arm.has_guard && holds_expr(arm.guard, site);
+    let in_guard = arm.has_guard && holds_expr(arm.guard, site);
     if (in_guard || holds(arm.body, site)) {
-      let a: checker.Scope = checker.arm_scope(arm, s, whole);
+      let a = checker.arm_scope(arm, s, whole);
       if (in_guard) {
         return scope_in_expr(arm.guard, a, site);
       }
@@ -496,8 +496,8 @@ function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope
 }
 
 pub function binding_of(fd: parser.FuncDecl, site: Site): Option[lexical.Binding] {
-  let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
-  let p: Probe = probe_all(r.func.body, site);
+  let r = lexical.resolve_func(fd);
+  let p = probe_all(r.func.body, site);
   if let Some(node) = p.node {
     if let ast.ExprIdent(id) = node.expr {
       for b in r.bindings {
@@ -550,7 +550,7 @@ function node_text(s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site):
 
 function ident_text(s: checker.Scope, fd: parser.FuncDecl, name: string, site: Site): string {
   let b: lexical.Binding = match (binding_of(fd, site)) { Some(value) => value, None => { return global_text(s, name, site.name); } };
-  let kind: string = "(var) ";
+  let kind = "(var) ";
   if (is_param(b, fd)) {
     kind = "(parameter) ";
   }
@@ -558,7 +558,7 @@ function ident_text(s: checker.Scope, fd: parser.FuncDecl, name: string, site: S
 }
 
 function global_text(s: checker.Scope, name: string, shown: string): string {
-  let owner: string = checker.variant_enum(s, name);
+  let owner = checker.variant_enum(s, name);
   if (owner.len() > 0) {
     return variant_text(s, name, owner);
   }
@@ -581,7 +581,7 @@ function qualified_text(s: checker.Scope, name: string, site: Site): string {
 }
 
 function type_text(s: checker.Scope, name: string): string {
-  let owner: string = checker.variant_enum(s, name);
+  let owner = checker.variant_enum(s, name);
   if (owner.len() > 0) {
     return variant_text(s, name, owner);
   }
@@ -624,7 +624,7 @@ function field_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
     let Some(st) = checker.struct_sig(s, t.name) else {
       return "";
     };
-    let i: i32 = util.index_of_str(st.field_names, fa.field);
+    let i = util.index_of_str(st.field_names, fa.field);
     if (i >= 0) {
       return "(field) " + fa.field + ": " + label(st.field_types[i], st.field_type_names[i]);
     }
@@ -633,8 +633,8 @@ function field_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
 }
 
 function method_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
-  let t: typeinfo.Type = checker.expr_type(fa.obj, s);
-  let owner: string = checker.receiver_key(t);
+  let t = checker.expr_type(fa.obj, s);
+  let owner = checker.receiver_key(t);
   if let typeinfo.TypeArray(_) = t {
     owner = "Array";
   }
@@ -660,7 +660,7 @@ function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Option
   if let typeinfo.TypeArray(a) = t {
     return array_parts(s, a, field);
   }
-  let recv: string = checker.receiver_key(t);
+  let recv = checker.receiver_key(t);
   if (recv.len() == 0) {
     return None;
   }
@@ -709,7 +709,7 @@ function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
     }
     return "";
   }
-  let slot: i32 = checker.payload_slot(s, u.name, name, 0);
+  let slot = checker.payload_slot(s, u.name, name, 0);
   if (slot >= 0 && slot < u.type_params.len()) {
     return "(" + u.type_params[slot] + ")";
   }
@@ -717,27 +717,27 @@ function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
 }
 
 function struct_text(st: checker.StructSig): string {
-  let out: string = "struct " + st.name + type_params(st.type_params) + " {";
-  let i: i32 = 0;
+  let out = "struct " + st.name + type_params(st.type_params) + " {";
+  let i = 0;
   while (i < st.field_names.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
     out = out + " " + st.field_names[i] + ": " + label(st.field_types[i], st.field_type_names[i]);
-    i = i + 1;
+    i += 1;
   }
   return closed(out, st.field_names.len());
 }
 
 function enum_text(s: checker.Scope, u: checker.UnionSig): string {
-  let out: string = "enum " + u.name + type_params(u.type_params) + " {";
-  let i: i32 = 0;
+  let out = "enum " + u.name + type_params(u.type_params) + " {";
+  let i = 0;
   while (i < u.variants.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
     out = out + " " + unprefixed(u.variants[i], u.module) + payload(s, u.variants[i], u);
-    i = i + 1;
+    i += 1;
   }
   return closed(out, u.variants.len());
 }
@@ -753,14 +753,14 @@ pub function type_params(tps: string[]): string {
   if (tps.len() == 0) {
     return "";
   }
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < tps.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + tps[i];
-    i = i + 1;
+    out += tps[i];
+    i += 1;
   }
   return out + "]";
 }
@@ -778,27 +778,27 @@ function labels(ts: typeinfo.Type[], spellings: string[]): string {
 
 function label_list(ts: typeinfo.Type[], spellings: string[], from: i32): string[] {
   let out: string[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < ts.len()) {
-    let sp: string = "";
+    let sp = "";
     if (i < spellings.len()) {
       sp = spellings[i];
     }
     out = out.append(label(ts[i], sp));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function joined(xs: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + xs[i];
-    i = i + 1;
+    out += xs[i];
+    i += 1;
   }
   return out;
 }
@@ -806,30 +806,30 @@ function joined(xs: string[]): string {
 // written spells each bundle name in `label` as the module's source does:
 // through the import's alias, or bare for the module's own declarations.
 pub function written(q: flatten.Qualifiers, label: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < label.len()) {
-    let j: i32 = i;
+    let j = i;
     while (j < label.len() && word_byte(label[j])) {
-      j = j + 1;
+      j += 1;
     }
     if (j == i) {
       j = i + 1;
     }
-    out = out + written_name(q, slice_unchecked(label, i, j) + "");
+    out += written_name(q, slice_unchecked(label, i, j) + "");
     i = j;
   }
   return out;
 }
 
 function written_name(q: flatten.Qualifiers, name: string): string {
-  let k: i32 = 0;
+  let k = 0;
   while (k < q.prefixes.len()) {
-    let p: string = q.prefixes[k] + "__";
+    let p = q.prefixes[k] + "__";
     if (util.str_has_prefix(name, p)) {
       return q.aliases[k] + "." + slice_unchecked(name, p.len(), name.len());
     }
-    k = k + 1;
+    k += 1;
   }
   return unprefixed(name, q.own);
 }
@@ -839,7 +839,7 @@ function word_byte(b: u8): boolean {
 }
 
 pub function unprefixed(name: string, prefix: string): string {
-  let p: string = prefix + "__";
+  let p = prefix + "__";
   if (prefix.len() > 0 && util.str_has_prefix(name, p)) {
     return slice_unchecked(name, p.len(), name.len()) + "";
   }
@@ -847,7 +847,7 @@ pub function unprefixed(name: string, prefix: string): string {
 }
 
 pub function type_candidates(q: Query): string[] {
-  let p: string = q.site.prev;
+  let p = q.site.prev;
   if (p == "struct" || p == "enum" || p == "type" || p == "trait" || p == "function" || p == "resource") {
     return [];
   }
@@ -866,7 +866,7 @@ pub function type_candidates(q: Query): string[] {
 function type_ref_text(s: checker.Scope, candidates: string[]): string {
   for c in candidates {
     if (checker.variant_enum(s, c).len() == 0) {
-      let text: string = type_text(s, c);
+      let text = type_text(s, c);
       if (text.len() > 0) {
         return text;
       }
@@ -906,7 +906,7 @@ pub function local_def(p: Program, b: lexical.Binding, param: boolean, name: str
 }
 
 pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name: string): Option[SourceSpan] {
-  let i: i32 = first_ident(toks, after(toks, b.line, b.col), name);
+  let i = first_ident(toks, after(toks, b.line, b.col), name);
   while (param && i >= 0 && !(punct_before(toks, i, "(") || punct_before(toks, i, ","))) {
     i = first_ident(toks, i + 1, name);
   }
@@ -914,7 +914,7 @@ pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name:
 }
 
 function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: string): Option[SourceSpan] {
-  let owner: string = checker.variant_enum(s, name);
+  let owner = checker.variant_enum(s, name);
   if (owner.len() > 0) {
     return variant_def(p, v, owner, name);
   }
@@ -951,7 +951,7 @@ pub function variant_def(p: Program, v: checker.QueryView, owner: string, name: 
 }
 
 function member_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Option[SourceSpan] {
-  let owner: string = enum_qualifier(s, fa);
+  let owner = enum_qualifier(s, fa);
   if (owner.len() > 0) {
     return variant_def(p, v, owner, fa.field);
   }
@@ -965,7 +965,7 @@ pub function field_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: a
   if let typeinfo.TypeStruct(t) = checker.expr_type(fa.obj, s) {
     let at: SourceSpan = match (type_decl_def(p, v, t.name)) { Some(value) => value, None => { return None; } };
     if (util.has_str(checker.struct_field_names(s, t.name), fa.field)) {
-      let toks: Tok[] = module_toks(p, util.pos_file_index(at.line));
+      let toks = module_toks(p, util.pos_file_index(at.line));
       return tok_answer(toks, field_tok(toks, after(toks, at.line, at.col + at.len), fa.field), at.line, at.col, fa.field);
     }
   }
@@ -973,7 +973,7 @@ pub function field_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: a
 }
 
 function method_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Option[SourceSpan] {
-  let t: typeinfo.Type = checker.expr_type(fa.obj, s);
+  let t = checker.expr_type(fa.obj, s);
   if let typeinfo.TypeArray(a) = t {
     return method_decl_def(p, checker.array_method_sig(s, fa.field, a.view), fa.field);
   }
@@ -993,7 +993,7 @@ function method_decl_def(p: Program, found: Option[checker.MethodSig], name: str
 function type_def(p: Program, v: checker.QueryView, s: checker.Scope, candidates: string[]): Option[SourceSpan] {
   for c in candidates {
     if (checker.variant_enum(s, c).len() == 0) {
-      let at: Option[SourceSpan] = type_decl_def(p, v, c);
+      let at = type_decl_def(p, v, c);
       if let Some(_) = at {
         return at;
       }
@@ -1006,9 +1006,9 @@ pub function decl_def(p: Program, line: i32, col: i32, name: string): Option[Sou
   if (line <= 0) {
     return None;
   }
-  let m: i32 = util.pos_file_index(line);
-  let shown: string = unprefixed(name, quals_of(view_of(p), m).own);
-  let toks: Tok[] = module_toks(p, m);
+  let m = util.pos_file_index(line);
+  let shown = unprefixed(name, quals_of(view_of(p), m).own);
+  let toks = module_toks(p, m);
   return tok_answer(toks, first_ident(toks, after(toks, line, col), shown), line, col, shown);
 }
 
@@ -1023,22 +1023,22 @@ function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Opt
 }
 
 pub function tok_at(toks: Tok[], line: i32, col: i32): i32 {
-  let i: i32 = after(toks, line, col);
+  let i = after(toks, line, col);
   if (i < toks.len() && toks[i].line == line && toks[i].col == col) {
     return i;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function pattern_end(toks: Tok[], from: i32): i32 {
-  let depth: i32 = 0;
-  let i: i32 = from;
+  let depth = 0;
+  let i = from;
   while (i < toks.len()) {
     if (depth == 0 && ends_pattern(toks[i])) {
       return i;
     }
-    depth = depth + bracket_step(toks[i]);
-    i = i + 1;
+    depth += bracket_step(toks[i]);
+    i += 1;
   }
   return i;
 }
@@ -1055,14 +1055,14 @@ function bracket_step(t: Tok): i32 {
     return 1;
   }
   if (t.text == ")" || t.text == "]" || t.text == "}") {
-    return 0 - 1;
+    return -1;
   }
   return 0;
 }
 
 pub function after(toks: Tok[], line: i32, col: i32): i32 {
-  let lo: i32 = 0;
-  let hi: i32 = toks.len();
+  let lo = 0;
+  let hi = toks.len();
   while (lo < hi) {
     let mid: i32 = (lo + hi) / 2;
     if (toks[mid].line < line || toks[mid].line == line && toks[mid].col < col) {
@@ -1075,63 +1075,63 @@ pub function after(toks: Tok[], line: i32, col: i32): i32 {
 }
 
 pub function body_end(toks: Tok[], from: i32): i32 {
-  let depth: i32 = 0;
-  let i: i32 = from;
+  let depth = 0;
+  let i = from;
   while (i < toks.len()) {
-    let t: string = toks[i].text;
+    let t = toks[i].text;
     if (toks[i].ident || t.len() != 1) {
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (t == "(" || t == "[") {
-      depth = depth + 1;
+      depth += 1;
     } else if (t == ")" || t == "]") {
-      depth = depth - 1;
+      depth -= 1;
     } else if (t == ";" && depth == 0) {
-      return 0 - 1;
+      return -1;
     } else if (t == "{" && depth == 0) {
       return closing_brace(toks, i);
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function closing_brace(toks: Tok[], open: i32): i32 {
-  let depth: i32 = 0;
-  let i: i32 = open;
+  let depth = 0;
+  let i = open;
   while (i < toks.len()) {
     if (!toks[i].ident && toks[i].text == "{") {
-      depth = depth + 1;
+      depth += 1;
     } else if (!toks[i].ident && toks[i].text == "}") {
-      depth = depth - 1;
+      depth -= 1;
       if (depth == 0) {
         return i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return toks.len() - 1;
 }
 
 pub function field_tok(toks: Tok[], from: i32, name: string): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < toks.len() && toks[i].text != "}") {
     if (toks[i].ident && toks[i].text == name && text_at(toks, i + 1) == ":") {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function first_ident(toks: Tok[], from: i32, name: string): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i >= 0 && i < toks.len() && i < from + 64) {
     if (toks[i].ident && toks[i].text == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
