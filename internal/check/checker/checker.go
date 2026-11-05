@@ -59,6 +59,9 @@ type Info struct {
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
+	// CallBorrowsBeside reports a plain call whose result can borrow from
+	// an argument other than the plain name given.
+	CallBorrowsBeside func(*ast.Call, string) bool
 	// NoReturn names the functions whose body never returns.
 	NoReturn        map[string]bool
 	Structs         map[string]*ast.StructDecl
@@ -2968,6 +2971,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.OwnFuncs = c.ownFuncs
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
+	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)

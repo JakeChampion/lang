@@ -891,10 +891,10 @@ pub function main(): i32 {
     if (have1) {
       in1 = next_line(in1, o, run.unpairable, w);
       if (in1.msg.len() > 0) {
-        let d: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
-        in1 = d.0;
-        run = d.1;
-        w = d.2;
+        let lead1: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
+        in1 = lead1.0;
+        run = lead1.1;
+        w = lead1.2;
       }
       have1 = in1.have;
       l1 = in1.line;
@@ -902,10 +902,10 @@ pub function main(): i32 {
     if (have2) {
       in2 = next_line(in2, o, run.unpairable, w);
       if (in2.msg.len() > 0) {
-        let d: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
-        in2 = d.0;
-        run = d.1;
-        w = d.2;
+        let lead2: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
+        in2 = lead2.0;
+        run = lead2.1;
+        w = lead2.2;
       }
       have2 = in2.have;
       l2 = in2.line;
@@ -924,10 +924,10 @@ pub function main(): i32 {
       }
       in1 = next_line(in1, o, run.unpairable, w);
       if (in1.msg.len() > 0) {
-        let d: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
-        in1 = d.0;
-        run = d.1;
-        w = d.2;
+        let odd1: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
+        in1 = odd1.0;
+        run = odd1.1;
+        w = odd1.2;
       }
       have1 = in1.have;
       l1 = in1.line;
@@ -941,10 +941,10 @@ pub function main(): i32 {
       }
       in2 = next_line(in2, o, run.unpairable, w);
       if (in2.msg.len() > 0) {
-        let d: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
-        in2 = d.0;
-        run = d.1;
-        w = d.2;
+        let odd2: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
+        in2 = odd2.0;
+        run = odd2.1;
+        w = odd2.2;
       }
       have2 = in2.have;
       l2 = in2.line;
@@ -958,10 +958,10 @@ pub function main(): i32 {
     while (true) {
       in1 = next_line(in1, o, run.unpairable, w);
       if (in1.msg.len() > 0) {
-        let d: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
-        in1 = d.0;
-        run = d.1;
-        w = d.2;
+        let grp1: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
+        in1 = grp1.0;
+        run = grp1.1;
+        w = grp1.2;
       }
       have1 = in1.have;
       l1 = in1.line;
@@ -977,10 +977,10 @@ pub function main(): i32 {
     while (true) {
       in2 = next_line(in2, o, run.unpairable, w);
       if (in2.msg.len() > 0) {
-        let d: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
-        in2 = d.0;
-        run = d.1;
-        w = d.2;
+        let grp2: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
+        in2 = grp2.0;
+        run = grp2.1;
+        w = grp2.2;
       }
       have2 = in2.have;
       l2 = in2.line;
@@ -1025,10 +1025,10 @@ pub function main(): i32 {
     }
     in1 = next_line(in1, o, run.unpairable, w);
     if (in1.msg.len() > 0) {
-      let d: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
-      in1 = d.0;
-      run = d.1;
-      w = d.2;
+      let tail1: (In, Run, io_buffered.BufWriter) = report(in1, o, run, w);
+      in1 = tail1.0;
+      run = tail1.1;
+      w = tail1.2;
     }
     have1 = in1.have;
     l1 = in1.line;
@@ -1040,10 +1040,10 @@ pub function main(): i32 {
     }
     in2 = next_line(in2, o, run.unpairable, w);
     if (in2.msg.len() > 0) {
-      let d: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
-      in2 = d.0;
-      run = d.1;
-      w = d.2;
+      let tail2: (In, Run, io_buffered.BufWriter) = report(in2, o, run, w);
+      in2 = tail2.0;
+      run = tail2.1;
+      w = tail2.2;
     }
     have2 = in2.have;
     l2 = in2.line;

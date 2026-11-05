@@ -189,20 +189,52 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 }
 
 // callSiteBorrows reports a plain call whose result can borrow: the callee's
-// result can hold a handle and borrows, and an argument is not a fresh value.
+// result can hold a handle and borrows, and an argument that can lend a
+// handle is not a fresh value.
 func (c *checker) callSiteBorrows(x *ast.Call) bool {
-	if id, ok := x.Callee.(*ast.Ident); ok && c.handleFreeResults[id.Name] {
+	return c.callSiteBorrowsBeside(x, "")
+}
+
+// callSiteBorrowsBeside is callSiteBorrows without the arguments that are
+// the plain name except: `x = f(x)` leaves x the one holder of what the
+// result took from it.
+func (c *checker) callSiteBorrowsBeside(x *ast.Call, except string) bool {
+	id, named := x.Callee.(*ast.Ident)
+	if named && c.handleFreeResults[id.Name] {
 		return false
 	}
 	if !c.calleeResultBorrows(x) {
 		return false
 	}
-	for _, a := range x.Args {
-		if c.argMayBorrow(a) {
+	var sig *ast.FuncType
+	var flags []bool
+	if named {
+		sig = c.info.FuncSigs[id.Name]
+		flags = c.ownFuncs[id.Name]
+	}
+	for i, a := range x.Args {
+		if aid, ok := a.(*ast.Ident); ok && except != "" && aid.Name == except {
+			continue
+		}
+		if c.argMayBorrow(a) && c.paramCanLend(sig, flags, i) {
 			return true
 		}
 	}
 	return false
+}
+
+// paramCanLend reports a parameter of the signature that can lend a handle
+// to the result: a borrowed pointer type that can hold one. A parameter the
+// signature does not know can.
+func (c *checker) paramCanLend(sig *ast.FuncType, flags []bool, i int) bool {
+	if sig == nil || i >= len(sig.Params) || sig.Params[i] == nil {
+		return true
+	}
+	if i < len(flags) && flags[i] {
+		return false
+	}
+	pt := sig.Params[i]
+	return ast.IsPointerType(pt) && !c.holdsNoHandle(pt)
 }
 
 func (c *checker) argMayBorrow(e ast.Expr) bool {

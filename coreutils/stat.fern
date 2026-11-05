@@ -1238,16 +1238,16 @@ pub function main(): i32 {
     }
     let ok = true;
     if (fs_mode) {
-      let res: (io_buffered.BufWriter, boolean, Quoting) = do_fs(o, pieces, name, newline, quoting);
-      o = res.0;
-      ok = res.1;
-      quoting = res.2;
+      let fs_res: (io_buffered.BufWriter, boolean, Quoting) = do_fs(o, pieces, name, newline, quoting);
+      o = fs_res.0;
+      ok = fs_res.1;
+      quoting = fs_res.2;
     } else {
-      let res: (io_buffered.BufWriter, boolean, Quoting, pwdb.Names) = do_file(o, pieces, device_pieces, name, deref, newline, z, quoting, names);
-      o = res.0;
-      ok = res.1;
-      quoting = res.2;
-      names = res.3;
+      let file_res: (io_buffered.BufWriter, boolean, Quoting, pwdb.Names) = do_file(o, pieces, device_pieces, name, deref, newline, z, quoting, names);
+      o = file_res.0;
+      ok = file_res.1;
+      quoting = file_res.2;
+      names = file_res.3;
     }
     if (!ok) {
       status = 1;

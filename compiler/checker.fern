@@ -19060,7 +19060,9 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 // entry per field the literal replaces.
 struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
 
-struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, noret: util.NameIndex, looped: string[] }
+// fresh names the fresh locals once lu_fresh_names has decided them; until
+// then fresh_known is false and lu_fresh_init_in decides from the facts.
+struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -19294,8 +19296,36 @@ function lu_is_local(fx: LuFn, name: string): boolean {
   return !util.has_str(fx.params, name) && lu_decl_count(fx, name) > 0;
 }
 
-// A name is a fresh local when each of its declarations is fresh.
+// A name is a fresh local when each of its declarations is fresh and each
+// assignment to it stores an owned value.
 function lu_fresh_init(fx: LuFn, name: string): boolean {
+  if (fx.fresh_known) {
+    return util.has_str(fx.fresh, name);
+  }
+  return lu_fresh_init_in(fx, name, []);
+}
+
+// The fresh locals of the function, decided once.
+function lu_fresh_names(fx: LuFn): string[] {
+  let out: string[] = [];
+  let done: string[] = [];
+  for v in fx.facts.vars {
+    if (!util.has_str(done, v.name)) {
+      done = done.append(v.name);
+      if (lu_fresh_init_in(fx, v.name, [])) {
+        out = out.append(v.name);
+      }
+    }
+  }
+  return out;
+}
+
+// A name in `seen` is on the path, so a cycle of assignments between fresh
+// locals is decided by its other values.
+function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
+  if (fx.fresh_known) {
+    return util.has_str(fx.fresh, name);
+  }
   let found: boolean = false;
   for v in fx.facts.vars {
     if (v.name == name) {
@@ -19305,7 +19335,7 @@ function lu_fresh_init(fx: LuFn, name: string): boolean {
       found = true;
     }
   }
-  return found;
+  return found && lu_only_fresh_assigns(fx, name, seen);
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
@@ -19530,37 +19560,58 @@ function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
   return found;
 }
 
-// A name of a local whose each declaration is fresh.
-function lu_fresh_local(fx: LuFn, e: ast.Expr): boolean {
-  if let ast.ExprIdent(id) = e {
-    return lu_fresh_init(fx, id.name);
-  }
-  return false;
-}
-
-// An own parameter, or a fresh local declared once outside a loop and given
-// only fresh values after that.
+// An own parameter, or a fresh local declared once outside a loop.
 function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
   if (lu_own_param(fx, name)) {
     return lu_decl_count(fx, name) == 0;
   }
-  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name) && lu_only_fresh_assigns(fx, name);
+  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
 }
 
-// Each value assigned to the name after its declaration is fresh.
-function lu_only_fresh_assigns(fx: LuFn, name: string): boolean {
+// Each value assigned to the name after its declaration is owned.
+function lu_only_fresh_assigns(fx: LuFn, name: string, seen: string[]): boolean {
   for a in fx.facts.assigns {
-    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
+    if (a.name == name && !lu_assigned_owned(fx, name, a.init, seen)) {
       return false;
     }
   }
   return true;
 }
 
+// A value an assignment to the name stores that no other name holds: a fresh
+// value, a self-update `T { ...name, f: v }`, a call whose result borrows
+// from no argument but the name itself, a payload a match took, a fresh
+// local, or an unpack.
+function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]): boolean {
+  if (lu_fresh_value(fx, e)) {
+    return true;
+  }
+  if let ast.ExprStructLit(sl) = e {
+    return sl.has_base && ow_ident_name(sl.base) == name;
+  }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(_) = c.callee {
+      return !lu_call_borrows_beside(fx, c, name);
+    }
+    return false;
+  }
+  if let ast.ExprUnary(u) = e {
+    return u.op == "try_" && lu_assigned_owned(fx, name, u.operand, seen);
+  }
+  if (util.has_str(seen, name)) {
+    return true;
+  }
+  let inner: string[] = seen.append(name);
+  if let ast.ExprIdent(src) = e {
+    return lu_fresh_bound(fx, src.name) || lu_fresh_init_in(fx, src.name, inner);
+  }
+  return lu_unpack_expr_in(fx, e, inner);
+}
+
 // A local declared once, outside a loop, from an own parameter at its last
-// use, and given only fresh values after that.
+// use, and given only owned values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
-  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name)) {
+  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name, [])) {
     return false;
   }
   // The fields that a destructure takes from an own parameter or a fresh
@@ -19625,15 +19676,32 @@ function lu_init_borrows(fx: LuFn, e: ast.Expr): boolean {
 }
 
 function lu_call_site_borrows(fx: LuFn, c: ast.ExprCall): boolean {
+  return lu_call_borrows_beside(fx, c, "");
+}
+
+// The call's result can borrow from an argument that is not the plain name
+// `except`: `x = f(x)` leaves x the one holder of what the result took from
+// it. Only a parameter that can lend a handle counts, when the callee is
+// declared.
+function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): boolean {
   if (!ow_call_may_borrow(c, fx.ofuncs, fx.borrows, fx.builtins)) {
     return false;
   }
+  let callee: string = ow_ident_name(c.callee);
+  let row: i32 = fx.lenders.names.find(callee);
+  let i: i32 = 0;
   for a in c.args {
-    if (lu_arg_may_borrow(fx, a)) {
+    let skipped: boolean = except.len() > 0 && ow_ident_name(a) == except;
+    if (!skipped && lu_arg_may_borrow(fx, a) && (row < 0 || lu_lends(fx.lenders.rows[row], i))) {
       return true;
     }
+    i = i + 1;
   }
   return false;
+}
+
+function lu_lends(row: OwnLend, i: i32): boolean {
+  return i < row.lend.len() && row.lend[i];
 }
 
 function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
@@ -19726,9 +19794,13 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
 // An unpack reads the one field of a fresh local or an own parameter that
 // nothing else reads, from a holder that each mention selects a field of.
 function lu_unpack_expr(fx: LuFn, init: ast.Expr): boolean {
+  return lu_unpack_expr_in(fx, init, []);
+}
+
+function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
   if let ast.ExprFieldAccess(fa) = init {
     let h: string = ow_ident_name(fa.obj);
-    if (h.len() == 0 || !(lu_fresh_init(fx, h) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
+    if (h.len() == 0 || !(lu_fresh_init_in(fx, h, seen) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
       return false;
     }
     let reads: i32 = 0;
@@ -19849,7 +19921,7 @@ function lu_base_admitted(fx: LuFn, name: string): boolean {
     seen = seen.append(next);
     next = lu_rename_source(fx, root);
   }
-  return util.has_str(fx.params, root) || lu_fresh_init(fx, root) || lu_unpack_init(fx, root);
+  return lu_own_param(fx, root) || lu_fresh_init(fx, root) || lu_unpack_init(fx, root);
 }
 
 function lu_is_last(fx: LuFn, id: ast.ExprIdent): boolean {
@@ -21192,19 +21264,20 @@ function lu_own_names(fn: parser.FuncDecl): string[] {
   return out;
 }
 
-function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, noret: util.NameIndex): string[] {
+function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts: LuFacts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_lambda, lu_outside_lambda);
   }
-  let fx: LuFn = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []) };
+  let fx0: LuFn = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false };
+  let fx: LuFn = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top: LuScope = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out: string[] = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
-    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs, borrows, builtins, noret));
+    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs, borrows, lenders, builtins, noret));
   }
   return out;
 }
@@ -22594,7 +22667,9 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
 
 // The struct declarations a type name resolves against, and the types with
 // a method that consumes its receiver.
-struct OwnDecls { structs: parser.StructDecl[], snames: util.NameIndex, consuming: util.NameIndex }
+// no_handle and handle hold the declared type names already decided, so a
+// type is walked once for the module.
+struct OwnDecls { structs: parser.StructDecl[], aliases: parser.TypeAlias[], snames: util.NameIndex, consuming: util.NameIndex, no_handle: util.NameIndex, handle: util.NameIndex }
 
 function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
   let names: string[] = [];
@@ -22608,7 +22683,34 @@ function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
       }
     }
   }
-  return OwnDecls { structs: mod.structs, snames: snames, consuming: util.name_index(names) };
+  let none: string[] = [];
+  let dx: OwnDecls = OwnDecls { structs: mod.structs, aliases: mod.aliases, snames: snames, consuming: util.name_index(names), no_handle: util.name_index(none), handle: util.name_index(none) };
+  let decl_names: string[] = [];
+  for sd in mod.structs {
+    if (sd.enum_owner.len() == 0) {
+      decl_names = decl_names.append(sd.name);
+    }
+  }
+  for ed in mod.enums {
+    decl_names = decl_names.append(ed.name);
+  }
+  for al in mod.aliases {
+    decl_names = decl_names.append(al.name);
+  }
+  let yes: string[] = [];
+  let no: string[] = [];
+  for name in decl_names {
+    if (dx.no_handle.has(name) || dx.handle.has(name)) {
+      continue;
+    }
+    if (ow_decl_holds_no_handle(name, dx, [name])) {
+      yes = yes.append(name);
+    } else {
+      no = no.append(name);
+    }
+    dx = OwnDecls { ...dx, no_handle: util.name_index(yes), handle: util.name_index(no) };
+  }
+  return dx;
 }
 
 // A type that cannot hold a handle: a number, a boolean, a char, a string,
@@ -22648,10 +22750,16 @@ function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[
       return false;
     }
   }
-  if (name == "Option" || name == "Result" || util.has_str(seen, name)) {
+  if (name == "Option" || name == "Result" || name == "Cell" || util.has_str(seen, name)) {
     return true;
   }
   if (dx.consuming.has(name) || util.has_str(semtypes.fd_handle_names(), name)) {
+    return false;
+  }
+  if (dx.no_handle.has(name)) {
+    return true;
+  }
+  if (dx.handle.has(name)) {
     return false;
   }
   return ow_decl_holds_no_handle(name, dx, seen.append(name));
@@ -22677,7 +22785,27 @@ function ow_decl_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): bo
       found = true;
     }
   }
-  return found;
+  if (found) {
+    return true;
+  }
+  // A union `type U = A | B[T]` holds no handle when no member does.
+  for al in dx.aliases {
+    if (al.name == name && al.variants.len() > 0) {
+      let i: i32 = 0;
+      while (i < al.variants.len()) {
+        let member: string = al.variants[i];
+        if (i < al.variant_args.len() && al.variant_args[i].len() > 0) {
+          member = member + "[" + al.variant_args[i] + "]";
+        }
+        if (!ow_no_handle_in(member, dx, al.type_params, seen)) {
+          return false;
+        }
+        i = i + 1;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: string[]): boolean {
@@ -22720,6 +22848,34 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
     }
   }
   return util.name_index(names);
+}
+
+// The parameters of each declared function that can lend a handle to its
+// result: a borrowed pointer type that can hold a handle. A function the
+// module does not declare has no row, and every argument of it can lend.
+struct OwnLend { name: string, lend: boolean[] }
+
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex }
+
+function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLenders {
+  let rows: OwnLend[] = [];
+  let names: string[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0) {
+      continue;
+    }
+    let flags: boolean[] = ow_func_flags(ofuncs, fn.name);
+    let lend: boolean[] = [];
+    let i: i32 = 0;
+    while (i < fn.params.len()) {
+      let tn: string = fn.params[i].type_name;
+      lend = lend.append((i >= flags.len() || !flags[i]) && ow_decl_type_is_pointer(fn, tn, ofuncs) && !ow_holds_no_handle(tn, dx));
+      i = i + 1;
+    }
+    rows = rows.append(OwnLend { name: fn.name, lend: lend });
+    names = names.append(fn.name);
+  }
+  return OwnLenders { rows: rows, names: util.name_index(names) };
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -23114,6 +23270,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let decls: OwnDecls = ow_decls(mod, snames);
   let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins, decls);
   let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows, decls);
+  let lenders: OwnLenders = ow_lenders(mod, ofuncs, decls);
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -23131,7 +23288,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs, handle_borrows, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
     let nomoved: MovedEntry[] = [];
     let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
