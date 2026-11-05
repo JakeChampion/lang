@@ -759,7 +759,7 @@ function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
         }
         out = Copy { ...out, pos: out.pos + chunk.len() as i64 };
         let here = __count_byte_bytes(chunk, s.term) as u64;
-        let start: i32 = -1;
+        let start = -1;
         if (here >= s.count) {
           start = lines.tail_start(chunk, s.count, s.term);
         }

@@ -21,6 +21,8 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 	}{
 		{"well-typed-arith", "function main(): i32 { return 1 + 2; }\n", 0, ""},
 		{"well-typed-vars", "function main(): i32 { let a: i32 = 5; let b: i32 = a + 1; return b; }\n", 0, ""},
+		{"entry-function-shadows-builtin", "function env(x: i32): i32 { return x; }\nfunction main(): i32 { return env(0); }\n", 0, ""},
+		{"entry-shadow-redeclared", "function env(x: i32): i32 { return x; }\nfunction env(x: i32): i32 { return x; }\nfunction main(): i32 { return env(0); }\n", 1, "error[E006]: function \"env\" redeclared"},
 		{"return-type-mismatch", "function main(): i32 { let s: string = \"x\"; return s; }\n", 1, "error[E002]"},
 		{"arith-type-mismatch", "function main(): i32 { let s: string = \"x\"; return 1 + s; }\n", 1, "error["},
 		{"field-assign-e048", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n", 1, "error[E048]"},

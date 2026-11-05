@@ -273,7 +273,7 @@ function word_at(w: Words, p: i32, wi: i32): i64 {
   if (s < p && p < e) {
     return s as i64 << 32 as i64 | e as i64;
   }
-  return 0 - 1 as i64;
+  return -1i64;
 }
 
 function word_start(wa: i64): i32 {

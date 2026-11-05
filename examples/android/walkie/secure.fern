@@ -129,7 +129,7 @@ function kem_start(initiator: boolean, own random: u8[]): (u8[], u8[]) {
     return ([], []);
   }
   if (!initiator) {
-    let m: u8[] = part(random, 0, 32);
+    let m = part(random, 0, 32);
     crypto.erase(random);
     return (m, []);
   }
@@ -155,7 +155,7 @@ pub function start(initiator: boolean, own random_key: u8[], random_nonce: u8[],
     Err(_) => {}
   }
   let (kem, ek) = kem_start(initiator, random_kem);
-  let kem_ok: boolean = initiator && ek.len() == EK_LEN || !initiator && kem.len() == 32;
+  let kem_ok = initiator && ek.len() == EK_LEN || !initiator && kem.len() == 32;
   let h = Handshake { initiator: initiator, private: cell_new(random_key), kem: cell_new(kem), phase: cell_new(FRESH), public: public, nonce: random_nonce, ek: ek, ct: [], commit: [], peer_key: [], peer_nonce: [], done: false, failed: public.len() != 32 || random_nonce.len() != 16 || !kem_ok };
   if (h.failed) {
     erase_private(h);
@@ -198,7 +198,7 @@ pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
   if (h.done || h.failed || m.len() == 0 || h.private.get().len() != 32) {
     return refused(h);
   }
-  let t: i32 = m[0] as i32;
+  let t = m[0] as i32;
   if (!h.initiator && t == M_COMMIT && m.len() == 33 + EK_LEN && h.phase.get() == FRESH) {
     return encapsulate(h, part(m, 1, 32), part(m, 33, EK_LEN));
   }
@@ -206,8 +206,8 @@ pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
     return decapsulate(h, part(m, 1, 32), part(m, 33, 16), part(m, 49, CT_LEN));
   }
   if (!h.initiator && t == M_REVEAL && m.len() == 49 && h.phase.get() == COMMITTED && h.commit.len() == 32) {
-    let key: u8[] = part(m, 1, 32);
-    let nonce: u8[] = part(m, 33, 16);
+    let key = part(m, 1, 32);
+    let nonce = part(m, 33, 16);
     if (commitment(key, nonce) != h.commit) {
       return refused(h);
     }
@@ -229,7 +229,7 @@ function encapsulate(h: Handshake, commit: u8[], ek: u8[]): (Handshake, u8[]) {
   };
   h.kem.set(e.shared_secret);
   h.phase.set(COMMITTED);
-  let reply: u8[] = cat(cat(cat([M_KEY as u8], h.public), h.nonce), e.ciphertext);
+  let reply = cat(cat(cat([M_KEY as u8], h.public), h.nonce), e.ciphertext);
   return (Handshake { ...h, commit: commit, ek: ek, ct: e.ciphertext }, reply);
 }
 
@@ -244,7 +244,7 @@ function decapsulate(h: Handshake, key: u8[], nonce: u8[], ct: u8[]): (Handshake
     return refused(h);
   };
   h.kem.set(shared);
-  let reveal: u8[] = cat(cat([M_REVEAL as u8], h.public), h.nonce);
+  let reveal = cat(cat([M_REVEAL as u8], h.public), h.nonce);
   h.phase.set(READY);
   return (Handshake { ...h, peer_key: key, peer_nonce: nonce, ct: ct, done: true }, reveal);
 }
@@ -276,28 +276,28 @@ pub function keys(h: Handshake): Option[Keys] {
     crypto.erase(shared);
     return None;
   }
-  let mine: u8[] = cat(h.public, h.nonce);
-  let theirs: u8[] = cat(h.peer_key, h.peer_nonce);
-  let first_part: u8[] = theirs;
-  let second_part: u8[] = mine;
+  let mine = cat(h.public, h.nonce);
+  let theirs = cat(h.peer_key, h.peer_nonce);
+  let first_part = theirs;
+  let second_part = mine;
   if (h.initiator) {
     first_part = mine;
     second_part = theirs;
   }
-  let transcript: u8[] = crypto.sha256(cat(cat(cat(cat(text("walkie v2"), h.ek), h.ct), first_part), second_part));
-  let prk: u8[] = crypto.hkdf_sha256_extract(transcript, shared);
+  let transcript = crypto.sha256(cat(cat(cat(cat(text("walkie v2"), h.ek), h.ct), first_part), second_part));
+  let prk = crypto.hkdf_sha256_extract(transcript, shared);
   crypto.erase(shared);
-  let i2r_ctl: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r control"), 32);
-  let r2i_ctl: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i control"), 32);
-  let i2r_voice: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r voice"), 32);
-  let r2i_voice: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i voice"), 32);
-  let sas_bytes: u8[] = crypto.hkdf_sha256_expand(prk, text("sas"), 4);
-  let binding: u8[] = crypto.hkdf_sha256_expand(prk, text("identity binding"), 32);
-  let i2r_id: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r identity"), 32);
-  let r2i_id: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i identity"), 32);
+  let i2r_ctl = crypto.hkdf_sha256_expand(prk, text("i2r control"), 32);
+  let r2i_ctl = crypto.hkdf_sha256_expand(prk, text("r2i control"), 32);
+  let i2r_voice = crypto.hkdf_sha256_expand(prk, text("i2r voice"), 32);
+  let r2i_voice = crypto.hkdf_sha256_expand(prk, text("r2i voice"), 32);
+  let sas_bytes = crypto.hkdf_sha256_expand(prk, text("sas"), 4);
+  let binding = crypto.hkdf_sha256_expand(prk, text("identity binding"), 32);
+  let i2r_id = crypto.hkdf_sha256_expand(prk, text("i2r identity"), 32);
+  let r2i_id = crypto.hkdf_sha256_expand(prk, text("r2i identity"), 32);
   crypto.erase(prk);
   let n: i64 = (sas_bytes[0] as i64 << 24 as i64 | sas_bytes[1] as i64 << 16 as i64 | sas_bytes[2] as i64 << 8 as i64 | sas_bytes[3] as i64) % (1000000 as i64);
-  let sas: string = n.to_string();
+  let sas = n.to_string();
   while (sas.len() < 6) {
     sas = "0" + sas;
   }
@@ -317,8 +317,8 @@ function way(own key: u8[]): Way {
     crypto.erase(key);
     return Way { key: [], next: 0 as i64, high: 0 - 1 as i64, seen: seen, epoch: 0, old: [], chain: [] };
   }
-  let first: u8[] = crypto.hkdf_sha256_expand(key, text("key"), 32);
-  let chain: u8[] = crypto.hkdf_sha256_expand(key, text("chain"), 32);
+  let first = crypto.hkdf_sha256_expand(key, text("key"), 32);
+  let chain = crypto.hkdf_sha256_expand(key, text("chain"), 32);
   crypto.erase(key);
   return Way { key: first, next: 0 as i64, high: 0 - 1 as i64, seen: seen, epoch: 0, old: [], chain: chain };
 }
@@ -384,7 +384,7 @@ function seal_way(w: Way, kind: i32, plain: [u8]): (Way, u8[]) {
   if (w.next < 0 as i64 || w.next == MAX_SEQUENCE) {
     return (w, []);
   }
-  let h: u8[] = head(kind, w.epoch, w.next);
+  let h = head(kind, w.epoch, w.next);
   match (chacha20poly1305.key(w.key)) {
     Ok(key) => {
       match (key.seal(nonce(w.next), plain, h)) {
@@ -402,7 +402,7 @@ function seal_way(w: Way, kind: i32, plain: [u8]): (Way, u8[]) {
 // The key of the epoch in the head of `frame`: the current key, or the key
 // of the epoch before. Another epoch gives an empty key.
 function frame_key(w: Way, frame: [u8]): u8[] {
-  let epoch: i32 = frame[1] as i32 << 24 | frame[2] as i32 << 16 | frame[3] as i32 << 8 | frame[4] as i32;
+  let epoch = frame[1] as i32 << 24 | frame[2] as i32 << 16 | frame[3] as i32 << 8 | frame[4] as i32;
   if (epoch == w.epoch) {
     return w.key;
   }
@@ -417,7 +417,7 @@ function open_frame(w: Way, kind: i32, frame: [u8]): Option[(i64, u8[])] {
   if (frame.len() < HEAD + 16 || frame[0] as i32 != kind) {
     return None;
   }
-  let seq: i64 = 0 as i64;
+  let seq = 0 as i64;
   for k in 5..HEAD {
     seq = seq << 8 as i64 | frame[k] as i64;
   }
@@ -491,15 +491,15 @@ pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[(i64, u8[])])
 // or in the window and not seen yet.
 function accept(w: Way, seq: i64): Option[Way] {
   if (seq > w.high) {
-    let seen: boolean[] = w.seen;
-    let shift: i64 = seq - w.high;
+    let seen = w.seen;
+    let shift = seq - w.high;
     for k in 0..WINDOW {
-      let from: i64 = k as i64 - shift;
+      let from = k as i64 - shift;
       seen = seen.with(k, from >= 0 as i64 && w.seen[from as i32]);
     }
     return Some(Way { ...w, high: seq, seen: seen.with(0, true) });
   }
-  let back: i64 = w.high - seq;
+  let back = w.high - seq;
   if (back >= WINDOW as i64 || w.seen[back as i32]) {
     return None;
   }
@@ -545,12 +545,12 @@ function proof_nonce(knows: u8): u8[] {
 // of `identity`, and whether this side knows the peer. Only the peer opens
 // it, and it is good for this exchange alone.
 pub function prove(k: Keys, identity: ed25519.PrivateKey, knows: boolean): u8[] {
-  let flag: u8 = 0 as u8;
+  let flag = 0 as u8;
   if (knows) {
     flag = 1 as u8;
   }
-  let plain: u8[] = cat(identity.public_point(), [flag]);
-  let signed: u8[] = cat(plain, identity.sign(cat(cat(text("walkie identity"), k.binding), plain)));
+  let plain = cat(identity.public_point(), [flag]);
+  let signed = cat(plain, identity.sign(cat(cat(text("walkie identity"), k.binding), plain)));
   let Ok(key) = chacha20poly1305.key(k.send_id.get()) else {
     return [];
   };
@@ -575,7 +575,7 @@ pub function check_proof(k: Keys, frame: [u8]): Option[Proof] {
   if (signed[32] != frame[0]) {
     return None;
   }
-  let plain: u8[] = part(signed, 0, 33);
+  let plain = part(signed, 0, 33);
   let Ok(public) = ed25519.public_key(part(signed, 0, 32)) else {
     return None;
   };
@@ -598,7 +598,7 @@ pub function recv_epoch(c: Channel): i32 {
 // The speaker's offer for the next epoch of its sending direction, from 32
 // random bytes.
 pub function offer(c: Channel, own random: u8[]): Option[Offer] {
-  let epoch: i32 = c.send_voice.get().epoch + 1;
+  let epoch = c.send_voice.get().epoch + 1;
   match (x25519.public_key(random)) {
     Ok(public) => {
       return Some(Offer { epoch: epoch, private: cell_new(random), public: public });
@@ -622,11 +622,11 @@ function be32(v: i32): u8[] {
 // The chain and the key of `epoch`, from the chain before, the shared secret
 // and the two public keys, the speaker's first.
 function next_epoch(chain: [u8], epoch: i32, own shared: u8[], speaker: [u8], listener: [u8]): (u8[], u8[]) {
-  let prk: u8[] = crypto.hkdf_sha256_extract(chain, shared);
+  let prk = crypto.hkdf_sha256_extract(chain, shared);
   crypto.erase(shared);
-  let info: u8[] = cat(cat(be32(epoch), speaker), listener);
-  let next: u8[] = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey chain"), info), 32);
-  let key: u8[] = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey key"), info), 32);
+  let info = cat(cat(be32(epoch), speaker), listener);
+  let next = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey chain"), info), 32);
+  let key = crypto.hkdf_sha256_expand(prk, cat(text("walkie rekey key"), info), 32);
   crypto.erase(prk);
   return (next, key);
 }

@@ -12121,7 +12121,7 @@ function emit_logcat_runtime(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
+function emit_entry_core_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.profile > 0) {
     s = emit_profile_runtime(s);
   }
@@ -12150,11 +12150,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("utf8_blocks")) {
     s = emit_rt_utf8_blocks(s);
   }
-  if (hev_on(s)) {
-    s = s.write("    .text\n");
-    s = emit_hev_runtime(s);
-  }
-  s = s.write("    .text\n");
+  return s;
+}
+
+function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.shared && asmcore.process_entry(s)) {
     s = emit_stack_overflow_runtime(s);
     s = emit_startup_failures(s);
@@ -12185,6 +12184,17 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ccall_shims(s);
   }
+  return s;
+}
+
+function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  s = emit_entry_core_runtime(s);
+  if (hev_on(s)) {
+    s = s.write("    .text\n");
+    s = emit_hev_runtime(s);
+  }
+  s = s.write("    .text\n");
+  s = emit_entry_environment(s);
   if (s.has_need("str_eq")) {
     s = s.write("    .text\n");
     s = s.write(rt_x86_str_eq());

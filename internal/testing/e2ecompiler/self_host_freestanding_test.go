@@ -17,6 +17,10 @@ const freestandingLibSrc = `function add(a: i32, b: i32): i32 {
   return a + b;
 }
 
+function env(x: i32): i32 {
+  return x + 1;
+}
+
 function total(n: i32): i32 {
   let xs: i32[] = [];
   let i = 0;
@@ -48,7 +52,7 @@ func emitFreestanding(t *testing.T, cli *selfHostCLI, target, src string, env ..
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "lib.s")
-	cmd := cli.compileCmd(target, out, in, "-export", "add,total", "-emit", "asm")
+	cmd := cli.compileCmd(target, out, in, "-export", "add,total,env", "-emit", "asm")
 	cmd.Env = append(os.Environ(), env...)
 	msg, err := cmd.CombinedOutput()
 	if err != nil {
@@ -81,7 +85,7 @@ func TestSelfHostFreestandingEmitsNoHost(t *testing.T) {
 			if strings.Contains(asm, "__fern_busy") {
 				t.Error("the export entries take the busy lock; only one context calls a freestanding artifact")
 			}
-			for _, want := range []string{".globl __fern_heap_init", ".globl add", "\nadd:\n", ".globl total", "\ntotal:\n"} {
+			for _, want := range []string{".globl __fern_heap_init", ".globl add", "\nadd:\n", ".globl total", "\ntotal:\n", ".globl env", "\nenv:\n"} {
 				if !strings.Contains(asm, want) {
 					t.Errorf("the artifact has no %q", strings.TrimSpace(want))
 				}
@@ -118,6 +122,7 @@ func TestSelfHostFreestandingRefusesHostedRuntime(t *testing.T) {
 const freestandingEmbedder = `extern void __fern_heap_init(void *base, unsigned long len);
 extern int add(int a, int b);
 extern int total(int n);
+extern int env(int x);
 static _Alignas(16) unsigned char heap[1 << 20];
 static void sys_exit(long code) {
   EXIT_SYSCALL
@@ -147,7 +152,7 @@ func TestSelfHostFreestandingRunsInEmbedder(t *testing.T) {
 		exit               int
 		trap               bool
 	}{
-		{"exports", "__fern_heap_init(heap, sizeof heap);", "add(total(9), 6)", 42, false},
+		{"exports", "__fern_heap_init(heap, sizeof heap);", "env(add(total(9), 5))", 42, false},
 		{"alloc_before_heap_init_traps", "", "total(1000)", 0, true},
 		{"heap_exhaustion_traps", "__fern_heap_init(heap, 64);", "total(1000)", 0, true},
 	}

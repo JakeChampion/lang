@@ -1,9 +1,11 @@
 import "../parser";
 import "./rundriver";
 import "../checker";
+import "../flatten";
 
 function main(): i32 {
-  let mod = rundriver.parse_stdin("checker_hint_run");
+  let parsed = rundriver.parse_stdin("checker_hint_run");
+  let mod = flatten.qualify_entry_builtins(parsed);
   for d in checker.ill_typed_hint(mod) {
     print(d.message);
   }
