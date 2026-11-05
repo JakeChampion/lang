@@ -3299,7 +3299,7 @@ function is_handle_method(kind: string, name: string): boolean {
     return true;
   }
   if (kind == "Writer") {
-    return util.has_str(["write", "write_some", "write_bytes", "write_some_bytes", "splice_forever", "truncate", "set_nonblocking"], name);
+    return util.has_str(["write", "write_some", "write_bytes", "write_some_bytes", "splice_forever", "truncate", "set_nonblocking", "set_times"], name);
   }
   return util.has_str(["read_chunk", "read_chunk_bytes", "splice_to", "copy_range_to", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name);
 }
@@ -3434,6 +3434,9 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
 }
 
 function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
+  if (name == "set_times") {
+    return void_result_value(w.set_times(arg_i64(args, 0), arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i32(args, 4)));
+  }
   if (name == "stat") {
     return stat_result_value(w.stat());
   }

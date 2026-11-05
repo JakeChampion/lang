@@ -10932,8 +10932,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_truncate\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("truncate");
-  } else if (o.kind_tag == 269) {
-    let helper: string = if (o.i32_imm == 1) { "writer_set_times" } else { "set_file_times" };
+  } else if (o.kind_tag == 269 || o.kind_tag == 498) {
+    let helper: string = if (o.kind_tag == 498) { "writer_set_times" } else { "set_file_times" };
     s = s.write("    popq %r9\n    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %r9\n    pushq %r8\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_" + helper + "\n    addq $48, %rsp\n    pushq %rax\n");

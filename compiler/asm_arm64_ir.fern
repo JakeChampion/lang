@@ -5682,8 +5682,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 269) {
-    let helper: string = if (o.i32_imm == 1) { "writer_set_times" } else { "set_file_times" };
+  } else if (o.kind_tag == 269 || o.kind_tag == 498) {
+    let helper: string = if (o.kind_tag == 498) { "writer_set_times" } else { "set_file_times" };
     s = s.need("heap");
     s = s.need(helper);
     s = s.write("    ldr x5, [sp], #16\n    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
