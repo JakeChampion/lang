@@ -19680,7 +19680,30 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
+  if let Some(src) = lu_spread_source(init) {
+    return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
+  }
   return false;
+}
+
+// The base of a struct literal `T { ...src, f: v }` whose field values do
+// not name `src`. The literal takes the rest of `src`, as an alias does.
+function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
+  let ast.ExprStructLit(sl) = e else {
+    return None;
+  };
+  let ast.ExprIdent(src) = sl.base else {
+    return None;
+  };
+  if (!sl.has_base) {
+    return None;
+  }
+  for v in sl.field_values {
+    if (util.has_str(astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all), src.name)) {
+      return None;
+    }
+  }
+  return Some(src);
 }
 
 function lu_value_owned(fx: LuFn, target: string, e: ast.Expr, seen: string[]): boolean {

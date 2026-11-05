@@ -1075,7 +1075,11 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
-			if src, ok := x.Init.(*ast.Ident); ok && declCount[x.Name] == 1 && !looped[x.Name] && order.IsLast(src) {
+			src, ok := x.Init.(*ast.Ident)
+			if !ok {
+				src, ok = spreadSource(x.Init)
+			}
+			if ok && declCount[x.Name] == 1 && !looped[x.Name] && order.IsLast(src) {
 				aliasOf[x.Name] = src
 			}
 		case *ast.Assign:
@@ -1124,6 +1128,26 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 		}
 	}
 	return in
+}
+
+// spreadSource is the base of a struct literal `T { ...src, f: v }` whose
+// field values do not name src. The literal takes the rest of src, as an
+// alias does.
+func spreadSource(e ast.Expr) (*ast.Ident, bool) {
+	sl, ok := e.(*ast.StructLit)
+	if !ok {
+		return nil, false
+	}
+	src, ok := sl.Base.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	for _, f := range sl.Fields {
+		if StmtReferencesName(f.Value, src.Name) {
+			return nil, false
+		}
+	}
+	return src, true
 }
 
 // loopedDecls names the locals that a declaration inside a loop binds.
