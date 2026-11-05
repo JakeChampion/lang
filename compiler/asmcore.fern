@@ -640,7 +640,23 @@ function flag01(on: boolean): string {
 // The build manifest stamped into every native executable and shared
 // object, which `fern -manifest` and std/mitigations read back.
 pub function build_manifest(s: EmitState): string {
-  return "FERNBUILD1 target=" + s.build_target + " profile=" + s.build_profile + " harden=" + flag01(s.harden) + " pie=" + flag01(s.pie) + " sanitize=" + flag01(s.sanitize) + " backtrace=" + flag01(s.backtrace) + " size=" + flag01(s.size) + " shared=" + flag01(s.shared) + " heap_limit=" + util.i64_to_string(s.heap_limit) + " quarantine=" + util.i64_to_string(s.quarantine);
+  return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared], s.heap_limit, s.quarantine);
+}
+
+// The manifest of a wasm module, from the switches its build took. A wasm
+// module has no arena, so its heap_limit is 0.
+pub function switches_manifest(sw: Switches): string {
+  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared], 0i64, sw.quarantine);
+}
+
+// flags: harden, pie, sanitize, backtrace, size, shared, in that order.
+function manifest_line(target: string, profile: string, flags: boolean[], heap_limit: i64, quarantine: i64): string {
+  let names = ["harden", "pie", "sanitize", "backtrace", "size", "shared"];
+  let out = "FERNBUILD1 target=" + target + " profile=" + profile;
+  for i in 0..names.len() {
+    out = out + " " + names[i] + "=" + flag01(flags[i]);
+  }
+  return out + " heap_limit=" + util.i64_to_string(heap_limit) + " quarantine=" + util.i64_to_string(quarantine);
 }
 
 pub function emit_build_manifest(s: EmitState): EmitState {

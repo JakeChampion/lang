@@ -25,6 +25,7 @@ An unknown profile name exits 2 and names the four profiles.
 ## The build manifest
 
 Every native executable and shared object carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... heap_limit=... quarantine=...`.
+A wasm module or component carries the same line in its custom section `fern.build`, with `heap_limit=0`, because a wasm module has no arena.
 `fern -manifest IMAGE` prints it one field per line, and answers exit 1 with a cause for a file without one.
 The line is deterministic, so a reproducible build stays reproducible.
 
@@ -41,7 +42,7 @@ The line is deterministic, so a reproducible build stays reproducible.
 | `verified` | the test that pins the feature and whether it ran natively, under emulation, or not yet |
 
 The rows are `nx-stack`, `canary`, `cfi`, `pie` and `sanitizer` on both targets, `shadow-stack` and `ibt` on x86-64, and `pac`, `bti` and `mte` on arm64.
-A program without a manifest, which an interpreted or a wasm program is, reads `unknown` in every `compiled` cell.
+A program that cannot read its own image, which an interpreted or a wasm program is, reads `unknown` in every `compiled` cell.
 A cell never claims more than its source: `ibt` is `requested=no` and `verified=unavailable` on every Linux host, and `shadow-stack` stays `verified=unverified` until a host with the feature runs the fault test.
 
 ## Verification
@@ -52,6 +53,6 @@ The refusals of a bad name and of a profile the target cannot carry exit 2.
 
 ## Remaining limits
 
-- A wasm image carries no manifest. A Darwin image carries one.
+- A wasm program cannot read its own image, so its `compiled` cells read `unknown` at run time. Its manifest is for `fern -manifest`.
 - The `verified` cell is a fixed text per feature, not a measurement on the running host.
 - The manifest is a line in the image, not an ELF note, so a generic tool reads it with `strings` rather than `readelf -n`.

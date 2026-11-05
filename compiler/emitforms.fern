@@ -1,5 +1,7 @@
+import "./asmcore";
 import "./ircore";
 import "./parser";
+import "./platforms";
 import "./rtmodule";
 import "./util";
 import "./wasm_ir";
@@ -319,4 +321,18 @@ function framed_component(core: i32[], shape: i32): i32[] {
     return watbin.component_full_io_eprint_exit(core);
   }
   return watbin.component_full_io_fs_rw_args(core);
+}
+
+// A wasm module or component with the custom section `fern.build` appended:
+// the build manifest line that `fern -manifest` reads back. Text output and
+// a native image come back unchanged.
+pub function with_build_section(image: string, text: boolean, sw: asmcore.Switches): string {
+  if (text || platforms.for_target(sw.target).isa != "wasm32") {
+    return image;
+  }
+  let body = watbin.wname([], "fern.build");
+  for byte in asmcore.switches_manifest(sw) + "\n" {
+    body = body.append(byte as i32);
+  }
+  return image + string_from_bytes_unchecked(util.to_u8(watbin.wsection(0, body)));
 }

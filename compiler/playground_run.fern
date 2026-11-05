@@ -279,6 +279,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   if (out.len() == 0) {
     return 2;
   }
+  out = emitforms.with_build_section(out, form == "asm", sub.switches);
   write(out);
   return 0;
 }
