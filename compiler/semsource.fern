@@ -1786,7 +1786,88 @@ function arithmetic(b: ast.ExprBinary, left: i32, right: i32, s: State): Value {
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "operator contract: " + typeinfo.spelling(s.values[left]) + " " + b.op + " " + typeinfo.spelling(s.values[right]));
   }
+  if let Some(v) = folded_constants(s, b.op, left, right, ty) {
+    return folded(s, v, ty, [left, right], literal_operand(b.left) && literal_operand(b.right));
+  }
   return define(s, 9, [left, right], 0, b.op, ty);
+}
+
+// The constant v in place of an operation on constants. The constants of a
+// literal operand are only that operation's, so they leave with it and the
+// constant takes the first of their ids: `-1` and `0 - 1` give one graph.
+function folded(s: State, v: i32, ty: typeinfo.Type, operands: i32[], literal: boolean): Value {
+  if (literal) {
+    return define(without_temporaries(s, operands), 1, [], v, "", ty);
+  }
+  return define(s, 1, [], v, "", ty);
+}
+
+// Whether e is an integer literal, or a negation, sum, difference or product
+// of them, whatever suffix the checker settled on it.
+function literal_operand(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(n) => {
+      return !n.is_float;
+    },
+    ast.ExprUnary(u) => {
+      return u.op == "-" && literal_operand(u.operand);
+    },
+    ast.ExprBinary(b) => {
+      return (b.op == "+" || b.op == "-" || b.op == "*") && literal_operand(b.left) && literal_operand(b.right);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// s without its last instructions and values when they define exactly ids.
+function without_temporaries(s: State, ids: i32[]): State {
+  let n = s.cur.insts.len();
+  let k = ids.len();
+  let first = s.values.len() - k;
+  if (n < k) {
+    return s;
+  }
+  for i in 0..k {
+    if (ids[i] != first + i || s.cur.insts[n - k + i].result != ids[i]) {
+      return s;
+    }
+  }
+  return State { ...s, cur: ssa.SBlock { ...s.cur, insts: s.cur.insts.truncate(n - k) }, values: s.values.truncate(first) };
+}
+
+// An i32 operation on two constants that the block just defined, folded.
+function folded_constants(s: State, op: string, left: i32, right: i32, ty: typeinfo.Type): Option[i32] {
+  if (!ssasem.is_i32(ty)) {
+    return None;
+  }
+  if let Some(a) = recent_constant(s, left) {
+    if let Some(b) = recent_constant(s, right) {
+      return semunroll.folded_i32(op, a, b);
+    }
+  }
+  return None;
+}
+
+// The value of v when one of the block's last two instructions defines it
+// as an i32 constant.
+function recent_constant(s: State, v: i32): Option[i32] {
+  let insts = s.cur.insts;
+  let n = insts.len();
+  for i in 0..2 {
+    if (i < n) {
+      let ins = insts[n - 1 - i];
+      if (ins.result == v) {
+        if (ins.kind_tag == 1 && ins.str == "" && ins.args.len() == 0 && ssasem.is_i32(s.values[v])) {
+          return Some(ins.imm);
+        }
+        return None;
+      }
+    }
+  }
+  return None;
 }
 
 function wide_literal(e: ast.Expr): boolean {
@@ -1928,7 +2009,19 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id]));
   }
-  return define(s, 10, [operand.id], 0, u.op, ty);
+  return unary_op(s, u.op, operand.id, ty, literal_operand(u.operand));
+}
+
+// A negation of an i32 constant that the block just defined is that constant.
+function unary_op(s: State, op: string, operand: i32, ty: typeinfo.Type, literal: boolean): Value {
+  if (op == "-" && ssasem.is_i32(ty)) {
+    if let Some(a) = recent_constant(s, operand) {
+      if let Some(v) = semunroll.folded_i32("-", 0, a) {
+        return folded(s, v, ty, [operand], literal);
+      }
+    }
+  }
+  return define(s, 10, [operand], 0, op, ty);
 }
 
 function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
@@ -7234,6 +7327,7 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type)
   out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
   out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
   out = out.append(ssasem.Contract { name: "Writer.set_nonblocking", params: [writer, t_bool()], modes: [v, v], result: done });
+  out = out.append(ssasem.Contract { name: "Writer.set_times", params: [writer, t_i64(), t_i64(), t_i64(), t_i64(), t_i32()], modes: [v, v, v, v, v, v], result: done });
   return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: done });
 }
 

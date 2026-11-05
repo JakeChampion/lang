@@ -151,9 +151,12 @@ func runSelfHostStdTestArm64(t *testing.T, tls bool) {
 	})
 }
 
+// A case peaks under 430 MB in the interpreter and in the compiler
+// (quic_conn, x86-64, 2026-11-04). The weight leaves room for twice that and
+// lets a four-core runner hold four cases, which the 5 GB weight did not.
 func stdTestOutput(cmd *exec.Cmd) ([]byte, error) {
 	var out []byte
-	err := e2eharness.WithBuildMemoryMB(5*1024, func() error {
+	err := e2eharness.WithBuildMemoryMB(1024, func() error {
 		var err error
 		out, err = cmd.Output()
 		return err

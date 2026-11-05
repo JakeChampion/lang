@@ -15,8 +15,10 @@ func TestSelfHostStackOverflow(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	// The recursion keeps twelve values live across the call, so x86-64 gives
 	// it a frame pointer and the walk sees every level. A leaner recursion
-	// keeps %rsp fixed there and shows the handler's record alone.
-	const runaway = "function f(n: i32): i32 {\n" +
+	// keeps %rsp fixed there and shows the handler's record alone. The base
+	// case never runs, but without it semreach proves that f cannot return
+	// and drops the values after the call.
+	const runaway = "function f(n: i32): i32 {\n  if (n > 1) {\n    return 0;\n  }\n" +
 		"  let a: i32 = n + 1;\n  let b: i32 = n + 2;\n  let c: i32 = n + 3;\n  let d: i32 = n + 4;\n" +
 		"  let e: i32 = n + 5;\n  let g: i32 = n + 6;\n  let h: i32 = n + 7;\n  let i: i32 = n + 8;\n" +
 		"  let j: i32 = n + 9;\n  let k: i32 = n + 10;\n  let l: i32 = n + 11;\n  let m: i32 = n + 12;\n" +

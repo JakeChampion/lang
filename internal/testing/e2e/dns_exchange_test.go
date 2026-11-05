@@ -92,7 +92,7 @@ func TestDnsPairInterpReadsTheReadySocket(t *testing.T) {
 	}
 }
 
-func compileDnsX86(t *testing.T, src string) (string, int) {
+func dnsX86Command(t *testing.T, src string) *exec.Cmd {
 	t.Helper()
 	_, runner := x86_64Tooling(t)
 	fern := buildLangBinForInterp(t)
@@ -109,7 +109,12 @@ func compileDnsX86(t *testing.T, src string) (string, int) {
 	if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", bin, path, stdlib).CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, out)
 	}
-	cmd := runX86_64Bin(runner, bin)
+	return runX86_64Bin(runner, bin)
+}
+
+func compileDnsX86(t *testing.T, src string) (string, int) {
+	t.Helper()
+	cmd := dnsX86Command(t, src)
 	out, _ := cmd.Output()
 	return string(out), cmd.ProcessState.ExitCode()
 }
@@ -127,9 +132,10 @@ func TestDnsDialX86_64(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			port := e2eharness.StartEchoListener(t)
+			cmd := dnsX86Command(t, e2eharness.DnsDialSource(c.first, port))
 			start := time.Now()
-			out, code := compileDnsX86(t, e2eharness.DnsDialSource(c.first, port))
-			e2eharness.CheckDnsDial(t, out, code)
+			out, _ := cmd.Output()
+			e2eharness.CheckDnsDial(t, string(out), cmd.ProcessState.ExitCode())
 			if took := time.Since(start); took > 4*time.Second {
 				t.Errorf("the dial took %v; the loopback attempt should have won within the attempt delay", took)
 			}

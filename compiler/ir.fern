@@ -932,6 +932,10 @@ pub function op_set_file_times(): Op {
   return op0(269);
 }
 
+pub function op_writer_set_times(): Op {
+  return Op { ...op_set_file_times(), i32_imm: 1 };
+}
+
 pub function op_open_reader_with(): Op {
   return op0(304);
 }
