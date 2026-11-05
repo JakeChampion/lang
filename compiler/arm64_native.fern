@@ -1923,7 +1923,7 @@ function arm64_v3int_entry(mnem: string): i32 {
       return arm64_vec_entry(true, 8, 15);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -1958,7 +1958,7 @@ function arm64_vlogical_entry(mnem: string): i32 {
       return arm64_vec_entry(true, 3, 1);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -1984,7 +1984,7 @@ function arm64_vcmpzero_entry(mnem: string): i32 {
       return arm64_vec_entry(false, 10, 15);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2019,7 +2019,7 @@ function arm64_v2misc_entry(mnem: string): i32 {
       return arm64_vec_entry(false, 0, 7);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2097,7 +2097,7 @@ function arm64_vfp3_entry(mnem: string): i32 {
       return arm64_vec_entry(false, 25, 1);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2152,7 +2152,7 @@ function arm64_vfp2_entry(mnem: string): i32 {
       return arm64_vec_entry(true, 25, 1);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2178,7 +2178,7 @@ function arm64_vfpcmpzero_entry(mnem: string): i32 {
       return arm64_vec_entry(false, 14, 0);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2204,7 +2204,7 @@ function arm64_vshift_entry(mnem: string): i32 {
       return arm64_vec_entry(true, 8, 0);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2233,7 +2233,7 @@ function arm64_vpermute_opc(mnem: string): i32 {
       return 6;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2506,7 +2506,7 @@ function arm64_across_entry(mnem: string): i32 {
       return arm64_vec_entry(true, 3, 1);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2529,7 +2529,7 @@ function arm64_pairlong_entry(mnem: string): i32 {
       return arm64_vec_entry(true, 6, 7);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2546,7 +2546,7 @@ function arm64_vpolylong_entry(mnem: string): i32 {
       return arm64_vec_entry(false, 14, 1);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -4693,7 +4693,7 @@ function arm64_fam_crc(): i32 {
 
 // arm64_gas_family returns the mnemonic family index, or -1 for an unknown mnemonic.
 function arm64_gas_family(mnem: string): i32 {
-  let n = mnem.len();
+  let n: i32 = mnem.len();
   if (n == 1) {
     return arm64_gas_family_len1(mnem);
   }
@@ -4721,14 +4721,14 @@ function arm64_gas_family(mnem: string): i32 {
   if (n == 9) {
     return arm64_gas_family_len9(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len1(mnem: string): i32 {
   if (mnem == "b") {
     return arm64_fam_branch();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len2(mnem: string): i32 {
@@ -4738,11 +4738,11 @@ function arm64_gas_family_len2(mnem: string): i32 {
   if (mnem == "bl") {
     return arm64_fam_branch();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3(mnem: string): i32 {
-  let c = mnem[0];
+  let c: u8 = mnem[0];
   if (c == b'a') {
     return arm64_gas_family_len3_a(mnem);
   }
@@ -4785,11 +4785,11 @@ function arm64_gas_family_len3(mnem: string): i32 {
   if (c == b'x' && mnem == "xtn") {
     return arm64_fam_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_a(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'd') {
     return arm64_gas_family_len3_a_ad(mnem);
   }
@@ -4799,7 +4799,7 @@ function arm64_gas_family_len3_a(mnem: string): i32 {
   if (c == b's' && mnem == "asr") {
     return arm64_fam_shift();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_a_ad(mnem: string): i32 {
@@ -4812,11 +4812,11 @@ function arm64_gas_family_len3_a_ad(mnem: string): i32 {
   if (mnem == "adc") {
     return arm64_fam_carry();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_b(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'f' && mnem == "bfi") {
     return arm64_fam_bitfield();
   }
@@ -4832,11 +4832,11 @@ function arm64_gas_family_len3_b(mnem: string): i32 {
   if (c == b't' && mnem == "bti") {
     return arm64_fam_landing();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_c(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b' && mnem == "cbz") {
     return arm64_fam_cbranch();
   }
@@ -4846,7 +4846,7 @@ function arm64_gas_family_len3_c(mnem: string): i32 {
   if (c == b'm') {
     return arm64_gas_family_len3_c_cm(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_c_cl(mnem: string): i32 {
@@ -4856,7 +4856,7 @@ function arm64_gas_family_len3_c_cl(mnem: string): i32 {
   if (mnem == "cls") {
     return arm64_fam_bitops();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_c_cm(mnem: string): i32 {
@@ -4866,7 +4866,7 @@ function arm64_gas_family_len3_c_cm(mnem: string): i32 {
   if (mnem == "cmn") {
     return arm64_fam_addsub();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_d(mnem: string): i32 {
@@ -4879,7 +4879,7 @@ function arm64_gas_family_len3_d(mnem: string): i32 {
   if (mnem == "dup") {
     return arm64_fam_vecmov();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_e(mnem: string): i32 {
@@ -4892,7 +4892,7 @@ function arm64_gas_family_len3_e(mnem: string): i32 {
   if (mnem == "ext") {
     return arm64_fam_vecext();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_i(mnem: string): i32 {
@@ -4902,22 +4902,22 @@ function arm64_gas_family_len3_i(mnem: string): i32 {
   if (mnem == "ins") {
     return arm64_fam_vecmov();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_l(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'd') {
     return arm64_gas_family_len3_l_ld(mnem);
   }
   if (c == b's') {
     return arm64_gas_family_len3_l_ls(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_l_ld(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'1' && mnem == "ld1") {
     return arm64_fam_vecldst();
   }
@@ -4936,7 +4936,7 @@ function arm64_gas_family_len3_l_ld(mnem: string): i32 {
   if (c == b'r' && mnem == "ldr") {
     return arm64_fam_ldst();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_l_ls(mnem: string): i32 {
@@ -4946,11 +4946,11 @@ function arm64_gas_family_len3_l_ls(mnem: string): i32 {
   if (mnem == "lsr") {
     return arm64_fam_shift();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_m(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'o' && mnem == "mov") {
     return arm64_fam_movwide();
   }
@@ -4966,7 +4966,7 @@ function arm64_gas_family_len3_m(mnem: string): i32 {
   if (c == b'v' && mnem == "mvn") {
     return arm64_fam_logical2();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_n(mnem: string): i32 {
@@ -4979,7 +4979,7 @@ function arm64_gas_family_len3_n(mnem: string): i32 {
   if (mnem == "ngc") {
     return arm64_fam_carry();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_o(mnem: string): i32 {
@@ -4989,7 +4989,7 @@ function arm64_gas_family_len3_o(mnem: string): i32 {
   if (mnem == "orn") {
     return arm64_fam_logical2();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_r(mnem: string): i32 {
@@ -5002,11 +5002,11 @@ function arm64_gas_family_len3_r(mnem: string): i32 {
   if (mnem == "rev") {
     return arm64_fam_bitops();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_s(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b' && mnem == "sbc") {
     return arm64_fam_carry();
   }
@@ -5022,11 +5022,11 @@ function arm64_gas_family_len3_s(mnem: string): i32 {
   if (c == b'w' && mnem == "swp") {
     return arm64_fam_swap();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_s_st(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'1' && mnem == "st1") {
     return arm64_fam_vecldst();
   }
@@ -5045,7 +5045,7 @@ function arm64_gas_family_len3_s_st(mnem: string): i32 {
   if (c == b'r' && mnem == "str") {
     return arm64_fam_ldst();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len3_t(mnem: string): i32 {
@@ -5061,11 +5061,11 @@ function arm64_gas_family_len3_t(mnem: string): i32 {
   if (mnem == "tbx") {
     return arm64_fam_vecext();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4(mnem: string): i32 {
-  let c = mnem[0];
+  let c: u8 = mnem[0];
   if (c == b'a') {
     return arm64_gas_family_len4_a(mnem);
   }
@@ -5105,11 +5105,11 @@ function arm64_gas_family_len4(mnem: string): i32 {
   if (c == b'x' && mnem == "xtn2") {
     return arm64_fam_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_a(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'd') {
     return arm64_gas_family_len4_a_ad(mnem);
   }
@@ -5119,7 +5119,7 @@ function arm64_gas_family_len4_a(mnem: string): i32 {
   if (c == b'n' && mnem == "ands") {
     return arm64_fam_logical2();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_a_ad(mnem: string): i32 {
@@ -5132,11 +5132,11 @@ function arm64_gas_family_len4_a_ad(mnem: string): i32 {
   if (mnem == "adcs") {
     return arm64_fam_carry();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_c(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b' && mnem == "cbnz") {
     return arm64_fam_cbranch();
   }
@@ -5152,7 +5152,7 @@ function arm64_gas_family_len4_c(mnem: string): i32 {
   if (c == b's') {
     return arm64_gas_family_len4_c_cs(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_c_cc(mnem: string): i32 {
@@ -5162,7 +5162,7 @@ function arm64_gas_family_len4_c_cc(mnem: string): i32 {
   if (mnem == "ccmn") {
     return arm64_fam_condsel();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_c_ci(mnem: string): i32 {
@@ -5172,7 +5172,7 @@ function arm64_gas_family_len4_c_ci(mnem: string): i32 {
   if (mnem == "cinv") {
     return arm64_fam_condsel();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_c_cs(mnem: string): i32 {
@@ -5182,11 +5182,11 @@ function arm64_gas_family_len4_c_cs(mnem: string): i32 {
   if (mnem == "cset") {
     return arm64_fam_condsel();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_f(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'a') {
     return arm64_gas_family_len4_f_fa(mnem);
   }
@@ -5205,7 +5205,7 @@ function arm64_gas_family_len4_f(mnem: string): i32 {
   if (c == b's' && mnem == "fsub") {
     return arm64_fam_fp3();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_f_fa(mnem: string): i32 {
@@ -5215,7 +5215,7 @@ function arm64_gas_family_len4_f_fa(mnem: string): i32 {
   if (mnem == "fabs") {
     return arm64_fam_funary();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_f_fc(mnem: string): i32 {
@@ -5225,7 +5225,7 @@ function arm64_gas_family_len4_f_fc(mnem: string): i32 {
   if (mnem == "fcvt") {
     return arm64_fam_fcvt();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_f_fm(mnem: string): i32 {
@@ -5241,19 +5241,19 @@ function arm64_gas_family_len4_f_fm(mnem: string): i32 {
   if (mnem == "fmov") {
     return arm64_fam_fmov();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_l(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'd') {
     return arm64_gas_family_len4_l_ld(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_l_ld(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'1' && mnem == "ld1r") {
     return arm64_fam_vecldst();
   }
@@ -5269,7 +5269,7 @@ function arm64_gas_family_len4_l_ld(mnem: string): i32 {
   if (c == b'x' && mnem == "ldxr") {
     return arm64_fam_excl_ld();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_l_ld_ldr(mnem: string): i32 {
@@ -5279,11 +5279,11 @@ function arm64_gas_family_len4_l_ld_ldr(mnem: string): i32 {
   if (mnem == "ldrh") {
     return arm64_fam_ldst_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_m(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'a' && mnem == "madd") {
     return arm64_fam_mulwide();
   }
@@ -5293,7 +5293,7 @@ function arm64_gas_family_len4_m(mnem: string): i32 {
   if (c == b's' && mnem == "msub") {
     return arm64_fam_muldiv();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_m_mo(mnem: string): i32 {
@@ -5309,7 +5309,7 @@ function arm64_gas_family_len4_m_mo(mnem: string): i32 {
   if (mnem == "movi") {
     return arm64_fam_movi();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_n(mnem: string): i32 {
@@ -5319,11 +5319,11 @@ function arm64_gas_family_len4_n(mnem: string): i32 {
   if (mnem == "ngcs") {
     return arm64_fam_carry();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_s(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b') {
     return arm64_gas_family_len4_s_sb(mnem);
   }
@@ -5348,7 +5348,7 @@ function arm64_gas_family_len4_s(mnem: string): i32 {
   if (c == b'x') {
     return arm64_gas_family_len4_s_sx(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_s_sb(mnem: string): i32 {
@@ -5358,11 +5358,11 @@ function arm64_gas_family_len4_s_sb(mnem: string): i32 {
   if (mnem == "sbfx") {
     return arm64_fam_bfx();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_s_st(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'l' && mnem == "stlr") {
     return arm64_fam_acqrel();
   }
@@ -5375,7 +5375,7 @@ function arm64_gas_family_len4_s_st(mnem: string): i32 {
   if (c == b'x' && mnem == "stxr") {
     return arm64_fam_excl_st();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_s_st_str(mnem: string): i32 {
@@ -5385,7 +5385,7 @@ function arm64_gas_family_len4_s_st_str(mnem: string): i32 {
   if (mnem == "strh") {
     return arm64_fam_ldst_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_s_sw(mnem: string): i32 {
@@ -5398,7 +5398,7 @@ function arm64_gas_family_len4_s_sw(mnem: string): i32 {
   if (mnem == "swpb") {
     return arm64_fam_swap();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_s_sx(mnem: string): i32 {
@@ -5414,11 +5414,11 @@ function arm64_gas_family_len4_s_sx(mnem: string): i32 {
   if (mnem == "sxtl") {
     return arm64_fam_shll();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_u(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b' && mnem == "ubfx") {
     return arm64_fam_bfx();
   }
@@ -5431,7 +5431,7 @@ function arm64_gas_family_len4_u(mnem: string): i32 {
   if (c == b'x') {
     return arm64_gas_family_len4_u_ux(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len4_u_ux(mnem: string): i32 {
@@ -5444,11 +5444,11 @@ function arm64_gas_family_len4_u_ux(mnem: string): i32 {
   if (mnem == "uxtl") {
     return arm64_fam_shll();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5(mnem: string): i32 {
-  let c = mnem[0];
+  let c: u8 = mnem[0];
   if (c == b'a' && mnem == "aesmc") {
     return arm64_fam_vecext();
   }
@@ -5476,18 +5476,18 @@ function arm64_gas_family_len5(mnem: string): i32 {
   if (c == b'y' && mnem == "yield") {
     return arm64_fam_fixed();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_c(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'a' && mnem == "casal") {
     return arm64_fam_lse();
   }
   if (c == b's') {
     return arm64_gas_family_len5_c_cs(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_c_cs(mnem: string): i32 {
@@ -5503,11 +5503,11 @@ function arm64_gas_family_len5_c_cs(mnem: string): i32 {
   if (mnem == "csetm") {
     return arm64_fam_condsel();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_f(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'c') {
     return arm64_gas_family_len5_f_fc(mnem);
   }
@@ -5520,11 +5520,11 @@ function arm64_gas_family_len5_f(mnem: string): i32 {
   if (c == b's' && mnem == "fsqrt") {
     return arm64_fam_funary();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_f_fc(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'c' && mnem == "fccmp") {
     return arm64_fam_fpcond();
   }
@@ -5537,7 +5537,7 @@ function arm64_gas_family_len5_f_fc(mnem: string): i32 {
   if (c == b'v') {
     return arm64_gas_family_len5_f_fc_fcv(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_f_fc_fcv(mnem: string): i32 {
@@ -5547,7 +5547,7 @@ function arm64_gas_family_len5_f_fc_fcv(mnem: string): i32 {
   if (mnem == "fcvtl") {
     return arm64_fam_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_f_fm(mnem: string): i32 {
@@ -5557,19 +5557,19 @@ function arm64_gas_family_len5_f_fm(mnem: string): i32 {
   if (mnem == "fmsub") {
     return arm64_fam_fp4();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_l(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'd') {
     return arm64_gas_family_len5_l_ld(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_l_ld(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'a') {
     return arm64_gas_family_len5_l_ld_lda(mnem);
   }
@@ -5582,7 +5582,7 @@ function arm64_gas_family_len5_l_ld(mnem: string): i32 {
   if (c == b'x') {
     return arm64_gas_family_len5_l_ld_ldx(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_l_ld_lda(mnem: string): i32 {
@@ -5595,7 +5595,7 @@ function arm64_gas_family_len5_l_ld_lda(mnem: string): i32 {
   if (mnem == "ldarh") {
     return arm64_fam_acqrel();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_l_ld_ldr(mnem: string): i32 {
@@ -5608,7 +5608,7 @@ function arm64_gas_family_len5_l_ld_ldr(mnem: string): i32 {
   if (mnem == "ldrsw") {
     return arm64_fam_ldst_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_l_ld_ldu(mnem: string): i32 {
@@ -5618,7 +5618,7 @@ function arm64_gas_family_len5_l_ld_ldu(mnem: string): i32 {
   if (mnem == "ldurh") {
     return arm64_fam_unscaled2();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_l_ld_ldx(mnem: string): i32 {
@@ -5628,7 +5628,7 @@ function arm64_gas_family_len5_l_ld_ldx(mnem: string): i32 {
   if (mnem == "ldxrh") {
     return arm64_fam_excl_ld();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_r(mnem: string): i32 {
@@ -5638,11 +5638,11 @@ function arm64_gas_family_len5_r(mnem: string): i32 {
   if (mnem == "rev32") {
     return arm64_fam_bitops();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b' && mnem == "sbfiz") {
     return arm64_fam_bitfield();
   }
@@ -5667,18 +5667,18 @@ function arm64_gas_family_len5_s(mnem: string): i32 {
   if (c == b'x' && mnem == "sxtl2") {
     return arm64_fam_shll();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_sh(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'a') {
     return arm64_gas_family_len5_s_sh_sha(mnem);
   }
   if (c == b'r' && mnem == "shrn2") {
     return arm64_fam_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_sh_sha(mnem: string): i32 {
@@ -5694,7 +5694,7 @@ function arm64_gas_family_len5_s_sh_sha(mnem: string): i32 {
   if (mnem == "sha1h") {
     return arm64_fam_vecext();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_sm(mnem: string): i32 {
@@ -5704,11 +5704,11 @@ function arm64_gas_family_len5_s_sm(mnem: string): i32 {
   if (mnem == "smull") {
     return arm64_fam_mulwide();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_st(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'l') {
     return arm64_gas_family_len5_s_st_stl(mnem);
   }
@@ -5718,7 +5718,7 @@ function arm64_gas_family_len5_s_st(mnem: string): i32 {
   if (c == b'x') {
     return arm64_gas_family_len5_s_st_stx(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_st_stl(mnem: string): i32 {
@@ -5731,7 +5731,7 @@ function arm64_gas_family_len5_s_st_stl(mnem: string): i32 {
   if (mnem == "stlrh") {
     return arm64_fam_acqrel();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_st_stu(mnem: string): i32 {
@@ -5741,7 +5741,7 @@ function arm64_gas_family_len5_s_st_stu(mnem: string): i32 {
   if (mnem == "sturh") {
     return arm64_fam_unscaled2();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_st_stx(mnem: string): i32 {
@@ -5751,7 +5751,7 @@ function arm64_gas_family_len5_s_st_stx(mnem: string): i32 {
   if (mnem == "stxrh") {
     return arm64_fam_excl_st();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_s_sw(mnem: string): i32 {
@@ -5764,11 +5764,11 @@ function arm64_gas_family_len5_s_sw(mnem: string): i32 {
   if (mnem == "swplb") {
     return arm64_fam_swap();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_u(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'b' && mnem == "ubfiz") {
     return arm64_fam_bitfield();
   }
@@ -5784,7 +5784,7 @@ function arm64_gas_family_len5_u(mnem: string): i32 {
   if (c == b'x' && mnem == "uxtl2") {
     return arm64_fam_shll();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len5_u_um(mnem: string): i32 {
@@ -5794,11 +5794,11 @@ function arm64_gas_family_len5_u_um(mnem: string): i32 {
   if (mnem == "umull") {
     return arm64_fam_mulwide();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6(mnem: string): i32 {
-  let c = mnem[0];
+  let c: u8 = mnem[0];
   if (c == b'c') {
     return arm64_gas_family_len6_c(mnem);
   }
@@ -5814,7 +5814,7 @@ function arm64_gas_family_len6(mnem: string): i32 {
   if (c == b'u') {
     return arm64_gas_family_len6_u(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_c(mnem: string): i32 {
@@ -5830,11 +5830,11 @@ function arm64_gas_family_len6_c(mnem: string): i32 {
   if (mnem == "crc32x") {
     return arm64_fam_crc();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'c') {
     return arm64_gas_family_len6_f_fc(mnem);
   }
@@ -5847,7 +5847,7 @@ function arm64_gas_family_len6_f(mnem: string): i32 {
   if (c == b'r') {
     return arm64_gas_family_len6_f_fr(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fc(mnem: string): i32 {
@@ -5863,7 +5863,7 @@ function arm64_gas_family_len6_f_fc(mnem: string): i32 {
   if (mnem == "fcvtl2") {
     return arm64_fam_narrow();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fm(mnem: string): i32 {
@@ -5873,7 +5873,7 @@ function arm64_gas_family_len6_f_fm(mnem: string): i32 {
   if (mnem == "fmaxnm") {
     return arm64_fam_fp3();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fn(mnem: string): i32 {
@@ -5883,35 +5883,35 @@ function arm64_gas_family_len6_f_fn(mnem: string): i32 {
   if (mnem == "fnmsub") {
     return arm64_fam_fp4();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fr(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'i') {
     return arm64_gas_family_len6_f_fr_fri(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fr_fri(mnem: string): i32 {
-  let c = mnem[3];
+  let c: u8 = mnem[3];
   if (c == b'n') {
     return arm64_gas_family_len6_f_fr_fri_frin(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fr_fri_frin(mnem: string): i32 {
-  let c = mnem[4];
+  let c: u8 = mnem[4];
   if (c == b't') {
     return arm64_gas_family_len6_f_fr_fri_frin_frint(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_f_fr_fri_frin_frint(mnem: string): i32 {
-  let c = mnem[5];
+  let c: u8 = mnem[5];
   if (c == b'a' && mnem == "frinta") {
     return arm64_fam_funary();
   }
@@ -5927,26 +5927,26 @@ function arm64_gas_family_len6_f_fr_fri_frin_frint(mnem: string): i32 {
   if (c == b'z' && mnem == "frintz") {
     return arm64_fam_funary();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_l(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'd') {
     return arm64_gas_family_len6_l_ld(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_l_ld(mnem: string): i32 {
-  let c = mnem[2];
+  let c: u8 = mnem[2];
   if (c == b'a') {
     return arm64_gas_family_len6_l_ld_lda(mnem);
   }
   if (c == b'u') {
     return arm64_gas_family_len6_l_ld_ldu(mnem);
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_l_ld_lda(mnem: string): i32 {
@@ -5956,7 +5956,7 @@ function arm64_gas_family_len6_l_ld_lda(mnem: string): i32 {
   if (mnem == "ldaxrh") {
     return arm64_fam_excl_ld();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_l_ld_ldu(mnem: string): i32 {
@@ -5969,11 +5969,11 @@ function arm64_gas_family_len6_l_ld_ldu(mnem: string): i32 {
   if (mnem == "ldursw") {
     return arm64_fam_unscaled2();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_s(mnem: string): i32 {
-  let c = mnem[1];
+  let c: u8 = mnem[1];
   if (c == b'm') {
     return arm64_gas_family_len6_s_sm(mnem);
   }
@@ -5986,7 +5986,7 @@ function arm64_gas_family_len6_s(mnem: string): i32 {
   if (c == b'w' && mnem == "swpalb") {
     return arm64_fam_swap();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_s_sm(mnem: string): i32 {
@@ -5996,7 +5996,7 @@ function arm64_gas_family_len6_s_sm(mnem: string): i32 {
   if (mnem == "smsubl") {
     return arm64_fam_mulwide();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_s_st(mnem: string): i32 {
@@ -6006,7 +6006,7 @@ function arm64_gas_family_len6_s_st(mnem: string): i32 {
   if (mnem == "stlxrh") {
     return arm64_fam_excl_st();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len6_u(mnem: string): i32 {
@@ -6019,11 +6019,11 @@ function arm64_gas_family_len6_u(mnem: string): i32 {
   if (mnem == "ushll2") {
     return arm64_fam_shll();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len7(mnem: string): i32 {
-  let c = mnem[0];
+  let c: u8 = mnem[0];
   if (c == b'a' && mnem == "autiasp") {
     return arm64_fam_fixed();
   }
@@ -6039,7 +6039,7 @@ function arm64_gas_family_len7(mnem: string): i32 {
   if (c == b'x' && mnem == "xpaclri") {
     return arm64_fam_fixed();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len7_s(mnem: string): i32 {
@@ -6052,14 +6052,14 @@ function arm64_gas_family_len7_s(mnem: string): i32 {
   if (mnem == "sha1su1") {
     return arm64_fam_vecext();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len8(mnem: string): i32 {
   if (mnem == "sha256h2") {
     return arm64_fam_vecext();
   }
-  return -1;
+  return 0 - 1;
 }
 
 function arm64_gas_family_len9(mnem: string): i32 {
@@ -6069,7 +6069,7 @@ function arm64_gas_family_len9(mnem: string): i32 {
   if (mnem == "sha256su1") {
     return arm64_fam_vecext();
   }
-  return -1;
+  return 0 - 1;
 }
 
 // arm64_logical2_base returns the base word with zero register fields, or -1 for an unknown mnemonic.
@@ -6097,7 +6097,7 @@ function arm64_logical2_base(mnem: string): i64 {
       return 0xaa200000;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6124,7 +6124,7 @@ function arm64_carry_base(mnem: string): i64 {
       return 0xfa000000;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6160,7 +6160,7 @@ function arm64_mulwide_base(mnem: string): i64 {
       return 0x9ba08000;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6204,7 +6204,7 @@ function arm64_condsel_base(mnem: string): i64 {
       return 0xba400000;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6240,7 +6240,7 @@ function arm64_fp3_base(mnem: string): i64 {
       return 0x1e606800;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6261,7 +6261,7 @@ function arm64_fp4_base(mnem: string): i64 {
       return 0x1f608000;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6294,7 +6294,7 @@ function arm64_funary_d_base(mnem: string): i64 {
       return 0x1e644000;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6327,7 +6327,7 @@ function arm64_gas_shll_kind(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -6348,7 +6348,7 @@ function arm64_crc_base(mnem: string): i64 {
       return 0x9ac04c00;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }

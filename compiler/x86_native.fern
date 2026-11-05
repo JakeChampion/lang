@@ -2547,7 +2547,7 @@ function x86_gas_rep_pfx(mnem: string): i32 {
       return 242;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2576,7 +2576,7 @@ function x86_gas_lea_size(mnem: string): i32 {
       return 16;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2596,7 +2596,7 @@ function x86_gas_mov_size(mnem: string): i32 {
       return 64;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2640,7 +2640,7 @@ function x86_gas_extend_op(mnem: string): i32 {
       return 48904;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2692,7 +2692,7 @@ function x86_gas_bitscan_op(mnem: string): i32 {
       return 15972353;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2706,7 +2706,7 @@ function x86_gas_shld_op(mnem: string): i32 {
       return 172;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2724,7 +2724,7 @@ function x86_gas_rmw_op(mnem: string): i32 {
       return 176;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2756,7 +2756,7 @@ function x86_gas_mov10_pfx(mnem: string): i32 {
       return 102;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2770,7 +2770,7 @@ function x86_gas_movdq_pfx(mnem: string): i32 {
       return 102;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2796,7 +2796,7 @@ function x86_gas_cvt2s_op(mnem: string): i32 {
       return 62208;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2842,7 +2842,7 @@ function x86_gas_cvt2si(mnem: string): i32 {
       return 62253;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2877,7 +2877,7 @@ function x86_gas_imm3a_op(mnem: string): i32 {
       return 15;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2900,7 +2900,7 @@ function x86_gas_shuf_op(mnem: string): i32 {
       return 26306;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2925,7 +2925,7 @@ function x86_gas_movmsk_op(mnem: string): i32 {
       return 26192;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -2965,7 +2965,7 @@ function x86_gas_vshift_op(mnem: string): i32 {
       return 1907;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3014,7 +3014,7 @@ function x86_gas_sse38_op(mnem: string): i32 {
       return 221;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3409,7 +3409,7 @@ function x86_gas_alu_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3435,7 +3435,7 @@ function x86_gas_unary_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3449,7 +3449,7 @@ function x86_gas_incdec_ext(mnem: string): i32 {
       return 1;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3481,7 +3481,7 @@ function x86_gas_shift_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3501,7 +3501,7 @@ function x86_gas_bt_idx(mnem: string): i32 {
       return 3;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -3526,12 +3526,12 @@ function x86_gas_lockable(mnem: string): boolean {
     "xchg",
     "xor",
   ];
-  let i = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == mnem) {
       return true;
     }
-    i += 1;
+    i = i + 1;
   }
   return false;
 }
@@ -3629,7 +3629,7 @@ function x86_gas_cc_code(cond: string): i32 {
       return 15;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -4163,7 +4163,7 @@ function x86_gas_fixed_op(mnem: string): i32 {
       return x86_pack2(72, 167);
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -5018,7 +5018,7 @@ function x86_gas_sse_fp_op(mnem: string): i32 {
       return 22;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
@@ -5181,7 +5181,7 @@ function x86_gas_sse_int_op(mnem: string): i32 {
       return 102 * 256 + 226;
     },
     _ => {
-      return -1;
+      return 0 - 1;
     }
   }
 }
