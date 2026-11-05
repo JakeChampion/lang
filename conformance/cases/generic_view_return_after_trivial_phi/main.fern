@@ -1,0 +1,41 @@
+// Regression for nightly EMI seed 144049, issue #12868.
+import "std/i32";
+
+function identity[T](x: T): T {
+  if (emi_true()) {
+    if (emi_false()) {
+      return x;
+    }
+  } else {
+    loop {
+      return x;
+      break;
+    }
+  }
+  return x;
+}
+
+function pair[T](a: T, b: T): i32 {
+  return 2;
+}
+
+function main(): i32 {
+  let lit: str = identity[str]("de");
+  if (emi_false()) {
+    return 0;
+  }
+  let raw: str = "abc";
+  print(lit.len().to_string());
+  print(pair("x", raw).to_string());
+  return 0;
+}
+
+@noinline
+function emi_false(): boolean {
+  return false;
+}
+
+@noinline
+function emi_true(): boolean {
+  return true;
+}

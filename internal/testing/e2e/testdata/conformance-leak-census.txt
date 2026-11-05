@@ -387,6 +387,7 @@ generic_return_pin_in_assoc_fn                       0
 generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_view_methods                                 0
+generic_view_return_after_trivial_phi                 0
 grow_past_capacity                                   0
 handle_close_unchecked_through_a_borrow              0
 handle_closes_on_loop_exit                           0

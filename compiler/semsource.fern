@@ -6953,10 +6953,46 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   }
   let graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
+  f = keep_returned_view_params(f);
   f = ssasem.tail_recursion(f, name);
   f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
+}
+
+// A trivial phi can expose a borrowed parameter after ret checked its value.
+function keep_returned_view_params(f: ssasem.Func): ssasem.Func {
+  if (!ssasem.is_view(f.result)) {
+    return f;
+  }
+  let needed: boolean = false;
+  for b in f.graph.blocks {
+    needed = needed || b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < f.params.len();
+  }
+  if (!needed) {
+    return f;
+  }
+  let values: typeinfo.Type[] = f.values;
+  let positions: sourcepos.SourcePos[] = f.source_positions.values;
+  let blocks: ssa.SBlock[] = [];
+  for b in f.graph.blocks {
+    let v: i32 = b.term.value;
+    if (b.term.kind_tag == 1 && v >= 0 && v < f.params.len()) {
+      let first: i32 = values.len();
+      values = values.append(t_i32()).append(t_i32()).append(t_str());
+      if (positions.len() > 0) {
+        let pos: sourcepos.SourcePos = sourcepos.at(f.source_positions.terms, b.id);
+        positions = positions.append(pos).append(pos).append(pos);
+      }
+      let insts: ssa.SInst[] = b.insts;
+      insts = insts.append(ssa.SInst { kind_tag: 1, result: first, args: [], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.length(), result: first + 1, args: [v], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.slice(), result: first + 2, args: [v, first, first + 1], imm: 0, str: "" });
+      b = ssa.SBlock { ...b, insts: insts, term: t_ret(first + 2) };
+    }
+    blocks = blocks.append(b);
+  }
+  return ssasem.Func { ...f, source_positions: sourcepos.SourceInfo { ...f.source_positions, values: positions }, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
 
 function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
