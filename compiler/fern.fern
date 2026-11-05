@@ -1282,16 +1282,32 @@ function jni_unify_heads(methods: JniMethod[]): (JniMethod[], string) {
   return (out, "");
 }
 
-// The Fern type with the width of Java type `t`, or "" for void. A Java
-// reference, such as String or int[], is a usize.
+// The Fern type of Java type `t`, or "" for void. A Java reference, such as
+// String or int[], is a usize. A byte, char or short is an i32, and the
+// wrapper extends it with jni_extend.
 function jni_fern_type(t: string): string {
   let java: string[] = ["void", "boolean", "byte", "char", "short", "int", "long", "float", "double"];
-  let fern: string[] = ["", "u8", "i8", "u16", "i16", "i32", "i64", "f32", "f64"];
+  let fern: string[] = ["", "u8", "i32", "i32", "i32", "i32", "i64", "f32", "f64"];
   let k = util.index_of_str(java, t);
   if (k >= 0) {
     return fern[k];
   }
   return "usize";
+}
+
+// The expression `e` extended from the width of Java type `t` to 32 bits.
+// The C ABIs do not specify the bits above a narrow argument or result.
+function jni_extend(t: string, e: string): string {
+  if (t == "byte") {
+    return "((" + e + ") << 24) >> 24";
+  }
+  if (t == "short") {
+    return "((" + e + ") << 16) >> 16";
+  }
+  if (t == "char") {
+    return "(" + e + ") & 65535";
+  }
+  return e;
 }
 
 function jni_name_char(c: u8): boolean {
@@ -1480,6 +1496,16 @@ pub function jni_methods(m: parser.Module): (JniMethod[], string) {
   return jni_unify_heads(out);
 }
 
+// The call of the Fern function of `jm`, with each Java argument extended.
+function jni_call(jm: JniMethod): string {
+  let f = jm.func;
+  let args = f.params[0].name + ", " + f.params[1].name;
+  for k in 0..jm.types.len() {
+    args = args + ", " + jni_extend(jm.types[k], f.params[k + 2].name);
+  }
+  return f.name + "(" + args + ")";
+}
+
 // Each JNI method becomes a C-ABI export named by its JNI symbol, which
 // calls the Fern function.
 pub function jni_wrappers(m: parser.Module, methods: JniMethod[]): parser.Module {
@@ -1490,20 +1516,17 @@ pub function jni_wrappers(m: parser.Module, methods: JniMethod[]): parser.Module
   for jm in methods {
     let f = jm.func;
     let decl = "";
-    let args = "";
     for p in f.params {
       if (decl.len() > 0) {
         decl += ", ";
-        args += ", ";
       }
       decl = decl + p.name + ": " + p.type_name;
-      args += p.name;
     }
-    let call = f.name + "(" + args + ");";
+    let call = jni_call(jm);
     if (f.ret_type.len() > 0 && f.ret_type != "void") {
-      src = src + "pub function " + jm.symbol + "(" + decl + "): " + f.ret_type + " {\n  return " + call + "\n}\n";
+      src = src + "pub function " + jm.symbol + "(" + decl + "): " + f.ret_type + " {\n  return " + jni_extend(jm.result, call) + ";\n}\n";
     } else {
-      src = src + "pub function " + jm.symbol + "(" + decl + "): void {\n  " + call + "\n}\n";
+      src = src + "pub function " + jm.symbol + "(" + decl + "): void {\n  " + call + ";\n}\n";
     }
   }
   let gen = parser.parse_module(lexer.tokenize(src));
