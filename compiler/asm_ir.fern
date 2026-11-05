@@ -64,6 +64,28 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   return s;
 }
 
+function envp_wanted(s: asmcore.EmitState): boolean {
+  return s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"]);
+}
+
+// A shared object has no _start. The loader calls each entry of
+// .init_array with argc, argv and envp, so this entry keeps them.
+function emit_shared_init_x86(s: asmcore.EmitState): asmcore.EmitState {
+  let args: boolean = s.has_need("args");
+  let env: boolean = envp_wanted(s);
+  if (!args && !env) {
+    return s;
+  }
+  s = s.write("__fern_shared_init:\n");
+  if (args) {
+    s = s.write("    movslq %edi, %rdi\n    movq %rdi, __fern_argc(%rip)\n    movq %rsi, __fern_argv(%rip)\n");
+  }
+  if (env) {
+    s = s.write("    movq %rdx, __fern_envp(%rip)\n");
+  }
+  return s.write("    ret\n    .section .data\n    .align 8\n__fern_init_array:\n    .quad __fern_shared_init\n    .text\n");
+}
+
 pub function busy_take_x86(): string {
   return "    call __fern_busy_take\n";
 }
@@ -3810,7 +3832,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jmp __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
-  if (s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"])) {
+  if (envp_wanted(s)) {
     s = s.write(".section .bss\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_envp: .quad 0\n");
@@ -11715,7 +11737,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = s.write("    leaq 8(%rsp), %rax\n");
     s = s.write("    movq %rax, __fern_argv(%rip)\n");
   }
-  if (s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"])) {
+  if (envp_wanted(s)) {
     s = s.write("    movq (%rsp), %rax\n");
     s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
     s = s.write("    movq %rax, __fern_envp(%rip)\n");
@@ -12077,6 +12099,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.shared) {
     s = emit_busy_lock_x86(s);
     s = emit_harden_start(s);
+    s = emit_shared_init_x86(s);
   }
   if (s.rc_free_debug) {
     s = s.write("    .text\n");

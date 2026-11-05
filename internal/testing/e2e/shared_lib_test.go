@@ -1599,3 +1599,90 @@ func TestSelfHostSharedRefusals(t *testing.T) {
 		})
 	}
 }
+
+// A shared object has no _start. The loader calls its .init_array entry with
+// argc, argv and envp, so env, environ and args work in a library: before,
+// env read through a null pointer.
+const sharedEnvSrc = `function probe(): i32 {
+  let r: i32 = 0;
+  if let Some(v) = env("FERN_SHARED_PROBE") {
+    if (v == "yes") {
+      r = r + 1;
+    }
+  }
+  for e in environ() {
+    if (e == "FERN_SHARED_PROBE=yes") {
+      r = r + 2;
+    }
+  }
+  if (args().len() == 3) {
+    r = r + 4;
+  }
+  return r;
+}
+function main(): i32 { return 0; }
+`
+
+const sharedProbeLoader = `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char **v) {
+  void *h = dlopen(v[1], RTLD_NOW);
+  if (!h) { fprintf(stderr, "%s\n", dlerror()); return 100; }
+  int (*f)(void) = (int (*)(void))dlsym(h, v[2]);
+  if (!f) return 101;
+  return f();
+}`
+
+func TestCLISharedEnvAndArgs(t *testing.T) {
+	bin := buildFernCLI(t)
+	build := func(t *testing.T, target, gcc string) (so, ld string) {
+		dir := t.TempDir()
+		src := filepath.Join(dir, "prog.fern")
+		if err := os.WriteFile(src, []byte(sharedEnvSrc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		so = filepath.Join(dir, "libprobe.so")
+		if o, err := exec.Command(bin, "-target", target, "-shared", "-export", "probe", "-o", so, src).CombinedOutput(); err != nil {
+			t.Fatalf("-shared build failed: %v\n%s", err, o)
+		}
+		cPath := filepath.Join(dir, "ld.c")
+		if err := os.WriteFile(cPath, []byte(sharedProbeLoader), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ld = filepath.Join(dir, "ld")
+		if o, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+			t.Fatalf("gcc loader: %v\n%s", err, o)
+		}
+		return so, ld
+	}
+	check := func(t *testing.T, cmd *exec.Cmd) {
+		cmd.Env = append(append(os.Environ(), cmd.Env...), "FERN_SHARED_PROBE=yes")
+		out, _ := cmd.CombinedOutput()
+		if code := cmd.ProcessState.ExitCode(); code != 7 {
+			t.Fatalf("probe = %d, want 7: 1 for env, 2 for environ, 4 for args (out=%q)", code, out)
+		}
+	}
+
+	t.Run("x86_64", func(t *testing.T) {
+		gcc, err := exec.LookPath("gcc")
+		if err != nil {
+			t.Skip("gcc not on PATH")
+		}
+		if runtime.GOARCH != "amd64" {
+			t.Skip("host is not amd64")
+		}
+		so, ld := build(t, "x86-64-linux", gcc)
+		check(t, exec.Command(ld, so, "probe"))
+	})
+
+	t.Run("arm64", func(t *testing.T) {
+		gcc, qemu := e2eharness.Arm64Tooling(t)
+		e2eharness.Arm64CLibc(t, gcc)
+		so, ld := build(t, "arm64-linux", gcc)
+		cmd := e2eharness.RunArm64Bin(qemu, ld, so, "probe")
+		if qemu != "" {
+			cmd.Env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+		}
+		check(t, cmd)
+	})
+}

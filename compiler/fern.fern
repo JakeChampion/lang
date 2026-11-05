@@ -1907,7 +1907,8 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     slots = slots.append(arm64_native.arm64_symbol_addr(p, got_label(stub), tv as i64, dv as i64) as i32);
   }
   imp = elf.SoImports { ...imp, slots: slots };
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, note);
+  let init_at: i32 = arm64_native.arm64_symbol_addr(p, "__fern_init_array", tv as i64, dv as i64) as i32;
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, note, init_at);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -1952,7 +1953,11 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     slots = slots.append(data_at + x86_native.x86_symbol_addr(a, got_label(stub), 0) - base);
   }
   imp = elf.SoImports { ...imp, slots: slots };
-  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, false);
+  let init_at: i32 = x86_native.x86_symbol_addr(a, "__fern_init_array", 0);
+  if (init_at >= 0) {
+    init_at = data_at + init_at - base;
+  }
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, false, init_at);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 

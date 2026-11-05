@@ -395,7 +395,8 @@ function so_string_entries(buf: i32[], names: string[]): (i32[], i32[]) {
   return (buf, offs);
 }
 
-pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string, imp: SoImports, note: boolean): i32[] {
+// `init_at` is the address of the one entry of .init_array, or -1 for none.
+pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string, imp: SoImports, note: boolean, init_at: i32): i32[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let text_off: i32 = elf_text_off_so(note);
   let unwind_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
@@ -438,6 +439,10 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   for off in needed_offs {
     tags = tags.append(1 as i64);
     vals_d = vals_d.append(off as i64);
+  }
+  if (init_at >= 0) {
+    tags = tags.append(25 as i64).append(27 as i64);
+    vals_d = vals_d.append(init_at as i64).append(8 as i64);
   }
   if (nrela > 0) {
     tags = tags.append(7 as i64).append(8 as i64).append(9 as i64).append(1879048185 as i64);

@@ -1,6 +1,9 @@
 function __fern_environ(): string[] {
   let out: string[] = [];
   let envp: usize = __raw_environ();
+  if (envp == 0) {
+    return out;
+  }
   let idx: i32 = 0;
   let done: i32 = 0;
   while (done == 0) {

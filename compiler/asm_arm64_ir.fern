@@ -6931,6 +6931,26 @@ pub function busy_give_arm64(): string {
 
 // The arm64 form of emit_busy_lock_x86. Both routines keep every register
 // except x16, x17 and the flags.
+// A shared object has no _start. The loader calls each entry of
+// .init_array with argc, argv and envp, so this entry keeps them.
+function emit_shared_init_arm64(s: asmcore.EmitState): asmcore.EmitState {
+  let args: boolean = s.has_need("args");
+  let env: boolean = s.has_need("heap");
+  if (!args && !env) {
+    return s;
+  }
+  s = s.write("__fern_shared_init:\n");
+  s = ssa_landing_pad(s);
+  if (args) {
+    s = s.write("    sxtw x0, w0\n    adrp x3, __fern_argc\n    add x3, x3, :lo12:__fern_argc\n    str x0, [x3]\n");
+    s = s.write("    adrp x3, __fern_argv\n    add x3, x3, :lo12:__fern_argv\n    str x1, [x3]\n");
+  }
+  if (env) {
+    s = s.write("    adrp x3, __fern_envp\n    add x3, x3, :lo12:__fern_envp\n    str x2, [x3]\n");
+  }
+  return s.write("    ret\n    .section .data\n    .align 3\n__fern_init_array:\n    .quad __fern_shared_init\n    .text\n");
+}
+
 function emit_busy_lock_arm64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
   s = s.write("__fern_busy_take:\n    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, .Lfern_busy_wait\n    ret\n");
@@ -10478,6 +10498,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   if (s.shared) {
     s = emit_busy_lock_arm64(s);
     s = emit_harden_start(s);
+    s = emit_shared_init_arm64(s);
   }
   s = emit_san_uaf_abort(s);
   s = emit_san_waf_abort(s);
