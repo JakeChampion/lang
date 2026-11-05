@@ -9,12 +9,14 @@ turns off the freezer of cached apps, so that the copy that is
 not in front keeps running as a second phone would. Then it:
 
 1. starts both copies, and requires the start line of each: one on port
-   47120 and one on 47121, and that each one runs its foreground service;
+   47120 and one on 47121, that each one runs its foreground service, and
+   that each one holds its wake lock;
 2. waits until both made their keys, then taps MATCH in each copy;
 3. holds the talk button of the first copy, then of the second, and requires
    that each copy transmits and the other hears it;
-4. waits 20 seconds, and requires that neither copy lost its peer and that
-   both still run with no crash in logcat;
+4. presses BACK in the second copy, waits 20 seconds, and requires that the
+   second copy went to the background, that neither copy lost its peer, and
+   that both still run with no crash in logcat;
 5. stops both copies and starts them again, and requires that each copy
    kept the identity of the other and connects with no string to compare;
 6. starts the first copy alone, opens SETTINGS, SERVER and PHONE KEYBOARD,
@@ -256,6 +258,9 @@ def run(apk, second_apk, out):
             raise Failure("a new copy already knows a phone")
     for package in (FIRST, SECOND):
         wait_for(package + " runs its foreground service", lambda log: foreground(package))
+    wait_for("both copies stay awake", lambda log: has(log, a, "walkie: awake with the screen off") and has(log, b, "walkie: awake with the screen off"))
+    if adb("shell", "dumpsys", "power").count("fern:walkie") < 2:
+        raise Failure("Android does not list a wake lock of each copy")
     wait_for("both copies make keys", lambda log: has(log, a, "walkie: keys are ready") and has(log, b, "walkie: keys are ready"))
     w, h = screen_size()
     confirm(SECOND, b, w, h)
@@ -266,6 +271,8 @@ def run(apk, second_apk, out):
     screenshot(f"{out}/first.png")
     talk(SECOND, b, a, w, h)
     screenshot(f"{out}/second.png")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    wait_for("BACK moves the second copy to the background", lambda log: has(log, b, "walkie: to the background"), 10)
     time.sleep(20)
     log = logcat()
     if pid(FIRST) != a or pid(SECOND) != b:

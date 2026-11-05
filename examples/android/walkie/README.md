@@ -18,7 +18,7 @@ Build and install the APK:
 
 ```sh
 fern -apk walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" \
-     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION \
+     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK \
      -apk-min-sdk 28 examples/android/walkie/app.fern
 adb install walkie.apk
 ```
@@ -81,6 +81,11 @@ A new mode starts the search again. The app keeps the mode and the server in
 its private files, so the next start uses them. A test of one way does not need the other
 ways turned off on the phone.
 
+BACK and HOME move the app to the background. The foreground service keeps
+the connection, and the phone still hears the other phone, also with the
+screen off. A wake lock and a Wi-Fi lock keep the CPU and the radio awake
+while the service runs. DISCONNECT in the notification ends the session.
+
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
 copy opens port 47121, and each copy sends its beacons to both ports. Show
@@ -112,7 +117,8 @@ most of the voice of the other. The two must never talk at the same time.
 
 `emulator_check.py` runs two copies of the APK on the Android emulator in CI,
 with the freezer of cached apps off. It taps MATCH in each copy, holds the
-talk button of each, and reads the result in logcat.
+talk button of each, presses BACK in one copy, and reads the result in
+logcat.
 
 ## `protocol.fern`
 

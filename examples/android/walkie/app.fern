@@ -73,6 +73,8 @@ struct App {
   // and the name while the user types it.
   server: string,
   host_edit: Option[string],
+  // The wake lock and the Wi-Fi lock, while the foreground service runs.
+  awake: Option[android.Awake],
 }
 
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
@@ -256,7 +258,7 @@ function app_main(ctx: usize): usize {
   let n: node.Node = fresh_node(notice, id_seed, pins);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -412,7 +414,8 @@ function invite(own s: App, k: i32): App {
 }
 
 // Asks for the microphone once the activity is in front. With the
-// microphone, it starts the foreground service.
+// microphone, it starts the foreground service, and keeps the CPU and the
+// Wi-Fi awake while the screen is off.
 function resumed(own s: App): App {
   let mic: boolean = android.has_permission(s.ctx, MIC);
   let nearby: string = nearby_permission(s.ctx);
@@ -420,15 +423,22 @@ function resumed(own s: App): App {
     android.request_permissions(s.ctx, [MIC, nearby]);
   }
   let serving: boolean = s.serving;
+  let awake: Option[android.Awake] = s.awake;
   if (mic && !serving) {
     serving = android.start_service(s.ctx, SERVICE);
     log.info("walkie: foreground service " + serving.to_string());
   }
-  return start_direct(App { ...s, asked: true, serving: serving, drawn: "" });
+  if (serving && awake.is_none()) {
+    awake = Some(android.stay_awake(s.ctx, "fern:walkie"));
+    log.info("walkie: awake with the screen off");
+  }
+  return start_direct(App { ...s, asked: true, serving: serving, awake: awake, drawn: "" });
 }
 
 // The keys type the name of the server while its keyboard shows. The back
-// key closes the settings screen, and otherwise leaves the session.
+// key closes the settings screen, and otherwise moves the app to the
+// background, where it still hears the other phone. DISCONNECT in the
+// notification leaves the session.
 function key(own s: App, code: i32, action: i32): App {
   if let Some(name) = s.host_edit {
     return host_key(s, code, action, name);
@@ -437,7 +447,8 @@ function key(own s: App, code: i32, action: i32): App {
     return App { ...s, menu: false, drawn: "" };
   }
   if (code == 4 && action == 1) {
-    return leave(s);
+    android.to_background(s.ctx);
+    log.info("walkie: to the background");
   }
   return s;
 }
@@ -450,7 +461,10 @@ function destroyed(own s: App): App {
   if let Some(p) = s.p2p {
     android.p2p_stop(s.ctx, p);
   }
-  return App { ...s, serving: false, p2p: None };
+  if let Some(a) = s.awake {
+    android.release_awake(s.ctx, a);
+  }
+  return App { ...s, serving: false, p2p: None, awake: None };
 }
 
 // Leaves the session and closes the app.

@@ -608,6 +608,16 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
   }
 }
 
+// Moves the task of the activity behind the other apps, as the home key
+// does. The activity and its foreground service keep running.
+pub function to_background(ctx: usize): void {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let args: usize = jni.jvalues([1 as usize]);
+  let moved: i32 = jni.call_boolean_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "moveTaskToBack", "(Z)Z"), args);
+  jni.free_buffer(args);
+}
+
 // Shows the keyboard of the system, or hides it. Its keys come to the loop
 // thread as Key events. The activity has no text field, so a keyboard that
 // sends only text, not keys, types nothing.
@@ -790,6 +800,47 @@ pub function service_command(e: usize, service: usize, intent: usize, n: Notice)
   let notification: usize = notification_of(e, service, activity, n);
   start_foreground(e, service, notification);
   return NOT_STICKY;
+}
+
+// The global references of a partial wake lock and a Wi-Fi lock.
+pub struct Awake { wake: usize, wifi: usize }
+
+// Keeps the CPU and the Wi-Fi radio awake while the screen is off, so a
+// socket keeps its datagrams on time. It needs the WAKE_LOCK permission.
+// Call it on the loop thread, and release_awake when the work stops.
+pub function stay_awake(ctx: usize, tag: string): Awake {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let service: string = "(Ljava/lang/String;)Ljava/lang/Object;";
+  let power: usize = call_object(e, obj, "getSystemService", service, [jni.new_string(e, "power")]);
+  // PowerManager.PARTIAL_WAKE_LOCK
+  let wake: usize = held(e, call_object(e, power, "newWakeLock", "(ILjava/lang/String;)Landroid/os/PowerManager$WakeLock;", [1 as usize, jni.new_string(e, tag)]));
+  let app: usize = call_object(e, obj, "getApplicationContext", "()Landroid/content/Context;", []);
+  let wifi_manager: usize = call_object(e, app, "getSystemService", service, [jni.new_string(e, "wifi")]);
+  let wifi: usize = 0 as usize;
+  if (wifi_manager != 0 as usize) {
+    // WifiManager.WIFI_MODE_FULL_HIGH_PERF
+    wifi = held(e, call_object(e, wifi_manager, "createWifiLock", "(ILjava/lang/String;)Landroid/net/wifi/WifiManager$WifiLock;", [3 as usize, jni.new_string(e, tag)]));
+  }
+  return Awake { wake: wake, wifi: wifi };
+}
+
+// Acquires the lock `lock`, and gives a global reference to it, or 0.
+function held(e: usize, lock: usize): usize {
+  if (lock == 0 as usize || !call_void(e, lock, "acquire", "()V", [])) {
+    return 0 as usize;
+  }
+  return jni.new_global_ref(e, lock);
+}
+
+pub function release_awake(ctx: usize, a: Awake): void {
+  let e: usize = env(ctx);
+  for lock in [a.wake, a.wifi] {
+    if (lock != 0 as usize) {
+      let released: boolean = call_void(e, lock, "release", "()V", []);
+      jni.delete_global_ref(e, lock);
+    }
+  }
 }
 
 function stop_self(e: usize, service: usize): void {
