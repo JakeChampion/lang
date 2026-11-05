@@ -672,7 +672,7 @@ pub function immersive(ctx: usize, on: boolean): void {
     if (on) {
       __store_i32(ctx + 40 as usize, flags | FLAG_IMMERSIVE);
     } else {
-      __store_i32(ctx + 40 as usize, flags & (0 - 1 - FLAG_IMMERSIVE));
+      __store_i32(ctx + 40 as usize, flags & 0 - 1 - FLAG_IMMERSIVE);
     }
   }
 }

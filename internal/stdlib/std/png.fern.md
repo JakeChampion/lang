@@ -131,10 +131,10 @@ pub function encode_rgba8_with_options(width: i32, height: i32, pixels: [u8], op
 // The PNG of `pixels` with `bpp` bytes for each pixel: 3 for RGB and 4 for
 // RGBA.
 function encode(width: i32, height: i32, pixels: [u8], opts: Options, bpp: i32): Result[u8[], EncodeError] {
-  if (width <= 0 || height <= 0 || width as i64 * bpp as i64 + 1 > 2147483647) {
+  if (width <= 0 || height <= 0 || width as i64 * (bpp as i64) + 1 > 2147483647) {
     return Err(InvalidDimensions);
   }
-  let stride: i64 = width as i64 * bpp as i64;
+  let stride: i64 = width as i64 * (bpp as i64);
   let bytes: i64 = (stride + 1) * (height as i64);
   if (bytes > 2147483647) {
     return Err(InvalidDimensions);
