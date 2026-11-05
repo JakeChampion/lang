@@ -116,6 +116,28 @@ func TestSelfHostProfiles(t *testing.T) {
 			}
 		})
 	}
+	// A shared object has no startup, and it carries the manifest too.
+	t.Run("shared", func(t *testing.T) {
+		lib := filepath.Join(dir, "lib.fern")
+		if err := os.WriteFile(lib, []byte("function answer(): i32 { return 42; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+			so := filepath.Join(dir, target+".so")
+			if _, errout, code := fern("-profile", "safe", "-shared", "-export", "answer", "-target", target, "-o", so, lib, cli.stdlib); code != 0 {
+				t.Fatalf("build %s: exit %d\n%s", target, code, errout)
+			}
+			out, errout, code := fern("-manifest", so)
+			if code != 0 {
+				t.Fatalf("-manifest %s: exit %d\n%s", target, code, errout)
+			}
+			for _, line := range []string{"target: " + target, "profile: safe", "shared: yes", "harden: no", "pie: no"} {
+				if !strings.Contains(out, line+"\n") {
+					t.Errorf("the manifest of the %s object lacks %q:\n%s", target, line, out)
+				}
+			}
+		}
+	})
 	t.Run("refusals", func(t *testing.T) {
 		if _, errout, code := fern("-profile", "bogus", "-target", "x86-64-linux", "-o", filepath.Join(dir, "x"), src, cli.stdlib); code != 2 || !strings.Contains(errout, "fern: -profile takes safe, hardened, diagnostic or minimal (got \"bogus\")") {
 			t.Errorf("a bad profile: exit %d, stderr %q", code, errout)

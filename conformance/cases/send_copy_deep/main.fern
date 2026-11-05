@@ -1,9 +1,10 @@
 // spec: WK-04
 // __send_copy builds a fresh tree with the same contents: a record of a
-// string, an owned array of records, a tuple, and an enum in both layouts.
-// The copy prints what the original prints, on every engine.
+// string, an owned array of records, a tuple, an enum in both layouts, and
+// a map. The copy prints what the original prints, on every engine.
 
 import "std/i32";
+import "core/map";
 
 struct Item { name: string, qty: i32, price: i64 }
 
@@ -53,5 +54,14 @@ function main(): i32 {
     let words: string[] = ["a", "bb"];
     let ws: string[] = __send_copy(words);
     print(ws[0] + ws[1]);
+    let stock: Map[string, Order] = map_new(4);
+    stock = stock.insert("first", o);
+    stock = stock.insert("second", Order { ...o, id: 8 });
+    let sc: Map[string, Order] = __send_copy(stock);
+    let counts: Map[i32, i64] = map_new(4);
+    counts = counts.insert(1, 10i64);
+    counts = counts.insert(2, 20i64);
+    let cc: Map[i32, i64] = __send_copy(counts);
+    print(sc.len().to_string() + ":" + show(sc.get_or("second", o)) + ":" + cc.get_or(2, 0i64).to_string());
     return 0;
 }

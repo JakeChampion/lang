@@ -5915,7 +5915,8 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   if (align <= 1) {
     return a;
   }
-  if (align > 16 && section != 0) {
+  // Refuse text alignment above an x86 page before materializing its padding.
+  if (align > 4096 || align > 16 && section != 0) {
     return x86_gas_bad(a, line);
   }
   if (section == 2) {

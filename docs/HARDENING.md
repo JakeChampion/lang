@@ -104,7 +104,7 @@ checks only where the hardware has them.
 
 `-profile hardened` is `-harden -pie`, `-profile diagnostic` is `-sanitize
 -backtrace -g`, `-profile minimal` is `-size`, and `-profile safe` is the
-defaults. Every native executable carries a build manifest, which
+defaults. Every native executable and shared object carries a build manifest, which
 `fern -manifest IMAGE` prints. `mitigations.manifest()` reads it at run
 time and reports the compiled, supported, requested, enabled and verified
 state of each mitigation (`docs/security/PROFILES.md`).

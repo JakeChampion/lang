@@ -1911,11 +1911,11 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
   return out.append(parser.parse_type_ref(ret_type_name));
 }
 
-pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], const_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string }
+pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], const_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string, must_consume: boolean }
 
 pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean }
 
-pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], const_params: string[], instance: string, visible_from: string[] }
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], const_params: string[], instance: string, visible_from: string[], must_consume: boolean }
 
 pub struct Scope {
   names: string[],
@@ -2089,7 +2089,7 @@ pub struct UnionTable {
 }
 
 function enum_union_sig(ed: parser.EnumDecl): UnionSig {
-  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, const_params: ed.const_params, instance: ed.instance, visible_from: ed.visible_from };
+  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, const_params: ed.const_params, instance: ed.instance, visible_from: ed.visible_from, must_consume: ed.must_consume };
 }
 
 function union_table(unions: UnionSig[]): UnionTable {
@@ -2346,28 +2346,11 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
 }
 
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
-  let b = s.bind(v.name, cell_new_settled(v.init, t, s));
+  let b = s.bind(v.name, t);
   if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
     return Scope { ...b, lit_locals: b.lit_locals.append(v.name) };
   }
   return b;
-}
-
-function cell_new_settled(init: ast.Expr, t: typeinfo.Type, s: Scope): typeinfo.Type {
-  if (!is_cell_type(t) || !is_unknown(cell_elem_type(t))) {
-    return t;
-  }
-  if let ast.ExprCall(c) = init {
-    if let ast.ExprIdent(id) = c.callee {
-      if (id.name == "cell_new" && c.args.len() == 1) {
-        let et = check_expr(c.args[0], s);
-        if (!is_unknown(et)) {
-          return t_struct_g("Cell", [et]);
-        }
-      }
-    }
-  }
-  return t;
 }
 
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
@@ -3141,6 +3124,9 @@ function tp_bound_diags(tp: string, bound: string, module: string, site: string,
 }
 
 function type_implements(s: Scope, t: typeinfo.Type, base: string, module: string): boolean {
+  if (is_send_trait(s, base)) {
+    return send_unsafe_reason(t, s, []).len() == 0;
+  }
   if let typeinfo.TypeDyn(d) = t {
     let want = parser.derive_simple_name(base);
     for tr in parser.dyn_trait_set("dyn " + d.traits) {
@@ -5395,7 +5381,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_map(t_unknown(MAP_NEW_KEY), t_unknown(MAP_NEW_VALUE));
   }
   if (!is_method && name == "cell_new") {
-    return t_struct("Cell");
+    return cell_new_type(c, s);
   }
   if (!is_method && parser.is_send_builtin(name) && c.args.len() == 1) {
     return send_builtin_type(name, c, s);
@@ -5407,20 +5393,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_string();
   }
   if (!is_method && name == "slice_unchecked") {
-    if (c.args.len() != 3) {
-      return t_unknown("slice_unchecked takes 3 arguments");
-    }
-    let sut = check_expr(c.args[0], s);
-    if (!is_integer(check_expr(c.args[1], s)) || !is_integer(check_expr(c.args[2], s))) {
-      return t_unknown("slice_unchecked bounds must be i32");
-    }
-    match (sut) {
-      typeinfo.TypeString(_) => {
-        return t_str();
-      },
-      _ => {}
-    }
-    return t_unknown("slice_unchecked: first argument must be a string");
+    return slice_unchecked_type(c, s);
   }
   let builtin_typed = builtin_result_type(recv_ty, name, is_method, c.args.len(), s);
   if (!is_unknown(builtin_typed)) {
@@ -7654,7 +7627,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       }
       ftnames = ftnames.append(parser.fn_tag_spelling(elem.type_name, elem.fn_ret, elem.fn_param_types));
     }
-    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, const_params: sd.const_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner, opaque: sd.opaque, module: sd.module });
+    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, const_params: sd.const_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner, opaque: sd.opaque, module: sd.module, must_consume: sd.must_consume });
   }
   return out;
 }
@@ -8265,7 +8238,7 @@ function collect_union_sigs(mod: parser.Module): UnionSig[] {
   while (i < mod.aliases.len()) {
     let a = mod.aliases[i];
     if (parser.alias_registers(mod, i)) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], const_params: [], instance: "", visible_from: [] });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], const_params: [], instance: "", visible_from: [], must_consume: false });
     }
     i += 1;
   }
@@ -10779,10 +10752,10 @@ function drop_lit_locals(lits: string[], names: string[]): string[] {
 
 function builtin_union_sig(name: string): Option[UnionSig] {
   if (name == "Option") {
-    return Some(UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], const_params: [], instance: "", visible_from: [] });
+    return Some(UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], const_params: [], instance: "", visible_from: [], must_consume: false });
   }
   if (name == "Result") {
-    return Some(UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], const_params: [], instance: "", visible_from: [] });
+    return Some(UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], const_params: [], instance: "", visible_from: [], must_consume: false });
   }
   return None;
 }
@@ -13073,6 +13046,9 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
 
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if (scalar_value_widens(e, want, s)) {
+    return true;
+  }
+  if (cell_new_settles(e, want, s)) {
     return true;
   }
   if let ast.ExprCall(vc) = e {
@@ -16057,8 +16033,52 @@ function checks_array_element(ty: typeinfo.Type): boolean {
   return false;
 }
 
+function slice_unchecked_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (c.args.len() != 3) {
+    return t_unknown("slice_unchecked takes 3 arguments");
+  }
+  let sut: typeinfo.Type = check_expr(c.args[0], s);
+  if (!is_integer(check_expr(c.args[1], s)) || !is_integer(check_expr(c.args[2], s))) {
+    return t_unknown("slice_unchecked bounds must be i32");
+  }
+  match (sut) {
+    typeinfo.TypeString(_) => {
+      return t_str();
+    },
+    _ => {}
+  }
+  return t_unknown("slice_unchecked: first argument must be a string");
+}
+
+function cell_new_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (c.args.len() != 1) {
+    return t_struct("Cell");
+  }
+  let et: typeinfo.Type = check_expr(c.args[0], s);
+  if (is_unknown(et)) {
+    return t_struct("Cell");
+  }
+  return t_struct_g("Cell", [et]);
+}
+
 // An array literal written straight into a destination whose elements
 // array_elem_check compares is reported element by element, not as a whole.
+// `cell_new(x)` settles to `Cell[W]` when x settles to W: the literal in
+// `let c: Cell[i64] = cell_new(2)` takes the width of the destination.
+function cell_new_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if (!is_cell_type(want) || is_unknown(cell_elem_type(want))) {
+    return false;
+  }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      if (id.name == "cell_new" && c.args.len() == 1 && !s.known(id.name)) {
+        return settles_to(c.args[0], cell_elem_type(want), s);
+      }
+    }
+  }
+  return false;
+}
+
 function elem_checked_literal(e: ast.Expr, dest: typeinfo.Type): boolean {
   if let ast.ExprArray(_) = e {
     return checks_array_element(array_elem_type_of(dest));
@@ -21487,21 +21507,21 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
       if (s.is_bound(name) && !util.has_str(seen, name)) {
         seen = seen.append(name);
         let ct = s.lookup(name);
-        let why = send_unsafe_reason(ct, ctx, []);
+        let why = send_unsafe_reason(ct, s, []);
         if (why.len() > 0) {
           out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" captures \"" + name + "\" of type " + type_label(ct) + ", which cannot cross a worker boundary: " + why, aline, acol));
         }
       }
     }
     if let typeinfo.TypeFunc(ft) = at {
-      let rwhy = send_unsafe_reason(ft.ret_type, ctx, []);
+      let rwhy = send_unsafe_reason(ft.ret_type, s, []);
       if (rwhy.len() > 0) {
         out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" returns " + type_label(ft.ret_type) + ", which cannot cross a worker boundary: " + rwhy, aline, acol));
       }
     }
     return out;
   }
-  let why = send_unsafe_reason(at, ctx, []);
+  let why = send_unsafe_reason(at, s, []);
   if (why.len() > 0) {
     out = out.append(dg_at("E100", "argument to `send` parameter \"" + pname + "\" has type " + type_label(at) + ", which cannot cross a worker boundary: " + why, aline, acol));
   }
@@ -21511,30 +21531,24 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
 // The reason a value of type t cannot be copied into another worker's heap,
 // or "" when every part of it can. A type already in seen is on the path
 // above and holds nothing its parent did not refuse. A type parameter
-// crosses only inside the standard library, where a generic body copies a
-// value its caller's `send` argument already admitted.
-function send_unsafe_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): string {
-  if (ctx.scope.fn_stdlib) {
-    if let typeinfo.TypeErased(_) = t {
-      return "";
-    }
-  }
+// crosses when its bound names `worker.Send`.
+function send_unsafe_reason(t: typeinfo.Type, s: Scope, seen: string[]): string {
   if (is_str_view(t) || is_arr_view(t)) {
     return "a view borrows another value's storage";
   }
-  return send_unsafe_nonview_reason(t, ctx, seen);
+  return send_unsafe_nonview_reason(t, s, seen);
 }
 
-function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): string {
+function send_unsafe_nonview_reason(t: typeinfo.Type, s: Scope, seen: string[]): string {
   match (t) {
     typeinfo.TypeArray(a) => {
-      return send_unsafe_reason(a.elem, ctx, seen);
+      return send_unsafe_reason(a.elem, s, seen);
     },
     typeinfo.TypeTuple(tup) => {
-      return send_unsafe_reason_list(tup.elements, ctx, seen);
+      return send_unsafe_reason_list(tup.elements, s, seen);
     },
-    typeinfo.TypeMap(_) => {
-      return "a Map does not cross a worker boundary in this release";
+    typeinfo.TypeMap(m) => {
+      return send_unsafe_reason_list([m.key, m.value], s, seen);
     },
     typeinfo.TypeFunc(_) => {
       return "a function value carries its environment";
@@ -21546,13 +21560,13 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[
       return "a resource handle is not copied";
     },
     typeinfo.TypeErased(e) => {
-      return "type parameter " + e.name + " is not known to be send-safe";
+      return send_unsafe_erased_reason(e.name, s);
     },
     typeinfo.TypeStruct(st) => {
-      return send_unsafe_struct_reason(st, ctx, seen);
+      return send_unsafe_struct_reason(st, s, seen);
     },
     typeinfo.TypeUnion(u) => {
-      return send_unsafe_union_reason(u, ctx, seen);
+      return send_unsafe_union_reason(u, s, seen);
     },
     _ => {
       return "";
@@ -21561,7 +21575,14 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[
   return "";
 }
 
-function send_unsafe_struct_reason(st: typeinfo.TypeStruct, ctx: OwnCtx, seen: string[]): string {
+function send_unsafe_erased_reason(name: string, s: Scope): string {
+  if (tp_bound_send(s, name)) {
+    return "";
+  }
+  return "type parameter " + name + " is not known to be send-safe";
+}
+
+function send_unsafe_struct_reason(st: typeinfo.TypeStruct, s: Scope, seen: string[]): string {
   if (st.name == "Cell") {
     return "a Cell is shared by aliasing";
   }
@@ -21571,40 +21592,40 @@ function send_unsafe_struct_reason(st: typeinfo.TypeStruct, ctx: OwnCtx, seen: s
   if (util.has_str(seen, st.name)) {
     return "";
   }
-  if (mc_struct_marked(st.name, ctx.structs)) {
+  let below: string[] = seen.append(st.name);
+  let Some(sig) = s.lookup_struct(st.name) else {
+    return send_unsafe_reason_list(st.args, s, below);
+  };
+  if (sig.must_consume) {
     return "a @must_consume value carries an obligation that a copy would double";
   }
-  let below = seen.append(st.name);
-  let in_args = send_unsafe_reason_list(st.args, ctx, below);
+  let in_args = send_unsafe_reason_list(st.args, s, below);
   if (in_args.len() > 0) {
     return in_args;
   }
-  let Some(sig) = ctx.scope.lookup_struct(st.name) else {
-    return "";
-  };
-  return send_unsafe_reason_list(send_field_types(sig, st.args, ctx.scope), ctx, below);
+  return send_unsafe_reason_list(send_field_types(sig, st.args, s), s, below);
 }
 
-function send_unsafe_union_reason(u: typeinfo.TypeUnion, ctx: OwnCtx, seen: string[]): string {
+function send_unsafe_union_reason(u: typeinfo.TypeUnion, s: Scope, seen: string[]): string {
   if (util.has_str(seen, u.name)) {
     return "";
   }
-  if (mc_enum_marked(u.name, ctx.enums)) {
+  let below: string[] = seen.append(u.name);
+  let Some(us) = s.lookup_union(u.name) else {
+    return send_unsafe_reason_list(u.args, s, below);
+  };
+  if (us.must_consume) {
     return "a @must_consume value carries an obligation that a copy would double";
   }
-  let below = seen.append(u.name);
-  let in_args = send_unsafe_reason_list(u.args, ctx, below);
+  let in_args = send_unsafe_reason_list(u.args, s, below);
   if (in_args.len() > 0) {
     return in_args;
   }
-  let Some(us) = ctx.scope.lookup_union(u.name) else {
-    return "";
-  };
   for v in us.variants {
-    let Some(sig) = variant_shape_sig(ctx.scope, v, u.name) else {
+    let Some(sig) = variant_shape_sig(s, v, u.name) else {
       continue;
     };
-    let why = send_unsafe_reason_list(send_field_types(sig, u.args, ctx.scope), ctx, below);
+    let why = send_unsafe_reason_list(send_field_types(sig, u.args, s), s, below);
     if (why.len() > 0) {
       return why;
     }
@@ -21625,9 +21646,31 @@ function send_field_types(sig: StructSig, args: typeinfo.Type[], s: Scope): type
   return out;
 }
 
-function send_unsafe_reason_list(ts: typeinfo.Type[], ctx: OwnCtx, seen: string[]): string {
+// A type parameter crosses the worker boundary when one of its bounds is
+// `worker.Send`.
+function tp_bound_send(s: Scope, tname: string): boolean {
+  for tr in tp_bound_traits(s, tname) {
+    if (is_send_trait(s, tr)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether the trait spelled tr is `std/worker`'s `Send`: the marker that
+// every send-safe type satisfies and that no impl declares.
+function is_send_trait(s: Scope, tr: string): boolean {
+  let idx: i32 = trait_req_idx(util.base_type_name(tr), s.trait_reqs);
+  if (idx < 0) {
+    return false;
+  }
+  let req: parser.TraitReq = s.trait_reqs[idx];
+  return req.trait_name == "Send" && req.module == "worker";
+}
+
+function send_unsafe_reason_list(ts: typeinfo.Type[], s: Scope, seen: string[]): string {
   for t in ts {
-    let why = send_unsafe_reason(t, ctx, seen);
+    let why = send_unsafe_reason(t, s, seen);
     if (why.len() > 0) {
       return why;
     }
@@ -25460,6 +25503,10 @@ function e021_diags(mod: parser.Module): util.Diag[] {
     let ir = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
       out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
+      continue;
+    }
+    if (im.trait_name == "Send" && im.trait_module == "worker") {
+      out = out.append(dg_at("E021", "impl " + im.trait_spelling + " for " + im.impl_type + ": Send is not implemented by hand; every send-safe type satisfies it", im.line, im.col));
       continue;
     }
     let known = false;

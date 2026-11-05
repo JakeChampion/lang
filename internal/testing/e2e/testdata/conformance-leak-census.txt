@@ -386,6 +386,7 @@ generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
+generic_struct_method_map_arg                        0
 generic_view_methods                                 0
 grow_past_capacity                                   0
 handle_close_unchecked_through_a_borrow              0
@@ -1276,6 +1277,7 @@ wide_shift_by_variable                               0
 wider_use_settles_a_nested_payload_literal           0
 worker_runs_in_its_own_process                       0
 worker_runs_on_the_simulation                        4
+worker_send_bound                                    0
 worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0

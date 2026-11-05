@@ -1,0 +1,17 @@
+// spec: WK-07
+// The worker.Send bound holds only for a send-safe type argument. A Cell is
+// shared by aliasing, so a generic that sends its type parameter refuses it
+// at the call.
+
+import "std/worker";
+
+function twice[T: worker.Send](x: T): (T, T) {
+    let w = worker.spawn((): T => x);
+    let y: T = w.join();
+    return (x, y);
+}
+
+function main(): i32 {
+    let p: (Cell[i32], Cell[i32]) = twice(cell_new(1));
+    return p.0.get();
+}
