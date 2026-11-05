@@ -5170,10 +5170,10 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
       }
       if (__quic_owns(conns, fd)) {
         let datagrams: (__Conns, __Flights, __H3Burst) = __h3_event(drv, conns, flights, opts, stop, host_for);
-        let answered: (__Conns, __Flights, S) = __h3_start_all_with(drv, datagrams.0, datagrams.1, datagrams.2, st, handler);
-        conns = answered.0;
-        flights = answered.1;
-        st = answered.2;
+        let h3_served: (__Conns, __Flights, S) = __h3_start_all_with(drv, datagrams.0, datagrams.1, datagrams.2, st, handler);
+        conns = h3_served.0;
+        flights = h3_served.1;
+        st = h3_served.2;
         continue;
       }
       let flown: (__Conns, __Flights, boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk, plat.pool);
@@ -5251,10 +5251,10 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
     flights = woken.1;
     if (__quic_on(conns)) {
       let ticked: (__Conns, __Flights, __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
-      let answered: (__Conns, __Flights, S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler);
-      conns = answered.0;
-      flights = answered.1;
-      st = answered.2;
+      let h3_woken: (__Conns, __Flights, S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler);
+      conns = h3_woken.0;
+      flights = h3_woken.1;
+      st = h3_woken.2;
     }
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.all.len());
     conns = ended.0;

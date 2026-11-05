@@ -104,7 +104,9 @@ resolve_stage0() {
     asset="$url/fern-selfhost-$HOST.gz"
     echo "stage0: downloading $asset" >&2
     mkdir -p "$(dirname "$stage0")"
-    curl -fsSL --retry 3 --retry-delay 2 -o "$gz" "$asset" \
+    # With no --retry-delay, curl doubles the wait after each try. A 504 from
+    # the release server can last longer than a few seconds.
+    curl -fsSL --retry 7 --retry-max-time 300 -o "$gz" "$asset" \
       || { rm -f "$gz"; die "download failed: $asset"; }
     gzip -dc "$gz" > "$tmp" || { rm -f "$gz" "$tmp"; die "$asset is not gzip data"; }
     rm -f "$gz"
