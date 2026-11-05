@@ -4626,7 +4626,7 @@ function ret(r: ast.StmtReturn, s: State): State {
   if (!semtypes.equal(s.values[value.id], s.result)) {
     return fail(s, "return type: declared " + typeinfo.spelling(s.result) + ", returns " + typeinfo.spelling(s.values[value.id]));
   }
-  value = kept_view(value);
+  value = kept_view(unaliased_view(value));
   return terminate(value.s, t_ret(value.id));
 }
 

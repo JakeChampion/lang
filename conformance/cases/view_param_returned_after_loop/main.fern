@@ -1,0 +1,35 @@
+// A view parameter that reaches a return through a loop is lent to the
+// caller, as one returned at once is.
+function after_loop(x: str): str {
+  loop {
+    break;
+  }
+  return x;
+}
+
+function after_while(x: str, n: i32): str {
+  let i = 0;
+  while (i < n) {
+    i += 1;
+  }
+  return x;
+}
+
+function identity[T](x: T): T {
+  loop {
+    if (x == x) {
+      break;
+    }
+  }
+  return x;
+}
+
+function main(): i32 {
+  let source: string = "hello";
+  let view: str = slice_unchecked(source, 1, 4);
+  print(after_loop(view));
+  print(after_while(view, 3));
+  print(identity[str](view));
+  print(identity[str]("abc"));
+  return 0;
+}
