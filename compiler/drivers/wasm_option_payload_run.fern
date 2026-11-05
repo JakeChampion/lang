@@ -18,14 +18,14 @@ function main(): i32 {
     "Result",
     "i32", "string", "Foo", "u8[]", "", "Map[string, i32]",
   ];
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < corpus.len()) {
-    let t: string = corpus[i];
-    let opt: string = wasm_ir.parse_option_payload(t);
-    let err: string = wasm_ir.parse_result_err_payload(t);
+    let t = corpus[i];
+    let opt = wasm_ir.parse_option_payload(t);
+    let err = wasm_ir.parse_result_err_payload(t);
     out = out + show(t) + " opt=" + show(opt) + " err=" + show(err) + "\n";
-    i = i + 1;
+    i += 1;
   }
   write(out);
   return 0;

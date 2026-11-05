@@ -15,7 +15,7 @@ pub function source_name(symbol: string): string {
   }
   let end = 9;
   while (end < symbol.len() && symbol[end] >= b'0' && symbol[end] <= b'9') {
-    end = end + 1;
+    end += 1;
   }
   if (end == 9 || end + 1 >= symbol.len() || symbol[end] != b'$') {
     return symbol;
@@ -26,7 +26,7 @@ pub function source_name(symbol: string): string {
 function lookup(s: Scope, name: string): string {
   let i = s.visible.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     let b = s.bindings[s.visible[i]];
     if (b.name == name) {
       return b.symbol;
@@ -42,7 +42,7 @@ function bind(s: Scope, name: string, line: i32, col: i32): Scope {
   let id = s.bindings.len();
   let symbol = "$binding$" + util.i32_to_string(id) + "$" + name;
   while (util.has_str(s.reserved, symbol)) {
-    symbol = symbol + "$";
+    symbol += "$";
   }
   let b = Binding { id: id, name: name, symbol: symbol, line: line, col: col };
   return Scope { ...s, bindings: s.bindings.append(b), visible: s.visible.append(id) };
@@ -62,13 +62,13 @@ function names(s: Scope, packed: string): string {
   let i = 0;
   while (i <= packed.len()) {
     if (i == packed.len() || packed[i] == b',' || packed[i] == b'(' || packed[i] == b')') {
-      out = out + lookup(s, slice_unchecked(packed, start, i) + "");
+      out += lookup(s, slice_unchecked(packed, start, i) + "");
       if (i < packed.len()) {
         out = out + slice_unchecked(packed, i, i + 1) + "";
       }
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

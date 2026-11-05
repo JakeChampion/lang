@@ -9,7 +9,7 @@ pub function registers(arm: boolean, width: i32): string[] {
     let i = 0;
     while (i < 31) {
       out = out.append((if (width == 64) { "x" } else { "w" }) + i.to_string());
-      i = i + 1;
+      i += 1;
     }
     return out;
   }
@@ -28,7 +28,7 @@ pub function reg(name: string, arm: boolean, width: i32): i32 {
     if (r == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -41,10 +41,10 @@ function operands(text: string): string[] {
   while (i < text.len()) {
     let c = text[i];
     if (c == b'[' || c == b'(') {
-      depth = depth + 1;
+      depth += 1;
     }
     if (c == b']' || c == b')') {
-      depth = depth - 1;
+      depth -= 1;
     }
     if (depth < 0 || depth > 1) {
       return [];
@@ -53,7 +53,7 @@ function operands(text: string): string[] {
       out = out.append(util.trim(slice_unchecked(text, start, i) + ""));
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (depth != 0) {
     return [];
@@ -246,7 +246,7 @@ pub function frame_slot(name: string, arm: boolean): boolean {
     }
     offset = offset * 10 + digit;
     remainder = (remainder * 10 + (c - b'0') as i32) % 8;
-    i = i + 1;
+    i += 1;
   }
   return remainder == 0 && (!arm || offset <= 32760);
 }

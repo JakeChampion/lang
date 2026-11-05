@@ -38,15 +38,15 @@ pub function steal_unit(): i32 {
 }
 
 pub function entry_point(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 pub function return_point(): i32 {
-  return 0 - 2;
+  return -2;
 }
 
 pub function edge_point(): i32 {
-  return 0 - 3;
+  return -3;
 }
 
 pub struct Supply { value: i32, slot: i32, mode: i32 }
@@ -68,9 +68,9 @@ pub function no_grows(): GrowTable {
 
 pub function grow_fields_of(t: GrowTable, callee: string, param: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = t.by_callee.chain(callee);
+  let i = t.by_callee.chain(callee);
   while (i >= 0) {
-    let row: GrowRow = t.rows[i];
+    let row = t.rows[i];
     if (row.callee == callee && row.param == param && row.field >= 0) {
       out = out.append(row.field);
     }
@@ -80,7 +80,7 @@ pub function grow_fields_of(t: GrowTable, callee: string, param: i32): i32[] {
 }
 
 pub function grows_buffer(t: GrowTable, callee: string, param: i32): boolean {
-  return has_row_at(t.rows, t.by_callee, callee, param, 0 - 1);
+  return has_row_at(t.rows, t.by_callee, callee, param, -1);
 }
 
 function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boolean {
@@ -102,9 +102,9 @@ pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boo
 }
 
 function rows_within(a: GrowTable, b: GrowTable, callee: string): boolean {
-  let i: i32 = a.by_callee.chain(callee);
+  let i = a.by_callee.chain(callee);
   while (i >= 0) {
-    let row: GrowRow = a.rows[i];
+    let row = a.rows[i];
     if (row.callee == callee && !has_row_at(b.rows, b.by_callee, callee, row.param, row.field)) {
       return false;
     }
@@ -121,7 +121,7 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
 }
 
 function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: i32, field: i32): boolean {
-  let i: i32 = ix.chain(callee);
+  let i = ix.chain(callee);
   while (i >= 0) {
     if (rows[i].callee == callee && rows[i].param == param && rows[i].field == field) {
       return true;
@@ -133,26 +133,26 @@ function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: 
 
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   let out: GrowRow[] = [];
-  let defs: ssa.SInst[] = p.defs;
-  let at: i32[] = ssa.block_positions(f.graph);
-  let seen: boolean[] = __alloc_bool(f.graph.nvals);
+  let defs = p.defs;
+  let at = ssa.block_positions(f.graph);
+  let seen = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (!box_update(ins)) {
         continue;
       }
-      let root: i32 = ins.args[0];
-      let field: i32 = 0 - 1;
+      let root = ins.args[0];
+      let field: i32 = -1;
       if (p.grows[ins.result] >= 0) {
         root = p.grows[ins.result];
         field = p.grow_fields[ins.result];
       }
       if (field < 0) {
-        let carried: Carried = carried_params(f, defs, root, seen);
+        let carried = carried_params(f, defs, root, seen);
         seen = carried.seen;
         for param in carried.params {
           if (!p.owned[param]) {
-            out = with_row(out, callee, defs[param].imm, 0 - 1);
+            out = with_row(out, callee, defs[param].imm, -1);
           }
         }
         continue;
@@ -163,28 +163,28 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       out = with_row(out, callee, defs[root].imm, field);
     }
   }
-  let partial: GrowTable = GrowTable { rows: table, by_callee: tix };
+  let partial = GrowTable { rows: table, by_callee: tix };
   for s in p.steps {
     if (s.point < 0) {
       continue;
     }
-    let ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
-    let scan: GrowScan = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, GrowScan { rows: out, seen: seen });
+    let ins = f.graph.blocks[at[s.block]].insts[s.point];
+    let scan = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, GrowScan { rows: out, seen: seen });
     out = scan.rows;
     seen = scan.seen;
-    let i: i32 = 0;
+    let i = 0;
     while (i < s.hand_roots.len()) {
-      let root: i32 = s.hand_roots[i];
+      let root = s.hand_roots[i];
       if (root >= 0 && defs[root].kind_tag == 6 && !p.owned[root]) {
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
           for field in grow_fields_of(partial, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
           }
-        } else if (has_row_at(table, tix, ins.str, i, 0 - 1)) {
+        } else if (has_row_at(table, tix, ins.str, i, -1)) {
           out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
         }
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
@@ -196,21 +196,21 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
   if (ins.kind_tag != ssasem.call()) {
     return scan;
   }
-  let out: GrowRow[] = scan.rows;
-  let seen: boolean[] = scan.seen;
-  let i: i32 = 0;
+  let out = scan.rows;
+  let seen = scan.seen;
+  let i = 0;
   while (i < ins.args.len()) {
-    let v: i32 = ins.args[i];
-    if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
-      let carried: Carried = carried_params(f, defs, v, seen);
+    let v = ins.args[i];
+    if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, -1)) {
+      let carried = carried_params(f, defs, v, seen);
       seen = carried.seen;
       for param in carried.params {
         if (!p.owned[param]) {
-          out = with_row(out, callee, defs[param].imm, 0 - 1);
+          out = with_row(out, callee, defs[param].imm, -1);
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return GrowScan { rows: out, seen: seen };
 }
@@ -220,15 +220,15 @@ struct Carried { params: i32[], seen: boolean[] }
 function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boolean[]): Carried {
   let out: i32[] = [];
   let work: i32[] = [v];
-  let k: i32 = 0;
+  let k = 0;
   while (k < work.len()) {
-    let w: i32 = work[k];
-    k = k + 1;
+    let w = work[k];
+    k += 1;
     if (w < 0 || seen[w]) {
       continue;
     }
     seen = seen.with(w, true);
-    let d: ssa.SInst = defs[w];
+    let d = defs[w];
     if (d.kind_tag == 6) {
       out = out.append(w);
     } else if (box_update(d)) {
@@ -245,12 +245,12 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
       }
     }
   }
-  let c: i32 = 0;
+  let c = 0;
   while (c < work.len()) {
     if (work[c] >= 0) {
       seen = seen.with(work[c], false);
     }
-    c = c + 1;
+    c += 1;
   }
   return Carried { params: out, seen: seen };
 }
@@ -258,17 +258,17 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   let table: GrowRow[] = [];
   let no_names: string[] = [];
-  let tix: util.NameIndex = util.name_index(no_names);
-  let kix: util.NameIndex = util.name_index(keys);
-  let callers: i32[][] = plan_callers(kix, funcs, plans);
+  let tix = util.name_index(no_names);
+  let kix = util.name_index(keys);
+  let callers = plan_callers(kix, funcs, plans);
   let dirty: boolean[] = [];
   while (dirty.len() < plans.len()) {
     dirty = dirty.append(true);
   }
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let i: i32 = 0;
+    let i = 0;
     while (i < plans.len()) {
       if (plans[i].ok && dirty[i]) {
         dirty = dirty.with(i, false);
@@ -277,7 +277,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
             table = table.append(row);
             tix = tix.added(row.callee);
             changed = true;
-            let at: i32 = kix.find(row.callee);
+            let at = kix.find(row.callee);
             if (at >= 0) {
               for c in callers[at] {
                 dirty = dirty.with(c, true);
@@ -286,7 +286,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
           }
         }
       }
-      i = i + 1;
+      i += 1;
     }
   }
   for row in dispatched_rows(funcs, plans, table, tix) {
@@ -303,7 +303,7 @@ pub function indirect_callee(): string {
 }
 
 pub function grow_callees(f: ssasem.Func): string[] {
-  let out: string[] = ssasem.called_names(f);
+  let out = ssasem.called_names(f);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call_value()) {
@@ -316,7 +316,7 @@ pub function grow_callees(f: ssasem.Func): string[] {
 
 function dispatched_rows(funcs: ssasem.Func[], plans: Plan[], table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   let out: GrowRow[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < plans.len()) {
     if (plans[i].ok) {
       for b in funcs[i].graph.blocks {
@@ -331,16 +331,16 @@ function dispatched_rows(funcs: ssasem.Func[], plans: Plan[], table: GrowRow[], 
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function rows_as(own out: GrowRow[], table: GrowRow[], tix: util.NameIndex, body: string, name: string, first: i32): GrowRow[] {
-  let k: i32 = tix.chain(body);
+  let k = tix.chain(body);
   while (k >= 0) {
     if (table[k].callee == body && table[k].param >= first) {
-      out = with_row(out, name, table[k].param, 0 - 1);
+      out = with_row(out, name, table[k].param, -1);
     }
     k = tix.next[k];
   }
@@ -352,20 +352,20 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
   while (out.len() < plans.len()) {
     out = out.append([]);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < plans.len()) {
     if (plans[i].ok) {
-      let at: i32[] = ssa.block_positions(funcs[i].graph);
+      let at = ssa.block_positions(funcs[i].graph);
       for s in plans[i].steps {
         if (s.point >= 0) {
-          let j: i32 = kix.find(funcs[i].graph.blocks[at[s.block]].insts[s.point].str);
+          let j = kix.find(funcs[i].graph.blocks[at[s.block]].insts[s.point].str);
           if (j >= 0 && (out[j].len() == 0 || out[j][out[j].len() - 1] != i)) {
             out = out.with(j, out[j].append(i));
           }
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -480,7 +480,7 @@ function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
 }
 
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < modes.len()) {
     if (ssasem.reference(params[i])) {
       if (modes[i] != borrow_mode() && modes[i] != counted_mode()) {
@@ -489,7 +489,7 @@ function mode_error(params: typeinfo.Type[], modes: i32[]): string {
     } else if (modes[i] != value_mode()) {
       return "scalar parameter mode";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -541,10 +541,10 @@ pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): boolean {
 }
 
 function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
-  let fits: boolean = view_fits(view, f);
-  let i: i32 = 0;
+  let fits = view_fits(view, f);
+  let i = 0;
   while (i < f.records.list.len()) {
-    let ok: boolean = false;
+    let ok = false;
     if (fits) {
       ok = view.rec_unit[i];
     } else {
@@ -553,11 +553,11 @@ function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
     if (!ok) {
       return "unsupported counted record field";
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < f.enums.len()) {
-    let ok: boolean = false;
+    let ok = false;
     if (fits) {
       ok = view.enum_unit[i];
     } else {
@@ -566,13 +566,13 @@ function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
     if (!ok) {
       return "unsupported counted variant field";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
-  let c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
+  let c = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   if (c.modes.len() > 0 && c.modes[0] == counted_mode()) {
     return "function value consumes its environment";
   }
@@ -583,7 +583,7 @@ function function_ops_error(f: ssasem.Func): string {
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.closure_new()) {
-        let why: string = closure_body_error(f, ins);
+        let why = closure_body_error(f, ins);
         if (why != "") {
           return why;
         }
@@ -605,7 +605,7 @@ function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string 
   if (!supported(f.result, f)) {
     return "unsupported counted-unit result";
   }
-  let why: string = schema_fields_error(f, view);
+  let why = schema_fields_error(f, view);
   if (why != "") {
     return why;
   }
@@ -646,7 +646,7 @@ function hands_out(kind: i32): boolean {
 }
 
 function literals(f: ssasem.Func): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == 5 || ins.kind_tag == 8) {
@@ -654,7 +654,7 @@ function literals(f: ssasem.Func): boolean[] {
       }
     }
   }
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
     for b in f.graph.blocks {
@@ -662,7 +662,7 @@ function literals(f: ssasem.Func): boolean[] {
         if (ins.kind_tag != 8 || !out[ins.result]) {
           continue;
         }
-        let lit: boolean = true;
+        let lit = true;
         for a in ins.args {
           if (a < 0 || !out[a]) {
             lit = false;
@@ -679,11 +679,11 @@ function literals(f: ssasem.Func): boolean[] {
 }
 
 function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let cells: boolean[] = ssasem.cell_borrows(f);
+  let out = __alloc_bool(f.graph.nvals);
+  let cells = ssasem.cell_borrows(f);
   for b in f.graph.blocks {
     for ins in b.insts {
-      let owns: boolean = false;
+      let owns = false;
       if (ins.kind_tag == 6) {
         owns = modes[ins.imm] == counted_mode();
       }
@@ -697,18 +697,18 @@ function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[
 }
 
 function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = owned;
+  let out = owned;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != 8 || !ssasem.reference(f.values[ins.result])) {
         continue;
       }
-      let lent: boolean = true;
+      let lent = true;
       for a in ins.args {
         if (a < 0) {
           continue;
         }
-        let r: i32 = lent_root(f, defs, a);
+        let r = lent_root(f, defs, a);
         if (defs[r].kind_tag == 8 || defs[r].kind_tag == 5) {
           continue;
         }
@@ -722,7 +722,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
       }
     }
   }
-  let grown: boolean = true;
+  let grown = true;
   while (grown) {
     grown = false;
     for b in f.graph.blocks {
@@ -743,9 +743,9 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
 }
 
 function lent_root(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
-  let at: i32 = v;
+  let at = v;
   while (part_read(defs[at].kind_tag) && defs[at].args.len() > 0) {
-    let t: typeinfo.Type = f.values[at];
+    let t = f.values[at];
     if (!ssasem.reference(t) || ssasem.holds_view(f, t) || ssasem.is_map(t)) {
       return at;
     }
@@ -771,7 +771,7 @@ function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[], de
 }
 
 function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
-  let d: ssa.SInst = defs[v];
+  let d = defs[v];
   return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
@@ -816,12 +816,12 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
       counted = counted.append(taken(f.values[arg]));
     }
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < counted.len()) {
     if (counted[i]) {
       out = out.append(Supply { value: ins.args[i], slot: i, mode: 0 });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -860,9 +860,9 @@ function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
   if (ins.kind_tag != ssasem.call() && ins.kind_tag != ssasem.call_value()) {
     return out;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < ins.args.len()) {
-    let slot_counted: boolean = false;
+    let slot_counted = false;
     for got in counted {
       if (got.slot == i) {
         slot_counted = true;
@@ -871,7 +871,7 @@ function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
     if (!slot_counted && ins.args[i] >= 0) {
       out = out.append(ins.args[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -883,8 +883,8 @@ function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][], owned: bo
   }
   for v in lent_operands(ins, counted) {
     for supply in counted {
-      let unit: i32 = supplied_unit(owned, ids, supply.value);
-      let reads: boolean = supply.value == v || has_id(deps[v], supply.value) || unit == v || has_id(deps[v], unit);
+      let unit = supplied_unit(owned, ids, supply.value);
+      let reads = supply.value == v || has_id(deps[v], supply.value) || unit == v || has_id(deps[v], unit);
       if (reads && !has_id(out, supply.value)) {
         out = out.append(supply.value);
       }
@@ -897,17 +897,17 @@ function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][], owned: bo
 // widened to its union or narrowed back), the value at the bottom of the
 // chain, whose unit it is; -1 for every other value.
 function identity_roots(defs: ssa.SInst[]): i32[] {
-  let out: i32[] = no_takes(defs.len());
-  let v: i32 = 0;
+  let out = no_takes(defs.len());
+  let v = 0;
   while (v < defs.len()) {
-    let r: i32 = v;
+    let r = v;
     while (passes_unit(defs[r])) {
       r = defs[r].args[0];
     }
     if (r != v) {
       out = out.with(v, r);
     }
-    v = v + 1;
+    v += 1;
   }
   return out;
 }
@@ -927,29 +927,29 @@ function supplied_unit(owned: boolean[], ids: i32[], v: i32): i32 {
 
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
   let out: boolean[] = [false];
-  let callee: typeinfo.Type = f.values[ins.args[0]];
-  let params: typeinfo.Type[] = ssasem.func_params(callee);
-  let i: i32 = 0;
+  let callee = f.values[ins.args[0]];
+  let params = ssasem.func_params(callee);
+  let i = 0;
   while (i < params.len()) {
     out = out.append(ssasem.func_param_own(callee, i) && ssasem.reference(f.values[ins.args[i + 1]]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
-  let c: ssasem.Contract = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
+  let c = f.calls[ssasem.find_contract_in(f.calls, ins.str)];
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ins.args.len()) {
     out = out.append(c.modes[i] == counted_mode() && ssasem.reference(f.values[ins.args[i]]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
-  let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
+  let at = ssasem.find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return [];
   }
@@ -964,29 +964,29 @@ function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
 }
 
 function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[]): Supply[] {
-  let succ: ssa.SBlock = f.graph.blocks[si];
-  let pi: i32 = 0;
+  let succ = f.graph.blocks[si];
+  let pi = 0;
   while (succ.preds[pi] != b.id) {
-    pi = pi + 1;
+    pi += 1;
   }
   let out: Supply[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for ins in succ.insts {
     if (ins.kind_tag == 8 && owned[ins.result]) {
       out = out.append(Supply { value: ins.args[pi], slot: i, mode: 0 });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.graph.nvals) {
     out = out.append(none);
-    i = i + 1;
+    i += 1;
   }
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -999,7 +999,7 @@ function definitions(f: ssasem.Func): ssa.SInst[] {
 }
 
 function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.slice() || array_view_slice(f, ins)) {
@@ -1009,20 +1009,20 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      let i: i32 = 0;
+      let i = 0;
       while (i < ins.args.len()) {
-        let view: i32 = lent_view(f, defs, ins.args[i]);
+        let view = lent_view(f, defs, ins.args[i]);
         if (view >= 0) {
-          let handed: boolean = ins.kind_tag == ssasem.call() && util.index_of_i32(ssasem.anchor_params(f.anchors, ins.str), i) >= 0;
+          let handed = ins.kind_tag == ssasem.call() && util.index_of_i32(ssasem.anchor_params(f.anchors, ins.str), i) >= 0;
           if (handed || !reads_view(f, ins, i, view != ins.args[i], defs[view].kind_tag == ssasem.arr_slice())) {
             out = out.with(view, false);
           }
         }
-        i = i + 1;
+        i += 1;
       }
     }
     if (b.term.kind_tag == 1) {
-      let ret: i32 = lent_view(f, defs, b.term.value);
+      let ret = lent_view(f, defs, b.term.value);
       if (ret >= 0) {
         out = out.with(ret, false);
       }
@@ -1044,7 +1044,7 @@ function array_view_slice(f: ssasem.Func, ins: ssa.SInst): boolean {
 function text_lens(f: ssasem.Func): i32[] {
   let out: i32[] = [];
   while (out.len() < f.graph.nvals) {
-    out = out.append(0 - 1);
+    out = out.append(-1);
   }
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -1058,12 +1058,12 @@ function text_lens(f: ssasem.Func): i32[] {
 
 function constants(f: ssasem.Func, defs: ssa.SInst[], view: SchemaView): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.graph.nvals) {
     out = out.append("");
-    i = i + 1;
+    i += 1;
   }
-  let raw: boolean[] = __alloc_bool(f.graph.nvals);
+  let raw = __alloc_bool(f.graph.nvals);
   let values = view.raw_values;
   if (!view.raw_known) {
     values = ssarawflow.reached(f, defs, raw_seeds(f, view.writes), view.raw_result).values;
@@ -1071,15 +1071,15 @@ function constants(f: ssasem.Func, defs: ssa.SInst[], view: SchemaView): string[
   for v in values {
     raw = raw.with(v, true);
   }
-  let again: boolean = true;
+  let again = true;
   while (again) {
-    let placed: boolean = false;
-    let waiting: boolean = false;
+    let placed = false;
+    let waiting = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        let built: Construction = placeable(f, raw, out, ins);
+        let built = placeable(f, raw, out, ins);
         if (built.ok) {
-          let w: BoxWords = box_words(f, defs, raw, out, ins, built.fields);
+          let w = box_words(f, defs, raw, out, ins, built.fields);
           waiting = waiting || w.waiting;
           if (w.text != "") {
             out = out.with(ins.result, w.text);
@@ -1107,7 +1107,7 @@ function raw_literal(raw: boolean[], ins: ssa.SInst): boolean {
 }
 
 function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst): Construction {
-  let built: Construction = built_fields(f, ins);
+  let built = built_fields(f, ins);
   if (!built.ok || built.fields.len() != ins.args.len() || raw_literal(raw, ins) || out[ins.result] != "") {
     return Construction { ...built, ok: false };
   }
@@ -1123,10 +1123,10 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
   if (ins.kind_tag == ssasem.bytes_new()) {
     return BoxWords { text: "|" + ins.str, waiting: false };
   }
-  let words: string = "|";
-  let j: i32 = 0;
+  let words = "|";
+  let j = 0;
   while (j < fields.len()) {
-    let w: string = constant_word(f, defs, ins.args[j], fields[j].ty);
+    let w = constant_word(f, defs, ins.args[j], fields[j].ty);
     if (w == "") {
       w = wide_word(f, defs, ins.args[j], fields[j].ty);
     }
@@ -1137,7 +1137,7 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
       w = option_word(f, defs, ins.args[j]);
     }
     if (w == "") {
-      let at: i32 = placed_box(f, defs, raw, ins.args[j]);
+      let at = placed_box(f, defs, raw, ins.args[j]);
       if (at < 0 || out[at] == "") {
         return BoxWords { text: "", waiting: at >= 0 };
       }
@@ -1147,10 +1147,10 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
       return BoxWords { text: "", waiting: false };
     }
     if (j > 0) {
-      words = words + ",";
+      words += ",";
     }
-    words = words + w;
-    j = j + 1;
+    words += w;
+    j += 1;
   }
   return BoxWords { text: words, waiting: false };
 }
@@ -1159,7 +1159,7 @@ function literal_word(defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
   }
-  let d: ssa.SInst = through_copies(defs, v);
+  let d = through_copies(defs, v);
   if (d.kind_tag != 5 || d.result < 0) {
     return "";
   }
@@ -1170,11 +1170,11 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
   }
-  let d: ssa.SInst = through_copies(defs, v);
+  let d = through_copies(defs, v);
   if (d.kind_tag != ssasem.variant_new() || d.args.len() != 0 || d.result < 0) {
     return "";
   }
-  let e: i32 = semrecords.find_enum(f.enums, f.values[d.result]);
+  let e = semrecords.find_enum(f.enums, f.values[d.result]);
   if (e < 0 || f.enums[e].layout != semrecords.layout_option()) {
     return "";
   }
@@ -1183,11 +1183,11 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
 
 function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): i32 {
   if (v < 0) {
-    return 0 - 1;
+    return -1;
   }
-  let d: ssa.SInst = through_copies(defs, v);
+  let d = through_copies(defs, v);
   if (d.result < 0 || raw_literal(raw, d) || !built_fields(f, d).ok) {
-    return 0 - 1;
+    return -1;
   }
   return d.result;
 }
@@ -1215,7 +1215,7 @@ function raw_cell_value(f: ssasem.Func, ins: ssa.SInst, writes: WriteRows): i32 
     && ssarawflow.storage(f, f.values[ins.args[1]])) {
     return ins.args[1];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function raw_seeds(f: ssasem.Func, writes: WriteRows): i32[] {
@@ -1243,7 +1243,7 @@ function raw_seeds(f: ssasem.Func, writes: WriteRows): i32[] {
 // The argument positions a call reaches raw.
 function raw_args(writes: WriteRows, ins: ssa.SInst): i32[] {
   let out: i32[] = [];
-  let raw: i32[] = ssasem.raw_array_args(ins.str);
+  let raw = ssasem.raw_array_args(ins.str);
   if (raw.len() > 0) {
     for k in raw {
       if (k < ins.args.len()) {
@@ -1252,11 +1252,11 @@ function raw_args(writes: WriteRows, ins: ssa.SInst): i32[] {
     }
     return out;
   }
-  let row: i32 = writes.rows.find(ins.str);
+  let row = writes.rows.find(ins.str);
   if (row < 0) {
     return out;
   }
-  let flags: boolean[] = writes.params[row];
+  let flags = writes.params[row];
   for i in 0..ins.args.len() {
     if (i < flags.len() && flags[i]) {
       out = out.append(i);
@@ -1385,11 +1385,11 @@ pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
   for f in funcs {
     raw = raw.append(empty);
   }
-  let out: WriteRows = WriteRows { ...no_writes(), inputs: index, raw: raw };
-  let cursor: i32 = 0;
+  let out = WriteRows { ...no_writes(), inputs: index, raw: raw };
+  let cursor = 0;
   while (cursor < pending.jobs.len()) {
     let i = pending.jobs[cursor];
-    cursor = cursor + 1;
+    cursor += 1;
     pending = WriteQueue { ...pending, queued: pending.queued.with(i, false) };
     let seeds = raw_seeds(funcs[i], out);
     let result = out.results.has(keys[i]);
@@ -1429,7 +1429,7 @@ pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
 }
 
 function written_params(f: ssasem.Func, defs: ssa.SInst[], reached: i32[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nparams);
+  let out = __alloc_bool(f.graph.nparams);
   for v in reached {
     let d = defs[v];
     if (d.kind_tag == 6 && d.imm >= 0 && d.imm < out.len() && ssasem.reference(f.values[v])) {
@@ -1472,7 +1472,7 @@ pub function write_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): bo
 }
 
 function written_row(rows: WriteRows, name: string): boolean[] {
-  let i: i32 = rows.rows.find(name);
+  let i = rows.rows.find(name);
   if (i < 0) {
     return [];
   }
@@ -1483,7 +1483,7 @@ struct Construction { ok: boolean, fields: semrecords.Field[] }
 
 function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
   let none: semrecords.Field[] = [];
-  let t: typeinfo.Type = f.values[ins.result];
+  let t = f.values[ins.result];
   if (ins.kind_tag == ssasem.bytes_new()) {
     return Construction { ok: true, fields: none };
   }
@@ -1497,13 +1497,13 @@ function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
     }
   }
   if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
-    let at: i32 = semrecords.find(f.records, t);
+    let at = semrecords.find(f.records, t);
     if (at >= 0) {
       return Construction { ok: true, fields: f.records.list[at].fields };
     }
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    let e: i32 = semrecords.find_enum(f.enums, t);
+    let e = semrecords.find_enum(f.enums, t);
     if (e >= 0 && f.enums[e].layout == semrecords.layout_variant()) {
       for v in f.enums[e].variants {
         if (v.name == ins.str) {
@@ -1519,8 +1519,8 @@ function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Ty
   if (!narrow_scalar(t)) {
     return "";
   }
-  let d: ssa.SInst = through_copies(defs, v);
-  let arg: i32 = constant_cast_arg(d);
+  let d = through_copies(defs, v);
+  let arg = constant_cast_arg(d);
   if (arg >= 0) {
     return cast_word(f, defs, arg, t);
   }
@@ -1540,7 +1540,7 @@ function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   if (!ssasem.is_u8(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
     return "";
   }
-  let src: ssa.SInst = through_copies(defs, v);
+  let src = through_copies(defs, v);
   if (!integer_literal(f, src)) {
     return "";
   }
@@ -1564,7 +1564,7 @@ function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag != 1 || ins.result < 0 || ins.result >= f.values.len()) {
     return false;
   }
-  let from: typeinfo.Type = f.values[ins.result];
+  let from = f.values[ins.result];
   return ssasem.is_integer(from) || ssasem.is_char(from);
 }
 
@@ -1582,8 +1582,8 @@ function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   if (!ssasem.is_wide(t)) {
     return "";
   }
-  let d: ssa.SInst = through_copies(defs, v);
-  let neg: boolean = false;
+  let d = through_copies(defs, v);
+  let neg = false;
   if (d.kind_tag == 10 && d.str == "-" && d.args.len() == 1 && d.args[0] >= 0) {
     neg = true;
     d = through_copies(defs, d.args[0]);
@@ -1592,12 +1592,12 @@ function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   if (d.kind_tag != 1) {
     return "";
   }
-  let bits: i64 = d.imm as i64;
+  let bits = d.imm as i64;
   if (d.str != "") {
     bits = util.lit_to_i64(d.str);
   }
   if (neg) {
-    bits = 0 - bits;
+    bits = -bits;
   }
   return util.i64_to_string(bits);
 }
@@ -1607,7 +1607,7 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
     return None;
   }
   budget.set(budget.get() - 1);
-  let d: ssa.SInst = through_copies(defs, v);
+  let d = through_copies(defs, v);
   if (d.result < 0 || !ssasem.is_float(f.values[d.result])) {
     return None;
   }
@@ -1645,8 +1645,8 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
         return None;
       }
     }
-    let a: f64 = f64_from_bits(left);
-    let b: f64 = f64_from_bits(right);
+    let a = f64_from_bits(left);
+    let b = f64_from_bits(right);
     let value: f64 = 0.0;
     if (d.str == "+") {
       value = a + b;
@@ -1674,11 +1674,11 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
 }
 
 function wide_literal(f: ssasem.Func, defs: ssa.SInst[], d: ssa.SInst): ssa.SInst {
-  let arg: i32 = constant_cast_arg(d);
+  let arg = constant_cast_arg(d);
   if (arg < 0) {
     return d;
   }
-  let src: ssa.SInst = through_copies(defs, arg);
+  let src = through_copies(defs, arg);
   if (integer_literal(f, src)) {
     return src;
   }
@@ -1686,24 +1686,24 @@ function wide_literal(f: ssasem.Func, defs: ssa.SInst[], d: ssa.SInst): ssa.SIns
 }
 
 function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
-  let d: ssa.SInst = defs[v];
-  let hops: i32 = 0;
+  let d = defs[v];
+  let hops = 0;
   while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
     d = defs[d.args[0]];
-    hops = hops + 1;
+    hops += 1;
   }
   return d;
 }
 
 function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
-  let k: ssa.SInst = defs[d.args[d.args.len() - 1]];
+  let k = defs[d.args[d.args.len() - 1]];
   if (k.kind_tag != 1 || k.imm < 0) {
     return "";
   }
   if (d.kind_tag == 10) {
     return util.i32_to_string(0 - k.imm);
   }
-  let zero: ssa.SInst = defs[d.args[0]];
+  let zero = defs[d.args[0]];
   if (d.kind_tag != 9 || zero.kind_tag != 1 || zero.imm != 0) {
     return "";
   }
@@ -1714,12 +1714,12 @@ function small_decimal(text: string): string {
   if (text.len() == 0 || text.len() > 9) {
     return "";
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < text.len()) {
     if (text[i] < b'0' || text[i] > b'9') {
       return "";
     }
-    i = i + 1;
+    i += 1;
   }
   return text;
 }
@@ -1733,20 +1733,20 @@ function narrow_scalar(t: typeinfo.Type): boolean {
 
 function lent_view(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (v < 0 || v >= defs.len()) {
-    return 0 - 1;
+    return -1;
   }
-  let d: ssa.SInst = defs[v];
+  let d = defs[v];
   if (d.kind_tag == ssasem.slice() || array_view_slice(f, d)) {
     return v;
   }
   if (d.kind_tag == ssasem.str_as() && d.args.len() == 1 && d.args[0] >= 0 && defs[d.args[0]].kind_tag == ssasem.slice()) {
     return d.args[0];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, array: boolean): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == 9 || k == ssasem.append_range() || k == ssasem.length() || k == ssasem.str_index() || k == ssasem.str_bytes()) {
     return true;
   }
@@ -1764,7 +1764,7 @@ function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, arra
       return at == 1;
     }
     if (k == ssasem.call()) {
-      let modes: i32[] = callee_modes(f, ins);
+      let modes = callee_modes(f, ins);
       return at < modes.len() && modes[at] == borrow_mode();
     }
     return false;
@@ -1805,12 +1805,12 @@ function used_after(a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
   if (ssalive.live_out_has(a.flow, bi, w) || ssasem.read_after(a.uses, bi, pos, w)) {
     return true;
   }
-  let k: i32 = a.anchored.start[w];
+  let k = a.anchored.start[w];
   while (k < a.anchored.start[w + 1]) {
     if (ssasem.read_after(a.uses, bi, pos, a.anchored.at[k])) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -1819,13 +1819,13 @@ function read_after_direct(a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, po
   if (ssalive.live_out_has(direct, bi, v) || ssasem.read_after(a.uses, bi, pos, v)) {
     return true;
   }
-  let k: i32 = a.anchored.start[v];
+  let k = a.anchored.start[v];
   while (k < a.anchored.start[v + 1]) {
-    let w: i32 = a.anchored.at[k];
+    let w = a.anchored.at[k];
     if (has_id(a.parents[w], v) && ssasem.read_after(a.uses, bi, pos, w)) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -1835,12 +1835,12 @@ function other_field_get(ins: ssa.SInst, root: i32, field: i32): boolean {
 }
 
 function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, v: i32): i32 {
-  let none: i32 = 0 - 1;
-  let get: ssa.SInst = defs[v];
+  let none: i32 = -1;
+  let get = defs[v];
   if (get.kind_tag != ssasem.record_get()) {
     return none;
   }
-  let root: i32 = get.args[0];
+  let root = get.args[0];
   if (!is_record(f.values[root]) || semtypes.is_env(f.values[root]) || ssasem.has_finalizer(f, f.values[root])) {
     return none;
   }
@@ -1865,8 +1865,8 @@ function takeable_root(kind: i32): boolean {
 }
 
 function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
-  let none: i32 = 0 - 1;
-  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let none: i32 = -1;
+  let ins = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.tuple_get()) {
     return none;
   }
@@ -1876,7 +1876,7 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (ins.result < 0 || ins.result >= f.graph.nvals) {
     return none;
   }
-  let root: i32 = ins.args[0];
+  let root = ins.args[0];
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
     return none;
   }
@@ -1894,23 +1894,23 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
 
 function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): i32[] {
   let out: i32[] = [];
-  let vi: i32 = 0;
+  let vi = 0;
   while (vi < f.graph.nvals) {
-    out = out.append(0 - 1);
-    vi = vi + 1;
+    out = out.append(-1);
+    vi += 1;
   }
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let pos: i32 = 0;
+    let pos = 0;
     while (pos < f.graph.blocks[bi].insts.len()) {
-      let field: i32 = tuple_take_field(f, a, owned, defs, bi, pos);
+      let field = tuple_take_field(f, a, owned, defs, bi, pos);
       if (field >= 0) {
         out = out.with(f.graph.blocks[bi].insts[pos].result, field);
       }
 
-      pos = pos + 1;
+      pos += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return out;
 }
@@ -1918,28 +1918,28 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean, likely: boolean[] }
 
 function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[], sup: SupplyTable, forced: boolean[]): Units {
-  let pt: PayloadTakes = payload_takes(f, a, base, defs, __alloc_bool(f.graph.nvals));
-  let payloads: boolean[] = pt.taken;
-  let likely: boolean[] = pt.likely;
-  let owned: boolean[] = base;
-  let i: i32 = 0;
+  let pt = payload_takes(f, a, base, defs, __alloc_bool(f.graph.nvals));
+  let payloads = pt.taken;
+  let likely = pt.likely;
+  let owned = base;
+  let i = 0;
   while (i < payloads.len()) {
     if (payloads[i]) {
       owned = owned.with(i, true);
     }
-    i = i + 1;
+    i += 1;
   }
-  let takes: i32[] = tuple_takes(f, a, owned, defs);
-  let flows: Flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), retainable_reads(f, defs)), firm: [] };
-  let held: boolean[] = held_elements(f, a, owned, defs, sup, flows);
-  let asked: boolean[] = twin_holds(f, a, defs, owned, held, flows.bare);
-  let past: PayloadTakes = takes_past_holds(f, a, owned, asked, defs);
-  let own_uses: ssalive.Flow = flows.bare;
+  let takes = tuple_takes(f, a, owned, defs);
+  let flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), retainable_reads(f, defs)), firm: [] };
+  let held = held_elements(f, a, owned, defs, sup, flows);
+  let asked = twin_holds(f, a, defs, owned, held, flows.bare);
+  let past = takes_past_holds(f, a, owned, asked, defs);
+  let own_uses = flows.bare;
   if (count_true(past.taken) > 0) {
     own_uses = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
   }
-  let added: boolean = false;
-  let grew: boolean = true;
+  let added = false;
+  let grew = true;
   while (grew) {
     grew = false;
     i = 0;
@@ -1952,7 +1952,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
         added = true;
         grew = true;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   if (added) {
@@ -1964,11 +1964,11 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     if (held[i] && (payloads[i] || takes[i] >= 0)) {
       held = held.with(i, false);
     }
-    i = i + 1;
+    i += 1;
   }
-  let parents: i32[][] = a.parents;
-  let deps: i32[][] = a.dependencies;
-  let reflow: boolean = pt.crossing || count_true(held) > 0;
+  let parents = a.parents;
+  let deps = a.dependencies;
+  let reflow = pt.crossing || count_true(held) > 0;
   i = 0;
   while (i < takes.len()) {
     if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || defs[i].kind_tag == ssasem.tuple_get() || option_layout(f, f.values[defs[i].args[0]]))) {
@@ -1985,7 +1985,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
       parents = parents.with(i, up);
       deps = deps.with(i, chain);
     }
-    i = i + 1;
+    i += 1;
   }
   if (reflow) {
     deps = through_takes(parents, deps, takes, held, payloads);
@@ -1994,26 +1994,26 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
 }
 
 function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], held: boolean[], defs: ssa.SInst[]): PayloadTakes {
-  let none: PayloadTakes = PayloadTakes { taken: __alloc_bool(f.graph.nvals), crossing: false, likely: __alloc_bool(f.graph.nvals) };
+  let none = PayloadTakes { taken: __alloc_bool(f.graph.nvals), crossing: false, likely: __alloc_bool(f.graph.nvals) };
   if (count_true(held) == 0) {
     return none;
   }
-  let parents: i32[][] = a.parents;
-  let deps: i32[][] = a.dependencies;
-  let w: i32 = 0;
+  let parents = a.parents;
+  let deps = a.dependencies;
+  let w = 0;
   while (w < held.len()) {
     if (held[w]) {
       parents = parents.with(w, []);
       deps = deps.with(w, []);
     }
-    w = w + 1;
+    w += 1;
   }
   deps = through_takes(parents, deps, no_takes(f.graph.nvals), held, __alloc_bool(f.graph.nvals));
-  let flow: ssalive.Flow = ssadeps.analyze_checked(f.graph, deps, a.facts);
+  let flow = ssadeps.analyze_checked(f.graph, deps, a.facts);
   if (!flow.ok) {
     return none;
   }
-  let cut: ssasem.Analysis = ssasem.Analysis { ...a, parents: parents, dependencies: deps, flow: flow, anchored: ssasem.anchored_of(deps, f.graph.nvals) };
+  let cut = ssasem.Analysis { ...a, parents: parents, dependencies: deps, flow: flow, anchored: ssasem.anchored_of(deps, f.graph.nvals) };
   return payload_takes(f, cut, either(owned, held), defs, held);
 }
 
@@ -2021,7 +2021,7 @@ function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
 // slot then still counts held there, so a take of r never finds held unique.
 function anchor_live_at(f: ssasem.Func, a: ssasem.Analysis, live: ssalive.Flow, held: i32, r: i32): boolean {
   for bi in 0..f.graph.blocks.len() {
-    let pos: i32 = 0;
+    let pos = 0;
     for ins in f.graph.blocks[bi].insts {
       if (ins.result == r) {
         for w in a.dependencies[held] {
@@ -2031,18 +2031,18 @@ function anchor_live_at(f: ssasem.Func, a: ssasem.Analysis, live: ssalive.Flow, 
         }
         return false;
       }
-      pos = pos + 1;
+      pos += 1;
     }
   }
   return false;
 }
 
 function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[], bare: ssalive.Flow): boolean[] {
-  let out: boolean[] = held;
-  let reads: i32[][] = field_reads(f, owned);
-  let bi: i32 = 0;
+  let out = held;
+  let reads = field_reads(f, owned);
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let pos: i32 = 0;
+    let pos = 0;
     for ins in f.graph.blocks[bi].insts {
       if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.result >= 0 && ins.args[0] < reads.len()) {
         for first in reads[ins.args[0]] {
@@ -2051,31 +2051,31 @@ function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned
           }
         }
       }
-      pos = pos + 1;
+      pos += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return out;
 }
 
 function holds_off(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bare: ssalive.Flow, first: i32, r: i32, bi: i32, pos: i32, own out: boolean[]): boolean[] {
-  let k: i32 = a.anchored.start[first];
+  let k = a.anchored.start[first];
   while (k < a.anchored.start[first + 1]) {
-    let w: i32 = a.anchored.at[k];
+    let w = a.anchored.at[k];
     if (w != r && !out[w] && retainable_read(f, defs, w) && (ssalive.live_out_has(bare, bi, w) || ssasem.read_after(a.uses, bi, pos, w))) {
       out = out.with(w, true);
     }
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function field_reads(f: ssasem.Func, owned: boolean[]): i32[][] {
-  let out: i32[][] = empty_chains(f.graph.nvals);
+  let out = empty_chains(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.result >= 0) {
-        let root: i32 = ins.args[0];
+        let root = ins.args[0];
         if (root >= 0 && root < out.len() && root < owned.len() && owned[root]) {
           out = out.with(root, out[root].append(ins.result));
         }
@@ -2094,46 +2094,46 @@ function empty_chains(n: i32): i32[][] {
 }
 
 function either(a: boolean[], b: boolean[]): boolean[] {
-  let out: boolean[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len() && i < out.len()) {
     if (b[i]) {
       out = out.with(i, true);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function slot_held(defs: ssa.SInst[], held: boolean[], r: i32): boolean {
-  let d: ssa.SInst = defs[r];
-  let w: i32 = 0;
+  let d = defs[r];
+  let w = 0;
   while (w < held.len()) {
-    let h: ssa.SInst = defs[w];
+    let h = defs[w];
     if (held[w] && w != r && h.kind_tag == d.kind_tag && h.imm == d.imm && h.str == d.str && h.args.len() > 0 && h.args[0] == d.args[0]) {
       return true;
     }
-    w = w + 1;
+    w += 1;
   }
   return false;
 }
 
 function no_takes(n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
-  let i: i32 = 0;
+  let out = __alloc_i32(n);
+  let i = 0;
   while (i < n) {
-    out = out.with(i, 0 - 1);
-    i = i + 1;
+    out = out.with(i, -1);
+    i += 1;
   }
   return out;
 }
 
 function through_takes(parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {
-  let out: i32[][] = deps;
-  let w: i32 = 0;
+  let out = deps;
+  let w = 0;
   while (w < deps.len()) {
     out = out.with(w, reach_through(parents, deps, takes, held, payloads, w, []));
-    w = w + 1;
+    w += 1;
   }
   return out;
 }
@@ -2158,7 +2158,7 @@ function reach_through(parents: i32[][], deps: i32[][], takes: i32[], held: bool
 }
 
 function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssasem.Analysis {
-  let any: boolean = units.reflow;
+  let any = units.reflow;
   for h in units.held {
     if (h) {
       any = true;
@@ -2167,28 +2167,28 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
   if (!any) {
     return ssasem.Analysis { ...a, parents: units.parents, dependencies: units.deps, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
   }
-  let flow: ssalive.Flow = ssadeps.analyze_checked(f.graph, units.deps, a.facts);
+  let flow = ssadeps.analyze_checked(f.graph, units.deps, a.facts);
   return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
 }
 
 function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
-  let k: i32 = defs[w].kind_tag;
+  let k = defs[w].kind_tag;
   if (k != ssasem.array_get() && k != ssasem.record_get() && k != ssasem.tuple_get() && !boxed_payload_read(f, defs, w)) {
     return false;
   }
-  let t: typeinfo.Type = f.values[w];
+  let t = f.values[w];
   return ssasem.reference(t) && !ssasem.is_view(t);
 }
 
 // A member union lays the member in the union's own box, so a count on that
 // read would count the union.
 function boxed_payload_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
-  let d: ssa.SInst = defs[w];
+  let d = defs[w];
   return d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && d.args[0] >= 0 && !member_union(f, f.values[d.args[0]]);
 }
 
 function retainable_reads(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   for w in 0..f.graph.nvals {
     if (retainable_read(f, defs, w)) {
       out = out.with(w, true);
@@ -2199,11 +2199,11 @@ function retainable_reads(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
 
 function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[], flows: Flows, s: i32, bi: i32, pos: i32, si: i32, args: i32[]): i32[] {
   let out: i32[] = [];
-  let k: i32 = a.anchored.start[s];
+  let k = a.anchored.start[s];
   while (k < a.anchored.start[s + 1]) {
-    let w: i32 = a.anchored.at[k];
+    let w = a.anchored.at[k];
     if (w != s && !held[w] && !owned[w] && retainable_read(f, defs, w)) {
-      let live: boolean = false;
+      let live = false;
       if (flows.firm.len() > 0) {
         live = in_hand(a, flows, w, bi, pos, si) || si < 0 && (has_id(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
       } else if (si >= 0) {
@@ -2215,7 +2215,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
         out = out.append(w);
       }
     }
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
@@ -2224,13 +2224,13 @@ function in_hand(a: ssasem.Analysis, flows: Flows, w: i32, bi: i32, pos: i32, si
   if (live_past(a, flows.bare, w, bi, pos, si)) {
     return true;
   }
-  let k: i32 = a.anchored.start[w];
+  let k = a.anchored.start[w];
   while (k < a.anchored.start[w + 1]) {
-    let x: i32 = a.anchored.at[k];
+    let x = a.anchored.at[k];
     if (x != w && !flows.firm[x] && live_past(a, a.flow, x, bi, pos, si)) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -2247,20 +2247,20 @@ function live_past(a: ssasem.Analysis, fl: ssalive.Flow, v: i32, bi: i32, pos: i
 // lends_view_of says an argument of the call is a view anchored on w,
 // lent beside the record w was read from.
 function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32): boolean {
-  let k: i32 = a.anchored.start[w];
+  let k = a.anchored.start[w];
   while (k < a.anchored.start[w + 1]) {
-    let x: i32 = a.anchored.at[k];
+    let x = a.anchored.at[k];
     if (has_id(args, x) && ssasem.holds_view(f, f.values[x])) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
 
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable, flows: Flows): boolean[] {
-  let consumed: boolean[] = consumed_values(f, owned, sup);
-  let loose: boolean[] = holds_settled(f, a, defs, flows, consumed, owned, sup);
+  let consumed = consumed_values(f, owned, sup);
+  let loose = holds_settled(f, a, defs, flows, consumed, owned, sup);
   if (count_true(loose) == 0) {
     return loose;
   }
@@ -2268,9 +2268,9 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
 }
 
 function holds_settled(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], sup: SupplyTable): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let before: i32 = 0 - 1;
-  let count: i32 = 0;
+  let out = __alloc_bool(f.graph.nvals);
+  let before: i32 = -1;
+  let count = 0;
   while (count != before) {
     before = count;
     out = hold_pass(f, a, defs, flows, consumed, owned, out, sup);
@@ -2284,19 +2284,19 @@ function holds_settled(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], fl
 struct Flows { direct: ssalive.Flow, bare: ssalive.Flow, firm: boolean[] }
 
 function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], own out: boolean[], sup: SupplyTable): boolean[] {
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let b: ssa.SBlock = f.graph.blocks[bi];
-    let pos: i32 = 0;
+    let b = f.graph.blocks[bi];
+    let pos = 0;
     while (pos < b.insts.len()) {
-      let ins: ssa.SInst = b.insts[pos];
+      let ins = b.insts[pos];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
         out = hold_at(f, a, defs, flows, consumed, owned, out, ins, bi, pos, sup.at(bi, pos));
       }
-      pos = pos + 1;
+      pos += 1;
     }
     out = hold_along(f, a, defs, owned, flows, out, b, bi);
-    bi = bi + 1;
+    bi += 1;
   }
   return out;
 }
@@ -2304,13 +2304,13 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows:
 function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32, supplies: Supply[]): boolean[] {
   for got in supplies {
     if (owned[got.value] || out[got.value]) {
-      let past: i32[] = outliving(f, a, defs, owned, out, flows, got.value, bi, pos, 0 - 1, ins.args);
+      let past = outliving(f, a, defs, owned, out, flows, got.value, bi, pos, -1, ins.args);
       out = mark_all(out, past);
     }
   }
-  let donor: i32 = ssasem.update_base(ins);
+  let donor = ssasem.update_base(ins);
   if (donor >= 0 && donor < owned.len() && owned[donor]) {
-    for w in outliving(f, a, defs, owned, out, flows, donor, bi, pos, 0 - 1, []) {
+    for w in outliving(f, a, defs, owned, out, flows, donor, bi, pos, -1, []) {
       if (ssalive.live_out_has(flows.bare, bi, w) || ssasem.read_after(a.uses, bi, pos, w)) {
         out = out.with(w, true);
       }
@@ -2320,7 +2320,7 @@ function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: F
     if (v == donor) {
       continue;
     }
-    for w in outliving(f, a, defs, owned, out, flows, v, bi, pos, 0 - 1, []) {
+    for w in outliving(f, a, defs, owned, out, flows, v, bi, pos, -1, []) {
       if (wanted(a.anchored, consumed, w)) {
         out = out.with(w, true);
       }
@@ -2331,12 +2331,12 @@ function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: F
 
 function hold_along(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], flows: Flows, own out: boolean[], b: ssa.SBlock, bi: i32): boolean[] {
   for which in 0..successor_count(b) {
-    let target: i32 = ssa.successor_id(b.term, which);
-    let si: i32 = ssalive.position(a.flow, target);
-    let along: Supply[] = edge_supplies(f, b, si, owned);
+    let target = ssa.successor_id(b.term, which);
+    let si = ssalive.position(a.flow, target);
+    let along = edge_supplies(f, b, si, owned);
     for got in along {
       if (owned[got.value] || out[got.value]) {
-        let past: i32[] = outliving(f, a, defs, owned, out, flows, got.value, bi, 0, si, []);
+        let past = outliving(f, a, defs, owned, out, flows, got.value, bi, 0, si, []);
         out = mark_all(out, past);
       }
     }
@@ -2352,10 +2352,10 @@ function mark_all(own flags: boolean[], ids: i32[]): boolean[] {
 }
 
 pub function count_true(flags: boolean[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for flag in flags {
     if (flag) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
@@ -2395,10 +2395,10 @@ function supplied(supplies: Supply[], v: i32): boolean {
 }
 
 function consumed_values(f: ssasem.Func, owned: boolean[], sup: SupplyTable): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let bi: i32 = 0;
+  let out = __alloc_bool(f.graph.nvals);
+  let bi = 0;
   for b in f.graph.blocks {
-    let pos: i32 = 0;
+    let pos = 0;
     for ins in b.insts {
       if (ins.kind_tag == 8) {
         if (owned[ins.result]) {
@@ -2409,12 +2409,12 @@ function consumed_values(f: ssasem.Func, owned: boolean[], sup: SupplyTable): bo
           out = out.with(got.value, true);
         }
       }
-      pos = pos + 1;
+      pos += 1;
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       out = out.with(b.term.value, true);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return out;
 }
@@ -2423,12 +2423,12 @@ function wanted(anchored: ssasem.Anchored, consumed: boolean[], w: i32): boolean
   if (consumed[w]) {
     return true;
   }
-  let k: i32 = anchored.start[w];
+  let k = anchored.start[w];
   while (k < anchored.start[w + 1]) {
     if (consumed[anchored.at[k]]) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -2438,12 +2438,12 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 }
 
 function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
-  let none: i32 = 0 - 1;
-  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
-  let field: boolean = ins.kind_tag == ssasem.record_get();
-  let element: boolean = ins.kind_tag == ssasem.tuple_get();
-  let slot: boolean = ins.kind_tag == ssasem.array_get();
-  let arity: i32 = 1;
+  let none: i32 = -1;
+  let ins = f.graph.blocks[bi].insts[pos];
+  let field = ins.kind_tag == ssasem.record_get();
+  let element = ins.kind_tag == ssasem.tuple_get();
+  let slot = ins.kind_tag == ssasem.array_get();
+  let arity = 1;
   if (slot) {
     arity = 2;
   }
@@ -2453,7 +2453,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
   if (ins.result < 0 || ins.result >= f.graph.nvals) {
     return none;
   }
-  let root: i32 = ins.args[0];
+  let root = ins.args[0];
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
     return none;
   }
@@ -2476,7 +2476,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
 }
 
 function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
-  let box: typeinfo.Type = f.values[root];
+  let box = f.values[root];
   if (ssasem.has_finalizer(f, box)) {
     return false;
   }
@@ -2496,40 +2496,40 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
 }
 
 function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
-  let root: i32 = take.args[0];
-  let b: ssa.SBlock = f.graph.blocks[bi];
+  let root = take.args[0];
+  let b = f.graph.blocks[bi];
   if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a, defs, bi, root, take))) {
     return true;
   }
-  let stores: i32 = 0;
+  let stores = 0;
   let kept: i32[] = [];
-  let u: i32 = ssasem.first_use_in(a.uses, root, bi);
+  let u = ssasem.first_use_in(a.uses, root, bi);
   while (u < a.uses.start[root + 1] && a.uses.block[u] == bi) {
     if (a.uses.at[u] > pos) {
       if (a.uses.kinds[u] == ssasem.term_use()) {
         return true;
       }
-      let later: ssa.SInst = b.insts[a.uses.at[u]];
+      let later = b.insts[a.uses.at[u]];
       if (same_slot_with(defs, later, take)) {
         if (a.uses.slot[u] == 0) {
-          stores = stores + 1;
+          stores += 1;
           if (stores > 1) {
             return true;
           }
         }
       } else if (!other_slot_get(later, take)) {
-        let through: i32[] = kept_store_back(a, defs, b, bi, later, a.uses.slot[u], take, 0);
+        let through = kept_store_back(a, defs, b, bi, later, a.uses.slot[u], take, 0);
         if (through.len() == 0) {
           return true;
         }
-        stores = stores + 1;
+        stores += 1;
         if (stores > 1) {
           return true;
         }
         kept = util.append_all(kept, through);
       }
     }
-    u = u + 1;
+    u += 1;
   }
   if (own_root) {
     for arg in b.insts[pos].args {
@@ -2538,13 +2538,13 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
       }
     }
   }
-  let k: i32 = a.anchored.start[root];
+  let k = a.anchored.start[root];
   while (k < a.anchored.start[root + 1]) {
-    let w: i32 = a.anchored.at[k];
+    let w = a.anchored.at[k];
     if (reaches_root(a, defs, take, root, through_take, w) && used_after(a, bi, pos, w) && reaches_past_kept(a, w, root, kept, __alloc_bool(a.parents.len()))) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -2554,17 +2554,17 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
   if (depth > 3 || update.kind_tag != ssasem.record_new() || ssasem.update_base(update) < 0 || take.kind_tag != ssasem.array_get()) {
     return none;
   }
-  let rec: i32 = update.result;
+  let rec = update.result;
   if (rec < 0 || ssalive.live_out_has(a.flow, bi, rec)) {
     return none;
   }
-  let field: i32 = 0 - 1;
-  let u: i32 = ssasem.first_use_in(a.uses, rec, bi);
+  let field: i32 = -1;
+  let u = ssasem.first_use_in(a.uses, rec, bi);
   while (u < a.uses.start[rec + 1] && a.uses.block[u] == bi) {
     if (a.uses.kinds[u] == ssasem.term_use()) {
       return none;
     }
-    let later: ssa.SInst = b.insts[a.uses.at[u]];
+    let later = b.insts[a.uses.at[u]];
     if (later.kind_tag != ssasem.record_get() || later.args[0] != rec) {
       return none;
     }
@@ -2574,10 +2574,10 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
       }
       field = later.result;
     }
-    u = u + 1;
+    u += 1;
   }
-  let rebuilt: i32 = 0 - 1;
-  let at: i32 = 0;
+  let rebuilt: i32 = -1;
+  let at = 0;
   while (at < b.insts.len()) {
     if (ssasem.update_base(b.insts[at]) == rec) {
       if (rebuilt >= 0) {
@@ -2585,26 +2585,26 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
       }
       rebuilt = at;
     }
-    at = at + 1;
+    at += 1;
   }
   if (field < 0 || rebuilt < 0 || ssalive.live_out_has(a.flow, bi, field)) {
     return none;
   }
-  let final: ssa.SInst = b.insts[rebuilt];
+  let final = b.insts[rebuilt];
   if (k >= final.args.len()) {
     return none;
   }
-  let n: i32 = 0;
-  let store: i32 = 0 - 1;
+  let n = 0;
+  let store: i32 = -1;
   u = ssasem.first_use_in(a.uses, field, bi);
   while (u < a.uses.start[field + 1] && a.uses.block[u] == bi) {
-    n = n + 1;
+    n += 1;
     if (a.uses.kinds[u] == ssasem.term_use()) {
       return none;
     }
-    let later: ssa.SInst = b.insts[a.uses.at[u]];
+    let later = b.insts[a.uses.at[u]];
     if (a.uses.at[u] == rebuilt && final.args[k] == field) {
-      let through: i32[] = kept_store_back(a, defs, b, bi, final, k, take, depth + 1);
+      let through = kept_store_back(a, defs, b, bi, final, k, take, depth + 1);
       if (through.len() == 0) {
         return none;
       }
@@ -2613,7 +2613,7 @@ function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, b
     if (later.kind_tag == ssasem.with() && later.args.len() == 3 && a.uses.slot[u] == 0 && same_index(defs, later.args[1], take.args[1])) {
       store = later.result;
     }
-    u = u + 1;
+    u += 1;
   }
   if (n != 1 || store < 0 || final.args[k] != store) {
     return none;
@@ -2644,10 +2644,10 @@ function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, ro
   if (w < 0 || w == root || through_take && w == take.result) {
     return false;
   }
-  let single: boolean = a.parents[w].len() <= 1;
-  let prev: i32 = w;
-  let hop: i32 = 0 - 1;
-  let found: boolean = false;
+  let single = a.parents[w].len() <= 1;
+  let prev = w;
+  let hop: i32 = -1;
+  let found = false;
   for dep in a.dependencies[w] {
     if (dep == root) {
       found = true;
@@ -2668,21 +2668,21 @@ function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, ro
 }
 
 function named_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, v: i32, take: ssa.SInst): boolean {
-  let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
+  let seen = __alloc_bool(f.graph.blocks.len());
   let work: i32[] = [bi];
-  let next: i32 = 0;
+  let next = 0;
   while (next < work.len()) {
-    let at: i32 = work[next];
-    next = next + 1;
+    let at = work[next];
+    next += 1;
     if (!ssalive.live_out_has(a.flow, at, v)) {
       continue;
     }
-    let from: ssa.SBlock = f.graph.blocks[at];
+    let from = f.graph.blocks[at];
     for which in 0..successor_count(from) {
-      let id: i32 = ssa.successor_id(from.term, which);
-      let k: i32 = ssalive.position(a.flow, id);
+      let id = ssa.successor_id(from.term, which);
+      let k = ssalive.position(a.flow, id);
       if (k >= 0) {
-        let blk: ssa.SBlock = f.graph.blocks[k];
+        let blk = f.graph.blocks[k];
         if (phi_reads_on(a.uses, blk, k, from.id, v)) {
           return true;
         }
@@ -2711,29 +2711,29 @@ function block_defines(blk: ssa.SBlock, v: i32): boolean {
 }
 
 function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32): boolean {
-  let i: i32 = ssasem.first_use_in(u, v, k);
+  let i = ssasem.first_use_in(u, v, k);
   while (i < u.start[v + 1] && u.block[i] == k) {
     if (u.kinds[i] == 8 && u.slot[i] < blk.preds.len() && blk.preds[u.slot[i]] == pred) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function block_reads(u: ssasem.Uses, defs: ssa.SInst[], blk: ssa.SBlock, k: i32, v: i32, take: ssa.SInst): boolean {
-  let i: i32 = ssasem.first_use_in(u, v, k);
+  let i = ssasem.first_use_in(u, v, k);
   while (i < u.start[v + 1] && u.block[i] == k) {
     if (u.kinds[i] == ssasem.term_use()) {
       return true;
     }
     if (u.kinds[i] != 8) {
-      let later: ssa.SInst = blk.insts[u.at[i]];
+      let later = blk.insts[u.at[i]];
       if (!other_slot_get(later, take) && !(u.slot[i] == 0 && same_slot_with(defs, later, take))) {
         return true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -2750,8 +2750,8 @@ function same_index(defs: ssa.SInst[], x: i32, y: i32): boolean {
   if (x < 0 || y < 0 || x >= defs.len() || y >= defs.len()) {
     return false;
   }
-  let a: ssa.SInst = defs[x];
-  let b: ssa.SInst = defs[y];
+  let a = defs[x];
+  let b = defs[y];
   return a.kind_tag == 1 && b.kind_tag == 1 && a.imm == b.imm && a.str == b.str;
 }
 
@@ -2787,7 +2787,7 @@ function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]
   if (seen[v]) {
     return true;
   }
-  let d: ssa.SInst = defs[v];
+  let d = defs[v];
   if (d.kind_tag != ssasem.variant_new() && d.kind_tag != 8) {
     return false;
   }
@@ -2795,7 +2795,7 @@ function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]
     return false;
   }
   if (d.kind_tag == 8) {
-    let next: boolean[] = seen.with(v, true);
+    let next = seen.with(v, true);
     for x in d.args {
       if (!sole_box(a, defs, x, next)) {
         return false;
@@ -2807,11 +2807,11 @@ function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]
 
 pub function shell_root(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (ins.kind_tag != ssasem.variant_get() || ins.result < 0 || ins.result >= p.payloads.len() || !p.payloads[ins.result]) {
-    return 0 - 1;
+    return -1;
   }
-  let root: i32 = ins.args[0];
+  let root = ins.args[0];
   if (!(ssasem.is_view(f.values[ins.result]) || unknown_layout(f, f.values[root])) || !sole_box(p.unit_analysis, p.defs, root, __alloc_bool(f.graph.nvals))) {
-    return 0 - 1;
+    return -1;
   }
   return root;
 }
@@ -2831,7 +2831,7 @@ function is_union(t: typeinfo.Type): boolean {
 }
 
 function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
-  let at: i32 = semrecords.find_enum(f.enums, t);
+  let at = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return true;
   }
@@ -2847,20 +2847,20 @@ struct PayloadTakes { taken: boolean[], crossing: boolean, likely: boolean[] }
 // A held value is likely the frame's alone too: it was retained because the
 // box it was read from went to a callee, which is usually done with it.
 function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], held: boolean[]): PayloadTakes {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let crossing: boolean = false;
-  let own: boolean[] = owned;
-  let spec: boolean[] = either(likely_unique(f, defs), held);
-  let grown: boolean = true;
+  let out = __alloc_bool(f.graph.nvals);
+  let crossing = false;
+  let own = owned;
+  let spec = either(likely_unique(f, defs), held);
+  let grown = true;
   while (grown) {
     grown = false;
-    let bi: i32 = 0;
+    let bi = 0;
     while (bi < f.graph.blocks.len()) {
-      let pos: i32 = 0;
+      let pos = 0;
       while (pos < f.graph.blocks[bi].insts.len()) {
-        let v: i32 = f.graph.blocks[bi].insts[pos].result;
+        let v = f.graph.blocks[bi].insts[pos].result;
         if (v >= 0 && v < out.len() && !out[v]) {
-          let root: i32 = payload_root(f, a, own, spec, defs, bi, pos);
+          let root = payload_root(f, a, own, spec, defs, bi, pos);
           if (root >= 0) {
             out = out.with(v, true);
             own = own.with(v, true);
@@ -2869,26 +2869,26 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
             grown = true;
           }
         }
-        pos = pos + 1;
+        pos += 1;
       }
-      bi = bi + 1;
+      bi += 1;
     }
   }
   return PayloadTakes { taken: out, crossing: crossing, likely: spec };
 }
 
 function member_union(f: ssasem.Func, t: typeinfo.Type): boolean {
-  let e: i32 = semrecords.find_enum(f.enums, t);
+  let e = semrecords.find_enum(f.enums, t);
   return e >= 0 && f.enums[e].layout == semrecords.layout_member();
 }
 
 function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      let k: i32 = ins.kind_tag;
+      let k = ins.kind_tag;
       if (ins.result >= 0 && ins.result < out.len()) {
-        let yes: boolean = k == 7 || k == 8;
+        let yes = k == 7 || k == 8;
         if (k == 6) {
           yes = ins.str == "own";
         } else if (!yes && k < 0) {
@@ -2898,7 +2898,7 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
       }
     }
   }
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
     for b in f.graph.blocks {
@@ -2918,16 +2918,16 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
 }
 
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
-  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let ins = f.graph.blocks[bi].insts[pos];
   if (string_append(f, ins)) {
-    let root: i32 = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
+    let root = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
     if (root >= 0 && owned[root]) {
       return root;
     }
-    return 0 - 1;
+    return -1;
   }
   if (!box_update(ins)) {
-    return 0 - 1;
+    return -1;
   }
   return projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
 }
@@ -2947,46 +2947,46 @@ function is_owned_array(t: typeinfo.Type): boolean {
 }
 
 pub function occurrences(xs: i32[], v: i32): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for x in xs {
     if (x == v) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
 }
 
 function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
-  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let ins = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.call()) {
     return s;
   }
-  let out: Supply[] = s.supplies;
-  let i: i32 = 0;
+  let out = s.supplies;
+  let i = 0;
   while (i < out.len()) {
-    let v: i32 = out[i].value;
+    let v = out[i].value;
     if (out[i].mode == retain_unit() && defs[v].kind_tag == ssasem.record_get() && !owned[v] && occurrences(ins.args, v) == 1) {
-      let root: i32 = projection_root(f, a, owned, defs, bi, pos, v);
+      let root = projection_root(f, a, owned, defs, bi, pos, v);
       if (root >= 0 && owned[root]) {
         out = out.with(i, Supply { ...out[i], mode: steal_unit() });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Step { ...s, supplies: out };
 }
 
 function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
-  let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+  let ins = f.graph.blocks[bi].insts[pos];
   if (ins.kind_tag != ssasem.call()) {
     return s;
   }
   let roots: i32[] = [];
   let fields: i32[] = [];
   for v in ins.args {
-    let root: i32 = 0 - 1;
-    let field: i32 = 0 - 1;
-    let lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(a, bi, pos, v);
+    let root: i32 = -1;
+    let field: i32 = -1;
+    let lent_param = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(a, bi, pos, v);
     if (is_array(f.values[v]) && !ssasem.is_text(f.values[v]) && occurrences(ins.args, v) == 1) {
       if (lent_param) {
         root = v;
@@ -3009,18 +3009,18 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
 
 function choose_ids(s: Step, supplies: Supply[], dead: i32[], owned: boolean[], ids: i32[], pinned: i32[]): Step {
   let moved: i32[] = [];
-  let selected: Supply[] = supplies;
-  let i: i32 = selected.len() - 1;
+  let selected = supplies;
+  let i = selected.len() - 1;
   while (i >= 0) {
-    let item: Supply = selected[i];
-    let unit: i32 = supplied_unit(owned, ids, item.value);
-    let mode: i32 = retain_unit();
+    let item = selected[i];
+    let unit = supplied_unit(owned, ids, item.value);
+    let mode = retain_unit();
     if (owned[unit] && has_id(dead, unit) && !has_id(moved, unit) && !has_id(pinned, item.value)) {
       mode = move_unit();
       moved = moved.append(unit);
     }
     selected = selected.with(i, Supply { ...item, mode: mode });
-    i = i - 1;
+    i -= 1;
   }
   let drops: i32[] = [];
   for v in dead {
@@ -3042,10 +3042,10 @@ function has_id(xs: i32[], v: i32): boolean {
 
 function insert_sorted(own xs: i32[], v: i32): i32[] {
   xs = xs.append(v);
-  let i: i32 = xs.len() - 1;
+  let i = xs.len() - 1;
   while (i > 0 && xs[i - 1] > v) {
     xs = xs.with(i, xs[i - 1]);
-    i = i - 1;
+    i -= 1;
   }
   return xs.with(i, v);
 }
@@ -3062,16 +3062,16 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
 // array goes whole to a write in place: a callee's grow position or an update
 // here. The array itself must not be read again, only reads taken off it before.
 pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   if (!p.ok) {
     return out;
   }
-  let a: ssasem.Analysis = p.unit_analysis;
+  let a = p.unit_analysis;
   let at_block: i32[] = [];
   let at_pos: i32[] = [];
   let at_value: i32[] = [];
   for bi in 0..f.graph.blocks.len() {
-    let insts: ssa.SInst[] = f.graph.blocks[bi].insts;
+    let insts = f.graph.blocks[bi].insts;
     for pos in 0..insts.len() {
       for v in grown_params(f, p, grows, insts[pos]) {
         if (!ssasem.read_after(a.uses, bi, pos, v)) {
@@ -3085,16 +3085,16 @@ pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
   if (at_value.len() == 0) {
     return out;
   }
-  let asked: boolean[] = __alloc_bool(f.graph.nvals);
+  let asked = __alloc_bool(f.graph.nvals);
   for v in at_value {
     asked = asked.with(v, true);
   }
-  let bare: ssalive.Flow = ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), asked);
+  let bare = ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), asked);
   for k in 0..at_value.len() {
-    let bi: i32 = at_block[k];
-    let v: i32 = at_value[k];
+    let bi = at_block[k];
+    let v = at_value[k];
     if (!ssalive.live_out_has(bare, bi, v)) {
-      let kids: i32[] = outliving(f, a, p.defs, p.owned, out, Flows { direct: a.flow, bare: bare, firm: [] }, v, bi, at_pos[k], 0 - 1, f.graph.blocks[bi].insts[at_pos[k]].args);
+      let kids = outliving(f, a, p.defs, p.owned, out, Flows { direct: a.flow, bare: bare, firm: [] }, v, bi, at_pos[k], -1, f.graph.blocks[bi].insts[at_pos[k]].args);
       out = mark_all(out, kids);
     }
   }
@@ -3109,9 +3109,9 @@ function grown_params(f: ssasem.Func, p: Plan, grows: GrowTable, ins: ssa.SInst)
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  let modes: i32[] = callee_modes(f, ins);
+  let modes = callee_modes(f, ins);
   for i in 0..ins.args.len() {
-    let v: i32 = ins.args[i];
+    let v = ins.args[i];
     if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i)) {
       out = out.append(v);
     }
@@ -3135,38 +3135,38 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   if (!semantic.ok) {
     return bad(semantic.why);
   }
-  let analysis: ssasem.Analysis = semantic;
-  let why: string = contract_error(f, modes, view);
+  let analysis = semantic;
+  let why = contract_error(f, modes, view);
   if (why != "") {
     return bad(why);
   }
-  let defs: ssa.SInst[] = definitions(f);
-  let owned: boolean[] = owned_values(f, modes, defs);
-  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  let sup: SupplyTable = supply_table(f);
-  let units: Units = units_of(f, owned, analysis, defs, sup, forced);
+  let defs = definitions(f);
+  let owned = owned_values(f, modes, defs);
+  let reachable = ssadeps.reachable_blocks(f.graph);
+  let sup = supply_table(f);
+  let units = units_of(f, owned, analysis, defs, sup, forced);
   owned = units.owned;
-  let takes: i32[] = units.takes;
+  let takes = units.takes;
   analysis = units_analysis(f, analysis, units);
   if (!analysis.ok) {
     return bad(analysis.why);
   }
-  let ids: i32[] = identity_roots(defs);
+  let ids = identity_roots(defs);
   let grows: i32[] = [];
   let grow_fields: i32[] = [];
-  let kept: boolean[] = analysis.flow.none;
-  let entry_kept: boolean[] = analysis.flow.none;
-  let vi0: i32 = 0;
+  let kept = analysis.flow.none;
+  let entry_kept = analysis.flow.none;
+  let vi0 = 0;
   while (vi0 < f.graph.nvals) {
-    grows = grows.append(0 - 1);
-    grow_fields = grow_fields.append(0 - 1);
-    vi0 = vi0 + 1;
+    grows = grows.append(-1);
+    grow_fields = grow_fields.append(-1);
+    vi0 += 1;
   }
   let steps: Step[] = [];
-  let live: boolean[] = analysis.flow.none;
-  let bi: i32 = 0;
+  let live = analysis.flow.none;
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let b: ssa.SBlock = f.graph.blocks[bi];
+    let b = f.graph.blocks[bi];
     if (reachable[bi]) {
       let term_uses: i32[] = [];
       if (b.term.kind_tag == 1) {
@@ -3175,16 +3175,16 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
       if (b.term.kind_tag == 3) {
         term_uses = use_ids(b.term.cond, analysis.dependencies);
       }
-      let touched: i32[] = ssalive.live_out_ids(analysis.flow, bi);
+      let touched = ssalive.live_out_ids(analysis.flow, bi);
       for v in term_uses {
         touched = touched.append(v);
       }
       for v in touched {
         live = live.with(v, true);
       }
-      let pos: i32 = b.insts.len() - 1;
+      let pos = b.insts.len() - 1;
       while (pos >= 0) {
-        let ins: ssa.SInst = b.insts[pos];
+        let ins = b.insts[pos];
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
           let dead: i32[] = [];
           if (box_update(ins) && live[ins.args[0]]) {
@@ -3210,15 +3210,15 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
               }
             }
           }
-          let supplies: Supply[] = sup.at(bi, pos);
-          steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, 0 - 1), supplies, dead, owned, ids, lent_owners(ins, supplies, analysis.dependencies, owned, ids)))));
-          let root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
+          let supplies = sup.at(bi, pos);
+          steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, -1), supplies, dead, owned, ids, lent_owners(ins, supplies, analysis.dependencies, owned, ids)))));
+          let root = field_grow_root(f, analysis, owned, defs, bi, pos);
           if (root >= 0) {
             grows = grows.with(ins.result, root);
             grow_fields = grow_fields.with(ins.result, defs[ins.args[0]].imm);
           }
         }
-        pos = pos - 1;
+        pos -= 1;
       }
       let entry_dead: i32[] = [];
       for ins in b.insts {
@@ -3229,26 +3229,26 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
       for v in touched {
         live = live.with(v, false);
       }
-      steps = steps.append(choose_ids(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned, ids, []));
+      steps = steps.append(choose_ids(step(b.id, entry_point(), -1), [], entry_dead, owned, ids, []));
       if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-        steps = steps.append(choose_ids(step(b.id, return_point(), 0 - 1), return_supplies(f, b), term_uses, owned, ids, []));
+        steps = steps.append(choose_ids(step(b.id, return_point(), -1), return_supplies(f, b), term_uses, owned, ids, []));
       }
       for which in 0..successor_count(b) {
-        let target: i32 = ssa.successor_id(b.term, which);
-        let si: i32 = ssalive.position(analysis.flow, target);
+        let target = ssa.successor_id(b.term, which);
+        let si = ssalive.position(analysis.flow, target);
         entry_kept = entry_kept_of(f, analysis, b, si, entry_kept);
-        let dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
+        let dead = ssalive.out_not_in(analysis.flow, bi, si);
         steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned, ids, []));
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let literal: boolean[] = literals(f);
+  let literal = literals(f);
   why = view_retain_error(f, steps, literal, defs);
   if (why != "") {
     return bad(why);
   }
-  let consts: string[] = constants(f, defs, view);
+  let consts = constants(f, defs, view);
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 
@@ -3267,39 +3267,39 @@ pub function without_constant_drops(p: Plan): Plan {
 }
 
 function checked_writes(f: ssasem.Func): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
-    let i: i32 = 0;
+    let i = 0;
     while (i < b.insts.len()) {
-      let ins: ssa.SInst = b.insts[i];
+      let ins = b.insts[i];
       if (ins.kind_tag == ssasem.with() && read_before(b, i, ins.args[0], ins.args[1])) {
         out = out.with(ins.result, true);
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
 }
 
 function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
-  let j: i32 = 0;
+  let j = 0;
   while (j < end) {
-    let r: ssa.SInst = b.insts[j];
+    let r = b.insts[j];
     if (r.kind_tag == ssasem.array_get() && r.args.len() == 2 && r.args[0] == arr && r.args[1] == index) {
       return true;
     }
-    j = j + 1;
+    j += 1;
   }
   return false;
 }
 
 function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, lent: boolean[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let sole: boolean[] = sole_boxes(f, steps, consts, fresh, 0 - 1, lent);
-  let at: i32[] = ssa.block_positions(f.graph);
+  let out = __alloc_bool(f.graph.nvals);
+  let sole = sole_boxes(f, steps, consts, fresh, -1, lent);
+  let at = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
-      let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
+      let ins = f.graph.blocks[at[st.block]].insts[st.point];
       if ((box_update(ins) || unique_check(ins)) && sole[ins.args[0]] && moved_at(st, ins.args[0], 0)) {
         out = out.with(ins.result, true);
       }
@@ -3316,72 +3316,72 @@ pub function no_fresh(): FreshRows {
 }
 
 function fresh_through(fresh: FreshRows, name: string): i32 {
-  let i: i32 = fresh.rows.find(name);
+  let i = fresh.rows.find(name);
   if (i < 0) {
-    return 0 - 2;
+    return -2;
   }
   return fresh.through[i];
 }
 
 pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): FreshRows {
-  let fresh: FreshRows = no_fresh();
-  let named: boolean[] = __alloc_bool(keys.len());
-  let check: boolean[] = __alloc_bool(keys.len());
-  let i: i32 = 0;
+  let fresh = no_fresh();
+  let named = __alloc_bool(keys.len());
+  let check = __alloc_bool(keys.len());
+  let i = 0;
   while (i < keys.len()) {
     check = check.with(i, plans[i].ok && returns_arrays(funcs[i]));
-    i = i + 1;
+    i += 1;
   }
-  let grew: boolean = true;
+  let grew = true;
   while (grew) {
     grew = false;
     let added: string[] = [];
     i = 0;
     while (i < keys.len()) {
       if (check[i] && !named[i]) {
-        let through: i32 = sole_result(funcs[i], plans[i], fresh);
-        if (through >= 0 - 1) {
+        let through = sole_result(funcs[i], plans[i], fresh);
+        if (through >= -1) {
           named = named.with(i, true);
           fresh = FreshRows { rows: fresh.rows.added(keys[i]), through: fresh.through.append(through) };
           added = added.append(keys[i]);
           grew = true;
         }
       }
-      i = i + 1;
+      i += 1;
     }
-    let ix: util.NameIndex = util.name_index(added);
+    let ix = util.name_index(added);
     i = 0;
     while (grew && i < keys.len()) {
       check = check.with(i, check[i] && !named[i] && calls_any(funcs[i], ix));
-      i = i + 1;
+      i += 1;
     }
   }
   return fresh;
 }
 
 function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows): i32 {
-  let lent: boolean[] = lent_withs(f, p.defs, p.owned, p.kept);
-  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, 0 - 1, lent))) {
-    return 0 - 1;
+  let lent = lent_withs(f, p.defs, p.owned, p.kept);
+  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, -1, lent))) {
+    return -1;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < f.graph.nparams) {
     if (is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, k, lent))) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
-  return 0 - 2;
+  return -2;
 }
 
 function returns_arrays(f: ssasem.Func): boolean {
-  let returns: i32 = 0;
+  let returns = 0;
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1) {
       if (b.term.value < 0 || !is_array(f.values[b.term.value])) {
         return false;
       }
-      returns = returns + 1;
+      returns += 1;
     }
   }
   return returns > 0;
@@ -3400,7 +3400,7 @@ pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows): Plan {
   if (!p.ok) {
     return p;
   }
-  let seeded: boolean = calls_any(f, fresh.rows);
+  let seeded = calls_any(f, fresh.rows);
   if (!seeded && !p.fresh_seeded) {
     return p;
   }
@@ -3449,27 +3449,27 @@ function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
     return 0;
   }
   if (ins.kind_tag == ssasem.call() && fresh.through.len() > 0) {
-    let through: i32 = fresh_through(fresh, ins.str);
+    let through = fresh_through(fresh, ins.str);
     if (through >= 0) {
       return through;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, seed: i32, lent: boolean[]): boolean[] {
-  let sole: boolean[] = __alloc_bool(f.graph.nvals);
+  let sole = __alloc_bool(f.graph.nvals);
   if (seed >= 0) {
     sole = sole.with(seed, true);
   }
-  let pass: i32[] = util.minus_ones(f.graph.nvals);
-  let links: SoleLinks = SoleLinks { from: [], to: [], phi: [] };
+  let pass = util.minus_ones(f.graph.nvals);
+  let links = SoleLinks { from: [], to: [], phi: [] };
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result < 0) {
         continue;
       }
-      let k: i32 = passed_slot(ins, fresh);
+      let k = passed_slot(ins, fresh);
       if (k >= 0) {
         pass = pass.with(ins.result, k);
         links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result), phi: links.phi.append(false) };
@@ -3486,7 +3486,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       }
     }
   }
-  let at: i32[] = ssa.block_positions(f.graph);
+  let at = ssa.block_positions(f.graph);
   for st in steps {
     for supply in st.supplies {
       if (supply.value >= 0 && supply.mode != move_unit()) {
@@ -3494,15 +3494,15 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       }
     }
     if (st.point >= 0) {
-      let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
-      let i: i32 = 0;
+      let ins = f.graph.blocks[at[st.block]].insts[st.point];
+      let i = 0;
       while (i < ins.args.len()) {
-        let a: i32 = ins.args[i];
-        let reads: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length()) || ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str);
+        let a = ins.args[i];
+        let reads = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length()) || ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str);
         if (a >= 0 && !reads && !moved_at(st, a, i)) {
           sole = sole.with(a, false);
         }
-        i = i + 1;
+        i += 1;
       }
       if (ins.result >= 0 && pass[ins.result] >= 0 && !moved_at(st, ins.args[pass[ins.result]], pass[ins.result])) {
         sole = sole.with(ins.result, false);
@@ -3515,14 +3515,14 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
 struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
 
 function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let seen: boolean[] = __alloc_bool(f.graph.nvals);
+  let out = __alloc_bool(f.graph.nvals);
+  let seen = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != ssasem.with() || kept[ins.result]) {
         continue;
       }
-      let carried: Carried = carried_params(f, defs, ins.args[0], seen);
+      let carried = carried_params(f, defs, ins.args[0], seen);
       seen = carried.seen;
       for param in carried.params {
         if (!(param < owned.len() && owned[param])) {
@@ -3535,13 +3535,13 @@ function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: b
 }
 
 function settled(own sole: boolean[], links: SoleLinks): boolean[] {
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let i: i32 = 0;
+    let i = 0;
     while (i < links.from.len()) {
-      let a: i32 = links.from[i];
-      let v: i32 = links.to[i];
+      let a = links.from[i];
+      let v = links.to[i];
       if (links.phi[i] && sole[a] != sole[v]) {
         sole = sole.with(a, false).with(v, false);
         changed = true;
@@ -3549,7 +3549,7 @@ function settled(own sole: boolean[], links: SoleLinks): boolean[] {
         sole = sole.with(v, false);
         changed = true;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return sole;
@@ -3563,22 +3563,22 @@ function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolea
     return ins.args.len() == 0 || consts[ins.result] == "";
   }
   if (ins.kind_tag == ssasem.call()) {
-    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == 0 - 1;
+    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str) || fresh_through(fresh, ins.str) == -1;
   }
   return ins.kind_tag == ssasem.array_reserve();
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
-  let succ: ssa.SBlock = f.graph.blocks[si];
-  let pi: i32 = 0;
+  let succ = f.graph.blocks[si];
+  let pi = 0;
   while (succ.preds[pi] != b.id) {
-    pi = pi + 1;
+    pi += 1;
   }
   for ins in succ.insts {
     if (ins.kind_tag != 8) {
       continue;
     }
-    let v: i32 = ins.args[pi];
+    let v = ins.args[pi];
     if (v >= 0 && v < f.graph.nparams && ssalive.live_in_has(a.flow, si, v)) {
       out = out.with(v, true);
     }
@@ -3602,31 +3602,31 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): (boolean[], i32) {
-  let state: boolean[] = __alloc_bool(f.graph.nvals);
-  let held: i32 = 0;
+  let state = __alloc_bool(f.graph.nvals);
+  let held = 0;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v] && !state[v]) {
       state = state.with(v, true);
-      held = held + 1;
+      held += 1;
     }
   }
   for ins in f.graph.blocks[bi].insts {
     if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result] && !state[ins.result]) {
       state = state.with(ins.result, true);
-      held = held + 1;
+      held += 1;
     }
   }
   return (state, held);
 }
 
 function holds_invariant(state: boolean[], held: i32, f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
-  let want: i32 = 0;
+  let want = 0;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
       if (!state[v]) {
         return false;
       }
-      want = want + 1;
+      want += 1;
     }
   }
   for ins in f.graph.blocks[bi].insts {
@@ -3634,25 +3634,25 @@ function holds_invariant(state: boolean[], held: i32, f: ssasem.Func, bi: i32, o
       if (!state[ins.result]) {
         return false;
       }
-      want = want + 1;
+      want += 1;
     }
   }
   return held == want;
 }
 
 function same_bits(a: boolean[], b: boolean[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function step_index(p: Plan): i32[][] {
-  let by_block: i32[][] = steps_by_block(p);
+  let by_block = steps_by_block(p);
   let out: i32[][] = [];
   for steps in by_block {
     out = out.append(block_step_row(p, steps));
@@ -3661,64 +3661,64 @@ pub function step_index(p: Plan): i32[][] {
 }
 
 function steps_by_block(p: Plan): i32[][] {
-  let top: i32 = 0 - 1;
+  let top: i32 = -1;
   for s in p.steps {
     if (s.block > top) {
       top = s.block;
     }
   }
-  let count: i32[] = __alloc_i32(top + 1);
+  let count = __alloc_i32(top + 1);
   for s in p.steps {
     if (s.block >= 0) {
       count = count.with(s.block, count[s.block] + 1);
     }
   }
   let out: i32[][] = [];
-  let b: i32 = 0;
+  let b = 0;
   while (b <= top) {
     out = out.append(__alloc_i32(count[b]));
-    b = b + 1;
+    b += 1;
   }
-  let fill: i32[] = __alloc_i32(top + 1);
-  let i: i32 = 0;
+  let fill = __alloc_i32(top + 1);
+  let i = 0;
   while (i < p.steps.len()) {
     b = p.steps[i].block;
     if (b >= 0) {
-      let row: i32[] = out[b];
+      let row = out[b];
       out = out.with(b, []);
       out = out.with(b, row.with(fill[b], i));
       fill = fill.with(b, fill[b] + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function tabled_step(s: Step): boolean {
-  return s.target == 0 - 1 && s.point >= return_point();
+  return s.target == -1 && s.point >= return_point();
 }
 
 function block_step_row(p: Plan, steps: i32[]): i32[] {
-  let n: i32 = 0;
+  let n = 0;
   for i in steps {
     if (tabled_step(p.steps[i]) && p.steps[i].point - return_point() >= n) {
       n = p.steps[i].point - return_point() + 1;
     }
   }
-  let m: i32 = 0;
+  let m = 0;
   for i in steps {
     if (!tabled_step(p.steps[i])) {
-      m = m + 1;
+      m += 1;
     }
   }
-  let row: i32[] = util.minus_ones(1 + n + m);
+  let row = util.minus_ones(1 + n + m);
   row = row.with(0, n);
-  let k: i32 = 1 + n;
+  let k = 1 + n;
   for i in steps {
-    let s: Step = p.steps[i];
+    let s = p.steps[i];
     if (!tabled_step(s)) {
       row = row.with(k, i);
-      k = k + 1;
+      k += 1;
     } else if (row[1 + s.point - return_point()] < 0) {
       row = row.with(1 + s.point - return_point(), i);
     }
@@ -3728,30 +3728,30 @@ function block_step_row(p: Plan, steps: i32[]): i32[] {
 
 pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): i32 {
   if (block < 0 || block >= idx.len()) {
-    return 0 - 1;
+    return -1;
   }
-  let row: i32[] = idx[block];
-  let n: i32 = row[0];
-  if (target == 0 - 1 && point >= return_point()) {
+  let row = idx[block];
+  let n = row[0];
+  if (target == -1 && point >= return_point()) {
     if (point - return_point() < n) {
       return row[1 + point - return_point()];
     }
-    return 0 - 1;
+    return -1;
   }
-  let at: i32 = 1 + n;
+  let at = 1 + n;
   while (at < row.len()) {
     if (p.steps[row[at]].point == point && p.steps[row[at]].target == target) {
       return row[at];
     }
-    at = at + 1;
+    at += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct ReplayIndex { positions: i32[], offsets: i32[], slots: i32[] }
 
 function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
-  if (target == 0 - 1) {
+  if (target == -1) {
     if (point == entry_point()) {
       return 0;
     }
@@ -3763,7 +3763,7 @@ function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
     }
   }
   if (point == edge_point()) {
-    let edge: i32 = b.insts.len() + 2;
+    let edge = b.insts.len() + 2;
     if (b.term.kind_tag == 2 && target == b.term.target) {
       return edge;
     }
@@ -3776,7 +3776,7 @@ function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
       }
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow): ReplayIndex {
@@ -3784,36 +3784,36 @@ function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow): ReplayIndex 
   let slots: i32[] = [];
   for b in f.graph.blocks {
     offsets = offsets.append(slots.len());
-    let n: i32 = b.insts.len() + 4;
-    let i: i32 = 0;
+    let n = b.insts.len() + 4;
+    let i = 0;
     while (i < n) {
-      slots = slots.append(0 - 1);
-      i = i + 1;
+      slots = slots.append(-1);
+      i += 1;
     }
   }
-  let i: i32 = 0;
+  let i = 0;
   for s in p.steps {
-    let bi: i32 = ssalive.position(flow, s.block);
+    let bi = ssalive.position(flow, s.block);
     if (bi >= 0) {
-      let point: i32 = replay_point(f.graph.blocks[bi], s.point, s.target);
+      let point = replay_point(f.graph.blocks[bi], s.point, s.target);
       if (point >= 0) {
-        let at: i32 = offsets[bi] + point;
-        let value: i32 = 0 - 2;
-        if (slots[at] == 0 - 1) {
+        let at = offsets[bi] + point;
+        let value: i32 = -2;
+        if (slots[at] == -1) {
           value = i;
         }
         slots = slots.with(at, value);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return ReplayIndex { positions: flow.at, offsets: offsets, slots: slots };
 }
 
 function find_step(b: ssa.SBlock, idx: ReplayIndex, point: i32, target: i32): i32 {
-  let at: i32 = replay_point(b, point, target);
+  let at = replay_point(b, point, target);
   if (at < 0) {
-    return 0 - 1;
+    return -1;
   }
   return idx.slots[idx.offsets[idx.positions[b.id]] + at];
 }
@@ -3822,40 +3822,40 @@ function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], ow
   if (supplies.len() != wanted.len()) {
     return "unit supply arity";
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < wanted.len()) {
-    let got: Supply = supplies[i];
+    let got = supplies[i];
     if (got.value != wanted[i].value || got.slot != wanted[i].slot) {
       return "unit supply identity or slot";
     }
-    let why: string = read_error(state, got.value, owned, deps);
+    let why = read_error(state, got.value, owned, deps);
     if (why != "") {
       return why;
     }
     if (got.mode != retain_unit() && got.mode != move_unit() && got.mode != steal_unit()) {
       return "invalid unit supply mode";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, owned: boolean[], ids: i32[], deps: i32[][]): string {
-  let why: string = supply_error(state, s.supplies, wanted, owned, deps);
+  let why = supply_error(state, s.supplies, wanted, owned, deps);
   if (why != "") {
     return why;
   }
   let cleared: i32[] = [];
   for got in s.supplies {
     if (got.mode == move_unit()) {
-      let unit: i32 = supplied_unit(owned, ids, got.value);
+      let unit = supplied_unit(owned, ids, got.value);
       if (!owned[unit] || !state[unit] || util.index_of_i32(cleared, unit) >= 0) {
         return "move without counted unit";
       }
       cleared = cleared.append(unit);
     }
   }
-  let set_result: boolean = false;
+  let set_result = false;
   if (result >= 0 && owned[result]) {
     if (state[result] && util.index_of_i32(cleared, result) < 0) {
       return "result unit already present";
@@ -3867,7 +3867,7 @@ function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, 
     if (value < 0 || value >= owned.len()) {
       return "drop value out of range";
     }
-    let present: boolean = state[value] && util.index_of_i32(cleared, value) < 0 || set_result && value == result;
+    let present = state[value] && util.index_of_i32(cleared, value) < 0 || set_result && value == result;
     if (!owned[value] || !present || util.index_of_i32(dropped, value) >= 0) {
       return "drop without counted unit";
     }
@@ -3879,21 +3879,21 @@ function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, 
 function apply_step(own state: boolean[], held: i32, s: Step, result: i32, owned: boolean[], ids: i32[]): (boolean[], i32) {
   for got in s.supplies {
     if (got.mode == move_unit()) {
-      let u: i32 = supplied_unit(owned, ids, got.value);
+      let u = supplied_unit(owned, ids, got.value);
       if (state[u]) {
         state = state.with(u, false);
-        held = held - 1;
+        held -= 1;
       }
     }
   }
   if (result >= 0 && owned[result] && !state[result]) {
     state = state.with(result, true);
-    held = held + 1;
+    held += 1;
   }
   for value in s.drops {
     if (state[value]) {
       state = state.with(value, false);
-      held = held - 1;
+      held -= 1;
     }
   }
   return (state, held);
@@ -3913,44 +3913,44 @@ function progress_error(why: string): ReplayProgress {
 }
 
 function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, own state: boolean[], held: i32, owned: boolean[], ids: i32[], deps: i32[][]): ReplayProgress {
-  let at0: i32 = find_step(b, idx, entry_point(), 0 - 1);
+  let at0 = find_step(b, idx, entry_point(), -1);
   if (at0 < 0) {
     return progress_error("missing or duplicate entry step");
   }
-  let entry_why: string = replay_error(state, p.steps[at0], [], 0 - 1, owned, ids, deps);
+  let entry_why = replay_error(state, p.steps[at0], [], -1, owned, ids, deps);
   if (entry_why != "") {
     return progress_error(entry_why);
   }
-  let (next, n) = apply_step(state, held, p.steps[at0], 0 - 1, owned, ids);
-  let count: i32 = 0;
-  let pos: i32 = 0;
+  let (next, n) = apply_step(state, held, p.steps[at0], -1, owned, ids);
+  let count = 0;
+  let pos = 0;
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       for arg in ins.args {
-        let why: string = read_error(next, arg, owned, deps);
+        let why = read_error(next, arg, owned, deps);
         if (why != "") {
           return progress_error(why);
         }
       }
-      let at: i32 = find_step(b, idx, pos, 0 - 1);
+      let at = find_step(b, idx, pos, -1);
       if (at < 0) {
         return progress_error("missing or duplicate operation step");
       }
-      let supplies: Supply[] = operation_supplies(f, ins);
-      let lent: string = lent_error(next, p.steps[at], ins, supplies, owned, ids, deps);
+      let supplies = operation_supplies(f, ins);
+      let lent = lent_error(next, p.steps[at], ins, supplies, owned, ids, deps);
       if (lent != "") {
         return progress_error(lent);
       }
-      let why: string = replay_error(next, p.steps[at], supplies, ins.result, owned, ids, deps);
+      let why = replay_error(next, p.steps[at], supplies, ins.result, owned, ids, deps);
       if (why != "") {
         return progress_error(why);
       }
       let (bits, count_held) = apply_step(next, n, p.steps[at], ins.result, owned, ids);
       next = bits;
       n = count_held;
-      count = count + 1;
+      count += 1;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return ReplayProgress { why: "", state: next, held: n, count: count };
 }
@@ -3962,7 +3962,7 @@ function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[]
   let cleared: i32[] = [];
   for got in s.supplies {
     if (got.mode == move_unit()) {
-      let unit: i32 = supplied_unit(owned, ids, got.value);
+      let unit = supplied_unit(owned, ids, got.value);
       if (!owned[unit] || !state[unit] || util.index_of_i32(cleared, unit) >= 0) {
         return "";
       }
@@ -3997,25 +3997,25 @@ function step_clears(s: Step, value: i32, owned: boolean[], ids: i32[]): boolean
 
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, state: boolean[], owned: boolean[], ids: i32[], deps: i32[][]): string {
   if (b.term.kind_tag == 1) {
-    let why: string = read_error(state, b.term.value, owned, deps);
+    let why = read_error(state, b.term.value, owned, deps);
     if (why != "") {
       return why;
     }
   }
-  let at: i32 = find_step(b, idx, return_point(), 0 - 1);
+  let at = find_step(b, idx, return_point(), -1);
   if (at < 0) {
     return "missing or duplicate return step";
   }
-  let why: string = replay_error(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, ids, deps);
+  let why = replay_error(state, p.steps[at], return_supplies(f, b), -1, owned, ids, deps);
   if (why != "") {
     return why;
   }
-  let v: i32 = 0;
+  let v = 0;
   while (v < state.len()) {
     if (state[v] && !step_clears(p.steps[at], v, owned, ids)) {
       return "counted unit leaks at return";
     }
-    v = v + 1;
+    v += 1;
   }
   return "";
 }
@@ -4027,24 +4027,24 @@ function enter_phis(b: ssa.SBlock, own state: boolean[], held: i32, owned: boole
         return rejected("phi unit already present");
       }
       state = state.with(ins.result, true);
-      held = held + 1;
+      held += 1;
     }
   }
   return Ledger { ok: true, why: "", bits: state, held: held };
 }
 
 function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: ReplayIndex, own state: boolean[], held: i32, owned: boolean[], ids: i32[], analysis: ssasem.Analysis): string {
-  let at: i32 = find_step(b, idx, edge_point(), target);
+  let at = find_step(b, idx, edge_point(), target);
   if (at < 0) {
     return "missing or duplicate edge step";
   }
-  let si: i32 = ssalive.position(analysis.flow, target);
-  let why: string = replay_error(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, ids, analysis.dependencies);
+  let si = ssalive.position(analysis.flow, target);
+  let why = replay_error(state, p.steps[at], edge_supplies(f, b, si, owned), -1, owned, ids, analysis.dependencies);
   if (why != "") {
     return why;
   }
-  let (left, left_held) = apply_step(state, held, p.steps[at], 0 - 1, owned, ids);
-  let entered: Ledger = enter_phis(f.graph.blocks[si], left, left_held, owned);
+  let (left, left_held) = apply_step(state, held, p.steps[at], -1, owned, ids);
+  let entered = enter_phis(f.graph.blocks[si], left, left_held, owned);
   if (!entered.ok) {
     return entered.why;
   }
@@ -4057,42 +4057,42 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: R
 struct BlockProgress { why: string, count: i32 }
 
 function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: ReplayIndex, owned: boolean[], ids: i32[], analysis: ssasem.Analysis): BlockProgress {
-  let b: ssa.SBlock = f.graph.blocks[bi];
+  let b = f.graph.blocks[bi];
   let (entry_row, entry_held) = invariant(f, bi, owned, analysis.flow);
-  let operations: ReplayProgress = verify_operations(f, b, p, idx, entry_row, entry_held, owned, ids, analysis.dependencies);
+  let operations = verify_operations(f, b, p, idx, entry_row, entry_held, owned, ids, analysis.dependencies);
   if (operations.why != "") {
     return BlockProgress { why: operations.why, count: 0 };
   }
-  let state: boolean[] = operations.state;
-  let count: i32 = 1 + operations.count;
+  let state = operations.state;
+  let count = 1 + operations.count;
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-    let why: string = verify_return(f, b, p, idx, state, owned, ids, analysis.dependencies);
+    let why = verify_return(f, b, p, idx, state, owned, ids, analysis.dependencies);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
-    count = count + 1;
+    count += 1;
   }
   if (b.term.kind_tag == 3) {
-    let why: string = read_error(state, b.term.cond, owned, analysis.dependencies);
+    let why = read_error(state, b.term.cond, owned, analysis.dependencies);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
   }
-  let targets: i32 = successor_count(b);
+  let targets = successor_count(b);
   if (targets == 2) {
-    let first: boolean[] = copy_row(state);
-    let why: string = verify_edge(f, b, ssa.successor_id(b.term, 0), p, idx, first, operations.held, owned, ids, analysis);
+    let first = copy_row(state);
+    let why = verify_edge(f, b, ssa.successor_id(b.term, 0), p, idx, first, operations.held, owned, ids, analysis);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
-    count = count + 1;
+    count += 1;
   }
   if (targets > 0) {
-    let why: string = verify_edge(f, b, ssa.successor_id(b.term, targets - 1), p, idx, state, operations.held, owned, ids, analysis);
+    let why = verify_edge(f, b, ssa.successor_id(b.term, targets - 1), p, idx, state, operations.held, owned, ids, analysis);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
-    count = count + 1;
+    count += 1;
   }
   return BlockProgress { why: "", count: count };
 }
@@ -4101,12 +4101,12 @@ function same_i32s(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -4123,12 +4123,12 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
   }
-  let analysis: ssasem.Analysis = semantic;
+  let analysis = semantic;
   if (!analysis.ok) {
     return analysis.why;
   }
-  let why: string = "";
-  let defs: ssa.SInst[] = p.defs;
+  let why = "";
+  let defs = p.defs;
   if (whole) {
     why = contract_error(f, modes, no_view());
     defs = definitions(f);
@@ -4140,9 +4140,9 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (why != "") {
     return why;
   }
-  let owned: boolean[] = p.owned;
+  let owned = p.owned;
   if (whole || !same_i32s(modes, p.modes)) {
-    let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f), forced_of(p, f));
+    let units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f), forced_of(p, f));
     owned = units.owned;
     if (!same_i32s(units.takes, p.takes)) {
       return "tuple take disagrees with the plan";
@@ -4160,20 +4160,20 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   } else {
     analysis = p.unit_analysis;
   }
-  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  let idx: ReplayIndex = replay_index(f, p, analysis.flow);
-  let ids: i32[] = identity_roots(defs);
-  let count: i32 = 0;
-  let bi: i32 = 0;
+  let reachable = ssadeps.reachable_blocks(f.graph);
+  let idx = replay_index(f, p, analysis.flow);
+  let ids = identity_roots(defs);
+  let count = 0;
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
-      let done: BlockProgress = verify_block(f, bi, p, idx, owned, ids, analysis);
+      let done = verify_block(f, bi, p, idx, owned, ids, analysis);
       if (done.why != "") {
         return done.why;
       }
-      count = count + done.count;
+      count += done.count;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (count != p.steps.len()) {
     return "extra unit plan steps";
@@ -4195,18 +4195,18 @@ pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom)
   if (p.reuse.pairs.len() == f.graph.blocks.len()) {
     return p;
   }
-  let off: boolean = reuse_layer_disabled(f.graph.name);
+  let off = reuse_layer_disabled(f.graph.name);
   if (!p.ok) {
     return Plan { ...p, reuse: Reuse { ...p.reuse, disabled: off } };
   }
-  let links: i32[] = links_of(f, p, idx);
-  let vr: VariantReads = variant_reads(f, p, dom);
-  let carry: Carry = carried_pairs(f, p, idx, links, off, vr);
-  let uses: ssasem.Uses = p.analysis.uses;
+  let links = links_of(f, p, idx);
+  let vr = variant_reads(f, p, dom);
+  let carry = carried_pairs(f, p, idx, links, off, vr);
+  let uses = p.analysis.uses;
   let pairs: ReusePairs[] = [];
   let keeps: Keeps[] = [];
   for b in f.graph.blocks {
-    let pr: ReusePairs = reuse_pairs(f, p, idx, vr, b, off, carry);
+    let pr = reuse_pairs(f, p, idx, vr, b, off, carry);
     keeps = keeps.append(block_keeps(f, p, idx, b, pr, carry, links, uses));
     pairs = pairs.append(pr);
   }
@@ -4222,7 +4222,7 @@ function step_of(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): St
 }
 
 function replayed_step(p: Plan, idx: ReplayIndex, b: ssa.SBlock, point: i32): Step {
-  return indexed_step(p, find_step(b, idx, point, 0 - 1), point);
+  return indexed_step(p, find_step(b, idx, point, -1), point);
 }
 
 function indexed_step(p: Plan, i: i32, point: i32): Step {
@@ -4279,69 +4279,69 @@ pub struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 
 function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   if (semtypes.is_env(t) || semtypes.is_cell(t)) {
-    return 0 - 1;
+    return -1;
   }
   if (ssasem.has_finalizer(f, t)) {
-    return 0 - 1;
+    return -1;
   }
   if let typeinfo.TypeTuple(tup) = t {
     return tup.elements.len();
   }
   if let typeinfo.TypeStruct(_) = t {
     if (semrecords.find(f.records, t) < 0) {
-      return 0 - 1;
+      return -1;
     }
     return record_fields(t, f).len() + 1;
   }
   if let typeinfo.TypeUnion(_) = t {
     return union_slots(t, f);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
-  let at: i32 = semrecords.find_enum(f.enums, t);
+  let at = semrecords.find_enum(f.enums, t);
   if (at < 0) {
-    return 0 - 1;
+    return -1;
   }
   if (f.enums[at].layout == semrecords.layout_option()) {
-    return 0 - 1;
+    return -1;
   }
-  let n: i32 = 0 - 1;
+  let n: i32 = -1;
   for v in f.enums[at].variants {
     if (n < 0) {
       n = v.fields.len();
     } else if (n != v.fields.len()) {
-      return 0 - 1;
+      return -1;
     }
   }
   if (n < 0) {
-    return 0 - 1;
+    return -1;
   }
   return n + 1;
 }
 
 function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
-  let at: i32 = semrecords.find_enum(f.enums, t);
+  let at = semrecords.find_enum(f.enums, t);
   if (at < 0 || f.enums[at].layout == semrecords.layout_option()) {
-    return 0 - 1;
+    return -1;
   }
-  let v: i32 = semrecords.find_variant(f.enums[at], name);
+  let v = semrecords.find_variant(f.enums[at], name);
   if (v < 0) {
-    return 0 - 1;
+    return -1;
   }
   return f.enums[at].variants[v].fields.len() + 1;
 }
 
 function donor_slots(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, d: i32): i32 {
-  let t: typeinfo.Type = f.values[d];
-  let n: i32 = reuse_slots(t, f);
+  let t = f.values[d];
+  let n = reuse_slots(t, f);
   if (n >= 0 || ssasem.has_finalizer(f, t)) {
     return n;
   }
-  let name: string = known_variant(vr, b, d);
+  let name = known_variant(vr, b, d);
   if (name == "") {
-    return 0 - 1;
+    return -1;
   }
   return variant_slots(t, name, f);
 }
@@ -4353,13 +4353,13 @@ pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
   if (d < vr.shared.len() && vr.shared[d]) {
     return "";
   }
-  let bp: i32 = vr.at[b.id];
-  let k: i32 = 0;
+  let bp = vr.at[b.id];
+  let k = 0;
   while (k < vr.sites[d].len()) {
     if (vr.sites[d][k] == bp || ssadeps.dom_holds(vr.dom, bp, vr.sites[d][k])) {
       return vr.names[d][k];
     }
-    k = k + 1;
+    k += 1;
   }
   return "";
 }
@@ -4369,16 +4369,16 @@ pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: st
 function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads {
   let sites: i32[][] = [];
   let names: string[][] = [];
-  let shared: boolean[] = __alloc_bool(f.values.len());
+  let shared = __alloc_bool(f.values.len());
   while (sites.len() < f.values.len()) {
     sites = sites.append([]);
     names = names.append([]);
   }
-  let bi: i32 = 0;
+  let bi = 0;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.variant_get() && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < sites.len()) {
-        let v: i32 = ins.args[0];
+        let v = ins.args[0];
         if (sites[v].len() == 0 && !(v < p.likely.len() && p.likely[v]) && !(v < p.payloads.len() && p.payloads[v]) && member_union(f, f.values[v])) {
           shared = shared.with(v, true);
         }
@@ -4386,14 +4386,14 @@ function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads 
         names = names.with(v, names[v].append(ins.str));
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return VariantReads { at: ssa.block_positions(f.graph), dom: dom, sites: sites, names: names, shared: shared };
 }
 
 function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (p.constants[ins.result] != "") {
-    return 0 - 1;
+    return -1;
   }
   if (ins.kind_tag == ssasem.tuple_new()) {
     return tuple_elements(f.values[ins.result]).len();
@@ -4402,13 +4402,13 @@ function recipient_slots(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
     return reuse_slots(f.values[ins.result], f);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    let n: i32 = union_slots(f.values[ins.result], f);
+    let n = union_slots(f.values[ins.result], f);
     if (n < 0) {
       n = variant_slots(f.values[ins.result], ins.str, f);
     }
     return n;
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct Claims { counts: i32[], last: i32[] }
@@ -4416,11 +4416,11 @@ struct Claims { counts: i32[], last: i32[] }
 function block_claims(f: ssasem.Func, p: Plan, b: ssa.SBlock): Claims {
   let counts: i32[] = [];
   let last: i32[] = [];
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < b.insts.len()) {
-    let c: i32 = recipient_slots(f, p, b.insts[pos]);
+    let c = recipient_slots(f, p, b.insts[pos]);
     if (c >= 0) {
-      let at: i32 = util.index_of_i32(counts, c);
+      let at = util.index_of_i32(counts, c);
       if (at < 0) {
         counts = counts.append(c);
         last = last.append(pos);
@@ -4428,13 +4428,13 @@ function block_claims(f: ssasem.Func, p: Plan, b: ssa.SBlock): Claims {
         last = last.with(at, pos);
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return Claims { counts: counts, last: last };
 }
 
 function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
-  let at: i32 = util.index_of_i32(c.counts, slots);
+  let at = util.index_of_i32(c.counts, slots);
   return at >= 0 && c.last[at] > pos;
 }
 
@@ -4445,15 +4445,15 @@ function no_carry(): Carry {
 }
 
 function first_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32): i32 {
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < b.insts.len()) {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots) {
       return pos;
     }
-    pos = pos + 1;
+    pos += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
@@ -4463,11 +4463,11 @@ struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][], reads: VariantRea
 function route_graph(f: ssasem.Func, p: Plan, dying: Dying[], vr: VariantReads): RouteGraph {
   let claims: i32[][] = [];
   let dies: i32[][] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < f.graph.blocks.len()) {
     claims = claims.append(block_claims(f, p, f.graph.blocks[k]).counts);
     dies = dies.append(dying[k].values);
-    k = k + 1;
+    k += 1;
   }
   return RouteGraph { at: vr.at, claims: claims, dies: dies, reads: vr };
 }
@@ -4493,29 +4493,29 @@ function route_marks(n: i32): RouteMarks {
 }
 
 function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks, slots: i32, d: i32): Searched {
-  let sources: i32[] = h.blocks;
-  let ahead: i32 = m.stamp + 1;
-  let seen: i32[] = m.seen;
-  let way: i32[] = m.way;
+  let sources = h.blocks;
+  let ahead = m.stamp + 1;
+  let seen = m.seen;
+  let way = m.way;
   let builds: i32[] = [];
   let work: i32[] = [];
   for si in 0..sources.len() {
-    let id: i32 = sources[si];
+    let id = sources[si];
     if (h.edges[si] >= 0) {
       work = work.append(h.edges[si]);
     } else {
-      let term: ssa.STerm = f.graph.blocks[g.at[id]].term;
+      let term = f.graph.blocks[g.at[id]].term;
       for which in 0..successor_count(f.graph.blocks[g.at[id]]) {
-        let s: i32 = ssa.successor_id(term, which);
+        let s = ssa.successor_id(term, which);
         work = work.append(s);
       }
     }
   }
-  let next: i32 = 0;
+  let next = 0;
   while (next < work.len()) {
-    let id: i32 = work[next];
-    next = next + 1;
-    let k: i32 = g.at[id];
+    let id = work[next];
+    next += 1;
+    let k = g.at[id];
     if (util.index_of_i32(sources, id) >= 0 || seen[k] == ahead) {
       continue;
     }
@@ -4524,15 +4524,15 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks
       builds = builds.append(id);
     } else {
       for which in 0..successor_count(f.graph.blocks[k]) {
-        let s: i32 = ssa.successor_id(f.graph.blocks[k].term, which);
+        let s = ssa.successor_id(f.graph.blocks[k].term, which);
         work = work.append(s);
       }
     }
   }
   m = RouteMarks { seen: seen, way: way, stamp: ahead };
-  let found: Routes = Routes { targets: [], ways: [], nulls: [] };
+  let found = Routes { targets: [], ways: [], nulls: [] };
   for target in builds {
-    let w: Way = way_to(f, g, sources, m, ahead, target, slots, d);
+    let w = way_to(f, g, sources, m, ahead, target, slots, d);
     m = w.marks;
     if (w.ok) {
       found = Routes { targets: found.targets.append(target), ways: found.ways.append(w.blocks), nulls: found.nulls.append(w.nulls) };
@@ -4542,17 +4542,17 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks
 }
 
 function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, ahead: i32, target: i32, slots: i32, d: i32): Way {
-  let stamp: i32 = m.stamp + 1;
-  let seen: i32[] = m.seen;
-  let way: i32[] = m.way;
+  let stamp = m.stamp + 1;
+  let seen = m.seen;
+  let way = m.way;
   let between: i32[] = [];
-  let entry: Preds = split_preds(f, g, sources, target, slots, d);
-  let work: i32[] = entry.carrying;
-  let next: i32 = 0;
+  let entry = split_preds(f, g, sources, target, slots, d);
+  let work = entry.carrying;
+  let next = 0;
   while (next < work.len()) {
-    let id: i32 = work[next];
-    next = next + 1;
-    let k: i32 = g.at[id];
+    let id = work[next];
+    next += 1;
+    let k = g.at[id];
     if (util.index_of_i32(sources, id) >= 0 || way[k] == stamp) {
       continue;
     }
@@ -4571,7 +4571,7 @@ function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks
 struct Preds { carrying: i32[], nulls: i32[] }
 
 function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32, slots: i32, d: i32): Preds {
-  let out: Preds = Preds { carrying: [], nulls: [] };
+  let out = Preds { carrying: [], nulls: [] };
   for pr in f.graph.blocks[g.at[target]].preds {
     if (null_edge(f, g, sources, pr, slots, d)) {
       out = Preds { ...out, nulls: out.nulls.append(pr) };
@@ -4583,7 +4583,7 @@ function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32,
 }
 
 function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots: i32, d: i32): boolean {
-  let k: i32 = g.at[id];
+  let k = g.at[id];
   return util.index_of_i32(sources, id) < 0 && util.index_of_i32(g.dies[k], d) >= 0
     && donor_slots(f, g.reads, f.graph.blocks[k], d) != slots;
 }
@@ -4594,30 +4594,30 @@ struct Dying { at: i32[], values: i32[], edges: i32[] }
 // The values dying in a block that no construction of their own slot count after them can take.
 // A value dying on an edge is listed when the block the edge enters claims its slot count.
 function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr: VariantReads, b: ssa.SBlock): Dying {
-  let claims: Claims = block_claims(f, p, b);
+  let claims = block_claims(f, p, b);
   let at: i32[] = [];
   let values: i32[] = [];
   let edges: i32[] = [];
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < b.insts.len()) {
     if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
-      for d in step_of(p, idx, b.id, pos, 0 - 1).drops {
+      for d in step_of(p, idx, b.id, pos, -1).drops {
         if (d != b.insts[pos].result && (d >= links.len() || links[d] < 0) && !static_box(p, d)
           && !claimed_from(claims, donor_slots(f, vr, b, d), pos)) {
           at = at.append(pos);
           values = values.append(d);
-          edges = edges.append(0 - 1);
+          edges = edges.append(-1);
         }
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   for which in 0..successor_count(b) {
-    let target: i32 = ssa.successor_id(b.term, which);
-    let si: i32 = step_at(p, idx, b.id, edge_point(), target);
+    let target = ssa.successor_id(b.term, which);
+    let si = step_at(p, idx, b.id, edge_point(), target);
     if (si >= 0) {
       for d in p.steps[si].drops {
-        let slots: i32 = donor_slots(f, vr, b, d);
+        let slots = donor_slots(f, vr, b, d);
         if (slots >= 0 && (d >= links.len() || links[d] < 0) && !static_box(p, d)
           && first_claim_of(f, p, f.graph.blocks[vr.at[target]], slots) >= 0) {
           at = at.append(b.insts.len());
@@ -4634,21 +4634,21 @@ function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr
 }
 
 function claimed_from(c: Claims, slots: i32, pos: i32): boolean {
-  let at: i32 = util.index_of_i32(c.counts, slots);
+  let at = util.index_of_i32(c.counts, slots);
   return at >= 0 && c.last[at] >= pos;
 }
 
 struct Holds { blocks: i32[], at: i32[], edges: i32[], slots: i32 }
 
 function holds_of(f: ssasem.Func, vr: VariantReads, dying: Dying[], holding: boolean[], first: i32, d: i32, i0: i32, slots: i32): Holds {
-  let h: Holds = Holds { blocks: [f.graph.blocks[first].id], at: [dying[first].at[i0]], edges: [dying[first].edges[i0]], slots: slots };
-  let bj: i32 = first + 1;
+  let h = Holds { blocks: [f.graph.blocks[first].id], at: [dying[first].at[i0]], edges: [dying[first].edges[i0]], slots: slots };
+  let bj = first + 1;
   while (bj < dying.len()) {
-    let j: i32 = util.index_of_i32(dying[bj].values, d);
+    let j = util.index_of_i32(dying[bj].values, d);
     if (!holding[bj] && j >= 0 && can_hold(f.graph.blocks[bj]) && donor_slots(f, vr, f.graph.blocks[bj], d) == slots) {
       h = Holds { ...h, blocks: h.blocks.append(f.graph.blocks[bj].id), at: h.at.append(dying[bj].at[j]), edges: h.edges.append(dying[bj].edges[j]) };
     }
-    bj = bj + 1;
+    bj += 1;
   }
   return h;
 }
@@ -4658,7 +4658,7 @@ function can_hold(b: ssa.SBlock): boolean {
 }
 
 function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off: boolean, vr: VariantReads): Carry {
-  let c: Carry = no_carry();
+  let c = no_carry();
   if (off) {
     return c;
   }
@@ -4668,23 +4668,23 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
     dying = dying.append(dying_unclaimed(f, p, idx, links, vr, b));
     holding = holding.append(false);
   }
-  let g: RouteGraph = route_graph(f, p, dying, vr);
-  let marks: RouteMarks = route_marks(f.graph.blocks.len());
-  let bi: i32 = 0;
+  let g = route_graph(f, p, dying, vr);
+  let marks = route_marks(f.graph.blocks.len());
+  let bi = 0;
   while (bi < dying.len()) {
-    let b: ssa.SBlock = f.graph.blocks[bi];
+    let b = f.graph.blocks[bi];
     let tried: i32[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (!holding[bi] && can_hold(b) && i < dying[bi].values.len()) {
-      let d: i32 = dying[bi].values[i];
-      let slots: i32 = donor_slots(f, g.reads, b, d);
+      let d = dying[bi].values[i];
+      let slots = donor_slots(f, g.reads, b, d);
       if (slots >= 0) {
-        let h: Holds = holds_of(f, g.reads, dying, holding, bi, d, i, slots);
+        let h = holds_of(f, g.reads, dying, holding, bi, d, i, slots);
         if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
           tried = tried.append(slots);
-          let found: Searched = carry_routes(f, g, h, marks, slots, d);
+          let found = carry_routes(f, g, h, marks, slots, d);
           marks = found.marks;
-          let before: i32 = c.to.len();
+          let before = c.to.len();
           c = served_by(f, p, idx, g, c, h, found.routes, d);
           if (c.to.len() > before) {
             for id in h.blocks {
@@ -4693,9 +4693,9 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
           }
         }
       }
-      i = i + 1;
+      i += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return c;
 }
@@ -4704,10 +4704,10 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
   let targets: i32[] = [];
   let builds: i32[] = [];
   let inside: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < r.targets.len()) {
-    let to: ssa.SBlock = f.graph.blocks[g.at[r.targets[k]]];
-    let at_build: i32 = first_claim_of(f, p, to, h.slots);
+    let to = f.graph.blocks[g.at[r.targets[k]]];
+    let at_build = first_claim_of(f, p, to, h.slots);
     if (util.index_of_i32(c.to, to.id) < 0 && util.index_of_i32(to.insts[at_build].args, d) < 0
       && !served_in_block(f, p, idx, g.reads, to, at_build, h.slots)) {
       targets = targets.append(to.id);
@@ -4717,7 +4717,7 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
         inside = inside.append(id);
       }
     }
-    k = k + 1;
+    k += 1;
   }
   if (targets.len() == 0) {
     return c;
@@ -4725,7 +4725,7 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
   k = 0;
   while (k < targets.len()) {
     c = Carry { ...c, to: c.to.append(targets[k]), build_at: c.build_at.append(builds[k]), donor: c.donor.append(d) };
-    k = k + 1;
+    k += 1;
   }
   let leaving: i32[] = [];
   k = 0;
@@ -4736,7 +4736,7 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
     } else if (util.index_of_i32(targets, h.edges[k]) >= 0 || util.index_of_i32(inside, h.edges[k]) >= 0) {
       c = Carry { ...c, edge_from: c.edge_from.append(h.blocks[k]), edge_to: c.edge_to.append(h.edges[k]), edge_held: c.edge_held.append(d) };
     }
-    k = k + 1;
+    k += 1;
   }
   for id in inside {
     if (util.index_of_i32(leaving, id) < 0) {
@@ -4744,9 +4744,9 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
     }
   }
   for id in leaving {
-    let term: ssa.STerm = f.graph.blocks[g.at[id]].term;
+    let term = f.graph.blocks[g.at[id]].term;
     for which in 0..successor_count(f.graph.blocks[g.at[id]]) {
-      let s: i32 = ssa.successor_id(term, which);
+      let s = ssa.successor_id(term, which);
       if (util.index_of_i32(targets, s) < 0 && util.index_of_i32(inside, s) < 0) {
         c = Carry { ...c, exit_from: c.exit_from.append(id), exit_to: c.exit_to.append(s), dropped: c.dropped.append(d) };
       }
@@ -4758,9 +4758,9 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
 // When values that die in the block already serve every construction of the
 // slot count from at on, a carried token would only take one's place.
 function served_in_block(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b: ssa.SBlock, at: i32, slots: i32): boolean {
-  let local: ReusePairs = reuse_pairs(f, p, idx, vr, b, false, no_carry());
+  let local = reuse_pairs(f, p, idx, vr, b, false, no_carry());
   for pos in at..b.insts.len() {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots && local.builds[pos] < 0 && local.selfs[pos] < 0) {
       return false;
     }
@@ -4777,30 +4777,30 @@ function with_null_edges(own c: Carry, from: i32[], to: i32, d: i32): Carry {
 
 pub function carry_nulls(c: Carry, from: i32, to: i32): i32[] {
   let out: i32[] = [];
-  let e: i32 = 0;
+  let e = 0;
   while (e < c.null_from.len()) {
     if (c.null_from[e] == from && c.null_to[e] == to) {
       out = out.append(c.nulled[e]);
     }
-    e = e + 1;
+    e += 1;
   }
   return out;
 }
 
 pub function carry_exits(c: Carry, from: i32, to: i32): i32[] {
   let out: i32[] = [];
-  let e: i32 = 0;
+  let e = 0;
   while (e < c.exit_from.len()) {
     if (c.exit_from[e] == from && c.exit_to[e] == to) {
       out = out.append(c.dropped[e]);
     }
-    e = e + 1;
+    e += 1;
   }
   return out;
 }
 
 pub function carry_held_for(c: Carry, b: i32, pos: i32): boolean {
-  let into: i32 = util.index_of_i32(c.to, b);
+  let into = util.index_of_i32(c.to, b);
   return into >= 0 && c.build_at[into] == pos;
 }
 
@@ -4811,44 +4811,44 @@ pub function carry_held_edge(c: Carry, from: i32, to: i32): i32 {
       return c.edge_held[i];
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function carry_held(c: Carry, b: i32, pos: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.from.len()) {
     if (c.from[i] == b && c.drop_at[i] == pos) {
       return c.held[i];
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b: ssa.SBlock, off: boolean, carry: Carry): ReusePairs {
-  let into: i32 = util.index_of_i32(carry.to, b.id);
+  let into = util.index_of_i32(carry.to, b.id);
   let tokens: i32[] = [];
   let builds: i32[] = [];
   let selfs: i32[] = [];
-  let claims_tab: Claims = block_claims(f, p, b);
+  let claims_tab = block_claims(f, p, b);
   let pending: i32[] = [];
   let pending_at: i32[] = [];
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < b.insts.len()) {
-    tokens = tokens.append(0 - 1);
-    builds = builds.append(0 - 1);
-    selfs = selfs.append(0 - 1);
-    let ins: ssa.SInst = b.insts[pos];
+    tokens = tokens.append(-1);
+    builds = builds.append(-1);
+    selfs = selfs.append(-1);
+    let ins = b.insts[pos];
     if (into >= 0 && carry.build_at[into] == pos) {
       selfs = selfs.with(pos, carry.donor[into]);
     } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-      let step: Step = step_of(p, idx, b.id, pos, 0 - 1);
-      let claims: i32 = recipient_slots(f, p, ins);
+      let step = step_of(p, idx, b.id, pos, -1);
+      let claims = recipient_slots(f, p, ins);
       if (off) {
         pending = [];
         pending_at = [];
       } else {
-        let k: i32 = 0 - 1;
+        let k: i32 = -1;
         if (claims >= 0) {
           k = held_for(f, vr, b, pending, ins, claims);
         }
@@ -4866,9 +4866,9 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
             }
           }
         }
-        let taken: boolean = false;
+        let taken = false;
         for d in step.drops {
-          let sl: i32 = donor_slots(f, vr, b, d);
+          let sl = donor_slots(f, vr, b, d);
           if (!taken && d != selfs[pos] && sl >= 0 && !static_box(p, d)
             && claimed_after(claims_tab, sl, pos) && util.index_of_i32(pending, d) < 0) {
             pending = pending.append(d);
@@ -4878,30 +4878,30 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
         }
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return ReusePairs { tokens: tokens, builds: builds, selfs: selfs };
 }
 
 function held_for(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, pending: i32[], ins: ssa.SInst, claims: i32): i32 {
-  let k: i32 = 0;
+  let k = 0;
   while (k < pending.len()) {
     if (donor_slots(f, vr, b, pending[k]) == claims && util.index_of_i32(ins.args, pending[k]) < 0) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function without_at(xs: i32[], k: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i != k) {
       out = out.append(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -4909,7 +4909,7 @@ function without_at(xs: i32[], k: i32): i32[] {
 pub struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], moved: i32[][], freed: boolean[][], start: i32[], taken: i32[], built: i32[], lives: boolean[] }
 
 function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: ssasem.Uses): Keeps {
-  let none: Keeps = no_keeps();
+  let none = no_keeps();
   if (!rebuilds(f, ins, donor)) {
     return none;
   }
@@ -4917,27 +4917,27 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
   while (slots.len() < ins.args.len()) {
     slots = slots.append(false);
   }
-  let freed: boolean[] = slots;
+  let freed = slots;
   let moved: i32[] = [];
-  let first_moved: i32 = 0 - 1;
+  let first_moved: i32 = -1;
   let values: i32[] = [];
   let late: i32[] = [];
-  let start: i32 = 0 - 1;
+  let start: i32 = -1;
   let retained: i32[] = [];
-  for supply in step_of(p, idx, b.id, built, 0 - 1).supplies {
+  for supply in step_of(p, idx, b.id, built, -1).supplies {
     if (supply.mode == retain_unit()) {
       retained = retained.append(supply.value);
     }
   }
-  let scalars: boolean = false;
-  let pos: i32 = 0;
+  let scalars = false;
+  let pos = 0;
   while (pos <= taken) {
-    let get: ssa.SInst = b.insts[pos];
-    let read: boolean = rebuilt_read(f, ins, get, donor);
-    let counted: boolean = read && ssasem.reference(f.values[get.result]);
-    let kept: boolean = false;
+    let get = b.insts[pos];
+    let read = rebuilt_read(f, ins, get, donor);
+    let counted = read && ssasem.reference(f.values[get.result]);
+    let kept = false;
     if (read && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
-      let i: i32 = util.index_of_i32(ins.args, get.result);
+      let i = util.index_of_i32(ins.args, get.result);
       if (i == get.imm && !slots[i] && occurrences(ins.args, get.result) == 1) {
         kept = true;
         values = values.append(get.result);
@@ -4959,7 +4959,7 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
         first_moved = pos;
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   if (first_moved >= 0 && only_read(b, donor, first_moved, built) && (start < 0 || first_moved < start)) {
     start = first_moved;
@@ -4990,12 +4990,12 @@ function rebuilds(f: ssasem.Func, ins: ssa.SInst, donor: i32): boolean {
   if (ins.kind_tag == ssasem.record_new()) {
     return true;
   }
-  let e: i32 = semrecords.find_enum(f.enums, f.values[donor]);
+  let e = semrecords.find_enum(f.enums, f.values[donor]);
   return ins.kind_tag == ssasem.variant_new() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
 }
 
 function member_of(f: ssasem.Func, ins: ssa.SInst, donor: i32): string {
-  let e: i32 = semrecords.find_enum(f.enums, f.values[donor]);
+  let e = semrecords.find_enum(f.enums, f.values[donor]);
   if (e < 0 || f.enums[e].layout != semrecords.layout_member()) {
     return "";
   }
@@ -5021,26 +5021,26 @@ function rebuilt_read(f: ssasem.Func, ins: ssa.SInst, get: ssa.SInst, donor: i32
 }
 
 function slot_reads(b: ssa.SBlock, v: i32, slot: i32, to: i32): i32 {
-  let n: i32 = 0;
-  let pos: i32 = 0;
+  let n = 0;
+  let pos = 0;
   while (pos <= to && pos < b.insts.len()) {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (taken_read(ins.kind_tag) && ins.args.len() == 1 && ins.args[0] == v && ins.imm == slot) {
-      n = n + 1;
+      n += 1;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return n;
 }
 
 function only_read(b: ssa.SBlock, v: i32, from: i32, to: i32): boolean {
-  let pos: i32 = from;
+  let pos = from;
   while (pos <= to && pos < b.insts.len()) {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (util.index_of_i32(ins.args, v) >= 0 && !taken_read(ins.kind_tag) && ins.kind_tag != ssasem.variant_is()) {
       return false;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return true;
 }
@@ -5053,46 +5053,46 @@ function held_read(p: Plan, ins: ssa.SInst): boolean {
 // A carried construction inside a keep's or a classified donor's span reads its token from the donor's own local
 // (ssarc.block_body), so it never needs the block's token slot.
 function token_busy(pairs: ReusePairs, carried: boolean[], from: i32, to: i32, own_build: i32): boolean {
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < pairs.builds.len()) {
     if (pos != own_build) {
       if (pairs.selfs[pos] >= 0 && !carried[pos] && pos >= from && pos <= to) {
         return true;
       }
       if (pairs.builds[pos] >= 0 && pos >= from) {
-        let t: i32 = util.index_of_i32(pairs.tokens, pairs.builds[pos]);
+        let t = util.index_of_i32(pairs.tokens, pairs.builds[pos]);
         if (t <= to) {
           return true;
         }
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return false;
 }
 
 function carried_builds(c: Carry, b: ssa.SBlock): boolean[] {
-  let out: boolean[] = __alloc_bool(b.insts.len());
-  let pos: i32 = 0;
+  let out = __alloc_bool(b.insts.len());
+  let pos = 0;
   while (pos < b.insts.len()) {
     out = out.with(pos, carry_held_for(c, b.id, pos));
-    pos = pos + 1;
+    pos += 1;
   }
   return out;
 }
 
 function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], uses: ssasem.Uses): Keeps {
-  let out: Keeps = no_keeps();
-  let pos: i32 = 0;
+  let out = no_keeps();
+  let pos = 0;
   while (pos < b.insts.len()) {
-    let donor: i32 = pairs.selfs[pos];
-    let taken: i32 = pos;
+    let donor = pairs.selfs[pos];
+    let taken = pos;
     if (donor < 0 && pairs.builds[pos] >= 0) {
       donor = pairs.builds[pos];
       taken = util.index_of_i32(pairs.tokens, donor);
     }
     if (donor >= 0 && taken >= 0) {
-      let k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
+      let k = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
       if (k.donors.len() > 0 && !keep_identity_conflict(out, out.donors.len(), donor, k.values[0], k.moved[0], k.start[0], pos)) {
         out = Keeps {
           donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
@@ -5102,15 +5102,15 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
         };
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return tested(f, p, idx, b, pairs, carry, links, classified(f, p, idx, b, pairs, carry, links, out));
 }
 
 function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < b.insts.len()) {
-    let dying: i32[] = step_of(p, idx, b.id, pos, 0 - 1).drops;
+    let dying = step_of(p, idx, b.id, pos, -1).drops;
     if (pairs.tokens[pos] >= 0) {
       dying = dying.append(pairs.tokens[pos]);
     }
@@ -5118,33 +5118,33 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
       dying = dying.append(carry_held(carry, b.id, pos));
     }
     for d in dying {
-      let start: i32 = first_classified_take(f, p, b, d, pos, links);
+      let start = first_classified_take(f, p, b, d, pos, links);
       if (start >= 0 && util.index_of_i32(out.donors, d) < 0 && util.index_of_i32(pairs.selfs, d) < 0) {
         let moved: i32[] = [];
         let freed: boolean[] = [];
-        let n: i32 = donor_fields(f, b.insts[start], d);
+        let n = donor_fields(f, b.insts[start], d);
         while (freed.len() < n) {
           freed = freed.append(false);
         }
-        let i: i32 = start;
+        let i = start;
         while (i <= pos) {
-          let get: ssa.SInst = b.insts[i];
+          let get = b.insts[i];
           if (classified_take(f, p, get, d)) {
             moved = moved.append(get.result);
             freed = freed.with(get.imm, true);
           }
-          i = i + 1;
+          i += 1;
         }
         if (!keep_identity_conflict(out, out.donors.len(), d, [], moved, start, pos)) {
           out = Keeps {
             donors: out.donors.append(d), slots: out.slots.append([]), values: out.values.append([]), late: out.late.append([]),
             moved: out.moved.append(moved), freed: out.freed.append(freed),
-            start: out.start.append(start), taken: out.taken.append(pos), built: out.built.append(0 - 1), lives: out.lives.append(false),
+            start: out.start.append(start), taken: out.taken.append(pos), built: out.built.append(-1), lives: out.lives.append(false),
           };
         }
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return out;
 }
@@ -5153,16 +5153,16 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
 // whole run: each take then clears its slot or retains under that one read.
 // The run frees the token slot at its last take, before a token taken there.
 function tested(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
-  let carried: boolean[] = carried_builds(carry, b);
-  let last: i32 = 0 - 1;
+  let carried = carried_builds(carry, b);
+  let last: i32 = -1;
   for pos in 0..b.insts.len() {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (pos > last && ins.args.len() == 1 && tested_member(f, p, ins, ins.args[0], ins)) {
-      let d: i32 = ins.args[0];
-      let end: i32 = tested_end(f, p, idx, b, d, pos, pairs, carry, links);
-      if (end > pos && util.index_of_i32(out.donors, d) < 0 && !token_busy(pairs, carried, pos, end - 1, 0 - 1) && !keep_overlaps(out, pos, end)) {
+      let d = ins.args[0];
+      let end = tested_end(f, p, idx, b, d, pos, pairs, carry, links);
+      if (end > pos && util.index_of_i32(out.donors, d) < 0 && !token_busy(pairs, carried, pos, end - 1, -1) && !keep_overlaps(out, pos, end)) {
         let moved: i32[] = [];
-        let past: i32 = end + 1;
+        let past = end + 1;
         for i in pos..past {
           if (classified_take(f, p, b.insts[i], d)) {
             moved = moved.append(b.insts[i].result);
@@ -5171,7 +5171,7 @@ function tested(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: Reu
         out = Keeps {
           donors: out.donors.append(d), slots: out.slots.append([]), values: out.values.append([]), late: out.late.append([]),
           moved: out.moved.append(moved), freed: out.freed.append([]),
-          start: out.start.append(pos), taken: out.taken.append(end), built: out.built.append(0 - 1), lives: out.lives.append(true),
+          start: out.start.append(pos), taken: out.taken.append(end), built: out.built.append(-1), lives: out.lives.append(true),
         };
         last = end;
       }
@@ -5181,7 +5181,7 @@ function tested(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: Reu
 }
 
 function tested_member(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32, first: ssa.SInst): boolean {
-  let same: boolean = ins.kind_tag == first.kind_tag && (ins.kind_tag == ssasem.record_get() || ins.str == first.str);
+  let same = ins.kind_tag == first.kind_tag && (ins.kind_tag == ssasem.record_get() || ins.str == first.str);
   return same && classified_take(f, p, ins, d) && shell_root(f, p, ins) != d;
 }
 
@@ -5191,12 +5191,12 @@ function tested_member(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32, first: s
 // at start is no run.
 function tested_end(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, d: i32, start: i32, pairs: ReusePairs, carry: Carry, links: i32[]): i32 {
   if (d < links.len() && links[d] >= 0 || !ssasem.reference(f.values[d]) || ssasem.finalizer_of(f, f.values[d]) != "") {
-    return 0 - 1;
+    return -1;
   }
-  let first: ssa.SInst = b.insts[start];
-  let end: i32 = start;
+  let first = b.insts[start];
+  let end = start;
   for pos in start..b.insts.len() {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (util.index_of_i32(ins.args, d) >= 0) {
       if (tested_member(f, p, ins, d, first)) {
         end = pos;
@@ -5204,7 +5204,7 @@ function tested_end(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, d: i32
         break;
       }
     }
-    if (pairs.tokens[pos] == d || carry_held(carry, b.id, pos) == d || util.index_of_i32(step_of(p, idx, b.id, pos, 0 - 1).drops, d) >= 0) {
+    if (pairs.tokens[pos] == d || carry_held(carry, b.id, pos) == d || util.index_of_i32(step_of(p, idx, b.id, pos, -1).drops, d) >= 0) {
       break;
     }
   }
@@ -5213,27 +5213,27 @@ function tested_end(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, d: i32
 
 function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, d: i32, dies: i32, links: i32[]): i32 {
   if (d < 0 || d < links.len() && links[d] >= 0 || !ssasem.reference(f.values[d]) || ssasem.finalizer_of(f, f.values[d]) != "") {
-    return 0 - 1;
+    return -1;
   }
-  let first: i32 = 0 - 1;
-  let pos: i32 = 0;
+  let first: i32 = -1;
+  let pos = 0;
   while (pos <= dies) {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (first < 0 && classified_take(f, p, ins, d)) {
       first = pos;
     }
     if (first >= 0 && util.index_of_i32(ins.args, d) >= 0) {
-      let same: boolean = ins.kind_tag == ssasem.record_get() || ins.str == b.insts[first].str;
+      let same = ins.kind_tag == ssasem.record_get() || ins.str == b.insts[first].str;
       let fits: boolean = classified_take(f, p, ins, d) && same && slot_reads(b, d, ins.imm, dies) == 1
         || ins.kind_tag == ssasem.variant_is() || taken_read(ins.kind_tag) && !(ins.result < p.payloads.len() && p.payloads[ins.result]);
       if (!fits || shell_root(f, p, ins) == d) {
-        return 0 - 1;
+        return -1;
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   if (first >= 0 && donor_fields(f, b.insts[first], d) < 0) {
-    return 0 - 1;
+    return -1;
   }
   return first;
 }
@@ -5245,7 +5245,7 @@ function classified_take(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32): boole
   if (ins.kind_tag == ssasem.record_get()) {
     return semrecords.find(f.records, f.values[d]) >= 0;
   }
-  let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
+  let e = semrecords.find_enum(f.enums, f.values[d]);
   return ins.kind_tag == ssasem.variant_get() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
 }
 
@@ -5253,28 +5253,28 @@ function donor_fields(f: ssasem.Func, get: ssa.SInst, d: i32): i32 {
   if (get.kind_tag == ssasem.record_get()) {
     return record_fields(f.values[d], f).len();
   }
-  let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
+  let e = semrecords.find_enum(f.enums, f.values[d]);
   if (e < 0) {
-    return 0 - 1;
+    return -1;
   }
-  let v: i32 = semrecords.find_variant(f.enums[e], get.str);
+  let v = semrecords.find_variant(f.enums[e], get.str);
   if (v < 0) {
-    return 0 - 1;
+    return -1;
   }
   return f.enums[e].variants[v].fields.len();
 }
 
 function keep_overlaps(k: Keeps, from: i32, to: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < k.donors.len()) {
-    let end: i32 = k.built[i];
+    let end = k.built[i];
     if (end < 0) {
       end = k.taken[i];
     }
     if (k.start[i] <= to && from <= end) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -5308,14 +5308,14 @@ pub function token_slot_held(k: Keeps, pos: i32): boolean {
 }
 
 pub function classified_at(k: Keeps, pos: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < k.donors.len()) {
     if (k.built[i] < 0 && !k.lives[i] && k.taken[i] == pos) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function kept_values(k: Keeps): i32[] {
@@ -5329,12 +5329,12 @@ pub function kept_values(k: Keeps): i32[] {
 }
 
 pub function token_kept(k: Keeps, pos: i32, donor: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < k.taken.len()) {
     if (k.taken[i] == pos && k.built[i] != pos && !k.lives[i] && k.donors[i] == donor) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -5381,43 +5381,43 @@ pub function late_values(k: Keeps): i32[] {
 }
 
 function links_of(f: ssasem.Func, p: Plan, idx: i32[][]): i32[] {
-  let top: i32 = 0 - 2;
+  let top: i32 = -2;
   let state: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < f.graph.nvals) {
-    state = state.append(0 - 1);
-    v = v + 1;
+    state = state.append(-1);
+    v += 1;
   }
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
     for ins in f.graph.blocks[bi].insts {
       if (link_kind(f, p, ins)) {
         state = state.with(ins.result, top);
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let roots: boolean[] = link_roots(f, p);
-  let changed: boolean = true;
+  let roots = link_roots(f, p);
+  let changed = true;
   while (changed) {
     changed = false;
-    let next: i32[] = propagate(f, p, idx, state, roots);
+    let next = propagate(f, p, idx, state, roots);
     next = prune(f, p, next);
     v = 0;
     while (v < next.len()) {
       if (next[v] != state[v]) {
         changed = true;
       }
-      v = v + 1;
+      v += 1;
     }
     state = next;
   }
   v = 0;
   while (v < state.len()) {
     if (state[v] == top) {
-      state = state.with(v, 0 - 1);
+      state = state.with(v, -1);
     }
-    v = v + 1;
+    v += 1;
   }
   return state;
 }
@@ -5441,39 +5441,39 @@ function is_array_type(t: typeinfo.Type): boolean {
 
 function link_roots(f: ssasem.Func, p: Plan): boolean[] {
   let ok: boolean[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < f.graph.nparams) {
     ok = ok.append(is_array_type(f.values[v]) && !(v < p.owned.len() && p.owned[v]) && !p.entry_kept[v]);
-    v = v + 1;
+    v += 1;
   }
   return ok;
 }
 
 function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: boolean[]): i32[] {
-  let top: i32 = 0 - 2;
-  let out: i32[] = state;
+  let top: i32 = -2;
+  let out = state;
   for b in f.graph.blocks {
-    let pos: i32 = 0 - 1;
+    let pos: i32 = -1;
     for ins in b.insts {
-      pos = pos + 1;
-      if (state[ins.result] == 0 - 1) {
+      pos += 1;
+      if (state[ins.result] == -1) {
         continue;
       }
-      let root: i32 = top;
+      let root = top;
       if (box_update(ins)) {
         root = input_root(f, state, roots, ins.args[0]);
-        if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, step_of(p, idx, b.id, pos, 0 - 1), ins)) {
-          root = 0 - 1;
+        if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, step_of(p, idx, b.id, pos, -1), ins)) {
+          root = -1;
         }
       } else if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
         root = pair_call_root(f, p, idx, b, pos, state, roots, ins);
       } else if (ins.kind_tag == ssasem.call()) {
-        root = call_root(f, step_of(p, idx, b.id, pos, 0 - 1), state, roots, ins);
+        root = call_root(f, step_of(p, idx, b.id, pos, -1), state, roots, ins);
       } else {
         for a in ins.args {
-          let r0: i32 = input_root(f, state, roots, a);
-          if (r0 == 0 - 1 || root >= 0 && r0 >= 0 && r0 != root) {
-            root = 0 - 1;
+          let r0 = input_root(f, state, roots, a);
+          if (r0 == -1 || root >= 0 && r0 >= 0 && r0 != root) {
+            root = -1;
           } else if (r0 >= 0 && root == top) {
             root = r0;
           }
@@ -5491,43 +5491,43 @@ function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: b
 // result would be. The pair words are captured right after the call.
 function pair_call_root(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pos: i32, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
   if (ins.args.len() != 1) {
-    return 0 - 1;
+    return -1;
   }
-  let w: i32 = ins.args[0];
-  let k: i32 = pos - 1;
+  let w = ins.args[0];
+  let k = pos - 1;
   while (k >= 0) {
-    let c: ssa.SInst = b.insts[k];
+    let c = b.insts[k];
     if (c.kind_tag == ssasem.call() && c.imm > 0 && ssasem.pair_capture_count(c.imm) > 0) {
-      let base: i32 = ssasem.pair_capture_base(c.imm);
+      let base = ssasem.pair_capture_base(c.imm);
       if (w < base || w >= base + ssasem.pair_capture_count(c.imm)) {
-        return 0 - 1;
+        return -1;
       }
-      return call_root(f, step_of(p, idx, b.id, k, 0 - 1), state, roots, c);
+      return call_root(f, step_of(p, idx, b.id, k, -1), state, roots, c);
     }
-    k = k - 1;
+    k -= 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function call_root(f: ssasem.Func, step: Step, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
-  let modes: i32[] = callee_modes(f, ins);
-  let root: i32 = 0 - 1;
-  let i: i32 = 0;
+  let modes = callee_modes(f, ins);
+  let root: i32 = -1;
+  let i = 0;
   while (i < ins.args.len()) {
-    let r0: i32 = input_root(f, state, roots, ins.args[i]);
-    if (r0 != 0 - 1) {
-      if (root != 0 - 1 || !lent_last(f, step, modes, ins, i)) {
-        return 0 - 1;
+    let r0 = input_root(f, state, roots, ins.args[i]);
+    if (r0 != -1) {
+      if (root != -1 || !lent_last(f, step, modes, ins, i)) {
+        return -1;
       }
       root = r0;
     }
-    i = i + 1;
+    i += 1;
   }
   return root;
 }
 
 function lent_last(f: ssasem.Func, step: Step, modes: i32[], ins: ssa.SInst, i: i32): boolean {
-  let a: i32 = ins.args[i];
+  let a = ins.args[i];
   if (i >= modes.len() || modes[i] != borrow_mode() || occurrences(ins.args, a) != 1) {
     return false;
   }
@@ -5539,26 +5539,26 @@ function lent_last(f: ssasem.Func, step: Step, modes: i32[], ins: ssa.SInst, i: 
 
 function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32 {
   if (a < 0) {
-    return 0 - 1;
+    return -1;
   }
   if (a < f.graph.nparams) {
     if (roots[a]) {
       return a;
     }
-    return 0 - 1;
+    return -1;
   }
   return state[a];
 }
 
 function prune(f: ssasem.Func, p: Plan, state: i32[]): i32[] {
-  let out: i32[] = state;
-  let at: i32[] = ssa.block_positions(f.graph);
+  let out = state;
+  let at = ssa.block_positions(f.graph);
   for step in p.steps {
     for h in step.hand_roots {
       out = unlink(out, h);
     }
     for supply in step.supplies {
-      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, at, state, step, supply)) {
+      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != -1 && !linked_supply(f, p, at, state, step, supply)) {
         out = unlink(out, supply.value);
       }
     }
@@ -5570,29 +5570,29 @@ function unlink(own state: i32[], v: i32): i32[] {
   if (v < 0 || v >= state.len()) {
     return state;
   }
-  return state.with(v, 0 - 1);
+  return state.with(v, -1);
 }
 
 function linked_supply(f: ssasem.Func, p: Plan, at: i32[], state: i32[], step: Step, supply: Supply): boolean {
   if (supply.mode != move_unit()) {
     return false;
   }
-  let b: ssa.SBlock = f.graph.blocks[at[step.block]];
+  let b = f.graph.blocks[at[step.block]];
   if (step.point == return_point()) {
     return b.term.kind_tag == 1 && b.term.value == supply.value;
   }
   if (step.point == edge_point()) {
-    let dest: ssa.SBlock = f.graph.blocks[at[step.target]];
+    let dest = f.graph.blocks[at[step.target]];
     if (supply.slot < 0 || supply.slot >= dest.insts.len()) {
       return false;
     }
-    let phi: ssa.SInst = dest.insts[supply.slot];
+    let phi = dest.insts[supply.slot];
     return phi.kind_tag == 8 && same_root(state[phi.result], state[supply.value]);
   }
   if (step.point < 0) {
     return false;
   }
-  let ins: ssa.SInst = b.insts[step.point];
+  let ins = b.insts[step.point];
   if (constructs(ins)) {
     return true;
   }
@@ -5609,51 +5609,51 @@ pub function constructs(ins: ssa.SInst): boolean {
 }
 
 function same_root(a: i32, b: i32): boolean {
-  if (a == 0 - 1 || b == 0 - 1) {
+  if (a == -1 || b == -1) {
     return false;
   }
-  return a == b || a == 0 - 2 || b == 0 - 2;
+  return a == b || a == -2 || b == -2;
 }
 
 function verify_reuse(f: ssasem.Func, p: Plan, reachable: boolean[], idx: ReplayIndex): string {
-  let r: Reuse = p.reuse;
+  let r = p.reuse;
   if (r.pairs.len() == 0 && r.keeps.len() == 0 && r.carry.from.len() == 0 && r.carry.to.len() == 0) {
     return "";
   }
   if (r.pairs.len() != f.graph.blocks.len() || r.keeps.len() != f.graph.blocks.len()) {
     return "reuse tables do not cover the blocks";
   }
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
-      let why: string = verify_block_tokens(f, p, idx, bi, r);
+      let why = verify_block_tokens(f, p, idx, bi, r);
       if (why != "") {
         return why;
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return verify_carry(f, p, idx, r, reachable);
 }
 
 function verify_block_tokens(f: ssasem.Func, p: Plan, idx: ReplayIndex, bi: i32, r: Reuse): string {
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  let pr: ReusePairs = r.pairs[bi];
+  let b = f.graph.blocks[bi];
+  let pr = r.pairs[bi];
   if (pr.tokens.len() != b.insts.len() || pr.builds.len() != b.insts.len() || pr.selfs.len() != b.insts.len()) {
     return "reuse pairing rows do not cover the block";
   }
   let held: i32[] = [];
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < b.insts.len()) {
-    let ins: ssa.SInst = b.insts[pos];
+    let ins = b.insts[pos];
     if (ins.kind_tag == 6 || ins.kind_tag == 8) {
       if (pr.tokens[pos] >= 0 || pr.builds[pos] >= 0 || pr.selfs[pos] >= 0) {
         return "a token at a parameter or a phi";
       }
     } else {
-      let step: Step = replayed_step(p, idx, b, pos);
+      let step = replayed_step(p, idx, b, pos);
       if (pr.builds[pos] >= 0) {
-        let k: i32 = util.index_of_i32(held, pr.builds[pos]);
+        let k = util.index_of_i32(held, pr.builds[pos]);
         if (k < 0) {
           return "a construction spends a token it was not handed";
         }
@@ -5663,11 +5663,11 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: ReplayIndex, bi: i32,
         held = without_at(held, k);
       }
       if (pr.selfs[pos] >= 0) {
-        let d: i32 = pr.selfs[pos];
+        let d = pr.selfs[pos];
         if (pr.builds[pos] >= 0) {
           return "a construction spends two tokens";
         }
-        let carried: boolean = carry_held_for(r.carry, b.id, pos);
+        let carried = carry_held_for(r.carry, b.id, pos);
         if (carried && r.carry.donor[util.index_of_i32(r.carry.to, b.id)] != d) {
           return "a construction spends a token other than the one carried to it";
         }
@@ -5690,7 +5690,7 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: ReplayIndex, bi: i32,
         held = held.append(pr.tokens[pos]);
       }
     }
-    pos = pos + 1;
+    pos += 1;
   }
   if (held.len() > 0) {
     return "a token taken in a block is spent by no construction in it";
@@ -5699,15 +5699,15 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: ReplayIndex, bi: i32,
 }
 
 function verify_keeps(pr: ReusePairs, carried: boolean[], k: Keeps): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < k.donors.len()) {
-    let built: i32 = k.built[i];
-    let taken: i32 = k.taken[i];
+    let built = k.built[i];
+    let taken = k.taken[i];
     if (built < 0) {
       if (taken < 0 || taken >= pr.selfs.len() || k.start[i] < 0 || k.start[i] > taken) {
         return "a classified donor's positions are outside its block";
       }
-      let held_to: i32 = taken;
+      let held_to = taken;
       if (k.lives[i]) {
         held_to = taken - 1;
       }
@@ -5717,21 +5717,21 @@ function verify_keeps(pr: ReusePairs, carried: boolean[], k: Keeps): string {
       if (keep_identity_conflict(k, i, k.donors[i], k.values[i], k.moved[i], k.start[i], taken)) {
         return "live keeps have an ambiguous donor or field identity";
       }
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (built >= pr.selfs.len() || taken < 0 || taken > built || k.start[i] < 0 || k.start[i] > built) {
       return "a kept donor's positions are outside its block";
     }
-    let own: boolean = built == taken && pr.selfs[built] == k.donors[i];
-    let earlier: boolean = taken < built && pr.tokens[taken] == k.donors[i] && pr.builds[built] == k.donors[i];
+    let own = built == taken && pr.selfs[built] == k.donors[i];
+    let earlier = taken < built && pr.tokens[taken] == k.donors[i] && pr.builds[built] == k.donors[i];
     if (!own && !earlier) {
       return "a kept donor is not its construction's token";
     }
     if (keep_identity_conflict(k, i, k.donors[i], k.values[i], k.moved[i], k.start[i], built)) {
       return "live keeps have an ambiguous donor or field identity";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -5766,33 +5766,33 @@ function same_tokens(a: i32[], b: i32[]): boolean {
 }
 
 function tokens_out(c: Carry, b: ssa.SBlock, entry: i32[]): i32[] {
-  let out: i32[] = entry;
-  let i: i32 = 0;
+  let out = entry;
+  let i = 0;
   while (i < c.from.len()) {
     if (c.from[i] == b.id) {
       out = with_token(out, c.held[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < c.to.len()) {
     if (c.to[i] == b.id) {
       out = without_token(out, c.donor[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function tokens_over(c: Carry, from: i32, to: i32, out: i32[]): i32[] {
-  let over: i32[] = out;
+  let over = out;
   for d in carry_exits(c, from, to) {
     over = without_token(over, d);
   }
   for d in carry_nulls(c, from, to) {
     over = with_token(over, d);
   }
-  let held: i32 = carry_held_edge(c, from, to);
+  let held = carry_held_edge(c, from, to);
   if (held >= 0) {
     over = with_token(over, held);
   }
@@ -5800,30 +5800,30 @@ function tokens_over(c: Carry, from: i32, to: i32, out: i32[]): i32[] {
 }
 
 function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reachable: boolean[]): string {
-  let c: Carry = r.carry;
-  let at: i32[] = ssa.block_positions(f.graph);
-  let i: i32 = 0;
+  let c = r.carry;
+  let at = ssa.block_positions(f.graph);
+  let i = 0;
   while (i < c.from.len()) {
-    let k: i32 = at[c.from[i]];
+    let k = at[c.from[i]];
     if (k < 0 || !reachable[k]) {
       return "a token is held in an unreachable block";
     }
-    let b: ssa.SBlock = f.graph.blocks[k];
+    let b = f.graph.blocks[k];
     if (successor_count(b) == 0) {
       return "a block that leaves the function holds a token";
     }
     if (util.index_of_i32(replayed_step(p, idx, b, c.drop_at[i]).drops, c.held[i]) < 0 || static_box(p, c.held[i])) {
       return "a carried token is taken from a value not dying there";
     }
-    i = i + 1;
+    i += 1;
   }
   for edge in 0..c.edge_from.len() {
-    let k: i32 = at[c.edge_from[edge]];
+    let k = at[c.edge_from[edge]];
     if (k < 0 || !reachable[k]) {
       return "a token is held on an edge out of an unreachable block";
     }
-    let b: ssa.SBlock = f.graph.blocks[k];
-    let st: i32 = find_step(b, idx, edge_point(), c.edge_to[edge]);
+    let b = f.graph.blocks[k];
+    let st = find_step(b, idx, edge_point(), c.edge_to[edge]);
     if (st < 0 || util.index_of_i32(p.steps[st].drops, c.edge_held[edge]) < 0 || static_box(p, c.edge_held[edge])) {
       return "a carried token is taken from a value not dying on that edge";
     }
@@ -5835,31 +5835,31 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reach
     known = known.append(false);
   }
   known = known.with(at[f.graph.entry], true);
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let k: i32 = 0;
+    let k = 0;
     while (k < f.graph.blocks.len()) {
       if (reachable[k] && known[k]) {
-        let b: ssa.SBlock = f.graph.blocks[k];
-        let why: string = spent_held(c, b, entry[k]);
+        let b = f.graph.blocks[k];
+        let why = spent_held(c, b, entry[k]);
         if (why != "") {
           return why;
         }
-        let out: i32[] = tokens_out(c, b, entry[k]);
-        let next: i32 = successor_count(b);
+        let out = tokens_out(c, b, entry[k]);
+        let next = successor_count(b);
         if (next == 0 && out.len() > 0) {
           return "a carried token is held where the function leaves";
         }
         for which in 0..next {
-          let s: i32 = ssa.successor_id(b.term, which);
+          let s = ssa.successor_id(b.term, which);
           for d in carry_exits(c, b.id, s) {
             if (util.index_of_i32(out, d) < 0) {
               return "an edge frees a token it does not hold";
             }
           }
-          let over: i32[] = tokens_over(c, b.id, s, out);
-          let sk: i32 = at[s];
+          let over = tokens_over(c, b.id, s, out);
+          let sk = at[s];
           if (!known[sk]) {
             known = known.with(sk, true);
             entry = entry.with(sk, over);
@@ -5869,19 +5869,19 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reach
           }
         }
       }
-      k = k + 1;
+      k += 1;
     }
   }
   return "";
 }
 
 function spent_held(c: Carry, b: ssa.SBlock, entry: i32[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.to.len()) {
     if (c.to[i] == b.id && util.index_of_i32(entry, c.donor[i]) < 0) {
       return "a construction spends a carried token no path holds";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }

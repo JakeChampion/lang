@@ -21,20 +21,20 @@ function expect(f: ssa.SFunc, producers: ssa.SFunc[], consumers: ssa.SFunc[], wh
   }
   if (ok) {
     require(p.sites.len() == 2 && p.proof.message == "proved pre-call incoming capacity", 92);
-    let input: i32 = 0;
+    let input = 0;
     for site in p.sites {
       require(site.input == input && site.words == 3 && site.parameter == 0 && site.consumer == consumers[0].name, 93);
-      let found: i32 = 0;
+      let found = 0;
       for b in f.blocks {
         for op in b.insts {
           if (b.id == site.block && op.result == site.call) {
             require(op.kind_tag == 11 && op.str == site.consumer && op.args[0] == site.argument && op.args[1] == site.incoming, 94);
-            found = found + 1;
+            found += 1;
           }
         }
       }
       require(found == 1, 95);
-      input = input + 1;
+      input += 1;
     }
   }
 }
@@ -144,11 +144,11 @@ function renamed(f: ssa.SFunc): ssa.SFunc {
 function controls(f: ssa.SFunc, p: ssa.SFunc, c: ssa.SFunc): void {
   expect(f, [p], [c], "");
   let reasons = ["invalid incoming producer credit transfer", "invalid incoming producer credit transfer", "caller origin producer binding", "owned matching-capacity consumer argument required", "independent incoming child argument required", "owned matching-capacity consumer argument required", "unsupported caller origin effect", "unsupported caller origin effect", "incoming consumer call missing", "unavailable caller origin phi", "owned matching-capacity consumer argument required", "owned matching-capacity consumer argument required", "unavailable caller origin operand", "exact incoming Boolean required", "invalid caller origin parameter", "", "invalid caller origin definition"];
-  let mode: i32 = 0;
+  let mode = 0;
   for why in reasons {
     expect(changed(f, mode), [p], [c], why);
     expect(sparse_ids.rename(changed(f, mode)), [p], [c], why);
-    mode = mode + 1;
+    mode += 1;
   }
   expect(f, [], [c], "incoming boundary binding");
   expect(f, [p, p], [c], "incoming boundary binding");

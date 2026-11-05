@@ -18,7 +18,7 @@ const ENTRY_DIR: i32 = 1;
 const ENTRY_FILE: i32 = 2;
 
 pub function load(dir: string): Result[Assets, string] {
-  let root_dir: boolean = false;
+  let root_dir = false;
   match (stat(dir)) {
     Ok(st) => {
       root_dir = st.is_dir;
@@ -31,11 +31,11 @@ pub function load(dir: string): Result[Assets, string] {
   let names: string[] = [];
   let contents: u8[][] = [];
   let rels: string[] = [""];
-  let ri: i32 = 0;
+  let ri = 0;
   while (ri < rels.len()) {
-    let rel: string = rels[ri];
-    ri = ri + 1;
-    let sdir: string = dir;
+    let rel = rels[ri];
+    ri += 1;
+    let sdir = dir;
     if (rel.len() > 0) {
       sdir = dir + "/" + rel;
     }
@@ -45,23 +45,23 @@ pub function load(dir: string): Result[Assets, string] {
         entries = ns;
       },
       Err(e) => {
-        let message: string = "-embed " + dir + ": cannot read directory " + sdir;
+        let message = "-embed " + dir + ": cannot read directory " + sdir;
         if let InvalidUtf8(_) = e {
           message = "-embed " + dir + ": a file name is not valid UTF-8";
         }
         return Err(message);
       }
     }
-    let i: i32 = 0;
+    let i = 0;
     while (i < entries.len()) {
-      let name: string = entries[i];
-      i = i + 1;
-      let child_rel: string = name + "";
+      let name = entries[i];
+      i += 1;
+      let child_rel = name + "";
       if (rel.len() > 0) {
         child_rel = rel + "/" + name;
       }
-      let child: string = dir + "/" + child_rel;
-      let kind: i32 = classify(child);
+      let child = dir + "/" + child_rel;
+      let kind = classify(child);
       if (kind == ENTRY_DIR) {
         rels = rels.append(child_rel + "");
         continue;
@@ -73,7 +73,7 @@ pub function load(dir: string): Result[Assets, string] {
         return Err("-embed " + dir + ": file name \"" + utf8.from_bytes_lossy(child_rel.bytes()) + "\" is not valid UTF-8");
       }
       let body: u8[] = [];
-      let read_ok: boolean = false;
+      let read_ok = false;
       match (read_file_bytes(child)) {
         Ok(bs) => {
           body = bs;
@@ -113,30 +113,30 @@ function classify(path: string): i32 {
 function sort_pairs(names: string[], contents: u8[][]): (string[], u8[][]) {
   let on: string[] = [];
   let oc: u8[][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
-    let pos: i32 = 0;
+    let pos = 0;
     while (pos < on.len() && util.str_less(on[pos], names[i])) {
-      pos = pos + 1;
+      pos += 1;
     }
     let nn: string[] = [];
     let nc: u8[][] = [];
-    let j: i32 = 0;
+    let j = 0;
     while (j < pos) {
       nn = nn.append(on[j]);
       nc = nc.append(oc[j]);
-      j = j + 1;
+      j += 1;
     }
     nn = nn.append(names[i]);
     nc = nc.append(contents[i]);
     while (j < on.len()) {
       nn = nn.append(on[j]);
       nc = nc.append(oc[j]);
-      j = j + 1;
+      j += 1;
     }
     on = nn;
     oc = nc;
-    i = i + 1;
+    i += 1;
   }
   return (on, oc);
 }
@@ -146,17 +146,17 @@ pub function lookup(a: Assets, name: string): i32 {
 }
 
 function common_affix(a: string, b: string): i32 {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let pre: i32 = 0;
+  let pre = 0;
   while (pre < n && a[pre] == b[pre]) {
-    pre = pre + 1;
+    pre += 1;
   }
-  let suf: i32 = 0;
+  let suf = 0;
   while (suf < n && a[a.len() - 1 - suf] == b[b.len() - 1 - suf]) {
-    suf = suf + 1;
+    suf += 1;
   }
   if (suf > pre) {
     return suf;
@@ -165,16 +165,16 @@ function common_affix(a: string, b: string): i32 {
 }
 
 pub function suggest(a: Assets, want: string): string {
-  let best: string = "";
-  let best_score: i32 = 0;
-  let i: i32 = 0;
+  let best = "";
+  let best_score = 0;
+  let i = 0;
   while (i < a.names.len()) {
-    let score: i32 = common_affix(a.names[i], want);
+    let score = common_affix(a.names[i], want);
     if (score > best_score) {
       best_score = score;
       best = a.names[i];
     }
-    i = i + 1;
+    i += 1;
   }
   if (best_score * 3 < want.len()) {
     return "";
@@ -186,18 +186,18 @@ pub function format_available(a: Assets): string {
   if (a.names.len() == 0) {
     return "no assets were embedded";
   }
-  let shown: i32 = a.names.len();
+  let shown = a.names.len();
   if (shown > 10) {
     shown = 10;
   }
-  let out: string = "embedded assets: ";
-  let i: i32 = 0;
+  let out = "embedded assets: ";
+  let i = 0;
   while (i < shown) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + a.names[i];
-    i = i + 1;
+    out += a.names[i];
+    i += 1;
   }
   if (a.names.len() > shown) {
     out = out + " (and " + util.i32_to_string(a.names.len() - shown) + " more)";
@@ -218,7 +218,7 @@ pub struct Folded { module: parser.Module, errs: util.Diag[] }
 struct FoldAcc { assets: Assets, errs: util.Diag[] }
 
 pub function fold_assets(mod: parser.Module, assets: Assets): Folded {
-  let acc: FoldAcc = FoldAcc { assets: assets, errs: [] };
+  let acc = FoldAcc { assets: assets, errs: [] };
   let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     let (body, a2) = astwalk.map_stmts_where(fd.body, acc, fa_keep_stmt, fa_expr, fa_applies);
@@ -245,7 +245,7 @@ function fa_applies(e: ast.Expr): boolean {
 function fa_expr(e: ast.Expr, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
   match (e) {
     ast.ExprCall(c) => {
-      let name: string = callee_ident(c.callee);
+      let name = callee_ident(c.callee);
       if (name == ASSET_ALL || name == ASSET_ALL_BYTES) {
         return resolve_all(c, a, name);
       }
@@ -274,7 +274,7 @@ function callee_ident(callee: ast.Expr): string {
 }
 
 function fail(c: ast.ExprCall, a: FoldAcc, msg: string): (ast.Expr, FoldAcc, boolean) {
-  let d: util.Diag = util.Diag { related: [], length: 0, code: "E094", message: msg, line: c.line, col: c.col, fix: None };
+  let d = util.Diag { related: [], length: 0, code: "E094", message: msg, line: c.line, col: c.col, fix: None };
   return (ast.ExprCall { ...c }, FoldAcc { ...a, errs: a.errs.append(d) }, true);
 }
 
@@ -285,7 +285,7 @@ function is_bytes_form(name: string): boolean {
 struct Content { lit: ast.Expr, err: string }
 
 function content(c: ast.ExprCall, a: Assets, idx: i32, name: string): Content {
-  let bs: u8[] = a.contents[idx];
+  let bs = a.contents[idx];
   if (is_bytes_form(name)) {
     return Content { lit: bytes_literal(bs, c.line, c.col), err: "" };
   }
@@ -295,7 +295,7 @@ function content(c: ast.ExprCall, a: Assets, idx: i32, name: string): Content {
     },
     Err(_) => {}
   }
-  let msg: string = name + ": embedded asset \"" + a.names[idx] + "\" under " + a.root;
+  let msg = name + ": embedded asset \"" + a.names[idx] + "\" under " + a.root;
   return Content { lit: ast.ExprCall { ...c }, err: msg + " is not valid UTF-8 — read it as u8[] with " + name + "_bytes" };
 }
 
@@ -307,8 +307,8 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
   if (c.args.len() != 1) {
     return fail(c, a, name + " takes exactly one argument, got " + util.i32_to_string(c.args.len()));
   }
-  let lit: string = "";
-  let is_lit: boolean = false;
+  let lit = "";
+  let is_lit = false;
   match (c.args[0]) {
     ast.ExprString(s) => {
       lit = s.value;
@@ -322,16 +322,16 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
   if (!a.assets.present) {
     return fail(c, a, name + "(\"" + lit + "\") but no assets were embedded — pass -embed DIR to the compiler");
   }
-  let idx: i32 = lookup(a.assets, lit);
+  let idx = lookup(a.assets, lit);
   if (idx < 0) {
-    let msg: string = "no embedded asset \"" + lit + "\" under " + a.assets.root;
-    let did: string = suggest(a.assets, lit);
+    let msg = "no embedded asset \"" + lit + "\" under " + a.assets.root;
+    let did = suggest(a.assets, lit);
     if (did.len() > 0) {
       return fail(c, a, msg + "; did you mean \"" + did + "\"?");
     }
     return fail(c, a, msg + " (" + format_available(a.assets) + ")");
   }
-  let got: Content = content(c, a.assets, idx, name);
+  let got = content(c, a.assets, idx, name);
   if (got.err.len() > 0) {
     return fail(c, a, got.err);
   }
@@ -346,9 +346,9 @@ function resolve_all(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
     return fail(c, a, name + "() but no assets were embedded — pass -embed DIR to the compiler");
   }
   let elems: ast.Expr[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.assets.names.len()) {
-    let got: Content = content(c, a.assets, i, name);
+    let got = content(c, a.assets, i, name);
     if (got.err.len() > 0) {
       return fail(c, a, got.err);
     }
@@ -356,9 +356,9 @@ function resolve_all(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, Fold
     pair = pair.append(ast.ExprString { value: a.assets.names[i], line: c.line, col: c.col });
     pair = pair.append(got.lit);
     elems = elems.append(ast.ExprTuple { elements: pair, line: c.line, col: c.col });
-    i = i + 1;
+    i += 1;
   }
-  let elem_ty: string = "(string, string)";
+  let elem_ty = "(string, string)";
   if (is_bytes_form(name)) {
     elem_ty = "(string, u8[])";
   }

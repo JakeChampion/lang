@@ -20,7 +20,7 @@ function retained_type(t: typeinfo.Type): typeinfo.Type {
     typeinfo.TypeUnion(u) => {
       let args: typeinfo.Type[] = [];
       for arg in u.args {
-        let kept: typeinfo.Type = retained_type(arg);
+        let kept = retained_type(arg);
         if let typeinfo.TypeUnknown(missing) = arg {
           if (util.str_has_prefix(missing.reason, "unbound ")) {
             kept = typeinfo.TypeStruct { name: "$unbound", args: [] };
@@ -67,32 +67,32 @@ pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamD
   if (ret.len() == 0) {
     return declined(name);
   }
-  let ptys: string = "";
-  let i: i32 = 0;
+  let ptys = "";
+  let i = 0;
   while (i < tys.len()) {
     if (tys[i].len() == 0) {
       return declined(name);
     }
     if (i > 0) {
-      ptys = ptys + ",";
+      ptys += ",";
     }
-    ptys = ptys + tys[i];
-    i = i + 1;
+    ptys += tys[i];
+    i += 1;
   }
   return ast.ParamDecl { name: name, type_name: "fn", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: ret, fn_param_types: ptys, line: 0, col: 0 };
 }
 
 pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {
-  let r: parser.TypeRef = parser.parse_type_ref(sp);
+  let r = parser.parse_type_ref(sp);
   if (!parser.ref_is_fn_value(r)) {
     return declined(name);
   }
-  let f: parser.TypeRef = parser.ref_ungroup(r);
+  let f = parser.ref_ungroup(r);
   let params: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < f.args.len()) {
     params = params.append(parser.render_type_ref(f.args[i]));
-    i = i + 1;
+    i += 1;
   }
   return fn_param_decl(name, params, parser.render_type_ref(parser.ref_fn_result(r)));
 }
@@ -103,14 +103,14 @@ pub function fn_param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
       return declined(name);
     }
     let params: string[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < f.param_types.len()) {
       let param = capture_spelling(f.param_types[i]);
       if (typeinfo.fn_own_at(f, i)) {
         param = "own " + param;
       }
       params = params.append(param);
-      i = i + 1;
+      i += 1;
     }
     return fn_param_decl(name, params, capture_spelling(f.ret_type));
   }
@@ -125,29 +125,29 @@ pub function fn_param_from_var(v: ast.StmtVar): ast.ParamDecl {
 }
 
 pub function follow_reexports(mangled: string, keys: string[], targets: string[]): string {
-  let cur: string = mangled;
-  let steps: i32 = 0;
+  let cur = mangled;
+  let steps = 0;
   while (steps < keys.len() + 1) {
-    let i: i32 = 0;
-    let hit: boolean = false;
+    let i = 0;
+    let hit = false;
     while (i < keys.len()) {
       if (keys[i] == cur) {
         cur = targets[i];
         hit = true;
         i = keys.len();
       } else {
-        i = i + 1;
+        i += 1;
       }
     }
     if (!hit) {
       return cur;
     }
-    steps = steps + 1;
+    steps += 1;
   }
   return cur;
 }
 
 pub function canonical_imported_trait(prefix: string, name: string, keys: string[], targets: string[]): string {
-  let origin: string = follow_reexports(prefix + "__" + name, keys, targets);
+  let origin = follow_reexports(prefix + "__" + name, keys, targets);
   return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
 }

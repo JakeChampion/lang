@@ -12,40 +12,40 @@ function contains(values: i32[], value: i32): boolean {
 }
 
 pub function position_of(f: ssa.SFunc): i32[] {
-  let top: i32 = 0;
+  let top = 0;
   for b in f.blocks {
     if (b.id > top) {
       top = b.id;
     }
   }
-  let out: i32[] = util.minus_ones(top + 1);
-  let i: i32 = 0;
+  let out = util.minus_ones(top + 1);
+  let i = 0;
   while (i < f.blocks.len()) {
     out = out.with(f.blocks[i].id, i);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
-  let at: i32[] = position_of(f);
-  let reachable: boolean[] = __alloc_bool(f.blocks.len());
-  let entry: i32 = at[f.entry];
+  let at = position_of(f);
+  let reachable = __alloc_bool(f.blocks.len());
+  let entry = at[f.entry];
   reachable = reachable.with(entry, true);
   let work: i32[] = [entry];
-  let depth: i32 = 1;
+  let depth = 1;
   while (depth > 0) {
-    depth = depth - 1;
-    let bi: i32 = work[depth];
-    let which: i32 = 0;
+    depth -= 1;
+    let bi = work[depth];
+    let which = 0;
     while (which < 2) {
-      let id: i32 = ssa.successor_id(f.blocks[bi].term, which);
+      let id = ssa.successor_id(f.blocks[bi].term, which);
       if (id >= 0 && !reachable[at[id]]) {
         reachable = reachable.with(at[id], true);
         work = push_at(work, depth, at[id]);
-        depth = depth + 1;
+        depth += 1;
       }
-      which = which + 1;
+      which += 1;
     }
   }
   return reachable;
@@ -61,52 +61,52 @@ pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
 }
 
 pub function dominates(f: ssa.SFunc): Dom {
-  let n: i32 = f.blocks.len();
-  let at: i32[] = position_of(f);
-  let entry: i32 = at[f.entry];
-  let po: i32[] = util.minus_ones(n);
+  let n = f.blocks.len();
+  let at = position_of(f);
+  let entry = at[f.entry];
+  let po = util.minus_ones(n);
   let order: i32[] = [];
-  let seen: boolean[] = __alloc_bool(n);
+  let seen = __alloc_bool(n);
   let stack: i32[] = [entry];
-  let sp: i32 = 1;
-  let next_succ: i32[] = util.minus_ones(n);
+  let sp = 1;
+  let next_succ = util.minus_ones(n);
   seen = seen.with(entry, true);
   while (sp > 0) {
-    let bi: i32 = stack[sp - 1];
-    let term: ssa.STerm = f.blocks[bi].term;
-    let k: i32 = next_succ[bi] + 1;
-    let id: i32 = ssa.successor_id(term, k);
+    let bi = stack[sp - 1];
+    let term = f.blocks[bi].term;
+    let k = next_succ[bi] + 1;
+    let id = ssa.successor_id(term, k);
     while (id >= 0 && seen[at[id]]) {
-      k = k + 1;
+      k += 1;
       id = ssa.successor_id(term, k);
     }
     next_succ = next_succ.with(bi, k);
     if (id >= 0) {
-      let sk: i32 = at[id];
+      let sk = at[id];
       seen = seen.with(sk, true);
       stack = push_at(stack, sp, sk);
-      sp = sp + 1;
+      sp += 1;
     } else {
       po = po.with(bi, order.len());
       order = order.append(bi);
-      sp = sp - 1;
+      sp -= 1;
     }
   }
-  let idom: i32[] = util.minus_ones(n);
+  let idom = util.minus_ones(n);
   idom = idom.with(entry, entry);
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let r: i32 = order.len() - 1;
+    let r = order.len() - 1;
     while (r >= 0) {
-      let bi: i32 = order[r];
-      r = r - 1;
+      let bi = order[r];
+      r -= 1;
       if (bi == entry) {
         continue;
       }
-      let nd: i32 = 0 - 1;
+      let nd: i32 = -1;
       for pid in f.blocks[bi].preds {
-        let p: i32 = at[pid];
+        let p = at[pid];
         if (p < 0 || idom[p] < 0) {
           continue;
         }
@@ -122,49 +122,49 @@ pub function dominates(f: ssa.SFunc): Dom {
       }
     }
   }
-  let first_child: i32[] = util.minus_ones(n);
-  let next_sibling: i32[] = util.minus_ones(n);
-  let bi: i32 = 0;
+  let first_child = util.minus_ones(n);
+  let next_sibling = util.minus_ones(n);
+  let bi = 0;
   while (bi < n) {
     if (bi != entry && idom[bi] >= 0) {
       next_sibling = next_sibling.with(bi, first_child[idom[bi]]);
       first_child = first_child.with(idom[bi], bi);
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let pre: i32[] = util.minus_ones(n);
-  let post: i32[] = util.minus_ones(n);
-  let clock: i32 = 0;
+  let pre = util.minus_ones(n);
+  let post = util.minus_ones(n);
+  let clock = 0;
   let walk: i32[] = [entry];
-  let wp: i32 = 1;
-  let cursor: i32[] = util.minus_ones(n);
+  let wp = 1;
+  let cursor = util.minus_ones(n);
   pre = pre.with(entry, clock);
-  clock = clock + 1;
+  clock += 1;
   while (wp > 0) {
-    let top: i32 = walk[wp - 1];
-    let c: i32 = first_child[top];
+    let top = walk[wp - 1];
+    let c = first_child[top];
     if (cursor[top] >= 0) {
       c = next_sibling[cursor[top]];
     }
     if (c >= 0) {
       cursor = cursor.with(top, c);
       pre = pre.with(c, clock);
-      clock = clock + 1;
+      clock += 1;
       walk = push_at(walk, wp, c);
-      wp = wp + 1;
+      wp += 1;
     } else {
       post = post.with(top, clock);
-      clock = clock + 1;
-      wp = wp - 1;
+      clock += 1;
+      wp -= 1;
     }
   }
-  let by_clock: i32[] = util.minus_ones(clock);
+  let by_clock = util.minus_ones(clock);
   bi = 0;
   while (bi < n) {
     if (pre[bi] >= 0) {
       by_clock = by_clock.with(pre[bi], bi);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return Dom { pre: pre, post: post, idom: idom, by_clock: by_clock };
 }
@@ -177,8 +177,8 @@ function push_at(own stack: i32[], d: i32, v: i32): i32[] {
 }
 
 function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
-  let x: i32 = a;
-  let y: i32 = b;
+  let x = a;
+  let y = b;
   while (x != y) {
     while (po[x] < po[y]) {
       x = idom[x];
@@ -191,7 +191,7 @@ function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
 }
 
 function available(value: i32, block: i32, pos: i32, defs: i32[], positions: i32[], dom: Dom): boolean {
-  let definition: i32 = defs[value];
+  let definition = defs[value];
   if (definition < 0) {
     return false;
   }
@@ -224,7 +224,7 @@ pub function analyze(f: ssa.SFunc, dependencies: i32[][]): ssalive.Flow {
 }
 
 pub function analyze_checked(f: ssa.SFunc, dependencies: i32[][], g: Facts): ssalive.Flow {
-  let why: string = limits_error(f);
+  let why = limits_error(f);
   if (why == "" && util.verify_on()) {
     if (g.checked) {
       why = dependencies_error(f, dependencies, g);
@@ -239,7 +239,7 @@ pub function analyze_checked(f: ssa.SFunc, dependencies: i32[][], g: Facts): ssa
 }
 
 pub function limits_error(f: ssa.SFunc): string {
-  let n: i32 = f.blocks.len();
+  let n = f.blocks.len();
   if (n > 0 && n > 2147483647 / n) {
     return "dominator matrix overflow";
   }
@@ -260,11 +260,11 @@ function refused(why: string): Facts {
 }
 
 pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
-  let err: string = ssalive.dependency_error(f, dependencies);
+  let err = ssalive.dependency_error(f, dependencies);
   if (err != "") {
     return err;
   }
-  let g: Facts = check_graph(f);
+  let g = check_graph(f);
   if (g.why != "") {
     return g.why;
   }
@@ -272,7 +272,7 @@ pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
 }
 
 pub function check_graph(f: ssa.SFunc): Facts {
-  let err: string = ssalive.graph_error(f);
+  let err = ssalive.graph_error(f);
   if (err != "") {
     return refused(err);
   }
@@ -282,16 +282,16 @@ pub function check_graph(f: ssa.SFunc): Facts {
   if (f.nparams < 0 || f.nparams > f.nvals) {
     return refused("parameter dimensions");
   }
-  let at: i32[] = position_of(f);
+  let at = position_of(f);
   if (f.blocks[at[f.entry]].preds.len() > 0) {
     return refused("entry has predecessors");
   }
-  let defs: i32[] = util.minus_ones(f.nvals);
-  let positions: i32[] = util.minus_ones(f.nvals);
-  let bi: i32 = 0;
+  let defs = util.minus_ones(f.nvals);
+  let positions = util.minus_ones(f.nvals);
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let pos: i32 = 0;
-    let seen_regular: boolean = false;
+    let pos = 0;
+    let seen_regular = false;
     for ins in f.blocks[bi].insts {
       if (ins.kind_tag == 6 && (f.blocks[bi].id != f.entry || ins.imm < 0 || ins.imm >= f.nparams)) {
         return refused("invalid parameter definition");
@@ -310,9 +310,9 @@ pub function check_graph(f: ssa.SFunc): Facts {
         defs = defs.with(ins.result, bi);
         positions = positions.with(ins.result, pos);
       }
-      pos = pos + 1;
+      pos += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   for b in f.blocks {
     for ins in b.insts {
@@ -322,12 +322,12 @@ pub function check_graph(f: ssa.SFunc): Facts {
         }
       }
     }
-    let used: i32 = term_value(b.term);
+    let used = term_value(b.term);
     if (used >= 0 && defs[used] < 0) {
       return refused("undefined value");
     }
   }
-  let g: Facts = Facts { checked: true, why: "", at: at, defs: defs, positions: positions, reachable: reachable_blocks(f), dom: dominates(f) };
+  let g = Facts { checked: true, why: "", at: at, defs: defs, positions: positions, reachable: reachable_blocks(f), dom: dominates(f) };
   err = uses_error(f, [], g);
   if (err != "") {
     return refused(err);
@@ -342,16 +342,16 @@ function term_value(t: ssa.STerm): i32 {
   if (t.kind_tag == 3) {
     return t.cond;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
-  let err: string = ssalive.dependency_error(f, dependencies);
+  let err = ssalive.dependency_error(f, dependencies);
   if (err != "") {
     return err;
   }
-  let any: boolean = false;
-  let value: i32 = 0;
+  let any = false;
+  let value = 0;
   while (value < f.nvals) {
     if (dependencies[value].len() > 0) {
       any = true;
@@ -375,7 +375,7 @@ pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): 
         }
       }
     }
-    value = value + 1;
+    value += 1;
   }
   if (!any) {
     return "";
@@ -385,24 +385,24 @@ pub function dependencies_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): 
 
 // An empty dependency table checks the values themselves.
 function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
-  let err: string = "";
-  let bi: i32 = 0;
+  let err = "";
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let b: ssa.SBlock = f.blocks[bi];
+    let b = f.blocks[bi];
     if (g.reachable[bi]) {
-      let pos: i32 = 0;
+      let pos = 0;
       for ins in b.insts {
         if (ins.kind_tag == 8) {
-          let pi: i32 = 0;
+          let pi = 0;
           while (pi < b.preds.len()) {
-            let pb: i32 = g.at[b.preds[pi]];
+            let pb = g.at[b.preds[pi]];
             if (g.reachable[pb]) {
               err = use_error(ins.args[pi], pb, f.blocks[pb].insts.len(), dependencies, g);
               if (err != "") {
                 return err;
               }
             }
-            pi = pi + 1;
+            pi += 1;
           }
         } else {
           for arg in ins.args {
@@ -412,14 +412,14 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
             }
           }
         }
-        pos = pos + 1;
+        pos += 1;
       }
       err = use_error(term_value(b.term), bi, b.insts.len(), dependencies, g);
       if (err != "") {
         return err;
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return "";
 }

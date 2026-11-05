@@ -39,7 +39,7 @@ function change(text: string, old: string, replacement: string): string {
   let i = 1;
   while (i < parts.len()) {
     out = out + replacement + parts[i];
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -59,7 +59,7 @@ function indexed_paths(site: ssaprepare.UniqueSite, arch: string, input: string,
   let prefix = jump + ".Lindexed0\n";
   let i = 65;
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     let target = if (i == 64) { ".Lindexed_end" } else { ".Lindexed" + (i + 1).to_string() };
     prefix = prefix + ".Lindexed" + i.to_string() + ":\n" + jump + target + "\n";
   }

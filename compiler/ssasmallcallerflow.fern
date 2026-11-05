@@ -53,7 +53,7 @@ function parameters(c: ssasem.Contract): boolean {
     if (!integer(p) || c.modes[i] != 1) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

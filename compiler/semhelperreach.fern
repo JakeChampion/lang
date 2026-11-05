@@ -33,7 +33,7 @@ function references(body: irtables.LowerResult, names: util.NameIndex, labels: s
         if (!m.live[i] && labels[i] != "" && util.contains(op.str, labels[i])) {
           m = mark(m, i);
         }
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -58,7 +58,7 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
     if (!typed || !extra[i].ok || extra[i].superseded || names.find(labels[i]) != i) {
       m = mark(m, i);
     }
-    i = i + 1;
+    i += 1;
   }
   for body in declarations {
     m = references(body, names, labels, m);
@@ -67,7 +67,7 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
   while (at < m.queue.len()) {
     let body = extra[m.queue[at]];
     m = references(body, names, labels, m);
-    at = at + 1;
+    at += 1;
   }
   let kept = Kept { bodies: [], indices: [] };
   i = 0;
@@ -75,7 +75,7 @@ pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerR
     if (m.live[i]) {
       kept = Kept { bodies: kept.bodies.append(extra[i]), indices: kept.indices.append(i) };
     }
-    i = i + 1;
+    i += 1;
   }
   return kept;
 }

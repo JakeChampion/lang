@@ -55,14 +55,14 @@ function initial(capacity: i32, hit: boolean): State {
   let i = 0;
   while (i < 16) {
     regs = regs.append(if (i == 4) { token(2, 0) } else { if (i == 7) { number(capacity as i64) } else { token(1, i as i64) } });
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < 10 + (capacity + 3) * 4) {
     let w = initial_word(capacity, hit, i);
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
-    i = i + 1;
+    i += 1;
   }
   return State { regs: regs, memory: memory, writes: writes, calls: 0, successor: -1, zero: -1, carry: -1, ok: true };
 }
@@ -144,7 +144,7 @@ function shift(s: State, op: isa.Op): State {
       return State { ...s, ok: false };
     }
     n = if (op.kind == 20) { n * 2 } else { n / 2 };
-    count = count - 1;
+    count -= 1;
   }
   return write(unknown(s), op.destination, number(n));
 }
@@ -198,7 +198,7 @@ function store_at(s: State, at: i32, width: i32, w: Word): State {
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
-    i = i + 1;
+    i += 1;
   }
   return State { ...s, memory: memory, writes: writes };
 }
@@ -393,7 +393,7 @@ function finished(s: State, capacity: i32, hit: boolean): boolean {
     if (!equal(s.regs[i], expected)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return finished_memory(s, original, capacity, hit);
 }
@@ -407,7 +407,7 @@ function finished_memory(s: State, original: State, capacity: i32, hit: boolean)
     if (i >= 8 && s.writes[i] != expected_writes(s, hit, i)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -439,7 +439,7 @@ function path(p: isa.Program, capacity: i32, hit: boolean): boolean {
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;

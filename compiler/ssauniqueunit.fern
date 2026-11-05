@@ -27,7 +27,7 @@ function pools_match(tail: string[], architecture: string): boolean {
     if (tail[i] != expected[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -61,7 +61,7 @@ function text_unit(output: string, architecture: string): Unit {
     } else {
       body = body.append(line);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!pools_match(tail, architecture)) {
     return Unit { lines: [], ok: false };
@@ -131,7 +131,7 @@ function collection(output: string, architecture: string, functions: ssa.SFunc[]
         }
       }
       seen = seen.with(at, true);
-      count = count + 1;
+      count += 1;
       current = at;
       body = [];
     }

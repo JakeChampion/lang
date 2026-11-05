@@ -45,7 +45,7 @@ function find(blocks: Block[], address: i64): i32 {
     if (blocks[i].address == address) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -82,9 +82,9 @@ function separated(capacity: i32, h: Heap): boolean {
       if (b.address < other.address + size && other.address < b.address + size) {
         return false;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -108,7 +108,7 @@ function members(h: Heap): boolean {
     if (seen[i] == h.blocks[i].live) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

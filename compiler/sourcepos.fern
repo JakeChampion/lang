@@ -8,10 +8,10 @@ pub function no_source(): SourceInfo {
 
 pub function blanks(n: i32): SourcePos[] {
   let out: SourcePos[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(SourcePos { line: 0, col: "0" });
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -22,13 +22,13 @@ pub function merge(a: SourceInfo, b: SourceInfo, map: i32[]): SourceInfo {
   }
   let out = a;
   out = grow_values(out, map);
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.values.len() && i < map.len()) {
     let v = map[i];
     if (v >= 0 && b.values[i].line > 0) {
       out = SourceInfo { ...out, values: out.values.with(v, b.values[i]) };
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

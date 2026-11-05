@@ -17,6 +17,7 @@ PACKAGE = "dev.fern.dnstest"
 LINES = (
     re.compile(r"dnstest: dns\.google has [1-9]\d* addresses: \S"),
     re.compile(r"dnstest: 192\.0\.2\.7 has 1 addresses: 192\.0\.2\.7"),
+    re.compile(r"dnstest: SSL_CERT_FILE overrides system roots"),
     re.compile(r"dnstest: tls to dns\.google verified with [1-9]\d* system roots"),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")

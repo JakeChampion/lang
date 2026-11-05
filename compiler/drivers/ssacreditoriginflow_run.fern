@@ -139,7 +139,7 @@ function sparse(f: ssa.SFunc): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   let i = f.blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     let b = f.blocks[i];
     let preds: i32[] = [];
     for p in b.preds {
@@ -206,11 +206,11 @@ function phi_controls(f: ssa.SFunc, producer: ssa.SFunc): void {
 function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   expect(f, [producer], "", 5);
   let reasons = ["caller origin producer binding", "invalid caller origin credit transfer", "invalid caller origin credit transfer", "unsupported caller origin effect", "unavailable caller origin operand", "unsupported caller origin effect", "invalid caller origin phi", "owned caller allocation return required", "unavailable caller origin phi", "unavailable caller origin phi", "invalid caller origin definition", "invalid caller origin credit transfer", "owned caller allocation return required", "exact caller Boolean required", "exact caller Boolean required", "unavailable caller origin terminator", "unsupported caller origin effect", "invalid caller origin parameter", "invalid caller origin parameter", "owned caller allocation return required"];
-  let i: i32 = 0;
+  let i = 0;
   for why in reasons {
     expect(changed(f, i), [producer], why, 10 + i);
     expect(sparse_ids.rename(changed(f, i)), [producer], why, 10 + i);
-    i = i + 1;
+    i += 1;
   }
   expect(f, [], "caller origin producer binding", 40);
   expect(f, [producer, producer], "caller origin producer binding", 41);

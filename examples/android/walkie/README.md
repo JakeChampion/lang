@@ -33,7 +33,8 @@ Use it:
    NO MATCH when they are not: then a third device can be in the middle.
 4. The first phone to confirm shows WAITING until the other phone confirms.
 5. Hold the button to talk. The other phone shows LISTENING and plays the
-   voice. Only one phone can talk at a time.
+   voice on its loudspeaker, at the media volume. Only one phone can talk at
+   a time.
 6. When the connection is lost, tap the button to search again.
 
 With no shared Wi-Fi network, the phones connect over Wi-Fi Direct:
@@ -120,6 +121,10 @@ The LAN transport: the datagram format, the beacons, and the key exchange
 with a resend of each message that has no answer. A linear resampler between
 the rate of the device and 16 kHz. The layout of the screen. `lan_test.fern`,
 `pcm_test.fern` and `screen_test.fern` test them.
+
+`pcm.fern` also has a gain for the microphone. It raises quiet speech up to
+8 times, and it falls at once for a loud word. It also keeps the samples
+that the speaker did not take yet, for the next write.
 
 ## `voice.fern`
 

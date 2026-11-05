@@ -12,7 +12,7 @@ function b2s(b: boolean): string {
 struct CheckResult { bad: i32, line: string }
 
 function check(s: string): CheckResult {
-  let r: string = parser.render_type_ref(parser.parse_type_ref(s));
+  let r = parser.render_type_ref(parser.parse_type_ref(s));
   if (r == s) {
     return CheckResult { bad: 0, line: "ok   " + s + "\n" };
   }
@@ -35,38 +35,38 @@ function main(): i32 {
     "(((T) => U)[][])", "(() => T, () => U)", "() => (() => U[])[]",
     "[u8]", "[u8][]", "([u8], i32)", "Option[[u8]]", "[[u8]]", "[(i32) => i32]",
   ];
-  let out: string = "";
-  let bad: i32 = 0;
+  let out = "";
+  let bad = 0;
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < corpus.len()) {
-    let cr: CheckResult = check(corpus[i]);
-    bad = bad + cr.bad;
-    out = out + cr.line;
-    i = i + 1;
+    let cr = check(corpus[i]);
+    bad += cr.bad;
+    out += cr.line;
+    i += 1;
   }
 
-  let mp: parser.TypeRef = parser.parse_type_ref("Map[string, Option[i32]]");
+  let mp = parser.parse_type_ref("Map[string, Option[i32]]");
   out = out + "struct Map base=" + mp.base
     + " args=" + util.i32_to_string(mp.args.len())
     + " depth=" + util.i32_to_string(mp.array_depth)
     + " tuple=" + b2s(mp.is_tuple) + "\n";
-  let inner1: parser.TypeRef = mp.args[1];
+  let inner1 = mp.args[1];
   out = out + "struct Map.arg1 base=" + inner1.base
     + " args=" + util.i32_to_string(inner1.args.len()) + "\n";
 
-  let tp: parser.TypeRef = parser.parse_type_ref("(i32, string)[]");
+  let tp = parser.parse_type_ref("(i32, string)[]");
   out = out + "struct tuparr base=" + tp.base
     + " args=" + util.i32_to_string(tp.args.len())
     + " depth=" + util.i32_to_string(tp.array_depth)
     + " tuple=" + b2s(tp.is_tuple) + "\n";
 
-  let ar: parser.TypeRef = parser.parse_type_ref("Foo[][][]");
+  let ar = parser.parse_type_ref("Foo[][][]");
   out = out + "struct arr3 base=" + ar.base
     + " args=" + util.i32_to_string(ar.args.len())
     + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
 
-  let vw: parser.TypeRef = parser.parse_type_ref("[u8][]");
+  let vw = parser.parse_type_ref("[u8][]");
   out = out + "struct viewarr view=" + b2s(vw.is_view)
     + " depth=" + util.i32_to_string(vw.array_depth)
     + " elemview=" + b2s(parser.elem_type_ref(vw).is_view)
@@ -105,35 +105,35 @@ function main(): i32 {
     + " ret=" + parser.render_type_ref(parser.ref_fn_result(fg)) + "\n";
 
   if (parser.ref_is_fn_value(parser.parse_type_ref("((() => U)[])"))) {
-    bad = bad + 1;
+    bad += 1;
   }
   if (parser.ref_is_fn_value(parser.parse_type_ref("(((T) => U)[][])"))) {
-    bad = bad + 1;
+    bad += 1;
   }
   if (parser.ref_is_fn_value(parser.parse_type_ref("(() => T, () => U)"))) {
-    bad = bad + 1;
+    bad += 1;
   }
   if (parser.ref_is_fn_value(parser.parse_type_ref("fn"))) {
-    bad = bad + 1;
+    bad += 1;
   }
   let chain: parser.TypeRef = parser.parse_type_ref("(T) => () => U[]");
-  let inner_fn: parser.TypeRef = parser.ref_fn_result(chain);
+  let inner_fn = parser.ref_fn_result(chain);
   if (!parser.ref_is_fn_value(inner_fn)) {
-    bad = bad + 1;
+    bad += 1;
   }
   if (parser.ref_fn_result(inner_fn).array_depth != 1) {
-    bad = bad + 1;
+    bad += 1;
   }
   let array_result: parser.TypeRef = parser.ref_fn_result(parser.parse_type_ref("() => (() => U[])[]"));
   if (array_result.array_depth != 1 || parser.ref_is_fn_value(array_result)) {
-    bad = bad + 1;
+    bad += 1;
   }
-  let element_fn: parser.TypeRef = parser.elem_type_ref(array_result);
+  let element_fn = parser.elem_type_ref(array_result);
   if (!parser.ref_is_fn_value(element_fn)) {
-    bad = bad + 1;
+    bad += 1;
   }
   if (parser.ref_fn_result(element_fn).array_depth != 1) {
-    bad = bad + 1;
+    bad += 1;
   }
 
   out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", "T") + "\n";
@@ -143,20 +143,20 @@ function main(): i32 {
   out = out + "tag fnview=" + parser.fn_tag_spelling("[fn]", "U", "T") + "\n";
   out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", "") + "\n";
   out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", "") + "\n";
-  let tagged: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
+  let tagged = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
   if (!parser.ref_is_fn_value(tagged) || parser.ref_ungroup(tagged).args[0].base != "T") {
-    bad = bad + 1;
+    bad += 1;
   }
-  let tagarr: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", "T"));
+  let tagarr = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", "T"));
   if (parser.ref_is_fn_value(tagarr) || tagarr.array_depth != 1) {
-    bad = bad + 1;
+    bad += 1;
   }
   if (!parser.ref_is_fn_value(parser.elem_type_ref(tagarr))) {
-    bad = bad + 1;
+    bad += 1;
   }
-  let tagview: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("[fn]", "U", "T"));
+  let tagview = parser.parse_type_ref(parser.fn_tag_spelling("[fn]", "U", "T"));
   if (!tagview.is_view || !parser.ref_is_fn_value(tagview.args[0])) {
-    bad = bad + 1;
+    bad += 1;
   }
 
   out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";

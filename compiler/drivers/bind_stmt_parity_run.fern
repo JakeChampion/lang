@@ -14,7 +14,7 @@ function scope_diff(want: checker.Scope, got: checker.Scope): string {
   if (want.loop_depth != got.loop_depth) {
     return "check_stmt left loop_depth " + util.i32_to_string(want.loop_depth) + ", bind_stmt " + util.i32_to_string(got.loop_depth);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < want.names.len()) {
     if (want.names[i] != got.names[i]) {
       return "binding " + util.i32_to_string(i) + " is `" + want.names[i] + "` under check_stmt and `" + got.names[i] + "` under bind_stmt";
@@ -22,7 +22,7 @@ function scope_diff(want: checker.Scope, got: checker.Scope): string {
     if (checker.type_debug(want.types[i]) != checker.type_debug(got.types[i])) {
       return "binding `" + want.names[i] + "` is " + checker.type_debug(want.types[i]) + " under check_stmt and " + checker.type_debug(got.types[i]) + " under bind_stmt";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -72,8 +72,8 @@ function form_of(st: ast.Stmt): string {
 struct Walked { diffs: string[], compared: i32, forms: string[] }
 
 function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): Walked {
-  let out: Walked = acc;
-  let cur: checker.Scope = s;
+  let out = acc;
+  let cur = s;
   for st in body {
     match (st) {
       ast.StmtIf(f) => {
@@ -97,14 +97,14 @@ function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): W
       },
       _ => {}
     }
-    let want: checker.Scope = checker.check_stmt(st, cur).scope;
-    let diff: string = scope_diff(want, checker.bind_stmt(st, cur));
-    let found: string[] = out.diffs;
+    let want = checker.check_stmt(st, cur).scope;
+    let diff = scope_diff(want, checker.bind_stmt(st, cur));
+    let found = out.diffs;
     if (diff.len() > 0) {
       found = found.append(where + ": " + diff);
     }
-    let seen: string[] = out.forms;
-    let form: string = form_of(st);
+    let seen = out.forms;
+    let form = form_of(st);
     if (!util.has_str(seen, form)) {
       seen = seen.append(form);
     }
@@ -115,29 +115,29 @@ function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): W
 }
 
 function main(): i32 {
-  let mod: parser.Module = rundriver.parse_stdin("bind_stmt_parity_run");
-  let scopes: checker.Scope[] = checker.module_scopes(mod);
-  let acc: Walked = Walked { diffs: [], compared: 0, forms: [] };
-  let i: i32 = 0;
+  let mod = rundriver.parse_stdin("bind_stmt_parity_run");
+  let scopes = checker.module_scopes(mod);
+  let acc = Walked { diffs: [], compared: 0, forms: [] };
+  let i = 0;
   while (i < mod.funcs.len()) {
     acc = walk(mod.funcs[i].body, scopes[i], "function " + mod.funcs[i].name, acc);
-    i = i + 1;
+    i += 1;
   }
   acc = walk(mod.top_stmts, scopes[mod.funcs.len()], "top level", acc);
-  let j: i32 = 0;
+  let j = 0;
   while (j < acc.diffs.len()) {
     print(acc.diffs[j]);
-    j = j + 1;
+    j += 1;
   }
   print("# compared " + util.i32_to_string(acc.compared));
-  let forms: string = "";
-  let k: i32 = 0;
+  let forms = "";
+  let k = 0;
   while (k < acc.forms.len()) {
     if (k > 0) {
-      forms = forms + ",";
+      forms += ",";
     }
-    forms = forms + acc.forms[k];
-    k = k + 1;
+    forms += acc.forms[k];
+    k += 1;
   }
   print("# forms " + forms);
   if (acc.diffs.len() > 0) {

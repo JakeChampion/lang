@@ -142,8 +142,8 @@ pub function kind_name(id: i32): string {
 }
 
 function semantic_names_symbol(id: i32): boolean {
-  return id == 0 - 7 || id == 0 - 8 || id == 0 - 9 || id == 0 - 10
-    || id == 0 - 11 || id == 0 - 12 || id == 0 - 20;
+  return id == -7 || id == -8 || id == -9 || id == -10
+    || id == -11 || id == -12 || id == -20;
 }
 
 pub function plain_str(ins: SInst): string {
@@ -161,7 +161,7 @@ pub function plain_imm(ins: SInst): i32 {
 }
 
 function carries_imm(kind: i32): boolean {
-  return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10 || kind == 0 - 49;
+  return kind == 1 || kind == 2 || kind == 6 || kind == -4 || kind == -6 || kind == -10 || kind == -49;
 }
 
 function carries_str(kind: i32): boolean {
@@ -180,7 +180,7 @@ function inst_detail(ins: SInst): string {
   if (ins.kind_tag == 1 && ins.str != "") {
     return " " + ins.str;
   }
-  let out: string = "";
+  let out = "";
   if (shows_imm(ins)) {
     out = out + " " + util.i32_to_string(ins.imm);
   }
@@ -191,27 +191,27 @@ function inst_detail(ins: SInst): string {
 }
 
 pub function print_func(f: SFunc): string {
-  let out: string = "func " + f.name + " {\n";
-  let bi: i32 = 0;
+  let out = "func " + f.name + " {\n";
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     out = out + "  b" + util.i32_to_string(blk.id) + ":\n";
-    let k: i32 = 0;
+    let k = 0;
     while (k < blk.insts.len()) {
-      let ins: SInst = blk.insts[k];
+      let ins = blk.insts[k];
       out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag) + inst_detail(ins);
-      let ai: i32 = 0;
+      let ai = 0;
       while (ai < ins.args.len()) {
         out = out + " v" + util.i32_to_string(ins.args[ai]);
-        ai = ai + 1;
+        ai += 1;
       }
-      out = out + "\n";
-      k = k + 1;
+      out += "\n";
+      k += 1;
     }
     if (blk.term.kind_tag == 4) {
-      out = out + "    unreachable\n";
+      out += "    unreachable\n";
     } else if (blk.term.kind_tag == 1 && blk.term.value < 0) {
-      out = out + "    ret\n";
+      out += "    ret\n";
     } else if (blk.term.kind_tag == 1) {
       out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n";
     } else if (blk.term.kind_tag == 2) {
@@ -219,7 +219,7 @@ pub function print_func(f: SFunc): string {
     } else if (blk.term.kind_tag == 3) {
       out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n";
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return out + "}\n";
 }
@@ -254,8 +254,8 @@ pub function semantic_kind_count(): i32 {
 }
 
 function semantic_kind_name(id: i32): string {
-  let names: string[] = semantic_kind_names();
-  let at: i32 = 0 - id - 1;
+  let names = semantic_kind_names();
+  let at = -id - 1;
   if (at < 0 || at >= names.len()) {
     return "invalid";
   }
@@ -415,10 +415,10 @@ pub function term_name(id: i32): string {
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
   let na: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ins.args.len()) {
     na = na.append(resolved[ins.args[i]]);
-    i = i + 1;
+    i += 1;
   }
   return SInst { kind_tag: ins.kind_tag, result: ins.result, args: na, imm: ins.imm, str: ins.str };
 }
@@ -458,7 +458,7 @@ pub function back_copy_call(ins: SInst): boolean {
 // A call that the allocator counts: it returns, and its result is not the
 // block's own return value.
 pub function counted_call(blk: SBlock, k: i32): boolean {
-  let ins: SInst = blk.insts[k];
+  let ins = blk.insts[k];
   return inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k);
 }
 
@@ -468,7 +468,7 @@ pub function hard_call_positions(f: SFunc, cold: i32[]): boolean[] {
   let out: boolean[] = [];
   for blk in f.blocks {
     for k in 0..blk.insts.len() {
-      let pos: i32 = out.len();
+      let pos = out.len();
       out = out.append(counted_call(blk, k) && (cold.len() == 0 || cold[pos] == COLD_NONE));
     }
     out = out.append(false);
@@ -485,13 +485,13 @@ pub const COLD_BRANCH: i32 = 2;
 pub const COLD_INLINE: i32 = 3;
 
 pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
-  let cold: boolean[] = cold_blocks(f);
+  let cold = cold_blocks(f);
   let out: i32[] = [];
   for bi in 0..f.blocks.len() {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     for k in 0..blk.insts.len() {
-      let ins: SInst = blk.insts[k];
-      let kind: i32 = COLD_NONE;
+      let ins = blk.insts[k];
+      let kind = COLD_NONE;
       if (cold_call(ins) || back && back_copy_call(ins)) {
         kind = COLD_SLOW;
       } else if (rc_inlined(ins)) {
@@ -509,17 +509,17 @@ pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
 }
 
 pub function cold_blocks(f: SFunc): boolean[] {
-  let n: i32 = f.blocks.len();
-  let at: i32[] = block_positions(f);
-  let latch: i32[] = __alloc_i32(n);
-  let span: i32[] = __alloc_i32(n);
+  let n = f.blocks.len();
+  let at = block_positions(f);
+  let latch = __alloc_i32(n);
+  let span = __alloc_i32(n);
   for i in 0..n {
-    latch = latch.with(i, 0 - 1);
+    latch = latch.with(i, -1);
     span = span.with(i, n + 1);
   }
   for bi in 0..n {
     for which in 0..2 {
-      let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
+      let tgt = distinct_successor_position(at, f.blocks[bi].term, which);
       if (tgt >= 0 && tgt <= bi) {
         for k in tgt..=bi {
           if (bi - tgt < span[k]) {
@@ -530,8 +530,8 @@ pub function cold_blocks(f: SFunc): boolean[] {
       }
     }
   }
-  let idom: i32[] = dominators(f, at);
-  let out: boolean[] = __alloc_bool(n);
+  let idom = dominators(f, at);
+  let out = __alloc_bool(n);
   for i in 0..n {
     out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
   }
@@ -539,33 +539,33 @@ pub function cold_blocks(f: SFunc): boolean[] {
 }
 
 function dominators(f: SFunc, at: i32[]): i32[] {
-  let n: i32 = f.blocks.len();
-  let entry: i32 = position_of(at, f.entry);
-  let idom: i32[] = __alloc_i32(n);
-  let po: i32[] = __alloc_i32(n);
+  let n = f.blocks.len();
+  let entry = position_of(at, f.entry);
+  let idom = __alloc_i32(n);
+  let po = __alloc_i32(n);
   for i in 0..n {
-    idom = idom.with(i, 0 - 1);
-    po = po.with(i, 0 - 1);
+    idom = idom.with(i, -1);
+    po = po.with(i, -1);
   }
   if (entry < 0) {
     return idom;
   }
-  let order: i32[] = postorder(f, at, entry);
+  let order = postorder(f, at, entry);
   for i in 0..order.len() {
     po = po.with(order[i], i);
   }
   idom = idom.with(entry, entry);
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let r: i32 = order.len() - 1;
+    let r = order.len() - 1;
     while (r >= 0) {
-      let b: i32 = order[r];
-      r = r - 1;
+      let b = order[r];
+      r -= 1;
       if (b == entry) {
         continue;
       }
-      let pick: i32 = meet_preds(f, at, idom, po, b);
+      let pick = meet_preds(f, at, idom, po, b);
       if (pick != idom[b]) {
         idom = idom.with(b, pick);
         changed = true;
@@ -576,9 +576,9 @@ function dominators(f: SFunc, at: i32[]): i32[] {
 }
 
 function meet_preds(f: SFunc, at: i32[], idom: i32[], po: i32[], b: i32): i32 {
-  let pick: i32 = 0 - 1;
+  let pick: i32 = -1;
   for pid in f.blocks[b].preds {
-    let p: i32 = position_of(at, pid);
+    let p = position_of(at, pid);
     if (p >= 0 && idom[p] >= 0) {
       if (pick < 0) {
         pick = p;
@@ -603,29 +603,29 @@ function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
 }
 
 function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
-  let seen: boolean[] = __alloc_bool(f.blocks.len());
+  let seen = __alloc_bool(f.blocks.len());
   let out: i32[] = [];
-  let stack: i32[] = __alloc_i32(f.blocks.len());
-  let next: i32[] = __alloc_i32(f.blocks.len());
+  let stack = __alloc_i32(f.blocks.len());
+  let next = __alloc_i32(f.blocks.len());
   stack = stack.with(0, entry);
-  let depth: i32 = 1;
+  let depth = 1;
   seen = seen.with(entry, true);
   while (depth > 0) {
-    let top: i32 = depth - 1;
-    let b: i32 = stack[top];
-    let which: i32 = next[top];
+    let top = depth - 1;
+    let b = stack[top];
+    let which = next[top];
     if (which < 2) {
       next = next.with(top, which + 1);
-      let s: i32 = distinct_successor_position(at, f.blocks[b].term, which);
+      let s = distinct_successor_position(at, f.blocks[b].term, which);
       if (s >= 0 && !seen[s]) {
         seen = seen.with(s, true);
         stack = stack.with(depth, s);
         next = next.with(depth, 0);
-        depth = depth + 1;
+        depth += 1;
       }
     } else {
       out = out.append(b);
-      depth = depth - 1;
+      depth -= 1;
     }
   }
   return out;
@@ -635,7 +635,7 @@ function dominates(idom: i32[], a: i32, b: i32): boolean {
   if (idom[b] < 0) {
     return false;
   }
-  let x: i32 = b;
+  let x = b;
   while (x != a) {
     if (idom[x] == x) {
       return false;
@@ -646,7 +646,7 @@ function dominates(idom: i32[], a: i32, b: i32): boolean {
 }
 
 pub function returns_call(blk: SBlock, k: i32): boolean {
-  let ins: SInst = blk.insts[k];
+  let ins = blk.insts[k];
   return k == blk.insts.len() - 1 && blk.term.kind_tag == 1 && ins.result >= 0 && blk.term.value == ins.result;
 }
 
@@ -673,15 +673,15 @@ pub function rc_inlined(ins: SInst): boolean {
 }
 
 function calls_before(calls: i32[], total_pos: i32): i32[] {
-  let cum: i32[] = __alloc_i32(total_pos + 2);
-  let ci: i32 = 0;
-  let p: i32 = 0;
+  let cum = __alloc_i32(total_pos + 2);
+  let ci = 0;
+  let p = 0;
   while (p <= total_pos + 1) {
     cum = cum.with(p, ci);
     while (ci < calls.len() && calls[ci] < p + 1) {
-      ci = ci + 1;
+      ci += 1;
     }
-    p = p + 1;
+    p += 1;
   }
   return cum;
 }
@@ -690,11 +690,11 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
   if (hi <= lo + 1) {
     return false;
   }
-  let a: i32 = lo + 1;
+  let a = lo + 1;
   if (a >= cum.len()) {
     return false;
   }
-  let b: i32 = hi;
+  let b = hi;
   if (b >= cum.len()) {
     b = cum.len() - 1;
   }
@@ -710,19 +710,19 @@ function cold_caller(saved_free: i32, cold_integer: boolean, pick: i32, cum: i32
 // A value spans a call when it is live after one. `crossing` gives that from
 // block liveness. Without it, any call inside the value's interval counts.
 function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[], crossing: boolean[]): boolean[] {
-  let out: boolean[] = __alloc_bool(f.nvals);
-  let exact: boolean = crossing.len() == f.nvals;
+  let out = __alloc_bool(f.nvals);
+  let exact = crossing.len() == f.nvals;
   if (cold.len() == 0) {
     for v in 0..f.nvals {
       out = out.with(v, if (exact) { crossing[v] } else { spans_call(cum, lo[v], hi[v]) });
     }
     return out;
   }
-  let cost: i32[] = cold_call_cost(f, cold);
+  let cost = cold_call_cost(f, cold);
   for v in 0..f.nvals {
     let h: boolean = if (exact) { crossing[v] } else { spans_call(cum, lo[v], hi[v]) };
     if (!h && hi[v] > lo[v] + 1 && lo[v] + 1 < cost.len()) {
-      let b: i32 = hi[v];
+      let b = hi[v];
       if (b >= cost.len()) {
         b = cost.len() - 1;
       }
@@ -734,16 +734,16 @@ function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], wei
 }
 
 function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
-  let bw: i32[] = block_loop_weights(f);
+  let bw = block_loop_weights(f);
   let out: i32[] = [0];
-  let total: i32 = 0;
-  let pos: i32 = 0;
+  let total = 0;
+  let pos = 0;
   for bi in 0..f.blocks.len() {
     for k in 0..=f.blocks[bi].insts.len() {
       if (pos < cold.len() && cold[pos] == COLD_BRANCH) {
-        total = total + bw[bi];
+        total += bw[bi];
       }
-      pos = pos + 1;
+      pos += 1;
       out = out.append(total);
     }
   }
@@ -758,33 +758,33 @@ function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: 
 }
 
 function order_by_lo(n: i32, lo: i32[]): i32[] {
-  let maxp: i32 = 0;
-  let v: i32 = 0;
+  let maxp = 0;
+  let v = 0;
   while (v < n) {
     if (lo[v] < 2000000000 && lo[v] > maxp) {
       maxp = lo[v];
     }
-    v = v + 1;
+    v += 1;
   }
-  let starts: i32[] = __alloc_i32(maxp + 3);
+  let starts = __alloc_i32(maxp + 3);
   v = 0;
   while (v < n) {
-    let b: i32 = order_bucket(lo[v], maxp);
+    let b = order_bucket(lo[v], maxp);
     starts = starts.with(b + 1, starts[b + 1] + 1);
-    v = v + 1;
+    v += 1;
   }
-  let b2: i32 = 1;
+  let b2 = 1;
   while (b2 < starts.len()) {
     starts = starts.with(b2, starts[b2] + starts[b2 - 1]);
-    b2 = b2 + 1;
+    b2 += 1;
   }
-  let out: i32[] = __alloc_i32(n);
+  let out = __alloc_i32(n);
   v = 0;
   while (v < n) {
-    let bk: i32 = order_bucket(lo[v], maxp);
+    let bk = order_bucket(lo[v], maxp);
     out = out.with(starts[bk], v);
     starts = starts.with(bk, starts[bk] + 1);
-    v = v + 1;
+    v += 1;
   }
   return out;
 }
@@ -797,14 +797,14 @@ function order_bucket(lo: i32, maxp: i32): i32 {
 }
 
 function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i32[] {
-  let top: i32 = 0 - 1;
+  let top: i32 = -1;
   for b in f.blocks {
     if (b.id > top) {
       top = b.id;
     }
   }
-  let start_of: i32[] = util.minus_ones(top + 1);
-  let rpos: i32 = 0;
+  let start_of = util.minus_ones(top + 1);
+  let rpos = 0;
   for b in f.blocks {
     if (b.id >= 0) {
       start_of = start_of.with(b.id, rpos);
@@ -813,12 +813,12 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
   }
   let edge_head: i32[] = [];
   let edge_end: i32[] = [];
-  let lstart: i32 = 0;
+  let lstart = 0;
   for lblk in f.blocks {
-    let lterm_pos: i32 = lstart + lblk.insts.len();
-    let th: i32 = 0;
+    let lterm_pos = lstart + lblk.insts.len();
+    let th = 0;
     while (th < 2) {
-      let tgt: i32 = 0 - 1;
+      let tgt: i32 = -1;
       if (th == 0) {
         if (lblk.term.kind_tag == 2) {
           tgt = lblk.term.target;
@@ -829,36 +829,36 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
         tgt = lblk.term.f;
       }
       if (tgt >= 0 && tgt <= top) {
-        let hstart: i32 = start_of[tgt];
+        let hstart = start_of[tgt];
         if (hstart >= 0 && hstart <= lstart) {
           edge_head = edge_head.append(hstart);
           edge_end = edge_end.append(lterm_pos);
         }
       }
-      th = th + 1;
+      th += 1;
     }
     lstart = lterm_pos + 1;
   }
   if (edge_head.len() == 0) {
     return hi;
   }
-  let heads: i32[] = sorted_i32(edge_head);
-  let vv: i32 = 0;
+  let heads = sorted_i32(edge_head);
+  let vv = 0;
   while (vv < f.nvals && vv < hi.len()) {
-    let d: i32 = def_pos[vv];
+    let d = def_pos[vv];
     if (d >= 0) {
-      let first: i32 = first_above(heads, d);
+      let first = first_above(heads, d);
       if (first < heads.len() && heads[first] <= hi[vv]) {
-        let e: i32 = 0;
+        let e = 0;
         while (e < edge_head.len()) {
           if (d < edge_head[e] && hi[vv] >= edge_head[e] && edge_end[e] > hi[vv]) {
             hi = hi.with(vv, edge_end[e]);
           }
-          e = e + 1;
+          e += 1;
         }
       }
     }
-    vv = vv + 1;
+    vv += 1;
   }
   return hi;
 }
@@ -867,10 +867,10 @@ function sorted_i32(xs: i32[]): i32[] {
   let out: i32[] = [];
   for x in xs {
     out = out.append(x);
-    let i: i32 = out.len() - 1;
+    let i = out.len() - 1;
     while (i > 0 && out[i - 1] > x) {
       out = out.with(i, out[i - 1]);
-      i = i - 1;
+      i -= 1;
     }
     out = out.with(i, x);
   }
@@ -878,8 +878,8 @@ function sorted_i32(xs: i32[]): i32[] {
 }
 
 function first_above(xs: i32[], v: i32): i32 {
-  let lo: i32 = 0;
-  let hi: i32 = xs.len();
+  let lo = 0;
+  let hi = xs.len();
   while (lo < hi) {
     let mid: i32 = (lo + hi) / 2;
     if (xs[mid] > v) {
@@ -897,7 +897,7 @@ pub function binary_fixes_abi(op: string): boolean {
 
 function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean): i32 {
   if (free.len() == 0) {
-    return 0 - 1;
+    return -1;
   }
   if (abi_reg < 0) {
     return free[free.len() - 1];
@@ -909,15 +909,15 @@ function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: b
       }
     }
   }
-  let i: i32 = free.len() - 1;
+  let i = free.len() - 1;
   while (i >= 0) {
     if (free[i] != abi_reg) {
       return free[i];
     }
-    i = i - 1;
+    i -= 1;
   }
   if (!abi_ok) {
-    return 0 - 1;
+    return -1;
   }
   return abi_reg;
 }
@@ -936,12 +936,12 @@ function pick_fixed_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: bo
     if (r != abi_reg && ssafixed.allows(fixed, r, lo, hi)) {
       return r;
     }
-    i = i - 1;
+    i -= 1;
   }
   if (take_abi) {
     return abi_reg;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function preferred_register_allowed(reg: i32, abi: i32, abi_ok: boolean, spans: boolean, lo: i32, hi: i32, fixed: ssafixed.Table): boolean {
@@ -956,7 +956,7 @@ function candidate(mates: Mates, def_a: i32[], def_b: i32[], v: i32, k: i32): i3
     return mates.hint[v];
   }
   if (k == 2) {
-    return 0 - 2;
+    return -2;
   }
   if (k == 3) {
     return def_a[v];
@@ -966,7 +966,7 @@ function candidate(mates: Mates, def_a: i32[], def_b: i32[], v: i32, k: i32): i3
 
 function remove_reg(free: i32[], reg: i32): i32[] {
   let out: i32[] = [];
-  let dropped: boolean = false;
+  let dropped = false;
   for r in free {
     if (r == reg && !dropped) {
       dropped = true;
@@ -979,37 +979,37 @@ function remove_reg(free: i32[], reg: i32): i32[] {
 
 function forbidden_abi(abi_reg: i32, allowed: boolean): i32 {
   if (allowed) {
-    return 0 - 1;
+    return -1;
   }
   return abi_reg;
 }
 
 function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32, fixed: ssafixed.Table, until: i32): i32 {
-  let best: i32 = 0 - 1;
-  let best_w: i32 = 0;
-  let best_len: i32 = 1;
-  let i: i32 = 0;
+  let best: i32 = -1;
+  let best_w = 0;
+  let best_len = 1;
+  let i = 0;
   while (i < act_val.len()) {
     if ((act_reg[i] >= nregs || !need_saved) && act_reg[i] != forbidden && ssafixed.allows(fixed, act_reg[i], now, until)) {
-      let w: i32 = chain_weight(act_val[i], shared_with, weight, hi, now);
-      let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo, hi, now) + 1;
-      let cmp: i32 = cmp_spill_cost(w, len, best_w, best_len);
+      let w = chain_weight(act_val[i], shared_with, weight, hi, now);
+      let len = act_hi[i] - chain_lo(act_val[i], shared_with, lo, hi, now) + 1;
+      let cmp = cmp_spill_cost(w, len, best_w, best_len);
       if (best < 0 || cmp < 0 || cmp == 0 && act_hi[i] > act_hi[best]) {
         best = i;
         best_w = w;
         best_len = len;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return best;
 }
 
 function cmp_spill_cost(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
-  let a: f64 = w1 as f64 * (w1 as f64) * (len2 as f64);
-  let b: f64 = w2 as f64 * (w2 as f64) * (len1 as f64);
+  let a = w1 as f64 * (w1 as f64) * (len2 as f64);
+  let b = w2 as f64 * (w2 as f64) * (len1 as f64);
   if (a < b) {
-    return 0 - 1;
+    return -1;
   }
   if (a > b) {
     return 1;
@@ -1018,8 +1018,8 @@ function cmp_spill_cost(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
 }
 
 function chain_lo(v: i32, shared_with: i32[], lo: i32[], hi: i32[], now: i32): i32 {
-  let m: i32 = lo[v];
-  let ev: i32 = shared_with[v];
+  let m = lo[v];
+  let ev = shared_with[v];
   while (ev >= 0) {
     if (still_holds(ev, hi, now) && lo[ev] < m) {
       m = lo[ev];
@@ -1030,11 +1030,11 @@ function chain_lo(v: i32, shared_with: i32[], lo: i32[], hi: i32[], now: i32): i
 }
 
 function chain_weight(v: i32, shared_with: i32[], weight: i32[], hi: i32[], now: i32): i32 {
-  let w: i32 = weight[v];
-  let ev: i32 = shared_with[v];
+  let w = weight[v];
+  let ev = shared_with[v];
   while (ev >= 0) {
     if (still_holds(ev, hi, now)) {
-      w = w + weight[ev];
+      w += weight[ev];
     }
     ev = shared_with[ev];
   }
@@ -1056,11 +1056,11 @@ function still_holds(ev: i32, hi: i32[], now: i32): boolean {
 
 // The position of each header's last back edge, or -1.
 function furthest_latches(f: SFunc): i32[] {
-  let at: i32[] = block_positions(f);
-  let latch: i32[] = util.minus_ones(f.blocks.len());
+  let at = block_positions(f);
+  let latch = util.minus_ones(f.blocks.len());
   for bi in 0..f.blocks.len() {
     for which in 0..2 {
-      let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
+      let tgt = distinct_successor_position(at, f.blocks[bi].term, which);
       if (tgt >= 0 && tgt <= bi && bi > latch[tgt]) {
         latch = latch.with(tgt, bi);
       }
@@ -1072,22 +1072,22 @@ function furthest_latches(f: SFunc): i32[] {
 // A loop is a header and the blocks up to its last back edge, so a header
 // with two back edges counts once.
 pub function block_loop_weights(f: SFunc): i32[] {
-  let latch: i32[] = furthest_latches(f);
-  let depth: i32[] = __alloc_i32(f.blocks.len());
+  let latch = furthest_latches(f);
+  let depth = __alloc_i32(f.blocks.len());
   for h in 0..f.blocks.len() {
-    let k: i32 = h;
+    let k = h;
     while (k <= latch[h]) {
       depth = depth.with(k, depth[k] + 1);
-      k = k + 1;
+      k += 1;
     }
   }
   let out: i32[] = [];
   for d in depth {
-    let w: i32 = 1;
-    let n: i32 = 0;
+    let w = 1;
+    let n = 0;
     while (n < d && n < 3) {
-      w = w * 8;
-      n = n + 1;
+      w *= 8;
+      n += 1;
     }
     out = out.append(w);
   }
@@ -1096,12 +1096,12 @@ pub function block_loop_weights(f: SFunc): i32[] {
 
 function drop_active_at(a: i32[], k: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (i != k) {
       out = out.append(a[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1109,12 +1109,12 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 pub struct Alloc { reg_of: i32[], def_pos: i32[], lo: i32[], hi: i32[], cold: i32[] }
 
 pub function lane_base(op: string): string {
-  let k: i32 = 0;
+  let k = 0;
   while (k < op.len()) {
     if (op[k] == b':') {
       return slice_unchecked(op, 0, k) + "";
     }
-    k = k + 1;
+    k += 1;
   }
   return op;
 }
@@ -1124,7 +1124,7 @@ pub function lane_op(op: string): boolean {
 }
 
 pub function lane_inst(ins: SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   return (k == 9 || k == 10 || k == 61 || k == 62) && lane_op(ins.str);
 }
 
@@ -1155,12 +1155,12 @@ pub function lane_result(ins: SInst): boolean {
   if (!lane_inst(ins)) {
     return false;
   }
-  let b: string = lane_base(ins.str);
+  let b = lane_base(ins.str);
   return b != "vextract" && b != "vbitmask" && b != "vstore" && b != "vset";
 }
 
 pub function lane_values(f: SFunc): boolean[] {
-  let lanes: boolean[] = lane_results(f);
+  let lanes = lane_results(f);
   if (lanes.len() == 0) {
     return [];
   }
@@ -1171,8 +1171,8 @@ function lane_results(f: SFunc): boolean[] {
   let lanes: boolean[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
-      let k: i32 = ins.kind_tag;
-      let maybe: boolean = k == 6 || k == 11 && ins.imm == 6 || (k == 9 || k == 10 || k == 61 || k == 62) && ins.str.len() > 1 && ins.str[0] == b'v';
+      let k = ins.kind_tag;
+      let maybe = k == 6 || k == 11 && ins.imm == 6 || (k == 9 || k == 10 || k == 61 || k == 62) && ins.str.len() > 1 && ins.str[0] == b'v';
       if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
         if (lanes.len() == 0) {
           lanes = __alloc_bool(f.nvals);
@@ -1185,7 +1185,7 @@ function lane_results(f: SFunc): boolean[] {
 }
 
 function lane_carriers(f: SFunc, lanes: boolean[]): boolean[] {
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
     for blk in f.blocks {
@@ -1214,14 +1214,14 @@ pub function has_lanes(f: SFunc): boolean {
 }
 
 pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boolean[] {
-  let fl: boolean[] = __alloc_bool(f.nvals);
-  let derived: boolean[] = __alloc_bool(f.nvals);
-  let seeded: boolean = false;
+  let fl = __alloc_bool(f.nvals);
+  let derived = __alloc_bool(f.nvals);
+  let seeded = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      let fcall: boolean = ins.kind_tag == 11 && ins.result >= 0 && ins.result < fcalls.len() && fcalls[ins.result];
+      let fcall = ins.kind_tag == 11 && ins.result >= 0 && ins.result < fcalls.len() && fcalls[ins.result];
       if (ins.result >= 0 && ins.result < f.nvals && (float_def(ins) || fcall)) {
-        let d: boolean = ins.kind_tag == 6 || ins.kind_tag == 8 || ins.kind_tag == 11 || float_load(ins);
+        let d = ins.kind_tag == 6 || ins.kind_tag == 8 || ins.kind_tag == 11 || float_load(ins);
         fl = fl.with(ins.result, true);
         derived = derived.with(ins.result, d);
         seeded = seeded || !d;
@@ -1232,13 +1232,13 @@ pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boole
   if (!seeded) {
     return with_lanes(f, __alloc_bool(f.nvals));
   }
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let strong: boolean[] = float_strong(f, fl, derived);
+    let strong = float_strong(f, fl, derived);
     for blk in f.blocks {
       for ins in blk.insts {
-        let keeps: boolean = float_use(ins) || ins.kind_tag == 8 && fl[ins.result] || tolerant && float_tolerant(ins);
+        let keeps = float_use(ins) || ins.kind_tag == 8 && fl[ins.result] || tolerant && float_tolerant(ins);
         for a in ins.args {
           if (!keeps && a >= 0 && a < f.nvals && fl[a]) {
             fl = fl.with(a, false);
@@ -1246,32 +1246,32 @@ pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boole
           }
         }
       }
-      let t: STerm = blk.term;
+      let t = blk.term;
       if (t.kind_tag == 3 && t.cond >= 0 && t.cond < f.nvals && fl[t.cond]) {
         fl = fl.with(t.cond, false);
         changed = true;
       }
     }
-    let v: i32 = 0;
+    let v = 0;
     while (v < f.nvals) {
       if (fl[v] && derived[v] && !strong[v]) {
         fl = fl.with(v, false);
         changed = true;
       }
-      v = v + 1;
+      v += 1;
     }
   }
   return with_lanes(f, fl);
 }
 
 function with_lanes(f: SFunc, fl: boolean[]): boolean[] {
-  let lanes: boolean[] = lane_values(f);
-  let v: i32 = 0;
+  let lanes = lane_values(f);
+  let v = 0;
   while (v < lanes.len()) {
     if (lanes[v]) {
       fl = fl.with(v, true);
     }
-    v = v + 1;
+    v += 1;
   }
   for x in fl {
     if (x) {
@@ -1282,13 +1282,13 @@ function with_lanes(f: SFunc, fl: boolean[]): boolean[] {
 }
 
 function float_strong(f: SFunc, fl: boolean[], derived: boolean[]): boolean[] {
-  let strong: boolean[] = __alloc_bool(f.nvals);
-  let changed: boolean = true;
+  let strong = __alloc_bool(f.nvals);
+  let changed = true;
   while (changed) {
     changed = false;
     for blk in f.blocks {
       for ins in blk.insts {
-        let fop: boolean = float_use(ins) || ins.kind_tag == 8 && fl[ins.result] && strong[ins.result];
+        let fop = float_use(ins) || ins.kind_tag == 8 && fl[ins.result] && strong[ins.result];
         for a in ins.args {
           if (fop && a >= 0 && a < f.nvals && fl[a] && !strong[a]) {
             strong = strong.with(a, true);
@@ -1314,7 +1314,7 @@ function float_tolerant(ins: SInst): boolean {
 }
 
 function float_def(ins: SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == 4 || k == 6 || k == 8 || float_load(ins)) {
     return true;
   }
@@ -1332,7 +1332,7 @@ function float_load(ins: SInst): boolean {
 }
 
 function float_use(ins: SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == 9) {
     return float_arith(ins.str) || float_cmp(ins.str);
   }
@@ -1370,10 +1370,10 @@ function class_order(order: i32[], fl: boolean[]): i32[] {
 }
 
 function count_false(fl: boolean[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for x in fl {
     if (!x) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
@@ -1402,45 +1402,45 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
   no_home = unhomed_call_results(f, no_home);
-  let cold_calls: boolean = cold.len() > 0;
-  let wish: i32[] = return_prefs(f, pref, abi_reg);
-  let big: i32 = 2000000000;
-  let lo: i32[] = __alloc_i32(f.nvals);
-  let hi: i32[] = __alloc_i32(f.nvals);
-  let i: i32 = 0;
+  let cold_calls = cold.len() > 0;
+  let wish = return_prefs(f, pref, abi_reg);
+  let big = 2000000000;
+  let lo = __alloc_i32(f.nvals);
+  let hi = __alloc_i32(f.nvals);
+  let i = 0;
   while (i < f.nvals) {
     lo = lo.with(i, big);
-    hi = hi.with(i, 0 - 1);
-    i = i + 1;
+    hi = hi.with(i, -1);
+    i += 1;
   }
   let calls: i32[] = [];
   let all_calls: i32[] = [];
   let soft_calls: i32[] = [];
   let abi_cl: i32[] = [];
 
-  let def_pos: i32[] = __alloc_i32(f.nvals);
-  let def_blk: i32[] = __alloc_i32(f.nvals);
-  let call_def: i32[] = __alloc_i32(f.nvals);
-  let reads_mate: boolean[] = __alloc_bool(f.nvals);
-  let def_a: i32[] = __alloc_i32(f.nvals);
-  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_pos = __alloc_i32(f.nvals);
+  let def_blk = __alloc_i32(f.nvals);
+  let call_def = __alloc_i32(f.nvals);
+  let reads_mate = __alloc_bool(f.nvals);
+  let def_a = __alloc_i32(f.nvals);
+  let def_b = __alloc_i32(f.nvals);
   i = 0;
   while (i < f.nvals) {
-    def_pos = def_pos.with(i, 0 - 1);
-    def_blk = def_blk.with(i, 0 - 1);
-    def_a = def_a.with(i, 0 - 1);
-    def_b = def_b.with(i, 0 - 1);
-    i = i + 1;
+    def_pos = def_pos.with(i, -1);
+    def_blk = def_blk.with(i, -1);
+    def_a = def_a.with(i, -1);
+    def_b = def_b.with(i, -1);
+    i += 1;
   }
   let blk_start: i32[] = [];
-  let pos: i32 = 0;
-  let bi: i32 = 0;
+  let pos = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     blk_start = blk_start.append(pos);
-    let k: i32 = 0;
+    let k = 0;
     while (k < blk.insts.len()) {
-      let ins: SInst = blk.insts[k];
+      let ins = blk.insts[k];
       if (ins.result >= 0 && ins.result < lo.len() && pos < lo[ins.result]) {
         lo = lo.with(ins.result, pos);
       }
@@ -1464,7 +1464,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
           }
         }
       }
-      let a: i32 = 0;
+      let a = 0;
       while (a < ins.args.len() && ins.kind_tag != 8) {
         if (ins.args[a] >= 0 && ins.args[a] < lo.len() && pos < lo[ins.args[a]]) {
           lo = lo.with(ins.args[a], pos);
@@ -1472,12 +1472,12 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         if (ins.args[a] >= 0 && ins.args[a] < hi.len() && pos > hi[ins.args[a]]) {
           hi = hi.with(ins.args[a], pos);
         }
-        a = a + 1;
+        a += 1;
       }
       if (inst_is_call(ins.kind_tag) && !never_returns(ins)) {
         if (counted_call(blk, k)) {
           all_calls = all_calls.append(pos);
-          let kind: i32 = COLD_NONE;
+          let kind = COLD_NONE;
           if (cold_calls) {
             kind = cold[pos];
           }
@@ -1494,8 +1494,8 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (abi_fixed_by_div && ins.kind_tag == 9 && binary_fixes_abi(ins.str)) {
         abi_cl = abi_cl.append(pos);
       }
-      pos = pos + 1;
-      k = k + 1;
+      pos += 1;
+      k += 1;
     }
     if (blk.term.kind_tag == 1) {
       if (blk.term.value >= 0 && blk.term.value < lo.len() && pos < lo[blk.term.value]) {
@@ -1512,81 +1512,81 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         hi = hi.with(blk.term.cond, pos);
       }
     }
-    pos = pos + 1;
-    bi = bi + 1;
+    pos += 1;
+    bi += 1;
   }
   i = 0;
   while (i < f.nparams && i < f.nvals) {
     if (hi[i] >= 0) {
       lo = lo.with(i, 0);
     }
-    i = i + 1;
+    i += 1;
   }
-  let total_pos: i32 = pos;
+  let total_pos = pos;
   ssafixed.validate(fixed, nregs, total_pos);
-  let at: i32[] = block_positions(f);
+  let at = block_positions(f);
   bi = 0;
   while (bi < f.blocks.len()) {
-    let pb: SBlock = f.blocks[bi];
-    let pk: i32 = 0;
+    let pb = f.blocks[bi];
+    let pk = 0;
     while (pk < pb.insts.len()) {
-      let ph: SInst = pb.insts[pk];
+      let ph = pb.insts[pk];
       if (ph.kind_tag == 8) {
-        let sl: i32 = 0;
+        let sl = 0;
         while (sl < ph.args.len()) {
-          let upos: i32 = blk_start[bi] + pk;
+          let upos = blk_start[bi] + pk;
           if (sl < pb.preds.len() && pb.preds[sl] >= 0 && pb.preds[sl] < at.len() && at[pb.preds[sl]] >= 0) {
-            let pi: i32 = at[pb.preds[sl]];
+            let pi = at[pb.preds[sl]];
             upos = blk_start[pi] + f.blocks[pi].insts.len();
           }
-          let pa: i32 = ph.args[sl];
+          let pa = ph.args[sl];
           if (pa >= 0 && pa < lo.len() && upos < lo[pa]) {
             lo = lo.with(pa, upos);
           }
           if (pa >= 0 && pa < hi.len() && upos > hi[pa]) {
             hi = hi.with(pa, upos);
           }
-          sl = sl + 1;
+          sl += 1;
         }
       }
-      pk = pk + 1;
+      pk += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   i = 0;
   while (i < no_home.len() && i < f.nvals) {
     if (no_home[i]) {
-      hi = hi.with(i, 0 - 1);
+      hi = hi.with(i, -1);
     }
-    i = i + 1;
+    i += 1;
   }
 
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
-  let cum: i32[] = calls_before(calls, total_pos);
-  let cum_abi: i32[] = calls_before(abi_cl, total_pos);
-  let cum_all: i32[] = cum;
-  let cum_soft: i32[] = calls_before(soft_calls, total_pos);
+  let cum = calls_before(calls, total_pos);
+  let cum_abi = calls_before(abi_cl, total_pos);
+  let cum_all = cum;
+  let cum_soft = calls_before(soft_calls, total_pos);
   if (cold_calls) {
     cum_all = calls_before(all_calls, total_pos);
   }
-  let mates: Mates = phi_mates(f, at, def_pos, hi, no_home);
-  let weight: i32[] = spill_weights(f, at);
-  let hard: boolean[] = hard_spans(f, cum, cold, lo, hi, weight, crossing);
-  let sole: i32[] = sole_readers(f);
+  let mates = phi_mates(f, at, def_pos, hi, no_home);
+  let weight = spill_weights(f, at);
+  let hard = hard_spans(f, cum, cold, lo, hi, weight, crossing);
+  let sole = sole_readers(f);
 
-  let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
+  let sites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
   let phi_side: boolean[] = [];
-  let reg_of: i32[] = __alloc_i32(f.nvals);
-  let shared_with: i32[] = __alloc_i32(f.nvals);
+  let reg_of = __alloc_i32(f.nvals);
+  let shared_with = __alloc_i32(f.nvals);
   i = 0;
   while (i < f.nvals) {
-    reg_of = reg_of.with(i, 0 - 1);
-    shared_with = shared_with.with(i, 0 - 1);
-    i = i + 1;
+    reg_of = reg_of.with(i, -1);
+    shared_with = shared_with.with(i, -1);
+    i += 1;
   }
 
-  let order: i32[] = order_by_lo(f.nvals, lo);
-  let split: i32 = order.len();
+  let order = order_by_lo(f.nvals, lo);
+  let split = order.len();
   if (fl.len() > 0) {
     order = class_order(order, fl);
     split = count_false(fl);
@@ -1595,28 +1595,28 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let act_hi: i32[] = [];
   let act_reg: i32[] = [];
   let free: i32[] = [];
-  let r: i32 = nregs - 1;
+  let r = nregs - 1;
   while (r >= 0) {
     free = free.append(r);
-    r = r - 1;
+    r -= 1;
   }
   let free_s: i32[] = [];
   r = nregs + nsaved - 1;
   while (r >= nregs) {
     free_s = free_s.append(r);
-    r = r - 1;
+    r -= 1;
   }
 
-  let cbase: i32 = 0;
-  let sat: i32 = nregs;
-  let cabi: i32 = abi_reg;
-  let oi: i32 = 0;
+  let cbase = 0;
+  let sat = nregs;
+  let cabi = abi_reg;
+  let oi = 0;
   while (oi < order.len()) {
     if (oi == split) {
       cum = cum_all;
       cbase = nregs + nsaved;
       sat = cbase + nf;
-      cabi = 0 - 1;
+      cabi = -1;
       act_val = [];
       act_hi = [];
       act_reg = [];
@@ -1624,25 +1624,25 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       r = sat - 1;
       while (r >= cbase) {
         free = free.append(r);
-        r = r - 1;
+        r -= 1;
       }
       free_s = [];
       r = sat + nfs - 1;
       while (r >= sat) {
         free_s = free_s.append(r);
-        r = r - 1;
+        r -= 1;
       }
     }
-    let v: i32 = order[oi];
+    let v = order[oi];
     if (hi[v] < 0) {
-      oi = oi + 1;
+      oi += 1;
       continue;
     }
     if (any_below(act_hi, lo[v])) {
       let nv: i32[] = [];
       let nh: i32[] = [];
       let nr: i32[] = [];
-      let ai: i32 = 0;
+      let ai = 0;
       while (ai < act_val.len()) {
         if (act_hi[ai] < lo[v]) {
           if (act_reg[ai] >= sat) {
@@ -1655,46 +1655,46 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
           nh = nh.append(act_hi[ai]);
           nr = nr.append(act_reg[ai]);
         }
-        ai = ai + 1;
+        ai += 1;
       }
       act_val = nv;
       act_hi = nh;
       act_reg = nr;
     }
 
-    let mh: i32 = mates.hint[v];
-    if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == 0 - 1) {
+    let mh = mates.hint[v];
+    if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == -1) {
       sites = cached_read_sites(f, sites, at, blk_start);
       if (!live_at_def(sites, mh, v, def_blk, def_pos)) {
-        oi = oi + 1;
+        oi += 1;
         continue;
       }
     }
-    if (mh >= 0 && mates.through[v] && reg_of[mh] == 0 - 1 && hi[mh] < lo[v] && !(cold_calls && weight[v] > 4 * weight[mh])) {
-      oi = oi + 1;
+    if (mh >= 0 && mates.through[v] && reg_of[mh] == -1 && hi[mh] < lo[v] && !(cold_calls && weight[v] > 4 * weight[mh])) {
+      oi += 1;
       continue;
     }
-    let ma: i32 = mates.alt[v];
-    if (ma >= 0 && reg_of[ma] == 0 - 1 && lo[ma] <= lo[v] && hi[ma] >= 0) {
+    let ma = mates.alt[v];
+    if (ma >= 0 && reg_of[ma] == -1 && lo[ma] <= lo[v] && hi[ma] >= 0) {
       sites = cached_read_sites(f, sites, at, blk_start);
       if (!live_at_def(sites, ma, v, def_blk, def_pos)) {
-        oi = oi + 1;
+        oi += 1;
         continue;
       }
     }
-    let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
-    let soft: boolean = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
-    let keep_caller: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
-    let placed: boolean = false;
-    let ci: i32 = 0;
+    let abi_ok = !spans_call(cum_abi, lo[v], hi[v]);
+    let soft = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
+    let keep_caller = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
+    let placed = false;
+    let ci = 0;
     while (ci < 5 && !placed) {
-      let h: i32 = candidate(mates, def_a, def_b, v, ci);
-      ci = ci + 1;
+      let h = candidate(mates, def_a, def_b, v, ci);
+      ci += 1;
       if (ci == 1 && h == mates.hint[v]) {
         continue;
       }
-      if (h == 0 - 2) {
-        let pr: i32 = 0 - 1;
+      if (h == -2) {
+        let pr: i32 = -1;
         if (v < wish.len()) {
           pr = wish[v];
         }
@@ -1710,7 +1710,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
           placed = true;
           continue;
         }
-        let held: i32 = index_of_reg(act_reg, pr);
+        let held = index_of_reg(act_reg, pr);
         if (held < 0) {
           continue;
         }
@@ -1719,15 +1719,15 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (h < 0 || reg_of[h] < 0) {
         continue;
       }
-      let hr: i32 = reg_of[h];
+      let hr = reg_of[h];
       if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
         continue;
       }
       if (hr < cbase || keep_caller && hr < sat || hr == cabi && !abi_ok || !ssafixed.allows(fixed, hr, lo[v], hi[v])) {
         continue;
       }
-      let fi: i32 = index_of_reg(free, hr);
-      let fsi: i32 = index_of_reg(free_s, hr);
+      let fi = index_of_reg(free, hr);
+      let fsi = index_of_reg(free_s, hr);
       if (fi >= 0 || fsi >= 0) {
         if (fi >= 0) {
           free = remove_reg(free, hr);
@@ -1742,11 +1742,11 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         placed = true;
         continue;
       }
-      let ha: i32 = index_of_reg(act_reg, hr);
+      let ha = index_of_reg(act_reg, hr);
       if (ha < 0) {
         continue;
       }
-      let share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
+      let share = act_hi[ha] == lo[v] && reads_mate[v];
       if (!share && (h == mates.hint[v] && mates.carried[v] || h == mates.alt[v])) {
         sites = cached_read_sites(f, sites, at, blk_start);
         share = chain_dead_at_def(sites, act_val[ha], v, shared_with, lo, hi, def_blk, def_pos);
@@ -1754,8 +1754,8 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (!share) {
         continue;
       }
-      let top: i32 = later_interval_end(act_hi[ha], hi[v]);
-      let holder: i32 = act_val[ha];
+      let top = later_interval_end(act_hi[ha], hi[v]);
+      let holder = act_val[ha];
       act_val = drop_active_at(act_val, ha);
       act_hi = drop_active_at(act_hi, ha);
       act_reg = drop_active_at(act_reg, ha);
@@ -1767,11 +1767,11 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       placed = true;
     }
     if (placed) {
-      oi = oi + 1;
+      oi += 1;
       continue;
     }
-    let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
-    let from_caller: boolean = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
+    let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
+    let from_caller = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     // A save around a call restores its holder, so a lent interval holds none.
     if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
@@ -1779,11 +1779,11 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (phi_side.len() == 0) {
         phi_side = phi_values(f);
       }
-      let lend: i32 = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos);
+      let lend = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos);
       if (lend >= 0) {
-        let top: i32 = later_interval_end(act_hi[lend], hi[v]);
-        let lent: i32 = act_reg[lend];
-        let holder: i32 = act_val[lend];
+        let top = later_interval_end(act_hi[lend], hi[v]);
+        let lent = act_reg[lend];
+        let holder = act_val[lend];
         act_val = drop_active_at(act_val, lend);
         act_hi = drop_active_at(act_hi, lend);
         act_reg = drop_active_at(act_reg, lend);
@@ -1792,29 +1792,29 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         act_val = act_val.append(v);
         act_hi = act_hi.append(top);
         act_reg = act_reg.append(lent);
-        oi = oi + 1;
+        oi += 1;
         continue;
       }
     }
     if (!from_caller && free_s.len() == 0) {
-      let need_saved: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
-      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
-      let cmp: i32 = 0;
+      let need_saved = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
+      let fa = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
+      let cmp = 0;
       if (fa >= 0) {
-        let fw: i32 = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);
+        let fw = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);
         cmp = cmp_spill_cost(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo, hi, lo[v]) + 1, weight[v], hi[v] - lo[v] + 1);
       }
       if (fa >= 0 && (cmp < 0 || cmp == 0 && act_hi[fa] > hi[v])) {
-        let taken: i32 = act_reg[fa];
-        let ev: i32 = act_val[fa];
-        let first: boolean = true;
+        let taken = act_reg[fa];
+        let ev = act_val[fa];
+        let first = true;
         while (ev >= 0) {
           if (first || still_holds(ev, hi, lo[v])) {
-            reg_of = reg_of.with(ev, 0 - 1);
+            reg_of = reg_of.with(ev, -1);
           }
           first = false;
-          let nx: i32 = shared_with[ev];
-          shared_with = shared_with.with(ev, 0 - 1);
+          let nx = shared_with[ev];
+          shared_with = shared_with.with(ev, -1);
           ev = nx;
         }
         act_val = drop_active_at(act_val, fa);
@@ -1825,10 +1825,10 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         act_hi = act_hi.append(hi[v]);
         act_reg = act_reg.append(taken);
       } else {
-        reg_of = reg_of.with(v, 0 - 1);
+        reg_of = reg_of.with(v, -1);
       }
     } else {
-      let reg: i32 = 0;
+      let reg = 0;
       if (from_caller) {
         reg = pick;
         free = remove_reg(free, reg);
@@ -1841,12 +1841,12 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       act_hi = act_hi.append(hi[v]);
       act_reg = act_reg.append(reg);
     }
-    oi = oi + 1;
+    oi += 1;
   }
   if (nfs > 0) {
     reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf);
   }
-  let shape: SlotShape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
+  let shape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
   if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
     sites = read_sites(f, at, blk_start);
   }
@@ -1854,13 +1854,13 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
 }
 
 function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
-  let lanes: boolean[] = lane_values(f);
-  let v: i32 = 0;
+  let lanes = lane_values(f);
+  let v = 0;
   while (v < lanes.len()) {
     if (lanes[v] && reg_of[v] >= saved_from) {
-      reg_of = reg_of.with(v, 0 - 1);
+      reg_of = reg_of.with(v, -1);
     }
-    v = v + 1;
+    v += 1;
   }
   return reg_of;
 }
@@ -1870,47 +1870,47 @@ struct SlotHints { hint: i32[], take_over: boolean[] }
 function slot_hints(f: SFunc, sites: ReadSites, def_blk: i32[], def_pos: i32[], reg_of: i32[], mates: Mates): SlotHints {
   let hint: i32[] = [];
   let take_over: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.nvals) {
-    let sh: i32 = mates.hint[i];
+    let sh = mates.hint[i];
     if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) {
-      sh = 0 - 1;
+      sh = -1;
     }
-    let free: boolean = sh >= 0 && def_pos[sh] >= 0 && !live_at_def(sites, sh, i, def_blk, def_pos);
+    let free = sh >= 0 && def_pos[sh] >= 0 && !live_at_def(sites, sh, i, def_blk, def_pos);
     if (sh >= 0 && mates.carried[i] && !free) {
-      sh = 0 - 1;
+      sh = -1;
     }
     hint = hint.append(sh);
     take_over = take_over.append(free);
-    i = i + 1;
+    i += 1;
   }
   return SlotHints { hint: hint, take_over: take_over };
 }
 
 function spilled_mates(reg_of: i32[], def_pos: i32[], hint: i32[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < reg_of.len()) {
-    let sh: i32 = hint[i];
+    let sh = hint[i];
     if (reg_of[i] < 0 && sh >= 0 && reg_of[sh] < 0 && def_pos[sh] >= 0) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
-  let out: i32[] = pref;
+  let out = pref;
   while (out.len() < f.nvals) {
-    out = out.append(0 - 1);
+    out = out.append(-1);
   }
   for blk in f.blocks {
-    let v: i32 = blk.term.value;
+    let v = blk.term.value;
     if (blk.term.kind_tag == 1 && v >= 0 && v < out.len() && out[v] < 0) {
       out = out.with(v, abi_reg);
     }
   }
-  let bi: i32 = f.blocks.len() - 1;
+  let bi = f.blocks.len() - 1;
   while (bi >= 0) {
     for ins in f.blocks[bi].insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < out.len() && out[ins.result] >= 0) {
@@ -1921,26 +1921,26 @@ function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
         }
       }
     }
-    bi = bi - 1;
+    bi -= 1;
   }
   return out;
 }
 
 function sole_readers(f: SFunc): i32[] {
-  let out: i32[] = util.minus_ones(f.nvals);
+  let out = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       for a in ins.args {
         if (a >= 0 && a < f.nvals && out[a] != ins.result) {
-          if (out[a] == 0 - 1 && ins.result >= 0) {
+          if (out[a] == -1 && ins.result >= 0) {
             out = out.with(a, ins.result);
           } else {
-            out = out.with(a, 0 - 2);
+            out = out.with(a, -2);
           }
         }
       }
     }
-    let tv: i32 = 0 - 1;
+    let tv: i32 = -1;
     if (blk.term.kind_tag == 1) {
       tv = blk.term.value;
     }
@@ -1948,28 +1948,28 @@ function sole_readers(f: SFunc): i32[] {
       tv = blk.term.cond;
     }
     if (tv >= 0 && tv < f.nvals) {
-      out = out.with(tv, 0 - 2);
+      out = out.with(tv, -2);
     }
   }
   return out;
 }
 
 function spill_weights(f: SFunc, at: i32[]): i32[] {
-  let bw: i32[] = block_loop_weights(f);
-  let w: i32[] = __alloc_i32(f.nvals);
-  let bi: i32 = 0;
+  let bw = block_loop_weights(f);
+  let w = __alloc_i32(f.nvals);
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     for ins in blk.insts {
       if (ins.result >= 0 && ins.result < f.nvals) {
         w = w.with(ins.result, w[ins.result] + bw[bi]);
       }
-      let sl: i32 = 0;
+      let sl = 0;
       while (sl < ins.args.len()) {
-        let a: i32 = ins.args[sl];
-        let rb: i32 = bi;
+        let a = ins.args[sl];
+        let rb = bi;
         if (ins.kind_tag == 8) {
-          rb = 0 - 1;
+          rb = -1;
           if (sl < blk.preds.len()) {
             rb = position_of(at, blk.preds[sl]);
           }
@@ -1977,10 +1977,10 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
         if (a >= 0 && a < f.nvals && rb >= 0) {
           w = w.with(a, w[a] + bw[rb]);
         }
-        sl = sl + 1;
+        sl += 1;
       }
     }
-    let tv: i32 = 0 - 1;
+    let tv: i32 = -1;
     if (blk.term.kind_tag == 1) {
       tv = blk.term.value;
     }
@@ -1990,52 +1990,52 @@ function spill_weights(f: SFunc, at: i32[]): i32[] {
     if (tv >= 0 && tv < f.nvals) {
       w = w.with(tv, w[tv] + bw[bi]);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return w;
 }
 
 function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): boolean {
-  let w: i32 = wanted_by[holder];
-  return w >= 0 && w != v && reg_of[w] == 0 - 1;
+  let w = wanted_by[holder];
+  return w >= 0 && w != v && reg_of[w] == -1;
 }
 
 function drop_last_i(a: i32[]): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len() - 1) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function spill_code(slot: i32): i32 {
-  return 0 - 2 - slot;
+  return -2 - slot;
 }
 
 pub function spill_slot(code: i32): i32 {
-  return 0 - 2 - code;
+  return -2 - code;
 }
 
 // One line per value with a home: its interval, its spill weight and the
 // register index or frame slot it took. FERN_SSA_ALLOC=<function> prints it.
 pub function print_alloc(f: SFunc, a: Alloc): string {
-  let w: i32[] = spill_weights(f, block_positions(f));
-  let cold: boolean[] = cold_blocks(f);
-  let out: string = "";
-  let start: i32 = 0;
+  let w = spill_weights(f, block_positions(f));
+  let cold = cold_blocks(f);
+  let out = "";
+  let start = 0;
   for bi in 0..f.blocks.len() {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     out = out + "  block " + util.i32_to_string(bi) + " id " + util.i32_to_string(blk.id) + " at " + util.i32_to_string(start);
     if (cold[bi]) {
-      out = out + " cold";
+      out += " cold";
     }
-    out = out + "\n";
+    out += "\n";
     for k in 0..blk.insts.len() {
-      let ins: SInst = blk.insts[k];
+      let ins = blk.insts[k];
       if (inst_is_call(ins.kind_tag)) {
-        let kind: i32 = COLD_NONE;
+        let kind = COLD_NONE;
         if (start + k < a.cold.len()) {
           kind = a.cold[start + k];
         }
@@ -2048,11 +2048,11 @@ pub function print_alloc(f: SFunc, a: Alloc): string {
     if (a.hi[v] < 0) {
       continue;
     }
-    let home: string = "reg " + util.i32_to_string(a.reg_of[v]);
-    if (a.reg_of[v] == 0 - 1) {
+    let home = "reg " + util.i32_to_string(a.reg_of[v]);
+    if (a.reg_of[v] == -1) {
       home = "none";
     }
-    if (a.reg_of[v] < 0 - 1) {
+    if (a.reg_of[v] < -1) {
       home = "slot " + util.i32_to_string(spill_slot(a.reg_of[v]));
     }
     out = out + "  v" + util.i32_to_string(v) + " [" + util.i32_to_string(a.lo[v]) + ", " + util.i32_to_string(a.hi[v]) + "] w=" + util.i32_to_string(w[v]) + " " + home + "\n";
@@ -2061,9 +2061,9 @@ pub function print_alloc(f: SFunc, a: Alloc): string {
 }
 
 pub function spill_count(reg_of: i32[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for h in reg_of {
-    if (h < 0 - 1 && spill_slot(h) + 1 > n) {
+    if (h < -1 && spill_slot(h) + 1 > n) {
       n = spill_slot(h) + 1;
     }
   }
@@ -2087,22 +2087,22 @@ function int_binary(op: string): boolean {
 struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 
 function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
-  let hint: i32[] = util.minus_ones(f.nvals);
-  let carried: boolean[] = __alloc_bool(f.nvals);
-  let alt: i32[] = hint;
-  let fell: boolean[] = carried;
-  let pos: i32 = 0;
-  let bi: i32 = 0;
+  let hint = util.minus_ones(f.nvals);
+  let carried = __alloc_bool(f.nvals);
+  let alt = hint;
+  let fell = carried;
+  let pos = 0;
+  let bi = 0;
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < hint.len()) {
-        let dying: i32 = 0 - 1;
-        let outliving: i32 = 0 - 1;
-        let through: i32 = 0 - 1;
-        let ai: i32 = 0;
+        let dying: i32 = -1;
+        let outliving: i32 = -1;
+        let through: i32 = -1;
+        let ai = 0;
         while (ai < ins.args.len()) {
-          let a: i32 = ins.args[ai];
-          ai = ai + 1;
+          let a = ins.args[ai];
+          ai += 1;
           if (a < 0 || a >= hint.len() || a < no_home.len() && no_home[a]) {
             continue;
           }
@@ -2124,7 +2124,7 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
             carried = carried.with(a, true);
           }
         }
-        let h: i32 = hint[ins.result];
+        let h = hint[ins.result];
         if (dying >= 0 && !carried[ins.result] && h >= 0 && hi[h] >= pos) {
           hint = hint.with(ins.result, dying);
         }
@@ -2136,17 +2136,17 @@ function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: bool
           alt = alt.with(ins.result, outliving);
         }
       }
-      pos = pos + 1;
+      pos += 1;
     }
-    pos = pos + 1;
-    bi = bi + 1;
+    pos += 1;
+    bi += 1;
   }
   return Mates { hint: hint, carried: carried, alt: alt, through: fell };
 }
 
 function pred_index(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
-    return 0 - 1;
+    return -1;
   }
   return at[id];
 }
@@ -2155,49 +2155,49 @@ function pred_index(at: i32[], id: i32): i32 {
 // registers below `nregs` that hold a value live across it. The mask at
 // `at[k]` leaves out the value `skip[k]`.
 pub function live_masks(alloc: Alloc, nregs: i32, at: i32[], skip: i32[]): i32[] {
-  let masks: i32[] = __alloc_i32(at.len());
+  let masks = __alloc_i32(at.len());
   if (at.len() == 0) {
     return masks;
   }
-  let order: i32[] = order_by_lo(alloc.reg_of.len(), alloc.lo);
-  let active: i32[] = __alloc_i32(order.len());
-  let na: i32 = 0;
-  let next: i32 = 0;
-  let k: i32 = 0;
+  let order = order_by_lo(alloc.reg_of.len(), alloc.lo);
+  let active = __alloc_i32(order.len());
+  let na = 0;
+  let next = 0;
+  let k = 0;
   while (k < at.len()) {
-    let p: i32 = at[k];
+    let p = at[k];
     while (next < order.len() && alloc.lo[order[next]] < p) {
-      let v: i32 = order[next];
-      let r: i32 = alloc.reg_of[v];
+      let v = order[next];
+      let r = alloc.reg_of[v];
       if (r >= 0 && r < nregs) {
         active = active.with(na, v);
-        na = na + 1;
+        na += 1;
       }
-      next = next + 1;
+      next += 1;
     }
-    let mask: i32 = 0;
-    let kept: i32 = 0;
-    let j: i32 = 0;
+    let mask = 0;
+    let kept = 0;
+    let j = 0;
     while (j < na) {
-      let v: i32 = active[j];
+      let v = active[j];
       if (alloc.hi[v] > p) {
         active = active.with(kept, v);
-        kept = kept + 1;
+        kept += 1;
         if (v != skip[k]) {
           mask = mask | 1 << alloc.reg_of[v];
         }
       }
-      j = j + 1;
+      j += 1;
     }
     na = kept;
     masks = masks.with(k, mask);
-    k = k + 1;
+    k += 1;
   }
   return masks;
 }
 
 pub function position_count(f: SFunc): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for blk in f.blocks {
     n = n + blk.insts.len() + 1;
   }
@@ -2205,25 +2205,25 @@ pub function position_count(f: SFunc): i32 {
 }
 
 pub function block_positions(f: SFunc): i32[] {
-  let top: i32 = 0 - 1;
+  let top: i32 = -1;
   for blk in f.blocks {
     if (blk.id > top) {
       top = blk.id;
     }
   }
-  let out: i32[] = __alloc_i32(top + 1);
-  let i: i32 = 0;
+  let out = __alloc_i32(top + 1);
+  let i = 0;
   while (i <= top) {
-    out = out.with(i, 0 - 1);
-    i = i + 1;
+    out = out.with(i, -1);
+    i += 1;
   }
   i = 0;
   while (i < f.blocks.len()) {
-    let id: i32 = f.blocks[i].id;
+    let id = f.blocks[i].id;
     if (id >= 0 && out[id] < 0) {
       out = out.with(id, i);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -2240,20 +2240,20 @@ pub function successor_id(t: STerm, which: i32): i32 {
       return t.f;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
-  let id: i32 = successor_id(t, which);
+  let id = successor_id(t, which);
   if (id < 0 || which == 1 && id == t.t) {
-    return 0 - 1;
+    return -1;
   }
   return position_of(at, id);
 }
 
 function position_of(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
-    return 0 - 1;
+    return -1;
   }
   return at[id];
 }
@@ -2278,14 +2278,14 @@ pub function term_reads_value(t: STerm, v: i32): boolean {
 }
 
 function index_of_reg(a: i32[], x: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] == x) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function marked(marks: boolean[], v: i32): boolean {
@@ -2294,7 +2294,7 @@ function marked(marks: boolean[], v: i32): boolean {
 
 function unmarked_or_none(v: i32, marks: boolean[]): i32 {
   if (marked(marks, v)) {
-    return 0 - 1;
+    return -1;
   }
   return v;
 }
@@ -2322,54 +2322,54 @@ function even_pair(t: PairSlots, p: i32, v: i32): PairSlots {
 }
 
 function take_pair(t: PairSlots, p: i32, end: i32, v: i32): PairSlots {
-  let u: i32 = p;
+  let u = p;
   while (u <= p + 1) {
     if (u == t.slot_end.len()) {
       t = PairSlots { slot_end: t.slot_end.append(end), holder: t.holder.append(v), occupants: t.occupants.append([v]) };
     } else {
       t = PairSlots { slot_end: t.slot_end.with(u, end), holder: t.holder.with(u, v), occupants: t.occupants.with(u, [v]) };
     }
-    u = u + 1;
+    u += 1;
   }
   return t;
 }
 
 function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints, given: ReadSites): i32[] {
-  let def_pos: i32[] = shape.def_pos;
-  let from: i32[] = spill_starts(lo, def_pos);
-  let wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
-  let lanes: boolean[] = lane_values(f);
+  let def_pos = shape.def_pos;
+  let from = spill_starts(lo, def_pos);
+  let wanted_by = mates_wanted(hi, reg_of, hints.hint);
+  let lanes = lane_values(f);
   let slot_end: i32[] = [];
   let holder: i32[] = [];
   let occupants: i32[][] = [];
-  let sites: ReadSites = given;
-  let built: boolean = given.start.len() > 0;
-  let live: SpillLive = no_spill_live();
+  let sites = given;
+  let built = given.start.len() > 0;
+  let live = no_spill_live();
   let pairs: i32[] = [];
   for v in order_by_lo(reg_of.len(), from) {
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
     }
     if (marked(lanes, v)) {
-      let p: i32 = free_pair(slot_end, holder, wanted_by, reg_of, pairs, from[v], v);
-      let t: PairSlots = even_pair(PairSlots { slot_end: slot_end, holder: holder, occupants: occupants }, p, v);
+      let p = free_pair(slot_end, holder, wanted_by, reg_of, pairs, from[v], v);
+      let t = even_pair(PairSlots { slot_end: slot_end, holder: holder, occupants: occupants }, p, v);
       p = p + t.slot_end.len() - slot_end.len();
       if (p == t.slot_end.len()) {
         pairs = pairs.append(p);
       }
-      let pair: PairSlots = take_pair(t, p, hi[v], v);
+      let pair = take_pair(t, p, hi[v], v);
       slot_end = pair.slot_end;
       holder = pair.holder;
       occupants = pair.occupants;
       reg_of = reg_of.with(v, spill_code(p));
       continue;
     }
-    let ends: i32[] = closed_pairs(slot_end, pairs);
-    let h: i32 = unmarked_or_none(hints.hint[v], lanes);
-    let s: i32 = hinted_slot(ends, holder, reg_of, h, from[v], hints.take_over[v]);
+    let ends = closed_pairs(slot_end, pairs);
+    let h = unmarked_or_none(hints.hint[v], lanes);
+    let s = hinted_slot(ends, holder, reg_of, h, from[v], hints.take_over[v]);
     if (s < 0 && def_pos[v] >= 0) {
-      let reads: i32[] = unmarked(slot_operands(f, shape, reg_of, v), lanes);
-      if (h >= 0 && reg_of[h] < 0 - 1) {
+      let reads = unmarked(slot_operands(f, shape, reg_of, v), lanes);
+      if (h >= 0 && reg_of[h] < -1) {
         let mate_first: i32[] = [h];
         for r in reads {
           mate_first = mate_first.append(r);
@@ -2388,7 +2388,7 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
     if (s < 0) {
       s = free_slot(ends, holder, wanted_by, reg_of, from[v], v);
     }
-    let end: i32 = hi[v];
+    let end = hi[v];
     if (s < slot_end.len() && slot_end[s] > end) {
       end = slot_end[s];
     }
@@ -2408,12 +2408,12 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
 
 function spilled_values(reg_of: i32[], hi: i32[]): i32[] {
   let out: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < reg_of.len()) {
     if (hi[v] >= 0 && reg_of[v] < 0) {
       out = out.append(v);
     }
-    v = v + 1;
+    v += 1;
   }
   return out;
 }
@@ -2422,14 +2422,14 @@ struct SlotShape { at: i32[], blk_start: i32[], def_blk: i32[], def_pos: i32[], 
 
 function slot_operands(f: SFunc, shape: SlotShape, reg_of: i32[], v: i32): i32[] {
   let out: i32[] = [];
-  let bi: i32 = shape.def_blk[v];
-  let ins: SInst = f.blocks[bi].insts[shape.def_pos[v] - shape.blk_start[bi]];
+  let bi = shape.def_blk[v];
+  let ins = f.blocks[bi].insts[shape.def_pos[v] - shape.blk_start[bi]];
   let cands: i32[] = [shape.def_a[v], shape.def_b[v]];
   if (ins.kind_tag == 8) {
     cands = ins.args;
   }
   for c in cands {
-    if (c >= 0 && reg_of[c] < 0 - 1) {
+    if (c >= 0 && reg_of[c] < -1) {
       out = out.append(c);
     }
   }
@@ -2438,8 +2438,8 @@ function slot_operands(f: SFunc, shape: SlotShape, reg_of: i32[], v: i32): i32[]
 
 function path_slot(sites: ReadSites, live: SpillLive, shape: SlotShape, reads: i32[], slot_end: i32[], holder: i32[], occupants: i32[][], wanted_by: i32[], reg_of: i32[], hi: i32[], from: i32, v: i32): i32 {
   for c in reads {
-    let cs: i32 = spill_slot(reg_of[c]);
-    let ok: boolean = true;
+    let cs = spill_slot(reg_of[c]);
+    let ok = true;
     for w in occupants[cs] {
       if (ok && hi[w] >= from && (spill_live_at(live, sites, w, v, shape.def_blk, shape.def_pos) || shape.def_pos[w] >= 0 && spill_live_at(live, sites, v, w, shape.def_blk, shape.def_pos))) {
         ok = false;
@@ -2449,7 +2449,7 @@ function path_slot(sites: ReadSites, live: SpillLive, shape: SlotShape, reads: i
       return cs;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
@@ -2479,45 +2479,45 @@ function later_interval_end(a: i32, b: i32): i32 {
 }
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
-  let count: i32[] = __alloc_i32(f.nvals + 1);
-  let succ_a: i32[] = __alloc_i32(f.blocks.len());
-  let succ_b: i32[] = __alloc_i32(f.blocks.len());
+  let count = __alloc_i32(f.nvals + 1);
+  let succ_a = __alloc_i32(f.blocks.len());
+  let succ_b = __alloc_i32(f.blocks.len());
   let phi_end: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let t: STerm = f.blocks[bi].term;
+    let t = f.blocks[bi].term;
     succ_a = succ_a.with(bi, distinct_successor_position(at, t, 0));
     succ_b = succ_b.with(bi, distinct_successor_position(at, t, 1));
-    let end: i32 = 0;
-    let k: i32 = 0;
+    let end = 0;
+    let k = 0;
     while (k < f.blocks[bi].insts.len()) {
       if (f.blocks[bi].insts[k].kind_tag == 8) {
         end = k + 1;
       }
-      k = k + 1;
+      k += 1;
     }
     phi_end = phi_end.append(blk_start[bi] + end);
-    bi = bi + 1;
+    bi += 1;
   }
-  let pass: i32 = 0;
+  let pass = 0;
   let start: i32[] = [];
   let blk: i32[] = [];
   let pos: i32[] = [];
   while (pass < 2) {
-    let fill: i32[] = start;
+    let fill = start;
     bi = 0;
     while (bi < f.blocks.len()) {
-      let b: SBlock = f.blocks[bi];
-      let k: i32 = 0;
+      let b = f.blocks[bi];
+      let k = 0;
       while (k < b.insts.len()) {
-        let ins: SInst = b.insts[k];
-        let sl: i32 = 0;
+        let ins = b.insts[k];
+        let sl = 0;
         while (sl < ins.args.len()) {
-          let a: i32 = ins.args[sl];
-          let rb: i32 = bi;
-          let rp: i32 = blk_start[bi] + k;
+          let a = ins.args[sl];
+          let rb = bi;
+          let rp = blk_start[bi] + k;
           if (ins.kind_tag == 8) {
-            rb = 0 - 1;
+            rb = -1;
             if (sl < b.preds.len()) {
               rb = position_of(at, b.preds[sl]);
             }
@@ -2534,11 +2534,11 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
               fill = fill.with(a, fill[a] + 1);
             }
           }
-          sl = sl + 1;
+          sl += 1;
         }
-        k = k + 1;
+        k += 1;
       }
-      let tv: i32 = 0 - 1;
+      let tv: i32 = -1;
       if (b.term.kind_tag == 1) {
         tv = b.term.value;
       }
@@ -2554,19 +2554,19 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
           fill = fill.with(tv, fill[tv] + 1);
         }
       }
-      bi = bi + 1;
+      bi += 1;
     }
     if (pass == 0) {
-      let v: i32 = 1;
+      let v = 1;
       while (v < count.len()) {
         count = count.with(v, count[v] + count[v - 1]);
-        v = v + 1;
+        v += 1;
       }
       start = count;
       blk = __alloc_i32(count[f.nvals]);
       pos = __alloc_i32(count[f.nvals]);
     }
-    pass = pass + 1;
+    pass += 1;
   }
   return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end };
 }
@@ -2578,7 +2578,7 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
 struct Lender { cbase: i32, sat: i32, cabi: i32, abi_ok: boolean, reads: i32[], phi: boolean[] }
 
 function phi_values(f: SFunc): boolean[] {
-  let out: boolean[] = __alloc_bool(f.nvals + 1);
+  let out = __alloc_bool(f.nvals + 1);
   for b in f.blocks {
     for ins in b.insts {
       if (ins.kind_tag == 8) {
@@ -2597,11 +2597,11 @@ function phi_values(f: SFunc): boolean[] {
 }
 
 function defining_args(f: SFunc, v: i32, def_blk: i32[], def_pos: i32[], blk_start: i32[]): i32[] {
-  let b: i32 = def_blk[v];
+  let b = def_blk[v];
   if (b < 0) {
     return [];
   }
-  let k: i32 = def_pos[v] - blk_start[b];
+  let k = def_pos[v] - blk_start[b];
   if (k < 0 || k >= f.blocks[b].insts.len()) {
     return [];
   }
@@ -2612,20 +2612,20 @@ function defining_args(f: SFunc, v: i32, def_blk: i32[], def_pos: i32[], blk_sta
 // at v's definition, and v is live at none of theirs.
 function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ln: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): i32 {
   if (ln.phi[v]) {
-    return 0 - 1;
+    return -1;
   }
   for ai in 0..act_val.len() {
-    let hr: i32 = act_reg[ai];
-    let open: boolean = hr >= ln.cbase && hr < ln.sat && (hr != ln.cabi || ln.abi_ok) && ssafixed.allows(fixed, hr, lo[v], hi[v]);
+    let hr = act_reg[ai];
+    let open = hr >= ln.cbase && hr < ln.sat && (hr != ln.cabi || ln.abi_ok) && ssafixed.allows(fixed, hr, lo[v], hi[v]);
     if (open && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, ln.reads, ln.phi, lo, hi, def_blk, def_pos)) {
       return ai;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: i32[], phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
-  let m: i32 = holder;
+  let m = holder;
   while (m >= 0) {
     if (hi[m] >= lo[v] && (phi[m] || util.index_of_i32(reads, m) >= 0 || live_at_def(sites, v, m, def_blk, def_pos))) {
       return false;
@@ -2636,7 +2636,7 @@ function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[]
 }
 
 function chain_dead_at_def(sites: ReadSites, holder: i32, a: i32, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
-  let m: i32 = holder;
+  let m = holder;
   while (m >= 0) {
     if (hi[m] >= lo[a] && live_at_def(sites, m, a, def_blk, def_pos)) {
       return false;
@@ -2647,26 +2647,26 @@ function chain_dead_at_def(sites: ReadSites, holder: i32, a: i32, shared_with: i
 }
 
 function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): i32 {
-  let ab: i32 = def_blk[a];
+  let ab = def_blk[a];
   if (r < 0 || ab < 0) {
     return 1;
   }
-  let rb: i32 = def_blk[r];
+  let rb = def_blk[r];
   if (rb == ab && def_pos[r] > def_pos[a] && def_pos[r] >= sites.phi_end[rb]) {
     return 0;
   }
-  let first: i32 = sites.start[r];
-  let last: i32 = sites.start[r + 1];
-  let far: boolean = false;
-  let elsewhere: boolean = false;
-  let i: i32 = first;
+  let first = sites.start[r];
+  let last = sites.start[r + 1];
+  let far = false;
+  let elsewhere = false;
+  let i = first;
   while (i < last) {
     if (sites.blk[i] == ab && sites.pos[i] > def_pos[a]) {
       return 1;
     }
     far = far || sites.blk[i] != ab || rb != ab;
     elsewhere = elsewhere || sites.blk[i] != rb;
-    i = i + 1;
+    i += 1;
   }
   if (!far) {
     return 0;
@@ -2678,38 +2678,38 @@ function live_near(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i3
 }
 
 function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
-  let near: i32 = live_near(sites, r, a, def_blk, def_pos);
+  let near = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
     return near == 1;
   }
-  let ab: i32 = def_blk[a];
-  let rb: i32 = def_blk[r];
-  let first: i32 = sites.start[r];
-  let last: i32 = sites.start[r + 1];
-  let n: i32 = sites.succ_a.len();
-  let walk: i32[] = __alloc_i32(3 * n);
-  let i: i32 = first;
+  let ab = def_blk[a];
+  let rb = def_blk[r];
+  let first = sites.start[r];
+  let last = sites.start[r + 1];
+  let n = sites.succ_a.len();
+  let walk = __alloc_i32(3 * n);
+  let i = first;
   while (i < last) {
     walk = walk.with(2 * n + sites.blk[i], 1);
-    i = i + 1;
+    i += 1;
   }
-  let top: i32 = 0;
-  let b: i32 = ab;
+  let top = 0;
+  let b = ab;
   while (true) {
-    let s: i32 = sites.succ_a[b];
+    let s = sites.succ_a[b];
     if (s >= 0 && s != rb && walk[n + s] == 0) {
       walk = walk.with(n + s, 1).with(top, s);
-      top = top + 1;
+      top += 1;
     }
     s = sites.succ_b[b];
     if (s >= 0 && s != rb && walk[n + s] == 0) {
       walk = walk.with(n + s, 1).with(top, s);
-      top = top + 1;
+      top += 1;
     }
     if (top == 0) {
       return false;
     }
-    top = top - 1;
+    top -= 1;
     b = walk[top];
     if (walk[2 * n + b] == 1) {
       return true;
@@ -2724,35 +2724,35 @@ function no_spill_live(): SpillLive {
 }
 
 function spill_live(sites: ReadSites, def_blk: i32[], values: i32[], nvals: i32): SpillLive {
-  let n: i32 = sites.succ_a.len();
+  let n = sites.succ_a.len();
   let words: i32 = (values.len() + 63) / 64;
-  let index: i32[] = util.minus_ones(nvals);
-  let uses: i64[] = __alloc_i64(n * words);
-  let kills: i64[] = __alloc_i64(n * words);
-  let k: i32 = 0;
+  let index = util.minus_ones(nvals);
+  let uses = __alloc_i64(n * words);
+  let kills = __alloc_i64(n * words);
+  let k = 0;
   for v in values {
     index = index.with(v, k);
-    let rb: i32 = def_blk[v];
+    let rb = def_blk[v];
     if (rb >= 0) {
       kills = spill_bit(kills, rb * words, k);
     }
-    let i: i32 = sites.start[v];
+    let i = sites.start[v];
     while (i < sites.start[v + 1]) {
       if (sites.blk[i] != rb) {
         uses = spill_bit(uses, sites.blk[i] * words, k);
       }
-      i = i + 1;
+      i += 1;
     }
-    k = k + 1;
+    k += 1;
   }
-  let live_in: i64[] = uses;
+  let live_in = uses;
   let all: i64 = 0i64 - 1i64;
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let b: i32 = n - 1;
+    let b = n - 1;
     while (b >= 0) {
-      let w: i32 = 0;
+      let w = 0;
       while (w < words) {
         let out: i64 = 0i64;
         if (sites.succ_a[b] >= 0) {
@@ -2761,37 +2761,37 @@ function spill_live(sites: ReadSites, def_blk: i32[], values: i32[], nvals: i32)
         if (sites.succ_b[b] >= 0) {
           out = out | live_in[sites.succ_b[b] * words + w];
         }
-        let next: i64 = uses[b * words + w] | out & (kills[b * words + w] ^ all);
+        let next = uses[b * words + w] | out & (kills[b * words + w] ^ all);
         if (next != live_in[b * words + w]) {
           live_in = live_in.with(b * words + w, next);
           changed = true;
         }
-        w = w + 1;
+        w += 1;
       }
-      b = b - 1;
+      b -= 1;
     }
   }
   return SpillLive { index: index, words: words, live_in: live_in };
 }
 
 function spill_bit(own rows: i64[], base: i32, k: i32): i64[] {
-  let w: i32 = base + k / 64;
+  let w = base + k / 64;
   return rows.with(w, rows[w] | 1i64 << (k % 64) as i64);
 }
 
 function spill_live_at(live: SpillLive, sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: i32[]): boolean {
-  let near: i32 = live_near(sites, r, a, def_blk, def_pos);
+  let near = live_near(sites, r, a, def_blk, def_pos);
   if (near != 2) {
     return near == 1;
   }
-  let k: i32 = 0 - 1;
+  let k: i32 = -1;
   if (r < live.index.len()) {
     k = live.index[r];
   }
   if (k < 0) {
     return live_at_def(sites, r, a, def_blk, def_pos);
   }
-  let ab: i32 = def_blk[a];
+  let ab = def_blk[a];
   for s in [sites.succ_a[ab], sites.succ_b[ab]] {
     if (s >= 0 && (live.live_in[s * live.words + k / 64] >> (k % 64) as i64 & 1i64) != 0i64) {
       return true;
@@ -2801,45 +2801,45 @@ function spill_live_at(live: SpillLive, sites: ReadSites, r: i32, a: i32, def_bl
 }
 
 function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
-  let from: i32[] = __alloc_i32(lo.len());
-  let i: i32 = 0;
+  let from = __alloc_i32(lo.len());
+  let i = 0;
   while (i < lo.len()) {
     if (def_pos[i] >= 0) {
       from = from.with(i, lo[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return from;
 }
 
 function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
-  let wanted_by: i32[] = util.minus_ones(reg_of.len());
-  let i: i32 = 0;
+  let wanted_by = util.minus_ones(reg_of.len());
+  let i = 0;
   while (i < reg_of.len()) {
-    let m: i32 = hint[i];
-    if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) {
+    let m = hint[i];
+    if (m >= 0 && hi[i] >= 0 && reg_of[i] == -1 && reg_of[m] == -1) {
       wanted_by = wanted_by.with(m, i);
     }
-    i = i + 1;
+    i += 1;
   }
   return wanted_by;
 }
 
 function hinted_slot(slot_end: i32[], holder: i32[], reg_of: i32[], h: i32, from: i32, take_over: boolean): i32 {
-  if (h < 0 || reg_of[h] >= 0 - 1) {
-    return 0 - 1;
+  if (h < 0 || reg_of[h] >= -1) {
+    return -1;
   }
-  let hs: i32 = spill_slot(reg_of[h]);
+  let hs = spill_slot(reg_of[h]);
   if (slot_end[hs] < from || take_over && holder[hs] == h) {
     return hs;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32): i32 {
-  let s: i32 = 0;
+  let s = 0;
   while (s < slot_end.len() && (slot_end[s] >= from || kept_for_mate(wanted_by, reg_of, holder[s], v))) {
-    s = s + 1;
+    s += 1;
   }
   return s;
 }
@@ -2867,26 +2867,26 @@ function slot_free_at(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: 
 pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[] }
 
 pub function imm_sym(imm: Imms, v: i32): string {
-  let k: i32 = imm.sym_at[v];
+  let k = imm.sym_at[v];
   return if (k > 0) { imm.syms[k - 1] } else { "" };
 }
 
 pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
-  let syms: string[] = imm.syms.append(sym);
+  let syms = imm.syms.append(sym);
   return Imms { ...imm, is_imm: imm.is_imm.with(v, true), sym_at: imm.sym_at.with(v, syms.len()), syms: syms };
 }
 
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
-  let is_imm: boolean[] = __alloc_bool(f.nvals);
-  let konst: boolean[] = __alloc_bool(f.nvals);
-  let value: i64[] = __alloc_i64(f.nvals);
+  let is_imm = __alloc_bool(f.nvals);
+  let konst = __alloc_bool(f.nvals);
+  let value = __alloc_i64(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag != 1 && ins.kind_tag != 3) {
         continue;
       }
       konst = konst.with(ins.result, true);
-      let c: i64 = ins.imm as i64;
+      let c = ins.imm as i64;
       if (ins.kind_tag == 3) {
         c = util.lit_to_i64(ins.str);
       }
@@ -2899,16 +2899,16 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      let a: i32 = 0;
+      let a = 0;
       while (a < ins.args.len()) {
-        let v: i32 = ins.args[a];
+        let v = ins.args[a];
         if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != 8 && !imm_use(ins, a, konst, value[v], right, left)) {
           is_imm = is_imm.with(v, false);
         }
-        a = a + 1;
+        a += 1;
       }
     }
-    let t: STerm = blk.term;
+    let t = blk.term;
     if (t.kind_tag == 3 && t.cond >= 0 && t.cond < is_imm.len()) {
       is_imm = is_imm.with(t.cond, false);
     }
@@ -2929,14 +2929,14 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
   if (ins.kind_tag != 9 || ins.args.len() != 2) {
     return false;
   }
-  let other: i32 = ins.args[1 - a];
+  let other = ins.args[1 - a];
   if (other < 0 || other >= konst.len()) {
     return false;
   }
   if (a == 0 && konst[other]) {
     return false;
   }
-  let names: string[] = left;
+  let names = left;
   if (a == 1) {
     names = right;
   }
@@ -2949,7 +2949,7 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
 }
 
 pub function literal_first_bytes(f: SFunc): i32[] {
-  let out: i32[] = util.minus_ones(f.nvals);
+  let out = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 47 && ins.str.len() > 0) {
@@ -2961,7 +2961,7 @@ pub function literal_first_bytes(f: SFunc): i32[] {
 }
 
 pub function use_counts(f: SFunc): i32[] {
-  let uses: i32[] = __alloc_i32(f.nvals);
+  let uses = __alloc_i32(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       for a in ins.args {
@@ -2970,7 +2970,7 @@ pub function use_counts(f: SFunc): i32[] {
         }
       }
     }
-    let t: STerm = blk.term;
+    let t = blk.term;
     if (t.kind_tag == 1 && t.value >= 0 && t.value < uses.len()) {
       uses = uses.with(t.value, uses[t.value] + 1);
     }
@@ -2982,43 +2982,43 @@ pub function use_counts(f: SFunc): i32[] {
 }
 
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
-  let only: i32 = 0 - 1;
-  let i: i32 = 0;
+  let only: i32 = -1;
+  let i = 0;
   while (i < ins.args.len()) {
-    let a: i32 = resolve_repl(repl, ins.args[i]);
+    let a = resolve_repl(repl, ins.args[i]);
     if (a != ins.result) {
       if (only < 0) {
         only = a;
       } else if (only != a) {
-        return 0 - 1;
+        return -1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return only;
 }
 
 function resolve_repl(repl: i32[], v: i32): i32 {
-  let seen: i32 = 0;
+  let seen = 0;
   while (v >= 0 && v < repl.len() && repl[v] != v && seen < 1000) {
     v = repl[v];
-    seen = seen + 1;
+    seen += 1;
   }
   return v;
 }
 
 function trivial_phi_repl(f: SFunc): i32[] {
-  let repl: i32[] = __alloc_i32(f.nvals);
-  let i: i32 = 0;
+  let repl = __alloc_i32(f.nvals);
+  let i = 0;
   while (i < f.nvals) {
     repl = repl.with(i, i);
-    i = i + 1;
+    i += 1;
   }
-  let rounds: i32 = 0;
-  let changed: boolean = true;
+  let rounds = 0;
+  let changed = true;
   while (changed && rounds < 100) {
     changed = false;
-    rounds = rounds + 1;
+    rounds += 1;
     for blk in f.blocks {
       for ins in blk.insts {
         if (ins.kind_tag != 8) {
@@ -3027,7 +3027,7 @@ function trivial_phi_repl(f: SFunc): i32[] {
         if (repl[ins.result] != ins.result) {
           continue;
         }
-        let only: i32 = phi_sole_operand(ins, repl);
+        let only = phi_sole_operand(ins, repl);
         if (only >= 0 && only != ins.result) {
           repl = repl.with(ins.result, only);
           changed = true;
@@ -3062,16 +3062,16 @@ pub function leaf_of(name: string, f: SFunc): Leaf[] {
   if (f.takes_env || f.blocks.len() == 0) {
     return [];
   }
-  let at: i32[] = block_positions(f);
+  let at = block_positions(f);
   let insts: SInst[] = [];
-  let bi: i32 = position_of(at, f.entry);
-  let seen: i32 = 0;
+  let bi = position_of(at, f.entry);
+  let seen = 0;
   while (bi >= 0 && seen < f.blocks.len()) {
-    let b: SBlock = f.blocks[bi];
+    let b = f.blocks[bi];
     for ins in b.insts {
       insts = insts.append(ins);
     }
-    seen = seen + 1;
+    seen += 1;
     if (b.term.kind_tag == 1) {
       if (seen != f.blocks.len()) {
         return [];
@@ -3090,19 +3090,19 @@ function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Le
   if (term.value < 0) {
     return [];
   }
-  let n: i32 = 0;
+  let n = 0;
   for ins in insts {
     if (!leaf_kind(ins.kind_tag)) {
       return [];
     }
     if (ins.kind_tag != 6) {
-      n = n + 1;
+      n += 1;
     }
   }
   if (n > leaf_limit()) {
     return [];
   }
-  let one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
+  let one = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
   return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
 }
 
@@ -3110,18 +3110,18 @@ pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
   if (leaves.list.len() == 0) {
     return f;
   }
-  let nvals: i32 = f.nvals;
+  let nvals = f.nvals;
   let blocks: SBlock[] = [];
-  let copying: boolean = false;
-  let bi: i32 = 0;
+  let copying = false;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let b: SBlock = f.blocks[bi];
+    let b = f.blocks[bi];
     let insts: SInst[] = [];
-    let spliced: boolean = false;
-    let k: i32 = 0;
+    let spliced = false;
+    let k = 0;
     while (k < b.insts.len()) {
-      let ins: SInst = b.insts[k];
-      let at: i32 = 0 - 1;
+      let ins = b.insts[k];
+      let at: i32 = -1;
       if (ins.kind_tag == 11) {
         at = leaf_index(leaves, ins.str, ins.args.len());
       }
@@ -3129,15 +3129,15 @@ pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
         if (spliced) {
           insts = insts.append(ins);
         }
-        k = k + 1;
+        k += 1;
         continue;
       }
       if (!spliced) {
         insts = insts_before(b.insts, k);
         spliced = true;
       }
-      let leaf: SFunc = leaves.list[at].func;
-      let map: i32[] = util.minus_ones(leaf.nvals);
+      let leaf = leaves.list[at].func;
+      let map = util.minus_ones(leaf.nvals);
       for li in leaf.blocks[0].insts {
         if (li.kind_tag == 6) {
           map = map.with(li.result, ins.args[li.imm]);
@@ -3148,13 +3148,13 @@ pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
             args = args.append(map[a]);
           }
           insts = insts.append(SInst { ...li, result: nvals, args: args });
-          nvals = nvals + 1;
+          nvals += 1;
         }
       }
       if (ins.result >= 0) {
         insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
       }
-      k = k + 1;
+      k += 1;
     }
     if (spliced) {
       if (!copying) {
@@ -3165,7 +3165,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
     } else if (copying) {
       blocks = blocks.append(b);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (!copying) {
     return f;
@@ -3185,25 +3185,25 @@ pub function calls_leaf(f: SFunc, leaves: Leaves): boolean {
 }
 
 function leaf_index(leaves: Leaves, name: string, argc: i32): i32 {
-  let i: i32 = leaves.ix.chain(name);
+  let i = leaves.ix.chain(name);
   while (i >= 0) {
     if (leaves.list[i].func.nparams == argc && leaves.ix.names[i] == name) {
       return i;
     }
     i = leaves.ix.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function prune_trivial_phis(f: SFunc): Formed {
-  let repl: i32[] = trivial_phi_repl(f);
-  let any: boolean = false;
-  let i: i32 = 0;
+  let repl = trivial_phi_repl(f);
+  let any = false;
+  let i = 0;
   while (i < f.nvals) {
     if (repl[i] != i) {
       any = true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (!any) {
     return Formed { f: f, repl: [] };
@@ -3212,24 +3212,24 @@ pub function prune_trivial_phis(f: SFunc): Formed {
   i = 0;
   while (i < f.nvals) {
     flat = flat.append(resolve_repl(repl, i));
-    i = i + 1;
+    i += 1;
   }
   return Formed { f: rewrite_through(f, flat), repl: flat };
 }
 
 function rewrite_through(f: SFunc, flat: i32[]): SFunc {
   let nblocks: SBlock[] = [];
-  let copying: boolean = false;
-  let bi: i32 = 0;
+  let copying = false;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     let ninsts: SInst[] = [];
-    let changed: boolean = false;
-    let k: i32 = 0;
+    let changed = false;
+    let k = 0;
     while (k < blk.insts.len()) {
-      let ins: SInst = blk.insts[k];
-      let gone: boolean = ins.result >= 0 && flat[ins.result] != ins.result;
-      let moved: boolean = !gone && args_move(ins, flat);
+      let ins = blk.insts[k];
+      let gone = ins.result >= 0 && flat[ins.result] != ins.result;
+      let moved = !gone && args_move(ins, flat);
       if (!changed && (gone || moved)) {
         ninsts = insts_before(blk.insts, k);
         changed = true;
@@ -3241,9 +3241,9 @@ function rewrite_through(f: SFunc, flat: i32[]): SFunc {
           ninsts = ninsts.append(ins);
         }
       }
-      k = k + 1;
+      k += 1;
     }
-    let term: STerm = blk.term;
+    let term = blk.term;
     if (term_moves(term, flat)) {
       term = rewrite_term(term, flat);
       if (!changed) {
@@ -3260,7 +3260,7 @@ function rewrite_through(f: SFunc, flat: i32[]): SFunc {
     } else if (copying) {
       nblocks = nblocks.append(blk);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (!copying) {
     return f;
@@ -3269,34 +3269,34 @@ function rewrite_through(f: SFunc, flat: i32[]): SFunc {
 }
 
 function merge_duplicates(f: SFunc): Formed {
-  let canon: i32[] = identity_repl(f.nvals);
-  let n: i32 = 0;
+  let canon = identity_repl(f.nvals);
+  let n = 0;
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag >= 1 && ins.kind_tag <= 3 || ins.kind_tag == 9 || ins.kind_tag == 10) {
-        n = n + 1;
+        n += 1;
       }
     }
   }
-  let nb: i32 = n * 2 + 1;
-  let head: i32[] = util.minus_ones(nb);
+  let nb = n * 2 + 1;
+  let head = util.minus_ones(nb);
   let seen: SInst[] = [];
   let seen_block: i32[] = [];
   let next: i32[] = [];
   let merged: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
     for ins in f.blocks[bi].insts {
-      let scope: i32 = 0 - 2;
+      let scope: i32 = -2;
       if (is_constant(ins, f.nvals)) {
-        scope = 0 - 1;
+        scope = -1;
       } else if (mergeable(ins)) {
         scope = bi;
       }
-      if (scope >= 0 - 1) {
-        let bk: i32 = (inst_hash(ins, canon) * 31 + (scope & 65535) & 1073741823) % nb;
-        let found: i32 = 0 - 1;
-        let j: i32 = head[bk];
+      if (scope >= -1) {
+        let bk = (inst_hash(ins, canon) * 31 + (scope & 65535) & 1073741823) % nb;
+        let found: i32 = -1;
+        let j = head[bk];
         while (j >= 0 && found < 0) {
           if (seen_block[j] == scope && same_operation(seen[j], ins, canon)) {
             found = seen[j].result;
@@ -3316,38 +3316,38 @@ function merge_duplicates(f: SFunc): Formed {
         }
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (merged.len() == 0) {
     return Formed { f: f, repl: [] };
   }
-  let repl: i32[] = identity_repl(f.nvals);
-  let k: i32 = 0;
+  let repl = identity_repl(f.nvals);
+  let k = 0;
   while (k < merged.len()) {
     repl = repl.with(merged[k], merged[k + 1]);
-    k = k + 2;
+    k += 2;
   }
   return Formed { f: rewrite_through(f, repl), repl: repl };
 }
 
 function identity_repl(n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
-  let i: i32 = 0;
+  let out = __alloc_i32(n);
+  let i = 0;
   while (i < n) {
     out = out.with(i, i);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 // x + 0, x - 0, x | 0, x ^ 0, x shifted by 0 and x * 1 are x.
 function fold_identities(f: SFunc): Formed {
-  let defs: SInst[] = inst_defs(f);
-  let flat: i32[] = identity_repl(f.nvals);
-  let changed: boolean = false;
+  let defs = inst_defs(f);
+  let flat = identity_repl(f.nvals);
+  let changed = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      let kept: i32 = identity_operand(ins, defs);
+      let kept = identity_operand(ins, defs);
       if (kept >= 0 && ins.result >= 0) {
         flat = flat.with(ins.result, flat[kept]);
         changed = true;
@@ -3362,7 +3362,7 @@ function fold_identities(f: SFunc): Formed {
 
 function identity_operand(ins: SInst, defs: SInst[]): i32 {
   if (ins.kind_tag != 9 || ins.args.len() != 2) {
-    return 0 - 1;
+    return -1;
   }
   let unit: i64 = 0i64;
   if (ins.str == "mul") {
@@ -3374,7 +3374,7 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
   if (left_identity(ins.str) && const_is(defs, ins.args[0], unit)) {
     return ins.args[1];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function left_identity(op: string): boolean {
@@ -3389,7 +3389,7 @@ function const_is(defs: SInst[], v: i32, n: i64): boolean {
   if (v < 0 || v >= defs.len()) {
     return false;
   }
-  let d: SInst = defs[v];
+  let d = defs[v];
   if (d.kind_tag == 1) {
     return d.imm as i64 == n;
   }
@@ -3433,12 +3433,12 @@ function same_operation(a: SInst, b: SInst, canon: i32[]): boolean {
   if (a.kind_tag != b.kind_tag || a.imm != b.imm || a.args.len() != b.args.len() || a.str != b.str) {
     return false;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < a.args.len()) {
     if (operand_id(a.args[k], canon) != operand_id(b.args[k], canon)) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
@@ -3463,40 +3463,40 @@ function term_moves(t: STerm, resolved: i32[]): boolean {
 }
 
 pub function repeated_block_id(f: SFunc): i32 {
-  let top: i32 = 0;
+  let top = 0;
   for blk in f.blocks {
     if (blk.id > top) {
       top = blk.id;
     }
   }
-  let seen: i32[] = __alloc_i32(top + 1);
+  let seen = __alloc_i32(top + 1);
   for blk in f.blocks {
     if (seen[blk.id] == 1) {
       return blk.id;
     }
     seen = seen.with(blk.id, 1);
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function thread_forwarding(f: SFunc): Threading {
-  let at: i32[] = block_positions(f);
+  let at = block_positions(f);
   let nblocks: SBlock[] = [];
-  let copying: boolean = false;
-  let bi: i32 = 0;
+  let copying = false;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
-    let t: STerm = blk.term;
-    let moved: boolean = false;
+    let blk = f.blocks[bi];
+    let t = blk.term;
+    let moved = false;
     if (t.kind_tag == 2) {
-      let target: i32 = forwarded(f, at, t.target);
+      let target = forwarded(f, at, t.target);
       if (target != t.target) {
         t = STerm { ...t, target: target };
         moved = true;
       }
     }
     if (t.kind_tag == 3) {
-      let nt: STerm = forwarded_branch(f, at, t);
+      let nt = forwarded_branch(f, at, t);
       moved = nt.kind_tag != 3 || nt.t != t.t || nt.f != t.f;
       t = nt;
     }
@@ -3509,34 +3509,34 @@ pub function thread_forwarding(f: SFunc): Threading {
     } else if (copying) {
       nblocks = nblocks.append(blk);
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let g: SFunc = f;
+  let g = f;
   if (copying) {
     g = SFunc { ...f, blocks: nblocks };
   }
-  let live: boolean[] = __alloc_bool(g.blocks.len());
+  let live = __alloc_bool(g.blocks.len());
   let work: i32[] = [position_of(at, g.entry)];
-  let next: i32 = 0;
+  let next = 0;
   while (next < work.len()) {
-    let b: i32 = work[next];
-    next = next + 1;
+    let b = work[next];
+    next += 1;
     if (b < 0 || live[b]) {
       continue;
     }
     live = live.with(b, true);
-    let which: i32 = 0;
+    let which = 0;
     while (which < 2) {
-      let id: i32 = successor_id(g.blocks[b].term, which);
+      let id = successor_id(g.blocks[b].term, which);
       if (id >= 0 && (which == 0 || id != g.blocks[b].term.t)) {
         work = work.append(position_of(at, id));
       }
-      which = which + 1;
+      which += 1;
     }
   }
   let kept: SBlock[] = [];
-  let dropping: boolean = false;
-  let i: i32 = 0;
+  let dropping = false;
+  let i = 0;
   while (i < g.blocks.len()) {
     if (!live[i]) {
       if (!dropping) {
@@ -3546,9 +3546,9 @@ pub function thread_forwarding(f: SFunc): Threading {
     } else if (dropping) {
       kept = kept.append(g.blocks[i]);
     }
-    i = i + 1;
+    i += 1;
   }
-  let out: SFunc = g;
+  let out = g;
   if (dropping) {
     out = SFunc { ...g, blocks: kept };
   }
@@ -3557,8 +3557,8 @@ pub function thread_forwarding(f: SFunc): Threading {
 
 // A branch whose two targets meet in a block with no phi is a jump.
 function forwarded_branch(f: SFunc, at: i32[], t: STerm): STerm {
-  let tt: i32 = forwarded(f, at, t.t);
-  let tf: i32 = forwarded(f, at, t.f);
+  let tt = forwarded(f, at, t.t);
+  let tf = forwarded(f, at, t.f);
   if (tt == tf && tt >= 0 && tt < at.len() && at[tt] >= 0 && !has_phi(f.blocks[at[tt]])) {
     return t_br(tt);
   }
@@ -3566,22 +3566,22 @@ function forwarded_branch(f: SFunc, at: i32[], t: STerm): STerm {
 }
 
 function forwarded(f: SFunc, at: i32[], id: i32): i32 {
-  let cur: i32 = id;
-  let steps: i32 = 0;
+  let cur = id;
+  let steps = 0;
   while (steps <= f.blocks.len()) {
     if (cur < 0 || cur >= at.len() || at[cur] < 0) {
       return cur;
     }
-    let b: SBlock = f.blocks[at[cur]];
+    let b = f.blocks[at[cur]];
     if (b.insts.len() != 0 || b.term.kind_tag != 2 || b.term.target == cur) {
       return cur;
     }
-    let nt: i32 = b.term.target;
+    let nt = b.term.target;
     if (nt < 0 || nt >= at.len() || at[nt] < 0 || has_phi(f.blocks[at[nt]])) {
       return cur;
     }
     cur = nt;
-    steps = steps + 1;
+    steps += 1;
   }
   return cur;
 }
@@ -3596,32 +3596,32 @@ function has_phi(b: SBlock): boolean {
 }
 
 pub function refreshed_preds(f: SFunc): SBlock[] {
-  let at: i32[] = block_positions(f);
+  let at = block_positions(f);
   let preds: i32[][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.blocks.len()) {
     preds = preds.append([]);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < f.blocks.len()) {
-    let which: i32 = 0;
+    let which = 0;
     while (which < 2) {
-      let s: i32 = distinct_successor_position(at, f.blocks[i].term, which);
+      let s = distinct_successor_position(at, f.blocks[i].term, which);
       if (s >= 0 && !has_pred(preds[s], f.blocks[i].id)) {
         preds = preds.with(s, preds[s].append(f.blocks[i].id));
       }
-      which = which + 1;
+      which += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   let out: SBlock[] = [];
-  let copying: boolean = false;
+  let copying = false;
   i = 0;
   while (i < f.blocks.len()) {
-    let b: SBlock = f.blocks[i];
-    let nb: SBlock = b;
-    let fresh: boolean = false;
+    let b = f.blocks[i];
+    let nb = b;
+    let fresh = false;
     if (has_phi(b)) {
       if (!every_pred(b.preds, preds[i])) {
         nb = trim_phi_edges(b, preds[i]);
@@ -3640,7 +3640,7 @@ pub function refreshed_preds(f: SFunc): SBlock[] {
     } else if (copying) {
       out = out.append(b);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!copying) {
     return f.blocks;
@@ -3661,12 +3661,12 @@ function same_preds(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -3675,7 +3675,7 @@ function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
   let keep: boolean[] = [];
   let npreds: i32[] = [];
   for p in b.preds {
-    let k: boolean = has_pred(edges, p);
+    let k = has_pred(edges, p);
     keep = keep.append(k);
     if (k) {
       npreds = npreds.append(p);
@@ -3691,12 +3691,12 @@ function trim_phi_edges(b: SBlock, edges: i32[]): SBlock {
       continue;
     }
     let nargs: i32[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < ins.args.len()) {
       if (i >= keep.len() || keep[i]) {
         nargs = nargs.append(ins.args[i]);
       }
-      i = i + 1;
+      i += 1;
     }
     ninsts = ninsts.append(SInst { ...ins, args: nargs });
   }
@@ -3719,56 +3719,56 @@ pub struct Threading { f: SFunc, changed: boolean }
 struct ThreadRound { blocks: SBlock[], busy: boolean[], gone: boolean[], changed: boolean }
 
 pub function thread_bool_joins(f: SFunc): Threading {
-  let g: SFunc = f;
-  let changed: boolean = false;
-  let rounds: i32 = 0;
+  let g = f;
+  let changed = false;
+  let rounds = 0;
   while (rounds < 8) {
-    let r: Threading = thread_round(g);
+    let r = thread_round(g);
     if (!r.changed) {
       return Threading { f: g, changed: changed };
     }
     g = r.f;
     changed = true;
-    rounds = rounds + 1;
+    rounds += 1;
   }
   return Threading { f: g, changed: changed };
 }
 
 function thread_round(f: SFunc): Threading {
-  let at: i32[] = block_positions(f);
-  let uses: i32[] = use_counts(f);
-  let konst: i32[] = truth_constants(f);
-  let flags: boolean[] = __alloc_bool(f.blocks.len());
-  let r: ThreadRound = ThreadRound { blocks: f.blocks, busy: flags, gone: flags, changed: false };
-  let j: i32 = 0;
+  let at = block_positions(f);
+  let uses = use_counts(f);
+  let konst = truth_constants(f);
+  let flags = __alloc_bool(f.blocks.len());
+  let r = ThreadRound { blocks: f.blocks, busy: flags, gone: flags, changed: false };
+  let j = 0;
   while (j < f.blocks.len()) {
-    let jn: BoolJoin = bool_join_at(f, at, uses, j);
+    let jn = bool_join_at(f, at, uses, j);
     if (jn.ok && !join_busy(f, at, r.busy, jn)) {
       r = thread_join(f, at, konst, jn, r);
     }
-    j = j + 1;
+    j += 1;
   }
   if (!r.changed) {
     return Threading { f: f, changed: false };
   }
   let kept: SBlock[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.blocks.len()) {
     if (!r.gone[i]) {
       kept = kept.append(r.blocks[i]);
     }
-    i = i + 1;
+    i += 1;
   }
-  let g: SFunc = SFunc { ...f, blocks: kept };
+  let g = SFunc { ...f, blocks: kept };
   return Threading { f: SFunc { ...g, blocks: refreshed_preds(g) }, changed: true };
 }
 
 function truth_constants(f: SFunc): i32[] {
-  let out: i32[] = util.minus_ones(f.nvals);
+  let out = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if ((ins.kind_tag == 1 || ins.kind_tag == 2) && ins.result >= 0 && ins.result < out.len()) {
-        let truth: i32 = 0;
+        let truth = 0;
         if (ins.imm != 0) {
           truth = 1;
         }
@@ -3780,14 +3780,14 @@ function truth_constants(f: SFunc): i32[] {
 }
 
 function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
-  let blk: SBlock = f.blocks[j];
-  let none: BoolJoin = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
+  let blk = f.blocks[j];
+  let none = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
   if (blk.insts.len() != 1 || blk.insts[0].kind_tag != 8 || uses[blk.insts[0].result] != 1 || !entered_forward(f, at, j)) {
     return none;
   }
-  let k: i32 = 0 - 1;
-  let last: i32 = j;
-  let br: STerm = blk.term;
+  let k: i32 = -1;
+  let last = j;
+  let br = blk.term;
   if (br.kind_tag == 2) {
     k = position_of(at, br.target);
     if (k <= j || !branch_only(f.blocks[k], blk.id)) {
@@ -3804,17 +3804,17 @@ function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
 }
 
 function entered_forward(f: SFunc, at: i32[], j: i32): boolean {
-  let blk: SBlock = f.blocks[j];
+  let blk = f.blocks[j];
   if (blk.preds.len() == 0 || blk.insts[0].args.len() != blk.preds.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < blk.preds.len()) {
-    let p: i32 = position_of(at, blk.preds[i]);
+    let p = position_of(at, blk.preds[i]);
     if (p < 0 || p >= j || pred_slot(blk, blk.preds[i]) != i) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -3824,7 +3824,7 @@ function branch_only(b: SBlock, from: i32): boolean {
 }
 
 function plain_target(f: SFunc, at: i32[], id: i32, last: i32): boolean {
-  let p: i32 = position_of(at, id);
+  let p = position_of(at, id);
   return p > last && !has_phi(f.blocks[p]);
 }
 
@@ -3841,22 +3841,22 @@ function join_busy(f: SFunc, at: i32[], busy: boolean[], jn: BoolJoin): boolean 
 }
 
 function thread_join(f: SFunc, at: i32[], konst: i32[], jn: BoolJoin, r: ThreadRound): ThreadRound {
-  let jb: SBlock = f.blocks[jn.j];
-  let blocks: SBlock[] = r.blocks;
-  let busy: boolean[] = r.busy.with(jn.j, true);
-  let kept: i32 = 0;
-  let i: i32 = 0;
+  let jb = f.blocks[jn.j];
+  let blocks = r.blocks;
+  let busy = r.busy.with(jn.j, true);
+  let kept = 0;
+  let i = 0;
   while (i < jb.preds.len()) {
-    let pp: i32 = at[jb.preds[i]];
+    let pp = at[jb.preds[i]];
     if (blocks[pp].term.kind_tag == 2) {
       blocks = blocks.with(pp, SBlock { ...blocks[pp], term: arm_term(jb.insts[0].args[i], konst, jn) });
       busy = busy.with(pp, true);
     } else {
-      kept = kept + 1;
+      kept += 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  let gone: boolean[] = r.gone;
+  let gone = r.gone;
   if (kept == 0) {
     gone = gone.with(jn.j, true);
     if (jn.k >= 0) {
@@ -3887,15 +3887,15 @@ pub function select_arm_limit(): i32 {
 pub struct Selection { f: SFunc, from: i32[], to: i32[] }
 
 pub function select_branches(f: SFunc): Selection {
-  let out: Selection = Selection { f: f, from: [], to: [] };
-  let rounds: i32 = 0;
+  let out = Selection { f: f, from: [], to: [] };
+  let rounds = 0;
   while (rounds < 8) {
-    let r: SelectRound = select_round(out.f);
+    let r = select_round(out.f);
     if (!r.changed) {
       return out;
     }
     out = Selection { f: r.s.f, from: util.append_all(out.from, r.s.from), to: util.append_all(out.to, r.s.to) };
-    rounds = rounds + 1;
+    rounds += 1;
   }
   return out;
 }
@@ -3903,29 +3903,29 @@ pub function select_branches(f: SFunc): Selection {
 struct SelectRound { s: Selection, changed: boolean }
 
 function select_round(f: SFunc): SelectRound {
-  let at: i32[] = block_positions(f);
-  let fl: boolean[] = float_values(f, [], false);
-  let none: boolean[] = __alloc_bool(f.blocks.len());
-  let r: Flattening = Flattening { blocks: f.blocks, busy: none, gone: none, nvals: f.nvals, changed: false, joins: [] };
-  let p: i32 = 0;
+  let at = block_positions(f);
+  let fl = float_values(f, [], false);
+  let none = __alloc_bool(f.blocks.len());
+  let r = Flattening { blocks: f.blocks, busy: none, gone: none, nvals: f.nvals, changed: false, joins: [] };
+  let p = 0;
   while (p < f.blocks.len()) {
-    let d: Diamond = diamond_at(f, at, fl, p);
+    let d = diamond_at(f, at, fl, p);
     if (d.ok && !diamond_busy(r.busy, d)) {
       r = flatten_diamond(f, d, r);
     }
-    p = p + 1;
+    p += 1;
   }
   if (!r.changed) {
     return SelectRound { s: Selection { f: f, from: [], to: [] }, changed: false };
   }
-  let m: Merging = merge_joins(r, at);
+  let m = merge_joins(r, at);
   let kept: SBlock[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.blocks.len()) {
     if (!m.gone[i]) {
       kept = kept.append(m.blocks[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return SelectRound { s: Selection { f: SFunc { ...f, nvals: r.nvals, blocks: kept }, from: m.from, to: m.to }, changed: true };
 }
@@ -3938,18 +3938,18 @@ struct Merging { blocks: SBlock[], gone: boolean[], from: i32[], to: i32[] }
 // merge_joins folds each flattened join into its head, which now ends in a
 // jump to it. The diamonds of one round share no block, so no head is folded.
 function merge_joins(r: Flattening, at: i32[]): Merging {
-  let m: Merging = Merging { blocks: r.blocks, gone: r.gone, from: [], to: [] };
-  let k: i32 = 0;
+  let m = Merging { blocks: r.blocks, gone: r.gone, from: [], to: [] };
+  let k = 0;
   while (k + 1 < r.joins.len()) {
     m = merge_join(m, r.joins[k], r.joins[k + 1], at);
-    k = k + 2;
+    k += 2;
   }
   return m;
 }
 
 function merge_join(m: Merging, h: i32, j: i32, at: i32[]): Merging {
-  let hb: SBlock = m.blocks[h];
-  let jb: SBlock = m.blocks[j];
+  let hb = m.blocks[h];
+  let jb = m.blocks[j];
   if (hb.term.kind_tag != 2 || hb.term.target != jb.id || jb.preds.len() != 1 || jb.preds[0] != hb.id || has_phi(jb)) {
     return m;
   }
@@ -3957,7 +3957,7 @@ function merge_join(m: Merging, h: i32, j: i32, at: i32[]): Merging {
   if (succ[0] == h || succ[1] == h) {
     return m;
   }
-  let blocks: SBlock[] = m.blocks.with(h, SBlock { ...hb, insts: util.append_all(hb.insts, jb.insts), term: jb.term });
+  let blocks = m.blocks.with(h, SBlock { ...hb, insts: util.append_all(hb.insts, jb.insts), term: jb.term });
   for s in succ {
     if (s >= 0) {
       blocks = blocks.with(s, SBlock { ...blocks[s], preds: renamed_pred(blocks[s].preds, jb.id, hb.id) });
@@ -3975,21 +3975,21 @@ function renamed_pred(preds: i32[], from: i32, to: i32): i32[] {
 }
 
 function flatten_diamond(f: SFunc, d: Diamond, r: Flattening): Flattening {
-  let head: SBlock = f.blocks[d.head];
-  let insts: SInst[] = hoisted(head, util.append_all(arm_insts(f, d.t), arm_insts(f, d.f)));
+  let head = f.blocks[d.head];
+  let insts = hoisted(head, util.append_all(arm_insts(f, d.t), arm_insts(f, d.f)));
   r = drop_arm(drop_arm(Flattening { ...r, busy: r.busy.with(d.head, true), changed: true }, d.t), d.f);
   if (d.join >= 0) {
-    let j: SBlock = f.blocks[d.join];
-    let picks: SInst[] = join_selects(j, head.term.cond, arm_source(f, head, d.t), arm_source(f, head, d.f));
-    let blocks: SBlock[] = r.blocks.with(d.head, SBlock { ...head, insts: util.append_all(insts, picks), term: t_br(j.id) });
+    let j = f.blocks[d.join];
+    let picks = join_selects(j, head.term.cond, arm_source(f, head, d.t), arm_source(f, head, d.f));
+    let blocks = r.blocks.with(d.head, SBlock { ...head, insts: util.append_all(insts, picks), term: t_br(j.id) });
     return Flattening { ...r, blocks: blocks.with(d.join, SBlock { ...j, insts: without_phis(j.insts), preds: [head.id] }), busy: r.busy.with(d.join, true), joins: r.joins.append(d.head).append(d.join) };
   }
-  let vt: i32 = f.blocks[d.t].term.value;
-  let vf: i32 = f.blocks[d.f].term.value;
+  let vt = f.blocks[d.t].term.value;
+  let vf = f.blocks[d.f].term.value;
   if (vt == vf) {
     return Flattening { ...r, blocks: r.blocks.with(d.head, SBlock { ...head, insts: insts, term: t_ret(vt) }) };
   }
-  let pick: SInst = SInst { kind_tag: 36, result: r.nvals, args: [head.term.cond, vt, vf], imm: 0, str: "" };
+  let pick = SInst { kind_tag: 36, result: r.nvals, args: [head.term.cond, vt, vf], imm: 0, str: "" };
   return Flattening { ...r, blocks: r.blocks.with(d.head, SBlock { ...head, insts: insts.append(pick), term: t_ret(r.nvals) }), nvals: r.nvals + 1 };
 }
 
@@ -4001,26 +4001,26 @@ function drop_arm(r: Flattening, arm: i32): Flattening {
 }
 
 function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
-  let none: Diamond = Diamond { ok: false, head: p, t: 0 - 1, f: 0 - 1, join: 0 - 1 };
-  let head: SBlock = f.blocks[p];
-  let br: STerm = head.term;
+  let none = Diamond { ok: false, head: p, t: 0 - 1, f: 0 - 1, join: 0 - 1 };
+  let head = f.blocks[p];
+  let br = head.term;
   if (!two_way(head)) {
     return none;
   }
-  let tp: i32 = position_of(at, br.t);
-  let fp: i32 = position_of(at, br.f);
+  let tp = position_of(at, br.t);
+  let fp = position_of(at, br.f);
   if (tp < 0 || fp < 0) {
     return none;
   }
-  let at_t: i32 = arm_at(f, tp, head.id);
-  let at_f: i32 = arm_at(f, fp, head.id);
+  let at_t = arm_at(f, tp, head.id);
+  let at_f = arm_at(f, fp, head.id);
   if (!arms_fit(f, at_t, at_f)) {
     return none;
   }
   if (returns_picked(f, fl, at_t) && returns_picked(f, fl, at_f)) {
     return Diamond { ok: true, head: p, t: tp, f: fp, join: 0 - 1 };
   }
-  let jp: i32 = join_of(f, at, p, tp, at_t, fp, at_f);
+  let jp = join_of(f, at, p, tp, at_t, fp, at_f);
   if (jp < 0 || !select_join(f, fl, f.blocks[jp], arm_source(f, head, at_t), arm_source(f, head, at_f))) {
     return none;
   }
@@ -4031,7 +4031,7 @@ function arm_at(f: SFunc, p: i32, from: i32): i32 {
   if (select_arm(f.blocks[p], from)) {
     return p;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function arms_fit(f: SFunc, at_t: i32, at_f: i32): boolean {
@@ -4045,18 +4045,18 @@ function returns_picked(f: SFunc, fl: boolean[], a: i32): boolean {
   if (a < 0) {
     return false;
   }
-  let t: STerm = f.blocks[a].term;
+  let t = f.blocks[a].term;
   return t.kind_tag == 1 && t.value >= 0 && !picks_float(fl, t.value);
 }
 
 function join_of(f: SFunc, at: i32[], p: i32, tp: i32, at_t: i32, fp: i32, at_f: i32): i32 {
   if (at_t < 0 && at_f < 0) {
-    return 0 - 1;
+    return -1;
   }
-  let jt: i32 = arm_exit(f, at, tp, at_t);
-  let jf: i32 = arm_exit(f, at, fp, at_f);
+  let jt = arm_exit(f, at, tp, at_t);
+  let jf = arm_exit(f, at, fp, at_f);
   if (jt < 0 || jt != jf || jt == p) {
-    return 0 - 1;
+    return -1;
   }
   return jt;
 }
@@ -4065,15 +4065,15 @@ function arm_exit(f: SFunc, at: i32[], p: i32, arm: i32): i32 {
   if (arm < 0) {
     return p;
   }
-  let t: STerm = f.blocks[arm].term;
+  let t = f.blocks[arm].term;
   if (t.kind_tag != 2) {
-    return 0 - 1;
+    return -1;
   }
   return position_of(at, t.target);
 }
 
 function two_way(head: SBlock): boolean {
-  let br: STerm = head.term;
+  let br = head.term;
   return br.kind_tag == 3 && br.t != br.f && !tested_by_call(head, br.cond);
 }
 
@@ -4105,7 +4105,7 @@ function select_arm(b: SBlock, from: i32): boolean {
 }
 
 function speculable(ins: SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == 1 || k == 2 || k == 3 || k == 7) {
     return true;
   }
@@ -4134,13 +4134,13 @@ function select_join(f: SFunc, fl: boolean[], j: SBlock, from_t: i32, from_f: i3
   if (j.preds.len() != 2 || !has_pred(j.preds, from_t) || !has_pred(j.preds, from_f)) {
     return false;
   }
-  let phis: i32 = 0;
+  let phis = 0;
   for ins in j.insts {
     if (ins.kind_tag == 8) {
       if (ins.args.len() != 2 || picks_float(fl, ins.result)) {
         return false;
       }
-      phis = phis + 1;
+      phis += 1;
     }
   }
   return phis <= 2;
@@ -4169,11 +4169,11 @@ function diamond_busy(busy: boolean[], d: Diamond): boolean {
 }
 
 function hoisted(head: SBlock, arms: SInst[]): SInst[] {
-  let n: i32 = head.insts.len();
+  let n = head.insts.len();
   if (n == 0 || head.insts[n - 1].result != head.term.cond || head.insts[n - 1].kind_tag == 8 || arms_read(arms, head.term.cond)) {
     return util.append_all(head.insts, arms);
   }
-  let out: SInst[] = util.append_all(slice_insts(head.insts, 0, n - 1), arms);
+  let out = util.append_all(slice_insts(head.insts, 0, n - 1), arms);
   return out.append(head.insts[n - 1]);
 }
 
@@ -4187,14 +4187,14 @@ function arms_read(arms: SInst[], v: i32): boolean {
 }
 
 pub function select_run(blk: SBlock, ii: i32): i32[] {
-  let c: i32 = blk.insts[ii].args[0];
-  let lo: i32 = ii;
+  let c = blk.insts[ii].args[0];
+  let lo = ii;
   while (lo > 0 && blk.insts[lo - 1].kind_tag == 36 && blk.insts[lo - 1].args[0] == c) {
-    lo = lo - 1;
+    lo -= 1;
   }
-  let hi: i32 = ii + 1;
+  let hi = ii + 1;
   while (hi < blk.insts.len() && blk.insts[hi].kind_tag == 36 && blk.insts[hi].args[0] == c) {
-    hi = hi + 1;
+    hi += 1;
   }
   return [lo, hi];
 }
@@ -4204,8 +4204,8 @@ function join_selects(j: SBlock, cond: i32, from_t: i32, from_f: i32): SInst[] {
   let copies: SInst[] = [];
   for ins in j.insts {
     if (ins.kind_tag == 8) {
-      let vt: i32 = ins.args[pred_slot(j, from_t)];
-      let vf: i32 = ins.args[pred_slot(j, from_f)];
+      let vt = ins.args[pred_slot(j, from_t)];
+      let vf = ins.args[pred_slot(j, from_f)];
       if (vt == vf) {
         copies = copies.append(SInst { kind_tag: 7, result: ins.result, args: [vt], imm: 0, str: "" });
       } else {
@@ -4228,10 +4228,10 @@ function without_phis(insts: SInst[]): SInst[] {
 
 function slice_insts(a: SInst[], lo: i32, hi: i32): SInst[] {
   let out: SInst[] = [];
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -4240,10 +4240,10 @@ pub struct Formed { f: SFunc, repl: i32[] }
 
 function formed_by(f: SFunc, repl: i32[]): Formed {
   let flat: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < repl.len()) {
     flat = flat.append(resolve_repl(repl, i));
-    i = i + 1;
+    i += 1;
   }
   return Formed { f: f, repl: flat };
 }
@@ -4267,27 +4267,27 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 }
 
 pub function register_form(f: SFunc): Formed {
-  let folded: Formed = prune_trivial_phis(slot_calls(without_lines(f)));
-  let merged: Formed = merge_duplicates(folded.f);
-  let plain: Formed = fold_identities(merged.f);
-  let shared: Formed = share_shape_loads(plain.f);
-  let unwrapped: Formed = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(double_lanes(shared.f)))));
-  let extended: Formed = fold_extensions(unwrapped.f);
-  let g: SFunc = extended.f;
-  let bytes: Formed = fold_byte_access(g);
+  let folded = prune_trivial_phis(slot_calls(without_lines(f)));
+  let merged = merge_duplicates(folded.f);
+  let plain = fold_identities(merged.f);
+  let shared = share_shape_loads(plain.f);
+  let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(double_lanes(shared.f)))));
+  let extended = fold_extensions(unwrapped.f);
+  let g = extended.f;
+  let bytes = fold_byte_access(g);
   if (bytes.repl.len() > 0) {
     g = prune_dead(bytes.f);
   }
-  let t: Threading = thread_bool_joins(g);
+  let t = thread_bool_joins(g);
   if (t.changed) {
     g = prune_dead(t.f);
   }
-  let fw: Threading = thread_forwarding(g);
+  let fw = thread_forwarding(g);
   g = fw.f;
   let trimmed: i32[] = [];
   if (fw.changed) {
     // A join that lost a predecessor can be left with one value on every edge.
-    let pruned: Formed = prune_trivial_phis(prune_dead(g));
+    let pruned = prune_trivial_phis(prune_dead(g));
     g = pruned.f;
     trimmed = pruned.repl;
   }
@@ -4301,12 +4301,12 @@ pub function drop_null_counts(f: SFunc): SFunc {
   if (!counts_a_null(f)) {
     return f;
   }
-  let defs: SInst[] = inst_defs(f);
-  let uses: i32[] = use_counts(f);
+  let defs = inst_defs(f);
+  let uses = use_counts(f);
   let nblocks: SBlock[] = [];
-  let changed: boolean = false;
+  let changed = false;
   for blk in f.blocks {
-    let kept: SBlock = without_null_counts(blk, defs, uses);
+    let kept = without_null_counts(blk, defs, uses);
     changed = changed || kept.insts.len() != blk.insts.len();
     nblocks = nblocks.append(kept);
   }
@@ -4319,8 +4319,8 @@ pub function drop_null_counts(f: SFunc): SFunc {
 // Whether the function holds both a zero constant and a count call, so the
 // common function pays one scan and no allocation.
 function counts_a_null(f: SFunc): boolean {
-  let zero: boolean = false;
-  let counts: boolean = false;
+  let zero = false;
+  let counts = false;
   for blk in f.blocks {
     for ins in blk.insts {
       zero = zero || zero_constant(ins);
@@ -4366,7 +4366,7 @@ function null_count(ins: SInst, defs: SInst[], uses: i32[]): boolean {
 
 // An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.
 pub function zero_extended_indices(f: SFunc): SFunc {
-  let at_index: i32[] = __alloc_i32(f.nvals);
+  let at_index = __alloc_i32(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag >= 42 && ins.kind_tag <= 44 && ins.args.len() >= 2 && ins.args[1] >= 0 && ins.args[1] < f.nvals) {
@@ -4374,9 +4374,9 @@ pub function zero_extended_indices(f: SFunc): SFunc {
       }
     }
   }
-  let uses: i32[] = use_counts(f);
-  let zero: boolean[] = __alloc_bool(f.nvals);
-  let any: boolean = false;
+  let uses = use_counts(f);
+  let zero = __alloc_bool(f.nvals);
+  let any = false;
   for blk in f.blocks {
     for ins in blk.insts {
       if (signed_extension(ins) && ins.result >= 0 && ins.result < f.nvals && uses[ins.result] > 0 && at_index[ins.result] == uses[ins.result]) {
@@ -4404,8 +4404,8 @@ pub function zero_extended_indices(f: SFunc): SFunc {
 }
 
 pub function double_lanes(f: SFunc): SFunc {
-  let has_two: boolean = false;
-  let has_multiply: boolean = false;
+  let has_two = false;
+  let has_multiply = false;
   for blk in f.blocks {
     for ins in blk.insts {
       has_two = has_two || ins.kind_tag == 4 && ins.str == "4611686018427387904";
@@ -4415,7 +4415,7 @@ pub function double_lanes(f: SFunc): SFunc {
   if (!has_two || !has_multiply) {
     return f;
   }
-  let two: boolean[] = __alloc_bool(f.nvals);
+  let two = __alloc_bool(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 4 && ins.str == "4611686018427387904") {
@@ -4435,11 +4435,11 @@ pub function double_lanes(f: SFunc): SFunc {
     let insts: SInst[] = [];
     for ins in blk.insts {
       if (ins.kind_tag == 9 && (ins.str == "vmul" || ins.str == "fmul") && (two[ins.args[0]] || two[ins.args[1]])) {
-        let a: i32 = ins.args[0];
+        let a = ins.args[0];
         if (two[a]) {
           a = ins.args[1];
         }
-        let op: string = "vadd";
+        let op = "vadd";
         if (ins.str == "fmul") {
           op = "fadd";
         }
@@ -4478,10 +4478,10 @@ function slot_calls(f: SFunc): SFunc {
   if (!has_kind(f, 56)) {
     return f;
   }
-  let env_of: i32[] = slot_reads(f);
-  let uses: i32[] = use_counts(f);
-  let dropped: boolean[] = __alloc_bool(f.nvals);
-  let found: boolean = false;
+  let env_of = slot_reads(f);
+  let uses = use_counts(f);
+  let dropped = __alloc_bool(f.nvals);
+  let found = false;
   for blk in f.blocks {
     for ins in blk.insts {
       if (reads_own_slot(ins, env_of, uses)) {
@@ -4512,7 +4512,7 @@ pub function has_kind(f: SFunc, k: i32): boolean {
 }
 
 function slot_reads(f: SFunc): i32[] {
-  let zero: boolean[] = __alloc_bool(f.nvals);
+  let zero = __alloc_bool(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 1 && ins.imm == 0) {
@@ -4520,7 +4520,7 @@ function slot_reads(f: SFunc): i32[] {
       }
     }
   }
-  let env_of: i32[] = util.minus_ones(f.nvals);
+  let env_of = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 42 && ins.imm == 1 && ins.str == "" && zero[ins.args[1]]) {
@@ -4532,7 +4532,7 @@ function slot_reads(f: SFunc): i32[] {
 }
 
 function slot_block(blk: SBlock, env_of: i32[], uses: i32[], dropped: boolean[]): SBlock {
-  let edit: boolean = false;
+  let edit = false;
   for ins in blk.insts {
     edit = edit || reads_own_slot(ins, env_of, uses) || ins.kind_tag == 42 && dropped[ins.result];
   }
@@ -4555,11 +4555,11 @@ function reads_own_slot(ins: SInst, env_of: i32[], uses: i32[]): boolean {
 }
 
 function share_shape_loads(f: SFunc): Formed {
-  let stored: boolean[] = __alloc_bool(f.nvals);
-  let loads: i32 = 0;
+  let stored = __alloc_bool(f.nvals);
+  let loads = 0;
   for blk in f.blocks {
     for ins in blk.insts {
-      let k: i32 = ins.kind_tag;
+      let k = ins.kind_tag;
       if (k == 16 || k == 53 || k == 55) {
         return Formed { f: f, repl: [] };
       }
@@ -4567,23 +4567,23 @@ function share_shape_loads(f: SFunc): Formed {
         stored = stored.with(ins.args[0], true);
       }
       if (shape_load(ins, f.nvals)) {
-        loads = loads + 1;
+        loads += 1;
       }
     }
   }
   if (loads < 2) {
     return Formed { f: f, repl: [] };
   }
-  let at: i32[] = block_positions(f);
+  let at = block_positions(f);
   let repl: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let insts: SInst[] = f.blocks[bi].insts;
-    let k: i32 = 0;
+    let insts = f.blocks[bi].insts;
+    let k = 0;
     while (k < insts.len()) {
-      let ins: SInst = insts[k];
+      let ins = insts[k];
       if (shape_load(ins, f.nvals) && !stored[ins.args[0]]) {
-        let found: i32 = earlier_shape(f, at, bi, k, ins.args[0]);
+        let found = earlier_shape(f, at, bi, k, ins.args[0]);
         if (found >= 0) {
           if (repl.len() == 0) {
             repl = identity_repl(f.nvals);
@@ -4591,9 +4591,9 @@ function share_shape_loads(f: SFunc): Formed {
           repl = repl.with(ins.result, repl[found]);
         }
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (repl.len() == 0) {
     return Formed { f: f, repl: [] };
@@ -4602,25 +4602,25 @@ function share_shape_loads(f: SFunc): Formed {
 }
 
 function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, box: i32): i32 {
-  let b: i32 = bi;
-  let j: i32 = k - 1;
+  let b = bi;
+  let j = k - 1;
   while (true) {
     while (j >= 0) {
-      let ins: SInst = f.blocks[b].insts[j];
+      let ins = f.blocks[b].insts[j];
       if (shape_load(ins, f.nvals) && ins.args[0] == box) {
         return ins.result;
       }
       if (may_write(ins.kind_tag)) {
-        return 0 - 1;
+        return -1;
       }
-      j = j - 1;
+      j -= 1;
     }
     if (f.blocks[b].preds.len() != 1) {
-      return 0 - 1;
+      return -1;
     }
-    let pb: i32 = position_of(at, f.blocks[b].preds[0]);
+    let pb = position_of(at, f.blocks[b].preds[0]);
     if (pb < 0 || pb >= b) {
-      return 0 - 1;
+      return -1;
     }
     b = pb;
     j = f.blocks[b].insts.len() - 1;
@@ -4639,37 +4639,37 @@ pub function fold_byte_access(f: SFunc): Formed {
   if (!has_byte_access(f)) {
     return Formed { f: f, repl: [] };
   }
-  let def_b: i32[] = __alloc_i32(f.nvals);
-  let def_k: i32[] = __alloc_i32(f.nvals);
-  let i: i32 = 0;
+  let def_b = __alloc_i32(f.nvals);
+  let def_k = __alloc_i32(f.nvals);
+  let i = 0;
   while (i < f.nvals) {
-    def_b = def_b.with(i, 0 - 1);
-    def_k = def_k.with(i, 0 - 1);
-    i = i + 1;
+    def_b = def_b.with(i, -1);
+    def_k = def_k.with(i, -1);
+    i += 1;
   }
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < f.blocks[bi].insts.len()) {
-      let r: i32 = f.blocks[bi].insts[k].result;
+      let r = f.blocks[bi].insts[k].result;
       if (r >= 0 && r < f.nvals) {
         def_b = def_b.with(r, bi);
         def_k = def_k.with(r, k);
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let uses: i32[] = use_counts(f);
-  let changed: boolean = false;
+  let uses = use_counts(f);
+  let changed = false;
   let nblocks: SBlock[] = [];
   for blk in f.blocks {
     let ninsts: SInst[] = [];
     for ins0 in blk.insts {
-      let ins: SInst = ins0;
+      let ins = ins0;
       if ((ins.kind_tag == 54 || ins.kind_tag == 55) && const_zero(f, def_b, def_k, ins.args[1])) {
-        let base: i32 = ins.args[0];
-        let d: SInst = def_at(f, def_b, def_k, base);
+        let base = ins.args[0];
+        let d = def_at(f, def_b, def_k, base);
         if (d.kind_tag == 9 && d.str == "add" && d.imm == 64 && d.args.len() == 2 && base >= 0 && base < uses.len() && uses[base] == 1) {
           let nargs: i32[] = [d.args[0], d.args[1]];
           if (ins.kind_tag == 55) {
@@ -4716,27 +4716,27 @@ pub function fold_extensions(f: SFunc): Formed {
   if (!has_extension(f)) {
     return Formed { f: f, repl: [] };
   }
-  let d: DefSites = def_sites_of(f);
-  let facts: i32[] = ext_facts(f, d);
+  let d = def_sites_of(f);
+  let facts = ext_facts(f, d);
   if (facts.len() == 0) {
     return Formed { f: f, repl: [] };
   }
-  let repl: i32[] = dropped_extensions(f, facts);
+  let repl = dropped_extensions(f, facts);
   if (repl.len() == 0) {
     return Formed { f: f, repl: [] };
   }
-  let flat: Formed = formed_by(f, repl);
+  let flat = formed_by(f, repl);
   return Formed { f: rewrite_through(f, flat.repl), repl: flat.repl };
 }
 
 struct DefSites { blk: i32[], at: i32[] }
 
 function def_sites_of(f: SFunc): DefSites {
-  let blk: i32[] = util.minus_ones(f.nvals);
-  let at: i32[] = util.minus_ones(f.nvals);
+  let blk = util.minus_ones(f.nvals);
+  let at = util.minus_ones(f.nvals);
   for bi in 0..f.blocks.len() {
     for k in 0..f.blocks[bi].insts.len() {
-      let r: i32 = f.blocks[bi].insts[k].result;
+      let r = f.blocks[bi].insts[k].result;
       if (r >= 0 && r < f.nvals) {
         blk = blk.with(r, bi);
         at = at.with(r, k);
@@ -4748,14 +4748,14 @@ function def_sites_of(f: SFunc): DefSites {
 
 // The fixed point, or [] when 64 rounds do not settle it.
 function ext_facts(f: SFunc, d: DefSites): i32[] {
-  let facts: i32[] = __alloc_i32(f.nvals);
+  let facts = __alloc_i32(f.nvals);
   for v in 0..f.nvals {
     if (d.blk[v] >= 0) {
       facts = facts.with(v, EXT_BYTE);
     }
   }
   for round in 0..64 {
-    let next: i32[] = ext_round(f, d, facts);
+    let next = ext_round(f, d, facts);
     if (next.len() == 0) {
       return facts;
     }
@@ -4766,12 +4766,12 @@ function ext_facts(f: SFunc, d: DefSites): i32[] {
 
 // One pass over the instructions, or [] when no fact shrank.
 function ext_round(f: SFunc, d: DefSites, facts: i32[]): i32[] {
-  let changed: boolean = false;
+  let changed = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      let r: i32 = ins.result;
+      let r = ins.result;
       if (r >= 0 && r < f.nvals) {
-        let x: i32 = ext_transfer(f, d.blk, d.at, facts, ins) & facts[r];
+        let x = ext_transfer(f, d.blk, d.at, facts, ins) & facts[r];
         changed = changed || x != facts[r];
         facts = facts.with(r, x);
       }
@@ -4785,8 +4785,8 @@ function ext_round(f: SFunc, d: DefSites, facts: i32[]): i32[] {
 
 // The replacement map, or [] when no extension goes.
 function dropped_extensions(f: SFunc, facts: i32[]): i32[] {
-  let repl: i32[] = identity_repl(f.nvals);
-  let dropped: boolean = false;
+  let repl = identity_repl(f.nvals);
+  let dropped = false;
   for blk in f.blocks {
     for ins in blk.insts {
       if (drops(f, facts, ins)) {
@@ -4838,7 +4838,7 @@ function holds_result(ins: SInst, held: i32): boolean {
 }
 
 function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k >= 1 && k <= 3) {
     return constant_facts(ins);
   }
@@ -4874,7 +4874,7 @@ function const_facts(c: i64): i32 {
   if (c >= 0i64 && c <= 255i64) {
     return EXT_BYTE;
   }
-  let out: i32 = 0;
+  let out = 0;
   if (c >= 0 - 2147483648i64 && c <= 2147483647i64) {
     out = EXT_I32;
   }
@@ -4892,7 +4892,7 @@ function fact_of(facts: i32[], v: i32): i32 {
 }
 
 function shared_facts(facts: i32[], args: i32[], from: i32): i32 {
-  let out: i32 = EXT_BYTE;
+  let out = EXT_BYTE;
   for i in from..args.len() {
     out = out & fact_of(facts, args[i]);
   }
@@ -4997,12 +4997,12 @@ function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
 }
 
 function const_in(f: SFunc, def_b: i32[], def_k: i32[], v: i32, lo: i64, hi: i64): boolean {
-  let d: SInst = def_at(f, def_b, def_k, v);
+  let d = def_at(f, def_b, def_k, v);
   if (d.kind_tag == 1) {
     return d.imm as i64 >= lo && d.imm as i64 <= hi;
   }
   if (d.kind_tag == 3) {
-    let c: i64 = util.lit_to_i64(d.str);
+    let c = util.lit_to_i64(d.str);
     return c >= lo && c <= hi;
   }
   return false;
@@ -5012,28 +5012,28 @@ pub function drop_low_wraps(f: SFunc): Formed {
   if (!has_low_wrap(f)) {
     return Formed { f: f, repl: [] };
   }
-  let prop: i32[] = __alloc_i32(f.nvals);
-  let def_b: i32[] = __alloc_i32(f.nvals);
-  let def_k: i32[] = __alloc_i32(f.nvals);
-  let high: boolean[] = __alloc_bool(f.nvals);
-  let i: i32 = 0;
+  let prop = __alloc_i32(f.nvals);
+  let def_b = __alloc_i32(f.nvals);
+  let def_k = __alloc_i32(f.nvals);
+  let high = __alloc_bool(f.nvals);
+  let i = 0;
   while (i < f.nvals) {
-    def_b = def_b.with(i, 0 - 1);
-    def_k = def_k.with(i, 0 - 1);
-    i = i + 1;
+    def_b = def_b.with(i, -1);
+    def_k = def_k.with(i, -1);
+    i += 1;
   }
   let wraps: i32[] = [];
   let wrap_arg: i32[] = [];
   let work: i32[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let insts: SInst[] = f.blocks[bi].insts;
-    let k: i32 = 0;
+    let insts = f.blocks[bi].insts;
+    let k = 0;
     while (k < insts.len()) {
-      let ins: SInst = insts[k];
-      let r: i32 = ins.result;
+      let ins = insts[k];
+      let r = ins.result;
       if (r >= 0 && r < f.nvals) {
-        let n: i32 = high_operands(ins);
+        let n = high_operands(ins);
         if (n > 0) {
           prop = prop.with(r, n);
         }
@@ -5044,61 +5044,61 @@ pub function drop_low_wraps(f: SFunc): Formed {
           wrap_arg = wrap_arg.append(ins.args[0]);
         }
       }
-      let ai: i32 = 0;
+      let ai = 0;
       while (ai < ins.args.len()) {
-        let a: i32 = ins.args[ai];
+        let a = ins.args[ai];
         if (a >= 0 && a < f.nvals && !high[a] && !reads_low_half(ins, ai)) {
           high = high.with(a, true);
           work = work.append(a);
         }
-        ai = ai + 1;
+        ai += 1;
       }
-      k = k + 1;
+      k += 1;
     }
-    let tv: i32 = term_operand(f.blocks[bi].term);
+    let tv = term_operand(f.blocks[bi].term);
     if (tv >= 0 && tv < f.nvals && !high[tv]) {
       high = high.with(tv, true);
       work = work.append(tv);
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let wi: i32 = 0;
+  let wi = 0;
   while (wi < work.len()) {
-    let v: i32 = work[wi];
-    wi = wi + 1;
+    let v = work[wi];
+    wi += 1;
     if (prop[v] == 0) {
       continue;
     }
-    let args: i32[] = f.blocks[def_b[v]].insts[def_k[v]].args;
-    let ai: i32 = 0;
+    let args = f.blocks[def_b[v]].insts[def_k[v]].args;
+    let ai = 0;
     while (ai < prop[v]) {
-      let a: i32 = args[ai];
+      let a = args[ai];
       if (a >= 0 && a < f.nvals && !high[a]) {
         high = high.with(a, true);
         work = work.append(a);
       }
-      ai = ai + 1;
+      ai += 1;
     }
   }
   let repl: i32[] = [];
-  let dropped: boolean = false;
-  let at: i32[] = block_positions(f);
-  let heads: i32[] = signed_compare_heads(f, def_b, def_k);
-  let wj: i32 = 0;
+  let dropped = false;
+  let at = block_positions(f);
+  let heads = signed_compare_heads(f, def_b, def_k);
+  let wj = 0;
   while (wj < wraps.len()) {
-    let w: i32 = wraps[wj];
+    let w = wraps[wj];
     if (!high[w] || signed_extension(def_at(f, def_b, def_k, w)) && counter_step(f, at, heads, def_b, def_k, wrap_arg[wj])) {
       if (!dropped) {
         i = 0;
         while (i < f.nvals) {
           repl = repl.append(i);
-          i = i + 1;
+          i += 1;
         }
         dropped = true;
       }
       repl = repl.with(w, wrap_arg[wj]);
     }
-    wj = wj + 1;
+    wj += 1;
   }
   if (!dropped) {
     return Formed { f: f, repl: [] };
@@ -5120,7 +5120,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
       }
       ninsts = ninsts.append(SInst { ...ins, args: nargs });
     }
-    let t: STerm = blk.term;
+    let t = blk.term;
     if (t.kind_tag == 1) {
       t = STerm { ...t, value: resolve_repl(repl, t.value) };
     } else if (t.kind_tag == 3) {
@@ -5153,13 +5153,13 @@ function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
       }
     }
   }
-  let tv: i32 = term_operand(blk.term);
+  let tv = term_operand(blk.term);
   return tv >= 0 && tv < repl.len() && repl[tv] != tv;
 }
 
 // x + 1 below a test that x is less than an i32, or x - 1 below a test that x is greater.
 function counter_step(f: SFunc, at: i32[], heads: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
-  let st: SInst = def_at(f, def_b, def_k, a);
+  let st = def_at(f, def_b, def_k, a);
   if (st.kind_tag != 9 || st.imm == 64 || st.args.len() != 2) {
     return false;
   }
@@ -5178,16 +5178,16 @@ function counter_step(f: SFunc, at: i32[], heads: i32[], def_b: i32[], def_k: i3
 // Some branch on a signed compare of `v` reaches block `d` only on the edge where `v` is below (or above) the other operand.
 function tested(f: SFunc, at: i32[], heads: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32, below: boolean): boolean {
   for hi in heads {
-    let h: SBlock = f.blocks[hi];
-    let t: STerm = h.term;
-    let c: SInst = def_at(f, def_b, def_k, t.cond);
-    let pass: i32 = 0 - 1;
+    let h = f.blocks[hi];
+    let t = h.term;
+    let c = def_at(f, def_b, def_k, t.cond);
+    let pass: i32 = -1;
     if (below && compares_below(c, v, "lt_s", "gt_s") || !below && compares_below(c, v, "gt_s", "lt_s")) {
       pass = t.t;
     } else if (below && compares_below(c, v, "ge_s", "le_s") || !below && compares_below(c, v, "le_s", "ge_s")) {
       pass = t.f;
     }
-    let b: i32 = position_of(at, pass);
+    let b = position_of(at, pass);
     if (b >= 0 && f.blocks[b].preds.len() == 1 && f.blocks[b].preds[0] == h.id && dominates_position(f, at, b, d)) {
       return true;
     }
@@ -5199,9 +5199,9 @@ function tested(f: SFunc, at: i32[], heads: i32[], def_b: i32[], def_k: i32[], v
 function signed_compare_heads(f: SFunc, def_b: i32[], def_k: i32[]): i32[] {
   let out: i32[] = [];
   for hi in 0..f.blocks.len() {
-    let t: STerm = f.blocks[hi].term;
+    let t = f.blocks[hi].term;
     if (t.kind_tag == 3 && t.t != t.f) {
-      let c: SInst = def_at(f, def_b, def_k, t.cond);
+      let c = def_at(f, def_b, def_k, t.cond);
       if (c.kind_tag == 9 && c.imm != 64 && c.args.len() == 2 && (c.str == "lt_s" || c.str == "gt_s" || c.str == "ge_s" || c.str == "le_s")) {
         out = out.append(hi);
       }
@@ -5214,25 +5214,25 @@ function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {
   if (b == d) {
     return true;
   }
-  let entry: i32 = position_of(at, f.entry);
+  let entry = position_of(at, f.entry);
   if (entry == b) {
     return true;
   }
   if (entry < 0 || d < 0) {
     return false;
   }
-  let seen: boolean[] = __alloc_bool(f.blocks.len());
+  let seen = __alloc_bool(f.blocks.len());
   seen = seen.with(d, true);
   let stack: i32[] = [d];
-  let si: i32 = 0;
+  let si = 0;
   while (si < stack.len()) {
-    let cur: i32 = stack[si];
-    si = si + 1;
+    let cur = stack[si];
+    si += 1;
     if (cur == entry) {
       return false;
     }
     for pid in f.blocks[cur].preds {
-      let p: i32 = position_of(at, pid);
+      let p = position_of(at, pid);
       if (p < 0) {
         return false;
       }
@@ -5253,7 +5253,7 @@ function compares_below(c: SInst, o: i32, first: string, second: string): boolea
 }
 
 function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
-  let d: SInst = def_at(f, def_b, def_k, v);
+  let d = def_at(f, def_b, def_k, v);
   return d.kind_tag == 1 && d.imm == 1;
 }
 
@@ -5311,7 +5311,7 @@ function term_operand(t: STerm): i32 {
   if (t.kind_tag == 3) {
     return t.cond;
   }
-  return 0 - 1;
+  return -1;
 }
 
 // A load or a store through base + constant takes the constant as its offset.
@@ -5323,11 +5323,11 @@ function offset_access(defs: SInst[], ins: SInst): SInst {
   if (ins.kind_tag != 40 && ins.kind_tag != 41 || ins.str != "" || ins.args.len() == 0 || ins.args[0] < 0) {
     return no_inst();
   }
-  let at: SInst = def_of(defs, ins.args[0]);
+  let at = def_of(defs, ins.args[0]);
   if (at.kind_tag != 9 || at.str != "add" || at.imm != 64 || at.args.len() != 2) {
     return no_inst();
   }
-  let off: i64 = ins.imm as i64 + offset_const(defs, at.args[1]);
+  let off = ins.imm as i64 + offset_const(defs, at.args[1]);
   if (off < ins.imm as i64 || off > 1073741824i64) {
     return no_inst();
   }
@@ -5335,7 +5335,7 @@ function offset_access(defs: SInst[], ins: SInst): SInst {
 }
 
 function offset_const(defs: SInst[], v: i32): i64 {
-  let d: SInst = def_of(defs, v);
+  let d = def_of(defs, v);
   if (d.kind_tag == 1 && d.imm >= 0) {
     return d.imm as i64;
   }
@@ -5349,7 +5349,7 @@ pub function fuse_rotates(f: SFunc): SFunc {
   if (!has_or(f)) {
     return f;
   }
-  let defs: SInst[] = inst_defs(f);
+  let defs = inst_defs(f);
   return rewrite_insts(f, defs, rotate_of).f;
 }
 
@@ -5357,7 +5357,7 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
   if (ins.kind_tag != 9 || ins.str != "or" || ins.args.len() != 2) {
     return no_inst();
   }
-  let m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
+  let m = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
   if (m.kind_tag == 0) {
     m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]);
   }
@@ -5370,10 +5370,10 @@ function no_inst(): SInst {
 
 function inst_defs(f: SFunc): SInst[] {
   let defs: SInst[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.nvals) {
     defs = defs.append(no_inst());
-    i = i + 1;
+    i += 1;
   }
   for blk in f.blocks {
     for ins in blk.insts {
@@ -5387,15 +5387,15 @@ function inst_defs(f: SFunc): SInst[] {
 
 function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SInst): Threading {
   let nblocks: SBlock[] = [];
-  let copying: boolean = false;
-  let bi: i32 = 0;
+  let copying = false;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     let ninsts: SInst[] = [];
-    let changed: boolean = false;
-    let k: i32 = 0;
+    let changed = false;
+    let k = 0;
     while (k < blk.insts.len()) {
-      let m: SInst = rewrite(defs, blk.insts[k]);
+      let m = rewrite(defs, blk.insts[k]);
       if (m.kind_tag != 0 && !changed) {
         ninsts = insts_before(blk.insts, k);
         changed = true;
@@ -5403,7 +5403,7 @@ function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SIn
       if (changed) {
         ninsts = ninsts.append(if (m.kind_tag != 0) { m } else { blk.insts[k] });
       }
-      k = k + 1;
+      k += 1;
     }
     if (changed && !copying) {
       nblocks = blocks_before(f.blocks, bi);
@@ -5414,7 +5414,7 @@ function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SIn
     } else if (copying) {
       nblocks = nblocks.append(blk);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (!copying) {
     return Threading { f: f, changed: false };
@@ -5434,10 +5434,10 @@ function has_or(f: SFunc): boolean {
 }
 
 function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
-  let no: SInst = no_inst();
-  let rs: SInst = def_of(defs, rv);
-  let ls: SInst = def_of(defs, lv);
-  let w: i32 = 64;
+  let no = no_inst();
+  let rs = def_of(defs, rv);
+  let ls = def_of(defs, lv);
+  let w = 64;
   if (zero_extends_u32(ls)) {
     w = 32;
     ls = def_of(defs, ls.args[0]);
@@ -5451,8 +5451,8 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   if (copy_root(defs, rs.args[0]) != copy_root(defs, ls.args[0])) {
     return no;
   }
-  let n: i64 = const_value(defs, rs.args[1]);
-  let k: i64 = const_value(defs, ls.args[1]);
+  let n = const_value(defs, rs.args[1]);
+  let k = const_value(defs, ls.args[1]);
   if (n <= 0i64 || k <= 0i64 || n + k != w as i64) {
     return no;
   }
@@ -5463,13 +5463,13 @@ pub function fuse_and_not(f: SFunc): SFunc {
   if (!has_and_xor(f)) {
     return f;
   }
-  let t: Threading = rewrite_insts(f, inst_defs(f), and_not_of);
+  let t = rewrite_insts(f, inst_defs(f), and_not_of);
   return if (t.changed) { prune_dead(t.f) } else { f };
 }
 
 function has_and_xor(f: SFunc): boolean {
-  let has_and: boolean = false;
-  let has_xor: boolean = false;
+  let has_and = false;
+  let has_xor = false;
   for b in f.blocks {
     for ins in b.insts {
       if (ins.kind_tag == 9) {
@@ -5492,7 +5492,7 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   if (ins.kind_tag != 9 || ins.str != "and" || ins.args.len() != 2) {
     return no_inst();
   }
-  let v: i32 = not_of(defs, ins.args[1]);
+  let v = not_of(defs, ins.args[1]);
   if (v >= 0) {
     return SInst { ...ins, args: [ins.args[0], v], str: "and_not" };
   }
@@ -5508,8 +5508,8 @@ pub function low_word_pair(blk: SBlock, ii: i32, uses: i32[]): boolean {
   if (ii < 0 || ii + 1 >= blk.insts.len()) {
     return false;
   }
-  let op: SInst = blk.insts[ii];
-  let w: SInst = blk.insts[ii + 1];
+  let op = blk.insts[ii];
+  let w = blk.insts[ii + 1];
   if (op.kind_tag != 9 || op.args.len() != 2 || op.str != "add" && op.str != "sub" && op.str != "mul") {
     return false;
   }
@@ -5520,18 +5520,18 @@ pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
   if (ii < 0 || ii + 2 >= blk.insts.len()) {
     return false;
   }
-  let sum: SInst = blk.insts[ii];
-  let c: SInst = blk.insts[ii + 1];
-  let reader: SInst = blk.insts[ii + 2];
+  let sum = blk.insts[ii];
+  let c = blk.insts[ii + 1];
+  let reader = blk.insts[ii + 2];
   if (c.kind_tag != 37 || c.args.len() != 2 || sum.kind_tag != 9 || reader.kind_tag != 9 || sum.args.len() != 2 || reader.args.len() != 2) {
     return false;
   }
-  let sub: boolean = c.imm == 1;
+  let sub = c.imm == 1;
   let op: string = if (sub) { "sub" } else { "add" };
   if (sum.str != op || reader.str != op || uses[c.result] != 1) {
     return false;
   }
-  let same: boolean = sum.args[0] == c.args[0] && sum.args[1] == c.args[1];
+  let same = sum.args[0] == c.args[0] && sum.args[1] == c.args[1];
   if (!sub && sum.args[0] == c.args[1] && sum.args[1] == c.args[0]) {
     same = true;
   }
@@ -5548,8 +5548,8 @@ pub function fuse_carries(f: SFunc): SFunc {
   if (!has_carry_shift(f)) {
     return f;
   }
-  let defs: SInst[] = inst_defs(f);
-  let t: Threading = rewrite_insts(f, defs, carry_of);
+  let defs = inst_defs(f);
+  let t = rewrite_insts(f, defs, carry_of);
   if (!t.changed) {
     return f;
   }
@@ -5572,7 +5572,7 @@ function is_top_bit(defs: SInst[], ins: SInst): boolean {
 }
 
 function is_const(defs: SInst[], v: i32, want: i64): boolean {
-  let d: SInst = def_of(defs, copy_root(defs, v));
+  let d = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 1) {
     return d.imm as i64 == want;
   }
@@ -5580,7 +5580,7 @@ function is_const(defs: SInst[], v: i32, want: i64): boolean {
 }
 
 function bin_of(defs: SInst[], v: i32, op: string): SInst {
-  let d: SInst = def_of(defs, copy_root(defs, v));
+  let d = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 9 && d.str == op && d.args.len() == 2) {
     return d;
   }
@@ -5588,14 +5588,14 @@ function bin_of(defs: SInst[], v: i32, op: string): SInst {
 }
 
 function wide_of(defs: SInst[], v: i32, op: string): SInst {
-  let d: SInst = bin_of(defs, v, op);
+  let d = bin_of(defs, v, op);
   return if (d.imm == 64) { d } else { no_inst() };
 }
 
 function not_of(defs: SInst[], v: i32): i32 {
-  let d: SInst = bin_of(defs, v, "xor");
+  let d = bin_of(defs, v, "xor");
   if (d.kind_tag == 0) {
-    return 0 - 1;
+    return -1;
   }
   if (is_const(defs, d.args[1], 0i64 - 1i64)) {
     return copy_root(defs, d.args[0]);
@@ -5603,17 +5603,17 @@ function not_of(defs: SInst[], v: i32): i32 {
   if (is_const(defs, d.args[0], 0i64 - 1i64)) {
     return copy_root(defs, d.args[1]);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function same_pair(defs: SInst[], a: i32, b: i32, x: i32, y: i32): boolean {
-  let ra: i32 = copy_root(defs, a);
-  let rb: i32 = copy_root(defs, b);
+  let ra = copy_root(defs, a);
+  let rb = copy_root(defs, b);
   return ra == x && rb == y || ra == y && rb == x;
 }
 
 function zero_one(defs: SInst[], v: i32): boolean {
-  let d: SInst = def_of(defs, copy_root(defs, v));
+  let d = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 37 || is_top_bit(defs, d)) {
     return true;
   }
@@ -5624,11 +5624,11 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
   if (!is_top_bit(defs, shr)) {
     return no_inst();
   }
-  let o: SInst = bin_of(defs, shr.args[0], "or");
+  let o = bin_of(defs, shr.args[0], "or");
   if (o.kind_tag == 0) {
     return no_inst();
   }
-  let m: SInst = carry_halves(defs, shr, o.args[0], o.args[1]);
+  let m = carry_halves(defs, shr, o.args[0], o.args[1]);
   if (m.kind_tag == 0) {
     m = carry_halves(defs, shr, o.args[1], o.args[0]);
   }
@@ -5636,65 +5636,65 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
 }
 
 function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
-  let pa: SInst = bin_of(defs, p, "and");
-  let qa: SInst = bin_of(defs, q, "and");
+  let pa = bin_of(defs, p, "and");
+  let qa = bin_of(defs, q, "and");
   if (pa.kind_tag == 0 || qa.kind_tag == 0) {
     return no_inst();
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < 2) {
-    let m: SInst = add_carry(defs, shr, pa, qa.args[k], qa.args[1 - k]);
+    let m = add_carry(defs, shr, pa, qa.args[k], qa.args[1 - k]);
     if (m.kind_tag == 0) {
       m = sub_borrow(defs, shr, pa, qa.args[k], qa.args[1 - k]);
     }
     if (m.kind_tag != 0) {
       return m;
     }
-    k = k + 1;
+    k += 1;
   }
   return no_inst();
 }
 
 function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): SInst {
-  let x: i32 = copy_root(defs, p.args[0]);
-  let y: i32 = copy_root(defs, p.args[1]);
-  let e: SInst = bin_of(defs, either, "or");
+  let x = copy_root(defs, p.args[0]);
+  let y = copy_root(defs, p.args[1]);
+  let e = bin_of(defs, either, "or");
   if (e.kind_tag == 0 || !same_pair(defs, e.args[0], e.args[1], x, y)) {
     return no_inst();
   }
-  let s: SInst = wide_of(defs, not_of(defs, inv), "add");
+  let s = wide_of(defs, not_of(defs, inv), "add");
   if (s.kind_tag == 0) {
     return no_inst();
   }
   if (same_pair(defs, s.args[0], s.args[1], x, y)) {
     return SInst { kind_tag: 37, result: shr.result, args: [x, y], imm: 0, str: "" };
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < 2) {
-    let inner: SInst = wide_of(defs, s.args[k], "add");
+    let inner = wide_of(defs, s.args[k], "add");
     if (inner.kind_tag != 0 && same_pair(defs, inner.args[0], inner.args[1], x, y) && zero_one(defs, s.args[1 - k])) {
       return SInst { kind_tag: 37, result: shr.result, args: [x, y, copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
     }
-    k = k + 1;
+    k += 1;
   }
   return no_inst();
 }
 
 function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32): SInst {
-  let k: i32 = 0;
+  let k = 0;
   while (k < 2) {
-    let x: i32 = not_of(defs, p.args[k]);
-    let y: i32 = copy_root(defs, p.args[1 - k]);
+    let x = not_of(defs, p.args[k]);
+    let y = copy_root(defs, p.args[1 - k]);
     if (x >= 0 && inverted_or(defs, either, x, y)) {
       return borrow_from(defs, shr, diff, x, y);
     }
-    k = k + 1;
+    k += 1;
   }
   return no_inst();
 }
 
 function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
-  let e: SInst = bin_of(defs, v, "or");
+  let e = bin_of(defs, v, "or");
   if (e.kind_tag == 0) {
     return false;
   }
@@ -5702,14 +5702,14 @@ function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
 }
 
 function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SInst {
-  let d: SInst = wide_of(defs, diff, "sub");
+  let d = wide_of(defs, diff, "sub");
   if (d.kind_tag == 0) {
     return no_inst();
   }
   if (copy_root(defs, d.args[0]) == x && copy_root(defs, d.args[1]) == y) {
     return SInst { kind_tag: 37, result: shr.result, args: [x, y], imm: 1, str: "" };
   }
-  let inner: SInst = wide_of(defs, d.args[0], "sub");
+  let inner = wide_of(defs, d.args[0], "sub");
   if (inner.kind_tag != 0 && copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y && zero_one(defs, d.args[1])) {
     return SInst { kind_tag: 37, result: shr.result, args: [x, y, copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
@@ -5741,21 +5741,21 @@ function shift_width(imm: i32): i32 {
 }
 
 function copy_root(defs: SInst[], v: i32): i32 {
-  let r: i32 = v;
-  let steps: i32 = 0;
+  let r = v;
+  let steps = 0;
   while (steps < defs.len()) {
-    let d: SInst = def_of(defs, r);
+    let d = def_of(defs, r);
     if (d.kind_tag != 7 || d.args.len() != 1) {
       return r;
     }
     r = d.args[0];
-    steps = steps + 1;
+    steps += 1;
   }
   return r;
 }
 
 function const_value(defs: SInst[], v: i32): i64 {
-  let d: SInst = def_of(defs, copy_root(defs, v));
+  let d = def_of(defs, copy_root(defs, v));
   if (d.kind_tag == 1) {
     return d.imm as i64;
   }
@@ -5773,28 +5773,28 @@ pub function rotr_width(what: string): i32 {
 }
 
 pub function rotr_count(what: string): i32 {
-  let n: i32 = 0;
-  let i: i32 = 8;
+  let n = 0;
+  let i = 8;
   while (i < what.len()) {
     n = n * 10 + (what[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 pub function prune_dead(f: SFunc): SFunc {
-  let live: i32[] = prune_mark(f, prune_roots(f));
+  let live = prune_mark(f, prune_roots(f));
   let nblocks: SBlock[] = [];
-  let copying: boolean = false;
-  let bi: i32 = 0;
+  let copying = false;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
+    let blk = f.blocks[bi];
     let ninsts: SInst[] = [];
-    let pruned: boolean = false;
-    let k: i32 = 0;
+    let pruned = false;
+    let k = 0;
     while (k < blk.insts.len()) {
-      let ins: SInst = blk.insts[k];
-      let stays: boolean = inst_has_effect(ins.kind_tag) || live[ins.result] == 1;
+      let ins = blk.insts[k];
+      let stays = inst_has_effect(ins.kind_tag) || live[ins.result] == 1;
       if (pruned) {
         if (stays) {
           ninsts = ninsts.append(ins);
@@ -5803,7 +5803,7 @@ pub function prune_dead(f: SFunc): SFunc {
         ninsts = insts_before(blk.insts, k);
         pruned = true;
       }
-      k = k + 1;
+      k += 1;
     }
     if (pruned) {
       if (!copying) {
@@ -5814,7 +5814,7 @@ pub function prune_dead(f: SFunc): SFunc {
     } else if (copying) {
       nblocks = nblocks.append(blk);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   if (!copying) {
     return f;
@@ -5824,20 +5824,20 @@ pub function prune_dead(f: SFunc): SFunc {
 
 function insts_before(insts: SInst[], n: i32): SInst[] {
   let out: SInst[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < n) {
     out = out.append(insts[j]);
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
 
 function blocks_before(blocks: SBlock[], n: i32): SBlock[] {
   let out: SBlock[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < n) {
     out = out.append(blocks[j]);
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
@@ -5870,24 +5870,24 @@ function prune_roots(f: SFunc): i32[] {
 }
 
 function prune_mark(f: SFunc, work: i32[]): i32[] {
-  let live: i32[] = __alloc_i32(f.nvals);
-  let def_b: i32[] = __alloc_i32(f.nvals);
-  let def_k: i32[] = __alloc_i32(f.nvals);
-  let bi: i32 = 0;
+  let live = __alloc_i32(f.nvals);
+  let def_b = __alloc_i32(f.nvals);
+  let def_k = __alloc_i32(f.nvals);
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < f.blocks[bi].insts.len()) {
-      let r: i32 = f.blocks[bi].insts[k].result;
+      let r = f.blocks[bi].insts[k].result;
       def_b = def_b.with(r, bi + 1);
       def_k = def_k.with(r, k);
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
-  let at: i32 = 0;
+  let at = 0;
   while (at < work.len()) {
-    let v: i32 = work[at];
-    at = at + 1;
+    let v = work[at];
+    at += 1;
     if (v < 0 || v >= f.nvals || live[v] == 1) {
       continue;
     }
@@ -5903,22 +5903,22 @@ function prune_mark(f: SFunc, work: i32[]): i32[] {
 }
 
 pub function count_insts(f: SFunc): i32 {
-  let n: i32 = 0;
-  let bi: i32 = 0;
+  let n = 0;
+  let bi = 0;
   while (bi < f.blocks.len()) {
-    n = n + f.blocks[bi].insts.len();
-    bi = bi + 1;
+    n += f.blocks[bi].insts.len();
+    bi += 1;
   }
   return n;
 }
 
 pub function pred_slot(blk: SBlock, prev: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < blk.preds.len()) {
     if (blk.preds[i] == prev) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }

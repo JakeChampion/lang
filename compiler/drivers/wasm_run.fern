@@ -8,20 +8,20 @@ import "../util";
 import "../semlower";
 
 function main(): i32 {
-  let decide: boolean = false;
-  let av: string[] = args();
-  let ai: i32 = 1;
+  let decide = false;
+  let av = args();
+  let ai = 1;
   while (ai < av.len()) {
     if (av[ai] == "-decide") {
       decide = true;
     }
-    ai = ai + 1;
+    ai += 1;
   }
-  let mod: parser.Module = rundriver.parse_stdin("wasm_run");
+  let mod = rundriver.parse_stdin("wasm_run");
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
-  let arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  let arity_errs = asmcore.check_call_arity(parser.fill_default_args_module(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
   if (arity_errs.len() > 0) {
@@ -36,9 +36,9 @@ function main(): i32 {
     eprint(util.format_diags(denied));
     return 1;
   }
-  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  let d = semlower.driven(mod, "wasm32-wasi");
   if (decide) {
-    let plm: parser.Module = wasm_ir.route_normalized(d.full);
+    let plm = wasm_ir.route_normalized(d.full);
     if (wasm_ir.ir_route_ok(plm, false, false, d.sub)) {
       print("ir\n");
     } else {
@@ -46,7 +46,7 @@ function main(): i32 {
     }
     return 0;
   }
-  let emitted: string = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
+  let emitted = wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub);
   write(emitted);
   return 0;
 }

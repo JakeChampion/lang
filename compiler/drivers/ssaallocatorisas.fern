@@ -49,7 +49,7 @@ function actual(): void {
   let i = 0;
   for op in p.ops {
     same_op(crlf.ops[i], op);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -75,11 +75,11 @@ function actual_operations(p: isa.Program, body: text.Body): void {
     if (!full) {
       require(op.kind > 0, "fast-path instruction: " + line);
     }
-    special = special + actual_special(op, line);
+    special += actual_special(op, line);
     if (op.kind == 17) {
       require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1, "actual branch binding");
     }
-    i = i + 1;
+    i += 1;
   }
   require(full && special == 3, "entry fragment retained, syscall unproved");
 }
@@ -118,7 +118,7 @@ function stack(): void {
       stack_base(reg, i, displacement);
     }
     stack_index(reg, i);
-    i = i + 1;
+    i += 1;
   }
   for scale in ["1", "2", "4", "8"] {
     let op = sample("pushq 16(%r12,%r13," + scale + ")");
@@ -142,7 +142,7 @@ function globals(): void {
       let i = 0;
       for reg in registers.registers(false, w) {
         global_operands(symbol, suffix, reg, w, i);
-        i = i + 1;
+        i += 1;
       }
     }
   }

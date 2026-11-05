@@ -141,12 +141,12 @@ function shaped_payloads(ts: typeinfo.Type[]): boolean {
 }
 
 function own_masks_equal(a: typeinfo.TypeFunc, b: typeinfo.TypeFunc): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.param_types.len()) {
     if (typeinfo.fn_own_at(a, i) != typeinfo.fn_own_at(b, i)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -194,12 +194,12 @@ function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (!equal(a[i], b[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -292,16 +292,16 @@ pub function env_body(t: typeinfo.Type): string {
 }
 
 function prefixed(name: string, prefix: string): boolean {
-  let n: i32 = prefix.len();
+  let n = prefix.len();
   if (name.len() <= n) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (name[i] != prefix[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

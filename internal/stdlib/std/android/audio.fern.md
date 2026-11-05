@@ -4,15 +4,19 @@ This module captures and plays mono 16-bit audio through AAudio.
 
 ## Model
 
-A `Stream` is one AAudio stream: a capture stream from the microphone, or a playback stream to the speaker or the earpiece. Both streams are set up for speech: the low-latency mode, the voice-communication usage and the voice-communication input preset, which turns on the echo canceller of the device where it has one.
+A `Stream` is one AAudio stream: a capture stream from the microphone, or a playback stream to the loudspeaker. Both streams carry speech.
 
-`read` and `write` block for at most their timeout. A sample is an `i32` from -32768 to 32767.
+A capture stream uses the voice-communication input preset. This preset turns on the noise suppressor and the gain control of the device. A playback stream uses the media usage, so it plays on the loudspeaker at the media volume. The voice-communication usage plays on the earpiece. The earpiece is too quiet when the phone is not at the ear.
+
+Each stream uses the full capacity of its buffer and not the low-latency mode. In the low-latency mode, a buffer can hold less than 10 ms. Then one frame of speech does not fit in it.
+
+`read` and `write` block for at most their timeout. A sample is an `i32` from -32768 to 32767. `write` gives the number of samples that it wrote. When the buffer is full before the timeout, that number is less than the length, and the caller must write the other samples later.
 
 The module needs API level 28, for the usage, the content type and the input preset. A capture stream needs the RECORD_AUDIO permission.
 
 ## Contracts
 
-A stream with `ptr` 0 did not open. Each other stream must be closed once.
+A stream with `ptr` 0 did not open. Close each other stream once.
 
 ## Module assembly
 
@@ -86,11 +90,17 @@ function c_write(stream: usize, buffer: usize, frames: i32, timeout_ns: i64): i3
 
 @import("libaaudio.so", "AAudioStream_getSampleRate")
 function c_sample_rate(stream: usize): i32;
+
+@import("libaaudio.so", "AAudioStream_getBufferCapacityInFrames")
+function c_buffer_capacity(stream: usize): i32;
+
+@import("libaaudio.so", "AAudioStream_setBufferSizeInFrames")
+function c_set_buffer_size(stream: usize, frames: i32): i32;
 ```
 
 ### `streams`
 
-The AAudio constants: the direction is 0 for output and 1 for input, the format 1 is 16-bit PCM, the performance mode 12 is low latency, the usage 2 is voice communication, the content type 1 is speech, and the input preset 7 is voice communication.
+The AAudio constants: the direction is 0 for output and 1 for input, and the format 1 is 16-bit PCM. The performance mode 10 is none, and the usage 1 is media. The content type 1 is speech, and the input preset 7 is voice communication.
 
 ```fern
 <<streams>>=
@@ -113,11 +123,12 @@ function open(input: boolean, rate: i32): Stream {
     c_set_sample_rate(builder, rate);
     c_set_channel_count(builder, 1);
     c_set_format(builder, 1);
-    c_set_performance_mode(builder, 12);
-    c_set_usage(builder, 2);
+    c_set_performance_mode(builder, 10);
     c_set_content_type(builder, 1);
     if (input) {
       c_set_input_preset(builder, 7);
+    } else {
+      c_set_usage(builder, 1);
     }
     __store_ptr(slot, 0 as usize);
     let opened: i32 = c_open_stream(builder, slot);
@@ -127,6 +138,7 @@ function open(input: boolean, rate: i32): Stream {
     if (opened != 0) {
       return Stream { ptr: 0 as usize, rate: 0 };
     }
+    let sized: i32 = c_set_buffer_size(stream, c_buffer_capacity(stream));
     return Stream { ptr: stream, rate: c_sample_rate(stream) };
   }
 }

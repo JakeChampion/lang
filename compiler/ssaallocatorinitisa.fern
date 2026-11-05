@@ -10,7 +10,7 @@ function decode(line: string, unknown: isa.Op): isa.Op {
   }
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return unknown;
@@ -56,7 +56,7 @@ pub function program(output: string): isa.Program {
   let i = 0;
   for op in old.ops {
     ops = ops.append(if (op.kind == 0) { decode(selected.lines[i], op) } else { op });
-    i = i + 1;
+    i += 1;
   }
   return isa.Program { ops: ops, error: "" };
 }

@@ -37,7 +37,7 @@ function declarations(u: ircore.Units, k: i32): i32 {
     let symbol = if (fd.name == "drop") { "Token.drop" } else { fd.name };
     require(rows[i].symbol == symbol && rows[i].producer == 0, 178);
     require(u.caches[k][i].name == fd.name, 179);
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
@@ -48,8 +48,8 @@ function tail(g: ircore.Gated, u: ircore.Units, k: i32, start: i32): i32 {
     let at = g.im.funcs.len();
     while (at < g.cache.len()) {
       require(same(u.physical[k].rows[i], g.physical.rows[at]) && u.caches[k][i].name == g.cache[at].name, 180);
-      at = at + 1;
-      i = i + 1;
+      at += 1;
+      i += 1;
     }
   }
   return i;
@@ -65,10 +65,10 @@ function selected(g: ircore.Gated, u: ircore.Units): void {
     require(rows.len() == u.caches[k].len() && u.physical[k].producers.len() == 2, 175);
     require(u.physical[k].producers[0].records.names.has("Token") && !u.physical[k].producers[1].records.names.has("Token"), 176);
     let i = declarations(u, k);
-    seen = seen + mod.funcs.len();
+    seen += mod.funcs.len();
     i = tail(g, u, k, i);
     require(i == rows.len(), 181);
-    k = k + 1;
+    k += 1;
   }
   require(seen == g.im.funcs.len() && u.loose.len() == 1 && u.loose[0].name == "loose" && g.cache.len() > g.im.funcs.len(), 182);
 }
@@ -81,11 +81,11 @@ function run_target(target: string): void {
   let i = 0;
   for row in d.sub.physical_origins.declarations {
     require(same(row, g.physical.rows[i]), 170);
-    i = i + 1;
+    i += 1;
   }
   for row in d.sub.physical_origins.extra {
     require(same(row, g.physical.rows[i]), 171);
-    i = i + 1;
+    i += 1;
   }
   require(i == g.cache.len(), 172);
   let tiny = ircore.Gated { ...g, cache: ircore.inline_tiny_leaves(g.im, g.cache) };

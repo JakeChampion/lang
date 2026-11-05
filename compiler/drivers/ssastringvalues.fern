@@ -32,7 +32,7 @@ function scalar_round(n: i64): i64 {
   }
   let power = 256 as i64;
   while (power * (2 as i64) <= n) {
-    power = power * (2 as i64);
+    power *= 2 as i64;
   }
   let quantum = power / (4 as i64);
   let rounded = (n / quantum + (if (n % quantum == 0) { 0 as i64 } else { 1 as i64 })) * quantum;
@@ -50,9 +50,9 @@ function scalar_class(n: i64): i32 {
       return index;
     }
     if (index % 4 == 3) {
-      quarter = quarter * (2 as i64);
+      quarter *= 2 as i64;
     }
-    index = index + 1;
+    index += 1;
   }
   return -2;
 }
@@ -80,7 +80,7 @@ function interval(r: value.Interval, fused: boolean): void {
     let d = r.min_residue;
     while (d <= r.max_residue) {
       sample(r, fused, w, d);
-      d = d + 1;
+      d += 1;
     }
   }
 }
@@ -92,7 +92,7 @@ pub function run_limit(limit: i32): void {
       if (index < limit) {
         interval(r, fused);
       }
-      index = index + 1;
+      index += 1;
     }
   }
 }

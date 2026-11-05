@@ -6,13 +6,13 @@ pub function wasm_source(append: boolean, write: boolean, back: boolean): string
   let out = "  (func $__fern_bytes_copy_bounds (param $a i32) (param $from i32) (param $n i32)\n"
     + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (unreachable))))\n";
   if (append) {
-    out = out + wasm_append();
+    out += wasm_append();
   }
   if (write) {
-    out = out + wasm_write();
+    out += wasm_write();
   }
   if (back) {
-    out = out + wasm_back();
+    out += wasm_back();
   }
   return out;
 }

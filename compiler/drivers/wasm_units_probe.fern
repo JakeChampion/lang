@@ -11,20 +11,20 @@ import "../util";
 
 function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[] {
   let out: parser.FuncDecl[] = [];
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi) {
     out = out.append(fs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function slice_cache(c: irtables.LowerResult[], lo: i32, hi: i32): irtables.LowerResult[] {
   let out: irtables.LowerResult[] = [];
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi) {
     out = out.append(c[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -45,48 +45,48 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
 }
 
 function main(): i32 {
-  let mod: parser.Module = rundriver.parse_stdin("wasm_units_probe");
+  let mod = rundriver.parse_stdin("wasm_units_probe");
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
 
-  let arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
+  let arity_errs = asmcore.check_call_arity(parser.fill_default_args_module(mod));
   arity_errs = util.append_diags(arity_errs, asmcore.check_call_arity(mod));
   if (arity_errs.len() > 0) {
     eprint(util.format_diags(arity_errs));
     return 1;
   }
 
-  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
-  let im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
+  let d = semlower.driven(mod, "wasm32-wasi");
+  let im = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
 
-  let n: i32 = im.funcs.len();
+  let n = im.funcs.len();
   if (n < 2) {
     eprint("wasm_units_probe: need at least 2 functions to split");
     return 1;
   }
-  let half: i32 = n / 2;
-  let mod_a: parser.Module = with_funcs(im, slice_funcs(im.funcs, 0, half));
-  let mod_b: parser.Module = with_funcs(im, slice_funcs(im.funcs, half, n));
+  let half = n / 2;
+  let mod_a = with_funcs(im, slice_funcs(im.funcs, 0, half));
+  let mod_b = with_funcs(im, slice_funcs(im.funcs, half, n));
 
-  let stab: irtables.StructTab = irtables.struct_tab(im.structs);
+  let stab = irtables.struct_tab(im.structs);
   let g = match (ircore.gate(im, d.sub)) { Some(g) => g, None => { ircore.eprint_ir_ineligible(); return 1; } };
-  let whole: irtables.LowerResult[] = g.cache;
-  let cache_a: irtables.LowerResult[] = slice_cache(whole, 0, half);
-  let cache_b: irtables.LowerResult[] = slice_cache(whole, half, whole.len());
+  let whole = g.cache;
+  let cache_a = slice_cache(whole, 0, half);
+  let cache_b = slice_cache(whole, half, whole.len());
 
-  let unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab, physicalbody.no_collection());
-  let unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab, physicalbody.no_collection());
+  let unit_a = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab, physicalbody.no_collection());
+  let unit_b = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab, physicalbody.no_collection());
 
-  let strs_a: string[] = wasm_ir.str_values(cache_a);
-  let strs_b: string[] = wasm_ir.str_values(cache_b);
-  let caggs_a: string[] = wasm_ir.const_agg_values(cache_a);
-  let caggs_b: string[] = wasm_ir.const_agg_values(cache_b);
-  let fns_a: string[] = wasm_ir.fn_value_table(cache_a);
-  let fns_b: string[] = wasm_ir.fn_value_table(cache_b);
+  let strs_a = wasm_ir.str_values(cache_a);
+  let strs_b = wasm_ir.str_values(cache_b);
+  let caggs_a = wasm_ir.const_agg_values(cache_a);
+  let caggs_b = wasm_ir.const_agg_values(cache_b);
+  let fns_a = wasm_ir.fn_value_table(cache_a);
+  let fns_b = wasm_ir.fn_value_table(cache_b);
 
-  let needs: string[] = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
-  let fn_sigs: string[] = wasm_ir.union_strs(wasm_ir.indirect_fn_sigs(cache_a), wasm_ir.indirect_fn_sigs(cache_b));
+  let needs = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
+  let fn_sigs = wasm_ir.union_strs(wasm_ir.indirect_fn_sigs(cache_a), wasm_ir.indirect_fn_sigs(cache_b));
 
   let units: wasm_ir.WasmUnit[] = [
     wasm_ir.WasmUnit { ns: "", text: unit_a, strs: strs_a, caggs: caggs_a, fns: fns_a },

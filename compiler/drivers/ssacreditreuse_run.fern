@@ -34,24 +34,24 @@ function expect(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc, ok: boolean, why: stri
 
 function mutation(body: irtables.LowerResult, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for op in body.ops {
     if (mode == 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
       ops = ops.append(ir.op_load_local(0)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0, str: "" }).append(op).append(ir.op_drop()).append(op);
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 3 && op.kind_tag == ir.kind_id("struct_set") && op.i32_imm == 0) {
       ops = ops.append(ir.op_drop()).append(ir.op_drop());
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_set") && op.i32_imm == 0) {
       ops = ops.append(op).append(ir.op_load_local(3)).append(ir.op_load_local(1)).append(op);
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 5 && op.kind_tag == ir.kind_id("eq")) {
       ops = ops.append(ir.Op { ...op, kind_tag: ir.kind_id("ne") });
-      hits = hits + 1;
+      hits += 1;
     } else if ((mode == 6 || mode == 7) && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
       ops = ops.append(op).append(ir.op_load_local(0));
       if (mode == 6) {
@@ -60,10 +60,10 @@ function mutation(body: irtables.LowerResult, mode: i32): irtables.LowerResult {
         ops = ops.append(ir.op_call_direct("__sem_release_Parent", 1));
       }
       ops = ops.append(ir.op_drop());
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 8 && op.kind_tag == ir.kind_id("const_i32") && op.i32_imm == 3) {
       ops = ops.append(ir.op_const_i32(2));
-      hits = hits + 1;
+      hits += 1;
     } else {
       ops = ops.append(op);
     }
@@ -94,7 +94,7 @@ function sparse_checks(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc): void {
 
 function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   let nvals = f.nvals;
   for b in f.blocks {
     let ops: ssa.SInst[] = [];
@@ -102,37 +102,37 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
       let changed = op;
       if (mode == 0 && op.kind_tag == 46) {
         changed = ssa.SInst { ...op, str: "Other" };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 1 && op.kind_tag == 6 && op.imm == 1) {
         changed = ssa.SInst { ...op, imm: 0 };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 2 && op.kind_tag == 11 && op.str == "__fern_rc_inc") {
         changed = ssa.SInst { ...op, str: "unknown_credit_effect" };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 3 && op.kind_tag == 11 && op.str == "__fern_alloc_reuse") {
         ops = ops.append(op);
         changed = ssa.SInst { ...op, result: f.nvals };
         nvals = f.nvals + 1;
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 4 && op.kind_tag == 41 && op.imm == 0) {
         changed = ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 5 && op.kind_tag == 41 && op.imm == 8) {
         changed = ssa.SInst { ...op, imm: 16 };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 6 && op.kind_tag == 8 && hits == 0) {
         changed = ssa.SInst { ...op, args: op.args.with(0, op.result) };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 7 && op.kind_tag == 41 && op.imm == 0) {
         ops = ops.append(op);
         changed = ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" };
         nvals = f.nvals + 1;
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 8 && op.kind_tag == 40 && op.imm == 8) {
         ops = ops.append(op);
         changed = ssa.SInst { kind_tag: 9, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
         nvals = f.nvals + 1;
-        hits = hits + 1;
+        hits += 1;
       }
       ops = ops.append(changed);
     }
@@ -148,18 +148,18 @@ function clear_slot(ops: ir.Op[], field: i32, value: i32): ir.Op[] {
 
 function clearing_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let releases: i32 = 0;
-  let retains: i32 = 0;
-  let stores: i32 = 0;
+  let releases = 0;
+  let retains = 0;
+  let stores = 0;
   for op in body.ops {
     if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-      releases = releases + 1;
+      releases += 1;
       if (mode == 6) {
         ops = clear_slot(ops.append(op), field, 0);
       } else if (mode == 3) {
         ops = ops.append(op);
       } else {
-        let value: i32 = 0;
+        let value = 0;
         if (mode == 4) {
           value = 1;
         }
@@ -175,13 +175,13 @@ function clearing_mutation(body: irtables.LowerResult, field: i32, mode: i32): i
         }
       }
     } else if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-      retains = retains + 1;
+      retains += 1;
       if (mode == 3) {
         ops = clear_slot(ops, 1 - field, 0);
       }
       ops = ops.append(op);
     } else if (op.kind_tag == ir.kind_id("struct_set") && op.i32_imm == field) {
-      stores = stores + 1;
+      stores += 1;
       if (mode == 7) {
         ops = ops.append(ir.op_drop()).append(ir.op_drop());
       } else {
@@ -197,13 +197,13 @@ function clearing_mutation(body: irtables.LowerResult, field: i32, mode: i32): i
 
 function child_drop_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for op in body.ops {
     if (mode == 5 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
       ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__sem_drop_Parent", 1)).append(ir.op_drop()).append(op);
-      hits = hits + 1;
+      hits += 1;
     } else if (mode != 5 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-      hits = hits + 1;
+      hits += 1;
       ops = ops.append(ir.op_load_local(0)).append(ir.op_struct_get(1 - field, 0)).append(ir.op_store_local(body.n_locals));
       if (mode == 2 || mode == 3) {
         ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_call_direct("__fern_rc_inc", 1)).append(ir.op_drop());
@@ -215,7 +215,7 @@ function child_drop_mutation(body: irtables.LowerResult, field: i32, mode: i32):
       } else if (mode != 4) {
         ops = clear_slot(ops, field, 0);
       }
-      let arg: i32 = 0;
+      let arg = 0;
       if (mode == 8) {
         arg = 1;
       }
@@ -237,25 +237,25 @@ function child_drop_mutation(body: irtables.LowerResult, field: i32, mode: i32):
 
 function child_drop_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let reasons = ["proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "children-only drop with stale slot", "child used after final credit or anchor", "children-only drop requires unique parent", "children-only drop with stale slot", "unconsumed child credit", "parent reference required"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < reasons.len()) {
     expect(lift(child_drop_mutation(body, field, mode)), d, r, mode < 3, reasons[mode], 81 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
 function scalar_read_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for op in body.ops {
     if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-      hits = hits + 1;
+      hits += 1;
       ops = ops.append(ir.op_store_local(body.n_locals));
       ops = clear_slot(ops, field, 0);
       if (mode == 1) {
         ops = ops.append(ir.op_load_local(body.n_locals)).append(op).append(ir.op_drop());
       }
-      let index: i32 = 0;
+      let index = 0;
       if (mode == 2) {
         index = 1;
       }
@@ -280,7 +280,7 @@ function scalar_read_mutation(body: irtables.LowerResult, field: i32, mode: i32)
 function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let facts = [reuse.ScalarField { root: 4 + field, offset: 8 }];
   let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "missing scalar child field layout", "flat child reference required"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < reasons.len()) {
     let f = lift(scalar_read_mutation(body, field, mode));
     let p = reuse.check_fields(f, d, r, "Parent", facts);
@@ -288,7 +288,7 @@ function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, fi
       print(p.function_name + ": " + p.message);
       exit(101 + mode);
     }
-    mode = mode + 1;
+    mode += 1;
   }
   let f = lift(scalar_read_mutation(body, field, 0));
   let duplicate = reuse.check_fields(f, d, r, "Parent", facts.append(facts[0]));
@@ -306,16 +306,16 @@ function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, fi
 function numeric_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let reading = scalar_read_mutation(body, field, 0);
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
-  let i: i32 = 0;
+  let hits = 0;
+  let i = 0;
   for op in reading.ops {
     ops = ops.append(op);
     if (op.kind_tag == ir.kind_id("struct_get") && i > 0 && reading.ops[i - 1].kind_tag == ir.kind_id("load_local") && reading.ops[i - 1].i32_imm == body.n_locals) {
-      hits = hits + 1;
+      hits += 1;
       if (mode == 2) {
         ops = ops.append(ir.op_drop()).append(ir.op_load_local(0));
       }
-      let width: i32 = 0;
+      let width = 0;
       if (mode == 5) {
         width = 64;
       }
@@ -351,7 +351,7 @@ function numeric_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
       ops = ops.append(ir.op_if(0)).append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop()).append(ir.op_end());
       ops = ops.append(ir.op_load_local(body.n_locals + 1));
     }
-    i = i + 1;
+    i += 1;
   }
   require(hits == 1, 110);
   return irtables.LowerResult { ...reading, ops: ops, n_locals: body.n_locals + 2 };
@@ -359,7 +359,7 @@ function numeric_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
 
 function numeric_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "integer add requires numeric operands", "signed comparison requires narrowed numeric operands", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "integer cast requires numeric operand", "proved guarded two-child partial replacement"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < reasons.len()) {
     let f = lift(numeric_mutation(body, field, mode));
     let p = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: 8 }]);
@@ -367,14 +367,14 @@ function numeric_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, 
       print(p.function_name + ": " + p.message);
       exit(111 + mode);
     }
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
 function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
-  let i: i32 = 0;
+  let hits = 0;
+  let i = 0;
   while (i < body.ops.len()) {
     let op = body.ops[i];
     if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
@@ -382,11 +382,11 @@ function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
     }
     if (mode == 1 && op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == "__sem_release_Parent") {
       require(body.ops[i + 2].kind_tag == ir.kind_id("drop"), 90);
-      hits = hits + 1;
-      i = i + 3;
+      hits += 1;
+      i += 3;
     } else {
       if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
-        hits = hits + 1;
+        hits += 1;
         ops = ops.append(ir.op_call_direct("__fern_rc_dec", 1));
         if (mode == 2) {
           ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
@@ -401,7 +401,7 @@ function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
         }
         ops = ops.append(op);
       }
-      i = i + 1;
+      i += 1;
     }
   }
   require(hits == 1, 91);
@@ -410,10 +410,10 @@ function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): ir
 
 function shallow_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
   let reasons = ["proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "old parent used after release", "shallow parent release requires shared parent", "old parent used after release", "old parent used after release"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < reasons.len()) {
     expect(lift(shallow_mutation(body, field, mode)), d, r, mode < 2, reasons[mode], 92 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -448,33 +448,33 @@ function target_checks(target: string): void {
   numeric_checks(body, d, r, 0);
   expect(f, d, r, true, "proved guarded two-child partial replacement", 10);
   let clearing_reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
-  let clearing_mode: i32 = 0;
+  let clearing_mode = 0;
   while (clearing_mode < clearing_reasons.len()) {
     expect(lift(clearing_mutation(body, 0, clearing_mode)), d, r, clearing_mode == 0, clearing_reasons[clearing_mode], 53 + clearing_mode);
-    clearing_mode = clearing_mode + 1;
+    clearing_mode += 1;
   }
   let reasons: string[] = ["slot store without local child credit", "child used after final credit or anchor", "unconsumed parent credit", "result has stale or uninitialized slot", "overwriting live slot credit", "nonnull reuse donor unsupported", "load from stale or uninitialized slot", "parent release with stale slot", "parent allocation size mismatch"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < reasons.len()) {
     expect(lift(mutation(body, mode)), d, r, false, reasons[mode], 11 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
   let reversed: ssa.SBlock[] = [];
   let i = f.blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     reversed = reversed.append(f.blocks[i]);
   }
   expect(ssa.SFunc { ...f, blocks: reversed }, d, r, true, "proved guarded two-child partial replacement", 30);
   let wrong_phi: ssa.SBlock[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for b in f.blocks {
     let ops: ssa.SInst[] = [];
     for op in b.insts {
       if (op.kind_tag == 8 && hits == 0) {
         require(op.args.len() == 2, 31);
         ops = ops.append(ssa.SInst { ...op, args: [op.args[1], op.args[0]] });
-        hits = hits + 1;
+        hits += 1;
       } else {
         ops = ops.append(op);
       }
@@ -484,22 +484,22 @@ function target_checks(target: string): void {
   require(hits == 1, 32);
   expect(ssa.SFunc { ...f, blocks: wrong_phi }, d, r, false, "unreadable phi operand", 33);
   let early: ir.Op[] = [];
-  let inserted: i32 = 0;
-  let removed: i32 = 0;
+  let inserted = 0;
+  let removed = 0;
   i = 0;
   while (i < body.ops.len()) {
     let op = body.ops[i];
     if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
       early = early.append(ir.op_load_local(0)).append(ir.op_call_direct(r.name, 1)).append(ir.op_drop());
-      inserted = inserted + 1;
+      inserted += 1;
     }
     if (op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == r.name) {
       require(body.ops[i + 2].kind_tag == ir.kind_id("drop"), 34);
-      i = i + 3;
-      removed = removed + 1;
+      i += 3;
+      removed += 1;
     } else {
       early = early.append(op);
-      i = i + 1;
+      i += 1;
     }
   }
   require(inserted == 1 && removed == 1, 35);
@@ -508,7 +508,7 @@ function target_checks(target: string): void {
   mode = 0;
   while (mode < physical_reasons.len()) {
     expect(physical_mutation(f, mode), d, r, false, physical_reasons[mode], 40 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, "invalid reuse boundary", 49);
   expect(ssa.SFunc { ...f, nparams: 1 }, d, r, false, "invalid reuse boundary", 50);
@@ -543,10 +543,10 @@ function right_checks(target: string): void {
   numeric_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
   expect(lift(bodies[0]), lift(drops[0]), lift(releases[0]), true, "proved guarded two-child partial replacement", 53);
   let reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < reasons.len()) {
     expect(lift(clearing_mutation(bodies[0], 1, mode)), lift(drops[0]), lift(releases[0]), mode == 0, reasons[mode], 70 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -624,16 +624,16 @@ function caller_controls(target: string): void {
       name = "partial_right";
     }
     let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
-    let mode: i32 = 0;
+    let mode = 0;
     while (mode < reasons.len()) {
       let rows: irtables.LowerResult[] = [];
-      let hits: i32 = 0;
+      let hits = 0;
       for body in sub.bodies {
         if (body.name == name) {
           let ops: ir.Op[] = [];
           for op in body.ops {
             if (op.kind_tag == ir.kind_id("return")) {
-              hits = hits + 1;
+              hits += 1;
               if (mode >= 5 && mode <= 7) {
                 ops = ops.append(ir.op_load_local(1)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0 }).append(ir.op_const_i32(0)).append(ir.op_bin("gt_s", 0, false)).append(ir.op_store_local(body.n_locals));
                 if (mode >= 6) {
@@ -646,7 +646,7 @@ function caller_controls(target: string): void {
               } else if (mode == 3) {
                 ops = ops.append(ir.op_load_local(1));
               } else {
-                let value: i32 = 1;
+                let value = 1;
                 if (mode == 1) {
                   value = 0;
                 } else if (mode == 2) {
@@ -659,7 +659,7 @@ function caller_controls(target: string): void {
               } else {
                 ops = ops.append(ir.op_const_i32(-2147483648));
               }
-              let arity: i32 = 2;
+              let arity = 2;
               if (mode == 10) {
                 ops = ops.append(ir.op_const_i32(7));
                 arity = 3;
@@ -712,7 +712,7 @@ function caller_controls(target: string): void {
         print(p.function_name + ": " + p.message);
         exit(191 + mode);
       }
-      mode = mode + 1;
+      mode += 1;
     }
     let original = reuse.check_fields(named_body(sub.bodies, name), d, r, "Parent", fields);
     require(original.ok, 205);

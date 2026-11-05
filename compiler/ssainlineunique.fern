@@ -22,7 +22,7 @@ function label(line: string): boolean {
     if (!label_char(c)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return line.len() > 3;
 }
@@ -102,7 +102,7 @@ function path(p: Program, b: flow.Boundary, c: flow.Case): boolean {
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return flow.result(s, b, c);

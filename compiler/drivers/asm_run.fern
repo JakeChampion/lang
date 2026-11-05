@@ -6,12 +6,12 @@ import "../asmcore";
 import "../semlower";
 
 function main(): i32 {
-  let mod: parser.Module = rundriver.parse_stdin("asm_run");
+  let mod = rundriver.parse_stdin("asm_run");
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
-  let d: semlower.Driven = semlower.driven(mod, "x86-64-linux");
-  let emitted: string = asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize);
+  let d = semlower.driven(mod, "x86-64-linux");
+  let emitted = asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize);
   print(emitted);
   return 0;
 }

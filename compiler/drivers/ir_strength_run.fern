@@ -2,14 +2,14 @@ import "../ir";
 import "../util";
 
 function render(ops: ir.Op[]): string {
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < ops.len()) {
     if (i > 0) {
-      s = s + " ; ";
+      s += " ; ";
     }
-    s = s + ir.render_op(ops[i]);
-    i = i + 1;
+    s += ir.render_op(ops[i]);
+    i += 1;
   }
   return s;
 }
@@ -35,41 +35,41 @@ function case_bin(label: string, k: i32, kind: string, width: i32): string {
 }
 
 function main(): i32 {
-  let out: string = "";
+  let out = "";
 
-  out = out + case_bin("mul_1", 1, "mul", 0);
-  out = out + case_bin("mul_0", 0, "mul", 0);
-  out = out + case_bin("mul_8", 8, "mul", 0);
-  out = out + case_bin("mul_2", 2, "mul", 0);
-  out = out + case_bin("mul_3", 3, "mul", 0);
-  out = out + case_bin("mul_neg8", 0 - 8, "mul", 0);
+  out += case_bin("mul_1", 1, "mul", 0);
+  out += case_bin("mul_0", 0, "mul", 0);
+  out += case_bin("mul_8", 8, "mul", 0);
+  out += case_bin("mul_2", 2, "mul", 0);
+  out += case_bin("mul_3", 3, "mul", 0);
+  out += case_bin("mul_neg8", -8, "mul", 0);
 
-  out = out + case_bin("add_0", 0, "add", 0);
-  out = out + case_bin("sub_0", 0, "sub", 0);
-  out = out + case_bin("or_0", 0, "or", 0);
-  out = out + case_bin("xor_0", 0, "xor", 0);
-  out = out + case_bin("shl_0", 0, "shl", 0);
-  out = out + case_bin("shr_s_0", 0, "shr_s", 0);
-  out = out + case_bin("shr_u_0", 0, "shr_u", 0);
-  out = out + case_bin("add_1", 1, "add", 0);
+  out += case_bin("add_0", 0, "add", 0);
+  out += case_bin("sub_0", 0, "sub", 0);
+  out += case_bin("or_0", 0, "or", 0);
+  out += case_bin("xor_0", 0, "xor", 0);
+  out += case_bin("shl_0", 0, "shl", 0);
+  out += case_bin("shr_s_0", 0, "shr_s", 0);
+  out += case_bin("shr_u_0", 0, "shr_u", 0);
+  out += case_bin("add_1", 1, "add", 0);
 
-  out = out + case_bin("and_0", 0, "and", 0);
-  out = out + case_bin("and_neg1", 0 - 1, "and", 0);
-  out = out + case_bin("and_7", 7, "and", 0);
+  out += case_bin("and_0", 0, "and", 0);
+  out += case_bin("and_neg1", -1, "and", 0);
+  out += case_bin("and_7", 7, "and", 0);
 
-  out = out + case_bin("div_s_1", 1, "div_s", 0);
-  out = out + case_bin("div_s_8", 8, "div_s", 0);
-  out = out + case_bin("div_u_1", 1, "div_u", 0);
-  out = out + case_bin("div_u_8", 8, "div_u", 0);
-  out = out + case_bin("div_u_6", 6, "div_u", 0);
-  out = out + case_bin("rem_s_1", 1, "rem_s", 0);
-  out = out + case_bin("rem_s_8", 8, "rem_s", 0);
-  out = out + case_bin("rem_u_1", 1, "rem_u", 0);
-  out = out + case_bin("rem_u_8", 8, "rem_u", 0);
-  out = out + case_bin("rem_u_6", 6, "rem_u", 0);
+  out += case_bin("div_s_1", 1, "div_s", 0);
+  out += case_bin("div_s_8", 8, "div_s", 0);
+  out += case_bin("div_u_1", 1, "div_u", 0);
+  out += case_bin("div_u_8", 8, "div_u", 0);
+  out += case_bin("div_u_6", 6, "div_u", 0);
+  out += case_bin("rem_s_1", 1, "rem_s", 0);
+  out += case_bin("rem_s_8", 8, "rem_s", 0);
+  out += case_bin("rem_u_1", 1, "rem_u", 0);
+  out += case_bin("rem_u_8", 8, "rem_u", 0);
+  out += case_bin("rem_u_6", 6, "rem_u", 0);
 
-  out = out + case_bin("mul_8_w64", 8, "mul", 64);
-  out = out + case_bin("add_0_w64", 0, "add", 64);
+  out += case_bin("mul_8_w64", 8, "mul", 64);
+  out += case_bin("add_0_w64", 0, "add", 64);
 
   let textdec: ir.Op[] = [base(), ir.op_const_i32_text("8"), ir.op_bin("mul", 0, false)];
   out = out + "mul_text_8: " + render(ir.reduce_strength(textdec)) + "\n";
@@ -92,11 +92,11 @@ function main(): i32 {
     base(), ir.op_const_i32(0), ir.op_bin("mul", 0, false),
     ir.op_const_i32(5), ir.op_bin("add", 0, false),
   ];
-  let once: ir.Op[] = optimize(strength_then);
+  let once = optimize(strength_then);
   out = out + "strength_then_fold: " + render(once) + "\n";
 
-  let twice: ir.Op[] = optimize(once);
-  let stable: i32 = 0;
+  let twice = optimize(once);
+  let stable = 0;
   if (render(twice) == render(once)) {
     stable = 1;
   }
@@ -133,9 +133,9 @@ function main(): i32 {
   let live: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
   out = out + "dce_live: " + render(ir.eliminate_dead_code(live)) + "\n";
 
-  let dce_once: ir.Op[] = ir.eliminate_dead_code(arm);
-  let dce_twice: ir.Op[] = ir.eliminate_dead_code(dce_once);
-  let dce_stable: i32 = 0;
+  let dce_once = ir.eliminate_dead_code(arm);
+  let dce_twice = ir.eliminate_dead_code(dce_once);
+  let dce_stable = 0;
   if (render(dce_twice) == render(dce_once)) {
     dce_stable = 1;
   }
@@ -162,8 +162,8 @@ function main(): i32 {
   let tee_two: ir.Op[] = [ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(1)];
   out = out + "tee_two: " + render(ir.fuse_tee(tee_two)) + "\n";
 
-  let tee_once: ir.Op[] = ir.fuse_tee(tee_hit);
-  let tee_stable: i32 = 0;
+  let tee_once = ir.fuse_tee(tee_hit);
+  let tee_stable = 0;
   if (render(ir.fuse_tee(tee_once)) == render(tee_once)) {
     tee_stable = 1;
   }
@@ -298,8 +298,8 @@ function main(): i32 {
   ];
   out = out + "kp_frame_write_in_loop: " + render(ir.const_propagate(kp_view_loop)) + "\n";
 
-  let kp_once: ir.Op[] = ir.const_propagate(kp_deep);
-  let kp_stable: i32 = 0;
+  let kp_once = ir.const_propagate(kp_deep);
+  let kp_stable = 0;
   if (render(ir.const_propagate(kp_once)) == render(kp_once)) {
     kp_stable = 1;
   }
@@ -391,8 +391,8 @@ function main(): i32 {
   ];
   out = out + "pi_nested_cascade: " + render(ir.fold_const_binaries(pi_nest)) + "\n";
 
-  let pi_once: ir.Op[] = ir.fold_const_binaries(pi_nest);
-  let pi_stable: i32 = 0;
+  let pi_once = ir.fold_const_binaries(pi_nest);
+  let pi_stable = 0;
   if (render(ir.fold_const_binaries(pi_once)) == render(pi_once)) {
     pi_stable = 1;
   }
@@ -416,11 +416,11 @@ function main(): i32 {
 
   let wc_u32: ir.Op[] = [ir.op_const_i32(9), ir.op_int_cast("u32")];
   out = out + "wc_u32: " + render(ir.fold_const_binaries(wc_u32)) + "\n";
-  let wc_u32_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_int_cast("u32")];
+  let wc_u32_neg: ir.Op[] = [ir.op_const_i32(-1), ir.op_int_cast("u32")];
   out = out + "wc_u32_neg_refused: " + render(ir.fold_const_binaries(wc_u32_neg)) + "\n";
   let wc_wrap: ir.Op[] = [ir.op_const_i32(9), ir.op_u32_wrap()];
   out = out + "wc_u32_wrap: " + render(ir.fold_const_binaries(wc_wrap)) + "\n";
-  let wc_wrap_neg: ir.Op[] = [ir.op_const_i32(0 - 1), ir.op_u32_wrap()];
+  let wc_wrap_neg: ir.Op[] = [ir.op_const_i32(-1), ir.op_u32_wrap()];
   out = out + "wc_u32_wrap_neg_refused: " + render(ir.fold_const_binaries(wc_wrap_neg)) + "\n";
 
   let wc_ext: ir.Op[] = [ir.op_const_i32(9), ir.op_int_extend(false)];
@@ -498,8 +498,8 @@ function main(): i32 {
 
   out = out + "zg_in_optimize: " + render(optimize(zg_body)) + "\n";
 
-  let zg_once: ir.Op[] = ir.prune_zero_slot_guards(zg_body, 0);
-  let zg_stable: i32 = 0;
+  let zg_once = ir.prune_zero_slot_guards(zg_body, 0);
+  let zg_stable = 0;
   if (render(ir.prune_zero_slot_guards(zg_once, 0)) == render(zg_once)) {
     zg_stable = 1;
   }
@@ -535,48 +535,48 @@ function main(): i32 {
   out = out + "f64_wrap_u32: " + render(ir.fold_const_binaries(f64_wrapu_lo)) + "\n";
 
   let mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
-  let mi: i32 = 0;
+  let mi = 0;
   while (mi < mds.len()) {
-    let ms: ir.MagicS32 = ir.derive_magic_s32(mds[mi] as i64);
+    let ms = ir.derive_magic_s32(mds[mi] as i64);
     out = out + "magic_s32 " + util.i32_to_string(mds[mi]) + ": m=" + util.i64_to_string(ms.m)
       + " s=" + util.i32_to_string(ms.s) + "\n";
-    mi = mi + 1;
+    mi += 1;
   }
   let mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
   mi = 0;
   while (mi < mus.len()) {
-    let mu: ir.MagicU = ir.derive_magic_u(mus[mi] as u64, 32);
+    let mu = ir.derive_magic_u(mus[mi] as u64, 32);
     out = out + "magic_u " + util.i64_to_string(mus[mi] as i64) + ": m=" + util.i64_to_string(mu.m as i64)
       + " s=" + util.i32_to_string(mu.s) + " add=" + bool_word(mu.add) + "\n";
-    mi = mi + 1;
+    mi += 1;
   }
   let mds64: i64[] = [3i64, 7i64, -7i64, 10i64, 100i64, 641i64, -1000000007i64, 1000000000000i64, 6148914691236517205i64, -6148914691236517205i64, 9223372036854775807i64, -9223372036854775807i64];
   mi = 0;
   while (mi < mds64.len()) {
-    let ms64: ir.MagicS = ir.derive_magic_s(mds64[mi]);
+    let ms64 = ir.derive_magic_s(mds64[mi]);
     out = out + "magic_s64 " + util.i64_to_string(mds64[mi]) + ": m=" + util.i64_to_string(ms64.m)
       + " s=" + util.i32_to_string(ms64.s) + " add=" + bool_word(ms64.add) + " sub=" + bool_word(ms64.sub) + "\n";
-    mi = mi + 1;
+    mi += 1;
   }
   let mus64: u64[] = [3u64, 7u64, 10u64, 100u64, 641u64, 1000000007u64, 9223372036854775809u64, 12297829382473034411u64, 18446744073709551557u64, 18446744073709551615u64];
   mi = 0;
   while (mi < mus64.len()) {
-    let mu64: ir.MagicU = ir.derive_magic_u(mus64[mi], 64);
+    let mu64 = ir.derive_magic_u(mus64[mi], 64);
     out = out + "magic_u64 " + util.i64_to_string(mus64[mi] as i64) + ": m=" + util.i64_to_string(mu64.m as i64)
       + " s=" + util.i32_to_string(mu64.s) + " add=" + bool_word(mu64.add) + "\n";
-    mi = mi + 1;
+    mi += 1;
   }
 
   let texts: string[] = ["0", "7", "-7", "007", "-0", "", "-", "0x10", "7u8", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967296", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "99999999999999999999"];
-  let ti: i32 = 0;
+  let ti = 0;
   while (ti < texts.len()) {
-    let t: string = texts[ti];
-    let r32: boolean = ir.const_i32_readable(ir.op_const_i32_text(t));
-    let r64: boolean = ir.const_i64_readable(ir.op_const_i64_text(t));
-    let a32: boolean = r32 == (util.i32_to_string(util.digits_to_i32(t)) == t);
-    let a64: boolean = r64 == (util.i64_to_string(util.digits_to_i64(t)) == t);
+    let t = texts[ti];
+    let r32 = ir.const_i32_readable(ir.op_const_i32_text(t));
+    let r64 = ir.const_i64_readable(ir.op_const_i64_text(t));
+    let a32 = r32 == (util.i32_to_string(util.digits_to_i32(t)) == t);
+    let a64 = r64 == (util.i64_to_string(util.digits_to_i64(t)) == t);
     out = out + "readable " + t + ": i32=" + bool_word(r32) + " i64=" + bool_word(r64) + " agree=" + bool_word(a32 && a64) + "\n";
-    ti = ti + 1;
+    ti += 1;
   }
 
   let ds_const: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_const_i32(0), ir.op_return()];

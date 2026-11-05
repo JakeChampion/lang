@@ -47,7 +47,7 @@ function verify_rows(keeps: ssaunits.Keeps[], bound: ssakeepregion.Bound, nvals:
   for block in 0..keeps.len() {
     let k = keeps[block];
     for row in 0..k.donors.len() {
-      let code: i32 = verify_row(k, bound, block, row, nvals);
+      let code = verify_row(k, bound, block, row, nvals);
       if (code != 0) {
         return code;
       }
@@ -70,13 +70,13 @@ function check_function(f: ssasem.Func, modes: i32[]): Summary {
   if (!bound.ok) {
     return failed(5, bound.why);
   }
-  let code: i32 = verify_rows(plan.reuse.keeps, bound, f.graph.nvals);
+  let code = verify_rows(plan.reuse.keeps, bound, f.graph.nvals);
   if (code != 0) {
     return failed(code, "");
   }
-  let keeps: i32 = 0;
+  let keeps = 0;
   for k in plan.reuse.keeps {
-    keeps = keeps + k.donors.len();
+    keeps += k.donors.len();
   }
   return Summary { code: 0, why: "", keeps: keeps, peak: bound.region.keep_count };
 }
@@ -92,7 +92,7 @@ function main(): i32 {
   if (args().len() != 2) {
     return 1;
   }
-  let src: string = "";
+  let src = "";
   match (read_file(args()[1])) {
     Ok(text) => {
       src = text;
@@ -104,23 +104,23 @@ function main(): i32 {
   let parsed = parser.parse_module(lexer.tokenize(src));
   let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
   let built = semsource.with_inferred_modes(semsource.build_module(mod));
-  let functions: i32 = 0;
-  let keeps: i32 = 0;
-  let peak: i32 = 0;
+  let functions = 0;
+  let keeps = 0;
+  let peak = 0;
   for produced in built.decls {
     if (!produced.ok) {
       eprint(produced.key + ": " + produced.why);
       return 3;
     }
     let f = produced.func;
-    let counted: Summary = check_function(f, produced.modes);
+    let counted = check_function(f, produced.modes);
     if (counted.code != 0) {
       return report_failure(f.graph.name, counted);
     }
     if (counted.peak > peak) {
       peak = counted.peak;
     }
-    keeps = keeps + counted.keeps;
+    keeps += counted.keeps;
   }
   functions = built.decls.len();
   print("functions=" + util.i32_to_string(functions) + " keeps=" + util.i32_to_string(keeps) + " peak=" + util.i32_to_string(peak));
