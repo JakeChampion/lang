@@ -137,11 +137,14 @@ function c_pthread_create(thread: usize, attr: usize, start: usize, arg: usize):
 
 @import("libc.so", "pthread_detach")
 function c_pthread_detach(thread: usize): i32;
+
+@import("libc.so", "__system_property_get")
+function c_property_get(name: usize, value: usize): i32;
 ```
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. `ServiceStopped` comes when the user stops the foreground service from its notification, and `ServiceAction` when the user taps the action of the app in it. `P2pEnabled`, `P2pPeers` and `P2pGroup` come from Wi-Fi Direct.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. `ServiceStopped` comes when the user stops the foreground service from its notification, and `ServiceAction` when the user taps the action of the app in it. `P2pEnabled`, `P2pPeers` and `P2pGroup` come from Wi-Fi Direct.
 
 ```fern
 <<events>>=
@@ -254,13 +257,21 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle and the JNIEnv of the loop thread: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, and the JNIEnv at 32.
+The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread and the window flags: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, the JNIEnv at 32, and the flags at 40.
+
+Only the UI thread can change the views of the activity. So `immersive` sets bit 0 of the flags, and the focus callback hides the system bars on the UI thread, through the JNIEnv of that thread at 16 of the activity. The window gets the focus after it shows, and again each time the user comes back to it.
 
 The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
 
 ```fern
 <<the UI thread>>=
-const CTX_SIZE: i32 = 40;
+const CTX_SIZE: i32 = 48;
+
+const FLAG_IMMERSIVE: i32 = 1;
+
+// View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY, FULLSCREEN, HIDE_NAVIGATION,
+// LAYOUT_STABLE, LAYOUT_FULLSCREEN and LAYOUT_HIDE_NAVIGATION.
+const IMMERSIVE_UI: i32 = 5894;
 
 @callback("on_start")
 function on_start_entry(): usize;
@@ -305,6 +316,8 @@ function on_input_destroyed_entry(): usize;
 pub function start(activity: usize, thread_main: usize): void {
   unsafe {
     let ctx: usize = __alloc(CTX_SIZE);
+    __store_ptr(ctx + 32 as usize, 0 as usize);
+    __store_i32(ctx + 40 as usize, 0);
     let ok: i32 = c_pipe2(ctx, 524288) | c_pipe2(ctx + 8 as usize, 524288);
     if (ok != 0) {
       c_activity_finish(activity);
@@ -373,7 +386,35 @@ function on_destroy(activity: usize): void {
 }
 
 function on_focus(activity: usize, focused: i32): void {
+  if (focused != 0) {
+    hide_bars(activity);
+  }
   send(activity, FOCUS, focused as usize);
+}
+
+// Hides the status bar and the navigation bar when the app asked for it. It
+// runs on the UI thread.
+function hide_bars(activity: usize): void {
+  unsafe {
+    let ctx: usize = __load_ptr(activity + 56 as usize);
+    if (ctx == 0 as usize || (__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE) == 0) {
+      return;
+    }
+    let e: usize = __load_ptr(activity + 16 as usize);
+    let obj: usize = __load_ptr(activity + 24 as usize);
+    let none: usize = jni.jvalue_alloc(0);
+    let window: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "getWindow", "()Landroid/view/Window;"), none);
+    let decor: usize = jni.call_object_method_a(e, window, jni.get_method_id(e, jni.get_object_class(e, window), "getDecorView", "()Landroid/view/View;"), none);
+    jni.free_buffer(none);
+    let args: usize = jni.jvalues([IMMERSIVE_UI as usize]);
+    let ignored: usize = jni.call_void_method_a(e, decor, jni.get_method_id(e, jni.get_object_class(e, decor), "setSystemUiVisibility", "(I)V"), args);
+    jni.free_buffer(args);
+    if (jni.exception_occurred(e) != 0 as usize) {
+      let cleared: usize = jni.exception_clear(e);
+    }
+    let a: usize = jni.delete_local_ref(e, decor);
+    let b: usize = jni.delete_local_ref(e, window);
+  }
 }
 
 function on_window_created(activity: usize, window: usize): void {
@@ -494,8 +535,11 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           state = step(state, Touch(c_motion_action(ev) & 255, c_motion_x(ev, 0 as usize), c_motion_y(ev, 0 as usize)));
           handled = 1;
         } else if (kind == 1) {
-          state = step(state, Key(c_key_code(ev), c_key_action(ev)));
-          handled = 1;
+          let code: i32 = c_key_code(ev);
+          state = step(state, Key(code, c_key_action(ev)));
+          if (!system_key(code)) {
+            handled = 1;
+          }
         }
         c_queue_finish_event(lp.queue, ev, handled);
       }
@@ -503,6 +547,11 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
     __free(slot, 8);
   }
   return state;
+}
+
+// The volume keys and the mute key, which the system handles after the app.
+function system_key(code: i32): boolean {
+  return code == 24 || code == 25 || code == 164;
 }
 
 // Attaches the loop thread to the JVM of the activity, and keeps its
@@ -613,6 +662,51 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
     }
   }
 }
+
+// Hides the status bar and the navigation bar while the window has the
+// focus, or shows them again the next time the window gets the focus. A
+// swipe from the edge shows the bars for a short time.
+pub function immersive(ctx: usize, on: boolean): void {
+  unsafe {
+    let flags: i32 = __load_i32(ctx + 40 as usize);
+    if (on) {
+      __store_i32(ctx + 40 as usize, flags | FLAG_IMMERSIVE);
+    } else {
+      __store_i32(ctx + 40 as usize, flags & (0 - 1 - FLAG_IMMERSIVE));
+    }
+  }
+}
+
+// The audio stream that the volume keys change while the window shows, as
+// an android.media.AudioManager stream: 3 music, 4 alarm and 5 notification.
+pub function volume_stream(ctx: usize, stream: i32): void {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let args: usize = jni.jvalues([stream as usize]);
+  let ignored: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "setVolumeControlStream", "(I)V"), args);
+  jni.free_buffer(args);
+}
+
+// The IANA name of the time zone of the device, such as "Europe/London", or
+// "" when the device gives none. `std/tz` gives the zone of the name with
+// `tz.iana_zone`.
+pub function time_zone(): string {
+  let bytes: u8[] = [];
+  unsafe {
+    let name: usize = jni.cstr("persist.sys.timezone");
+    let value: usize = __alloc(PROP_VALUE_MAX);
+    let n: i32 = c_property_get(name, value);
+    for k in 0..n {
+      bytes = bytes.append(__load_u8(value + k as usize) as u8);
+    }
+    __free(value, PROP_VALUE_MAX);
+    jni.free_buffer(name);
+  }
+  return utf8.from_bytes_lossy(bytes);
+}
+
+// The size of the buffer of a system property value, PROP_VALUE_MAX.
+const PROP_VALUE_MAX: i32 = 92;
 
 // Moves the task of the activity behind the other apps, as the home key
 // does. The activity and its foreground service keep running.
