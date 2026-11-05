@@ -1,0 +1,304 @@
+// The rooms of the internet mode. One phone creates a room and gets a short
+// code. The other phone joins the room with the code. The server gives each
+// member a token, over TLS. The relay sends a datagram that carries a token
+// to the other member of its room. The relay cannot read the voice, because
+// the phones seal it with the keys of their own exchange.
+//
+// This module does no I/O. The server gives it the time and the random bytes.
+import "std/hex";
+import "std/net";
+
+pub const PORT: i32 = 47130;
+
+pub const CODE_LEN: i32 = 6;
+
+// No 0, O, 1, I or L: a user reads the code to the other user.
+const ALPHABET: string = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+pub const TOKEN_LEN: i32 = 16;
+
+// The random bytes of one request: 8 for the code and the bytes of the token.
+pub const RANDOM_LEN: i32 = 24;
+
+// A relayed datagram is this byte, a token, and the datagram of the LAN
+// transport.
+pub const MAGIC: u8 = 248u8;
+
+// A room with one member closes 10 minutes after it opens. A room with two
+// members closes after 2 minutes with no datagram.
+pub const OPEN_MS: i64 = 600000i64;
+
+pub const IDLE_MS: i64 = 120000i64;
+
+// Each address can send 10 requests in a minute, so a guess of the code is
+// slow.
+pub const RATE_MS: i64 = 60000i64;
+
+pub const RATE_MAX: i32 = 10;
+
+pub const MAX_ROOMS: i32 = 4096;
+
+// The longest request line.
+pub const LINE_MAX: i32 = 64;
+
+pub struct Member { token: u8[], addr: Option[net.SocketAddr] }
+
+pub struct Room { code: string, opened: i64, last: i64, members: Member[] }
+
+struct Hits { ip: string, at: i64[] }
+
+pub struct Rooms { rooms: Room[], hits: Hits[] }
+
+pub enum Reply {
+  Created(string, u8[]),
+  Joined(u8[]),
+  Refused(string),
+}
+
+pub struct Answer { rooms: Rooms, reply: Reply }
+
+// A datagram for the relay to send.
+pub struct Forward { to: net.SocketAddr, data: u8[] }
+
+pub struct Relayed { rooms: Rooms, out: Option[Forward] }
+
+pub function empty(): Rooms {
+  return Rooms { rooms: [], hits: [] };
+}
+
+// The code that 8 random bytes give. The modulo bias is below one part in
+// 10^10.
+function code_of(random: [u8]): string {
+  let v: i64 = 0i64;
+  for k in 0..8 {
+    v = v << 8i64 | random[k] as i64;
+  }
+  v = v & 9223372036854775807i64;
+  let letters: [u8] = ALPHABET.as_bytes();
+  let n: i64 = letters.len() as i64;
+  let out: u8[] = [];
+  for k in 0..CODE_LEN {
+    out = out.append(letters[(v % n) as i32]);
+    v = v / n;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function token_of(random: [u8]): u8[] {
+  let out: u8[] = [];
+  for k in 8..RANDOM_LEN {
+    out = out.append(random[k]);
+  }
+  return out;
+}
+
+// Compares two tokens in a time that does not depend on where they differ.
+function same_token(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let d: i32 = 0;
+  for k in 0..a.len() {
+    d = d | (a[k] ^ b[k]) as i32;
+  }
+  return d == 0;
+}
+
+function open(room: Room, now: i64): boolean {
+  if (room.members.len() < 2) {
+    return now - room.opened < OPEN_MS;
+  }
+  return now - room.last < IDLE_MS;
+}
+
+// The table without its closed rooms and old requests.
+pub function expire(r: Rooms, now: i64): Rooms {
+  let rooms: Room[] = [];
+  for room in r.rooms {
+    if (open(room, now)) {
+      rooms = rooms.append(room);
+    }
+  }
+  let hits: Hits[] = [];
+  for h in r.hits {
+    let at: i64[] = [];
+    for t in h.at {
+      if (now - t < RATE_MS) {
+        at = at.append(t);
+      }
+    }
+    if (at.len() > 0) {
+      hits = hits.append(Hits { ip: h.ip, at: at });
+    }
+  }
+  return Rooms { rooms: rooms, hits: hits };
+}
+
+// The table with one more request from `ip`, or None when `ip` sent too many.
+function counted(r: Rooms, ip: string, now: i64): Option[Rooms] {
+  for i in 0..r.hits.len() {
+    let h: Hits = r.hits[i];
+    if (h.ip == ip) {
+      if (h.at.len() >= RATE_MAX) {
+        return None;
+      }
+      return Some(Rooms { ...r, hits: r.hits.with(i, Hits { ip: ip, at: h.at.append(now) }) });
+    }
+  }
+  return Some(Rooms { ...r, hits: r.hits.append(Hits { ip: ip, at: [now] }) });
+}
+
+function room_index(r: Rooms, code: string): i32 {
+  for i in 0..r.rooms.len() {
+    if (r.rooms[i].code == code) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function refused(r: Rooms, why: string): Answer {
+  return Answer { rooms: r, reply: Refused(why) };
+}
+
+// Opens a room for `ip`. `random` holds RANDOM_LEN bytes.
+pub function create(r0: Rooms, ip: string, now: i64, random: [u8]): Answer {
+  let Some(r) = counted(expire(r0, now), ip, now) else {
+    return refused(expire(r0, now), "too many requests");
+  };
+  if (r.rooms.len() >= MAX_ROOMS) {
+    return refused(r, "the server is full");
+  }
+  let code: string = code_of(random);
+  if (room_index(r, code) >= 0) {
+    return refused(r, "try again");
+  }
+  let token: u8[] = token_of(random);
+  let room = Room { code: code, opened: now, last: now, members: [Member { token: token, addr: None }] };
+  return Answer { rooms: Rooms { ...r, rooms: r.rooms.append(room) }, reply: Created(code, token) };
+}
+
+// Adds `ip` to the room of `code`. `random` holds RANDOM_LEN bytes.
+pub function join(r0: Rooms, ip: string, code: string, now: i64, random: [u8]): Answer {
+  let Some(r) = counted(expire(r0, now), ip, now) else {
+    return refused(expire(r0, now), "too many requests");
+  };
+  let i: i32 = room_index(r, code.to_ascii_upper());
+  if (i < 0) {
+    return refused(r, "no room has this code");
+  }
+  let room: Room = r.rooms[i];
+  if (room.members.len() >= 2) {
+    return refused(r, "the room is full");
+  }
+  let token: u8[] = token_of(random);
+  let joined = Room { ...room, last: now, members: room.members.append(Member { token: token, addr: None }) };
+  return Answer { rooms: Rooms { ...r, rooms: r.rooms.with(i, joined) }, reply: Joined(token) };
+}
+
+// The text of a reply, as the server sends it.
+pub function reply_line(reply: Reply): string {
+  match (reply) {
+    Created(code, token) => {
+      return "ROOM " + code + " " + hex.encode(token) + "\n";
+    },
+    Joined(token) => {
+      return "JOINED " + hex.encode(token) + "\n";
+    },
+    Refused(why) => {
+      return "ERROR " + why + "\n";
+    }
+  }
+  return "";
+}
+
+function token_text(text: string): Option[u8[]] {
+  if let Ok(token) = hex.decode(text) {
+    if (token.len() == TOKEN_LEN) {
+      return Some(token);
+    }
+  }
+  return None;
+}
+
+// The reply in a line from the server, without its newline.
+pub function parse_reply(line: string): Reply {
+  let words: string[] = line.trim().split(" ");
+  if (words.len() == 3 && words[0] == "ROOM" && words[1].len() == CODE_LEN) {
+    if let Some(token) = token_text(words[2]) {
+      return Created(words[1], token);
+    }
+  }
+  if (words.len() == 2 && words[0] == "JOINED") {
+    if let Some(token) = token_text(words[1]) {
+      return Joined(token);
+    }
+  }
+  if let Some(why) = line.trim().strip_prefix("ERROR ") {
+    return Refused(why);
+  }
+  return Refused("the server sent an unknown reply");
+}
+
+// The answer to one request line from `ip`: `CREATE`, or `JOIN` and a code.
+pub function answer(r: Rooms, ip: string, line: string, now: i64, random: [u8]): Answer {
+  let words: string[] = line.trim().split(" ");
+  if (words.len() == 1 && words[0] == "CREATE") {
+    return create(r, ip, now, random);
+  }
+  if (words.len() == 2 && words[0] == "JOIN" && words[1].len() == CODE_LEN) {
+    return join(r, ip, words[1], now, random);
+  }
+  return refused(r, "unknown request");
+}
+
+// The datagram that a phone sends to the relay for `packet`.
+pub function wrap(token: [u8], packet: [u8]): u8[] {
+  let out: u8[] = [MAGIC];
+  for b in token {
+    out = out.append(b);
+  }
+  for b in packet {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// Relays the first `n` bytes of `data`, which came from `from`. The member
+// of the token now has the address `from`, so a phone that changes network
+// keeps its room. The datagram goes to the other member when the relay knows
+// its address.
+pub function relay(r: Rooms, from: net.SocketAddr, data: [u8], n: i32, now: i64): Relayed {
+  if (n <= 1 + TOKEN_LEN || n > data.len() || data[0] != MAGIC) {
+    return Relayed { rooms: r, out: None };
+  }
+  let token: u8[] = [];
+  for k in 1..1 + TOKEN_LEN {
+    token = token.append(data[k]);
+  }
+  for i in 0..r.rooms.len() {
+    let room: Room = r.rooms[i];
+    for m in 0..room.members.len() {
+      if (same_token(room.members[m].token, token) && open(room, now)) {
+        let members = room.members.with(m, Member { token: token, addr: Some(from) });
+        let rooms = Rooms { ...r, rooms: r.rooms.with(i, Room { ...room, last: now, members: members }) };
+        return Relayed { rooms: rooms, out: forward(members, 1 - m, data, n) };
+      }
+    }
+  }
+  return Relayed { rooms: r, out: None };
+}
+
+function forward(members: Member[], other: i32, data: [u8], n: i32): Option[Forward] {
+  if (other >= members.len()) {
+    return None;
+  }
+  let Some(to) = members[other].addr else {
+    return None;
+  };
+  let body: u8[] = [];
+  for k in 1 + TOKEN_LEN..n {
+    body = body.append(data[k]);
+  }
+  return Some(Forward { to: to, data: body });
+}
