@@ -9,14 +9,21 @@ turns off the freezer of cached apps, so that the copy that is
 not in front keeps running as a second phone would. Then it:
 
 1. starts both copies, and requires the start line of each: one on port
-   47120 and one on 47121, and that each one runs its foreground service;
+   47120 and one on 47121, that each one runs its foreground service, and
+   that each one holds its wake lock;
 2. waits until both made their keys, then taps MATCH in each copy;
 3. holds the talk button of the first copy, then of the second, and requires
    that each copy transmits and the other hears it;
-4. waits 20 seconds, and requires that neither copy lost its peer and that
-   both still run with no crash in logcat;
+4. presses BACK in the second copy, taps TALK in a notification and then
+   STOP TALKING, and requires that the copy of that notification transmits
+   and the other copy hears it. Then it waits 20 seconds, and requires that
+   the second copy went to the background, that neither copy lost its peer,
+   and that both still run with no crash in logcat;
 5. stops both copies and starts them again, and requires that each copy
-   kept the identity of the other and connects with no string to compare.
+   kept the identity of the other and connects with no string to compare;
+6. starts the first copy alone, opens SETTINGS, SERVER and PHONE KEYBOARD,
+   types a server with key events and ENTER, and requires that the copy
+   saves the server and loads it at the next start.
 
 OUT_DIR gets logcat and a screenshot of each copy.
 """
@@ -33,6 +40,7 @@ ACTIVITY = "/android.app.NativeActivity"
 START = re.compile(r"walkie: node \d+, port (4712[01]), socket (-?\d+), speaker rate ([1-9]\d*)")
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 IDENTITY = re.compile(r"walkie: identity [0-9a-f]{8}, (\d+) known phones")
+SERVER = "rooms.example.com"
 LOST = re.compile(r"walkie: (the peer stopped answering|the other phone did not confirm the code|the peer left|the connection was lost)")
 LOGCAT = ["logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:F", "*:F"]
 WAIT_SECONDS = 30
@@ -133,6 +141,28 @@ def meet_again():
     wait_for("each copy sees the other confirm again", lambda log: has(log, a, "walkie: the other phone confirmed") and has(log, b, "walkie: the other phone confirmed"), 10)
 
 
+def type_server(w, h):
+    """Types a room server through the key events of the phone keyboard."""
+    for package in (FIRST, SECOND):
+        adb("shell", "am", "force-stop", package)
+    adb("logcat", "-c")
+    to_front(FIRST)
+    wait_for("the first copy starts alone", lambda log: pid(FIRST) != "" and has(log, pid(FIRST), "walkie: node "))
+    a = pid(FIRST)
+    # The middles of screen.mode_button, screen.server_row and
+    # screen.phone_keys_button.
+    for x, y in [(w * 75 // 100, h * 45 // 1000), (w // 2, h * 795 // 1000), (w // 2, h * 32 // 100)]:
+        adb("shell", "input", "tap", str(x), str(y))
+        time.sleep(1)
+    adb("shell", "input", "text", SERVER)
+    adb("shell", "input", "keyevent", "KEYCODE_ENTER")
+    wait_for("the copy saves the server", lambda log: has(log, a, "walkie: server " + SERVER), 10)
+    adb("shell", "am", "force-stop", FIRST)
+    adb("logcat", "-c")
+    to_front(FIRST)
+    wait_for("the copy loads the server", lambda log: pid(FIRST) != "" and has(log, pid(FIRST), ", server " + SERVER))
+
+
 def screen_size():
     m = re.search(r"(\d+)x(\d+)", adb("shell", "wm", "size").splitlines()[-1])
     return int(m.group(1)), int(m.group(2))
@@ -167,6 +197,35 @@ def talk(package, talker, listener, w, h):
     if not any("walkie: hearing the peer" in line for line in lines_of(log, listener)[mark:]):
         raise Failure("the other copy did not hear " + package)
     wait_for(package + " stops after the release", lambda log: last_state(log, talker) == "CONNECTED_LISTENING", 10)
+
+
+def tap_notice_button(label, out):
+    """Opens the notifications and taps the first button with the text
+    label. It gives the pid of the copy that logs the tap."""
+    adb("shell", "cmd", "statusbar", "expand-notifications")
+    time.sleep(1.5)
+    adb("shell", "uiautomator", "dump", "/sdcard/notices.xml")
+    dump = adb("shell", "cat", "/sdcard/notices.xml")
+    m = re.search(r'text="' + re.escape(label) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump, re.IGNORECASE)
+    if m is None:
+        Path(out, "notices.xml").write_text(dump)
+        raise Failure("no " + label + " button in the notifications")
+    x1, y1, x2, y2 = (int(g) for g in m.groups())
+    adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+    adb("shell", "cmd", "statusbar", "collapse")
+
+
+def talk_from_notice(a, b, out):
+    """TALK in a notification makes its copy transmit while it is not in
+    front, and STOP TALKING makes it listen again."""
+    tap_notice_button("Talk", out)
+    wait_for("a copy talks from its notification", lambda log: has(log, a, "walkie: talk from the notification true") or has(log, b, "walkie: talk from the notification true"), 10)
+    log = logcat()
+    talker, listener = (a, b) if has(log, a, "walkie: talk from the notification true") else (b, a)
+    mark = len(lines_of(log, listener))
+    wait_for("the other copy hears the notification talk", lambda log: any("walkie: hearing the peer" in line for line in lines_of(log, listener)[mark:]), 10)
+    tap_notice_button("Stop talking", out)
+    wait_for("the copy stops talking from its notification", lambda log: last_state(log, talker) == "CONNECTED_LISTENING", 10)
 
 
 def save(out):
@@ -230,6 +289,9 @@ def run(apk, second_apk, out):
             raise Failure("a new copy already knows a phone")
     for package in (FIRST, SECOND):
         wait_for(package + " runs its foreground service", lambda log: foreground(package))
+    wait_for("both copies stay awake", lambda log: has(log, a, "walkie: awake with the screen off") and has(log, b, "walkie: awake with the screen off"))
+    if adb("shell", "dumpsys", "power").count("fern:walkie") < 2:
+        raise Failure("Android does not list a wake lock of each copy")
     wait_for("both copies make keys", lambda log: has(log, a, "walkie: keys are ready") and has(log, b, "walkie: keys are ready"))
     w, h = screen_size()
     confirm(SECOND, b, w, h)
@@ -240,6 +302,9 @@ def run(apk, second_apk, out):
     screenshot(f"{out}/first.png")
     talk(SECOND, b, a, w, h)
     screenshot(f"{out}/second.png")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    wait_for("BACK moves the second copy to the background", lambda log: has(log, b, "walkie: to the background"), 10)
+    talk_from_notice(a, b, out)
     time.sleep(20)
     log = logcat()
     if pid(FIRST) != a or pid(SECOND) != b:
@@ -253,6 +318,7 @@ def run(apk, second_apk, out):
     if crashes:
         raise Failure("logcat: " + "; ".join(crashes))
     meet_again()
+    type_server(w, h)
 
 
 def main(apk, second_apk, out):

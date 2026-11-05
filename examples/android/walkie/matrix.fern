@@ -1,0 +1,126 @@
+// A dot-matrix font: each character is 5 columns by 7 rows of round dots,
+// as on a dot-matrix display. Lower-case letters draw as upper-case, and a
+// character with no glyph is a blank cell.
+import "std/android/draw";
+
+pub const COLS: i32 = 5;
+
+pub const ROWS: i32 = 7;
+
+// The characters of GLYPHS, in order.
+const CHARS: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.:?!/',()";
+
+// Seven rows for each character of CHARS. Bit 4 of a row is its left column.
+const GLYPHS: i32[] = [
+  14, 17, 17, 17, 31, 17, 17,
+  30, 17, 17, 30, 17, 17, 30,
+  14, 17, 16, 16, 16, 17, 14,
+  28, 18, 17, 17, 17, 18, 28,
+  31, 16, 16, 30, 16, 16, 31,
+  31, 16, 16, 30, 16, 16, 16,
+  14, 17, 16, 23, 17, 17, 15,
+  17, 17, 17, 31, 17, 17, 17,
+  14, 4, 4, 4, 4, 4, 14,
+  7, 2, 2, 2, 2, 18, 12,
+  17, 18, 20, 24, 20, 18, 17,
+  16, 16, 16, 16, 16, 16, 31,
+  17, 27, 21, 21, 17, 17, 17,
+  17, 17, 25, 21, 19, 17, 17,
+  14, 17, 17, 17, 17, 17, 14,
+  30, 17, 17, 30, 16, 16, 16,
+  14, 17, 17, 17, 21, 18, 13,
+  30, 17, 17, 30, 20, 18, 17,
+  15, 16, 16, 14, 1, 1, 30,
+  31, 4, 4, 4, 4, 4, 4,
+  17, 17, 17, 17, 17, 17, 14,
+  17, 17, 17, 17, 17, 10, 4,
+  17, 17, 17, 21, 21, 21, 10,
+  17, 17, 10, 4, 10, 17, 17,
+  17, 17, 17, 10, 4, 4, 4,
+  31, 1, 2, 4, 8, 16, 31,
+  14, 17, 19, 21, 25, 17, 14,
+  4, 12, 4, 4, 4, 4, 14,
+  14, 17, 1, 2, 4, 8, 31,
+  31, 2, 4, 2, 1, 17, 14,
+  2, 6, 10, 18, 31, 2, 2,
+  31, 16, 30, 1, 1, 17, 14,
+  6, 8, 16, 30, 17, 17, 14,
+  31, 1, 2, 4, 8, 8, 8,
+  14, 17, 17, 14, 17, 17, 14,
+  14, 17, 17, 15, 1, 2, 12,
+  0, 0, 0, 31, 0, 0, 0,
+  0, 0, 0, 0, 0, 12, 12,
+  0, 12, 12, 0, 12, 12, 0,
+  14, 17, 1, 2, 4, 0, 4,
+  4, 4, 4, 4, 4, 0, 4,
+  0, 1, 2, 4, 8, 16, 0,
+  12, 4, 8, 0, 0, 0, 0,
+  0, 0, 0, 0, 12, 4, 8,
+  2, 4, 8, 8, 8, 4, 2,
+  8, 4, 2, 2, 2, 4, 8,
+];
+
+// The position of `c` in CHARS, or -1.
+function glyph_index(c: u8): i32 {
+  let up: u8 = c;
+  if (c >= 97u8 && c <= 122u8) {
+    up = c - 32u8;
+  }
+  let all: [u8] = CHARS.as_bytes();
+  for k in 0..all.len() {
+    if (all[k] == up) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// True when the dot at `col` and `row` of `c` is on.
+pub function lit(c: u8, col: i32, row: i32): boolean {
+  let k: i32 = glyph_index(c);
+  if (k < 0 || col < 0 || col >= COLS || row < 0 || row >= ROWS) {
+    return false;
+  }
+  return (GLYPHS[k * ROWS + row] >> COLS - 1 - col & 1) == 1;
+}
+
+// The width in pixels of `s` with `pitch` pixels from dot to dot. A column
+// of space separates two characters.
+pub function width(s: string, pitch: i32): i32 {
+  if (s.len() == 0) {
+    return 0;
+  }
+  return (s.len() * (COLS + 1) - 1) * pitch;
+}
+
+pub function height(pitch: i32): i32 {
+  return ROWS * pitch;
+}
+
+// The largest pitch up to `cap` at which `s` fits in `w` pixels, at least 1.
+pub function fit_pitch(s: string, w: i32, cap: i32): i32 {
+  let p: i32 = cap;
+  while (p > 1 && width(s, p) > w) {
+    p = p - 1;
+  }
+  return p;
+}
+
+// Draws `s` with the top-left dot cell at x and y.
+pub function text(f: draw.Frame, x: i32, y: i32, s: string, pitch: i32, color: i32): void {
+  let r: i32 = pitch * 2 / 5;
+  if (r < 1) {
+    r = 1;
+  }
+  let bytes: [u8] = s.as_bytes();
+  for k in 0..bytes.len() {
+    let left: i32 = x + k * (COLS + 1) * pitch;
+    for row in 0..ROWS {
+      for col in 0..COLS {
+        if (lit(bytes[k], col, row)) {
+          f.disc(left + col * pitch + pitch / 2, y + row * pitch + pitch / 2, r, color);
+        }
+      }
+    }
+  }
+}

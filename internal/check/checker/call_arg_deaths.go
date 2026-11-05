@@ -143,14 +143,14 @@ type ArgDeaths struct {
 }
 
 func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
-	return callArgDeaths(fn, info, nil)
+	return callArgDeaths(fn, info, nil, nil)
 }
 
 // callArgDeaths is CallArgDeaths with handleFree, which reports a type that
 // cannot hold a handle. A payload an arm binds from a fresh value or an own
 // parameter is a fresh local when its type is handle-free; without the
 // predicate no such payload is.
-func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) ArgDeaths {
+func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) ArgDeaths {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
 	occurrences := map[string]int{}
@@ -215,13 +215,15 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 		switch x := n.(type) {
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				for _, b := range arm.Bindings {
+				names, _ := arm.OwnBindings()
+				for _, b := range names {
 					bound[b] = true
 				}
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
-				for _, b := range arm.Bindings {
+				names, _ := arm.OwnBindings()
+				for _, b := range names {
 					bound[b] = true
 				}
 			}
@@ -246,7 +248,8 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			}
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				for _, b := range arm.Bindings {
+				names, _ := arm.OwnBindings()
+				for _, b := range names {
 					if _, had := declNode[b]; !had {
 						declNode[b] = x
 					}
@@ -254,7 +257,8 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
-				for _, b := range arm.Bindings {
+				names, _ := arm.OwnBindings()
+				for _, b := range names {
 					if _, had := declNode[b]; !had {
 						declNode[b] = x
 					}
@@ -265,8 +269,15 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 	})
 	var fieldSelections map[string]int
 	var fieldReads map[[2]string]int
-	// An unpack reads the one field of a fresh local or an own parameter that
-	// nothing else reads, from a holder that each mention selects a field of.
+	// A name that only matches on a fresh call bind: the match takes the
+	// result, so the payload is owned.
+	freshBound, staleBound := matchBinds(info, body)
+	payloadOwned := func(name string) bool {
+		return freshBound[name] && !staleBound[name] && !isParam[name] && declCount[name] == 0
+	}
+	// An unpack reads the one field of a fresh local, an own parameter or a
+	// payload that a match took, that nothing else reads, from a holder that
+	// each mention selects a field of.
 	unpack := func(e ast.Expr) bool {
 		fa, isField := e.(*ast.FieldAccess)
 		if !isField {
@@ -274,7 +285,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 		}
 		hid, isID := fa.Target.(*ast.Ident)
 		// An own parameter holds its fields as a fresh local does.
-		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
+		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) && !payloadOwned(hid.Name) {
 			return false
 		}
 		if fieldSelections == nil {
@@ -291,12 +302,6 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			})
 		}
 		return fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name] == occurrences[hid.Name]
-	}
-	// A name that only matches on a fresh call bind: the match takes the
-	// result, so the payload is owned.
-	freshBound, staleBound := matchBinds(info, body)
-	payloadOwned := func(name string) bool {
-		return freshBound[name] && !staleBound[name] && !isParam[name] && declCount[name] == 0
 	}
 	// An assignment that stores a value another name can hold ends the
 	// freshness of its target. An unpack can read a holder that an earlier
@@ -340,7 +345,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			aliasInitLocal[name] = true
 		}
 	}
-	for name := range ownedAliases(body, ownParam, declCount, order, freshInitLocal, staleAssign) {
+	for name := range ownedAliases(body, ownParam, declCount, order, freshInitLocal, staleAssign, payloadOwned) {
 		aliasInitLocal[name] = true
 	}
 	admitted := func(name string) bool {
@@ -464,13 +469,15 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			moveSite(x, x.Tag)
 			tag = x.Tag
 			for _, arm := range x.Arms {
-				arms = append(arms, armBinds{arm.Bindings, arm.BindingTypes})
+				names, types := arm.OwnBindings()
+				arms = append(arms, armBinds{names, types})
 			}
 		case *ast.MatchExpr:
 			moveSite(x, x.Tag)
 			tag = x.Tag
 			for _, arm := range x.Arms {
-				arms = append(arms, armBinds{arm.Bindings, arm.BindingTypes})
+				names, types := arm.OwnBindings()
+				arms = append(arms, armBinds{names, types})
 			}
 		case *ast.Var:
 			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
@@ -498,7 +505,11 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 	})
 	markOnce := func(scope ast.Expr, name string) {
 		total := 0
+		copied := copiedArgs(scope, name, scalar)
 		ast.Walk(scope, func(m ast.Node) bool {
+			if e, ok := m.(ast.Expr); ok && copied[e] {
+				return false
+			}
 			if id, ok := m.(*ast.Ident); ok && id.Name == name {
 				total++
 			}
@@ -1064,7 +1075,11 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
-			if src, ok := x.Init.(*ast.Ident); ok && declCount[x.Name] == 1 && !looped[x.Name] && order.IsLast(src) {
+			src, ok := x.Init.(*ast.Ident)
+			if !ok {
+				src, ok = spreadSource(x.Init)
+			}
+			if ok && declCount[x.Name] == 1 && !looped[x.Name] && order.IsLast(src) {
 				aliasOf[x.Name] = src
 			}
 		case *ast.Assign:
@@ -1115,6 +1130,26 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 	return in
 }
 
+// spreadSource is the base of a struct literal `T { ...src, f: v }` whose
+// field values do not name src. The literal takes the rest of src, as an
+// alias does.
+func spreadSource(e ast.Expr) (*ast.Ident, bool) {
+	sl, ok := e.(*ast.StructLit)
+	if !ok {
+		return nil, false
+	}
+	src, ok := sl.Base.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	for _, f := range sl.Fields {
+		if StmtReferencesName(f.Value, src.Name) {
+			return nil, false
+		}
+	}
+	return src, true
+}
+
 // loopedDecls names the locals that a declaration inside a loop binds.
 func loopedDecls(body *ast.Block) map[string]bool {
 	looped := map[string]bool{}
@@ -1148,7 +1183,8 @@ func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool) {
 			_, named := m.Tag.(*ast.Ident)
 			taken := !named && freshInit(info, m.Tag)
 			for _, arm := range m.Arms {
-				for _, b := range arm.Bindings {
+				names, _ := arm.OwnBindings()
+				for _, b := range names {
 					if taken {
 						fresh[b] = true
 					} else {
@@ -1185,17 +1221,48 @@ func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]
 	return false
 }
 
+// copiedArgs names direct scalar field reads before an argument that is name
+// alone. A scalar-returning call can consume name through an aggregate, so
+// its result type alone does not make it a copy of a field.
+func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.Expr]bool {
+	out := map[ast.Expr]bool{}
+	if len(scalar) == 0 {
+		return out
+	}
+	ast.Walk(scope, func(m ast.Node) bool {
+		c, isCall := m.(*ast.Call)
+		if !isCall {
+			return true
+		}
+		for k, a := range c.Args {
+			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
+				for _, before := range c.Args[:k] {
+					fa, isField := before.(*ast.FieldAccess)
+					if !isField || !scalar[before] {
+						continue
+					}
+					if target, ok := fa.Target.(*ast.Ident); ok && target.Name == name {
+						out[before] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
 // ownedAliases names the locals declared once, outside a loop, from an own
-// parameter at its last use, and given only owned values after that (stale
-// names the locals given another value).
-func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool) map[string]bool {
+// parameter or a payload that a match took, at its last use, and given only
+// owned values after that (stale names the locals given another value).
+func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool, payloadOwned func(string) bool) map[string]bool {
 	looped := loopedDecls(body)
 	sole := func(name string) bool {
 		return declCount[name] == 1 && !looped[name] && !stale[name]
 	}
 	ownedAtLastUse := func(e ast.Expr) bool {
 		src, ok := e.(*ast.Ident)
-		return ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src)
+		return ok && (ownParam[src.Name] && declCount[src.Name] == 0 || payloadOwned(src.Name)) && order.IsLast(src)
 	}
 	freshAtLastUse := func(e ast.Expr) bool {
 		src, ok := e.(*ast.Ident)
@@ -1209,8 +1276,9 @@ func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[strin
 				out[x.Name] = true
 			}
 		case *ast.Destructure:
-			// The fields that the destructure takes from an own parameter
-			// or a fresh local at its last use are owned, as the source is.
+			// The fields that the destructure takes from an own parameter, a
+			// payload a match took, or a fresh local at its last use are
+			// owned, as the source is.
 			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) {
 				return true
 			}
@@ -1317,7 +1385,7 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 
 // lastUseArgs returns the arguments at their last use, and the subset of
 // them that are unadmitted locals (see ArgDeaths.Unadmitted).
-func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (map[ast.Expr]bool, map[ast.Expr]bool) {
+func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) (map[ast.Expr]bool, map[ast.Expr]bool) {
 	out := map[ast.Expr]bool{}
 	loose := map[ast.Expr]bool{}
 	if fn.Body == nil {
@@ -1331,7 +1399,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (
 			inner, ok = &ast.FuncDecl{Params: lm.Params, Body: lm.Body}, true
 		}
 		if ok && inner != fn {
-			innerOut, innerLoose := lastUseArgs(inner, info, handleFree)
+			innerOut, innerLoose := lastUseArgs(inner, info, handleFree, scalar)
 			for e := range innerOut {
 				out[e] = true
 			}
@@ -1342,7 +1410,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (
 		}
 		return true
 	})
-	d := callArgDeaths(fn, info, handleFree)
+	d := callArgDeaths(fn, info, handleFree, scalar)
 	isParam := map[string]bool{}
 	ownParam := map[string]bool{}
 	for _, p := range fn.Params {

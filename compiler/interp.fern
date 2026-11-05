@@ -233,9 +233,24 @@ function coerce_int_width(val: Value, type_name: string): Value {
     }
   }
   if (type_name == "f64") {
-    if let VFloat32(f) = val {
-      return v_float(f.v);
+    match (val) {
+      VFloat32(f) => {
+        return v_float(f.v);
+      },
+      VInt(i) => {
+        return v_float(i.v as f64);
+      },
+      VInt64(i) => {
+        return v_float(wide_as_f64(i));
+      },
+      _ => {}
     }
+  }
+  if (parser.parse_type_ref(type_name).base == "Cell") {
+    if let VCell(c) = val {
+      return cell_as_declared(c, type_name);
+    }
+    return val;
   }
   if (type_name == "f32") {
     match (val) {
@@ -1383,56 +1398,108 @@ function cell_for(heap: interpheap.Heap, v: Value): Value {
 }
 
 function cell_value(heap: interpheap.Heap, v: Value): Value {
+  match (scalar_cell(v)) {
+    Some(sc) => {
+      return sc;
+    },
+    None => {}
+  }
+  let encoded = encoded_value(v);
+  if (encoded.ok) {
+    let c = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new(""), value: None };
+    return VCell { ...c, kind: "value", value: Some(interpheap.allocate(heap, encoded.text, [], encoded.edges)) };
+  }
+  return v_err("Cell: the value holds a function or a cell, which E057 rejects");
+}
+
+// The kind a cell of the declared element type holds, or "" for a type the
+// scalar slots do not hold.
+function cell_kind_of(elem: string): string {
+  if (elem == "boolean" || elem == "bool") {
+    return "bool";
+  }
+  if (util.has_str(["i32", "u32", "char", "u8", "i64", "u64", "usize", "f64", "f32", "string"], elem)) {
+    return elem;
+  }
+  return "";
+}
+
+// A cell declared as `Cell[T]` holds a T. A fresh cell takes its kind from
+// its initial value, so `cell_new(2)` is an i32 cell until the declaration
+// settles it, as the literal itself settles. Only a numeric cell changes
+// kind; the cell comes back unchanged when the kinds agree.
+function cell_as_declared(c: VCell, type_name: string): Value {
+  let ref = parser.parse_type_ref(type_name);
+  if (ref.args.len() != 1) {
+    return VCell { ...c };
+  }
+  let want = cell_kind_of(parser.render_type_ref(ref.args[0]));
+  if (!cell_kind_numeric(want) || !cell_kind_numeric(c.kind) || want == c.kind) {
+    return VCell { ...c };
+  }
+  match (scalar_cell(coerce_int_width(cell_method(c, "get", []), want))) {
+    Some(sc) => {
+      return sc;
+    },
+    None => {
+      return VCell { ...c };
+    }
+  }
+}
+
+function cell_kind_numeric(kind: string): boolean {
+  return util.has_str(["i32", "u32", "u8", "i64", "u64", "usize", "f64", "f32"], kind);
+}
+
+// A cell of a scalar, held in the slot of its kind, or None for a value the
+// heap holds.
+function scalar_cell(v: Value): Option[Value] {
   let c = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new(""), value: None };
   match (v) {
     VInt(n) => {
       c.ci.set(n.v);
       if (n.is_char) {
-        return VCell { ...c, kind: "char" };
+        return Some(VCell { ...c, kind: "char" });
       }
       if (n.is_byte) {
-        return VCell { ...c, kind: "u8" };
+        return Some(VCell { ...c, kind: "u8" });
       }
-      return VCell { ...c, kind: "i32" };
+      return Some(VCell { ...c, kind: "i32" });
     },
     VUint(n) => {
       c.ci.set(n.v);
-      return VCell { ...c, kind: "u32" };
+      return Some(VCell { ...c, kind: "u32" });
     },
     VBool(bb) => {
       if (bb.v) {
         c.ci.set(1);
       }
-      return VCell { ...c, kind: "bool" };
+      return Some(VCell { ...c, kind: "bool" });
     },
     VInt64(n) => {
       c.cl.set(vint_as_i64(v));
       if (n.ptr) {
-        return VCell { ...c, kind: "usize" };
+        return Some(VCell { ...c, kind: "usize" });
       }
       if (n.unsigned) {
-        return VCell { ...c, kind: "u64" };
+        return Some(VCell { ...c, kind: "u64" });
       }
-      return VCell { ...c, kind: "i64" };
+      return Some(VCell { ...c, kind: "i64" });
     },
     VFloat(f) => {
       c.cf.set(f.v);
-      return VCell { ...c, kind: "f64" };
+      return Some(VCell { ...c, kind: "f64" });
     },
     VFloat32(f) => {
       c.cf.set(f.v);
-      return VCell { ...c, kind: "f32" };
+      return Some(VCell { ...c, kind: "f32" });
     },
     VString(sv) => {
       c.cs.set(sv.v);
-      return VCell { ...c, kind: "string" };
+      return Some(VCell { ...c, kind: "string" });
     },
     _ => {
-      let encoded = encoded_value(v);
-      if (encoded.ok) {
-        return VCell { ...c, kind: "value", value: Some(interpheap.allocate(heap, encoded.text, [], encoded.edges)) };
-      }
-      return v_err("Cell: the value holds a function or a cell, which E057 rejects");
+      return None;
     }
   }
 }
@@ -5409,11 +5476,11 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
         let bvals = sv.field_values;
         let oi = 0;
         while (oi < sl.field_values.len()) {
-          let ov2 = eval_expr(sl.field_values[oi], env);
+          let oname = sl.field_names[oi];
+          let ov2 = settled_field(sl.type_name, oname, eval_expr(sl.field_values[oi], env), env);
           if (is_err(ov2)) {
             return ov2;
           }
-          let oname = sl.field_names[oi];
           let replaced = false;
           let bi = 0;
           while (bi < bnames.len()) {
@@ -5439,7 +5506,7 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
   let fvs: Value[] = [];
   let i = 0;
   while (i < sl.field_values.len()) {
-    let fv = eval_expr(sl.field_values[i], env);
+    let fv = settled_field(sl.type_name, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
     if (is_err(fv)) {
       return fv;
     }
@@ -5447,6 +5514,27 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
     i += 1;
   }
   return v_struct_at(sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
+}
+
+// A field value settles to the declared type of the field, as a let settles
+// its initializer: a literal takes the declared width, and a cell the
+// declared element type.
+function settled_field(type_name: string, field: string, fv: Value, env: Env): Value {
+  if (is_err(fv)) {
+    return fv;
+  }
+  let base = util.base_type_name(type_name);
+  for sd in env.type_decls {
+    if (sd.name == base) {
+      for fd in sd.fields {
+        if (fd.name == field) {
+          return coerce_int_width(fv, fd.type_name);
+        }
+      }
+      return fv;
+    }
+  }
+  return fv;
 }
 
 function eval_var_init(v: ast.StmtVar, env: Env): Value {

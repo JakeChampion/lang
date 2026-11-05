@@ -13842,7 +13842,7 @@ function payload_count_message(variant: string, want: i32, got: i32): string {
 function arg_subject(c: ast.ExprCall, n: i32): string {
   let arg = "argument " + util.i32_to_string(n);
   if let ast.ExprIdent(id) = c.callee {
-    if (!util.str_has_prefix(id.name, "__")) {
+    if (!util.str_has_prefix(id.name, "__") || util.str_has_prefix(id.name, util.ENTRY_SHADOW_PREFIX)) {
       return arg + " to \"" + util.demangle(id.name) + "\"";
     }
   }
@@ -19347,10 +19347,14 @@ function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
   return found;
 }
 
-// An own parameter, or a fresh local declared once outside a loop.
+// An own parameter, a payload that a match took, or a fresh local declared
+// once outside a loop.
 function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
   if (lu_own_param(fx, name)) {
     return lu_decl_count(fx, name) == 0;
+  }
+  if (lu_fresh_bound(fx, name)) {
+    return true;
   }
   return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
 }
@@ -19676,7 +19680,30 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
+  if let Some(src) = lu_spread_source(init) {
+    return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
+  }
   return false;
+}
+
+// The base of a struct literal `T { ...src, f: v }` whose field values do
+// not name `src`. The literal takes the rest of `src`, as an alias does.
+function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
+  let ast.ExprStructLit(sl) = e else {
+    return None;
+  };
+  let ast.ExprIdent(src) = sl.base else {
+    return None;
+  };
+  if (!sl.has_base) {
+    return None;
+  }
+  for v in sl.field_values {
+    if (util.has_str(astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all), src.name)) {
+      return None;
+    }
+  }
+  return Some(src);
 }
 
 function lu_value_owned(fx: LuFn, target: string, e: ast.Expr, seen: string[]): boolean {
@@ -20381,16 +20408,67 @@ function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, 
   if (util.has_str(fx.facts.escaping, name)) {
     return false;
   }
-  if (lu_rebind_site(site, name)) {
+  if (lu_rebind_site(site, name) || lu_returns_after_reads(site, call, aid)) {
     return true;
   }
-  if (!once) {
+  if (!once && !lu_reads_before(call, aid)) {
     return false;
   }
   if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
     return false;
   }
   return !lu_live_after(fx, site, call, aid);
+}
+
+// The other mentions of `aid` in the call are reads of one of its fields, in
+// arguments before it. The ownership walk decides whether each read gives a
+// copy: its key carries "~".
+function lu_reads_before(call: ast.Expr, aid: ast.ExprIdent): boolean {
+  let ast.ExprCall(c) = call else {
+    return false;
+  };
+  let before = 0;
+  for a in c.args {
+    if let ast.ExprIdent(x) = a {
+      if (x.line == aid.line && x.col == aid.col) {
+        return before + 1 == astwalk.count_ident_expr(call, aid.name);
+      }
+    }
+    let n = astwalk.count_ident_expr(a, aid.name);
+    if (n > 0) {
+      if (n != 1 || !lu_reads_field_of(a, aid.name)) {
+        return false;
+      }
+      before += 1;
+    }
+  }
+  return false;
+}
+
+function lu_reads_field_of(e: ast.Expr, name: string): boolean {
+  if let ast.ExprFieldAccess(fa) = e {
+    if let ast.ExprIdent(o) = fa.obj {
+      return o.name == name;
+    }
+  }
+  return false;
+}
+
+// A return of the call, which mentions the name only in it, and there only
+// in field reads before the argument.
+function lu_returns_after_reads(site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
+  if let ast.StmtReturn(r) = site.stmts[site.idx] {
+    return !site.in_iife && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(call, aid);
+  }
+  return false;
+}
+
+// "~" when the call mentions the name more than once.
+function lu_copy_tag(call: ast.Expr, name: string): string {
+  if (astwalk.count_ident_expr(call, name) > 1) {
+    return "~";
+  }
+  return "";
 }
 
 // A local that is not admitted can be a read out of a borrowed structure.
@@ -20792,7 +20870,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
       match (c.args[i]) {
         ast.ExprIdent(aid) => {
           if (lu_dies(fx, e, aid, outer, has_outer, site)) {
-            acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name));
+            acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name) + lu_copy_tag(e, aid.name));
           }
         },
         ast.ExprFieldAccess(fa) => {
@@ -21228,7 +21306,7 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let oc = ow_own_call(c, ctx);
   let i = 0;
   while (i < oc.args.len() && i < oc.flags.len()) {
-    if (oc.flags[i] && oc.recv != RECV_DYN && !ow_is_owned_expr(oc.args[i], ctx)) {
+    if (oc.flags[i] && oc.recv != RECV_DYN && !ow_is_owned_expr(oc.args[i], ctx) && !ow_dies_after_copies(oc.args, i, ctx)) {
       let aline = ast.expr_line(oc.args[i]);
       let acol = ast.expr_col(oc.args[i]);
       if (aline <= 0) {
@@ -22578,6 +22656,25 @@ function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: str
 
 function ow_expr_holds_no_handle(e: ast.Expr, ctx: OwnCtx): boolean {
   return ow_holds_no_handle(typeinfo.spelling(check_expr(e, ctx.scope)), ctx.decls);
+}
+
+// The local at argument i dies there, and each argument before it that reads
+// one of its fields gives a copy: a scalar.
+function ow_dies_after_copies(args: ast.Expr[], i: i32, ctx: OwnCtx): boolean {
+  let ast.ExprIdent(id) = args[i] else {
+    return false;
+  };
+  let key = lu_key(id.line, id.col);
+  let tagged = util.has_str(ctx.last_use, key + "~") || util.has_str(ctx.last_use, key + "^~") && ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(id.name)), ctx.decls);
+  if (!tagged || util.has_str(ctx.borrowed, id.name)) {
+    return false;
+  }
+  for j in 0..i {
+    if (astwalk.count_ident_expr(args[j], id.name) > 0 && !ow_expr_is_scalar(args[j], ctx)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function ow_local_last_use(id: ast.ExprIdent, ctx: OwnCtx): boolean {
@@ -26645,6 +26742,9 @@ function imported_decl_names(mod: parser.Module): string[] {
 }
 
 function with_mangled(out: string[], name: string, prefix: string): string[] {
+  if (util.str_has_prefix(name, util.ENTRY_SHADOW_PREFIX)) {
+    return out.append(name);
+  }
   if (prefix.len() == 0 || !util.str_has_prefix(name, prefix + "__")) {
     return out;
   }

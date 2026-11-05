@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/pkg/caps"
 	"github.com/jakechampion/lang/internal/pkg/manifest"
 	"github.com/jakechampion/lang/internal/pkg/mvs"
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
@@ -1115,12 +1116,21 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	for _, td := range m.prog.Traits {
 		ownTraits[td.Name] = true
 	}
+	shadows := map[string]bool{}
+	if selfPrefix == "" && !flatNamespace {
+		for name := range ownFuncs {
+			if caps.IsBuiltin(name) {
+				shadows[name] = true
+			}
+		}
+	}
 
 	r := &rewriter{
 		modPath:       m.path,
 		packageRoot:   m.packageRoot,
 		selfPrefix:    selfPrefix,
 		ownFuncs:      ownFuncs,
+		shadows:       shadows,
 		ownStructs:    ownStructs,
 		ownEnums:      ownEnums,
 		ownVariants:   m.allVariants,
@@ -1133,7 +1143,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	for _, fn := range m.prog.Funcs {
 		restoreTypeParams := r.bindTypeParams(fn.TypeParams)
 		if fn.Receiver == nil && fn.AssocType == "" && !isRuntimeHelperName(fn.Name) {
-			fn.Name = selfPrefix + fn.Name
+			fn.Name = r.ownName(fn.Name)
 		} else if fn.Receiver != nil {
 			r.rewriteType(&fn.Receiver.Type)
 		} else if fn.AssocType != "" {
@@ -1248,6 +1258,7 @@ type rewriter struct {
 	modPath       string
 	selfPrefix    string
 	ownFuncs      map[string]bool
+	shadows       map[string]bool
 	ownStructs    map[string]bool
 	ownEnums      map[string]bool
 	ownVariants   map[string]string
@@ -1260,6 +1271,14 @@ type rewriter struct {
 	packageRoot   string
 	flatNamespace bool
 	skipPaths     map[string]bool
+}
+
+// ownName is the name of the module's own function or const `name`.
+func (r *rewriter) ownName(name string) string {
+	if r.shadows[name] {
+		return ast.EntryShadowPrefix + name
+	}
+	return r.selfPrefix + name
 }
 
 func (r *rewriter) refuse(pos ast.Position, format string, args ...any) {
@@ -1585,7 +1604,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			return
 		}
 		if r.ownFuncs[x.Name] || r.ownConsts[x.Name] {
-			x.Name = r.selfPrefix + x.Name
+			x.Name = r.ownName(x.Name)
 		}
 	case *ast.Call:
 		if args := r.rewriteTypeArgs(x.TypeArgs); args != nil {

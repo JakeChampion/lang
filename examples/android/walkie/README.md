@@ -18,7 +18,7 @@ Build and install the APK:
 
 ```sh
 fern -apk walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" \
-     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION \
+     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK \
      -apk-min-sdk 28 examples/android/walkie/app.fern
 adb install walkie.apk
 ```
@@ -58,6 +58,38 @@ server. The app shows the room buttons when its build names a server (see
 3. The phones find each other through the relay of the server. The code
    check and the talk button work as on a Wi-Fi network.
 
+While the phone searches, the MODE button at the top right opens the
+settings. They choose the way to find the other phone:
+
+- AUTOMATIC uses all three ways at once. It is the default.
+- SAME WI-FI uses only the beacons on the Wi-Fi network.
+- WI-FI DIRECT uses only Wi-Fi Direct. The phone sends no beacon on the
+  Wi-Fi network, and it takes datagrams only from its group.
+- INTERNET ROOM uses only the rooms of the server. The phone sends and takes
+  nothing until it is in a room. With no server, the phone cannot choose it.
+
+Below the modes, the SERVER card shows the room server. Tap it to type the
+host name or the IPv4 address of your own server, and tap SAVE. CLR and SAVE
+select the server of the build again.
+
+PHONE KEYBOARD opens the keyboard of the phone, and ENTER on it saves. A keyboard
+that sends words and not keys, as in some swipe modes, types nothing: use the
+keys on the screen then. The server must serve the room port of
+`rooms.fern`.
+
+A new mode starts the search again. The app keeps the mode and the server in
+its private files, so the next start uses them. A test of one way does not need the other
+ways turned off on the phone.
+
+BACK and HOME move the app to the background. The foreground service keeps
+the connection, and the phone still hears the other phone, also with the
+screen off. A wake lock and a Wi-Fi lock keep the CPU and the radio awake
+while the service runs. DISCONNECT in the notification ends the session.
+
+To talk while the app is in the background, tap TALK in the notification. The
+phone talks until you tap STOP TALKING. The talk button of the app also stops
+it.
+
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
 copy opens port 47121, and each copy sends its beacons to both ports. Show
@@ -89,7 +121,8 @@ most of the voice of the other. The two must never talk at the same time.
 
 `emulator_check.py` runs two copies of the APK on the Android emulator in CI,
 with the freezer of cached apps off. It taps MATCH in each copy, holds the
-talk button of each, and reads the result in logcat.
+talk button of each, presses BACK in one copy, and reads the result in
+logcat.
 
 ## `protocol.fern`
 
@@ -104,11 +137,13 @@ runs two engines on a simulated link.
 
 ## `ui.fern`
 
-The look of the screen: a dark theme with one accent colour for each state.
-The round talk button has a ring in the colour of the state. It fills while
-the phone talks or listens. A dot beside the status has the same colour. The
-code to compare shows in two groups of three digits, over a MATCH pill and a
-NO MATCH outline.
+The look of the screen: a black background, white and grey type, and red only
+for what is live. Titles, button labels and the code use the dot font of
+`matrix.fern`, 5 by 7 round dots for each character. The round talk button is
+a ring of dots. It fills red while the phone talks, and white while it
+listens. A dot beside the status has the colour of the state. The code to
+compare shows in two groups of three digits, over a MATCH pill and a NO MATCH
+outline.
 
 `ui.fern` draws a view of the app on a frame and does no other I/O.
 `ui_test.fern` draws each screen on a frame in memory and checks the colours
@@ -253,7 +288,8 @@ room through the relay table, and one node moves to a new address.
 
 The nightly build writes `server_host.fern` from the `WALKIE_SERVER`
 repository variable. Set the variable to the DNS name of the server, and the
-next nightly APK shows the room buttons.
+next nightly APK shows the room buttons. A user can also type a server on the
+settings screen.
 
 `rooms.fern` holds the room table and does no I/O. `rooms_test.fern` tests
 it. `TestWalkieRelayServer` runs the server on the host. Two clients make and

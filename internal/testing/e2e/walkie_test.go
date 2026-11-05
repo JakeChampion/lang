@@ -88,3 +88,8 @@ func TestWalkieInternet(t *testing.T) {
 func TestWalkieUi(t *testing.T) {
 	runWalkieTest(t, "ui_test.fern")
 }
+
+// The ways to find the other phone: what each mode sends and takes.
+func TestWalkieModes(t *testing.T) {
+	runWalkieTest(t, "modes_test.fern")
+}

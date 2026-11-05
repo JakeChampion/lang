@@ -5,6 +5,7 @@ import "./parser";
 import "./decltypes";
 import "./astwalk";
 import "./platforms";
+import "./builtinsigs";
 
 pub struct ImportedEnum { name: string, prefix: string }
 
@@ -1515,7 +1516,43 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
     }
     i += 1;
   }
-  let ctx = RewriteCtx { type_params: [], modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
+  let shadows = builtin_shadows(mod);
+  let ctx = RewriteCtx { type_params: [], modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: empty, enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
+  return rewrite_module_bodies(mod, ctx);
+}
+
+// The bundle names of the entry functions `names`. An imported module's own
+// functions have their module prefix, so they cannot collide with a builtin.
+function entry_shadow_names(names: string[]): string[] {
+  let out: string[] = [];
+  for n in names {
+    out = out.append(util.ENTRY_SHADOW_PREFIX + n);
+  }
+  return out;
+}
+
+// The free functions of the entry module that have the name of a builtin.
+// Each one shadows the builtin in the module, as a function of an imported
+// module does.
+function builtin_shadows(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for fd in mod.funcs {
+    if (fd.receiver_type.len() == 0 && !fd.is_const && builtinsigs.builtin_row(fd.name).len() > 0 && !util.has_str(out, fd.name)) {
+      out = out.append(fd.name);
+    }
+  }
+  return out;
+}
+
+// Diagnostic drivers have an unloaded module. Rewrite its builtin shadows
+// without qualifying names from imports that the driver has not loaded.
+pub function qualify_entry_builtins(mod: parser.Module): parser.Module {
+  let shadows = builtin_shadows(mod);
+  if (shadows.len() == 0) {
+    return mod;
+  }
+  let empty: string[] = [];
+  let ctx = RewriteCtx { type_params: [], modnames: empty, modprefixes: empty, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: empty, enumnames: empty, imported_enums: [], ivar_names: empty, ivar_mangled: empty, variant_scope: empty, reexport_keys: empty, reexport_targets: empty, own_variants: empty };
   return rewrite_module_bodies(mod, ctx);
 }
 
