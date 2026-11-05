@@ -162,7 +162,13 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		if !c.calleeResultBorrows(x) {
 			return false
 		}
-		for _, a := range x.Args {
+		args := x.Args
+		// The method rewrite puts the receiver first. A receiver is not an
+		// argument here, as it is not before the rewrite.
+		if x.Method != nil && len(args) > 0 {
+			args = args[1:]
+		}
+		for _, a := range args {
 			if c.exprBorrows(a, b) {
 				return true
 			}

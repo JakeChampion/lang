@@ -3005,3 +3005,20 @@ function f(l: Socket): i32 {
     return 0;
 }`)
 }
+
+// The receiver of a method is not an argument for the result-borrow
+// analysis. cmd/fern checks the same program after the method rewrite (#14234).
+const cellTakeSrc = `
+struct Keys { a: Cell[i32[]] }
+function take(slot: Cell[i32[]]): i32[] {
+    let got = slot.get();
+    slot.set([]);
+    return got;
+}
+function consume(own xs: i32[]): i32 { return xs.len(); }
+function f(k: Keys): i32 { return consume(take(k.a)); }
+function main(): i32 { return 0; }`
+
+func TestOwnGuardIgnoresAMethodReceiver(t *testing.T) {
+	wantOK(t, "method-receiver-result", cellTakeSrc)
+}
