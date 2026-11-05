@@ -1,27 +1,38 @@
 # Fern Stopwatch for Android
 
-A calm stopwatch and clock for long sessions, such as meditation. The UI
-and UX follow [Tranquil Stopwatch](https://github.com/tibarj/tranquilstopwatch):
+A calm stopwatch and clock for long sessions, such as meditation. The UX
+follows [Tranquil Stopwatch](https://github.com/tibarj/tranquilstopwatch).
+The look is the dot-matrix style of the [walkie-talkie](../walkie/README.md):
+a black screen, white and grey round dots, and red only for the state.
 
 - The screen is black, to save power on AMOLED displays.
-- A dim clock (`HH:MM`) shows above the stopwatch (`H:MM:SS`).
-- Tap the stopwatch to start or pause it. It is white while it runs and red
-  while it is paused.
+- The text is in the dot font of `../matrix.fern`, 5 by 7 round dots for
+  each character.
+- A clock (`HH:MM`) shows above the stopwatch (`H:MM:SS`).
+- The stopwatch is a dark disc in a ring of 60 dots.
+- Tap the stopwatch to start or pause it.
 - Long-tap the stopwatch to reset it. The run time goes into the total on
   the About screen.
 - The display updates once per second, or once per minute when the seconds
   are hidden. There are no milliseconds.
 - The screen keeps on while the stopwatch runs.
 - The system bars stay hidden.
-- Tap anywhere to show the menu button for 5 seconds.
+- Tap anywhere to show the title and the MENU button for 5 seconds.
 - The menu opens Settings and About.
 - Burn-in protection moves the content by a random amount every minute.
 - The beeper sounds at each multiple of an interval on the stopwatch.
 - The stopwatch keeps its time when the app closes, because the state is two
   numbers: the start time of the current run and the sum of earlier runs.
 
+The ring shows the seconds of the current minute. With the seconds hidden,
+it shows the minutes of the current hour. While the stopwatch runs, the
+passed dots are white and the current dot is red. The digits are red while
+the stopwatch is paused with time on it, and white at other times. The
+words under the digits tell the next action. The settings and the About
+text show in dark cards.
+
 The clock and the stopwatch each have these settings: show or hide, thin
-font, opacity and size. The stopwatch can also hide its seconds. The other
+font (smaller dots), opacity and size. The stopwatch can also hide its seconds. The other
 settings are the beep interval, the alarm volume for beeps, and the burn-in
 amount.
 
@@ -29,14 +40,14 @@ amount.
 
 | file | what it does |
 |---|---|
-| `stopwatch.fern` | All of the behaviour: the state changes, the text, the colours, when to update next, the burn-in position, the beep times and the settings table. Every function is pure. |
+| `stopwatch.fern` | All of the behaviour: the state changes, the text, the palette and the colours, the ring, the glyphs of the dot font, when to update next, the burn-in position, the beep times and the settings table. Every function is pure. |
 | `native.fern` | The JNI methods of `Core`, each with `@jni`. Each one changes JNI types into Fern types and calls `stopwatch.fern`. `build.sh` writes `Core.java` from them with `-jni-java`. |
 | `stopwatch_test.fern` | The tests for `stopwatch.fern` (`std/test`). |
-| `java/dev/fern/stopwatch/` | The Android shell: views, touch events, timers and stored values. It asks `Core` for every decision. |
+| `java/dev/fern/stopwatch/` | The Android shell: views, touch events, timers and stored values. It asks `Core` for every decision. `Matrix.java` draws the dot font, and `Dial`, `Pill`, `DotSwitch` and `DotSlider` draw the controls. |
 | `host/HostCheck.java` | Calls every native method in a desktop JVM. |
 | `build.sh` | Builds the signed APK. |
 
-The settings screen has no layout file. It makes one row for each entry of
+The settings screen has no layout file. It makes one card for each entry of
 the table in `stopwatch.fern`. Thus a new entry in that table needs no Java
 change.
 

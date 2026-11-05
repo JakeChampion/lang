@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
@@ -17,19 +16,16 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import java.util.Random;
 import java.util.TimeZone;
 
 /**
- * The full-screen black display: a clock above a stopwatch. Tap the
- * stopwatch to start or pause it, long-tap it to reset it, and tap anywhere
- * to show the menu button. Core makes every decision; this class only
- * shows the result and schedules the next update.
+ * The full-screen black display: a clock in dots above the dial of the
+ * stopwatch. Tap the dial to start or pause it, long-tap it to reset it, and
+ * tap anywhere to show the title and the menu button. Core makes every
+ * decision; this class only shows the result and schedules the next update.
  */
 public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -37,9 +33,10 @@ public final class MainActivity extends Activity {
 
     private FrameLayout root;
     private LinearLayout content;
-    private TextView clock;
-    private TextView stopwatch;
-    private ImageButton menuButton;
+    private DotText clock;
+    private Dial stopwatch;
+    private DotText title;
+    private Pill menuButton;
     private LinearLayout menu;
     private ToneGenerator tone;
 
@@ -50,6 +47,7 @@ public final class MainActivity extends Activity {
     private boolean stopwatchEnabled;
     private boolean showSeconds;
     private int stopwatchOpacity;
+    private int[] ring;
     private int displacement;
     private int beepInterval;
 
@@ -57,7 +55,7 @@ public final class MainActivity extends Activity {
         @Override
         public void run() {
             long elapsed = elapsed();
-            stopwatch.setText(Core.stopwatchText(elapsed, showSeconds));
+            show(elapsed);
             handler.postDelayed(this, Core.stopwatchTickIn(elapsed, showSeconds));
         }
     };
@@ -92,6 +90,7 @@ public final class MainActivity extends Activity {
     private final Runnable hideMenuButton = new Runnable() {
         @Override
         public void run() {
+            title.setVisibility(View.GONE);
             menuButton.setVisibility(View.GONE);
         }
     };
@@ -115,14 +114,11 @@ public final class MainActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        clock = new TextView(this);
+        clock = new DotText(this, "", 1, Theme.INK);
         clock.setPadding(dp(30), dp(8), dp(30), dp(8));
-        clock.setIncludeFontPadding(false);
         content.addView(clock, wrap());
 
-        stopwatch = new TextView(this);
-        stopwatch.setPadding(dp(30), dp(15), dp(30), dp(15));
-        stopwatch.setIncludeFontPadding(false);
+        stopwatch = new Dial(this);
         stopwatch.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -136,7 +132,9 @@ public final class MainActivity extends Activity {
                 return true;
             }
         });
-        content.addView(stopwatch, wrap());
+        LinearLayout.LayoutParams dialParams = wrap();
+        dialParams.setMargins(0, dp(12), 0, dp(12));
+        content.addView(stopwatch, dialParams);
 
         root.addView(content, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -158,11 +156,13 @@ public final class MainActivity extends Activity {
             }
         });
 
-        menuButton = new ImageButton(this);
-        menuButton.setImageResource(R.drawable.ic_menu);
-        menuButton.setColorFilter(0xFFABABB1);
-        menuButton.setBackgroundColor(Color.TRANSPARENT);
-        menuButton.setScaleType(ImageView.ScaleType.CENTER);
+        title = new DotText(this, "Stopwatch", dp(3.2f), Theme.INK);
+        FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, dp(44), Gravity.TOP | Gravity.START);
+        titleParams.setMargins(dp(24), dp(28), 0, 0);
+        root.addView(title, titleParams);
+
+        menuButton = new Pill(this, "Menu", Pill.OUTLINED, Theme.MUTED);
         menuButton.setContentDescription(getString(R.string.open_menu));
         menuButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -172,21 +172,21 @@ public final class MainActivity extends Activity {
             }
         });
         FrameLayout.LayoutParams menuParams = new FrameLayout.LayoutParams(
-                bar(), bar(), Gravity.BOTTOM | Gravity.END);
-        menuParams.setMargins(0, 0, dp(16), 0);
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        menuParams.setMargins(0, dp(28), dp(24), 0);
         root.addView(menuButton, menuParams);
 
         menu = new LinearLayout(this);
         menu.setOrientation(LinearLayout.VERTICAL);
-        menu.setBackgroundColor(0xFF1C1C1E);
-        menu.setPadding(0, dp(8), 0, dp(8));
+        menu.setBackground(Theme.card(this, Theme.OUTLINE));
+        menu.setPadding(dp(12), dp(12), dp(12), dp(4));
         menu.setVisibility(View.GONE);
-        menu.addView(menuItem(R.string.settings, SettingsActivity.class));
-        menu.addView(menuItem(R.string.about, AboutActivity.class));
+        menu.addView(menuItem(R.string.settings, SettingsActivity.class), menuItemParams());
+        menu.addView(menuItem(R.string.about, AboutActivity.class), menuItemParams());
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.END);
-        panelParams.setMargins(0, 0, dp(16), bar());
+                dp(200), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        panelParams.setMargins(0, dp(28 + 44 + 12), dp(24), 0);
         root.addView(menu, panelParams);
 
         setContentView(root);
@@ -208,11 +208,14 @@ public final class MainActivity extends Activity {
         displacement = Prefs.get(this, "burn_in");
         beepInterval = Prefs.get(this, "beep_interval");
 
-        style(clock, Prefs.on(this, "clock_thin"), Prefs.get(this, "clock_size"));
-        clock.setTextColor(Core.clockColor(Prefs.get(this, "clock_opacity")));
+        clock.setThin(Prefs.on(this, "clock_thin"));
+        clock.setPitch(sp(Prefs.get(this, "clock_size")) / 10);
+        clock.setColor(Core.clockColor(Prefs.get(this, "clock_opacity")));
         clock.setVisibility(clockEnabled ? View.VISIBLE : View.GONE);
-        style(stopwatch, Prefs.on(this, "stopwatch_thin"), Prefs.get(this, "stopwatch_size"));
+        stopwatch.setThin(Prefs.on(this, "stopwatch_thin"));
+        stopwatch.setSize(sp(Prefs.get(this, "stopwatch_size")));
         stopwatch.setVisibility(stopwatchEnabled ? View.VISIBLE : View.GONE);
+        ring = new int[Core.ringDots()];
 
         int stream = Prefs.on(this, "beep_override_silent") ? AudioManager.STREAM_ALARM : AudioManager.STREAM_NOTIFICATION;
         setVolumeControlStream(stream);
@@ -295,8 +298,7 @@ public final class MainActivity extends Activity {
         boolean running = Core.isRunning(startedAt);
         handler.removeCallbacks(stopwatchTick);
         handler.removeCallbacks(beepTick);
-        stopwatch.setTextColor(Core.stopwatchColor(running, stopwatchOpacity));
-        stopwatch.setText(Core.stopwatchText(elapsed(), showSeconds));
+        show(elapsed());
         if (running && stopwatchEnabled) {
             handler.postDelayed(stopwatchTick, Core.stopwatchTickIn(elapsed(), showSeconds));
             scheduleBeep();
@@ -306,6 +308,17 @@ public final class MainActivity extends Activity {
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
+    }
+
+    /** Draws the dial for `elapsed`: the time, the state and the ring. */
+    private void show(long elapsed) {
+        boolean running = Core.isRunning(startedAt);
+        for (int k = 0; k < ring.length; k++) {
+            ring[k] = Core.ringColor(k, elapsed, showSeconds, running, stopwatchOpacity);
+        }
+        int color = Core.stopwatchColor(running, elapsed, stopwatchOpacity);
+        stopwatch.show(Core.stopwatchText(elapsed, showSeconds), color,
+                Core.statusText(running, elapsed), Theme.withAlphaOf(color, Theme.MUTED), ring);
     }
 
     private void scheduleBeep() {
@@ -333,16 +346,13 @@ public final class MainActivity extends Activity {
 
     private void showMenuButton() {
         handler.removeCallbacks(hideMenuButton);
+        title.setVisibility(View.VISIBLE);
         menuButton.setVisibility(View.VISIBLE);
         handler.postDelayed(hideMenuButton, Core.buttonsHideDelayMs());
     }
 
-    private TextView menuItem(int label, final Class<? extends Activity> target) {
-        TextView item = new TextView(this);
-        item.setText(label);
-        item.setTextColor(0xFFDDDDDD);
-        item.setTextSize(18);
-        item.setPadding(dp(24), dp(14), dp(48), dp(14));
+    private Pill menuItem(int label, final Class<? extends Activity> target) {
+        Pill item = new Pill(this, getString(label), Pill.OUTLINED, Theme.INK);
         item.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -350,6 +360,13 @@ public final class MainActivity extends Activity {
             }
         });
         return item;
+    }
+
+    private LinearLayout.LayoutParams menuItemParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, dp(8));
+        return params;
     }
 
     @SuppressWarnings("deprecation")
@@ -372,9 +389,8 @@ public final class MainActivity extends Activity {
         return now + TimeZone.getDefault().getOffset(now);
     }
 
-    private static void style(TextView view, boolean thin, int sizeSp) {
-        view.setTypeface(Typeface.create(thin ? "sans-serif-thin" : "sans-serif", Typeface.NORMAL));
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
+    private float sp(int value) {
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value, getResources().getDisplayMetrics());
     }
 
     private static LinearLayout.LayoutParams wrap() {
@@ -382,11 +398,12 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
     }
 
+    /** The band at each end that the title and the menu button use. */
     private int bar() {
-        return dp(56);
+        return dp(28 + 44);
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
+    private int dp(float value) {
+        return Theme.dp(this, value);
     }
 }

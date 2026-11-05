@@ -55,14 +55,59 @@ pub function clock_tick_in(env: usize, cls: usize, local_ms: i64): i64 {
   return stopwatch.clock_tick_in(local_ms);
 }
 
-@jni("dev.fern.stopwatch.Core", "static int stopwatchColor(boolean, int)")
-pub function stopwatch_color(env: usize, cls: usize, running: u8, opacity: i32): i32 {
-  return stopwatch.stopwatch_color(flag(running), opacity);
+@jni("dev.fern.stopwatch.Core", "static int stopwatchColor(boolean, long, int)")
+pub function stopwatch_color(env: usize, cls: usize, running: u8, elapsed: i64, opacity: i32): i32 {
+  return stopwatch.stopwatch_color(flag(running), elapsed, opacity);
 }
 
 @jni("dev.fern.stopwatch.Core", "static int clockColor(int)")
 pub function clock_color(env: usize, cls: usize, opacity: i32): i32 {
   return stopwatch.clock_color(opacity);
+}
+
+@jni("dev.fern.stopwatch.Core", "static String statusText(boolean, long)")
+pub function status_text(env: usize, cls: usize, running: u8, elapsed: i64): usize {
+  return jni.new_string(env, stopwatch.status_text(flag(running), elapsed));
+}
+
+@jni("dev.fern.stopwatch.Core", "static int ringDots()")
+pub function ring_dots(env: usize, cls: usize): i32 {
+  return stopwatch.RING_DOTS;
+}
+
+@jni("dev.fern.stopwatch.Core", "static int ringColor(int, long, boolean, boolean, int)")
+pub function ring_color(env: usize, cls: usize, k: i32, elapsed: i64, show_seconds: u8, running: u8, opacity: i32): i32 {
+  return stopwatch.ring_color(k, elapsed, flag(show_seconds), flag(running), opacity);
+}
+
+@jni("dev.fern.stopwatch.Core", "static long glyphMask(int)")
+pub function glyph_mask(env: usize, cls: usize, c: i32): i64 {
+  return stopwatch.glyph_mask(c);
+}
+
+@jni("dev.fern.stopwatch.Core", "static int ink()")
+pub function ink(env: usize, cls: usize): i32 {
+  return stopwatch.opaque(stopwatch.INK);
+}
+
+@jni("dev.fern.stopwatch.Core", "static int muted()")
+pub function muted(env: usize, cls: usize): i32 {
+  return stopwatch.opaque(stopwatch.MUTED);
+}
+
+@jni("dev.fern.stopwatch.Core", "static int outline()")
+pub function outline(env: usize, cls: usize): i32 {
+  return stopwatch.opaque(stopwatch.OUTLINE);
+}
+
+@jni("dev.fern.stopwatch.Core", "static int surface()")
+pub function surface(env: usize, cls: usize): i32 {
+  return stopwatch.opaque(stopwatch.SURFACE);
+}
+
+@jni("dev.fern.stopwatch.Core", "static int red()")
+pub function red(env: usize, cls: usize): i32 {
+  return stopwatch.opaque(stopwatch.RED);
 }
 
 @jni("dev.fern.stopwatch.Core", "static boolean keepScreenOn(boolean, boolean)")

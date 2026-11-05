@@ -4,7 +4,7 @@
 import "std/android/draw";
 import "std/png";
 import "std/test";
-import "./matrix";
+import "../matrix";
 import "./screen";
 import "./ui";
 

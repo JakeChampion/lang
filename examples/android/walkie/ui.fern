@@ -6,7 +6,7 @@
 // tests it on a frame in memory.
 import "std/android/draw";
 import "std/string";
-import "./matrix";
+import "../matrix";
 import "./modes";
 import "./rooms";
 import "./screen";

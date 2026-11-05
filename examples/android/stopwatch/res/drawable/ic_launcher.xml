@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A dim red stopwatch face on black. -->
+<!-- A ring of dots on black, as on a dot-matrix display. The passed seconds
+     are white, the current one is red, and the rest are grey. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
         android:width="48dp" android:height="48dp"
         android:viewportWidth="48" android:viewportHeight="48">
     <path android:fillColor="#FF000000"
           android:pathData="M24,0A24,24 0,1 1,23.99,0z" />
-    <path android:fillColor="#FFEE5555"
-          android:pathData="M21,6h6v3h-6z" />
-    <path android:strokeColor="#FFEE5555" android:strokeWidth="2.5"
-          android:pathData="M24,12.5A14,14 0,1 1,23.99,12.5z" />
-    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.5"
-          android:strokeLineCap="round"
-          android:pathData="M24,26.5V18" />
+    <path android:fillColor="#FF1A1A1A"
+          android:pathData="M9.50,24.00a14.5,14.5 0,1 0,29.0,0a14.5,14.5 0,1 0,-29.0,0z" />
+    <path android:fillColor="#FFFFFFFF"
+          android:pathData="M22.50,6.50a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM27.03,7.10a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM31.25,8.84a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM34.87,11.63a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM37.66,15.25a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM39.40,19.47a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM40.00,24.00a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM39.40,28.53a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM37.66,32.75a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM34.87,36.37a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM31.25,39.16a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM27.03,40.90a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM22.50,41.50a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM17.97,40.90a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM13.75,39.16a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM10.13,36.37a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0z" />
+    <path android:fillColor="#FF3C3C3C"
+          android:pathData="M5.60,28.53a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM5.00,24.00a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM5.60,19.47a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM7.34,15.25a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM10.13,11.63a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM13.75,8.84a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0zM17.97,7.10a1.5,1.5 0,1 0,3.0,0a1.5,1.5 0,1 0,-3.0,0z" />
+    <path android:fillColor="#FFD71921"
+          android:pathData="M6.97,32.75a1.875,1.875 0,1 0,3.75,0a1.875,1.875 0,1 0,-3.75,0z" />
+    <path android:fillColor="#FFFFFFFF"
+          android:pathData="M23.00,20.80a1.0,1.0 0,1 0,2.0,0a1.0,1.0 0,1 0,-2.0,0zM23.00,24.00a1.0,1.0 0,1 0,2.0,0a1.0,1.0 0,1 0,-2.0,0zM26.20,24.00a1.0,1.0 0,1 0,2.0,0a1.0,1.0 0,1 0,-2.0,0z" />
 </vector>

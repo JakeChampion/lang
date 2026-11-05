@@ -1,6 +1,10 @@
 // The behaviour of the Fern Stopwatch app. Every function is pure: the
 // Android side passes in the clock, the stored state and the settings, and
 // shows what comes back. native.fern exposes these functions over JNI.
+//
+// The look is the dot-matrix style of the walkie-talkie: a black screen,
+// white and grey dots, and red only for the state of the stopwatch.
+import "../matrix";
 
 // A stopwatch is two numbers. `started_at` is the wall-clock time of the
 // current run, or 0 when paused. `anteriority` is the sum of all earlier runs.
@@ -61,21 +65,91 @@ pub function clock_tick_in(local_ms: i64): i64 {
   return 60010 - floor_mod(local_ms, 60000);
 }
 
-pub const WHITE: i64 = 16777215;
+pub const INK: i64 = 0xFFFFFF;
 
-pub const RED: i64 = 15619413;
+pub const MUTED: i64 = 0x8C8C8C;
 
-// The text colour as ARGB. The stopwatch is white while it runs and red while
-// it is paused. `opacity` is a setting from 1 to 20.
-pub function stopwatch_color(running: boolean, opacity: i32): i32 {
-  if (running) {
-    return argb(opacity, WHITE);
+pub const OUTLINE: i64 = 0x3C3C3C;
+
+pub const SURFACE: i64 = 0x1A1A1A;
+
+pub const RED: i64 = 0xD71921;
+
+// The opaque ARGB of a colour of the palette.
+pub function opaque(rgb: i64): i32 {
+  return argb(20, rgb);
+}
+
+// The colour of the digits as ARGB. They are red while the stopwatch is
+// paused with time on it, and white otherwise. `opacity` is a setting from 1
+// to 20.
+pub function stopwatch_color(running: boolean, elapsed: i64, opacity: i32): i32 {
+  if (!running && elapsed > 0) {
+    return argb(opacity, RED);
   }
-  return argb(opacity, RED);
+  return argb(opacity, INK);
 }
 
 pub function clock_color(opacity: i32): i32 {
-  return argb(opacity, WHITE);
+  return argb(opacity, INK);
+}
+
+// The words under the digits.
+pub function status_text(running: boolean, elapsed: i64): string {
+  if (running) {
+    return "RUNNING";
+  }
+  if (elapsed > 0) {
+    return "HOLD TO RESET";
+  }
+  return "TAP TO START";
+}
+
+// The ring around the digits has one dot for each second of the current
+// minute, or for each minute of the current hour when the seconds are hidden.
+pub const RING_DOTS: i32 = 60;
+
+// The dot of the ring that the stopwatch is on.
+pub function ring_position(elapsed: i64, show_seconds: boolean): i32 {
+  let unit: i64 = 1000;
+  if (!show_seconds) {
+    unit = 60000;
+  }
+  return (nonneg(elapsed) / unit % (RING_DOTS as i64)) as i32;
+}
+
+// The colour of dot `k` of the ring. The dots that passed are white while the
+// stopwatch runs and grey while it is paused. The current dot is red while it
+// runs. The other dots are dim.
+pub function ring_color(k: i32, elapsed: i64, show_seconds: boolean, running: boolean, opacity: i32): i32 {
+  let at = ring_position(elapsed, show_seconds);
+  if (running && k == at) {
+    return argb(opacity, RED);
+  }
+  if (k < at && running) {
+    return argb(opacity, INK);
+  }
+  if (k < at) {
+    return argb(opacity, MUTED);
+  }
+  return argb(opacity, OUTLINE);
+}
+
+// The dots of character `c` in the font of matrix.fern: bit row * 5 + col is
+// the dot at col and row. A character with no glyph has no dots.
+pub function glyph_mask(c: i32): i64 {
+  if (c < 0 || c > 127) {
+    return 0;
+  }
+  let mask: i64 = 0;
+  for row in 0..matrix.ROWS {
+    for col in 0..matrix.COLS {
+      if (matrix.lit(c as u8, col, row)) {
+        mask = mask | 1 as i64 << (row * matrix.COLS + col) as i64;
+      }
+    }
+  }
+  return mask;
 }
 
 function argb(opacity: i32, rgb: i64): i32 {

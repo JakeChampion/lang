@@ -30,9 +30,16 @@ public final class HostCheck {
         check("stopwatchTickIn minutes", Core.stopwatchTickIn(61_000, false), 59_010L);
         check("clockTickIn", Core.clockTickIn(150_000), 30_010L);
 
-        check("stopwatchColor running", Core.stopwatchColor(true, 20), 0xFFFFFFFF);
-        check("stopwatchColor paused", Core.stopwatchColor(false, 20), 0xFFEE5555);
+        check("stopwatchColor running", Core.stopwatchColor(true, 5000, 20), 0xFFFFFFFF);
+        check("stopwatchColor paused", Core.stopwatchColor(false, 5000, 20), 0xFFD71921);
+        check("stopwatchColor reset", Core.stopwatchColor(false, 0, 20), 0xFFFFFFFF);
         check("clockColor", Core.clockColor(10), 0x7FFFFFFF);
+        check("statusText", Core.statusText(true, 0) + "|" + Core.statusText(false, 1000), "RUNNING|HOLD TO RESET");
+        check("ringDots", Core.ringDots(), 60);
+        check("ringColor", Core.ringColor(5, 5000, true, true, 20), 0xFFD71921);
+        check("glyphMask", Core.glyphMask('0') & 31, 14L);
+        check("palette", Core.ink() + " " + Core.muted() + " " + Core.outline() + " " + Core.surface() + " " + Core.red(),
+                0xFFFFFFFF + " " + 0xFF8C8C8C + " " + 0xFF3C3C3C + " " + 0xFF1A1A1A + " " + 0xFFD71921);
         check("keepScreenOn", Core.keepScreenOn(true, true) + " " + Core.keepScreenOn(false, true) + " " + Core.keepScreenOn(false, false), "true false true");
 
         check("buttonsHideDelayMs", Core.buttonsHideDelayMs(), 5000);
