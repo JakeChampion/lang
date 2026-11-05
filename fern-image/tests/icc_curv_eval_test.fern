@@ -74,30 +74,30 @@ function rejection(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return false;
     });
-    if (polls.get() != 0 || match (result) { Err(curv_eval.EvalError.Input()) => false, _ => true }) {
+    if (polls.get() != 0 || match (result) { Err(curv_eval.EvalError.Input) => false, _ => true }) {
       return test.fail("finite unit-interval admission precedes callbacks");
     }
   }
   for gamma in [-1, 0, 65536] {
-    if (match (value(tag_data.Gamma(gamma), 0.5)) { Err(curv_eval.EvalError.Value()) => false, _ => true }) {
+    if (match (value(tag_data.Gamma(gamma), 0.5)) { Err(curv_eval.EvalError.Value) => false, _ => true }) {
       return test.fail("public gamma wire range");
     }
   }
   for samples in [[], [1]] {
-    if (match (value(tag_data.Samples(samples), 0.5)) { Err(curv_eval.EvalError.Shape()) => false, _ => true }) {
+    if (match (value(tag_data.Samples(samples), 0.5)) { Err(curv_eval.EvalError.Shape) => false, _ => true }) {
       return test.fail("public sampled shape");
     }
   }
   for samples in [[-1, 65535], [0, 65536], [0, 65535, -1]] {
-    if (match (value(tag_data.Samples(samples), 0.0)) { Err(curv_eval.EvalError.Value()) => false, _ => true }) {
+    if (match (value(tag_data.Samples(samples), 0.0)) { Err(curv_eval.EvalError.Value) => false, _ => true }) {
       return test.fail("all samples need admission even at an endpoint");
     }
   }
-  if (match (curv_eval.evaluate(tag_data.Samples([0, 65535]), 0.5, curv_eval.EvalLimits { max_samples: 1 }, never)) { Err(curv_eval.EvalError.Limit()) => false, _ => true }) {
+  if (match (curv_eval.evaluate(tag_data.Samples([0, 65535]), 0.5, curv_eval.EvalLimits { max_samples: 1 }, never)) { Err(curv_eval.EvalError.Limit) => false, _ => true }) {
     return test.fail("sample caller allowance");
   }
-  return test.assert_true(match (value(tag_data.Parametric(tag_data.ParametricData { function_type: 0, coefficients: [65536] }), 0.5)) { Err(curv_eval.EvalError.Unsupported()) => true, _ => false }
-    && match (curv_eval.evaluate(tag_data.Identity, 0.5, curv_eval.EvalLimits { max_samples: 0 }, never)) { Err(curv_eval.EvalError.Limit()) => true, _ => false });
+  return test.assert_true(match (value(tag_data.Parametric(tag_data.ParametricData { function_type: 0, coefficients: [65536] }), 0.5)) { Err(curv_eval.EvalError.Unsupported) => true, _ => false }
+    && match (curv_eval.evaluate(tag_data.Identity, 0.5, curv_eval.EvalLimits { max_samples: 0 }, never)) { Err(curv_eval.EvalError.Limit) => true, _ => false });
 }
 
 function ownership_and_wire(): test.TestOutcome {
@@ -137,7 +137,7 @@ function cancellation(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return polls.get() == stop;
       });
-      if (polls.get() != stop || match (result) { Err(curv_eval.EvalError.Cancelled()) => false, _ => true }) {
+      if (polls.get() != stop || match (result) { Err(curv_eval.EvalError.Cancelled) => false, _ => true }) {
         return test.fail("every cooperative validation and result poll");
       }
     }

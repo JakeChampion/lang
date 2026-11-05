@@ -54,8 +54,8 @@ function capability(): i32 {
   let Ok(independent) = second.read(0, never) else {
     return 5;
   };
-  let order = match (first.read(0, never)) { Err(ProbeFault.Order()) => true, _ => false };
-  let cancel = match (second.read(1, (): boolean => true)) { Err(ProbeFault.Cancelled()) => true, _ => false };
+  let order = match (first.read(0, never)) { Err(ProbeFault.Order) => true, _ => false };
+  let cancel = match (second.read(1, (): boolean => true)) { Err(ProbeFault.Cancelled) => true, _ => false };
   let Ok(after) = second.read(1, never) else {
     return 6;
   };

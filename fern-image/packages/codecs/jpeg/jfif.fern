@@ -94,7 +94,7 @@ function metadata(input: [u8], stop: i32, cancelled: () => boolean): Result[AppF
 
 // This profile identifies sample meaning without entropy or EOI validation.
 pub function inspect(input: [u8], limits: header.HeaderLimits, cancelled: () => boolean): Result[JfifInfo, JfifError] {
-  let parsed = match (header.parse(input, limits, cancelled)) { Ok(value) => value, Err(header.JpegError.Cancelled()) => { return Err(JfifError.Cancelled); }, Err(error) => { return Err(JfifError.Header(error)); } };
+  let parsed = match (header.parse(input, limits, cancelled)) { Ok(value) => value, Err(header.JpegError.Cancelled) => { return Err(JfifError.Cancelled); }, Err(error) => { return Err(JfifError.Header(error)); } };
   let fields = metadata(input, parsed.entropy_offset, cancelled)?;
   let color = component_color(parsed)?;
   if (cancelled()) {

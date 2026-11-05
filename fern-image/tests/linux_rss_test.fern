@@ -18,13 +18,13 @@ function malformed(): test.TestOutcome {
     "VmSize: 10 kB\nVmRSS: abc kB\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 MB\nVmHWM: 1 kB",
     "VmSize: 10 kB\nVmRSS: 1 kB extra\nVmHWM: 1 kB", "VmSize: 10 kB\nVmRSS: 1 kB\nVmRSS: 1 kB\nVmHWM: 1 kB",
   ] {
-    good = good && match (linux_rss.parse_status(status)) { Err(linux_rss.Malformed()) => true, _ => false };
+    good = good && match (linux_rss.parse_status(status)) { Err(linux_rss.Malformed) => true, _ => false };
   }
   return test.assert_true(good);
 }
 
 function overflow(): test.TestOutcome {
-  return test.assert_true(match (linux_rss.parse_status("VmSize: 9223372036854775807 kB\nVmRSS: 1 kB\nVmHWM: 1 kB")) { Err(linux_rss.Overflow()) => true, _ => false });
+  return test.assert_true(match (linux_rss.parse_status("VmSize: 9223372036854775807 kB\nVmRSS: 1 kB\nVmHWM: 1 kB")) { Err(linux_rss.Overflow) => true, _ => false });
 }
 
 function main(): i32 {

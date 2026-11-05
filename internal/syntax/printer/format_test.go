@@ -929,6 +929,37 @@ function main(): i32 {
 	}
 }
 
+// A qualified unit variant inside a payload or a tuple prints without `()`,
+// as it does at the top of an arm. An unqualified one keeps `()`: a bare name
+// there is a binding.
+func TestFormatNestedQualifiedUnitVariants(t *testing.T) {
+	got := formatSrc(t, `enum A { Foo(i32), Bar }
+function f(r: Result[i32, A], k: i32): i32 {
+	match (r) { Err(A.Bar()) => { return 1; }, _ => {} }
+	match ((r, k)) { (Err(A.Bar), 1) => { return 2; }, _ => {} }
+	match ((A.Bar, k)) { (A.Bar(), 1) => { return 3; }, (Bar(), 2) => { return 4; }, _ => {} }
+	return 0;
+}
+function main(): i32 { return f(Err(A.Bar), 1); }`)
+	for _, want := range []string{
+		"Err(A.Bar) =>",
+		"(Err(A.Bar), 1) =>",
+		"(A.Bar, 1) =>",
+		"(Bar(), 2) =>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "A.Bar()") {
+		t.Errorf("a qualified unit variant kept its parentheses:\n%s", got)
+	}
+	again := formatSrc(t, got)
+	if got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
 func TestFormatUnionDeclRoundTrip(t *testing.T) {
 	got := formatSrc(t, `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }

@@ -88,7 +88,7 @@ function admission(): test.TestOutcome {
     }
   }
   for input in [-0.01, 1.01, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
-    if (match (evaluate(-1, [], input)) { Err(quadratic_inverse.InvertError.Input()) => false, _ => true }) {
+    if (match (evaluate(-1, [], input)) { Err(quadratic_inverse.InvertError.Input) => false, _ => true }) {
       return test.fail("input admission priority");
     }
   }
@@ -104,7 +104,7 @@ function cancellation(): test.TestOutcome {
         return polls.get() == stop;
       });
       if (stop < 3) {
-        if (polls.get() != stop || match (result) { Err(quadratic_inverse.InvertError.Cancelled()) => false, _ => true }) {
+        if (polls.get() != stop || match (result) { Err(quadratic_inverse.InvertError.Cancelled) => false, _ => true }) {
           return test.fail("both cancellation polls");
         }
       } else if (polls.get() != 2 || match (result) { Ok(_) => false, _ => true }) {
@@ -123,7 +123,7 @@ function ownership(): test.TestOutcome {
     return false;
   });
   return test.assert_true(exact(result, 0.5) && values[0] == 131072 && shared.get()[0] == 65536 && exact(evaluate(3, values, 0.25), 0.5)
-    && match (evaluate(3, shared.get(), 0.25)) { Err(quadratic_inverse.InvertError.Unsupported()) => true, _ => false });
+    && match (evaluate(3, shared.get(), 0.25)) { Err(quadratic_inverse.InvertError.Unsupported) => true, _ => false });
 }
 
 function joins(): test.TestOutcome {
@@ -132,7 +132,7 @@ function joins(): test.TestOutcome {
   let above = f64_from_bits(0x3fb0000000000001);
   return test.assert_true(exact(evaluate(3, values, below), below * 4.0) && exact(evaluate(3, values, 0.0625), 0.25)
     && close(evaluate(3, values, above), above.sqrt())
-    && match (evaluate(3, [131072, 65536, 0, 16385, 16384], 0.0625)) { Err(quadratic_inverse.InvertError.Unsupported()) => true, _ => false });
+    && match (evaluate(3, [131072, 65536, 0, 16385, 16384], 0.0625)) { Err(quadratic_inverse.InvertError.Unsupported) => true, _ => false });
 }
 
 function boundaries(): test.TestOutcome {

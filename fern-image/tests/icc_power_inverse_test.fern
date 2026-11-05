@@ -76,7 +76,7 @@ function admission(): test.TestOutcome {
     }
   }
   for input in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
-    if (match (evaluate(65536, input)) { Err(parametric_eval.EvalError.Input()) => false, _ => true }) {
+    if (match (evaluate(65536, input)) { Err(parametric_eval.EvalError.Input) => false, _ => true }) {
       return test.fail("power inverse finite input");
     }
   }
@@ -91,7 +91,7 @@ function cancellation(): test.TestOutcome {
       return polls.get() == stop;
     });
     if (stop < 3) {
-      if (polls.get() != stop || match (result) { Err(parametric_eval.EvalError.Cancelled()) => false, _ => true }) {
+      if (polls.get() != stop || match (result) { Err(parametric_eval.EvalError.Cancelled) => false, _ => true }) {
         return test.fail("power inverse every cancellation poll");
       }
     } else if (polls.get() != 2 || !exact(result, 0.5)) {

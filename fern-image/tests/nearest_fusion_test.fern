@@ -120,8 +120,8 @@ function admission(): test.TestOutcome {
   };
   let samples = match (pipeline.required_samples(graph, limits)) { Ok(v) => v == 133, _ => false };
   let scratch = match (pipeline.required_scratch(graph, limits)) { Ok(v) => v == 1064, _ => false };
-  let work = match (pipeline.render_row(graph, 0, pipeline.Limits { ...limits, max_samples: 132 }, never_cancel)) { Err(pipeline.Budget()) => true, _ => false };
-  let memory = match (pipeline.render_row(graph, 0, pipeline.Limits { ...limits, max_scratch_bytes: 1063 }, never_cancel)) { Err(pipeline.Budget()) => true, _ => false };
+  let work = match (pipeline.render_row(graph, 0, pipeline.Limits { ...limits, max_samples: 132 }, never_cancel)) { Err(pipeline.Budget) => true, _ => false };
+  let memory = match (pipeline.render_row(graph, 0, pipeline.Limits { ...limits, max_scratch_bytes: 1063 }, never_cancel)) { Err(pipeline.Budget) => true, _ => false };
   return test.assert_true(samples && scratch && work && memory && p.r == 17 && p.a == 128 && row.data.len() == 512);
 }
 
@@ -139,7 +139,7 @@ function cancellation(): test.TestOutcome {
       calls.set(calls.get() + 1);
       return calls.get() >= stop;
     };
-    let result = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled()) => true, _ => false };
+    let result = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled) => true, _ => false };
     good = good && result && calls.get() == stop;
   }
   let after = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v.data.len() == 512, _ => false };

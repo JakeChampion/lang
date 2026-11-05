@@ -94,7 +94,7 @@ function admission(): test.TestOutcome {
     }
   }
   for input in [-0.001, 1.0000000000000002, f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
-    if (match (eval(tag_data.Identity, input)) { Err(curv_inverse.InvertError.Input()) => false, _ => true }) {
+    if (match (eval(tag_data.Identity, input)) { Err(curv_inverse.InvertError.Input) => false, _ => true }) {
       return test.fail("inverse input domain");
     }
   }
@@ -117,7 +117,7 @@ function admission(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return false;
       });
-      if (polls.get() != 0 || match (result) { Err(curv_inverse.InvertError.Limit()) => false, _ => true }) {
+      if (polls.get() != 0 || match (result) { Err(curv_inverse.InvertError.Limit) => false, _ => true }) {
         return test.fail("caller sample limit before callbacks");
       }
     }
@@ -137,7 +137,7 @@ function cancellation(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return polls.get() == stop;
       });
-      if (polls.get() != stop || match (result) { Err(curv_inverse.InvertError.Cancelled()) => false, _ => true }) {
+      if (polls.get() != stop || match (result) { Err(curv_inverse.InvertError.Cancelled) => false, _ => true }) {
         return test.fail("every inverse cancellation poll");
       }
     }
@@ -195,7 +195,7 @@ function ownership_and_limits(): test.TestOutcome {
     polls.set(polls.get() + 1);
     return false;
   });
-  return test.assert_true(polls.get() == 0 && match (rejected) { Err(curv_inverse.InvertError.Limit()) => true, _ => false });
+  return test.assert_true(polls.get() == 0 && match (rejected) { Err(curv_inverse.InvertError.Limit) => true, _ => false });
 }
 
 pub function main(): i32 {

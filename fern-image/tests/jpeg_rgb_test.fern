@@ -77,7 +77,7 @@ function plans(): test.TestOutcome {
       return test.fail("exact byte admission");
     }
     for limits in [rgb.RgbLimits { ...exact, max_output_bytes: 458 }, rgb.RgbLimits { ...exact, max_planned_bytes: totals[index] - 1 }] {
-      if (match (rgb.decode(input, chroma.Filter.Nearest, limits, never)) { Err(rgb.RgbError.Limit()) => false, _ => true }) {
+      if (match (rgb.decode(input, chroma.Filter.Nearest, limits, never)) { Err(rgb.RgbError.Limit) => false, _ => true }) {
         return test.fail("one-less byte admission");
       }
     }
@@ -93,7 +93,7 @@ function limits(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return true;
     });
-    if (polls.get() != 0 || match (result) { Err(rgb.RgbError.Limit()) => false, _ => true }) {
+    if (polls.get() != 0 || match (result) { Err(rgb.RgbError.Limit) => false, _ => true }) {
       return test.fail("invalid top-level limits precede callbacks");
     }
   }
@@ -102,11 +102,11 @@ function limits(): test.TestOutcome {
   };
   let large = input.with(frame + 5, 11).with(frame + 6, 184).with(frame + 7, 19).with(frame + 8, 136);
   let unlimited = rgb.RgbLimits { ...rgb.default_limits(), max_output_bytes: 2147483647, max_planned_bytes: 2147483647 };
-  return test.assert_true(match (rgb.inspect(large, unlimited, never)) { Err(rgb.RgbError.Limit()) => true, _ => false });
+  return test.assert_true(match (rgb.inspect(large, unlimited, never)) { Err(rgb.RgbError.Limit) => true, _ => false });
 }
 
 function profiles(): test.TestOutcome {
-  if (match (rgb.decode(headers.gray(), chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Unsupported()) => false, _ => true }) {
+  if (match (rgb.decode(headers.gray(), chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Unsupported) => false, _ => true }) {
     return test.fail("grayscale remains a separate API");
   }
   let input = fixtures.input(0);
@@ -114,7 +114,7 @@ function profiles(): test.TestOutcome {
   for byte in input[20:] {
     no_jfif = no_jfif.append(byte);
   }
-  if (match (rgb.decode(no_jfif, chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Profile(jfif.JfifError.Missing())) => false, _ => true }) {
+  if (match (rgb.decode(no_jfif, chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Profile(jfif.JfifError.Missing)) => false, _ => true }) {
     return test.fail("no color guess without JFIF");
   }
   let conflicting: u8[] = [];
@@ -127,7 +127,7 @@ function profiles(): test.TestOutcome {
   for byte in input[20:] {
     conflicting = conflicting.append(byte);
   }
-  return test.assert_true(match (rgb.decode(conflicting, chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Profile(jfif.JfifError.Metadata())) => true, _ => false });
+  return test.assert_true(match (rgb.decode(conflicting, chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Profile(jfif.JfifError.Metadata)) => true, _ => false });
 }
 
 function framing(): test.TestOutcome {
@@ -201,7 +201,7 @@ function cancellation(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return polls.get() == stop;
       });
-      if (polls.get() != stop || match (result) { Err(rgb.RgbError.Cancelled()) => false, _ => true }) {
+      if (polls.get() != stop || match (result) { Err(rgb.RgbError.Cancelled) => false, _ => true }) {
         return test.fail("every complete decode cancellation poll");
       }
     }
@@ -241,7 +241,7 @@ function wide_cancellation(): test.TestOutcome {
         calls.set(calls.get() + 1);
         return calls.get() == stop;
       });
-      if (calls.get() != stop || match (result) { Err(rgb.RgbError.Cancelled()) => false, _ => true }) {
+      if (calls.get() != stop || match (result) { Err(rgb.RgbError.Cancelled) => false, _ => true }) {
         return test.fail("wide output allocation, sample groups, row copy, and final cancellation");
       }
     }

@@ -146,7 +146,7 @@ function test_zero_output_limit(): test.TestOutcome {
   let stream = __codec_bytes(hex.decode("cb48cdc9c957c8402701"));
   for limit in [-1, 0] {
     match (deflate.inflate(stream, limit)) {
-      Err(deflate.OutputLimit()) => {},
+      Err(deflate.OutputLimit) => {},
       _ => {
         return test.fail("expected the output limit error");
       }

@@ -22,6 +22,15 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"nested-qualified-unit-variants", `enum A { Foo(i32), Bar }
+
+function f(r: Result[i32, A], k: i32): i32 {
+  match (r) { Err(A.Bar()) => { return 1; }, _ => {} }
+  match ((r, k)) { (Err(A.Bar), 1) => { return 2; }, _ => {} }
+  match ((A.Bar, k)) { (A.Bar(), 1) => { return 3; }, (Bar(), 2) => { return 4; }, _ => {} }
+  return 0;
+}
+`},
 	{"scalar-match-bindings", `function f(tag: i32): i32 {
   let value = match (tag) { 0 => 10, n when n > 100 => n, rest => rest + 14 };
   match (tag) { n when n > 0 => { return n + value; }, 0..5 => { return 1; }, rest => { return rest; } }
