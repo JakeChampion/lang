@@ -215,6 +215,16 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   let desc = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
+  let roots: string[] = [];
+  if (fern.is_freestanding(target)) {
+    let (exported, names, bad) = fern.freestanding_roots(merged, "");
+    if (bad.len() > 0) {
+      eprint("fern: " + bad);
+      return 2;
+    }
+    merged = exported;
+    roots = names;
+  }
   if (report_diags(fern.capability_diags(merged, target), files)) {
     return 1;
   }
@@ -224,10 +234,6 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   merged = constfold.fold_module(merged);
   merged = checker.annotate_module(merged);
   merged = treeshake.treeshake(merged);
-  if (desc.environment == "freestanding") {
-    eprint("fern: the playground does not build -target " + target + ": a freestanding artifact is entered through -export functions, and the playground has no -export");
-    return 2;
-  }
 
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
@@ -238,7 +244,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   let out = "";
   if (desc.isa == "x86-64") {
     out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
-  } else if (target == "arm64-linux" || target == "arm64-android") {
+  } else if (target == "arm64-linux" || target == "arm64-android" || target == "arm64-freestanding") {
     out = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, 0 as usize);
   } else if (target == "arm64-darwin") {
     out = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub, 0 as usize));
@@ -277,6 +283,9 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   }
   if (out.len() == 0) {
     return 2;
+  }
+  if (fern.is_freestanding(target)) {
+    out = fern.freestanding_exports(merged, roots, desc.isa == "arm64") + out;
   }
   write(out);
   return 0;

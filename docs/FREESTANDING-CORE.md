@@ -660,8 +660,10 @@ fern -target arm64-freestanding -export add,total -emit asm -o lib.s lib.fern ST
 ```
 
 The compiler has no object writer, so the embedder assembles the output with its own
-toolchain and links it. Any other output form stops with `-target T writes assembly
-only; pass -emit asm`. `-run` stops because the target has no host.
+toolchain and links it. With no `-o`, the assembly goes to stdout, as for the hosted
+native targets. `-o` with no `-emit asm` stops with `-target T writes assembly only;
+pass -emit asm`, because there is no binary to write. `-run` stops because the target
+has no host. The playground builds the same assembly, with `main` as its export.
 
 The artifact has no `_start`. Each function in `-export` (default `main`) is a global
 symbol with its own name, over the C-ABI export entry that `-shared` also uses
