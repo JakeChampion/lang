@@ -11,7 +11,7 @@ function ramp(n: i32, step: i32): i32[] {
 
 // The same rate gives the same samples back, one sample late, across blocks.
 function test_same_rate_is_identity(): test.TestOutcome {
-  let r: pcm.Resampler = pcm.resampler(16000, 16000);
+  let r = pcm.resampler(16000, 16000);
   let (r1, a) = pcm.resample(r, ramp(100, 3));
   let (r2, b) = pcm.resample(r1, ramp(100, 3));
   return test.assert_eq((a.len() + b.len()).to_string() + " " + a[98].to_string() + " " + b[0].to_string(), "199 294 297");
@@ -20,7 +20,7 @@ function test_same_rate_is_identity(): test.TestOutcome {
 // 48 kHz to 16 kHz keeps one sample in three, and a straight line stays
 // straight across the block boundary.
 function test_downsample_by_three(): test.TestOutcome {
-  let r: pcm.Resampler = pcm.resampler(48000, 16000);
+  let r = pcm.resampler(48000, 16000);
   let (r1, a) = pcm.resample(r, ramp(960, 1));
   let (r2, b) = pcm.resample(r1, ramp(960, 1));
   return test.assert_eq(a.len().to_string() + " " + a[1].to_string() + " " + a[319].to_string() + " " + b.len().to_string(), "320 3 957 320");
@@ -28,17 +28,17 @@ function test_downsample_by_three(): test.TestOutcome {
 
 // 16 kHz to 48 kHz gives three samples for each, on the line between them.
 function test_upsample_by_three(): test.TestOutcome {
-  let r: pcm.Resampler = pcm.resampler(16000, 48000);
+  let r = pcm.resampler(16000, 48000);
   let (r1, a) = pcm.resample(r, [0, 300, 600]);
   return test.assert_eq(a.len().to_string() + " " + a[1].to_string() + " " + a[2].to_string() + " " + a[3].to_string(), "6 100 200 300");
 }
 
 // The samples that the speaker did not take stay, and an old backlog goes.
 function test_unplayed(): test.TestOutcome {
-  let q: i32[] = ramp(10, 1);
-  let rest: i32[] = pcm.unplayed(q, 4, 100);
-  let newest: i32[] = pcm.unplayed(q, 2, 3);
-  let failed: i32[] = pcm.unplayed(q, 0 - 5, 100);
+  let q = ramp(10, 1);
+  let rest = pcm.unplayed(q, 4, 100);
+  let newest = pcm.unplayed(q, 2, 3);
+  let failed = pcm.unplayed(q, -5, 100);
   return test.assert_eq(rest.len().to_string() + " " + rest[0].to_string() + " " + newest.len().to_string() + " " + newest[0].to_string() + " " + failed.len().to_string(), "6 4 3 7 10");
 }
 
@@ -47,7 +47,7 @@ function tone(peak: i32, block: i32): i32[] {
   let x: i32[] = [];
   for i in 0..160 {
     let k: i32 = (block * 160 + i) % 32;
-    let v: i32 = peak * k / 8;
+    let v = peak * k / 8;
     if (k >= 8 && k < 24) {
       v = peak * (16 - k) / 8;
     } else if (k >= 24) {
@@ -59,7 +59,7 @@ function tone(peak: i32, block: i32): i32[] {
 }
 
 function peak(x: [i32]): i32 {
-  let p: i32 = 0;
+  let p = 0;
   for v in x {
     if (v > p) {
       p = v;
@@ -73,8 +73,8 @@ function peak(x: [i32]): i32 {
 // Runs `blocks` blocks of a tone of `level` through `a`, and gives the peak
 // of the last block.
 function settle(a: pcm.Agc, level: i32, blocks: i32): (pcm.Agc, i32) {
-  let g: pcm.Agc = a;
-  let last: i32 = 0;
+  let g = a;
+  let last = 0;
   for b in 0..blocks {
     let (g1, y) = pcm.amplify(g, tone(level, b));
     g = g1;
@@ -87,7 +87,7 @@ function settle(a: pcm.Agc, level: i32, blocks: i32): (pcm.Agc, i32) {
 function test_gain_raises_quiet_speech(): test.TestOutcome {
   let (quiet, q) = settle(pcm.agc(), 2000, 60);
   let (loud, l) = settle(pcm.agc(), 30000, 60);
-  let near: boolean = q > pcm.TARGET_PEAK * 9 / 10 && q <= pcm.TARGET_PEAK;
+  let near = q > pcm.TARGET_PEAK * 9 / 10 && q <= pcm.TARGET_PEAK;
   return test.assert_eq(near.to_string() + " " + l.to_string() + " " + loud.gain.to_string(), "true 30000 256");
 }
 
@@ -107,7 +107,7 @@ function test_gain_does_not_clip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("walkie pcm");
+  let r = test.new("walkie pcm");
   r = r.it("the same rate is the identity", test_same_rate_is_identity);
   r = r.it("48 kHz to 16 kHz keeps one sample in three", test_downsample_by_three);
   r = r.it("16 kHz to 48 kHz interpolates", test_upsample_by_three);

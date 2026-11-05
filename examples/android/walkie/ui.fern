@@ -89,9 +89,9 @@ function small_scale(sc: i32): i32 {
 
 // The largest scale up to `cap` at which `text` fits in `w` pixels.
 pub function fit_scale(text: string, w: i32, cap: i32): i32 {
-  let sc: i32 = cap;
+  let sc = cap;
   while (sc > 1 && draw.text_width(text, sc) > w) {
-    sc = sc - 1;
+    sc -= 1;
   }
   return sc;
 }
@@ -141,7 +141,7 @@ function dotted_ring(f: draw.Frame, cx: i32, cy: i32, r: i32, d: i32, n: i32, co
 }
 
 pub function render(f: draw.Frame, v: View): void {
-  let sc: i32 = screen.text_scale(f.width, draw.text_width("x", 1));
+  let sc = screen.text_scale(f.width, draw.text_width("x", 1));
   f.fill(0, 0, f.width, f.height, bg());
   header(f, v, sc);
   if let Some(name) = v.editing {
@@ -256,8 +256,8 @@ function keypad(f: draw.Frame, typed: string): void {
   let bh: i32 = bw * 5 / 4;
   let y: i32 = f.height * 3 / 10 - bh - f.height / 40;
   for k in 0..n {
-    let bx: i32 = f.width / 10 + k * (bw + gap);
-    let edge: i32 = outline();
+    let bx = f.width / 10 + k * (bw + gap);
+    let edge = outline();
     if (k == typed.len()) {
       edge = ink();
     }

@@ -13,23 +13,23 @@ pub function resampler(from_rate: i32, to_rate: i32): Resampler {
 // The output samples for the input samples `x`, and the resampler for the
 // input that follows them.
 pub function resample(r: Resampler, x: [i32]): (Resampler, i32[]) {
-  let n: i32 = x.len();
+  let n = x.len();
   let out: i32[] = [];
   if (n == 0) {
     return (r, out);
   }
-  let pos: i64 = r.pos;
-  let limit: i64 = (n as i64 - 1i64) * r.to;
+  let pos = r.pos;
+  let limit = (n as i64 - 1i64) * r.to;
   while (pos < limit) {
-    let i: i32 = ((pos + r.to) / r.to - 1i64) as i32;
-    let frac: i64 = pos - i as i64 * r.to;
-    let a: i32 = r.prev;
+    let i = ((pos + r.to) / r.to - 1i64) as i32;
+    let frac = pos - i as i64 * r.to;
+    let a = r.prev;
     if (i >= 0) {
       a = x[i];
     }
-    let b: i32 = x[i + 1];
+    let b = x[i + 1];
     out = out.append(a + (((b - a) as i64 * frac * 2i64 + r.to) / (2i64 * r.to)) as i32);
-    pos = pos + r.from;
+    pos += r.from;
   }
   return (Resampler { ...r, pos: pos - n as i64 * r.to, prev: x[n - 1] }, out);
 }
@@ -38,7 +38,7 @@ pub function resample(r: Resampler, x: [i32]): (Resampler, i32[]) {
 // not take yet. When more than `max` are left, the oldest ones go, so the
 // delay of the voice stays short.
 pub function unplayed(queue: [i32], written: i32, max: i32): i32[] {
-  let from: i32 = written;
+  let from = written;
   if (from < 0) {
     from = 0;
   }
@@ -73,12 +73,12 @@ pub function agc(): Agc {
 }
 
 function peak_of(x: [i32]): i32 {
-  let peak: i32 = 0;
+  let peak = 0;
   for v in x {
     if (v > peak) {
       peak = v;
-    } else if (0 - v > peak) {
-      peak = 0 - v;
+    } else if (-v > peak) {
+      peak = -v;
     }
   }
   return peak;
@@ -89,7 +89,7 @@ function next_gain(gain: i32, env: i32): i32 {
   if (env < NOISE_PEAK) {
     return gain;
   }
-  let want: i32 = TARGET_PEAK * GAIN_ONE / env;
+  let want = TARGET_PEAK * GAIN_ONE / env;
   if (want > MAX_GAIN) {
     want = MAX_GAIN;
   } else if (want < GAIN_ONE) {
@@ -103,12 +103,12 @@ function next_gain(gain: i32, env: i32): i32 {
 
 // The samples `x` at the gain of `a`, and the gain for the next block.
 pub function amplify(a: Agc, x: [i32]): (Agc, i32[]) {
-  let peak: i32 = peak_of(x);
-  let env: i32 = a.env - (a.env - peak) / 8;
+  let peak = peak_of(x);
+  let env = a.env - (a.env - peak) / 8;
   if (peak > a.env) {
     env = peak;
   }
-  let gain: i32 = next_gain(a.gain, env);
+  let gain = next_gain(a.gain, env);
   if (peak > 0 && peak * gain > 32767 * GAIN_ONE) {
     gain = 32767 * GAIN_ONE / peak;
   }

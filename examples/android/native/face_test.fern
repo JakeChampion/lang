@@ -2,9 +2,9 @@ import "std/test";
 import "./face";
 
 function digit_text(d: i32[]): string {
-  let out: string = "";
+  let out = "";
   for x in d {
-    out = out + x.to_string();
+    out += x.to_string();
   }
   return out;
 }
@@ -51,7 +51,7 @@ function test_fits(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("android native stopwatch face");
+  let r = test.new("android native stopwatch face");
   r = r.it("digit 8 lights every segment", test_eight);
   r = r.it("digit 1 lights b and c", test_one);
   r = r.it("mm:ss of 754 s", test_digits);

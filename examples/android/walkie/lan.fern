@@ -130,9 +130,9 @@ pub function beacon(l: Link, now: i64): (Link, u8[][]) {
 // beacon to the peer directly until that message comes, because the peer
 // possibly did not hear its broadcasts.
 pub function pair(l: Link, peer: i64, now: i64, own random_key: u8[], random_nonce: u8[], own random_kem: u8[]): (Link, u8[][]) {
-  let first: boolean = l.me < peer;
-  let h: secure.Handshake = secure.start(first, random_key, random_nonce, random_kem);
-  let out: u8[] = encode(BEACON, l.me, []);
+  let first = l.me < peer;
+  let h = secure.start(first, random_key, random_nonce, random_kem);
+  let out = encode(BEACON, l.me, []);
   if (first) {
     out = encode(HANDSHAKE, l.me, secure.first(h));
   }
@@ -158,18 +158,18 @@ function exchange(l: Link, body: u8[], h: secure.Handshake, now: i64): Step {
     return Step { link: Link { ...l, phase: Closed, hs: None }, out: [], heard: Failed };
   }
   let out: u8[][] = [];
-  let last: u8[] = l.last_out;
+  let last = l.last_out;
   if (reply.len() > 0) {
     last = encode(HANDSHAKE, l.me, reply);
     out = [last];
   }
-  let next: Link = Link { ...l, last_in: body, last_out: last, resend_at: now + RESEND_MS };
+  let next = Link { ...l, last_in: body, last_out: last, resend_at: now + RESEND_MS };
   if (!h1.done) {
     return Step { link: Link { ...next, hs: Some(h1) }, out: out, heard: Nothing };
   }
   match (secure.keys(h1)) {
     Some(k) => {
-      let sas: string = k.sas;
+      let sas = k.sas;
       return Step { link: Link { ...next, phase: Verifying, hs: None, keys: Some(k), sas: sas }, out: out, heard: Verify(sas) };
     },
     None => {

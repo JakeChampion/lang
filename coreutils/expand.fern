@@ -102,9 +102,9 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
   let r = stdin();
   let chunk: u8[] = [];
   let pos = 0;
-  let tabat: i32 = -1;
-  let bsat: i32 = -1;
-  let nulat: i32 = -1;
+  let tabat = -1;
+  let bsat = -1;
+  let nulat = -1;
   let carry = 0 as usize;
   let final = false;
 
