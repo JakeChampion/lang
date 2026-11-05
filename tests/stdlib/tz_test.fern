@@ -8,8 +8,8 @@ function us_rule(): tz.Zone {
 }
 
 function test_rule_standard_before_spring(): test.TestOutcome {
-  let z: tz.Zone = us_rule();
-  if (z.offset_at(time.timestamp_from_unix(1710054000i64 - 1i64)) != 0 - 18000) {
+  let z = us_rule();
+  if (z.offset_at(time.timestamp_from_unix(1710054000i64 - 1i64)) != -18000) {
     return test.fail("EST before the gap");
   }
   if (z.abbrev_at(time.timestamp_from_unix(1710054000i64 - 1i64)) != "EST") {
@@ -19,8 +19,8 @@ function test_rule_standard_before_spring(): test.TestOutcome {
 }
 
 function test_rule_daylight_after_spring(): test.TestOutcome {
-  let z: tz.Zone = us_rule();
-  if (z.offset_at(time.timestamp_from_unix(1710054000i64)) != 0 - 14400) {
+  let z = us_rule();
+  if (z.offset_at(time.timestamp_from_unix(1710054000i64)) != -14400) {
     return test.fail("EDT at the gap");
   }
   if (z.abbrev_at(time.timestamp_from_unix(1710054000i64)) != "EDT") {
@@ -30,15 +30,15 @@ function test_rule_daylight_after_spring(): test.TestOutcome {
 }
 
 function test_rule_fall_back(): test.TestOutcome {
-  let z: tz.Zone = us_rule();
-  if (z.offset_at(time.timestamp_from_unix(1730613600i64 - 1i64)) != 0 - 14400) {
+  let z = us_rule();
+  if (z.offset_at(time.timestamp_from_unix(1730613600i64 - 1i64)) != -14400) {
     return test.fail("EDT before the overlap");
   }
-  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1730613600i64)), 0 - 18000);
+  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1730613600i64)), -18000);
 }
 
 function test_rule_southern_hemisphere(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("AEST-10AEDT,M10.1.0,M4.1.0/3");
+  let z = tz.zone_from_tz("AEST-10AEDT,M10.1.0,M4.1.0/3");
   if (z.offset_at(time.timestamp_from_unix(1712419200i64 - 1i64)) != 39600) {
     return test.fail("AEDT before April's fall-back");
   }
@@ -52,7 +52,7 @@ function test_rule_southern_hemisphere(): test.TestOutcome {
 }
 
 function test_rule_quoted_fixed(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("<+0545>-5:45");
+  let z = tz.zone_from_tz("<+0545>-5:45");
   if (z.offset_at(time.timestamp_from_unix(0i64)) != 20700) {
     return test.fail("offset");
   }
@@ -63,7 +63,7 @@ function test_rule_quoted_fixed(): test.TestOutcome {
 }
 
 function test_rule_time_past_24_hours(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("IST-2IDT,M3.4.4/26,M10.5.0");
+  let z = tz.zone_from_tz("IST-2IDT,M3.4.4/26,M10.5.0");
   if (z.offset_at(time.timestamp_from_unix(1774569600i64 - 1i64)) != 7200) {
     return test.fail("IST before 26:00 on the Thursday");
   }
@@ -73,10 +73,10 @@ function test_rule_time_past_24_hours(): test.TestOutcome {
 function test_rule_time_negative(): test.TestOutcome {
   match (tz.iana_zone("America/Nuuk")) {
     Ok(z) => {
-      if (z.offset_at(time.timestamp_from_unix(13576813200i64 - 1i64)) != 0 - 7200) {
+      if (z.offset_at(time.timestamp_from_unix(13576813200i64 - 1i64)) != -7200) {
         return test.fail("-02 before -1:00 on the Sunday");
       }
-      return test.assert_eq(z.offset_at(time.timestamp_from_unix(13576813200i64)), 0 - 3600);
+      return test.assert_eq(z.offset_at(time.timestamp_from_unix(13576813200i64)), -3600);
     },
     Err(_) => {
       return test.fail("America/Nuuk missing");
@@ -85,7 +85,7 @@ function test_rule_time_negative(): test.TestOutcome {
 }
 
 function test_rule_time_past_167_hours_refused(): test.TestOutcome {
-  let r: tz.Rule = tz.parse_posix("IST-2IDT,M3.4.4/168,M10.5.0");
+  let r = tz.parse_posix("IST-2IDT,M3.4.4/168,M10.5.0");
   return test.assert_eq(r.start.week, 2);
 }
 
@@ -125,8 +125,8 @@ function test_iana_zone_unknown(): test.TestOutcome {
 }
 
 function test_at_is_the_local_time_then(): test.TestOutcome {
-  let z: tz.Zone = us_rule();
-  let summer: tz.Zoned = z.at(time.timestamp_from_unix(1720000000i64));
+  let z = us_rule();
+  let summer = z.at(time.timestamp_from_unix(1720000000i64));
   if (summer.format_rfc3339() != "2024-07-03T05:46:40-04:00" || summer.to_datetime().time.hour != 5) {
     return test.fail("summer");
   }
@@ -157,18 +157,18 @@ function test_zoned_parse_utc(): test.TestOutcome {
 }
 
 function test_fixed_zone_negative_offset(): test.TestOutcome {
-  let z: tz.Zone = tz.fixed_zone(0 - (9 * 3600 + 30 * 60), "MART");
-  let zt: tz.Zoned = z.at(time.timestamp_from_unix(0i64));
-  if (z.offset_at(zt.timestamp) != 0 - 34200 || z.abbrev_at(zt.timestamp) != "MART") {
+  let z = tz.fixed_zone(0 - (9 * 3600 + 30 * 60), "MART");
+  let zt = z.at(time.timestamp_from_unix(0i64));
+  if (z.offset_at(zt.timestamp) != -34200 || z.abbrev_at(zt.timestamp) != "MART") {
     return test.fail("offset or abbreviation");
   }
   return test.assert_eq(zt.format_rfc3339(), "1969-12-31T14:30:00-09:30");
 }
 
 function push_be32(own out: u8[], v: i64): u8[] {
-  let u: i64 = v;
+  let u = v;
   if (u < 0i64) {
-    u = u + 4294967296i64;
+    u += 4294967296i64;
   }
   out = out.append((u >> 24i64 & 255i64) as u8);
   out = out.append((u >> 16i64 & 255i64) as u8);
@@ -178,19 +178,19 @@ function push_be32(own out: u8[], v: i64): u8[] {
 }
 
 function push_be64(own out: u8[], v: i64): u8[] {
-  let i: i32 = 7;
+  let i = 7;
   while (i >= 0) {
     out = out.append((v >> (i * 8) as i64 & 255i64) as u8);
-    i = i - 1;
+    i -= 1;
   }
   return out;
 }
 
 function push_bytes(own out: u8[], s: string): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     out = out.append(s[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -198,10 +198,10 @@ function push_bytes(own out: u8[], s: string): u8[] {
 function push_header(own out: u8[], version: u8, timecnt: i32, typecnt: i32, charcnt: i32): u8[] {
   out = push_bytes(out, "TZif");
   out = out.append(version);
-  let i: i32 = 0;
+  let i = 0;
   while (i < 15) {
     out = out.append(0 as u8);
-    i = i + 1;
+    i += 1;
   }
   out = push_be32(out, 0i64);
   out = push_be32(out, 0i64);
@@ -295,12 +295,12 @@ function test_tzif_footer_governs_the_future(): test.TestOutcome {
 }
 
 function test_tzif_truncated_is_refused(): test.TestOutcome {
-  let whole: u8[] = fixture();
+  let whole = fixture();
   let cut: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 60) {
     cut = cut.append(whole[i]);
-    i = i + 1;
+    i += 1;
   }
   match (tz.parse_tzif(cut)) {
     Ok(_) => {
@@ -316,10 +316,10 @@ function test_tzif_absurd_count_is_refused(): test.TestOutcome {
   let out: u8[] = [];
   out = push_bytes(out, "TZif");
   out = out.append(50 as u8);
-  let i: i32 = 0;
+  let i = 0;
   while (i < 15) {
     out = out.append(0 as u8);
-    i = i + 1;
+    i += 1;
   }
   out = push_be32(out, 0i64);
   out = push_be32(out, 0i64);
@@ -354,12 +354,12 @@ function test_not_tzif_is_refused(): test.TestOutcome {
 }
 
 function test_posix_rule_rejected(): test.TestOutcome {
-  let r: tz.Rule = tz.parse_posix("12");
+  let r = tz.parse_posix("12");
   return test.assert_eq(r.valid, false);
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.new("tz");
+  let t = test.new("tz");
   t = t.it("standard time before the spring gap", test_rule_standard_before_spring);
   t = t.it("daylight time from the spring gap", test_rule_daylight_after_spring);
   t = t.it("fall back", test_rule_fall_back);

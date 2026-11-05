@@ -271,7 +271,7 @@ function test_in_place(): test.TestOutcome {
     return test.fail("seal_in_place");
   }
   let forged = "aead: the message does not verify";
-  if (opened(round_trip(rfc_seq(), 0 - 1, rfc_seq() + 1 as u64)) != forged) {
+  if (opened(round_trip(rfc_seq(), -1, rfc_seq() + 1 as u64)) != forged) {
     return test.fail("the next sequence number");
   }
   if (opened(round_trip(rfc_seq(), n + 3, rfc_seq())) != forged) {
@@ -280,7 +280,7 @@ function test_in_place(): test.TestOutcome {
   if (opened(round_trip(rfc_seq(), n + 16 + 2, rfc_seq())) != forged) {
     return test.fail("changed aad");
   }
-  return test.assert_eq(opened(round_trip(rfc_seq(), 0 - 1, rfc_seq())), hex.encode(sunscreen()));
+  return test.assert_eq(opened(round_trip(rfc_seq(), -1, rfc_seq())), hex.encode(sunscreen()));
 }
 
 function main(): i32 {

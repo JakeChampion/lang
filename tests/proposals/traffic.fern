@@ -32,7 +32,7 @@ function flow_permille(f: Flow): i32 {
 }
 
 function xs_next(s: i64): i64 {
-  let x: i64 = s;
+  let x = s;
   x = x ^ x << 13;
   x = x ^ x >> 7;
   x = x ^ x << 17;
@@ -40,7 +40,7 @@ function xs_next(s: i64): i64 {
 }
 
 function xs_below(s: i64, m: i32): i32 {
-  let v: i64 = s;
+  let v = s;
   if (v < 0) {
     v = 0 - v;
   }
@@ -49,57 +49,57 @@ function xs_below(s: i64, m: i32): i32 {
 
 function initial_positions(cells: i32, cars: i32): i32[] {
   let pos: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cars) {
     pos = pos.append(i * cells / cars);
-    i = i + 1;
+    i += 1;
   }
   return pos;
 }
 
 function gap_ahead(pos: i32[], i: i32, cells: i32): i32 {
-  let n: i32 = pos.len();
+  let n = pos.len();
   if (n == 1) {
     return cells - 1;
   }
-  let ahead: i32 = pos[(i + 1) % n];
-  let g: i32 = ahead - pos[i] - 1;
+  let ahead = pos[(i + 1) % n];
+  let g = ahead - pos[i] - 1;
   if (g < 0) {
-    g = g + cells;
+    g += cells;
   }
   return g;
 }
 
 function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, seed: i64): (i32[], i32[], i32, i64) {
-  let pos: i32[] = pos0;
-  let spd: i32[] = spd0;
-  let s: i64 = seed;
-  let moved: i32 = 0;
-  let n: i32 = pos.len();
+  let pos = pos0;
+  let spd = spd0;
+  let s = seed;
+  let moved = 0;
+  let n = pos.len();
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let v: i32 = spd[i];
+    let v = spd[i];
     if (v < vmax) {
-      v = v + 1;
+      v += 1;
     }
-    let g: i32 = gap_ahead(pos, i, cells);
+    let g = gap_ahead(pos, i, cells);
     if (v > g) {
       v = g;
     }
     s = xs_next(s);
     if (v > 0 && xs_below(s, 100) < brake_pct) {
-      v = v - 1;
+      v -= 1;
     }
     spd = spd.with(i, v);
-    i = i + 1;
+    i += 1;
   }
 
-  let j: i32 = 0;
+  let j = 0;
   while (j < n) {
     pos = pos.with(j, (pos[j] + spd[j]) % cells);
-    moved = moved + spd[j];
-    j = j + 1;
+    moved += spd[j];
+    j += 1;
   }
   return (pos, spd, moved, s);
 }
@@ -108,27 +108,27 @@ function simulate(cells: i32, cars: i32, steps: i32, warmup: i32, vmax: i32, bra
   if (cars <= 0) {
     return Flow { cells: cells, cars: 0, steps: steps, moves: 0 };
   }
-  let pos: i32[] = initial_positions(cells, cars);
+  let pos = initial_positions(cells, cars);
   let spd: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cars) {
     spd = spd.append(0);
-    i = i + 1;
+    i += 1;
   }
 
-  let s: i64 = seed;
-  let total: i32 = 0;
-  let t: i32 = 0;
+  let s = seed;
+  let total = 0;
+  let t = 0;
   sweep: while (t < warmup + steps) {
     let (p2, v2, moved, s2) = step(cells, pos, spd, vmax, brake_pct, s);
     pos = p2;
     spd = v2;
     s = s2;
-    t = t + 1;
+    t += 1;
     if (t <= warmup) {
       continue sweep;
     }
-    total = total + moved;
+    total += moved;
   }
   return Flow { cells: cells, cars: cars, steps: steps, moves: total };
 }
@@ -146,7 +146,7 @@ function run_at(cars: i32): Flow {
 }
 
 function test_a_full_ring_has_no_flow(): test.TestOutcome {
-  let f: Flow = gridlock(40);
+  let f = gridlock(40);
   if (f.moves != 0) {
     return test.fail("a full ring moved " + f.moves.to_string() + " cells");
   }
@@ -157,7 +157,7 @@ function test_a_full_ring_has_no_flow(): test.TestOutcome {
 }
 
 function test_an_empty_ring_has_no_flow(): test.TestOutcome {
-  let f: Flow = run_at(0);
+  let f = run_at(0);
   if (flow_permille(f) != 0) {
     return test.fail("empty ring reported flow " + flow_permille(f).to_string());
   }
@@ -168,8 +168,8 @@ function test_an_empty_ring_has_no_flow(): test.TestOutcome {
 }
 
 function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
-  let cells: i32 = 50;
-  let pos: i32[] = initial_positions(cells, 12);
+  let cells = 50;
+  let pos = initial_positions(cells, 12);
   let spd: i32[] = [];
   for i in 0..12 {
     spd = spd.append(0);
@@ -195,9 +195,9 @@ function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
 }
 
 function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
-  let cells: i32 = 60;
-  let vmax: i32 = 5;
-  let pos: i32[] = initial_positions(cells, 15);
+  let cells = 60;
+  let vmax = 5;
+  let pos = initial_positions(cells, 15);
   let spd: i32[] = [];
   for i in 0..15 {
     spd = spd.append(0);
@@ -227,14 +227,14 @@ function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
 }
 
 function test_flow_peaks_then_falls(): test.TestOutcome {
-  let ds: i32[] = densities();
+  let ds = densities();
   let flows: i32[] = [];
   for i in 0..ds.len() {
     flows = flows.append(flow_permille(run_at(ds[i])));
   }
 
-  let peak: i32 = 0;
-  let peak_at: i32 = 0;
+  let peak = 0;
+  let peak_at = 0;
   for i in 0..flows.len() {
     if (flows[i] > peak) {
       peak = flows[i];
@@ -277,8 +277,8 @@ function some_flow(cars: i32): Option[i32] {
 }
 
 function test_runs_are_deterministic(): test.TestOutcome {
-  let a: Flow = run_at(25);
-  let b: Flow = run_at(25);
+  let a = run_at(25);
+  let b = run_at(25);
   if (a.moves != b.moves) {
     return test.fail("same seed gave " + a.moves.to_string()
       + " then " + b.moves.to_string());
@@ -290,13 +290,13 @@ function main(): i32 {
   defer eprint("(simulation complete)");
   eprint("traffic — Nagel-Schreckenberg on a one-lane ring");
 
-  let ds: i32[] = densities();
+  let ds = densities();
   for i in 0..ds.len() {
-    let f: Flow = run_at(ds[i]);
+    let f = run_at(ds[i]);
     eprint(f.describe() |> indent_by("  "));
   }
 
-  let r: test.TestRunner = test.new("traffic");
+  let r = test.new("traffic");
   r = r.it("a full ring has no flow", test_a_full_ring_has_no_flow);
   r = r.it("an empty ring has no flow", test_an_empty_ring_has_no_flow);
   r = r.it("cars are conserved and stay on the ring", test_cars_are_conserved_and_stay_on_the_ring);

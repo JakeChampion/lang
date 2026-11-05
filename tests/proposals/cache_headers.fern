@@ -37,7 +37,7 @@ function is_weak(tag: string): boolean {
 }
 
 function opaque_of(tag: string): string {
-  let t: string = tag;
+  let t = tag;
   if (is_weak(t)) {
     t = t.drop(2).to_owned();
   }
@@ -60,9 +60,9 @@ function strong_eq(a: string, b: string): boolean {
 
 function parse_tag_list(h: string): string[] {
   let out: string[] = [];
-  let parts: string[] = h.split(",");
+  let parts = h.split(",");
   for i in 0..parts.len() {
-    let t: string = parts[i].trim().to_owned();
+    let t = parts[i].trim().to_owned();
     if (t.len() > 0) {
       out = out.append(t);
     }
@@ -74,7 +74,7 @@ function list_matches(h: string, etag: string, strong: boolean): boolean {
   if (h.trim() == "*") {
     return true;
   }
-  let tags: string[] = parse_tag_list(h);
+  let tags = parse_tag_list(h);
   for i in 0..tags.len() {
     if (strong) {
       if (strong_eq(tags[i], etag)) {
@@ -145,7 +145,7 @@ function freshness_lifetime(cc: CacheControl, expires: i32, date: i32, shared: b
     return cc.max_age;
   }
   if (expires >= 0 && date >= 0) {
-    let d: i32 = expires - date;
+    let d = expires - date;
     if (d < 0) {
       return 0;
     }
@@ -173,7 +173,7 @@ function res_at(etag: string, modified: i32): Resource {
 }
 
 function test_if_none_match_shadows_if_modified_since(): test.TestOutcome {
-  let res: Resource = res_at("\"v2\"", 1000);
+  let res = res_at("\"v2\"", 1000);
 
   let a: Request = Request {
     ...req_get(), if_none_match: "\"v1\"",
@@ -193,11 +193,11 @@ function test_if_none_match_shadows_if_modified_since(): test.TestOutcome {
       + evaluate(b, res).to_string() + ", wanted 304");
   }
 
-  let c: Request = Request { ...req_get(), if_modified_since: 2000 };
+  let c = Request { ...req_get(), if_modified_since: 2000 };
   if (evaluate(c, res) != status_not_modified()) {
     return test.fail("the date alone should give 304");
   }
-  let d: Request = Request { ...req_get(), if_modified_since: 500 };
+  let d = Request { ...req_get(), if_modified_since: 500 };
   if (evaluate(d, res) != status_ok()) {
     return test.fail("the date alone should give 200");
   }
@@ -205,13 +205,13 @@ function test_if_none_match_shadows_if_modified_since(): test.TestOutcome {
 }
 
 function test_the_two_comparisons_differ_on_weak_tags(): test.TestOutcome {
-  let strong_res: Resource = res_at("\"abc\"", 1000);
-  let weak_res: Resource = res_at("W/\"abc\"", 1000);
+  let strong_res = res_at("\"abc\"", 1000);
+  let weak_res = res_at("W/\"abc\"", 1000);
 
   let pairs_h: string[] = ["\"abc\"", "W/\"abc\"", "\"abc\"", "W/\"abc\""];
   let pairs_r: Resource[] = [strong_res, strong_res, weak_res, weak_res];
   for i in 0..pairs_h.len() {
-    let r: Request = Request { ...req_get(), if_none_match: pairs_h[i] };
+    let r = Request { ...req_get(), if_none_match: pairs_h[i] };
     if (evaluate(r, pairs_r[i]) != status_not_modified()) {
       return test.fail("If-None-Match " + pairs_h[i] + " vs "
         + pairs_r[i].etag + " gave "
@@ -219,17 +219,17 @@ function test_the_two_comparisons_differ_on_weak_tags(): test.TestOutcome {
     }
   }
 
-  let put: Request = Request { ...req_get(), method: "PUT" };
-  let m1: Request = Request { ...put, if_match: "\"abc\"" };
+  let put = Request { ...req_get(), method: "PUT" };
+  let m1 = Request { ...put, if_match: "\"abc\"" };
   if (evaluate(m1, strong_res) != status_ok()) {
     return test.fail("If-Match strong vs strong should pass");
   }
-  let m2: Request = Request { ...put, if_match: "W/\"abc\"" };
+  let m2 = Request { ...put, if_match: "W/\"abc\"" };
   if (evaluate(m2, strong_res) != status_precondition_failed()) {
     return test.fail("If-Match with a WEAK tag must fail the strong "
       + "comparison, got " + evaluate(m2, strong_res).to_string());
   }
-  let m3: Request = Request { ...put, if_match: "\"abc\"" };
+  let m3 = Request { ...put, if_match: "\"abc\"" };
   if (evaluate(m3, weak_res) != status_precondition_failed()) {
     return test.fail("If-Match against a WEAK stored tag must fail, got "
       + evaluate(m3, weak_res).to_string());
@@ -238,7 +238,7 @@ function test_the_two_comparisons_differ_on_weak_tags(): test.TestOutcome {
 }
 
 function test_the_method_decides_304_versus_412(): test.TestOutcome {
-  let res: Resource = res_at("\"v\"", 1000);
+  let res = res_at("\"v\"", 1000);
   let safe: string[] = ["GET", "HEAD"];
   let unsafe: string[] = ["PUT", "POST", "DELETE", "PATCH"];
   for i in 0..safe.len() {
@@ -277,20 +277,20 @@ function test_the_method_decides_304_versus_412(): test.TestOutcome {
 function test_the_wildcard_is_about_existence(): test.TestOutcome {
   let tags: string[] = ["\"v\"", "W/\"v\"", "\"\""];
   for i in 0..tags.len() {
-    let res: Resource = res_at(tags[i], 1000);
-    let a: Request = Request { ...req_get(), if_none_match: "*" };
+    let res = res_at(tags[i], 1000);
+    let a = Request { ...req_get(), if_none_match: "*" };
     if (evaluate(a, res) != status_not_modified()) {
       return test.fail("If-None-Match: * against " + tags[i] + " gave "
         + evaluate(a, res).to_string() + ", wanted 304");
     }
-    let b: Request = Request { ...req_get(), method: "PUT", if_match: "*" };
+    let b = Request { ...req_get(), method: "PUT", if_match: "*" };
     if (evaluate(b, res) != status_ok()) {
       return test.fail("If-Match: * against an existing resource gave "
         + evaluate(b, res).to_string() + ", wanted 200");
     }
   }
-  let gone: Resource = Resource { etag: "", last_modified: 0, exists: false };
-  let c: Request = Request { ...req_get(), method: "PUT", if_match: "*" };
+  let gone = Resource { etag: "", last_modified: 0, exists: false };
+  let c = Request { ...req_get(), method: "PUT", if_match: "*" };
   if (evaluate(c, gone) != status_not_found()) {
     return test.fail("If-Match: * against a missing resource gave "
       + evaluate(c, gone).to_string() + ", wanted 404");
@@ -299,7 +299,7 @@ function test_the_wildcard_is_about_existence(): test.TestOutcome {
 }
 
 function test_a_tag_list_matches_any_member(): test.TestOutcome {
-  let res: Resource = res_at("\"c\"", 1000);
+  let res = res_at("\"c\"", 1000);
   let headers: string[] = [
     "\"a\", \"b\", \"c\"",
     "\"c\",\"a\"",
@@ -307,14 +307,14 @@ function test_a_tag_list_matches_any_member(): test.TestOutcome {
     "W/\"a\", W/\"c\"",
   ];
   for i in 0..headers.len() {
-    let r: Request = Request { ...req_get(), if_none_match: headers[i] };
+    let r = Request { ...req_get(), if_none_match: headers[i] };
     if (evaluate(r, res) != status_not_modified()) {
       return test.fail("list [" + headers[i] + "] did not match \"c\"");
     }
   }
   let misses: string[] = ["\"a\", \"b\"", "\"cc\"", "\"\"", "W/\"d\""];
   for i in 0..misses.len() {
-    let r2: Request = Request { ...req_get(), if_none_match: misses[i] };
+    let r2 = Request { ...req_get(), if_none_match: misses[i] };
     if (evaluate(r2, res) != status_ok()) {
       return test.fail("list [" + misses[i] + "] wrongly matched \"c\"");
     }
@@ -323,23 +323,23 @@ function test_a_tag_list_matches_any_member(): test.TestOutcome {
 }
 
 function test_if_match_shadows_if_unmodified_since(): test.TestOutcome {
-  let res: Resource = res_at("\"v\"", 1000);
-  let put: Request = Request { ...req_get(), method: "PUT" };
+  let res = res_at("\"v\"", 1000);
+  let put = Request { ...req_get(), method: "PUT" };
 
-  let a: Request = Request { ...put, if_match: "\"v\"", if_unmodified_since: 500 };
+  let a = Request { ...put, if_match: "\"v\"", if_unmodified_since: 500 };
   if (evaluate(a, res) != status_ok()) {
     return test.fail("a satisfied If-Match with a failing date gave "
       + evaluate(a, res).to_string() + ", wanted 200");
   }
-  let b: Request = Request { ...put, if_unmodified_since: 500 };
+  let b = Request { ...put, if_unmodified_since: 500 };
   if (evaluate(b, res) != status_precondition_failed()) {
     return test.fail("If-Unmodified-Since alone should give 412");
   }
-  let c: Request = Request { ...put, if_unmodified_since: 1000 };
+  let c = Request { ...put, if_unmodified_since: 1000 };
   if (evaluate(c, res) != status_ok()) {
     return test.fail("an equal timestamp should satisfy If-Unmodified-Since");
   }
-  let d: Request = Request { ...req_get(), if_modified_since: 1000 };
+  let d = Request { ...req_get(), if_modified_since: 1000 };
   if (evaluate(d, res) != status_not_modified()) {
     return test.fail("an equal timestamp should give 304");
   }
@@ -357,7 +357,7 @@ function test_freshness_directives_have_a_fixed_order(): test.TestOutcome {
   if (freshness_lifetime(all, 1000, 0, false) != 60) {
     return test.fail("a private cache should ignore s-maxage");
   }
-  let only_max: CacheControl = CacheControl { ...cc_none(), max_age: 30 };
+  let only_max = CacheControl { ...cc_none(), max_age: 30 };
   if (freshness_lifetime(only_max, 1000, 0, true) != 30) {
     return test.fail("max-age should beat Expires");
   }
@@ -370,11 +370,11 @@ function test_freshness_directives_have_a_fixed_order(): test.TestOutcome {
   if (freshness_lifetime(cc_none(), -1, -1, true) != 0) {
     return test.fail("no directives at all should give 0");
   }
-  let ns: CacheControl = CacheControl { ...all, no_store: true };
+  let ns = CacheControl { ...all, no_store: true };
   if (is_fresh(ns, 1000, 0, 0, true)) {
     return test.fail("no-store is never fresh");
   }
-  let nc: CacheControl = CacheControl { ...all, no_cache: true };
+  let nc = CacheControl { ...all, no_cache: true };
   if (is_fresh(nc, 1000, 0, 0, true)) {
     return test.fail("no-cache is never fresh");
   }
@@ -388,15 +388,15 @@ function test_freshness_directives_have_a_fixed_order(): test.TestOutcome {
 }
 
 function test_every_combination_is_decided(): test.TestOutcome {
-  let res: Resource = res_at("\"v\"", 1000);
+  let res = res_at("\"v\"", 1000);
   let inm: string[] = ["", "\"v\"", "\"other\"", "*"];
   let im: string[] = ["", "\"v\"", "\"other\"", "*"];
   let ims: i32[] = [-1, 500, 1000, 2000];
   let ius: i32[] = [-1, 500, 1000, 2000];
   let methods: string[] = ["GET", "PUT"];
-  let seen_ok: boolean = false;
-  let seen_304: boolean = false;
-  let seen_412: boolean = false;
+  let seen_ok = false;
+  let seen_304 = false;
+  let seen_412 = false;
   for a in 0..inm.len() {
     for b in 0..im.len() {
       for c in 0..ims.len() {
@@ -407,7 +407,7 @@ function test_every_combination_is_decided(): test.TestOutcome {
               if_match: im[b], if_modified_since: ims[c],
               if_unmodified_since: ius[d],
             };
-            let s: i32 = evaluate(r, res);
+            let s = evaluate(r, res);
             if (s == status_ok()) {
               seen_ok = true;
             } else if (s == status_not_modified()) {
@@ -437,7 +437,7 @@ function describe(label: string, r: Request, res: Resource): void {
 
 function main(): i32 {
   eprint("cache_headers — RFC 9110 conditional requests");
-  let res: Resource = res_at("W/\"v2\"", 1000);
+  let res = res_at("W/\"v2\"", 1000);
   eprint("  resource: ETag W/\"v2\", Last-Modified 1000");
   describe(
     "GET If-None-Match: \"v2\"          ",
@@ -467,7 +467,7 @@ function main(): i32 {
   eprint("  freshness: shared=" + freshness_lifetime(cc, 1000, 0, true).to_string()
     + "s  private=" + freshness_lifetime(cc, 1000, 0, false).to_string() + "s");
 
-  let r: test.TestRunner = test.new("cache_headers");
+  let r = test.new("cache_headers");
   r = r.it("If-None-Match shadows If-Modified-Since", test_if_none_match_shadows_if_modified_since);
   r = r.it("the two comparisons differ on weak tags", test_the_two_comparisons_differ_on_weak_tags);
   r = r.it("the method decides 304 versus 412", test_the_method_decides_304_versus_412);

@@ -41,7 +41,7 @@ function test_a_bad_inbound_id_is_replaced(): test.TestOutcome {
 
 function test_fresh_spells_hex(): test.TestOutcome {
   let n = 0;
-  let id: string = requestid.fresh((): i32 => 0 - 1);
+  let id: string = requestid.fresh((): i32 => -1);
   let zero: string = requestid.fresh((): i32 => 0);
   return test.assert_eq(id + "|" + zero + "|" + requestid.of(http.request("GET", "/")), "ffffffffffffffffffffffffffffffff|00000000000000000000000000000000|");
 }

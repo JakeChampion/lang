@@ -12,7 +12,7 @@ import "std/test";
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
@@ -50,16 +50,16 @@ function flag(b: boolean): string {
 
 function transient_case(own g: Gen): (Gen, string) {
   let (g1, lm0) = rnd(g);
-  let lm: i32 = lm0 % 4;
+  let lm = lm0 % 4;
   let n: i32 = (120 << lm) + 120;
   let (g2, c0) = rnd(g1);
-  let c: i32 = 1 + c0 % 2;
+  let c = 1 + c0 % 2;
   let (g3, w0) = rnd(g2);
-  let weak: boolean = w0 % 2 == 1;
+  let weak = w0 % 2 == 1;
   let (g4, amp) = frand(g3, 0.5f32, 30000.0f32);
-  let f: Fill = fill(g4, c * n, 0.0f32 - amp, amp);
-  let g5: Gen = f.g;
-  let xs: f32[] = f.xs;
+  let f = fill(g4, c * n, 0.0f32 - amp, amp);
+  let g5 = f.g;
+  let xs = f.xs;
   let (g6, burst) = rnd(g5);
   g5 = g6;
   if (burst % 2 == 1) {
@@ -67,43 +67,43 @@ function transient_case(own g: Gen): (Gen, string) {
     let (g8, w1) = rnd(g7);
     let (g9, gain) = frand(g8, 2.0f32, 80.0f32);
     g5 = g9;
-    let at: i32 = at0 % (c * n);
-    let i: i32 = at;
+    let at = at0 % (c * n);
+    let i = at;
     while (i < at + 1 + w1 % 40 && i < c * n) {
       xs = xs.with(i, xs[i] * gain);
-      i = i + 1;
+      i += 1;
     }
   }
-  let t: celt_encoder.Transient = celt_encoder.transient_analysis(xs, n, c, weak);
+  let t = celt_encoder.transient_analysis(xs, n, c, weak);
   return (g5, "t " + lm.to_string() + " " + c.to_string() + " " + flag(weak) + " " + flag(t.transient) + " " + flag(t.weak) + " " + (f32_bits(t.tf_estimate) as u32).to_string() + " " + t.tf_chan.to_string());
 }
 
 function preemphasis_case(own g: Gen): (Gen, string) {
   let (g1, cc0) = rnd(g);
-  let cc: i32 = 1 + cc0 % 2;
+  let cc = 1 + cc0 % 2;
   let (g2, up0) = rnd(g1);
-  let up: i32 = 1 + up0 % 3;
+  let up = 1 + up0 % 3;
   let (g3, n0) = rnd(g2);
-  let n: i32 = 120 * up * (1 + n0 % 8);
+  let n = 120 * up * (1 + n0 % 8);
   let (g4, clip0) = rnd(g3);
   let (g5, c0) = rnd(g4);
-  let c: i32 = c0 % cc;
+  let c = c0 % cc;
   let (g6, mem) = frand(g5, -30000.0f32, 30000.0f32);
-  let f: Fill = fill(g6, cc * n, -2.5f32, 2.5f32);
-  let p: celt_encoder.Preemphasis = celt_encoder.preemphasis(f.xs, c, n, cc, up, mem, clip0 % 2 == 1);
+  let f = fill(g6, cc * n, -2.5f32, 2.5f32);
+  let p = celt_encoder.preemphasis(f.xs, c, n, cc, up, mem, clip0 % 2 == 1);
   return (f.g, "p " + cc.to_string() + " " + up.to_string() + " " + n.to_string() + " " + (clip0 % 2).to_string() + " " + c.to_string() + " " + hash(p.samples).to_string() + " " + (f32_bits(p.mem) as u32).to_string());
 }
 
 function patch_case(own g: Gen): (Gen, string) {
   let (g1, c0) = rnd(g);
-  let c: i32 = 1 + c0 % 2;
+  let c = 1 + c0 % 2;
   let (g2, s0) = rnd(g1);
-  let start: i32 = s0 % 5;
+  let start = s0 % 5;
   let (g3, e0) = rnd(g2);
-  let end: i32 = 13 + e0 % 9;
+  let end = 13 + e0 % 9;
   let old_e: f32[] = [];
   let new_e: f32[] = [];
-  let g4: Gen = g3;
+  let g4 = g3;
   for i in 0..42 {
     let (g5, o) = frand(g4, -12.0f32, 18.0f32);
     let (g6, v) = frand(g5, -12.0f32, 18.0f32);
@@ -111,16 +111,16 @@ function patch_case(own g: Gen): (Gen, string) {
     old_e = old_e.append(o);
     new_e = new_e.append(v);
   }
-  let patched: boolean = celt_encoder.patch_transient_decision(new_e, old_e, 21, start, end, c);
+  let patched = celt_encoder.patch_transient_decision(new_e, old_e, 21, start, end, c);
   return (g4, "x " + c.to_string() + " " + start.to_string() + " " + end.to_string() + " " + flag(patched));
 }
 
 function trace(seed: u32, cases: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let c: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let c = crc32.new();
   for k in 0..cases {
     let (g1, what) = rnd(g);
-    let line: string = "";
+    let line = "";
     if (what % 3 == 0) {
       let (g2, s) = transient_case(g1);
       g = g2;
@@ -140,7 +140,7 @@ function trace(seed: u32, cases: i32): u32 {
 }
 
 function ints(xs: [i32], from: i32): string {
-  let s: string = "";
+  let s = "";
   for i in from..xs.len() {
     s = s + " " + xs[i].to_string();
   }
@@ -149,13 +149,13 @@ function ints(xs: [i32], from: i32): string {
 
 function tf_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) {
   let (g1, len0) = rnd(g);
-  let len: i32 = 13 + len0 % 9;
+  let len = 13 + len0 % 9;
   let (g2, tr0) = rnd(g1);
-  let tr: boolean = tr0 % 2 == 1;
+  let tr = tr0 % 2 == 1;
   let (g3, l0) = rnd(g2);
-  let lambda: i32 = 80 + l0 % 320;
+  let lambda = 80 + l0 % 320;
   let (g4, ch0) = rnd(g3);
-  let chan: i32 = ch0 % c;
+  let chan = ch0 % c;
   let (g5, tfe) = frand(g4, 0.0f32, 1.0f32);
   let imp: i32[] = [];
   for i in 0..21 {
@@ -163,13 +163,13 @@ function tf_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) 
     g5 = g6;
     imp = imp.append(v % 40);
   }
-  let t: celt_encoder.Tf = celt_encoder.tf_analysis(len, tr, lambda, x, n0, lm, tfe, chan, imp);
-  let line: string = "a " + lm.to_string() + " " + len.to_string() + " " + flag(tr) + " " + lambda.to_string() + " " + chan.to_string() + " " + t.select.to_string() + ints(t.res, 0);
+  let t = celt_encoder.tf_analysis(len, tr, lambda, x, n0, lm, tfe, chan, imp);
+  let line = "a " + lm.to_string() + " " + len.to_string() + " " + flag(tr) + " " + lambda.to_string() + " " + chan.to_string() + " " + t.select.to_string() + ints(t.res, 0);
   let (g7, size0) = rnd(g5);
-  let size: i32 = 2 + size0 % 60;
+  let size = 2 + size0 % 60;
   let (g8, pre0) = rnd(g7);
-  let e: range.Encoder = range.encoder(size);
-  let g9: Gen = g8;
+  let e = range.encoder(size);
+  let g9 = g8;
   for i in 0..pre0 % 40 {
     let (ga, v) = rnd(g9);
     let (gb, lp) = rnd(ga);
@@ -177,10 +177,10 @@ function tf_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) 
     e = e.bit_logp(v % 2 == 1, 1 + lp % 3);
   }
   let (gc, start0) = rnd(g9);
-  let start: i32 = start0 % 3;
+  let start = start0 % 3;
   let (e1, res) = celt_encoder.tf_encode(e, start, len, tr, t.res, lm, t.select);
-  let tell: i32 = e1.tell();
-  let done: range.Encoder = e1.done();
+  let tell = e1.tell();
+  let done = e1.done();
   let h: u32 = 0u32;
   for b in done.bytes() {
     h = h * 31u32 + b as u32;
@@ -190,35 +190,35 @@ function tf_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) 
 
 function trim_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) {
   let (g1, end0) = rnd(g);
-  let end: i32 = 13 + end0 % 9;
+  let end = 13 + end0 % 9;
   let (g2, in0) = rnd(g1);
-  let intensity: i32 = in0 % (end + 1);
-  let f: Fill = fill(g2, 42, -10.0f32, 20.0f32);
+  let intensity = in0 % (end + 1);
+  let f = fill(g2, 42, -10.0f32, 20.0f32);
   let (g3, valid0) = rnd(f.g);
   let (g4, slope) = frand(g3, -1.0f32, 1.0f32);
   let (g5, saving) = frand(g4, -1.0f32, 1.0f32);
   let (g6, tfe) = frand(g5, 0.0f32, 1.0f32);
   let (g7, surround) = frand(g6, -1.0f32, 1.0f32);
   let (g8, rate0) = rnd(g7);
-  let rate: i32 = 6000 + rate0 % 114000;
-  let an: celt_encoder.Analysis = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid0 % 2 == 1, tonality_slope: slope };
-  let t: celt_encoder.Trim = celt_encoder.alloc_trim_analysis(x, f.xs, end, lm, c, n0, an, saving, tfe, intensity, surround, rate);
+  let rate = 6000 + rate0 % 114000;
+  let an = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid0 % 2 == 1, tonality_slope: slope };
+  let t = celt_encoder.alloc_trim_analysis(x, f.xs, end, lm, c, n0, an, saving, tfe, intensity, surround, rate);
   return (g8, "r " + lm.to_string() + " " + c.to_string() + " " + end.to_string() + " " + intensity.to_string() + " " + rate.to_string() + " " + t.index.to_string() + " " + (f32_bits(t.stereo_saving) as u32).to_string());
 }
 
 function trace2(seed: u32, cases: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let crc: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let crc = crc32.new();
   for k in 0..cases {
     let (g1, what) = rnd(g);
     let (g2, lm0) = rnd(g1);
-    let lm: i32 = lm0 % 4;
-    let n0: i32 = 120 << lm;
+    let lm = lm0 % 4;
+    let n0 = 120 << lm;
     let (g3, c0) = rnd(g2);
-    let c: i32 = 1 + c0 % 2;
+    let c = 1 + c0 % 2;
     let (g4, amp) = frand(g3, 0.01f32, 2.0f32);
-    let f: Fill = fill(g4, c * n0, 0.0f32 - amp, amp);
-    let line: string = "";
+    let f = fill(g4, c * n0, 0.0f32 - amp, amp);
+    let line = "";
     if (what % 3 == 0) {
       let (g5, s) = tf_case(f.g, lm, n0, c, f.xs);
       g = g5;
@@ -228,10 +228,10 @@ function trace2(seed: u32, cases: i32): u32 {
       g = g5;
       line = s;
     } else {
-      let x: f32[] = f.xs;
+      let x = f.xs;
       g = f.g;
       if (c == 1) {
-        let f2: Fill = fill(g, n0, 0.0f32 - amp, amp);
+        let f2 = fill(g, n0, 0.0f32 - amp, amp);
         g = f2.g;
         for v in f2.xs {
           x = x.append(v);
@@ -263,7 +263,7 @@ function test_tf_tie_takes_flag_one(): test.TestOutcome {
   for i in 0..21 {
     imp = imp.append(0);
   }
-  let t: celt_encoder.Tf = celt_encoder.tf_analysis(21, true, 100, x, 480, 2, 0.0f32, 0, imp);
+  let t = celt_encoder.tf_analysis(21, true, 100, x, 480, 2, 0.0f32, 0, imp);
   return test.assert_eq(t.select.to_string() + " |" + ints(t.res, 0), "0 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1");
 }
 
@@ -304,15 +304,15 @@ function dynalloc_case(own g: Gen, an: celt_encoder.Analysis): (Gen, string) {
   let (gc, lm0) = rnd(gb);
   let (gd, eff0) = rnd(gc);
   let (ge, lfe0) = rnd(gd);
-  let start: i32 = start0 % 3;
-  let end: i32 = 13 + end0 % 9;
-  let c: i32 = 1 + c0 % 2;
-  let depth: i32 = 8 + depth0 % 17;
-  let lm: i32 = lm0 % 4;
-  let eff: i32 = 10 + eff0 % 190;
-  let lfe: boolean = lfe0 % 8 == 0;
-  let d: celt_encoder.Dynalloc = celt_encoder.dynalloc_analysis(e, e2, start, end, c, depth, tr, vbr, cvbr, lm, eff, lfe, sur, an);
-  let line: string = "d " + start.to_string() + " " + end.to_string() + " " + c.to_string() + " " + depth.to_string() + " " + flag(tr) + " " + flag(vbr) + " " + flag(cvbr) + " " + lm.to_string() + " " + eff.to_string() + " " + flag(lfe) + " " + (f32_bits(d.max_depth) as u32).to_string() + " " + d.tot_boost.to_string() + " |" + ints(d.offsets, 0) + " |";
+  let start = start0 % 3;
+  let end = 13 + end0 % 9;
+  let c = 1 + c0 % 2;
+  let depth = 8 + depth0 % 17;
+  let lm = lm0 % 4;
+  let eff = 10 + eff0 % 190;
+  let lfe = lfe0 % 8 == 0;
+  let d = celt_encoder.dynalloc_analysis(e, e2, start, end, c, depth, tr, vbr, cvbr, lm, eff, lfe, sur, an);
+  let line = "d " + start.to_string() + " " + end.to_string() + " " + c.to_string() + " " + depth.to_string() + " " + flag(tr) + " " + flag(vbr) + " " + flag(cvbr) + " " + lm.to_string() + " " + eff.to_string() + " " + flag(lfe) + " " + (f32_bits(d.max_depth) as u32).to_string() + " " + d.tot_boost.to_string() + " |" + ints(d.offsets, 0) + " |";
   for i in start..end {
     line = line + " " + d.importance[i].to_string();
   }
@@ -325,7 +325,7 @@ function vbr_case(own g: Gen, an: celt_encoder.Analysis): (Gen, string) {
   let (g3, rate0) = rnd(g2);
   let (g4, lcb_zero) = bit(g3);
   g = g4;
-  let lcb: i32 = 0;
+  let lcb = 0;
   if (!lcb_zero) {
     let (g5, l0) = rnd(g);
     g = g5;
@@ -343,28 +343,28 @@ function vbr_case(own g: Gen, an: celt_encoder.Analysis): (Gen, string) {
   let (gf, hs0) = rnd(ge);
   let (gg, sm) = frand(gf, -2.0f32, 2.0f32);
   let (gh, tv) = frand(gg, -3.0f32, 3.0f32);
-  let r: celt_encoder.VbrRequest = celt_encoder.VbrRequest { base_target: 100 + base0 % 3900, lm: lm0 % 4, bitrate: 6000 + rate0 % 194000, last_coded_bands: lcb, channels: 1 + c0 % 2, intensity: in0 % 22, constrained_vbr: cvbr, stereo_saving: ss, tot_boost: tb0 % 800, tf_estimate: tfe, pitch_change: pc, max_depth: md, lfe: lfe0 % 8 == 0, has_surround_mask: hs0 % 4 == 0, surround_masking: sm, temporal_vbr: tv };
-  let t: i32 = celt_encoder.compute_vbr(r, an);
+  let r = celt_encoder.VbrRequest { base_target: 100 + base0 % 3900, lm: lm0 % 4, bitrate: 6000 + rate0 % 194000, last_coded_bands: lcb, channels: 1 + c0 % 2, intensity: in0 % 22, constrained_vbr: cvbr, stereo_saving: ss, tot_boost: tb0 % 800, tf_estimate: tfe, pitch_change: pc, max_depth: md, lfe: lfe0 % 8 == 0, has_surround_mask: hs0 % 4 == 0, surround_masking: sm, temporal_vbr: tv };
+  let t = celt_encoder.compute_vbr(r, an);
   return (gh, "v " + r.base_target.to_string() + " " + r.lm.to_string() + " " + r.bitrate.to_string() + " " + lcb.to_string() + " " + r.channels.to_string() + " " + r.intensity.to_string() + " " + flag(cvbr) + " " + flag(r.has_surround_mask) + " " + t.to_string());
 }
 
 function trace3(seed: u32, cases: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let crc: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let crc = crc32.new();
   for k in 0..cases {
     let (g1, what) = rnd(g);
     let (g2, valid) = bit(g1);
     let (g3, activity) = frand(g2, 0.0f32, 1.0f32);
     let (g4, tonality) = frand(g3, 0.0f32, 1.0f32);
     let leak: i32[] = [];
-    let g5: Gen = g4;
+    let g5 = g4;
     for i in 0..19 {
       let (g6, v) = rnd(g5);
       g5 = g6;
       leak = leak.append(v % 256);
     }
-    let an: celt_encoder.Analysis = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid, activity: activity, tonality: tonality, leak_boost: leak };
-    let line: string = "";
+    let an = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid, activity: activity, tonality: tonality, leak_boost: leak };
+    let line = "";
     if (what % 2 == 0) {
       let (g7, s) = dynalloc_case(g5, an);
       g = g7;
@@ -396,7 +396,7 @@ function test_long_analysis_trace(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/celt_encoder");
+  let r = test.new("std/opus/celt_encoder");
   r = r.it("a short analysis trace is the libopus trace", test_short_analysis_trace);
   r = r.it("a long analysis trace is the libopus trace", test_long_analysis_trace);
   r = r.it("a short TF, trim and stereo trace is the libopus trace", test_short_band_trace);

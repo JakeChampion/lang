@@ -13,7 +13,7 @@ function sort_names(xs: string[]): string[] {
 struct Changes { created: string[], modified: string[], deleted: string[] }
 
 function checksum(s: string): i32 {
-  let h: i32 = 7;
+  let h = 7;
   for i in 0..s.len() {
     h = (h * 31 + s[i] as i32) % 1000003;
   }
@@ -102,12 +102,12 @@ function snapshot(dir: string): Entry[] {
     },
     Ok(names) => {
       for i in 0..names.len() {
-        let path: string = dir + "/" + names[i];
+        let path = dir + "/" + names[i];
         match (stat(path)) {
           Err(e) => {},
           Ok(st) => {
             if (!st.is_dir) {
-              let sum: i32 = 0;
+              let sum = 0;
               match (read_file(path)) {
                 Err(e) => {},
                 Ok(body) => {
@@ -128,7 +128,7 @@ function snapshot(dir: string): Entry[] {
 }
 
 function sort_entries(es: Entry[]): Entry[] {
-  let ns: string[] = sort_names(names_of(es));
+  let ns = sort_names(names_of(es));
   let out: Entry[] = [];
   for i in 0..ns.len() {
     match (find_entry(es, ns[i])) {
@@ -157,16 +157,16 @@ function names_alphabet(): string[] {
 }
 
 function gen_snapshot(seed: i32): Entry[] {
-  let az: string[] = names_alphabet();
+  let az = names_alphabet();
   let out: Entry[] = [];
-  let s: i32 = seed;
+  let s = seed;
   for i in 0..az.len() {
     s = (s * 1103515245 + 12345) % 2147483647;
     if (s < 0) {
-      s = 0 - s;
+      s = -s;
     }
     if (s % 3 != 0) {
-      let size: i64 = (s % 17) as i64;
+      let size = (s % 17) as i64;
       out = out.append(Entry {
         name: az[i], size: size,
         sum: s / 7 % 1000003,
@@ -179,11 +179,11 @@ function gen_snapshot(seed: i32): Entry[] {
 function test_applying_the_diff_reconstructs_the_after_state(): test.TestOutcome {
   for i in 0..60 {
     for j in 0..7 {
-      let before: Entry[] = gen_snapshot(i + 1);
-      let after: Entry[] = gen_snapshot(i * 7 + j + 2);
-      let c: Changes = diff(before, after);
-      let rebuilt: string[] = apply_names(names_of(before), c);
-      let want: string[] = sort_names(names_of(after));
+      let before = gen_snapshot(i + 1);
+      let after = gen_snapshot(i * 7 + j + 2);
+      let c = diff(before, after);
+      let rebuilt = apply_names(names_of(before), c);
+      let want = sort_names(names_of(after));
       if (rebuilt.len() != want.len()) {
         return test.fail("seeds " + i.to_string() + "/" + j.to_string()
           + ": rebuilt " + rebuilt.len().to_string() + " names, wanted "
@@ -203,20 +203,20 @@ function test_applying_the_diff_reconstructs_the_after_state(): test.TestOutcome
 
 function test_every_name_is_in_exactly_one_bucket(): test.TestOutcome {
   for i in 0..60 {
-    let before: Entry[] = gen_snapshot(i + 1);
-    let after: Entry[] = gen_snapshot(i * 3 + 5);
-    let c: Changes = diff(before, after);
-    let all: string[] = names_alphabet();
+    let before = gen_snapshot(i + 1);
+    let after = gen_snapshot(i * 3 + 5);
+    let c = diff(before, after);
+    let all = names_alphabet();
     for k in 0..all.len() {
-      let n: i32 = 0;
+      let n = 0;
       if (contains_name(c.created, all[k])) {
-        n = n + 1;
+        n += 1;
       }
       if (contains_name(c.modified, all[k])) {
-        n = n + 1;
+        n += 1;
       }
       if (contains_name(c.deleted, all[k])) {
-        n = n + 1;
+        n += 1;
       }
       if (n > 1) {
         return test.fail("seed " + i.to_string() + ": \"" + all[k]
@@ -229,8 +229,8 @@ function test_every_name_is_in_exactly_one_bucket(): test.TestOutcome {
 
 function test_nothing_changed_reports_nothing(): test.TestOutcome {
   for i in 0..60 {
-    let s: Entry[] = gen_snapshot(i + 1);
-    let c: Changes = diff(s, s);
+    let s = gen_snapshot(i + 1);
+    let c = diff(s, s);
     if (total(c) != 0) {
       return test.fail("seed " + i.to_string() + ": a snapshot differs"
         + " from itself by " + total(c).to_string() + " changes");
@@ -241,10 +241,10 @@ function test_nothing_changed_reports_nothing(): test.TestOutcome {
 
 function test_swapping_the_snapshots_swaps_created_and_deleted(): test.TestOutcome {
   for i in 0..60 {
-    let a: Entry[] = gen_snapshot(i + 1);
-    let b: Entry[] = gen_snapshot(i * 5 + 3);
-    let fwd: Changes = diff(a, b);
-    let rev: Changes = diff(b, a);
+    let a = gen_snapshot(i + 1);
+    let b = gen_snapshot(i * 5 + 3);
+    let fwd = diff(a, b);
+    let rev = diff(b, a);
     if (fwd.created.len() != rev.deleted.len()
       || fwd.deleted.len() != rev.created.len()) {
       return test.fail("seed " + i.to_string() + ": forward created/"
@@ -270,8 +270,8 @@ function test_swapping_the_snapshots_swaps_created_and_deleted(): test.TestOutco
 
 function test_the_report_does_not_depend_on_directory_order(): test.TestOutcome {
   for i in 0..60 {
-    let a: Entry[] = gen_snapshot(i + 1);
-    let b: Entry[] = gen_snapshot(i * 11 + 4);
+    let a = gen_snapshot(i + 1);
+    let b = gen_snapshot(i * 11 + 4);
     let ra: Entry[] = [];
     for k in 0..a.len() {
       ra = ra.append(a[a.len() - 1 - k]);
@@ -280,8 +280,8 @@ function test_the_report_does_not_depend_on_directory_order(): test.TestOutcome 
     for k in 0..b.len() {
       rb = rb.append(b[b.len() - 1 - k]);
     }
-    let straight: Changes = diff(a, b);
-    let reversed: Changes = diff(ra, rb);
+    let straight = diff(a, b);
+    let reversed = diff(ra, rb);
     if (straight.created.len() != reversed.created.len()
       || straight.modified.len() != reversed.modified.len()
       || straight.deleted.len() != reversed.deleted.len()) {
@@ -307,7 +307,7 @@ function test_the_report_does_not_depend_on_directory_order(): test.TestOutcome 
 function test_a_same_size_edit_is_still_a_modification(): test.TestOutcome {
   let before: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
   let after: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("world") }];
-  let c: Changes = diff(before, after);
+  let c = diff(before, after);
   if (c.modified.len() != 1 || c.modified[0] != "a.txt") {
     return test.fail("a same-size content change reported "
       + c.modified.len().to_string() + " modifications");
@@ -332,7 +332,7 @@ function test_a_same_size_edit_is_still_a_modification(): test.TestOutcome {
 function test_a_rename_is_a_creation_and_a_deletion(): test.TestOutcome {
   let before: Entry[] = [Entry { name: "old.txt", size: 5 as i64, sum: 42 }];
   let after: Entry[] = [Entry { name: "new.txt", size: 5 as i64, sum: 42 }];
-  let c: Changes = diff(before, after);
+  let c = diff(before, after);
   if (c.created.len() != 1 || c.created[0] != "new.txt") {
     return test.fail("rename: created = " + c.created.len().to_string());
   }
@@ -355,21 +355,21 @@ function test_a_real_directory_reports_its_real_changes(): test.TestOutcome {
       if (!write_at(d, "keep.txt", "unchanged")
         || !write_at(d, "edit.txt", "before")
         || !write_at(d, "gone.txt", "doomed")) {
-        let _w: Result[void, IoError] = remove_dir_all(d);
+        let _w = remove_dir_all(d);
         return test.fail("could not write the initial files");
       }
-      let before: Entry[] = snapshot(d);
+      let before = snapshot(d);
       if (before.len() != 3) {
-        let _w2: Result[void, IoError] = remove_dir_all(d);
+        let _w2 = remove_dir_all(d);
         return test.fail("the initial snapshot saw "
           + before.len().to_string() + " files, not 3");
       }
-      let _e: boolean = write_at(d, "edit.txt", "aftr!!");
-      let _n: boolean = write_at(d, "new.txt", "fresh");
-      let _r: Result[void, IoError] = remove_file(d + "/gone.txt");
-      let after: Entry[] = snapshot(d);
-      let c: Changes = diff(before, after);
-      let _w3: Result[void, IoError] = remove_dir_all(d);
+      let _e = write_at(d, "edit.txt", "aftr!!");
+      let _n = write_at(d, "new.txt", "fresh");
+      let _r = remove_file(d + "/gone.txt");
+      let after = snapshot(d);
+      let c = diff(before, after);
+      let _w3 = remove_dir_all(d);
 
       if (c.created.len() != 1 || c.created[0] != "new.txt") {
         return test.fail("created = " + c.created.len().to_string()
@@ -394,12 +394,12 @@ function test_polling_an_unchanged_directory_is_silent(): test.TestOutcome {
       return test.fail("could not create a temp directory");
     },
     Ok(d) => {
-      let _a: boolean = write_at(d, "x.txt", "one");
-      let _b: boolean = write_at(d, "y.txt", "two");
-      let first: Entry[] = snapshot(d);
-      let second: Entry[] = snapshot(d);
-      let c: Changes = diff(first, second);
-      let _w: Result[void, IoError] = remove_dir_all(d);
+      let _a = write_at(d, "x.txt", "one");
+      let _b = write_at(d, "y.txt", "two");
+      let first = snapshot(d);
+      let second = snapshot(d);
+      let c = diff(first, second);
+      let _w = remove_dir_all(d);
       if (total(c) != 0) {
         return test.fail("two snapshots of an untouched directory"
           + " differ by " + total(c).to_string() + " changes");
@@ -414,12 +414,12 @@ function test_polling_an_unchanged_directory_is_silent(): test.TestOutcome {
 }
 
 function show(label: string, xs: string[]): string {
-  let s: string = label + "=[";
+  let s = label + "=[";
   for i in 0..xs.len() {
     if (i > 0) {
-      s = s + " ";
+      s += " ";
     }
-    s = s + xs[i];
+    s += xs[i];
   }
   return s + "]";
 }
@@ -431,29 +431,29 @@ function main(): i32 {
       eprint("  (no temp directory available)");
     },
     Ok(d) => {
-      let _a: boolean = write_at(d, "notes.md", "hello");
-      let _b: boolean = write_at(d, "data.csv", "1,2,3");
-      let _c: boolean = write_at(d, "stale.tmp", "junk");
-      let before: Entry[] = snapshot(d);
+      let _a = write_at(d, "notes.md", "hello");
+      let _b = write_at(d, "data.csv", "1,2,3");
+      let _c = write_at(d, "stale.tmp", "junk");
+      let before = snapshot(d);
       eprint("  first poll: " + before.len().to_string() + " files");
 
-      let _d: boolean = write_at(d, "notes.md", "world");
-      let _e: boolean = write_at(d, "fresh.log", "new");
-      let _f: Result[void, IoError] = remove_file(d + "/stale.tmp");
+      let _d = write_at(d, "notes.md", "world");
+      let _e = write_at(d, "fresh.log", "new");
+      let _f = remove_file(d + "/stale.tmp");
 
-      let after: Entry[] = snapshot(d);
-      let ch: Changes = diff(before, after);
+      let after = snapshot(d);
+      let ch = diff(before, after);
       eprint("  second poll: " + after.len().to_string() + " files");
       eprint("  " + show("created", ch.created));
       eprint("  " + show("modified", ch.modified));
       eprint("  " + show("deleted", ch.deleted));
       eprint("  third poll (nothing touched): "
         + total(diff(after, snapshot(d))).to_string() + " changes");
-      let _g: Result[void, IoError] = remove_dir_all(d);
+      let _g = remove_dir_all(d);
     }
   }
 
-  let t: test.TestRunner = test.new("dirwatch");
+  let t = test.new("dirwatch");
   t = t.it("applying the diff reconstructs the after state", test_applying_the_diff_reconstructs_the_after_state);
   t = t.it("every name is in exactly one bucket", test_every_name_is_in_exactly_one_bucket);
   t = t.it("nothing changed reports nothing", test_nothing_changed_reports_nothing);

@@ -34,7 +34,7 @@ function test_is_prime_small(): test.TestOutcome {
   if (1.is_prime()) {
     return test.fail("1");
   }
-  if ((0 - 7).is_prime()) {
+  if ((-7).is_prime()) {
     return test.fail("-7");
   }
   if (!7919.is_prime()) {

@@ -19,8 +19,8 @@ function root(): i32 {
 }
 
 function snapshot(s: Store, at: i32): (Store, i32) {
-  let l: Layer = Layer { writes: Map { }, deletes: [], parent: at };
-  let next: Store = Store { layers: s.layers.append(l) };
+  let l = Layer { writes: Map { }, deletes: [], parent: at };
+  let next = Store { layers: s.layers.append(l) };
   return (next, next.layers.len() - 1);
 }
 
@@ -34,27 +34,27 @@ function has_str(xs: string[], k: string): boolean {
 }
 
 function put(s: Store, at: i32, k: string, v: i32): Store {
-  let l: Layer = s.layers[at];
+  let l = s.layers[at];
   let d: string[] = [];
   for i in 0..l.deletes.len() {
     if (l.deletes[i] != k) {
       d = d.append(l.deletes[i]);
     }
   }
-  let updated: Layer = Layer { ...l, writes: l.writes.insert(k, v), deletes: d };
+  let updated = Layer { ...l, writes: l.writes.insert(k, v), deletes: d };
   return Store { ...s, layers: s.layers.with(at, updated) };
 }
 
 function del(s: Store, at: i32, k: string): Store {
-  let l: Layer = s.layers[at];
+  let l = s.layers[at];
   let w: Map[string, i32] = Map { };
-  let ks: string[] = l.writes.keys();
+  let ks = l.writes.keys();
   for i in 0..ks.len() {
     if (ks[i] != k) {
       w = w.insert(ks[i], l.writes.get_or(ks[i], 0));
     }
   }
-  let d: string[] = l.deletes;
+  let d = l.deletes;
   if (!has_str(d, k)) {
     d = d.append(k);
   }
@@ -62,9 +62,9 @@ function del(s: Store, at: i32, k: string): Store {
 }
 
 function get(s: Store, at: i32, k: string): Option[i32] {
-  let cur: i32 = at;
+  let cur = at;
   while (cur >= 0) {
-    let l: Layer = s.layers[cur];
+    let l = s.layers[cur];
     if (has_str(l.deletes, k)) {
       return None;
     }
@@ -89,16 +89,16 @@ function get_or(s: Store, at: i32, k: string, fallback: i32): i32 {
 
 function visible_keys(s: Store, at: i32): string[] {
   let chain: i32[] = [];
-  let cur: i32 = at;
+  let cur = at;
   while (cur >= 0) {
     chain = chain.append(cur);
     cur = s.layers[cur].parent;
   }
   let out: string[] = [];
-  let i: i32 = chain.len() - 1;
+  let i = chain.len() - 1;
   while (i >= 0) {
-    let l: Layer = s.layers[chain[i]];
-    let ks: string[] = l.writes.keys();
+    let l = s.layers[chain[i]];
+    let ks = l.writes.keys();
     for j in 0..ks.len() {
       if (!has_str(out, ks[j])) {
         out = out.append(ks[j]);
@@ -111,13 +111,13 @@ function visible_keys(s: Store, at: i32): string[] {
       }
     }
     out = kept;
-    i = i - 1;
+    i -= 1;
   }
   return out;
 }
 
 function flatten(s: Store, at: i32): Store {
-  let ks: string[] = visible_keys(s, at);
+  let ks = visible_keys(s, at);
   let w: Map[string, i32] = Map { };
   for i in 0..ks.len() {
     w = w.insert(ks[i], get_or(s, at, ks[i], 0));
@@ -126,7 +126,7 @@ function flatten(s: Store, at: i32): Store {
 }
 
 function stored_entries(s: Store): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for i in 0..s.layers.len() {
     n = n + s.layers[i].writes.len() + s.layers[i].deletes.len();
   }
@@ -134,19 +134,19 @@ function stored_entries(s: Store): i32 {
 }
 
 function test_a_write_is_invisible_to_older_snapshots(): test.TestOutcome {
-  let s: Store = store_new();
+  let s = store_new();
   s = put(s, root(), "a", 1);
   s = put(s, root(), "b", 2);
 
   let t: (Store, i32) = snapshot(s, root());
   s = t.0;
-  let v1: i32 = t.1;
+  let v1 = t.1;
   s = put(s, v1, "a", 100);
   s = put(s, v1, "c", 3);
 
   let t2: (Store, i32) = snapshot(s, root());
   s = t2.0;
-  let v2: i32 = t2.1;
+  let v2 = t2.1;
   s = put(s, v2, "a", 200);
 
   if (get_or(s, root(), "a", -1) != 1) {
@@ -175,21 +175,21 @@ function test_snapshots_share_the_base(): test.TestOutcome {
   let bases: i32[] = [4, 16, 64];
   let counts: i32[] = [4, 16, 64];
   for b in 0..bases.len() {
-    let m: i32 = bases[b];
-    let n: i32 = counts[b];
-    let s: Store = store_new();
+    let m = bases[b];
+    let n = counts[b];
+    let s = store_new();
     for i in 0..m {
       s = put(s, root(), "base" + i.to_string(), i);
     }
-    let at: i32 = root();
+    let at = root();
     for i in 0..n {
       let t: (Store, i32) = snapshot(s, at);
       s = t.0;
       at = t.1;
       s = put(s, at, "own" + i.to_string(), 1000 + i);
     }
-    let want: i32 = m + n;
-    let got: i32 = stored_entries(s);
+    let want = m + n;
+    let got = stored_entries(s);
     if (got != want) {
       return test.fail("base " + m.to_string() + " + " + n.to_string()
         + " snapshots stored " + got.to_string() + " entries, wanted "
@@ -205,11 +205,11 @@ function test_snapshots_share_the_base(): test.TestOutcome {
 }
 
 function test_a_deletion_is_local_to_its_layer(): test.TestOutcome {
-  let s: Store = store_new();
+  let s = store_new();
   s = put(s, root(), "k", 7);
   let t: (Store, i32) = snapshot(s, root());
   s = t.0;
-  let child: i32 = t.1;
+  let child = t.1;
 
   s = del(s, child, "k");
   if (get_or(s, child, "k", -1) != -1) {
@@ -241,28 +241,28 @@ function test_a_deletion_is_local_to_its_layer(): test.TestOutcome {
 }
 
 function test_flattening_preserves_every_answer(): test.TestOutcome {
-  let s: Store = store_new();
+  let s = store_new();
   let all: string[] = [];
   for i in 0..12 {
-    let k: string = "k" + i.to_string();
+    let k = "k" + i.to_string();
     all = all.append(k);
     s = put(s, root(), k, i);
   }
-  let at: i32 = root();
+  let at = root();
   for round in 0..5 {
     let t: (Store, i32) = snapshot(s, at);
     s = t.0;
     at = t.1;
     s = put(s, at, "k" + round.to_string(), 100 + round);
     s = del(s, at, "k" + (round + 6).to_string());
-    let extra: string = "extra" + round.to_string();
+    let extra = "extra" + round.to_string();
     all = all.append(extra);
     s = put(s, at, extra, 500 + round);
   }
-  let f: Store = flatten(s, at);
+  let f = flatten(s, at);
   for i in 0..all.len() {
-    let a: i32 = get_or(s, at, all[i], -999);
-    let b: i32 = get_or(f, root(), all[i], -999);
+    let a = get_or(s, at, all[i], -999);
+    let b = get_or(f, root(), all[i], -999);
     if (a != b) {
       return test.fail("key " + all[i] + ": the chain says " + a.to_string()
         + " but the flattened store says " + b.to_string());
@@ -275,29 +275,29 @@ function test_flattening_preserves_every_answer(): test.TestOutcome {
 }
 
 function test_visible_keys_agree_with_lookup(): test.TestOutcome {
-  let s: Store = store_new();
+  let s = store_new();
   let candidates: string[] = [];
   for i in 0..10 {
-    let k: string = "c" + i.to_string();
+    let k = "c" + i.to_string();
     candidates = candidates.append(k);
     s = put(s, root(), k, i);
   }
   candidates = candidates.append("never_written");
   let t: (Store, i32) = snapshot(s, root());
   s = t.0;
-  let child: i32 = t.1;
+  let child = t.1;
   s = del(s, child, "c3");
   s = del(s, child, "c7");
   s = put(s, child, "c9", 99);
 
-  let ks: string[] = visible_keys(s, child);
+  let ks = visible_keys(s, child);
   for i in 0..ks.len() {
     if (get_or(s, child, ks[i], -1) == -1) {
       return test.fail("listed key " + ks[i] + " reads as absent");
     }
   }
   for i in 0..candidates.len() {
-    let present: boolean = get_or(s, child, candidates[i], -1) != -1;
+    let present = get_or(s, child, candidates[i], -1) != -1;
     if (present != has_str(ks, candidates[i])) {
       return test.fail("key " + candidates[i] + ": lookup says "
         + bool_str(present) + " but the key list says "
@@ -322,11 +322,11 @@ function bool_str(b: boolean): string {
 }
 
 function test_empty_overlays_are_transparent(): test.TestOutcome {
-  let s: Store = store_new();
+  let s = store_new();
   for i in 0..6 {
     s = put(s, root(), "b" + i.to_string(), i);
   }
-  let at: i32 = root();
+  let at = root();
   for i in 0..40 {
     let t: (Store, i32) = snapshot(s, at);
     s = t.0;
@@ -348,14 +348,14 @@ function test_empty_overlays_are_transparent(): test.TestOutcome {
 }
 
 function test_branches_do_not_interfere(): test.TestOutcome {
-  let s: Store = store_new();
+  let s = store_new();
   s = put(s, root(), "shared", 0);
   let ta: (Store, i32) = snapshot(s, root());
   s = ta.0;
-  let a: i32 = ta.1;
+  let a = ta.1;
   let tb: (Store, i32) = snapshot(s, root());
   s = tb.0;
-  let b: i32 = tb.1;
+  let b = tb.1;
 
   for i in 0..20 {
     s = put(s, a, "shared", i);
@@ -386,13 +386,13 @@ function test_branches_do_not_interfere(): test.TestOutcome {
 
 function main(): i32 {
   eprint("cow_snapshots — a persistent map as a chain of overlays");
-  let s: Store = store_new();
+  let s = store_new();
   for i in 0..8 {
     s = put(s, root(), "base" + i.to_string(), i);
   }
   eprint("  base: 8 keys, " + stored_entries(s).to_string() + " entries stored");
 
-  let at: i32 = root();
+  let at = root();
   for i in 0..8 {
     let t: (Store, i32) = snapshot(s, at);
     s = t.0;
@@ -410,11 +410,11 @@ function main(): i32 {
     + get_or(s, at, "base0", -1).to_string() + " there and "
     + get_or(s, root(), "base0", -1).to_string() + " at the root");
 
-  let f: Store = flatten(s, at);
+  let f = flatten(s, at);
   eprint("  flattened: " + stored_entries(f).to_string() + " entries in "
     + f.layers.len().to_string() + " layer");
 
-  let r: test.TestRunner = test.new("cow_snapshots");
+  let r = test.new("cow_snapshots");
   r = r.it("a write is invisible to older snapshots", test_a_write_is_invisible_to_older_snapshots);
   r = r.it("snapshots share the base", test_snapshots_share_the_base);
   r = r.it("a deletion is local to its layer", test_a_deletion_is_local_to_its_layer);

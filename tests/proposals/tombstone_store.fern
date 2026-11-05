@@ -11,18 +11,18 @@ function store_new(): Store {
 }
 
 function find_live(s: Store, k: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.slots.len()) {
     if (s.slots[i].live && s.slots[i].key == k) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function get(s: Store, k: string): Option[string] {
-  let at: i32 = find_live(s, k);
+  let at = find_live(s, k);
   if (at < 0) {
     return None;
   }
@@ -34,17 +34,17 @@ function has(s: Store, k: string): boolean {
 }
 
 function put(s: Store, k: string, v: string): Store {
-  let at: i32 = find_live(s, k);
+  let at = find_live(s, k);
   if (at >= 0) {
     let updated: Slot[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < s.slots.len()) {
       if (i == at) {
         updated = updated.append(Slot { key: k, val: v, live: true });
       } else {
         updated = updated.append(s.slots[i]);
       }
-      i = i + 1;
+      i += 1;
     }
     return Store { slots: updated, live: s.live, dead: s.dead };
   }
@@ -56,12 +56,12 @@ function put(s: Store, k: string, v: string): Store {
 }
 
 function del(s: Store, k: string): (Store, boolean) {
-  let at: i32 = find_live(s, k);
+  let at = find_live(s, k);
   if (at < 0) {
     return (s, false);
   }
   let updated: Slot[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.slots.len()) {
     if (i == at) {
       updated = updated.append(Slot {
@@ -72,38 +72,38 @@ function del(s: Store, k: string): (Store, boolean) {
     } else {
       updated = updated.append(s.slots[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return (Store { slots: updated, live: s.live - 1, dead: s.dead + 1 }, true);
 }
 
 function compact(s: Store): (Store, i32) {
   let kept: Slot[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.slots.len()) {
     if (s.slots[i].live) {
       kept = kept.append(s.slots[i]);
     }
-    i = i + 1;
+    i += 1;
   }
-  let reclaimed: i32 = s.slots.len() - kept.len();
+  let reclaimed = s.slots.len() - kept.len();
   return (Store { slots: kept, live: kept.len(), dead: 0 }, reclaimed);
 }
 
 function live_keys(s: Store): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.slots.len()) {
     if (s.slots[i].live) {
       out = out.append(s.slots[i].key);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function seeded(): Store {
-  let s: Store = store_new();
+  let s = store_new();
   s = put(s, "alpha", "1");
   s = put(s, "beta", "2");
   s = put(s, "gamma", "3");
@@ -112,8 +112,8 @@ function seeded(): Store {
 }
 
 function test_delete_tombstones_rather_than_removes(): test.TestOutcome {
-  let s: Store = seeded();
-  let slots_before: i32 = s.slots.len();
+  let s = seeded();
+  let slots_before = s.slots.len();
   let (s2, removed) = del(s, "beta");
   if (!removed) {
     return test.fail("del reported no-op on a present key");
@@ -135,7 +135,7 @@ function test_delete_tombstones_rather_than_removes(): test.TestOutcome {
 }
 
 function test_delete_missing_is_a_noop(): test.TestOutcome {
-  let s: Store = seeded();
+  let s = seeded();
   let (s2, removed) = del(s, "nope");
   if (removed) {
     return test.fail("del reported a delete on a missing key");
@@ -147,21 +147,21 @@ function test_delete_missing_is_a_noop(): test.TestOutcome {
 }
 
 function test_compaction_preserves_the_live_mapping(): test.TestOutcome {
-  let s: Store = seeded();
+  let s = seeded();
   let (s1, _) = del(s, "alpha");
   let (s2, _) = del(s1, "gamma");
-  let before: string[] = live_keys(s2);
+  let before = live_keys(s2);
 
   let (c, reclaimed) = compact(s2);
   if (reclaimed != 2) {
     return test.fail("wanted 2 reclaimed, got " + reclaimed.to_string());
   }
-  let after: string[] = live_keys(c);
+  let after = live_keys(c);
   if (after.len() != before.len()) {
     return test.fail("live key count changed across compaction: "
       + before.len().to_string() + " -> " + after.len().to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < before.len()) {
     if (before[i] != after[i]) {
       return test.fail("compaction reordered live keys at " + i.to_string()
@@ -185,7 +185,7 @@ function test_compaction_preserves_the_live_mapping(): test.TestOutcome {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (c.dead != 0) {
     return test.fail("compaction left " + c.dead.to_string() + " tombstones");
@@ -194,7 +194,7 @@ function test_compaction_preserves_the_live_mapping(): test.TestOutcome {
 }
 
 function test_compaction_is_idempotent(): test.TestOutcome {
-  let s: Store = seeded();
+  let s = seeded();
   let (s1, _) = del(s, "beta");
   let (c1, first) = compact(s1);
   let (c2, second) = compact(c1);
@@ -212,9 +212,9 @@ function test_compaction_is_idempotent(): test.TestOutcome {
 }
 
 function test_reinsert_after_delete_does_not_resurrect(): test.TestOutcome {
-  let s: Store = seeded();
+  let s = seeded();
   let (s1, _) = del(s, "beta");
-  let s2: Store = put(s1, "beta", "22");
+  let s2 = put(s1, "beta", "22");
   match (get(s2, "beta")) {
     None => {
       return test.fail("re-inserted key reads absent");
@@ -236,14 +236,14 @@ function test_reinsert_after_delete_does_not_resurrect(): test.TestOutcome {
       }
     }
   }
-  let ks: string[] = live_keys(c);
-  let seen: i32 = 0;
-  let i: i32 = 0;
+  let ks = live_keys(c);
+  let seen = 0;
+  let i = 0;
   while (i < ks.len()) {
     if (ks[i] == "beta") {
-      seen = seen + 1;
+      seen += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (seen != 1) {
     return test.fail("wanted exactly one live beta, saw " + seen.to_string());
@@ -252,17 +252,17 @@ function test_reinsert_after_delete_does_not_resurrect(): test.TestOutcome {
 }
 
 function test_counters_track_the_slots_under_churn(): test.TestOutcome {
-  let s: Store = store_new();
-  let round: i32 = 0;
+  let s = store_new();
+  let round = 0;
   while (round < 40) {
     s = put(s, "k" + round.to_string(), "v" + round.to_string());
     if (round % 3 == 0) {
       let (s2, _) = del(s, "k" + (round / 2).to_string());
       s = s2;
     }
-    round = round + 1;
+    round += 1;
   }
-  let counted_live: i32 = live_keys(s).len();
+  let counted_live = live_keys(s).len();
   if (s.live != counted_live) {
     return test.fail("live counter " + s.live.to_string()
       + " disagrees with " + counted_live.to_string() + " live slots");
@@ -284,17 +284,17 @@ function test_counters_track_the_slots_under_churn(): test.TestOutcome {
 }
 
 function churn(n: i32): i32 {
-  let s: Store = store_new();
-  let i: i32 = 0;
+  let s = store_new();
+  let i = 0;
   while (i < n) {
     s = put(s, "k" + i.to_string(), "v" + i.to_string());
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < n) {
     let (s2, _) = del(s, "k" + j.to_string());
     s = s2;
-    j = j + 2;
+    j += 2;
   }
   let (c, reclaimed) = compact(s);
   return c.slots.len() + reclaimed;
@@ -303,7 +303,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
   eprint("tombstone_store — tombstoned delete + a compaction pass");
 
-  let s: Store = seeded();
+  let s = seeded();
   let (s1, _) = del(s, "beta");
   eprint("after one delete: " + s1.live.to_string() + " live, "
     + s1.dead.to_string() + " dead, " + s1.slots.len().to_string() + " slots");
@@ -311,17 +311,17 @@ function main(): i32 {
   eprint("after compaction: " + c.live.to_string() + " live, "
     + c.dead.to_string() + " dead, " + reclaimed.to_string() + " reclaimed");
 
-  let base: i64 = __heap_bump_bytes();
-  let a: i32 = churn(64);
-  let after_n: i64 = __heap_bump_bytes();
-  let b: i32 = churn(128);
-  let after_2n: i64 = __heap_bump_bytes();
+  let base = __heap_bump_bytes();
+  let a = churn(64);
+  let after_n = __heap_bump_bytes();
+  let b = churn(128);
+  let after_2n = __heap_bump_bytes();
   eprint("churn(64)  total=" + a.to_string()
     + " bump=" + (after_n - base).to_string());
   eprint("churn(128) total=" + b.to_string()
     + " bump=" + (after_2n - after_n).to_string());
 
-  let r: test.TestRunner = test.new("tombstone_store");
+  let r = test.new("tombstone_store");
   r = r.it("delete tombstones rather than removes", test_delete_tombstones_rather_than_removes);
   r = r.it("delete of a missing key is a no-op", test_delete_missing_is_a_noop);
   r = r.it("compaction preserves the live mapping", test_compaction_preserves_the_live_mapping);

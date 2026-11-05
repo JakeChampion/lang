@@ -16,10 +16,10 @@ function scan(l: Lx, start_line: i32): Res {
 }
 
 function run(src: string): i32 {
-  let l: Lx = Lx { src: src, i: 0, line: 1 };
+  let l = Lx { src: src, i: 0, line: 1 };
   let out: Tok[] = [];
   while (l.i < 8) {
-    let start_line: i32 = l.line;
+    let start_line = l.line;
     if (l.src[l.i] == 46) {
       out = out.append(TPunct { text: ".", line: start_line });
       l = Lx { src: l.src, i: l.i + 1, line: l.line };
@@ -33,11 +33,11 @@ function run(src: string): i32 {
 }
 
 function main(): i32 {
-  let acc: i32 = 0;
-  let n: i32 = 0;
+  let acc = 0;
+  let n = 0;
   while (n < 100) {
-    acc = acc + run("abc.def.g");
-    n = n + 1;
+    acc += run("abc.def.g");
+    n += 1;
   }
   return acc % 7;
 }

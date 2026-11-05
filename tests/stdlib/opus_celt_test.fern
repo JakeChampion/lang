@@ -14,14 +14,14 @@ import "std/test";
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
 const RATES: i32[] = [48000, 24000, 16000, 12000, 8000];
 
 function all_bits(xs: [f32]): string {
-  let s: string = "";
+  let s = "";
   for i in 0..xs.len() {
     s = s + " " + f32_bits(xs[i]).to_string();
   }
@@ -38,15 +38,15 @@ function frame(own g: Gen, own t: crc32.Crc32, own st: celt.Decoder, rate: i32, 
   let (g1, r1) = rnd(g);
   let (g2, r2) = rnd(g1);
   let (g3, r3) = rnd(g2);
-  let lm: i32 = r1 % 4;
-  let c: i32 = 1 + r2 % 2;
-  let start: i32 = 0;
+  let lm = r1 % 4;
+  let c = 1 + r2 % 2;
+  let start = 0;
   if (r3 % 8 == 0) {
     start = 17;
   }
   let (g4, r4) = rnd(g3);
   g = g4;
-  let end: i32 = 21;
+  let end = 21;
   if (r4 % 4 == 0) {
     let (g5, r5) = rnd(g);
     g = g5;
@@ -57,7 +57,7 @@ function frame(own g: Gen, own t: crc32.Crc32, own st: celt.Decoder, rate: i32, 
   }
   let (g6, r6) = rnd(g);
   g = g6;
-  let len: i32 = 0;
+  let len = 0;
   if (r6 % 4 == 0) {
     let (g7, r7) = rnd(g);
     g = g7;
@@ -88,7 +88,7 @@ function frame(own g: Gen, own t: crc32.Crc32, own st: celt.Decoder, rate: i32, 
   }
   let fs: i32 = (120 << lm) / (48000 / rate);
   let (st1, res) = st.decode(data, celt.Frame { frame_size: fs, stream_channels: c, start: start, end: end });
-  let out: string = "d " + lm.to_string() + " " + c.to_string() + " " + start.to_string() + " " + end.to_string() + " " + len.to_string() + " ";
+  let out = "d " + lm.to_string() + " " + c.to_string() + " " + start.to_string() + " " + end.to_string() + " " + len.to_string() + " ";
   match (res) {
     Ok(pcm) => {
       out = out + (pcm.len() / cc).to_string() + " " + st1.rng.to_string() + " |" + all_bits(pcm);
@@ -103,13 +103,13 @@ function frame(own g: Gen, own t: crc32.Crc32, own st: celt.Decoder, rate: i32, 
 function script(own g0: Gen, own t0: crc32.Crc32, frames: i32): Run {
   let (g1, r1) = rnd(g0);
   let (g2, r2) = rnd(g1);
-  let g: Gen = g2;
-  let rate: i32 = RATES[r1 % 5];
-  let cc: i32 = 1 + r2 % 2;
-  let t: crc32.Crc32 = line(t0, "s " + rate.to_string() + " " + cc.to_string());
+  let g = g2;
+  let rate = RATES[r1 % 5];
+  let cc = 1 + r2 % 2;
+  let t = line(t0, "s " + rate.to_string() + " " + cc.to_string());
   match (celt.decoder(rate, cc)) {
     Ok(st) => {
-      let d: celt.Decoder = st;
+      let d = st;
       for f in 0..frames {
         let (r, d1) = frame(g, t, d, rate, cc);
         g = r.g;
@@ -125,8 +125,8 @@ function script(own g0: Gen, own t0: crc32.Crc32, frames: i32): Run {
 }
 
 function trace(seed: u32, scripts: i32, frames: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let t: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let t = crc32.new();
   for s in 0..scripts {
     let Run { g: g1, t: t1 } = script(g, t, frames);
     g = g1;
@@ -201,7 +201,7 @@ function test_loss_after_a_hybrid_loss(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/celt");
+  let r = test.new("std/opus/celt");
   r = r.it("a short script gives the libopus trace", test_short_script);
   r = r.it("a long script gives the libopus trace", test_long_script);
   r = r.it("a bad rate or frame size is an error", test_bad_arguments);

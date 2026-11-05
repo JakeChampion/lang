@@ -12,7 +12,7 @@ import "std/test";
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
@@ -47,7 +47,7 @@ function frame(own g: Gen, period: i32, len: i32): Frame {
 
 function start_period(own g: Gen, period: i32): (Gen, i32) {
   let (g1, r) = rnd(g);
-  let t0: i32 = 15 + r % 1009;
+  let t0 = 15 + r % 1009;
   let (g2, aim) = rnd(g1);
   if (aim % 2 == 0) {
     return (g2, t0);
@@ -73,8 +73,8 @@ function last_period(own g: Gen, t0: i32): (Gen, i32) {
   }
   let (g3, kr) = rnd(g2);
   let (g4, dr) = rnd(g3);
-  let k: i32 = 2 + kr % 6;
-  let prev: i32 = 2 * ((2 * (t0 / 2) + k) / (2 * k)) + dr % 11 - 5;
+  let k = 2 + kr % 6;
+  let prev = 2 * ((2 * (t0 / 2) + k) / (2 * k)) + dr % 11 - 5;
   if (prev < 15) {
     return (g4, 15);
   }
@@ -82,24 +82,24 @@ function last_period(own g: Gen, t0: i32): (Gen, i32) {
 }
 
 function trace(seed: u32, cases: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let crc: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let crc = crc32.new();
   for k in 0..cases {
     let (g1, nr) = rnd(g);
-    let n: i32 = 120 << nr % 4;
+    let n = 120 << nr % 4;
     let (g2, pr) = rnd(g1);
-    let period: i32 = 8 + pr % 1000;
+    let period = 8 + pr % 1000;
     let (g2a, short) = rnd(g2);
     if (short % 2 == 1) {
       period = 8 + period % 60;
     }
-    let f: Frame = frame(g2a, period, 1024 + n >> 1);
+    let f = frame(g2a, period, 1024 + n >> 1);
     let (g3, t0) = start_period(f.g, period);
     let (g4, prev) = last_period(g3, t0);
     let (g5, pg) = frand(g4, 0.0f32, 0.75f32);
     g = g5;
-    let d: pitch.Doubling = pitch.remove_doubling(f.x, 1024, 15, n, t0, prev, pg);
-    let line: string = n.to_string() + " " + period.to_string() + " " + t0.to_string() + " " + prev.to_string() + " " + bits(pg) + " " + d.period.to_string() + " " + bits(d.gain);
+    let d = pitch.remove_doubling(f.x, 1024, 15, n, t0, prev, pg);
+    let line = n.to_string() + " " + period.to_string() + " " + t0.to_string() + " " + prev.to_string() + " " + bits(pg) + " " + d.period.to_string() + " " + bits(d.gain);
     crc = crc.update((line + "\n").as_bytes());
   }
   return crc.finish();
@@ -120,7 +120,7 @@ function test_a_doubled_period_is_removed(): test.TestOutcome {
     let phase: f64 = 6.283185307179586f64 * ((i % 100) as f64) / 100.0f64;
     x = x.append((1000.0f64 * phase.sin()) as f32);
   }
-  let d: pitch.Doubling = pitch.remove_doubling(x, 1024, 15, 960, 400, 0, 0.0f32);
+  let d = pitch.remove_doubling(x, 1024, 15, 960, 400, 0, 0.0f32);
   if (d.period < 199 || d.period > 201 || d.gain < 0.9f32) {
     return test.fail("the period is " + d.period.to_string() + " with the gain " + d.gain.to_string());
   }
@@ -128,7 +128,7 @@ function test_a_doubled_period_is_removed(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/pitch remove_doubling");
+  let r = test.new("std/opus/pitch remove_doubling");
   r = r.it("a short trace is the libopus trace", test_short_trace);
   r = r.it("a long trace is the libopus trace", test_long_trace);
   r = r.it("a doubled period is removed", test_a_doubled_period_is_removed);

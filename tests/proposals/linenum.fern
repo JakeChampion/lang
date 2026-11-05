@@ -9,13 +9,13 @@ function sep(): string {
 }
 
 function is_blank(line: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < line.len()) {
-    let c: u8 = line[i];
+    let c = line[i];
     if (c != 32 && c != 9 && c != 13) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -24,64 +24,64 @@ function digits(n: i32): i32 {
   if (n <= 0) {
     return 1;
   }
-  let d: i32 = 0;
-  let m: i32 = n;
+  let d = 0;
+  let m = n;
   while (m > 0) {
-    d = d + 1;
-    m = m / 10;
+    d += 1;
+    m /= 10;
   }
   return d;
 }
 
 function pad_left(s: string, width: i32): string {
-  let out: string = "";
-  let need: i32 = width - s.len();
-  let i: i32 = 0;
+  let out = "";
+  let need = width - s.len();
+  let i = 0;
   while (i < need) {
-    out = out + " ";
-    i = i + 1;
+    out += " ";
+    i += 1;
   }
   return out + s;
 }
 
 function number(lines: string[]): Numbered {
-  let count: i32 = 0;
-  let i: i32 = 0;
+  let count = 0;
+  let i = 0;
   while (i < lines.len()) {
     if (!is_blank(lines[i])) {
-      count = count + 1;
+      count += 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  let width: i32 = digits(count);
+  let width = digits(count);
 
   let out: string[] = [];
-  let n: i32 = 0;
-  let k: i32 = 0;
+  let n = 0;
+  let k = 0;
   while (k < lines.len()) {
-    let line: string = lines[k];
+    let line = lines[k];
     if (is_blank(line)) {
       out = out.append(line);
     } else {
-      n = n + 1;
+      n += 1;
       out = out.append(pad_left(n.to_string(), width) + sep() + line);
     }
-    k = k + 1;
+    k += 1;
   }
   return Numbered { lines: out, width: width, count: count };
 }
 
 function unnumber(numbered: string[], width: i32): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < numbered.len()) {
-    let line: string = numbered[i];
+    let line = numbered[i];
     if (is_blank(line)) {
       out = out.append(line);
     } else {
       out = out.append(line.drop(width + sep().len()).to_owned());
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -90,11 +90,11 @@ function field_number(line: string, width: i32): i32 {
   if (line.len() < width) {
     return -1;
   }
-  let seen_digit: boolean = false;
-  let value: i32 = 0;
-  let i: i32 = 0;
+  let seen_digit = false;
+  let value = 0;
+  let i = 0;
   while (i < width) {
-    let c: u8 = line[i];
+    let c = line[i];
     if (c == 32) {
       if (seen_digit) {
         return -1;
@@ -106,7 +106,7 @@ function field_number(line: string, width: i32): i32 {
       seen_digit = true;
       value = value * 10 + (c - 48) as i32;
     }
-    i = i + 1;
+    i += 1;
   }
   if (!seen_digit) {
     return -1;
@@ -122,7 +122,7 @@ function make_doc(content: i32, shape: i32): string[] {
   if (shape % 5 == 2) {
     out = out.append("   ");
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < content) {
     if (i % 5 == 0) {
       out = out.append("  line " + (i + 1).to_string() + " indented");
@@ -142,7 +142,7 @@ function make_doc(content: i32, shape: i32): string[] {
     if (shape % 7 == 3 && i % 3 == 2) {
       out = out.append("\t");
     }
-    i = i + 1;
+    i += 1;
   }
   if (shape % 3 == 2) {
     out = out.append("");
@@ -155,13 +155,13 @@ function boundary_counts(): i32[] {
 }
 
 function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcome {
-  let counts: i32[] = boundary_counts();
-  let ci: i32 = 0;
+  let counts = boundary_counts();
+  let ci = 0;
   while (ci < counts.len()) {
-    let c: i32 = counts[ci];
-    let shape: i32 = 0;
+    let c = counts[ci];
+    let shape = 0;
     while (shape < 4) {
-      let r: Numbered = number(make_doc(c, shape));
+      let r = number(make_doc(c, shape));
       if (r.count != c) {
         return test.fail("count=" + c.to_string() + " shape=" + shape.to_string()
           + ": numbered " + r.count.to_string() + " lines, want " + c.to_string());
@@ -170,28 +170,28 @@ function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcom
         return test.fail("count=" + c.to_string() + ": field width is "
           + r.width.to_string() + ", want " + digits(c).to_string());
       }
-      shape = shape + 1;
+      shape += 1;
     }
-    ci = ci + 1;
+    ci += 1;
   }
   return test.pass();
 }
 
 function test_the_numbers_are_one_to_k_in_a_uniform_field(): test.TestOutcome {
-  let counts: i32[] = boundary_counts();
-  let ci: i32 = 0;
+  let counts = boundary_counts();
+  let ci = 0;
   while (ci < counts.len()) {
-    let c: i32 = counts[ci];
-    let shape: i32 = 0;
+    let c = counts[ci];
+    let shape = 0;
     while (shape < 4) {
-      let r: Numbered = number(make_doc(c, shape));
-      let expect: i32 = 0;
-      let i: i32 = 0;
+      let r = number(make_doc(c, shape));
+      let expect = 0;
+      let i = 0;
       while (i < r.lines.len()) {
-        let line: string = r.lines[i];
+        let line = r.lines[i];
         if (!is_blank(line)) {
-          expect = expect + 1;
-          let got: i32 = field_number(line, r.width);
+          expect += 1;
+          let got = field_number(line, r.width);
           if (got < 0) {
             return test.fail("count=" + c.to_string() + " line " + i.to_string()
               + ": field is not a right-aligned decimal: `" + line + "`");
@@ -201,29 +201,29 @@ function test_the_numbers_are_one_to_k_in_a_uniform_field(): test.TestOutcome {
               + ": numbered " + got.to_string() + ", want " + expect.to_string());
           }
         }
-        i = i + 1;
+        i += 1;
       }
       if (expect != c) {
         return test.fail("count=" + c.to_string() + ": emitted " + expect.to_string()
           + " numbered lines");
       }
-      shape = shape + 1;
+      shape += 1;
     }
-    ci = ci + 1;
+    ci += 1;
   }
   return test.pass();
 }
 
 function test_blank_lines_are_preserved_unnumbered(): test.TestOutcome {
-  let shape: i32 = 0;
+  let shape = 0;
   while (shape < 8) {
-    let src: string[] = make_doc(12, shape);
-    let r: Numbered = number(src);
+    let src = make_doc(12, shape);
+    let r = number(src);
     if (r.lines.len() != src.len()) {
       return test.fail("shape=" + shape.to_string() + ": " + src.len().to_string()
         + " lines in, " + r.lines.len().to_string() + " out");
     }
-    let i: i32 = 0;
+    let i = 0;
     while (i < src.len()) {
       if (is_blank(src[i])) {
         if (r.lines[i] != src[i]) {
@@ -231,50 +231,50 @@ function test_blank_lines_are_preserved_unnumbered(): test.TestOutcome {
             + ": blank line changed from `" + src[i] + "` to `" + r.lines[i] + "`");
         }
       }
-      i = i + 1;
+      i += 1;
     }
-    shape = shape + 1;
+    shape += 1;
   }
   return test.pass();
 }
 
 function test_stripping_the_prefix_recovers_the_input(): test.TestOutcome {
-  let counts: i32[] = boundary_counts();
-  let ci: i32 = 0;
+  let counts = boundary_counts();
+  let ci = 0;
   while (ci < counts.len()) {
-    let shape: i32 = 0;
+    let shape = 0;
     while (shape < 8) {
-      let src: string[] = make_doc(counts[ci], shape);
-      let r: Numbered = number(src);
-      let back: string[] = unnumber(r.lines, r.width);
+      let src = make_doc(counts[ci], shape);
+      let r = number(src);
+      let back = unnumber(r.lines, r.width);
       if (back.len() != src.len()) {
         return test.fail("count=" + counts[ci].to_string() + " shape=" + shape.to_string()
           + ": round trip changed the line count");
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < src.len()) {
         if (back[i] != src[i]) {
           return test.fail("count=" + counts[ci].to_string() + " line " + i.to_string()
             + ": round trip gave `" + back[i] + "`, want `" + src[i] + "`");
         }
-        i = i + 1;
+        i += 1;
       }
-      shape = shape + 1;
+      shape += 1;
     }
-    ci = ci + 1;
+    ci += 1;
   }
   return test.pass();
 }
 
 function test_the_padding_is_on_the_left(): test.TestOutcome {
-  let r: Numbered = number(make_doc(10, 0));
-  let i: i32 = 0;
-  let seen: i32 = 0;
+  let r = number(make_doc(10, 0));
+  let i = 0;
+  let seen = 0;
   while (i < r.lines.len()) {
-    let line: string = r.lines[i];
+    let line = r.lines[i];
     if (!is_blank(line)) {
-      seen = seen + 1;
-      let last: u8 = line[r.width - 1];
+      seen += 1;
+      let last = line[r.width - 1];
       if (last < 48 || last > 57) {
         return test.fail("line " + i.to_string() + ": field does not end in a digit: `"
           + line + "`");
@@ -284,7 +284,7 @@ function test_the_padding_is_on_the_left(): test.TestOutcome {
           + " the left: `" + line + "`");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (seen != 10) {
     return test.fail("expected 10 numbered lines, saw " + seen.to_string());
@@ -294,7 +294,7 @@ function test_the_padding_is_on_the_left(): test.TestOutcome {
 
 function test_whitespace_only_counts_as_blank(): test.TestOutcome {
   let src: string[] = ["", "   ", "\t", " x ", "y"];
-  let r: Numbered = number(src);
+  let r = number(src);
   if (r.count != 2) {
     return test.fail("counted " + r.count.to_string() + " non-blank, want 2");
   }
@@ -307,7 +307,7 @@ function test_whitespace_only_counts_as_blank(): test.TestOutcome {
   if (field_number(r.lines[4], r.width) != 2) {
     return test.fail("`y` should be numbered 2, got `" + r.lines[4] + "`");
   }
-  let back: string[] = unnumber(r.lines, r.width);
+  let back = unnumber(r.lines, r.width);
   if (back[3] != " x ") {
     return test.fail("content whitespace was trimmed: `" + back[3] + "`");
   }
@@ -315,7 +315,7 @@ function test_whitespace_only_counts_as_blank(): test.TestOutcome {
 }
 
 function test_degenerate_inputs(): test.TestOutcome {
-  let empty: Numbered = number([]);
+  let empty = number([]);
   if (empty.lines.len() != 0) {
     return test.fail("empty input produced output lines");
   }
@@ -326,7 +326,7 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("empty input gave width " + empty.width.to_string());
   }
 
-  let blanks: Numbered = number(["", "  ", ""]);
+  let blanks = number(["", "  ", ""]);
   if (blanks.count != 0) {
     return test.fail("all-blank counted " + blanks.count.to_string());
   }
@@ -337,7 +337,7 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("all-blank altered a line");
   }
 
-  let one: Numbered = number(["only"]);
+  let one = number(["only"]);
   if (one.width != 1) {
     return test.fail("one line gave width " + one.width.to_string());
   }
@@ -348,25 +348,25 @@ function test_degenerate_inputs(): test.TestOutcome {
 }
 
 function test_nine_and_ten_differ_in_width(): test.TestOutcome {
-  let nine: Numbered = number(make_doc(9, 0));
-  let ten: Numbered = number(make_doc(10, 0));
+  let nine = number(make_doc(9, 0));
+  let ten = number(make_doc(10, 0));
   if (nine.width != 1) {
     return test.fail("9 lines gave width " + nine.width.to_string());
   }
   if (ten.width != 2) {
     return test.fail("10 lines gave width " + ten.width.to_string());
   }
-  let i: i32 = 0;
-  let seen: i32 = 0;
+  let i = 0;
+  let seen = 0;
   while (i < ten.lines.len()) {
     if (!is_blank(ten.lines[i])) {
-      seen = seen + 1;
+      seen += 1;
       if (seen == 1 && ten.lines[i].take(2).to_owned() != " 1") {
         return test.fail("in a 10-line document the first field is `"
           + ten.lines[i].take(2).to_owned() + "`, want ` 1`");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -375,19 +375,19 @@ function main(): i32 {
   eprint("linenum — number the non-blank lines, right-aligned");
 
   let src: string[] = ["alpha", "", "beta", "   ", "gamma", "delta"];
-  let r: Numbered = number(src);
-  let i: i32 = 0;
+  let r = number(src);
+  let i = 0;
   while (i < r.lines.len()) {
     eprint("  |" + r.lines[i]);
-    i = i + 1;
+    i += 1;
   }
   eprint("  width " + r.width.to_string() + " for " + r.count.to_string() + " numbered lines");
 
-  let wide: Numbered = number(make_doc(10, 0));
+  let wide = number(make_doc(10, 0));
   eprint("  10 lines -> width " + wide.width.to_string()
     + ", first field `" + wide.lines[0].take(2).to_owned() + "`");
 
-  let t: test.TestRunner = test.new("linenum");
+  let t = test.new("linenum");
   t = t.it("the width is the digit count of the last number", test_the_width_is_the_digit_count_of_the_last_number);
   t = t.it("the numbers are 1..k in a uniform field", test_the_numbers_are_one_to_k_in_a_uniform_field);
   t = t.it("blank lines are preserved unnumbered", test_blank_lines_are_preserved_unnumbered);

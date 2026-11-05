@@ -14,7 +14,7 @@ function test_clamp_hi(): test.TestOutcome {
 }
 
 function test_clamp_lo(): test.TestOutcome {
-  return test.assert_eq(cmp.clamp(0 - 4, 0, 10), 0);
+  return test.assert_eq(cmp.clamp(-4, 0, 10), 0);
 }
 
 function test_clamp_in(): test.TestOutcome {

@@ -299,7 +299,7 @@ function test_in_place(): test.TestOutcome {
   if (shown(k.seal_in_place(iv4(), seq4(), laid4(), 0, 20, 20, 60)) != hex.encode(aad3()) + sealed4()) {
     return test.fail(shown(k.seal_in_place(iv4(), seq4(), laid4(), 0, 20, 20, 60)));
   }
-  return test.assert_eq(opened4(round_trip4(k, seq4(), 0 - 1, seq4())), hex.encode(p60()));
+  return test.assert_eq(opened4(round_trip4(k, seq4(), -1, seq4())), hex.encode(p60()));
 }
 
 function test_in_place_refuses(): test.TestOutcome {
@@ -307,7 +307,7 @@ function test_in_place_refuses(): test.TestOutcome {
     return test.fail("key");
   };
   let forged = "aead: the message does not verify";
-  if (opened4(round_trip4(k, seq4(), 0 - 1, seq4() + 1 as u64)) != forged) {
+  if (opened4(round_trip4(k, seq4(), -1, seq4() + 1 as u64)) != forged) {
     return test.fail("the next sequence number");
   }
   if (opened4(round_trip4(k, seq4(), 95, seq4())) != forged) {

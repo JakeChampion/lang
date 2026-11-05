@@ -3,7 +3,7 @@ import "std/time";
 import "std/tz";
 
 function test_bare_name_is_utc(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("ABC");
+  let z = tz.zone_from_tz("ABC");
   if (z.offset_at(time.timestamp_from_unix(0i64)) != 0) {
     return test.fail("offset");
   }
@@ -15,22 +15,22 @@ function test_empty_is_utc(): test.TestOutcome {
 }
 
 function test_short_quoted_names(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("<XX>5<YY>4,M3.2.0,M11.1.0");
+  let z = tz.zone_from_tz("<XX>5<YY>4,M3.2.0,M11.1.0");
   if (z.abbrev_at(time.timestamp_from_unix(1720000000i64)) != "YY") {
     return test.fail("daylight name");
   }
-  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1700000000i64)), 0 - 18000);
+  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1700000000i64)), -18000);
 }
 
 function test_hours_past_a_day(): test.TestOutcome {
-  if (tz.zone_from_tz("AAA+25:59:59").offset_at(time.timestamp_from_unix(0i64)) != 0 - 93599) {
+  if (tz.zone_from_tz("AAA+25:59:59").offset_at(time.timestamp_from_unix(0i64)) != -93599) {
     return test.fail("25:59:59");
   }
   return test.assert_eq(tz.zone_from_tz("AAA+168").abbrev_at(time.timestamp_from_unix(0i64)), "UTC");
 }
 
 function test_rule_starts_in_1970(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("NZST-12NZDT,M9.5.0,M4.1.0/3");
+  let z = tz.zone_from_tz("NZST-12NZDT,M9.5.0,M4.1.0/3");
   if (z.abbrev_at(time.timestamp_from_unix(0i64 - 372000000i64)) != "NZST") {
     return test.fail("1958");
   }
@@ -41,13 +41,13 @@ function test_rule_starts_in_1970(): test.TestOutcome {
 }
 
 function test_rule_ends_in_2569(): test.TestOutcome {
-  let july2569: i64 = time.days_from_civil(2569i64, 7, 1) * 86400i64;
-  let july2570: i64 = time.days_from_civil(2570i64, 7, 1) * 86400i64;
-  let north: tz.Zone = tz.zone_from_tz("EST5EDT,M3.2.0/2,M11.1.0/2");
+  let july2569 = time.days_from_civil(2569i64, 7, 1) * 86400i64;
+  let july2570 = time.days_from_civil(2570i64, 7, 1) * 86400i64;
+  let north = tz.zone_from_tz("EST5EDT,M3.2.0/2,M11.1.0/2");
   if (north.abbrev_at(time.timestamp_from_unix(july2569)) != "EDT") {
     return test.fail("2569");
   }
-  if (north.offset_at(time.timestamp_from_unix(july2570)) != 0 - 18000) {
+  if (north.offset_at(time.timestamp_from_unix(july2570)) != -18000) {
     return test.fail("2570");
   }
   return test.assert_eq(tz.zone_from_tz("NZST-12NZDT,M9.5.0,M4.1.0/3").abbrev_at(time.timestamp_from_unix(july2570)), "NZDT");
@@ -58,7 +58,7 @@ function test_bad_date_is_utc(): test.TestOutcome {
 }
 
 function test_semicolon_rule(): test.TestOutcome {
-  return test.assert_eq(tz.zone_from_tz("EST5EDT4;M3.2.0,M11.1.0").offset_at(time.timestamp_from_unix(1720000000i64)), 0 - 14400);
+  return test.assert_eq(tz.zone_from_tz("EST5EDT4;M3.2.0,M11.1.0").offset_at(time.timestamp_from_unix(1720000000i64)), -14400);
 }
 
 function test_unclosed_dst_name_is_utc(): test.TestOutcome {
@@ -66,11 +66,11 @@ function test_unclosed_dst_name_is_utc(): test.TestOutcome {
 }
 
 function test_dst_without_rule(): test.TestOutcome {
-  let z: tz.Zone = tz.zone_from_tz("EST5EDT");
+  let z = tz.zone_from_tz("EST5EDT");
   if (z.abbrev_at(time.timestamp_from_unix(1700000000i64)) != "EST") {
     return test.fail("November");
   }
-  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1720000000i64)), 0 - 14400);
+  return test.assert_eq(z.offset_at(time.timestamp_from_unix(1720000000i64)), -14400);
 }
 
 function test_malformed_dates_are_utc(): test.TestOutcome {
@@ -85,7 +85,7 @@ function test_junk_after_dst_offset_is_utc(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.new("tz-darwin");
+  let t = test.new("tz-darwin");
   t = t.it("a bare name is UTC", test_bare_name_is_utc);
   t = t.it("an empty TZ is UTC", test_empty_is_utc);
   t = t.it("short quoted names", test_short_quoted_names);
