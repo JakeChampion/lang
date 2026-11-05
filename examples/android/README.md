@@ -39,15 +39,17 @@ pub function char_code_at(env: usize, thiz: usize, s: usize, i: i32): i32 {
 ```
 
 The function takes the `JNIEnv*` and the `jobject` (or the `jclass` of a
-`static` method) first, then the Java arguments. Each Fern type must have the
-width of its Java type, and the compiler refuses one that does not:
+`static` method) first, then the Java arguments. Each Java type has the Fern
+type in this table, and the compiler refuses a different one. The wrapper
+extends a `byte` or a `short` with its sign and a `char` with zeros, so the
+Fern function gets the Java value:
 
 | Java | Fern |
 |---|---|
 | a reference, such as `String`, `Object` or `int[]` | `usize` |
 | `boolean` | `u8` |
-| `byte`, `char`, `short` | `i8`, `u16`, `i16` |
-| `int`, `long` | `i32`, `i64` |
+| `byte`, `char`, `short`, `int` | `i32` |
+| `long` | `i64` |
 | `float`, `double` | `f32`, `f64` |
 
 The compiler exports each method under its JNI symbol, so `-export` is not
