@@ -137,9 +137,6 @@ function c_pthread_create(thread: usize, attr: usize, start: usize, arg: usize):
 
 @import("libc.so", "pthread_detach")
 function c_pthread_detach(thread: usize): i32;
-
-@import("libc.so", "__system_property_get")
-function c_property_get(name: usize, value: usize): i32;
 ```
 
 ### `events`
@@ -687,26 +684,26 @@ pub function volume_stream(ctx: usize, stream: i32): void {
   jni.free_buffer(args);
 }
 
-// The IANA name of the time zone of the device, such as "Europe/London", or
-// "" when the device gives none. `std/tz` gives the zone of the name with
-// `tz.iana_zone`.
-pub function time_zone(): string {
-  let bytes: u8[] = [];
-  unsafe {
-    let name: usize = jni.cstr("persist.sys.timezone");
-    let value: usize = __alloc(PROP_VALUE_MAX);
-    let n: i32 = c_property_get(name, value);
-    for k in 0..n {
-      bytes = bytes.append(__load_u8(value + k as usize) as u8);
-    }
-    __free(value, PROP_VALUE_MAX);
-    jni.free_buffer(name);
+// The offset of the local time of the device from UTC, in milliseconds, at
+// `unix_ms`. It comes from java.util.TimeZone, so it follows the time zone
+// and the zone data of the device. Call it on the loop thread.
+pub function utc_offset_ms(ctx: usize, unix_ms: i64): i32 {
+  let e: usize = env(ctx);
+  let class: usize = jni.find_class(e, "java/util/TimeZone");
+  let none: usize = jni.jvalue_alloc(0);
+  let zone: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getDefault", "()Ljava/util/TimeZone;"), none);
+  jni.free_buffer(none);
+  let args: usize = jni.jvalues([unix_ms as usize]);
+  let offset: i32 = jni.call_int_method_a(e, zone, jni.get_method_id(e, class, "getOffset", "(J)I"), args);
+  jni.free_buffer(args);
+  if (jni.exception_occurred(e) != 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    offset = 0;
   }
-  return utf8.from_bytes_lossy(bytes);
+  let a: usize = jni.delete_local_ref(e, zone);
+  let b: usize = jni.delete_local_ref(e, class);
+  return offset;
 }
-
-// The size of the buffer of a system property value, PROP_VALUE_MAX.
-const PROP_VALUE_MAX: i32 = 92;
 
 // Moves the task of the activity behind the other apps, as the home key
 // does. The activity and its foreground service keep running.

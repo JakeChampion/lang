@@ -6,8 +6,6 @@ import "std/android";
 import "std/android/audio";
 import "std/log";
 import "std/rand";
-import "std/time";
-import "std/tz";
 import "./screen";
 import "./stopwatch";
 import "./ui";
@@ -36,7 +34,9 @@ struct App {
   dx: i32,
   dy: i32,
   burn_at: i64,
-  zone: tz.Zone,
+  // The offset of the local time from UTC, and the minute it is for.
+  offset: i32,
+  offset_minute: i64,
   // The beep period in milliseconds, and the count of periods on the
   // stopwatch at the last beep.
   beep_period: i64,
@@ -65,7 +65,7 @@ function no_press(): Press {
 }
 
 function app_main(ctx: usize): usize {
-  let first = App { ctx: ctx, window: 0 as usize, dir: android.data_dir(ctx), started_at: 0, anteriority: 0, total: 0, values: stopwatch.load_settings(""), page: screen.MAIN, menu: false, chrome_until: 0, press: no_press(), scroll: 0, dx: 0, dy: 0, burn_at: 0, zone: tz.utc_zone(), beep_period: 0, beep_mark: 0, tone: audio.Stream { ptr: 0 as usize, rate: 0 }, tone_usage: 0, shown: false, screen_on: false, drawn: "" };
+  let first = App { ctx: ctx, window: 0 as usize, dir: android.data_dir(ctx), started_at: 0, anteriority: 0, total: 0, values: stopwatch.load_settings(""), page: screen.MAIN, menu: false, chrome_until: 0, press: no_press(), scroll: 0, dx: 0, dy: 0, burn_at: 0, offset: 0, offset_minute: -1, beep_period: 0, beep_mark: 0, tone: audio.Stream { ptr: 0 as usize, rate: 0 }, tone_usage: 0, shown: false, screen_on: false, drawn: "" };
   let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => timeout(s, mono_ms()));
   log.info("stopwatch: destroyed");
   close_tone(last);
@@ -73,7 +73,7 @@ function app_main(ctx: usize): usize {
 }
 
 function step(own s: App, e: android.Event): App {
-  let t = event(s, e);
+  let t = sync_offset(event(s, e));
   return draw(update(t, mono_ms()));
 }
 
@@ -131,15 +131,11 @@ function save_settings(s: App): void {
   }
 }
 
-// The window shows: read the files, the time zone and the settings.
+// The window shows: read the files of the state and the settings.
 function started(own s: App): App {
   let state = read_text(s.dir + "/state");
-  let zone = tz.utc_zone();
-  if let Ok(z) = tz.iana_zone(android.time_zone()) {
-    zone = z;
-  }
   android.immersive(s.ctx, true);
-  let t = App { ...s, started_at: stopwatch.stored(state, "started_at", 0), anteriority: stopwatch.stored(state, "anteriority", 0), total: stopwatch.stored(state, "total", 0), values: stopwatch.load_settings(read_text(s.dir + "/settings")), zone: zone, shown: true, drawn: "" };
+  let t = App { ...s, started_at: stopwatch.stored(state, "started_at", 0), anteriority: stopwatch.stored(state, "anteriority", 0), total: stopwatch.stored(state, "total", 0), values: stopwatch.load_settings(read_text(s.dir + "/settings")), offset_minute: -1, shown: true, drawn: "" };
   return show_chrome(main_settings(t), mono_ms());
 }
 
@@ -193,8 +189,18 @@ function elapsed(s: App): i64 {
 }
 
 function local_ms(s: App): i64 {
+  return now_wall() + s.offset as i64;
+}
+
+// The offset of the local time again, once a minute: a change of the time
+// zone or of summer time shows at the next minute.
+function sync_offset(own s: App): App {
   let now = now_wall();
-  return now + s.zone.offset_at(time.timestamp_from_unix_millis(now)) as i64 * 1000;
+  let minute = now / 60000;
+  if (minute == s.offset_minute) {
+    return s;
+  }
+  return App { ...s, offset: android.utc_offset_ms(s.ctx, now), offset_minute: minute };
 }
 
 function clock_text(s: App): string {
