@@ -14,7 +14,7 @@ function bytes(seed: string, n: i32): u8[] {
 }
 
 function party(initiator: boolean, name: string): secure.Handshake {
-  return secure.start(initiator, bytes(name + " key", 32), bytes(name + " nonce", 16));
+  return secure.start(initiator, bytes(name + " key", 32), bytes(name + " nonce", 16), bytes(name + " kem", secure.KEM_RANDOM));
 }
 
 // A full handshake between `a` (the initiator) and `b`.
@@ -91,6 +91,84 @@ function test_reveal_must_match_commitment(): test.TestOutcome {
   secure.close_handshake(a);
   secure.close_handshake(other1);
   return test.assert_eq(b2.failed.to_string() + " " + b2.done.to_string(), "true false");
+}
+
+// The string of a finished handshake, or "" when it gives no keys.
+function sas_of(h: secure.Handshake): string {
+  if let Some(k) = secure.keys(h) {
+    let s: string = k.sas;
+    secure.close_keys(k);
+    return s;
+  }
+  return "";
+}
+
+// The three messages carry the ML-KEM-768 encapsulation key and ciphertext.
+function test_hybrid_message_sizes(): test.TestOutcome {
+  let a: secure.Handshake = party(true, "alice");
+  let commit = secure.first(a);
+  let (b1, key_msg) = secure.receive(party(false, "bob"), commit);
+  let (a1, reveal) = secure.receive(a, key_msg);
+  secure.close_handshake(a1);
+  secure.close_handshake(b1);
+  return test.assert_eq(commit.len().to_string() + " " + key_msg.len().to_string() + " " + reveal.len().to_string(), "1217 1137 49");
+}
+
+// A party in the middle changes one byte of the ML-KEM ciphertext. The
+// initiator gets another shared secret, so the strings differ.
+function test_changed_ciphertext_changes_the_string(): test.TestOutcome {
+  let a: secure.Handshake = party(true, "alice");
+  let (b1, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
+  let bad: u8[] = key_msg.with(100, key_msg[100] ^ 1 as u8);
+  let (a1, reveal) = secure.receive(a, bad);
+  let (b2, none) = secure.receive(b1, reveal);
+  let sa: string = sas_of(a1);
+  let sb: string = sas_of(b2);
+  return test.assert_eq((sa.len() == 6 && sb.len() == 6 && sa != sb).to_string(), "true");
+}
+
+// A party in the middle puts its own encapsulation key in the first
+// message. The responder encapsulates to that key, so the strings differ.
+function test_swapped_encapsulation_key_changes_the_string(): test.TestOutcome {
+  let a: secure.Handshake = party(true, "alice");
+  let mallory: secure.Handshake = party(true, "mallory");
+  let commit = secure.first(a);
+  let theirs = secure.first(mallory);
+  let swapped: u8[] = [];
+  for k in 0..commit.len() {
+    let b: u8 = commit[k];
+    if (k >= 33) {
+      b = theirs[k];
+    }
+    swapped = swapped.append(b);
+  }
+  let (b1, key_msg) = secure.receive(party(false, "bob"), swapped);
+  let (a1, reveal) = secure.receive(a, key_msg);
+  let (b2, none) = secure.receive(b1, reveal);
+  secure.close_handshake(mallory);
+  let sa: string = sas_of(a1);
+  let sb: string = sas_of(b2);
+  return test.assert_eq((sa.len() == 6 && sb.len() == 6 && sa != sb).to_string(), "true");
+}
+
+// The ML-KEM secrets leave the handshake: after the keys, and after a failure.
+function test_kem_secrets_are_erased(): test.TestOutcome {
+  let (a, b) = pair(party(true, "alice"), party(false, "bob"));
+  let ka = a;
+  let kb = b;
+  let sa: string = sas_of(a);
+  let sb: string = sas_of(b);
+  let c = party(false, "carol");
+  let old = c;
+  let (failed, _) = secure.receive(c, [16 as u8]);
+  return test.assert_eq(ka.kem.get().len().to_string() + " " + kb.kem.get().len().to_string() + " " + old.kem.get().len().to_string() + " " + (sa == sb).to_string(), "0 0 0 true");
+}
+
+// The ML-KEM part needs all of its random bytes.
+function test_kem_random_is_required(): test.TestOutcome {
+  let a = secure.start(true, bytes("key", 32), bytes("nonce", 16), bytes("kem", 32));
+  let b = secure.start(false, bytes("key", 32), bytes("nonce", 16), []);
+  return test.assert_eq(a.failed.to_string() + " " + b.failed.to_string() + " " + a.private.get().len().to_string(), "true true 0");
 }
 
 function test_changed_frame_is_refused(): test.TestOutcome {
@@ -242,7 +320,7 @@ function test_cancelled_handshake_clears_aliases(): test.TestOutcome {
 }
 
 function test_invalid_nonce_does_not_keep_a_private_key(): test.TestOutcome {
-  let a = secure.start(true, bytes("key", 32), []);
+  let a = secure.start(true, bytes("key", 32), [], bytes("kem", secure.KEM_RANDOM));
   return test.assert_eq(a.failed.to_string() + " " + a.private.get().len().to_string(), "true 0");
 }
 
@@ -363,6 +441,11 @@ function main(): i32 {
   r = r.it("the handshake agrees on keys and on the string", test_handshake_agrees);
   r = r.it("a party in the middle shows different strings", test_man_in_the_middle_shows_different_strings);
   r = r.it("the reveal must match the commitment", test_reveal_must_match_commitment);
+  r = r.it("the messages carry the ML-KEM key and ciphertext", test_hybrid_message_sizes);
+  r = r.it("a changed ML-KEM ciphertext changes the string", test_changed_ciphertext_changes_the_string);
+  r = r.it("a swapped encapsulation key changes the string", test_swapped_encapsulation_key_changes_the_string);
+  r = r.it("the ML-KEM secrets are erased", test_kem_secrets_are_erased);
+  r = r.it("the ML-KEM part needs its random bytes", test_kem_random_is_required);
   r = r.it("a changed frame is refused", test_changed_frame_is_refused);
   r = r.it("a control frame opens once, in any order", test_control_replay_is_refused_and_order_is_free);
   r = r.it("voice frames open once inside the window", test_voice_window);

@@ -143,9 +143,19 @@ concealment.
 
 ## `secure.fern`
 
-The secure channel. Its key exchange uses ephemeral X25519 keys, and the
-initiator commits to its key before it sees the other key. The two users then
-compare a six-digit authentication string.
+The secure channel. Its key exchange is a hybrid of ephemeral X25519 and
+ML-KEM-768. The initiator commits to its X25519 key before it sees the other
+key, and it sends its ML-KEM encapsulation key in the first message. The
+responder sends an ML-KEM ciphertext with its X25519 key. Both shared secrets
+go into the key derivation, so a recording of the traffic stays secret while
+one of the two problems stays hard. The two users then compare a six-digit
+authentication string.
+
+Each side fixes its values before it sees the values of the other side. So a
+party in the middle cannot try keys until the two strings match. For this
+reason the initiator holds the ML-KEM key pair: the side that encapsulates
+chooses its value after it sees the key. The first message is 1217 bytes, so
+a phone with an older build cannot pair with this build.
 
 Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. Both go over datagrams, so a frame can be lost

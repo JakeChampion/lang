@@ -36,7 +36,7 @@ pub struct Node {
   logs: string[],
 }
 
-pub const SEED_BYTES: i32 = 48;
+pub const SEED_BYTES: i32 = 48 + secure.KEM_RANDOM;
 
 // A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
@@ -121,7 +121,7 @@ function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
   match (st.heard) {
     lan.Found(peer) => {
       let u: Node = log(t, "found peer " + peer.to_string() + " at " + from.to_string());
-      let (l, out) = lan.pair(u.link, peer, now, part(u.seed, 0, 32), part(u.seed, 32, 16));
+      let (l, out) = lan.pair(u.link, peer, now, part(u.seed, 0, 32), part(u.seed, 32, 16), part(u.seed, 48, secure.KEM_RANDOM));
       return to_peer(act(Node { ...u, link: l, peer_addr: from, seed: [] }, session.PeerFound, now), out);
     },
     lan.Verify(sas) => {

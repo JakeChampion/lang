@@ -1,17 +1,23 @@
 // The secure channel of the walkie-talkie: an authenticated key exchange,
 // a short authentication string, and sealed frames.
 //
-// The key exchange has three messages, with ephemeral X25519 keys:
+// The key exchange is a hybrid of ephemeral X25519 and ML-KEM-768, in three
+// messages:
 //
-// 1. The initiator sends a commitment: the SHA-256 of its public key and a
-//    nonce.
-// 2. The responder sends its public key and a nonce.
-// 3. The initiator sends its public key and nonce, and the responder checks
-//    them against the commitment.
+// 1. The initiator sends a commitment, the SHA-256 of its X25519 public key
+//    and a nonce, and its ML-KEM encapsulation key.
+// 2. The responder sends its X25519 public key, a nonce, and an ML-KEM
+//    ciphertext for that encapsulation key.
+// 3. The initiator sends its X25519 public key and nonce, and the responder
+//    checks them against the commitment.
 //
-// The initiator commits before it sees the responder's key, so a third party
-// in the middle cannot try keys until the authentication strings match. The
-// two users compare the short authentication string at first pairing.
+// Each side fixes all of its values before it sees the values of the other
+// side, so a third party in the middle cannot try keys until the
+// authentication strings match. For this reason the initiator holds the
+// ML-KEM key pair: the side that encapsulates chooses its value after it sees
+// the key. Both shared secrets go into the key derivation, so the keys stay
+// secret while one of the two problems stays hard. The two users compare the
+// short authentication string at first pairing.
 //
 // Each direction and each channel has its own key. Both channels go over
 // datagrams, which can be lost or reordered. A frame is sealed with
@@ -19,6 +25,7 @@
 // channel is accepted once inside a window of 64 numbers.
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
+import "std/crypto/mlkem768";
 import "std/crypto/x25519";
 
 const M_COMMIT: i32 = 16;
@@ -33,6 +40,13 @@ pub const VOICE: i32 = 2;
 
 const WINDOW: i32 = 64;
 
+// The ML-KEM-768 sizes, and the random bytes that `start` takes for ML-KEM.
+const EK_LEN: i32 = 1184;
+
+const CT_LEN: i32 = 1088;
+
+pub const KEM_RANDOM: i32 = 64;
+
 const MAX_SEQUENCE: i64 = 9223372036854775807i64;
 
 const FRESH: i32 = 0;
@@ -43,7 +57,10 @@ const READY: i32 = 2;
 
 const CLOSED: i32 = 3;
 
-pub struct Handshake { initiator: boolean, private: Cell[u8[]], phase: Cell[i32], public: u8[], nonce: u8[], commit: u8[], peer_key: u8[], peer_nonce: u8[], done: boolean, failed: boolean }
+// `kem` holds the ML-KEM secret of this side: the decapsulation key of the
+// initiator or the random value of the responder, and then the shared
+// secret. `ek` and `ct` are the public ML-KEM values of the exchange.
+pub struct Handshake { initiator: boolean, private: Cell[u8[]], kem: Cell[u8[]], phase: Cell[i32], public: u8[], nonce: u8[], ek: u8[], ct: u8[], commit: u8[], peer_key: u8[], peer_nonce: u8[], done: boolean, failed: boolean }
 
 pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string }
 
@@ -82,8 +99,33 @@ function commitment(public: [u8], nonce: [u8]): u8[] {
   return crypto.sha256(cat(cat(text("walkie commit"), public), nonce));
 }
 
-// A handshake from 32 random bytes for the private key and 16 for the nonce.
-pub function start(initiator: boolean, own random_key: u8[], random_nonce: u8[]): Handshake {
+// The ML-KEM secret and encapsulation key of a side, from KEM_RANDOM bytes.
+// The initiator makes a key pair. The responder keeps 32 bytes for its
+// encapsulation.
+function kem_start(initiator: boolean, own random: u8[]): (u8[], u8[]) {
+  if (random.len() != KEM_RANDOM) {
+    crypto.erase(random);
+    return ([], []);
+  }
+  if (!initiator) {
+    let m: u8[] = part(random, 0, 32);
+    crypto.erase(random);
+    return (m, []);
+  }
+  let result = mlkem768.keygen_derand(part(random, 0, 32), part(random, 32, 32));
+  crypto.erase(random);
+  match (result) {
+    Ok(kp) => {
+      return (kp.decapsulation_key, kp.encapsulation_key);
+    },
+    Err(_) => {}
+  }
+  return ([], []);
+}
+
+// A handshake from 32 random bytes for the X25519 private key, 16 for the
+// nonce, and KEM_RANDOM for ML-KEM.
+pub function start(initiator: boolean, own random_key: u8[], random_nonce: u8[], own random_kem: u8[]): Handshake {
   let public: u8[] = [];
   match (x25519.public_key(random_key)) {
     Ok(p) => {
@@ -91,7 +133,9 @@ pub function start(initiator: boolean, own random_key: u8[], random_nonce: u8[])
     },
     Err(_) => {}
   }
-  let h = Handshake { initiator: initiator, private: cell_new(random_key), phase: cell_new(FRESH), public: public, nonce: random_nonce, commit: [], peer_key: [], peer_nonce: [], done: false, failed: public.len() != 32 || random_nonce.len() != 16 };
+  let (kem, ek) = kem_start(initiator, random_kem);
+  let kem_ok: boolean = initiator && ek.len() == EK_LEN || !initiator && kem.len() == 32;
+  let h = Handshake { initiator: initiator, private: cell_new(random_key), kem: cell_new(kem), phase: cell_new(FRESH), public: public, nonce: random_nonce, ek: ek, ct: [], commit: [], peer_key: [], peer_nonce: [], done: false, failed: public.len() != 32 || random_nonce.len() != 16 || !kem_ok };
   if (h.failed) {
     erase_private(h);
   }
@@ -103,6 +147,9 @@ function erase_private(h: Handshake): void {
   let secret = h.private.get();
   h.private.set([]);
   crypto.erase(secret);
+  let kem = h.kem.get();
+  h.kem.set([]);
+  crypto.erase(kem);
 }
 
 // Abort also clears the key in every copy of this handshake.
@@ -121,7 +168,7 @@ pub function first(h: Handshake): u8[] {
     return [];
   }
   h.phase.set(COMMITTED);
-  return cat([M_COMMIT as u8], commitment(h.public, h.nonce));
+  return cat(cat([M_COMMIT as u8], commitment(h.public, h.nonce)), h.ek);
 }
 
 // The handshake after message `m`, and the reply to send, which is empty
@@ -131,15 +178,11 @@ pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
     return refused(h);
   }
   let t: i32 = m[0] as i32;
-  if (!h.initiator && t == M_COMMIT && m.len() == 33 && h.phase.get() == FRESH) {
-    let reply: u8[] = cat(cat([M_KEY as u8], h.public), h.nonce);
-    h.phase.set(COMMITTED);
-    return (Handshake { ...h, commit: part(m, 1, 32) }, reply);
+  if (!h.initiator && t == M_COMMIT && m.len() == 33 + EK_LEN && h.phase.get() == FRESH) {
+    return encapsulate(h, part(m, 1, 32), part(m, 33, EK_LEN));
   }
-  if (h.initiator && t == M_KEY && m.len() == 49 && h.phase.get() == COMMITTED) {
-    let reveal: u8[] = cat(cat([M_REVEAL as u8], h.public), h.nonce);
-    h.phase.set(READY);
-    return (Handshake { ...h, peer_key: part(m, 1, 32), peer_nonce: part(m, 33, 16), done: true }, reveal);
+  if (h.initiator && t == M_KEY && m.len() == 49 + CT_LEN && h.phase.get() == COMMITTED) {
+    return decapsulate(h, part(m, 1, 32), part(m, 33, 16), part(m, 49, CT_LEN));
   }
   if (!h.initiator && t == M_REVEAL && m.len() == 49 && h.phase.get() == COMMITTED && h.commit.len() == 32) {
     let key: u8[] = part(m, 1, 32);
@@ -151,6 +194,38 @@ pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
     return (Handshake { ...h, peer_key: key, peer_nonce: nonce, done: true }, []);
   }
   return refused(h);
+}
+
+// The responder's reply to the commitment: its X25519 key, its nonce, and a
+// ciphertext for the initiator's encapsulation key.
+function encapsulate(h: Handshake, commit: u8[], ek: u8[]): (Handshake, u8[]) {
+  let m = h.kem.get();
+  h.kem.set([]);
+  let result = mlkem768.encaps_derand(ek, m);
+  crypto.erase(m);
+  let Ok(e) = result else {
+    return refused(h);
+  };
+  h.kem.set(e.shared_secret);
+  h.phase.set(COMMITTED);
+  let reply: u8[] = cat(cat(cat([M_KEY as u8], h.public), h.nonce), e.ciphertext);
+  return (Handshake { ...h, commit: commit, ek: ek, ct: e.ciphertext }, reply);
+}
+
+// The initiator's reveal, after it takes the ML-KEM shared secret from the
+// responder's ciphertext.
+function decapsulate(h: Handshake, key: u8[], nonce: u8[], ct: u8[]): (Handshake, u8[]) {
+  let dk = h.kem.get();
+  h.kem.set([]);
+  let result = mlkem768.decaps(dk, ct);
+  crypto.erase(dk);
+  let Ok(shared) = result else {
+    return refused(h);
+  };
+  h.kem.set(shared);
+  let reveal: u8[] = cat(cat([M_REVEAL as u8], h.public), h.nonce);
+  h.phase.set(READY);
+  return (Handshake { ...h, peer_key: key, peer_nonce: nonce, ct: ct, done: true }, reveal);
 }
 
 // The keys of a finished handshake, and its short authentication string:
@@ -165,14 +240,20 @@ pub function keys(h: Handshake): Option[Keys] {
   h.private.set([]);
   let result = x25519.x25519(secret, h.peer_key);
   crypto.erase(secret);
+  let kem = h.kem.get();
+  h.kem.set([]);
   let shared: u8[] = [];
   match (result) {
     Ok(s) => {
-      shared = s;
+      shared = cat(s, kem);
+      crypto.erase(s);
     },
-    Err(_) => {
-      return None;
-    }
+    Err(_) => {}
+  }
+  crypto.erase(kem);
+  if (shared.len() != 64) {
+    crypto.erase(shared);
+    return None;
   }
   let mine: u8[] = cat(h.public, h.nonce);
   let theirs: u8[] = cat(h.peer_key, h.peer_nonce);
@@ -182,7 +263,7 @@ pub function keys(h: Handshake): Option[Keys] {
     first_part = mine;
     second_part = theirs;
   }
-  let transcript: u8[] = crypto.sha256(cat(cat(text("walkie v1"), first_part), second_part));
+  let transcript: u8[] = crypto.sha256(cat(cat(cat(cat(text("walkie v2"), h.ek), h.ct), first_part), second_part));
   let prk: u8[] = crypto.hkdf_sha256_extract(transcript, shared);
   crypto.erase(shared);
   let i2r_ctl: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r control"), 32);
