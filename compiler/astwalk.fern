@@ -462,18 +462,28 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
   return out;
 }
 
-pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Expr, T, boolean) {
-  let (ve, va, vh) = visit(e, acc);
-  if (vh) {
-    return (ve, va, true);
+// The expression visitor runs on the nodes `applies` admits. A pass that
+// touches one node kind names it, so the map does not call the visitor,
+// and box its answer, on every other node.
+pub function every_expr(e: ast.Expr): boolean {
+  return true;
+}
+
+pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Expr, T, boolean) {
+  let a: T = acc;
+  if (applies(e)) {
+    let (ve, va, vh) = visit(e, acc);
+    if (vh) {
+      return (ve, va, true);
+    }
+    a = va;
   }
-  let a: T = va;
   let out: ast.Expr = e;
   let changed: boolean = false;
   match (e) {
     ast.ExprBinary(b) => {
-      let (le, la, lh) = map_expr_acc(b.left, a, visit_stmt, visit);
-      let (re, ra, rh) = map_expr_acc(b.right, la, visit_stmt, visit);
+      let (le, la, lh) = map_expr_where(b.left, a, visit_stmt, visit, applies);
+      let (re, ra, rh) = map_expr_where(b.right, la, visit_stmt, visit, applies);
       a = ra;
       changed = lh || rh;
       if (changed) {
@@ -481,7 +491,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprUnary(u) => {
-      let (oe, oa, oh) = map_expr_acc(u.operand, a, visit_stmt, visit);
+      let (oe, oa, oh) = map_expr_where(u.operand, a, visit_stmt, visit, applies);
       a = oa;
       changed = oh;
       if (changed) {
@@ -489,8 +499,8 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprCall(c) => {
-      let (args, aa, ah) = map_exprs_acc(c.args, a, visit_stmt, visit);
-      let (ce, ca, ch) = map_expr_acc(c.callee, aa, visit_stmt, visit);
+      let (args, aa, ah) = map_exprs_where(c.args, a, visit_stmt, visit, applies);
+      let (ce, ca, ch) = map_expr_where(c.callee, aa, visit_stmt, visit, applies);
       a = ca;
       changed = ah || ch;
       if (changed) {
@@ -498,7 +508,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprArray(arr) => {
-      let (els, ea, eh) = map_exprs_acc(arr.elements, a, visit_stmt, visit);
+      let (els, ea, eh) = map_exprs_where(arr.elements, a, visit_stmt, visit, applies);
       a = ea;
       changed = eh;
       if (changed) {
@@ -506,7 +516,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprTuple(t) => {
-      let (tel, ta, th) = map_exprs_acc(t.elements, a, visit_stmt, visit);
+      let (tel, ta, th) = map_exprs_where(t.elements, a, visit_stmt, visit, applies);
       a = ta;
       changed = th;
       if (changed) {
@@ -514,8 +524,8 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprIndex(ix) => {
-      let (xe, xa, xh) = map_expr_acc(ix.array, a, visit_stmt, visit);
-      let (ie, ia, ih) = map_expr_acc(ix.index, xa, visit_stmt, visit);
+      let (xe, xa, xh) = map_expr_where(ix.array, a, visit_stmt, visit, applies);
+      let (ie, ia, ih) = map_expr_where(ix.index, xa, visit_stmt, visit, applies);
       a = ia;
       changed = xh || ih;
       if (changed) {
@@ -523,9 +533,9 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprSlice(sl) => {
-      let (xe, xa, xh) = map_expr_acc(sl.array, a, visit_stmt, visit);
-      let (se, sa, sh) = map_expr_acc(sl.start, xa, visit_stmt, visit);
-      let (ne, na, nh) = map_expr_acc(sl.end, sa, visit_stmt, visit);
+      let (xe, xa, xh) = map_expr_where(sl.array, a, visit_stmt, visit, applies);
+      let (se, sa, sh) = map_expr_where(sl.start, xa, visit_stmt, visit, applies);
+      let (ne, na, nh) = map_expr_where(sl.end, sa, visit_stmt, visit, applies);
       a = na;
       changed = xh || sh || nh;
       if (changed) {
@@ -533,12 +543,12 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprStructLit(sl) => {
-      let (fv, fa, fh) = map_exprs_acc(sl.field_values, a, visit_stmt, visit);
+      let (fv, fa, fh) = map_exprs_where(sl.field_values, a, visit_stmt, visit, applies);
       a = fa;
       changed = fh;
       let nb: ast.Expr = sl.base;
       if (sl.has_base) {
-        let (be, ba, bh) = map_expr_acc(sl.base, a, visit_stmt, visit);
+        let (be, ba, bh) = map_expr_where(sl.base, a, visit_stmt, visit, applies);
         a = ba;
         nb = be;
         changed = changed || bh;
@@ -548,7 +558,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprFieldAccess(fa) => {
-      let (oe, oa, oh) = map_expr_acc(fa.obj, a, visit_stmt, visit);
+      let (oe, oa, oh) = map_expr_where(fa.obj, a, visit_stmt, visit, applies);
       a = oa;
       changed = oh;
       if (changed) {
@@ -556,7 +566,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
     },
     ast.ExprLambda(lm) => {
-      let (bs, ba, bh) = map_stmts_acc_changed(lm.body, a, visit_stmt, visit);
+      let (bs, ba, bh) = map_stmts_where_changed(lm.body, a, visit_stmt, visit, applies);
       a = ba;
       changed = bh;
       if (changed) {
@@ -568,8 +578,8 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       let vs: ast.Expr[] = [];
       let q: i32 = 0;
       while (q < ml.keys.len()) {
-        let (ke, ka, kh) = map_expr_acc(ml.keys[q], a, visit_stmt, visit);
-        let (ue, ua, uh) = map_expr_acc(ml.vals[q], ka, visit_stmt, visit);
+        let (ke, ka, kh) = map_expr_where(ml.keys[q], a, visit_stmt, visit, applies);
+        let (ue, ua, uh) = map_expr_where(ml.vals[q], ka, visit_stmt, visit, applies);
         a = ua;
         ks = ks.append(ke);
         vs = vs.append(ue);
@@ -585,7 +595,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       let q: i32 = 0;
       while (q < fs.exprs.len()) {
         if (fs.is_expr[q]) {
-          let (pe, pa, ph) = map_expr_acc(fs.exprs[q], a, visit_stmt, visit);
+          let (pe, pa, ph) = map_expr_where(fs.exprs[q], a, visit_stmt, visit, applies);
           a = pa;
           xs = xs.append(pe);
           changed = changed || ph;
@@ -603,12 +613,12 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
   return (out, a, changed);
 }
 
-function map_exprs_acc[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Expr[], T, boolean) {
+function map_exprs_where[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Expr[], T, boolean) {
   let out: ast.Expr[] = [];
   let changed: boolean = false;
   let i: i32 = 0;
   while (i < es.len()) {
-    let (ne, na, nh) = map_expr_acc(es[i], acc, visit_stmt, visit);
+    let (ne, na, nh) = map_expr_where(es[i], acc, visit_stmt, visit, applies);
     acc = na;
     if (nh && !changed) {
       changed = true;
@@ -629,7 +639,7 @@ function map_exprs_acc[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (
   return (out, acc, true);
 }
 
-pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt, T, boolean) {
+pub function map_stmt_where[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Stmt, T, boolean) {
   let (vs, va, vh) = visit_stmt(st, acc);
   if (vh) {
     return (vs, va, true);
@@ -639,7 +649,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
   let changed: boolean = false;
   match (st) {
     ast.StmtVar(v) => {
-      let (ie, ia, ih) = map_expr_acc(v.init, a, visit_stmt, visit);
+      let (ie, ia, ih) = map_expr_where(v.init, a, visit_stmt, visit, applies);
       a = ia;
       changed = ih;
       if (changed) {
@@ -647,7 +657,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtReturn(rt) => {
-      let (ve, vla, vlh) = map_expr_acc(rt.value, a, visit_stmt, visit);
+      let (ve, vla, vlh) = map_expr_where(rt.value, a, visit_stmt, visit, applies);
       a = vla;
       changed = vlh;
       if (changed) {
@@ -655,7 +665,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtExpr(x) => {
-      let (ve, vla, vlh) = map_expr_acc(x.value, a, visit_stmt, visit);
+      let (ve, vla, vlh) = map_expr_where(x.value, a, visit_stmt, visit, applies);
       a = vla;
       changed = vlh;
       if (changed) {
@@ -663,7 +673,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtAssign(asg) => {
-      let (ve, vla, vlh) = map_expr_acc(asg.value, a, visit_stmt, visit);
+      let (ve, vla, vlh) = map_expr_where(asg.value, a, visit_stmt, visit, applies);
       a = vla;
       changed = vlh;
       if (changed) {
@@ -671,9 +681,9 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtIf(f) => {
-      let (ce, ca, ch) = map_expr_acc(f.cond, a, visit_stmt, visit);
-      let (tb, ta, th) = map_stmts_acc_changed(f.then_body, ca, visit_stmt, visit);
-      let (eb, ea, eh) = map_stmts_acc_changed(f.else_body, ta, visit_stmt, visit);
+      let (ce, ca, ch) = map_expr_where(f.cond, a, visit_stmt, visit, applies);
+      let (tb, ta, th) = map_stmts_where_changed(f.then_body, ca, visit_stmt, visit, applies);
+      let (eb, ea, eh) = map_stmts_where_changed(f.else_body, ta, visit_stmt, visit, applies);
       a = ea;
       changed = ch || th || eh;
       if (changed) {
@@ -681,8 +691,8 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtWhile(w) => {
-      let (ce, ca, ch) = map_expr_acc(w.cond, a, visit_stmt, visit);
-      let (wb, wa, wh) = map_stmts_acc_changed(w.body, ca, visit_stmt, visit);
+      let (ce, ca, ch) = map_expr_where(w.cond, a, visit_stmt, visit, applies);
+      let (wb, wa, wh) = map_stmts_where_changed(w.body, ca, visit_stmt, visit, applies);
       a = wa;
       changed = ch || wh;
       if (changed) {
@@ -690,8 +700,8 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtFor(fo) => {
-      let (ie, ia, ih) = map_expr_acc(fo.iter, a, visit_stmt, visit);
-      let (fb, fba, fbh) = map_stmts_acc_changed(fo.body, ia, visit_stmt, visit);
+      let (ie, ia, ih) = map_expr_where(fo.iter, a, visit_stmt, visit, applies);
+      let (fb, fba, fbh) = map_stmts_where_changed(fo.body, ia, visit_stmt, visit, applies);
       a = fba;
       changed = ih || fbh;
       if (changed) {
@@ -699,19 +709,19 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtMatch(mt) => {
-      let (se, sa, sh) = map_expr_acc(mt.scrutinee, a, visit_stmt, visit);
+      let (se, sa, sh) = map_expr_where(mt.scrutinee, a, visit_stmt, visit, applies);
       a = sa;
       changed = sh;
       let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
         let g: ast.Expr = arm.guard;
         if (arm.has_guard) {
-          let (ge, ga, gh) = map_expr_acc(arm.guard, a, visit_stmt, visit);
+          let (ge, ga, gh) = map_expr_where(arm.guard, a, visit_stmt, visit, applies);
           a = ga;
           g = ge;
           changed = changed || gh;
         }
-        let (ab, aa, abh) = map_stmts_acc_changed(arm.body, a, visit_stmt, visit);
+        let (ab, aa, abh) = map_stmts_where_changed(arm.body, a, visit_stmt, visit, applies);
         a = aa;
         changed = changed || abh;
         arms = arms.append(ast.MatchArm { ...arm, body: ab, guard: g });
@@ -721,7 +731,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
       }
     },
     ast.StmtDefer(d) => {
-      let (de, da, dh) = map_stmt_acc(d.action, a, visit_stmt, visit);
+      let (de, da, dh) = map_stmt_where(d.action, a, visit_stmt, visit, applies);
       a = da;
       changed = dh;
       if (changed) {
@@ -733,17 +743,17 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
   return (out, a, changed);
 }
 
-pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt[], T) {
-  let (out, a, changed) = map_stmts_acc_changed(stmts, acc, visit_stmt, visit);
+pub function map_stmts_where[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Stmt[], T) {
+  let (out, a, changed) = map_stmts_where_changed(stmts, acc, visit_stmt, visit, applies);
   return (out, a);
 }
 
-function map_stmts_acc_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt[], T, boolean) {
+function map_stmts_where_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Stmt[], T, boolean) {
   let out: ast.Stmt[] = [];
   let changed: boolean = false;
   let i: i32 = 0;
   while (i < stmts.len()) {
-    let (ns, na, nh) = map_stmt_acc(stmts[i], acc, visit_stmt, visit);
+    let (ns, na, nh) = map_stmt_where(stmts[i], acc, visit_stmt, visit, applies);
     acc = na;
     if (nh && !changed) {
       changed = true;
@@ -1424,7 +1434,7 @@ function cs_bind(c: ConstSubst, packed: string): ConstSubst {
 }
 
 function cs_expr(e: ast.Expr, c: ConstSubst): ast.Expr {
-  let (out, tail, handled) = map_expr_acc(e, c, cs_stmt_at, cs_expr_at);
+  let (out, tail, handled) = map_expr_where(e, c, cs_stmt_at, cs_expr_at, every_expr);
   return out;
 }
 
@@ -1432,7 +1442,7 @@ function cs_body(stmts: ast.Stmt[], c: ConstSubst): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let cur: ConstSubst = c;
   for st in stmts {
-    let (next, tail, handled) = map_stmt_acc(st, cur, cs_stmt_at, cs_expr_at);
+    let (next, tail, handled) = map_stmt_where(st, cur, cs_stmt_at, cs_expr_at, every_expr);
     out = out.append(next);
     cur = tail;
   }
@@ -1549,7 +1559,7 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
       return (ast.StmtMatch { ...m, scrutinee: cs_expr(m.scrutinee, c), arms: arms }, c, true);
     },
     ast.StmtDefer(d) => {
-      let (action, tail, handled) = map_stmt_acc(d.action, c, cs_stmt_at, cs_expr_at);
+      let (action, tail, handled) = map_stmt_where(d.action, c, cs_stmt_at, cs_expr_at, every_expr);
       return (ast.StmtDefer { ...d, action: action }, c, true);
     },
     _ => {

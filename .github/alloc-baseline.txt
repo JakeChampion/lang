@@ -93,5 +93,11 @@
 # Measured 2026-11-04 (PR #14170): CI recorded 38,587,649 on 6858ecfe.
 # Keep the prior limits while the compiler cost is repaired. A higher
 # measurement does not authorize a higher limit.
-x86_64/checker.allocs	36037176
-x86_64/checker.frees	36037176
+# 2026-11-04: after integration with main 05a98461, filtered AST map
+# visitors measured 35,901,919 events. The main compiler measured
+# 36,293,688 on the same candidate checker source. Both x86-64 leak-check
+# compilers used the same qualified producer and emitted identical
+# assembly under QEMU. Both counts balance with zero live bytes.
+# This lowers the prior branch measurement of 35,915,045. No timing claim.
+x86_64/checker.allocs	35901919
+x86_64/checker.frees	35901919

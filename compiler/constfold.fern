@@ -488,8 +488,16 @@ pub function prune_literal_branches(mod: parser.Module): parser.Module {
 }
 
 function prune_block(body: ast.Stmt[]): ast.Stmt[] {
-  let (out, a) = astwalk.map_stmts_acc(body, 0, prune_stmt, keep_expr);
+  let (out, a) = astwalk.map_stmts_where(body, 0, prune_stmt, keep_expr, keep_applies);
   return out;
+}
+
+// Only a lambda holds an arm to prune.
+function keep_applies(e: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = e {
+    return true;
+  }
+  return false;
 }
 
 function keep_expr(e: ast.Expr, a: i32): (ast.Expr, i32, boolean) {
@@ -570,16 +578,24 @@ pub function fold_target_name(mod: parser.Module, env: string, arch: string): pa
   let acc: TargetAcc = TargetAcc { env: env, arch: arch };
   let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
-    let (body, a2) = astwalk.map_stmts_acc(fd.body, acc, to_keep_stmt, to_expr);
+    let (body, a2) = astwalk.map_stmts_where(fd.body, acc, to_keep_stmt, to_expr, to_applies);
     acc = a2;
     funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
   }
-  let (tops, a3) = astwalk.map_stmts_acc(mod.top_stmts, acc, to_keep_stmt, to_expr);
+  let (tops, a3) = astwalk.map_stmts_where(mod.top_stmts, acc, to_keep_stmt, to_expr, to_applies);
   return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
 }
 
 function to_keep_stmt(s: ast.Stmt, a: TargetAcc): (ast.Stmt, TargetAcc, boolean) {
   return (s, a, false);
+}
+
+// Only a call with no argument can be a target probe.
+function to_applies(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    return c.args.len() == 0;
+  }
+  return false;
 }
 
 function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
