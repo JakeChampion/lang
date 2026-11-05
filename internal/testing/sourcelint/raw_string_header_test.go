@@ -11,7 +11,8 @@ import (
 
 var rawStringCallRe = regexp.MustCompile(`__raw_string\(`)
 
-var rawAllocBindRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*usize\s*=\s*__raw_alloc\(`)
+// __raw_alloc returns usize, so the annotation is optional.
+var rawAllocBindRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*usize\s*)?=\s*__raw_alloc\(`)
 
 var genFnRe = regexp.MustCompile(`(?m)^(?:pub )?function\s+[A-Za-z_][A-Za-z0-9_]*\s*\(`)
 
@@ -73,7 +74,7 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 	}
 }
 
-var coverageLoadRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*usize\s*=\s*__raw_load_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*\)\s*;`)
+var coverageLoadRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*usize\s*)?=\s*__raw_load_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*\)\s*;`)
 
 // The coverage slot owns a pointer from __fern_cov_table.
 // The report clears that slot before it transfers the allocation to a string.
@@ -91,7 +92,7 @@ func coverageStringTransfer(chunk genFnChunk, name string, call int, allocator s
 	if rebound.MatchString(before[loads[0][1]:]) {
 		return false
 	}
-	handoff := regexp.MustCompile(`(?s)if\s*\(\s*` + identifier + `\s*!=\s*0\s+as\s+usize\s*\)\s*\{\s*__raw_store_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*,\s*0\s+as\s+usize\s*\)\s*;\s*let\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*=\s*$`)
+	handoff := regexp.MustCompile(`(?s)if\s*\(\s*` + identifier + `\s*!=\s*0\s+as\s+usize\s*\)\s*\{\s*__raw_store_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*,\s*0\s+as\s+usize\s*\)\s*;\s*let\s+[A-Za-z_][A-Za-z0-9_]*\s*(?::\s*string\s*)?=\s*$`)
 	if !handoff.MatchString(before) {
 		return false
 	}
@@ -117,6 +118,22 @@ func coverageStringTransfer(chunk genFnChunk, name string, call int, allocator s
 	return false
 }
 
+func TestRawAllocBindAcceptsBothSpellings(t *testing.T) {
+	for src, want := range map[string]string{
+		"let buf: usize = __raw_alloc(n);": "buf",
+		"let buf = __raw_alloc(n);":        "buf",
+		"let buf = __raw_scratch(n);":      "",
+	} {
+		got := ""
+		if m := rawAllocBindRe.FindStringSubmatch(src); m != nil {
+			got = m[1]
+		}
+		if got != want {
+			t.Errorf("rawAllocBindRe on %q bound %q, want %q", src, got, want)
+		}
+	}
+}
+
 func TestCoverageStringTransfer(t *testing.T) {
 	const producer = `function __fern_cov_table(): usize {
   let t: usize = __raw_alloc(__FERN_COVER_COUNT * 8 + 8);
@@ -135,6 +152,7 @@ func TestCoverageStringTransfer(t *testing.T) {
 		want                             bool
 	}{
 		{"owned-table-transfer", producer, report, "t", true},
+		{"inferred-locals", strings.Replace(producer, "let t: usize =", "let t =", 1), strings.NewReplacer("let t: usize =", "let t =", "let table_own: string =", "let table_own =").Replace(report), "t", true},
 		{"borrowed-allocation", strings.Replace(producer, "__raw_alloc(", "__raw_scratch(", 1), report, "t", false},
 		{"unpublished-allocation", strings.Replace(producer, "__raw_store_ptr(__raw_cover(), 0, t);", "", 1), report, "t", false},
 		{"wrong-producer-slot", strings.Replace(producer, "__raw_cover(), 0, t", "__raw_cover(), 1, t", 1), report, "t", false},

@@ -1,10 +1,10 @@
 function __fern_ring_enqueue(blk: usize, ent: usize, bid: i32, len: i32): i32 {
-  let pb: usize = __load_i64(blk + 160) as usize;
-  let meta: usize = pb + 4096 + bid as usize * 8;
+  let pb = __load_i64(blk + 160) as usize;
+  let meta = pb + 4096 + bid as usize * 8;
   __fern_ring_set16(meta, 0, 0);
   __fern_ring_set16(meta, 2, len);
   __fern_ring_set16(meta, 4, 0);
-  let t: i32 = __fern_ring_u16(ent, 10);
+  let t = __fern_ring_u16(ent, 10);
   if (t == 0) {
     __fern_ring_set16(ent, 8, bid + 1);
   } else {

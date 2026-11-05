@@ -203,14 +203,14 @@ function __fern_io_error(e: i32, path: string): IoError {
   if (e == 131) {
     return Other(path, "State not recoverable", 131);
   }
-  let ndig: i32 = 1;
-  let tt: i32 = e;
+  let ndig = 1;
+  let tt = e;
   while (tt >= 10) {
-    ndig = ndig + 1;
-    tt = tt / 10;
+    ndig += 1;
+    tt /= 10;
   }
-  let total: i32 = 14 + ndig;
-  let buf: usize = __raw_alloc(total);
+  let total = 14 + ndig;
+  let buf = __raw_alloc(total);
   __raw_store8(buf, 0, 85);
   __raw_store8(buf, 1, 110);
   __raw_store8(buf, 2, 107);
@@ -225,13 +225,13 @@ function __fern_io_error(e: i32, path: string): IoError {
   __raw_store8(buf, 11, 111);
   __raw_store8(buf, 12, 114);
   __raw_store8(buf, 13, 32);
-  let pos: i32 = total - 1;
-  let v: i32 = e;
+  let pos = total - 1;
+  let v = e;
   while (pos >= 14) {
     __raw_store8(buf, pos, 48 + v % 10);
-    v = v / 10;
-    pos = pos - 1;
+    v /= 10;
+    pos -= 1;
   }
-  let unknown: string = __raw_string(buf, total);
+  let unknown = __raw_string(buf, total);
   return Other(path, unknown, 0);
 }

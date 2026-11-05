@@ -1,14 +1,14 @@
 function __fern_create_dir_all(path: string): Result[void, IoError] {
-  let plen: i32 = path.len();
-  let pathz: usize = __raw_alloc(plen + 1);
-  let i: i32 = 0;
+  let plen = path.len();
+  let pathz = __raw_alloc(plen + 1);
+  let i = 0;
   while (i < plen) {
     __raw_store8(pathz, i, path[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   __raw_store8(pathz, plen, 0);
-  let rc: i32 = 0;
-  let j: i32 = 1;
+  let rc = 0;
+  let j = 1;
   while (j < plen) {
     if (path[j] == 47) {
       if (path[j - 1] != 47) {
@@ -17,13 +17,13 @@ function __fern_create_dir_all(path: string): Result[void, IoError] {
         __raw_store8(pathz, j, 47);
       }
     }
-    j = j + 1;
+    j += 1;
   }
   rc = __syscall3(258, -100, pathz as i64, 511) as i32;
-  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let pathz_own = __raw_string(pathz, plen + 1);
   if (rc < 0) {
-    if (rc != 0 - 17) {
-      return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+    if (rc != -17) {
+      return Err(__fern_io_error(-rc, __fern_path_copy(pathz_own, plen)));
     }
   }
   return Ok(());

@@ -1,5 +1,5 @@
 function __fern_isatty(fd: i32): i32 {
-  let buf: usize = __raw_scratch(80);
+  let buf = __raw_scratch(80);
   if (__syscall3(29, fd as i64, 21505, buf as i64) == 0 as i64) {
     return 1;
   }

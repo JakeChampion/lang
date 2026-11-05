@@ -1,8 +1,8 @@
 function __fern_tcp_ktls_u8(fd: i32, op: i32, arg: i32, data: i32[]): i32 {
-  let n: i32 = data.len();
-  let p: usize = __raw_arr_ptr(data) + 8;
+  let n = data.len();
+  let p = __raw_arr_ptr(data) + 8;
   if (op == 1) {
-    let u: usize = __raw_scratch(4);
+    let u = __raw_scratch(4);
     __raw_store8(u, 0, 116);
     __raw_store8(u, 1, 108);
     __raw_store8(u, 2, 115);
@@ -13,22 +13,22 @@ function __fern_tcp_ktls_u8(fd: i32, op: i32, arg: i32, data: i32[]): i32 {
     return __syscall5(54, fd as i64, 282, (op - 1) as i64, p as i64, n as i64) as i32;
   }
   if (op != 4 && op != 5) {
-    return 0 - 22;
+    return -22;
   }
-  let m: usize = __raw_scratch(96);
-  let z: i32 = 0;
+  let m = __raw_scratch(96);
+  let z = 0;
   while (z < 96) {
     __raw_store8(m, z, 0);
-    z = z + 1;
+    z += 1;
   }
-  let q: usize = __raw_alloc(n + 1);
+  let q = __raw_alloc(n + 1);
   __store_i64(m + 16, (m + 56) as i64);
   __raw_store8(m, 24, 1);
   __store_i64(m + 32, (m + 72) as i64);
   __raw_store8(m, 40, 24);
   __store_i64(m + 56, q as i64);
   __store_i64(m + 64, n as i64);
-  let r: i32 = 0;
+  let r = 0;
   if (op == 4) {
     __memcpy(q, p, n);
     __raw_store8(m, 72, 17);
@@ -44,13 +44,13 @@ function __fern_tcp_ktls_u8(fd: i32, op: i32, arg: i32, data: i32[]): i32 {
       __memcpy(p, q, r);
     }
     if (r >= 0) {
-      let ty: i32 = 0;
+      let ty = 0;
       if (__raw_load8(m, 40) != 0 && __raw_load8(m, 80) == 26 && __raw_load8(m, 81) == 1 && __raw_load8(m, 84) == 2) {
         ty = __raw_load8(m, 88);
       }
       r = r | ty << 24;
     }
   }
-  let q_own: string = __raw_string(q, n + 1);
+  let q_own = __raw_string(q, n + 1);
   return r;
 }

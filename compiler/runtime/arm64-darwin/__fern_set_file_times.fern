@@ -1,32 +1,32 @@
 function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] {
-  let plen: i32 = path.len();
-  let pathz: usize = __raw_alloc(plen + 1);
+  let plen = path.len();
+  let pathz = __raw_alloc(plen + 1);
   let i: i32 = 0;
   while (i < plen) {
     __raw_store8(pathz, i, path[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   __raw_store8(pathz, plen, 0);
   if (plen > 0 && path[plen - 1] == 47) {
-    let st: usize = __raw_scratch(160);
-    let src: i32 = __syscall4(470, -2, pathz as i64, st as i64, 0) as i32;
+    let st = __raw_scratch(160);
+    let src = __syscall4(470, -2, pathz as i64, st as i64, 0) as i32;
     if (src >= 0 && (__raw_load8(st, 4 + 1) & 240) != 64) {
-      src = 0 - 20;
+      src = -20;
     }
     if (src < 0) {
-      let spath: string = __raw_string(pathz, plen + 1);
-      return Err(__fern_io_error(0 - src, __fern_path_copy(spath, plen)));
+      let spath = __raw_string(pathz, plen + 1);
+      return Err(__fern_io_error(-src, __fern_path_copy(spath, plen)));
     }
   }
-  let a0: i64 = asec;
-  let a1: i64 = ansec;
-  let m0: i64 = msec;
-  let m1: i64 = mnsec;
+  let a0 = asec;
+  let a1 = ansec;
+  let m0 = msec;
+  let m1 = mnsec;
   if ((flags & 24) != 0) {
-    let ts: usize = __raw_scratch(16);
+    let ts = __raw_scratch(16);
     __syscall3(116, ts as i64, 0, 0);
-    let sec: i64 = __load_i64(ts);
-    let sub: i64 = __load_i32(ts + 8) as i64;
+    let sec = __load_i64(ts);
+    let sub = __load_i32(ts + 8) as i64;
     if ((flags & 8) != 0) {
       a0 = sec;
       a1 = sub * (1000 as i64);
@@ -36,27 +36,27 @@ function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, m
       m1 = sub * (1000 as i64);
     }
   }
-  let al: usize = __raw_scratch(64);
+  let al = __raw_scratch(64);
   let z: i32 = 0;
   while (z < 24) {
     __raw_store8(al, z, 0);
-    z = z + 1;
+    z += 1;
   }
   __raw_store8(al, 0, 5);
-  let buf: usize = al + 32;
+  let buf = al + 32;
   let n: i32 = 0;
   let hi: i32 = 0;
   if ((flags & 4) == 0) {
-    hi = hi + 4;
+    hi += 4;
     __store_i64(buf + n, m0);
     __store_i64(buf + n + 8, m1);
-    n = n + 16;
+    n += 16;
   }
   if ((flags & 2) == 0) {
-    hi = hi + 16;
+    hi += 16;
     __store_i64(buf + n, a0);
     __store_i64(buf + n + 8, a1);
-    n = n + 16;
+    n += 16;
   }
   __raw_store8(al, 5, hi);
   let opt: i32 = 0;
@@ -66,10 +66,10 @@ function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, m
   if ((flags & 30) == 24) {
     opt = opt | 1024;
   }
-  let rc: i32 = __syscall5(221, pathz as i64, al as i64, buf as i64, n as i64, opt as i64) as i32;
-  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let rc = __syscall5(221, pathz as i64, al as i64, buf as i64, n as i64, opt as i64) as i32;
+  let pathz_own = __raw_string(pathz, plen + 1);
   if (rc < 0) {
-    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+    return Err(__fern_io_error(-rc, __fern_path_copy(pathz_own, plen)));
   }
   return Ok(());
 }
