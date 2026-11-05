@@ -28,6 +28,9 @@ function main(): i32 {
     let text: wasm_ir.WasmUnit = wasm_ir.WasmUnit { ns: "", text: "  (func $main (result i32) (i32.const 0))\n", strs: [], caggs: [], fns: [] };
     for op in wasm_ir.need_ops() {
         let o: ir.Op = ir.Op { source: 0,  decl: 0 - 1, kind_tag: ir.kind_id(op), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+        if (op == "writer_set_times") {
+            o = ir.op_writer_set_times();
+        }
         let needs: string[] = wasm_ir.needs_of(unit(o));
         if (util.index_of_str(needs, op) < 0) {
             print("=== unrecorded: " + op);
