@@ -51,6 +51,29 @@ function early(own box: Box, flag: boolean): i32 {
   return value + consume(box);
 }
 
+function sum_bytes(own bytes: u8[]): i32 {
+  let total = 0;
+  for b in bytes {
+    total = total + b as i32;
+  }
+  return total;
+}
+
+// An array local moves to an own parameter in a branch that returns. The
+// path after the branch reads it and moves it again (#14227).
+function early_array(data: u8[], flag: boolean): i32 {
+  let copy: u8[] = [];
+  for b in data {
+    copy = copy.append(b);
+  }
+  if (flag) {
+    let total = sum_bytes(copy);
+    return total;
+  }
+  let n = copy.len();
+  return n + sum_bytes(copy);
+}
+
 function nested(own box: Box, flag: boolean): i32 {
   let value = if (flag) { let helper = (own box: Box): i32 => consume(box); helper(Box { data: [7 as u8] }) } else { 0 };
   return value + consume(box);
@@ -120,6 +143,16 @@ function main(): i32 {
   }
   if (take_choice(Choice.Wrapped(Box { data: data })) != expected) {
     return 10;
+  }
+  let byte_sum = 0;
+  for b in data {
+    byte_sum = byte_sum + b as i32;
+  }
+  for flag in [false, true] {
+    let extra = if (flag) { 0 } else { data.len() };
+    if (early_array(data, flag) != byte_sum + extra) {
+      return 11;
+    }
   }
   return 0;
 }

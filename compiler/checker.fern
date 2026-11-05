@@ -17932,12 +17932,65 @@ function const_init_diags(mod: parser.Module): util.Diag[] {
   return const_init(mod).diags;
 }
 
+// The consts of `mod` in the order to fold them. A const comes after each
+// const of another module that its initializer reads, so a module can use
+// the consts of a module it imports whatever the merge order is. Within a
+// module the source order stays, so a forward reference stays an error.
+// Consts on a cycle keep their order and get the diagnostic they had.
+function const_fold_order(mod: parser.Module): parser.FuncDecl[] {
+  let pending: parser.FuncDecl[] = [];
+  let names: string[] = [];
+  let modules: string[] = [];
+  for fd in mod.funcs {
+    if (fd.is_const && fd.receiver_type.len() == 0) {
+      pending = pending.append(fd);
+      names = names.append(fd.name);
+      modules = modules.append(fd.module);
+    }
+  }
+  let done: string[] = [];
+  let out: parser.FuncDecl[] = [];
+  while (pending.len() > 0) {
+    let next: parser.FuncDecl[] = [];
+    let blocked: string[] = [];
+    for fd in pending {
+      if (util.has_str(blocked, fd.module) || !const_ready(fd, names, modules, done)) {
+        blocked = blocked.append(fd.module);
+        next = next.append(fd);
+      } else {
+        out = out.append(fd);
+        done = done.append(fd.name);
+      }
+    }
+    if (next.len() == pending.len()) {
+      return out.concat(next);
+    }
+    pending = next;
+  }
+  return out;
+}
+
+// True when each const of another module that `fd` reads is in `done`.
+function const_ready(fd: parser.FuncDecl, names: string[], modules: string[], done: string[]): boolean {
+  for stmt in fd.body {
+    if let ast.StmtReturn(r) = stmt {
+      for id in astwalk.collect_idents_expr(r.value, []) {
+        let k = util.index_of_str(names, id);
+        if (k >= 0 && modules[k] != fd.module && !util.has_str(done, id)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 function const_init(mod: parser.Module): ConstInit {
   let out = ConstInit { diags: [], deferred: [], messages: [] };
   let earlier: string[] = [];
   let evaluated_names: string[] = [];
   let values: consteval.Value[] = [];
-  for fd in mod.funcs {
+  for fd in const_fold_order(mod) {
     if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
         if let ast.StmtReturn(r) = stmt {
@@ -18534,7 +18587,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[], send: boolean[] }
+pub struct OwnFunc { name: string, flags: boolean[], send: boolean[] }
 
 pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
 
@@ -20510,32 +20563,7 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
   return -1;
 }
 
-// Whether no later read of the name belongs to the binding that `id` reads:
-// no read after `id` inside the block that declares it.
-function lu_is_last_in(fx: LuFn, site: LuSite, id: ast.ExprIdent): boolean {
-  let scope = lu_binding_level(site.frames, id.name);
-  if (scope < 0) {
-    return lu_is_last(fx, id);
-  }
-  let f = site.frames[scope];
-  for j in f.idx..f.stmts.len() {
-    if (lu_later_in(f.stmts[j], id)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
-  for ofn in fx.ofuncs.rows {
-    if (ofn.name == callee) {
-      return i >= ofn.arr.len() || ofn.arr[i];
-    }
-  }
-  return true;
-}
-
-function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
+function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name = aid.name;
   let elem = lu_elem_fresh(fx, site, name);
   if (!lu_is_local(fx, name) && !elem) {
@@ -20555,9 +20583,6 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
     return false;
   }
   if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
-    return false;
-  }
-  if (arr && !lu_is_last_in(fx, site, aid)) {
     return false;
   }
   return !lu_live_after(fx, site, call, aid);
@@ -20753,7 +20778,7 @@ function lu_iter_owned(fx: LuFn, iter: ast.Expr): boolean {
 function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): string[] {
   match (e) {
     ast.ExprIdent(aid) => {
-      if (lu_dies(fx, e, false, aid, e, false, site) && lu_loose_tag(fx, site, aid.name).len() == 0) {
+      if (lu_dies(fx, e, aid, e, false, site) && lu_loose_tag(fx, site, aid.name).len() == 0) {
         return acc.append(lu_key(aid.line, aid.col));
       }
       if (lu_own_param(fx, aid.name) && !util.has_str(fx.facts.escaping, aid.name) && !lu_live_after(fx, site, e, aid)) {
@@ -20961,7 +20986,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
     if (flags[i]) {
       match (c.args[i]) {
         ast.ExprIdent(aid) => {
-          if (lu_dies(fx, e, lu_arr_position(fx, cname, i), aid, outer, has_outer, site)) {
+          if (lu_dies(fx, e, aid, outer, has_outer, site)) {
             acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name));
           }
         },
@@ -20982,11 +21007,8 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
 
 function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = a {
-    if (lu_dies(fx, e, true, id, outer, has_outer, site)) {
+    if (lu_dies(fx, e, id, outer, has_outer, site)) {
       return acc.append(lu_key(id.line, id.col) + lu_loose_tag(fx, site, id.name));
-    }
-    if (lu_dies(fx, e, false, id, outer, has_outer, site)) {
-      return acc.append(lu_key(id.line, id.col) + "~" + lu_loose_tag(fx, site, id.name));
     }
   }
   if let ast.ExprFieldAccess(fa) = a {
@@ -21366,7 +21388,7 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
   return out;
 }
 
-struct OwnCall { args: ast.Expr[], flags: boolean[], arr: boolean[], recv: i32 }
+struct OwnCall { args: ast.Expr[], flags: boolean[], recv: i32 }
 
 const RECV_NONE: i32 = 0;
 
@@ -21382,24 +21404,10 @@ function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
       for a in c.args {
         args = args.append(a);
       }
-      let row = ctx.ofuncs.names.find(key);
-      let arr: boolean[] = [];
-      if (row >= 0) {
-        arr = ctx.ofuncs.rows[row].arr;
-      }
-      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), arr: arr, recv: ow_recv_kind(key) };
+      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), recv: ow_recv_kind(key) };
     }
   }
-  let flags = ow_call_arg_flags(c.callee, ctx);
-  let arr: boolean[] = [];
-  if (flags.len() > 0) {
-    if let typeinfo.TypeFunc(ft) = check_expr(c.callee, ctx.scope) {
-      for t in ft.param_types {
-        arr = arr.append(is_owned_array(t) || is_arr_view(t) || is_unknown(t));
-      }
-    }
-  }
-  return OwnCall { args: c.args, flags: flags, arr: arr, recv: RECV_NONE };
+  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), recv: RECV_NONE };
 }
 
 function ow_recv_kind(key: string): i32 {
@@ -21409,24 +21417,12 @@ function ow_recv_kind(key: string): i32 {
   return RECV_METHOD;
 }
 
-function ow_arg_dies(oc: OwnCall, i: i32, ctx: OwnCtx): boolean {
-  if (oc.recv == RECV_DYN || i >= oc.arr.len() || oc.arr[i]) {
-    return false;
-  }
-  if let ast.ExprIdent(id) = oc.args[i] {
-    let key = lu_key(id.line, id.col) + "~";
-    return util.has_str(ctx.last_use, key) || util.has_str(ctx.last_use, key + "^") && ow_expr_holds_no_handle(oc.args[i], ctx);
-  }
-  return false;
-}
-
 function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
   let oc = ow_own_call(c, ctx);
   let i = 0;
   while (i < oc.args.len() && i < oc.flags.len()) {
-    let exempt = oc.recv == RECV_DYN || ow_arg_dies(oc, i, ctx);
-    if (oc.flags[i] && !exempt && !ow_is_owned_expr(oc.args[i], ctx)) {
+    if (oc.flags[i] && oc.recv != RECV_DYN && !ow_is_owned_expr(oc.args[i], ctx)) {
       let aline = ast.expr_line(oc.args[i]);
       let acol = ast.expr_col(oc.args[i]);
       if (aline <= 0) {
@@ -22392,28 +22388,25 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
     }
     let any_own = func.receiver_own;
     let flags: boolean[] = [];
-    let arr: boolean[] = [];
     let send: boolean[] = [];
     if (func.receiver_name.len() > 0) {
       flags = flags.append(func.receiver_own);
-      arr = arr.append(ow_type_is_array(func.receiver_type));
       send = send.append(false);
     }
     for param in func.params {
       let o = param.own;
       flags = flags.append(o);
-      arr = arr.append(ow_type_is_array(param.type_name));
       send = send.append(param.send);
       if (o) {
         any_own = true;
       }
     }
     if (any_own && func.receiver_name.len() == 0) {
-      out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr, send: send });
+      out = out.append(OwnFunc { name: func.name, flags: flags, send: send });
       names = names.append(func.name);
     } else if (any_own) {
       let key = ow_receiver_ns(func.receiver_type) + "." + func.name;
-      out = out.append(OwnFunc { name: key, flags: flags, arr: arr, send: send });
+      out = out.append(OwnFunc { name: key, flags: flags, send: send });
       names = names.append(key);
       methods = methods.append(func.name);
     }
@@ -22422,10 +22415,10 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   // not a value the program reads again.
   for h in ["Reader", "Writer", "Dir"] {
     let key = h + ".close";
-    out = out.append(OwnFunc { name: key, flags: [true], arr: [false], send: [] });
+    out = out.append(OwnFunc { name: key, flags: [true], send: [] });
     names = names.append(key);
   }
-  out = out.append(OwnFunc { name: "tcp_close", flags: [true], arr: [false], send: [] });
+  out = out.append(OwnFunc { name: "tcp_close", flags: [true], send: [] });
   names = names.append("tcp_close");
   methods = methods.append("close");
   for td in mod.trait_decls {
@@ -22463,12 +22456,10 @@ function ow_takes_own_self(m: parser.FuncDecl): boolean {
 
 function ow_trait_row(tname: string, m: parser.FuncDecl): OwnFunc {
   let flags: boolean[] = [];
-  let arr: boolean[] = [];
   for param in m.params {
     flags = flags.append(param.own);
-    arr = arr.append(ow_type_is_array(param.type_name));
   }
-  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, arr: arr, send: [] };
+  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, send: [] };
 }
 
 function ow_receiver_ns(rt: string): string {
@@ -22479,10 +22470,6 @@ function ow_receiver_ns(rt: string): string {
     return "[]";
   }
   return util.base_type_name(receiver_namespace(rt));
-}
-
-function ow_type_is_array(tn: string): boolean {
-  return tn.len() >= 2 && tn[tn.len() - 2] == b'[' && tn[tn.len() - 1] == b']';
 }
 
 function ow_method_key(c: ast.ExprCall, ctx: OwnCtx): string {

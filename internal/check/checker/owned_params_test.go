@@ -1590,10 +1590,17 @@ function take(own flags: boolean[]): i32 { return flags.len(); }
     flags = [true];
     return n + m + flags.len();
 }`)
-	wantE051(t, "branch-between", prelude+`function f(k: i32): i32 {
+	wantOK(t, "branch-between", prelude+`function f(k: i32): i32 {
     let flags: boolean[] = [false];
     let n: i32 = take(flags);
     if (k > 0) { k = k + 1; }
+    flags = [true];
+    return n + k + flags.len();
+}`)
+	wantE051(t, "branch-reads-between", prelude+`function f(k: i32): i32 {
+    let flags: boolean[] = [false];
+    let n: i32 = take(flags);
+    if (k > 0) { k = k + flags.len(); }
     flags = [true];
     return n + k + flags.len();
 }`)

@@ -358,3 +358,54 @@ func TestFoldRefusalsRenderAsPositionedErrors(t *testing.T) {
 		}
 	}
 }
+
+// modules parses each source as its own module and merges their consts and
+// functions in the given order, as the loader can.
+func modules(t *testing.T, srcs ...[2]string) *ast.Program {
+	t.Helper()
+	merged := &ast.Program{}
+	for _, s := range srcs {
+		prog, err := parser.Parse(s[1])
+		if err != nil {
+			t.Fatalf("parse %s: %v", s[0], err)
+		}
+		for _, cd := range prog.Consts {
+			cd.SourceModule = s[0]
+		}
+		merged.Consts = append(merged.Consts, prog.Consts...)
+		merged.Funcs = append(merged.Funcs, prog.Funcs...)
+	}
+	return merged
+}
+
+// A module uses a const of a module it imports, though the merge puts the
+// importer first.
+func TestFoldReadsAnImportedConstMergedLater(t *testing.T) {
+	prog := modules(t,
+		[2]string{"a.fern", "const a__N: i32 = 48 + zz__A;"},
+		[2]string{"zz.fern", "const zz__A: i32 = 64;\nfunction main(): i32 { return a__N; }"})
+	if err := Fold(prog, nil); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	lit, ok := returnLit(t, prog).(*ast.NumberLit)
+	if !ok || lit.Value != 112 {
+		t.Fatalf("a__N should fold to 112, got %#v", returnLit(t, prog))
+	}
+}
+
+// The new order keeps the source order inside a module, so a forward
+// reference there is still an error, and so is a cycle across modules.
+func TestFoldKeepsForwardReferenceAndCycleErrors(t *testing.T) {
+	forward := modules(t,
+		[2]string{"a.fern", "const a__X: i32 = a__Y + zz__A;\nconst a__Y: i32 = 1;"},
+		[2]string{"zz.fern", "const zz__A: i32 = 64;"})
+	if err := Fold(forward, nil); err == nil || !strings.Contains(err.Error(), `"a__Y" is not a constant`) {
+		t.Errorf("a forward reference in a module: got %v", err)
+	}
+	cycle := modules(t,
+		[2]string{"a.fern", "const a__X: i32 = zz__Y + 1;"},
+		[2]string{"zz.fern", "const zz__Y: i32 = a__X + 1;"})
+	if err := Fold(cycle, nil); err == nil || !strings.Contains(err.Error(), "is not a constant") {
+		t.Errorf("a cycle across modules: got %v", err)
+	}
+}
