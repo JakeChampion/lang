@@ -42,7 +42,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() == stop;
     });
-    if (polls.get() != stop || match (result) { Err(matrix_eval.MatrixError.Cancelled()) => false, _ => true }) {
+    if (polls.get() != stop || match (result) { Err(matrix_eval.MatrixError.Cancelled) => false, _ => true }) {
       return test.fail("both scalar cancellation polls");
     }
   }
@@ -56,7 +56,7 @@ function admission(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return false;
     });
-    if (polls.get() != 0 || match (result) { Err(matrix_eval.MatrixError.Shape()) => false, _ => true }) {
+    if (polls.get() != 0 || match (result) { Err(matrix_eval.MatrixError.Shape) => false, _ => true }) {
       return test.fail("shape before callback");
     }
   }
@@ -67,7 +67,7 @@ function admission(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return false;
       });
-      if (polls.get() != 0 || match (result) { Err(matrix_eval.MatrixError.Input()) => false, _ => true }) {
+      if (polls.get() != 0 || match (result) { Err(matrix_eval.MatrixError.Input) => false, _ => true }) {
         return test.fail("each channel before callback");
       }
     }

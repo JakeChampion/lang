@@ -117,7 +117,7 @@ function rows(count: i32, keep: boolean, cancel: boolean): i32 {
     let result = pipeline.render_row(graph, 10000 + i, pipeline.default_limits(), cancelled);
     if (cancel) {
       match (result) {
-        Err(pipeline.Cancelled()) => {
+        Err(pipeline.Cancelled) => {
           total += 17;
         },
         _ => {

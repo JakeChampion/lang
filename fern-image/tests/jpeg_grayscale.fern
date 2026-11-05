@@ -30,7 +30,7 @@ function emit_case(path: string): i32 {
       }
       print(f"accepted {path} {image.layout.width} {image.layout.height} {image.layout.stride} {image.layout.bytes}");
     },
-    Err(grayscale.DecodeUnsupported()) => {
+    Err(grayscale.DecodeUnsupported) => {
       print("unsupported " + path);
     },
     Err(error) => {

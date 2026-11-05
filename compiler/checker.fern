@@ -5381,14 +5381,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_map(t_unknown(MAP_NEW_KEY), t_unknown(MAP_NEW_VALUE));
   }
   if (!is_method && name == "cell_new") {
-    if (c.args.len() != 1) {
-      return t_struct("Cell");
-    }
-    let et: typeinfo.Type = check_expr(c.args[0], s);
-    if (is_unknown(et)) {
-      return t_struct("Cell");
-    }
-    return t_struct_g("Cell", [et]);
+    return cell_new_type(c, s);
   }
   if (!is_method && parser.is_send_builtin(name) && c.args.len() == 1) {
     return send_builtin_type(name, c, s);
@@ -5400,20 +5393,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_string();
   }
   if (!is_method && name == "slice_unchecked") {
-    if (c.args.len() != 3) {
-      return t_unknown("slice_unchecked takes 3 arguments");
-    }
-    let sut: typeinfo.Type = check_expr(c.args[0], s);
-    if (!is_integer(check_expr(c.args[1], s)) || !is_integer(check_expr(c.args[2], s))) {
-      return t_unknown("slice_unchecked bounds must be i32");
-    }
-    match (sut) {
-      typeinfo.TypeString(_) => {
-        return t_str();
-      },
-      _ => {}
-    }
-    return t_unknown("slice_unchecked: first argument must be a string");
+    return slice_unchecked_type(c, s);
   }
   let builtin_typed: typeinfo.Type = builtin_result_type(recv_ty, name, is_method, c.args.len(), s);
   if (!is_unknown(builtin_typed)) {
@@ -16053,6 +16033,34 @@ function checks_array_element(ty: typeinfo.Type): boolean {
   return false;
 }
 
+function slice_unchecked_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (c.args.len() != 3) {
+    return t_unknown("slice_unchecked takes 3 arguments");
+  }
+  let sut: typeinfo.Type = check_expr(c.args[0], s);
+  if (!is_integer(check_expr(c.args[1], s)) || !is_integer(check_expr(c.args[2], s))) {
+    return t_unknown("slice_unchecked bounds must be i32");
+  }
+  match (sut) {
+    typeinfo.TypeString(_) => {
+      return t_str();
+    },
+    _ => {}
+  }
+  return t_unknown("slice_unchecked: first argument must be a string");
+}
+
+function cell_new_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (c.args.len() != 1) {
+    return t_struct("Cell");
+  }
+  let et: typeinfo.Type = check_expr(c.args[0], s);
+  if (is_unknown(et)) {
+    return t_struct("Cell");
+  }
+  return t_struct_g("Cell", [et]);
+}
+
 // An array literal written straight into a destination whose elements
 // array_elem_check compares is reported element by element, not as a whole.
 // `cell_new(x)` settles to `Cell[W]` when x settles to W: the literal in
@@ -21552,10 +21560,7 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, s: Scope, seen: string[]):
       return "a resource handle is not copied";
     },
     typeinfo.TypeErased(e) => {
-      if (tp_bound_send(s, e.name)) {
-        return "";
-      }
-      return "type parameter " + e.name + " is not known to be send-safe";
+      return send_unsafe_erased_reason(e.name, s);
     },
     typeinfo.TypeStruct(st) => {
       return send_unsafe_struct_reason(st, s, seen);
@@ -21568,6 +21573,13 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, s: Scope, seen: string[]):
     }
   }
   return "";
+}
+
+function send_unsafe_erased_reason(name: string, s: Scope): string {
+  if (tp_bound_send(s, name)) {
+    return "";
+  }
+  return "type parameter " + name + " is not known to be send-safe";
 }
 
 function send_unsafe_struct_reason(st: typeinfo.TypeStruct, s: Scope, seen: string[]): string {

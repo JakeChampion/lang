@@ -134,7 +134,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let result = match (regions.render_cached_tile(source, region, limits, 3072, cancelled)) { Err(pipeline.Cancelled()) => true, _ => false };
+    let result = match (regions.render_cached_tile(source, region, limits, 3072, cancelled)) { Err(pipeline.Cancelled) => true, _ => false };
     good = good && result && polls.get() == stop;
   }
   let after = match (regions.render_cached_tile(source, region, limits, 3072, never_cancel)) { Ok(v) => v.stats.rows == 8 && v.stats.hits > 0, _ => false };

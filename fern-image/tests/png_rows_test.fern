@@ -104,19 +104,19 @@ function admission(): test.TestOutcome {
     png.RowLimits { max_payload_bytes: 183i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: 13i64 },
     png.RowLimits { max_payload_bytes: 0i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: -1i64 },
   ] {
-    let rejected = match (png.fold_rows(data, 1, 1, pixels.default_limits(), budget, never_cancel, 0, consume)) { Err(png.RowBudget()) => true, _ => false };
+    let rejected = match (png.fold_rows(data, 1, 1, pixels.default_limits(), budget, never_cancel, 0, consume)) { Err(png.RowBudget) => true, _ => false };
     if (!rejected) {
       return test.fail("budget rejection");
     }
   }
   for first in [-1, 2, 2147483647] {
-    let rejected = match (png.fold_rows(data, first, 1, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds()) => true, _ => false };
+    let rejected = match (png.fold_rows(data, first, 1, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds) => true, _ => false };
     if (!rejected) {
       return test.fail("first row");
     }
   }
   for count in [-1, 0, 3, 2147483647] {
-    let rejected = match (png.fold_rows(data, 0, count, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds()) => true, _ => false };
+    let rejected = match (png.fold_rows(data, 0, count, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds) => true, _ => false };
     if (!rejected) {
       return test.fail("row count");
     }
@@ -159,7 +159,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let rejected = match (png.fold_rows(data, 0, 3, pixels.default_limits(), png.default_row_limits(), cancel_at, 0, consume)) { Err(png.RowCancelled()) => true, _ => false };
+    let rejected = match (png.fold_rows(data, 0, 3, pixels.default_limits(), png.default_row_limits(), cancel_at, 0, consume)) { Err(png.RowCancelled) => true, _ => false };
     if (!rejected || polls.get() != stop) {
       return test.fail("cancellation phase");
     }
@@ -190,7 +190,7 @@ function final_filter(): test.TestOutcome {
     calls.set(calls.get() + 1);
     return Ok(value + 1);
   };
-  let rejected = match (png.fold_rows(fixtures.bad_final_filter(), 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(png.Scanline())) => true, _ => false };
+  let rejected = match (png.fold_rows(fixtures.bad_final_filter(), 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(png.Scanline)) => true, _ => false };
   return test.assert_true(rejected && calls.get() == 0);
 }
 

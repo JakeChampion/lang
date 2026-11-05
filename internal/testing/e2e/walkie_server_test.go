@@ -1,0 +1,241 @@
+package e2e
+
+import (
+	"bufio"
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+// writeTestIdentity writes a self-signed P-256 certificate for 127.0.0.1 and
+// its key, and gives the pool that trusts the certificate.
+func writeTestIdentity(t *testing.T, dir string) (string, string, *x509.CertPool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "walkie test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1)},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(cert)
+	return certPath, keyPath, pool
+}
+
+// freePort gives a port that is free for TCP and for UDP on 127.0.0.1.
+func freePort(t *testing.T) int {
+	t.Helper()
+	for k := 0; k < 20; k++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		u, err := net.ListenPacket("udp", "127.0.0.1:"+strconv.Itoa(port))
+		l.Close()
+		if err == nil {
+			u.Close()
+			return port
+		}
+	}
+	t.Fatal("no port is free for TCP and UDP")
+	return 0
+}
+
+// ask sends one request line over TLS and gives the reply line.
+func ask(t *testing.T, addr string, pool *x509.CertPool, request string) string {
+	t.Helper()
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr,
+		&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13})
+	if err != nil {
+		t.Fatalf("TLS dial: %v", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte(request + "\n")); err != nil {
+		t.Fatalf("write %q: %v", request, err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatalf("reply to %q: %v (got %q)", request, err, line)
+	}
+	return strings.TrimSpace(line)
+}
+
+func tokenOf(t *testing.T, line string) []byte {
+	t.Helper()
+	words := strings.Fields(line)
+	b, err := hex.DecodeString(words[len(words)-1])
+	if err != nil || len(b) != 16 {
+		t.Fatalf("no token in %q", line)
+	}
+	return b
+}
+
+func relayed(token []byte, body string) []byte {
+	return append(append([]byte{248}, token...), body...)
+}
+
+// receive gives the next datagram on c, or "" when none comes in time.
+func receive(c *net.UDPConn, wait time.Duration) string {
+	buf := make([]byte, 2048)
+	c.SetReadDeadline(time.Now().Add(wait))
+	n, err := c.Read(buf)
+	if err != nil {
+		return ""
+	}
+	return string(buf[:n])
+}
+
+// send writes one datagram to the relay, again until the peer has it: the
+// first datagram of a member can arrive before the relay knows the peer.
+func sendUntil(t *testing.T, from *net.UDPConn, relay *net.UDPAddr, data []byte, to *net.UDPConn, want string) {
+	t.Helper()
+	for k := 0; k < 20; k++ {
+		if _, err := from.WriteToUDP(data, relay); err != nil {
+			t.Fatal(err)
+		}
+		if got := receive(to, 250*time.Millisecond); got == want {
+			return
+		}
+	}
+	t.Fatalf("the relay did not deliver %q", want)
+}
+
+func udpConn(t *testing.T) *net.UDPConn {
+	t.Helper()
+	c, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// The server of the internet mode on the host: two phones make and join a
+// room over TLS, and the relay sends their datagrams to each other. A phone
+// that moves to a new address keeps its room.
+func TestWalkieRelayServer(t *testing.T) {
+	host := e2eharness.HostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "server")
+	build := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-o", bin,
+		e2eharness.RepoPath(walkieApp, "server.fern"), e2eharness.SelfHostStdlibRoot(t))
+	build.Env = e2eharness.ChildEnv()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build server.fern: %v\n%s", err, out)
+	}
+	certPath, keyPath, pool := writeTestIdentity(t, dir)
+	port := freePort(t)
+	var logs bytes.Buffer
+	srv := exec.Command(bin, certPath, keyPath, strconv.Itoa(port))
+	srv.Stdout = &logs
+	srv.Stderr = &logs
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		srv.Process.Kill()
+		srv.Wait()
+		if t.Failed() {
+			t.Logf("server log:\n%s", logs.String())
+		}
+	})
+	addr := "127.0.0.1:" + strconv.Itoa(port)
+	for k := 0; ; k++ {
+		c, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			c.Close()
+			break
+		}
+		if k == 100 {
+			t.Fatalf("the server does not listen: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	created := ask(t, addr, pool, "CREATE")
+	words := strings.Fields(created)
+	if len(words) != 3 || words[0] != "ROOM" || len(words[1]) != 6 {
+		t.Fatalf("CREATE: %q", created)
+	}
+	joined := ask(t, addr, pool, "JOIN "+strings.ToLower(words[1]))
+	if !strings.HasPrefix(joined, "JOINED ") {
+		t.Fatalf("JOIN: %q", joined)
+	}
+	if full := ask(t, addr, pool, "JOIN "+words[1]); full != "ERROR the room is full" {
+		t.Fatalf("a third JOIN: %q", full)
+	}
+	if bad := ask(t, addr, pool, "HELLO"); bad != "ERROR unknown request" {
+		t.Fatalf("HELLO: %q", bad)
+	}
+	ta, tb := tokenOf(t, created), tokenOf(t, joined)
+
+	relay := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
+	a, b := udpConn(t), udpConn(t)
+	if _, err := a.WriteToUDP(relayed(ta, "a is here"), relay); err != nil {
+		t.Fatal(err)
+	}
+	sendUntil(t, b, relay, relayed(tb, "from b"), a, "from b")
+	sendUntil(t, a, relay, relayed(ta, "from a"), b, "from a")
+
+	moved := udpConn(t)
+	sendUntil(t, moved, relay, relayed(ta, "a moved"), b, "a moved")
+	sendUntil(t, b, relay, relayed(tb, "to the new address"), moved, "to the new address")
+
+	stranger := udpConn(t)
+	stranger.WriteToUDP(relayed(make([]byte, 16), "not a member"), relay)
+	if got := receive(b, 300*time.Millisecond); got != "" {
+		t.Fatalf("the relay sent a datagram with an unknown token: %q", got)
+	}
+}

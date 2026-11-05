@@ -27,10 +27,10 @@ function admitted(value: f64): boolean {
 function curve(data: tag_data.CurveData, input: f64, limits: EvalLimits, cancelled: () => boolean): Result[f64, EvalError] {
   match (data) {
     tag_data.Parametric(value) => {
-      return match (parametric_eval.evaluate(value, input, cancelled)) { Ok(out) => Ok(out), Err(parametric_eval.EvalError.Cancelled()) => Err(EvalError.Cancelled), Err(error) => Err(EvalError.Parametric(error)) };
+      return match (parametric_eval.evaluate(value, input, cancelled)) { Ok(out) => Ok(out), Err(parametric_eval.EvalError.Cancelled) => Err(EvalError.Cancelled), Err(error) => Err(EvalError.Parametric(error)) };
     },
     _ => {
-      return match (curv_eval.evaluate(data, input, curv_eval.EvalLimits { max_samples: limits.max_samples }, cancelled)) { Ok(out) => Ok(out), Err(curv_eval.EvalError.Cancelled()) => Err(EvalError.Cancelled), Err(error) => Err(EvalError.Curve(error)) };
+      return match (curv_eval.evaluate(data, input, curv_eval.EvalLimits { max_samples: limits.max_samples }, cancelled)) { Ok(out) => Ok(out), Err(curv_eval.EvalError.Cancelled) => Err(EvalError.Cancelled), Err(error) => Err(EvalError.Curve(error)) };
     }
   }
 }
@@ -56,7 +56,7 @@ pub function evaluate(data: matrix_model.ForwardData, input: DeviceRGB, limits: 
   let green = curve(data.green, input.g, limits, cancelled)?;
   let blue = curve(data.blue, input.b, limits, cancelled)?;
   let linear = matrix_eval.LinearRGB { r: red, g: green, b: blue };
-  let xyz = match (matrix_eval.evaluate(data.matrix[:], linear, cancelled)) { Ok(out) => out, Err(matrix_eval.MatrixError.Cancelled()) => { return Err(EvalError.Cancelled); }, Err(error) => { return Err(EvalError.Matrix(error)); } };
+  let xyz = match (matrix_eval.evaluate(data.matrix[:], linear, cancelled)) { Ok(out) => out, Err(matrix_eval.MatrixError.Cancelled) => { return Err(EvalError.Cancelled); }, Err(error) => { return Err(EvalError.Matrix(error)); } };
   if (cancelled()) {
     return Err(EvalError.Cancelled);
   }

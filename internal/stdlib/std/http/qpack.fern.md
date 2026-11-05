@@ -243,7 +243,7 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
     Ok(bytes) => {
       return Ok((string_from_bytes_unchecked(bytes), end));
     },
-    Err(huffman.ExceedsRoom()) => {
+    Err(huffman.ExceedsRoom) => {
       return Err(TOO_LONG);
     },
     Err(_) => {
