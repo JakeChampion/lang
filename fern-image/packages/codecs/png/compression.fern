@@ -21,7 +21,7 @@ pub function decode(input: [u8], max_out: i32): Result[u8[], CompressionError] {
   if let Some(error) = header_error(input, max_out) {
     return Err(error);
   }
-  let value = match (deflate.inflate_from(input, 2, max_out)) { Ok(v) => v, Err(deflate.OutputLimit()) => { return Err(Limit); }, Err(deflate.Truncated()) => { return Err(CompressionError.Truncated); }, Err(_) => { return Err(Deflate); } };
+  let value = match (deflate.inflate_from(input, 2, max_out)) { Ok(v) => v, Err(deflate.OutputLimit) => { return Err(Limit); }, Err(deflate.Truncated) => { return Err(CompressionError.Truncated); }, Err(_) => { return Err(Deflate); } };
   let trailer = 2 + value.consumed;
   if (trailer < 2 || trailer > input.len() - 4) {
     return Err(CompressionError.Truncated);

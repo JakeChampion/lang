@@ -133,6 +133,47 @@ Compare the bundle's `sas` with the peer before calling `channel`. Call
 exchange and `close` when the session ends. Do not retain raw secret arrays
 outside these handles.
 
+## `rooms.fern` and `server.fern`
+
+The server of the internet mode. `server.fern` serves the room requests over
+TLS on a TCP port. It relays the voice datagrams on the UDP port of the same
+number. The default port is 47130. The server needs a certificate and its
+key in PEM files:
+
+```sh
+fern -o walkie-server examples/android/walkie/server.fern
+./walkie-server cert.pem key.pem 47130
+```
+
+Open TCP port 47130 and UDP port 47130 in the firewall. The key can be P-256,
+P-384 or Ed25519. The server cannot sign with an RSA key.
+
+A client sends one request line, and the server sends one reply line:
+
+- `CREATE` opens a room. The reply is `ROOM`, the code and a token in hex.
+- `JOIN` and a code adds the client to the room. The reply is `JOINED` and a
+  token in hex.
+- When the server refuses a request, the reply is `ERROR` and the reason.
+
+A code has 6 characters. It has no 0, O, 1, I or L, so a user can read it to
+the other user. A room with one member closes after 10 minutes. A room with
+two members closes after 2 minutes with no datagram. Each address can send 10
+requests in a minute, so it is slow to guess a code. A room has two members
+at most.
+
+A phone sends each datagram of the LAN transport to the relay, after the byte
+248 and its token. The relay sends the datagram to the other member of the
+room. The relay gets the address of each member from the token, so a phone
+that changes network keeps its room. The relay cannot read the voice,
+because the phones seal it with the keys of their own exchange. A relay that
+changes the datagrams of the key exchange gives the two phones different
+codes. The users then see that the codes are not the same.
+
+`rooms.fern` holds the room table and does no I/O. `rooms_test.fern` tests
+it. `TestWalkieRelayServer` runs the server on the host. Two clients make and
+join a room over TLS, and the relay sends their datagrams. Then one client
+moves to a new address.
+
 ## The floor
 
 One peer is the floor controller: the Wi-Fi Direct group owner, or the first

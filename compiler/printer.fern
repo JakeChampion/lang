@@ -1549,7 +1549,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
         return head + "(" + print_tuple_elems(pv.tup_kinds, pv.tup_binds, pv.tup_lits, pv.tup_pats) + ")";
       }
       if (pv.binding.len() == 0) {
-        if (always_parens) {
+        if (always_parens && !pv.type_name.contains(".")) {
           return head + "()";
         }
         return head;

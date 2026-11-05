@@ -60,7 +60,7 @@ function xyz_values(): test.TestOutcome {
 }
 
 function curve_forms(): test.TestOutcome {
-  if (match (tag_data.read_curve(curve([]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Identity()) => false, _ => true }) {
+  if (match (tag_data.read_curve(curve([]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Identity) => false, _ => true }) {
     return test.fail("identity payload");
   }
   for value in [0, 1, 255, 256, 65535] {
@@ -119,14 +119,14 @@ function framing(): test.TestOutcome {
   }
   let input = xyz([1, 2, 3]);
   for length in 0..input.len() {
-    if (match (tag_data.read_xyz_triplet(input[:length], never)) { Err(tag_data.TagError.Length()) => false, _ => true }) {
+    if (match (tag_data.read_xyz_triplet(input[:length], never)) { Err(tag_data.TagError.Length) => false, _ => true }) {
       return test.fail("XYZ exact triplet shape");
     }
   }
   return test.assert_true(rejects(parametric(5, []), tag_data.TagError.Function)
     && rejects(parametric(0, [1]).with(11, 1), tag_data.TagError.Reserved)
     && rejects(curve([]).with(0, 0), tag_data.TagError.Signature)
-    && match (tag_data.read_xyz_triplet(input.with(4, 1), never)) { Err(tag_data.TagError.Reserved()) => true, _ => false });
+    && match (tag_data.read_xyz_triplet(input.with(4, 1), never)) { Err(tag_data.TagError.Reserved) => true, _ => false });
 }
 
 function limits(): test.TestOutcome {
@@ -137,7 +137,7 @@ function limits(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return false;
     });
-    if (polls.get() != 0 || match (result) { Err(tag_data.TagError.Limit()) => false, _ => true }) {
+    if (polls.get() != 0 || match (result) { Err(tag_data.TagError.Limit) => false, _ => true }) {
       return test.fail("positive byte/sample admission precedes callbacks");
     }
   }
@@ -181,7 +181,7 @@ function cancellation(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return polls.get() == stop;
       });
-      if (polls.get() != stop || match (result) { Err(tag_data.TagError.Cancelled()) => false, _ => true }) {
+      if (polls.get() != stop || match (result) { Err(tag_data.TagError.Cancelled) => false, _ => true }) {
         return test.fail("every curve poll, including partial owned arrays");
       }
     }
@@ -192,7 +192,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() == stop;
     });
-    if (polls.get() != stop || match (result) { Err(tag_data.TagError.Cancelled()) => false, _ => true }) {
+    if (polls.get() != stop || match (result) { Err(tag_data.TagError.Cancelled) => false, _ => true }) {
       return test.fail("both XYZ polls");
     }
   }

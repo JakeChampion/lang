@@ -130,13 +130,13 @@ function invalid_inputs(): test.TestOutcome {
       bad_q = bad_q.append(1);
     }
     match (idct.inverse(bad, q, never)) {
-      Err(idct.Shape()) => {},
+      Err(idct.Shape) => {},
       _ => {
         return test.fail("coefficient shape");
       }
     }
     match (idct.inverse(c, bad_q, never)) {
-      Err(idct.Shape()) => {},
+      Err(idct.Shape) => {},
       _ => {
         return test.fail("quantizer shape");
       }
@@ -144,14 +144,14 @@ function invalid_inputs(): test.TestOutcome {
   }
   for i in 0..64 {
     match (idct.inverse(c, q.with(i, 0), never)) {
-      Err(idct.Quantizer()) => {},
+      Err(idct.Quantizer) => {},
       _ => {
         return test.fail("zero quantizer");
       }
     }
     for value in [32768, -32769] {
       match (idct.inverse(c.with(i, value), q, never)) {
-        Err(idct.Coefficient()) => {},
+        Err(idct.Coefficient) => {},
         _ => {
           return test.fail("coefficient domain");
         }
@@ -159,14 +159,14 @@ function invalid_inputs(): test.TestOutcome {
     }
   }
   match (idct.samples([0.0], never)) {
-    Err(idct.Shape()) => {},
+    Err(idct.Shape) => {},
     _ => {
       return test.fail("sample shape");
     }
   }
   for value in [f64_from_bits(0x7ff8000000000000), f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000)] {
     match (idct.samples(uniform(0.0).with(63, value), never)) {
-      Err(idct.NonFinite()) => {},
+      Err(idct.NonFinite) => {},
       _ => {
         return test.fail("nonfinite sample");
       }
@@ -225,7 +225,7 @@ function cancellation(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return polls.get() == stop;
       })) {
-        Err(idct.Cancelled()) => {},
+        Err(idct.Cancelled) => {},
         _ => {
           return test.fail("cancellation poll");
         }

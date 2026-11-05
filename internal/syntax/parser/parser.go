@@ -3741,6 +3741,9 @@ func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 		elem.VariantModule += elem.VariantName
 		elem.VariantName = vt.Text
 	}
+	if elem.VariantModule != "" && !p.match(lexer.Punct, "(") {
+		return nil
+	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return err
 	}

@@ -99,5 +99,6 @@
 # compilers used the same qualified producer and emitted identical
 # assembly under QEMU. Both counts balance with zero live bytes.
 # This lowers the prior branch measurement of 35,915,045. No timing claim.
-x86_64/checker.allocs	35901919
-x86_64/checker.frees	35901919
+# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
+x86_64/checker.allocs	35541047
+x86_64/checker.frees	35541047

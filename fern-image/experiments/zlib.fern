@@ -34,14 +34,14 @@ function golden(): test.TestOutcome {
 }
 
 function limited(): test.TestOutcome {
-  let limited = match (deflate.zlib_decode(dynamic(), 4223)) { Ok(_) => false, Err(deflate.OutputLimit()) => true, Err(_) => false };
-  let zero = match (deflate.zlib_decode(dynamic(), 0)) { Ok(_) => false, Err(deflate.OutputLimit()) => true, Err(_) => false };
+  let limited = match (deflate.zlib_decode(dynamic(), 4223)) { Ok(_) => false, Err(deflate.OutputLimit) => true, Err(_) => false };
+  let zero = match (deflate.zlib_decode(dynamic(), 0)) { Ok(_) => false, Err(deflate.OutputLimit) => true, Err(_) => false };
   return test.assert_true(limited && zero);
 }
 
 function corrupt(): test.TestOutcome {
   let stream = dynamic();
-  let checksum = match (deflate.zlib_decode(stream.with(stream.len() - 1, 0), 4224)) { Ok(_) => false, Err(deflate.BadChecksum()) => true, Err(_) => false };
+  let checksum = match (deflate.zlib_decode(stream.with(stream.len() - 1, 0), 4224)) { Ok(_) => false, Err(deflate.BadChecksum) => true, Err(_) => false };
   let truncated = match (deflate.zlib_decode(stream[:stream.len() - 1], 4224)) { Ok(_) => false, Err(_) => true };
   let header = match (deflate.zlib_decode(stream.with(0, 0), 4224)) { Ok(_) => false, Err(_) => true };
   return test.assert_true(checksum && truncated && header);

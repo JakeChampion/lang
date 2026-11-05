@@ -26,21 +26,21 @@ function required(tags: [envelope.Tag], signature: i64): Result[envelope.Tag, Mo
 
 function xyz(input: [u8], tags: [envelope.Tag], signature: i64, cancelled: () => boolean): Result[tag_data.XyzNumerators, ModelError] {
   let tag = required(tags, signature)?;
-  return match (tag_data.read_xyz_triplet(input[tag.offset:tag.offset + tag.size], cancelled)) { Ok(value) => Ok(value), Err(tag_data.TagError.Cancelled()) => Err(ModelError.Cancelled), Err(error) => Err(ModelError.Tag(error)) };
+  return match (tag_data.read_xyz_triplet(input[tag.offset:tag.offset + tag.size], cancelled)) { Ok(value) => Ok(value), Err(tag_data.TagError.Cancelled) => Err(ModelError.Cancelled), Err(error) => Err(ModelError.Tag(error)) };
 }
 
 function curve(input: [u8], tags: [envelope.Tag], signature: i64, limits: tag_data.CurveLimits, cancelled: () => boolean): Result[tag_data.CurveData, ModelError] {
   let tag = required(tags, signature)?;
-  let value = match (tag_data.read_curve(input[tag.offset:tag.offset + tag.size], limits, cancelled)) { Ok(value) => value, Err(tag_data.TagError.Cancelled()) => { return Err(ModelError.Cancelled); }, Err(error) => { return Err(ModelError.Tag(error)); } };
+  let value = match (tag_data.read_curve(input[tag.offset:tag.offset + tag.size], limits, cancelled)) { Ok(value) => value, Err(tag_data.TagError.Cancelled) => { return Err(ModelError.Cancelled); }, Err(error) => { return Err(ModelError.Tag(error)); } };
   // Existing evaluators check their entire declared coefficient domain before a result.
   match (value) {
     tag_data.Parametric(data) => {
       match (parametric_eval.evaluate(data, 0.0, cancelled)) {
         Ok(_) => {},
-        Err(parametric_eval.EvalError.Cancelled()) => {
+        Err(parametric_eval.EvalError.Cancelled) => {
           return Err(ModelError.Cancelled);
         },
-        Err(parametric_eval.EvalError.Unsupported()) => {
+        Err(parametric_eval.EvalError.Unsupported) => {
           return Err(ModelError.UnsupportedCurve);
         },
         Err(_) => {
@@ -51,7 +51,7 @@ function curve(input: [u8], tags: [envelope.Tag], signature: i64, limits: tag_da
     _ => {
       match (curv_eval.evaluate(value, 0.0, curv_eval.EvalLimits { max_samples: limits.max_samples }, cancelled)) {
         Ok(_) => {},
-        Err(curv_eval.EvalError.Cancelled()) => {
+        Err(curv_eval.EvalError.Cancelled) => {
           return Err(ModelError.Cancelled);
         },
         Err(_) => {
@@ -76,7 +76,7 @@ pub function read(input: [u8], requested: envelope.Intent, limits: ModelLimits, 
   if (requested != envelope.Intent.Relative) {
     return Err(ModelError.Intent);
   }
-  let info = match (envelope.inspect(input, limits.profile, cancelled)) { Ok(value) => value, Err(envelope.IccError.Cancelled()) => { return Err(ModelError.Cancelled); }, Err(error) => { return Err(ModelError.Envelope(error)); } };
+  let info = match (envelope.inspect(input, limits.profile, cancelled)) { Ok(value) => value, Err(envelope.IccError.Cancelled) => { return Err(ModelError.Cancelled); }, Err(error) => { return Err(ModelError.Envelope(error)); } };
   // Reject mixed forward models instead of a silent matrix fallback.
   for index in 0..info.tags.len() {
     if (index % 64 == 0 && cancelled()) {
