@@ -5,7 +5,7 @@
 // middle holds the code to compare and its two buttons, or the list of
 // peers. The round talk button sits in the lower half, and the room buttons
 // below it make or join a room of the internet mode. A keypad takes the code
-// of a room.
+// of a room. The settings screen chooses the way to find the other phone.
 
 import "std/string";
 import "./rooms";
@@ -169,4 +169,32 @@ pub function typed(code: string, k: i32): string {
     return code;
   }
   return code + key_label(k);
+}
+
+// The button at the top right that opens the settings screen. It shows
+// while the phone searches.
+pub function mode_button(w: i32, h: i32): Rect {
+  return Rect { x: w * 56 / 100, y: h * 2 / 100, w: w * 38 / 100, h: h * 5 / 100 };
+}
+
+// The rows of the settings screen, one for each way to find the other phone.
+pub const MODE_ROWS: i32 = 4;
+
+pub function mode_row(w: i32, h: i32, k: i32): Rect {
+  return Rect { x: w / 10, y: h * 22 / 100 + k * (h * 13 / 100), w: w * 8 / 10, h: h * 11 / 100 };
+}
+
+// The row at (x, y), or -1.
+pub function mode_at(w: i32, h: i32, x: f32, y: f32): i32 {
+  for k in 0..MODE_ROWS {
+    if (contains(mode_row(w, h, k), x, y)) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The button that closes the settings screen, in the row of the room buttons.
+pub function back_button(w: i32, h: i32): Rect {
+  return Rect { x: w / 10, y: h * 885 / 1000, w: w * 8 / 10, h: h * 6 / 100 };
 }

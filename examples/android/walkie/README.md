@@ -58,6 +58,21 @@ server. The app shows the room buttons when its build names a server (see
 3. The phones find each other through the relay of the server. The code
    check and the talk button work as on a Wi-Fi network.
 
+While the phone searches, the MODE button at the top right opens the
+settings. They choose the way to find the other phone:
+
+- AUTOMATIC uses all three ways at once. It is the default.
+- SAME WI-FI uses only the beacons on the Wi-Fi network.
+- WI-FI DIRECT uses only Wi-Fi Direct. The phone sends no beacon on the
+  Wi-Fi network, and it takes datagrams only from its group.
+- INTERNET ROOM uses only the rooms of the server. The phone sends and takes
+  nothing until it is in a room. A build that names no server cannot choose
+  it.
+
+A new mode starts the search again. The app keeps the mode in its private
+files, so the next start uses it. A test of one way does not need the other
+ways turned off on the phone.
+
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
 copy opens port 47121, and each copy sends its beacons to both ports. Show

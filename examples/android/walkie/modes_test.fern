@@ -1,0 +1,77 @@
+import "std/net";
+import "std/test";
+import "./internet";
+import "./modes";
+
+function v4(a: u8, b: u8, c: u8, d: u8): net.IpAddr {
+  return net.V4([a, b, c, d]);
+}
+
+function from(a: u8, b: u8, c: u8, d: u8): net.SocketAddr {
+  return net.socket_addr(v4(a, b, c, d), 47120);
+}
+
+function targets(m: modes.Mode, group: Option[net.IpAddr]): string {
+  let out: string = "";
+  for ip in modes.beacon_targets(m, group) {
+    out = out + net.socket_addr(ip, 1).to_string() + " ";
+  }
+  return out;
+}
+
+// Each mode sends its beacons only to its own network.
+function test_beacons_go_to_the_networks_of_the_mode(): test.TestOutcome {
+  let g: Option[net.IpAddr] = Some(v4(192u8, 168u8, 49u8, 255u8));
+  let line: string = targets(modes.Automatic, g) + "| " + targets(modes.SameWifi, g) + "| " + targets(modes.WifiDirect, g) + "| " + targets(modes.WifiDirect, None) + "| " + targets(modes.InternetRoom, g);
+  return test.assert_eq(line, "255.255.255.255:1 192.168.49.255:1 | 255.255.255.255:1 | 192.168.49.255:1 | | ");
+}
+
+// Wi-Fi Direct takes only its group, the internet mode takes nothing
+// before a room, and a room takes only its relay.
+function test_each_mode_takes_only_its_own_network(): test.TestOutcome {
+  let g: Option[net.IpAddr] = Some(v4(192u8, 168u8, 49u8, 255u8));
+  let lan: net.SocketAddr = from(10u8, 0u8, 0u8, 7u8);
+  let peer: net.SocketAddr = from(192u8, 168u8, 49u8, 1u8);
+  let relay: net.SocketAddr = net.socket_addr(v4(203u8, 0u8, 113u8, 5u8), 47130);
+  let room: Option[internet.Room] = Some(internet.Room { code: "K7Q2MX", token: [1u8], relay: relay });
+  let got: boolean[] = [
+    modes.accepts(modes.Automatic, None, g, lan),
+    modes.accepts(modes.SameWifi, None, g, lan),
+    modes.accepts(modes.WifiDirect, None, g, lan),
+    modes.accepts(modes.WifiDirect, None, g, peer),
+    modes.accepts(modes.WifiDirect, None, None, peer),
+    modes.accepts(modes.InternetRoom, None, g, lan),
+    modes.accepts(modes.InternetRoom, room, g, relay),
+    modes.accepts(modes.Automatic, room, g, lan),
+  ];
+  let line: string = "";
+  for b in got {
+    line = line + b.to_string() + " ";
+  }
+  return test.assert_eq(line, "true true false true false false true false ");
+}
+
+// The internet mode needs a server, and the other modes do not.
+function test_rooms_need_a_server(): test.TestOutcome {
+  let line: string = modes.uses_rooms(modes.Automatic, "rooms.example").to_string() + " " + modes.uses_rooms(modes.SameWifi, "rooms.example").to_string() + " " + modes.uses_rooms(modes.InternetRoom, "").to_string() + " " + modes.available(modes.InternetRoom, "").to_string() + " " + modes.available(modes.WifiDirect, "").to_string();
+  return test.assert_eq(line, "true false false false true");
+}
+
+// A mode goes to the file and back, and a bad file gives AUTOMATIC.
+function test_a_mode_survives_its_file(): test.TestOutcome {
+  let line: string = "";
+  for m in modes.all() {
+    line = line + modes.name(modes.of_bytes([modes.to_byte(m)])) + ", ";
+  }
+  line = line + modes.name(modes.of_bytes([9u8])) + ", " + modes.name(modes.of_bytes([]));
+  return test.assert_eq(line, "AUTOMATIC, SAME WI-FI, WI-FI DIRECT, INTERNET ROOM, AUTOMATIC, AUTOMATIC");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie modes");
+  r = r.it("beacons go to the networks of the mode", test_beacons_go_to_the_networks_of_the_mode);
+  r = r.it("each mode takes only its own network", test_each_mode_takes_only_its_own_network);
+  r = r.it("rooms need a server", test_rooms_need_a_server);
+  r = r.it("a mode survives its file", test_a_mode_survives_its_file);
+  return r.finish();
+}

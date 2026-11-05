@@ -3,6 +3,7 @@
 // a frame and does no other I/O, so the host tests it on a frame in memory.
 import "std/android/draw";
 import "std/string";
+import "./modes";
 import "./rooms";
 import "./screen";
 
@@ -22,6 +23,13 @@ pub struct View {
   room_buttons: boolean,
   // The code that the user types, while the keypad shows.
   typing: Option[string],
+  // The short name of the mode on the button that opens the settings
+  // screen, or "" for no button.
+  mode_label: string,
+  // The position of the chosen mode while the settings screen shows, and
+  // whether each mode can be chosen.
+  menu: Option[i32],
+  available: boolean[],
 }
 
 pub function bg(): i32 {
@@ -40,7 +48,7 @@ pub function ink(): i32 {
   return draw.rgb(236, 238, 242);
 }
 
-function muted(): i32 {
+pub function muted(): i32 {
   return draw.rgb(150, 156, 168);
 }
 
@@ -117,9 +125,16 @@ pub function render(f: draw.Frame, v: View): void {
   let sc: i32 = screen.text_scale(f.width, draw.text_width("x", 1));
   f.fill(0, 0, f.width, f.height, bg());
   header(f, v, sc);
+  if let Some(chosen) = v.menu {
+    settings(f, chosen, v.available, sc);
+    return;
+  }
   if let Some(typed) = v.typing {
     keypad(f, typed, sc);
     return;
+  }
+  if (v.mode_label.len() > 0) {
+    outlined(f, screen.mode_button(f.width, f.height), v.mode_label, muted(), small_scale(sc));
   }
   if (v.code.len() > 0) {
     compare(f, v.code, sc);
@@ -240,4 +255,56 @@ function keypad(f: draw.Frame, typed: string, sc: i32): void {
   } else {
     pill(f, screen.join_button(f.width, f.height), "JOIN", surface(), muted(), sc);
   }
+}
+
+// The settings screen: a card for each mode with what it does, the chosen
+// mode in green, and BACK.
+function settings(f: draw.Frame, chosen: i32, available: [boolean], sc: i32): void {
+  let list: modes.Mode[] = modes.all();
+  let help_scale: i32 = small_scale(sc);
+  let width: i32 = screen.mode_row(f.width, f.height, 0).w * 9 / 10;
+  for m in list {
+    help_scale = imin(help_scale, fit_scale(modes.help(m), width, small_scale(sc)));
+  }
+  help_scale = imin(help_scale, fit_scale(NO_SERVER, width, small_scale(sc)));
+  for k in 0..list.len() {
+    let row: screen.Rect = screen.mode_row(f.width, f.height, k);
+    let open: boolean = k < available.len() && available[k];
+    let edge: i32 = surface();
+    if (k == chosen) {
+      edge = green();
+    }
+    let t: i32 = row.h / 24 + 2;
+    f.round_rect(row.x, row.y, row.w, row.h, row.h / 4, edge);
+    f.round_rect(row.x + t, row.y + t, row.w - 2 * t, row.h - 2 * t, row.h / 4 - t, surface());
+    mode_card(f, row, list[k], k == chosen, open, sc, help_scale);
+  }
+  outlined(f, screen.back_button(f.width, f.height), "BACK", muted(), sc);
+}
+
+const NO_SERVER: string = "needs a server";
+
+function imin(a: i32, b: i32): i32 {
+  if (a < b) {
+    return a;
+  }
+  return b;
+}
+
+// The name and the help of one mode in its card. Each help line has the
+// same scale `small`.
+function mode_card(f: draw.Frame, row: screen.Rect, m: modes.Mode, chosen: boolean, open: boolean, sc: i32, small: i32): void {
+  let color: i32 = ink();
+  let help: string = modes.help(m);
+  if (chosen) {
+    color = green();
+  }
+  if (!open) {
+    color = muted();
+    help = NO_SERVER;
+  }
+  let left: i32 = row.x + row.h / 4;
+  let name_scale: i32 = fit_scale(modes.name(m), row.w * 8 / 10, sc);
+  f.text(left, row.y + row.h / 4 - draw.text_height(name_scale) / 3, modes.name(m), name_scale, color);
+  f.text(left, row.y + row.h * 64 / 100, help, small, muted());
 }

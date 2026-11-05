@@ -25,7 +25,7 @@ function free_frame(own f: draw.Frame): void {
 }
 
 function base(label: string): ui.View {
-  return ui.View { title: "Walkie", status: "connected", notice: "", label: label, code: "", searching: false, peers: [], room_buttons: false, typing: None };
+  return ui.View { title: "Walkie", status: "connected", notice: "", label: label, code: "", searching: false, peers: [], room_buttons: false, typing: None, mode_label: "", menu: None, available: [true, true, true, true] };
 }
 
 // Draws `v`, writes it as `name`.png when WALKIE_UI_PNG is set, and gives
@@ -99,6 +99,25 @@ function test_keypad(): test.TestOutcome {
   return test.assert_eq((c[0] == ui.surface()).to_string(), "true");
 }
 
+// The search screen has the button that opens the settings.
+function test_search_has_the_mode_button(): test.TestOutcome {
+  let b: screen.Rect = screen.mode_button(W, H);
+  let v: ui.View = ui.View { ...base("SEARCHING"), status: "looking for a phone on this Wi-Fi", searching: true, mode_label: "MODE: AUTO" };
+  let c: i32[] = colours("mode-button", v, [[b.x + b.w / 2, b.y + 1], [b.x + b.w / 2, b.y + b.h / 2 - b.h / 5]]);
+  return test.assert_eq((c[0] == ui.muted()).to_string() + " " + (c[1] == ui.bg()).to_string(), "true true");
+}
+
+// The settings screen shows a card for each mode with the chosen one in
+// green, a mode with no server in grey, and BACK.
+function test_settings_screen(): test.TestOutcome {
+  let chosen: screen.Rect = screen.mode_row(W, H, 2);
+  let other: screen.Rect = screen.mode_row(W, H, 0);
+  let back: screen.Rect = screen.back_button(W, H);
+  let v: ui.View = ui.View { ...base("SEARCHING"), title: "Settings", status: "how does this phone find the other phone?", menu: Some(2), available: [true, true, true, false] };
+  let c: i32[] = colours("settings", v, [[chosen.x + chosen.w / 2, chosen.y + 1], [other.x + other.w / 2, other.y + 1], [back.x + back.w / 2, back.y + 1], [chosen.x + chosen.w / 2, chosen.y + chosen.h / 2]]);
+  return test.assert_eq((c[0] == ui.green()).to_string() + " " + (c[1] == ui.surface()).to_string() + " " + (c[2] == ui.muted()).to_string() + " " + (c[3] == ui.surface()).to_string(), "true true true true");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie ui");
   r = r.it("ready shows a green ring", test_ready_shows_a_green_ring);
@@ -106,5 +125,7 @@ function main(): i32 {
   r = r.it("the code has two pills", test_compare_has_two_pills);
   r = r.it("the search shows peers and rooms", test_search_shows_peers_and_rooms);
   r = r.it("the keypad draws its keys", test_keypad);
+  r = r.it("the search has the mode button", test_search_has_the_mode_button);
+  r = r.it("the settings screen shows the modes", test_settings_screen);
   return r.finish();
 }
