@@ -87,6 +87,45 @@ function test_unreadable(dir: string): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// A directory with one root in each file, as Android keeps them. Each file
+// has the text form of its certificate after the PEM block.
+function test_roots_dir(dir: string): test.TestOutcome {
+  let sub = dir + "/cacerts";
+  match (create_dir_all(sub)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("mkdir failed");
+    }
+  }
+  let a = write_file(sub + "/3c58f906.0", pem.encode("CERTIFICATE", rsa_root()) + "Certificate:\n    Data:\n        Version: 3 (0x2)\n");
+  let b = write_file(sub + "/5ed36f99.0", pem.encode("CERTIFICATE", ec_root()));
+  let c = write_file(sub + "/README", "no certificate here\n");
+  match (verify.roots_from_dir(sub)) {
+    Ok(r) => {
+      if (r.certs.len() != 2) {
+        return test.fail("two roots, got " + r.certs.len().to_string());
+      }
+      return test.assert_eq(outcome(verify.server([ec_leaf(), ec_int()], r, "example.com", time.timestamp_from_unix(1780000000))), "ok example.com");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_roots_dir_empty(dir: string): test.TestOutcome {
+  match (verify.roots_from_dir(dir + "/no-such-dir")) {
+    Ok(_) => {
+      return test.fail("a missing directory accepted");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "tls verify: no certificates could be read from " + dir + "/no-such-dir");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_system_roots(): test.TestOutcome {
   match (verify.system_roots()) {
     Some(r) => {
@@ -107,6 +146,8 @@ function main(): i32 {
   }
   rr = rr.it("roots from a bundle file", () => test_bundle_file(dir));
   rr = rr.it("a file with no roots", () => test_unreadable(dir));
+  rr = rr.it("roots from a directory of files", () => test_roots_dir(dir));
+  rr = rr.it("a directory with no roots", () => test_roots_dir_empty(dir));
   rr = rr.it("the system's roots", test_system_roots);
   return rr.finish();
 }

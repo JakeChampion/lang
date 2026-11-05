@@ -1,10 +1,15 @@
-// A NativeActivity app for the emulator check of std/dns on Android. At the
-// first Resume it resolves a public name, which netd answers because no hosts
-// file has it, and an IP literal. It logs what it found, and finishes.
+// A NativeActivity app for the emulator check of std/dns and the TLS roots on
+// Android. At the first Resume it resolves a public name, which netd answers
+// because no hosts file has it, and an IP literal. Then it opens a TLS
+// connection that the system roots verify. It logs what it found, and
+// finishes.
 import "std/android";
 import "std/dns";
 import "std/log";
 import "std/net";
+import "std/time";
+import "std/tls/client";
+import "std/tls/verify";
 
 struct App { done: boolean }
 
@@ -26,6 +31,7 @@ function step(ctx: usize, s: App, e: android.Event): App {
       if (!s.done) {
         report("dns.google");
         report("192.0.2.7");
+        tls_check("dns.google");
         android.finish(ctx);
       }
       return App { done: true };
@@ -47,6 +53,22 @@ function report(name: string): void {
     },
     Err(e) => {
       log.warn("dnstest: " + name + " failed: " + e.message());
+    }
+  }
+}
+
+function tls_check(host: string): void {
+  let Some(roots) = verify.system_roots() else {
+    log.warn("dnstest: no system roots");
+    return;
+  };
+  match (client.connect(host, 443, client.config(host, roots), time.duration_seconds(10 as i64))) {
+    Ok(c) => {
+      let closed = c.close();
+      log.warn("dnstest: tls to " + host + " verified with " + roots.certs.len().to_string() + " system roots");
+    },
+    Err(e) => {
+      log.warn("dnstest: tls to " + host + " failed: " + e.message());
     }
   }
 }

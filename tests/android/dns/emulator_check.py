@@ -4,7 +4,8 @@
 Usage: emulator_check.py APK OUT_DIR
 
 It starts the app and requires its lines in logcat: a public name that
-netd resolved, and an IP literal. It fails on a crash. OUT_DIR gets logcat.
+netd resolved, an IP literal, and a TLS connection that the system roots
+verified. It fails on a crash. OUT_DIR gets logcat.
 """
 
 import re
@@ -16,6 +17,7 @@ PACKAGE = "dev.fern.dnstest"
 LINES = (
     re.compile(r"dnstest: dns\.google has [1-9]\d* addresses: \S"),
     re.compile(r"dnstest: 192\.0\.2\.7 has 1 addresses: 192\.0\.2\.7"),
+    re.compile(r"dnstest: tls to dns\.google verified with [1-9]\d* system roots"),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 
@@ -33,7 +35,7 @@ def main(apk, out):
     deadline = time.time() + 40
     while time.time() < deadline:
         log = adb("logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "*:F")
-        if all(p.search(log) for p in LINES) or "failed:" in log:
+        if all(p.search(log) for p in LINES) or "failed:" in log or "no system roots" in log:
             break
         time.sleep(0.5)
     with open(f"{out}/logcat.txt", "w") as f:
