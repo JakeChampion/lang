@@ -63,13 +63,13 @@ function tone(): i32[] {
 
 // The datagrams of node `from` on their way to the other node.
 function send(s: Sim, from: i32, nw: Network): Sim {
-  let rng: i64 = s.rng;
-  let flights: Flight[] = s.flights;
+  let rng = s.rng;
+  let flights = s.flights;
   for d in s.nodes[from].out {
     rng = next(rng);
     if (rng % 1000i64 >= nw.loss) {
       rng = next(rng);
-      let at: i64 = s.now + nw.delay + rng % (nw.jitter + 1i64);
+      let at = s.now + nw.delay + rng % (nw.jitter + 1i64);
       flights = flights.append(Flight { at: at, to: 1 - from, data: d.data });
     }
   }
@@ -77,7 +77,7 @@ function send(s: Sim, from: i32, nw: Network): Sim {
 }
 
 function deliver(s: Sim): Sim {
-  let nodes: node.Node[] = s.nodes;
+  let nodes = s.nodes;
   let left: Flight[] = [];
   for f in s.flights {
     if (f.at <= s.now) {
@@ -130,17 +130,17 @@ function run(nw: Network, cues: Cue[], end: i64): Sim {
 }
 
 function run_nodes(start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim {
-  let s: Sim = Sim { nodes: start, flights: [], rng: 12345i64, now: 0i64, heard: [0, 0], lost: ["", ""], overlap: false };
-  let voice: i32[] = tone();
+  let s = Sim { nodes: start, flights: [], rng: 12345i64, now: 0i64, heard: [0, 0], lost: ["", ""], overlap: false };
+  let voice = tone();
   let done: boolean[] = [];
   for c in cues {
     done = done.append(false);
   }
   while (s.now <= end) {
     s = deliver(s);
-    let nodes: node.Node[] = s.nodes;
+    let nodes = s.nodes;
     for k in 0..cues.len() {
-      let c: Cue = cues[k];
+      let c = cues[k];
       if (!done[k] && c.at <= s.now && (c.what != CONFIRM || shows_code(nodes[c.who]))) {
         nodes = nodes.with(c.who, cue(nodes[c.who], c.what, s.now));
         done = done.with(k, true);
@@ -152,9 +152,9 @@ function run_nodes(start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim 
     s = Sim { ...s, nodes: nodes };
     for i in 0..2 {
       s = send(s, i, nw);
-      let n: node.Node = s.nodes[i];
-      let heard: i32[] = s.heard.with(i, s.heard[i] + n.heard.len());
-      let lost: string[] = s.lost;
+      let n = s.nodes[i];
+      let heard = s.heard.with(i, s.heard[i] + n.heard.len());
+      let lost = s.lost;
       if (lost[i] == "") {
         lost = lost.with(i, ended_notice(n));
       }
@@ -171,7 +171,7 @@ function run_nodes(start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim 
 // The random bytes of node `k` for the tick at `now`, different each time.
 function entropy(k: i32, now: i64): u8[] {
   let out: u8[] = [];
-  let v: i64 = now * 2654435761i64 + (k as i64 + 1i64) * 40503i64;
+  let v = now * 2654435761i64 + (k as i64 + 1i64) * 40503i64;
   for i in 0..node.RANDOM_BYTES {
     v = v * 6364136223846793005i64 + 1442695040888963407i64;
     out = out.append((v >> 33i64 & 255i64) as u8);
@@ -196,8 +196,8 @@ function epochs(n: node.Node): string {
 }
 
 function summary(s: Sim, end: i64): string {
-  let a: node.Node = s.nodes[0];
-  let b: node.Node = s.nodes[1];
+  let a = s.nodes[0];
+  let b = s.nodes[1];
   return "lost [" + s.lost[0] + "] [" + s.lost[1] + "], heard " + s.heard[0].to_string() + " " + s.heard[1].to_string() + ", overlap " + s.overlap.to_string() + ", buttons " + node.button(a, end) + " / " + node.button(b, end) + ", codes " + a.link.sas + " " + b.link.sas + ", epochs " + epochs(a) + " " + epochs(b);
 }
 
@@ -216,9 +216,9 @@ function check_talk(nw: Network, min_heard_by_b: i32, min_heard_by_a: i32): test
 }
 
 function check_session(s: Sim, end: i64, min_heard_by_b: i32, min_heard_by_a: i32): test.TestOutcome {
-  let a: node.Node = s.nodes[0];
-  let b: node.Node = s.nodes[1];
-  let ok: boolean = s.lost[0] == "" && s.lost[1] == "" && !s.overlap && session.connected(a.sess) && session.connected(b.sess) && a.link.sas.len() == 6 && a.link.sas == b.link.sas && s.heard[1] >= min_heard_by_b && s.heard[0] >= min_heard_by_a && s.heard[1] <= 750 && s.heard[0] <= 250 && node.button(a, end) == "HOLD TO TALK" && node.button(b, end) == "HOLD TO TALK" && epochs(a) == "2/1" && epochs(b) == "1/2";
+  let a = s.nodes[0];
+  let b = s.nodes[1];
+  let ok = s.lost[0] == "" && s.lost[1] == "" && !s.overlap && session.connected(a.sess) && session.connected(b.sess) && a.link.sas.len() == 6 && a.link.sas == b.link.sas && s.heard[1] >= min_heard_by_b && s.heard[0] >= min_heard_by_a && s.heard[1] <= 750 && s.heard[0] <= 250 && node.button(a, end) == "HOLD TO TALK" && node.button(b, end) == "HOLD TO TALK" && epochs(a) == "2/1" && epochs(b) == "1/2";
   if (!ok) {
     return test.fail(summary(s, end));
   }
@@ -258,23 +258,23 @@ function presses(): Cue[] {
 // Two phones that know each other need no string: they connect, talk and
 // rekey with no user who confirms.
 function test_known_phones_need_no_string(): test.TestOutcome {
-  let s: Sim = run_nodes(phones([key_of(2)], [key_of(1)]), Network { loss: 50i64, delay: 5i64, jitter: 20i64 }, presses(), 100000i64);
+  let s = run_nodes(phones([key_of(2)], [key_of(1)]), Network { loss: 50i64, delay: 5i64, jitter: 20i64 }, presses(), 100000i64);
   return check_session(s, 100000i64, 700, 230);
 }
 
 // Two new phones show the string. After the users confirm it, each phone
 // knows the other.
 function test_new_phones_learn_each_other(): test.TestOutcome {
-  let s: Sim = run_nodes(phones([], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, talk_script(), 100000i64);
-  let a: node.Node = s.nodes[0];
-  let b: node.Node = s.nodes[1];
-  let learned: boolean = a.pins.len() == 1 && a.pins[0] == key_of(2) && b.pins.len() == 1 && b.pins[0] == key_of(1);
+  let s = run_nodes(phones([], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, talk_script(), 100000i64);
+  let a = s.nodes[0];
+  let b = s.nodes[1];
+  let learned = a.pins.len() == 1 && a.pins[0] == key_of(2) && b.pins.len() == 1 && b.pins[0] == key_of(1);
   return test.assert_eq(learned.to_string() + " " + session.connected(a.sess).to_string() + " " + session.connected(b.sess).to_string(), "true true true");
 }
 
 // When only one phone knows the other, both still show the string.
 function test_one_known_side_shows_the_string(): test.TestOutcome {
-  let s: Sim = run_nodes(phones([key_of(2)], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, presses(), 20000i64);
+  let s = run_nodes(phones([key_of(2)], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, presses(), 20000i64);
   return test.assert_eq(shows_code(s.nodes[0]).to_string() + " " + shows_code(s.nodes[1]).to_string(), "true true");
 }
 
@@ -293,20 +293,20 @@ function test_twenty_percent_loss(): test.TestOutcome {
 // A press before the other phone confirms does not start a transmission.
 function test_press_before_the_peer_confirms(): test.TestOutcome {
   let cues: Cue[] = [Cue { at: 3000i64, who: 0, what: CONFIRM }, Cue { at: 4000i64, who: 0, what: PRESS }];
-  let s: Sim = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 6000i64);
-  let a: node.Node = s.nodes[0];
+  let s = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 6000i64);
+  let a = s.nodes[0];
   return test.assert_eq(session.transmitting(a.sess).to_string() + " " + s.heard[1].to_string() + " " + a.notice, "false 0 wait for the other phone to confirm the code");
 }
 
 // When the other phone never confirms, the session ends with a reason.
 function test_peer_that_never_confirms(): test.TestOutcome {
   let cues: Cue[] = [Cue { at: 3000i64, who: 0, what: CONFIRM }];
-  let s: Sim = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 3000i64 + session.CONFIRM_TIMEOUT_MS as i64 + 1000i64);
+  let s = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 3000i64 + session.CONFIRM_TIMEOUT_MS as i64 + 1000i64);
   return test.assert_eq(s.lost[0], "the other phone did not confirm the code");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("walkie nodes");
+  let r = test.new("walkie nodes");
   r = r.it("two nodes talk on a clean network", test_clean_network);
   r = r.it("two phones that know each other need no string", test_known_phones_need_no_string);
   r = r.it("two new phones learn each other after the string", test_new_phones_learn_each_other);

@@ -239,7 +239,8 @@ func TestSelfHostCheckerHintQualifiesSharedVariants(t *testing.T) {
 	src := `enum A { Shared, OnlyA }
 enum B { Shared, OnlyB }
 function pick(): A { return Shared; }
-function main(): i32 { return 0; }
+function env(x: i32): i32 { return x; }
+function main(): i32 { return env(0); }
 `
 	path := filepath.Join(t.TempDir(), "shared.fern")
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {

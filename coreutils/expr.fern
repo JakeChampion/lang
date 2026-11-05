@@ -130,14 +130,14 @@ function str_cmp(a: string, b: string): i32 {
     let y = b[i] as i32;
     if (x != y) {
       if (x < y) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }
     i += 1;
   }
   if (a.len() < b.len()) {
-    return 0 - 1;
+    return -1;
   }
   if (a.len() > b.len()) {
     return 1;

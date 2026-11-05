@@ -307,7 +307,7 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
   let dq = ws.dq;
   let breaks = ws.breaks;
   let costs = ws.costs;
-  let sentence_at: i32 = 0 - 1;
+  let sentence_at: i32 = -1;
   if (last) {
     sentence_at = n - 1;
   }
@@ -718,7 +718,7 @@ function scan_body(own s: State, line: u8[], at: i32, col0: i32): State {
   let tdq = ws.dq;
   let tbr = ws.breaks;
   let tco = ws.costs;
-  let li: i32 = -1;
+  let li = -1;
   let i = at;
   let col = col0;
   let n = line.len();

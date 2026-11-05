@@ -939,7 +939,7 @@ function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: bool
 
 function dirent_cmp(a: DirEntry, b: DirEntry): i32 {
   if (a.ino < b.ino) {
-    return 0 - 1;
+    return -1;
   }
   if (a.ino > b.ino) {
     return 1;

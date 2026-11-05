@@ -477,7 +477,7 @@ function fast_lines(buf: u8[], pos0: i32, st: State, o: Opts, w0: io_buffered.Bu
   if (!fast_style(kind, o) || st.over) {
     return (pos0, st, w);
   }
-  let d0: i32 = -1;
+  let d0 = -1;
   if (o.del1.len() > 0) {
     d0 = o.del1[0] as i32;
   }

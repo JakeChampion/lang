@@ -22,7 +22,7 @@ pub function is_slash(s: string, i: i32): boolean {
 }
 
 pub function last_component_end(dir: string): i32 {
-  let end: i32 = -1;
+  let end = -1;
   let start = 0;
   let i = 0;
   while (i <= dir.len()) {

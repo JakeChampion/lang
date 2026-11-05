@@ -42,7 +42,7 @@ function test_stopwatch_text_minutes(): test.TestOutcome {
 function test_clock_text(): test.TestOutcome {
   let nine_oh_five = (9 * 3600 + 5 * 60 + 59) as i64 * 1000;
   let day: i64 = 86400000;
-  let got: string = stopwatch.clock_text(nine_oh_five) + " " + stopwatch.clock_text(day * 20000 + nine_oh_five) + " " + stopwatch.clock_text(0 - 60000);
+  let got = stopwatch.clock_text(nine_oh_five) + " " + stopwatch.clock_text(day * 20000 + nine_oh_five) + " " + stopwatch.clock_text(-60000);
   return test.assert_eq(got, "09:05 09:05 23:59");
 }
 

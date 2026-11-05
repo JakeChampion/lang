@@ -118,7 +118,7 @@ pub function close(own n: Node): void {
   let pool = n.random.get();
   n.random.set([]);
   crypto.erase(pool);
-  let closed: lan.Link = lan.close(n.link);
+  let closed = lan.close(n.link);
 }
 
 // The session ended, or the key exchange did: a tap starts a new node.
@@ -159,7 +159,7 @@ function log(n: Node, line: string): Node {
 }
 
 function to_peer(n: Node, data: u8[][]): Node {
-  let out: Datagram[] = n.out;
+  let out = n.out;
   for d in data {
     out = out.append(Datagram { broadcast: false, data: d });
   }
@@ -178,22 +178,22 @@ pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i
 }
 
 function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
-  let st: lan.Step = lan.heard(n.link, p, now);
-  let t: Node = to_peer(Node { ...n, link: st.link }, st.out);
+  let st = lan.heard(n.link, p, now);
+  let t = to_peer(Node { ...n, link: st.link }, st.out);
   match (st.heard) {
     lan.Found(peer) => {
-      let u: Node = log(t, "found peer " + peer.to_string() + " at " + from.to_string());
+      let u = log(t, "found peer " + peer.to_string() + " at " + from.to_string());
       let (l, out) = lan.pair(u.link, peer, now, part(u.seed, 0, 32), part(u.seed, 32, 16), part(u.seed, 48, secure.KEM_RANDOM));
       return to_peer(act(Node { ...u, link: l, peer_addr: from, seed: [] }, session.PeerFound, now), out);
     },
     lan.Verify(sas) => {
-      let me: i32 = 2;
-      let id: i64 = t.link.peer;
+      let me = 2;
+      let id = t.link.peer;
       if (lan.initiator(t.link)) {
         me = 1;
         id = t.link.me;
       }
-      let u: Node = act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
+      let u = act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
       return proved(u, false, now);
     },
     lan.Failed => {
@@ -215,7 +215,7 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
     Some(c) => {
       if (kind == lan.CONTROL) {
         let (c1, plain) = secure.open_control(c, body);
-        let t: Node = Node { ...n, chan: Some(c1) };
+        let t = Node { ...n, chan: Some(c1) };
         match (plain) {
           Some(b) => {
             match (protocol.decode(b)) {
@@ -236,7 +236,7 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
         return t;
       }
       let (c2, voice) = secure.open_voice(c, body);
-      let t2: Node = Node { ...n, chan: Some(c2) };
+      let t2 = Node { ...n, chan: Some(c2) };
       match (voice) {
         Some((seq, b)) => {
           return played(t2, seq, b, now);
@@ -253,12 +253,12 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
 // The node with the frames of voice packet `b`, with sequence number `seq`,
 // in `heard`. The log says when the voice of the peer starts again.
 function played(n: Node, seq: i64, b: [u8], now: i64): Node {
-  let t: Node = n;
+  let t = n;
   if (now - n.heard_at > 1000i64) {
     t = log(n, "hearing the peer");
   }
   let (rx, frames) = voice.receive(voice.Receiver { ...t.rx }, seq, b);
-  let heard: i32[][] = t.heard;
+  let heard = t.heard;
   for f in frames {
     heard = heard.append(f);
   }
@@ -269,9 +269,9 @@ function played(n: Node, seq: i64, b: [u8], now: i64): Node {
 // and the confirmation of the peer.
 function act(n: Node, e: session.Event, now: i64): Node {
   let (s, acts) = session.step(n.sess, e, now);
-  let t: Node = Node { ...n, sess: s };
-  let was: string = session.state_name(n.sess.state);
-  let next: string = session.state_name(s.state);
+  let t = Node { ...n, sess: s };
+  let was = session.state_name(n.sess.state);
+  let next = session.state_name(s.state);
   if (next != was) {
     t = log(t, "state " + next);
   }
@@ -323,8 +323,8 @@ function proved(n: Node, knows_peer: boolean, now: i64): Node {
   let Some(k) = n.link.keys else {
     return n;
   };
-  let proof: u8[] = secure.prove(k, id, knows_peer);
-  let t: Node = Node { ...n, proof: proof, proof_knows: knows_peer, proof_at: now + lan.RESEND_MS };
+  let proof = secure.prove(k, id, knows_peer);
+  let t = Node { ...n, proof: proof, proof_knows: knows_peer, proof_at: now + lan.RESEND_MS };
   return to_peer(t, [lan.encode(lan.IDENTITY, n.link.me, proof)]);
 }
 
@@ -351,7 +351,7 @@ function identified(n: Node, body: u8[], now: i64): Node {
   let Some(p) = secure.check_proof(k, body) else {
     return n;
   };
-  let t: Node = Node { ...n, peer_identity: p.identity, peer_knows: p.knows };
+  let t = Node { ...n, peer_identity: p.identity, peer_knows: p.knows };
   if (!knows(t, p.identity)) {
     return t;
   }
@@ -368,7 +368,7 @@ function identified(n: Node, body: u8[], now: i64): Node {
 // `now`.
 pub function tick(n: Node, now: i64): Node {
   let (l1, beacons) = lan.beacon(n.link, now);
-  let out: Datagram[] = n.out;
+  let out = n.out;
   for b in beacons {
     out = out.append(Datagram { broadcast: true, data: b });
   }
@@ -391,7 +391,7 @@ function draw(n: Node): u8[] {
   if (pool.len() < 32) {
     return [];
   }
-  let out: u8[] = part(pool, 0, 32);
+  let out = part(pool, 0, 32);
   n.random.set(part(pool, 32, pool.len() - 32));
   crypto.erase(pool);
   return out;
@@ -415,7 +415,7 @@ function rekeying(n: Node, now: i64): Node {
   let Some(o) = secure.offer(c, draw(n)) else {
     return n;
   };
-  let next: Node = Node { ...n, rekey_due: false, offer: Some(o), offer_at: now + lan.RESEND_MS };
+  let next = Node { ...n, rekey_due: false, offer: Some(o), offer_at: now + lan.RESEND_MS };
   return send_frame(next, lan.CONTROL, protocol.encode(protocol.KeyOffer(o.epoch, o.public)));
 }
 
@@ -433,7 +433,7 @@ function offered(n: Node, epoch: i32, public: u8[]): Node {
   if (mine.len() == 0) {
     return n;
   }
-  let u: Node = log(Node { ...n, chan: Some(c1), accepted: epoch, accepted_key: mine }, "the peer's voice has key " + epoch.to_string());
+  let u = log(Node { ...n, chan: Some(c1), accepted: epoch, accepted_key: mine }, "the peer's voice has key " + epoch.to_string());
   return send_frame(u, lan.CONTROL, protocol.encode(protocol.KeyAccept(epoch, mine)));
 }
 
@@ -458,12 +458,12 @@ pub function voice(n: Node, samples: [i32]): Node {
   if (!n.capture) {
     return n;
   }
-  let pending: i32[] = n.pending;
+  let pending = n.pending;
   for v in samples {
     pending = pending.append(v);
   }
-  let t: Node = n;
-  let at: i32 = 0;
+  let t = n;
+  let at = 0;
   while (pending.len() - at >= voice.FRAME) {
     let head: i32[] = [];
     for k in at..at + voice.FRAME {
@@ -474,7 +474,7 @@ pub function voice(n: Node, samples: [i32]): Node {
     if (packet.len() > 0) {
       t = send_frame(t, lan.VOICE, packet);
     }
-    at = at + voice.FRAME;
+    at += voice.FRAME;
   }
   let rest: i32[] = [];
   for k in at..pending.len() {
@@ -500,7 +500,7 @@ pub function confirm(n: Node, now: i64): Node {
     }
   }
   let (l, chan) = lan.confirm(n.link);
-  let t: Node = log(Node { ...n, link: l, chan: chan, proof: [] }, "the string is confirmed");
+  let t = log(Node { ...n, link: l, chan: chan, proof: [] }, "the string is confirmed");
   if (t.peer_identity.len() > 0 && !knows(t, t.peer_identity)) {
     t = log(Node { ...t, pins: t.pins.append(t.peer_identity) }, "this phone now knows the other phone");
   }
@@ -509,7 +509,7 @@ pub function confirm(n: Node, now: i64): Node {
 
 // The user says that the strings differ.
 pub function reject(own n: Node, now: i64): Node {
-  let t: Node = log(Node { ...n, link: lan.close(n.link) }, "the string is rejected");
+  let t = log(Node { ...n, link: lan.close(n.link) }, "the string is rejected");
   return act(t, session.AuthFailed, now);
 }
 
@@ -524,7 +524,7 @@ pub function noticed(n: Node, text: string): Node {
 }
 
 pub function mic_lost(n: Node, why: string, now: i64): Node {
-  let t: Node = act(n, session.MicLost, now);
+  let t = act(n, session.MicLost, now);
   return Node { ...t, notice: why };
 }
 

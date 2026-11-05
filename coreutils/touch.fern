@@ -101,7 +101,7 @@ function date_relative(text: string, sec: i64, nsec: i64, hint: i64): datetime.R
 }
 
 function touch_flags(t: Times, change: i32, no_deref: boolean): i32 {
-  let flags: i32 = 0;
+  let flags = 0;
   if (no_deref) {
     flags = flags | 1;
   }
@@ -142,7 +142,7 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
   if (!(no_create || no_deref)) {
     match (open_writer_with(file, 3)) {
       Ok(w) => {
-        let ok: boolean = touch_handle(w, file, t, flags, false);
+        let ok = touch_handle(w, file, t, flags, false);
         w.close();
         return ok;
       },

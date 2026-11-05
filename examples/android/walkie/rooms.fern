@@ -75,11 +75,11 @@ function code_of(random: [u8]): string {
   }
   v = v & 9223372036854775807i64;
   let letters: [u8] = ALPHABET.as_bytes();
-  let n: i64 = letters.len() as i64;
+  let n = letters.len() as i64;
   let out: u8[] = [];
   for k in 0..CODE_LEN {
     out = out.append(letters[(v % n) as i32]);
-    v = v / n;
+    v /= n;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -97,7 +97,7 @@ function same_token(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let d: i32 = 0;
+  let d = 0;
   for k in 0..a.len() {
     d = d | (a[k] ^ b[k]) as i32;
   }
@@ -137,7 +137,7 @@ pub function expire(r: Rooms, now: i64): Rooms {
 // The table with one more request from `ip`, or None when `ip` sent too many.
 function counted(r: Rooms, ip: string, now: i64): Option[Rooms] {
   for i in 0..r.hits.len() {
-    let h: Hits = r.hits[i];
+    let h = r.hits[i];
     if (h.ip == ip) {
       if (h.at.len() >= RATE_MAX) {
         return None;
@@ -169,11 +169,11 @@ pub function create(r0: Rooms, ip: string, now: i64, random: [u8]): Answer {
   if (r.rooms.len() >= MAX_ROOMS) {
     return refused(r, "the server is full");
   }
-  let code: string = code_of(random);
+  let code = code_of(random);
   if (room_index(r, code) >= 0) {
     return refused(r, "try again");
   }
-  let token: u8[] = token_of(random);
+  let token = token_of(random);
   let room = Room { code: code, opened: now, last: now, members: [Member { token: token, addr: None }] };
   return Answer { rooms: Rooms { ...r, rooms: r.rooms.append(room) }, reply: Created(code, token) };
 }
@@ -183,15 +183,15 @@ pub function join(r0: Rooms, ip: string, code: string, now: i64, random: [u8]): 
   let Some(r) = counted(expire(r0, now), ip, now) else {
     return refused(expire(r0, now), "too many requests");
   };
-  let i: i32 = room_index(r, code.to_ascii_upper());
+  let i = room_index(r, code.to_ascii_upper());
   if (i < 0) {
     return refused(r, "no room has this code");
   }
-  let room: Room = r.rooms[i];
+  let room = r.rooms[i];
   if (room.members.len() >= 2) {
     return refused(r, "the room is full");
   }
-  let token: u8[] = token_of(random);
+  let token = token_of(random);
   let joined = Room { ...room, last: now, members: room.members.append(Member { token: token, addr: None }) };
   return Answer { rooms: Rooms { ...r, rooms: r.rooms.with(i, joined) }, reply: Joined(token) };
 }
@@ -223,7 +223,7 @@ function token_text(text: string): Option[u8[]] {
 
 // The reply in a line from the server, without its newline.
 pub function parse_reply(line: string): Reply {
-  let words: string[] = line.trim().split(" ");
+  let words = line.trim().split(" ");
   if (words.len() == 3 && words[0] == "ROOM" && words[1].len() == CODE_LEN) {
     if let Some(token) = token_text(words[2]) {
       return Created(words[1], token);
@@ -242,7 +242,7 @@ pub function parse_reply(line: string): Reply {
 
 // The answer to one request line from `ip`: `CREATE`, or `JOIN` and a code.
 pub function answer(r: Rooms, ip: string, line: string, now: i64, random: [u8]): Answer {
-  let words: string[] = line.trim().split(" ");
+  let words = line.trim().split(" ");
   if (words.len() == 1 && words[0] == "CREATE") {
     return create(r, ip, now, random);
   }
@@ -277,7 +277,7 @@ pub function relay(r: Rooms, from: net.SocketAddr, data: [u8], n: i32, now: i64)
     token = token.append(data[k]);
   }
   for i in 0..r.rooms.len() {
-    let room: Room = r.rooms[i];
+    let room = r.rooms[i];
     for m in 0..room.members.len() {
       if (same_token(room.members[m].token, token) && open(room, now)) {
         let members = room.members.with(m, Member { token: token, addr: Some(from) });

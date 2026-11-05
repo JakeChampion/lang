@@ -1371,7 +1371,7 @@ function read_into(h: usize, path: string, open_msg: string): i32 {
 }
 
 function read_into_from(h: usize, r: Reader, path: string): i32 {
-  let last: i32 = -1;
+  let last = -1;
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -1525,7 +1525,7 @@ function split_lines(text: u8[], term: i32): i64[] {
 }
 
 function argmatch(value: string, names: string[], vals: i32[], option: string, groups: string[]): i32 {
-  let found: i32 = -1;
+  let found = -1;
   let ambiguous = false;
   let i = 0;
   while (i < names.len()) {
@@ -2644,7 +2644,7 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
     m = open_feed(m, files[f], o_file, o_dev, o_ino, term);
     bufs = bufs.append(m.fresh);
     at = at.append(0);
-    cur = cur.append(0 - 1 as i64);
+    cur = cur.append(-1i64);
     f += 1;
   }
   let out = out_open(a.outfile, !a.have_out);
@@ -2665,7 +2665,7 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
       end = __memchr_bytes(bufs[f], term, 0);
     }
     if (end < 0) {
-      cur = cur.with(f, 0 - 1 as i64);
+      cur = cur.with(f, -1i64);
     } else {
       cur = cur.with(f, pack_line(from, end - from));
       at = at.with(f, end + 1);
@@ -2674,7 +2674,7 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
     if (primed < n) {
       f = primed;
     } else {
-      f = 0 - 1;
+      f = -1;
       let g = 0;
       while (g < n) {
         if (cur[g] >= 0 as i64) {
