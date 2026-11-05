@@ -515,6 +515,7 @@ is the number of slots it leaves.
 | `send_adopt` | 495 | 1 | 1 |
 | `worker_unmap` | 496 | 3 | 1 |
 | `send_root` | 497 | 1 | 1 |
+| `writer_set_times` | 498 | 6 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
