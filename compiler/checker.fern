@@ -29598,7 +29598,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
 }
 
 function pretype_expr(e: ast.Expr, s: Scope): ast.Expr {
-  let (ne, ns, nh) = astwalk.map_expr_acc(e, s, pretype_at_stmt, pretype_at_expr);
+  let (ne, ns, nh) = astwalk.map_expr_where(e, s, pretype_at_stmt, pretype_at_expr, astwalk.every_expr);
   return ne;
 }
 
@@ -30253,7 +30253,7 @@ function qualify_expr(e: ast.Expr, want: typeinfo.Type, s: Scope, coll: util.Nam
   if (!expr_names_shared(e, coll)) {
     return e;
   }
-  let (out, _, _) = astwalk.map_expr_acc(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at);
+  let (out, _, _) = astwalk.map_expr_where(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at, astwalk.every_expr);
   return out;
 }
 
@@ -32065,7 +32065,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if (at < 0) {
         return (st, rw, false);
       }
-      let (ie, ia, ih) = astwalk.map_expr_acc(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr);
+      let (ie, ia, ih) = astwalk.map_expr_where(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
       return (ast.StmtVar { ...v, type_name: rw.tags[at], init: ie }, rw, true);
     },
     ast.StmtFor(fr) => {
@@ -32090,7 +32090,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if let ast.ExprCall(c) = fr.iter {
         iter = ast.ExprCall { ...c, args: nb };
       }
-      let (body, ba) = astwalk.map_stmts_acc(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr);
+      let (body, ba) = astwalk.map_stmts_where(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
       return (ast.StmtFor { ...fr, iter: iter, body: body }, rw, true);
     },
     _ => {
@@ -32165,11 +32165,11 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     if (pt >= 0) {
       a = settle_wide_literals(a, rw.ptypes[pt]);
     }
-    let (ae, aa, ah) = astwalk.map_expr_acc(a, rw, lit_rewrite_stmt, lit_rewrite_expr);
+    let (ae, aa, ah) = astwalk.map_expr_where(a, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
     args = args.append(ae);
     k = k + 1;
   }
-  let (ce, ca, ch) = astwalk.map_expr_acc(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr);
+  let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
   return ast.ExprCall { ...c, callee: ce, args: args };
 }
 
@@ -32312,7 +32312,7 @@ function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
   if (rw.keys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;
   }
-  let (out, ra) = astwalk.map_stmts_acc(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr);
+  let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.every_expr);
   return out;
 }
 
