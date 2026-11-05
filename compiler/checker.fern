@@ -21533,8 +21533,8 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[
     typeinfo.TypeTuple(tup) => {
       return send_unsafe_reason_list(tup.elements, ctx, seen);
     },
-    typeinfo.TypeMap(_) => {
-      return "a Map does not cross a worker boundary in this release";
+    typeinfo.TypeMap(m) => {
+      return send_unsafe_reason_list([m.key, m.value], ctx, seen);
     },
     typeinfo.TypeFunc(_) => {
       return "a function value carries its environment";

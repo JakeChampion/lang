@@ -5,7 +5,7 @@ This module runs a closure as a worker and joins its result.
 ## Model
 
 A worker owns its heap. A value crosses the worker boundary only by copy: the captures of the closure at `spawn`, and the result at `join`.
-Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array or tuple of send-safe values.
+Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array, tuple or map of send-safe values.
 A `Cell`, a function value, a `dyn` value, a view, a handle and a `@must_consume` value are not send-safe.
 
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.

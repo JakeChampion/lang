@@ -74,9 +74,8 @@ A type is send-safe when every part of it is:
 | a tuple of send-safe parts | `dyn Trait`: a dyn value hides its concrete type |
 | a struct or enum whose fields and payloads are send-safe, with its type arguments applied | a view, `[T]` or `str`: a view borrows another value's storage |
 | `Option[T]` and `Result[T, E]` of send-safe arguments | `Reader`, `Writer`, `Dir`, `Socket`: a built-in handle owns a descriptor |
-| | a resource handle: it is not copied |
+| a `Map[K, V]` of a send-safe key and value | a resource handle: it is not copied |
 | | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
-| | `Map[K, V]`: a Map does not cross a worker boundary in this release |
 | | a type parameter: it is not known to be send-safe |
 
 The last row is the conservative choice of this release. A generic function
@@ -160,7 +159,7 @@ them.
 | Builtin | Role |
 |---|---|
 | `__worker_region(size)` | Maps a shared anonymous region that the fork inherits at the same address. The interpreters return zero. |
-| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too. |
+| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too, and keeps the old bounds as the parent's image. A raw free of a block in the image does nothing, because the kernel reclaims the image at exit. |
 | `__send_root(v)` | Gives up `v` and returns the address of its root box. |
 | `__send_release(v)` | Releases `v` where it is written, not at its last use. |
 | `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |
@@ -208,11 +207,12 @@ named `__sem_send_` and the type's key, beside the release helpers.
 
 A string copies its bytes. An array copies each element. A record, a tuple and an
 enum variant allocate a fresh box and copy each field. An `Option` copies
-its payload.
+its payload. A map reads its key and value columns, and a fresh map of the
+same size takes a copy of each pair.
 
 Both checkers refuse a value that is not send-safe with `E100`. The
 interpreters copy every array store, so a builtin that writes through a
-box cannot reach the original. A `Map` does not cross in this release.
+box cannot reach the original.
 
 The case is `conformance/cases/send_copy_deep`.
 
