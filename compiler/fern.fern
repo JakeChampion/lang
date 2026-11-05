@@ -6923,7 +6923,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   } else if (target == "wasm32-wasi" && emit_text) {
     out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
   } else if (target == "wasm32-wasi" && emit == "core-module") {
-    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
+    out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches)));
   } else if (target == "wasm32-wasi") {
     let comp = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
@@ -6940,7 +6940,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (hwat.len() == 0) {
       return 2;
     }
-    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+    out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches)));
   } else if (target == "wasm32-wasi-http") {
     let hc = emitforms.wasm_http_component(full, sub);
     if (hc.bytes.len() == 0) {
@@ -6971,7 +6971,6 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       }
     }
   }
-  out_asm = emitforms.with_build_section(out_asm, emit_text, sub.switches);
   if (out_path.len() > 0) {
     match (write_output(out_path, out_asm, target, emit)) {
       Err(e) => {
