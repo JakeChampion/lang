@@ -542,8 +542,9 @@ aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
-aarch64/sort_ints.text	2175
-aarch64/sort_ints.ir	30178876
+# 2026-11-05: PR #14207, perf-aarch64 job 126960803294 reports sort_ints.text 7.5% and sort_ints.ir 18.0% lower.
+aarch64/sort_ints.text	2012
+aarch64/sort_ints.ir	24753301
 aarch64/sort_strings.text	3451
 aarch64/sort_strings.ir	100996546
 aarch64/string_build.text	2241
