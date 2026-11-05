@@ -32101,6 +32101,9 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
 }
 
 function lit_rewrite_expr(e: ast.Expr, rw: LitRewrite): (ast.Expr, LitRewrite, boolean) {
+  if (rw.cargs.len() == 0 && rw.pargs.len() == 0) {
+    return (e, rw, false);
+  }
   let at: i32 = util.index_of_str(rw.cargs, lit_float_key(e));
   if (at >= 0) {
     return (lit_float_read(e, parser.parse_type_ref(rw.ctags[at])), rw, true);
