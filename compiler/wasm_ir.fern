@@ -978,11 +978,8 @@ pub function module_allocates(cache: irtables.LowerResult[]): boolean {
 }
 
 pub function module_emits_op_cached(cache: irtables.LowerResult[], kind: string): boolean {
-  let ktag: i32 = if (kind == "writer_set_times") { 269 } else { ir.kind_id(kind) };
+  let ktag: i32 = ir.kind_id(kind);
   function is_kind(o: ir.Op): boolean {
-    if (ktag == 269) {
-      return o.kind_tag == ktag && o.i32_imm == (if (kind == "writer_set_times") { 1 } else { 0 });
-    }
     return o.kind_tag == ktag;
   }
   return any_op(cache, is_kind);
@@ -4153,7 +4150,7 @@ function is_host_op_kind(tag: i32): boolean {
     || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
     || tag == 171 || tag == 310 || tag == 391 || tag == 432 || tag == 172 || tag == 180 || tag == 249 || tag == 166
     || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
-    || tag == 267 || tag == 269 || tag == 273 || tag == 405;
+    || tag == 267 || tag == 269 || tag == 498 || tag == 273 || tag == 405;
 }
 
 function emit_host_op_wat(o: ir.Op): string {
@@ -4239,8 +4236,8 @@ function emit_host_op_wat(o: ir.Op): string {
   if (o.kind_tag == 273) {
     return "    call $__fern_truncate\n";
   }
-  if (o.kind_tag == 269) {
-    let helper: string = if (o.i32_imm == 1) { "writer_set_times" } else { "set_file_times" };
+  if (o.kind_tag == 269 || o.kind_tag == 498) {
+    let helper: string = if (o.kind_tag == 498) { "writer_set_times" } else { "set_file_times" };
     return "    call $__fern_" + helper + "\n";
   }
   if (o.kind_tag == 264) {
