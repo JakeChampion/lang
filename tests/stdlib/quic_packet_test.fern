@@ -59,7 +59,7 @@ function test_client_initial(): test.TestOutcome {
   let k = packet.initial_keys(dcid(), true);
   let sealed = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: [], token: [], pn: 2 as i64, pn_len: 4 }, client_payload(), k);
   let same = hex.encode(sealed) == client_packet();
-  let back: string = opened(__codec_bytes(hex.decode(client_packet())), k, 0 - 1 as i64);
+  let back = opened(__codec_bytes(hex.decode(client_packet())), k, -1i64);
   return test.assert_eq(same.to_string() + " " + sealed.len().to_string() + " | " + back, "true 1200 | dcid 8394c8f03e515708 scid  end 1200 pn 2 payload 1162 reserved true");
 }
 
@@ -108,7 +108,7 @@ function test_retry(): test.TestOutcome {
 }
 
 function test_packet_numbers(): test.TestOutcome {
-  let got: string = packet.pn_len(11291906 as i64, 11266227 as i64).to_string() + " " + packet.pn_len(11331838 as i64, 11266227 as i64).to_string() + " " + packet.pn_len(0 as i64, 0 - 1 as i64).to_string() + " " + packet.decode_pn(2821665002 as i64, 39730 as i64, 16).to_string() + " " + packet.decode_pn(0 - 1 as i64, 0 as i64, 8).to_string() + " " + packet.decode_pn(255 as i64, 1 as i64, 8).to_string();
+  let got = packet.pn_len(11291906 as i64, 11266227 as i64).to_string() + " " + packet.pn_len(11331838 as i64, 11266227 as i64).to_string() + " " + packet.pn_len(0 as i64, -1i64).to_string() + " " + packet.decode_pn(2821665002 as i64, 39730 as i64, 16).to_string() + " " + packet.decode_pn(-1i64, 0 as i64, 8).to_string() + " " + packet.decode_pn(255 as i64, 1 as i64, 8).to_string();
   return test.assert_eq(got, "2 3 1 2821692210 0 257");
 }
 

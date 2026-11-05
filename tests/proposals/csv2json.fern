@@ -47,52 +47,52 @@ struct Table { rows: string[][] }
 struct Parsed { ok: boolean, table: Table, err: string }
 
 function needs_quoting(cell: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < cell.len()) {
-    let c: u8 = cell[i];
+    let c = cell[i];
     if (c == 44 || c == 34 || c == 10 || c == 13) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function quote_cell(cell: string): string {
   let buf: u8[] = [34];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cell.len()) {
     if (cell[i] == 34) {
       buf = buf.append(34);
     }
     buf = buf.append(cell[i]);
-    i = i + 1;
+    i += 1;
   }
   buf = buf.append(34);
   return string_from_bytes_unchecked(buf);
 }
 
 function to_csv(t: Table): string {
-  let out: string = "";
-  let r: i32 = 0;
+  let out = "";
+  let r = 0;
   while (r < t.rows.len()) {
     if (r > 0) {
-      out = out + "\n";
+      out += "\n";
     }
-    let c: i32 = 0;
+    let c = 0;
     while (c < t.rows[r].len()) {
       if (c > 0) {
-        out = out + ",";
+        out += ",";
       }
-      let cell: string = t.rows[r][c];
+      let cell = t.rows[r][c];
       if (needs_quoting(cell)) {
-        out = out + quote_cell(cell);
+        out += quote_cell(cell);
       } else {
-        out = out + cell;
+        out += cell;
       }
-      c = c + 1;
+      c += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return out;
 }
@@ -106,16 +106,16 @@ function from_csv(text: string): Parsed {
   let rows: string[][] = [];
   let row: string[] = [];
   let buf: u8[] = [];
-  let in_quotes: boolean = false;
-  let any: boolean = false;
-  let i: i32 = 0;
+  let in_quotes = false;
+  let any = false;
+  let i = 0;
   while (i < text.len()) {
-    let c: u8 = text[i];
+    let c = text[i];
     if (in_quotes) {
       if (c == 34) {
         if (i + 1 < text.len() && text[i + 1] == 34) {
           buf = buf.append(34);
-          i = i + 1;
+          i += 1;
         } else {
           in_quotes = false;
         }
@@ -145,7 +145,7 @@ function from_csv(text: string): Parsed {
         any = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (in_quotes) {
     return fail_parse("unterminated quoted field");
@@ -159,9 +159,9 @@ function from_csv(text: string): Parsed {
 
 function json_escape(s: string): string {
   let buf: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: u8 = s[i];
+    let c = s[i];
     if (c == 34) {
       buf = buf.append(92);
       buf = buf.append(34);
@@ -180,7 +180,7 @@ function json_escape(s: string): string {
     } else {
       buf = buf.append(c);
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -189,28 +189,28 @@ function to_json(t: Table): string {
   if (t.rows.len() == 0) {
     return "[]";
   }
-  let head: string[] = t.rows[0];
-  let out: string = "[";
-  let r: i32 = 1;
+  let head = t.rows[0];
+  let out = "[";
+  let r = 1;
   while (r < t.rows.len()) {
     if (r > 1) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + "{";
-    let c: i32 = 0;
+    out += "{";
+    let c = 0;
     while (c < head.len()) {
       if (c > 0) {
-        out = out + ",";
+        out += ",";
       }
-      let v: string = "";
+      let v = "";
       if (c < t.rows[r].len()) {
         v = t.rows[r][c];
       }
       out = out + "\"" + json_escape(head[c]) + "\":\"" + json_escape(v) + "\"";
-      c = c + 1;
+      c += 1;
     }
-    out = out + "}";
-    r = r + 1;
+    out += "}";
+    r += 1;
   }
   return out + "]";
 }
@@ -223,9 +223,9 @@ function json_string_at(s: string, at: i32): JsonRead {
     return JsonRead { ok: false, values: none, err: "expected a string" };
   }
   let buf: u8[] = [];
-  let i: i32 = at + 1;
+  let i = at + 1;
   while (i < s.len()) {
-    let c: u8 = s[i];
+    let c = s[i];
     if (c == 34) {
       let one: string[] = [string_from_bytes_unchecked(buf), (i + 1).to_string()];
       return JsonRead { ok: true, values: one, err: "" };
@@ -234,7 +234,7 @@ function json_string_at(s: string, at: i32): JsonRead {
       if (i + 1 >= s.len()) {
         return JsonRead { ok: false, values: none, err: "escape at end" };
       }
-      let e: u8 = s[i + 1];
+      let e = s[i + 1];
       if (e == 34) {
         buf = buf.append(34);
       } else if (e == 92) {
@@ -248,10 +248,10 @@ function json_string_at(s: string, at: i32): JsonRead {
       } else {
         return JsonRead { ok: false, values: none, err: "bad escape" };
       }
-      i = i + 2;
+      i += 2;
     } else {
       buf = buf.append(c);
-      i = i + 1;
+      i += 1;
     }
   }
   return JsonRead { ok: false, values: none, err: "unterminated string" };
@@ -260,28 +260,28 @@ function json_string_at(s: string, at: i32): JsonRead {
 function json_flatten(s: string): JsonRead {
   let none: string[] = [];
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   if (i >= s.len() || s[i] != 91) {
     return JsonRead { ok: false, values: none, err: "expected [" };
   }
-  i = i + 1;
+  i += 1;
   if (i < s.len() && s[i] == 93) {
     return JsonRead { ok: true, values: out, err: "" };
   }
-  let going: boolean = true;
+  let going = true;
   while (going) {
     if (i >= s.len() || s[i] != 123) {
       return JsonRead { ok: false, values: none, err: "expected {" };
     }
     out = out.append("{");
-    i = i + 1;
+    i += 1;
     if (i < s.len() && s[i] == 125) {
       out = out.append("}");
-      i = i + 1;
+      i += 1;
     } else {
-      let fields: boolean = true;
+      let fields = true;
       while (fields) {
-        let k: JsonRead = json_string_at(s, i);
+        let k = json_string_at(s, i);
         if (!k.ok) {
           return k;
         }
@@ -290,15 +290,15 @@ function json_flatten(s: string): JsonRead {
         if (i < 0 || i >= s.len() || s[i] != 58) {
           return JsonRead { ok: false, values: none, err: "expected :" };
         }
-        i = i + 1;
-        let v: JsonRead = json_string_at(s, i);
+        i += 1;
+        let v = json_string_at(s, i);
         if (!v.ok) {
           return v;
         }
         out = out.append(v.values[0]);
         i = i32.parse_i32(v.values[1]).unwrap_or(-1);
         if (i >= 0 && i < s.len() && s[i] == 44) {
-          i = i + 1;
+          i += 1;
         } else {
           fields = false;
         }
@@ -307,10 +307,10 @@ function json_flatten(s: string): JsonRead {
         return JsonRead { ok: false, values: none, err: "expected }" };
       }
       out = out.append("}");
-      i = i + 1;
+      i += 1;
     }
     if (i < s.len() && s[i] == 44) {
-      i = i + 1;
+      i += 1;
     } else {
       going = false;
     }
@@ -332,77 +332,77 @@ function tables_equal(a: Table, b: Table): boolean {
   if (a.rows.len() != b.rows.len()) {
     return false;
   }
-  let r: i32 = 0;
+  let r = 0;
   while (r < a.rows.len()) {
     if (a.rows[r].len() != b.rows[r].len()) {
       return false;
     }
-    let c: i32 = 0;
+    let c = 0;
     while (c < a.rows[r].len()) {
       if (a.rows[r][c] != b.rows[r][c]) {
         return false;
       }
-      c = c + 1;
+      c += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return true;
 }
 
 function show_table(t: Table): string {
-  let out: string = "";
-  let r: i32 = 0;
+  let out = "";
+  let r = 0;
   while (r < t.rows.len()) {
     if (r > 0) {
-      out = out + " | ";
+      out += " | ";
     }
-    let c: i32 = 0;
+    let c = 0;
     while (c < t.rows[r].len()) {
       if (c > 0) {
-        out = out + " / ";
+        out += " / ";
       }
       out = out + "<" + t.rows[r][c] + ">";
-      c = c + 1;
+      c += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return out;
 }
 
 function generated_tables(): Table[] {
-  let cells: string[] = nasty_cells();
+  let cells = nasty_cells();
   let out: Table[] = [];
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < 4) {
-    let a: i32 = 0;
+    let a = 0;
     while (a < cells.len()) {
-      let b: i32 = 0;
+      let b = 0;
       while (b < cells.len()) {
         let v: string[] = ["h1", "h2", "v1", "v2"];
         v = v.with(pos, cells[a]);
-        let other: i32 = pos + 1;
+        let other = pos + 1;
         if (other > 3) {
           other = 0;
         }
         v = v.with(other, cells[b]);
         let rows: string[][] = [[v[0], v[1]], [v[2], v[3]]];
         out = out.append(Table { rows: rows });
-        b = b + 1;
+        b += 1;
       }
-      a = a + 1;
+      a += 1;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return out;
 }
 
 function test_every_table_round_trips(): test.TestOutcome {
-  let ts: Table[] = generated_tables();
-  let checked: i32 = 0;
-  let i: i32 = 0;
+  let ts = generated_tables();
+  let checked = 0;
+  let i = 0;
   while (i < ts.len()) {
-    let csv: string = to_csv(ts[i]);
-    let p: Parsed = from_csv(csv);
+    let csv = to_csv(ts[i]);
+    let p = from_csv(csv);
     if (!p.ok) {
       return test.fail("table " + i.to_string() + " failed to parse its own CSV ("
         + p.err + "):\n  " + show_table(ts[i]));
@@ -411,8 +411,8 @@ function test_every_table_round_trips(): test.TestOutcome {
       return test.fail("table " + i.to_string() + " did not round-trip:\n  in  "
         + show_table(ts[i]) + "\n  out " + show_table(p.table));
     }
-    checked = checked + 1;
-    i = i + 1;
+    checked += 1;
+    i += 1;
   }
   if (checked < 400) {
     return test.fail("the sweep only covered " + checked.to_string() + " tables");
@@ -421,22 +421,22 @@ function test_every_table_round_trips(): test.TestOutcome {
 }
 
 function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
-  let ts: Table[] = generated_tables();
-  let saw_comma: boolean = false;
-  let saw_quote: boolean = false;
-  let saw_newline: boolean = false;
-  let saw_empty: boolean = false;
-  let i: i32 = 0;
+  let ts = generated_tables();
+  let saw_comma = false;
+  let saw_quote = false;
+  let saw_newline = false;
+  let saw_empty = false;
+  let i = 0;
   while (i < ts.len()) {
-    let r: i32 = 0;
+    let r = 0;
     while (r < ts[i].rows.len()) {
-      let c: i32 = 0;
+      let c = 0;
       while (c < ts[i].rows[r].len()) {
-        let cell: string = ts[i].rows[r][c];
+        let cell = ts[i].rows[r][c];
         if (cell.len() == 0) {
           saw_empty = true;
         }
-        let k: i32 = 0;
+        let k = 0;
         while (k < cell.len()) {
           if (cell[k] == 44) {
             saw_comma = true;
@@ -447,13 +447,13 @@ function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
           if (cell[k] == 10) {
             saw_newline = true;
           }
-          k = k + 1;
+          k += 1;
         }
-        c = c + 1;
+        c += 1;
       }
-      r = r + 1;
+      r += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (!saw_comma) {
     return test.fail("no generated cell contained a comma");
@@ -471,10 +471,10 @@ function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
 }
 
 function test_the_parsed_shape_matches(): test.TestOutcome {
-  let ts: Table[] = generated_tables();
-  let i: i32 = 0;
+  let ts = generated_tables();
+  let i = 0;
   while (i < ts.len()) {
-    let p: Parsed = from_csv(to_csv(ts[i]));
+    let p = from_csv(to_csv(ts[i]));
     if (!p.ok) {
       return test.fail("table " + i.to_string() + ": " + p.err);
     }
@@ -483,80 +483,80 @@ function test_the_parsed_shape_matches(): test.TestOutcome {
         + p.table.rows.len().to_string() + " rows, want "
         + ts[i].rows.len().to_string());
     }
-    let width: i32 = p.table.rows[0].len();
-    let r: i32 = 0;
+    let width = p.table.rows[0].len();
+    let r = 0;
     while (r < p.table.rows.len()) {
       if (p.table.rows[r].len() != width) {
         return test.fail("table " + i.to_string() + ": row " + r.to_string()
           + " has " + p.table.rows[r].len().to_string() + " cells, header has "
           + width.to_string());
       }
-      r = r + 1;
+      r += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_json_parses_and_matches(): test.TestOutcome {
-  let ts: Table[] = generated_tables();
-  let i: i32 = 0;
+  let ts = generated_tables();
+  let i = 0;
   while (i < ts.len()) {
-    let j: string = to_json(ts[i]);
-    let read: JsonRead = json_flatten(j);
+    let j = to_json(ts[i]);
+    let read = json_flatten(j);
     if (!read.ok) {
       return test.fail("table " + i.to_string() + " produced JSON that does not "
         + "parse (" + read.err + "): " + j);
     }
-    let head: string[] = ts[i].rows[0];
+    let head = ts[i].rows[0];
     let want: string[] = [];
-    let r: i32 = 1;
+    let r = 1;
     while (r < ts[i].rows.len()) {
       want = want.append("{");
-      let c: i32 = 0;
+      let c = 0;
       while (c < head.len()) {
         want = want.append(head[c]);
-        let v: string = "";
+        let v = "";
         if (c < ts[i].rows[r].len()) {
           v = ts[i].rows[r][c];
         }
         want = want.append(v);
-        c = c + 1;
+        c += 1;
       }
       want = want.append("}");
-      r = r + 1;
+      r += 1;
     }
     if (read.values.len() != want.len()) {
       return test.fail("table " + i.to_string() + ": JSON has "
         + read.values.len().to_string() + " items, want " + want.len().to_string());
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < want.len()) {
       if (read.values[k] != want[k]) {
         return test.fail("table " + i.to_string() + ": JSON item " + k.to_string()
           + " is <" + read.values[k] + ">, want <" + want[k] + ">");
       }
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_quoting_is_applied_exactly_when_needed(): test.TestOutcome {
-  let plain: Table = Table { rows: [["a", "b"]] };
+  let plain = Table { rows: [["a", "b"]] };
   if (to_csv(plain) != "a,b") {
     return test.fail("plain cells were quoted: " + to_csv(plain));
   }
-  let comma: Table = Table { rows: [["a,b", "c"]] };
+  let comma = Table { rows: [["a,b", "c"]] };
   if (to_csv(comma) != "\"a,b\",c") {
     return test.fail("a comma cell serialised as " + to_csv(comma));
   }
-  let quote: Table = Table { rows: [["say \"hi\"", "c"]] };
+  let quote = Table { rows: [["say \"hi\"", "c"]] };
   if (to_csv(quote) != "\"say \"\"hi\"\"\",c") {
     return test.fail("a quote cell serialised as " + to_csv(quote));
   }
-  let nl: Table = Table { rows: [["a\nb", "c"]] };
+  let nl = Table { rows: [["a\nb", "c"]] };
   if (to_csv(nl) != "\"a\nb\",c") {
     return test.fail("a newline cell serialised as " + to_csv(nl));
   }
@@ -564,7 +564,7 @@ function test_quoting_is_applied_exactly_when_needed(): test.TestOutcome {
 }
 
 function test_hand_written_csv_parses_correctly(): test.TestOutcome {
-  let p: Parsed = from_csv("name,note\n\"Smith, John\",\"he said \"\"hi\"\"\"\n\"two\nlines\",plain");
+  let p = from_csv("name,note\n\"Smith, John\",\"he said \"\"hi\"\"\"\n\"two\nlines\",plain");
   if (!p.ok) {
     return test.fail("parse failed: " + p.err);
   }
@@ -584,8 +584,8 @@ function test_hand_written_csv_parses_correctly(): test.TestOutcome {
 }
 
 function test_trailing_newline_and_unterminated_quotes(): test.TestOutcome {
-  let without: Parsed = from_csv("a,b\nc,d");
-  let with_nl: Parsed = from_csv("a,b\nc,d\n");
+  let without = from_csv("a,b\nc,d");
+  let with_nl = from_csv("a,b\nc,d\n");
   if (!without.ok || !with_nl.ok) {
     return test.fail("a well-formed file failed to parse");
   }
@@ -597,7 +597,7 @@ function test_trailing_newline_and_unterminated_quotes(): test.TestOutcome {
     return test.fail("a trailing newline produced " + with_nl.table.rows.len().to_string()
       + " rows, want 2");
   }
-  let bad: Parsed = from_csv("a,\"unterminated");
+  let bad = from_csv("a,\"unterminated");
   if (bad.ok) {
     return test.fail("an unterminated quoted field was accepted");
   }
@@ -612,23 +612,23 @@ function main(): i32 {
     ["Smith, John", "he said \"hi\""], ["two\nlines", "plain"],
   ] };
   eprint("  csv:");
-  let csv: string = to_csv(t);
-  let lines: string[] = csv.split("\n");
-  let i: i32 = 0;
+  let csv = to_csv(t);
+  let lines = csv.split("\n");
+  let i = 0;
   while (i < lines.len()) {
     eprint("    " + lines[i]);
-    i = i + 1;
+    i += 1;
   }
   eprint("  json: " + to_json(t));
-  let back: Parsed = from_csv(csv);
-  let verdict: string = "no";
+  let back = from_csv(csv);
+  let verdict = "no";
   if (back.ok && tables_equal(back.table, t)) {
     verdict = "yes";
   }
   eprint("  round-trips: " + verdict);
   eprint("  generated tables in the sweep: " + generated_tables().len().to_string());
 
-  let r: test.TestRunner = test.new("csv2json");
+  let r = test.new("csv2json");
   r = r.it("every table round trips", test_every_table_round_trips);
   r = r.it("the sweep covers the nasty shapes", test_the_sweep_covers_the_nasty_shapes);
   r = r.it("the parsed shape matches", test_the_parsed_shape_matches);

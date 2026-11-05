@@ -12,7 +12,7 @@ import "std/test";
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
@@ -32,7 +32,7 @@ struct Signal { g: Gen, pat: f32[], period: i32, noise: f32 }
 
 function signal(own g: Gen, cc: i32): Signal {
   let (g1, p0) = rnd(g);
-  let period: i32 = 8 + p0 % 1000;
+  let period = 8 + p0 % 1000;
   g = g1;
   let pat: f32[] = [];
   for i in 0..cc * period {
@@ -48,44 +48,44 @@ struct Setup { g: Gen, st: celt_encoder.Encoder, line: string, lm: i32, frames: 
 
 function setup(own g: Gen, upsample: i32, end: i32): Setup {
   let (g1, cc0) = rnd(g);
-  let cc: i32 = 1 + cc0 % 2;
+  let cc = 1 + cc0 % 2;
   let (g2, mode0) = rnd(g1);
-  let mode: i32 = mode0 % 3;
+  let mode = mode0 % 3;
   let (g3, rate0) = rnd(g2);
-  let bitrate: i32 = 6000 + rate0 % 250000;
+  let bitrate = 6000 + rate0 % 250000;
   let (g4, cx0) = rnd(g3);
-  let complexity: i32 = cx0 % 11;
+  let complexity = cx0 % 11;
   let (g5, lossy) = rnd(g4);
-  let loss: i32 = 0;
+  let loss = 0;
   if (lossy % 4 == 0) {
     let (g6, l) = rnd(g5);
     g5 = g6;
     loss = l % 20;
   }
-  let st: celt_encoder.Encoder = celt_encoder.Encoder { ...celt_encoder.new_encoder(cc), upsample: upsample, end: end, bitrate: bitrate, vbr: mode != 0, constrained_vbr: mode == 2, complexity: complexity, loss_rate: loss };
+  let st = celt_encoder.Encoder { ...celt_encoder.new_encoder(cc), upsample: upsample, end: end, bitrate: bitrate, vbr: mode != 0, constrained_vbr: mode == 2, complexity: complexity, loss_rate: loss };
   let (g7, lm0) = rnd(g5);
-  let lm: i32 = lm0 % 4;
+  let lm = lm0 % 4;
   let Signal { g: gs, pat, period, noise } = signal(g7, cc);
   let (g8, f0) = rnd(gs);
   let (g9, mb0) = rnd(g8);
-  let frames: i32 = 1 + f0 % 6;
-  let max_bytes: i32 = 2 + mb0 % 1274;
-  let line: string = "c " + cc.to_string() + " " + mode.to_string() + " " + bitrate.to_string() + " " + complexity.to_string() + " " + loss.to_string() + " " + lm.to_string() + " " + frames.to_string() + " " + max_bytes.to_string();
+  let frames = 1 + f0 % 6;
+  let max_bytes = 2 + mb0 % 1274;
+  let line = "c " + cc.to_string() + " " + mode.to_string() + " " + bitrate.to_string() + " " + complexity.to_string() + " " + loss.to_string() + " " + lm.to_string() + " " + frames.to_string() + " " + max_bytes.to_string();
   return Setup { g: g9, st: st, line: line, lm: lm, frames: frames, max_bytes: max_bytes, sig: Signal { g: Gen { x: 0u32 }, pat: pat, period: period, noise: noise } };
 }
 
 function trace(seed: u32, cases: i32, upsample: i32, end: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let crc: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let crc = crc32.new();
   for k in 0..cases {
-    let s: Setup = setup(g, upsample, end);
-    let cc: i32 = s.st.channels;
-    let n: i32 = (120 << s.lm) / upsample;
-    let sig: Signal = s.sig;
+    let s = setup(g, upsample, end);
+    let cc = s.st.channels;
+    let n = (120 << s.lm) / upsample;
+    let sig = s.sig;
     g = s.g;
     crc = crc.update((s.line + "\n").as_bytes());
-    let st: celt_encoder.Encoder = s.st;
-    let t: i32 = 0;
+    let st = s.st;
+    let t = 0;
     for f in 0..s.frames {
       let (g1, z) = rnd(g);
       g = g1;
@@ -102,11 +102,11 @@ function trace(seed: u32, cases: i32, upsample: i32, end: i32): u32 {
           g = g3;
           pcm = pcm.append(gain * (0.7f32 * sig.pat[c * sig.period + t % sig.period] + sig.noise * v));
         }
-        t = t + 1;
+        t += 1;
       }
-      let r: celt_encoder.Encoded = celt_encoder.encode(st, pcm, n, s.max_bytes);
+      let r = celt_encoder.encode(st, pcm, n, s.max_bytes);
       st = r.st;
-      let len: i32 = r.packet.len();
+      let len = r.packet.len();
       let sum: u32 = 0u32;
       if (r.error != 0) {
         len = r.error;
@@ -134,7 +134,7 @@ function test_wideband_trace(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/celt_encoder frames");
+  let r = test.new("std/opus/celt_encoder frames");
   r = r.it("a short trace of frames is the libopus trace", test_short_trace);
   r = r.it("a long trace of frames is the libopus trace", test_long_trace);
   r = r.it("a trace of wideband frames at 16 kHz is the libopus trace", test_wideband_trace);

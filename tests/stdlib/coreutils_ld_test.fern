@@ -203,7 +203,7 @@ function test_specials_and_ordering(): test.TestOutcome {
   let f = ld.binary128();
   let one = f.from_i64(1 as i64);
   let two = f.from_i64(2 as i64);
-  if (one.cmp(two) != 0 - 1) {
+  if (one.cmp(two) != -1) {
     return test.fail("less");
   }
   if (two.cmp(one) != 1) {
@@ -215,7 +215,7 @@ function test_specials_and_ordering(): test.TestOutcome {
   if (f.zero(true).cmp(f.zero(false)) != 0) {
     return test.fail("signed zeros");
   }
-  if (one.negate().cmp(one) != 0 - 1) {
+  if (one.negate().cmp(one) != -1) {
     return test.fail("negative");
   }
   if (ld.nan(false).cmp(one) != 2) {

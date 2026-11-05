@@ -13,71 +13,71 @@ struct Bloom {
 function bloom_new(nbits: i32, k: i32): Bloom {
   let nwords: i32 = (nbits + 31) / 32;
   let w: u32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < nwords) {
     w = w.append(0 as u32);
-    i = i + 1;
+    i += 1;
   }
   return Bloom { words: w, nbits: nwords * 32, k: k, added: 0 };
 }
 
 function bit_index(b: Bloom, s: string, i: i32): i32 {
-  let h1: u32 = s.hash_fnv32();
-  let h2: u32 = s.hash_djb2();
-  let combined: u32 = h1 + i as u32 * h2;
+  let h1 = s.hash_fnv32();
+  let h2 = s.hash_djb2();
+  let combined = h1 + i as u32 * h2;
   return (combined % (b.nbits as u32)) as i32;
 }
 
 function get_bit(b: Bloom, i: i32): boolean {
-  let word: u32 = b.words[i / 32];
+  let word = b.words[i / 32];
   return (word >> (i % 32) as u32 & 1 as u32) == 1 as u32;
 }
 
 function set_bit(b: Bloom, i: i32): Bloom {
-  let wi: i32 = i / 32;
-  let mask: u32 = 1 as u32 << (i % 32) as u32;
+  let wi = i / 32;
+  let mask = 1 as u32 << (i % 32) as u32;
   return Bloom { ...b, words: b.words.with(wi, b.words[wi] | mask) };
 }
 
 function bloom_add(b0: Bloom, s: string): Bloom {
-  let b: Bloom = b0;
-  let i: i32 = 0;
+  let b = b0;
+  let i = 0;
   while (i < b.k) {
     b = set_bit(b, bit_index(b, s, i));
-    i = i + 1;
+    i += 1;
   }
   return Bloom { ...b, added: b.added + 1 };
 }
 
 function might_contain(b: Bloom, s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.k) {
     if (!get_bit(b, bit_index(b, s, i))) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function popcount_bits(b: Bloom): i32 {
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < b.words.len()) {
     total = total + b.words[i].count_ones() as i32;
-    i = i + 1;
+    i += 1;
   }
   return total;
 }
 
 function count_bits_by_hand(b: Bloom): i32 {
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < b.nbits) {
     if (get_bit(b, i)) {
-      total = total + 1;
+      total += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return total;
 }
@@ -87,34 +87,34 @@ function fill_permille(b: Bloom): i32 {
 }
 
 function estimated_fp_permille(b: Bloom): i32 {
-  let fill: i32 = fill_permille(b);
-  let acc: i32 = 1000;
-  let i: i32 = 0;
+  let fill = fill_permille(b);
+  let acc = 1000;
+  let i = 0;
   while (i < b.k) {
     acc = acc * fill / 1000;
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
 
 function measured_fp_permille(b: Bloom, probes: string[]): i32 {
-  let hits: i32 = 0;
-  let i: i32 = 0;
+  let hits = 0;
+  let i = 0;
   while (i < probes.len()) {
     if (might_contain(b, probes[i])) {
-      hits = hits + 1;
+      hits += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return hits * 1000 / probes.len();
 }
 
 function keys(prefix: string, n: i32): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(prefix + i.to_string());
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -124,8 +124,8 @@ function test_no_false_negatives(): test.TestOutcome {
   let ks: i32[] = [1, 3, 7];
   for si in 0..sizes.len() {
     for ki in 0..ks.len() {
-      let b: Bloom = bloom_new(sizes[si], ks[ki]);
-      let ins: string[] = keys("item-", 40);
+      let b = bloom_new(sizes[si], ks[ki]);
+      let ins = keys("item-", 40);
       for i in 0..ins.len() {
         b = bloom_add(b, ins[i]);
       }
@@ -142,11 +142,11 @@ function test_no_false_negatives(): test.TestOutcome {
 }
 
 function test_empty_filter_contains_nothing(): test.TestOutcome {
-  let b: Bloom = bloom_new(256, 3);
+  let b = bloom_new(256, 3);
   if (popcount_bits(b) != 0) {
     return test.fail("a fresh filter had bits set");
   }
-  let probes: string[] = keys("probe-", 50);
+  let probes = keys("probe-", 50);
   for i in 0..probes.len() {
     if (might_contain(b, probes[i])) {
       return test.fail("empty filter claimed to contain " + probes[i]);
@@ -156,12 +156,12 @@ function test_empty_filter_contains_nothing(): test.TestOutcome {
 }
 
 function test_popcount_agrees_with_a_manual_count(): test.TestOutcome {
-  let b: Bloom = bloom_new(512, 4);
-  let ins: string[] = keys("x-", 30);
+  let b = bloom_new(512, 4);
+  let ins = keys("x-", 30);
   for i in 0..ins.len() {
     b = bloom_add(b, ins[i]);
-    let fast: i32 = popcount_bits(b);
-    let slow: i32 = count_bits_by_hand(b);
+    let fast = popcount_bits(b);
+    let slow = count_bits_by_hand(b);
     if (fast != slow) {
       return test.fail("popcount says " + fast.to_string()
         + ", manual count says " + slow.to_string()
@@ -173,14 +173,14 @@ function test_popcount_agrees_with_a_manual_count(): test.TestOutcome {
 
 function test_more_bits_means_lower_fill(): test.TestOutcome {
   let sizes: i32[] = [128, 256, 512, 1024, 2048];
-  let prev: i32 = 1001;
+  let prev = 1001;
   for i in 0..sizes.len() {
-    let b: Bloom = bloom_new(sizes[i], 3);
-    let ins: string[] = keys("k-", 40);
+    let b = bloom_new(sizes[i], 3);
+    let ins = keys("k-", 40);
     for j in 0..ins.len() {
       b = bloom_add(b, ins[j]);
     }
-    let f: i32 = fill_permille(b);
+    let f = fill_permille(b);
     if (f > prev) {
       return test.fail("fill rose from " + prev.to_string() + " to "
         + f.to_string() + " when nbits grew to "
@@ -192,17 +192,17 @@ function test_more_bits_means_lower_fill(): test.TestOutcome {
 }
 
 function test_measured_and_estimated_rates_agree(): test.TestOutcome {
-  let b: Bloom = bloom_new(512, 3);
-  let ins: string[] = keys("in-", 60);
+  let b = bloom_new(512, 3);
+  let ins = keys("in-", 60);
   for i in 0..ins.len() {
     b = bloom_add(b, ins[i]);
   }
 
-  let probes: string[] = keys("out-", 400);
-  let measured: i32 = measured_fp_permille(b, probes);
-  let estimated: i32 = estimated_fp_permille(b);
+  let probes = keys("out-", 400);
+  let measured = measured_fp_permille(b, probes);
+  let estimated = estimated_fp_permille(b);
 
-  let diff: i32 = measured - estimated;
+  let diff = measured - estimated;
   if (diff < 0) {
     diff = 0 - diff;
   }
@@ -215,9 +215,9 @@ function test_measured_and_estimated_rates_agree(): test.TestOutcome {
 }
 
 function test_reinsert_sets_no_new_bits(): test.TestOutcome {
-  let b: Bloom = bloom_new(256, 3);
+  let b = bloom_new(256, 3);
   b = bloom_add(b, "hello");
-  let after_first: i32 = popcount_bits(b);
+  let after_first = popcount_bits(b);
   b = bloom_add(b, "hello");
   if (popcount_bits(b) != after_first) {
     return test.fail("re-inserting set new bits: " + after_first.to_string()
@@ -233,12 +233,12 @@ function main(): i32 {
   eprint("bloom — a bloom filter over ()[] configurable bits and hash count");
   let configs: i32[] = [256, 512, 1024, 2048];
   for i in 0..configs.len() {
-    let b: Bloom = bloom_new(configs[i], 3);
-    let ins: string[] = keys("in-", 60);
+    let b = bloom_new(configs[i], 3);
+    let ins = keys("in-", 60);
     for j in 0..ins.len() {
       b = bloom_add(b, ins[j]);
     }
-    let probes: string[] = keys("out-", 400);
+    let probes = keys("out-", 400);
     eprint("  nbits=" + b.nbits.to_string() + " k=" + b.k.to_string()
       + " added=" + b.added.to_string()
       + " fill=" + fill_permille(b).to_string() + "/1000"
@@ -246,7 +246,7 @@ function main(): i32 {
       + " fp_measured=" + measured_fp_permille(b, probes).to_string() + "/1000");
   }
 
-  let r: test.TestRunner = test.new("bloom");
+  let r = test.new("bloom");
   r = r.it("no false negatives", test_no_false_negatives);
   r = r.it("empty filter contains nothing", test_empty_filter_contains_nothing);
   r = r.it("popcount agrees with a manual count", test_popcount_agrees_with_a_manual_count);

@@ -41,7 +41,7 @@ function test_at_i32_out_of_bounds_high(): test.TestOutcome {
 }
 
 function test_at_i32_out_of_bounds_negative(): test.TestOutcome {
-  match (test.assert_at([10, 20, 30], 0 - 1, 0)) {
+  match (test.assert_at([10, 20, 30], -1, 0)) {
     Pass => {
       return test.fail("negative OOB should fail");
     },

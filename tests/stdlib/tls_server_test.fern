@@ -127,7 +127,7 @@ function key_outcome(r: Result[identity.PrivateKey, identity.KeyError]): string 
 }
 
 function test_keys(): test.TestOutcome {
-  let pkcs8: string = key_outcome(identity.private_key_from_pem(P256_PKCS8));
+  let pkcs8 = key_outcome(identity.private_key_from_pem(P256_PKCS8));
   if (pkcs8 != "ec 0451a7580833898ea1b1") {
     return test.fail("P-256 PKCS #8: " + pkcs8);
   }
@@ -159,7 +159,7 @@ function test_key_refusals(): test.TestOutcome {
   if (key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])) != "tls identity: malformed ECPrivateKey") {
     return test.fail("sec1: " + key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])));
   }
-  let zero_scalar: u8[] = __codec_bytes(hex.decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107"));
+  let zero_scalar = __codec_bytes(hex.decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107"));
   return test.assert_eq(key_outcome(identity.sec1(zero_scalar)), "tls identity: ecdsa: the private scalar is not in [1, n) at the curve's size");
 }
 
@@ -280,23 +280,23 @@ function connect(cc: client.Config, sc: server.Config): Result[Pair, string] {
 }
 
 function connect_at(cc: client.Config, sc: server.Config, now: i64): Result[Pair, string] {
-  let c0: client.Step = started(cc)?;
-  let s0: server.Session = listening(sc)?;
-  let s1: server.Step = srd_at(s0, c0.output, now)?;
-  let c1: client.Step = crd(c0.session, s1.output)?;
-  let s2: server.Step = srd_at(s1.session, c1.output, now)?;
+  let c0 = started(cc)?;
+  let s0 = listening(sc)?;
+  let s1 = srd_at(s0, c0.output, now)?;
+  let c1 = crd(c0.session, s1.output)?;
+  let s2 = srd_at(s1.session, c1.output, now)?;
   if (!c1.session.connected() || !s2.session.connected()) {
     return Err("not connected");
   }
-  let c2: client.Step = crd(c1.session, s2.output)?;
+  let c2 = crd(c1.session, s2.output)?;
   return Ok(Pair { client: c2.session, server: s2.session, tickets: c2.tickets });
 }
 
 function exchange(p: Pair): Result[string, string] {
-  let cw: client.Step = cwrite(p.client, "ping")?;
-  let sr: server.Step = srd(p.server, cw.output)?;
-  let sw: server.Step = swrite(sr.session, "pong")?;
-  let cr: client.Step = crd(cw.session, sw.output)?;
+  let cw = cwrite(p.client, "ping")?;
+  let sr = srd(p.server, cw.output)?;
+  let sw = swrite(sr.session, "pong")?;
+  let cr = crd(cw.session, sw.output)?;
   return Ok(string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data));
 }
 
@@ -325,8 +325,8 @@ function swrite(s: server.Session, text: string): Result[server.Step, string] {
 }
 
 function served(leaf: string, key_pem: string): string {
-  let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
-  let sc: server.Config = server.config(identity_of(leaf, key_pem), rand.bytes(32)).with_alpn(["http/1.1"]);
+  let cc = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
+  let sc = server.config(identity_of(leaf, key_pem), rand.bytes(32)).with_alpn(["http/1.1"]);
   match (connect(cc, sc)) {
     Ok(p) => {
       match (exchange(p)) {
@@ -346,7 +346,7 @@ function served(leaf: string, key_pem: string): string {
 }
 
 function test_leaves(): test.TestOutcome {
-  let want: string = "tls.example http/1.1 http/1.1 ping pong";
+  let want = "tls.example http/1.1 http/1.1 ping pong";
   if (served(ED_LEAF, ED_PKCS8) != want) {
     return test.fail("Ed25519: " + served(ED_LEAF, ED_PKCS8));
   }
@@ -369,7 +369,7 @@ function outcome(r: Result[Pair, string]): string {
 }
 
 function test_names_and_protocols(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32));
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32));
   if (outcome(connect(client.config("192.0.2.7", roots()), sc)) != "connected [] []") {
     return test.fail("an address: " + outcome(connect(client.config("192.0.2.7", roots()), sc)));
   }
@@ -388,9 +388,9 @@ function test_names_and_protocols(): test.TestOutcome {
 }
 
 function refusal_alert(cc: client.Config, sc: server.Config): Result[string, string] {
-  let c0: client.Step = started(cc)?;
-  let s0: server.Session = listening(sc)?;
-  let s1: server.Step = srd(s0, c0.output)?;
+  let c0 = started(cc)?;
+  let s0 = listening(sc)?;
+  let s1 = srd(s0, c0.output)?;
   match (c0.session.read(s1.output, time.timestamp_from_unix_millis(WALL_MS))) {
     Ok(step) => {
       return Ok("client: accepted");
@@ -410,8 +410,8 @@ function refusal_alert(cc: client.Config, sc: server.Config): Result[string, str
 }
 
 function test_no_common_scheme(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
-  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("tls.example"), schemes: [0x0804] };
+  let sc = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
+  let cc = handshake.ClientConfig { ...handshake.client_config("tls.example"), schemes: [0x0804] };
   match (handshake.client_start(cc, rand.bytes(handshake.client_entropy(cc)))) {
     Ok(c0) => {
       match (server.start(sc, rand.bytes(server.entropy(sc)))) {
@@ -438,8 +438,8 @@ function test_no_common_scheme(): test.TestOutcome {
 }
 
 function test_wrong_key(): test.TestOutcome {
-  let id: identity.Identity = identity.Identity { chain: [__codec_bytes(hex.decode(P256_LEAF))], key: identity_of(P384_LEAF, P384_PKCS8).key };
-  let cc: client.Config = client.config("tls.example", roots());
+  let id = identity.Identity { chain: [__codec_bytes(hex.decode(P256_LEAF))], key: identity_of(P384_LEAF, P384_PKCS8).key };
+  let cc = client.config("tls.example", roots());
   match (connect(cc, server.config(id, rand.bytes(32)))) {
     Ok(p) => {
       return test.fail("connected");
@@ -490,21 +490,21 @@ function test_records_across_reads(): test.TestOutcome {
 }
 
 function records_across(p: Pair): Result[string, string] {
-  let a: client.Step = cwrite(p.client, "one")?;
-  let b: client.Step = cwrite(a.session, "two")?;
-  let c: client.Step = cwrite(b.session, "three")?;
-  let all: u8[] = a.output.concat(b.output).concat(c.output);
-  let cut: i32 = a.output.len() + b.output.len() + 4;
-  let first: server.Step = srd(p.server, __first(all, cut))?;
-  let second: server.Step = srd(first.session, __bytes_range(all, cut, all.len()))?;
+  let a = cwrite(p.client, "one")?;
+  let b = cwrite(a.session, "two")?;
+  let c = cwrite(b.session, "three")?;
+  let all = a.output.concat(b.output).concat(c.output);
+  let cut = a.output.len() + b.output.len() + 4;
+  let first = srd(p.server, __first(all, cut))?;
+  let second = srd(first.session, __bytes_range(all, cut, all.len()))?;
   return Ok(string_from_bytes_unchecked(first.data) + "|" + string_from_bytes_unchecked(second.data));
 }
 
 function close_both(p: Pair): Result[string, string] {
-  let sc: server.Step = sclose(p.server)?;
-  let seen: client.Step = crd(p.client, sc.output)?;
-  let cc: client.Step = cclose(p.client)?;
-  let sr: server.Step = srd(p.server, cc.output)?;
+  let sc = sclose(p.server)?;
+  let seen = crd(p.client, sc.output)?;
+  let cc = cclose(p.client)?;
+  let sr = srd(p.server, cc.output)?;
   if (seen.closed && sr.closed) {
     return Ok("both");
   }
@@ -538,7 +538,7 @@ function cclose(s: client.Session): Result[client.Step, string] {
 function how(r: Result[Pair, string]): string {
   match (r) {
     Ok(p) => {
-      let mode: string = "full";
+      let mode = "full";
       if (p.client.resumed() && p.server.resumed()) {
         mode = "resumed";
       } else if (p.client.resumed() || p.server.resumed()) {
@@ -561,9 +561,9 @@ function how(r: Result[Pair, string]): string {
 }
 
 function test_resumption(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_alpn(["http/1.1"]);
-  let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
-  let t: client.Ticket = client.Ticket { identity: [], psk: [], suite: 0, lifetime: time.DURATION_ZERO, age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "" };
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_alpn(["http/1.1"]);
+  let cc = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
+  let t = client.Ticket { identity: [], psk: [], suite: 0, lifetime: time.DURATION_ZERO, age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "" };
   match (connect(cc, sc)) {
     Ok(p) => {
       if (p.tickets.len() != 1 || p.client.resumed()) {
@@ -578,7 +578,7 @@ function test_resumption(): test.TestOutcome {
   if (how(connect(cc.with_ticket(t), sc)) != "resumed ping pong 1") {
     return test.fail("resumed: " + how(connect(cc.with_ticket(t), sc)));
   }
-  let other: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), __codec_bytes(hex.decode("0000000000000000000000000000000000000000000000000000000000000000"))).with_alpn(["http/1.1"]);
+  let other = server.config(identity_of(ED_LEAF, ED_PKCS8), __codec_bytes(hex.decode("0000000000000000000000000000000000000000000000000000000000000000"))).with_alpn(["http/1.1"]);
   if (how(connect(cc.with_ticket(t), other)) != "full ping pong 1") {
     return test.fail("another key: " + how(connect(cc.with_ticket(t), other)));
   }
@@ -601,7 +601,7 @@ function test_resumption(): test.TestOutcome {
 
 function drawn(n: i32, seed: i64): u8[] {
   let out: u8[] = [];
-  let x: i64 = seed;
+  let x = seed;
   while (out.len() < n) {
     x = x * (1103515245 as i64) + 12345 as i64 & 0x7fffffff as i64;
     out = out.append((x >> 16 as i64 & 255 as i64) as u8);
@@ -610,28 +610,28 @@ function drawn(n: i32, seed: i64): u8[] {
 }
 
 function replayed(seed: i64): Result[string, string] {
-  let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), drawn(32, 1 as i64)).with_alpn(["http/1.1"]);
-  let c0: client.Step = started_with(cc, drawn(client.entropy(cc), seed))?;
-  let s0: server.Session = listening_with(sc, drawn(server.entropy(sc), seed + 1 as i64))?;
-  let s1: server.Step = srd(s0, c0.output)?;
-  let c1: client.Step = crd(c0.session, s1.output)?;
-  let s2: server.Step = srd(s1.session, c1.output)?;
-  let c2: client.Step = crd(c1.session, s2.output)?;
+  let cc = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), drawn(32, 1 as i64)).with_alpn(["http/1.1"]);
+  let c0 = started_with(cc, drawn(client.entropy(cc), seed))?;
+  let s0 = listening_with(sc, drawn(server.entropy(sc), seed + 1 as i64))?;
+  let s1 = srd(s0, c0.output)?;
+  let c1 = crd(c0.session, s1.output)?;
+  let s2 = srd(s1.session, c1.output)?;
+  let c2 = crd(c1.session, s2.output)?;
   if (c2.tickets.len() != 1) {
     return Err("tickets: " + c2.tickets.len().to_string());
   }
-  let cw: client.Step = cwrite(c2.session, "ping")?;
-  let sr: server.Step = srd(s2.session, cw.output)?;
-  let sw: server.Step = swrite(sr.session, "pong")?;
-  let wire: u8[] = c0.output.concat(s1.output).concat(c1.output).concat(s2.output).concat(cw.output).concat(sw.output).concat(c2.tickets[0].identity);
+  let cw = cwrite(c2.session, "ping")?;
+  let sr = srd(s2.session, cw.output)?;
+  let sw = swrite(sr.session, "pong")?;
+  let wire = c0.output.concat(s1.output).concat(c1.output).concat(s2.output).concat(cw.output).concat(sw.output).concat(c2.tickets[0].identity);
   return Ok(hex.encode(crypto.sha256_new().update(wire).finish()));
 }
 
 function short_entropy(): string {
-  let cc: client.Config = client.config("tls.example", roots());
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), drawn(32, 1 as i64));
-  let said: string = "";
+  let cc = client.config("tls.example", roots());
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), drawn(32, 1 as i64));
+  let said = "";
   match (started_with(cc, drawn(client.entropy(cc) - 1, 1 as i64))) {
     Ok(_) => {
       said = "client started";
@@ -652,7 +652,7 @@ function short_entropy(): string {
 }
 
 function test_fixed_entropy(): test.TestOutcome {
-  let first: string = "";
+  let first = "";
   match (replayed(7 as i64)) {
     Ok(h) => {
       first = h;
@@ -762,19 +762,19 @@ function refused_with(cc: client.Config, sc: server.Config): string {
 }
 
 function test_client_signature_refused(): test.TestOutcome {
-  let cc: client.Config = client.config("tls.example", roots());
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
-  let other_ed: identity.Identity = identity.Identity { ...identity_of(ED_LEAF, ED_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
+  let cc = client.config("tls.example", roots());
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
+  let other_ed = identity.Identity { ...identity_of(ED_LEAF, ED_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
   if (refused_with(cc.with_identity(other_ed), sc) != "server: the peer's CertificateVerify does not verify / client: tls handshake: the peer sent alert 51") {
     return test.fail("another key: " + refused_with(cc.with_identity(other_ed), sc));
   }
-  let p256: identity.Identity = identity.Identity { ...identity_of(P256_LEAF, P256_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
+  let p256 = identity.Identity { ...identity_of(P256_LEAF, P256_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
   return test.assert_eq(refused_with(cc.with_identity(p256), sc), "server: the peer's CertificateVerify names a scheme its key cannot make / client: tls handshake: the peer sent alert 47");
 }
 
 function test_client_certificate(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
-  let cc: client.Config = client.config("tls.example", roots());
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
+  let cc = client.config("tls.example", roots());
   if (presented(cc.with_identity(client_identity(CLIENT_LEAF)), sc) != "ping pong chain 1") {
     return test.fail("trusted: " + presented(cc.with_identity(client_identity(CLIENT_LEAF)), sc));
   }
@@ -794,8 +794,8 @@ function test_client_certificate(): test.TestOutcome {
 }
 
 function test_client_certificate_validity(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
-  let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
+  let cc = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
   if (presented_at(cc, sc, NOT_BEFORE_MS - 1000) != "server: the peer's certificate is not trusted: tls verify: certificate 0 is not yet valid") {
     return test.fail("before notBefore: " + presented_at(cc, sc, NOT_BEFORE_MS - 1000));
   }
@@ -853,8 +853,8 @@ function client_refusal(cc: client.Config, sc: server.Config): string {
 }
 
 function test_client_certificate_resumed(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
-  let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
+  let sc = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
+  let cc = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
   match (connect(cc, sc)) {
     Ok(p) => {
       if (p.tickets.len() != 1) {
@@ -913,19 +913,19 @@ function cupdate(s: client.Session, request: boolean): Result[client.Step, strin
 }
 
 function updated(p: Pair): Result[string, string] {
-  let su: server.Step = supdate(p.server, true)?;
-  let ca: client.Step = crd(p.client, su.output)?;
+  let su = supdate(p.server, true)?;
+  let ca = crd(p.client, su.output)?;
   if (ca.output.len() == 0) {
     return Err("the client did not answer the request");
   }
-  let sa: server.Step = srd(su.session, ca.output)?;
-  let first: string = exchange(Pair { ...p, client: ca.session, server: sa.session })?;
-  let cu: client.Step = cupdate(ca.session, false)?;
-  let sb: server.Step = srd(sa.session, cu.output)?;
+  let sa = srd(su.session, ca.output)?;
+  let first = exchange(Pair { ...p, client: ca.session, server: sa.session })?;
+  let cu = cupdate(ca.session, false)?;
+  let sb = srd(sa.session, cu.output)?;
   if (sb.output.len() != 0) {
     return Err("the server answered an update not asked for");
   }
-  let second: string = exchange(Pair { ...p, client: cu.session, server: sb.session })?;
+  let second = exchange(Pair { ...p, client: cu.session, server: sb.session })?;
   return Ok(first + " / " + second);
 }
 
@@ -949,12 +949,12 @@ function test_offload(): test.TestOutcome {
 }
 
 function bytes_text(b: u8[]): string {
-  let out: string = "";
+  let out = "";
   for x in b {
     if (out.len() > 0) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + (x as i32).to_string();
+    out += (x as i32).to_string();
   }
   return out;
 }
@@ -963,55 +963,55 @@ function same(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function offloaded(p: Pair): Result[string, string] {
-  let partial: client.Step = cwrite(p.client, "x")?;
-  let half: server.Step = srd(p.server, __first(partial.output, 3))?;
-  let refused: string = "";
+  let partial = cwrite(p.client, "x")?;
+  let half = srd(p.server, __first(partial.output, 3))?;
+  let refused = "";
   if let None = half.session.offload() {
     refused = "refused";
   }
-  let so: server.Offloaded = __some_server(p.server.offload())?;
-  let co: client.Offloaded = __some_client(p.client.offload())?;
+  let so = __some_server(p.server.offload())?;
+  let co = __some_client(p.client.offload())?;
   if (!same(so.keys.transmit, co.keys.receive) || !same(so.keys.receive, co.keys.transmit) || so.keys.transmit.len() < 40 || so.keys.transmit[0] != 4 as u8) {
     return Err("the keys do not meet");
   }
   if let None = so.session.offload() {
-    refused = refused + " twice";
+    refused += " twice";
   }
-  let sw: server.Step = swrite(so.session, "hi")?;
-  let cr: client.Step = crd(co.session, sw.output)?;
-  let su: server.Step = supdate(sw.session, true)?;
+  let sw = swrite(so.session, "hi")?;
+  let cr = crd(co.session, sw.output)?;
+  let su = supdate(sw.session, true)?;
   if (su.rekeyed.transmit.len() == 0 || su.rekeyed.receive.len() != 0 || su.output[0] != 22 as u8) {
     return Err("the server's update reported no transmit key");
   }
-  let ca: client.Step = crd(cr.session, su.output)?;
+  let ca = crd(cr.session, su.output)?;
   if (!same(ca.rekeyed.receive, su.rekeyed.transmit) || ca.rekeyed.transmit.len() == 0) {
     return Err("the client's keys do not follow the update");
   }
-  let sa: server.Step = srd(su.session, ca.output)?;
+  let sa = srd(su.session, ca.output)?;
   if (!same(sa.rekeyed.receive, ca.rekeyed.transmit)) {
     return Err("the server's receive key does not follow the client's answer");
   }
-  let sc: server.Step = sclose(sa.session)?;
+  let sc = sclose(sa.session)?;
   return Ok("keys meet / " + bytes_text(sw.output) + " / " + string_from_bytes_unchecked(cr.data) + " / rekeyed both ends / " + bytes_text(sc.output) + " / " + refused);
 }
 
 function __first(b: u8[], n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n && i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1041,7 +1041,7 @@ function __some_client(o: Option[client.Offloaded]): Result[client.Offloaded, st
 }
 
 function test_start_is_a_step(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
+  let sc = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
   match (server.start(sc, rand.bytes(server.entropy(sc)))) {
     Ok(step) => {
       return test.assert_eq(step.output.len().to_string() + " " + step.data.len().to_string() + " " + step.closed.to_string(), "0 0 false");
@@ -1054,7 +1054,7 @@ function test_start_is_a_step(): test.TestOutcome {
 }
 
 function test_start_refuses_short_entropy(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
+  let sc = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
   match (server.start(sc, rand.bytes(3))) {
     Ok(_) => {
       return test.fail("started");
@@ -1067,7 +1067,7 @@ function test_start_refuses_short_entropy(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/server");
+  let r = test.new("std/tls/server");
   r = r.it("start gives a Step with no output", test_start_is_a_step);
   r = r.it("start refuses short entropy", test_start_refuses_short_entropy);
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);

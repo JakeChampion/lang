@@ -7,25 +7,25 @@ function is_blank(c: u8): boolean {
 }
 
 function spaces(n: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < n) {
-    out = out + " ";
-    i = i + 1;
+    out += " ";
+    i += 1;
   }
   return out;
 }
 
 function words_of(text: string): string[] {
   let out: string[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < text.len()) {
     while (at < text.len() && is_blank(text[at])) {
-      at = at + 1;
+      at += 1;
     }
-    let start: i32 = at;
+    let start = at;
     while (at < text.len() && !is_blank(text[at])) {
-      at = at + 1;
+      at += 1;
     }
     if (at > start) {
       out = out.append(slice_unchecked(text, start, at).to_owned());
@@ -39,79 +39,79 @@ function wrap(words: string[], width: i32): i32[] {
   if (words.len() == 0) {
     return breaks;
   }
-  let used: i32 = words[0].len();
-  let i: i32 = 1;
+  let used = words[0].len();
+  let i = 1;
   while (i < words.len()) {
-    let w: i32 = words[i].len();
+    let w = words[i].len();
     if (used + 1 + w <= width) {
       used = used + 1 + w;
     } else {
       breaks = breaks.append(i);
       used = w;
     }
-    i = i + 1;
+    i += 1;
   }
   return breaks;
 }
 
 function justify_line(words: string[], from: i32, to: i32, width: i32, last: boolean): string {
-  let count: i32 = to - from;
+  let count = to - from;
   if (count == 0) {
     return "";
   }
 
-  let letters: i32 = 0;
-  let i: i32 = from;
+  let letters = 0;
+  let i = from;
   while (i < to) {
-    letters = letters + words[i].len();
-    i = i + 1;
+    letters += words[i].len();
+    i += 1;
   }
 
   if (count == 1 || last) {
-    let out: string = words[from].to_owned();
-    let k: i32 = from + 1;
+    let out = words[from].to_owned();
+    let k = from + 1;
     while (k < to) {
       out = out + " " + words[k];
-      k = k + 1;
+      k += 1;
     }
     return out;
   }
 
-  let gaps: i32 = count - 1;
-  let total: i32 = width - letters;
+  let gaps = count - 1;
+  let total = width - letters;
   if (total < gaps) {
     total = gaps;
   }
-  let base: i32 = total / gaps;
-  let extra: i32 = total - base * gaps;
+  let base = total / gaps;
+  let extra = total - base * gaps;
 
-  let line: string = words[from].to_owned();
-  let g: i32 = 0;
+  let line = words[from].to_owned();
+  let g = 0;
   while (g < gaps) {
-    let pad: i32 = base;
+    let pad = base;
     if (g < extra) {
       pad = base + 1;
     }
     line = line + spaces(pad) + words[from + 1 + g];
-    g = g + 1;
+    g += 1;
   }
   return line;
 }
 
 function layout(text: string, width: i32): string[] {
-  let words: string[] = words_of(text);
+  let words = words_of(text);
   if (words.len() == 0) {
     return [];
   }
-  let breaks: i32[] = wrap(words, width);
+  let breaks = wrap(words, width);
 
   let lines: string[] = [];
-  let start: i32 = 0;
-  let b: i32 = 0;
+  let start = 0;
+  let b = 0;
   while (b < breaks.len()) {
     lines = lines.append(justify_line(words, start, breaks[b], width, false));
     start = breaks[b];
-    b = b + 1;
+    b += 1;
   }
   lines = lines.append(justify_line(words, start, words.len(), width, true));
   return lines;
@@ -119,35 +119,35 @@ function layout(text: string, width: i32): string[] {
 
 function gaps_of(line: string): i32[] {
   let out: i32[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < line.len() && line[at] != 32) {
-    at = at + 1;
+    at += 1;
   }
   while (at < line.len()) {
-    let run: i32 = 0;
+    let run = 0;
     while (at < line.len() && line[at] == 32) {
-      run = run + 1;
-      at = at + 1;
+      run += 1;
+      at += 1;
     }
     if (run > 0) {
       out = out.append(run);
     }
     while (at < line.len() && line[at] != 32) {
-      at = at + 1;
+      at += 1;
     }
   }
   return out;
 }
 
 function join_words(ws: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < ws.len()) {
     if (i > 0) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + ws[i];
-    i = i + 1;
+    out += ws[i];
+    i += 1;
   }
   return out;
 }
@@ -169,47 +169,47 @@ function widths(): i32[] {
 }
 
 function test_every_full_line_is_exactly_the_width(): test.TestOutcome {
-  let ps: string[] = paragraphs();
-  let ws: i32[] = widths();
-  let wi: i32 = 0;
+  let ps = paragraphs();
+  let ws = widths();
+  let wi = 0;
   while (wi < ws.len()) {
-    let width: i32 = ws[wi];
-    let pi: i32 = 0;
+    let width = ws[wi];
+    let pi = 0;
     while (pi < ps.len()) {
-      let lines: string[] = layout(ps[pi], width);
-      let i: i32 = 0;
+      let lines = layout(ps[pi], width);
+      let i = 0;
       while (i + 1 < lines.len()) {
-        let line: string = lines[i];
+        let line = lines[i];
         if (gaps_of(line).len() > 0 && line.len() != width) {
           return test.fail("width=" + width.to_string() + " para " + pi.to_string()
             + " line " + i.to_string() + " is " + line.len().to_string()
             + " wide: `" + line + "`");
         }
-        i = i + 1;
+        i += 1;
       }
-      pi = pi + 1;
+      pi += 1;
     }
-    wi = wi + 1;
+    wi += 1;
   }
   return test.pass();
 }
 
 function test_gaps_on_a_line_differ_by_at_most_one(): test.TestOutcome {
-  let ps: string[] = paragraphs();
-  let ws: i32[] = widths();
-  let wi: i32 = 0;
+  let ps = paragraphs();
+  let ws = widths();
+  let wi = 0;
   while (wi < ws.len()) {
-    let width: i32 = ws[wi];
-    let pi: i32 = 0;
+    let width = ws[wi];
+    let pi = 0;
     while (pi < ps.len()) {
-      let lines: string[] = layout(ps[pi], width);
-      let i: i32 = 0;
+      let lines = layout(ps[pi], width);
+      let i = 0;
       while (i < lines.len()) {
-        let gs: i32[] = gaps_of(lines[i]);
+        let gs = gaps_of(lines[i]);
         if (gs.len() > 0) {
-          let lo: i32 = gs[0];
-          let hi: i32 = gs[0];
-          let g: i32 = 1;
+          let lo = gs[0];
+          let hi = gs[0];
+          let g = 1;
           while (g < gs.len()) {
             if (gs[g] < lo) {
               lo = gs[g];
@@ -217,7 +217,7 @@ function test_gaps_on_a_line_differ_by_at_most_one(): test.TestOutcome {
             if (gs[g] > hi) {
               hi = gs[g];
             }
-            g = g + 1;
+            g += 1;
           }
           if (hi - lo > 1) {
             return test.fail("width=" + width.to_string() + " para " + pi.to_string()
@@ -225,28 +225,28 @@ function test_gaps_on_a_line_differ_by_at_most_one(): test.TestOutcome {
               + " to " + hi.to_string() + ": `" + lines[i] + "`");
           }
         }
-        i = i + 1;
+        i += 1;
       }
-      pi = pi + 1;
+      pi += 1;
     }
-    wi = wi + 1;
+    wi += 1;
   }
   return test.pass();
 }
 
 function test_the_wider_gaps_come_first(): test.TestOutcome {
-  let ps: string[] = paragraphs();
-  let ws: i32[] = widths();
-  let wi: i32 = 0;
+  let ps = paragraphs();
+  let ws = widths();
+  let wi = 0;
   while (wi < ws.len()) {
-    let width: i32 = ws[wi];
-    let pi: i32 = 0;
+    let width = ws[wi];
+    let pi = 0;
     while (pi < ps.len()) {
-      let lines: string[] = layout(ps[pi], width);
-      let i: i32 = 0;
+      let lines = layout(ps[pi], width);
+      let i = 0;
       while (i < lines.len()) {
-        let gs: i32[] = gaps_of(lines[i]);
-        let g: i32 = 1;
+        let gs = gaps_of(lines[i]);
+        let g = 1;
         while (g < gs.len()) {
           if (gs[g] > gs[g - 1]) {
             return test.fail("width=" + width.to_string() + " para " + pi.to_string()
@@ -254,95 +254,95 @@ function test_the_wider_gaps_come_first(): test.TestOutcome {
               + gs[g].to_string() + ", wider than the one before it ("
               + gs[g - 1].to_string() + "): `" + lines[i] + "`");
           }
-          g = g + 1;
+          g += 1;
         }
-        i = i + 1;
+        i += 1;
       }
-      pi = pi + 1;
+      pi += 1;
     }
-    wi = wi + 1;
+    wi += 1;
   }
   return test.pass();
 }
 
 function test_the_words_survive_unchanged(): test.TestOutcome {
-  let ps: string[] = paragraphs();
-  let ws: i32[] = widths();
-  let wi: i32 = 0;
+  let ps = paragraphs();
+  let ws = widths();
+  let wi = 0;
   while (wi < ws.len()) {
-    let width: i32 = ws[wi];
-    let pi: i32 = 0;
+    let width = ws[wi];
+    let pi = 0;
     while (pi < ps.len()) {
-      let want: string[] = words_of(ps[pi]);
-      let lines: string[] = layout(ps[pi], width);
-      let got: string[] = words_of(join_words(lines));
+      let want = words_of(ps[pi]);
+      let lines = layout(ps[pi], width);
+      let got = words_of(join_words(lines));
       if (got.len() != want.len()) {
         return test.fail("width=" + width.to_string() + " para " + pi.to_string()
           + ": " + want.len().to_string() + " words in, " + got.len().to_string()
           + " out");
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < want.len()) {
         if (got[i] != want[i]) {
           return test.fail("width=" + width.to_string() + " para " + pi.to_string()
             + " word " + i.to_string() + ": `" + got[i] + "`, want `" + want[i] + "`");
         }
-        i = i + 1;
+        i += 1;
       }
-      pi = pi + 1;
+      pi += 1;
     }
-    wi = wi + 1;
+    wi += 1;
   }
   return test.pass();
 }
 
 function test_the_last_line_is_not_stretched(): test.TestOutcome {
-  let ps: string[] = paragraphs();
-  let ws: i32[] = widths();
-  let wi: i32 = 0;
+  let ps = paragraphs();
+  let ws = widths();
+  let wi = 0;
   while (wi < ws.len()) {
-    let width: i32 = ws[wi];
-    let pi: i32 = 0;
+    let width = ws[wi];
+    let pi = 0;
     while (pi < ps.len()) {
-      let lines: string[] = layout(ps[pi], width);
+      let lines = layout(ps[pi], width);
       if (lines.len() == 0) {
-        pi = pi + 1;
+        pi += 1;
         continue;
       }
-      let last: string = lines[lines.len() - 1];
-      let gs: i32[] = gaps_of(last);
-      let g: i32 = 0;
+      let last = lines[lines.len() - 1];
+      let gs = gaps_of(last);
+      let g = 0;
       while (g < gs.len()) {
         if (gs[g] != 1) {
           return test.fail("width=" + width.to_string() + " para " + pi.to_string()
             + ": the last line has a gap of " + gs[g].to_string() + ": `" + last + "`");
         }
-        g = g + 1;
+        g += 1;
       }
       if (last.len() > 0 && last[last.len() - 1] == 32) {
         return test.fail("width=" + width.to_string() + " para " + pi.to_string()
           + ": the last line is padded on the right: `" + last + "`");
       }
-      pi = pi + 1;
+      pi += 1;
     }
-    wi = wi + 1;
+    wi += 1;
   }
   return test.pass();
 }
 
 function test_a_lone_word_is_not_padded(): test.TestOutcome {
-  let lines: string[] = layout("antidisestablishmentarianism is long", 12);
-  let i: i32 = 0;
+  let lines = layout("antidisestablishmentarianism is long", 12);
+  let i = 0;
   while (i < lines.len()) {
-    let gs: i32[] = gaps_of(lines[i]);
+    let gs = gaps_of(lines[i]);
     if (gs.len() == 0) {
       if (lines[i].contains(" ")) {
         return test.fail("a lone word carries padding: `" + lines[i] + "`");
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  let solo: string[] = layout("singleword", 20);
+  let solo = layout("singleword", 20);
   if (solo.len() != 1) {
     return test.fail("one word should be one line");
   }
@@ -353,39 +353,39 @@ function test_a_lone_word_is_not_padded(): test.TestOutcome {
 }
 
 function test_the_wrap_is_greedy(): test.TestOutcome {
-  let ps: string[] = paragraphs();
-  let ws: i32[] = widths();
-  let wi: i32 = 0;
+  let ps = paragraphs();
+  let ws = widths();
+  let wi = 0;
   while (wi < ws.len()) {
-    let width: i32 = ws[wi];
-    let pi: i32 = 0;
+    let width = ws[wi];
+    let pi = 0;
     while (pi < ps.len()) {
-      let words: string[] = words_of(ps[pi]);
-      let breaks: i32[] = wrap(words, width);
-      let start: i32 = 0;
-      let b: i32 = 0;
+      let words = words_of(ps[pi]);
+      let breaks = wrap(words, width);
+      let start = 0;
+      let b = 0;
       while (b < breaks.len()) {
-        let used: i32 = 0;
-        let k: i32 = start;
+        let used = 0;
+        let k = start;
         while (k < breaks[b]) {
           if (k > start) {
-            used = used + 1;
+            used += 1;
           }
-          used = used + words[k].len();
-          k = k + 1;
+          used += words[k].len();
+          k += 1;
         }
-        let next_len: i32 = words[breaks[b]].len();
+        let next_len = words[breaks[b]].len();
         if (used + 1 + next_len <= width) {
           return test.fail("width=" + width.to_string() + " para " + pi.to_string()
             + ": broke before `" + words[breaks[b]] + "` but it would have fitted ("
             + used.to_string() + " + 1 + " + next_len.to_string() + ")");
         }
         start = breaks[b];
-        b = b + 1;
+        b += 1;
       }
-      pi = pi + 1;
+      pi += 1;
     }
-    wi = wi + 1;
+    wi += 1;
   }
   return test.pass();
 }
@@ -398,21 +398,21 @@ function test_degenerate_inputs(): test.TestOutcome {
     return test.fail("whitespace-only text produced lines");
   }
 
-  let big: string[] = layout("tiny enormouslylongword tiny", 8);
-  let found: boolean = false;
-  let i: i32 = 0;
+  let big = layout("tiny enormouslylongword tiny", 8);
+  let found = false;
+  let i = 0;
   while (i < big.len()) {
     if (big[i] == "enormouslylongword") {
       found = true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (!found) {
     return test.fail("an over-wide word was split or padded rather than left alone");
   }
 
-  let all_big: string[] = layout("alpha bravo charlie", 3);
-  let got: string[] = words_of(join_words(all_big));
+  let all_big = layout("alpha bravo charlie", 3);
+  let got = words_of(join_words(all_big));
   if (got.len() != 3) {
     return test.fail("width smaller than every word lost some: got "
       + got.len().to_string() + " of 3");
@@ -423,29 +423,29 @@ function test_degenerate_inputs(): test.TestOutcome {
 function main(): i32 {
   eprint("justify — wrap, then pad the gaps evenly");
 
-  let text: string = "the quick brown fox jumps over the lazy dog and keeps on running";
-  let lines: string[] = layout(text, 20);
+  let text = "the quick brown fox jumps over the lazy dog and keeps on running";
+  let lines = layout(text, 20);
   eprint("  width 20:");
-  let i: i32 = 0;
+  let i = 0;
   while (i < lines.len()) {
     eprint("  |" + lines[i] + "|  (" + lines[i].len().to_string() + ")");
-    i = i + 1;
+    i += 1;
   }
-  let narrow: string[] = layout(text, 12);
+  let narrow = layout(text, 12);
   eprint("  width 12 gives " + narrow.len().to_string() + " lines");
-  let gs: i32[] = gaps_of(lines[0]);
-  let shown: string = "";
-  let g: i32 = 0;
+  let gs = gaps_of(lines[0]);
+  let shown = "";
+  let g = 0;
   while (g < gs.len()) {
     if (g > 0) {
-      shown = shown + " ";
+      shown += " ";
     }
-    shown = shown + gs[g].to_string();
-    g = g + 1;
+    shown += gs[g].to_string();
+    g += 1;
   }
   eprint("  first line gaps: " + shown);
 
-  let t: test.TestRunner = test.new("justify");
+  let t = test.new("justify");
   t = t.it("every full line is exactly the width", test_every_full_line_is_exactly_the_width);
   t = t.it("gaps on a line differ by at most one", test_gaps_on_a_line_differ_by_at_most_one);
   t = t.it("the wider gaps come first", test_the_wider_gaps_come_first);

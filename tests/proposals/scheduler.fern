@@ -16,21 +16,21 @@ struct Run { name: string, due: i32, started: i32, finished: i32 }
 
 function schedule(t: Task, start: i32, n: i32): Run[] {
   let runs: Run[] = [];
-  let due: i32 = start;
-  let clock: i32 = start;
+  let due = start;
+  let clock = start;
   for k in 0..n {
-    let began: i32 = due;
+    let began = due;
     if (clock > began) {
       began = clock;
     }
-    let ended: i32 = began + t.duration;
+    let ended = began + t.duration;
     runs = runs.append(Run {
       name: t.name, due: due, started: began,
       finished: ended,
     });
     clock = ended;
     if (t.policy == FIXED_RATE()) {
-      due = due + t.interval;
+      due += t.interval;
     } else {
       due = ended + t.interval;
     }
@@ -43,15 +43,15 @@ function drift_of(r: Run): i32 {
 }
 
 function total_drift(runs: Run[]): i32 {
-  let d: i32 = 0;
+  let d = 0;
   for i in 0..runs.len() {
-    d = d + drift_of(runs[i]);
+    d += drift_of(runs[i]);
   }
   return d;
 }
 
 function max_drift(runs: Run[]): i32 {
-  let m: i32 = 0;
+  let m = 0;
   for i in 0..runs.len() {
     if (drift_of(runs[i]) > m) {
       m = drift_of(runs[i]);
@@ -63,14 +63,14 @@ function max_drift(runs: Run[]): i32 {
 function run_all(tasks: Task[], start: i32, n: i32): Run[] {
   let all: Run[] = [];
   for i in 0..tasks.len() {
-    let rs: Run[] = schedule(tasks[i], start, n);
+    let rs = schedule(tasks[i], start, n);
     for k in 0..rs.len() {
       all = all.append(rs[k]);
     }
   }
   let out: Run[] = [];
   for i in 0..all.len() {
-    let at: i32 = out.len();
+    let at = out.len();
     for k in 0..out.len() {
       if (at == out.len() && out[k].due > all[i].due) {
         at = k;
@@ -99,7 +99,7 @@ function tasks(): Task[] {
 }
 
 function find_task(name: string): Task {
-  let ts: Task[] = tasks();
+  let ts = tasks();
   for i in 0..ts.len() {
     if (ts[i].name == name) {
       return ts[i];
@@ -114,9 +114,9 @@ function test_fixed_rate_due_times_never_drift(): test.TestOutcome {
       name: "t", interval: 10, duration: dur,
       policy: FIXED_RATE(),
     };
-    let runs: Run[] = schedule(t, 100, 12);
+    let runs = schedule(t, 100, 12);
     for k in 0..runs.len() {
-      let want: i32 = 100 + k * 10;
+      let want = 100 + k * 10;
       if (runs[k].due != want) {
         return test.fail("duration " + dur.to_string() + ", run "
           + k.to_string() + " due at " + runs[k].due.to_string()
@@ -133,17 +133,17 @@ function test_fixed_delay_adds_the_duration_to_every_period(): test.TestOutcome 
       name: "t", interval: 10, duration: dur,
       policy: FIXED_DELAY(),
     };
-    let runs: Run[] = schedule(t, 100, 8);
+    let runs = schedule(t, 100, 8);
     for k in 0..runs.len() {
-      let want: i32 = 100 + k * (10 + dur);
+      let want = 100 + k * (10 + dur);
       if (runs[k].due != want) {
         return test.fail("duration " + dur.to_string() + ", run "
           + k.to_string() + " due at " + runs[k].due.to_string()
           + ", must be " + want.to_string());
       }
     }
-    let rate: Run[] = schedule(Task { ...t, policy: FIXED_RATE() }, 100, 8);
-    let same: boolean = true;
+    let rate = schedule(Task { ...t, policy: FIXED_RATE() }, 100, 8);
+    let same = true;
     for k in 0..runs.len() {
       if (runs[k].due != rate[k].due) {
         same = false;
@@ -163,8 +163,8 @@ function test_drift_is_bounded_under_rate_and_grows_under_delay(): test.TestOutc
     name: "s", interval: 10, duration: 3,
     policy: FIXED_RATE(),
   };
-  let short: Run[] = schedule(slow, 0, 5);
-  let long: Run[] = schedule(slow, 0, 500);
+  let short = schedule(slow, 0, 5);
+  let long = schedule(slow, 0, 500);
   if (max_drift(short) != max_drift(long)) {
     return test.fail("fixed-rate drift grew with the run count: "
       + max_drift(short).to_string() + " over 5 runs, "
@@ -174,15 +174,15 @@ function test_drift_is_bounded_under_rate_and_grows_under_delay(): test.TestOutc
     return test.fail("fixed-rate drift " + max_drift(long).to_string()
       + " exceeds one task duration (" + slow.duration.to_string() + ")");
   }
-  let drifty: Task = Task { ...slow, policy: FIXED_DELAY() };
-  let d: Run[] = schedule(drifty, 0, 100);
+  let drifty = Task { ...slow, policy: FIXED_DELAY() };
+  let d = schedule(drifty, 0, 100);
   if (total_drift(d) != 0) {
     return test.fail("fixed-delay reported " + total_drift(d).to_string()
       + " drift; it has none by construction — its cost is the period");
   }
-  let rate_runs: Run[] = schedule(slow, 0, 100);
-  let span_rate: i32 = rate_runs[99].due - rate_runs[0].due;
-  let span_delay: i32 = d[99].due - d[0].due;
+  let rate_runs = schedule(slow, 0, 100);
+  let span_rate = rate_runs[99].due - rate_runs[0].due;
+  let span_delay = d[99].due - d[0].due;
   if (span_delay <= span_rate) {
     return test.fail("100 fixed-delay runs spanned " + span_delay.to_string()
       + ", not more than fixed rate's " + span_rate.to_string());
@@ -191,8 +191,8 @@ function test_drift_is_bounded_under_rate_and_grows_under_delay(): test.TestOutc
 }
 
 function test_an_overrunning_task_falls_behind_without_overlapping(): test.TestOutcome {
-  let t: Task = find_task("overrun");
-  let runs: Run[] = schedule(t, 0, 20);
+  let t = find_task("overrun");
+  let runs = schedule(t, 0, 20);
   if (runs.len() != 20) {
     return test.fail("dropped runs: " + runs.len().to_string() + " of 20");
   }
@@ -221,9 +221,9 @@ function test_an_overrunning_task_falls_behind_without_overlapping(): test.TestO
 }
 
 function test_drift_is_never_negative(): test.TestOutcome {
-  let ts: Task[] = tasks();
+  let ts = tasks();
   for i in 0..ts.len() {
-    let runs: Run[] = schedule(ts[i], 7, 50);
+    let runs = schedule(ts[i], 7, 50);
     for k in 0..runs.len() {
       if (drift_of(runs[k]) < 0) {
         return test.fail(ts[i].name + " run " + k.to_string()
@@ -240,8 +240,8 @@ function test_drift_is_never_negative(): test.TestOutcome {
 }
 
 function test_the_merged_timeline_is_ordered_and_deterministic(): test.TestOutcome {
-  let a: Run[] = run_all(tasks(), 0, 6);
-  let b: Run[] = run_all(tasks(), 0, 6);
+  let a = run_all(tasks(), 0, 6);
+  let b = run_all(tasks(), 0, 6);
   if (a.len() != b.len()) {
     return test.fail("two identical runs produced " + a.len().to_string()
       + " and " + b.len().to_string() + " entries");
@@ -260,12 +260,12 @@ function test_the_merged_timeline_is_ordered_and_deterministic(): test.TestOutco
         + a[i].due.to_string());
     }
   }
-  let ts: Task[] = tasks();
+  let ts = tasks();
   for i in 0..ts.len() {
-    let n: i32 = 0;
+    let n = 0;
     for k in 0..a.len() {
       if (a[k].name == ts[i].name) {
-        n = n + 1;
+        n += 1;
       }
     }
     if (n != 6) {
@@ -281,7 +281,7 @@ function test_a_zero_interval_is_back_to_back_not_a_hang(): test.TestOutcome {
     name: "z", interval: 0, duration: 2,
     policy: FIXED_DELAY(),
   };
-  let runs: Run[] = schedule(t, 0, 10);
+  let runs = schedule(t, 0, 10);
   for k in 0..runs.len() {
     if (runs[k].due != k * 2) {
       return test.fail("run " + k.to_string() + " due at "
@@ -289,7 +289,7 @@ function test_a_zero_interval_is_back_to_back_not_a_hang(): test.TestOutcome {
         + (k * 2).to_string());
     }
   }
-  let instant: Run[] = schedule(Task { ...t, duration: 0 }, 5, 10);
+  let instant = schedule(Task { ...t, duration: 0 }, 5, 10);
   if (instant.len() != 10) {
     return test.fail("an instantaneous schedule produced "
       + instant.len().to_string() + " runs");
@@ -304,19 +304,19 @@ function test_a_zero_interval_is_back_to_back_not_a_hang(): test.TestOutcome {
 }
 
 function pad(s: string, w: i32): string {
-  let out: string = s;
+  let out = s;
   for i in s.len()..w {
-    out = out + " ";
+    out += " ";
   }
   return out;
 }
 
 function main(): i32 {
   eprint("scheduler — fixed rate against fixed delay, on a virtual clock");
-  let ts: Task[] = tasks();
+  let ts = tasks();
   for i in 0..ts.len() {
-    let runs: Run[] = schedule(ts[i], 0, 10);
-    let policy: string = "rate ";
+    let runs = schedule(ts[i], 0, 10);
+    let policy = "rate ";
     if (ts[i].policy == FIXED_DELAY()) {
       policy = "delay";
     }
@@ -328,14 +328,14 @@ function main(): i32 {
       + ", max drift " + max_drift(runs).to_string()
       + ", total drift " + total_drift(runs).to_string());
   }
-  let merged: Run[] = run_all(ts, 0, 3);
-  let line: string = "  merged:";
+  let merged = run_all(ts, 0, 3);
+  let line = "  merged:";
   for i in 0..merged.len() {
     line = line + " " + merged[i].name + "@" + merged[i].due.to_string();
   }
   eprint(line);
 
-  let t: test.TestRunner = test.new("scheduler");
+  let t = test.new("scheduler");
   t = t.it("fixed rate due times never drift", test_fixed_rate_due_times_never_drift);
   t = t.it("fixed delay adds the duration to every period", test_fixed_delay_adds_the_duration_to_every_period);
   t = t.it("drift is bounded under rate and grows under delay", test_drift_is_bounded_under_rate_and_grows_under_delay);

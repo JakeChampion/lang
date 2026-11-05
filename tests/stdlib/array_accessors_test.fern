@@ -69,7 +69,7 @@ function test_get_out_of_range(): test.TestOutcome {
 }
 
 function test_get_negative(): test.TestOutcome {
-  match ([10, 20, 30].get(0 - 1)) {
+  match ([10, 20, 30].get(-1)) {
     Some(v) => {
       return test.fail("expected None for negative get");
     },

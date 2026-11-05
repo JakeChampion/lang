@@ -14,7 +14,7 @@ function scan(l: Lx): Res {
 }
 
 function run(src: string): i32 {
-  let l: Lx = Lx { src: src, i: 0 };
+  let l = Lx { src: src, i: 0 };
   let out: Tok[] = [];
   while (l.i < 5) {
     let r = scan(l);
@@ -25,11 +25,11 @@ function run(src: string): i32 {
 }
 
 function main(): i32 {
-  let acc: i32 = 0;
-  let n: i32 = 0;
+  let acc = 0;
+  let n = 0;
   while (n < 100) {
-    acc = acc + run("abcdefgh");
-    n = n + 1;
+    acc += run("abcdefgh");
+    n += 1;
   }
   return acc % 7;
 }

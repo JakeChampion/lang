@@ -7,22 +7,22 @@ struct Report { total: i32, name: string }
 struct Bundle { names: string[], result: Option[(string, Report)] }
 
 function test_spawn_join_scalar(): test.TestOutcome {
-  let n: i32 = 20;
+  let n = 20;
   let w = worker.spawn((): i32 => n + 1);
   return test.assert_eq(w.join().to_string(), "21");
 }
 
 function test_spawn_join_record(): test.TestOutcome {
   let items: i32[] = [1, 2, 3];
-  let label: string = "three";
+  let label = "three";
   let w = worker.spawn((): Report => {
-    let total: i32 = 0;
+    let total = 0;
     for x in items {
-      total = total + x;
+      total += x;
     }
     return Report { total: total, name: label };
   });
-  let r: Report = w.join();
+  let r = w.join();
   if (r.total != 6) {
     return test.fail("total");
   }
@@ -32,8 +32,8 @@ function test_spawn_join_record(): test.TestOutcome {
 function test_two_workers_join_out_of_order(): test.TestOutcome {
   let a = worker.spawn((): string => "first");
   let b = worker.spawn((): string => "second");
-  let second: string = b.join();
-  let first: string = a.join();
+  let second = b.join();
+  let first = a.join();
   return test.assert_eq(first + "," + second, "first,second");
 }
 
@@ -56,10 +56,10 @@ function bundle(n: i32): Bundle {
 
 function test_nested_results_survive_later_joins(): test.TestOutcome {
   let first = worker.spawn((): Bundle => bundle(7));
-  let kept: Bundle = first.join();
+  let kept = first.join();
   for i in 0..32 {
     let next = worker.spawn((): Bundle => bundle(i));
-    let value: Bundle = next.join();
+    let value = next.join();
     if (value.names[0] != "worker-" + i.to_string()) {
       return test.fail("later result");
     }
@@ -85,7 +85,7 @@ function test_nested_worker_result(): test.TestOutcome {
     let inner = worker.spawn((): Bundle => bundle(11));
     return inner.join();
   });
-  let value: Bundle = outer.join();
+  let value = outer.join();
   return test.assert_eq(value.names[0], "worker-11");
 }
 
@@ -100,7 +100,7 @@ function test_map_crosses_both_ways(): test.TestOutcome {
     }
     return out;
   });
-  let doubled: Map[string, Report] = w.join();
+  let doubled = w.join();
   if (doubled.len() != 2 || doubled.get_or("bolt", Report { total: 0, name: "" }).total != 50) {
     return test.fail("doubled map");
   }
@@ -112,9 +112,9 @@ function test_captured_map_is_read_in_the_child(): test.TestOutcome {
   prices = prices.insert("bolt", 25);
   prices = prices.insert("nut", 4);
   let w = worker.spawn((): i32 => {
-    let total: i32 = 0;
+    let total = 0;
     for name in prices.keys() {
-      total = total + prices.get_or(name, 0);
+      total += prices.get_or(name, 0);
     }
     return total;
   });
@@ -123,7 +123,7 @@ function test_captured_map_is_read_in_the_child(): test.TestOutcome {
 
 function twice[T: worker.Send](x: T): (T, T) {
   let w = worker.spawn((): T => x);
-  let y: T = w.join();
+  let y = w.join();
   return (x, y);
 }
 

@@ -19,7 +19,7 @@ function test_base36(): test.TestOutcome {
 }
 
 function test_negative(): test.TestOutcome {
-  return test.assert_true((0 - 26).to_string_radix(16) == "-1a");
+  return test.assert_true((-26).to_string_radix(16) == "-1a");
 }
 
 function test_zero(): test.TestOutcome {

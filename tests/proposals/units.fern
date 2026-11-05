@@ -60,12 +60,12 @@ function dim_str(d: Dim): string {
   if (parts.len() == 0) {
     return "dimensionless";
   }
-  let out: string = "";
+  let out = "";
   for i in 0..parts.len() {
     if (i > 0) {
-      out = out + "·";
+      out += "·";
     }
-    out = out + parts[i];
+    out += parts[i];
   }
   return out;
 }
@@ -94,7 +94,7 @@ function units(): Unit[] {
 }
 
 function find_unit(name: string): Option[Unit] {
-  let us: Unit[] = units();
+  let us = units();
   for i in 0..us.len() {
     if (us[i].name == name) {
       return Some(us[i]);
@@ -139,18 +139,18 @@ function render(q: Quantity): string {
 }
 
 function test_every_unit_round_trips(): test.TestOutcome {
-  let us: Unit[] = units();
+  let us = units();
   let samples: f64[] = [0.0, 1.0, 2.5, 1000.0, 0.001];
   for i in 0..us.len() {
     for k in 0..samples.len() {
-      let v: f64 = samples[k];
-      let q: Quantity = quantity(v, us[i]);
+      let v = samples[k];
+      let q = quantity(v, us[i]);
       match (convert(q, us[i])) {
         Err(e) => {
           return test.fail("round trip refused: " + e);
         },
         Ok(back) => {
-          let tol: f64 = v.abs() * 0.000000001 + 0.000000001;
+          let tol = v.abs() * 0.000000001 + 0.000000001;
           if (!close(back, v, tol)) {
             return test.fail("round trip through " + us[i].name
               + " gave " + back.to_string_prec(9)
@@ -164,13 +164,13 @@ function test_every_unit_round_trips(): test.TestOutcome {
 }
 
 function test_cross_dimension_conversion_is_refused(): test.TestOutcome {
-  let metre: Unit = unit_or_die("m");
-  let kilo: Unit = unit_or_die("kg");
-  let sec: Unit = unit_or_die("s");
+  let metre = unit_or_die("m");
+  let kilo = unit_or_die("kg");
+  let sec = unit_or_die("s");
   let pairs_from: Unit[] = [metre, kilo, sec, metre];
   let pairs_to: Unit[] = [kilo, sec, metre, sec];
   for i in 0..pairs_from.len() {
-    let q: Quantity = quantity(5.0, pairs_from[i]);
+    let q = quantity(5.0, pairs_from[i]);
     match (convert(q, pairs_to[i])) {
       Ok(v) => {
         return test.fail("converted " + pairs_from[i].name + " to "
@@ -198,7 +198,7 @@ function contains(hay: string, needle: string): boolean {
     return false;
   }
   for i in 0..hay.len() - needle.len() + 1 {
-    let ok: boolean = true;
+    let ok = true;
     for k in 0..needle.len() {
       if (hay[i + k] != needle[k]) {
         ok = false;
@@ -223,8 +223,8 @@ function unit_or_die(name: string): Unit {
 }
 
 function test_addition_respects_dimensions(): test.TestOutcome {
-  let a: Quantity = quantity(1.0, unit_or_die("km"));
-  let b: Quantity = quantity(500.0, unit_or_die("m"));
+  let a = quantity(1.0, unit_or_die("km"));
+  let b = quantity(500.0, unit_or_die("m"));
   match (add(a, b)) {
     Err(e) => {
       return test.fail("km + m refused: " + e);
@@ -239,7 +239,7 @@ function test_addition_respects_dimensions(): test.TestOutcome {
       }
     }
   }
-  let t: Quantity = quantity(1.0, unit_or_die("h"));
+  let t = quantity(1.0, unit_or_die("h"));
   match (add(a, t)) {
     Ok(bad) => {
       return test.fail("added a length to a time, getting " + render(bad));
@@ -250,11 +250,11 @@ function test_addition_respects_dimensions(): test.TestOutcome {
 }
 
 function test_derived_dimensions_fall_out_of_arithmetic(): test.TestOutcome {
-  let d: Quantity = quantity(100.0, unit_or_die("m"));
-  let t: Quantity = quantity(10.0, unit_or_die("s"));
-  let m: Quantity = quantity(2.0, unit_or_die("kg"));
+  let d = quantity(100.0, unit_or_die("m"));
+  let t = quantity(10.0, unit_or_die("s"));
+  let m = quantity(2.0, unit_or_die("kg"));
 
-  let speed: Quantity = div(d, t);
+  let speed = div(d, t);
   if (!dim_eq(speed.dim, Dim { l: 1, m: 0, t: -1 })) {
     return test.fail("speed is " + dim_str(speed.dim) + ", wanted m·s^-1");
   }
@@ -262,22 +262,22 @@ function test_derived_dimensions_fall_out_of_arithmetic(): test.TestOutcome {
     return test.fail("100 m / 10 s should be 10 m/s");
   }
 
-  let accel: Quantity = div(speed, t);
+  let accel = div(speed, t);
   if (!dim_eq(accel.dim, Dim { l: 1, m: 0, t: -2 })) {
     return test.fail("acceleration is " + dim_str(accel.dim));
   }
 
-  let force: Quantity = mul(m, accel);
+  let force = mul(m, accel);
   if (!dim_eq(force.dim, Dim { l: 1, m: 1, t: -2 })) {
     return test.fail("force is " + dim_str(force.dim) + ", wanted m·kg·s^-2");
   }
 
-  let energy: Quantity = mul(force, d);
+  let energy = mul(force, d);
   if (!dim_eq(energy.dim, Dim { l: 2, m: 1, t: -2 })) {
     return test.fail("energy is " + dim_str(energy.dim));
   }
 
-  let power: Quantity = div(energy, t);
+  let power = div(energy, t);
   if (!dim_eq(power.dim, Dim { l: 2, m: 1, t: -3 })) {
     return test.fail("power is " + dim_str(power.dim));
   }
@@ -285,10 +285,10 @@ function test_derived_dimensions_fall_out_of_arithmetic(): test.TestOutcome {
 }
 
 function test_like_over_like_is_dimensionless(): test.TestOutcome {
-  let us: Unit[] = units();
+  let us = units();
   for i in 0..us.len() {
-    let q: Quantity = quantity(7.0, us[i]);
-    let r: Quantity = div(q, q);
+    let q = quantity(7.0, us[i]);
+    let r = div(q, q);
     if (!dim_eq(r.dim, dim_none())) {
       return test.fail(us[i].name + " over itself has dimension "
         + dim_str(r.dim));
@@ -347,7 +347,7 @@ function test_exact_definitions_are_exact(): test.TestOutcome {
 }
 
 function test_conversion_is_transitive(): test.TestOutcome {
-  let q: Quantity = quantity(1234.5, unit_or_die("m"));
+  let q = quantity(1234.5, unit_or_die("m"));
   let direct: f64 = 0.0;
   match (convert(q, unit_or_die("cm"))) {
     Err(e) => {
@@ -363,7 +363,7 @@ function test_conversion_is_transitive(): test.TestOutcome {
       return test.fail(e);
     },
     Ok(km) => {
-      let back: Quantity = quantity(km, unit_or_die("km"));
+      let back = quantity(km, unit_or_die("km"));
       match (convert(back, unit_or_die("cm"))) {
         Err(e2) => {
           return test.fail(e2);
@@ -402,7 +402,7 @@ function test_unknown_units_are_not_invented(): test.TestOutcome {
 }
 
 function show_convert(v: f64, from: string, to: string): void {
-  let q: Quantity = quantity(v, unit_or_die(from));
+  let q = quantity(v, unit_or_die(from));
   match (convert(q, unit_or_die(to))) {
     Ok(out) => {
       eprint("  " + v.to_string_prec(3) + " " + from + " = "
@@ -428,7 +428,7 @@ function main(): i32 {
     quantity(1.0, unit_or_die("h")),
   );
   eprint("  60 mi / 1 h = " + render(mph60));
-  let m: Quantity = quantity(1500.0, unit_or_die("kg"));
+  let m = quantity(1500.0, unit_or_die("kg"));
   let a: Quantity = div(
     div(
       quantity(100.0, unit_or_die("m")),
@@ -438,7 +438,7 @@ function main(): i32 {
   );
   eprint("  1500 kg * 1 m/s^2 = " + render(mul(m, a)));
 
-  let r: test.TestRunner = test.new("units");
+  let r = test.new("units");
   r = r.it("every unit round trips", test_every_unit_round_trips);
   r = r.it("cross-dimension conversion is refused", test_cross_dimension_conversion_is_refused);
   r = r.it("addition respects dimensions", test_addition_respects_dimensions);

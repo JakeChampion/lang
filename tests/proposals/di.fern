@@ -9,73 +9,73 @@ struct Container { providers: Provider[] }
 struct State { names: string[], vals: i32[], order: string[], stack: string[], err: string }
 
 function find_provider(c: Container, name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.providers.len()) {
     if (c.providers[i].name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function cached(s: State, name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.names.len()) {
     if (s.names[i] == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function on_stack(s: State, name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.stack.len()) {
     if (s.stack[i] == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function join(xs: string[], sep: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
-      out = out + sep;
+      out += sep;
     }
-    out = out + xs[i];
-    i = i + 1;
+    out += xs[i];
+    i += 1;
   }
   return out;
 }
 
 function resolve(c: Container, s_in: State, name: string, wanted_by: string): (State, i32) {
-  let s: State = s_in;
+  let s = s_in;
   if (s.err.len() > 0) {
     return (s, 0);
   }
 
   if (on_stack(s, name)) {
-    let path: string = join(s.stack, " -> ") + " -> " + name;
+    let path = join(s.stack, " -> ") + " -> " + name;
     return (State {
       names: s.names, vals: s.vals, order: s.order, stack: s.stack,
       err: "cycle: " + path,
     }, 0);
   }
 
-  let hit: i32 = cached(s, name);
+  let hit = cached(s, name);
   if (hit >= 0) {
     return (s, s.vals[hit]);
   }
 
-  let pi: i32 = find_provider(c, name);
+  let pi = find_provider(c, name);
   if (pi < 0) {
-    let who: string = wanted_by;
+    let who = wanted_by;
     if (who.len() == 0) {
       who = "(root)";
     }
@@ -91,7 +91,7 @@ function resolve(c: Container, s_in: State, name: string, wanted_by: string): (S
   };
 
   let args: i32[] = [];
-  let d: i32 = 0;
+  let d = 0;
   while (d < c.providers[pi].deps.len()) {
     let (s2, v) = resolve(c, s, c.providers[pi].deps[d], name);
     s = s2;
@@ -99,16 +99,16 @@ function resolve(c: Container, s_in: State, name: string, wanted_by: string): (S
       return (s, 0);
     }
     args = args.append(v);
-    d = d + 1;
+    d += 1;
   }
 
-  let made: i32 = c.providers[pi].make(args);
+  let made = c.providers[pi].make(args);
 
   let popped: string[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < s.stack.len() - 1) {
     popped = popped.append(s.stack[k]);
-    k = k + 1;
+    k += 1;
   }
 
   return (State {
@@ -125,31 +125,31 @@ function reachable(c: Container, root: string): string[] {
   let seen: string[] = [];
   let queue: string[] = [root];
   while (queue.len() > 0) {
-    let n: string = queue[0];
+    let n = queue[0];
     let rest: string[] = [];
-    let i: i32 = 1;
+    let i = 1;
     while (i < queue.len()) {
       rest = rest.append(queue[i]);
-      i = i + 1;
+      i += 1;
     }
     queue = rest;
 
-    let already: boolean = false;
-    let j: i32 = 0;
+    let already = false;
+    let j = 0;
     while (j < seen.len()) {
       if (seen[j] == n) {
         already = true;
       }
-      j = j + 1;
+      j += 1;
     }
     if (!already) {
       seen = seen.append(n);
-      let pi: i32 = find_provider(c, n);
+      let pi = find_provider(c, n);
       if (pi >= 0) {
-        let d: i32 = 0;
+        let d = 0;
         while (d < c.providers[pi].deps.len()) {
           queue = queue.append(c.providers[pi].deps[d]);
-          d = d + 1;
+          d += 1;
         }
       }
     }
@@ -158,12 +158,12 @@ function reachable(c: Container, root: string): string[] {
 }
 
 function position(xs: string[], name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -194,13 +194,13 @@ function test_a_shared_dependency_is_built_once(): test.TestOutcome {
   if (v != 1112) {
     return test.fail("app resolved to " + v.to_string() + ", want 1112");
   }
-  let built: i32 = 0;
-  let i: i32 = 0;
+  let built = 0;
+  let i = 0;
   while (i < s.order.len()) {
     if (s.order[i] == "config") {
-      built = built + 1;
+      built += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (built != 1) {
     return test.fail("config was constructed " + built.to_string()
@@ -216,43 +216,43 @@ function test_a_shared_dependency_is_built_once(): test.TestOutcome {
 function test_dependencies_are_built_before_dependents(): test.TestOutcome {
   let graphs: Container[] = [diamond(), chain()];
   let roots: string[] = ["app", "eight"];
-  let g: i32 = 0;
+  let g = 0;
   while (g < graphs.len()) {
     let (s, _) = resolve(graphs[g], new_state(), roots[g], "");
     if (s.err.len() > 0) {
       return test.fail("resolve failed: " + s.err);
     }
 
-    let reach: string[] = reachable(graphs[g], roots[g]);
+    let reach = reachable(graphs[g], roots[g]);
     if (s.order.len() != reach.len()) {
       return test.fail("built [" + join(s.order, ",") + "] but reachable is ["
         + join(reach, ",") + "]");
     }
-    let r: i32 = 0;
+    let r = 0;
     while (r < reach.len()) {
       if (position(s.order, reach[r]) < 0) {
         return test.fail("reachable provider \"" + reach[r] + "\" was never built");
       }
-      r = r + 1;
+      r += 1;
     }
-    let p: i32 = 0;
+    let p = 0;
     while (p < graphs[g].providers.len()) {
-      let me: i32 = position(s.order, graphs[g].providers[p].name);
+      let me = position(s.order, graphs[g].providers[p].name);
       if (me >= 0) {
-        let d: i32 = 0;
+        let d = 0;
         while (d < graphs[g].providers[p].deps.len()) {
-          let dep: i32 = position(s.order, graphs[g].providers[p].deps[d]);
+          let dep = position(s.order, graphs[g].providers[p].deps[d]);
           if (dep < 0 || dep > me) {
             return test.fail("\"" + graphs[g].providers[p].name
               + "\" was built before its dependency \""
               + graphs[g].providers[p].deps[d] + "\": [" + join(s.order, ",") + "]");
           }
-          d = d + 1;
+          d += 1;
         }
       }
-      p = p + 1;
+      p += 1;
     }
-    g = g + 1;
+    g += 1;
   }
   return test.pass();
 }
@@ -316,7 +316,7 @@ function test_resolving_again_builds_nothing(): test.TestOutcome {
   if (s1.err.len() > 0) {
     return test.fail("first resolve failed: " + s1.err);
   }
-  let built_first: i32 = s1.order.len();
+  let built_first = s1.order.len();
 
   let (s2, v2) = resolve(diamond(), s1, "app", "");
   if (s2.err.len() > 0) {
@@ -340,7 +340,7 @@ function test_resolving_again_builds_nothing(): test.TestOutcome {
 }
 
 function test_degenerate_graphs(): test.TestOutcome {
-  let empty: Container = Container { providers: [] };
+  let empty = Container { providers: [] };
   let (s, _) = resolve(empty, new_state(), "anything", "");
   if (!s.err.contains("no provider")) {
     return test.fail("empty container: \"" + s.err + "\"");
@@ -371,13 +371,13 @@ function test_degenerate_graphs(): test.TestOutcome {
   if (p != 10) {
     return test.fail("pair = " + p.to_string() + ", want 10");
   }
-  let builds: i32 = 0;
-  let i: i32 = 0;
+  let builds = 0;
+  let i = 0;
   while (i < s3.order.len()) {
     if (s3.order[i] == "base") {
-      builds = builds + 1;
+      builds += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (builds != 1) {
     return test.fail("base built " + builds.to_string() + " times, want 1");
@@ -421,7 +421,7 @@ function main(): i32 {
   let (s4, _) = resolve(miss, new_state(), "app", "");
   eprint("missing: " + s4.err);
 
-  let r: test.TestRunner = test.new("di");
+  let r = test.new("di");
   r = r.it("a shared dependency is built once", test_a_shared_dependency_is_built_once);
   r = r.it("dependencies are built before dependents", test_dependencies_are_built_before_dependents);
   r = r.it("cycles are reported with their path", test_cycles_are_reported_with_their_path);

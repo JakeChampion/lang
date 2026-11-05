@@ -12,16 +12,16 @@ function sieve_bytes(n: i32): boolean[] {
   if (n >= 1) {
     s = s.with(1, false);
   }
-  let i: i32 = 2;
+  let i = 2;
   while (i * i <= n) {
     if (s[i]) {
-      let j: i32 = i * i;
+      let j = i * i;
       while (j <= n) {
         s = s.with(j, false);
-        j = j + i;
+        j += i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -31,15 +31,15 @@ function bit_get(w: i32[], i: i32): boolean {
 }
 
 function bit_clear(w: i32[], i: i32): i32[] {
-  let word: i32 = i / 32;
+  let word = i / 32;
   return w.with(word, w[word] & 0 - 1 - (1 << i % 32));
 }
 
 function sieve_bits(n: i32): i32[] {
-  let words: i32 = n / 32 + 1;
+  let words = n / 32 + 1;
   let w: i32[] = [];
   for i in 0..words {
-    w = w.append(0 - 1);
+    w = w.append(-1);
   }
   if (n >= 0) {
     w = bit_clear(w, 0);
@@ -47,16 +47,16 @@ function sieve_bits(n: i32): i32[] {
   if (n >= 1) {
     w = bit_clear(w, 1);
   }
-  let i: i32 = 2;
+  let i = 2;
   while (i * i <= n) {
     if (bit_get(w, i)) {
-      let j: i32 = i * i;
+      let j = i * i;
       while (j <= n) {
         w = bit_clear(w, j);
-        j = j + i;
+        j += i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
@@ -67,25 +67,25 @@ function segment(lo: i32, hi: i32, base: i32[]): boolean[] {
     seg = seg.append(true);
   }
   for k in 0..base.len() {
-    let p: i32 = base[k];
+    let p = base[k];
     if (p * p > hi) {
       break;
     }
-    let start: i32 = lo / p * p;
+    let start = lo / p * p;
     if (start < lo) {
-      start = start + p;
+      start += p;
     }
     if (start < p * p) {
       start = p * p;
     }
-    let j: i32 = start;
+    let j = start;
     while (j <= hi) {
       seg = seg.with(j - lo, false);
-      j = j + p;
+      j += p;
     }
   }
   if (lo <= 0 && hi >= 0) {
-    seg = seg.with(0 - lo, false);
+    seg = seg.with(-lo, false);
   }
   if (lo <= 1 && hi >= 1) {
     seg = seg.with(1 - lo, false);
@@ -94,7 +94,7 @@ function segment(lo: i32, hi: i32, base: i32[]): boolean[] {
 }
 
 function primes_up_to(n: i32): i32[] {
-  let s: boolean[] = sieve_bytes(n);
+  let s = sieve_bytes(n);
   let out: i32[] = [];
   for i in 0..s.len() {
     if (s[i]) {
@@ -108,22 +108,22 @@ function count_segmented(n: i32, window: i32): i32 {
   if (n < 2) {
     return 0;
   }
-  let root: i32 = 1;
+  let root = 1;
   while ((root + 1) * (root + 1) <= n) {
-    root = root + 1;
+    root += 1;
   }
-  let base: i32[] = primes_up_to(root);
-  let total: i32 = 0;
-  let lo: i32 = 0;
+  let base = primes_up_to(root);
+  let total = 0;
+  let lo = 0;
   while (lo <= n) {
-    let hi: i32 = lo + window - 1;
+    let hi = lo + window - 1;
     if (hi > n) {
       hi = n;
     }
-    let seg: boolean[] = segment(lo, hi, base);
+    let seg = segment(lo, hi, base);
     for i in 0..seg.len() {
       if (seg[i]) {
-        total = total + 1;
+        total += 1;
       }
     }
     lo = hi + 1;
@@ -135,21 +135,21 @@ function is_prime_trial(v: i32): boolean {
   if (v < 2) {
     return false;
   }
-  let d: i32 = 2;
+  let d = 2;
   while (d * d <= v) {
     if (v % d == 0) {
       return false;
     }
-    d = d + 1;
+    d += 1;
   }
   return true;
 }
 
 function count_trial(n: i32): i32 {
-  let c: i32 = 0;
+  let c = 0;
   for v in 0..n + 1 {
     if (is_prime_trial(v)) {
-      c = c + 1;
+      c += 1;
     }
   }
   return c;
@@ -158,15 +158,15 @@ function count_trial(n: i32): i32 {
 struct Report { count: i32, max_gap: i32, gap_lo: i32, gap_hi: i32 }
 
 function report(n: i32): Report {
-  let ps: i32[] = primes_up_to(n);
+  let ps = primes_up_to(n);
   if (ps.len() < 2) {
     return Report { count: ps.len(), max_gap: 0, gap_lo: 0, gap_hi: 0 };
   }
-  let best: i32 = 0;
-  let lo: i32 = 0;
-  let hi: i32 = 0;
+  let best = 0;
+  let lo = 0;
+  let hi = 0;
   for i in 1..ps.len() {
-    let g: i32 = ps[i] - ps[i - 1];
+    let g = ps[i] - ps[i - 1];
     if (g > best) {
       best = g;
       lo = ps[i - 1];
@@ -177,11 +177,11 @@ function report(n: i32): Report {
 }
 
 function count_bits(n: i32): i32 {
-  let w: i32[] = sieve_bits(n);
-  let c: i32 = 0;
+  let w = sieve_bits(n);
+  let c = 0;
   for i in 0..n + 1 {
     if (bit_get(w, i)) {
-      c = c + 1;
+      c += 1;
     }
   }
   return c;
@@ -191,25 +191,25 @@ function test_every_route_gives_the_same_count(): test.TestOutcome {
   let ns: i32[] = [0, 1, 2, 3, 10, 30, 100, 541, 1000];
   let expected: i32[] = [0, 0, 1, 2, 4, 10, 25, 100, 168];
   for i in 0..ns.len() {
-    let n: i32 = ns[i];
-    let by_bytes: i32 = report(n).count;
+    let n = ns[i];
+    let by_bytes = report(n).count;
     if (by_bytes != expected[i]) {
       return test.fail("byte sieve: pi(" + n.to_string() + ") = "
         + by_bytes.to_string() + ", wanted " + expected[i].to_string());
     }
-    let by_bits: i32 = count_bits(n);
+    let by_bits = count_bits(n);
     if (by_bits != expected[i]) {
       return test.fail("bit sieve: pi(" + n.to_string() + ") = "
         + by_bits.to_string() + ", wanted " + expected[i].to_string());
     }
-    let by_trial: i32 = count_trial(n);
+    let by_trial = count_trial(n);
     if (by_trial != expected[i]) {
       return test.fail("trial division: pi(" + n.to_string() + ") = "
         + by_trial.to_string() + ", wanted " + expected[i].to_string());
     }
     let windows: i32[] = [1, 2, 7, 30, 64, 1000];
     for k in 0..windows.len() {
-      let by_seg: i32 = count_segmented(n, windows[k]);
+      let by_seg = count_segmented(n, windows[k]);
       if (by_seg != expected[i]) {
         return test.fail("segmented (window " + windows[k].to_string()
           + "): pi(" + n.to_string() + ") = " + by_seg.to_string()
@@ -226,7 +226,7 @@ function test_largest_gaps_match_the_published_values(): test.TestOutcome {
   let los: i32[] = [89, 887, 9551];
   let his: i32[] = [97, 907, 9587];
   for i in 0..ns.len() {
-    let r: Report = report(ns[i]);
+    let r = report(ns[i]);
     if (r.max_gap != gaps[i]) {
       return test.fail("largest gap below " + ns[i].to_string() + " is "
         + r.max_gap.to_string() + ", wanted " + gaps[i].to_string());
@@ -250,13 +250,13 @@ function test_largest_gaps_match_the_published_values(): test.TestOutcome {
 }
 
 function test_the_sieves_agree_number_by_number(): test.TestOutcome {
-  let n: i32 = 2000;
-  let s: boolean[] = sieve_bytes(n);
-  let w: i32[] = sieve_bits(n);
+  let n = 2000;
+  let s = sieve_bytes(n);
+  let w = sieve_bits(n);
   for v in 0..n + 1 {
-    let a: boolean = s[v];
-    let b: boolean = bit_get(w, v);
-    let c: boolean = is_prime_trial(v);
+    let a = s[v];
+    let b = bit_get(w, v);
+    let c = is_prime_trial(v);
     if (a != c) {
       return test.fail("byte sieve disagrees with trial division at "
         + v.to_string());
@@ -270,15 +270,15 @@ function test_the_sieves_agree_number_by_number(): test.TestOutcome {
 }
 
 function test_bertrands_postulate_holds(): test.TestOutcome {
-  let s: boolean[] = sieve_bytes(2000);
+  let s = sieve_bytes(2000);
   for n in 1..1000 {
-    let found: boolean = false;
-    let p: i32 = n + 1;
+    let found = false;
+    let p = n + 1;
     while (p <= 2 * n && !found) {
       if (s[p]) {
         found = true;
       }
-      p = p + 1;
+      p += 1;
     }
     if (!found) {
       return test.fail("no prime between " + n.to_string() + " and "
@@ -291,7 +291,7 @@ function test_bertrands_postulate_holds(): test.TestOutcome {
 function test_the_gap_is_consistent_with_the_count(): test.TestOutcome {
   let ns: i32[] = [10, 100, 1000, 5000];
   for i in 0..ns.len() {
-    let r: Report = report(ns[i]);
+    let r = report(ns[i]);
     if (r.max_gap > ns[i]) {
       return test.fail("gap " + r.max_gap.to_string() + " exceeds n = "
         + ns[i].to_string());
@@ -309,14 +309,14 @@ function test_the_gap_is_consistent_with_the_count(): test.TestOutcome {
 }
 
 function test_a_bigger_sieve_agrees_with_a_smaller_one(): test.TestOutcome {
-  let small: boolean[] = sieve_bytes(200);
-  let large: boolean[] = sieve_bytes(3000);
+  let small = sieve_bytes(200);
+  let large = sieve_bytes(3000);
   for v in 0..small.len() {
     if (small[v] != large[v]) {
       return test.fail("the two sieves disagree at " + v.to_string());
     }
   }
-  let again: boolean[] = sieve_bytes(200);
+  let again = sieve_bytes(200);
   for v in 0..small.len() {
     if (small[v] != again[v]) {
       return test.fail("sieving twice differed");
@@ -328,13 +328,13 @@ function test_a_bigger_sieve_agrees_with_a_smaller_one(): test.TestOutcome {
 function test_the_bound_is_inclusive(): test.TestOutcome {
   let primes: i32[] = [2, 3, 5, 97, 101, 997];
   for i in 0..primes.len() {
-    let p: i32 = primes[i];
-    let ps: i32[] = primes_up_to(p);
+    let p = primes[i];
+    let ps = primes_up_to(p);
     if (ps.len() == 0 || ps[ps.len() - 1] != p) {
       return test.fail("sieve to " + p.to_string() + " excluded "
         + p.to_string() + " itself");
     }
-    let below: i32[] = primes_up_to(p - 1);
+    let below = primes_up_to(p - 1);
     if (below.len() != ps.len() - 1) {
       return test.fail("sieve to " + (p - 1).to_string()
         + " did not drop exactly one prime");
@@ -347,7 +347,7 @@ function main(): i32 {
   eprint("prime_gaps — three sieves, one answer");
   let ns: i32[] = [100, 1000, 10000];
   for i in 0..ns.len() {
-    let r: Report = report(ns[i]);
+    let r = report(ns[i]);
     eprint("  N=" + ns[i].to_string()
       + "  primes=" + r.count.to_string()
       + "  largest gap=" + r.max_gap.to_string()
@@ -357,7 +357,7 @@ function main(): i32 {
     + count_segmented(10000, 1000).to_string() + " primes)");
   eprint("  (bit-packed, N=10000: " + count_bits(10000).to_string() + " primes)");
 
-  let r: test.TestRunner = test.new("prime_gaps");
+  let r = test.new("prime_gaps");
   r = r.it("every route gives the same count", test_every_route_gives_the_same_count);
   r = r.it("largest gaps match the published values", test_largest_gaps_match_the_published_values);
   r = r.it("the sieves agree number by number", test_the_sieves_agree_number_by_number);

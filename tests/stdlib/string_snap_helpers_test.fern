@@ -11,19 +11,19 @@ function test_take_snaps_backward(): test.TestOutcome {
 }
 
 function test_drop_snaps_backward(): test.TestOutcome {
-  let s: string = hello_acc();
+  let s = hello_acc();
   return test.assert_true(s.drop(2) == slice_unchecked(s, 1, 6)
     && s.drop(2).len() == 5);
 }
 
 function test_take_drop_partition(): test.TestOutcome {
-  let s: string = hello_acc();
-  let i: i32 = 0 - 1;
+  let s = hello_acc();
+  let i: i32 = -1;
   while (i <= 7) {
     if (s.take(i).to_owned() + s.drop(i).to_owned() != s) {
       return test.fail("take+drop != s at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(true);
 }
@@ -47,14 +47,14 @@ function test_split_at_ascii(): test.TestOutcome {
 }
 
 function test_chunks_no_split(): test.TestOutcome {
-  let cs: string[] = hello_acc().chunks(2);
+  let cs = hello_acc().chunks(2);
   return test.assert_true(cs.len() == 4
     && cs[0] == "h" && cs[1].len() == 2
     && cs[2] == "ll" && cs[3] == "o");
 }
 
 function test_chunks_progress_on_wide_char(): test.TestOutcome {
-  let cs: string[] = hello_acc().chunks(1);
+  let cs = hello_acc().chunks(1);
   return test.assert_true(cs.len() == 5
     && cs[0] == "h" && cs[1].len() == 2 && cs[4] == "o");
 }
@@ -64,7 +64,7 @@ function test_chunks_ascii_identity(): test.TestOutcome {
 }
 
 function test_truncate_code_points(): test.TestOutcome {
-  let s: string = hello_acc() + " world";
+  let s = hello_acc() + " world";
   return test.assert_true(s.truncate(4, "..") == "hé.."
     && s.truncate(5, "..") == "hél..");
 }
@@ -75,12 +75,12 @@ function test_truncate_ascii(): test.TestOutcome {
 }
 
 function test_ellipsis_code_points(): test.TestOutcome {
-  let s: string = hello_acc() + " world";
+  let s = hello_acc() + " world";
   return test.assert_true(s.ellipsis(6) == "hél..." && s.ellipsis(5) == "hé...");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/string snap helpers");
+  let r = test.new("std/string snap helpers");
   r = r.it("take snaps backward", test_take_snaps_backward);
   r = r.it("drop snaps backward", test_drop_snaps_backward);
   r = r.it("take+drop partition", test_take_drop_partition);
