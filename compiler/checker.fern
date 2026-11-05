@@ -27958,7 +27958,7 @@ function main(): i32 {
     return 590;
   }
 
-  let src60 = "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, -1); } function main(): i32 { return 0; }";
+  let src60: string = "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0 - 1); } function main(): i32 { return 0; }";
   let mod60 = parser.parse_module(lexer.tokenize(src60));
   let mt60 = check_module(mod60);
   if (!mt60.all_well_typed) {
