@@ -3270,3 +3270,23 @@ function main(): i32 { return 0; }`)
 function f(own s: A): A { let t: A = A { ...s, d: s.d }; return take(t); }
 function main(): i32 { return 0; }`)
 }
+
+func TestOwnGuardAllowsSeveralScalarFieldReadsBeforeTheMove(t *testing.T) {
+	wantOK(t, "several-scalar-field-reads", fieldReadSrc+`
+function many(a: i32, b: i32, own c: C): i32 { return a + b + c.xs.len(); }
+function f(): i32 { let c = make(); return many(c.n, c.n, c); }
+function main(): i32 { return 0; }`)
+}
+
+const scalarCallConsumeSrc = `struct C { n: i32 }
+function (own c: C) close(): i32 { return c.n; }
+function make(): C { return C { n: 1 }; }
+function first(own p: (C, i32)): i32 { let (c, n) = p; return c.close() + n; }
+function last(n: i32, own c: C): i32 { return n + c.close(); }
+function f(): i32 { let c = make(); return last(first((c, 0)), c); }
+function main(): i32 { return 0; }
+`
+
+func TestOwnGuardRejectsAConsumeHiddenInAScalarArgument(t *testing.T) {
+	wantE051(t, "consume-through-earlier-tuple", scalarCallConsumeSrc)
+}

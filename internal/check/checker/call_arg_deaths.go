@@ -1221,10 +1221,9 @@ func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]
 	return false
 }
 
-// copiedArgs names the arguments of each call in scope that come before an
-// argument that is `name` alone and that have a scalar type. Each reads name
-// before the call takes it, and gives a copy, so it is not a use of the value
-// that the call takes.
+// copiedArgs names direct scalar field reads before an argument that is name
+// alone. A scalar-returning call can consume name through an aggregate, so
+// its result type alone does not make it a copy of a field.
 func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.Expr]bool {
 	out := map[ast.Expr]bool{}
 	if len(scalar) == 0 {
@@ -1238,7 +1237,11 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 		for k, a := range c.Args {
 			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
 				for _, before := range c.Args[:k] {
-					if scalar[before] {
+					fa, isField := before.(*ast.FieldAccess)
+					if !isField || !scalar[before] {
+						continue
+					}
+					if target, ok := fa.Target.(*ast.Ident); ok && target.Name == name {
 						out[before] = true
 					}
 				}

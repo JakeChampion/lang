@@ -1963,6 +1963,20 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"own-arg-scalar-field-read-before-ok", "struct C { n: i32, xs: i32[] }\nfunction g(n: i32, own c: C): i32 { return n + c.xs.len(); }\nfunction k(xs: [i32], own c: C): i32 { return xs.len() + c.n; }\nfunction make(): C { return C { n: 1, xs: [1] }; }\nfunction made(): Result[C, string] { return Ok(make()); }\nfunction f(): i32 { let c = make(); return g(c.n, c); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-payload-field-read-in-branch-ok", "struct C { n: i32, xs: i32[] }\nfunction g(n: i32, own c: C): i32 { return n + c.xs.len(); }\nfunction k(xs: [i32], own c: C): i32 { return xs.len() + c.n; }\nfunction make(): C { return C { n: 1, xs: [1] }; }\nfunction made(): Result[C, string] { return Ok(make()); }\nfunction f(): i32 { match (made()) { Ok(c) => { if (c.n > 0) { return g(c.n, c); } return g(0, c); }, Err(_) => { return 0; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-borrowed-field-read-before", "struct C { n: i32, xs: i32[] }\nfunction g(n: i32, own c: C): i32 { return n + c.xs.len(); }\nfunction k(xs: [i32], own c: C): i32 { return xs.len() + c.n; }\nfunction make(): C { return C { n: 1, xs: [1] }; }\nfunction made(): Result[C, string] { return Ok(make()); }\nfunction f(): i32 { let c = make(); return k(c.xs, c); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-several-scalar-field-reads", `struct C { n: i32, xs: i32[] }
+function make(): C { return C { n: 1, xs: [1] }; }
+function many(a: i32, b: i32, own c: C): i32 { return a + b + c.xs.len(); }
+function f(): i32 { let c = make(); return many(c.n, c.n, c); }
+function main(): i32 { return 0; }
+`, nil},
+		{"own-arg-scalar-call-cannot-hide-consume", `struct C { n: i32 }
+function (own c: C) close(): i32 { return c.n; }
+function make(): C { return C { n: 1 }; }
+function first(own p: (C, i32)): i32 { let (c, n) = p; return c.close() + n; }
+function last(n: i32, own c: C): i32 { return n + c.close(); }
+function f(): i32 { let c = make(); return last(first((c, 0)), c); }
+function main(): i32 { return 0; }
+`, []string{"E051"}},
 		{"own-arg-method-receiver-result-ok", "struct Keys { a: Cell[i32[]] }\nfunction take(slot: Cell[i32[]]): i32[] { let got = slot.get(); slot.set([]); return got; }\nfunction consume(own xs: i32[]): i32 { return xs.len(); }\nfunction f(k: Keys): i32 { return consume(take(k.a)); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-spread-of-own-param-ok", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-spread-of-borrowed-param", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
