@@ -1,0 +1,228 @@
+// The stopwatch screens, drawn on a frame in memory, and their layout. Each
+// case checks the colours at points of the screen. With STOPWATCH_UI_PNG set
+// to a directory, the test also writes each screen there as a PNG file.
+import "std/android/draw";
+import "std/png";
+import "std/test";
+import "../look";
+import "./screen";
+import "./stopwatch";
+import "./ui";
+
+const W: i32 = 1080;
+
+const H: i32 = 2400;
+
+function frame(w: i32, h: i32): draw.Frame {
+  unsafe {
+    let bits = __alloc(w * h * 4);
+    return draw.Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: w, height: h, stride: w };
+  }
+}
+
+function free_frame(own f: draw.Frame): void {
+  unsafe {
+    __free(f.bits, f.stride * f.height * 4);
+  }
+}
+
+function defaults(): i32[] {
+  return stopwatch.load_settings("");
+}
+
+function base(): ui.View {
+  return ui.View { page: screen.MAIN, chrome: false, menu: false, clock: "09:05", elapsed: 0, running: false, values: defaults(), dx: 0, dy: 0, scroll: 0, about: stopwatch.about_text(7200000) };
+}
+
+// Draws `v` on a window of `w` by `h`, writes it as `name`.png when
+// STOPWATCH_UI_PNG is set, and gives the colours at the points.
+function colours_at(name: string, w: i32, h: i32, v: ui.View, points: i32[][]): i32[] {
+  let f = frame(w, h);
+  defer free_frame(f);
+  ui.render(f, v);
+  if let Some(dir) = env("STOPWATCH_UI_PNG") {
+    save(f, dir + "/" + name + ".png");
+  }
+  let out: i32[] = [];
+  for p in points {
+    out = out.append(f.pixel(p[0], p[1]));
+  }
+  return out;
+}
+
+function colours(name: string, v: ui.View, points: i32[][]): i32[] {
+  return colours_at(name, W, H, v, points);
+}
+
+function save(f: draw.Frame, path: string): void {
+  let rgb: u8[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      let c = f.pixel(x, y);
+      rgb = rgb.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8);
+    }
+  }
+  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
+    let written = write_file_bytes(path, bytes);
+  }
+}
+
+function save_rgba(f: draw.Frame, path: string): void {
+  let rgba: u8[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      let c = f.pixel(x, y);
+      rgba = rgba.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8).append((c >> 24 & 255) as u8);
+    }
+  }
+  if let Ok(bytes) = png.encode_rgba8(f.width, f.height, rgba) {
+    let written = write_file_bytes(path, bytes);
+  }
+}
+
+function same(a: i32, b: i32): string {
+  return (a == b).to_string();
+}
+
+// The centre of ring dot `k` of the dial in `r`.
+function ring_dot(r: screen.Rect, k: i32): i32[] {
+  let rad = r.w / 2;
+  let d = rad / 40 + 1;
+  let a: f64 = 6.283185307179586 * (k as f64) / 60.0;
+  return [r.x + rad + ((rad - d) as f64 * a.sin()) as i32, r.y + rad - ((rad - d) as f64 * a.cos()) as i32];
+}
+
+function dial(v: ui.View): screen.Rect {
+  return screen.dial_box(W, H, v.values, v.clock, v.dx, v.dy);
+}
+
+function test_reset(): test.TestOutcome {
+  let v = base();
+  let r = dial(v);
+  // A point of the disc below the words, and the first dot of the ring.
+  let c = colours("reset", v, [[r.x + r.w / 2, r.y + r.h * 85 / 100], ring_dot(r, 0), [5, 5]]);
+  let dim = look.blend(look.outline(), look.bg(), 13);
+  return test.assert_eq(same(c[0], look.surface()) + " " + same(c[1], dim) + " " + same(c[2], look.bg()), "true true true");
+}
+
+function test_running(): test.TestOutcome {
+  let v = ui.View { ...base(), elapsed: 5000, running: true };
+  let r = dial(v);
+  let c = colours("running", v, [ring_dot(r, 2), ring_dot(r, 5), ring_dot(r, 30)]);
+  let got = same(c[0], look.blend(look.ink(), look.bg(), 13)) + " " + same(c[1], look.blend(look.red(), look.bg(), 13)) + " " + same(c[2], look.blend(look.outline(), look.bg(), 13));
+  return test.assert_eq(got, "true true true");
+}
+
+function test_paused(): test.TestOutcome {
+  let v = ui.View { ...base(), elapsed: 5000 };
+  let r = dial(v);
+  let c = colours("paused", v, [ring_dot(r, 2), ring_dot(r, 5)]);
+  return test.assert_eq(same(c[0], look.blend(look.muted(), look.bg(), 13)) + " " + same(c[1], look.blend(look.outline(), look.bg(), 13)), "true true");
+}
+
+function test_menu(): test.TestOutcome {
+  let v = ui.View { ...base(), chrome: true, menu: true };
+  let menu = screen.corner_button(W, H, "MENU");
+  let item = screen.menu_item(W, H, 0);
+  let panel = screen.menu_panel(W, H);
+  // The left edge of the MENU outline, the left edge of the SETTINGS outline,
+  // and the inside of the panel next to the item.
+  let c = colours("menu", v, [[menu.x + 1, menu.y + menu.h / 2], [item.x + 1, item.y + item.h / 2], [panel.x + panel.w / 2, panel.y + screen.dp(W, H, 6)]]);
+  return test.assert_eq(same(c[0], look.muted()) + " " + same(c[1], look.ink()) + " " + same(c[2], look.surface()), "true true true");
+}
+
+function test_settings(): test.TestOutcome {
+  let v = ui.View { ...base(), page: screen.SETTINGS };
+  let first = ui.setting_card(W, H, 0);
+  let sw = screen.switch_box(W, H, first, ui.title_h(W, H));
+  let opacity = ui.setting_card(W, H, stopwatch.setting_index("clock_opacity"));
+  let track = screen.track(W, H, stopwatch.setting_index("clock_opacity"), opacity);
+  // Default opacity 13 of 1 to 20: dot 15 of 24 is the knob.
+  let knob_x = track.x + screen.knob(W, H) + screen.slider_dot(13, 1, 20) * (track.w - 2 * screen.knob(W, H)) / (screen.SLIDER_DOTS - 1);
+  let c = colours("settings", v, [[sw.x + sw.w / 4, sw.y + sw.h / 2], [sw.x + sw.w - sw.h / 2, sw.y + sw.h / 2], [knob_x, track.y + track.h / 2], [track.x + track.w - screen.knob(W, H), track.y + track.h / 2]]);
+  return test.assert_eq(same(c[0], look.ink()) + " " + same(c[1], look.bg()) + " " + same(c[2], look.ink()) + " " + same(c[3], look.outline()), "true true true true");
+}
+
+function test_settings_scrolled(): test.TestOutcome {
+  let max = ui.settings_max_scroll(W, H);
+  let v = ui.View { ...base(), page: screen.SETTINGS, scroll: max };
+  let last = ui.setting_card(W, H, stopwatch.settings().len() - 1);
+  let c = colours("settings-end", v, [[last.x + last.w / 2, last.y + last.h - max - screen.dp(W, H, 4)]]);
+  return test.assert_eq((last.y + last.h - max < H).to_string() + " " + same(c[0], look.surface()), "true true");
+}
+
+function test_about(): test.TestOutcome {
+  let v = ui.View { ...base(), page: screen.ABOUT };
+  let parts = ui.about_parts(v.about);
+  let boxes = ui.about_boxes(W, H, parts);
+  let c = colours("about", v, [[boxes[0].x + boxes[0].w / 2, boxes[0].y + 3]]);
+  return test.assert_eq(parts.len().to_string() + " " + parts[0].heading + " " + parts[1].lines[0] + " " + same(c[0], look.surface()), "3 Usage Total runtime: 2 hours true");
+}
+
+function test_landscape(): test.TestOutcome {
+  let v = base();
+  let r = screen.dial_box(H, W, v.values, v.clock, 0, 0);
+  let clock = screen.clock_box(H, W, v.values, v.clock, 0, 0);
+  let c = colours_at("landscape", H, W, v, [[r.x + r.w / 2, r.y + r.h * 85 / 100]]);
+  return test.assert_eq((clock.y >= 0 && r.y + r.h <= W && clock.y + clock.h < r.y).to_string() + " " + same(c[0], look.surface()), "true true");
+}
+
+function test_layout(): test.TestOutcome {
+  let values = defaults();
+  let menu = screen.corner_button(W, H, "MENU");
+  let panel = screen.menu_panel(W, H);
+  let title = screen.title_box(W, H, ui.TITLE);
+  let ok = panel.y > menu.y + menu.h && title.x + title.w < menu.x && panel.x + panel.w <= W;
+  let size = screen.content_size(W, H, values, "09:05");
+  let centred = screen.dial_box(W, H, values, "09:05", 0, 0);
+  ok = ok && centred.x + centred.w / 2 == W / 2 && size.1 < H;
+  let bottom = 0;
+  for k in 0..stopwatch.settings().len() {
+    let c = ui.setting_card(W, H, k);
+    if (c.y < bottom) {
+      ok = false;
+    }
+    bottom = c.y + c.h;
+  }
+  return test.assert_eq(ok.to_string(), "true");
+}
+
+function test_slider_value(): test.TestOutcome {
+  let track = screen.Rect { x: 100, y: 0, w: 800, h: 50 };
+  let k = screen.knob(W, H);
+  let got = screen.slider_value(W, H, track, 1, 20, 0.0).to_string() + " " + screen.slider_value(W, H, track, 1, 20, 2000.0).to_string() + " " + screen.slider_value(W, H, track, 0, 120, (100 + k) as f32 + (800 - 2 * k) as f32 / 2.0).to_string() + " " + screen.slider_dot(0, 0, 120).to_string() + " " + screen.slider_dot(120, 0, 120).to_string();
+  return test.assert_eq(got, "1 20 60 0 23");
+}
+
+// The launcher icon. With STOPWATCH_ICON set to a path, the test writes it
+// there as a PNG file: icon.png is that file.
+function test_icon(): test.TestOutcome {
+  let f = frame(192, 192);
+  defer free_frame(f);
+  ui.icon(f);
+  if let Some(path) = env("STOPWATCH_ICON") {
+    save_rgba(f, path);
+  }
+  // A corner, the black edge, the dark disc, and the red dot: dot 16 of 24.
+  let a: f64 = 6.283185307179586 * 16.0 / 24.0;
+  let red_x: i32 = 96 + (72.0 * a.sin()) as i32;
+  let red_y: i32 = 96 - (72.0 * a.cos()) as i32;
+  let got = same(f.pixel(2, 2), 0) + " " + same(f.pixel(96, 3), look.bg()) + " " + same(f.pixel(96, 150), look.surface()) + " " + same(f.pixel(red_x, red_y), look.red());
+  return test.assert_eq(got, "true true true true");
+}
+
+function main(): i32 {
+  let r = test.new("android stopwatch ui");
+  r = r.it("the dial after a reset", test_reset);
+  r = r.it("the dial while it runs", test_running);
+  r = r.it("the dial while it is paused", test_paused);
+  r = r.it("the title, the menu button and the menu", test_menu);
+  r = r.it("the settings screen", test_settings);
+  r = r.it("the settings screen scrolled to the end", test_settings_scrolled);
+  r = r.it("the About screen", test_about);
+  r = r.it("the dial in landscape", test_landscape);
+  r = r.it("the layout", test_layout);
+  r = r.it("the slider value", test_slider_value);
+  r = r.it("the launcher icon", test_icon);
+  return r.finish();
+}

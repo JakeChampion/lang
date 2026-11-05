@@ -1,12 +1,12 @@
 package e2e
 
 import (
+	"archive/zip"
 	"bytes"
 	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -15,22 +15,6 @@ import (
 )
 
 const stopwatchApp = "examples/android/stopwatch"
-
-// stopwatchShared builds native.fern for target, and writes the Core.java of
-// its @jni declarations under the returned java directory.
-func stopwatchShared(t *testing.T, target string) (so, java string) {
-	t.Helper()
-	dir := t.TempDir()
-	so = filepath.Join(dir, "libfern.so")
-	java = filepath.Join(dir, "java")
-	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-shared", "-jni-java", java, "-o", so,
-		e2eharness.RepoPath(stopwatchApp, "native.fern"), e2eharness.SelfHostStdlibRoot(t))
-	cmd.Env = e2eharness.ChildEnv()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build libfern.so for %s: %v\n%s", target, err, out)
-	}
-	return so, java
-}
 
 func TestAndroidStopwatchLogic(t *testing.T) {
 	host := e2eharness.HostSelfHostTarget()
@@ -50,76 +34,89 @@ func TestAndroidStopwatchLogic(t *testing.T) {
 	}
 }
 
-// Every native method of the generated Core.java has an export in the
-// arm64 library, and the library is one that Android's loader accepts.
-func TestAndroidStopwatchExports(t *testing.T) {
-	so, java := stopwatchShared(t, "arm64-android")
-	core, err := os.ReadFile(filepath.Join(java, "dev", "fern", "stopwatch", "Core.java"))
+// ui_test.fern draws each screen of the app on a frame in memory, and the
+// launcher icon it draws is the icon.png that the APK carries.
+func TestAndroidStopwatchUI(t *testing.T) {
+	host := e2eharness.HostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "ui_test")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-o", bin,
+		e2eharness.RepoPath(stopwatchApp, "ui_test.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build ui_test.fern: %v\n%s", err, out)
+	}
+	icon := filepath.Join(dir, "icon.png")
+	run := exec.Command(bin)
+	run.Env = append(os.Environ(), "STOPWATCH_ICON="+icon)
+	out, err := run.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "# fail 0") {
+		t.Fatalf("ui_test.fern: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(icon)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var declared []string
-	for _, m := range regexp.MustCompile(`static native [\w\[\]]+ (\w+)\(`).FindAllSubmatch(core, -1) {
-		declared = append(declared, "Java_dev_fern_stopwatch_Core_"+string(m[1]))
-	}
-	if len(declared) == 0 {
-		t.Fatalf("the generated Core.java declares no native method:\n%s", core)
-	}
-	raw, err := os.ReadFile(so)
+	want, err := os.ReadFile(e2eharness.RepoPath(stopwatchApp, "icon.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sharedImageCheck(t, raw, elf.EM_AARCH64)
-	f, err := elf.NewFile(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	syms, err := f.DynamicSymbols()
-	if err != nil {
-		t.Fatal(err)
-	}
-	have := map[string]bool{}
-	for _, s := range syms {
-		if elf.ST_TYPE(s.Info) == elf.STT_FUNC && s.Section != elf.SHN_UNDEF {
-			have[s.Name] = true
-		}
-	}
-	for _, name := range declared {
-		if !have[name] {
-			t.Errorf("Core.java declares %s, and the library does not export it", name)
-		}
-	}
-	if len(have) != len(declared) {
-		t.Errorf("the library exports %d functions, and Core.java declares %d", len(have), len(declared))
+	if !bytes.Equal(got, want) {
+		t.Errorf("icon.png is not the icon that ui.icon draws; write it again with STOPWATCH_ICON=%s", e2eharness.RepoPath(stopwatchApp, "icon.png"))
 	}
 }
 
-// HostCheck calls every native method in a desktop JVM, through the same
-// JNI entry points the APK uses, on the host build of libfern.so.
-func TestAndroidStopwatchHostJVM(t *testing.T) {
-	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
-		t.Skipf("-shared does not build for %s/%s", runtime.GOOS, runtime.GOARCH)
+// fern -apk builds the app, a NativeActivity with no Java code, with its
+// launcher icon.
+func TestAndroidStopwatchApk(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "stopwatch.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.stopwatch", "-apk-label", "Fern Stopwatch",
+		"-apk-icon", e2eharness.RepoPath(stopwatchApp, "icon.png"), "-apk-min-sdk", "28",
+		e2eharness.RepoPath(stopwatchApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
 	}
-	javac, err := exec.LookPath("javac")
+	raw, err := os.ReadFile(out)
 	if err != nil {
-		t.Skip("javac not on PATH")
+		t.Fatal(err)
 	}
-	java, err := exec.LookPath("java")
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		t.Skip("java not on PATH")
+		t.Fatal(err)
 	}
-	so, javaDir := stopwatchShared(t, e2eharness.HostSelfHostTarget())
-	classes := t.TempDir()
-	if out, err := exec.Command(javac, "-d", classes,
-		filepath.Join(javaDir, "dev", "fern", "stopwatch", "Core.java"),
-		e2eharness.RepoPath(stopwatchApp, "host/HostCheck.java")).CombinedOutput(); err != nil {
-		t.Fatalf("javac: %v\n%s", err, out)
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
 	}
-	out, err := exec.Command(java, "-Djava.library.path="+filepath.Dir(so), "-cp", classes,
-		"dev.fern.stopwatch.HostCheck").CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "ok") {
-		t.Fatalf("HostCheck: %v\n%s", err, out)
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+		t.Errorf("entries = %s", got)
 	}
+	for _, name := range []string{"lib/arm64-v8a/libapp.so", "lib/x86_64/libapp.so"} {
+		lib := readZipEntry(t, zr, name)
+		f, err := elf.NewFile(bytes.NewReader(lib))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		syms, err := f.DynamicSymbols()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		found := false
+		for _, s := range syms {
+			if s.Name == "ANativeActivity_onCreate" && s.Section != elf.SHN_UNDEF {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s does not export ANativeActivity_onCreate", name)
+		}
+	}
+	verifyApkV2(t, raw)
 }
 
 // A Java_* export takes the JNIEnv* and a jobject or jclass as usize, then

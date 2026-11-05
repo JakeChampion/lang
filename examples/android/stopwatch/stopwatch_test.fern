@@ -1,4 +1,5 @@
 import "std/test";
+import "../look";
 import "./stopwatch";
 
 function test_elapsed_paused(): test.TestOutcome {
@@ -42,7 +43,7 @@ function test_stopwatch_text_minutes(): test.TestOutcome {
 function test_clock_text(): test.TestOutcome {
   let nine_oh_five = (9 * 3600 + 5 * 60 + 59) as i64 * 1000;
   let day: i64 = 86400000;
-  let got: string = stopwatch.clock_text(nine_oh_five) + " " + stopwatch.clock_text(day * 20000 + nine_oh_five) + " " + stopwatch.clock_text(0 - 60000);
+  let got = stopwatch.clock_text(nine_oh_five) + " " + stopwatch.clock_text(day * 20000 + nine_oh_five) + " " + stopwatch.clock_text(-60000);
   return test.assert_eq(got, "09:05 09:05 23:59");
 }
 
@@ -56,9 +57,8 @@ function test_clock_tick_in(): test.TestOutcome {
 }
 
 function test_colors(): test.TestOutcome {
-  let got = stopwatch.stopwatch_color(true, 5000, 20).to_string() + " " + stopwatch.stopwatch_color(false, 5000, 20).to_string() + " " + stopwatch.stopwatch_color(false, 0, 20).to_string() + " " + stopwatch.clock_color(10).to_string() + " " + stopwatch.clock_color(0).to_string();
-  // 0xFFFFFFFF, 0xFFD71921, 0xFFFFFFFF, 0x7FFFFFFF, and 0x0CFFFFFF for the lowest opacity.
-  return test.assert_eq(got, "-1 -2680543 -1 2147483647 218103807");
+  let got = (stopwatch.stopwatch_color(true, 5000) == look.ink()).to_string() + " " + (stopwatch.stopwatch_color(false, 5000) == look.red()).to_string() + " " + (stopwatch.stopwatch_color(false, 0) == look.ink()).to_string();
+  return test.assert_eq(got, "true true true");
 }
 
 function test_status_text(): test.TestOutcome {
@@ -73,17 +73,34 @@ function test_ring_position(): test.TestOutcome {
 
 function test_ring_color(): test.TestOutcome {
   // 5 s on the stopwatch: dots 0 to 4 passed, and dot 5 is the current one.
-  let running = stopwatch.ring_color(4, 5000, true, true, 20).to_string() + " " + stopwatch.ring_color(5, 5000, true, true, 20).to_string() + " " + stopwatch.ring_color(6, 5000, true, true, 20).to_string();
-  let paused = stopwatch.ring_color(4, 5000, true, false, 20).to_string() + " " + stopwatch.ring_color(5, 5000, true, false, 20).to_string();
-  // 0xFFFFFFFF, 0xFFD71921, 0xFF3C3C3C; 0xFF8C8C8C, 0xFF3C3C3C.
-  return test.assert_eq(running + "|" + paused, "-1 -2680543 -12829636|-7566196 -12829636");
+  let running = (stopwatch.ring_color(4, 5000, true, true) == look.ink()).to_string() + " " + (stopwatch.ring_color(5, 5000, true, true) == look.red()).to_string() + " " + (stopwatch.ring_color(6, 5000, true, true) == look.outline()).to_string();
+  let paused = (stopwatch.ring_color(4, 5000, true, false) == look.muted()).to_string() + " " + (stopwatch.ring_color(5, 5000, true, false) == look.outline()).to_string();
+  return test.assert_eq(running + "|" + paused, "true true true|true true");
 }
 
-function test_glyph_mask(): test.TestOutcome {
-  // The top row of "0" is .###., the dots at columns 1, 2 and 3. A space has no dots.
-  let zero = stopwatch.glyph_mask(48);
-  let got = (zero & 31).to_string() + " " + stopwatch.glyph_mask(32).to_string() + " " + (stopwatch.glyph_mask(97) == stopwatch.glyph_mask(65)).to_string() + " " + stopwatch.glyph_mask(200).to_string();
-  return test.assert_eq(got, "14 0 true 0");
+function test_stored_values(): test.TestOutcome {
+  let text = stopwatch.store(["started_at", "anteriority"], [1700000000000 as i64, -(5 as i64)]);
+  let got = stopwatch.stored(text, "started_at", 0).to_string() + " " + stopwatch.stored(text, "anteriority", 0).to_string() + " " + stopwatch.stored(text, "total", 7).to_string() + " " + stopwatch.stored("total=x\n", "total", 9).to_string();
+  return test.assert_eq(got, "1700000000000 -5 7 9");
+}
+
+function test_settings_round_trip(): test.TestOutcome {
+  let values = stopwatch.load_settings("clock_size=200\nburn_in=3\nbeep_interval=-4\n");
+  let again = stopwatch.load_settings(stopwatch.save_settings(values));
+  let got = stopwatch.value(values, "clock_size").to_string() + " " + stopwatch.value(values, "burn_in").to_string() + " " + stopwatch.value(values, "beep_interval").to_string() + " " + stopwatch.value(values, "stopwatch_opacity").to_string() + " " + (stopwatch.save_settings(again) == stopwatch.save_settings(values)).to_string() + " " + stopwatch.on(values, "clock_enabled").to_string();
+  return test.assert_eq(got, "100 3 0 13 true true");
+}
+
+function test_beep_samples(): test.TestOutcome {
+  let b = stopwatch.beep_samples(48000);
+  let peak = 0;
+  for x in b {
+    if (x > peak) {
+      peak = x;
+    }
+  }
+  let got = b.len().to_string() + " " + b[0].to_string() + " " + (peak > 15000 && peak <= 16000).to_string() + " " + (b[b.len() - 1] * b[b.len() - 1] < 10000).to_string();
+  return test.assert_eq(got, "9600 0 true true");
 }
 
 function test_keep_screen_on(): test.TestOutcome {
@@ -190,7 +207,9 @@ function main(): i32 {
   r = r.it("status text", test_status_text);
   r = r.it("ring position", test_ring_position);
   r = r.it("ring colours", test_ring_color);
-  r = r.it("glyph mask", test_glyph_mask);
+  r = r.it("stored values", test_stored_values);
+  r = r.it("settings file round trip", test_settings_round_trip);
+  r = r.it("beep samples", test_beep_samples);
   r = r.it("keep the screen on", test_keep_screen_on);
   r = r.it("burn-in offset when off", test_burn_in_centred);
   r = r.it("burn-in offset range", test_burn_in_range);
