@@ -297,7 +297,7 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
   while (i < arg.len()) {
     let c = arg[i] as i32;
     i += 1;
-    let kind: i32 = 0 - 1;
+    let kind: i32 = -1;
     let floating = false;
     if (c == 97) {
       kind = k_named();

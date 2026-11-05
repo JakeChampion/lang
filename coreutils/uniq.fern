@@ -185,7 +185,7 @@ function gm_both(): i32 {
 }
 
 function argmatch(v: string, names: string[], opt: string): i32 {
-  let found: i32 = -1;
+  let found = -1;
   let ambiguous = false;
   let i = 0;
   while (i < names.len()) {

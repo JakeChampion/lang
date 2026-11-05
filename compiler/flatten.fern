@@ -1544,6 +1544,18 @@ function builtin_shadows(mod: parser.Module): string[] {
   return out;
 }
 
+// Diagnostic drivers have an unloaded module. Rewrite its builtin shadows
+// without qualifying names from imports that the driver has not loaded.
+pub function qualify_entry_builtins(mod: parser.Module): parser.Module {
+  let shadows = builtin_shadows(mod);
+  if (shadows.len() == 0) {
+    return mod;
+  }
+  let empty: string[] = [];
+  let ctx = RewriteCtx { type_params: [], modnames: empty, modprefixes: empty, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: empty, enumnames: empty, imported_enums: [], ivar_names: empty, ivar_mangled: empty, variant_scope: empty, reexport_keys: empty, reexport_targets: empty, own_variants: empty };
+  return rewrite_module_bodies(mod, ctx);
+}
+
 pub function collect_decl_names(mod: parser.Module): string[] {
   let names: string[] = [];
   let i = 0;

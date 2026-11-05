@@ -51,7 +51,7 @@ function exchange(c0: client.Connection, line: string): rooms.Reply {
     return rooms.Refused("the server closed the connection");
   };
   let got: u8[] = [];
-  let conn: client.Connection = c;
+  let conn = c;
   for k in 0..16 {
     match (conn.read(time.duration_seconds(10 as i64))) {
       Ok(r) => {

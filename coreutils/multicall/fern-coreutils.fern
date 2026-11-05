@@ -111,42 +111,42 @@ function catalogue(): string[] {
 }
 
 function in_catalogue(n: string): boolean {
-  let names: string[] = catalogue();
-  let i: i32 = 0;
+  let names = catalogue();
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == n) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function basename(p: string): string {
-  let last: i32 = -1;
-  let i: i32 = 0;
+  let last = -1;
+  let i = 0;
   while (i < p.len()) {
     if (p[i] == b'/') {
       last = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return slice_unchecked(p, last + 1, p.len()) + "";
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " UTILITY [ARGUMENT]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Every utility in one binary, selected by the name it is invoked as\n";
-  out = out + "or by its first argument:\n";
-  out = out + "\n";
+  out += "Every utility in one binary, selected by the name it is invoked as\n";
+  out += "or by its first argument:\n";
+  out += "\n";
   out = out + "  " + gnu.prog() + " yes\n";
   out = out + "  ln -s " + gnu.prog() + " yes && ./yes\n";
-  out = out + "\n";
-  out = out + "      --list     list the utilities this binary provides\n";
-  out = out + "      --help     display this help and exit\n";
-  out = out + "      --version  output version information and exit\n";
+  out += "\n";
+  out += "      --list     list the utilities this binary provides\n";
+  out += "      --help     display this help and exit\n";
+  out += "      --version  output version information and exit\n";
   return out;
 }
 
@@ -154,14 +154,14 @@ function own_main(argv: string[]): i32 {
   if (argv.len() < 2) {
     gnu.die_usage("missing option", 1);
   }
-  let a: string = argv[1];
+  let a = argv[1];
   if (a == "--list") {
-    let names: string[] = catalogue();
-    let out: string = "";
-    let i: i32 = 0;
+    let names = catalogue();
+    let out = "";
+    let i = 0;
     while (i < names.len()) {
       out = out + names[i] + "\n";
-      i = i + 1;
+      i += 1;
     }
     gnu.write_out(out);
     return 0;
@@ -183,11 +183,11 @@ function own_main(argv: string[]): i32 {
 
 // fern-lint: allow cyclomatic-complexity
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() == 0) {
     return 1;
   }
-  let n: string = basename(argv[0]);
+  let n = basename(argv[0]);
   if (!in_catalogue(n) && argv.len() > 1 && in_catalogue(argv[1])) {
     n = argv[1];
     let shifted: string[] = [];

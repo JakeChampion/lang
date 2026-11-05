@@ -219,7 +219,7 @@ function run(text: u8[], fname: string): i32 {
     if (order.len() == 0) {
       order = byte_order(names);
     }
-    let chain_head: i32 = -1;
+    let chain_head = -1;
     let found = false;
     while (!found) {
       let k = 0;
@@ -234,7 +234,7 @@ function run(text: u8[], fname: string): i32 {
           continue;
         }
         let e2 = head[node];
-        let prev: i32 = -1;
+        let prev = -1;
         while (e2 >= 0 && edge_to[e2] != chain_head) {
           prev = e2;
           e2 = edge_next[e2];

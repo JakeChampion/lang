@@ -583,7 +583,7 @@ function list_all(c: Conf): Row[] {
       continue;
     }
     let live = m.dev == key;
-    let found: i32 = -1;
+    let found = -1;
     let j = 0;
     while (j < seen_key.len()) {
       if (seen_key[j] == key) {
@@ -701,8 +701,8 @@ function find_mount(mounts: MountEntry[], path: string, is_block: boolean, devno
       i += 1;
     }
   }
-  let best: i32 = -1;
-  let best_len: i32 = -1;
+  let best = -1;
+  let best_len = -1;
   let j = 0;
   if (path.len() > 0 && path[0] == b'/') {
     while (j < mounts.len()) {
@@ -812,7 +812,7 @@ function parse_fields(have: i32[], spec: string): i32[] {
   while (i <= spec.len()) {
     if (i == spec.len() || spec[i] as i32 == 44) {
       let word = slice_unchecked(spec, start, i) + "";
-      let f: i32 = -1;
+      let f = -1;
       let j = 0;
       while (j < names.len()) {
         if (names[j] == word) {
