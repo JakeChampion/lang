@@ -64,7 +64,7 @@ pub function cached_plan(graph: pipeline.Graph, region: Region, limits: pipeline
     return Err(pipeline.Pixel(pixels.Overflow));
   };
   let output_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes };
-  let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) { Ok(v) => v, Err(pixels.Limit()) => { return Err(pipeline.Budget); }, Err(e) => { return Err(pipeline.Pixel(e)); } };
+  let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) { Ok(v) => v, Err(pixels.Limit) => { return Err(pipeline.Budget); }, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let row_scratch = pipeline.required_scratch(graph, limits)?;
   let row_samples = pipeline.required_samples(graph, limits)?;
   let setup_samples = pipeline.required_setup_samples(graph, limits)?;

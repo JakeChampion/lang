@@ -71,3 +71,9 @@ func TestWalkieVoice(t *testing.T) {
 func TestWalkieScreen(t *testing.T) {
 	runWalkieTest(t, "screen_test.fern")
 }
+
+// The rooms of the internet mode: codes, joins, the rate limit, the expiry
+// and the relay table.
+func TestWalkieRooms(t *testing.T) {
+	runWalkieTest(t, "rooms_test.fern")
+}

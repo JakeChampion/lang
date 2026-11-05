@@ -206,7 +206,7 @@ function limits(): test.TestOutcome {
       return Ok(count + 1);
     });
     match (result) {
-      Err(entropy.BlockDecode(entropy.EntropyLimit())) => {},
+      Err(entropy.BlockDecode(entropy.EntropyLimit)) => {},
       _ => {
         return test.fail("block admission");
       }
@@ -261,7 +261,7 @@ function cancellation(): test.TestOutcome {
         return polls.get() == stop;
       }, kept, (value: entropy.CoefficientBlock[], block: entropy.CoefficientBlock): Result[entropy.CoefficientBlock[], string] => Ok(value.append(block)));
       match (result) {
-        Err(entropy.BlockDecode(entropy.EntropyCancelled())) => {},
+        Err(entropy.BlockDecode(entropy.EntropyCancelled)) => {},
         _ => {
           return test.fail("cancellation poll");
         }

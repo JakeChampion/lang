@@ -148,7 +148,7 @@ function budgets(): test.TestOutcome {
   }
   for limits in [entropy.BlockLimits { ...exact, max_mcus: 5 }, entropy.BlockLimits { ...exact, max_blocks: 5 }] {
     match (grayscale.decode(input, limits, never)) {
-      Err(grayscale.DecodeEntropy(entropy.EntropyLimit())) => {},
+      Err(grayscale.DecodeEntropy(entropy.EntropyLimit)) => {},
       _ => {
         return test.fail("block count admission");
       }
@@ -156,7 +156,7 @@ function budgets(): test.TestOutcome {
   }
   for limited in [header.HeaderLimits { ...headers, max_input_bytes: input.len() - 1 }, header.HeaderLimits { ...headers, max_header_bytes: h.entropy_offset - 1 }, header.HeaderLimits { ...headers, max_segments: h.segment_count - 1 }, header.HeaderLimits { ...headers, image: pixels.Limits { max_pixels: 152, max_bytes: 459 } }, header.HeaderLimits { ...headers, image: pixels.Limits { max_pixels: 153, max_bytes: 458 } }] {
     match (grayscale.decode(input, entropy.BlockLimits { ...exact, headers: limited }, never)) {
-      Err(grayscale.DecodeEntropy(entropy.EntropyHeader(header.Limit()))) => {},
+      Err(grayscale.DecodeEntropy(entropy.EntropyHeader(header.Limit))) => {},
       _ => {
         return test.fail("header and output admission");
       }
@@ -264,7 +264,7 @@ function cancellation(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return polls.get() == stop;
       })) {
-        Err(grayscale.DecodeCancelled()) => {},
+        Err(grayscale.DecodeCancelled) => {},
         _ => {
           return test.fail("cancel poll");
         }

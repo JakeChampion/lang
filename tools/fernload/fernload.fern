@@ -283,7 +283,7 @@ function connected(io: Io, p: Plan, c: Conn, t: Tally): Conn {
       io.drv.watch(c.fd, 1);
       return Conn { ...c, state: IDLE };
     },
-    Err(net.InProgress()) => {
+    Err(net.InProgress) => {
       return c;
     },
     Err(_) => {

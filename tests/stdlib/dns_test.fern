@@ -1059,6 +1059,66 @@ function test_live_resolver(): test.TestOutcome {
   return test.assert_eq(kept.to_string() + " " + same.to_string() + " " + names.conf().ndots.to_string(), "true true " + dns.system_conf().ndots.to_string());
 }
 
+function word(n: i32): i32[] {
+  return [n >> 24 & 255, n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+
+// One record of a netd getaddrinfo reply: the fields, the sockaddr and the
+// canonical name.
+function netd_record(family: i32, sockaddr: i32[], name: string): i32[] {
+  let out: i32[] = word(1).concat(word(0)).concat(word(family)).concat(word(1)).concat(word(6)).concat(word(sockaddr.len()));
+  out = out.concat(sockaddr).concat(word(name.len()));
+  for b in name.as_bytes() {
+    out = out.append(b as i32);
+  }
+  return out;
+}
+
+function netd_answer(r: dns.NetdReply): string {
+  match (r) {
+    dns.NetdMore => {
+      return "more";
+    },
+    dns.NetdDone(Ok(addrs)) => {
+      let parts: string[] = [];
+      for a in addrs {
+        parts = parts.append(a.to_string());
+      }
+      return parts.join(" ");
+    },
+    dns.NetdDone(Err(e)) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_netd_request(): test.TestOutcome {
+  let line: string = "";
+  if let Some(b) = dns.netd_request("example.com") {
+    line = string_from_bytes_unchecked(b.take(b.len() - 1)) + " NUL " + (b[b.len() - 1] == 0u8).to_string();
+  }
+  let refused: string = dns.netd_request("a b").is_some().to_string() + " " + dns.netd_request("").is_some().to_string() + " " + dns.netd_request("a\nb").is_some().to_string();
+  return test.assert_eq(line + ", " + refused, "getaddrinfo example.com ^ 1024 0 1 0 0 NUL true, false false false");
+}
+
+function test_netd_reply(): test.TestOutcome {
+  let v4: i32[] = [2, 0, 0, 0, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+  let v6: i32[] = [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0];
+  let whole: u8[] = bytes([50, 50, 50, 0].concat(netd_record(2, v4, "localhost")).concat(netd_record(10, v6, "")).concat(word(0)));
+  let more: i32 = 0;
+  for n in 0..whole.len() {
+    if (netd_answer(dns.netd_reply(whole.take(n))) == "more") {
+      more = more + 1;
+    }
+  }
+  let failed: string = netd_answer(dns.netd_reply(bytes([52, 48, 49, 0].concat(word(8)))));
+  let empty: string = netd_answer(dns.netd_reply(bytes([50, 50, 50, 0].concat(word(0)))));
+  let foreign: string = netd_answer(dns.netd_reply(bytes([53, 48, 48, 0])));
+  let got: string = netd_answer(dns.netd_reply(whole)) + ", " + (more == whole.len()).to_string() + ", " + failed + ", " + empty + ", " + foreign;
+  return test.assert_eq(got, "127.0.0.1 ::1, true, " + dns.NoSuchName.message() + ", " + dns.NoData.message() + ", " + dns.Malformed.message());
+}
+
 function main(): i32 {
   let r = test.new("std/dns");
   r = r.it("a name on the wire", test_encode_name);
@@ -1095,6 +1155,8 @@ function main(): i32 {
   r = r.it("NAT64: the prefix an ipv4only.arpa record reveals", test_nat64_prefix_of);
   r = r.it("NAT64: an IPv4 address under a prefix", test_synthesize);
   r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
+  r = r.it("netd: the getaddrinfo command of Android", test_netd_request);
+  r = r.it("netd: the reply, whole and in parts", test_netd_reply);
   r = r.it("live: resolve localhost and a literal", test_live_resolve);
   r = r.it("live: a resolver keeps what it read", test_live_resolver);
   return r.finish();

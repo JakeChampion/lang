@@ -115,7 +115,7 @@ function invalid(): test.TestOutcome {
     orientation.OrientLimits { output: pixels.default_limits(), max_planned_bytes: 0 },
   ] {
     match (orientation.apply(source, exif.RightTop, limits, cancel)) {
-      Err(orientation.Cancelled()) => {
+      Err(orientation.Cancelled) => {
         return test.fail("callback before admission");
       },
       Err(_) => {},
@@ -157,7 +157,7 @@ function cancellation(): test.TestOutcome {
         current.set(current.get() + 1);
         return current.get() == stop;
       })) {
-        Err(orientation.Cancelled()) => {},
+        Err(orientation.Cancelled) => {},
         _ => {
           return test.fail("each cancellation poll");
         }

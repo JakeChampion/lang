@@ -1586,6 +1586,9 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 			f.b.WriteByte('.')
 		}
 		f.b.WriteString(el.VariantName)
+		if el.VariantModule != "" && len(el.VariantBindings) == 0 && el.VariantFieldNames == nil && !el.RestWritten {
+			return
+		}
 		open, close := "(", ")"
 		if el.VariantFieldNames != nil || el.RestWritten {
 			open, close = " { ", " }"

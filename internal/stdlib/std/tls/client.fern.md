@@ -883,10 +883,10 @@ function __recv_fd(sock: Socket, wait: Duration): Result[Option[u8[]], tls.TlsEr
     Ok(net.Chunk(b)) => {
       return Ok(Some(b));
     },
-    Ok(net.Elapsed()) => {
+    Ok(net.Elapsed) => {
       return Ok(None);
     },
-    Ok(net.Abandoned()) => {
+    Ok(net.Abandoned) => {
       return Err(tls.NetFailed(net.Interrupted));
     },
     Err(e) => {
