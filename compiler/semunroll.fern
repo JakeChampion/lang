@@ -637,8 +637,8 @@ function unfolded(ins: ssa.SInst): Folded {
   return Folded { ins: ins, known: false, value: 0 };
 }
 
-// Folds an i32 comparison, or a sum, difference or product that does not
-// overflow, when both operands are constants.
+// Folds an i32 comparison, or a negation, sum, difference or product that
+// does not overflow, when its operands are constants.
 pub function fold(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
   if (small_constant(f, ins)) {
     return Folded { ins: ins, known: true, value: ins.imm };
@@ -646,6 +646,22 @@ pub function fold(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]
   if (ins.kind_tag == 7 && ins.args.len() == 1 && is_marked(known, ins.args[0])) {
     return Folded { ins: ins, known: true, value: konst[ins.args[0]] };
   }
+  if (ins.kind_tag == 10) {
+    return folded_negation(f, ins, known, konst);
+  }
+  return folded_pair(f, ins, known, konst);
+}
+
+function folded_negation(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
+  if (ins.args.len() == 1 && is_marked(known, ins.args[0]) && ssasem.is_i32(f.values[ins.result])) {
+    if let Some(v) = folded_i32(ins.str, 0, konst[ins.args[0]]) {
+      return Folded { ins: ssa.SInst { kind_tag: 1, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
+    }
+  }
+  return unfolded(ins);
+}
+
+function folded_pair(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
   if (ins.kind_tag != 9 || ins.args.len() != 2 || !is_marked(known, ins.args[0]) || !is_marked(known, ins.args[1]) || !ssasem.is_i32(f.values[ins.args[0]])) {
     return unfolded(ins);
   }
@@ -662,12 +678,23 @@ function folded_binary(f: ssasem.Func, ins: ssa.SInst, konst: i32[]): Folded {
     }
     return Folded { ins: ssa.SInst { kind_tag: 2, result: ins.result, args: [], imm: yes, str: "" }, known: false, value: 0 };
   }
-  if let Some(v) = arithmetic(ins.str, a, b) {
-    if (fits_i32(v) && ssasem.is_i32(f.values[ins.result])) {
-      return Folded { ins: ssa.SInst { kind_tag: 1, result: ins.result, args: [], imm: v as i32, str: "" }, known: true, value: v as i32 };
+  if (ssasem.is_i32(f.values[ins.result])) {
+    if let Some(v) = folded_i32(ins.str, konst[ins.args[0]], konst[ins.args[1]]) {
+      return Folded { ins: ssa.SInst { kind_tag: 1, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
     }
   }
   return unfolded(ins);
+}
+
+// The i32 sum, difference or product of two constants, when it does not
+// overflow. A negation is the difference from 0.
+pub function folded_i32(op: string, a: i32, b: i32): Option[i32] {
+  if let Some(v) = arithmetic(op, a as i64, b as i64) {
+    if (fits_i32(v)) {
+      return Some(v as i32);
+    }
+  }
+  return None;
 }
 
 function arithmetic(op: string, a: i64, b: i64): Option[i64] {

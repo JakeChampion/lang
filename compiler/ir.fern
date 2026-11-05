@@ -933,7 +933,7 @@ pub function op_set_file_times(): Op {
 }
 
 pub function op_writer_set_times(): Op {
-  return Op { ...op0(269), i32_imm: 1 };
+  return op0(498);
 }
 
 pub function op_open_reader_with(): Op {
@@ -3642,6 +3642,9 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "writer_set_times") {
+    return 498;
+  }
   if (name == "crc32_ieee_array") {
     return 481;
   }
@@ -4224,6 +4227,9 @@ function kind_name_3(id: i32): string {
 function kind_name_4(id: i32): string {
   if (id >= 491 && id <= 497) {
     return kind_name_worker(id);
+  }
+  if (id == 498) {
+    return "writer_set_times";
   }
   let a: string = kind_name_4a(id);
   if (a != "invalid") {
@@ -5319,7 +5325,7 @@ function kind_pops(t: i32): i32 {
   if (t == 323) {
     return 7;
   }
-  if (t == 269) {
+  if (t == 269 || t == 498) {
     return 6;
   }
   if (t == 274) {
@@ -7306,7 +7312,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 231) {
     return true;
   }
-  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363 || tag == 364 || tag == 365 || tag == 405) {
+  if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 || tag == 267 || tag == 269 || tag == 498 || tag == 273 || tag == 356 || tag == 357 || tag == 362 || tag == 363 || tag == 364 || tag == 365 || tag == 405) {
     return true;
   }
   if (tag == 171 || tag == 310 || tag == 391 || tag == 432) {

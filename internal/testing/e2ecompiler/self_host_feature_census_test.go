@@ -349,7 +349,7 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	logCensus(t, srcs, c)
 
 	pinned(t, c, "generic functions", 16,
-		"Nine on astwalk's fold spine, five on its accumulator-carrying map spine (map_expr_acc / map_exprs_acc / map_stmt_acc / map_stmts_acc / map_stmts_acc_changed), util.append_all, and util.sorted_by. The diagnostics source-order sort added sorted_by in #12993. This code exercises generic function monomorphisation on the fixpoint path.")
+		"Nine on astwalk's fold spine, five on its accumulator-carrying map spine (map_expr_where / map_exprs_where / map_stmt_where / map_stmts_where / map_stmts_where_changed), util.append_all, and util.sorted_by. The diagnostics source-order sort added sorted_by in #12993. This code exercises generic function monomorphisation on the fixpoint path.")
 	pinned(t, c, "generic structs", 0,
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
 	pinned(t, c, "arrow lambdas", 16,
