@@ -3916,7 +3916,7 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 const cmpImport = "`import \"core/cmp\";`"
 
 // cmpHint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// Ord and Hash for Option, Result, owned arrays and tuples when their parts
 // do, so the hint moves to the first part that is not a scalar, or else asks
 // for the import. A type that no module can implement the trait for gets
 // advice on its parts, not an impl that the orphan rule refuses.
@@ -3949,8 +3949,6 @@ func cmpParts(t ast.Type) ([]ast.Type, bool) {
 			return t.Args, true
 		}
 	case ast.ArrayType:
-		return []ast.Type{t.Elem}, true
-	case ast.SliceType:
 		return []ast.Type{t.Elem}, true
 	case ast.TupleType:
 		return t.Elems, true

@@ -1702,7 +1702,9 @@ function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
       }
     },
     typeinfo.TypeArray(a) => {
-      return Some([a.elem]);
+      if (!a.view) {
+        return Some([a.elem]);
+      }
     },
     typeinfo.TypeTuple(tup) => {
       return Some(tup.elements);
@@ -1712,8 +1714,19 @@ function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
   return None;
 }
 
+// True when `a` and `b` are arrays at the same depths, each of them owned or
+// a view on both sides. The rest of the type `type_eq` decides.
+function same_views(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(x) = a {
+    if let typeinfo.TypeArray(y) = b {
+      return x.view == y.view && same_views(x.elem, y.elem);
+    }
+  }
+  return true;
+}
+
 // cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// Ord and Hash for Option, Result, owned arrays and tuples when their parts
 // do, so the hint moves to the first part that is not a scalar, or else asks
 // for the import. A type that no module can implement the trait for gets
 // advice on its parts, not an impl that the orphan rule refuses.
@@ -15039,8 +15052,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
     }
   }
   if (b.op == "==" || b.op == "!=") {
-    let eq_widths: boolean = type_eq(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
-      || settles_to(b.left, brt, s) || settles_to(b.right, blt, s);
+    let eq_widths: boolean = (type_eq(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
+      || settles_to(b.left, brt, s) || settles_to(b.right, blt, s)) && same_views(blt, brt);
     if (!is_unknown(blt) && !is_unknown(brt) && !eq_widths) {
       out = out.append(dg_at("E041", "cannot compare " + type_label(blt) + " with " + type_label(brt) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
     } else if (!is_unknown(blt) && eq_widths && is_composite_type(blt) && !s.has_cmp_method("eq", blt)) {
