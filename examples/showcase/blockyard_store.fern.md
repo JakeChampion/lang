@@ -136,7 +136,7 @@ Journal records already included in a snapshot are safe to skip after a crash du
 ```fern
 <<Recovery>>=
 pub function recover(directory: string, name: string): Result[Recovered, string] {
-  let blocks = map_new(64);
+  let blocks: Map[i32, i32] = map_new(64);
   let revision: i64 = 0;
   if (directory == "") {
     return Ok(Recovered { blocks: blocks, revision: revision, journal_bytes: 0 });
