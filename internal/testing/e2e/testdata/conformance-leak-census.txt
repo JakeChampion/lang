@@ -1212,6 +1212,7 @@ tuple_match                                          0
 tuple_match_expr                                     0
 tuple_nested_destructure                             0
 tuple_nested_tuple_pattern                           0
+tuple_payload_gives_loop_local_next_value            0
 tuple_payload_pattern                                0
 tuple_payload_pattern_expr                           0
 tuple_return_union                                   0

@@ -1,0 +1,28 @@
+// The tuple payload of a fresh call gives the loop local its next value, so
+// the move of the local into the call is its last use on each round (#14239).
+struct D { buf: u8[], n: i32 }
+
+function next(own d: D): Result[(D, i32), string] {
+  if (d.n > 100) {
+    return Err("big");
+  }
+  return Ok((D { ...d, n: d.n + 1 }, d.n));
+}
+
+function main(): i32 {
+  let d = D { buf: [], n: 0 };
+  let total = 0;
+  while (total < 10) {
+    match (next(d)) {
+      Ok((d1, v)) => {
+        d = d1;
+        total += v + 1;
+      },
+      Err(_) => {
+        return 1;
+      }
+    }
+  }
+  print(total.to_string() + " " + d.n.to_string());
+  return 0;
+}
