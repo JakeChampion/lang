@@ -46,6 +46,9 @@ struct App {
   capturing: boolean,
   up: pcm.Resampler,
   down: pcm.Resampler,
+  agc: pcm.Agc,
+  // The samples at the rate of the speaker that it did not take yet.
+  queue: i32[],
   pressed: boolean,
   drawn: string,
   asked: boolean,
@@ -136,7 +139,7 @@ function app_main(ctx: usize): usize {
   android.keep_screen_on(ctx, true);
   let n: node.Node = fresh_node(notice);
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -504,6 +507,7 @@ function sync_mic(s: App, now: i64): App {
   if (!mic.start()) {
     return App { ...s, mic: mic, node: node.mic_lost(s.node, "the microphone did not start", now) };
   }
+  log.info("walkie: microphone rate " + mic.rate.to_string());
   return App { ...s, mic: mic, capturing: true, up: pcm.resampler(mic.rate, voice.RATE) };
 }
 
@@ -513,7 +517,8 @@ function speak(s: App): App {
     return s;
   }
   let (up, wire) = pcm.resample(s.up, s.mic.read(s.mic.rate / 10, 0));
-  return App { ...s, up: up, node: node.voice(s.node, wire) };
+  let (agc, loud) = pcm.amplify(s.agc, wire);
+  return App { ...s, up: up, agc: agc, node: node.voice(s.node, loud) };
 }
 
 // In a room, a datagram counts only when it comes from the relay, so that a
@@ -546,15 +551,21 @@ function flush(s: App): App {
     send_out(sock, n, s.room, s.group_broadcast);
   }
   let down: pcm.Resampler = s.down;
+  let queue: i32[] = s.queue;
   for f in n.heard {
     let (d2, samples) = pcm.resample(down, f);
-    let written: i32 = s.spk.write(samples, 0);
+    for v in samples {
+      queue = queue.append(v);
+    }
     down = d2;
+  }
+  if (queue.len() > 0) {
+    queue = pcm.unplayed(queue, s.spk.write(queue, 0), s.spk.rate * 3 / 10);
   }
   for l in n.logs {
     log.info("walkie: " + l);
   }
-  return App { ...s, down: down, node: node.drained(n) };
+  return App { ...s, down: down, queue: queue, node: node.drained(n) };
 }
 
 // A beacon goes to the broadcast address on each walkie port, and to the

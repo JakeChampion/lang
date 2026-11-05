@@ -33,3 +33,88 @@ pub function resample(r: Resampler, x: [i32]): (Resampler, i32[]) {
   }
   return (Resampler { ...r, pos: pos - n as i64 * r.to, prev: x[n - 1] }, out);
 }
+
+// The samples of `queue` after the first `written`, which the speaker did
+// not take yet. When more than `max` are left, the oldest ones go, so the
+// delay of the voice stays short.
+pub function unplayed(queue: [i32], written: i32, max: i32): i32[] {
+  let from: i32 = written;
+  if (from < 0) {
+    from = 0;
+  }
+  if (queue.len() - from > max) {
+    from = queue.len() - max;
+  }
+  let out: i32[] = [];
+  for k in from..queue.len() {
+    out = out.append(queue[k]);
+  }
+  return out;
+}
+
+// The gain of the microphone, in steps of 1/256. A phone that is not at the
+// mouth gives quiet speech, so the gain raises speech to TARGET_PEAK, up to
+// MAX_GAIN times. It does not rise on noise below NOISE_PEAK, and it falls at
+// once so that a loud word is not clipped.
+pub const GAIN_ONE: i32 = 256;
+
+pub const MAX_GAIN: i32 = 2048;
+
+pub const TARGET_PEAK: i32 = 16000;
+
+pub const NOISE_PEAK: i32 = 600;
+
+// `env` follows the peaks of the input: it rises at once and falls by an
+// eighth of the difference on each block.
+pub struct Agc { gain: i32, env: i32 }
+
+pub function agc(): Agc {
+  return Agc { gain: GAIN_ONE, env: 0 };
+}
+
+function peak_of(x: [i32]): i32 {
+  let peak: i32 = 0;
+  for v in x {
+    if (v > peak) {
+      peak = v;
+    } else if (0 - v > peak) {
+      peak = 0 - v;
+    }
+  }
+  return peak;
+}
+
+// The gain that brings the envelope `env` to TARGET_PEAK, from `gain`.
+function next_gain(gain: i32, env: i32): i32 {
+  if (env < NOISE_PEAK) {
+    return gain;
+  }
+  let want: i32 = TARGET_PEAK * GAIN_ONE / env;
+  if (want > MAX_GAIN) {
+    want = MAX_GAIN;
+  } else if (want < GAIN_ONE) {
+    want = GAIN_ONE;
+  }
+  if (want <= gain) {
+    return want;
+  }
+  return gain + (want - gain) / 8 + 1;
+}
+
+// The samples `x` at the gain of `a`, and the gain for the next block.
+pub function amplify(a: Agc, x: [i32]): (Agc, i32[]) {
+  let peak: i32 = peak_of(x);
+  let env: i32 = a.env - (a.env - peak) / 8;
+  if (peak > a.env) {
+    env = peak;
+  }
+  let gain: i32 = next_gain(a.gain, env);
+  if (peak > 0 && peak * gain > 32767 * GAIN_ONE) {
+    gain = 32767 * GAIN_ONE / peak;
+  }
+  let out: i32[] = [];
+  for v in x {
+    out = out.append(v * gain / GAIN_ONE);
+  }
+  return (Agc { gain: gain, env: env }, out);
+}
