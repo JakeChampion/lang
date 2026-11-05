@@ -50,9 +50,10 @@ func EMI(src string, seed uint64, steps int, valid func(string) bool) (string, i
 }
 
 type emiSite struct {
-	blk  *ast.Block
-	fn   int
-	loop bool
+	blk   *ast.Block
+	fn    int
+	loop  bool
+	limit int
 	// A donor that holds the site would make the tree hold itself.
 	outer []ast.Stmt
 }
@@ -75,9 +76,7 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 		if fn.Body == nil || fn.Name == "emi_false" || fn.Name == "emi_true" {
 			continue
 		}
-		w.fn = len(w.donors)
-		w.donors = append(w.donors, nil)
-		w.stmt(fn.Body, false)
+		w.function(fn.Body)
 	}
 	if len(w.sites) == 0 {
 		return "", false
@@ -93,13 +92,13 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 	}
 	switch rng.IntN(4) {
 	case 0:
-		at := rng.IntN(len(s.blk.Stmts) + 1)
+		at := rng.IntN(s.limit + 1)
 		s.blk.Stmts = insertStmt(s.blk.Stmts, at, emiIf("emi_false", donor, nil))
 	case 1:
-		if len(s.blk.Stmts) == 0 {
+		if s.limit == 0 {
 			return "", false
 		}
-		at := rng.IntN(len(s.blk.Stmts))
+		at := rng.IntN(s.limit)
 		if !emiWrappable(s.blk.Stmts[at]) {
 			return "", false
 		}
@@ -109,10 +108,10 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 		}
 		s.blk.Stmts[at] = emiIf("emi_true", s.blk.Stmts[at], els)
 	case 2:
-		if len(s.blk.Stmts) == 0 {
+		if s.limit == 0 {
 			return "", false
 		}
-		at := rng.IntN(len(s.blk.Stmts))
+		at := rng.IntN(s.limit)
 		if !emiWrappable(s.blk.Stmts[at]) || emiLoopSensitive(s.blk.Stmts[at]) {
 			return "", false
 		}
@@ -125,10 +124,19 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 		if rng.IntN(2) == 0 {
 			jump = &ast.Continue{}
 		}
-		at := rng.IntN(len(s.blk.Stmts) + 1)
+		at := rng.IntN(s.limit + 1)
 		s.blk.Stmts = insertStmt(s.blk.Stmts, at, emiIf("emi_false", jump, nil))
 	}
 	return printer.Format(prog), true
+}
+
+func (w *emiWalk) function(body *ast.Block) {
+	fn, outer := w.fn, w.outer
+	w.fn = len(w.donors)
+	w.donors = append(w.donors, nil)
+	w.outer = nil
+	w.stmt(body, false)
+	w.fn, w.outer = fn, outer
 }
 
 func (w *emiWalk) stmt(s ast.Stmt, loop bool) {
@@ -138,14 +146,31 @@ func (w *emiWalk) stmt(s ast.Stmt, loop bool) {
 			w.stmt(s.Sugar.Body, true)
 			return
 		}
-		w.sites = append(w.sites, emiSite{blk: s, fn: w.fn, loop: loop, outer: slices.Clone(w.outer)})
-		for _, st := range s.Stmts {
-			if _, ok := st.(*ast.Block); !ok {
+		// Preserve the adjacent callback declaration and return that print as use.
+		limit := len(s.Stmts)
+		for i, st := range s.Stmts {
+			if fd, ok := st.(*ast.FuncDecl); ok && fd.UseSource != nil {
+				limit = i
+				break
+			}
+		}
+		w.sites = append(w.sites, emiSite{blk: s, fn: w.fn, loop: loop, limit: limit, outer: slices.Clone(w.outer)})
+		for _, st := range s.Stmts[:limit] {
+			switch st.(type) {
+			case *ast.Block, *ast.FuncDecl:
+			default:
 				w.donors[w.fn] = append(w.donors[w.fn], st)
 			}
 			w.outer = append(w.outer, st)
 			w.stmt(st, loop)
 			w.outer = w.outer[:len(w.outer)-1]
+		}
+		if limit < len(s.Stmts) {
+			w.stmt(s.Stmts[limit], false)
+		}
+	case *ast.FuncDecl:
+		if s.Body != nil {
+			w.function(s.Body)
 		}
 	case *ast.If:
 		// An assert is an If whose Then block the printer reads back as one call.
@@ -180,7 +205,7 @@ func (w *emiWalk) stmt(s ast.Stmt, loop bool) {
 // end of the block, and neither does a defer, which runs at that end.
 func emiWrappable(s ast.Stmt) bool {
 	switch s := s.(type) {
-	case *ast.Var, *ast.Destructure, *ast.Defer:
+	case *ast.Var, *ast.Destructure, *ast.Defer, *ast.FuncDecl:
 		return false
 	case *ast.Match:
 		return s.Origin != ast.OriginLetElse

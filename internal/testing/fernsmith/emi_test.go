@@ -82,6 +82,37 @@ func TestEMIKeepsOnlyValidSteps(t *testing.T) {
 	}
 }
 
+func TestEMIKeepsUseCallbacksInTheirFunction(t *testing.T) {
+	const prelude = `function with_doubled(n: i32, k: (i32) => i32): i32 { return k(n * 2); }
+`
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"reported-seed", `use v <- with_doubled(21); return v;`, 42},
+		{"prefix", `let n: i32 = 20; use v <- with_doubled(n + 1); return v;`, 42},
+		{"nested", `use a <- with_doubled(21); use b <- with_doubled(a); return b;`, 84},
+		{"local-function", `function local(n: i32): i32 { return n + 1; } return local(41);`, 42},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := prelude + "function main(): i32 { " + tc.body + " }\n"
+			for offset := uint64(0); offset < sweepN(t, 128); offset++ {
+				seed := 143184 + offset
+				mutant, kept := fernsmith.EMI(source, seed, 8, func(s string) bool { return checkGenerated(t, s) == nil })
+				if strings.Contains(mutant, "__use_") {
+					t.Fatalf("seed %d exposes a generated callback after %d mutations:\n%s", seed, kept, mutant)
+				}
+				if offset == 0 && kept == 0 {
+					t.Fatalf("seed %d exercises no mutation", seed)
+				}
+				if got := emiExit(t, mutant); got != tc.want {
+					t.Fatalf("seed %d exits %d, want %d:\n%s", seed, got, tc.want, mutant)
+				}
+			}
+		})
+	}
+}
+
 func TestEMIPreservesDeferredCleanupOrder(t *testing.T) {
 	src, err := os.ReadFile("../../../conformance/cases/defer_binding_siblings/main.fern")
 	if err != nil {
