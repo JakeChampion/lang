@@ -414,7 +414,7 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
           return out;
         }
         let here = __count_byte_bytes(chunk, s.term) as u64;
-        let start: i32 = -1;
+        let start = -1;
         if (here >= s.count.n) {
           start = lines.tail_start(chunk, s.count.n, s.term);
         }

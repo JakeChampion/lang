@@ -560,7 +560,7 @@ function parse_directive(s: string, from: i32): (Fmt, i32) {
     gnu.error("format " + gnu.quote(s) + " ends in %");
     exit(1);
   }
-  let prec: i64 = 0 - 1 as i64;
+  let prec = -1i64;
   if (s[i] as i32 == 46) {
     let p: (i64, i32) = read_precision(s, i + 1);
     prec = p.0;
@@ -612,7 +612,7 @@ function read_signed(s: string, from: i32): (i32, i32, boolean) {
 function read_precision(s: string, from: i32): (i64, i32) {
   let i = from;
   if (i >= s.len()) {
-    return (0 - 1 as i64, from - 1);
+    return (-1i64, from - 1);
   }
   if (s[i] as i32 == 102) {
     return (0 as i64, i);

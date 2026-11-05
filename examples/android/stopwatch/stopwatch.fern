@@ -101,7 +101,7 @@ pub const BURN_IN_MAX: i32 = 10;
 // displacement / BURN_IN_MAX of half the free space. `random` is any
 // non-negative number.
 pub function burn_in_offset(panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
-  let space: i32 = panel - content - 2 * reserved;
+  let space = panel - content - 2 * reserved;
   if (content <= 0 || space <= 0) {
     return 0;
   }

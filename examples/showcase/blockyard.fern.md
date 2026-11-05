@@ -61,7 +61,7 @@ pub function state(instance: string): State {
   if (hosts.len() == 0 || hosts.len() > 8) {
     error = "The world directory needs one to eight worlds.";
   }
-  let names: Map[string, boolean] = map_new(8);
+  let names = map_new(8);
   for host in hosts {
     if (!common.room_name(host.name) || names.contains(host.name) || host.server == "") {
       error = "The world directory has an invalid or duplicate world.";

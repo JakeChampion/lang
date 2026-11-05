@@ -6,7 +6,7 @@ import "./secure";
 
 // Fixed random bytes for a repeatable test.
 function bytes(seed: string, n: i32): u8[] {
-  let h: u8[] = crypto.sha256(seed.as_bytes());
+  let h = crypto.sha256(seed.as_bytes());
   let out: u8[] = [];
   for k in 0..n {
     out = out.append(h[k % 32]);
@@ -83,9 +83,9 @@ function test_man_in_the_middle_shows_different_strings(): test.TestOutcome {
 }
 
 function test_reveal_must_match_commitment(): test.TestOutcome {
-  let a: secure.Handshake = party(true, "alice");
+  let a = party(true, "alice");
   let (b1, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
-  let other: secure.Handshake = party(true, "mallory");
+  let other = party(true, "mallory");
   let other_commit = secure.first(other);
   let (other1, reveal) = secure.receive(other, key_msg);
   let (b2, none) = secure.receive(b1, reveal);
@@ -97,7 +97,7 @@ function test_reveal_must_match_commitment(): test.TestOutcome {
 // The string of a finished handshake, or "" when it gives no keys.
 function sas_of(h: secure.Handshake): string {
   if let Some(k) = secure.keys(h) {
-    let s: string = k.sas;
+    let s = k.sas;
     secure.close_keys(k);
     return s;
   }
@@ -106,7 +106,7 @@ function sas_of(h: secure.Handshake): string {
 
 // The three messages carry the ML-KEM-768 encapsulation key and ciphertext.
 function test_hybrid_message_sizes(): test.TestOutcome {
-  let a: secure.Handshake = party(true, "alice");
+  let a = party(true, "alice");
   let commit = secure.first(a);
   let (b1, key_msg) = secure.receive(party(false, "bob"), commit);
   let (a1, reveal) = secure.receive(a, key_msg);
@@ -118,26 +118,26 @@ function test_hybrid_message_sizes(): test.TestOutcome {
 // A party in the middle changes one byte of the ML-KEM ciphertext. The
 // initiator gets another shared secret, so the strings differ.
 function test_changed_ciphertext_changes_the_string(): test.TestOutcome {
-  let a: secure.Handshake = party(true, "alice");
+  let a = party(true, "alice");
   let (b1, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
-  let bad: u8[] = key_msg.with(100, key_msg[100] ^ 1 as u8);
+  let bad = key_msg.with(100, key_msg[100] ^ 1 as u8);
   let (a1, reveal) = secure.receive(a, bad);
   let (b2, none) = secure.receive(b1, reveal);
-  let sa: string = sas_of(a1);
-  let sb: string = sas_of(b2);
+  let sa = sas_of(a1);
+  let sb = sas_of(b2);
   return test.assert_eq((sa.len() == 6 && sb.len() == 6 && sa != sb).to_string(), "true");
 }
 
 // A party in the middle puts its own encapsulation key in the first
 // message. The responder encapsulates to that key, so the strings differ.
 function test_swapped_encapsulation_key_changes_the_string(): test.TestOutcome {
-  let a: secure.Handshake = party(true, "alice");
-  let mallory: secure.Handshake = party(true, "mallory");
+  let a = party(true, "alice");
+  let mallory = party(true, "mallory");
   let commit = secure.first(a);
   let theirs = secure.first(mallory);
   let swapped: u8[] = [];
   for k in 0..commit.len() {
-    let b: u8 = commit[k];
+    let b = commit[k];
     if (k >= 33) {
       b = theirs[k];
     }
@@ -147,8 +147,8 @@ function test_swapped_encapsulation_key_changes_the_string(): test.TestOutcome {
   let (a1, reveal) = secure.receive(a, key_msg);
   let (b2, none) = secure.receive(b1, reveal);
   secure.close_handshake(mallory);
-  let sa: string = sas_of(a1);
-  let sb: string = sas_of(b2);
+  let sa = sas_of(a1);
+  let sb = sas_of(b2);
   return test.assert_eq((sa.len() == 6 && sb.len() == 6 && sa != sb).to_string(), "true");
 }
 
@@ -157,8 +157,8 @@ function test_kem_secrets_are_erased(): test.TestOutcome {
   let (a, b) = pair(party(true, "alice"), party(false, "bob"));
   let ka = a;
   let kb = b;
-  let sa: string = sas_of(a);
-  let sb: string = sas_of(b);
+  let sa = sas_of(a);
+  let sb = sas_of(b);
   let c = party(false, "carol");
   let old = c;
   let (failed, _) = secure.receive(c, [16 as u8]);
@@ -175,7 +175,7 @@ function test_kem_random_is_required(): test.TestOutcome {
 function test_changed_frame_is_refused(): test.TestOutcome {
   let (a, b) = channels(party(true, "alice"), party(false, "bob"));
   let (a1, f) = secure.seal_control(a, "push".as_bytes());
-  let bad: u8[] = f.with(f.len() - 1, f[f.len() - 1] ^ 1 as u8);
+  let bad = f.with(f.len() - 1, f[f.len() - 1] ^ 1 as u8);
   let (b1, got) = secure.open_control(b, bad);
   return test.assert_eq(opened(got), "refused");
 }
@@ -203,7 +203,7 @@ function test_voice_window(): test.TestOutcome {
     a = next;
     frames = frames.append(f);
   }
-  let out: string = "";
+  let out = "";
   let order: i32[] = [5, 3, 4, 3, 90, 30, 26, 89, 5];
   for i in order {
     let (next, got) = secure.open_voice(b, frames[i]);
@@ -235,14 +235,14 @@ function test_third_party_cannot_read_or_inject(): test.TestOutcome {
 }
 
 function test_wrong_order_handshake_fails(): test.TestOutcome {
-  let b: secure.Handshake = party(false, "bob");
+  let b = party(false, "bob");
   let (b1, reply) = secure.receive(b, [18 as u8]);
   return test.assert_eq(b1.failed.to_string() + " " + reply.len().to_string(), "true 0");
 }
 
 function test_close_consumes_the_channel(): test.TestOutcome {
   let (a, b) = channels(party(true, "alice"), party(false, "bob"));
-  let sas: string = a.sas;
+  let sas = a.sas;
   secure.close(a);
   secure.close(b);
   return test.assert_eq(sas.len(), 6);
@@ -356,7 +356,7 @@ function reject_aliased_keys(k: secure.Keys): i32 {
 
 function test_rejected_key_bundle_clears_aliases(): test.TestOutcome {
   let (a, b) = pair(party(true, "alice"), party(false, "bob"));
-  let size = 0 - 1;
+  let size = -1;
   match (secure.keys(a)) {
     Some(k) => {
       size = reject_aliased_keys(k);
@@ -400,11 +400,11 @@ function test_sequence_boundaries_do_not_change_the_window(): test.TestOutcome {
     return test.fail("a hand-sealed frame inside the range did not open: " + voiced(inside));
   }
   let refused = 0;
-  for seq in [0 - 1 as i64, 9223372036854775807i64] {
+  for seq in [-1i64, 9223372036854775807i64] {
     let frame = voice_at(a, seq);
     let (_, got) = secure.open_voice(b, frame);
     if (frame.len() >= 25 && voiced(got) == "refused") {
-      refused = refused + 1;
+      refused += 1;
     }
   }
   let (a1, good) = secure.seal_voice(a, "ok".as_bytes());
@@ -438,7 +438,7 @@ function test_rekey_moves_the_voice_key(): test.TestOutcome {
   let (a5, last) = secure.seal_voice(a4, "last".as_bytes());
   let (b5, got_last) = secure.open_voice(b4, last);
   let (b6, stale) = secure.open_voice(b5, early);
-  let epochs: string = secure.send_epoch(a5).to_string() + "/" + secure.recv_epoch(b6).to_string();
+  let epochs = secure.send_epoch(a5).to_string() + "/" + secure.recv_epoch(b6).to_string();
   return test.assert_eq(epochs + " " + voiced(got_late) + " " + voiced(got_early) + " " + voiced(got_last) + " " + voiced(stale), "2/2 ok:late@1 ok:early@0 ok:last@2 refused");
 }
 
@@ -542,7 +542,7 @@ function test_identity_proof_is_bound_to_its_exchange(): test.TestOutcome {
   let Some(ida) = id_key("alice") else {
     return test.fail("no identity");
   };
-  let proof: u8[] = secure.prove(ka, ida, false);
+  let proof = secure.prove(ka, ida, false);
   let moved = secure.check_proof(kc, proof);
   let changed = secure.check_proof(kb, proof.with(20, proof[20] ^ 1 as u8));
   let flag = secure.check_proof(kb, proof.with(0, 1 as u8));
@@ -578,7 +578,7 @@ function test_handshake_aliases_cannot_reuse_a_key_reply(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("walkie secure channel");
+  let r = test.new("walkie secure channel");
   r = r.it("the handshake agrees on keys and on the string", test_handshake_agrees);
   r = r.it("a party in the middle shows different strings", test_man_in_the_middle_shows_different_strings);
   r = r.it("the reveal must match the commitment", test_reveal_must_match_commitment);

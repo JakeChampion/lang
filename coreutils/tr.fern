@@ -333,7 +333,7 @@ function build_spec(e: ES): Item[] {
       if (es_is(e, i + 1, 58) || es_is(e, i + 1, 61)) {
         let delim = e.s[i + 1] as i32;
         let j = i + 2;
-        let close: i32 = -1;
+        let close = -1;
         while (j + 1 < n) {
           if (e.s[j] as i32 == delim && e.s[j + 1] as i32 == 93 && e.esc[j] as i32 == 0 && e.esc[j + 1] as i32 == 0) {
             close = j;
@@ -367,7 +367,7 @@ function build_spec(e: ES): Item[] {
       }
       if (!handled && i + 2 < n && es_is(e, i + 2, 42)) {
         let k = i + 3;
-        let end: i32 = -1;
+        let end = -1;
         while (k < n && e.esc[k] as i32 == 0) {
           if (e.s[k] as i32 == 93) {
             end = k;
@@ -662,7 +662,7 @@ function build_xlate_complement(s1: Item[], s2: Item[], truncate: boolean): u8[]
   let t = identity_table();
   let in1 = members(s1, false);
   let cur = cur_new();
-  let last: i32 = -1;
+  let last = -1;
   let i = 0;
   while (i < 256) {
     if (in1[i] as i32 == 0) {
@@ -901,7 +901,7 @@ pub function main(): i32 {
 
   let o = gnu.out_new();
   let r = stdin();
-  let last: i32 = -1;
+  let last = -1;
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {

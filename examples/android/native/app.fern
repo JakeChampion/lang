@@ -15,7 +15,7 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 function app_main(ctx: usize): usize {
-  let first: App = App { ctx: ctx, window: 0 as usize, started_ns: 0 as i64, before_ms: 0 as i64, running: false };
+  let first = App { ctx: ctx, window: 0 as usize, started_ns: 0 as i64, before_ms: 0 as i64, running: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => timeout(s));
   log.info("stopwatch: destroyed at " + elapsed_ms(last).to_string() + " ms");
   return 0 as usize;
@@ -32,7 +32,7 @@ function timeout(s: App): i32 {
   if (s.running && s.window != 0 as usize) {
     return face.next_change_ms(elapsed_ms(s));
   }
-  return 0 - 1;
+  return -1;
 }
 
 function step(s: App, e: android.Event): App {
@@ -73,7 +73,7 @@ function step(s: App, e: android.Event): App {
 
 function toggle(s: App): App {
   if (s.running) {
-    let paused: App = App { ...s, before_ms: elapsed_ms(s), running: false };
+    let paused = App { ...s, before_ms: elapsed_ms(s), running: false };
     android.keep_screen_on(s.ctx, false);
     log.info("stopwatch: paused at " + paused.before_ms.to_string() + " ms");
     return paused;

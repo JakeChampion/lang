@@ -9,9 +9,9 @@ import "./voice";
 function speech(n: i32, start: i32): i32[] {
   let x: i32[] = [];
   for i in 0..n {
-    let t: f64 = (start + i) as f64 / (voice.RATE as f64);
-    let w: f64 = 6.283185307179586 * 150.0 * t;
-    let v: f64 = 6000.0 * w.sin() + 3000.0 * (2.0 * w).sin() + 1500.0 * (3.0 * w).sin();
+    let t = (start + i) as f64 / (voice.RATE as f64);
+    let w = 6.283185307179586 * 150.0 * t;
+    let v = 6000.0 * w.sin() + 3000.0 * (2.0 * w).sin() + 1500.0 * (3.0 * w).sin();
     x = x.append(v as i32);
   }
   return x;
@@ -36,15 +36,15 @@ function code(frames: i32): Coded {
   let dec = voice.decoder();
   let input: i32[] = [];
   let output: i32[] = [];
-  let bytes: i32 = 0;
+  let bytes = 0;
   for f in 0..frames {
-    let x: i32[] = speech(voice.FRAME, f * voice.FRAME);
+    let x = speech(voice.FRAME, f * voice.FRAME);
     for v in x {
       input = input.append(v);
     }
     let (e1, p) = voice.encode(enc, x);
     enc = e1;
-    bytes = bytes + p.len();
+    bytes += p.len();
     let (d1, y) = decode_frame(dec, p);
     dec = d1;
     for v in y {
@@ -63,13 +63,13 @@ function best_correlation(c: Coded): f64 {
     let xx: f64 = 0.0;
     let yy: f64 = 0.0;
     for i in 1600..c.output.len() - lag {
-      let x: f64 = c.input[i] as f64;
-      let y: f64 = c.output[i + lag] as f64;
+      let x = c.input[i] as f64;
+      let y = c.output[i + lag] as f64;
       xy = xy + x * y;
       xx = xx + x * x;
       yy = yy + y * y;
     }
-    let r: f64 = xy / (xx * yy + 1.0).sqrt();
+    let r = xy / (xx * yy + 1.0).sqrt();
     if (r > best) {
       best = r;
     }
@@ -79,8 +79,8 @@ function best_correlation(c: Coded): f64 {
 
 // The decoded voice follows the input closely, after the delay of the codec.
 function test_round_trip_keeps_the_voice(): test.TestOutcome {
-  let c: Coded = code(50);
-  let r: f64 = best_correlation(c);
+  let c = code(50);
+  let r = best_correlation(c);
   if (c.output.len() != c.input.len() || r < 0.95) {
     return test.fail("the output has " + c.output.len().to_string() + " samples and a correlation of " + r.to_string());
   }
@@ -89,8 +89,8 @@ function test_round_trip_keeps_the_voice(): test.TestOutcome {
 
 // A second of voice takes about 24 kbit/s.
 function test_rate_is_near_the_target(): test.TestOutcome {
-  let c: Coded = code(50);
-  let kbits: i32 = c.bytes * 8 / 1000;
+  let c = code(50);
+  let kbits = c.bytes * 8 / 1000;
   if (kbits < 18 || kbits > 30) {
     return test.fail("one second took " + kbits.to_string() + " kbit");
   }
@@ -100,8 +100,8 @@ function test_rate_is_near_the_target(): test.TestOutcome {
 // Each packet is one wideband CELT frame of 20 ms.
 function test_packet_is_one_wideband_celt_frame(): test.TestOutcome {
   let (_, p) = voice.encode(voice.encoder(), speech(voice.FRAME, 0));
-  let toc: u8 = p[0];
-  let ok: boolean = packet.bandwidth(toc) == packet.WIDEBAND && packet.samples_per_frame(toc, voice.RATE) == voice.FRAME && !packet.stereo(toc);
+  let toc = p[0];
+  let ok = packet.bandwidth(toc) == packet.WIDEBAND && packet.samples_per_frame(toc, voice.RATE) == voice.FRAME && !packet.stereo(toc);
   match (packet.mode(toc)) {
     packet.Celt => {},
     _ => {
@@ -128,20 +128,20 @@ function test_other_packet_gives_nothing(): test.TestOutcome {
 // `seqs`, each with a packet of the same frame of speech.
 function playout(seqs: [i64]): string {
   let (_, p) = voice.encode(voice.encoder(), speech(voice.FRAME, 0));
-  let r: voice.Receiver = voice.receiver();
-  let out: string = "";
+  let r = voice.receiver();
+  let out = "";
   for seq in seqs {
     let (r1, frames) = voice.receive(r, seq, p);
     r = r1;
-    let ok: boolean = true;
+    let ok = true;
     for f in frames {
       ok = ok && f.len() == voice.FRAME;
     }
-    out = out + frames.len().to_string();
+    out += frames.len().to_string();
     if (!ok) {
-      out = out + "!";
+      out += "!";
     }
-    out = out + " ";
+    out += " ";
   }
   return out;
 }
@@ -159,7 +159,7 @@ function test_long_loss_conceals_five_frames(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("walkie voice");
+  let r = test.new("walkie voice");
   r = r.it("the round trip keeps the voice", test_round_trip_keeps_the_voice);
   r = r.it("the rate is near the target", test_rate_is_near_the_target);
   r = r.it("a packet is one wideband CELT frame", test_packet_is_one_wideband_celt_frame);

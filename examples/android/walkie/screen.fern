@@ -22,7 +22,7 @@ pub const LINE_CHARS: i32 = 20;
 // The scale of the text for a screen `w` pixels wide and characters `cell_w`
 // pixels wide at scale 1: LINE_CHARS characters fit inside the margins.
 pub function text_scale(w: i32, cell_w: i32): i32 {
-  let s: i32 = w * 9 / 10 / (LINE_CHARS * cell_w);
+  let s = w * 9 / 10 / (LINE_CHARS * cell_w);
   if (s < 1) {
     return 1;
   }
@@ -38,9 +38,9 @@ pub function line_chars(w: i32, cell_w: i32, sc: i32): i32 {
 // A word longer than `max` is cut.
 pub function wrap(text: string, max: i32): string[] {
   let lines: string[] = [];
-  let line: string = "";
+  let line = "";
   for word in text.split(" ") {
-    let w: string = word;
+    let w = word;
     while (w.len() > max) {
       if (line.len() > 0) {
         lines = lines.append(line);
@@ -67,7 +67,7 @@ pub function wrap(text: string, max: i32): string[] {
 
 // The square around the round talk button.
 pub function talk_button(w: i32, h: i32): Rect {
-  let d: i32 = w * 7 / 10;
+  let d = w * 7 / 10;
   if (h * 3 / 10 < d) {
     d = h * 3 / 10;
   }
@@ -76,9 +76,9 @@ pub function talk_button(w: i32, h: i32): Rect {
 
 // True when (x, y) is on the disc inside the square `r`.
 pub function in_circle(r: Rect, x: f32, y: f32): boolean {
-  let dx: f32 = x - (r.x + r.w / 2) as f32;
-  let dy: f32 = y - (r.y + r.h / 2) as f32;
-  let rad: f32 = (r.w / 2) as f32;
+  let dx = x - (r.x + r.w / 2) as f32;
+  let dy = y - (r.y + r.h / 2) as f32;
+  let rad = (r.w / 2) as f32;
   return dx * dx + dy * dy < rad * rad;
 }
 
@@ -125,15 +125,15 @@ pub const KEY_ROWS: i32 = 4;
 pub const DELETE_KEY: i32 = 31;
 
 pub function key_rect(w: i32, h: i32, k: i32): Rect {
-  let cell_w: i32 = w * 9 / 10 / KEY_COLS;
-  let cell_h: i32 = h * 56 / 100 / KEY_ROWS;
+  let cell_w = w * 9 / 10 / KEY_COLS;
+  let cell_h = h * 56 / 100 / KEY_ROWS;
   if (cell_h > cell_w * 5 / 4) {
     cell_h = cell_w * 5 / 4;
   }
   // The keys sit just above the room buttons, as a keyboard does.
-  let top: i32 = room_button(w, h).y - h / 40 - KEY_ROWS * cell_h;
-  let x: i32 = w / 20 + k % KEY_COLS * cell_w;
-  let y: i32 = top + k / KEY_COLS * cell_h;
+  let top = room_button(w, h).y - h / 40 - KEY_ROWS * cell_h;
+  let x = w / 20 + k % KEY_COLS * cell_w;
+  let y = top + k / KEY_COLS * cell_h;
   return Rect { x: x + cell_w / 20, y: y + cell_h / 20, w: cell_w * 9 / 10, h: cell_h * 9 / 10 };
 }
 

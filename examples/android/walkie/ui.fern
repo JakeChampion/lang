@@ -87,15 +87,15 @@ function small_scale(sc: i32): i32 {
 
 // The largest scale up to `cap` at which `text` fits in `w` pixels.
 pub function fit_scale(text: string, w: i32, cap: i32): i32 {
-  let sc: i32 = cap;
+  let sc = cap;
   while (sc > 1 && draw.text_width(text, sc) > w) {
-    sc = sc - 1;
+    sc -= 1;
   }
   return sc;
 }
 
 function centered(f: draw.Frame, r: screen.Rect, text: string, sc: i32, color: i32): void {
-  let ts: i32 = fit_scale(text, r.w * 8 / 10, sc);
+  let ts = fit_scale(text, r.w * 8 / 10, sc);
   f.text(screen.center_x(r, draw.text_width(text, ts)), r.y + r.h / 2 - draw.text_height(ts) / 2, text, ts, color);
 }
 
@@ -107,14 +107,14 @@ pub function pill(f: draw.Frame, r: screen.Rect, label: string, fill: i32, text:
 
 // A pill with only its outline in `color`.
 function outlined(f: draw.Frame, r: screen.Rect, label: string, color: i32, sc: i32): void {
-  let t: i32 = r.h / 18 + 1;
+  let t = r.h / 18 + 1;
   f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, color);
   f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 2 - t, bg());
   centered(f, r, label, sc, color);
 }
 
 pub function render(f: draw.Frame, v: View): void {
-  let sc: i32 = screen.text_scale(f.width, draw.text_width("x", 1));
+  let sc = screen.text_scale(f.width, draw.text_width("x", 1));
   f.fill(0, 0, f.width, f.height, bg());
   header(f, v, sc);
   if let Some(typed) = v.typing {
@@ -135,14 +135,14 @@ pub function render(f: draw.Frame, v: View): void {
 
 // The title, a dot in the colour of the state, the status and the notice.
 function header(f: draw.Frame, v: View, sc: i32): void {
-  let left: i32 = f.width / 14;
-  let line: i32 = draw.text_height(sc) * 3 / 2;
-  let big: i32 = fit_scale(v.title, f.width - left * 2, sc * 3 / 2);
+  let left = f.width / 14;
+  let line = draw.text_height(sc) * 3 / 2;
+  let big = fit_scale(v.title, f.width - left * 2, sc * 3 / 2);
   f.text(left, line - draw.text_height(big) / 3, v.title, big, ink());
-  let small: i32 = small_scale(sc);
-  let th: i32 = draw.text_height(small);
-  let chars: i32 = screen.line_chars(f.width - left * 2 - th, draw.text_width("x", 1), small) * 10 / 9;
-  let y: i32 = line * 2 + line / 2;
+  let small = small_scale(sc);
+  let th = draw.text_height(small);
+  let chars = screen.line_chars(f.width - left * 2 - th, draw.text_width("x", 1), small) * 10 / 9;
+  let y = line * 2 + line / 2;
   f.disc(left + th / 3, y + th / 2, th / 4, accent(v.label));
   for l in screen.wrap(v.status, chars) {
     f.text(left + th, y, l, small, muted());
@@ -157,11 +157,11 @@ function header(f: draw.Frame, v: View, sc: i32): void {
 // The code that the users compare, in two groups of three, and the two
 // buttons.
 function compare(f: draw.Frame, code: string, sc: i32): void {
-  let shown: string = code;
+  let shown = code;
   if (code.len() == 6) {
     shown = code.take(3) + " " + code.drop(3);
   }
-  let big: i32 = sc * 3;
+  let big = sc * 3;
   f.text((f.width - draw.text_width(shown, big)) / 2, f.height / 5, shown, big, ink());
   pill(f, screen.same_button(f.width, f.height), "MATCH", green(), bg(), sc);
   outlined(f, screen.differ_button(f.width, f.height), "NO MATCH", red(), sc);
@@ -171,14 +171,14 @@ function compare(f: draw.Frame, code: string, sc: i32): void {
 function peers(f: draw.Frame, list: Peer[], sc: i32): void {
   for k in 0..list.len() {
     if (k < screen.PEER_ROWS) {
-      let row: screen.Rect = screen.peer_row(f.width, f.height, k);
+      let row = screen.peer_row(f.width, f.height, k);
       f.round_rect(row.x, row.y, row.w, row.h, row.h / 4, surface());
-      let ts: i32 = fit_scale(list[k].name, row.w * 6 / 10, small_scale(sc));
-      let ty: i32 = row.y + row.h / 2 - draw.text_height(ts) / 2;
+      let ts = fit_scale(list[k].name, row.w * 6 / 10, small_scale(sc));
+      let ty = row.y + row.h / 2 - draw.text_height(ts) / 2;
       f.text(row.x + row.h / 3, ty, list[k].name, ts, ink());
       if (list[k].invited) {
-        let tag: string = "INVITED";
-        let tags: i32 = fit_scale(tag, row.w * 3 / 10, small_scale(sc));
+        let tag = "INVITED";
+        let tags = fit_scale(tag, row.w * 3 / 10, small_scale(sc));
         f.text(row.x + row.w - row.h / 3 - draw.text_width(tag, tags), row.y + row.h / 2 - draw.text_height(tags) / 2, tag, tags, amber());
       }
     }
@@ -188,12 +188,12 @@ function peers(f: draw.Frame, list: Peer[], sc: i32): void {
 // The round talk button: filled while it talks or listens, and a ring in the
 // colour of the state otherwise.
 function talk(f: draw.Frame, label: string, sc: i32): void {
-  let r: screen.Rect = screen.talk_button(f.width, f.height);
-  let cx: i32 = r.x + r.w / 2;
-  let cy: i32 = r.y + r.h / 2;
-  let rad: i32 = r.w / 2;
-  let color: i32 = accent(label);
-  let text: i32 = ink();
+  let r = screen.talk_button(f.width, f.height);
+  let cx = r.x + r.w / 2;
+  let cy = r.y + r.h / 2;
+  let rad = r.w / 2;
+  let color = accent(label);
+  let text = ink();
   if (label == "TALKING" || label == "LISTENING") {
     f.ring(cx, cy, rad + rad / 10, rad / 30 + 1, color);
     f.disc(cx, cy, rad, color);
@@ -202,20 +202,20 @@ function talk(f: draw.Frame, label: string, sc: i32): void {
     f.disc(cx, cy, rad, surface());
     f.ring(cx, cy, rad, rad / 14 + 1, color);
   }
-  let ts: i32 = fit_scale(label, r.w * 7 / 10, sc * 3 / 2);
+  let ts = fit_scale(label, r.w * 7 / 10, sc * 3 / 2);
   f.text(cx - draw.text_width(label, ts) / 2, cy - draw.text_height(ts) / 2, label, ts, text);
 }
 
 // The six boxes of the code, the keys, CANCEL and JOIN.
 function keypad(f: draw.Frame, typed: string, sc: i32): void {
-  let n: i32 = rooms.CODE_LEN;
-  let gap: i32 = f.width / 60;
-  let bw: i32 = (f.width * 8 / 10 - gap * (n - 1)) / n;
-  let bh: i32 = bw * 5 / 4;
-  let y: i32 = f.height * 3 / 10 - bh - f.height / 40;
+  let n = rooms.CODE_LEN;
+  let gap = f.width / 60;
+  let bw = (f.width * 8 / 10 - gap * (n - 1)) / n;
+  let bh = bw * 5 / 4;
+  let y = f.height * 3 / 10 - bh - f.height / 40;
   for k in 0..n {
-    let bx: i32 = f.width / 10 + k * (bw + gap);
-    let edge: i32 = outline();
+    let bx = f.width / 10 + k * (bw + gap);
+    let edge = outline();
     if (k == typed.len()) {
       edge = blue();
     }
@@ -226,8 +226,8 @@ function keypad(f: draw.Frame, typed: string, sc: i32): void {
     }
   }
   for k in 0..screen.DELETE_KEY + 1 {
-    let key: screen.Rect = screen.key_rect(f.width, f.height, k);
-    let color: i32 = ink();
+    let key = screen.key_rect(f.width, f.height, k);
+    let color = ink();
     if (k == screen.DELETE_KEY) {
       color = amber();
     }

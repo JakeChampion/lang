@@ -121,7 +121,7 @@ function parse_list(spec: string, fields: boolean): Ranges {
   let rhs = false;
   let dash = false;
   while (true) {
-    let c: i32 = -1;
+    let c = -1;
     if (i < spec.len()) {
       c = spec[i] as i32;
     }
@@ -432,7 +432,7 @@ function run(files: string[], s: Settings): i32 {
   let r = stdin();
   let chunk: u8[] = [];
   let pos = 0;
-  let delimat: i32 = -1;
+  let delimat = -1;
   let carry = buf_new(0);
   let tail = false;
   let done = false;
@@ -668,7 +668,7 @@ function run(files: string[], s: Settings): i32 {
         let idx = 1 as u64;
         let ri = 0;
         let printed = false;
-        let run: i32 = -1;
+        let run = -1;
         while (true) {
           let e = body;
           let last = true;

@@ -188,7 +188,7 @@ function parse_action(spec: string, at: i32, who: i32, explicit: boolean): (Chan
   let op = spec[at] as i32;
   let i = at + 1;
   let refused = Change { who: who, explicit: explicit, op: op, kind: kind_perm(), bits: 0, x_if: false };
-  let src: i32 = -1;
+  let src = -1;
   if (i < n) {
     src = copy_index(spec[i] as i32);
   }

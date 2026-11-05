@@ -597,7 +597,7 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
   w = wrap_break(w);
 
   let ms = modes();
-  let word: i32 = -1;
+  let word = -1;
   i = 0;
   while (i < ms.len()) {
     let m = ms[i];
@@ -648,7 +648,7 @@ function print_diff(t: i64[]): string {
   w = wrap_break(w);
 
   let ms = modes();
-  let word: i32 = -1;
+  let word = -1;
   i = 0;
   while (i < ms.len()) {
     let m = ms[i];
@@ -925,7 +925,7 @@ function parse_hex(s: string): (i64, boolean) {
   let i = 0;
   while (i < body.len()) {
     let c = body[i] as i32;
-    let d: i32 = -1;
+    let d = -1;
     if (c >= 48 && c <= 57) {
       d = c - 48;
     }
@@ -1356,7 +1356,7 @@ function parse_u64(s: string): (u64, boolean, boolean) {
   let over = false;
   while (i < s.len()) {
     let c = s[i] as i32;
-    let d: i32 = -1;
+    let d = -1;
     if (c >= 48 && c <= 57) {
       d = c - 48;
     }

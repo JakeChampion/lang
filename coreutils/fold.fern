@@ -210,7 +210,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
   let r = stdin();
   let chunk: u8[] = [];
   let pos = 0;
-  let specat: i32 = -1;
+  let specat = -1;
   let carry = buf_new(0);
   let tail = false;
   let done = false;
@@ -320,7 +320,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
     let p = lo;
     let column = 0 as u64;
     let lastw = 1;
-    let sp: i32 = -1;
+    let sp = -1;
     if (mode != count_bytes_mode()) {
       if (carried) {
         sp = special_at(buf, lo, specials);

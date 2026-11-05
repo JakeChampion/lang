@@ -763,7 +763,7 @@ function parse_ls_colors(spec: string): Palette {
     if (key.len() > 1 && key[0] as i32 == 42) {
       p = Palette { ...p, suffix: p.suffix.append(slice_unchecked(key, 1, key.len()) + ""), suffix_code: p.suffix_code.append(value) };
     } else {
-      let slot: i32 = -1;
+      let slot = -1;
       let k = 0;
       while (k < names.len()) {
         if (names[k] == key) {
@@ -921,7 +921,7 @@ function ent_time(c: Cfg, e: Ent): i64 {
   }
   if (c.time_type == time_birth()) {
     if (no_birth(e)) {
-      return 0 - 1 as i64;
+      return -1i64;
     }
     return e.st.btime;
   }
@@ -937,7 +937,7 @@ function ent_nsec(c: Cfg, e: Ent): i64 {
   }
   if (c.time_type == time_birth()) {
     if (no_birth(e)) {
-      return 0 - 1 as i64;
+      return -1i64;
     }
     return e.st.btime_nsec;
   }
@@ -2631,11 +2631,11 @@ struct Scan { c: Cfg, width_seen: boolean, hide_opt: i32, operands: string[] }
 
 function scan(argv: string[], start: Cfg): Scan {
   let c = start;
-  let hide_opt: i32 = -1;
+  let hide_opt = -1;
   c = Cfg { ...c, qstyle: gnu.quoting_style_from_env_with(c.qstyle) };
   let g = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
-  let format_opt: i32 = -1;
-  let sort_opt: i32 = -1;
+  let format_opt = -1;
+  let sort_opt = -1;
   let explicit_time = false;
   let deref_seen = false;
   let kibibytes = false;
