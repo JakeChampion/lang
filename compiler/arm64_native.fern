@@ -9479,7 +9479,7 @@ function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_va
 pub function arm64_symbol_addr(p: Arm64GasProg, name: string, text_vaddr: i64, data_vaddr: i64): i64 {
   let res = arm64_gas_sym_addr(p, p.asm, name, text_vaddr, data_vaddr, p.data.len(), 0i64);
   if (!res.found) {
-    return 0 - 1 as i64;
+    return -1i64;
   }
   return res.addr;
 }
