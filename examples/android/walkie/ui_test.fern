@@ -4,6 +4,7 @@
 import "std/android/draw";
 import "std/png";
 import "std/test";
+import "../look";
 import "../matrix";
 import "./screen";
 import "./ui";
@@ -73,14 +74,14 @@ function same(a: i32, b: i32): string {
 // ready.
 function test_ready_shows_a_ring_of_dots(): test.TestOutcome {
   let c: i32[] = colours("ready", base("HOLD TO TALK"), talk_points().append([2, 2]));
-  return test.assert_eq(same(c[0], ui.surface()) + " " + same(c[1], ui.ink()) + " " + same(c[2], ui.bg()), "true true true");
+  return test.assert_eq(same(c[0], look.surface()) + " " + same(c[1], look.ink()) + " " + same(c[2], look.bg()), "true true true");
 }
 
 // The button fills red while the phone talks, and white while it listens.
 function test_talking_fills_the_button(): test.TestOutcome {
   let talking: i32[] = colours("talking", base("TALKING"), talk_points());
   let listening: i32[] = colours("listening", base("LISTENING"), talk_points());
-  return test.assert_eq(same(talking[0], ui.red()) + " " + same(listening[0], ui.ink()), "true true");
+  return test.assert_eq(same(talking[0], look.red()) + " " + same(listening[0], look.ink()), "true true");
 }
 
 // The code shows with a white MATCH pill and a red NO MATCH outline.
@@ -89,7 +90,7 @@ function test_compare_has_two_pills(): test.TestOutcome {
   let differ: screen.Rect = screen.differ_button(W, H);
   let v: ui.View = ui.View { ...base("WAITING"), status: "do both phones show this code?", code: "482913" };
   let c: i32[] = colours("compare", v, [[yes.x + yes.h / 3, yes.y + yes.h / 2], [differ.x + differ.h / 2, differ.y + 1], [differ.x + differ.h / 5, differ.y + differ.h / 2]]);
-  return test.assert_eq(same(c[0], ui.ink()) + " " + same(c[1], ui.red()) + " " + same(c[2], ui.bg()), "true true true");
+  return test.assert_eq(same(c[0], look.ink()) + " " + same(c[1], look.red()) + " " + same(c[2], look.bg()), "true true true");
 }
 
 // Peers show as cards, and the room buttons as white outlines.
@@ -98,7 +99,7 @@ function test_search_shows_peers_and_rooms(): test.TestOutcome {
   let room: screen.Rect = screen.room_button(W, H);
   let v: ui.View = ui.View { ...base("SEARCHING"), status: "looking for a phone on this Wi-Fi", searching: true, peers: [ui.Peer { name: "Pixel 8", invited: false }, ui.Peer { name: "Galaxy S24", invited: true }], room_buttons: true };
   let c: i32[] = colours("search", v, [[row.x + row.w / 2, row.y + 2], [room.x + room.w / 2, room.y + 1]]);
-  return test.assert_eq(same(c[0], ui.surface()) + " " + same(c[1], ui.ink()), "true true");
+  return test.assert_eq(same(c[0], look.surface()) + " " + same(c[1], look.ink()), "true true");
 }
 
 // The keypad draws its keys, and the typed letters in their boxes.
@@ -106,7 +107,7 @@ function test_keypad(): test.TestOutcome {
   let key: screen.Rect = screen.key_rect(W, H, 0);
   let v: ui.View = ui.View { ...base("SEARCHING"), status: "type the code of the room", typing: Some("K7Q") };
   let c: i32[] = colours("keypad", v, [[key.x + key.w / 2, key.y + 3]]);
-  return test.assert_eq(same(c[0], ui.surface()), "true");
+  return test.assert_eq(same(c[0], look.surface()), "true");
 }
 
 // The search screen has the button that opens the settings.
@@ -114,7 +115,7 @@ function test_search_has_the_mode_button(): test.TestOutcome {
   let b: screen.Rect = screen.mode_button(W, H);
   let v: ui.View = ui.View { ...base("SEARCHING"), status: "looking for a phone on this Wi-Fi", searching: true, mode_label: "MODE: AUTO" };
   let c: i32[] = colours("mode-button", v, [[b.x + b.w / 2, b.y + 1], [b.x + b.w / 2, b.y + b.h / 6]]);
-  return test.assert_eq(same(c[0], ui.muted()) + " " + same(c[1], ui.bg()), "true true");
+  return test.assert_eq(same(c[0], look.muted()) + " " + same(c[1], look.bg()), "true true");
 }
 
 // The settings screen shows a card for each mode with the chosen one in a
@@ -127,7 +128,7 @@ function test_settings_screen(): test.TestOutcome {
   let v: ui.View = ui.View { ...base("SEARCHING"), title: "SETTINGS", status: "how does this phone find the other phone?", menu: Some(2), available: [true, true, true, false] };
   let points: i32[][] = [[chosen.x + chosen.w / 2, chosen.y + 1], [other.x + other.w / 2, other.y + 1], [back.x + back.w / 2, back.y + 1], [chosen.x + chosen.w * 85 / 100, chosen.y + chosen.h / 4], [chosen.x + chosen.w - chosen.h / 4, chosen.y + chosen.h / 2], [server.x + server.w / 2, server.y + 1]];
   let c: i32[] = colours("settings", v, points);
-  return test.assert_eq(same(c[0], ui.ink()) + " " + same(c[1], ui.surface()) + " " + same(c[2], ui.muted()) + " " + same(c[3], ui.surface()) + " " + same(c[4], ui.red()) + " " + same(c[5], ui.surface()), "true true true true true true");
+  return test.assert_eq(same(c[0], look.ink()) + " " + same(c[1], look.surface()) + " " + same(c[2], look.muted()) + " " + same(c[3], look.surface()) + " " + same(c[4], look.red()) + " " + same(c[5], look.surface()), "true true true true true true");
 }
 
 // The keyboard of the server has the field in a white outline, the button of
@@ -140,7 +141,7 @@ function test_host_keyboard(): test.TestOutcome {
   let v: ui.View = ui.View { ...base("SEARCHING"), title: "SERVER", status: "type the host name of the room server", menu: Some(0), editing: Some("rooms.example") };
   let phone: screen.Rect = screen.phone_keys_button(W, H);
   let c: i32[] = colours("server", v, [[field.x + field.w / 2, field.y + 1], [key.x + key.w / 2, key.y + 3], [cancel.x + cancel.w / 2, cancel.y + 1], [save.x + save.h / 3, save.y + save.h / 2], [phone.x + phone.w / 2, phone.y + 1]]);
-  return test.assert_eq(same(c[0], ui.ink()) + " " + same(c[1], ui.surface()) + " " + same(c[2], ui.muted()) + " " + same(c[3], ui.ink()) + " " + same(c[4], ui.ink()), "true true true true true");
+  return test.assert_eq(same(c[0], look.ink()) + " " + same(c[1], look.surface()) + " " + same(c[2], look.muted()) + " " + same(c[3], look.ink()) + " " + same(c[4], look.ink()), "true true true true true");
 }
 
 // Rows of the letter A, and a lower-case letter, and a character with no

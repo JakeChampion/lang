@@ -139,9 +139,10 @@ runs two engines on a simulated link.
 
 The look of the screen: a black background, white and grey type, and red only
 for what is live. Titles, button labels and the code use the dot font of
-`../matrix.fern`, 5 by 7 round dots for each character. The stopwatch app
-uses the same font. The round talk button is
-a ring of dots. It fills red while the phone talks, and white while it
+`../matrix.fern`, 5 by 7 round dots for each character. The palette, the
+pills, the cards and the rings of dots are in `../look.fern`. The stopwatch
+app uses the same font and the same look. The round talk button is a ring
+of dots. It fills red while the phone talks, and white while it
 listens. A dot beside the status has the colour of the state. The code to
 compare shows in two groups of three digits, over a MATCH pill and a NO MATCH
 outline.

@@ -8,13 +8,9 @@
 // of a room. The settings screen chooses the way to find the other phone.
 
 import "std/string";
+import "../look";
 import "./rooms";
-
-pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
-
-pub function contains(r: Rect, x: f32, y: f32): boolean {
-  return x >= r.x as f32 && y >= r.y as f32 && x < (r.x + r.w) as f32 && y < (r.y + r.h) as f32;
-}
+pub use "../look".{Rect, contains, center_x, wrap};
 
 // The characters on one line of status text, at least.
 pub const LINE_CHARS: i32 = 20;
@@ -34,48 +30,17 @@ pub function line_chars(w: i32, cell_w: i32, sc: i32): i32 {
   return w * 9 / 10 / (cell_w * sc);
 }
 
-// The lines of `text` with at most `max` characters each, broken at spaces.
-// A word longer than `max` is cut.
-pub function wrap(text: string, max: i32): string[] {
-  let lines: string[] = [];
-  let line: string = "";
-  for word in text.split(" ") {
-    let w: string = word;
-    while (w.len() > max) {
-      if (line.len() > 0) {
-        lines = lines.append(line);
-        line = "";
-      }
-      let (head, rest) = w.split_at(max);
-      lines = lines.append(head);
-      w = rest;
-    }
-    if (line.len() == 0) {
-      line = w;
-    } else if (line.len() + 1 + w.len() <= max) {
-      line = line + " " + w;
-    } else {
-      lines = lines.append(line);
-      line = w;
-    }
-  }
-  if (line.len() > 0) {
-    lines = lines.append(line);
-  }
-  return lines;
-}
-
 // The square around the round talk button.
-pub function talk_button(w: i32, h: i32): Rect {
+pub function talk_button(w: i32, h: i32): look.Rect {
   let d: i32 = w * 7 / 10;
   if (h * 3 / 10 < d) {
     d = h * 3 / 10;
   }
-  return Rect { x: (w - d) / 2, y: h * 68 / 100 - d / 2, w: d, h: d };
+  return look.Rect { x: (w - d) / 2, y: h * 68 / 100 - d / 2, w: d, h: d };
 }
 
 // True when (x, y) is on the disc inside the square `r`.
-pub function in_circle(r: Rect, x: f32, y: f32): boolean {
+pub function in_circle(r: look.Rect, x: f32, y: f32): boolean {
   let dx: f32 = x - (r.x + r.w / 2) as f32;
   let dy: f32 = y - (r.y + r.h / 2) as f32;
   let rad: f32 = (r.w / 2) as f32;
@@ -83,36 +48,31 @@ pub function in_circle(r: Rect, x: f32, y: f32): boolean {
 }
 
 // The button that says the two strings are the same.
-pub function same_button(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 33 / 100, w: w * 37 / 100, h: h * 6 / 100 };
+pub function same_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 33 / 100, w: w * 37 / 100, h: h * 6 / 100 };
 }
 
 // The button that says the two strings differ.
-pub function differ_button(w: i32, h: i32): Rect {
-  return Rect { x: w * 53 / 100, y: h * 33 / 100, w: w * 37 / 100, h: h * 6 / 100 };
+pub function differ_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w * 53 / 100, y: h * 33 / 100, w: w * 37 / 100, h: h * 6 / 100 };
 }
 
 // The number of Wi-Fi Direct peers that the screen lists.
 pub const PEER_ROWS: i32 = 3;
 
 // The row of peer `k` in the list, above the talk button.
-pub function peer_row(w: i32, h: i32, k: i32): Rect {
-  return Rect { x: w / 10, y: h * 3 / 10 + k * (h / 15), w: w * 8 / 10, h: h / 18 };
-}
-
-// The x of `text_w` pixels of text in the middle of `r`.
-pub function center_x(r: Rect, text_w: i32): i32 {
-  return r.x + (r.w - text_w) / 2;
+pub function peer_row(w: i32, h: i32, k: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 3 / 10 + k * (h / 15), w: w * 8 / 10, h: h / 18 };
 }
 
 // The button that makes a room, and the button that joins one, in the row
 // below the talk button.
-pub function room_button(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 885 / 1000, w: w * 37 / 100, h: h * 6 / 100 };
+pub function room_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 885 / 1000, w: w * 37 / 100, h: h * 6 / 100 };
 }
 
-pub function join_button(w: i32, h: i32): Rect {
-  return Rect { x: w * 53 / 100, y: h * 885 / 1000, w: w * 37 / 100, h: h * 6 / 100 };
+pub function join_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w * 53 / 100, y: h * 885 / 1000, w: w * 37 / 100, h: h * 6 / 100 };
 }
 
 // The keypad for the code of a room: a key for each letter of the code, and
@@ -124,12 +84,12 @@ pub const KEY_ROWS: i32 = 4;
 
 pub const DELETE_KEY: i32 = 31;
 
-pub function key_rect(w: i32, h: i32, k: i32): Rect {
+pub function key_rect(w: i32, h: i32, k: i32): look.Rect {
   return grid_key(w, h, k, KEY_ROWS);
 }
 
 // Key `k` of a keyboard of KEY_COLS columns and `rows` rows.
-function grid_key(w: i32, h: i32, k: i32, rows: i32): Rect {
+function grid_key(w: i32, h: i32, k: i32, rows: i32): look.Rect {
   let cell_w: i32 = w * 9 / 10 / KEY_COLS;
   let cell_h: i32 = h * 56 / 100 / rows;
   if (cell_h > cell_w * 5 / 4) {
@@ -139,13 +99,13 @@ function grid_key(w: i32, h: i32, k: i32, rows: i32): Rect {
   let top: i32 = room_button(w, h).y - h / 40 - rows * cell_h;
   let x: i32 = w / 20 + k % KEY_COLS * cell_w;
   let y: i32 = top + k / KEY_COLS * cell_h;
-  return Rect { x: x + cell_w / 20, y: y + cell_h / 20, w: cell_w * 9 / 10, h: cell_h * 9 / 10 };
+  return look.Rect { x: x + cell_w / 20, y: y + cell_h / 20, w: cell_w * 9 / 10, h: cell_h * 9 / 10 };
 }
 
 // The key at (x, y), or -1.
 pub function key_at(w: i32, h: i32, x: f32, y: f32): i32 {
   for k in 0..DELETE_KEY + 1 {
-    if (contains(key_rect(w, h, k), x, y)) {
+    if (look.contains(key_rect(w, h, k), x, y)) {
       return k;
     }
   }
@@ -178,21 +138,21 @@ pub function typed(code: string, k: i32): string {
 
 // The button at the top right that opens the settings screen. It shows
 // while the phone searches.
-pub function mode_button(w: i32, h: i32): Rect {
-  return Rect { x: w * 56 / 100, y: h * 2 / 100, w: w * 38 / 100, h: h * 5 / 100 };
+pub function mode_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w * 56 / 100, y: h * 2 / 100, w: w * 38 / 100, h: h * 5 / 100 };
 }
 
 // The rows of the settings screen, one for each way to find the other phone.
 pub const MODE_ROWS: i32 = 4;
 
-pub function mode_row(w: i32, h: i32, k: i32): Rect {
-  return Rect { x: w / 10, y: h * 22 / 100 + k * (h * 13 / 100), w: w * 8 / 10, h: h * 11 / 100 };
+pub function mode_row(w: i32, h: i32, k: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 22 / 100 + k * (h * 13 / 100), w: w * 8 / 10, h: h * 11 / 100 };
 }
 
 // The row at (x, y), or -1.
 pub function mode_at(w: i32, h: i32, x: f32, y: f32): i32 {
   for k in 0..MODE_ROWS {
-    if (contains(mode_row(w, h, k), x, y)) {
+    if (look.contains(mode_row(w, h, k), x, y)) {
       return k;
     }
   }
@@ -200,14 +160,14 @@ pub function mode_at(w: i32, h: i32, x: f32, y: f32): i32 {
 }
 
 // The button that closes the settings screen, in the row of the room buttons.
-pub function back_button(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 885 / 1000, w: w * 8 / 10, h: h * 6 / 100 };
+pub function back_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 885 / 1000, w: w * 8 / 10, h: h * 6 / 100 };
 }
 
 // The card of the settings screen that shows the room server, below the
 // rows of the modes.
-pub function server_row(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 75 / 100, w: w * 8 / 10, h: h * 9 / 100 };
+pub function server_row(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 75 / 100, w: w * 8 / 10, h: h * 9 / 100 };
 }
 
 // The keyboard for the name of the room server: the letters, the digits,
@@ -220,14 +180,14 @@ pub const CLEAR_KEY: i32 = 38;
 
 pub const HOST_DELETE_KEY: i32 = 39;
 
-pub function host_key_rect(w: i32, h: i32, k: i32): Rect {
+pub function host_key_rect(w: i32, h: i32, k: i32): look.Rect {
   return grid_key(w, h, k, HOST_ROWS);
 }
 
 // The key of the host keyboard at (x, y), or -1.
 pub function host_key_at(w: i32, h: i32, x: f32, y: f32): i32 {
   for k in 0..HOST_DELETE_KEY + 1 {
-    if (contains(host_key_rect(w, h, k), x, y)) {
+    if (look.contains(host_key_rect(w, h, k), x, y)) {
       return k;
     }
   }
@@ -265,13 +225,13 @@ pub function host_typed(name: string, k: i32): string {
 }
 
 // The field that shows the name as the user types it.
-pub function host_field(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 20 / 100, w: w * 8 / 10, h: h * 7 / 100 };
+pub function host_field(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 20 / 100, w: w * 8 / 10, h: h * 7 / 100 };
 }
 
 // The button below the field that opens the keyboard of the phone.
-pub function phone_keys_button(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 29 / 100, w: w * 8 / 10, h: h * 6 / 100 };
+pub function phone_keys_button(w: i32, h: i32): look.Rect {
+  return look.Rect { x: w / 10, y: h * 29 / 100, w: w * 8 / 10, h: h * 6 / 100 };
 }
 
 // The key of the host keyboard for an Android key code, or -1. The letters
