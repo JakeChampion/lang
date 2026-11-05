@@ -10,7 +10,7 @@ A `State` is `Yes`, `No`, or `Unknown`. `Unknown` means that the source for the 
 
 The rows on x86-64 Linux are `shstk`, the CET shadow stack, and `ibt`, indirect branch tracking. The rows on arm64 Linux are `pac`, pointer authentication, `bti`, branch target identification, and `mte`, memory tagging. Other targets return no rows.
 
-`manifest` returns one `Status` row per mitigation with five cells. `compiled` says whether the image was built with the feature, from the build manifest the compiler stamps into every native executable. `supported` says whether the processor and the kernel have it. `requested` says whether the image asks for it at startup. `enabled` says whether this process runs with it. `verified` names the evidence that the feature holds, which is a test name and the host kind it ran on.
+`manifest` returns one `Status` row per mitigation with five cells. `compiled` says whether the image was built with the feature, from the build manifest the compiler stamps into every native executable and shared object. `supported` says whether the processor and the kernel have it. `requested` says whether the image asks for it at startup. `enabled` says whether this process runs with it. `verified` names the evidence that the feature holds, which is a test name and the host kind it ran on.
 
 ## Contracts
 

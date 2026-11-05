@@ -721,6 +721,9 @@ function send_copy_value(v: Value): Value {
     VStruct(s) => {
       return VStruct { ...s, field_values: send_copy_values(s.field_values) };
     },
+    VMap(m) => {
+      return VMap { keys: send_copy_values(m.keys), values: send_copy_values(m.values) };
+    },
     _ => {
       return v;
     }

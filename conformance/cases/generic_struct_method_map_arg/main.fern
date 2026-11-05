@@ -1,0 +1,31 @@
+// A method of a generic struct is cloned for a built-in generic type
+// argument. The instance key of Box[Map[string, i32]] groups `Map` with its
+// two arguments, so the clone's result type is the map, not a bare name.
+
+import "core/map";
+
+struct Box[T] { v: T }
+
+function (b: Box[T]) take(): T {
+    return b.v;
+}
+
+function (b: Box[T]) wrapped(): Option[T] {
+    return Some(b.v);
+}
+
+function main(): i32 {
+    let m: Map[string, i32] = map_new(4);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    let b: Box[Map[string, i32]] = Box { v: m };
+    let t: Map[string, i32] = b.take();
+    print(t.len().to_string() + ":" + t.get_or("b", 0).to_string());
+    match (b.wrapped()) {
+        Some(w) => { print(w.get_or("a", 0).to_string()); },
+        None => { print("none"); }
+    }
+    let c: Box[Cell[i32]] = Box { v: cell_new(7) };
+    print(c.take().get().to_string());
+    return 0;
+}
