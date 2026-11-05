@@ -350,13 +350,15 @@ function server_card(f: draw.Frame, server: string, small: i32): void {
   f.text(left, row.y + row.h * 62 / 100, server, ts, muted());
 }
 
-// The field with the name of the server, the keys, CANCEL and SAVE.
+// The field with the name of the server, the button that opens the keyboard
+// of the phone, the keys, CANCEL and SAVE.
 function host_keyboard(f: draw.Frame, name: string, sc: i32): void {
   let field: screen.Rect = screen.host_field(f.width, f.height);
   card(f, field, ink());
   let shown: string = name + "_";
   let ts: i32 = fit_scale(shown, field.w * 9 / 10, sc);
   f.text(field.x + field.h / 3, field.y + (field.h - draw.text_height(ts)) / 2, shown, ts, ink());
+  outlined(f, screen.phone_keys_button(f.width, f.height), "PHONE KEYBOARD", ink());
   for k in 0..screen.HOST_DELETE_KEY + 1 {
     let key: screen.Rect = screen.host_key_rect(f.width, f.height, k);
     key_cap(f, key, screen.host_key_label(k), k >= screen.CLEAR_KEY);

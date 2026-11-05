@@ -70,7 +70,11 @@ settings. They choose the way to find the other phone:
 
 Below the modes, the SERVER card shows the room server. Tap it to type the
 host name or the IPv4 address of your own server, and tap SAVE. CLR and SAVE
-select the server of the build again. The server must serve the room port of
+select the server of the build again.
+
+PHONE KEYBOARD opens the keyboard of the phone, and ENTER on it saves. A keyboard
+that sends words and not keys, as in some swipe modes, types nothing: use the
+keys on the screen then. The server must serve the room port of
 `rooms.fern`.
 
 A new mode starts the search again. The app keeps the mode and the server in

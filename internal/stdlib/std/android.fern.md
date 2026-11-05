@@ -114,6 +114,12 @@ function c_activity_finish(activity: usize): void;
 @import("libandroid.so", "ANativeActivity_setWindowFlags")
 function c_activity_window_flags(activity: usize, add: i32, remove: i32): void;
 
+@import("libandroid.so", "ANativeActivity_showSoftInput")
+function c_activity_show_input(activity: usize, flags: i32): void;
+
+@import("libandroid.so", "ANativeActivity_hideSoftInput")
+function c_activity_hide_input(activity: usize, flags: i32): void;
+
 @import("libc.so", "pipe2")
 function c_pipe2(fds: usize, flags: i32): i32;
 
@@ -598,6 +604,21 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
       c_activity_window_flags(activity, 128, 0);
     } else {
       c_activity_window_flags(activity, 0, 128);
+    }
+  }
+}
+
+// Shows the keyboard of the system, or hides it. Its keys come to the loop
+// thread as Key events. The activity has no text field, so a keyboard that
+// sends only text, not keys, types nothing.
+pub function show_keyboard(ctx: usize, show: boolean): void {
+  unsafe {
+    let activity: usize = __load_ptr(ctx + 16 as usize);
+    if (show) {
+      // ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED
+      c_activity_show_input(activity, 2);
+    } else {
+      c_activity_hide_input(activity, 0);
     }
   }
 }

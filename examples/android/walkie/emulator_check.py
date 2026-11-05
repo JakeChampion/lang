@@ -16,7 +16,10 @@ not in front keeps running as a second phone would. Then it:
 4. waits 20 seconds, and requires that neither copy lost its peer and that
    both still run with no crash in logcat;
 5. stops both copies and starts them again, and requires that each copy
-   kept the identity of the other and connects with no string to compare.
+   kept the identity of the other and connects with no string to compare;
+6. starts the first copy alone, opens SETTINGS, SERVER and PHONE KEYBOARD,
+   types a server with key events and ENTER, and requires that the copy
+   saves the server and loads it at the next start.
 
 OUT_DIR gets logcat and a screenshot of each copy.
 """
@@ -33,6 +36,7 @@ ACTIVITY = "/android.app.NativeActivity"
 START = re.compile(r"walkie: node \d+, port (4712[01]), socket (-?\d+), speaker rate ([1-9]\d*)")
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 IDENTITY = re.compile(r"walkie: identity [0-9a-f]{8}, (\d+) known phones")
+SERVER = "rooms.example.com"
 LOST = re.compile(r"walkie: (the peer stopped answering|the other phone did not confirm the code|the peer left|the connection was lost)")
 LOGCAT = ["logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:F", "*:F"]
 WAIT_SECONDS = 30
@@ -131,6 +135,28 @@ def meet_again():
             raise Failure("a copy did not keep the identity of the other phone")
     wait_for("the copies know each other", lambda log: has(log, a, "walkie: the other phone is known: no string to compare") and has(log, b, "walkie: the other phone is known: no string to compare"))
     wait_for("each copy sees the other confirm again", lambda log: has(log, a, "walkie: the other phone confirmed") and has(log, b, "walkie: the other phone confirmed"), 10)
+
+
+def type_server(w, h):
+    """Types a room server through the key events of the phone keyboard."""
+    for package in (FIRST, SECOND):
+        adb("shell", "am", "force-stop", package)
+    adb("logcat", "-c")
+    to_front(FIRST)
+    wait_for("the first copy starts alone", lambda log: pid(FIRST) != "" and has(log, pid(FIRST), "walkie: node "))
+    a = pid(FIRST)
+    # The middles of screen.mode_button, screen.server_row and
+    # screen.phone_keys_button.
+    for x, y in [(w * 75 // 100, h * 45 // 1000), (w // 2, h * 795 // 1000), (w // 2, h * 32 // 100)]:
+        adb("shell", "input", "tap", str(x), str(y))
+        time.sleep(1)
+    adb("shell", "input", "text", SERVER)
+    adb("shell", "input", "keyevent", "KEYCODE_ENTER")
+    wait_for("the copy saves the server", lambda log: has(log, a, "walkie: server " + SERVER), 10)
+    adb("shell", "am", "force-stop", FIRST)
+    adb("logcat", "-c")
+    to_front(FIRST)
+    wait_for("the copy loads the server", lambda log: pid(FIRST) != "" and has(log, pid(FIRST), ", server " + SERVER))
 
 
 def screen_size():
@@ -253,6 +279,7 @@ def run(apk, second_apk, out):
     if crashes:
         raise Failure("logcat: " + "; ".join(crashes))
     meet_again()
+    type_server(w, h)
 
 
 def main(apk, second_apk, out):

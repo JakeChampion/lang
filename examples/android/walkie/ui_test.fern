@@ -130,16 +130,17 @@ function test_settings_screen(): test.TestOutcome {
   return test.assert_eq(same(c[0], ui.ink()) + " " + same(c[1], ui.surface()) + " " + same(c[2], ui.muted()) + " " + same(c[3], ui.surface()) + " " + same(c[4], ui.red()) + " " + same(c[5], ui.surface()), "true true true true true true");
 }
 
-// The keyboard of the server has the field in a white outline, its keys,
-// CANCEL and SAVE.
+// The keyboard of the server has the field in a white outline, the button of
+// the phone keyboard, its keys, CANCEL and SAVE.
 function test_host_keyboard(): test.TestOutcome {
   let field: screen.Rect = screen.host_field(W, H);
   let key: screen.Rect = screen.host_key_rect(W, H, 0);
   let cancel: screen.Rect = screen.room_button(W, H);
   let save: screen.Rect = screen.join_button(W, H);
   let v: ui.View = ui.View { ...base("SEARCHING"), title: "SERVER", status: "type the host name of the room server", menu: Some(0), editing: Some("rooms.example") };
-  let c: i32[] = colours("server", v, [[field.x + field.w / 2, field.y + 1], [key.x + key.w / 2, key.y + 3], [cancel.x + cancel.w / 2, cancel.y + 1], [save.x + save.h / 3, save.y + save.h / 2]]);
-  return test.assert_eq(same(c[0], ui.ink()) + " " + same(c[1], ui.surface()) + " " + same(c[2], ui.muted()) + " " + same(c[3], ui.ink()), "true true true true");
+  let phone: screen.Rect = screen.phone_keys_button(W, H);
+  let c: i32[] = colours("server", v, [[field.x + field.w / 2, field.y + 1], [key.x + key.w / 2, key.y + 3], [cancel.x + cancel.w / 2, cancel.y + 1], [save.x + save.h / 3, save.y + save.h / 2], [phone.x + phone.w / 2, phone.y + 1]]);
+  return test.assert_eq(same(c[0], ui.ink()) + " " + same(c[1], ui.surface()) + " " + same(c[2], ui.muted()) + " " + same(c[3], ui.ink()) + " " + same(c[4], ui.ink()), "true true true true true");
 }
 
 // Rows of the letter A, and a lower-case letter, and a character with no

@@ -176,6 +176,10 @@ function test_host_keyboard_fits(): test.TestOutcome {
     let at: string = " at " + w.to_string() + "x" + h.to_string();
     let field: screen.Rect = screen.host_field(w, h);
     let card: screen.Rect = screen.server_row(w, h);
+    let phone: screen.Rect = screen.phone_keys_button(w, h);
+    if (!inside(phone, w, h) || overlap(phone, field) || overlap(phone, screen.host_key_rect(w, h, 0))) {
+      return test.fail("the button of the phone keyboard does not fit" + at);
+    }
     if (!inside(field, w, h) || !inside(card, w, h) || overlap(card, screen.back_button(w, h)) || overlap(card, screen.mode_row(w, h, screen.MODE_ROWS - 1))) {
       return test.fail("the field or the card of the server does not fit" + at);
     }
@@ -194,6 +198,16 @@ function test_host_keyboard_fits(): test.TestOutcome {
   return test.assert_eq(line, "a.1 a. [] CLR");
 }
 
+// The key codes of the phone keyboard give the keys of the host keyboard.
+function test_host_key_of_code(): test.TestOutcome {
+  let typed: string = "";
+  // r, o, ., 4, -, z, then DEL, and a key that types nothing (SPACE)
+  for code in [46, 43, 56, 11, 69, 54, 67, 62] {
+    typed = screen.host_typed(typed, screen.host_key_of_code(code));
+  }
+  return test.assert_eq(typed + " " + screen.host_key_of_code(29).to_string() + " " + screen.host_key_of_code(62).to_string(), "ro.4- 0 -1");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie screen");
   r = r.it("the buttons fit and do not overlap", test_buttons_fit_and_do_not_overlap);
@@ -206,5 +220,6 @@ function main(): i32 {
   r = r.it("text wraps at spaces", test_wrap);
   r = r.it("the settings fit", test_settings_fit);
   r = r.it("the keyboard of the server fits", test_host_keyboard_fits);
+  r = r.it("phone key codes give host keys", test_host_key_of_code);
   return r.finish();
 }

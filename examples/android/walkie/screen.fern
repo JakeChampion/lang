@@ -268,3 +268,31 @@ pub function host_typed(name: string, k: i32): string {
 pub function host_field(w: i32, h: i32): Rect {
   return Rect { x: w / 10, y: h * 20 / 100, w: w * 8 / 10, h: h * 7 / 100 };
 }
+
+// The button below the field that opens the keyboard of the phone.
+pub function phone_keys_button(w: i32, h: i32): Rect {
+  return Rect { x: w / 10, y: h * 29 / 100, w: w * 8 / 10, h: h * 6 / 100 };
+}
+
+// The key of the host keyboard for an Android key code, or -1. The letters
+// come as lower case, as a host name is.
+pub function host_key_of_code(code: i32): i32 {
+  // KEYCODE_A to KEYCODE_Z, and KEYCODE_0 to KEYCODE_9
+  if (code >= 29 && code <= 54) {
+    return code - 29;
+  }
+  if (code >= 7 && code <= 16) {
+    return code - 7 + 26;
+  }
+  // KEYCODE_PERIOD, KEYCODE_MINUS and KEYCODE_DEL
+  if (code == 56) {
+    return 36;
+  }
+  if (code == 69) {
+    return 37;
+  }
+  if (code == 67) {
+    return HOST_DELETE_KEY;
+  }
+  return -1;
+}

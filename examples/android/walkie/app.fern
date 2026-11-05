@@ -252,10 +252,11 @@ function app_main(ctx: usize): usize {
   let id_seed: u8[] = identity_seed(dir);
   let pins: u8[][] = load_pins(dir);
   let mode: modes.Mode = load_mode(dir);
+  let server: string = load_server(dir);
   let n: node.Node = fresh_node(notice, id_seed, pins);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
-  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode));
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: load_server(dir), host_edit: None };
+  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -426,11 +427,11 @@ function resumed(own s: App): App {
   return start_direct(App { ...s, asked: true, serving: serving, drawn: "" });
 }
 
-// The back key closes the keyboard of the server, then the settings screen,
-// and otherwise leaves the session.
+// The keys type the name of the server while its keyboard shows. The back
+// key closes the settings screen, and otherwise leaves the session.
 function key(own s: App, code: i32, action: i32): App {
-  if (code == 4 && action == 1 && s.host_edit.is_some()) {
-    return App { ...s, host_edit: None, drawn: "" };
+  if let Some(name) = s.host_edit {
+    return host_key(s, code, action, name);
   }
   if (code == 4 && action == 1 && s.menu) {
     return App { ...s, menu: false, drawn: "" };
@@ -547,7 +548,8 @@ function menu_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean): 
   return choose(s, modes.at(k));
 }
 
-// A key of the keyboard of the server, CANCEL, or SAVE. An empty name uses
+// A key of the keyboard of the server, CANCEL, SAVE, or the button that opens
+// the keyboard of the phone. An empty name uses
 // the server of the build again. A mode that the new server cannot give
 // changes to AUTOMATIC.
 function host_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, name: string): App {
@@ -555,10 +557,14 @@ function host_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, n
     return s;
   }
   if (screen.contains(screen.room_button(w, h), x, y)) {
-    return App { ...s, host_edit: None, drawn: "" };
+    return close_host(s);
   }
   if (screen.contains(screen.join_button(w, h), x, y)) {
     return save_host(s, name);
+  }
+  if (screen.contains(screen.phone_keys_button(w, h), x, y)) {
+    android.show_keyboard(s.ctx, true);
+    return s;
   }
   let k: i32 = screen.host_key_at(w, h, x, y);
   if (k < 0) {
@@ -567,11 +573,38 @@ function host_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, n
   return App { ...s, host_edit: Some(screen.host_typed(name, k)), drawn: "" };
 }
 
+// A key of the keyboard of the phone: a letter, a digit, "." or "-" types,
+// DEL deletes, ENTER saves, and BACK cancels.
+function host_key(own s: App, code: i32, action: i32, name: string): App {
+  // KEYCODE_BACK when it comes up, and KEYCODE_ENTER when it goes down
+  if (code == 4 && action == 1) {
+    return close_host(s);
+  }
+  if (action != 0) {
+    return s;
+  }
+  if (code == 66) {
+    return save_host(s, name);
+  }
+  let k: i32 = screen.host_key_of_code(code);
+  if (k < 0) {
+    return s;
+  }
+  return App { ...s, host_edit: Some(screen.host_typed(name, k)), drawn: "" };
+}
+
+// Closes the keyboard of the server, and the keyboard of the phone.
+function close_host(own s: App): App {
+  android.show_keyboard(s.ctx, false);
+  return App { ...s, host_edit: None, drawn: "" };
+}
+
 function save_host(own s: App, name: string): App {
   if (!modes.valid_host(name)) {
     return App { ...s, node: node.noticed(s.node, "that is not a host name"), drawn: "" };
   }
   save_server(s.dir, name);
+  android.show_keyboard(s.ctx, false);
   log.info("walkie: server " + name);
   let quiet: node.Node = node.noticed(s.node, "");
   let t: App = App { ...s, server: name, host_edit: None, node: quiet, drawn: "" };
