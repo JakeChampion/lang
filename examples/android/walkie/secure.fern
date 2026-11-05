@@ -332,8 +332,10 @@ function take_key(slot: Cell[u8[]]): u8[] {
 // A key bundle creates one channel. Copies see the same drained slots. The
 // id keys go too: a proof of identity comes before the channel.
 pub function channel(k: Keys): Channel {
-  crypto.erase(take_key(k.send_id));
-  crypto.erase(take_key(k.recv_id));
+  let send_id = take_key(k.send_id);
+  crypto.erase(send_id);
+  let recv_id = take_key(k.recv_id);
+  crypto.erase(recv_id);
   let send_ctl = take_key(k.send_ctl);
   let recv_ctl = take_key(k.recv_ctl);
   let send_voice = take_key(k.send_voice);
@@ -343,8 +345,10 @@ pub function channel(k: Keys): Channel {
 
 // Clear a rejected key bundle, for example after a failed string comparison.
 pub function close_keys(k: Keys): void {
-  crypto.erase(take_key(k.send_id));
-  crypto.erase(take_key(k.recv_id));
+  let send_id = take_key(k.send_id);
+  crypto.erase(send_id);
+  let recv_id = take_key(k.recv_id);
+  crypto.erase(recv_id);
   let send_ctl = take_key(k.send_ctl);
   let recv_ctl = take_key(k.recv_ctl);
   let send_voice = take_key(k.send_voice);
