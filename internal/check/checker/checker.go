@@ -2986,6 +2986,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 		c.checkFunction(fn)
 	}
+	// Method calls now have their resolved receiver arguments. Analyse the
+	// complete typed program before the owned-argument checks use its results.
+	c.computeResultBorrows(prog)
+	for _, fn := range prog.Funcs {
+		c.current = fn
+		c.checkOwnedParams(fn)
+	}
+	c.current = nil
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
@@ -9344,7 +9352,6 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if infer {
 		c.inferReturnType(fn, rets)
 	}
-	c.checkOwnedParams(fn)
 	c.checkMustConsume(fn)
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
