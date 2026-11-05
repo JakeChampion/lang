@@ -10428,7 +10428,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	selfMoveArgs := map[ast.Expr]bool{}
-	lastUse, looseUse := lastUseArgs(fn, c.info, c.holdsNoHandle)
+	lastUse, looseUse := lastUseArgs(fn, c.info, c.holdsNoHandle, c.scalarArgs)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -10636,6 +10636,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		return false
 	}
 	// A call result is a temporary. Its handle-free bindings are fresh locals.
+	// The names that a tuple payload binds take the same rule as a field.
 	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, tag ast.Expr, armMoved movedSet) *ownedBindingScope {
 		taken := takesTag(tag)
 		_, temporary := tag.(*ast.Call)
@@ -10681,7 +10682,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if len(arm.Binders()) == 0 {
 				restoreTag(armMoved, whole, m.Tag)
 			}
-			scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, m.Tag, armMoved)
+			names, types := arm.OwnBindings()
+			scope := bindArm(names, types, scrutOwned, m.Tag, armMoved)
 			recordExprUses(arm.Guard, armMoved)
 			if arm.Guard != nil {
 				joinGuardInto(baseline, armMoved, scope)
@@ -11046,7 +11048,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if len(arm.Binders()) == 0 {
 					restoreTag(armMoved, whole, x.Tag)
 				}
-				scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, x.Tag, armMoved)
+				names, types := arm.OwnBindings()
+				scope := bindArm(names, types, scrutOwned, x.Tag, armMoved)
 				recordExprUses(arm.Guard, armMoved)
 				if arm.Guard != nil {
 					joinGuardInto(baseline, armMoved, scope)

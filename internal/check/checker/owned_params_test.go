@@ -3168,3 +3168,80 @@ function main(): i32 { return 0; }`
 func TestOwnGuardIgnoresAMethodReceiver(t *testing.T) {
 	wantOK(t, "method-receiver-result", cellTakeSrc)
 }
+
+// A tuple payload of a fresh call is owned, a handle in it included, as a
+// single payload is (#14237).
+const tuplePayloadSrc = `
+struct D { buf: u8[], rng: u32 }
+function (own d: D) step(): D { return d; }
+function start(own d: D): Result[(D, i32[]), string] { return Ok((d, [1])); }
+function eat(own d: D, own xs: i32[]): i32 { return d.buf.len() + xs.len(); }
+`
+
+func TestOwnGuardAllowsATuplePayloadOfAFreshCall(t *testing.T) {
+	wantOK(t, "tuple-payload", tuplePayloadSrc+`
+function f(own d: D): i32 {
+    match (start(d)) {
+        Ok((a, b)) => { return eat(a, b); },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+	wantOK(t, "destructured-payload", tuplePayloadSrc+`
+function f(own d: D): i32 {
+    match (start(d)) {
+        Ok(p) => {
+            let (a, b) = p;
+            return eat(a, b);
+        },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardRejectsATuplePayloadOfABorrowedValue(t *testing.T) {
+	wantE051(t, "borrowed-tuple-payload", tuplePayloadSrc+`
+function f(r: Result[(D, i32[]), string]): i32 {
+    match (r) {
+        Ok((a, b)) => { return eat(a, b); },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+}
+
+// An argument before the moved one may read a scalar field of it: the read
+// gives a copy before the call takes the value (#14238).
+const fieldReadSrc = `
+struct C { n: i32, xs: i32[] }
+function g(n: i32, own c: C): i32 { return n + c.xs.len(); }
+function k(xs: [i32], own c: C): i32 { return xs.len() + c.n; }
+function make(): C { return C { n: 1, xs: [1] }; }
+function made(): Result[C, string] { return Ok(make()); }
+`
+
+func TestOwnGuardAllowsAScalarFieldReadBeforeTheMove(t *testing.T) {
+	wantOK(t, "local", fieldReadSrc+`
+function f(): i32 { let c = make(); return g(c.n, c); }
+function main(): i32 { return 0; }`)
+	wantOK(t, "payload-in-a-returning-branch", fieldReadSrc+`
+function f(): i32 {
+    match (made()) {
+        Ok(c) => {
+            if (c.n > 0) {
+                return g(c.n, c);
+            }
+            return g(0, c);
+        },
+        Err(_) => { return 0; },
+    }
+}
+function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardRejectsABorrowedFieldReadBeforeTheMove(t *testing.T) {
+	wantE051(t, "borrowed-field", fieldReadSrc+`
+function f(): i32 { let c = make(); return k(c.xs, c); }
+function main(): i32 { return 0; }`)
+}

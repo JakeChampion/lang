@@ -1779,18 +1779,60 @@ func (a *MatchExprArm) BinderType(name string, scrutinee Type) Type {
 	if a.AtBinding == name || a.ScalarBinding == name {
 		return scrutinee
 	}
-	for i, bn := range a.Bindings {
-		if bn == name && i < len(a.BindingTypes) {
-			return a.BindingTypes[i]
+	return payloadBinderType(name, a.Bindings, a.BindingTypes, a.Payloads, a.TupleElems)
+}
+
+func (a *MatchArm) BinderType(name string, scrutinee Type) Type {
+	if a == nil || name == "" {
+		return nil
+	}
+	if a.AtBinding == name || a.ScalarBinding == name {
+		return scrutinee
+	}
+	return payloadBinderType(name, a.Bindings, a.BindingTypes, a.Payloads, a.TupleElems)
+}
+
+// OwnBindings gives the names that the payload of an arm binds, with their
+// types: the field bindings, then the names that its tuple payloads bind.
+func (a *MatchArm) OwnBindings() ([]string, []Type) {
+	return payloadBindings(a.Bindings, a.BindingTypes, a.Binders(), a.AtBinding, a.ScalarBinding, a.BinderType)
+}
+
+// OwnBindings gives the names that the payload of an arm binds, with their
+// types: the field bindings, then the names that its tuple payloads bind.
+func (a *MatchExprArm) OwnBindings() ([]string, []Type) {
+	return payloadBindings(a.Bindings, a.BindingTypes, a.Binders(), a.AtBinding, a.ScalarBinding, a.BinderType)
+}
+
+func payloadBindings(bindings []string, types []Type, binders []string, at, scalar string, typeOf func(string, Type) Type) ([]string, []Type) {
+	names := append([]string{}, bindings...)
+	out := append([]Type{}, types...)
+	for len(out) < len(names) {
+		out = append(out, nil)
+	}
+	for _, b := range binders {
+		if b == at || b == scalar || slices.Contains(bindings, b) {
+			continue
+		}
+		names = append(names, b)
+		out = append(out, typeOf(b, nil))
+	}
+	return names, out
+}
+
+func payloadBinderType(name string, bindings []string, types []Type, payloads []*TuplePatElem, elems []TuplePatElem) Type {
+	for i, bn := range bindings {
+		if bn == name && i < len(types) {
+			return types[i]
 		}
 	}
-	for i, p := range a.Payloads {
-		if t := p.binderType(name, nthType(a.BindingTypes, i)); t != nil {
+	for i, p := range payloads {
+		if t := p.binderType(name, nthType(types, i)); t != nil {
 			return t
 		}
 	}
-	for i := range a.TupleElems {
-		if t := a.TupleElems[i].binderType(name, nthType(a.BindingTypes, i)); t != nil {
+	for i := range elems {
+		if t := elems[i].binderType(name, nthType(types, i)); t != nil {
 			return t
 		}
 	}
