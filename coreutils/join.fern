@@ -634,7 +634,7 @@ function add_field_list(specs: Spec[], str: string): Spec[] {
       if (item.len() > 0 && item[0] as i32 == 48) {
         die_spec("invalid field specifier: ", item);
       }
-      let fi: i32 = -1;
+      let fi = -1;
       if (item.len() > 0) {
         fi = item[0] as i32 - 48;
       }

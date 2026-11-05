@@ -334,7 +334,7 @@ function print_esc(own p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, bo
     }
     return (emit(p, "\\U" + hex_padded(code, 8, true)), j, false);
   }
-  let lit: i32 = -1;
+  let lit = -1;
   if (c == 97) {
     lit = 7;
   } else if (c == 98) {

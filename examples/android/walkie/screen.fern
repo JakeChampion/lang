@@ -18,7 +18,7 @@ pub const LINE_CHARS: i32 = 20;
 // The scale of the text for a screen `w` pixels wide and characters `cell_w`
 // pixels wide at scale 1: LINE_CHARS characters fit inside the margins.
 pub function text_scale(w: i32, cell_w: i32): i32 {
-  let s: i32 = w * 9 / 10 / (LINE_CHARS * cell_w);
+  let s = w * 9 / 10 / (LINE_CHARS * cell_w);
   if (s < 1) {
     return 1;
   }
@@ -32,7 +32,7 @@ pub function line_chars(w: i32, cell_w: i32, sc: i32): i32 {
 
 // The square around the round talk button.
 pub function talk_button(w: i32, h: i32): look.Rect {
-  let d: i32 = w * 7 / 10;
+  let d = w * 7 / 10;
   if (h * 3 / 10 < d) {
     d = h * 3 / 10;
   }
@@ -41,9 +41,9 @@ pub function talk_button(w: i32, h: i32): look.Rect {
 
 // True when (x, y) is on the disc inside the square `r`.
 pub function in_circle(r: look.Rect, x: f32, y: f32): boolean {
-  let dx: f32 = x - (r.x + r.w / 2) as f32;
-  let dy: f32 = y - (r.y + r.h / 2) as f32;
-  let rad: f32 = (r.w / 2) as f32;
+  let dx = x - (r.x + r.w / 2) as f32;
+  let dy = y - (r.y + r.h / 2) as f32;
+  let rad = (r.w / 2) as f32;
   return dx * dx + dy * dy < rad * rad;
 }
 

@@ -37,7 +37,7 @@ function relay_addr(): net.SocketAddr {
 }
 
 function random(seed: string): u8[] {
-  let h: u8[] = crypto.sha256(seed.as_bytes());
+  let h = crypto.sha256(seed.as_bytes());
   let out: u8[] = [];
   for k in 0..rooms.RANDOM_LEN {
     out = out.append(h[k]);
@@ -48,7 +48,7 @@ function random(seed: string): u8[] {
 // The random bytes of node `k` for the tick at `now`, different each time.
 function entropy(k: i32, now: i64): u8[] {
   let out: u8[] = [];
-  let v: i64 = now * 2654435761i64 + (k as i64 + 1i64) * 40503i64;
+  let v = now * 2654435761i64 + (k as i64 + 1i64) * 40503i64;
   for i in 0..node.RANDOM_BYTES {
     v = v * 6364136223846793005i64 + 1442695040888963407i64;
     out = out.append((v >> 33i64 & 255i64) as u8);
@@ -66,12 +66,12 @@ function seed(k: i32): u8[] {
 
 // A room that node 0 makes and node 1 joins.
 function start(): Sim {
-  let made: rooms.Answer = rooms.answer(rooms.empty(), "198.51.100.1", "CREATE", 0i64, random("a"));
-  let code: string = "";
+  let made = rooms.answer(rooms.empty(), "198.51.100.1", "CREATE", 0i64, random("a"));
+  let code = "";
   if let rooms.Created(c, _) = made.reply {
     code = c;
   }
-  let joined: rooms.Answer = rooms.answer(made.rooms, "198.51.100.2", "JOIN " + code, 0i64, random("b"));
+  let joined = rooms.answer(made.rooms, "198.51.100.2", "JOIN " + code, 0i64, random("b"));
   let r0: internet.Room[] = [];
   for reply in [made.reply, joined.reply] {
     if let Some(r) = internet.room_of(reply, code, relay_addr()) {
@@ -91,14 +91,14 @@ function owner_of(s: Sim, a: net.SocketAddr): i32 {
 }
 
 function deliver(s0: Sim): Sim {
-  let s: Sim = s0;
+  let s = s0;
   let left: Flight[] = [];
   let later: Flight[] = [];
   for f in s.flights {
     if (f.at > s.now) {
       left = left.append(f);
     } else if (f.to < 0) {
-      let r: rooms.Relayed = rooms.relay(s.table, f.from, f.data, f.data.len(), s.now);
+      let r = rooms.relay(s.table, f.from, f.data, f.data.len(), s.now);
       s = Sim { ...s, table: r.rooms };
       if let Some(fw) = r.out {
         later = later.append(Flight { at: s.now + STEP_MS, to: owner_of(s, fw.to), from: relay_addr(), data: fw.data });
@@ -111,11 +111,11 @@ function deliver(s0: Sim): Sim {
 }
 
 function send(s: Sim, i: i32): Sim {
-  let flights: Flight[] = s.flights;
+  let flights = s.flights;
   for d in s.nodes[i].out {
     flights = flights.append(Flight { at: s.now + STEP_MS, to: -1, from: s.addrs[i], data: internet.wrap(s.rooms[i], d.data) });
   }
-  let n: node.Node = s.nodes[i];
+  let n = s.nodes[i];
   return Sim { ...s, flights: flights, heard: s.heard.with(i, s.heard[i] + n.heard.len()), nodes: s.nodes.with(i, node.drained(n)) };
 }
 
@@ -141,13 +141,13 @@ function tone(): i32[] {
 // Both users confirm when the code shows. Node 0 holds the button from 5 s to
 // 15 s, and node 1 moves to a new address at 10 s.
 function run(end: i64): Sim {
-  let s: Sim = start();
-  let voice: i32[] = tone();
+  let s = start();
+  let voice = tone();
   while (s.now <= end) {
     s = deliver(s);
-    let nodes: node.Node[] = s.nodes;
+    let nodes = s.nodes;
     for i in 0..2 {
-      let n: node.Node = nodes[i];
+      let n = nodes[i];
       if (shows_code(n)) {
         n = node.confirm(n, s.now);
       }
@@ -177,19 +177,19 @@ function epoch_of(n: node.Node, sending: boolean): i32 {
     }
     return secure.recv_epoch(c);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function test_two_phones_talk_through_the_relay(): test.TestOutcome {
-  let s: Sim = run(20000i64);
-  let a: node.Node = s.nodes[0];
-  let b: node.Node = s.nodes[1];
-  let rooms_ok: boolean = s.rooms.len() == 2 && s.rooms[0].code == s.rooms[1].code;
-  let paired: boolean = a.link.sas.len() == 6 && a.link.sas == b.link.sas && session.connected(a.sess) && session.connected(b.sess);
+  let s = run(20000i64);
+  let a = s.nodes[0];
+  let b = s.nodes[1];
+  let rooms_ok = s.rooms.len() == 2 && s.rooms[0].code == s.rooms[1].code;
+  let paired = a.link.sas.len() == 6 && a.link.sas == b.link.sas && session.connected(a.sess) && session.connected(b.sess);
   // 500 frames in 10 s: B moves at 10 s and must still hear the second half.
   // The transmission rekeys A's voice through the relay.
-  let rekeyed: boolean = epoch_of(a, true) == 1 && epoch_of(b, false) == 1;
-  let got: string = rooms_ok.to_string() + " " + paired.to_string() + " " + (s.heard[1] >= 480).to_string() + " " + (s.heard[1] <= 500).to_string() + " " + rekeyed.to_string();
+  let rekeyed = epoch_of(a, true) == 1 && epoch_of(b, false) == 1;
+  let got = rooms_ok.to_string() + " " + paired.to_string() + " " + (s.heard[1] >= 480).to_string() + " " + (s.heard[1] <= 500).to_string() + " " + rekeyed.to_string();
   if (got != "true true true true true") {
     return test.fail(got + ": heard " + s.heard[1].to_string() + ", codes " + a.link.sas + " " + b.link.sas);
   }
@@ -198,14 +198,14 @@ function test_two_phones_talk_through_the_relay(): test.TestOutcome {
 
 // The relay sends nothing that a phone without a room token sends.
 function test_a_stranger_reaches_nobody(): test.TestOutcome {
-  let s: Sim = start();
+  let s = start();
   let stranger = internet.Room { code: "", token: random("z").take(rooms.TOKEN_LEN), relay: relay_addr() };
-  let r: rooms.Relayed = rooms.relay(s.table, addr(9, 5000), internet.wrap(stranger, [247u8, 1u8]), 19, 0i64);
+  let r = rooms.relay(s.table, addr(9, 5000), internet.wrap(stranger, [247u8, 1u8]), 19, 0i64);
   return test.assert_eq(r.out.is_some().to_string(), "false");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("walkie internet");
+  let r = test.new("walkie internet");
   r = r.it("two phones talk through the relay, and one moves", test_two_phones_talk_through_the_relay);
   r = r.it("a stranger reaches nobody", test_a_stranger_reaches_nobody);
   return r.finish();

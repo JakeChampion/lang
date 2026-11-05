@@ -4,23 +4,23 @@ import "./lib/gnu";
 import "./lib/signals";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [-s SIGNAL | -SIGNAL] PID...\n";
   out = out + "  or:  " + gnu.prog() + " -l [SIGNAL]...\n";
   out = out + "  or:  " + gnu.prog() + " -t [SIGNAL]...\n";
-  out = out + "Send signals to processes, or list signals.\n";
-  out = out + "\n";
-  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
-  out = out + "  -s, --signal=SIGNAL, -SIGNAL\n";
-  out = out + "                   specify the name or number of the signal to be sent\n";
-  out = out + "  -l, --list       list signal names, or convert signal names to/from numbers\n";
-  out = out + "  -t, --table      print a table of signal information\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "SIGNAL may be a signal name like 'HUP', or a signal number like '1',\n";
-  out = out + "or the exit status of a process terminated by a signal.\n";
-  out = out + "PID is an integer; if negative it identifies a process group.\n";
+  out += "Send signals to processes, or list signals.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "  -s, --signal=SIGNAL, -SIGNAL\n";
+  out += "                   specify the name or number of the signal to be sent\n";
+  out += "  -l, --list       list signal names, or convert signal names to/from numbers\n";
+  out += "  -t, --table      print a table of signal information\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "SIGNAL may be a signal name like 'HUP', or a signal number like '1',\n";
+  out += "or the exit status of a process terminated by a signal.\n";
+  out += "PID is an integer; if negative it identifies a process group.\n";
   return out;
 }
 
@@ -52,12 +52,12 @@ function is_digit_str(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (!gnu.is_digit(s[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -69,7 +69,7 @@ function bare_signal_attempt(tok: string): string {
   if (tok == "-L") {
     return "";
   }
-  let b: i32 = tok[1] as i32;
+  let b = tok[1] as i32;
   if (b < 65 || b > 90) {
     return "";
   }
@@ -81,20 +81,20 @@ function refuse_second_signal(given: string): void {
 }
 
 function name_width(): i32 {
-  let w: i32 = 0;
-  let n: i32 = 0;
+  let w = 0;
+  let n = 0;
   while (n <= signals.highest()) {
-    let nm: string = signals.name(n);
+    let nm = signals.name(n);
     if (nm.len() > w) {
       w = nm.len();
     }
-    n = n + 1;
+    n += 1;
   }
   return w;
 }
 
 function shown_name(n: i32): string {
-  let nm: string = signals.name(n);
+  let nm = signals.name(n);
   if (nm == "") {
     return n.to_string();
   }
@@ -102,15 +102,15 @@ function shown_name(n: i32): string {
 }
 
 function pad_name(s: string, w: i32): string {
-  let out: string = s;
+  let out = s;
   while (out.len() < w) {
-    out = out + " ";
+    out += " ";
   }
   return out;
 }
 
 function num2(n: i32): string {
-  let s: string = n.to_string();
+  let s = n.to_string();
   if (s.len() < 2) {
     return " " + s;
   }
@@ -118,22 +118,22 @@ function num2(n: i32): string {
 }
 
 function run_list(args: string[]): i32 {
-  let out: string = "";
+  let out = "";
   if (args.len() == 0) {
-    let n: i32 = 0;
+    let n = 0;
     while (n <= signals.highest()) {
-      let nm: string = signals.name(n);
+      let nm = signals.name(n);
       if (nm != "") {
         out = out + nm + "\n";
       }
-      n = n + 1;
+      n += 1;
     }
     gnu.write_out(out);
     return 0;
   }
-  let bad: boolean = false;
+  let bad = false;
   for a in args {
-    let v: i32 = signals.operand2sig(a);
+    let v = signals.operand2sig(a);
     if (v < 0) {
       gnu.write_out(out);
       out = "";
@@ -153,23 +153,23 @@ function run_list(args: string[]): i32 {
 }
 
 function run_table(args: string[]): i32 {
-  let out: string = "";
-  let w: i32 = name_width();
+  let out = "";
+  let w = name_width();
   if (args.len() == 0) {
-    let n: i32 = 0;
+    let n = 0;
     while (n <= signals.highest()) {
-      let nm: string = signals.name(n);
+      let nm = signals.name(n);
       if (nm != "") {
         out = out + num2(n) + " " + pad_name(nm, w) + " " + signals.description(n) + "\n";
       }
-      n = n + 1;
+      n += 1;
     }
     gnu.write_out(out);
     return 0;
   }
-  let bad: boolean = false;
+  let bad = false;
   for a in args {
-    let v: i32 = signals.operand2sig(a);
+    let v = signals.operand2sig(a);
     if (v < 0) {
       gnu.write_out(out);
       out = "";
@@ -190,8 +190,8 @@ function parse_pid(s: string): Option[i32] {
   if (s.len() == 0) {
     return None;
   }
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s[0] as i32 == 45) {
     neg = true;
     i = 1;
@@ -199,7 +199,7 @@ function parse_pid(s: string): Option[i32] {
   if (i >= s.len()) {
     return None;
   }
-  let v: i32 = 0;
+  let v = 0;
   while (i < s.len()) {
     if (!gnu.is_digit(s[i] as i32)) {
       return None;
@@ -208,16 +208,16 @@ function parse_pid(s: string): Option[i32] {
     if (v > 2147483000) {
       return None;
     }
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
-    return Some(0 - v);
+    return Some(-v);
   }
   return Some(v);
 }
 
 function run_send(sig: i32, pids: string[]): i32 {
-  let bad: boolean = false;
+  let bad = false;
   for p in pids {
     match (parse_pid(p)) {
       Some(n) => {
@@ -249,16 +249,16 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("t", "table", opt_table()));
   opts = opts.append(gnu.flag("L", "", opt_table()));
 
-  let sig: i32 = 0 - 1;
-  let mode: i32 = mode_send();
+  let sig: i32 = -1;
+  let mode = mode_send();
   let rest: string[] = [];
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "kill", help_text(), 1).return_in_order();
+  let g = gnu.getopt_new(args(), opts, "kill", help_text(), 1).return_in_order();
 
   match (g.peek()) {
     Some(first) => {
       if (first.len() >= 2 && first[0] as i32 == 45 && gnu.is_digit(first[1] as i32)) {
-        let v: string = slice_unchecked(first, 1, first.len()) + "";
-        let n: i32 = signals.operand2sig(v);
+        let v = slice_unchecked(first, 1, first.len()) + "";
+        let n = signals.operand2sig(v);
         if (n < 0) {
           gnu.die_usage(gnu.quote(v) + ": invalid signal", 1);
         }
@@ -270,10 +270,10 @@ pub function main(): i32 {
   }
 
   while (true) {
-    let stop: boolean = false;
+    let stop = false;
     match (g.peek()) {
       Some(tok) => {
-        let nm: string = bare_signal_attempt(tok);
+        let nm = bare_signal_attempt(tok);
         if (nm != "") {
           if (mode != mode_send()) {
             gnu.die_usage("cannot combine signal with -l or -t", 1);
@@ -281,7 +281,7 @@ pub function main(): i32 {
           if (sig >= 0) {
             refuse_second_signal(nm);
           }
-          let bn: i32 = signals.operand2sig(nm);
+          let bn = signals.operand2sig(nm);
           if (bn < 0) {
             gnu.die_usage(gnu.quote(nm) + ": invalid signal", 1);
           }
@@ -318,13 +318,13 @@ pub function main(): i32 {
             if (sig >= 0) {
               refuse_second_signal(m.value);
             }
-            let sn: i32 = signals.operand2sig(m.value);
+            let sn = signals.operand2sig(m.value);
             if (sn < 0) {
               gnu.die_usage(gnu.quote(m.value) + ": invalid signal", 1);
             }
             sig = sn;
           } else if (m.id == opt_list() || m.id == opt_table()) {
-            let want: i32 = mode_list();
+            let want = mode_list();
             if (m.id == opt_table()) {
               want = mode_table();
             }

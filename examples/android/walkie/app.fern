@@ -179,7 +179,7 @@ function load_pins(dir: string): u8[][] {
   let Ok(b) = read_file_bytes(dir + "/peers") else {
     return out;
   };
-  let at: i32 = 0;
+  let at = 0;
   while (at + 32 <= b.len()) {
     out = out.append(b.drop(at).take(32));
     at += 32;
@@ -253,8 +253,8 @@ function app_main(ctx: usize): usize {
   let spk: audio.Stream = audio.playback(voice.RATE);
   let started: boolean = spk.start();
   let (sock, port) = open_socket();
-  let notice: string = "";
-  let fd: i32 = 0 - 1;
+  let notice = "";
+  let fd: i32 = -1;
   if let Some(open) = sock {
     fd = open.fd;
   } else {
@@ -422,7 +422,7 @@ function peer_at(s: App, w: i32, h: i32, x: f32, y: f32): i32 {
       return k;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 // Invites peer `k`. Android asks the other user to accept.
@@ -712,7 +712,7 @@ function enter_room(own s: App, line: string, code: string): App {
     log.info("walkie: room " + r.code + " on " + relay.to_string());
     return App { ...s, room: Some(r), node: node.noticed(s.node, "room " + r.code + ": the other phone joins with this code"), drawn: "" };
   }
-  let why: string = "the server refused";
+  let why = "the server refused";
   if let rooms.Refused(text) = reply {
     why = text;
   }
@@ -886,7 +886,7 @@ function beacon(sock: Socket, data: u8[], to: [net.IpAddr]): void {
 
 // The peers as they show, so that a change draws the screen again.
 function peer_key(s: App): string {
-  let out: string = "";
+  let out = "";
   for p in s.peers {
     out = out + p.name + p.status.to_string() + ";";
   }
@@ -896,8 +896,8 @@ function peer_key(s: App): string {
 // The screen as `ui` draws it.
 function view(s: App, label: string): ui.View {
   let n: node.Node = s.node;
-  let code: string = "";
-  let searching: boolean = false;
+  let code = "";
+  let searching = false;
   match (n.link.phase) {
     lan.Verifying => {
       code = n.link.sas;
@@ -1014,7 +1014,7 @@ function title(s: App): string {
 
 // The room and the typed code as they show, so that a change draws again.
 function room_key(s: App): string {
-  let out: string = "";
+  let out = "";
   if let Some(r) = s.room {
     out = r.code;
   }

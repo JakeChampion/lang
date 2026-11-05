@@ -227,7 +227,7 @@ function start(s: Session, mode: Mode): (Session, Action[]) {
       return (s, []);
     }
   }
-  let next: State = Discovering;
+  let next = Discovering;
   match (mode) {
     Internet => {
       next = Joining;
@@ -271,12 +271,12 @@ function authenticated(s: Session, now: i64): (Session, Action[]) {
       return (s, []);
     }
   }
-  let hello: protocol.Message = protocol.Hello(protocol.VERSION, s.id, s.codec, 0);
+  let hello = protocol.Hello(protocol.VERSION, s.id, s.codec, 0);
   return (Session { ...s, state: Listening, last_heard: now, peer_ready: false, next_heartbeat: now + HEARTBEAT_MS as i64 }, [Send(hello)]);
 }
 
 function ptt_down(s: Session, now: i64): (Session, Action[]) {
-  let t: Session = Session { ...s, held: true };
+  let t = Session { ...s, held: true };
   match (s.state) {
     Listening => {},
     _ => {
@@ -289,7 +289,7 @@ function ptt_down(s: Session, now: i64): (Session, Action[]) {
   if (s.receiving) {
     return (t, [Notice("the peer is talking")]);
   }
-  let request: i32 = s.next_request;
+  let request = s.next_request;
   t = Session { ...t, state: Requesting, request: request, request_at: now, next_request: request + 1 };
   if (s.controller) {
     return grant_self(t, now);
@@ -302,14 +302,14 @@ function grant_self(s: Session, now: i64): (Session, Action[]) {
   if (s.owner != 0 && s.owner != s.me && now < s.owner_until) {
     return (Session { ...s, state: Listening, request: 0 }, [Notice("the peer is talking")]);
   }
-  let until: i64 = now + LEASE_MS as i64;
-  let t: Session = Session { ...s, state: Transmitting, owner: s.me, owner_request: s.request, owner_until: until, lease_until: until, next_renew: now + RENEW_MS as i64, receiving: false };
+  let until = now + LEASE_MS as i64;
+  let t = Session { ...s, state: Transmitting, owner: s.me, owner_request: s.request, owner_until: until, lease_until: until, next_renew: now + RENEW_MS as i64, receiving: false };
   return (t, [Send(protocol.PttGrant(s.request, s.me, LEASE_MS)), Capture(true)]);
 }
 
 // Stops this side's request or transmission, and gives the floor back.
 function stop_talking(s: Session, acts: Action[]): (Session, Action[]) {
-  let request: i32 = s.request;
+  let request = s.request;
   match (s.state) {
     Transmitting => {
       acts = acts.append(Capture(false));
@@ -319,7 +319,7 @@ function stop_talking(s: Session, acts: Action[]): (Session, Action[]) {
       return (s, acts);
     }
   }
-  let t: Session = Session { ...s, state: Listening, request: 0, request_at: 0 as i64, lease_until: 0 as i64 };
+  let t = Session { ...s, state: Listening, request: 0, request_at: 0 as i64, lease_until: 0 as i64 };
   if (s.controller && s.owner == s.me) {
     t = Session { ...t, owner: 0, owner_request: 0 };
   }
@@ -394,11 +394,11 @@ function request_from_peer(s: Session, id: i64, participant: i32, request: i32, 
   if (!s.controller || participant != s.peer || id != s.id || !connected(s)) {
     return (s, []);
   }
-  let free: boolean = s.owner == 0 || now >= s.owner_until || s.owner == participant;
+  let free = s.owner == 0 || now >= s.owner_until || s.owner == participant;
   if (!free) {
     return (s, [Send(protocol.PttDeny(request, s.owner))]);
   }
-  let t: Session = Session { ...s, owner: participant, owner_request: request, owner_until: now + LEASE_MS as i64, receiving: true };
+  let t = Session { ...s, owner: participant, owner_request: request, owner_until: now + LEASE_MS as i64, receiving: true };
   return (t, [Send(protocol.PttGrant(request, participant, LEASE_MS))]);
 }
 
@@ -409,7 +409,7 @@ function granted(s: Session, request: i32, owner: i32, lease: i32, now: i64): (S
     return (s, []);
   }
   if (owner != s.me) {
-    let until: i64 = now + clamp_lease(lease) as i64;
+    let until = now + clamp_lease(lease) as i64;
     match (s.state) {
       Transmitting => {
         let (t, acts) = stop_talking(s, []);
@@ -431,7 +431,7 @@ function granted(s: Session, request: i32, owner: i32, lease: i32, now: i64): (S
     }
     return (s, [Send(protocol.PttRelease(request))]);
   }
-  let until: i64 = s.request_at + lease as i64;
+  let until = s.request_at + lease as i64;
   if (lease <= 0 || lease > LEASE_MS || now >= until) {
     let (t, acts) = stop_talking(s, []);
     return (t, acts.append(Notice("the floor grant expired")));
@@ -479,7 +479,7 @@ function tick(s: Session, now: i64): (Session, Action[]) {
   if (now - s.last_heard >= PEER_TIMEOUT_MS as i64) {
     return lost(s, "the peer stopped answering");
   }
-  let t: Session = s;
+  let t = s;
   let acts: Action[] = [];
   if (now >= t.next_heartbeat) {
     acts = acts.append(Send(protocol.Heartbeat(t.id, t.heartbeat_seq)));
@@ -505,7 +505,7 @@ function wait_for_peer(s: Session, now: i64): (Session, Action[]) {
   if (now < s.next_heartbeat) {
     return (s, []);
   }
-  let hello: protocol.Message = protocol.Hello(protocol.VERSION, s.id, s.codec, 0);
+  let hello = protocol.Hello(protocol.VERSION, s.id, s.codec, 0);
   return (Session { ...s, next_heartbeat: now + HEARTBEAT_MS as i64 }, [Send(hello)]);
 }
 
@@ -520,8 +520,8 @@ function ask_again(s: Session, acts: Action[], now: i64): (Session, Action[]) {
   if (s.controller || now < s.request_at + RENEW_MS as i64) {
     return (s, acts);
   }
-  let request: i32 = s.next_request;
-  let t: Session = Session { ...s, request: request, request_at: now, next_request: request + 1 };
+  let request = s.next_request;
+  let t = Session { ...s, request: request, request_at: now, next_request: request + 1 };
   return (t, acts.append(Send(protocol.PttRequest(s.id, s.me, request, now))));
 }
 
@@ -541,14 +541,14 @@ function renew(s: Session, acts: Action[], now: i64): (Session, Action[]) {
   if (now < s.next_renew) {
     return (s, acts);
   }
-  let t: Session = Session { ...s, next_renew: now + RENEW_MS as i64 };
+  let t = Session { ...s, next_renew: now + RENEW_MS as i64 };
   if (s.controller) {
     // The grant tells the peer that the lease goes on.
-    let until: i64 = now + LEASE_MS as i64;
+    let until = now + LEASE_MS as i64;
     return (Session { ...t, owner_until: until, lease_until: until }, acts.append(Send(protocol.PttGrant(s.owner_request, s.me, LEASE_MS))));
   }
   // Each attempt has its own deadline and reply. An old grant cannot renew it.
-  let request: i32 = s.next_request;
+  let request = s.next_request;
   t = Session { ...t, request: request, request_at: now, next_request: request + 1 };
   return (t, acts.append(Send(protocol.PttRequest(s.id, s.me, request, now))));
 }
@@ -566,7 +566,7 @@ function lost(s: Session, why: string): (Session, Action[]) {
   if (transmitting(s)) {
     acts = acts.append(Capture(false));
   }
-  let t: Session = Session { ...s, state: Reconnecting, request: 0, owner: 0, owner_request: 0, receiving: false, lease_until: 0 as i64 };
+  let t = Session { ...s, state: Reconnecting, request: 0, owner: 0, owner_request: 0, receiving: false, lease_until: 0 as i64 };
   return (t, acts.append(Notice(why)));
 }
 

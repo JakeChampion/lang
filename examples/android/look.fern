@@ -104,7 +104,7 @@ pub function dotted_ring(f: draw.Frame, cx: i32, cy: i32, r: i32, d: i32, n: i32
 // A word longer than `max` is cut.
 pub function wrap(text: string, max: i32): string[] {
   let lines: string[] = [];
-  let line: string = "";
+  let line = "";
   for word in text.split(" ") {
     let w = word;
     while (w.len() > max) {

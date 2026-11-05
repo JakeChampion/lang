@@ -240,7 +240,7 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
   let live: boolean[] = [];
   let stdins: boolean[] = [];
   let slot: i32[] = [];
-  let stdin_slot: i32 = -1;
+  let stdin_slot = -1;
   let i = 0;
   while (i < files.len()) {
     let name = files[i];

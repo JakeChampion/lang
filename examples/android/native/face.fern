@@ -12,12 +12,12 @@ pub function segments(digit: i32): i32 {
 
 // The four digits of mm:ss for `elapsed_ms`. The minutes stop at 99.
 pub function digits(elapsed_ms: i64): i32[] {
-  let s: i64 = elapsed_ms / 1000i64;
-  let m: i64 = s / 60i64;
+  let s = elapsed_ms / 1000i64;
+  let m = s / 60i64;
   if (m > 99i64) {
     m = 99i64;
   }
-  let sec: i64 = s % 60i64;
+  let sec = s % 60i64;
   return [(m / 10i64) as i32, (m % 10i64) as i32, (sec / 10i64) as i32, (sec % 10i64) as i32];
 }
 
@@ -40,7 +40,7 @@ pub function digit_rects(digit: i32, x: i32, y: i32, len: i32, t: i32): Rect[] {
     Rect { x: x, y: y + t, w: t, h: len },
     Rect { x: x + t, y: y + t + len, w: len, h: t },
   ];
-  let mask: i32 = segments(digit);
+  let mask = segments(digit);
   let out: Rect[] = [];
   for i in 0..7 {
     if ((mask >> i & 1) == 1) {
@@ -53,15 +53,15 @@ pub function digit_rects(digit: i32, x: i32, y: i32, len: i32, t: i32): Rect[] {
 // Every rectangle of the face for `elapsed_ms` in a window of the given
 // size: four digit cells with a colon between the minutes and the seconds.
 pub function face_rects(elapsed_ms: i64, width: i32, height: i32): Rect[] {
-  let len: i32 = width / 9;
-  let t: i32 = len / 5 + 1;
-  let cell: i32 = len + 2 * t;
-  let gap: i32 = t * 2;
-  let colon: i32 = t * 3;
-  let total: i32 = 4 * cell + 2 * gap + colon + gap;
+  let len = width / 9;
+  let t = len / 5 + 1;
+  let cell = len + 2 * t;
+  let gap = t * 2;
+  let colon = t * 3;
+  let total = 4 * cell + 2 * gap + colon + gap;
   let x: i32 = (width - total) / 2;
   let y: i32 = (height - (2 * len + 3 * t)) / 2;
-  let d: i32[] = digits(elapsed_ms);
+  let d = digits(elapsed_ms);
   let out: Rect[] = [];
   let xs: i32[] = [x, x + cell + gap, x + 2 * cell + 2 * gap + colon + gap, x + 3 * cell + 3 * gap + colon + gap];
   for i in 0..4 {
@@ -69,7 +69,7 @@ pub function face_rects(elapsed_ms: i64, width: i32, height: i32): Rect[] {
       out = out.append(r);
     }
   }
-  let cx: i32 = x + 2 * cell + gap + gap;
+  let cx = x + 2 * cell + gap + gap;
   out = out.append(Rect { x: cx, y: y + len / 2 + t, w: t, h: t });
   out = out.append(Rect { x: cx, y: y + len + len / 2 + 2 * t, w: t, h: t });
   return out;

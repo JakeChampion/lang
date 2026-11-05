@@ -101,7 +101,7 @@ function flip_first(p: i32): i32 {
 }
 
 function random_pass(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 function hex_digit(v: i32): u8 {
@@ -144,7 +144,7 @@ function schedule(passes: i32, zero: boolean): i32[] {
   }
   let vocab = shuffled_vocab();
   let middle = passes - 2;
-  let extra: i32 = 0 - 1;
+  let extra: i32 = -1;
   if (passes >= 5) {
     extra = middle / 2;
   }

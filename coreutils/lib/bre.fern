@@ -676,7 +676,7 @@ function parse_alt(p0: P): (P, i32) {
 
 function parse_branch(p0: P): (P, i32) {
   let p = p0;
-  let cur: i32 = -1;
+  let cur = -1;
   while (true) {
     if (p.err.len() > 0) {
       return (p, empty_node(p, cur));
@@ -819,7 +819,7 @@ function has_close_brace(p: P, from: i32): boolean {
 
 function read_count(p: P, from: i32): (i32, i32) {
   let k = from;
-  let v: i32 = -1;
+  let v = -1;
   while (is_digit(byte_at(p, k))) {
     if (v < 0) {
       v = 0;
@@ -1381,7 +1381,7 @@ function branch_literals(insts: Inst[]): u8[][] {
 }
 
 function find_any_literal(text: Input, lits: u8[][], lo: i32, hi: i32): i32 {
-  let best: i32 = -1;
+  let best = -1;
   let i = 0;
   while (i < lits.len()) {
     let at = find_literal(text, lits[i], lo, hi);
@@ -1884,7 +1884,7 @@ function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boo
   }
   d = dfa_intern(d, key, [0], row);
   let s = d.found;
-  let best: i32 = -1;
+  let best = -1;
   let pos = start;
   let is_text = false;
   let raw_t = "";
@@ -2084,7 +2084,7 @@ function dfa_intern(own d0: Dfa, key: i32, pcs: i32[], row: i32): Dfa {
   }
   let c = 0;
   while (c < row) {
-    d = Dfa { ...d, trans: d.trans.append(0 - 1) };
+    d = Dfa { ...d, trans: d.trans.append(-1) };
     c += 1;
   }
   if (d.offs.len() * 2 > d.slots.len()) {
@@ -2330,7 +2330,7 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
   let npcs = fill(ni, 0);
   let ncaps = fill(ni * w, 0);
   let nn = 0;
-  let match_at: i32 = -1;
+  let match_at = -1;
   let best: i32[] = [];
   let pos = start;
   let seeding = true;
