@@ -3709,11 +3709,46 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function ssa_host_kind(op: string): boolean {
-  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string";
+  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "mmio_");
+}
+
+// One device register access, at the width after the colon. It is a host
+// call to the allocator, so x0 and x9 are free here.
+function ssa_mmio(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  if (util.str_has_prefix(ins.str, "mmio_load")) {
+    s = ssa_load(reg_of, ins.args[0], "x9", s);
+    let ld = "ldr x0";
+    if (w == 8) {
+      ld = "ldrb w0";
+    } else if (w == 16) {
+      ld = "ldrh w0";
+    } else if (w == 32) {
+      ld = "ldrsw x0";
+    }
+    s = s.write("    " + ld + ", [x9]\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  }
+  s = ssa_push_operand(reg_of, ins.args[0], 0, s);
+  s = ssa_push_operand(reg_of, ins.args[1], 16, s);
+  s = s.write("    ldr x0, [sp], #16\n    ldr x9, [sp], #16\n");
+  let st = "str x0";
+  if (w == 8) {
+    st = "strb w0";
+  } else if (w == 16) {
+    st = "strh w0";
+  } else if (w == 32) {
+    st = "str w0";
+  }
+  s = s.write("    " + st + ", [x9]\n    mov x0, #0\n");
+  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
+  if (util.str_has_prefix(ins.str, "mmio_")) {
+    return ssa_mmio(ins, reg_of, s);
+  }
   if (util.str_has_prefix(ins.str, "syscall")) {
     let i = 0;
     while (i < ins.args.len()) {

@@ -128,11 +128,15 @@ forwards a store to a load or moves a load out of a loop.
 `PERFORMANCE-RESEARCH.md`'s headline recommendation is the cross-block
 optimisation work that ends those two facts.
 
-So an MMIO access cannot be a plain `__raw_load*` or `__raw_store*`. It must be an
-op of its own kind, which `inst_has_effect` marks as an effect. Then no pass can
-remove, merge or move it. That is a small change, and it can come with the first
-driver. A `volatile` type qualifier can follow the need for drivers in Fern, not
-come before it.
+So an MMIO access is not a plain load or store. The `unsafe` intrinsics
+`__mmio_load8`, `__mmio_load16`, `__mmio_load32` and `__mmio_load64`, and the
+matching `__mmio_store*`, lower to the IR ops `mmio_load` and `mmio_store`
+(#14249). The SSA lift makes each one a host call (kind 50), which
+`inst_has_effect` marks as an effect, `merge_duplicates` does not merge and
+`speculable` does not move. Each backend then emits one load or store of the
+width. `internal/testing/e2ecompiler/self_host_mmio_test.go` makes sure that an
+unread MMIO load and two loads of one register stay in the output. A `volatile`
+type qualifier can follow the need for drivers in Fern, not come before it.
 
 ### 2. Effect intrinsics, not an asm block
 
@@ -370,9 +374,8 @@ environment over the FernOS syscalls can come later, as an improvement.
 
 1. **Done: the freestanding codegen is in the compiler** (#14245). It reads the
    entry shape from the descriptor, so `EntryReset` can be a second value.
-2. **Give MMIO loads and stores an effect kind** (#14249) when the first driver
-   needs them. Add a test that `ssa.prune_dead` keeps an unused MMIO load. The
-   compiler removes an unused plain raw load today (see "Volatile").
+2. **Done: MMIO loads and stores that no pass removes** (#14249). The compiler
+   still removes an unused plain raw load (see "Volatile").
 3. **Decide the interrupt/RC rule** (#14250). Design work, no code, and it gates 3 of the
    5 mechanical pieces. The proposed answer is the TamaGo shape above: a checked
    top half, a bottom half in the reactor, and no preemption of the kernel heap.

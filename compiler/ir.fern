@@ -1268,6 +1268,27 @@ pub function op_bswap(width: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: K_BSWAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
+// A device register access of `width` bits. No pass removes, merges or moves
+// one, because a read or a write of the register has an effect on the device.
+pub function op_mmio_load(width: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: K_MMIO_LOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+pub function op_mmio_store(width: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: K_MMIO_STORE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+pub function is_mmio_kind(id: i32): boolean {
+  return id == K_MMIO_LOAD || id == K_MMIO_STORE;
+}
+
+function mmio_kind_name(id: i32): string {
+  if (id == K_MMIO_LOAD) {
+    return "mmio_load";
+  }
+  return "mmio_store";
+}
+
 pub function op_arr_push_shared_count(): Op {
   return op0(216);
 }
@@ -2230,6 +2251,10 @@ pub const K_CALL_WORD: i32 = 385;
 
 pub const K_BSWAP: i32 = 411;
 
+pub const K_MMIO_LOAD: i32 = 412;
+
+pub const K_MMIO_STORE: i32 = 413;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2993,6 +3018,9 @@ function kind_id_len9(name: string): i32 {
   if (c == b'l' && name == "lsetxattr") {
     return 365;
   }
+  if (name == "mmio_load") {
+    return K_MMIO_LOAD;
+  }
   if (c == b'o' && name == "open_file") {
     return 203;
   }
@@ -3170,6 +3198,9 @@ function kind_id_len10(name: string): i32 {
   }
   if (c == b'l' && name == "load_local") {
     return 18;
+  }
+  if (name == "mmio_store") {
+    return K_MMIO_STORE;
   }
   if (c == b'r') {
     return kind_id_len10_r(name);
@@ -4800,6 +4831,9 @@ pub function kind_name(id: i32): string {
   if (id == 411) {
     return "bswap";
   }
+  if (is_mmio_kind(id)) {
+    return mmio_kind_name(id);
+  }
   if (id == 446) {
     return "mismatch_bytes_str";
   }
@@ -5086,7 +5120,7 @@ function pops1_mem(t: i32): boolean {
     || t == 113
     || t == 120 || t == 122 || t == 123
     || t == 139 || t == 141 || t == 143 || t == 145
-    || t == 146;
+    || t == 146 || t == 412;
 }
 
 function pops1_io(t: i32): boolean {
@@ -5145,7 +5179,7 @@ function pops2_mem(t: i32): boolean {
     || t == 98 || t == 99 || t == 100 || t == 101
     || t == 105 || t == 108
     || pops2_kernel(t)
-    || t == 124 || t == 140 || t == 144;
+    || t == 124 || t == 140 || t == 144 || t == 413;
 }
 
 function pops2_io(t: i32): boolean {
