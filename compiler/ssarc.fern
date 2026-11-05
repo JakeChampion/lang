@@ -5454,6 +5454,9 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "Writer.set_nonblocking") {
     return Lowered { found: true, r: emit(r, ir.op_writer_nonblocking()) };
   }
+  if (ins.str == "Writer.set_times") {
+    return Lowered { found: true, r: emit(r, ir.op_writer_set_times()) };
+  }
   return handle_metadata_site(r, ins);
 }
 

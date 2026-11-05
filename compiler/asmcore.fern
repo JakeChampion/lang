@@ -3505,7 +3505,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_struct_name(rt) == "Reader" && fa.field == "splice_to") {
     return ty_result(ty_i32());
   }
-  if (ty_struct_name(rt) == "Writer" && util.has_str(["write", "write_bytes", "truncate", "set_nonblocking"], fa.field)) {
+  if (ty_struct_name(rt) == "Writer" && util.has_str(["write", "write_bytes", "truncate", "set_nonblocking", "set_times"], fa.field)) {
     return ty_result(ty_unknown());
   }
   if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "dup_onto") {

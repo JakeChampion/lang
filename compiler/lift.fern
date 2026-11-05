@@ -1368,7 +1368,7 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_acc(body, InlineCloAcc { funcs: lifted.funcs, counter: lifted.counter }, vs, ve);
+  return astwalk.map_stmts_where(body, InlineCloAcc { funcs: lifted.funcs, counter: lifted.counter }, vs, ve, astwalk.every_expr);
 }
 
 function ilc_keep_expr(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) {
@@ -1435,7 +1435,7 @@ function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarD
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_acc(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr);
+  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.every_expr);
 }
 
 function box_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: irtables.StructTab): (ast.Stmt[], InlineCloAcc) {
@@ -1481,7 +1481,7 @@ function box_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDe
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_acc(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr);
+  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.every_expr);
 }
 
 function passthrough_array_arg(c: ast.ExprCall, mfuncs: MFuncs): i32 {
@@ -2280,7 +2280,7 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: 
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_acc(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr);
+  return astwalk.map_stmts_where(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr, astwalk.every_expr);
 }
 
 function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: irtables.StructTab, mfuncs: MFuncs): InlineCloRes {
@@ -2590,7 +2590,7 @@ function lift_inline_closures_expr(e: ast.Expr, fd: parser.FuncDecl, vars: VarDe
   function vst(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
     return ilc_stmt_at(s, a, fd, vars, gfns, structs, mfuncs);
   }
-  let (ne, na, nh) = astwalk.map_expr_acc(e, InlineCloAcc { funcs: funcs, counter: counter }, vst, ve);
+  let (ne, na, nh) = astwalk.map_expr_where(e, InlineCloAcc { funcs: funcs, counter: counter }, vst, ve, astwalk.every_expr);
   return InlineCloRes { expr: ne, funcs: na.funcs, counter: na.counter };
 }
 
@@ -2957,7 +2957,7 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: irta
   function vst(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
     return ilc_stmt_at(s, a, fd, vars, gfns, structs, mfuncs);
   }
-  let (ns, na) = astwalk.map_stmts_acc(fd.body, InlineCloAcc { funcs: [], counter: 0 }, vst, ve);
+  let (ns, na) = astwalk.map_stmts_where(fd.body, InlineCloAcc { funcs: [], counter: 0 }, vst, ve, astwalk.every_expr);
   if (na.funcs.len() == 0) {
     return (fd.body, []);
   }

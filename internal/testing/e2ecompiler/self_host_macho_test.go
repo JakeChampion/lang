@@ -364,6 +364,9 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
     },
     Err(e) => { return 21; }
   }
+  match (set_file_times("`+sftPath+`/", 1, 0, 1, 0, 0)) { Ok(_) => { return 22; }, Err(e) => {} }
+  match (set_file_times("`+dir+`/", 1, 0, 1, 0, 0)) { Err(e) => { return 23; }, Ok(_) => {} }
+  match (set_file_times("/dev/null", 0, 0, 0, 0, 24)) { Err(e) => { return 24; }, Ok(_) => {} }
   return 42;
 }`,
 		42)

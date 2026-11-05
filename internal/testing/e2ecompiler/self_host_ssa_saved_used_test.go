@@ -180,3 +180,40 @@ func TestSelfHostSSARuntimeClockEntries(t *testing.T) {
 		})
 	}
 }
+
+// __fern_str_cmp's byte loop needs one register more than the caller-saved
+// values that its intervals leave free. The word that the word loop reads is
+// dead in the byte loop, so the byte loop takes its register and the function
+// saves no callee-saved register.
+func TestSelfHostSSADeadValueLendsItsRegister(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "lend.fern")
+	if err := os.WriteFile(src, []byte(savedUsedProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "lend.s")
+	if combined, err := exec.Command(h.cli, "-O", "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("emitting: %v\n%s", err, combined)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn___fern_str_cmp")
+	if fn == "" {
+		t.Fatal("__fern_str_cmp not in the listing")
+	}
+	for _, line := range strings.Split(fn, "\n") {
+		if savedRegPush.MatchString(line) {
+			t.Errorf("__fern_str_cmp saves a callee-saved register: %q\n%s", strings.TrimSpace(line), fn)
+		}
+	}
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, tg.target+".bin")
+		h.compileWith(t, tg, src, bin, "-O")
+		if _, code := h.runProduced(t, tg, bin); code != 1 {
+			t.Errorf("%s: exit %d, want 1", tg.target, code)
+		}
+	}
+}

@@ -1186,12 +1186,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
 	c.info.FuncSigs["__worker_exit"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: false}},
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["__worker_reap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
-		Result: ast.NumberType{Width: 64, Signed: false},
+		Result: ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"},
 	}
 	c.info.FuncSigs["__worker_unmap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}, ast.BoolType{}},
@@ -2103,6 +2103,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerStructMethod("Writer", "truncate",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, voidIoResult)
 	registerStructMethod("Writer", "set_nonblocking", []ast.Type{ast.BoolType{}}, voidIoResult)
+	registerStructMethod("Writer", "set_times", []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true},
+		ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true},
+		ast.NumberType{Width: 32, Signed: true},
+	}, voidIoResult)
 	registerStructMethod("Reader", "fsync", nil, voidIoResult)
 	registerStructMethod("Writer", "fsync", nil, voidIoResult)
 	registerStructMethod("Reader", "fdatasync", nil, voidIoResult)
