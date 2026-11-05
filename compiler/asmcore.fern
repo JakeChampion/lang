@@ -637,8 +637,8 @@ function flag01(on: boolean): string {
   return "0";
 }
 
-// The build manifest stamped into every native executable, which
-// `fern -manifest` and std/mitigations read back.
+// The build manifest stamped into every native executable and shared
+// object, which `fern -manifest` and std/mitigations read back.
 pub function build_manifest(s: EmitState): string {
   return "FERNBUILD1 target=" + s.build_target + " profile=" + s.build_profile + " harden=" + flag01(s.harden) + " pie=" + flag01(s.pie) + " sanitize=" + flag01(s.sanitize) + " backtrace=" + flag01(s.backtrace) + " size=" + flag01(s.size) + " shared=" + flag01(s.shared) + " heap_limit=" + util.i64_to_string(s.heap_limit) + " quarantine=" + util.i64_to_string(s.quarantine);
 }
