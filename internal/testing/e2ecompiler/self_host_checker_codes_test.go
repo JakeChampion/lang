@@ -3423,6 +3423,14 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"array-method-accepts-inferred-map-result", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let m: i32[] = a.map((x: i32) => x * 2); return m.len(); }\n"},
 		{"array-method-accepts-typed-map", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let w: string[] = [\"a\"]; let l: i32[] = w.map((t: string): i32 => t.len()); return l.len(); }\n"},
 		{"option-method-callables", "import \"std/option\";\nfunction main(): i32 { let o: Option[i32] = Some(1); let r: Option[string] = o.map((x: i32): string => \"a\"); let q: Option[string] = o.map((x: i64): string => \"a\"); return 0; }\n"},
+		// A type parameter bounded by worker.Send crosses the worker boundary;
+		// the bound holds for a send-safe type argument only, and no impl
+		// declares the marker. These rows need the loaded std/worker, because
+		// its `send` parameters and the trait live there.
+		{"send-bounded-type-parameter", "import \"std/worker\";\nfunction twice[T: worker.Send](x: T): (T, T) { let w = worker.spawn((): T => x); let y: T = w.join(); return (x, y); }\nfunction main(): i32 { let p: (i32, i32) = twice(1); return p.0 + p.1; }\n"},
+		{"send-bound-unsatisfied-e021", "import \"std/worker\";\nfunction twice[T: worker.Send](x: T): (T, T) { let w = worker.spawn((): T => x); let y: T = w.join(); return (x, y); }\nfunction main(): i32 { let p: (Cell[i32], Cell[i32]) = twice(cell_new(1)); return p.0.get(); }\n"},
+		{"send-impl-by-hand-e021", "import \"std/worker\";\nstruct Box { n: i32 }\nimpl worker.Send for Box {}\nfunction main(): i32 { return 0; }\n"},
+		{"send-unbounded-type-parameter-e100", "import \"std/worker\";\nfunction once[T](x: T): T { let w = worker.spawn((): T => x); return w.join(); }\nfunction main(): i32 { return once(1); }\n"},
 	}
 
 	for _, tc := range progs {

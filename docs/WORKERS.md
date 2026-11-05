@@ -75,18 +75,31 @@ A type is send-safe when every part of it is:
 | a struct or enum whose fields and payloads are send-safe, with its type arguments applied | a view, `[T]` or `str`: a view borrows another value's storage |
 | `Option[T]` and `Result[T, E]` of send-safe arguments | `Reader`, `Writer`, `Dir`, `Socket`: a built-in handle owns a descriptor |
 | a `Map[K, V]` of a send-safe key and value | a resource handle: it is not copied |
-| | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
-| | a type parameter: it is not known to be send-safe |
+| a type parameter bounded by `worker.Send` | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
+| | a type parameter without that bound: it is not known to be send-safe |
 
-The last row is the conservative choice of this release. A generic function
-cannot send a value of its type parameter, because the check runs once on
-the generic body.
+The check runs once on the generic body, so a type parameter is send-safe
+only when its bound says so. `worker.Send` is a marker trait with no
+methods. A type satisfies it when every part of the type is send-safe, and
+the call that binds the type parameter checks the bound (`E021`).
+
+No impl declares `Send`: an `impl worker.Send for T` is refused (`E021`),
+because an impl could name a type whose parts cannot be copied. `spawn`,
+`spawn_on` and `join` carry the bound, so the module itself sends through it.
+
+```fern
+function twice[T: worker.Send](x: T): (T, T) {
+    let w = worker.spawn((): T => x);
+    return (x, w.join());
+}
+```
 
 The rule is `send_guard_call` in `compiler/checker.fern` and `guardSendArg`
 in `internal/check/checker/send.go`. The two checkers give one message. The
-cases are `conformance/cases/diag_e100` and
-`conformance/cases/diag_e100_closure_value`, and the rows named `send-` in
-`TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
+cases are `conformance/cases/diag_e100`,
+`conformance/cases/diag_e100_closure_value`, `worker_send_bound`,
+`diag_e021_send_bound` and `diag_e021_send_impl`, and the rows named `send-`
+in `TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
 
 ## Sequential degrade
 

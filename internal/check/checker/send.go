@@ -47,9 +47,7 @@ func (c *checker) sendUnsafeReason(t ast.Type, seen map[string]bool) string {
 	case ast.HandleType:
 		return "a resource handle is not copied"
 	case ast.ParamType:
-		// Inside the standard library a generic body copies a value its
-		// caller's `send` argument already admitted.
-		if c.inStdlibContext() {
+		if c.paramBoundSend(v.Name) {
 			return ""
 		}
 		return "type parameter " + v.Name + " is not known to be send-safe"
@@ -63,6 +61,25 @@ func (c *checker) sendUnsafeReason(t ast.Type, seen map[string]bool) string {
 		return c.sendUnsafeEnumReason(v, seen)
 	}
 	return ""
+}
+
+// SendTrait is the mangled name of `std/worker`'s `Send`: the marker every
+// send-safe type satisfies and no impl declares.
+const SendTrait = "worker__Send"
+
+// paramBoundSend reports whether the type parameter name is bounded by
+// `worker.Send` in the function that declares it.
+func (c *checker) paramBoundSend(name string) bool {
+	decl := c.typeParamDecl(name)
+	if decl == nil {
+		return false
+	}
+	for _, b := range decl.Bounds[name] {
+		if b == SendTrait {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *checker) sendUnsafeStructReason(v ast.StructType, seen map[string]bool) string {

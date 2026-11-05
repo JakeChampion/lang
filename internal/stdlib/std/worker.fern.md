@@ -8,6 +8,8 @@ A worker owns its heap. A value crosses the worker boundary only by copy: the ca
 Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array, tuple or map of send-safe values.
 A `Cell`, a function value, a `dyn` value, a view, a handle and a `@must_consume` value are not send-safe.
 
+A type parameter is send-safe when its bound names `Send`. The bound holds for every send-safe type argument (E021 otherwise).
+
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.
 
 On Linux a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into the parent heap, and removes the region.
@@ -47,13 +49,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<2 pub struct Worker[T]>>
 
-<<3 pub function spawn[T](send body: () => T): Worker[T]>>
+<<12 pub trait Send>>
 
-<<4 function __spawn_process[T](own body: () => T): Worker[T]>>
+<<3 pub function spawn[T: Send](send body: () => T): Worker[T]>>
 
-<<5 pub function (own w: Worker[T]) join(): T>>
+<<4 function __spawn_process[T: Send](own body: () => T): Worker[T]>>
 
-<<6 function __join_process[T](own w: Worker[T]): T>>
+<<5 pub function (own w: Worker[T: Send]) join(): T>>
+
+<<6 function __join_process[T: Send](own w: Worker[T]): T>>
 
 <<7 function __wait_worker(pid: i32): i32>>
 
@@ -63,7 +67,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 pub trait Scheduler>>
 
-<<11 pub function spawn_on[T](s: Scheduler, send body: () => T): Worker[T]>>
+<<11 pub function spawn_on[T: Send](s: Scheduler, send body: () => T): Worker[T]>>
 ```
 
 ### `module introduction`
@@ -89,14 +93,14 @@ A worker on a scheduler holds the scheduler and its index there. A process worke
 pub struct Worker[T] { sched: Option[dyn Scheduler], index: i32, pid: i32, region: i64, size: i64 }
 ```
 
-### `3 pub function spawn[T](send body: () => T): Worker[T]`
+### `3 pub function spawn[T: Send](send body: () => T): Worker[T]`
 
 Runs `body` as a worker. The closure's captures and its result cross the worker boundary, so both must be send-safe (E100). A native Linux program runs the worker as a process. Every other engine runs the body on the `Inline` scheduler before `spawn` returns. The interpreters map no region, so they take the inline path of `__spawn_process`.
 
 ```fern
-<<3 pub function spawn[T](send body: () => T): Worker[T]>>=
+<<3 pub function spawn[T: Send](send body: () => T): Worker[T]>>=
 /// Runs `body` as a worker and returns the handle that `join` takes.
-pub function spawn[T](send body: () => T): Worker[T] {
+pub function spawn[T: Send](send body: () => T): Worker[T] {
   if (target_os() == "linux") {
     return __spawn_process(body);
   }
@@ -104,15 +108,15 @@ pub function spawn[T](send body: () => T): Worker[T] {
 }
 ```
 
-### `4 function __spawn_process[T](own body: () => T): Worker[T]`
+### `4 function __spawn_process[T: Send](own body: () => T): Worker[T]`
 
 The region is a shared anonymous mapping that the fork inherits at the same address. Its header holds the root address of the result and the leak-check counters, and the child's heap starts one line past it. A fork that the kernel refuses runs the body inline.
 
 The child copies its result, because a box the body built can point at a box the parent owns. A copy built from the child's cursor lies inside the region. The copy is wrapped in `Some`, so a scalar result crosses as a box too. The body frees boxes of the parent's image into the child's free lists, and a copy must not land in one. So the lists are cleared again at the mark before the copy. The child exits through `__worker_exit`, so neither the leak census nor the parent's at-exit work runs twice.
 
 ```fern
-<<4 function __spawn_process[T](own body: () => T): Worker[T]>>=
-function __spawn_process[T](own body: () => T): Worker[T] {
+<<4 function __spawn_process[T: Send](own body: () => T): Worker[T]>>=
+function __spawn_process[T: Send](own body: () => T): Worker[T] {
   let size: i64 = 4294967296i64;
   let region: i64 = 0i64;
   unsafe {
@@ -139,14 +143,14 @@ function __spawn_process[T](own body: () => T): Worker[T] {
 }
 ```
 
-### `5 pub function (own w: Worker[T]) join(): T`
+### `5 pub function (own w: Worker[T: Send]) join(): T`
 
 Waits for the worker and returns its result. The call consumes the worker. A worker on a scheduler runs the scheduler until its result is there. A process worker returns a copy in the parent heap after the parent removes the shared region.
 
 ```fern
-<<5 pub function (own w: Worker[T]) join(): T>>=
+<<5 pub function (own w: Worker[T: Send]) join(): T>>=
 /// Returns the worker's result. The worker is consumed.
-pub function (own w: Worker[T]) join(): T {
+pub function (own w: Worker[T: Send]) join(): T {
   match (w.sched) {
     Some(s) => {
       let out: T = __join_scheduled(s, w.index);
@@ -175,13 +179,13 @@ function __join_scheduled[T](s: dyn Scheduler, index: i32): T {
 }
 ```
 
-### `6 function __join_process[T](own w: Worker[T]): T`
+### `6 function __join_process[T: Send](own w: Worker[T]): T`
 
 Waits for the process and copies its result into the parent heap. The original tree leaves the worker region through bulk reclamation. It never enters the parent's free lists. Only a native Linux program reaches this function.
 
 ```fern
-<<6 function __join_process[T](own w: Worker[T]): T>>=
-function __join_process[T](own w: Worker[T]): T {
+<<6 function __join_process[T: Send](own w: Worker[T]): T>>=
+function __join_process[T: Send](own w: Worker[T]): T {
   let status: i32 = __wait_worker(w.pid);
   if (status != 0) {
     __unmap_region(w.region, w.size, false);
@@ -294,18 +298,18 @@ impl Scheduler for Inline {
 }
 ```
 
-### `11 pub function spawn_on[T](s: Scheduler, send body: () => T): Worker[T]`
+### `11 pub function spawn_on[T: Send](s: Scheduler, send body: () => T): Worker[T]`
 
 Runs `body` as a worker of scheduler `s`. The thunk the scheduler gets wraps the result in `Some`, so a scalar result crosses as a box too.
 
 ```fern
-<<11 pub function spawn_on[T](s: Scheduler, send body: () => T): Worker[T]>>=
+<<11 pub function spawn_on[T: Send](s: Scheduler, send body: () => T): Worker[T]>>=
 /// Runs `body` as a worker of `s`, and returns the handle that `join` takes.
-pub function spawn_on[T](s: dyn Scheduler, send body: () => T): Worker[T] {
+pub function spawn_on[T: Send](s: dyn Scheduler, send body: () => T): Worker[T] {
   return __spawn_on(s, body);
 }
 
-function __spawn_on[T](s: dyn Scheduler, own body: () => T): Worker[T] {
+function __spawn_on[T: Send](s: dyn Scheduler, own body: () => T): Worker[T] {
   let run: () => usize = (): usize => {
     unsafe {
       return __send_root(Some(body()));
@@ -314,4 +318,14 @@ function __spawn_on[T](s: dyn Scheduler, own body: () => T): Worker[T] {
   let index: i32 = s.admit(run);
   return Worker { sched: Some(s), index: index, pid: 0, region: 0i64, size: 0i64 };
 }
+```
+
+### `12 pub trait Send`
+
+The marker of a send-safe type. No impl declares it: a type satisfies the bound when every part of it is send-safe, and the checker refuses an `impl Send` (E021). A generic function writes `[T: Send]` to send a value of its type parameter.
+
+```fern
+<<12 pub trait Send>>=
+/// Satisfied by every send-safe type. Bound a type parameter by it to send a value of that type.
+pub trait Send {}
 ```

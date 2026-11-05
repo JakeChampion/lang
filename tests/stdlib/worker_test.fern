@@ -121,6 +121,21 @@ function test_captured_map_is_read_in_the_child(): test.TestOutcome {
   return test.assert_eq(w.join().to_string(), "29");
 }
 
+function twice[T: worker.Send](x: T): (T, T) {
+  let w = worker.spawn((): T => x);
+  let y: T = w.join();
+  return (x, y);
+}
+
+function test_bounded_type_parameter_crosses(): test.TestOutcome {
+  let pair: (Report, Report) = twice(Report { total: 7, name: "seven" });
+  if (pair.1.total != 7) {
+    return test.fail("total");
+  }
+  let names: (string[], string[]) = twice(["ada", "rush"]);
+  return test.assert_eq(pair.1.name + ":" + names.1[1], "seven:rush");
+}
+
 function main(): i32 {
   let r = test.new("std/worker");
   r = r.it("spawn and join a scalar", test_spawn_join_scalar);
@@ -131,5 +146,6 @@ function main(): i32 {
   r = r.it("a nested worker returns a copied result", test_nested_worker_result);
   r = r.it("a map crosses the boundary both ways", test_map_crosses_both_ways);
   r = r.it("a captured map is read in the child", test_captured_map_is_read_in_the_child);
+  r = r.it("a type parameter bounded by Send crosses", test_bounded_type_parameter_crosses);
   return r.finish();
 }

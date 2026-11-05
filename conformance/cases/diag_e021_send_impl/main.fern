@@ -1,0 +1,14 @@
+// spec: WK-07
+// worker.Send is a marker that every send-safe type satisfies. No impl
+// declares it, because an impl could name a type whose parts cannot be
+// copied.
+
+import "std/worker";
+
+struct Holder { c: Cell[i32] }
+
+impl worker.Send for Holder {}
+
+function main(): i32 {
+    return 0;
+}
