@@ -259,7 +259,7 @@ func shouldUseASCII(force bool) bool {
 
 func main() {
 	out := flag.String("o", "", "output path; if unset, a native target writes its assembly to stdout, and a wasm target refuses unless -emit asm asks for its WAT")
-	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android and x86-64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — type-checks against an empty capability set; no backend emits for them yet, see docs/FREESTANDING-CORE.md). `fern-oracle -targets` lists them with their capabilities.")
+	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android and x86-64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — grants no capability and writes assembly that an embedder links and calls through the -export functions, see docs/FREESTANDING-CORE.md). `fern-oracle -targets` lists them with their capabilities.")
 	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default); a wasm32-wasi target runs under `wasmtime run`")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64-linux, arm64-linux, x86-64-android, arm64-android); requires -o.")
@@ -368,9 +368,6 @@ func main() {
 			}
 			if len(d.Bindings) > 0 {
 				fmt.Printf("    bindings:     %v\n", d.Bindings)
-			}
-			if d.NoBackend {
-				fmt.Printf("    note:         check-only — no backend emits for this target yet\n")
 			}
 		}
 		return

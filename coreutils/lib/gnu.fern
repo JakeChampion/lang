@@ -19,20 +19,20 @@ pub function decimal_pairs(): string {
 }
 
 pub function decimal_len(n: u64): i32 {
-  let d: i32 = 1;
-  let p: u64 = 10 as u64;
+  let d = 1;
+  let p = 10 as u64;
   while (n >= p) {
-    d = d + 1;
+    d += 1;
     if (d == 20) {
       return d;
     }
-    p = p * (10 as u64);
+    p *= 10 as u64;
   }
   return d;
 }
 
 pub function prog(): string {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() == 0) {
     return "";
   }
@@ -61,14 +61,14 @@ pub function error_out_bytes(o: io_buffered.BufWriter, msg: u8[]): io_buffered.B
   if (stdout_open()) {
     o.flush();
   }
-  let h: usize = buf_new(msg.len());
+  let h = buf_new(msg.len());
   buf_push(h, prog());
   buf_push(h, ": ");
   buf_push_bytes_range(h, msg, 0, msg.len());
   buf_push_byte(h, 10);
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
-  let diagnostic: Writer = stderr();
+  let diagnostic = stderr();
   diagnostic.write_bytes(bytes);
   return o;
 }
@@ -87,9 +87,9 @@ function stdout_open(): boolean {
 // The writer is borrowed, so die flushes it and leaves the close to the
 // kernel at exit. It reports a write error as close_stdout_with does.
 pub function die(o: io_buffered.BufWriter, msg: string, status: i32): void {
-  let w: io_buffered.BufWriter = error_out(o, msg);
-  let pending: boolean = w.buffered() > 0;
-  let failed: boolean = false;
+  let w = error_out(o, msg);
+  let pending = w.buffered() > 0;
+  let failed = false;
   match (w.error()) {
     Some(_) => {
       failed = true;
@@ -123,21 +123,21 @@ pub function argmatch(v: string, names: string[], option: string): i32 {
 }
 
 pub function argmatch_valued(v: string, names: string[], values: i32[], option: string): i32 {
-  let found: i32 = argmatch_find(v, names, values);
+  let found = argmatch_find(v, names, values);
   if (found >= 0) {
     return found;
   }
-  let what: string = "invalid";
-  if (found == 0 - 2) {
+  let what = "invalid";
+  if (found == -2) {
     what = "ambiguous";
   }
   return argmatch_die(v, names, values, option, what);
 }
 
 pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
-  let found: i32 = 0 - 1;
-  let ambiguous: boolean = false;
-  let i: i32 = 0;
+  let found: i32 = -1;
+  let ambiguous = false;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return values[i];
@@ -149,24 +149,24 @@ pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
         ambiguous = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (ambiguous) {
-    return 0 - 2;
+    return -2;
   }
   if (found >= 0) {
     return values[found];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function argmatch_exact(v: string, names: string[], option: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return argmatch_die(v, names, one_value_each(names.len()), option, "invalid");
 }
@@ -174,13 +174,13 @@ pub function argmatch_exact(v: string, names: string[], option: string): i32 {
 function argmatch_die(v: string, names: string[], values: i32[], option: string, what: string): i32 {
   error(what + " argument " + quote(v) + " for " + quote(option));
   eprint("Valid arguments are:");
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
-    let line: string = "  - " + quote(names[i]);
-    let j: i32 = i + 1;
+    let line = "  - " + quote(names[i]);
+    let j = i + 1;
     while (j < names.len() && values[j] == values[i]) {
       line = line + ", " + quote(names[j]);
-      j = j + 1;
+      j += 1;
     }
     eprint(line);
     i = j;
@@ -191,10 +191,10 @@ function argmatch_die(v: string, names: string[], values: i32[], option: string,
 
 function one_value_each(n: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(i);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -259,7 +259,7 @@ pub function write_out(s: string): void {
 }
 
 pub function write_out_with(s: string, status: i32): void {
-  let w: Writer = stdout();
+  let w = stdout();
   if let Err(e) = w.write(s) {
     error("write error: " + io_error_text(e));
     exit(status);
@@ -329,25 +329,25 @@ pub function count_overflow(status: i32): boolean {
 }
 
 function parse_count(s: string, suffixes: boolean): (u64, i32) {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && is_blank(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
-  let starts: boolean = i < s.len() && is_digit(s[i] as i32);
+  let starts = i < s.len() && is_digit(s[i] as i32);
   if (!starts && !(suffixes && i < s.len() && is_suffix(s[i] as i32))) {
     return (0 as u64, 1);
   }
-  let v: u64 = 1 as u64;
+  let v = 1 as u64;
   if (starts) {
     v = 0 as u64;
   }
-  let over: boolean = false;
-  let digits_over: boolean = false;
+  let over = false;
+  let digits_over = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
-    let d: u64 = (s[i] as i32 - 48) as u64;
+    let d = (s[i] as i32 - 48) as u64;
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -363,28 +363,28 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
         digits_over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  let mul: u64 = 1 as u64;
+  let mul = 1 as u64;
   if (i < s.len() && suffixes) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 98) {
       mul = 512 as u64;
-      i = i + 1;
+      i += 1;
     } else {
-      let p: i32 = suffix_power(c);
+      let p = suffix_power(c);
       if (p == 0) {
         return (0 as u64, 4);
       }
-      i = i + 1;
-      let base: u64 = 1024 as u64;
+      i += 1;
+      let base = 1024 as u64;
       if (i < s.len() && s[i] as i32 == 66) {
         base = 1000 as u64;
-        i = i + 1;
+        i += 1;
       } else if (i + 1 < s.len() && s[i] as i32 == 105 && s[i + 1] as i32 == 66) {
-        i = i + 2;
+        i += 2;
       }
-      let k: i32 = 0;
+      let k = 0;
       while (k < p) {
         match (mul.checked_mul(base)) {
           Some(m) => {
@@ -394,7 +394,7 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
             over = true;
           }
         }
-        k = k + 1;
+        k += 1;
       }
     }
   }
@@ -441,27 +441,27 @@ pub function posix2_version(): i64 {
 }
 
 function strtol_int(s: string): Option[i64] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && is_blank(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
   if (i >= s.len() || !is_digit(s[i] as i32)) {
     return None;
   }
-  let v: i64 = 0 as i64;
-  let over: boolean = false;
+  let v = 0 as i64;
+  let over = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
     if (v > 999999999 as i64) {
       over = true;
     } else {
       v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i != s.len()) {
     return None;
@@ -469,9 +469,9 @@ function strtol_int(s: string): Option[i64] {
   if (neg) {
     v = 0 as i64 - v;
   }
-  if (over || v > 2147483647 as i64 || v < (0 - 2147483647 - 1) as i64) {
+  if (over || v > 2147483647 as i64 || v < (-2147483647 - 1) as i64) {
     if (neg) {
-      return Some((0 - 2147483647 - 1) as i64);
+      return Some((-2147483647 - 1) as i64);
     }
     return Some(2147483647 as i64);
   }
@@ -479,19 +479,19 @@ function strtol_int(s: string): Option[i64] {
 }
 
 pub function digit_option(argv: string[]): string {
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a.len() >= 2 && a[0] as i32 == 45) {
-      let k: i32 = 1;
+      let k = 1;
       while (k < a.len()) {
         if (is_digit(a[k] as i32)) {
           return slice_unchecked(a, k, k + 1) + "";
         }
-        k = k + 1;
+        k += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return "0";
 }
@@ -532,7 +532,7 @@ pub function stream_fail(o: Stream, msg: string): Stream {
 }
 
 pub function stream_header(o: Stream, name: string): Stream {
-  let lead: string = "\n";
+  let lead = "\n";
   if (o.first) {
     lead = "";
   }
@@ -557,10 +557,10 @@ pub function quote(s: string): string {
 }
 
 pub function quote_bytes(bytes: u8[]): string {
-  let out: usize = buf_new(bytes.len());
+  let out = buf_new(bytes.len());
   buf_push_byte(out, 39);
   for byte in bytes {
-    let b: i32 = byte as i32;
+    let b = byte as i32;
     if (b == 92 || b == 39) {
       buf_push_byte(out, 92);
       buf_push_byte(out, b);
@@ -568,7 +568,7 @@ pub function quote_bytes(bytes: u8[]): string {
       buf_push_byte(out, b);
     } else {
       buf_push_byte(out, 92);
-      let named: i32 = c_escape_letter(b);
+      let named = c_escape_letter(b);
       if (named > 0) {
         buf_push_byte(out, named);
       } else {
@@ -579,7 +579,7 @@ pub function quote_bytes(bytes: u8[]): string {
     }
   }
   buf_push_byte(out, 39);
-  let text: string = buf_take(out);
+  let text = buf_take(out);
   buf_free(out);
   return text;
 }
@@ -607,8 +607,8 @@ pub function quoting_style_from_env(): i32 {
 pub function quoting_style_from_env_with(fallback: i32): i32 {
   match (env("QUOTING_STYLE")) {
     Some(v) => {
-      let names: string[] = quoting_style_names();
-      let found: i32 = argmatch_find(v, names, one_value_each(names.len()));
+      let names = quoting_style_names();
+      let found = argmatch_find(v, names, one_value_each(names.len()));
       if (found >= 0) {
         return found;
       }
@@ -645,12 +645,12 @@ pub function quote_style_with(s: string, style: i32, extra: string): string {
 }
 
 function in_set(extra: string, b: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < extra.len()) {
     if (extra[i] as i32 == b) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -663,9 +663,9 @@ function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
   if (q != 0) {
     bs = bs.append(q as u8);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 92 || q != 0 && b == q || in_set(extra, b)) {
       bs = bs.append(92 as u8);
       bs = bs.append(b as u8);
@@ -674,7 +674,7 @@ function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
     } else {
       bs = append_c_escape(bs, b);
     }
-    i = i + 1;
+    i += 1;
   }
   if (q != 0) {
     bs = bs.append(q as u8);
@@ -683,20 +683,20 @@ function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
 }
 
 function c_needs_quotes(s: string, q: i32, extra: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == q || is_control_or_high(b) || in_set(extra, b)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function append_c_escape(out: u8[], b: i32): u8[] {
-  let bs: u8[] = out.append(92 as u8);
-  let named: i32 = c_escape_letter(b);
+  let bs = out.append(92 as u8);
+  let named = c_escape_letter(b);
   if (named > 0) {
     return bs.append(named as u8);
   }
@@ -748,9 +748,9 @@ function shell_needs_quotes(s: string, escapes: boolean, extra: string): boolean
   if (s.len() == 1 && (s[0] == 123 as u8 || s[0] == 125 as u8)) {
     return true;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (is_control_or_high(b)) {
       if (escapes || b == 10 || b == 13 || b == 9) {
         return true;
@@ -758,7 +758,7 @@ function shell_needs_quotes(s: string, escapes: boolean, extra: string): boolean
     } else if (shell_special(b, i == 0) || in_set(extra, b)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -777,29 +777,29 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
   if (elide && !shell_needs_quotes(s, escapes, extra)) {
     return s;
   }
-  let double_ok: boolean = true;
-  let has_quote: boolean = false;
-  let i: i32 = 0;
+  let double_ok = true;
+  let has_quote = false;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (double_quote_unsafe(b, i == 0)) {
       double_ok = false;
     }
     if (b == 39) {
       has_quote = true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (has_quote && double_ok) {
     return "\"" + s + "\"";
   }
   let bs: u8[] = [];
   bs = bs.append(39 as u8);
-  let open: boolean = true;
-  let run: boolean = false;
+  let open = true;
+  let run = false;
   i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (escapes && is_control_or_high(b)) {
       if (open) {
         bs = bs.append(39 as u8);
@@ -811,7 +811,7 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
         run = true;
       }
       bs = append_c_escape(bs, b);
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (run) {
@@ -833,7 +833,7 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
       }
       bs = bs.append(b as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   if (run) {
     bs = bs.append(39 as u8);
@@ -848,7 +848,7 @@ pub function env_entry(entry: string, style: i32): string {
   let Some(eq) = entry.index_of("=") else {
     return quote_style(entry, style);
   };
-  let name: string = quote_style(slice_unchecked(entry, 0, eq) + "", style);
+  let name = quote_style(slice_unchecked(entry, 0, eq) + "", style);
   if (eq + 1 == entry.len()) {
     return name + "=";
   }
@@ -914,8 +914,8 @@ pub function close_stdout(own o: io_buffered.BufWriter, prev_fail: boolean): voi
 }
 
 pub function close_stdout_with(own o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
-  let some_pending: boolean = o.buffered() > 0;
-  let prev: boolean = prev_fail;
+  let some_pending = o.buffered() > 0;
+  let prev = prev_fail;
   match (o.error()) {
     Some(_) => {
       prev = true;
@@ -961,8 +961,8 @@ function written_or_die(written: Result[io_buffered.BufWriter, IoError], status:
 pub struct Stdio { w: Writer, buf: u8[], cap: i32, alloc: boolean, err: Option[IoError] }
 
 pub function stdio_new(): Stdio {
-  let w: Writer = stdout();
-  let cap: i32 = bufsiz();
+  let w = stdout();
+  let cap = bufsiz();
   match (w.stat()) {
     Ok(st) => {
       if (st.blksize > 0 as i64 && st.blksize < bufsiz() as i64) {
@@ -987,8 +987,8 @@ pub function (s: Stdio) fwrite_bytes(data: u8[]): Stdio {
 }
 
 pub function (s: Stdio) fwrite_bytes_range(data: u8[], lo0: i32, hi0: i32): Stdio {
-  let lo: i32 = lo0;
-  let hi: i32 = hi0;
+  let lo = lo0;
+  let hi = hi0;
   if (lo < 0) {
     lo = 0;
   }
@@ -1009,28 +1009,28 @@ function stdio_append_range(own pending: u8[], data: u8[], text: string, lo: i32
     return text.bytes();
   }
   if (hi - lo <= 128) {
-    let i: i32 = lo;
+    let i = lo;
     if (text.len() > 0) {
       while (i < hi) {
         pending = pending.append(text[i]);
-        i = i + 1;
+        i += 1;
       }
     } else {
       while (i < hi) {
         pending = pending.append(data[i]);
-        i = i + 1;
+        i += 1;
       }
     }
     return pending;
   }
-  let h: usize = buf_new(pending.len() + hi - lo);
+  let h = buf_new(pending.len() + hi - lo);
   buf_push_bytes_range(h, pending, 0, pending.len());
   if (text.len() > 0) {
     buf_push_range(h, text, lo, hi);
   } else {
     buf_push_bytes_range(h, data, lo, hi);
   }
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return bytes;
 }
@@ -1039,30 +1039,30 @@ pub function (s: Stdio) fflush(): Stdio {
   if (s.buf.len() == 0) {
     return s;
   }
-  let r: Stdio = sys_write(s, s.buf);
+  let r = sys_write(s, s.buf);
   return Stdio { ...r, buf: [] };
 }
 
 pub function (s: Stdio) report(msg: string): Stdio {
-  let flushed: Stdio = s.fflush();
+  let flushed = s.fflush();
   error(msg);
   return flushed;
 }
 
 pub function (own s: Stdio) close_stdout(): void {
-  let some_pending: boolean = s.buf.len() > 0;
-  let prev_fail: boolean = false;
+  let some_pending = s.buf.len() > 0;
+  let prev_fail = false;
   match (s.err) {
     Some(_) => {
       prev_fail = true;
     },
     None => {}
   }
-  let fclose_fail: boolean = false;
-  let text: string = "";
-  let errnum: i32 = 0;
+  let fclose_fail = false;
+  let text = "";
+  let errnum = 0;
   if (some_pending) {
-    let r: Stdio = sys_write(s, s.buf);
+    let r = sys_write(s, s.buf);
     if (stdio_failed(r)) {
       fclose_fail = true;
       match (r.err) {
@@ -1090,13 +1090,13 @@ pub function (own s: Stdio) close_stdout(): void {
 }
 
 function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
-  let s: Stdio = s0;
-  let n: i32 = hi - lo;
+  let s = s0;
+  let n = hi - lo;
   if (n == 0) {
     return s;
   }
-  let pos: i32 = 0;
-  let count: i32 = 0;
+  let pos = 0;
+  let count = 0;
   if (s.alloc) {
     count = s.cap - s.buf.len();
   }
@@ -1108,13 +1108,13 @@ function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
     pos = count;
   }
   if (pos < n) {
-    let had_pending: boolean = s.buf.len() > 0;
+    let had_pending = s.buf.len() > 0;
     s = overflow(s);
     if (had_pending && stdio_failed(s)) {
       return s;
     }
-    let to_do: i32 = n - pos;
-    let do_write: i32 = to_do - to_do % s.cap;
+    let to_do = n - pos;
+    let do_write = to_do - to_do % s.cap;
     if (do_write > 0) {
       if (text.len() > 0) {
         let bytes: [u8] = text.as_bytes();
@@ -1125,7 +1125,7 @@ function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
       if (stdio_failed(s)) {
         return s;
       }
-      pos = pos + do_write;
+      pos += do_write;
     }
     if (pos < n) {
       s = Stdio { ...s, buf: stdio_append_range(s.buf, data, text, lo + pos, hi) };
@@ -1135,11 +1135,11 @@ function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
 }
 
 function overflow(s0: Stdio): Stdio {
-  let s: Stdio = Stdio { ...s0, alloc: true };
+  let s = Stdio { ...s0, alloc: true };
   if (s.buf.len() == 0) {
     return s;
   }
-  let r: Stdio = sys_write(s, s.buf);
+  let r = sys_write(s, s.buf);
   return Stdio { ...r, buf: [] };
 }
 
@@ -1172,7 +1172,7 @@ function sys_write(s: Stdio, data: [u8]): Stdio {
 }
 
 function long_parts(a: string): (string, boolean) {
-  let body: str = slice_unchecked(a, 2, a.len());
+  let body = slice_unchecked(a, 2, a.len());
   if let Some(eq) = body.index_of("=") {
     return (slice_unchecked(body, 0, eq) + "", true);
   }
@@ -1223,18 +1223,18 @@ pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boo
 pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean, hint: string }
 
 pub function help_id(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 pub function version_id(): i32 {
-  return 0 - 2;
+  return -2;
 }
 
 pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: string, status: i32): Getopt {
-  let all: Opt[] = opts;
+  let all = opts;
   all = all.append(flag("", "help", help_id()));
   all = all.append(flag("", "version", version_id()));
-  let in_order: boolean = false;
+  let in_order = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       in_order = true;
@@ -1266,7 +1266,7 @@ pub function (g: Getopt) in_order(): Getopt {
 }
 
 pub function operand_id(): i32 {
-  return 0 - 3;
+  return -3;
 }
 
 pub function (g: Getopt) return_in_order(): Getopt {
@@ -1278,7 +1278,7 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
     return short_option(g);
   }
   while (g.i < g.argv.len()) {
-    let a: string = g.argv[g.i];
+    let a = g.argv[g.i];
     if (a == "--") {
       g = Getopt { ...g, i: g.i + 1 };
       return (None, take_rest(g));
@@ -1308,7 +1308,7 @@ pub function (g: Getopt) operands(): string[] {
 }
 
 pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
-  let nil: OptMatch = OptMatch { id: 0, value: "", has_value: false, long_form: false };
+  let nil = OptMatch { id: 0, value: "", has_value: false, long_form: false };
   if (g.cluster.len() > 0) {
     let r: (Option[OptMatch], Getopt) = short_option(g);
     match (r.0) {
@@ -1320,9 +1320,9 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
       }
     }
   }
-  let s: Getopt = g;
+  let s = g;
   while (s.i < s.argv.len()) {
-    let a: string = s.argv[s.i];
+    let a = s.argv[s.i];
     if (!s.past_dashdash && a == "--") {
       s = Getopt { ...s, i: s.i + 1, past_dashdash: true };
       continue;
@@ -1368,11 +1368,11 @@ pub function (g: Getopt) at_negative_number(): boolean {
   if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
     return false;
   }
-  let a: string = g.argv[g.i];
+  let a = g.argv[g.i];
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;
   }
-  let b: i32 = a[1] as i32;
+  let b = a[1] as i32;
   return b == 46 || b >= 48 && b <= 57;
 }
 
@@ -1392,29 +1392,29 @@ pub function (g: Getopt) stop(): Getopt {
 }
 
 function take_rest(g: Getopt): Getopt {
-  let ops: string[] = g.operands;
-  let i: i32 = g.i;
+  let ops = g.operands;
+  let i = g.i;
   while (i < g.argv.len()) {
     ops = ops.append(g.argv[i]);
-    i = i + 1;
+    i += 1;
   }
   return Getopt { ...g, i: i, operands: ops };
 }
 
 function short_option(g: Getopt): (Option[OptMatch], Getopt) {
-  let b: i32 = g.cluster[0] as i32;
-  let rest: string = slice_unchecked(g.cluster, 1, g.cluster.len()) + "";
-  let k: i32 = 0;
+  let b = g.cluster[0] as i32;
+  let rest = slice_unchecked(g.cluster, 1, g.cluster.len()) + "";
+  let k = 0;
   while (k < g.opts.len()) {
     if (g.opts[k].short == b) {
       break;
     }
-    k = k + 1;
+    k += 1;
   }
   if (k == g.opts.len()) {
     die_fault(g, "invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
   }
-  let o: Opt = g.opts[k];
+  let o = g.opts[k];
   if (o.id == help_id()) {
     print_help(g.help, 0, g.fail);
   }
@@ -1431,7 +1431,7 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     return (Some(OptMatch { id: o.id, value: rest, has_value: true, long_form: false }), Getopt { ...g, cluster: "" });
   }
   if (g.i < g.argv.len()) {
-    let v: string = g.argv[g.i];
+    let v = g.argv[g.i];
     return (Some(OptMatch { id: o.id, value: v, has_value: true, long_form: false }), Getopt { ...g, cluster: "", i: g.i + 1 });
   }
   die_fault(g, "option requires an argument -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
@@ -1440,29 +1440,29 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
 
 function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
   let parts: (string, boolean) = long_parts(a);
-  let name: string = parts.0;
-  let glued: boolean = parts.1;
-  let value: string = "";
+  let name = parts.0;
+  let glued = parts.1;
+  let value = "";
   if let Some(eq) = a.index_of("=") {
     if (glued) {
       value = slice_unchecked(a, eq + 1, a.len()) + "";
     }
   }
-  let found: i32 = 0 - 1;
-  let k: i32 = 0;
+  let found: i32 = -1;
+  let k = 0;
   while (k < g.opts.len()) {
     if (g.opts[k].long.len() > 0 && g.opts[k].long == name) {
       found = k;
       break;
     }
-    k = k + 1;
+    k += 1;
   }
   if (found < 0) {
-    let list: string = "";
-    let ambiguous: boolean = false;
+    let list = "";
+    let ambiguous = false;
     k = 0;
     while (k < g.opts.len()) {
-      let o: Opt = g.opts[k];
+      let o = g.opts[k];
       if (o.long.len() > 0 && o.long.starts_with(name)) {
         if (found < 0) {
           found = k;
@@ -1472,7 +1472,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
           list = list + " '--" + o.long + "'";
         }
       }
-      k = k + 1;
+      k += 1;
     }
     if (found < 0) {
       die_fault(g, "unrecognized option '" + a + "'");
@@ -1481,12 +1481,12 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       die_fault(g, "option '" + a + "' is ambiguous; possibilities:" + list);
     }
   }
-  let o: Opt = g.opts[found];
+  let o = g.opts[found];
   if (o.arg == 0 && glued) {
     die_fault(g, "option '--" + o.long + "' doesn't allow an argument");
   }
-  let s: Getopt = g;
-  let has: boolean = glued;
+  let s = g;
+  let has = glued;
   if (o.arg == 1 && !glued) {
     if (s.i < s.argv.len()) {
       value = s.argv[s.i];
@@ -1507,7 +1507,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
 
 pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
   let none: Opt[] = [];
-  let g: Getopt = getopt_new(argv, none, name, help_text, status);
+  let g = getopt_new(argv, none, name, help_text, status);
   while (true) {
     let r: (Option[OptMatch], Getopt) = g.next();
     g = r.1;
@@ -1542,9 +1542,9 @@ function is_slash(c: u8): boolean {
 }
 
 pub function base_name(s: string): string {
-  let end: i32 = s.len();
+  let end = s.len();
   while (end > 0 && is_slash(s[end - 1])) {
-    end = end - 1;
+    end -= 1;
   }
   if (end == 0) {
     if (s.len() > 0) {
@@ -1552,17 +1552,17 @@ pub function base_name(s: string): string {
     }
     return "";
   }
-  let start: i32 = end;
+  let start = end;
   while (start > 0 && !is_slash(s[start - 1])) {
-    start = start - 1;
+    start -= 1;
   }
   return slice_unchecked(s, start, end) + "";
 }
 
 pub function dir_name(s: string): string {
-  let end: i32 = s.len();
+  let end = s.len();
   while (end > 0 && is_slash(s[end - 1])) {
-    end = end - 1;
+    end -= 1;
   }
   if (end == 0) {
     if (s.len() > 0) {
@@ -1570,15 +1570,15 @@ pub function dir_name(s: string): string {
     }
     return ".";
   }
-  let i: i32 = end;
+  let i = end;
   while (i > 0 && !is_slash(s[i - 1])) {
-    i = i - 1;
+    i -= 1;
   }
   if (i == 0) {
     return ".";
   }
   while (i > 0 && is_slash(s[i - 1])) {
-    i = i - 1;
+    i -= 1;
   }
   if (i == 0) {
     return "/";
@@ -1590,11 +1590,11 @@ pub function join_path(dir: string, name: string): string {
   if (dir.len() == 0) {
     return name;
   }
-  let end: i32 = dir.len();
+  let end = dir.len();
   while (end > 1 && is_slash(dir[end - 1])) {
-    end = end - 1;
+    end -= 1;
   }
-  let head: string = slice_unchecked(dir, 0, end) + "";
+  let head = slice_unchecked(dir, 0, end) + "";
   if (head.len() > 0 && is_slash(head[head.len() - 1])) {
     return head + name;
   }
@@ -1602,20 +1602,20 @@ pub function join_path(dir: string, name: string): string {
 }
 
 pub function strip_slashes(s: string): string {
-  let end: i32 = s.len();
+  let end = s.len();
   while (end > 1 && is_slash(s[end - 1])) {
-    end = end - 1;
+    end -= 1;
   }
   return slice_unchecked(s, 0, end) + "";
 }
 
 function last_component_start(s: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && is_slash(s[i])) {
-    i = i + 1;
+    i += 1;
   }
-  let last: i32 = i;
-  let after_slash: boolean = false;
+  let last = i;
+  let after_slash = false;
   while (i < s.len()) {
     if (is_slash(s[i])) {
       after_slash = true;
@@ -1623,7 +1623,7 @@ function last_component_start(s: string): i32 {
       last = i;
       after_slash = false;
     }
-    i = i + 1;
+    i += 1;
   }
   return last;
 }
@@ -1657,41 +1657,41 @@ pub function usable_suffix(s: string): boolean {
 }
 
 function numbered_index(entry: string, name: string): i32 {
-  let head: string = name + ".~";
+  let head = name + ".~";
   if (!entry.starts_with(head) || !entry.ends_with("~")) {
-    return 0 - 1;
+    return -1;
   }
-  let start: i32 = head.len();
-  let end: i32 = entry.len() - 1;
+  let start = head.len();
+  let end = entry.len() - 1;
   if (end <= start) {
-    return 0 - 1;
+    return -1;
   }
   if (entry[start] as i32 == 48 && end - start > 1) {
-    return 0 - 1;
+    return -1;
   }
-  let n: i32 = 0;
-  let i: i32 = start;
+  let n = 0;
+  let i = start;
   while (i < end) {
     if (!is_digit(entry[i] as i32)) {
-      return 0 - 1;
+      return -1;
     }
     n = n * 10 + (entry[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function highest_numbered(dir: string, name: string): i32 {
-  let best: i32 = 0 - 1;
+  let best: i32 = -1;
   match (read_dir(dir)) {
     Ok(entries) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < entries.len()) {
-        let n: i32 = numbered_index(entries[i], name);
+        let n = numbered_index(entries[i], name);
         if (n > best) {
           best = n;
         }
-        i = i + 1;
+        i += 1;
       }
     },
     Err(_) => {}
@@ -1700,7 +1700,7 @@ function highest_numbered(dir: string, name: string): i32 {
 }
 
 pub function backup_name(dest: string, control: i32, suffix: string): string {
-  let c: i32 = control;
+  let c = control;
   if (c == backup_existing()) {
     if (highest_numbered(dir_name(dest), base_name(dest)) >= 0) {
       c = backup_numbered();
@@ -1709,7 +1709,7 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
     }
   }
   if (c == backup_numbered()) {
-    let n: i32 = highest_numbered(dir_name(dest), base_name(dest));
+    let n = highest_numbered(dir_name(dest), base_name(dest));
     if (n < 0) {
       n = 0;
     }
@@ -1719,7 +1719,7 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
 }
 
 pub function prompt(msg: string): boolean {
-  let w: Writer = stderr();
+  let w = stderr();
   w.write(prog() + ": " + msg);
   return yesno();
 }
@@ -1803,16 +1803,16 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
   } else {
     path = "/bin:/usr/bin";
   }
-  let best: i32 = 2;
-  let start: i32 = 0;
-  let j: i32 = 0;
+  let best = 2;
+  let start = 0;
+  let j = 0;
   while (j <= path.len()) {
     if (j == path.len() || path[j] == b':') {
-      let dir: string = slice_unchecked(path, start, j) + "";
+      let dir = slice_unchecked(path, start, j) + "";
       if (dir.len() == 0) {
         dir = ".";
       }
-      let cand: string = dir + "/" + cmd;
+      let cand = dir + "/" + cmd;
       match (access(cand, 1)) {
         Ok(_) => {
           return Exec { path: cand, errno: 0 };
@@ -1825,51 +1825,51 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
       }
       start = j + 1;
     }
-    j = j + 1;
+    j += 1;
   }
   return Exec { path: "", errno: best };
 }
 
 pub function exec_command(cmd: string, argv: string[], envp: string[]): i32 {
-  let f: Exec = resolve_command(cmd, envp);
+  let f = resolve_command(cmd, envp);
   if (f.errno != 0) {
     return f.errno;
   }
-  let rc: i32 = proc_exec_as(f.path, argv, envp);
-  if (0 - rc != 8) {
-    return 0 - rc;
+  let rc = proc_exec_as(f.path, argv, envp);
+  if (-rc != 8) {
+    return -rc;
   }
   let shell_argv: string[] = ["/bin/sh", f.path];
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
     shell_argv = shell_argv.append(argv[i]);
-    i = i + 1;
+    i += 1;
   }
   return 0 - proc_exec_as("/bin/sh", shell_argv, envp);
 }
 
 pub function env_value(envp: string[], name: string): (string, boolean) {
-  let value: string = "";
-  let found: boolean = false;
-  let i: i32 = 0;
+  let value = "";
+  let found = false;
+  let i = 0;
   while (i < envp.len()) {
-    let entry: string = envp[i];
+    let entry = envp[i];
     if (entry.len() > name.len() && entry[name.len()] as i32 == 61 && starts_with_name(entry, name)) {
       value = slice_unchecked(entry, name.len() + 1, entry.len()) + "";
       found = true;
     }
-    i = i + 1;
+    i += 1;
   }
   return (value, found);
 }
 
 function starts_with_name(entry: string, name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
     if (entry[i] != name[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

@@ -114,7 +114,7 @@ function report(o: Out, msg: string): Out {
 }
 
 function parent_of(dir: string): Option[string] {
-  let slash: i32 = -1;
+  let slash = -1;
   let i = 0;
   while (i < dir.len()) {
     if (dir[i] as i32 == 47) {

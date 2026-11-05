@@ -160,7 +160,7 @@ func TestEntryShapeOrDefault(t *testing.T) {
 func TestNoTargetMissesLogCapability(t *testing.T) {
 	for _, name := range Targets() {
 		d := ForTarget(name)
-		if d.NoBackend {
+		if d.Environment == "freestanding" {
 			continue
 		}
 		if !HasCapability(name, "log") {

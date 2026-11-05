@@ -2,10 +2,12 @@ import "../lexer";
 import "../parser";
 import "./rundriver";
 import "../checker";
+import "../flatten";
 import "../util";
 
 function main(): i32 {
-  let mod = rundriver.parse_stdin("checker_run");
+  let parsed = rundriver.parse_stdin("checker_run");
+  let mod = flatten.qualify_entry_builtins(parsed);
   let mt = checker.check_module(mod);
   if (mt.all_well_typed) {
     return 0;

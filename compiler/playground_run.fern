@@ -224,9 +224,8 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   merged = constfold.fold_module(merged);
   merged = checker.annotate_module(merged);
   merged = treeshake.treeshake(merged);
-  let no_backend = fern.backend_refusal(target);
-  if (no_backend.len() > 0) {
-    eprint(no_backend);
+  if (desc.environment == "freestanding") {
+    eprint("fern: the playground does not build -target " + target + ": a freestanding artifact is entered through -export functions, and the playground has no -export");
     return 2;
   }
 

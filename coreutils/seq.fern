@@ -581,7 +581,7 @@ function inc_fixed(own d: u8[]): u8[] {
 function cmp_digits(a: u8[], b: u8[]): i32 {
   if (a.len() != b.len()) {
     if (a.len() < b.len()) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
@@ -589,7 +589,7 @@ function cmp_digits(a: u8[], b: u8[]): i32 {
   while (i < a.len()) {
     if (a[i] != b[i]) {
       if (a[i] < b[i]) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }

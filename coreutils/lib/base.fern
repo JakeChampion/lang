@@ -50,7 +50,7 @@ function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, p
 // of the run for the rest, as buf_decode_base32 takes them. Empty unless the
 // alphabet is two runs of consecutive characters.
 function two_runs(alphabet: string): u8[] {
-  let split: i32 = 0;
+  let split = 0;
   for k in 1..alphabet.len() {
     if (alphabet[k] as i32 != alphabet[k - 1] as i32 + 1) {
       if (split > 0) {
@@ -681,7 +681,7 @@ function encode(r: Reader, c: Codec, wrap: i64, own o: io_buffered.BufWriter): v
 }
 
 function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, c: Codec): i32 {
-  let bits: i32 = c.bits;
+  let bits = c.bits;
   if (bits == 4) {
     return hex_rows(bs, i, n, pairs, h);
   }

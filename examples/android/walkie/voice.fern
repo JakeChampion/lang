@@ -68,7 +68,7 @@ function frame_info(): celt.Frame {
 function to_samples(pcm: [f32]): i32[] {
   let out: i32[] = [];
   for x in pcm {
-    let v: f32 = x * 32768.0f32;
+    let v = x * 32768.0f32;
     if (v > 32767.0f32) {
       v = 32767.0f32;
     } else if (v < -32768.0f32) {
@@ -131,7 +131,7 @@ pub function receive(own r: Receiver, seq: i64, data: [u8]): (Receiver, i32[][])
   match (dec) {
     Some(d) => {
       if (last >= 0i64) {
-        let lost: i64 = seq - last - 1i64;
+        let lost = seq - last - 1i64;
         if (lost > MAX_CONCEAL) {
           lost = MAX_CONCEAL;
         }

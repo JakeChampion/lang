@@ -307,7 +307,7 @@ func TestEnforceLogAndClockUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
-			if platforms.ForTarget(target).NoBackend {
+			if platforms.ForTarget(target).Environment == "freestanding" {
 				continue
 			}
 			t.Run(name+"/"+target, func(t *testing.T) {
@@ -408,7 +408,7 @@ func TestEnforceRandomUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
-			if platforms.ForTarget(target).NoBackend {
+			if platforms.ForTarget(target).Environment == "freestanding" {
 				continue
 			}
 			t.Run(name+"/"+target, func(t *testing.T) {
@@ -450,7 +450,7 @@ func TestEnforceFreestandingAllowsCore(t *testing.T) {
 	}
 }
 
-func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
+func TestFreestandingDescriptorGrantsNothing(t *testing.T) {
 	free := []string{"arm64-freestanding", "x86-64-freestanding"}
 	for _, name := range free {
 		t.Run(name, func(t *testing.T) {
@@ -458,8 +458,8 @@ func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 			if d == nil {
 				t.Fatalf("%s has no descriptor", name)
 			}
-			if !d.NoBackend {
-				t.Errorf("%s should be marked NoBackend until #6510/#6511 land", name)
+			if d.Entry != platforms.EntryExports {
+				t.Errorf("%s entry = %q, want %q: its embedder calls the -export functions", name, d.Entry, platforms.EntryExports)
 			}
 			if len(d.Capabilities) != 0 {
 				t.Errorf("%s grants %v, want nothing", name, d.Capabilities)
@@ -472,11 +472,6 @@ func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 	listed := map[string]bool{}
 	for _, n := range platforms.Targets() {
 		listed[n] = true
-		emits := !platforms.ForTarget(n).NoBackend
-		isFree := platforms.ForTarget(n).Environment == "freestanding"
-		if emits == isFree {
-			t.Errorf("target %q: emits=%v but freestanding=%v — they must be opposites", n, emits, isFree)
-		}
 	}
 	for _, n := range free {
 		if !listed[n] {

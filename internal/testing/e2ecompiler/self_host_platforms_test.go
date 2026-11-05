@@ -205,7 +205,7 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	for _, target := range []string{"arm64-freestanding", "x86-64-freestanding"} {
-		t.Run("codegen-refused-"+target, func(t *testing.T) {
+		t.Run("codegen-needs-emit-asm-"+target, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "out")
 			nativeCmd := exec.Command(nativeBin, "-target", target, "-o", out, src)
 			nativeOut, _ := nativeCmd.CombinedOutput()
@@ -213,12 +213,12 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 			shOut, _ := shCmd.CombinedOutput()
 
 			if nativeCmd.ProcessState.ExitCode() == 0 {
-				t.Fatalf("native emitted for %s, which has no backend:\n%s", target, nativeOut)
+				t.Fatalf("native wrote a binary for %s, which writes assembly only:\n%s", target, nativeOut)
 			}
 			if shCmd.ProcessState.ExitCode() == 0 {
-				t.Errorf("self-host emitted for %s, which has no backend:\n%s", target, shOut)
+				t.Errorf("self-host wrote a binary for %s, which writes assembly only:\n%s", target, shOut)
 			}
-			if !strings.Contains(string(shOut), "no backend emits for this target") {
+			if !strings.Contains(string(shOut), "writes assembly only; pass -emit asm") {
 				t.Errorf("self-host refusal for %s does not say why:\n%s", target, shOut)
 			}
 		})

@@ -1,11 +1,9 @@
 # Bare metal: hosts, guests, drivers, kernels
 
-Status: [plan] the scope is decided, the sequencing below is accepted, none
-of it is built. Epic #6506 (the freestanding core) is the prerequisite. Its
-capability half is in the compiler. Its codegen half left with the deleted
-native backends, and #14245 ports it to the compiler. This doc is what comes
-after #6506, and what #6506 must not prevent. Epic #14248 tracks the work, with
-one sub-issue for each piece and each milestone.
+Status: [plan] the scope is decided and the sequencing below is accepted. The
+guest posture is built: the compiler emits a freestanding artifact (#14245, the
+port of epic #6506's codegen half). The rest is not built. Epic #14248 tracks
+the work, with one sub-issue for each piece and each milestone.
 
 This plan names historical or proposed source paths. The reference documentation identifies current files.
 
@@ -36,7 +34,7 @@ capability question. This is the different question of **who owns the machine**.
 | Posture | Who owns reset / vectors / MMU | What Fern must add |
 | --- | --- | --- |
 | **Hosted app** | the kernel | nothing — shipped |
-| **Guest library** | the embedder's C/asm | nothing beyond #14245, the compiler port of #6510 and #6511 |
+| **Guest library** | the embedder's C/asm | nothing — shipped as assembly (`docs/FREESTANDING-CORE.md`) |
 | **Driver** | a kernel Fern does not write | volatile/MMIO, barriers, interrupt-safe RC |
 | **Kernel** | Fern | all of the above, plus entry, vectors, memory layout, atomics |
 
@@ -47,7 +45,8 @@ that the embedder supplies. Everything hard lives in the bottom two rows.
 `Descriptor.Entry` in `internal/pkg/platforms` has three values: `EntryProcess`,
 `EntryExports` and `EntryReset`. Freestanding is `EntryExports`, the guest answer.
 A kernel target is a second descriptor with `EntryReset`, not a rewrite. The
-compiler does not read the entry shape yet (#14245).
+compiler reads the entry shape (`platforms.entry_shape`), and its backends key on
+`asmcore.process_entry`, not on the target name.
 
 ## The thing that is actually in the way
 
@@ -187,7 +186,7 @@ SRAM, an MMIO region that is never allocated into) and a defined stack. Fern's
 in-process linkers emit *its* binaries, which is an advantage here — there is no
 external linker script to interoperate with, so this can be a descriptor-driven
 layout rather than a text format we have to parse. #6511's embedder-supplied heap
-region is the first half of this already (#14245 ports it to the compiler).
+region (`__fern_heap_init`) is the first half of this already.
 
 The addresses belong to the board, not to the ISA. TamaGo first put its layout in
 three variables of the board package (`RamStart`, `RamSize`, `RamStackOffset`) and
@@ -369,23 +368,18 @@ environment over the FernOS syscalls can come later, as an improvement.
 
 ## Sequencing
 
-1. **Port the freestanding codegen to the compiler** (#14245). #6506 closed, but
-   its codegen half left with the native backends. Nothing here is blocked on
-   the features above. If we invent them before the freestanding shape is real,
-   we will invent the wrong ones.
-2. **Read the entry shape from the descriptor** in #14245. The port must not
-   assume that freestanding means exported symbols, because `EntryReset` is the
-   kernel posture.
-3. **Give MMIO loads and stores an effect kind** (#14249) when the first driver
+1. **Done: the freestanding codegen is in the compiler** (#14245). It reads the
+   entry shape from the descriptor, so `EntryReset` can be a second value.
+2. **Give MMIO loads and stores an effect kind** (#14249) when the first driver
    needs them. Add a test that `ssa.prune_dead` keeps an unused MMIO load. The
    compiler removes an unused plain raw load today (see "Volatile").
-4. **Decide the interrupt/RC rule** (#14250). Design work, no code, and it gates 3 of the
+3. **Decide the interrupt/RC rule** (#14250). Design work, no code, and it gates 3 of the
    5 mechanical pieces. The proposed answer is the TamaGo shape above: a checked
    top half, a bottom half in the reactor, and no preemption of the kernel heap.
-5. Then: capability providers (#14251) → effect intrinsics (#14252) → function
+4. Then: capability providers (#14251) → effect intrinsics (#14252) → function
    attributes and the no-RC property (#14253) → memory layout (#14254) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-6. Beside those: the DMA region (#14255), the raw-pointer surface (#14256), the
+5. Beside those: the DMA region (#14255), the raw-pointer surface (#14256), the
    panic scope decision (#14257, before milestone 4) and a TCP/IP stack in Fern
    (#14259).
 

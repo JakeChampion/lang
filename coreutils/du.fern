@@ -731,7 +731,7 @@ function files0_names(bytes: u8[], origin: string): Option[string[]] {
 function time_word(v: string): i32 {
   let names: string[] = ["atime", "access", "use", "ctime", "status"];
   let kinds: i32[] = [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime()];
-  let found: i32 = -1;
+  let found = -1;
   let ambiguous = false;
   let i = 0;
   while (i < names.len()) {
