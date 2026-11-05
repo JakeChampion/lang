@@ -654,13 +654,15 @@ every target would grant `alloc` and the capability would carry no information.
 
 `-target arm64-freestanding` / `-target x86-64-freestanding` exist and grant nothing (#6509). It is **check-only**: the
 descriptor is declared, `fern -targets` lists it, and `fern -check -target arm64-freestanding`
-type-checks against its empty capability set — but no backend emits for it, and asking
-one to is a refusal naming the check path rather than the "unknown target" error, which
-would be false.
+type-checks against its empty capability set — but no backend emits for it. A compile
+for it stops with `fern: -target arm64-freestanding: check-only — no backend emits for
+this target yet` (`backend_refusal` in `compiler/fern.fern`). It does not stop with the
+"unknown target" error, because that error is false for this target.
 
-That ordering is deliberate. The constraint becomes real before there is codegen to
-constrain, so the backend work that follows (#6510, #6511) is written against a compiler
-that already rejects what it may not do.
+The Go native backends emitted for freestanding (#6510, #6511). The native retirement
+deleted them (`docs/NATIVE-RETIREMENT.md`), and the compiler did not get that work.
+#14245 ports it. The two sections below are the contract that the port implements.
+`compiler/platforms.fern` `emits_code` becomes true for freestanding when the port lands.
 
 Two consequences worth knowing:
 
@@ -677,24 +679,24 @@ Two consequences worth knowing:
 `HandlerKinds` is empty because a freestanding artifact is not entered at `main`. What
 replaces it is `Descriptor.Entry`, an `EntryShape` on the environment (#6510):
 
-| shape | who transfers control | native backends emit |
+| shape | who transfers control | the backend emits |
 | --- | --- | --- |
 | `EntryProcess` | a kernel / dyld, with a populated process stack | `_start` (`_main` on Mach-O) + the argc/argv/envp capture |
 | `EntryExports` | nobody; the embedder calls exported symbols | neither |
-| `EntryReset` | a reset vector, with no stack pointer | not emitted for yet |
+| `EntryReset` | a reset vector, with no stack pointer | no design yet |
 
-Freestanding is `EntryExports` today. **`EntryReset` exists so the kernel posture is a
-second value rather than a rewrite** of everything keyed on "freestanding means exported
+Freestanding is `EntryExports` today. The compiler does not read `Entry` yet (#14245).
+**`EntryReset` exists so the kernel posture is a second value rather than a rewrite** of everything keyed on "freestanding means exported
 symbols" — Fern targets both postures (`docs/BARE-METAL-PLAN.md`). The zero value
-resolves to `EntryProcess` via `OrDefault`, so a codegen `Options{}` keeps the hosted
-behaviour.
+resolves to `EntryProcess` via `OrDefault`, so a descriptor that does not set `Entry`
+keeps the hosted behaviour.
 
 ### Where a hostless panic goes: nowhere — it traps
 
 Capability gating removes most of the hosted runtime for free: a freestanding program
-*cannot call* `read_file` / `tcp_*` / `print` / the clocks, so their `uses*` flags never
-set and their syscalls are never emitted. Three pieces do not fall out that way, because
-nothing in the program has to name them:
+*cannot call* `read_file` / `tcp_*` / `print` / the clocks, so nothing reaches their
+runtime helpers and their syscalls are never emitted. Three pieces do not fall out that
+way, because nothing in the program has to name them:
 
 - **`__fern_report`**, the abort reporter, emitted for every program — it writes the
   cause to stderr and `exit_group`s.
@@ -711,7 +713,7 @@ bodies change, and the backtrace string is dropped since nothing writes it.
 
 A hostless target cannot `mmap` a region, and with no MMU may have no address space to
 reserve one in. So the heap becomes the embedder's (#6511): off the process path the
-backends export
+backend exports
 
 ```
 __fern_heap_init(base, len)     // rdi/rsi on System V, x0/x1 on AAPCS64

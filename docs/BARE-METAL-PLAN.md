@@ -1,9 +1,10 @@
 # Bare metal: hosts, guests, drivers, kernels
 
 Status: [plan] the scope is decided, the sequencing below is accepted, none
-of it is built. Epic #6506 (the freestanding core) is the prerequisite and is
-in flight; this doc is what comes after it and what it must not paint into a
-corner.
+of it is built. Epic #6506 (the freestanding core) is the prerequisite. Its
+capability half is in the compiler. Its codegen half left with the deleted
+native backends, and #14245 ports it to the compiler. This doc is what comes
+after #6506, and what #6506 must not prevent.
 
 This plan names historical or proposed source paths. The reference documentation identifies current files.
 
@@ -34,20 +35,18 @@ capability question. This is the different question of **who owns the machine**.
 | Posture | Who owns reset / vectors / MMU | What Fern must add |
 | --- | --- | --- |
 | **Hosted app** | the kernel | nothing — shipped |
-| **Guest library** | the embedder's C/asm | nothing beyond #6510–#6512 |
+| **Guest library** | the embedder's C/asm | nothing beyond #14245, the compiler port of #6510 and #6511 |
 | **Driver** | a kernel Fern does not write | volatile/MMIO, barriers, interrupt-safe RC |
 | **Kernel** | Fern | all of the above, plus entry, vectors, memory layout, atomics |
 
-The guest posture is the cheap one, and it is the one #6510 currently assumes
-without saying so: no `_start`, exported symbols, embedder-supplied heap
-(#6511). Everything hard lives in the two right-hand rows.
+The guest posture is the cheap one: no `_start`, exported symbols, and a heap
+that the embedder supplies. Everything hard lives in the bottom two rows.
 
-**Entry is a target-descriptor property, not one canonical answer.** #6510 should
-not settle on "exported symbols" as *the* freestanding shape — that is the guest
-answer, and hard-coding it makes the kernel posture a rewrite rather than a
-second descriptor field. A freestanding descriptor needs to be able to say *this
-target is entered at a reset vector* as easily as *this target is a set of
-exported symbols*.
+**Entry is a target-descriptor property, not one canonical answer.**
+`Descriptor.Entry` in `internal/pkg/platforms` has three values: `EntryProcess`,
+`EntryExports` and `EntryReset`. Freestanding is `EntryExports`, the guest answer.
+A kernel target is a second descriptor with `EntryReset`, not a rewrite. The
+compiler does not read the entry shape yet (#14245).
 
 ## The thing that is actually in the way
 
@@ -81,6 +80,34 @@ The first is right. The point to internalise: *the kernel story is a memory-mode
 question wearing a codegen question's clothes*, and getting it wrong produces
 heisenbugs rather than build failures.
 
+### Interrupts as messages: the TamaGo shape
+
+TamaGo (see "Prior art" below) uses the first option in a real system. Its
+interrupt handler is a few lines of assembler. The handler sends the IRQ number to
+a goroutine (`ServiceInterrupts`, `os/signal.Relay`). The goroutine does the work
+as ordinary code. When no goroutine can run, the `Idle` hook executes WFI or HLT.
+
+The Fern form has three parts:
+
+- **The top half** is a function with the `interrupt` attribute. The checker
+  limits it to scalars and `__raw_*` operations, with no allocation and no RC
+  operation. It records that the IRQ occurred, and then it returns.
+- **The bottom half** is a `std/async` task that waits on an IRQ pollable. An
+  `irq_pollable(id)` constructor is gated on a capability. This obeys the rule
+  that authority lives on the constructor (`docs/FREESTANDING-CORE.md`).
+- **Idle** is the empty wait of the reactor. When no task can run, the reactor
+  executes WFI or HLT until the next interrupt.
+
+With this shape, all code that touches a reference count runs in the main
+context. The rule needs a checker, not a runtime mechanism.
+
+**Do not preempt the kernel heap.** TamaGo has no asynchronous preemption of
+goroutines, and it keeps at most one OS thread for each CPU (`M <= P`). The Fern
+kernel takes the same rule. A context switch occurs only at a wait in the reactor
+or between processes. Thus no interrupt stops the kernel heap in the middle of an
+RC operation. Per-process heaps make the switch between processes safe (see the
+north-star section).
+
 ## The mechanical pieces, in dependency order
 
 ### 1. Volatile
@@ -89,16 +116,23 @@ Two triggers, and they are independent: MMIO (a device register read must not be
 hoisted out of a spin loop, a write must not be coalesced or dropped) and, later,
 shared memory.
 
-**Free right now, expensive later.** There is no GVN, no load forwarding, and no
-global load elimination anywhere in `internal/oracle/ir` or the SSA backends — `dce.go`
-is reachability-only, so it cannot drop an unused load. The raw memory ops
-survive today by accident, and `PERFORMANCE-RESEARCH.md`'s headline
-recommendation is exactly the cross-block optimisation work that ends that.
+**The SSA backend already removes an unused load.** `ssa.prune_dead` in
+`compiler/ssa.fern` keeps an instruction only if it has an effect or a reader.
+`inst_has_effect` gives no effect to the load kinds, and this includes
+`__raw_load_ptr` (kind 52) and `__raw_load8` (kind 54). Thus the compiler removes a
+read of a read-to-clear device register if nothing reads its value.
 
-So the cheap move is to **write the constraint down and pin it with a test before
-the optimiser gets clever**, not to add a `volatile` type qualifier now. A
-qualifier only earns its keep when users write drivers in Fern — which is the
-same trigger as MMIO, so it can follow the need rather than precede it.
+The other passes do not move or merge a load. `ssa.merge_duplicates` leaves loads
+alone, and `ssa.speculable` does not move a load out of a branch arm. No pass
+forwards a store to a load or moves a load out of a loop.
+`PERFORMANCE-RESEARCH.md`'s headline recommendation is the cross-block
+optimisation work that ends those two facts.
+
+So an MMIO access cannot be a plain `__raw_load*` or `__raw_store*`. It must be an
+op of its own kind, which `inst_has_effect` marks as an effect. Then no pass can
+remove, merge or move it. That is a small change, and it can come with the first
+driver. A `volatile` type qualifier can follow the need for drivers in Fern, not
+come before it.
 
 ### 2. Effect intrinsics, not an asm block
 
@@ -112,9 +146,10 @@ concept* with a per-target emitter; that property is what a general asm block
 gives up.
 
 General inline asm costs a register-constraint sublanguage, clobber lists, and an
-ABI contract — paid **four to six times**, because there are two independent
-instruction-selection layers per ISA (`x86_64` and `x86_64ssa`, `arm64` and
-`arm64ssa`), deliberately parallel per `CLAUDE.md`. Defer it until a real target
+ABI contract. Each emitter pays that cost: `compiler/asm_arm64_ir.fern` and
+`compiler/asm_ir.fern`, which are deliberately parallel per `CLAUDE.md`. The SSA
+lift must also admit an op that it cannot see into, and the register allocator
+must obey the constraints of that op. Defer it until a real target
 proves the intrinsic floor cannot express something, and expect that to be rarer
 than it sounds.
 
@@ -131,6 +166,19 @@ vector needs no prologue at all. That is a calling convention, so it wants
 form. Pairs directly with the handler-restriction rule from the memory-model
 section: the attribute is the natural place to hang the checker's enforcement.
 
+**One checked property serves three uses.** TamaGo requires `Hwinit0`, the early
+hardware setup, to be assembler. The reason is that no code can allocate before
+the Go runtime starts. Fern can do better with one property that the checker
+enforces: no allocation and no RC operation. The property covers three cases:
+
+- early setup before the heap exists, for example the FPU enable in
+  `CPACR_EL1`, or the MMU setup
+- the top half of an interrupt handler
+- code that touches DMA memory.
+
+Then the early setup is Fern code with effect intrinsics, not assembler.
+`interrupt` implies the property, and a reset entry requires it.
+
 ### 4. Memory layout
 
 Real firmware needs section placement (`.text` at the reset address, `.bss` in
@@ -138,7 +186,14 @@ SRAM, an MMIO region that is never allocated into) and a defined stack. Fern's
 in-process linkers emit *its* binaries, which is an advantage here — there is no
 external linker script to interoperate with, so this can be a descriptor-driven
 layout rather than a text format we have to parse. #6511's embedder-supplied heap
-region is the first half of this already.
+region is the first half of this already (#14245 ports it to the compiler).
+
+The addresses belong to the board, not to the ISA. TamaGo first put its layout in
+three variables of the board package (`RamStart`, `RamSize`, `RamStackOffset`) and
+a `-T` link flag. Its `GOOS=custom` proposal moves the layout into a `mem`
+package. Fern can do the same from the start: the descriptor holds the ISA rules,
+and the board package (section 6) holds the addresses. A new board is then a new
+package, not a compiler change.
 
 ### 5. Atomics
 
@@ -149,6 +204,34 @@ for SMP kernels and lock-free structures, and gated on the memory-model decision
 above rather than on anyone writing a `Mutex`. Ordering it last is deliberate:
 under the handler-owns-nothing rule, single-core drivers and kernels do not need
 it.
+
+### 6. Board packages: who supplies a capability
+
+A TamaGo board package supplies about ten functions and variables to the runtime:
+
+- startup: `CPUInit` (the first instruction), `Hwinit0` (before the runtime
+  starts) and `Hwinit1` (after it starts)
+- services: `Printk(c byte)`, `Nanotime() int64` and `GetRandomData(b []byte)`
+- memory: `RamStart`, `RamSize` and `RamStackOffset`
+- optional: `Idle(until)`, `Exit(code)`, and `ProcID`, `Task` and `Wake` for SMP.
+
+The Fern freestanding targets grant **no** capability, and the descriptor fixes
+that set. But a board can supply several capabilities. A UART gives `log`, the
+generic timer gives `now`, and `RNDR` or `RDRAND` gives `random`. The descriptor
+cannot know which capabilities a board gives. Without a way to say so, each
+freestanding program calls its own UART driver directly, and `print` is not
+available.
+
+So the missing piece is a **capability provider**: a Fern module that implements
+a capability for a target. The E066 gate then grants each capability that the
+provider implements, in addition to the descriptor set. The parity tests between
+`internal/pkg/platforms` and `compiler/platforms.fern` must cover the provider
+rule too. The mechanism that names the board module for a build is not decided.
+
+Go gets this slot late. TamaGo keeps a Go fork for each Go release, and
+golang/go#73608 (`GOOS=custom`) asks upstream Go to accept a user package as the
+OS layer. Fern owns its compiler, so the slot can be part of the design from the
+start.
 
 ## Vector
 
@@ -223,9 +306,23 @@ check time, in the same mechanism that enforces the OS boundary today.
 - **DMA.** Volatile is not sufficient. A driver needs physically contiguous,
   uncached (or explicitly cache-maintained) allocations, and physical addresses
   distinct from virtual ones. This is an allocator feature, and it is the one
-  driver requirement the list above genuinely misses.
+  driver requirement the list above genuinely misses. TamaGo keeps DMA regions
+  outside the Go runtime, so that the GC never touches them. For Fern, DMA memory
+  is a second region that the RC machinery never sees, used through the
+  `__raw_*` surface. It is not a flag on ordinary boxes.
+- **Panic scope.** A Fern panic stops the program: `__fern_report` exits the
+  process, and off the process entry it is a trap (#14245). eggshell's kernel
+  uses no unsafe code, and a panic during a syscall ends the process that made the call,
+  not the kernel. Per-process heaps let FernOS do the same: discard the heap of
+  the process and end only that process. Decide this before milestone 4,
+  because it decides what a panic in kernel code means.
+- **A network stack in Fern.** TamaGo uses the pure-Go gVisor TCP/IP stack over
+  virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
+  unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
+  a virtio-net driver.
 - **A sanctioned raw-pointer surface.** `__raw_*` is a **self-host-compiler
-  internal** — it does not exist in `internal/` at all. An OS needs it as a
+  internal**. In `internal/`, only the capability tables of
+  `internal/pkg/platforms` name it. An OS needs it as a
   *language* surface, capability-gated. Being self-host-only is the right side of
   `docs/NATIVE-CONVERGENCE.md` (new surface lands self-host-first), so this is a
   promotion to public surface rather than a port.
@@ -236,7 +333,8 @@ check time, in the same mechanism that enforces the OS boundary today.
 
 ### Milestones, each producing something that runs
 
-1. Boot to a UART "hello" on qemu-virt — proves entry, layout, MMIO.
+1. Boot to a serial "hello" on a microVM (Firecracker or QEMU `microvm`), and on
+   qemu-virt for arm64 — proves entry, layout, MMIO.
 2. Interrupts and a timer tick — proves the handler rule under real preemption.
 3. A page-frame allocator and the Fern heap on top of it.
 4. Two processes, separate heaps, preemptively scheduled — the C1 claim, tested.
@@ -247,21 +345,81 @@ Step 4 is where the design either holds or does not, and it is reachable long
 before anything resembling a usable OS. Worth getting to early for that reason
 alone.
 
+**Start on a microVM.** The most active TamaGo targets are Firecracker, Cloud
+Hypervisor and QEMU `microvm`. Their device model is small: a serial port and
+virtio-mmio, with no PCI. Firecracker loads the kernel ELF directly, with no
+bootloader. That makes milestone 1 shorter.
+
+A microVM also fits the workload that Fern is best at: a Fern HTTP handler that
+boots directly on Firecracker is a product, not only a test.
+
+**Reach milestone 6 through the Linux ABI.** eggshell is a TamaGo kernel that
+implements the Linux syscall ABI. It runs unmodified static Linux programs, and
+the Go toolchain is one of them. The Fern compiler is a static Linux ELF that
+makes raw syscalls and uses no libc.
+
+Thus a FernOS kernel that implements the syscalls of the compiler can run the
+`arm64-linux` compiler with no change. `strace -c` on a compile gives that set
+of syscalls. The eggshell list of limits shows what a first kernel can omit:
+`ptrace`, SysV IPC, inotify, mounts and namespaces. An `arm64-fernos` user
+environment over the FernOS syscalls can come later, as an improvement.
+
 ## Sequencing
 
-1. **Finish #6506** — #6510, #6511, #6512. Nothing here is blocked on the
-   features above, and inventing them before the freestanding shape is real means
-   inventing the wrong ones.
-2. **#6510 must keep both entry shapes open** (see above). This is the one place
-   the in-flight epic can foreclose on the direction, so it is the one place to
-   push now.
-3. **Pin the no-load-elimination-of-raw-ops constraint** with a test and a note.
-   Cheap insurance; a silent miscompile otherwise, on whatever day global
-   optimisation lands.
+1. **Port the freestanding codegen to the compiler** (#14245). #6506 closed, but
+   its codegen half left with the native backends. Nothing here is blocked on
+   the features above. If we invent them before the freestanding shape is real,
+   we will invent the wrong ones.
+2. **Read the entry shape from the descriptor** in #14245. The port must not
+   assume that freestanding means exported symbols, because `EntryReset` is the
+   kernel posture.
+3. **Give MMIO loads and stores an effect kind** when the first driver needs
+   them. Add a test that `ssa.prune_dead` keeps an unused MMIO load. The
+   compiler removes an unused plain raw load today (see "Volatile").
 4. **Decide the interrupt/RC rule.** Design work, no code, and it gates 3 of the
-   5 mechanical pieces.
-5. Then: effect intrinsics → function attributes → memory layout → volatile
-   qualifier (if drivers materialise) → atomics (if SMP does).
+   5 mechanical pieces. The proposed answer is the TamaGo shape above: a checked
+   top half, a bottom half in the reactor, and no preemption of the kernel heap.
+5. Then: capability providers → effect intrinsics → function attributes and the
+   no-RC property → memory layout → volatile qualifier (if drivers materialise)
+   → atomics (if SMP does).
+
+## Prior art: TamaGo, GoTEE and eggshell
+
+Sources: the READMEs and wikis of `usbarmory/tamago`, `usbarmory/GoTEE` and
+`usbarmory/eggshell`, read 2026-11-05.
+
+- **TamaGo** runs Go on bare metal with no C and no OS. It adds `GOOS=tamago` to
+  the Go toolchain. The board package supplies the hardware layer (section 6).
+  Targets include i.MX6UL and i.MX8M boards, Firecracker, Cloud Hypervisor, QEMU
+  `microvm`, UEFI and RISC-V SoCs.
+- **GoTEE** runs a privileged Go unikernel (the Trusted OS) and an unprivileged
+  Go applet on one core, split by ARM TrustZone or RISC-V PMP. The applet calls
+  the Trusted OS with `SVC`. The applet package maps `runtime.printk` onto a
+  syscall, so `fmt` works in the applet. That is a capability provider whose
+  implementation is a trap. It is the same split as `arm64-fernos-kernel` and
+  `arm64-fernos`.
+- **eggshell** is an early, experimental TamaGo kernel that implements the
+  Linux syscall ABI. Each user thread is a goroutine. A syscall that blocks is a
+  wait in the Go scheduler. The SSH server runs in the kernel as Go code. The
+  README calls this a trade of privilege separation for a memory-safe parser.
+
+The sections above contain the lessons. They are:
+
+- interrupts as messages, and no preemption of the kernel heap
+- one no-RC property, and DMA outside the heap
+- board packages that supply capabilities
+- panic scope, and a network stack in Fern
+- microVMs first, and the Linux ABI for milestone 6.
+
+Do not copy these parts:
+
+- **A fork for each release.** TamaGo rebases its Go fork on each Go release.
+  Fern owns its compiler and does not need a fork.
+- **Ownership that a GC hides.** The TamaGo interrupt handler can ignore
+  ownership because it is assembler and the GC owns all memory. Fern must enforce
+  the handler rule in the checker.
+- **The in-memory filesystem.** TamaGo took it from NaCl. It is a good start, not
+  a design.
 
 ## Non-goals, explicitly
 
