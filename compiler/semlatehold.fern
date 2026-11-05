@@ -23,15 +23,15 @@ struct Cand { block: i32, at: i32, chain: i32[] }
 struct Graph { defs: i32[], def_block: i32[], joined: boolean[], dom: ssadeps.Dom, live: ssalive.Flow }
 
 pub function reread_before_spends(f: ssasem.Func): Late {
-  let g: ssa.SFunc = f.graph;
-  let gr: Graph = graph_of(g);
+  let g = f.graph;
+  let gr = graph_of(g);
   if (!gr.live.ok) {
     return Late { f: f, reread: 0 };
   }
-  let cands: Cand[] = candidates(f, gr);
+  let cands = candidates(f, gr);
   while (cands.len() > 0) {
-    let out: ssasem.Func = applied(f, gr, cands);
-    let bad: i32 = first_still_live(out, cands);
+    let out = applied(f, gr, cands);
+    let bad = first_still_live(out, cands);
     if (bad < 0) {
       return Late { f: out, reread: cands.len() };
     }
@@ -41,13 +41,13 @@ pub function reread_before_spends(f: ssasem.Func): Late {
 }
 
 function graph_of(g: ssa.SFunc): Graph {
-  let defs: i32[] = minus_ones(g.nvals);
-  let def_block: i32[] = minus_ones(g.nvals);
-  let joined: boolean[] = __alloc_bool(g.nvals);
+  let defs = minus_ones(g.nvals);
+  let def_block = minus_ones(g.nvals);
+  let joined = __alloc_bool(g.nvals);
   for bi in 0..g.blocks.len() {
-    let b: ssa.SBlock = g.blocks[bi];
+    let b = g.blocks[bi];
     for k in 0..b.insts.len() {
-      let ins: ssa.SInst = b.insts[k];
+      let ins = b.insts[k];
       if (ins.result >= 0 && ins.result < g.nvals) {
         defs = defs.with(ins.result, k);
         def_block = def_block.with(ins.result, bi);
@@ -71,10 +71,10 @@ function marked(own flags: boolean[], vs: i32[]): boolean[] {
 
 function candidates(f: ssasem.Func, gr: Graph): Cand[] {
   let out: Cand[] = [];
-  let below: i32[][] = reads_below(f, gr);
-  let taken: boolean[] = __alloc_bool(f.graph.nvals);
+  let below = reads_below(f, gr);
+  let taken = __alloc_bool(f.graph.nvals);
   for bi in 0..f.graph.blocks.len() {
-    let b: ssa.SBlock = f.graph.blocks[bi];
+    let b = f.graph.blocks[bi];
     for k in 0..b.insts.len() {
       for r in spent_args(f, b.insts[k]) {
         for v in below[r] {
@@ -92,16 +92,16 @@ function candidates(f: ssasem.Func, gr: Graph): Cand[] {
 // reads_below lists, for each value, the counted reads at most four reads
 // down from it.
 function reads_below(f: ssasem.Func, gr: Graph): i32[][] {
-  let out: i32[][] = no_chains(f.graph.nvals);
+  let out = no_chains(f.graph.nvals);
   for v in 0..f.graph.nvals {
-    let x: i32 = v;
-    let depth: i32 = 0;
+    let x = v;
+    let depth = 0;
     while (depth < 4 && x >= 0 && counted_read(f, gr, x)) {
       x = def(f, gr, x).args[0];
       if (x >= 0 && x < out.len()) {
         out = out.with(x, out[x].append(v));
       }
-      depth = depth + 1;
+      depth += 1;
     }
   }
   return out;
@@ -123,7 +123,7 @@ function spent_args(f: ssasem.Func, ins: ssa.SInst): i32[] {
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  let c: i32 = ssasem.find_contract_in(f.calls, ins.str);
+  let c = ssasem.find_contract_in(f.calls, ins.str);
   if (c < 0) {
     return out;
   }
@@ -138,7 +138,7 @@ function spent_args(f: ssasem.Func, ins: ssa.SInst): i32[] {
 // Whether v, a read off a value the call at insts[k] of blocks[bi]
 // consumes, is made in a block above the call's own and is live past it.
 function late_read(f: ssasem.Func, gr: Graph, bi: i32, k: i32, v: i32): boolean {
-  let vb: i32 = gr.def_block[v];
+  let vb = gr.def_block[v];
   if (vb < 0 || vb == bi || !ssadeps.dom_holds(gr.dom, bi, vb) || gr.joined[v]) {
     return false;
   }
@@ -149,8 +149,8 @@ function counted_read(f: ssasem.Func, gr: Graph, v: i32): boolean {
   if (gr.def_block[v] < 0) {
     return false;
   }
-  let d: ssa.SInst = def(f, gr, v);
-  let kind: boolean = d.kind_tag == ssasem.record_get() && d.args.len() == 1 || d.kind_tag == ssasem.tuple_get() && d.args.len() == 1 || d.kind_tag == ssasem.array_get() && d.args.len() == 2;
+  let d = def(f, gr, v);
+  let kind = d.kind_tag == ssasem.record_get() && d.args.len() == 1 || d.kind_tag == ssasem.tuple_get() && d.args.len() == 1 || d.kind_tag == ssasem.array_get() && d.args.len() == 2;
   return kind && ssasem.reference(f.values[v]) && !ssasem.is_view(f.values[v]);
 }
 
@@ -161,16 +161,16 @@ function def(f: ssasem.Func, gr: Graph, v: i32): ssa.SInst {
 // chain_of lists r, then each read from r down to v.
 function chain_of(f: ssasem.Func, gr: Graph, r: i32, v: i32): i32[] {
   let up: i32[] = [];
-  let x: i32 = v;
+  let x = v;
   while (x != r) {
     up = up.append(x);
     x = def(f, gr, x).args[0];
   }
   let out: i32[] = [r];
-  let i: i32 = up.len() - 1;
+  let i = up.len() - 1;
   while (i >= 0) {
     out = out.append(up[i]);
-    i = i - 1;
+    i -= 1;
   }
   return out;
 }
@@ -191,15 +191,15 @@ function term_reads(t: ssa.STerm, v: i32): boolean {
 // applied re-reads each candidate's chain before its call and renames the
 // uses its call dominates.
 function applied(f: ssasem.Func, gr: Graph, cands: Cand[]): ssasem.Func {
-  let values: typeinfo.Type[] = f.values;
-  let fresh: i32[] = minus_ones(f.graph.nvals);
-  let blocks: ssa.SBlock[] = f.graph.blocks;
+  let values = f.values;
+  let fresh = minus_ones(f.graph.nvals);
+  let blocks = f.graph.blocks;
   for c in cands {
     let pre: ssa.SInst[] = [];
-    let prev: i32 = c.chain[0];
+    let prev = c.chain[0];
     for i in 1..c.chain.len() {
-      let d: ssa.SInst = def(f, gr, c.chain[i]);
-      let nv: i32 = values.len();
+      let d = def(f, gr, c.chain[i]);
+      let nv = values.len();
       values = values.append(f.values[c.chain[i]]);
       pre = pre.append(ssa.SInst { ...d, result: nv, args: d.args.with(0, prev) });
       prev = nv;
@@ -207,8 +207,8 @@ function applied(f: ssasem.Func, gr: Graph, cands: Cand[]): ssasem.Func {
     fresh = fresh.with(c.chain[c.chain.len() - 1], prev);
     blocks = blocks.with(c.block, ssa.SBlock { ...blocks[c.block], insts: inserted(blocks[c.block].insts, c.at, pre) });
   }
-  let renamed: ssa.SBlock[] = renamed_blocks(f.graph, gr, cands, blocks, fresh);
-  let graph: ssa.SFunc = ssa.SFunc { ...f.graph, blocks: renamed, nvals: values.len() };
+  let renamed = renamed_blocks(f.graph, gr, cands, blocks, fresh);
+  let graph = ssa.SFunc { ...f.graph, blocks: renamed, nvals: values.len() };
   return ssasem.Func { ...f, values: values, graph: graph, source_positions: padded(f.source_positions, values.len()) };
 }
 
@@ -227,13 +227,13 @@ function inserted(insts: ssa.SInst[], at: i32, pre: ssa.SInst[]): ssa.SInst[] {
 }
 
 function renamed_blocks(g: ssa.SFunc, gr: Graph, cands: Cand[], blocks: ssa.SBlock[], fresh: i32[]): ssa.SBlock[] {
-  let out: ssa.SBlock[] = blocks;
+  let out = blocks;
   for bi in 0..blocks.len() {
-    let b: ssa.SBlock = blocks[bi];
+    let b = blocks[bi];
     let insts: ssa.SInst[] = [];
-    let k: i32 = 0;
+    let k = 0;
     for ins in b.insts {
-      let at: i32 = original_at(cands, bi, k);
+      let at = original_at(cands, bi, k);
       if (at >= 0 && ins.kind_tag == 8) {
         insts = insts.append(ssa.SInst { ...ins, args: renamed_phi_args(g, gr, cands, fresh, b, ins.args) });
       } else if (at >= 0) {
@@ -241,9 +241,9 @@ function renamed_blocks(g: ssa.SFunc, gr: Graph, cands: Cand[], blocks: ssa.SBlo
       } else {
         insts = insts.append(ins);
       }
-      k = k + 1;
+      k += 1;
     }
-    let t: ssa.STerm = b.term;
+    let t = b.term;
     let big: i32 = 1 << 30;
     t = ssa.STerm { ...t, value: renamed(gr, cands, fresh, bi, big, t.value), cond: renamed(gr, cands, fresh, bi, big, t.cond) };
     out = out.with(bi, ssa.SBlock { ...b, insts: insts, term: t });
@@ -256,12 +256,12 @@ function renamed_blocks(g: ssa.SFunc, gr: Graph, cands: Cand[], blocks: ssa.SBlo
 function original_at(cands: Cand[], bi: i32, k: i32): i32 {
   for c in cands {
     if (c.block == bi) {
-      let n: i32 = c.chain.len() - 1;
+      let n = c.chain.len() - 1;
       if (k < c.at) {
         return k;
       }
       if (k < c.at + n) {
-        return 0 - 1;
+        return -1;
       }
       return k - n;
     }
@@ -270,7 +270,7 @@ function original_at(cands: Cand[], bi: i32, k: i32): i32 {
 }
 
 function renamed_args(gr: Graph, cands: Cand[], fresh: i32[], bi: i32, at: i32, args: i32[]): i32[] {
-  let out: i32[] = args;
+  let out = args;
   for i in 0..args.len() {
     out = out.with(i, renamed(gr, cands, fresh, bi, at, args[i]));
   }
@@ -278,8 +278,8 @@ function renamed_args(gr: Graph, cands: Cand[], fresh: i32[], bi: i32, at: i32, 
 }
 
 function renamed_phi_args(g: ssa.SFunc, gr: Graph, cands: Cand[], fresh: i32[], b: ssa.SBlock, args: i32[]): i32[] {
-  let pos: i32[] = ssa.block_positions(g);
-  let out: i32[] = args;
+  let pos = ssa.block_positions(g);
+  let out = args;
   for i in 0..args.len() {
     if (i < b.preds.len()) {
       out = out.with(i, renamed(gr, cands, fresh, pos[b.preds[i]], 1 << 30, args[i]));
@@ -305,19 +305,19 @@ function renamed(gr: Graph, cands: Cand[], fresh: i32[], bi: i32, at: i32, v: i3
 // first_still_live is the first candidate whose value is still live past its
 // call, which a use that the call does not dominate makes so, or -1.
 function first_still_live(f: ssasem.Func, cands: Cand[]): i32 {
-  let live: ssalive.Flow = ssalive.compute_checked(f.graph, no_chains(f.graph.nvals));
+  let live = ssalive.compute_checked(f.graph, no_chains(f.graph.nvals));
   if (!live.ok) {
     return 0;
   }
   for i in 0..cands.len() {
-    let c: Cand = cands[i];
-    let v: i32 = c.chain[c.chain.len() - 1];
-    let call_at: i32 = c.at + c.chain.len() - 1;
+    let c = cands[i];
+    let v = c.chain[c.chain.len() - 1];
+    let call_at = c.at + c.chain.len() - 1;
     if (ssalive.live_out_has(live, c.block, v) || used_after(f.graph.blocks[c.block], call_at, v)) {
       return i;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function without(cands: Cand[], i: i32): Cand[] {
@@ -340,9 +340,9 @@ function has(xs: i32[], v: i32): boolean {
 }
 
 function minus_ones(n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
+  let out = __alloc_i32(n);
   for i in 0..n {
-    out = out.with(i, 0 - 1);
+    out = out.with(i, -1);
   }
   return out;
 }

@@ -37,7 +37,7 @@ function wide(): void {
       let old = isa.allocator_program(fixture(line));
       require(old.error == "" && old.ops[0].kind == 0, "old allocator syntax unchanged");
     }
-    i = i + 1;
+    i += 1;
   }
   for literal in ["", "-", "00", "01", "-0", "+1", "1.0", "1x", "0x400000000", "9223372036854775808", "-9223372036854775809", "18446744073709551615", "999999999999999999999999999999"] {
     require(sample("movabs $" + literal + ", %rax").kind == 0, "refused literal: " + literal);
@@ -52,7 +52,7 @@ function xor_and_syscall(): void {
   for reg in registers.registers(false, 32) {
     let op = sample("xorl " + reg + ", " + reg);
     require(op.kind == 38 && op.width == 32 && op.source == i && op.destination == i, "self XOR: " + reg);
-    i = i + 1;
+    i += 1;
   }
   require(sample("syscall").kind == 37, "syscall is data");
   for line in ["syscall $9", "syscallq", "sysenter", "int $128", "xorq %rax, %rax", "xorw %ax, %ax", "xorl %eax, %ecx", "xorl %eax, %rax", "xorl $0, %eax", "xorl (%rax), %eax", "xorl %eax"] {
@@ -80,9 +80,9 @@ function actual(output: string): void {
     if (old.ops[i].kind != 0) {
       same(op, old.ops[i]);
     } else {
-      added = added + actual_added(op, body.lines[i]);
+      added += actual_added(op, body.lines[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   require(added == 5, "three wide sizes, self XOR and syscall retained");
 }

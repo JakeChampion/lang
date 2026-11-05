@@ -16,16 +16,16 @@ struct Def { block: i32, pos: i32 }
 struct Decision { reason: i32, stage: i32 }
 
 pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boolean[], stdlib: string[], iter_lib: string[], enabled: boolean, report: boolean): Fused {
-  let cx: Context = context(funcs, names, usable, util.name_index(stdlib), util.name_index(iter_lib), report);
+  let cx = context(funcs, names, usable, util.name_index(stdlib), util.name_index(iter_lib), report);
   let out: ssasem.Func[] = [];
   let rewritten: boolean[] = [];
   let sites: semarrayreport.Site[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
-    let f: ssasem.Func = funcs[i];
-    let changed: boolean = false;
+    let f = funcs[i];
+    let changed = false;
     if (cx.any && usable[i] && cx.verbs[i] == "") {
-      let c: Chain = no_chain();
+      let c = no_chain();
       if (enabled) {
         c = find_chain(f, cx);
       }
@@ -43,20 +43,20 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
     }
     out = out.append(f);
     rewritten = rewritten.append(changed);
-    i = i + 1;
+    i += 1;
   }
   return Fused { funcs: out, rewritten: rewritten, sites: sites };
 }
 
 @noinline
 function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trusted: util.NameIndex, iter_trusted: util.NameIndex, report: boolean): Context {
-  let index: util.NameIndex = util.name_index(names);
+  let index = util.name_index(names);
   let verbs: string[] = [];
   let report_verbs: string[] = [];
-  let any: boolean = false;
-  let i: i32 = 0;
+  let any = false;
+  let i = 0;
   while (i < funcs.len()) {
-    let v: string = fn_verb(usable[i], names[i], trusted, iter_trusted);
+    let v = fn_verb(usable[i], names[i], trusted, iter_trusted);
     if (report) {
       report_verbs = report_verbs.append(v);
     }
@@ -65,7 +65,7 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
     }
     verbs = verbs.append(v);
     any = any || v != "" || report && report_verbs[i] != "";
-    i = i + 1;
+    i += 1;
   }
   if (!any) {
     return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], aborts: [], any: false };
@@ -90,7 +90,7 @@ function verb_of(name: string): string {
   if (!util.str_has_prefix(name, "__arrm_") && !util.str_has_prefix(name, "array__")) {
     return "";
   }
-  let v: string = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
+  let v = slice_unchecked(name, 7, suffix_at(name, 7)) + "";
   if (util.has_str(["map", "filter", "fold", "reduce", "scan", "zip", "take", "take_while", "drop", "drop_while", "flat_map", "flatten", "chunks", "chunks_exact", "windows", "partition", "enumerate", "reverse"], v)) {
     return v;
   }
@@ -99,7 +99,7 @@ function verb_of(name: string): string {
 
 function iter_verb_of(name: string): string {
   let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "len", "collect", "find", "any", "all"];
-  let n: string = slice_unchecked(name, 0, dollar_at(name)) + "";
+  let n = slice_unchecked(name, 0, dollar_at(name)) + "";
   if (n == "iter__range") {
     return "range";
   }
@@ -109,9 +109,9 @@ function iter_verb_of(name: string): string {
     }
     return "";
   }
-  let dot: i32 = last_dot(n);
+  let dot = last_dot(n);
   if (dot >= 0) {
-    let m: string = slice_unchecked(n, dot + 1, n.len()) + "";
+    let m = slice_unchecked(n, dot + 1, n.len()) + "";
     if (util.has_str(verbs, m)) {
       return m;
     }
@@ -124,10 +124,10 @@ function iter_verb_of(name: string): string {
 }
 
 function smm_verb(n: string, verbs: string[]): string {
-  let best: i32 = n.len();
-  let found: string = "";
+  let best = n.len();
+  let found = "";
   for v in verbs {
-    let at: i32 = verb_end(n, "_" + v);
+    let at = verb_end(n, "_" + v);
     if (at >= 0 && at < best) {
       best = at;
       found = v;
@@ -137,43 +137,43 @@ function smm_verb(n: string, verbs: string[]): string {
 }
 
 function verb_end(n: string, tag: string): i32 {
-  let at: i32 = 6;
+  let at = 6;
   while (at + tag.len() <= n.len()) {
-    let end: i32 = at + tag.len();
+    let end = at + tag.len();
     if (slice_unchecked(n, at, end) == tag && (end == n.len() || end + 1 < n.len() && n[end] == b'_' && n[end + 1] == b'_')) {
       return at;
     }
-    at = at + 1;
+    at += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function last_dot(n: string): i32 {
-  let i: i32 = n.len() - 1;
+  let i = n.len() - 1;
   while (i >= 0 && n[i] != b'.') {
-    i = i - 1;
+    i -= 1;
   }
   return i;
 }
 
 function dollar_at(name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len() && name[i] != b'$') {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
 
 function suffix_at(name: string, from: i32): i32 {
-  let end: i32 = from;
+  let end = from;
   while (end < name.len() && name[end] != b'$' && !(name[end] == b'_' && end + 1 < name.len() && name[end + 1] == b'_')) {
-    end = end + 1;
+    end += 1;
   }
   return end;
 }
 
 function verb_at(cx: Context, callee: string): string {
-  let at: i32 = cx.index.find(callee);
+  let at = cx.index.find(callee);
   if (at < 0) {
     return "";
   }
@@ -181,7 +181,7 @@ function verb_at(cx: Context, callee: string): string {
 }
 
 function report_verb(cx: Context, callee: string): string {
-  let at: i32 = cx.index.find(callee);
+  let at = cx.index.find(callee);
   if (at < 0 || at >= cx.report_verbs.len()) {
     return "";
   }
@@ -211,10 +211,10 @@ function direct_effect(f: ssasem.Func): boolean {
 
 function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {
   let bad: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     bad = bad.append(!usable[i] || direct_effect(funcs[i]));
-    i = i + 1;
+    i += 1;
   }
   return through_calls(funcs, bad, index);
 }
@@ -243,17 +243,17 @@ function concatenates(f: ssasem.Func, ins: ssa.SInst): boolean {
 
 function may_abort(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {
   let bad: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     bad = bad.append(!usable[i] || direct_abort(funcs[i]));
-    i = i + 1;
+    i += 1;
   }
   return through_calls(funcs, bad, index);
 }
 
 function through_calls(funcs: ssasem.Func[], bad: boolean[], index: util.NameIndex): boolean[] {
-  let i: i32 = 0;
-  let changed: boolean = true;
+  let i = 0;
+  let changed = true;
   while (changed) {
     changed = false;
     i = 0;
@@ -262,7 +262,7 @@ function through_calls(funcs: ssasem.Func[], bad: boolean[], index: util.NameInd
         bad = bad.with(i, true);
         changed = true;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return bad;
@@ -272,7 +272,7 @@ function calls_bad(f: ssasem.Func, bad: boolean[], index: util.NameIndex): boole
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
-        let at: i32 = index.find(ins.str);
+        let at = index.find(ins.str);
         if (at < 0 || bad[at]) {
           return true;
         }
@@ -288,33 +288,33 @@ function no_chain(): Chain {
 
 @noinline
 function find_chain(f: ssasem.Func, cx: Context): Chain {
-  let uses: i32[] = use_counts(f.graph);
-  let defs: Def[] = defs_of(f.graph);
-  let bi: i32 = 0;
+  let uses = use_counts(f.graph);
+  let defs = defs_of(f.graph);
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < f.graph.blocks[bi].insts.len()) {
-      let c: Chain = chain_at(f, cx, uses, defs, bi, k);
+      let c = chain_at(f, cx, uses, defs, bi, k);
       if (c.ok) {
         return c;
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return no_chain();
 }
 
 function chain_at(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32, k: i32): Chain {
-  let sink: ssa.SInst = f.graph.blocks[bi].insts[k];
-  let verb: string = sink_verb(sink, cx);
+  let sink = f.graph.blocks[bi].insts[k];
+  let verb = sink_verb(sink, cx);
   if (verb == "") {
     return no_chain();
   }
-  let c: Chain = Chain { ...no_chain(), block: bi, sink: k, verb: verb, base: sink.args[0] };
-  let d: Def = defs[c.base];
+  let c = Chain { ...no_chain(), block: bi, sink: k, verb: verb, base: sink.args[0] };
+  let d = defs[c.base];
   while (d.block == bi && uses[c.base] == 1 && stage_verb(f.graph.blocks[bi].insts[d.pos], cx) != "") {
-    let p: ssa.SInst = f.graph.blocks[bi].insts[d.pos];
+    let p = f.graph.blocks[bi].insts[d.pos];
     c = Chain { ...c, stages: prepend(d.pos, c.stages), verbs: prepend_str(stage_verb(p, cx), c.verbs), fns: prepend(p.args[1], c.fns), base: p.args[0] };
     d = defs[c.base];
   }
@@ -341,7 +341,7 @@ function sink_verb(ins: ssa.SInst, cx: Context): string {
   if (ins.kind_tag != ssasem.call()) {
     return "";
   }
-  let v: string = verb_at(cx, ins.str);
+  let v = verb_at(cx, ins.str);
   if ((v == "fold" || v == "scan") && ins.args.len() == 3 || v == "reduce" && ins.args.len() == 2 || v == "len" && ins.args.len() == 1) {
     return v;
   }
@@ -359,15 +359,15 @@ function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision 
   if (c.hi < 0 && !is_array(f.values[c.base])) {
     return Decision { reason: semarrayreport.fusion_no_producer(), stage: first_pos(c) };
   }
-  let between: i32 = effect_between(f.graph.blocks[c.block], c);
+  let between = effect_between(f.graph.blocks[c.block], c);
   if (between >= 0) {
     return Decision { reason: semarrayreport.fusion_effect_boundary(), stage: between };
   }
-  let purity: Decision = purity_decision(f, cx, defs, c);
+  let purity = purity_decision(f, cx, defs, c);
   if (purity.reason != semarrayreport.fusion_fused()) {
     return purity;
   }
-  let non_scalar: i32 = non_scalar_stage(f, c);
+  let non_scalar = non_scalar_stage(f, c);
   if (non_scalar >= 0) {
     return Decision { reason: semarrayreport.fusion_non_scalar(), stage: non_scalar };
   }
@@ -375,9 +375,9 @@ function decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision 
 }
 
 function absent_producer(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
-  let d: Def = defs[c.base];
+  let d = defs[c.base];
   if (d.block >= 0) {
-    let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
+    let ins = f.graph.blocks[d.block].insts[d.pos];
     if (stage_verb(ins, cx) != "") {
       if (d.block != c.block) {
         return Decision { reason: semarrayreport.fusion_control_flow_boundary(), stage: c.sink };
@@ -395,7 +395,7 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
   if (ins.kind_tag != ssasem.call() || ins.args.len() != 2) {
     return "";
   }
-  let v: string = verb_at(cx, ins.str);
+  let v = verb_at(cx, ins.str);
   if (util.has_str(["map", "filter", "take", "take_while", "flat_map"], v)) {
     return v;
   }
@@ -403,33 +403,33 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
 }
 
 function effect_between(b: ssa.SBlock, c: Chain): i32 {
-  let p: i32 = first_pos(c) + 1;
+  let p = first_pos(c) + 1;
   while (p < c.sink) {
-    let k: i32 = b.insts[p].kind_tag;
+    let k = b.insts[p].kind_tag;
     if (!removed(c, p) && (k == ssasem.call() || !pure_kind(k))) {
       return p;
     }
-    p = p + 1;
+    p += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
-  let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
-  let last_take: i32 = last_take_of(c.verbs);
-  let j: i32 = 0;
+  let sink = f.graph.blocks[c.block].insts[c.sink];
+  let last_take = last_take_of(c.verbs);
+  let j = 0;
   for v in checked_fns(c, sink) {
-    let stage: i32 = c.sink;
+    let stage = c.sink;
     if (j < c.stages.len()) {
       stage = c.stages[j];
     }
     if (j >= c.verbs.len() || c.verbs[j] != "take") {
-      let d: Decision = fn_decision(f, cx, defs[v], stage, j < last_take);
+      let d = fn_decision(f, cx, defs[v], stage, j < last_take);
       if (d.reason != semarrayreport.fusion_fused()) {
         return d;
       }
     }
-    j = j + 1;
+    j += 1;
   }
   return Decision { reason: semarrayreport.fusion_fused(), stage: c.sink };
 }
@@ -442,13 +442,13 @@ function checked_fns(c: Chain, sink: ssa.SInst): i32[] {
 }
 
 function last_take_of(verbs: string[]): i32 {
-  let last: i32 = 0 - 1;
-  let j: i32 = 0;
+  let last: i32 = -1;
+  let j = 0;
   while (j < verbs.len()) {
     if (verbs[j] == "take" || verbs[j] == "take_while") {
       last = j;
     }
-    j = j + 1;
+    j += 1;
   }
   return last;
 }
@@ -457,8 +457,8 @@ function fn_decision(f: ssasem.Func, cx: Context, d: Def, stage: i32, before_tak
   if (d.block < 0) {
     return Decision { reason: semarrayreport.fusion_element_fn_unresolved(), stage: stage };
   }
-  let ins: ssa.SInst = f.graph.blocks[d.block].insts[d.pos];
-  let at: i32 = cx.index.find(ins.str);
+  let ins = f.graph.blocks[d.block].insts[d.pos];
+  let at = cx.index.find(ins.str);
   if (ins.kind_tag != ssasem.closure_new() || at < 0) {
     return Decision { reason: semarrayreport.fusion_element_fn_unresolved(), stage: stage };
   }
@@ -472,7 +472,7 @@ function fn_decision(f: ssasem.Func, cx: Context, d: Def, stage: i32, before_tak
 }
 
 function stage_name(ins: ssa.SInst): string {
-  let name: string = ins.str;
+  let name = ins.str;
   if (name == "") {
     name = "op" + util.i32_to_string(ins.kind_tag);
   }
@@ -480,7 +480,7 @@ function stage_name(ins: ssa.SInst): string {
 }
 
 function chain_text(c: Chain): string {
-  let out: string = "";
+  let out = "";
   if (c.roots.len() > 0 && c.hi >= 0) {
     out = "range -> ";
   } else if (c.roots.len() > 0) {
@@ -493,7 +493,7 @@ function chain_text(c: Chain): string {
 }
 
 function fused_site(f: ssasem.Func, c: Chain, name: string): semarrayreport.Site {
-  let storage: string = "no-intermediate-arrays";
+  let storage = "no-intermediate-arrays";
   if (c.verb == "scan") {
     storage = "no-intermediate-arrays/one-output-buffer";
   }
@@ -523,10 +523,10 @@ function standalone_reason(f: ssasem.Func, ins: ssa.SInst, uses: i32[]): i32 {
 }
 
 function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32, k: i32, name: string, enabled: boolean): semarrayreport.Site {
-  let ins: ssa.SInst = f.graph.blocks[bi].insts[k];
-  let c: Chain = chain_at(f, cx, uses, defs, bi, k);
-  let why: Decision = Decision { reason: standalone_reason(f, ins, uses), stage: k };
-  let plan: string = report_verb(cx, ins.str);
+  let ins = f.graph.blocks[bi].insts[k];
+  let c = chain_at(f, cx, uses, defs, bi, k);
+  let why = Decision { reason: standalone_reason(f, ins, uses), stage: k };
+  let plan = report_verb(cx, ins.str);
   if (stage_verb(ins, cx) == "" && sink_verb(ins, cx) == "") {
     why = Decision { reason: semarrayreport.fusion_operator_outside_algebra(), stage: k };
   }
@@ -542,11 +542,11 @@ function remaining_site(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
 
 function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], bi: i32): i32[] {
   let covered: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < f.graph.blocks[bi].insts.len()) {
-    let c: Chain = chain_at(f, cx, uses, defs, bi, k);
+    let c = chain_at(f, cx, uses, defs, bi, k);
     covered = util.append_all(util.append_all(covered, c.stages), c.roots);
-    k = k + 1;
+    k += 1;
   }
   return covered;
 }
@@ -554,19 +554,19 @@ function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
 @noinline
 function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boolean): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
-  let uses: i32[] = use_counts(f.graph);
-  let defs: Def[] = defs_of(f.graph);
-  let bi: i32 = 0;
+  let uses = use_counts(f.graph);
+  let defs = defs_of(f.graph);
+  let bi = 0;
   while (bi < f.graph.blocks.len()) {
-    let covered: i32[] = covered_stages(f, cx, uses, defs, bi);
-    let k: i32 = 0;
+    let covered = covered_stages(f, cx, uses, defs, bi);
+    let k = 0;
     for ins in f.graph.blocks[bi].insts {
       if (ins.kind_tag == ssasem.call() && !util.has_str(["", "of", "range"], report_verb(cx, ins.str)) && util.index_of_i32(covered, k) < 0) {
         out = out.append(remaining_site(f, cx, uses, defs, bi, k, name, enabled));
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return out;
 }
@@ -590,13 +590,13 @@ function element(t: typeinfo.Type): typeinfo.Type {
 }
 
 function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
-  let b: ssa.SBlock = f.graph.blocks[c.block];
-  let sink: ssa.SInst = b.insts[c.sink];
-  let e: typeinfo.Type = base_element(f, c);
+  let b = f.graph.blocks[c.block];
+  let sink = b.insts[c.sink];
+  let e = base_element(f, c);
   if (!scalar(e)) {
     return first_pos(c);
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < c.stages.len()) {
     if (c.verbs[j] == "map") {
       e = ssasem.func_result(f.values[c.fns[j]]);
@@ -607,12 +607,12 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
     if (!scalar(e)) {
       return c.stages[j];
     }
-    j = j + 1;
+    j += 1;
   }
   if (sink_not_scalar(f, c.verb, sink)) {
     return c.sink;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean {
@@ -647,7 +647,7 @@ function removed(c: Chain, p: i32): boolean {
 }
 
 function use_counts(g: ssa.SFunc): i32[] {
-  let out: i32[] = __alloc_i32(g.nvals);
+  let out = __alloc_i32(g.nvals);
   for b in g.blocks {
     for ins in b.insts {
       for a in ins.args {
@@ -666,35 +666,35 @@ function use_counts(g: ssa.SFunc): i32[] {
 
 function defs_of(g: ssa.SFunc): Def[] {
   let out: Def[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < g.nvals) {
     out = out.append(Def { block: 0 - 1, pos: 0 - 1 });
-    v = v + 1;
+    v += 1;
   }
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < g.blocks.len()) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < g.blocks[bi].insts.len()) {
-      let r: i32 = g.blocks[bi].insts[k].result;
+      let r = g.blocks[bi].insts[k].result;
       if (r >= 0 && r < out.len()) {
         out = out.with(r, Def { block: bi, pos: k });
       }
-      k = k + 1;
+      k += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return out;
 }
 
 function index_of(xs: i32[], x: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == x) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function prepend(x: i32, xs: i32[]): i32[] {
@@ -714,7 +714,7 @@ function prepend_str(x: string, xs: string[]): string[] {
 }
 
 function next_block_id(g: ssa.SFunc): i32 {
-  let hi: i32 = 0;
+  let hi = 0;
   for b in g.blocks {
     if (b.id >= hi) {
       hi = b.id + 1;
@@ -750,8 +750,8 @@ struct Build { values: typeinfo.Type[], blocks: ssa.SBlock[], id: i32, preds: i3
 struct Emitted { s: Build, v: i32 }
 
 function emit(s: Build, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str: string): Emitted {
-  let v: i32 = s.values.len();
-  let ins: ssa.SInst = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
+  let v = s.values.len();
+  let ins = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
   return Emitted { s: Build { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, v: v };
 }
 
@@ -788,44 +788,44 @@ function stop(l: Loop, from: i32): Loop {
 struct Stepped { s: Build, l: Loop, e: i32, outer: Loop[] }
 
 function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
-  let st: Stepped = Stepped { s: s, l: l, e: e, outer: [] };
-  let j: i32 = 0;
-  let k: i32 = 0;
+  let st = Stepped { s: s, l: l, e: e, outer: [] };
+  let j = 0;
+  let k = 0;
   while (j < c.stages.len()) {
-    let v: string = c.verbs[j];
+    let v = c.verbs[j];
     if (v == "take") {
       st = count(st, k);
-      k = k + 1;
+      k += 1;
     } else if (v == "flat_map") {
       st = inner(f, c, st, j);
     } else {
       st = call_step(f, st, v, c.fns[j]);
     }
-    j = j + 1;
+    j += 1;
   }
   return st;
 }
 
 function count(st: Stepped, k: i32): Stepped {
-  let at: i32 = st.l.count_at + k;
-  let one: Emitted = emit(st.s, 1, int32(), [], 1, "");
-  let more: Emitted = emit(one.s, 9, int32(), [st.l.cur[at], one.v], 0, "+");
+  let at = st.l.count_at + k;
+  let one = emit(st.s, 1, int32(), [], 1, "");
+  let more = emit(one.s, 9, int32(), [st.l.cur[at], one.v], 0, "+");
   return Stepped { ...st, s: more.s, l: Loop { ...st.l, cur: st.l.cur.with(at, more.v) } };
 }
 
 function call_step(f: ssasem.Func, st: Stepped, v: string, fn: i32): Stepped {
   if (v == "map") {
-    let m: Emitted = emit(st.s, ssasem.call_value(), ssasem.func_result(f.values[fn]), [fn, st.e], 0, "");
+    let m = emit(st.s, ssasem.call_value(), ssasem.func_result(f.values[fn]), [fn, st.e], 0, "");
     return Stepped { ...st, s: m.s, e: m.v };
   }
-  let keep: Emitted = emit(st.s, ssasem.call_value(), typeinfo.TypeBool { tag: 0 }, [fn, st.e], 0, "");
-  let from: i32 = keep.s.id;
-  let yes: i32 = keep.s.next;
+  let keep = emit(st.s, ssasem.call_value(), typeinfo.TypeBool { tag: 0 }, [fn, st.e], 0, "");
+  let from = keep.s.id;
+  let yes = keep.s.next;
   if (v == "take_while") {
-    let s: Build = open(close(fresh(keep.s, 1), brif(keep.v, yes, pipeline_exit(st))), yes, [from]);
+    let s = open(close(fresh(keep.s, 1), brif(keep.v, yes, pipeline_exit(st))), yes, [from]);
     return Stepped { ...st, s: s, l: stop(st.l, from) };
   }
-  let s: Build = close(fresh(keep.s, 2), brif(keep.v, yes, yes + 1));
+  let s = close(fresh(keep.s, 2), brif(keep.v, yes, yes + 1));
   s = close(open(s, yes + 1, [from]), br(st.l.head));
   return Stepped { ...st, s: open(s, yes, [from]), l: back(st.l, yes + 1, st.l.cur) };
 }
@@ -838,15 +838,15 @@ function pipeline_exit(st: Stepped): i32 {
 }
 
 function inner(f: ssasem.Func, c: Chain, st: Stepped, j: i32): Stepped {
-  let fn: i32 = c.fns[j];
-  let arr_t: typeinfo.Type = ssasem.func_result(f.values[fn]);
-  let ys: Emitted = emit(st.s, ssasem.call_value(), arr_t, [fn, st.e], 0, "");
-  let n: Emitted = emit(ys.s, ssasem.length(), int32(), [ys.v], 0, "");
-  let zero: Emitted = emit(n.s, 1, int32(), [], 0, "");
-  let s: Build = zero.s;
-  let o: Loop = st.l;
-  let head: i32 = s.next;
-  let l: Loop = Loop { ...o, head: head, i: s.values.len(), start: zero.v, entry: s.id, inits: o.cur, backs: [], rows: [], exits: [], exit_rows: [] };
+  let fn = c.fns[j];
+  let arr_t = ssasem.func_result(f.values[fn]);
+  let ys = emit(st.s, ssasem.call_value(), arr_t, [fn, st.e], 0, "");
+  let n = emit(ys.s, ssasem.length(), int32(), [ys.v], 0, "");
+  let zero = emit(n.s, 1, int32(), [], 0, "");
+  let s = zero.s;
+  let o = st.l;
+  let head = s.next;
+  let l = Loop { ...o, head: head, i: s.values.len(), start: zero.v, entry: s.id, inits: o.cur, backs: [], rows: [], exits: [], exit_rows: [] };
   s = Build { ...fresh(s, 3), values: s.values.append(int32()) };
   let vars: i32[] = [];
   for v in o.vars {
@@ -854,66 +854,66 @@ function inner(f: ssasem.Func, c: Chain, st: Stepped, j: i32): Stepped {
     s = Build { ...s, values: s.values.append(s.values[v]) };
   }
   l = Loop { ...l, vars: vars, cur: vars };
-  let h: Opened = loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: 0 - 1 }, n.v);
+  let h = loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: 0 - 1 }, n.v);
   h = guards(c, h, j + 1, pipeline_exit(st));
-  let fetched: Emitted = emit(h.s, ssasem.array_get(), element(arr_t), [ys.v, h.l.i], 1, "");
+  let fetched = emit(h.s, ssasem.array_get(), element(arr_t), [ys.v, h.l.i], 1, "");
   return Stepped { s: fetched.s, l: h.l, e: fetched.v, outer: st.outer.append(o) };
 }
 
 function unwind(st: Stepped): Stepped {
-  let s: Build = st.s;
-  let l: Loop = st.l;
-  let k: i32 = st.outer.len() - 1;
+  let s = st.s;
+  let l = st.l;
+  let k = st.outer.len() - 1;
   while (k >= 0) {
-    let o: Loop = st.outer[k];
+    let o = st.outer[k];
     s = header(s, l);
-    let exit: i32 = l.head + 2;
+    let exit = l.head + 2;
     s = close(open(s, exit, [l.head]), br(o.head));
     o = back(o, exit, l.vars);
     l = Loop { ...o, exits: util.append_all(o.exits, l.exits), exit_rows: util.append_all(o.exit_rows, l.exit_rows) };
-    k = k - 1;
+    k -= 1;
   }
   return Stepped { ...st, s: s, l: l, outer: [] };
 }
 
 function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i32): Stepped {
-  let s: Build = st.s;
-  let l: Loop = st.l;
+  let s = st.s;
+  let l = st.l;
   if (c.verb == "len") {
-    let one: Emitted = emit(s, 1, t, [], 1, "");
-    let more: Emitted = emit(one.s, 9, t, [l.cur[0], one.v], 0, "+");
+    let one = emit(s, 1, t, [], 1, "");
+    let more = emit(one.s, 9, t, [l.cur[0], one.v], 0, "+");
     return Stepped { ...st, s: close(more.s, br(l.head)), l: back(l, more.s.id, l.cur.with(0, more.v)) };
   }
   if (c.verb == "fold" || l.seen_at < 0) {
-    let a: Emitted = emit(s, ssasem.call_value(), t, [combine, l.cur[0], st.e], 0, "");
-    let cur: i32[] = l.cur.with(0, a.v);
+    let a = emit(s, ssasem.call_value(), t, [combine, l.cur[0], st.e], 0, "");
+    let cur = l.cur.with(0, a.v);
     s = a.s;
     if (c.verb == "scan") {
-      let out: Emitted = emit(s, ssasem.append(), s.values[l.cur[l.out_at]], [l.cur[l.out_at], a.v], 0, "");
+      let out = emit(s, ssasem.append(), s.values[l.cur[l.out_at]], [l.cur[l.out_at], a.v], 0, "");
       s = out.s;
       cur = cur.with(l.out_at, out.v);
     }
     return Stepped { ...st, s: close(s, br(l.head)), l: back(l, s.id, cur) };
   }
-  let from: i32 = s.id;
-  let comb: i32 = s.next;
+  let from = s.id;
+  let comb = s.next;
   s = close(fresh(s, 3), brif(l.cur[l.seen_at], comb, comb + 1));
-  let a: Emitted = emit(open(s, comb, [from]), ssasem.call_value(), t, [combine, l.cur[0], st.e], 0, "");
+  let a = emit(open(s, comb, [from]), ssasem.call_value(), t, [combine, l.cur[0], st.e], 0, "");
   s = close(a.s, br(comb + 2));
   s = close(open(s, comb + 1, [from]), br(comb + 2));
-  let joined: Emitted = emit(open(s, comb + 2, [comb, comb + 1]), 8, t, [a.v, st.e], 0, "");
+  let joined = emit(open(s, comb + 2, [comb, comb + 1]), 8, t, [a.v, st.e], 0, "");
   return Stepped { ...st, s: close(joined.s, br(l.head)), l: back(l, comb + 2, l.cur.with(0, joined.v).with(l.seen_at, yes)) };
 }
 
 struct Ended { s: Build, finals: i32[] }
 
 function exit_values(s: Build, l: Loop): Ended {
-  let w: i32 = l.vars.len();
-  let same: boolean = true;
-  let x: i32 = 0;
+  let w = l.vars.len();
+  let same = true;
+  let x = 0;
   while (x < l.exit_rows.len()) {
     same = same && l.exit_rows[x] == l.vars[x % w];
-    x = x + 1;
+    x += 1;
   }
   if (same) {
     return Ended { s: s, finals: l.vars };
@@ -922,18 +922,18 @@ function exit_values(s: Build, l: Loop): Ended {
   for v in l.vars {
     finals = finals.append(v);
   }
-  let at: i32 = 0;
+  let at = 0;
   while (at < l.count_at) {
     let args: i32[] = [l.vars[at]];
-    let e: i32 = 0;
+    let e = 0;
     while (e < l.exits.len()) {
       args = args.append(l.exit_rows[e * w + at]);
-      e = e + 1;
+      e += 1;
     }
-    let phi: Emitted = emit(s, 8, s.values[l.vars[at]], args, 0, "");
+    let phi = emit(s, 8, s.values[l.vars[at]], args, 0, "");
     s = phi.s;
     finals = finals.with(at, phi.v);
-    at = at + 1;
+    at += 1;
   }
   return Ended { s: s, finals: finals };
 }
@@ -945,82 +945,82 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, finals: i32[], resu
   if (c.verb == "fold" || c.verb == "len") {
     return emit_at(s, 7, [finals[0]], result);
   }
-  let whole: typeinfo.Type = f.values[result];
-  let from: i32 = s.id;
-  let some: i32 = s.next;
+  let whole = f.values[result];
+  let from = s.id;
+  let some = s.next;
   s = close(fresh(s, 3), brif(finals[l.seen_at], some, some + 1));
-  let vs: Emitted = emit(open(s, some, [from]), ssasem.variant_new(), whole, [finals[0]], 0, "Some");
+  let vs = emit(open(s, some, [from]), ssasem.variant_new(), whole, [finals[0]], 0, "Some");
   s = close(vs.s, br(some + 2));
-  let vn: Emitted = emit(open(s, some + 1, [from]), ssasem.variant_new(), whole, [], 0, "None");
+  let vn = emit(open(s, some + 1, [from]), ssasem.variant_new(), whole, [], 0, "None");
   s = close(vn.s, br(some + 2));
   return emit_at(open(s, some + 2, [some, some + 1]), 8, [vs.v, vn.v], result);
 }
 
 function header(s: Build, l: Loop): Build {
-  let at: i32 = 0;
+  let at = 0;
   while (s.blocks[at].id != l.head) {
-    at = at + 1;
+    at += 1;
   }
-  let h: ssa.SBlock = s.blocks[at];
+  let h = s.blocks[at];
   let is: i32[] = [l.start];
   for _ in l.backs {
     is = is.append(l.next_i);
   }
   let phis: ssa.SInst[] = [ssa.SInst { kind_tag: 8, result: l.i, args: is, imm: 0, str: "" }];
-  let w: i32 = l.vars.len();
-  let v: i32 = 0;
+  let w = l.vars.len();
+  let v = 0;
   while (v < w) {
     let args: i32[] = [l.inits[v]];
-    let b: i32 = 0;
+    let b = 0;
     while (b < l.backs.len()) {
       args = args.append(l.rows[b * w + v]);
-      b = b + 1;
+      b += 1;
     }
     phis = phis.append(ssa.SInst { kind_tag: 8, result: l.vars[v], args: args, imm: 0, str: "" });
-    v = v + 1;
+    v += 1;
   }
   for ins in h.insts {
     phis = phis.append(ins);
   }
-  let full: ssa.SBlock = ssa.SBlock { ...h, insts: phis, preds: prepend(l.entry, l.backs) };
+  let full = ssa.SBlock { ...h, insts: phis, preds: prepend(l.entry, l.backs) };
   return Build { ...s, blocks: s.blocks.with(at, full) };
 }
 
 struct Opened { s: Build, l: Loop, yes: i32 }
 
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i32): Opened {
-  let i32t: typeinfo.Type = int32();
+  let i32t = int32();
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
-  let n: Emitted = Emitted { s: s, v: c.hi };
+  let n = Emitted { s: s, v: c.hi };
   if (c.hi < 0) {
     n = emit(s, ssasem.length(), i32t, [c.base], 0, "");
   }
-  let first: i32 = 0;
+  let first = 0;
   if (seed >= 0) {
     first = 1;
   }
-  let start: Emitted = emit(n.s, 1, i32t, [], first, "");
+  let start = emit(n.s, 1, i32t, [], first, "");
   s = start.s;
-  let cursor: i32 = start.v;
+  let cursor = start.v;
   if (c.hi >= 0) {
     cursor = c.base;
   }
-  let entry: i32 = s.id;
-  let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
-  let seeded: Opened = seed_inits(c.verb, sink, s, acc_t, seed, start.v);
+  let entry = s.id;
+  let sink = f.graph.blocks[c.block].insts[c.sink];
+  let seeded = seed_inits(c.verb, sink, s, acc_t, seed, start.v);
   s = seeded.s;
-  let inits: i32[] = seeded.l.inits;
-  let yes: i32 = seeded.yes;
-  let out: i32 = 0 - 1;
+  let inits = seeded.l.inits;
+  let yes = seeded.yes;
+  let out: i32 = -1;
   if (c.verb == "scan") {
-    let result: i32 = sink.result;
-    let reserved: Emitted = emit(s, ssasem.array_reserve(), f.values[result], [n.v], 0, "");
+    let result = sink.result;
+    let reserved = emit(s, ssasem.array_reserve(), f.values[result], [n.v], 0, "");
     out = reserved.s.values.len();
     s = Build { ...reserved.s, values: reserved.s.values.append(f.values[result]) };
     inits = inits.append(reserved.v);
   }
-  let head: i32 = s.next;
-  let l: Loop = Loop { ...no_loop(), head: head, i: s.values.len(), start: cursor, entry: entry, vars: [s.values.len() + 1] };
+  let head = s.next;
+  let l = Loop { ...no_loop(), head: head, i: s.values.len(), start: cursor, entry: entry, vars: [s.values.len() + 1] };
   s = Build { ...fresh(s, 3), values: s.values.append(i32t).append(acc_t) };
   if (yes >= 0) {
     l = Loop { ...l, seen_at: 1, vars: l.vars.append(s.values.len()) };
@@ -1052,38 +1052,38 @@ function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Typ
     return Opened { s: s, l: Loop { ...no_loop(), inits: [start] }, yes: 0 - 1 };
   }
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
-  let z: Emitted = emit(s, ssasem.zero(), acc_t, [], 0, "");
-  let no: Emitted = emit(z.s, 2, bool_t, [], 0, "");
-  let y: Emitted = emit(no.s, 2, bool_t, [], 1, "");
+  let z = emit(s, ssasem.zero(), acc_t, [], 0, "");
+  let no = emit(z.s, 2, bool_t, [], 0, "");
+  let y = emit(no.s, 2, bool_t, [], 1, "");
   return Opened { s: y.s, l: Loop { ...no_loop(), inits: [z.v, no.v] }, yes: y.v };
 }
 
 function loop_head(o: Opened, n: i32): Opened {
-  let head: i32 = o.l.head;
-  let more: Emitted = emit(o.s, 9, typeinfo.TypeBool { tag: 0 }, [o.l.i, n], 0, "<");
-  let s: Build = close(more.s, brif(more.v, head + 1, head + 2));
-  let one: Emitted = emit(open(s, head + 1, [head]), 1, int32(), [], 1, "");
-  let step: Emitted = emit(one.s, 9, int32(), [o.l.i, one.v], 0, "+");
+  let head = o.l.head;
+  let more = emit(o.s, 9, typeinfo.TypeBool { tag: 0 }, [o.l.i, n], 0, "<");
+  let s = close(more.s, brif(more.v, head + 1, head + 2));
+  let one = emit(open(s, head + 1, [head]), 1, int32(), [], 1, "");
+  let step = emit(one.s, 9, int32(), [o.l.i, one.v], 0, "+");
   return Opened { ...o, s: step.s, l: Loop { ...o.l, next_i: step.v } };
 }
 
 function guards(c: Chain, o: Opened, from: i32, exit: i32): Opened {
-  let s: Build = o.s;
-  let l: Loop = o.l;
-  let k: i32 = 0;
-  let j: i32 = 0;
+  let s = o.s;
+  let l = o.l;
+  let k = 0;
+  let j = 0;
   while (j < c.stages.len() && (j < from || c.verbs[j] != "flat_map")) {
     if (c.verbs[j] == "take" && j >= from) {
-      let below: Emitted = emit(s, 9, typeinfo.TypeBool { tag: 0 }, [l.cur[l.count_at + k], c.fns[j]], 0, "<");
-      let at: i32 = below.s.id;
-      let on: i32 = below.s.next;
+      let below = emit(s, 9, typeinfo.TypeBool { tag: 0 }, [l.cur[l.count_at + k], c.fns[j]], 0, "<");
+      let at = below.s.id;
+      let on = below.s.next;
       s = open(close(fresh(below.s, 1), brif(below.v, on, exit)), on, [at]);
       l = stop(l, at);
     }
     if (c.verbs[j] == "take") {
-      k = k + 1;
+      k += 1;
     }
-    j = j + 1;
+    j += 1;
   }
   return Opened { ...o, s: s, l: l };
 }
@@ -1091,7 +1091,7 @@ function guards(c: Chain, o: Opened, from: i32, exit: i32): Opened {
 struct Peeled { s: Build, seed: i32, empty: i32, none: i32, join: i32 }
 
 function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
-  let out: Peeled = Peeled { s: s, seed: 0 - 1, empty: 0 - 1, none: 0 - 1, join: 0 - 1 };
+  let out = Peeled { s: s, seed: 0 - 1, empty: 0 - 1, none: 0 - 1, join: 0 - 1 };
   for v in c.verbs {
     if (v != "map") {
       return out;
@@ -1100,18 +1100,18 @@ function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
   if (c.verb != "reduce") {
     return out;
   }
-  let i32t: typeinfo.Type = int32();
-  let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
-  let zero: Emitted = emit(n.s, 1, i32t, [], 0, "");
-  let nonempty: Emitted = emit(zero.s, 9, typeinfo.TypeBool { tag: 0 }, [n.v, zero.v], 0, ">");
-  let from: i32 = s.id;
-  let empty: i32 = s.next;
+  let i32t = int32();
+  let n = emit(s, ssasem.length(), i32t, [c.base], 0, "");
+  let zero = emit(n.s, 1, i32t, [], 0, "");
+  let nonempty = emit(zero.s, 9, typeinfo.TypeBool { tag: 0 }, [n.v, zero.v], 0, ">");
+  let from = s.id;
+  let empty = s.next;
   s = close(fresh(nonempty.s, 3), brif(nonempty.v, empty + 1, empty));
-  let result: i32 = f.graph.blocks[c.block].insts[c.sink].result;
-  let none: Emitted = emit(open(s, empty, [from]), ssasem.variant_new(), f.values[result], [], 0, "None");
+  let result = f.graph.blocks[c.block].insts[c.sink].result;
+  let none = emit(open(s, empty, [from]), ssasem.variant_new(), f.values[result], [], 0, "None");
   s = open(close(none.s, br(empty + 2)), empty + 1, [from]);
-  let value: Emitted = emit(s, ssasem.array_get(), element(f.values[c.base]), [c.base, zero.v], 1, "");
-  let st: Stepped = steps(f, c, value.s, no_loop(), value.v);
+  let value = emit(s, ssasem.array_get(), element(f.values[c.base]), [c.base, zero.v], 1, "");
+  let st = steps(f, c, value.s, no_loop(), value.v);
   return Peeled { s: st.s, seed: st.e, empty: empty, none: none.v, join: empty + 2 };
 }
 
@@ -1119,43 +1119,43 @@ function finish_seeded(f: ssasem.Func, c: Chain, e: Ended, l: Loop, p: Peeled, r
   if (p.seed < 0) {
     return finish(f, c, e.s, l, e.finals, result);
   }
-  let some: Emitted = emit(e.s, ssasem.variant_new(), f.values[result], [e.finals[0]], 0, "Some");
-  let from: i32 = e.s.id;
+  let some = emit(e.s, ssasem.variant_new(), f.values[result], [e.finals[0]], 0, "Some");
+  let from = e.s.id;
   return emit_at(open(close(some.s, br(p.join)), p.join, [p.empty, from]), 8, [p.none, some.v], result);
 }
 
 @noinline
 function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
-  let g: ssa.SFunc = f.graph;
-  let b: ssa.SBlock = g.blocks[c.block];
-  let sink: ssa.SInst = b.insts[c.sink];
-  let acc_t: typeinfo.Type = f.values[sink.result];
+  let g = f.graph;
+  let b = g.blocks[c.block];
+  let sink = b.insts[c.sink];
+  let acc_t = f.values[sink.result];
   if (c.verb == "reduce") {
     acc_t = element(f.values[sink.args[0]]);
   }
   if (c.verb == "scan") {
     acc_t = element(f.values[sink.result]);
   }
-  let s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
-  let peeled: Peeled = peel_seed(f, c, s);
-  let o: Opened = enter(f, c, peeled.s, acc_t, peeled.seed);
+  let s = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
+  let peeled = peel_seed(f, c, s);
+  let o = enter(f, c, peeled.s, acc_t, peeled.seed);
   o = guards(c, o, 0, o.l.head + 2);
-  let fetched: Emitted = Emitted { s: o.s, v: o.l.i };
+  let fetched = Emitted { s: o.s, v: o.l.i };
   if (c.hi < 0) {
     fetched = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.i], 1, "");
   }
-  let st: Stepped = steps(f, c, fetched.s, o.l, fetched.v);
+  let st = steps(f, c, fetched.s, o.l, fetched.v);
   st = unwind(sink_step(c, sink.args[sink.args.len() - 1], acc_t, st, o.yes));
-  let l: Loop = st.l;
-  let ended: Ended = exit_values(open(st.s, l.head + 2, prepend(l.head, l.exits)), l);
+  let l = st.l;
+  let ended = exit_values(open(st.s, l.head + 2, prepend(l.head, l.exits)), l);
   s = finish_seeded(f, c, ended, l, peeled, sink.result);
-  let p: i32 = c.sink + 1;
+  let p = c.sink + 1;
   while (p < b.insts.len()) {
     s = Build { ...s, insts: s.insts.append(b.insts[p]) };
-    p = p + 1;
+    p += 1;
   }
   s = header(close(s, b.term), l);
-  let graph: ssa.SFunc = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
+  let graph = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
   let gone: string[] = [sink.str];
   for at in util.append_all(c.stages, c.roots) {
     gone = gone.append(b.insts[at].str);
@@ -1165,24 +1165,24 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
 
 function kept_before(b: ssa.SBlock, c: Chain): ssa.SInst[] {
   let out: ssa.SInst[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < c.sink) {
     if (!removed(c, p)) {
       out = out.append(b.insts[p]);
     }
-    p = p + 1;
+    p += 1;
   }
   return out;
 }
 
 function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
-  let old: ssa.SBlock = g.blocks[at];
-  let last: i32 = built[built.len() - 1].id;
-  let targets: i32[] = term_targets(old.term);
+  let old = g.blocks[at];
+  let last = built[built.len() - 1].id;
+  let targets = term_targets(old.term);
   let out: ssa.SBlock[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < g.blocks.len()) {
-    let blk: ssa.SBlock = g.blocks[i];
+    let blk = g.blocks[i];
     if (i == at) {
       blk = built[0];
     }
@@ -1190,12 +1190,12 @@ function spliced(g: ssa.SFunc, at: i32, built: ssa.SBlock[]): ssa.SBlock[] {
       blk = ssa.SBlock { ...blk, preds: renamed(blk.preds, old.id, last) };
     }
     out = out.append(blk);
-    i = i + 1;
+    i += 1;
   }
   i = 1;
   while (i < built.len()) {
     out = out.append(built[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

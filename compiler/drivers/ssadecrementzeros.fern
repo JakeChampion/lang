@@ -65,7 +65,7 @@ function entries(s: string, entry: string): void {
     check(prefix(s, entry, "movq %rax, " + regs[i]), entry, false);
     check(prefix(s, entry, "movq " + regs[i] + ", %rcx\nmovq %rax, " + regs[i] + "\nmovq %rcx, " + regs[i]), entry, true);
     check(prefix(s, entry, "movl " + words[i] + ", %ecx\nmovq %rcx, " + regs[i]), entry, false);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -80,7 +80,7 @@ function increment(s: string, entry: string, to: string): string {
   let i = 2;
   while (i < pieces.len()) {
     tail = tail + inc + pieces[i];
-    i = i + 1;
+    i += 1;
   }
   return bodies[0] + marker + tail;
 }
@@ -105,7 +105,7 @@ function comparisons(s: string, entry: string): void {
       let lines = "movl -8(%rax), %ecx\ncmpl $" + values[i].to_string() + ", %ecx\n" + name + " .Lzero_cmp\nunknown_instruction\n.Lzero_cmp:";
       check(prefix(s, entry, lines), entry, true);
     }
-    i = i + 1;
+    i += 1;
   }
 }
 

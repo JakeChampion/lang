@@ -7,12 +7,12 @@ function refused(f: ssa.SFunc, why: string): helper.Proof {
 }
 
 function at(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     if (b.id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -22,9 +22,9 @@ function edge(t: ssa.STerm, id: i32): boolean {
 }
 
 function input_error(f: ssa.SFunc): string {
-  let count: i32 = 0;
+  let count = 0;
   for b in f.blocks {
-    count = count + b.insts.len();
+    count += b.insts.len();
   }
   if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != 2 || f.takes_env || f.nvals < 2 || f.nvals > count || at(f, f.entry) < 0) {
     return "invalid scalar helper boundary";
@@ -97,10 +97,10 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
     return refused(f, error);
   }
   let empty: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.nvals) {
     empty = empty.append(-1);
-    i = i + 1;
+    i += 1;
   }
   let rows: i32[][] = [];
   let done: boolean[] = [];
@@ -110,7 +110,7 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
   }
   let remaining = f.blocks.len();
   while (remaining > 0) {
-    let chosen: i32 = -1;
+    let chosen = -1;
     i = 0;
     for b in f.blocks {
       let ready = !done[i];
@@ -122,7 +122,7 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
       if (ready && chosen < 0) {
         chosen = i;
       }
-      i = i + 1;
+      i += 1;
     }
     if (chosen < 0) {
       return refused(f, "unsupported scalar helper cycle");
@@ -135,7 +135,7 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
         let other = rows[at(f, p)];
         i = 0;
         while (i < f.nvals) {
-          let value: i32 = -1;
+          let value = -1;
           if (row[i] >= 0 && other[i] >= 0) {
             value = 0;
             if (row[i] == 1 && other[i] == 1) {
@@ -143,12 +143,12 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
             }
           }
           row = row.with(i, value);
-          i = i + 1;
+          i += 1;
         }
       }
     }
     for op in b.insts {
-      let value: i32 = 0;
+      let value = 0;
       if (op.kind_tag == 8) {
         value = 1;
         i = 0;
@@ -161,7 +161,7 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
           if (previous[arg] != 1) {
             value = 0;
           }
-          i = i + 1;
+          i += 1;
         }
       } else {
         for arg in op.args {
@@ -196,7 +196,7 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
     }
     rows = rows.with(chosen, row);
     done = done.with(chosen, true);
-    remaining = remaining - 1;
+    remaining -= 1;
   }
   return helper.Proof { ok: true, function_name: f.name, message: "proved scalar zero-or-exit effects" };
 }
@@ -257,10 +257,10 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
   }
   let unknown = Number { known: false, value: 0 };
   let empty: Number[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.nvals) {
     empty = empty.append(unknown);
-    i = i + 1;
+    i += 1;
   }
   for input in [0, 1] {
     let rows: Number[][] = [];
@@ -273,7 +273,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
     }
     let remaining = f.blocks.len();
     while (remaining > 0) {
-      let chosen: i32 = -1;
+      let chosen = -1;
       i = 0;
       for b in f.blocks {
         let ready = !done[i];
@@ -285,7 +285,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
         if (ready && chosen < 0) {
           chosen = i;
         }
-        i = i + 1;
+        i += 1;
       }
       if (chosen < 0) {
         return Outcomes { ...result, proof: refused(f, "unsupported scalar helper cycle") };
@@ -302,7 +302,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
             i = 0;
             while (i < f.nvals) {
               row = row.with(i, joined_number(row[i], previous[i]));
-              i = i + 1;
+              i += 1;
             }
           }
           active = true;
@@ -324,7 +324,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
                 }
                 first = false;
               }
-              i = i + 1;
+              i += 1;
             }
           } else if (op.kind_tag == 6 && op.imm == 0) {
             value = Number { known: true, value: input };
@@ -347,7 +347,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
       rows = rows.with(chosen, row);
       live = live.with(chosen, active);
       done = done.with(chosen, true);
-      remaining = remaining - 1;
+      remaining -= 1;
     }
   }
   return result;

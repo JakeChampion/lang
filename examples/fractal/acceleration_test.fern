@@ -142,7 +142,7 @@ function test_cancelled_rows(): test.TestOutcome {
     return polls.get() >= 4;
   };
   match (fractal.render_cancellable(42, 1931133968718, 2054079141036, stop)) {
-    Err(fractal.RenderError.Cancelled()) => {},
+    Err(fractal.RenderError.Cancelled) => {},
     _ => {
       return test.fail("cancelled renderer produced a tile");
     }

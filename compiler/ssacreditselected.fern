@@ -48,8 +48,8 @@ function ordinary(m: physicalbody.Metadata, t: typeinfo.Type): boolean {
 }
 
 function index(m: physicalbody.Metadata, t: typeinfo.Type): i32 {
-  let found: i32 = -1;
-  let i: i32 = 0;
+  let found = -1;
+  let i = 0;
   for r in m.records.list {
     if (semtypes.equal(r.ty, t)) {
       if (found >= 0) {
@@ -57,7 +57,7 @@ function index(m: physicalbody.Metadata, t: typeinfo.Type): i32 {
       }
       found = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return found;
 }
@@ -80,7 +80,7 @@ pub function compatible(a: physicalbody.Metadata, b: physicalbody.Metadata, t: t
 }
 
 function compatible_fields(a: physicalbody.Metadata, b: physicalbody.Metadata, fields: semrecords.Field[], others: semrecords.Field[], depth: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   for field in fields {
     let other = others[i];
     if (field.name != other.name || !semtypes.equal(field.ty, other.ty)) {
@@ -89,7 +89,7 @@ function compatible_fields(a: physicalbody.Metadata, b: physicalbody.Metadata, f
     if (!scalar(field.ty) && !compatible(a, b, field.ty, depth - 1)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -99,7 +99,7 @@ pub function child_offsets(m: physicalbody.Metadata, t: typeinfo.Type): i32[] {
     return [];
   }
   let offsets: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for field in m.records.list[index(m, t)].fields {
     if (i > 268435454) {
       return [];
@@ -107,7 +107,7 @@ pub function child_offsets(m: physicalbody.Metadata, t: typeinfo.Type): i32[] {
     if (!scalar(field.ty)) {
       offsets = offsets.append((i + 1) * 8);
     }
-    i = i + 1;
+    i += 1;
   }
   return offsets;
 }
@@ -174,7 +174,7 @@ function signed_code(t: typeinfo.Type): boolean {
 pub function fields(m: physicalbody.Metadata, d: ssasem.Contract): reuse.ScalarField[] {
   let result: reuse.ScalarField[] = [];
   let r = m.records.list[index(m, d.params[1])];
-  let i: i32 = 0;
+  let i = 0;
   for field in r.fields {
     if (i > 268435454) {
       return [];
@@ -186,7 +186,7 @@ pub function fields(m: physicalbody.Metadata, d: ssasem.Contract): reuse.ScalarF
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return result;
 }

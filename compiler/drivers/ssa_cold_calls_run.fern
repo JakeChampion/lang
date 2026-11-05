@@ -16,27 +16,27 @@ function branch(cond: i32, t: i32, f: i32): ssa.STerm {
 }
 
 function looped(): ssa.SFunc {
-  let b0: ssa.SBlock = ssa.SBlock { id: 0, insts: [inst(1, 0, [], "")], term: jump(1), preds: [] };
-  let b1: ssa.SBlock = ssa.SBlock { id: 1, insts: [inst(8, 1, [0, 6], ""), inst(9, 2, [1, 0], "lt_s")], term: branch(2, 2, 5), preds: [0, 4] };
-  let b2: ssa.SBlock = ssa.SBlock { id: 2, insts: [inst(9, 3, [1, 0], "eq")], term: branch(3, 3, 4), preds: [1] };
-  let b3: ssa.SBlock = ssa.SBlock { id: 3, insts: [inst(11, 4, [1], "rare")], term: jump(4), preds: [2] };
+  let b0 = ssa.SBlock { id: 0, insts: [inst(1, 0, [], "")], term: jump(1), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(8, 1, [0, 6], ""), inst(9, 2, [1, 0], "lt_s")], term: branch(2, 2, 5), preds: [0, 4] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(9, 3, [1, 0], "eq")], term: branch(3, 3, 4), preds: [1] };
+  let b3 = ssa.SBlock { id: 3, insts: [inst(11, 4, [1], "rare")], term: jump(4), preds: [2] };
   let join: ssa.SInst[] = [inst(11, 5, [0], "every"), inst(50, 7, [0, 1], "arr_push_u8"), inst(11, 8, [0], "__fern_rc_is_unique"), inst(9, 6, [1, 1], "add")];
-  let b4: ssa.SBlock = ssa.SBlock { id: 4, insts: join, term: jump(1), preds: [2, 3] };
-  let b5: ssa.SBlock = ssa.SBlock { id: 5, insts: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 }, preds: [1] };
+  let b4 = ssa.SBlock { id: 4, insts: join, term: jump(1), preds: [2, 3] };
+  let b5 = ssa.SBlock { id: 5, insts: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 }, preds: [1] };
   return ssa.SFunc { name: "looped", nparams: 0, nvals: 9, blocks: [b0, b1, b2, b3, b4, b5], entry: 0, takes_env: false };
 }
 
 function cold_only(): ssa.SFunc {
-  let f: ssa.SFunc = looped();
+  let f = looped();
   let join: ssa.SInst[] = [inst(50, 7, [0, 1], "arr_push_u8"), inst(11, 8, [0], "__fern_rc_is_unique"), inst(9, 6, [1, 1], "add")];
-  let blocks: ssa.SBlock[] = f.blocks.with(4, ssa.SBlock { ...f.blocks[4], insts: join });
+  let blocks = f.blocks.with(4, ssa.SBlock { ...f.blocks[4], insts: join });
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
 function aborting(name: string): ssa.SFunc {
-  let f: ssa.SFunc = looped();
+  let f = looped();
   let join: ssa.SInst[] = [inst(11, 7, [], name), inst(9, 6, [1, 1], "add")];
-  let blocks: ssa.SBlock[] = f.blocks.with(4, ssa.SBlock { ...f.blocks[4], insts: join });
+  let blocks = f.blocks.with(4, ssa.SBlock { ...f.blocks[4], insts: join });
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
@@ -47,10 +47,10 @@ function ret(v: i32): ssa.STerm {
 // v1 is read only on the slow path, so it is dead after the fast path's call.
 // v5 lives inside the slow block across its call.
 function split_paths(): ssa.SFunc {
-  let b0: ssa.SBlock = ssa.SBlock { id: 0, insts: [inst(1, 0, [], ""), inst(1, 1, [], ""), inst(9, 2, [0, 1], "lt_s")], term: branch(2, 1, 2), preds: [] };
-  let b1: ssa.SBlock = ssa.SBlock { id: 1, insts: [inst(11, 3, [0], "fast"), inst(9, 4, [3, 3], "add")], term: ret(4), preds: [0] };
+  let b0 = ssa.SBlock { id: 0, insts: [inst(1, 0, [], ""), inst(1, 1, [], ""), inst(9, 2, [0, 1], "lt_s")], term: branch(2, 1, 2), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(11, 3, [0], "fast"), inst(9, 4, [3, 3], "add")], term: ret(4), preds: [0] };
   let slow: ssa.SInst[] = [inst(9, 5, [1, 0], "add"), inst(11, 6, [], "slow"), inst(9, 7, [6, 5], "add")];
-  let b2: ssa.SBlock = ssa.SBlock { id: 2, insts: slow, term: ret(7), preds: [0] };
+  let b2 = ssa.SBlock { id: 2, insts: slow, term: ret(7), preds: [0] };
   return ssa.SFunc { name: "split_paths", nparams: 0, nvals: 8, blocks: [b0, b1, b2], entry: 0, takes_env: false };
 }
 
@@ -68,51 +68,51 @@ function check(ok: boolean, what: string, failures: i32): i32 {
 }
 
 function main(): i32 {
-  let f: ssa.SFunc = looped();
-  let failures: i32 = 0;
-  let cold: boolean[] = ssa.cold_blocks(f);
+  let f = looped();
+  let failures = 0;
+  let cold = ssa.cold_blocks(f);
   failures = check(!cold[0] && !cold[1] && !cold[2] && cold[3] && !cold[4] && !cold[5], "cold_blocks", failures);
-  let kinds: i32[] = ssa.cold_positions(f, false, true);
+  let kinds = ssa.cold_positions(f, false, true);
   failures = check(kinds[7] == ssa.COLD_BRANCH, "a call some iterations skip is COLD_BRANCH", failures);
   failures = check(kinds[9] == ssa.COLD_NONE, "a call every iteration makes is a call", failures);
   failures = check(kinds[10] == ssa.COLD_SLOW, "a push is COLD_SLOW", failures);
   failures = check(kinds[11] == ssa.COLD_INLINE, "an inline rc primitive is COLD_INLINE", failures);
-  let sized: i32[] = ssa.cold_positions(f, true, false);
+  let sized = ssa.cold_positions(f, true, false);
   failures = check(sized[11] == ssa.COLD_NONE, "a size-mode rc helper remains a call", failures);
-  let inside: ssafixed.Table = ssafixed.with_clobbers(ssafixed.none(), 0, 1, [0, 1, 0, 0]);
-  let plain: ssafixed.Table = ssafixed.table(0, 1, [0, 1, 0, 0]);
+  let inside = ssafixed.with_clobbers(ssafixed.none(), 0, 1, [0, 1, 0, 0]);
+  let plain = ssafixed.table(0, 1, [0, 1, 0, 0]);
   failures = check(ssafixed.allows(inside, 0, 0, 1) && ssafixed.allows(inside, 0, 1, 3), "a clobber admits endpoints", failures);
   failures = check(!ssafixed.allows(inside, 0, 0, 2), "a clobber refuses a span", failures);
   failures = check(!ssafixed.allows(plain, 0, 0, 1), "table refuses an endpoint", failures);
-  let both: ssafixed.Table = ssafixed.with_clobbers(ssafixed.table(0, 1, [0, 0, 1, 0]), 1, 1, [0, 1, 0, 0]);
+  let both = ssafixed.with_clobbers(ssafixed.table(0, 1, [0, 0, 1, 0]), 1, 1, [0, 1, 0, 0]);
   failures = check(!ssafixed.allows(both, 0, 2, 3) && ssafixed.allows(both, 0, 0, 1), "a joined table keeps its fixed rows", failures);
   failures = check(!ssafixed.allows(both, 1, 0, 2) && ssafixed.allows(both, 1, 1, 3), "a joined table keeps its clobbers", failures);
-  let ab: ssa.SFunc = aborting("__fern_oob_abort");
-  let ret: ssa.SFunc = aborting("every");
-  let aborts: ssa.Alloc = ssa.regalloc_linear_fixed(ab, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false, true), []);
-  let returns: ssa.Alloc = ssa.regalloc_linear_fixed(ret, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false, true), []);
+  let ab = aborting("__fern_oob_abort");
+  let ret = aborting("every");
+  let aborts = ssa.regalloc_linear_fixed(ab, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false, true), []);
+  let returns = ssa.regalloc_linear_fixed(ret, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false, true), []);
   failures = check(aborts.reg_of[1] >= 0, "an abort leaves the hot phi a register", failures);
   failures = check(returns.reg_of[1] < 0, "a call that returns spills the hot phi", failures);
   failures = check(!ssa.calls(inst(11, 7, [], "__fern_oob_abort")), "an abort is not a call", failures);
-  let g: ssa.SFunc = cold_only();
-  let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false, true), []);
-  let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
-  let sized_alloc: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true, false), []);
+  let g = cold_only();
+  let kept = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false, true), []);
+  let spilled = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
+  let sized_alloc = ssa.regalloc_linear_fixed(g, 2, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true, false), []);
   failures = check(sized_alloc.reg_of[1] < 0, "a size-mode rc call spills the hot phi", failures);
   failures = check(kept.reg_of[1] >= 0, "cold calls leave the hot phi a register", failures);
   failures = check(spilled.reg_of[1] < 0, "calls spill the hot phi", failures);
-  let sp: ssa.SFunc = split_paths();
-  let crossing: boolean[] = ssalive.call_crossers(sp, ssa.hard_call_positions(sp, []));
+  let sp = split_paths();
+  let crossing = ssalive.call_crossers(sp, ssa.hard_call_positions(sp, []));
   failures = check(crossing.len() == sp.nvals, "call_crossers covers every value", failures);
   failures = check(!crossing[0] && !crossing[1] && !crossing[3], "a value dead after a call does not cross it", failures);
   failures = check(crossing[5] && !crossing[6], "a value live across a call in its own block crosses it", failures);
-  let by_live: ssa.Alloc = ssa.regalloc_linear_fixed(sp, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], crossing);
-  let by_span: ssa.Alloc = ssa.regalloc_linear_fixed(sp, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
+  let by_live = ssa.regalloc_linear_fixed(sp, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], crossing);
+  let by_span = ssa.regalloc_linear_fixed(sp, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
   failures = check(by_live.reg_of[1] >= 0 && by_live.reg_of[5] < 0, "liveness keeps a register the call does not clobber", failures);
   failures = check(by_span.reg_of[1] < 0, "an interval over a call spills without liveness", failures);
   let unused = unused_result();
   let homes = ssa.regalloc_linear(unused, 1, 1, 0, false, [], [], [], 0, 0);
-  failures = check(homes.reg_of[1] == 0 - 1 && homes.hi[1] < 0, "an unused call result needs no register or spill slot", failures);
+  failures = check(homes.reg_of[1] == -1 && homes.hi[1] < 0, "an unused call result needs no register or spill slot", failures);
   failures = check(homes.reg_of[0] >= 1 && homes.reg_of[2] >= 0, "the live input and returned result retain their homes", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;

@@ -18,8 +18,8 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
   }
   let values: i32[] = [];
   let defined: i32[] = [];
-  let last: i32 = -1;
-  let i: i32 = 0;
+  let last = -1;
+  let i = 0;
   let params: boolean[] = [];
   let fields: boolean[] = [];
   let credits: i32[] = [];
@@ -48,7 +48,7 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
       last = original.result;
     }
     let op = ssa.SInst { ...original, args: args };
-    let kind: i32 = -1;
+    let kind = -1;
     if (op.kind_tag == 6 && op.args.len() == 0 && op.str == "") {
       if (op.imm < 0 || op.imm >= params.len() || params[op.imm]) {
         return refused(f, "invalid allocation producer parameter");
@@ -103,7 +103,7 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
     if (!params[i] || !fields[i] || credits[i] != 0) {
       return refused(f, "incomplete allocation producer initialization");
     }
-    i = i + 1;
+    i += 1;
   }
   let returned = util.index_of_i32(defined, b.term.value);
   if (returned < 0 || values[returned] != 1) {

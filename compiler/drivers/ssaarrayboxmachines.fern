@@ -124,7 +124,7 @@ function identities(body: string): void {
     if (i != 4) {
       altered(body, "ret", "movq $0, " + reg + "\nret", false);
     }
-    i = i + 1;
+    i += 1;
   }
   altered(body, "pushq %rdi", "pushq %rcx\nmovq $0, %rcx\npopq %rcx\npushq %rdi", true);
   altered(body, "movq %rdi, (%rax)", "movq %rcx, -16(%rsp)\nmovq %rdi, %rcx\nmovq %rcx, (%rax)\nmovq -16(%rsp), %rcx", false);

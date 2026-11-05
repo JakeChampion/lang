@@ -323,7 +323,7 @@ function hard_caps(): test.TestOutcome {
     image: pixels.Limits { max_pixels: 2147483647, max_bytes: 2147483647 },
   };
   let oversized = __alloc_u8(16777217);
-  let input_limit = match (header.parse(oversized, limits, never_cancel)) { Err(header.Limit()) => true, _ => false };
+  let input_limit = match (header.parse(oversized, limits, never_cancel)) { Err(header.Limit) => true, _ => false };
   if (!input_limit) {
     return test.fail("hard input cap");
   }
@@ -332,7 +332,7 @@ function hard_caps(): test.TestOutcome {
     fill = fill.with(i, 255);
   }
   fill = fill.with(1, 216);
-  let header_limit = match (header.parse(fill, limits, never_cancel)) { Err(header.Limit()) => true, _ => false };
+  let header_limit = match (header.parse(fill, limits, never_cancel)) { Err(header.Limit) => true, _ => false };
   if (!header_limit) {
     return test.fail("hard header cap");
   }
@@ -340,7 +340,7 @@ function hard_caps(): test.TestOutcome {
   for _ in 0..4097 {
     many = append_bytes(many, segment(224, []));
   }
-  return test.assert_true(match (header.parse(many, limits, never_cancel)) { Err(header.Limit()) => true, _ => false });
+  return test.assert_true(match (header.parse(many, limits, never_cancel)) { Err(header.Limit) => true, _ => false });
 }
 
 function cancellation(): test.TestOutcome {
@@ -363,7 +363,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let result = match (header.parse(input, header.default_limits(), cancelled)) { Err(header.Cancelled()) => true, _ => false };
+    let result = match (header.parse(input, header.default_limits(), cancelled)) { Err(header.Cancelled) => true, _ => false };
     if (!result || polls.get() != stop) {
       return test.fail(f"cancellation poll {stop}");
     }

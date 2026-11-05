@@ -258,7 +258,7 @@ function cancellation(): test.TestOutcome {
         return seen.get() == stop;
       };
       match (planes.decode(input, planes.default_limits(), cancel)) {
-        Err(planes.PlaneCancelled()) => {},
+        Err(planes.PlaneCancelled) => {},
         _ => {
           return test.fail("every cancellation offset");
         }

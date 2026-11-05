@@ -43,13 +43,13 @@ function results(pair: ssaprepare.Emitted[], row_index: i32, arch: string): void
           let used = ssa.SBlock { ...block, insts: block.insts.with(oi + 1, load) };
           bad = ssa.SFunc { ...renamed, blocks: renamed.blocks.with(bi, used) };
           check(pair.with(row_index, changed(row, bad)), arch, row.label_name + ": child slot mismatch");
-          hits = hits + 1;
+          hits += 1;
         }
-        hits = hits + 1;
+        hits += 1;
       }
-      oi = oi + 1;
+      oi += 1;
     }
-    bi = bi + 1;
+    bi += 1;
   }
   require(hits == (if (row.label_name == "__sem_drop_Parent") { 3 } else { 1 }), 229);
 }

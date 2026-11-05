@@ -11,40 +11,40 @@ function drop_prefix(): string {
 }
 
 function is_resource_drop(name: string): boolean {
-  let pre: string = drop_prefix();
+  let pre = drop_prefix();
   if (name.len() <= pre.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < pre.len()) {
     if (name[i] != pre[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function name_from(s: string, from: i32): string {
   let bytes: u8[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < s.len()) {
     bytes = bytes.append(s[i]);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
 
 function surface_resource(w: WorldWired, inst: i32, res: string): (WorldWired, i32) {
-  let i: i32 = 0;
+  let i = 0;
   while (i < w.res_names.len()) {
     if (w.res_names[i] == res) {
       return (w, w.res_types[i]);
     }
-    i = i + 1;
+    i += 1;
   }
-  let rt: i32 = w.n_type;
-  let o: i32[] = watbin.wcat(w.o, watbin.comp_alias_inst_type(inst, res));
+  let rt = w.n_type;
+  let o = watbin.wcat(w.o, watbin.comp_alias_inst_type(inst, res));
   return (WorldWired { ...w, o: o, n_type: rt + 1, res_names: w.res_names.append(res), res_types: w.res_types.append(rt) }, rt);
 }
 
@@ -53,26 +53,26 @@ function refuse(w: WorldWired, why: string): WorldWired {
 }
 
 function wire_world(tbody: i32[], ci: wit_decode.WitCoreImports, req_ifaces: string[], req_names: string[], asy: watbin.AsyncSurface): WorldWired {
-  let ifaces: string[] = req_ifaces;
-  let wanted: string[] = req_names;
-  let k: i32 = 0;
+  let ifaces = req_ifaces;
+  let wanted = req_names;
+  let k = 0;
   while (k < ci.names.len()) {
     if (world_supplied(ci.ifaces[k], ci.names[k])) {
       ifaces = ifaces.append(ci.ifaces[k]);
       wanted = wanted.append(world_name(ci.names[k]));
     }
-    k = k + 1;
+    k += 1;
   }
-  let plan: wit_decode.WitImportPlan = wit_decode.wit_import_plan(tbody, ifaces, wanted);
-  let o: i32[] = watbin.component_preamble();
+  let plan = wit_decode.wit_import_plan(tbody, ifaces, wanted);
+  let o = watbin.component_preamble();
   o = watbin.wcat(o, wit_decode.wit_emit_world_imports(tbody, plan));
-  let w: WorldWired = WorldWired { o: o, n_type: plan.n_type, n_inst: plan.n_inst, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], async_ifaces: [], async_insts: [], stream_elems: [], stream_types: [], refused: "" };
+  let w = WorldWired { o: o, n_type: plan.n_type, n_inst: plan.n_inst, plan: plan, kinds: [], insts: [], rts: [], res_names: [], res_types: [], async_ifaces: [], async_insts: [], stream_elems: [], stream_types: [], refused: "" };
   w = import_async_ifaces(w, tbody, asy.lowers);
   w = define_stream_types(w, ci);
-  let i: i32 = 0;
+  let i = 0;
   while (i < ci.ifaces.len() && w.refused.len() == 0) {
     w = wire_import(w, tbody, asy, ci.ifaces[i], ci.names[i]);
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
@@ -101,7 +101,7 @@ function import_async_ifaces(w: WorldWired, tbody: i32[], lowers: watbin.AsyncLo
           mine = mine.append(m);
         }
       }
-      let o: i32[] = watbin.wcat(w.o, watbin.comp_type_async_instance(mine));
+      let o = watbin.wcat(w.o, watbin.comp_type_async_instance(mine));
       o = watbin.wcat(o, watbin.comp_import_instance(l.iface, w.n_type));
       w = WorldWired { ...w, o: o, n_type: w.n_type + 1, n_inst: w.n_inst + 1, async_ifaces: w.async_ifaces.append(l.iface), async_insts: w.async_insts.append(w.n_inst) };
     }
@@ -124,20 +124,20 @@ function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, ifac
     return wire_async_lower(w, asy.lowers, iface, name);
   }
   if (iface == task_return_iface()) {
-    let vt: i32 = task_return_result(asy.lifts, name);
-    if (vt < 0 - 1) {
+    let vt = task_return_result(asy.lifts, name);
+    if (vt < -1) {
       return refuse(w, "core imports " + name + " from " + iface + " for no async export");
     }
     return WorldWired { ...w, kinds: w.kinds.append(4), insts: w.insts.append(0), rts: w.rts.append(vt) };
   }
-  let inst: i32 = wit_decode.wit_import_instance_index(tbody, w.plan, iface);
+  let inst = wit_decode.wit_import_instance_index(tbody, w.plan, iface);
   if (inst < 0) {
     return refuse(w, "core imports interface " + iface + " not declared by the world");
   }
-  let kind: i32 = 0;
-  let rt: i32 = 0;
+  let kind = 0;
+  let rt = 0;
   if (is_resource_drop(name)) {
-    let res: string = name_from(name, drop_prefix().len());
+    let res = name_from(name, drop_prefix().len());
     if (!wit_decode.wit_iface_has_resource(tbody, iface, res)) {
       return refuse(w, "world interface " + iface + " has no resource " + res + " to drop");
     }
@@ -156,42 +156,42 @@ function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, ifac
 
 function stream_op(name: string): (i32, string) {
   let ops: string[] = ["[stream-read]", "[stream-write]", "[stream-new]", "[stream-drop-readable]", "[stream-drop-writable]"];
-  let j: i32 = 0;
+  let j = 0;
   while (j < ops.len()) {
-    let pre: string = ops[j];
+    let pre = ops[j];
     if (name.len() > pre.len() && slice_unchecked(name, 0, pre.len()) == pre) {
       return (9 + j, name_from(name, pre.len()));
     }
-    j = j + 1;
+    j += 1;
   }
-  return (0 - 1, "");
+  return (-1, "");
 }
 
 function wit_elem_valtype(e: string): i32 {
   let names: string[] = ["bool", "u8", "s32", "u32", "s64", "u64", "f32", "f64"];
   let vts: i32[] = [127, 125, 122, 121, 120, 119, 118, 117];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == e) {
       return vts[i];
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function define_stream_types(w: WorldWired, ci: wit_decode.WitCoreImports): WorldWired {
-  let k: i32 = 0;
+  let k = 0;
   while (k < ci.names.len() && w.refused.len() == 0) {
     let (op, e) = stream_op(ci.names[k]);
     if (ci.ifaces[k] == intrinsic_iface() && op >= 0 && !util.has_str(w.stream_elems, e)) {
-      let vt: i32 = wit_elem_valtype(e);
+      let vt = wit_elem_valtype(e);
       if (vt < 0) {
         return refuse(w, "core imports " + ci.names[k] + ", a stream of no element type the composer knows");
       }
       w = WorldWired { ...w, o: watbin.wcat(w.o, watbin.comp_type_stream(vt)), n_type: w.n_type + 1, stream_elems: w.stream_elems.append(e), stream_types: w.stream_types.append(w.n_type) };
     }
-    k = k + 1;
+    k += 1;
   }
   return w;
 }
@@ -199,7 +199,7 @@ function define_stream_types(w: WorldWired, ci: wit_decode.WitCoreImports): Worl
 function wire_intrinsic(w: WorldWired, name: string): WorldWired {
   let (op, e) = stream_op(name);
   if (op >= 0) {
-    let t: i32 = w.stream_types[util.index_of_str(w.stream_elems, e)];
+    let t = w.stream_types[util.index_of_str(w.stream_elems, e)];
     return WorldWired { ...w, kinds: w.kinds.append(op), insts: w.insts.append(0), rts: w.rts.append(t) };
   }
   if (name == "[waitable-set-wait]") {
@@ -207,27 +207,27 @@ function wire_intrinsic(w: WorldWired, name: string): WorldWired {
   }
   let names: string[] = ["[waitable-set-new]", "[waitable-join]", "[subtask-drop]", "[waitable-set-drop]"];
   let ops: i32[] = [31, 35, 13, 34];
-  let j: i32 = 0;
+  let j = 0;
   while (j < names.len()) {
     if (names[j] == name) {
       return WorldWired { ...w, kinds: w.kinds.append(8), insts: w.insts.append(0), rts: w.rts.append(ops[j]) };
     }
-    j = j + 1;
+    j += 1;
   }
   return refuse(w, "core imports " + name + " from " + intrinsic_iface() + ", which is no intrinsic the composer supplies");
 }
 
 function wire_async_lower(w: WorldWired, lowers: watbin.AsyncLower[], iface: string, name: string): WorldWired {
-  let j: i32 = 0;
+  let j = 0;
   while (j < w.async_ifaces.len()) {
     if (w.async_ifaces[j] == iface) {
-      let kind: i32 = 5;
+      let kind = 5;
       if (lower_result_in_memory(lowers, iface, watbin.lowered_name(name))) {
         kind = 6;
       }
       return WorldWired { ...w, kinds: w.kinds.append(kind), insts: w.insts.append(w.async_insts[j]), rts: w.rts.append(0) };
     }
-    j = j + 1;
+    j += 1;
   }
   return refuse(w, "core imports " + name + " from " + iface + " for no async import");
 }
@@ -248,22 +248,22 @@ function task_return_iface(): string {
 function task_return_result(lifts: watbin.AsyncLift[], name: string): i32 {
   for l in lifts {
     if ("[task-return]" + l.core_name == name && l.result.len() == 0) {
-      return 0 - 1;
+      return -1;
     }
     if ("[task-return]" + l.core_name == name) {
       return l.result[0];
     }
   }
-  return 0 - 2;
+  return -2;
 }
 
 pub function compose_run(tbody: i32[], core: i32[], asy: watbin.AsyncSurface): Composed {
-  let ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-  let w: WorldWired = wire_world(tbody, ci, [], [], asy);
+  let ci = wit_decode.wit_core_func_imports(core);
+  let w = wire_world(tbody, ci, [], [], asy);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
-  let o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
+  let o = watbin.wcat(w.o, watbin.comp_core_module_section(core));
   o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.n_inst, 0, "_lang_run", asy.lifts));
   return Composed { bytes: o, refused: "" };
 }
@@ -273,19 +273,19 @@ pub function component_from_world(tbody: i32[], core: i32[]): i32[] {
 }
 
 pub function compose_http(tbody: i32[], core: i32[]): Composed {
-  let ci: wit_decode.WitCoreImports = wit_decode.wit_core_func_imports(core);
-  let http_iface: string = "wasi:http/types@0.2.0";
-  let w: WorldWired = wire_world(tbody, ci, [http_iface, http_iface], ["incoming-request", "response-outparam"], watbin.AsyncSurface { lifts: [], lowers: [] });
+  let ci = wit_decode.wit_core_func_imports(core);
+  let http_iface = "wasi:http/types@0.2.0";
+  let w = wire_world(tbody, ci, [http_iface, http_iface], ["incoming-request", "response-outparam"], watbin.AsyncSurface { lifts: [], lowers: [] });
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
-  let http_inst: i32 = wit_decode.wit_import_instance_index(tbody, w.plan, http_iface);
+  let http_inst = wit_decode.wit_import_instance_index(tbody, w.plan, http_iface);
   if (http_inst < 0) {
     return Composed { bytes: [], refused: "world does not import " + http_iface };
   }
   let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
   let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
-  let o: i32[] = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
+  let o = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
   o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, ci.results, w3.rts, w3.n_type, w3.n_inst, 0, req_t, out_t));
   return Composed { bytes: o, refused: "" };
 }

@@ -9,10 +9,10 @@ pub struct Reach { values: i32[], returns: string[], indirect: string[], cells: 
 
 function storage_kind(t: typeinfo.Type): i32 {
   if (!ssasem.reference(t)) {
-    return 0 - 1;
+    return -1;
   }
   if let typeinfo.TypeString(_) = t {
-    return 0 - 1;
+    return -1;
   }
   if let typeinfo.TypeArray(_) = t {
     return 1;
@@ -33,11 +33,11 @@ function combined_kind(a: i32, b: i32): i32 {
   if (a == 0 || b == 0) {
     return 0;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function types_kind(types: typeinfo.Type[]): i32 {
-  let kind: i32 = 0 - 1;
+  let kind: i32 = -1;
   for t in types {
     kind = combined_kind(kind, storage_kind(t));
     if (kind > 0) {
@@ -48,7 +48,7 @@ function types_kind(types: typeinfo.Type[]): i32 {
 }
 
 function fields_kind(fields: semrecords.Field[]): i32 {
-  let kind: i32 = 0 - 1;
+  let kind: i32 = -1;
   for field in fields {
     kind = combined_kind(kind, storage_kind(field.ty));
     if (kind > 0) {
@@ -87,7 +87,7 @@ function shallow_kind(f: ssasem.Func, t: typeinfo.Type): i32 {
   if let typeinfo.TypeMap(map) = t {
     return combined_kind(storage_kind(map.key), storage_kind(map.value));
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct Children { types: typeinfo.Type[], opaque: boolean }
@@ -151,10 +151,10 @@ pub function storage(f: ssasem.Func, t: typeinfo.Type): boolean {
   }
   let work: typeinfo.Type[] = [t];
   let seen: string[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < work.len()) {
     let value = work[at];
-    at = at + 1;
+    at += 1;
     let kind = storage_kind(value);
     if (kind < 0) {
       continue;
@@ -210,15 +210,15 @@ pub function reached(f: ssasem.Func, defs: ssa.SInst[], seeds: i32[], result: bo
     return Reach { values: [], returns: [], indirect: [], cells: [] };
   }
   let work = return_seeds(f, seeds, result);
-  let seen: boolean[] = __alloc_bool(f.graph.nvals);
+  let seen = __alloc_bool(f.graph.nvals);
   let values: i32[] = [];
   let returns: string[] = [];
   let indirect: string[] = [];
   let cells: string[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < work.len()) {
     let v = work[at];
-    at = at + 1;
+    at += 1;
     if (v < 0 || v >= seen.len() || seen[v]) {
       continue;
     }

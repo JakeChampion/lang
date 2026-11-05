@@ -1,0 +1,152 @@
+import "std/crypto";
+import "std/net";
+import "std/test";
+import "./rooms";
+
+function random(seed: string): u8[] {
+  let h: u8[] = crypto.sha256(seed.as_bytes());
+  let out: u8[] = [];
+  for k in 0..rooms.RANDOM_LEN {
+    out = out.append(h[k]);
+  }
+  return out;
+}
+
+function addr(last: i32, port: i32): net.SocketAddr {
+  return net.socket_addr(net.ipv4(192, 0, 2, last), port);
+}
+
+function reply_name(reply: rooms.Reply): string {
+  match (reply) {
+    rooms.Created(code, token) => {
+      return "created " + code.len().to_string() + " " + token.len().to_string();
+    },
+    rooms.Joined(token) => {
+      return "joined " + token.len().to_string();
+    },
+    rooms.Refused(why) => {
+      return "refused " + why;
+    }
+  }
+  return "";
+}
+
+function code_of(a: rooms.Answer): string {
+  if let rooms.Created(code, _) = a.reply {
+    return code;
+  }
+  return "";
+}
+
+function token_of(a: rooms.Answer): u8[] {
+  match (a.reply) {
+    rooms.Created(_, token) => {
+      return token;
+    },
+    rooms.Joined(token) => {
+      return token;
+    },
+    rooms.Refused(_) => {}
+  }
+  return [];
+}
+
+function sent_to(r: rooms.Relayed): string {
+  match (r.out) {
+    Some(f) => {
+      return f.to.to_string() + " " + f.data.len().to_string();
+    },
+    None => {}
+  }
+  return "nothing";
+}
+
+function test_a_code_has_six_letters_of_the_alphabet(): test.TestOutcome {
+  let a: rooms.Answer = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let code: string = code_of(a);
+  let bad: i32 = 0;
+  for c in code.as_bytes() {
+    if (!"ABCDEFGHJKMNPQRSTUVWXYZ23456789".contains(string_from_bytes_unchecked([c]))) {
+      bad = bad + 1;
+    }
+  }
+  return test.assert_eq(reply_name(a.reply) + " " + bad.to_string(), "created 6 16 0");
+}
+
+function test_two_phones_join_and_a_third_is_refused(): test.TestOutcome {
+  let a: rooms.Answer = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let b: rooms.Answer = rooms.join(a.rooms, "192.0.2.2", code_of(a).to_lower(), 10i64, random("b"));
+  let c: rooms.Answer = rooms.join(b.rooms, "192.0.2.3", code_of(a), 20i64, random("c"));
+  let d: rooms.Answer = rooms.join(c.rooms, "192.0.2.3", "ZZZZZZ", 30i64, random("d"));
+  return test.assert_eq(reply_name(b.reply) + ", " + reply_name(c.reply) + ", " + reply_name(d.reply), "joined 16, refused the room is full, refused no room has this code");
+}
+
+function test_an_address_has_ten_requests_a_minute(): test.TestOutcome {
+  let r: rooms.Rooms = rooms.empty();
+  let last: string = "";
+  for k in 0..rooms.RATE_MAX + 1 {
+    let a: rooms.Answer = rooms.join(r, "192.0.2.9", "AAAAAA", k as i64, random(k.to_string()));
+    r = a.rooms;
+    last = reply_name(a.reply);
+  }
+  let other: rooms.Answer = rooms.create(r, "192.0.2.8", 20i64, random("x"));
+  let later: rooms.Answer = rooms.create(other.rooms, "192.0.2.9", rooms.RATE_MS + 11i64, random("y"));
+  return test.assert_eq(last + ", " + reply_name(other.reply) + ", " + reply_name(later.reply), "refused too many requests, created 6 16, created 6 16");
+}
+
+function test_rooms_close_when_nobody_joins_or_nobody_talks(): test.TestOutcome {
+  let a: rooms.Answer = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let alone: i32 = rooms.expire(a.rooms, rooms.OPEN_MS).rooms.len();
+  let b: rooms.Answer = rooms.join(a.rooms, "192.0.2.2", code_of(a), 1000i64, random("b"));
+  let p = rooms.relay(b.rooms, addr(1, 5000), rooms.wrap(token_of(a), [1u8]), 18, rooms.IDLE_MS);
+  let busy: i32 = rooms.expire(p.rooms, rooms.IDLE_MS + rooms.IDLE_MS - 1i64).rooms.len();
+  let quiet: i32 = rooms.expire(p.rooms, rooms.IDLE_MS + rooms.IDLE_MS).rooms.len();
+  return test.assert_eq(alone.to_string() + " " + busy.to_string() + " " + quiet.to_string(), "0 1 0");
+}
+
+// The relay learns each address from the token, and it follows a phone that
+// changes network.
+function test_the_relay_sends_to_the_other_member(): test.TestOutcome {
+  let a: rooms.Answer = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let b: rooms.Answer = rooms.join(a.rooms, "192.0.2.2", code_of(a), 10i64, random("b"));
+  let ta: u8[] = token_of(a);
+  let tb: u8[] = token_of(b);
+  let packet: u8[] = [247u8, 1u8, 2u8, 3u8];
+  let s1 = rooms.relay(b.rooms, addr(1, 5000), rooms.wrap(ta, packet), 21, 20i64);
+  let s2 = rooms.relay(s1.rooms, addr(2, 6000), rooms.wrap(tb, packet), 21, 30i64);
+  let s3 = rooms.relay(s2.rooms, addr(7, 7000), rooms.wrap(ta, packet), 21, 40i64);
+  let s4 = rooms.relay(s3.rooms, addr(2, 6000), rooms.wrap(tb, packet), 21, 50i64);
+  let stranger = rooms.relay(s4.rooms, addr(9, 9000), rooms.wrap(random("z"), packet), 21, 60i64);
+  return test.assert_eq(sent_to(s1) + ", " + sent_to(s2) + ", " + sent_to(s3) + ", " + sent_to(s4) + ", " + sent_to(stranger), "nothing, 192.0.2.1:5000 4, 192.0.2.2:6000 4, 192.0.2.7:7000 4, nothing");
+}
+
+function test_short_or_foreign_datagrams_are_dropped(): test.TestOutcome {
+  let a: rooms.Answer = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let wrapped: u8[] = rooms.wrap(token_of(a), []);
+  let short = rooms.relay(a.rooms, addr(1, 5000), wrapped, wrapped.len(), 10i64);
+  let foreign = rooms.relay(a.rooms, addr(1, 5000), [247u8, 1u8, 2u8], 3, 10i64);
+  return test.assert_eq(sent_to(short) + " " + sent_to(foreign), "nothing nothing");
+}
+
+function test_the_lines_round_trip(): test.TestOutcome {
+  let a: rooms.Answer = rooms.answer(rooms.empty(), "192.0.2.1", "CREATE\n", 0i64, random("a"));
+  let room_line: string = rooms.reply_line(a.reply);
+  let b: rooms.Answer = rooms.answer(a.rooms, "192.0.2.2", "JOIN " + code_of(a) + "\r\n", 10i64, random("b"));
+  let bad: rooms.Answer = rooms.answer(b.rooms, "192.0.2.3", "JOIN AB", 20i64, random("c"));
+  let parsed: string = reply_name(rooms.parse_reply(room_line)) + ", " + reply_name(rooms.parse_reply(rooms.reply_line(b.reply)));
+  let errors: string = reply_name(rooms.parse_reply(rooms.reply_line(bad.reply))) + ", " + reply_name(rooms.parse_reply("HELLO"));
+  let same: boolean = rooms.reply_line(rooms.parse_reply(room_line)) == room_line;
+  return test.assert_eq(parsed + ", " + errors + ", " + same.to_string(), "created 6 16, joined 16, refused unknown request, refused the server sent an unknown reply, true");
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.new("walkie rooms");
+  t = t.it("a code has six letters of the alphabet", test_a_code_has_six_letters_of_the_alphabet);
+  t = t.it("two phones join and a third is refused", test_two_phones_join_and_a_third_is_refused);
+  t = t.it("an address has ten requests a minute", test_an_address_has_ten_requests_a_minute);
+  t = t.it("rooms close when nobody joins or nobody talks", test_rooms_close_when_nobody_joins_or_nobody_talks);
+  t = t.it("the relay sends to the other member", test_the_relay_sends_to_the_other_member);
+  t = t.it("short or foreign datagrams are dropped", test_short_or_foreign_datagrams_are_dropped);
+  t = t.it("the lines round trip", test_the_lines_round_trip);
+  return t.finish();
+}

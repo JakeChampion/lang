@@ -8,7 +8,7 @@ function before(a: string, b: string): boolean {
     if (a[i] != b[i]) {
       return a[i] < b[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return a.len() < b.len();
 }
@@ -21,12 +21,12 @@ function merge_names(names: string[], order: i32[], left: i32, mid: i32, end: i3
   while (at < end) {
     if (b >= end || a < mid && !before(names[order[b]], names[order[a]])) {
       out = out.with(at, order[a]);
-      a = a + 1;
+      a += 1;
     } else {
       out = out.with(at, order[b]);
-      b = b + 1;
+      b += 1;
     }
-    at = at + 1;
+    at += 1;
   }
   return out;
 }
@@ -51,7 +51,7 @@ function duplicate_name(names: string[], order: i32[]): i32 {
     if (names[at] == names[order[i - 1]] && (duplicate < 0 || at < duplicate)) {
       duplicate = at;
     }
-    i = i + 1;
+    i += 1;
   }
   return duplicate;
 }
@@ -63,7 +63,7 @@ pub function index(names: string[]): Names {
     if (names[i] != "") {
       order = order.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   let width = 1;
   while (width < order.len()) {

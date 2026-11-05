@@ -52,9 +52,9 @@ function position(ops: ssa.SInst[], kind: i32, name: string, occurrence: i32): i
       if (count == occurrence) {
         return at;
       }
-      count = count + 1;
+      count += 1;
     }
-    at = at + 1;
+    at += 1;
   }
   require(false, "operation present");
   return -1;
@@ -195,7 +195,7 @@ pub function run(): void {
     let i = 0;
     for event in relation.events {
       require(event.kind == i % 2 && event.allocation == i / 2, "actual event identity and order");
-      i = i + 1;
+      i += 1;
     }
     let f = retained.resolve(output, "caller").rows[0].body.formed.f;
     mutations(output, f);

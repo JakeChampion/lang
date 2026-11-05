@@ -207,10 +207,10 @@ function assertion_signature_error(c: ssasem.Contract): string {
 function replacement_scalar_fields(sub: ircore.Sub, c: ssasem.Contract, parent: semrecords.Record): ScalarFields {
   let fields: reuse.ScalarField[] = [];
   let types = [c.params[1], parent.fields[0].ty, parent.fields[1].ty];
-  let root: i32 = 3;
+  let root = 3;
   for ty in types {
     let ri = semrecords.find(sub.physical_records, ty);
-    let index: i32 = 0;
+    let index = 0;
     for field in sub.physical_records.list[ri].fields {
       if (index > 268435454) {
         return ScalarFields { fields: [], error: "unrepresentable scalar child field" };
@@ -220,17 +220,17 @@ function replacement_scalar_fields(sub: ircore.Sub, c: ssasem.Contract, parent: 
           fields = fields.append(reuse.ScalarField { root: root, offset: (index + 1) * 8 });
         }
       }
-      index = index + 1;
+      index += 1;
     }
-    root = root + 1;
+    root += 1;
   }
   return ScalarFields { fields: fields, error: "" };
 }
 
 function extraction_slots(sub: ircore.Sub, c: ssasem.Contract, p: semrecords.Record, selected: i32): ExtractionSlots {
-  let index: i32 = -1;
+  let index = -1;
   let offsets: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for field in p.fields {
     if (!scalar(field.ty)) {
       if (selected < 0 && (index >= 0 || !semtypes.equal(field.ty, c.result))) {
@@ -251,7 +251,7 @@ function extraction_slots(sub: ircore.Sub, c: ssasem.Contract, p: semrecords.Rec
         index = i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (index < 0 || index > 268435454) {
     return ExtractionSlots { offsets: [], index: -1, error: "missing or unrepresentable child slot" };
@@ -308,8 +308,8 @@ function no_incoming(name: string, why: string): incoming.Boundary {
 }
 
 function incoming_schema_index(sub: ircore.Sub, ty: typeinfo.Type): i32 {
-  let found: i32 = -1;
-  let index: i32 = 0;
+  let found = -1;
+  let index = 0;
   for record in sub.physical_records.list {
     if (semtypes.equal(record.ty, ty)) {
       if (found >= 0) {
@@ -317,7 +317,7 @@ function incoming_schema_index(sub: ircore.Sub, ty: typeinfo.Type): i32 {
       }
       found = index;
     }
-    index = index + 1;
+    index += 1;
   }
   return found;
 }
@@ -651,7 +651,7 @@ function producer_metadata_layout(metadata: physicalbody.Metadata, name: string)
     return no_producer_layout("unsupported producer layout or ABI arity");
   }
   let refs: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for field in record.fields {
     if (!semtypes.equal(field.ty, c.params[i])) {
       return no_producer_layout("producer parameter differs from field");
@@ -667,7 +667,7 @@ function producer_metadata_layout(metadata: physicalbody.Metadata, name: string)
       }
     }
     refs = refs.append(ref);
-    i = i + 1;
+    i += 1;
   }
   return ProducerLayout { shape: semrecords.name_of(record.ty), references: refs, error: "" };
 }

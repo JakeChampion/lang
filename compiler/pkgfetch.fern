@@ -18,11 +18,11 @@ pub function fetch(url: string, hash: string): fern.Fetched {
   if (derr.len() > 0) {
     return failed(derr);
   }
-  let got: string = "sha256:" + hex.encode(crypto.sha256_new().update(raw).finish());
+  let got = "sha256:" + hex.encode(crypto.sha256_new().update(raw).finish());
   if (hash.len() > 0 && got != hash) {
     return failed("fetch " + url + ": hash mismatch — manifest declares " + hash + ", server sent " + got + "; refusing to unpack");
   }
-  let dir: string = "";
+  let dir = "";
   match (modloader.store_dir(got)) {
     Some(d) => {
       dir = slice_unchecked(d, 0, d.len() - 1) + "";
@@ -34,7 +34,7 @@ pub function fetch(url: string, hash: string): fern.Fetched {
   if (util.is_dir(dir)) {
     return fern.Fetched { hash: got, dir: dir, err: "" };
   }
-  let uerr: string = unpack_into(dir, raw);
+  let uerr = unpack_into(dir, raw);
   if (uerr.len() > 0) {
     return failed("fetch " + url + ": " + uerr);
   }
@@ -46,8 +46,8 @@ function failed(err: string): fern.Fetched {
 }
 
 function download(url: string): (u8[], string) {
-  let limits: http.HttpLimits = http.HttpLimits { ...http.limits(), body: MAX_ARCHIVE };
-  let req: fetch.Request = fetch.get(url).with_header("Accept-Encoding", "identity").with_limits(limits);
+  let limits = http.HttpLimits { ...http.limits(), body: MAX_ARCHIVE };
+  let req = fetch.get(url).with_header("Accept-Encoding", "identity").with_limits(limits);
   match (fetch.send(req)) {
     Ok(resp) => {
       if (resp.status != 200) {
@@ -72,13 +72,13 @@ function unpack_into(dir: string, raw: u8[]): string {
       return "cannot gunzip the archive: " + e.message();
     }
   }
-  let parent: string = util.dir_of(dir);
-  let suffix: string = "";
+  let parent = util.dir_of(dir);
+  let suffix = "";
   for b in rand.bytes(6) {
-    suffix = suffix + util.i32_to_string(b as i32);
+    suffix += util.i32_to_string(b as i32);
   }
-  let tmp: string = parent + "/.unpack-" + suffix;
-  let err: string = write_entries(tmp, tar);
+  let tmp = parent + "/.unpack-" + suffix;
+  let err = write_entries(tmp, tar);
   if (err.len() == 0) {
     err = install(tmp, dir);
   }
@@ -90,7 +90,7 @@ function unpack_into(dir: string, raw: u8[]): string {
 }
 
 function install(tmp: string, dir: string): string {
-  let src: string = tmp;
+  let src = tmp;
   match (read_dir(tmp)) {
     Ok(names) => {
       if (names.len() == 1 && util.is_dir(tmp + "/" + names[0])) {
@@ -122,10 +122,10 @@ function write_entries(tmp: string, t: u8[]): string {
       return "cannot create " + tmp + ": " + e.message();
     }
   }
-  let next_name: string = "";
-  let off: i32 = 0;
+  let next_name = "";
+  let off = 0;
   while (off + 512 <= t.len() && t[off] != 0) {
-    let e: Entry = header(t, off);
+    let e = header(t, off);
     if (e.size < 0 || e.at + e.size > t.len()) {
       return "reading tar: truncated archive";
     }
@@ -138,7 +138,7 @@ function write_entries(tmp: string, t: u8[]): string {
       e = Entry { ...e, name: next_name };
       next_name = "";
     }
-    let err: string = write_entry(tmp, t, e);
+    let err = write_entry(tmp, t, e);
     if (err.len() > 0) {
       return err;
     }
@@ -161,21 +161,21 @@ function names_next(t: u8[], e: Entry): string {
 }
 
 function write_entry(tmp: string, t: u8[], e: Entry): string {
-  let name: string = clean(e.name);
+  let name = clean(e.name);
   if (name == ".") {
     return "";
   }
   if (escapes(name)) {
     return "archive entry " + quoted(e.name) + " escapes the package directory";
   }
-  let dst: string = tmp + "/" + name;
+  let dst = tmp + "/" + name;
   if (e.kind == b'5') {
     return made(create_dir_all(dst), dst);
   }
   if (e.kind != b'0' && e.kind != 0) {
     return "archive entry " + quoted(e.name) + " has unsupported type " + util.i32_to_string(e.kind as i32) + " (only files and directories)";
   }
-  let err: string = made(create_dir_all(util.dir_of(dst)), util.dir_of(dst));
+  let err = made(create_dir_all(util.dir_of(dst)), util.dir_of(dst));
   if (err.len() > 0) {
     return err;
   }
@@ -205,9 +205,9 @@ function made(r: Result[void, IoError], path: string): string {
 }
 
 function header(t: u8[], off: i32): Entry {
-  let name: string = c_string(t, off, 100);
+  let name = c_string(t, off, 100);
   if (c_string(t, off + 257, 5) == "ustar") {
-    let prefix: string = c_string(t, off + 345, 155);
+    let prefix = c_string(t, off + 345, 155);
     if (prefix.len() > 0) {
       name = prefix + "/" + name;
     }
@@ -216,74 +216,74 @@ function header(t: u8[], off: i32): Entry {
 }
 
 function c_string(t: u8[], at: i32, n: i32): string {
-  let end: i32 = at;
+  let end = at;
   while (end < at + n && t[end] != 0) {
-    end = end + 1;
+    end += 1;
   }
   return string_from_bytes_unchecked(bytes(t, at, end));
 }
 
 function bytes(t: u8[], from: i32, to: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     out = out.append(t[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function octal(t: u8[], at: i32, n: i32): i32 {
-  let v: i32 = 0;
-  let i: i32 = at;
+  let v = 0;
+  let i = at;
   while (i < at + n) {
-    let c: u8 = t[i];
+    let c = t[i];
     if (c >= b'0' && c <= b'7') {
       v = v * 8 + (c - b'0') as i32;
     } else if (c != b' ' && c != 0) {
-      return 0 - 1;
+      return -1;
     }
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function pax_path(t: u8[], at: i32, size: i32): string {
-  let i: i32 = at;
+  let i = at;
   while (i < at + size) {
-    let sp: i32 = i;
+    let sp = i;
     while (sp < at + size && t[sp] != b' ') {
-      sp = sp + 1;
+      sp += 1;
     }
-    let len: i32 = decimal(t, i, sp);
+    let len = decimal(t, i, sp);
     if (len <= 0 || i + len > at + size) {
       return "";
     }
-    let rec: string = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
+    let rec = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
     if (util.str_has_prefix(rec, "path=")) {
       return slice_unchecked(rec, 5, rec.len()) + "";
     }
-    i = i + len;
+    i += len;
   }
   return "";
 }
 
 function decimal(t: u8[], from: i32, to: i32): i32 {
-  let v: i32 = 0;
-  let i: i32 = from;
+  let v = 0;
+  let i = from;
   while (i < to) {
     if (t[i] < b'0' || t[i] > b'9') {
-      return 0 - 1;
+      return -1;
     }
     v = v * 10 + (t[i] - b'0') as i32;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function clean(p: string): string {
   let segs: string[] = [];
-  let lead: string = "";
+  let lead = "";
   if (p.len() > 0 && p[0] == b'/') {
     lead = "/";
   }
@@ -294,7 +294,7 @@ function clean(p: string): string {
       segs = segs.append(seg);
     }
   }
-  let out: string = lead + joined(segs);
+  let out = lead + joined(segs);
   if (out.len() == 0) {
     return ".";
   }
@@ -302,38 +302,38 @@ function clean(p: string): string {
 }
 
 function joined(segs: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < segs.len()) {
     if (i > 0) {
-      out = out + "/";
+      out += "/";
     }
-    out = out + segs[i];
-    i = i + 1;
+    out += segs[i];
+    i += 1;
   }
   return out;
 }
 
 function split(p: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i <= p.len()) {
     if (i == p.len() || p[i] == b'/') {
       out = out.append(slice_unchecked(p, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function drop_last(xs: string[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

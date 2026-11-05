@@ -15,9 +15,9 @@ struct Same { of: i32[], merged: i32 }
 struct Across { reads: ssa.SInst[], at: i32[], slots: Slots, dom: ssadeps.Dom }
 
 pub function merge(f: ssasem.Func): Merged {
-  let same: Same = Same { of: identity(f.values.len()), merged: 0 };
-  let across: Across = scalar_reads(f.graph, f.values);
-  let before: i32 = 0 - 1;
+  let same = Same { of: identity(f.values.len()), merged: 0 };
+  let across = scalar_reads(f.graph, f.values);
+  let before: i32 = -1;
   while (same.merged != before) {
     before = same.merged;
     for b in f.graph.blocks {
@@ -44,8 +44,8 @@ pub function replaced(f: ssasem.Func, same: i32[]): ssasem.Func {
 function scalar_reads(g: ssa.SFunc, values: typeinfo.Type[]): Across {
   let reads: ssa.SInst[] = [];
   let at: i32[] = [];
-  let first: i32 = 0 - 1;
-  let spread: boolean = false;
+  let first: i32 = -1;
+  let spread = false;
   for bi in 0..g.blocks.len() {
     for ins in g.blocks[bi].insts {
       if (read(ins.kind_tag) && ins.result >= 0 && ins.result < values.len() && !ssasem.reference(values[ins.result])) {
@@ -66,9 +66,9 @@ function scalar_reads(g: ssa.SFunc, values: typeinfo.Type[]): Across {
 
 function merge_dominated(a: Across, values: typeinfo.Type[], own same: Same): Same {
   for k in 0..a.reads.len() {
-    let r: ssa.SInst = a.reads[k];
+    let r = a.reads[k];
     if (same.of[r.result] == r.result) {
-      let first: i32 = dominating(a, k, same.of, values);
+      let first = dominating(a, k, same.of, values);
       if (first >= 0) {
         same = Same { of: same.of.with(r.result, first), merged: same.merged + 1 };
       }
@@ -78,15 +78,15 @@ function merge_dominated(a: Across, values: typeinfo.Type[], own same: Same): Sa
 }
 
 function dominating(a: Across, k: i32, same: i32[], values: typeinfo.Type[]): i32 {
-  let r: ssa.SInst = a.reads[k];
-  let i: i32 = a.slots.head[slot_hash(r) & a.slots.head.len() - 1];
+  let r = a.reads[k];
+  let i = a.slots.head[slot_hash(r) & a.slots.head.len() - 1];
   while (i >= 0) {
     if (a.at[i] != a.at[k] && ssadeps.dom_holds(a.dom, a.at[k], a.at[i]) && same_slot(a.reads[i], r, same, values)) {
       return stand_in(same, a.reads[i].result);
     }
     i = a.slots.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub struct Slots { head: i32[], next: i32[] }
@@ -96,28 +96,28 @@ pub function slot_hash(u: ssa.SInst): i32 {
 }
 
 pub function read_slots(reads: ssa.SInst[]): Slots {
-  let nb: i32 = 2;
+  let nb = 2;
   while (nb <= reads.len() * 2) {
-    nb = nb * 2;
+    nb *= 2;
   }
-  let head: i32[] = util.minus_ones(nb);
-  let next: i32[] = util.minus_ones(reads.len());
-  let k: i32 = reads.len() - 1;
+  let head = util.minus_ones(nb);
+  let next = util.minus_ones(reads.len());
+  let k = reads.len() - 1;
   while (k >= 0) {
-    let b: i32 = slot_hash(reads[k]) & nb - 1;
+    let b = slot_hash(reads[k]) & nb - 1;
     next = next.with(k, head[b]);
     head = head.with(b, k);
-    k = k - 1;
+    k -= 1;
   }
   return Slots { head: head, next: next };
 }
 
 pub function identity(n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
-  let k: i32 = 0;
+  let out = __alloc_i32(n);
+  let k = 0;
   while (k < n) {
     out = out.with(k, k);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
@@ -126,8 +126,8 @@ function merge_block(b: ssa.SBlock, values: typeinfo.Type[], own same: Same): Sa
   let seen: ssa.SInst[] = [];
   for ins in b.insts {
     if (read(ins.kind_tag) && ins.result >= 0 && ins.result < same.of.len() && same.of[ins.result] == ins.result) {
-      let args: i32[] = renamed(ins.args, same.of);
-      let first: i32 = earlier(seen, ins, args, values);
+      let args = renamed(ins.args, same.of);
+      let first = earlier(seen, ins, args, values);
       if (first >= 0) {
         same = Same { of: same.of.with(ins.result, first), merged: same.merged + 1 };
       } else {
@@ -149,7 +149,7 @@ function rewritten(b: ssa.SBlock, same: i32[]): ssa.SBlock {
 }
 
 function renamed_inst(ins: ssa.SInst, same: i32[]): ssa.SInst {
-  let base: i32 = ssasem.update_base(ins);
+  let base = ssasem.update_base(ins);
   if (base >= 0) {
     return ssa.SInst { ...ins, args: renamed(ins.args, same), imm: stand_in(same, base) + 1 };
   }
@@ -171,32 +171,32 @@ function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinf
       return s.result;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function same_args(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function renamed(args: i32[], same: i32[]): i32[] {
-  let out: i32[] = args;
-  let i: i32 = 0;
+  let out = args;
+  let i = 0;
   while (i < args.len()) {
-    let v: i32 = stand_in(same, args[i]);
+    let v = stand_in(same, args[i]);
     if (v != args[i]) {
       out = out.with(i, v);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

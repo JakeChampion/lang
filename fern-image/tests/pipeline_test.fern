@@ -112,13 +112,13 @@ function cancellation(): test.TestOutcome {
     return test.fail("solid graph");
   };
   graph = match (pipeline.nearest(graph, 128, 1, limits)) { Ok(v) => v, Err(_) => { return test.fail("nearest graph"); } };
-  let before = match (pipeline.render_row(graph, 0, limits, always_cancel)) { Err(pipeline.Cancelled()) => true, _ => false };
+  let before = match (pipeline.render_row(graph, 0, limits, always_cancel)) { Err(pipeline.Cancelled) => true, _ => false };
   let calls = cell_new(0);
   let cancelled = (): boolean => {
     calls.set(calls.get() + 1);
     return calls.get() >= 9;
   };
-  let during = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled()) => true, _ => false };
+  let during = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled) => true, _ => false };
   let after = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v.data.len() == 512, Err(_) => false };
   return test.assert_true(before && during && calls.get() > 1 && after);
 }

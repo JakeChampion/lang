@@ -99,7 +99,7 @@ pub function run(): void {
         consistent(row);
         bindings(row);
         if (row.label_name == "__sem_release_Parent") {
-          hits = hits + 1;
+          hits += 1;
           require(row.release_entry.counted == !debug, 77);
           let drop = if (arm || debug) { "" } else { "__sem_drop_Parent" };
           require(row.release_entry.unique_drop == drop, 78);

@@ -23,12 +23,12 @@ function valid(a: Arena, id: i32): boolean {
 }
 
 function node(a: Arena, n: Node): Built {
-  let i: i32 = 0;
+  let i = 0;
   for old in a.nodes {
     if (old.variable == n.variable && old.low == n.low && old.high == n.high && old.value == n.value) {
       return Built { arena: a, id: i };
     }
-    i = i + 1;
+    i += 1;
   }
   return Built { arena: Arena { ...a, nodes: a.nodes.append(n) }, id: i };
 }
@@ -99,14 +99,14 @@ pub function combine(a: Arena, op: i32, left: i32, right: i32): Result[Built, Bu
     }
     constant(a, value as i32)
   } else {
-    let v: i32 = l.variable;
+    let v = l.variable;
     if (v < 0 || r.variable >= 0 && r.variable < v) {
       v = r.variable;
     }
-    let ll: i32 = left;
-    let lh: i32 = left;
-    let rl: i32 = right;
-    let rh: i32 = right;
+    let ll = left;
+    let lh = left;
+    let rl = right;
+    let rh = right;
     if (l.variable == v) {
       ll = l.low;
       lh = l.high;
@@ -135,17 +135,17 @@ pub function evaluate(a: Arena, id: i32, variables: i32[], values: boolean[]): O
   if (!valid(a, id) || variables.len() != values.len()) {
     return None;
   }
-  let i: i32 = 0;
+  let i = 0;
   for v in variables {
     if (v < 0 || util.index_of_i32(variables, v) != i) {
       return None;
     }
-    i = i + 1;
+    i += 1;
   }
-  let at: i32 = id;
+  let at = id;
   while (a.nodes[at].variable >= 0) {
     let n = a.nodes[at];
-    let p: i32 = util.index_of_i32(variables, n.variable);
+    let p = util.index_of_i32(variables, n.variable);
     if (p < 0) {
       return None;
     }

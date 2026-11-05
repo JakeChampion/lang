@@ -85,8 +85,8 @@ function scalar_class(bytes: i64): i32 {
   let quantum = 131072 as i64;
   let octave = 0;
   while (bytes > quantum * (8 as i64)) {
-    quantum = quantum * (2 as i64);
-    octave = octave + 1;
+    quantum *= 2 as i64;
+    octave += 1;
   }
   let count = (bytes + quantum - 1 as i64) / quantum;
   return octave * 4 + count as i32 - 4;
@@ -146,7 +146,7 @@ pub function audit(limit: i32): void {
     if (at < limit) {
       row(r);
     }
-    at = at + 1;
+    at += 1;
   }
   require(next == 4294967296 as i64, "full unsigned capacity coverage");
 }

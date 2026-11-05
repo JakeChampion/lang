@@ -37,12 +37,12 @@ function main(): i32 {
     "Option[i32]", "Vec[T]", "Foo[T]",
     "Bogus[]", "mod.Thing", "",
   ];
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < corpus.len()) {
-    let t: typeinfo.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
+    let t = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
     out = out + corpus[i] + " => " + checker.type_debug(t) + "\n";
-    i = i + 1;
+    i += 1;
   }
   let callables: string[] = [
     "() => i32[]", "((i32) => string[][])", "((i32) => string)[]",
@@ -50,7 +50,7 @@ function main(): i32 {
     "() => (() => i32[])[]", "fn",
   ];
   for spelling in callables {
-    let resolved: typeinfo.Type = checker.type_from_name_with_structs_unions(spelling, structs, unions);
+    let resolved = checker.type_from_name_with_structs_unions(spelling, structs, unions);
     out = out + "callable " + spelling + " => " + callable_shape(resolved) + "\n";
   }
   write(out);

@@ -2218,6 +2218,33 @@ func TestTupleMatchPatternParses(t *testing.T) {
 	}
 }
 
+// A qualified unit variant in a tuple element needs no `()`, as in a payload.
+func TestTupleElemQualifiedUnitVariantParses(t *testing.T) {
+	prog, err := Parse(`enum Sh { A(i32), B }
+	function f(p: (Sh, Result[i32, Sh])): i32 {
+		match (p) {
+			(Sh.B, Err(Sh.B)) => { return 1; },
+			(Sh.A(n), _) => { return n; },
+			_ => {}
+		}
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	e := m.Arms[0].TupleElems
+	if len(e) != 2 || e[0].VariantModule != "Sh" || e[0].VariantName != "B" || len(e[0].VariantBindings) != 0 {
+		t.Fatalf("arm 0 elem 0 = %#v, want the unit variant Sh.B", e[0])
+	}
+	if p := e[1].VariantPayloads; e[1].VariantName != "Err" || len(p) != 1 || p[0] == nil || p[0].VariantModule != "Sh" || p[0].VariantName != "B" {
+		t.Fatalf("arm 0 elem 1 = %#v, want Err(Sh.B)", e[1])
+	}
+	if a := m.Arms[1].TupleElems[0]; a.VariantName != "A" || len(a.VariantBindings) != 1 {
+		t.Fatalf("arm 1 elem 0 = %#v, want Sh.A(n)", a)
+	}
+}
+
 func TestTupleElemVariantPatternParses(t *testing.T) {
 	prog, err := Parse(`enum Sh { A(i32), B, C(i32, i32) }
 	function f(p: (Sh, i32)): i32 {

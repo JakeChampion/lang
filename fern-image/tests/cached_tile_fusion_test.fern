@@ -189,7 +189,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() >= stop;
     };
-    let result = match (regions.render_cached_tile_fused(graph, region, limits, 4096, cancel)) { Err(pipeline.Cancelled()) => true, _ => false };
+    let result = match (regions.render_cached_tile_fused(graph, region, limits, 4096, cancel)) { Err(pipeline.Cancelled) => true, _ => false };
     if (!result || polls.get() != stop) {
       return test.fail("cancellation phase");
     }

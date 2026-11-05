@@ -160,10 +160,10 @@ function main(): i32 {
   let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_valid", 1, 1, ops, false)) { Ok(l) => l, Err(message) => { print(message); return 26; } };
   expect(lifted.func, [2], true, 0, "certified", 27);
   let bad: ir.Op[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 6) {
     bad = bad.append(ops[i]);
-    i = i + 1;
+    i += 1;
   }
   bad = bad.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   bad = bad.append(ir.op_load_local(0)).append(ir.op_return());

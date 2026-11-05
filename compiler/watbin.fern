@@ -3,10 +3,10 @@ function leb128_mask25(): i32 {
 }
 
 pub function leb_u32(buf: i32[], value: i32): i32[] {
-  let v: i32 = value;
-  let more: boolean = true;
+  let v = value;
+  let more = true;
   while (more) {
-    let b: i32 = v & 127;
+    let b = v & 127;
     v = v >> 7 & leb128_mask25();
     if (v == 0) {
       more = false;
@@ -19,13 +19,13 @@ pub function leb_u32(buf: i32[], value: i32): i32[] {
 }
 
 pub function leb_i32(buf: i32[], value: i32): i32[] {
-  let v: i32 = value;
-  let more: boolean = true;
+  let v = value;
+  let more = true;
   while (more) {
-    let b: i32 = v & 127;
+    let b = v & 127;
     v = v >> 7;
-    let sign: i32 = b & 64;
-    if (v == 0 && sign == 0 || v == 0 - 1 && sign != 0) {
+    let sign = b & 64;
+    if (v == 0 && sign == 0 || v == -1 && sign != 0) {
       more = false;
     } else {
       b = b | 128;
@@ -36,13 +36,13 @@ pub function leb_i32(buf: i32[], value: i32): i32[] {
 }
 
 function leb_i64(buf: i32[], value: i64): i32[] {
-  let v: i64 = value;
-  let more: boolean = true;
+  let v = value;
+  let more = true;
   while (more) {
-    let b: i32 = (v & 127) as i32;
+    let b = (v & 127) as i32;
     v = v >> 7;
-    let sign: i32 = b & 64;
-    if (v == 0 && sign == 0 || v == 0 - 1 && sign != 0) {
+    let sign = b & 64;
+    if (v == 0 && sign == 0 || v == -1 && sign != 0) {
       more = false;
     } else {
       b = b | 128;
@@ -60,38 +60,38 @@ function wat_is_space(c: i32): boolean {
 
 function wat_tokenize(src: string): WatTok[] {
   let toks: WatTok[] = [];
-  let i: i32 = 0;
-  let n: i32 = src.len();
+  let i = 0;
+  let n = src.len();
   while (i < n) {
-    let c: i32 = src[i] as i32;
+    let c = src[i] as i32;
     if (wat_is_space(c)) {
-      i = i + 1;
+      i += 1;
     } else if (c == 40) {
       toks = toks.append(WatTok { kind: 0, text: "(" });
-      i = i + 1;
+      i += 1;
     } else if (c == 41) {
       toks = toks.append(WatTok { kind: 1, text: ")" });
-      i = i + 1;
+      i += 1;
     } else if (c == 34) {
-      let start: i32 = i + 1;
-      let j: i32 = start;
+      let start = i + 1;
+      let j = start;
       while (j < n && src[j] != b'"') {
         if (src[j] == b'\\') {
-          j = j + 2;
+          j += 2;
         } else {
-          j = j + 1;
+          j += 1;
         }
       }
       toks = toks.append(WatTok { kind: 3, text: slice_unchecked(src, start, j) + "" });
       i = j + 1;
     } else {
-      let astart: i32 = i;
+      let astart = i;
       while (i < n) {
-        let ch: i32 = src[i] as i32;
+        let ch = src[i] as i32;
         if (wat_is_space(ch) || ch == 40 || ch == 41 || ch == 34) {
           break;
         }
-        i = i + 1;
+        i += 1;
       }
       toks = toks.append(WatTok { kind: 2, text: slice_unchecked(src, astart, i) + "" });
     }
@@ -104,14 +104,14 @@ pub struct SExpr { kind: i32, text: string, items: SExpr[] }
 pub struct ParseOne { node: SExpr, pos: i32 }
 
 function wat_parse_one(toks: WatTok[], i: i32): ParseOne {
-  let t: WatTok = toks[i];
+  let t = toks[i];
   if (t.kind != 0) {
     return ParseOne { node: SExpr { kind: t.kind, text: t.text, items: [] }, pos: i + 1 };
   }
   let children: SExpr[] = [];
-  let j: i32 = i + 1;
+  let j = i + 1;
   while (j < toks.len() && toks[j].kind != 1) {
-    let r: ParseOne = wat_parse_one(toks, j);
+    let r = wat_parse_one(toks, j);
     children = children.append(r.node);
     j = r.pos;
   }
@@ -119,24 +119,24 @@ function wat_parse_one(toks: WatTok[], i: i32): ParseOne {
 }
 
 function wat_parse(toks: WatTok[]): SExpr {
-  let r: ParseOne = wat_parse_one(toks, 0);
+  let r = wat_parse_one(toks, 0);
   return r.node;
 }
 
 pub function wcat(buf: i32[], src: i32[]): i32[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < src.len()) {
     buf = buf.append(src[i]);
-    i = i + 1;
+    i += 1;
   }
   return buf;
 }
 
 function wstr_bytes(buf: i32[], s: string): i32[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     buf = buf.append(s[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   return buf;
 }
@@ -163,7 +163,7 @@ function global_valtype(gn: SExpr): string {
   if (gn.items.len() < 3) {
     return "i32";
   }
-  let ty: SExpr = gn.items[2];
+  let ty = gn.items[2];
   if (ty.kind == 2) {
     return ty.text;
   }
@@ -209,18 +209,18 @@ function wmagic(): i32[] {
 }
 
 function index_of_str(xs: string[], s: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == s) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function name_idx(names: string[], n: string): i32 {
-  let k: i32 = index_of_str(names, n);
+  let k = index_of_str(names, n);
   if (k < 0) {
     eprint("watbin: reference to undefined " + n);
     exit(1);
@@ -236,35 +236,35 @@ function node_head(n: SExpr): string {
 }
 
 function parse_dec(s: string): i32 {
-  let neg: boolean = false;
-  let i: i32 = 0;
+  let neg = false;
+  let i = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  let base: i32 = 10;
+  let base = 10;
   if (s.len() > i + 2 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
     base = 16;
-    i = i + 2;
+    i += 2;
   }
-  let v: i32 = 0;
+  let v = 0;
   while (i < s.len()) {
     if (s[i] != b'_') {
       v = v * base + hexval(s[i] as i32);
     }
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
-    return 0 - v;
+    return -v;
   }
   return v;
 }
 
 function parse_dec_i64(s: string): i64 {
-  let neg: boolean = false;
-  let i: i32 = 0;
+  let neg = false;
+  let i = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
@@ -274,14 +274,14 @@ function parse_dec_i64(s: string): i64 {
   let base: i64 = 10;
   if (s.len() > i + 2 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
     base = 16;
-    i = i + 2;
+    i += 2;
   }
   let v: i64 = 0;
   while (i < s.len()) {
     if (s[i] != b'_') {
       v = v * base + hexval(s[i] as i32) as i64;
     }
-    i = i + 1;
+    i += 1;
   }
   let z: i64 = 0;
   if (neg) {
@@ -303,13 +303,13 @@ const PF64_HEAD: i32 = 512;
 const PF64_CAP: i32 = 2560;
 
 function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
-  let r: i32 = 0;
-  let i: i32 = lo;
+  let r = 0;
+  let i = lo;
   while (i < hi) {
-    let cur: i32 = r * 10 + buf[i];
+    let cur = r * 10 + buf[i];
     buf = buf.with(i, cur / 2);
     r = cur % 2;
-    i = i + 1;
+    i += 1;
   }
   if (r != 0) {
     buf = buf.with(hi, 5);
@@ -318,13 +318,13 @@ function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
 }
 
 function pf64_double(own buf: i32[], lo: i32, hi: i32): i32[] {
-  let carry: i32 = 0;
-  let j: i32 = hi - 1;
+  let carry = 0;
+  let j = hi - 1;
   while (j >= lo) {
-    let cur: i32 = buf[j] * 2 + carry;
+    let cur = buf[j] * 2 + carry;
     buf = buf.with(j, cur % 10);
     carry = cur / 10;
-    j = j - 1;
+    j -= 1;
   }
   return buf.with(lo - 1, carry);
 }
@@ -337,16 +337,16 @@ function pf64_top_bit(buf: i32[], lo: i32): i64 {
 }
 
 function pf64_trim(buf: i32[], lo: i32, hi: i32): i32 {
-  let h: i32 = hi;
+  let h = hi;
   while (h > lo && buf[h - 1] == 0) {
-    h = h - 1;
+    h -= 1;
   }
   return h;
 }
 
 function parse_f64_bits(s: string): i64 {
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
@@ -358,68 +358,68 @@ function parse_f64_bits(s: string): i64 {
     let one: i64 = 1;
     signbit = one << 63;
   }
-  let buf: i32[] = __alloc_i32(PF64_CAP);
-  let lo: i32 = PF64_HEAD;
-  let hi: i32 = PF64_HEAD;
-  let dp: i32 = 0;
-  let sticky: boolean = false;
-  let started: boolean = false;
+  let buf = __alloc_i32(PF64_CAP);
+  let lo = PF64_HEAD;
+  let hi = PF64_HEAD;
+  let dp = 0;
+  let sticky = false;
+  let started = false;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    let d: i32 = s[i] as i32 - 48;
+    let d = s[i] as i32 - 48;
     if (started || d != 0) {
       started = true;
       if (hi - lo < PF64_DIGITS) {
         buf = buf.with(hi, d);
-        hi = hi + 1;
+        hi += 1;
       } else {
         if (d != 0) {
           sticky = true;
         }
       }
-      dp = dp + 1;
+      dp += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] == b'.') {
-    i = i + 1;
+    i += 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      let fd: i32 = s[i] as i32 - 48;
+      let fd = s[i] as i32 - 48;
       if (started || fd != 0) {
         started = true;
         if (hi - lo < PF64_DIGITS) {
           buf = buf.with(hi, fd);
-          hi = hi + 1;
+          hi += 1;
         } else {
           if (fd != 0) {
             sticky = true;
           }
         }
       } else {
-        dp = dp - 1;
+        dp -= 1;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
-    i = i + 1;
-    let eneg: boolean = false;
+    i += 1;
+    let eneg = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
-      i = i + 1;
+      i += 1;
     } else if (i < s.len() && s[i] == b'+') {
-      i = i + 1;
+      i += 1;
     }
-    let exp: i32 = 0;
+    let exp = 0;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
       }
-      i = i + 1;
+      i += 1;
     }
     if (eneg) {
-      dp = dp - exp;
+      dp -= exp;
     } else {
-      dp = dp + exp;
+      dp += exp;
     }
   }
   hi = pf64_trim(buf, lo, hi);
@@ -430,43 +430,43 @@ function parse_f64_bits(s: string): i64 {
     let inf: i64 = 2047;
     return signbit | inf << 52;
   }
-  if (dp < 0 - 350) {
+  if (dp < -350) {
     return signbit;
   }
-  let bexp: i32 = 0;
+  let bexp = 0;
   while (dp > 0) {
-    let lead_zero: boolean = buf[lo] < 2;
-    let odd: boolean = buf[hi - 1] % 2 == 1;
+    let lead_zero = buf[lo] < 2;
+    let odd = buf[hi - 1] % 2 == 1;
     buf = pf64_halve(buf, lo, hi);
     if (odd) {
-      hi = hi + 1;
+      hi += 1;
     }
     if (lead_zero) {
-      lo = lo + 1;
-      dp = dp - 1;
+      lo += 1;
+      dp -= 1;
     }
-    bexp = bexp + 1;
+    bexp += 1;
     hi = pf64_trim(buf, lo, hi);
   }
   while (dp < 0 || hi > lo && buf[lo] < 5) {
-    let carry: boolean = buf[lo] >= 5;
+    let carry = buf[lo] >= 5;
     buf = pf64_double(buf, lo, hi);
     if (carry) {
-      lo = lo - 1;
-      dp = dp + 1;
+      lo -= 1;
+      dp += 1;
     }
-    bexp = bexp - 1;
+    bexp -= 1;
     hi = pf64_trim(buf, lo, hi);
     if (hi == lo) {
       return signbit;
     }
   }
-  let e: i32 = bexp + 1022;
+  let e = bexp + 1022;
   if (e >= 2047) {
     let inf2: i64 = 2047;
     return signbit | inf2 << 52;
   }
-  let nbits: i32 = 53;
+  let nbits = 53;
   if (e <= 0) {
     nbits = 52 + e;
   }
@@ -474,17 +474,17 @@ function parse_f64_bits(s: string): i64 {
     return signbit;
   }
   let mant: i64 = 0;
-  let k2: i32 = 0;
+  let k2 = 0;
   while (k2 < nbits) {
     mant = mant * 2 + pf64_top_bit(buf, lo);
     buf = pf64_double(buf, lo, hi);
-    k2 = k2 + 1;
+    k2 += 1;
   }
-  let roundbit: i64 = pf64_top_bit(buf, lo);
+  let roundbit = pf64_top_bit(buf, lo);
   buf = pf64_double(buf, lo, hi);
-  let st: boolean = sticky || pf64_trim(buf, lo, hi) > lo;
+  let st = sticky || pf64_trim(buf, lo, hi) > lo;
   if (roundbit == 1 && (st || (mant & 1) == 1)) {
-    mant = mant + 1;
+    mant += 1;
   }
   if (e <= 0) {
     return signbit | mant;
@@ -492,8 +492,8 @@ function parse_f64_bits(s: string): i64 {
   let full: i64 = 1;
   full = full << 53;
   if (mant == full) {
-    mant = mant / 2;
-    e = e + 1;
+    mant /= 2;
+    e += 1;
     if (e >= 2047) {
       let inf3: i64 = 2047;
       return signbit | inf3 << 52;
@@ -519,33 +519,33 @@ function hexval(c: i32): i32 {
 
 function data_bytes(s: string): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 92 && i + 1 < s.len()) {
-      let n: i32 = s[i + 1] as i32;
+      let n = s[i + 1] as i32;
       if (n == 110) {
         out = out.append(10);
-        i = i + 2;
+        i += 2;
       } else if (n == 116) {
         out = out.append(9);
-        i = i + 2;
+        i += 2;
       } else if (n == 92) {
         out = out.append(92);
-        i = i + 2;
+        i += 2;
       } else if (n == 34) {
         out = out.append(34);
-        i = i + 2;
+        i += 2;
       } else if (i + 2 < s.len()) {
         out = out.append(hexval(n) * 16 + hexval(s[i + 2] as i32));
-        i = i + 3;
+        i += 3;
       } else {
         out = out.append(c);
-        i = i + 1;
+        i += 1;
       }
     } else {
       out = out.append(c);
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
@@ -564,91 +564,91 @@ function func_name(fnode: SExpr): string {
 
 function collect_func_names(mod: SExpr): string[] {
   let names: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "import") {
       names = names.append(func_name(func_node(mod.items[i])));
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "func") {
       names = names.append(func_name(mod.items[i]));
     }
-    i = i + 1;
+    i += 1;
   }
   return names;
 }
 
 function func_header_end(fnode: SExpr): i32 {
-  let i: i32 = 2;
+  let i = 2;
   while (i < fnode.items.len()) {
-    let h: string = node_head(fnode.items[i]);
+    let h = node_head(fnode.items[i]);
     if (h != "param" && h != "result" && h != "local") {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return fnode.items.len();
 }
 
 function func_param_types(fnode: SExpr): string[] {
   let out: string[] = [];
-  let stop: i32 = func_header_end(fnode);
-  let i: i32 = 1;
+  let stop = func_header_end(fnode);
+  let i = 1;
   while (i < stop) {
-    let c: SExpr = fnode.items[i];
+    let c = fnode.items[i];
     if (node_head(c) == "param") {
       if (c.items.len() >= 2 && c.items[1].text[0] == b'$') {
         out = out.append(c.items[2].text);
       } else {
-        let j: i32 = 1;
+        let j = 1;
         while (j < c.items.len()) {
           out = out.append(c.items[j].text);
-          j = j + 1;
+          j += 1;
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function func_result_types(fnode: SExpr): string[] {
   let out: string[] = [];
-  let stop: i32 = func_header_end(fnode);
-  let i: i32 = 1;
+  let stop = func_header_end(fnode);
+  let i = 1;
   while (i < stop) {
-    let c: SExpr = fnode.items[i];
+    let c = fnode.items[i];
     if (node_head(c) == "result") {
-      let j: i32 = 1;
+      let j = 1;
       while (j < c.items.len()) {
         out = out.append(c.items[j].text);
-        j = j + 1;
+        j += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function local_names(fnode: SExpr): string[] {
   let out: string[] = [];
-  let stop: i32 = func_header_end(fnode);
-  let i: i32 = 2;
+  let stop = func_header_end(fnode);
+  let i = 2;
   while (i < stop) {
     if (node_head(fnode.items[i]) == "param") {
       out = add_slot_names(out, fnode.items[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   i = 2;
   while (i < stop) {
     if (node_head(fnode.items[i]) == "local") {
       out = add_slot_names(out, fnode.items[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -657,32 +657,32 @@ function add_slot_names(out: string[], c: SExpr): string[] {
   if (c.items.len() >= 2 && c.items[1].text.len() > 0 && c.items[1].text[0] == b'$') {
     return out.append(c.items[1].text);
   }
-  let k: i32 = 1;
+  let k = 1;
   while (k < c.items.len()) {
     out = out.append("");
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function local_decl_types(fnode: SExpr): string[] {
   let out: string[] = [];
-  let stop: i32 = func_header_end(fnode);
-  let i: i32 = 2;
+  let stop = func_header_end(fnode);
+  let i = 2;
   while (i < stop) {
-    let c: SExpr = fnode.items[i];
+    let c = fnode.items[i];
     if (node_head(c) == "local") {
       if (c.items.len() >= 3 && c.items[1].text.len() > 0 && c.items[1].text[0] == b'$') {
         out = out.append(c.items[2].text);
       } else {
-        let k: i32 = 1;
+        let k = 1;
         while (k < c.items.len()) {
           out = out.append(c.items[k].text);
-          k = k + 1;
+          k += 1;
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -978,22 +978,22 @@ function arith_opcode(op: string): i32 {
 
 function labels_push(labels: string[], x: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < labels.len()) {
     out = out.append(labels[i]);
-    i = i + 1;
+    i += 1;
   }
   out = out.append(x);
   return out;
 }
 
 function label_depth(labels: string[], name: string): i32 {
-  let i: i32 = labels.len() - 1;
+  let i = labels.len() - 1;
   while (i >= 0) {
     if (labels[i] == name) {
       return labels.len() - 1 - i;
     }
-    i = i - 1;
+    i -= 1;
   }
   return 0;
 }
@@ -1023,7 +1023,7 @@ function sat_trunc_opcode(op: string): i32 {
   if (op == "i64.trunc_sat_f64_u") {
     return 7;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function simd_opcode(op: string): i32 {
@@ -1228,7 +1228,7 @@ function simd_opcode(op: string): i32 {
   if (op == "i64x2.extract_lane") {
     return 29;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function simd_has_memarg(op: string): boolean {
@@ -1254,7 +1254,7 @@ function str_starts_with(s: string, prefix: string): boolean {
 }
 
 function simd_lane_index(op: string, text: string): i32 {
-  let lanes: i32 = 16;
+  let lanes = 16;
   if (str_starts_with(op, "f64x2.") || str_starts_with(op, "i64x2.")) {
     lanes = 2;
   } else if (str_starts_with(op, "f32x4.") || str_starts_with(op, "i32x4.")) {
@@ -1262,7 +1262,7 @@ function simd_lane_index(op: string, text: string): i32 {
   } else if (str_starts_with(op, "i16x8.")) {
     lanes = 8;
   }
-  let idx: i32 = parse_dec(text);
+  let idx = parse_dec(text);
   if (idx < 0 || idx >= lanes) {
     eprint("watbin: lane index out of range: " + op + " " + text);
     exit(1);
@@ -1298,11 +1298,11 @@ function bulk_mem_opcode(op: string): i32 {
   if (op == "memory.fill") {
     return 11;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function bulk_mem_tail(out: i32[], idx: i32): i32[] {
-  let o: i32[] = leb_u32(out, idx);
+  let o = leb_u32(out, idx);
   o = o.append(0);
   if (idx == 10) {
     o = o.append(0);
@@ -1389,7 +1389,7 @@ function mem_store_opcode(op: string): i32 {
 
 function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[], labels: string[], tnames: string[]): i32[] {
   let out: i32[] = [];
-  let op: string = node.items[0].text;
+  let op = node.items[0].text;
   if (op == "i32.const") {
     out = out.append(65);
     return leb_i32(out, parse_dec(node.items[1].text));
@@ -1400,11 +1400,11 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
   }
   if (op == "f64.const") {
     out = out.append(68);
-    let bits: i64 = f64_bits(parse_f64(node.items[1].text));
+    let bits = f64_bits(parse_f64(node.items[1].text));
     let k: i32 = 0;
     while (k < 8) {
       out = out.append((bits >> k * 8 & 255) as i32);
-      k = k + 1;
+      k += 1;
     }
     return out;
   }
@@ -1448,20 +1448,20 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return out;
   }
   if (op == "call") {
-    let k: i32 = 2;
+    let k = 2;
     while (k < node.items.len()) {
       out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
-      k = k + 1;
+      k += 1;
     }
     out = out.append(16);
     return leb_u32(out, name_idx(fnames, node.items[1].text));
   }
   if (op == "call_indirect") {
-    let lasti: i32 = node.items.len() - 1;
-    let k: i32 = 2;
+    let lasti = node.items.len() - 1;
+    let k = 2;
     while (k < lasti) {
       out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
-      k = k + 1;
+      k += 1;
     }
     out = wcat(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
     out = out.append(17);
@@ -1487,16 +1487,16 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     return leb_u32(out, label_depth(labels, node.items[1].text));
   }
   if (op == "block" || op == "loop") {
-    let bi: i32 = 1;
-    let label: string = "";
+    let bi = 1;
+    let label = "";
     if (node.items[1].kind == 2 && node.items[1].text[0] == b'$') {
       label = node.items[1].text;
       bi = 2;
     }
-    let bt: i32 = 64;
+    let bt = 64;
     if (bi < node.items.len() && node_head(node.items[bi]) == "result") {
       bt = valtype_byte(node.items[bi].items[1].text);
-      bi = bi + 1;
+      bi += 1;
     }
     if (op == "block") {
       out = out.append(2);
@@ -1504,17 +1504,17 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       out = out.append(3);
     }
     out = out.append(bt);
-    let inner: string[] = labels_push(labels, label);
+    let inner = labels_push(labels, label);
     while (bi < node.items.len()) {
       out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner, tnames));
-      bi = bi + 1;
+      bi += 1;
     }
     out = out.append(11);
     return out;
   }
   if (op == "if") {
-    let ci: i32 = 1;
-    let ibt: i32 = 64;
+    let ci = 1;
+    let ibt = 64;
     if (node_head(node.items[1]) == "result") {
       ibt = valtype_byte(node.items[1].items[1].text);
       ci = 2;
@@ -1522,29 +1522,29 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels, tnames));
     out = out.append(4);
     out = out.append(ibt);
-    let iinner: string[] = labels_push(labels, "");
-    let thenN: SExpr = node.items[ci + 1];
-    let tk: i32 = 1;
+    let iinner = labels_push(labels, "");
+    let thenN = node.items[ci + 1];
+    let tk = 1;
     while (tk < thenN.items.len()) {
       out = wcat(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner, tnames));
-      tk = tk + 1;
+      tk += 1;
     }
     if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
       out = out.append(5);
-      let elseN: SExpr = node.items[ci + 2];
-      let ek: i32 = 1;
+      let elseN = node.items[ci + 2];
+      let ek = 1;
       while (ek < elseN.items.len()) {
         out = wcat(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner, tnames));
-        ek = ek + 1;
+        ek += 1;
       }
     }
     out = out.append(11);
     return out;
   }
-  let ml: i32 = mem_load_opcode(op);
+  let ml = mem_load_opcode(op);
   if (ml != 0) {
-    let loff: i32 = 0;
-    let lopnd: i32 = 1;
+    let loff = 0;
+    let lopnd = 1;
     if (node.items.len() > 2 && is_offset_atom(node.items[1])) {
       loff = offset_atom_value(node.items[1]);
       lopnd = 2;
@@ -1555,10 +1555,10 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = leb_u32(out, loff);
     return out;
   }
-  let ms: i32 = mem_store_opcode(op);
+  let ms = mem_store_opcode(op);
   if (ms != 0) {
-    let soff: i32 = 0;
-    let sbase: i32 = 1;
+    let soff = 0;
+    let sbase = 1;
     if (node.items.len() > 3 && is_offset_atom(node.items[1])) {
       soff = offset_atom_value(node.items[1]);
       sbase = 2;
@@ -1577,23 +1577,23 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(27);
     return out;
   }
-  let stf: i32 = sat_trunc_opcode(op);
+  let stf = sat_trunc_opcode(op);
   if (stf >= 0) {
     out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     out = out.append(252);
     return leb_u32(out, stf);
   }
-  let sop: i32 = simd_opcode(op);
+  let sop = simd_opcode(op);
   if (sop >= 0) {
-    let sa: i32 = simd_arity(op);
-    let first: i32 = 1;
+    let sa = simd_arity(op);
+    let first = 1;
     if (simd_has_lane(op)) {
       first = 2;
     }
-    let sk: i32 = first;
+    let sk = first;
     while (sk < first + sa) {
       out = wcat(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
-      sk = sk + 1;
+      sk += 1;
     }
     out = out.append(253);
     out = leb_u32(out, sop);
@@ -1606,7 +1606,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     return out;
   }
-  let blk: i32 = bulk_mem_opcode(op);
+  let blk = bulk_mem_opcode(op);
   if (blk >= 0) {
     out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
@@ -1614,7 +1614,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     out = out.append(252);
     return bulk_mem_tail(out, blk);
   }
-  let ao: i32 = arith_opcode(op);
+  let ao = arith_opcode(op);
   if (ao != 0) {
     out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
     if (op != "i32.eqz" && node.items.len() > 2) {
@@ -1639,63 +1639,63 @@ function flat_idx(text: string, names: string[]): i32 {
 
 function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnames: string[], tnames: string[]): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < instrs.len()) {
-    let op: string = instrs[i].text;
+    let op = instrs[i].text;
     if (op == "i32.const") {
       out = out.append(65);
       out = leb_i32(out, parse_dec(instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "i64.const") {
       out = out.append(66);
       out = leb_i64(out, parse_dec_i64(instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "f64.const") {
       out = out.append(68);
-      let fbits: i64 = f64_bits(parse_f64(instrs[i + 1].text));
+      let fbits = f64_bits(parse_f64(instrs[i + 1].text));
       let fk: i32 = 0;
       while (fk < 8) {
         out = out.append((fbits >> fk * 8 & 255) as i32);
-        fk = fk + 1;
+        fk += 1;
       }
-      i = i + 2;
+      i += 2;
     } else if (op == "local.get") {
       out = out.append(32);
       out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));
-      i = i + 2;
+      i += 2;
     } else if (op == "local.set") {
       out = out.append(33);
       out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));
-      i = i + 2;
+      i += 2;
     } else if (op == "local.tee") {
       out = out.append(34);
       out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));
-      i = i + 2;
+      i += 2;
     } else if (op == "global.get") {
       out = out.append(35);
       out = leb_u32(out, name_idx(gnames, instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "global.set") {
       out = out.append(36);
       out = leb_u32(out, name_idx(gnames, instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "call") {
       out = out.append(16);
       out = leb_u32(out, name_idx(fnames, instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "call_indirect") {
       out = out.append(17);
       out = leb_u32(out, name_idx(tnames, instrs[i + 1].items[1].text));
       out = leb_u32(out, 0);
-      i = i + 2;
+      i += 2;
     } else if (op == "br") {
       out = out.append(12);
       out = leb_u32(out, parse_dec(instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "br_if") {
       out = out.append(13);
       out = leb_u32(out, parse_dec(instrs[i + 1].text));
-      i = i + 2;
+      i += 2;
     } else if (op == "block" || op == "loop" || op == "if") {
       if (op == "block") {
         out = out.append(2);
@@ -1704,35 +1704,35 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
       } else {
         out = out.append(4);
       }
-      let bt: i32 = 64;
+      let bt = 64;
       if (i + 1 < instrs.len() && node_head(instrs[i + 1]) == "result") {
         bt = valtype_byte(instrs[i + 1].items[1].text);
-        i = i + 1;
+        i += 1;
       }
       out = out.append(bt);
-      i = i + 1;
+      i += 1;
     } else if (op == "else") {
       out = out.append(5);
-      i = i + 1;
+      i += 1;
     } else if (op == "end") {
       out = out.append(11);
-      i = i + 1;
+      i += 1;
     } else if (op == "unreachable") {
       out = out.append(0);
-      i = i + 1;
+      i += 1;
     } else if (op == "return") {
       out = out.append(15);
-      i = i + 1;
+      i += 1;
     } else if (op == "drop") {
       out = out.append(26);
-      i = i + 1;
+      i += 1;
     } else {
-      let ml: i32 = mem_load_opcode(op);
-      let ms: i32 = mem_store_opcode(op);
-      let ao: i32 = arith_opcode(op);
-      let stf: i32 = sat_trunc_opcode(op);
-      let blk: i32 = bulk_mem_opcode(op);
-      let sop: i32 = simd_opcode(op);
+      let ml = mem_load_opcode(op);
+      let ms = mem_store_opcode(op);
+      let ao = arith_opcode(op);
+      let stf = sat_trunc_opcode(op);
+      let blk = bulk_mem_opcode(op);
+      let sop = simd_opcode(op);
       if (ml != 0) {
         out = out.append(ml);
         out = leb_u32(out, memarg_align(op));
@@ -1750,7 +1750,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
         }
         if (simd_has_lane(op)) {
           out = out.append(simd_lane_index(op, instrs[i + 1].text));
-          i = i + 1;
+          i += 1;
         }
       } else if (stf >= 0) {
         out = out.append(252);
@@ -1764,31 +1764,31 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
         eprint("watbin: unknown instruction: " + op);
         exit(1);
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
 }
 
 function enc_locals_vec(types: string[]): i32[] {
-  let runs: i32 = 0;
-  let i: i32 = 0;
+  let runs = 0;
+  let i = 0;
   while (i < types.len()) {
     if (i == 0 || types[i] != types[i - 1]) {
-      runs = runs + 1;
+      runs += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   let body: i32[] = [];
   i = 0;
   while (i < types.len()) {
-    let n: i32 = 1;
+    let n = 1;
     while (i + n < types.len() && types[i + n] == types[i]) {
-      n = n + 1;
+      n += 1;
     }
     body = leb_u32(body, n);
     body = body.append(valtype_byte(types[i]));
-    i = i + n;
+    i += n;
   }
   return wvec(runs, body);
 }
@@ -1797,17 +1797,17 @@ function enc_functype(params: string[], results: string[]): i32[] {
   let o: i32[] = [];
   o = o.append(96);
   let pb: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < params.len()) {
     pb = pb.append(valtype_byte(params[i]));
-    i = i + 1;
+    i += 1;
   }
   o = wcat(o, wvec(params.len(), pb));
   let rb: i32[] = [];
   i = 0;
   while (i < results.len()) {
     rb = rb.append(valtype_byte(results[i]));
-    i = i + 1;
+    i += 1;
   }
   o = wcat(o, wvec(results.len(), rb));
   return o;
@@ -1815,28 +1815,28 @@ function enc_functype(params: string[], results: string[]): i32[] {
 
 function body_instrs(fnode: SExpr): SExpr[] {
   let out: SExpr[] = [];
-  let i: i32 = func_header_end(fnode);
+  let i = func_header_end(fnode);
   while (i < fnode.items.len()) {
     out = out.append(fnode.items[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function emit_binary(mod: SExpr): i32[] {
-  let fnames: string[] = collect_func_names(mod);
+  let fnames = collect_func_names(mod);
   let gnames: string[] = [];
-  let gi: i32 = 0;
+  let gi = 0;
   while (gi < mod.items.len()) {
     if (node_head(mod.items[gi]) == "global") {
       gnames = gnames.append(mod.items[gi].items[1].text);
     }
-    gi = gi + 1;
+    gi += 1;
   }
 
   let importNodes: SExpr[] = [];
   let definedNodes: SExpr[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "import") {
       importNodes = importNodes.append(mod.items[i]);
@@ -1844,7 +1844,7 @@ function emit_binary(mod: SExpr): i32[] {
     if (node_head(mod.items[i]) == "func") {
       definedNodes = definedNodes.append(mod.items[i]);
     }
-    i = i + 1;
+    i += 1;
   }
 
   let tnames: string[] = [];
@@ -1852,178 +1852,178 @@ function emit_binary(mod: SExpr): i32[] {
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "type") {
-      let tn: SExpr = mod.items[i];
+      let tn = mod.items[i];
       tnames = tnames.append(tn.items[1].text);
-      let tf: SExpr = tn.items[2];
+      let tf = tn.items[2];
       namedTypeBody = wcat(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
     }
-    i = i + 1;
+    i += 1;
   }
-  let ntypes: i32 = tnames.len();
+  let ntypes = tnames.len();
 
-  let nfuncs: i32 = importNodes.len() + definedNodes.len();
-  let typeBody: i32[] = namedTypeBody;
+  let nfuncs = importNodes.len() + definedNodes.len();
+  let typeBody = namedTypeBody;
   i = 0;
   while (i < importNodes.len()) {
-    let fn: SExpr = func_node(importNodes[i]);
+    let fn = func_node(importNodes[i]);
     typeBody = wcat(typeBody, enc_functype(func_param_types(fn), func_result_types(fn)));
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < definedNodes.len()) {
     typeBody = wcat(typeBody, enc_functype(func_param_types(definedNodes[i]), func_result_types(definedNodes[i])));
-    i = i + 1;
+    i += 1;
   }
 
   let impBody: i32[] = [];
   i = 0;
   while (i < importNodes.len()) {
-    let imp: SExpr = importNodes[i];
+    let imp = importNodes[i];
     impBody = wname(impBody, imp.items[1].text);
     impBody = wname(impBody, imp.items[2].text);
     impBody = impBody.append(0);
     impBody = leb_u32(impBody, ntypes + i);
-    i = i + 1;
+    i += 1;
   }
 
   let funcBody: i32[] = [];
   i = 0;
   while (i < definedNodes.len()) {
     funcBody = leb_u32(funcBody, ntypes + importNodes.len() + i);
-    i = i + 1;
+    i += 1;
   }
 
   let memBody: i32[] = [];
-  let memCount: i32 = 0;
+  let memCount = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "memory") {
-      let mn: SExpr = mod.items[i];
-      let minv: i32 = parse_dec(mn.items[mn.items.len() - 1].text);
+      let mn = mod.items[i];
+      let minv = parse_dec(mn.items[mn.items.len() - 1].text);
       memBody = memBody.append(0);
       memBody = leb_u32(memBody, minv);
-      memCount = memCount + 1;
+      memCount += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
   let globBody: i32[] = [];
-  let globCount: i32 = 0;
+  let globCount = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "global") {
-      let gn: SExpr = mod.items[i];
+      let gn = mod.items[i];
       globBody = globBody.append(valtype_byte(global_valtype(gn)));
       globBody = globBody.append(1);
       globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
       globBody = globBody.append(11);
-      globCount = globCount + 1;
+      globCount += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
   let expBody: i32[] = [];
-  let expCount: i32 = 0;
+  let expCount = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "memory") {
-      let mm: SExpr = mod.items[i];
-      let j: i32 = 1;
+      let mm = mod.items[i];
+      let j = 1;
       while (j < mm.items.len()) {
         if (node_head(mm.items[j]) == "export") {
           expBody = wname(expBody, mm.items[j].items[1].text);
           expBody = expBody.append(2);
           expBody = leb_u32(expBody, 0);
-          expCount = expCount + 1;
+          expCount += 1;
         }
-        j = j + 1;
+        j += 1;
       }
     }
     if (node_head(mod.items[i]) == "export") {
-      let ex: SExpr = mod.items[i];
+      let ex = mod.items[i];
       expBody = wname(expBody, ex.items[1].text);
       expBody = expBody.append(0);
       expBody = leb_u32(expBody, name_idx(fnames, ex.items[2].items[1].text));
-      expCount = expCount + 1;
+      expCount += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
   let codeBody: i32[] = [];
   i = 0;
   while (i < definedNodes.len()) {
-    let fnode: SExpr = definedNodes[i];
-    let lnames: string[] = local_names(fnode);
-    let fbody: i32[] = enc_locals_vec(local_decl_types(fnode));
-    let instrs: SExpr[] = body_instrs(fnode);
+    let fnode = definedNodes[i];
+    let lnames = local_names(fnode);
+    let fbody = enc_locals_vec(local_decl_types(fnode));
+    let instrs = body_instrs(fnode);
     if (instrs.len() > 0 && instrs[0].kind != 0) {
       fbody = wcat(fbody, enc_flat_body(instrs, lnames, fnames, gnames, tnames));
     } else {
-      let k: i32 = 0;
+      let k = 0;
       while (k < instrs.len()) {
         fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
-        k = k + 1;
+        k += 1;
       }
     }
     fbody = fbody.append(11);
     codeBody = leb_u32(codeBody, fbody.len());
     codeBody = wcat(codeBody, fbody);
-    i = i + 1;
+    i += 1;
   }
 
   let dataBody: i32[] = [];
-  let dataCount: i32 = 0;
+  let dataCount = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "data") {
-      let dn: SExpr = mod.items[i];
+      let dn = mod.items[i];
       dataBody = dataBody.append(0);
       dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], []));
       dataBody = dataBody.append(11);
-      let bytes: i32[] = data_bytes(dn.items[2].text);
+      let bytes = data_bytes(dn.items[2].text);
       dataBody = leb_u32(dataBody, bytes.len());
       dataBody = wcat(dataBody, bytes);
-      dataCount = dataCount + 1;
+      dataCount += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
   let tableBody: i32[] = [];
-  let tableCount: i32 = 0;
+  let tableCount = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "table") {
-      let tbn: SExpr = mod.items[i];
+      let tbn = mod.items[i];
       tableBody = tableBody.append(112);
       tableBody = tableBody.append(0);
       tableBody = leb_u32(tableBody, parse_dec(tbn.items[1].text));
-      tableCount = tableCount + 1;
+      tableCount += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
   let elemBody: i32[] = [];
-  let elemCount: i32 = 0;
+  let elemCount = 0;
   i = 0;
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "elem") {
-      let en: SExpr = mod.items[i];
+      let en = mod.items[i];
       elemBody = elemBody.append(0);
       elemBody = wcat(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
       elemBody = elemBody.append(11);
       let fb: i32[] = [];
-      let ei: i32 = 2;
+      let ei = 2;
       while (ei < en.items.len()) {
         fb = leb_u32(fb, name_idx(fnames, en.items[ei].text));
-        ei = ei + 1;
+        ei += 1;
       }
       elemBody = wcat(elemBody, wvec(en.items.len() - 2, fb));
-      elemCount = elemCount + 1;
+      elemCount += 1;
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let out: i32[] = wmagic();
+  let out = wmagic();
   out = wcat(out, wsection(1, wvec(ntypes + nfuncs, typeBody)));
   out = wcat(out, wsection(2, wvec(importNodes.len(), impBody)));
   out = wcat(out, wsection(3, wvec(definedNodes.len(), funcBody)));
@@ -2050,26 +2050,26 @@ function emit_binary(mod: SExpr): i32[] {
 }
 
 function func_sig(fn: SExpr): string {
-  let o: string = "";
-  let ps: string[] = func_param_types(fn);
-  let i: i32 = 0;
+  let o = "";
+  let ps = func_param_types(fn);
+  let i = 0;
   while (i < ps.len()) {
     o = o + ps[i] + ",";
-    i = i + 1;
+    i += 1;
   }
-  o = o + "->";
-  let rs: string[] = func_result_types(fn);
+  o += "->";
+  let rs = func_result_types(fn);
   i = 0;
   while (i < rs.len()) {
     o = o + rs[i] + ",";
-    i = i + 1;
+    i += 1;
   }
   return o;
 }
 
 function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
   if (n.kind == 2) {
-    let k: i32 = index_of_str(from, n.text);
+    let k = index_of_str(from, n.text);
     if (k >= 0) {
       return SExpr { kind: 2, text: to[k], items: [] };
     }
@@ -2079,10 +2079,10 @@ function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
     return n;
   }
   let out: SExpr[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n.items.len()) {
     out = out.append(rename_atoms(n.items[i], from, to));
-    i = i + 1;
+    i += 1;
   }
   return SExpr { kind: 0, text: n.text, items: out };
 }
@@ -2093,24 +2093,24 @@ function merge_duplicate_imports(mod: SExpr): SExpr {
   let seen_name: string[] = [];
   let from: string[] = [];
   let to: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.items.len()) {
-    let it: SExpr = mod.items[i];
+    let it = mod.items[i];
     if (node_head(it) == "import" && it.items.len() == 4 && node_head(it.items[3]) == "func") {
-      let fn: SExpr = func_node(it);
-      let key: string = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
-      let k: i32 = index_of_str(seen_key, key);
+      let fn = func_node(it);
+      let key = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
+      let k = index_of_str(seen_key, key);
       if (k >= 0) {
         from = from.append(func_name(fn));
         to = to.append(seen_name[k]);
-        i = i + 1;
+        i += 1;
         continue;
       }
       seen_key = seen_key.append(key);
       seen_name = seen_name.append(func_name(fn));
     }
     keep = keep.append(it);
-    i = i + 1;
+    i += 1;
   }
   if (from.len() == 0) {
     return mod;
@@ -2136,12 +2136,12 @@ pub function component_preamble(): i32[] {
 }
 
 function component_wrap(core: i32[]): i32[] {
-  let o: i32[] = component_preamble();
+  let o = component_preamble();
   return wcat(o, wsection(1, core));
 }
 
 pub function component_full(core: i32[]): i32[] {
-  let o: i32[] = component_preamble();
+  let o = component_preamble();
   o = wcat(o, wsection(1, core));
 
   o = wcat(o, wsection(2, [1, 0, 0, 0]));
@@ -2195,21 +2195,21 @@ function fs_write_tail(): i32[] {
 }
 
 function io_fs_read_head(): i32[] {
-  let o: i32[] = component_preamble();
+  let o = component_preamble();
   o = wcat(o, tb_io_error());
   o = wcat(o, tb_io_streams_inout());
   return wcat(o, fs_read_tail());
 }
 
 function io_fs_rw_head(): i32[] {
-  let o: i32[] = component_preamble();
+  let o = component_preamble();
   o = wcat(o, tb_io_error());
   o = wcat(o, tb_io_streams_inout());
   return wcat(o, fs_rw_tail());
 }
 
 function io_fs_write_head(): i32[] {
-  let o: i32[] = component_preamble();
+  let o = component_preamble();
   o = wcat(o, tb_io_error());
   o = wcat(o, tb_io_streams_out());
   return wcat(o, fs_write_tail());
@@ -2220,7 +2220,7 @@ function tb_cli_stdout(): i32[] {
 }
 
 function io_stdout_head(): i32[] {
-  let o: i32[] = component_preamble();
+  let o = component_preamble();
   o = wcat(o, tb_io_error());
   o = wcat(o, tb_io_streams_out());
   return wcat(o, tb_cli_stdout());
@@ -2276,120 +2276,120 @@ function type_block(body: string, rest: string): i32[] {
 
 pub function hex_to_bytes(s: string): i32[] {
   let o: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < s.len()) {
     o = o.append(hexval(s[i] as i32) * 16 + hexval(s[i + 1] as i32));
-    i = i + 2;
+    i += 2;
   }
   return o;
 }
 
 pub function blob_to_bytes(s: string): i32[] {
   let o: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     o = o.append(s[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   return o;
 }
 
 pub function component_full_io(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_stdout());
 }
 
 pub function component_full_io_fs(core: i32[]): i32[] {
-  let o: i32[] = io_fs_read_head();
+  let o = io_fs_read_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_read());
 }
 
 pub function component_full_io_fs_write(core: i32[]): i32[] {
-  let o: i32[] = io_fs_write_head();
+  let o = io_fs_write_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_write());
 }
 
 pub function component_full_io_fs_rw(core: i32[]): i32[] {
-  let o: i32[] = io_fs_rw_head();
+  let o = io_fs_rw_head();
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw());
 }
 
 pub function component_full_io_random(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_random());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_random());
 }
 
 pub function component_full_io_env(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_cli_environment_env());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_env());
 }
 
 pub function component_full_io_args(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_cli_environment_args());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_args());
 }
 
 pub function component_full_io_clock(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_wall_clock());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_clock());
 }
 
 pub function component_full_io_clock_mono(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_monotonic_clock());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_clock_mono());
 }
 
 pub function component_full_io_fs_read_env(core: i32[]): i32[] {
-  let o: i32[] = io_fs_read_head();
+  let o = io_fs_read_head();
   o = wcat(o, tb_fsread_env_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_read_env());
 }
 
 pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
-  let o: i32[] = io_fs_rw_head();
+  let o = io_fs_rw_head();
   o = wcat(o, tb_fsrw_env_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw_env());
 }
 
 pub function component_full_io_random_write(core: i32[]): i32[] {
-  let o: i32[] = io_fs_write_head();
+  let o = io_fs_write_head();
   o = wcat(o, tb_fswrite_random_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_random_write());
 }
 
 pub function component_full_io_eprint(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_cli_stderr());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_eprint());
 }
 
 pub function component_full_io_exit(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_cli_exit());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_exit());
 }
 
 pub function component_full_io_eprint_exit(core: i32[]): i32[] {
-  let o: i32[] = io_stdout_head();
+  let o = io_stdout_head();
   o = wcat(o, tb_cli_stderr());
   o = wcat(o, type_block("\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01", "\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
   o = wcat(o, wsection(1, core));
@@ -2406,7 +2406,7 @@ pub function component_full_io_eprint_exit(core: i32[]): i32[] {
 }
 
 pub function component_full_io_fs_args_read(core: i32[]): i32[] {
-  let o: i32[] = io_fs_read_head();
+  let o = io_fs_read_head();
   o = wcat(o, tb_fsread_args_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_args_read());
@@ -2417,7 +2417,7 @@ function tb_fsrw_args_tail(): i32[] {
 }
 
 pub function component_full_io_fs_rw_args(core: i32[]): i32[] {
-  let o: i32[] = io_fs_rw_head();
+  let o = io_fs_rw_head();
   o = wcat(o, tb_fsrw_args_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw_args());
@@ -2445,11 +2445,11 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
   ex = ex.append(0);
   o = wcat(o, wsection(7, ex));
   let body: i32[] = [0];
-  let k: i32 = 0;
+  let k = 0;
   while (k < params.len()) {
     body = body.append(32);
     body = body.append(k);
-    k = k + 1;
+    k += 1;
   }
   body = body.append(65);
   body = body.append(0);
@@ -2497,12 +2497,12 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
   let b: i32[] = [1, 0];
   b = leb_u32(b, modidx);
   b = leb_u32(b, names.len());
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     b = wname(b, names[i]);
     b = b.append(18);
     b = leb_u32(b, insts[i]);
-    i = i + 1;
+    i += 1;
   }
   return wsection(2, b);
 }
@@ -2510,12 +2510,12 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
 function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i32[]): i32[] {
   let b: i32[] = [1, 1];
   b = leb_u32(b, names.len());
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     b = wname(b, names[i]);
     b = b.append(sorts[i]);
     b = leb_u32(b, idxs[i]);
-    i = i + 1;
+    i += 1;
   }
   return wsection(2, b);
 }
@@ -2628,7 +2628,7 @@ function comp_canon_task_return(vt: i32): i32[] {
   if (vt >= 0) {
     r = [vt];
   }
-  let b: i32[] = comp_resultlist([1, 9], r);
+  let b = comp_resultlist([1, 9], r);
   b = b.append(0);
   return wsection(8, b);
 }
@@ -2636,10 +2636,10 @@ function comp_canon_task_return(vt: i32): i32[] {
 function async_functype(b: i32[], names: string[], vts: i32[][], result: i32[]): i32[] {
   b = b.append(67);
   b = leb_u32(b, vts.len());
-  let i: i32 = 0;
+  let i = 0;
   while (i < vts.len()) {
     b = wcat(wname(b, names[i]), vts[i]);
-    i = i + 1;
+    i += 1;
   }
   return comp_resultlist(b, result);
 }
@@ -2654,12 +2654,12 @@ function instance_valtype(it: InstanceTypes, t: i32[]): (InstanceTypes, i32[]) {
   if (t.len() <= 1) {
     return (it, t);
   }
-  let b: i32[] = wcat(it.b.append(1), t);
+  let b = wcat(it.b.append(1), t);
   return (InstanceTypes { b: b, n: it.n + 1 }, leb_u32([], it.n));
 }
 
 pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
-  let it: InstanceTypes = InstanceTypes { b: [], n: 0 };
+  let it = InstanceTypes { b: [], n: 0 };
   for l in lowers {
     let vts: i32[][] = [];
     for t in l.param_types {
@@ -2668,8 +2668,8 @@ pub function comp_type_async_instance(lowers: AsyncLower[]): i32[] {
       vts = vts.append(vt);
     }
     let (it3, rvt) = instance_valtype(it, l.result);
-    let fb: i32[] = async_functype(it3.b.append(1), l.param_names, vts, rvt);
-    let eb: i32[] = wname(wcat(fb, [4, 0]), l.name);
+    let fb = async_functype(it3.b.append(1), l.param_names, vts, rvt);
+    let eb = wname(wcat(fb, [4, 0]), l.name);
     eb = eb.append(1);
     it = InstanceTypes { b: leb_u32(eb, it3.n), n: it3.n + 1 };
   }
@@ -2681,7 +2681,7 @@ pub function comp_type_stream(vt: i32): i32[] {
 }
 
 pub function comp_import_instance(name: string, typeidx: i32): i32[] {
-  let b: i32[] = wname([1, 0], name);
+  let b = wname([1, 0], name);
   b = b.append(5);
   b = leb_u32(b, typeidx);
   return wsection(10, b);
@@ -2719,15 +2719,15 @@ function lowers_realloc(k: i32): boolean {
 }
 
 pub function lowered_name(name: string): string {
-  let pre: string = "[async-lower]";
+  let pre = "[async-lower]";
   if (name.len() <= pre.len() || slice_unchecked(name, 0, pre.len()) != pre) {
     return name;
   }
   let bytes: u8[] = [];
-  let i: i32 = pre.len();
+  let i = pre.len();
   while (i < name.len()) {
     bytes = bytes.append(name[i]);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
@@ -2741,7 +2741,7 @@ function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: 
   }
   o = wcat(o, comp_alias_inst_func(inst, lowered_name(name)));
   let opts: i32[] = [3, 0];
-  let n_opts: i32 = 1;
+  let n_opts = 1;
   if (k == 5 || k == 6) {
     opts = [6, 3, 0];
     n_opts = 2;
@@ -2749,7 +2749,7 @@ function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: 
   if (lowers_realloc(k)) {
     opts = opts.append(4);
     opts = leb_u32(opts, realloc_f);
-    n_opts = n_opts + 1;
+    n_opts += 1;
   }
   let b: i32[] = [1, 1, 0];
   b = leb_u32(b, n_cfunc);
@@ -2767,20 +2767,20 @@ function comp_export_one_func(name: string, funcidx: i32): i32[] {
 }
 
 function suffix_group_find(order: string[], iface: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < order.len()) {
     if (order[i] == iface) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_inst: i32 }
 
 function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
-  let n: i32 = imp_iface.len();
+  let n = imp_iface.len();
   let o: i32[] = [];
   let none: i32[] = [];
   let tramp_mod: i32[] = [];
@@ -2788,66 +2788,66 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   let tramp_inst: i32[] = [];
   let tbl: i32[] = [];
   let coref: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     tramp_mod = tramp_mod.append(0);
     fixup_mod = fixup_mod.append(0);
     tramp_inst = tramp_inst.append(0);
     tbl = tbl.append(0);
     coref = coref.append(0);
-    i = i + 1;
+    i += 1;
   }
-  let n_mod: i32 = user_mod + 1;
-  let n_cfunc: i32 = 0;
-  let n_corefunc: i32 = 0;
-  let n_coreinst: i32 = 0;
-  let n_coretab: i32 = 0;
-  let n_inst: i32 = n_inst0;
+  let n_mod = user_mod + 1;
+  let n_cfunc = 0;
+  let n_corefunc = 0;
+  let n_coreinst = 0;
+  let n_coretab = 0;
+  let n_inst = n_inst0;
   i = 0;
   while (i < n) {
     if (trampolined(imp_kind[i])) {
       tramp_mod = tramp_mod.with(i, n_mod);
-      n_mod = n_mod + 1;
+      n_mod += 1;
       o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], imp_results[i])));
       fixup_mod = fixup_mod.with(i, n_mod);
-      n_mod = n_mod + 1;
+      n_mod += 1;
       o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], imp_results[i])));
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < n) {
     if (trampolined(imp_kind[i])) {
       tramp_inst = tramp_inst.with(i, n_coreinst);
-      n_coreinst = n_coreinst + 1;
+      n_coreinst += 1;
       o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
     }
-    i = i + 1;
+    i += 1;
   }
   let order: string[] = [];
   let group_names: string[][] = [];
   let group_idxs: i32[][] = [];
   i = 0;
   while (i < n) {
-    let k: i32 = imp_kind[i];
-    let idx: i32 = 0;
+    let k = imp_kind[i];
+    let idx = 0;
     if (k == 0) {
       o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
-      let cf: i32 = n_cfunc;
-      n_cfunc = n_cfunc + 1;
+      let cf = n_cfunc;
+      n_cfunc += 1;
       idx = n_corefunc;
       o = wcat(o, comp_canon_lower_noopts(cf));
-      n_corefunc = n_corefunc + 1;
+      n_corefunc += 1;
     } else if (trampolined(k)) {
       idx = n_corefunc;
       o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
-      n_corefunc = n_corefunc + 1;
+      n_corefunc += 1;
     } else {
       idx = n_corefunc;
       o = wcat(o, comp_canon_typed(k, imp_typeop[i]));
-      n_corefunc = n_corefunc + 1;
+      n_corefunc += 1;
     }
-    let gi: i32 = suffix_group_find(order, imp_iface[i]);
+    let gi = suffix_group_find(order, imp_iface[i]);
     if (gi < 0) {
       order = order.append(imp_iface[i]);
       group_names = group_names.append([imp_name[i]]);
@@ -2856,52 +2856,52 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       group_names = group_names.with(gi, group_names[gi].append(imp_name[i]));
       group_idxs = group_idxs.with(gi, group_idxs[gi].append(idx));
     }
-    i = i + 1;
+    i += 1;
   }
   let arg_insts: i32[] = [];
-  let g: i32 = 0;
+  let g = 0;
   while (g < order.len()) {
-    let gn: string[] = group_names[g];
-    let gx: i32[] = group_idxs[g];
+    let gn = group_names[g];
+    let gx = group_idxs[g];
     let sorts: i32[] = [];
-    let s: i32 = 0;
+    let s = 0;
     while (s < gn.len()) {
       sorts = sorts.append(0);
-      s = s + 1;
+      s += 1;
     }
     o = wcat(o, comp_core_instance_from_exports(gn, sorts, gx));
     arg_insts = arg_insts.append(n_coreinst);
-    n_coreinst = n_coreinst + 1;
-    g = g + 1;
+    n_coreinst += 1;
+    g += 1;
   }
-  let user_inst: i32 = n_coreinst;
+  let user_inst = n_coreinst;
   o = wcat(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
-  n_coreinst = n_coreinst + 1;
-  let need_mem: boolean = false;
-  let need_realloc: boolean = false;
+  n_coreinst += 1;
+  let need_mem = false;
+  let need_realloc = false;
   i = 0;
   while (i < n) {
     need_mem = need_mem || trampolined(imp_kind[i]);
     need_realloc = need_realloc || lowers_realloc(imp_kind[i]);
-    i = i + 1;
+    i += 1;
   }
   if (need_mem) {
     o = wcat(o, comp_alias_core_export(2, user_inst, "memory"));
   }
-  let realloc_f: i32 = 0;
+  let realloc_f = 0;
   if (need_realloc) {
     realloc_f = n_corefunc;
     o = wcat(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
-    n_corefunc = n_corefunc + 1;
+    n_corefunc += 1;
   }
   i = 0;
   while (i < n) {
     if (trampolined(imp_kind[i])) {
       tbl = tbl.with(i, n_coretab);
-      n_coretab = n_coretab + 1;
+      n_coretab += 1;
       o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < n) {
@@ -2910,57 +2910,57 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       o = o2;
       n_cfunc = nc;
       coref = coref.with(i, n_corefunc);
-      n_corefunc = n_corefunc + 1;
+      n_corefunc += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < n) {
     if (trampolined(imp_kind[i])) {
-      let arg: i32 = n_coreinst;
+      let arg = n_coreinst;
       o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
-      n_coreinst = n_coreinst + 1;
+      n_coreinst += 1;
       o = wcat(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
-      n_coreinst = n_coreinst + 1;
+      n_coreinst += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return SuffixWired { o: o, n_cfunc: n_cfunc, n_corefunc: n_corefunc, n_inst: n_inst, user_inst: user_inst };
 }
 
 pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, lifts: AsyncLift[]): i32[] {
-  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
-  let o: i32[] = w.o;
-  let run_core_f: i32 = w.n_corefunc;
+  let w = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
+  let o = w.o;
+  let run_core_f = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
   o = wcat(o, comp_type_result_unit(n_type0));
-  let lifted: i32 = w.n_cfunc;
+  let lifted = w.n_cfunc;
   o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
-  let run_inst: i32 = w.n_inst;
+  let run_inst = w.n_inst;
   o = wcat(o, comp_instance_one_func("run", lifted));
   o = wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
-  let i: i32 = 0;
+  let i = 0;
   while (i < lifts.len()) {
     o = wcat(o, comp_alias_core_func(w.user_inst, "[async-lift]" + lifts[i].core_name));
     o = wcat(o, comp_type_async_func(lifts[i]));
     o = wcat(o, comp_canon_lift_async(run_core_f + 1 + i, n_type0 + 2 + i));
     o = wcat(o, comp_export_one_func(lifts[i].name, lifted + 1 + 2 * i));
-    i = i + 1;
+    i += 1;
   }
   return o;
 }
 
 pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
-  let w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
-  let o: i32[] = w.o;
-  let handle_core_f: i32 = w.n_corefunc;
+  let w = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
+  let o = w.o;
+  let handle_core_f = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
   o = wcat(o, comp_type_own(req_t));
   o = wcat(o, comp_type_own(out_t));
   o = wcat(o, comp_type_handle_func(n_type0, n_type0 + 1));
-  let lifted: i32 = w.n_cfunc;
+  let lifted = w.n_cfunc;
   o = wcat(o, comp_canon_lift_noopts(handle_core_f, n_type0 + 2));
-  let handler_inst: i32 = w.n_inst;
+  let handler_inst = w.n_inst;
   o = wcat(o, comp_instance_one_func("handle", lifted));
   return wcat(o, comp_export_one_instance("wasi:http/incoming-handler@0.2.0", handler_inst));
 }
@@ -2968,22 +2968,22 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
 function no_results(n: i32): i32[][] {
   let out: i32[][] = [];
   let none: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(none);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
-  let at: i32 = 0;
-  let i: i32 = 0;
+  let at = 0;
+  let i = 0;
   while (i < imp_iface.len()) {
     if (imp_iface[i] == "wasi:io/streams@0.2.0") {
       at = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   let none: i32[] = [];
   let iface: string[] = [];
@@ -3010,7 +3010,7 @@ function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: 
       params = params.append(imp_params[i]);
       res = res.append(imp_typeop[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return component_suffix(iface, name, kind, inst, params, no_results(params.len()), res, n_type0, n_inst0, user_mod, core_export, []);
 }

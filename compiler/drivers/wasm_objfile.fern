@@ -20,11 +20,11 @@ pub struct StrsAt { items: string[], pos: i32 }
 pub struct IntsAt { items: i32[], pos: i32 }
 
 function enc_strs(tag: string, xs: string[]): string {
-  let out: string = tag + util.i32_to_string(xs.len()) + "\n";
-  let i: i32 = 0;
+  let out = tag + util.i32_to_string(xs.len()) + "\n";
+  let i = 0;
   while (i < xs.len()) {
     out = out + util.i32_to_string(xs[i].len()) + "\n" + xs[i];
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -51,41 +51,41 @@ pub function encode(u: UnitObj): string {
 }
 
 function scan_int(s: string, pos: i32): IntsAt {
-  let p: i32 = pos;
-  let v: i32 = 0;
+  let p = pos;
+  let v = 0;
   while (p < s.len() && s[p] != b'\n') {
     if (s[p] as i32 >= 48 && s[p] as i32 <= 57) {
       v = v * 10 + (s[p] as i32 - 48);
     }
-    p = p + 1;
+    p += 1;
   }
   return IntsAt { items: [v], pos: p + 1 };
 }
 
 function dec_strs(s: string, pos: i32): StrsAt {
-  let hdr: IntsAt = scan_int(s, pos);
-  let n: i32 = hdr.items[0];
-  let p: i32 = hdr.pos;
+  let hdr = scan_int(s, pos);
+  let n = hdr.items[0];
+  let p = hdr.pos;
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let lh: IntsAt = scan_int(s, p);
-    let len: i32 = lh.items[0];
+    let lh = scan_int(s, p);
+    let len = lh.items[0];
     out = out.append(slice_unchecked(s, lh.pos, lh.pos + len) + "");
     p = lh.pos + len;
-    i = i + 1;
+    i += 1;
   }
   return StrsAt { items: out, pos: p };
 }
 
 pub function decode(s: string): UnitObj {
-  let p: i32 = magic().len();
-  let st: StrsAt = dec_strs(s, p + 1);
-  let kg: StrsAt = dec_strs(s, st.pos + 1);
-  let fn: StrsAt = dec_strs(s, kg.pos + 1);
-  let nd: StrsAt = dec_strs(s, fn.pos + 1);
-  let ar: StrsAt = dec_strs(s, nd.pos + 1);
-  let tl: IntsAt = scan_int(s, ar.pos + 1);
+  let p = magic().len();
+  let st = dec_strs(s, p + 1);
+  let kg = dec_strs(s, st.pos + 1);
+  let fn = dec_strs(s, kg.pos + 1);
+  let nd = dec_strs(s, fn.pos + 1);
+  let ar = dec_strs(s, nd.pos + 1);
+  let tl = scan_int(s, ar.pos + 1);
   return UnitObj {
     strs: st.items,
     caggs: kg.items,

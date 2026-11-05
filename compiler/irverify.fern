@@ -16,14 +16,14 @@ pub function problem_str(p: Problem): string {
 }
 
 pub function format_problems(ps: Problem[], max: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < ps.len()) {
     if (i == max) {
       return out + "\n    ... and " + util.i32_to_string(ps.len() - max) + " more";
     }
     out = out + "\n    " + problem_str(ps[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -42,36 +42,36 @@ function name_index_buckets(): i32 {
 }
 
 function chain_names(names: string[], params: i32[]): NameIndex {
-  let nb: i32 = name_index_buckets();
-  let head: i32[] = util.minus_ones(nb);
-  let next: i32[] = util.minus_ones(names.len());
-  let k: i32 = names.len() - 1;
+  let nb = name_index_buckets();
+  let head = util.minus_ones(nb);
+  let next = util.minus_ones(names.len());
+  let k = names.len() - 1;
   while (k >= 0) {
-    let bk: i32 = util.hash_bucket(names[k], nb);
+    let bk = util.hash_bucket(names[k], nb);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
-    k = k - 1;
+    k -= 1;
   }
   return NameIndex { head: head, next: next, names: names, params: params };
 }
 
 pub function index_row(ix: NameIndex, name: string): i32 {
-  let i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
+  let i = ix.head[util.hash_bucket(name, ix.head.len())];
   while (i >= 0) {
     if (ix.names[i] == name) {
       return i;
     }
     i = ix.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function name_index(names: string[]): NameIndex {
   let params: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
-    params = params.append(0 - 1);
-    i = i + 1;
+    params = params.append(-1);
+    i += 1;
   }
   return chain_names(names, params);
 }
@@ -79,11 +79,11 @@ pub function name_index(names: string[]): NameIndex {
 pub function sig_index(sigs: FnSig[]): NameIndex {
   let names: string[] = [];
   let params: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < sigs.len()) {
     names = names.append(sigs[i].name);
     params = params.append(sigs[i].n_params);
-    i = i + 1;
+    i += 1;
   }
   return chain_names(names, params);
 }
@@ -93,9 +93,9 @@ pub function index_has(ix: NameIndex, name: string): boolean {
 }
 
 pub function index_params(ix: NameIndex, name: string): i32 {
-  let r: i32 = index_row(ix, name);
+  let r = index_row(ix, name);
   if (r < 0) {
-    return 0 - 1;
+    return -1;
   }
   return ix.params[r];
 }
@@ -103,29 +103,29 @@ pub function index_params(ix: NameIndex, name: string): i32 {
 pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: NameIndex): Problem[] {
   let out: Problem[] = [];
 
-  let k_load: i32 = ir.K_LOAD_LOCAL;
-  let k_store: i32 = ir.K_STORE_LOCAL;
-  let k_tee: i32 = ir.K_TEE_LOCAL;
-  let k_block: i32 = ir.K_BLOCK;
-  let k_loop: i32 = ir.K_LOOP;
-  let k_if: i32 = ir.K_IF;
-  let k_else: i32 = ir.K_ELSE;
-  let k_end: i32 = ir.K_END;
-  let k_br: i32 = ir.K_BR;
-  let k_brif: i32 = ir.K_BRIF;
-  let k_calld: i32 = ir.K_CALL_DIRECT;
-  let k_calli: i32 = ir.K_CALL_INDIRECT;
-  let k_callc: i32 = ir.K_CALL_CLOSURE_DIRECT;
+  let k_load = ir.K_LOAD_LOCAL;
+  let k_store = ir.K_STORE_LOCAL;
+  let k_tee = ir.K_TEE_LOCAL;
+  let k_block = ir.K_BLOCK;
+  let k_loop = ir.K_LOOP;
+  let k_if = ir.K_IF;
+  let k_else = ir.K_ELSE;
+  let k_end = ir.K_END;
+  let k_br = ir.K_BR;
+  let k_brif = ir.K_BRIF;
+  let k_calld = ir.K_CALL_DIRECT;
+  let k_calli = ir.K_CALL_INDIRECT;
+  let k_callc = ir.K_CALL_CLOSURE_DIRECT;
 
   let st_kind: i32[] = [];
   let st_at: i32[] = [];
   let st_else: i32[] = [];
-  let depth: i32 = 0;
+  let depth = 0;
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < ops.len()) {
-    let op: ir.Op = ops[i];
-    let kt: i32 = op.kind_tag;
+    let op = ops[i];
+    let kt = op.kind_tag;
 
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (op.i32_imm < 0 || op.i32_imm >= n_locals) {
@@ -141,13 +141,13 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
       if (depth < st_kind.len()) {
         st_kind = st_kind.with(depth, kt);
         st_at = st_at.with(depth, i);
-        st_else = st_else.with(depth, 0 - 1);
+        st_else = st_else.with(depth, -1);
       } else {
         st_kind = st_kind.append(kt);
         st_at = st_at.append(i);
-        st_else = st_else.append(0 - 1);
+        st_else = st_else.append(-1);
       }
-      depth = depth + 1;
+      depth += 1;
     } else if (kt == k_else) {
       if (depth == 0) {
         out = out.append(Problem { fn_name: fn_name, op: i, kind: "else", msg: "else with no open scope" });
@@ -170,7 +170,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
       if (depth == 0) {
         out = out.append(Problem { fn_name: fn_name, op: i, kind: "end", msg: "end with no open scope" });
       } else {
-        depth = depth - 1;
+        depth -= 1;
       }
     } else if (kt == k_br || kt == k_brif) {
       if (op.i32_imm < 0 || op.i32_imm > depth) {
@@ -189,7 +189,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
       } else if (op.str.len() == 0) {
         out = out.append(Problem { fn_name: fn_name, op: i, kind: "call_direct", msg: "call with no callee name" });
       } else {
-        let np: i32 = index_params(sigs, op.str);
+        let np = index_params(sigs, op.str);
         if (np >= 0 && op.i32_imm != np) {
           out = out.append(Problem {
             fn_name: fn_name, op: i, kind: "call_direct",
@@ -206,16 +206,16 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
         });
       }
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let d: i32 = 0;
+  let d = 0;
   while (d < depth) {
     out = out.append(Problem {
       fn_name: fn_name, op: st_at[d], kind: ir.kind_name(st_kind[d]),
       msg: "scope is never closed - the function ends with it still open",
     });
-    d = d + 1;
+    d += 1;
   }
   return out;
 }

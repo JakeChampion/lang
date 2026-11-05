@@ -5,14 +5,14 @@ import "./typeinfo";
 pub struct Pruned { f: ssasem.Func, removed: i32 }
 
 pub function prune(f: ssasem.Func): Pruned {
-  let g: ssa.SFunc = f.graph;
-  let removed: i32 = 0;
-  let round: i32 = 1;
+  let g = f.graph;
+  let removed = 0;
+  let round = 1;
   while (round > 0) {
-    let r: Round = prune_round(f, g, reads(g));
+    let r = prune_round(f, g, reads(g));
     g = r.g;
     round = r.removed;
-    removed = removed + r.removed;
+    removed += r.removed;
   }
   if (removed == 0) {
     return Pruned { f: f, removed: 0 };
@@ -23,10 +23,10 @@ pub function prune(f: ssasem.Func): Pruned {
 struct Round { g: ssa.SFunc, removed: i32 }
 
 function reads(g: ssa.SFunc): i32[] {
-  let uses: i32[] = ssa.use_counts(g);
+  let uses = ssa.use_counts(g);
   for b in g.blocks {
     for ins in b.insts {
-      let base: i32 = ssasem.update_base(ins);
+      let base = ssasem.update_base(ins);
       if (base >= 0 && base < uses.len()) {
         uses = uses.with(base, uses[base] + 1);
       }
@@ -36,14 +36,14 @@ function reads(g: ssa.SFunc): i32[] {
 }
 
 function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
-  let dead: boolean[] = dead_cycles(f, g, uses);
+  let dead = dead_cycles(f, g, uses);
   let blocks: ssa.SBlock[] = [];
-  let removed: i32 = 0;
+  let removed = 0;
   for b in g.blocks {
     let kept: ssa.SInst[] = [];
     for ins in b.insts {
       if (unread_construction(f, uses, ins) || droppable(ins.kind_tag) && in_range(ins.result, dead.len()) && dead[ins.result]) {
-        removed = removed + 1;
+        removed += 1;
       } else {
         kept = kept.append(ins);
       }
@@ -57,25 +57,25 @@ function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
 }
 
 function dead_cycles(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): boolean[] {
-  let dead: boolean[] = candidates(f, g, uses.len());
-  let changed: boolean = true;
+  let dead = candidates(f, g, uses.len());
+  let changed = true;
   while (changed) {
     changed = false;
-    let by_dead: i32[] = reads_by(g, dead);
-    let v: i32 = 0;
+    let by_dead = reads_by(g, dead);
+    let v = 0;
     while (v < dead.len()) {
       if (dead[v] && uses[v] != by_dead[v]) {
         dead = dead.with(v, false);
         changed = true;
       }
-      v = v + 1;
+      v += 1;
     }
   }
   return dead;
 }
 
 function candidates(f: ssasem.Func, g: ssa.SFunc, n: i32): boolean[] {
-  let out: boolean[] = __alloc_bool(n);
+  let out = __alloc_bool(n);
   for b in g.blocks {
     for ins in b.insts {
       if (droppable(ins.kind_tag) && in_range(ins.result, n) && !ssasem.has_finalizer(f, f.values[ins.result])) {
@@ -87,7 +87,7 @@ function candidates(f: ssasem.Func, g: ssa.SFunc, n: i32): boolean[] {
 }
 
 function reads_by(g: ssa.SFunc, dead: boolean[]): i32[] {
-  let out: i32[] = __alloc_i32(dead.len());
+  let out = __alloc_i32(dead.len());
   for b in g.blocks {
     for ins in b.insts {
       if (droppable(ins.kind_tag) && in_range(ins.result, dead.len()) && dead[ins.result]) {
@@ -117,7 +117,7 @@ function droppable(k: i32): boolean {
 }
 
 function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != 7 && !pure_lane_call(ins)) {
     return false;
   }
@@ -129,6 +129,6 @@ function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boole
 
 // A lane builtin that reads only its operands.
 function pure_lane_call(ins: ssa.SInst): boolean {
-  let verb: string = typeinfo.lane_builtin_verb(ins.str);
+  let verb = typeinfo.lane_builtin_verb(ins.str);
   return ins.kind_tag == ssasem.call() && verb != "" && verb != "with" && verb != "load";
 }

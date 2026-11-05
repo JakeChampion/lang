@@ -16,12 +16,12 @@ import "../suspend";
 struct Hist { keys: string[], counts: i32[] }
 
 function hist_bump(h: Hist, k: string): Hist {
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.keys.len()) {
     if (h.keys[i] == k) {
       return Hist { keys: h.keys, counts: h.counts.with(i, h.counts[i] + 1) };
     }
-    i = i + 1;
+    i += 1;
   }
   return Hist { keys: h.keys.append(k), counts: h.counts.append(1) };
 }
@@ -30,26 +30,26 @@ function hist_print(label: string, h: Hist): void {
   print(label);
   let order: i32[] = [];
   let used: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.keys.len()) {
     used = used.append(false);
-    i = i + 1;
+    i += 1;
   }
-  let n: i32 = 0;
+  let n = 0;
   while (n < h.keys.len()) {
-    let best: i32 = 0 - 1;
-    let j: i32 = 0;
+    let best: i32 = -1;
+    let j = 0;
     while (j < h.keys.len()) {
       if (!used[j]) {
         if (best < 0 || h.counts[j] > h.counts[best]) {
           best = j;
         }
       }
-      j = j + 1;
+      j += 1;
     }
     used = used.with(best, true);
     order = order.append(best);
-    n = n + 1;
+    n += 1;
   }
   for k in order {
     print("  " + util.i32_to_string(h.counts[k]) + "  " + h.keys[k]);
@@ -57,10 +57,10 @@ function hist_print(label: string, h: Hist): void {
 }
 
 function leaf(why: string): string {
-  let tag: string = "call target was refused: ";
-  let out: string = why;
+  let tag = "call target was refused: ";
+  let out = why;
   while (out.len() > tag.len()) {
-    let head: string = slice_unchecked(out, 0, tag.len()).to_owned();
+    let head = slice_unchecked(out, 0, tag.len()).to_owned();
     if (head != tag) {
       return out;
     }
@@ -72,7 +72,7 @@ function leaf(why: string): string {
 struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
 
 function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
-  let plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes, ssaunits.no_view());
+  let plan = ssaunits.plan(p.func, p.modes, ssaunits.no_view());
   if (!plan.ok) {
     return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
   }
@@ -88,8 +88,8 @@ function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
 }
 
 function template_stage(key: string, instances: semsource.Produced[], stages: Stage[]): Stage {
-  let out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
-  let i: i32 = 0;
+  let out = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
+  let i = 0;
   while (i < instances.len()) {
     if (instances[i].key == key) {
       if (!stages[i].planned) {
@@ -99,7 +99,7 @@ function template_stage(key: string, instances: semsource.Produced[], stages: St
         out = stages[i];
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -117,8 +117,8 @@ function listed_leaf(): string {
 }
 
 function measured_build(merged: parser.Module): semsource.Built {
-  let built: semsource.Built = semsource.build_module(merged);
-  let widened: semsource.Built = semsource.with_inferred_modes(built);
+  let built = semsource.build_module(merged);
+  let widened = semsource.with_inferred_modes(built);
   if (!semsource.any_row_changed(semsource.changed_rows(built, widened))) {
     return built;
   }
@@ -126,35 +126,35 @@ function measured_build(merged: parser.Module): semsource.Built {
 }
 
 function report(merged: parser.Module, tab: irtables.StructTab): void {
-  let listed: string = listed_leaf();
-  let built: semsource.Built = measured_build(merged);
-  let total: i32 = built.decls.len();
-  let n_produced: i32 = 0;
-  let n_planned: i32 = 0;
-  let n_lowered: i32 = 0;
-  let n_instances: i32 = 0;
-  let n_bodyless: i32 = 0;
-  let n_spliced: i32 = 0;
-  let refusals: Hist = Hist { keys: [], counts: [] };
-  let leaves: Hist = Hist { keys: [], counts: [] };
-  let plan_why: Hist = Hist { keys: [], counts: [] };
-  let rc_why: Hist = Hist { keys: [], counts: [] };
+  let listed = listed_leaf();
+  let built = measured_build(merged);
+  let total = built.decls.len();
+  let n_produced = 0;
+  let n_planned = 0;
+  let n_lowered = 0;
+  let n_instances = 0;
+  let n_bodyless = 0;
+  let n_spliced = 0;
+  let refusals = Hist { keys: [], counts: [] };
+  let leaves = Hist { keys: [], counts: [] };
+  let plan_why = Hist { keys: [], counts: [] };
+  let rc_why = Hist { keys: [], counts: [] };
   let stages: Stage[] = [];
   for inst in built.instances {
-    let st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+    let st = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
     if (inst.ok) {
-      n_instances = n_instances + 1;
+      n_instances += 1;
       st = stage_of(inst, tab);
     }
     stages = stages.append(st);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < built.decls.len()) {
-    let p: semsource.Produced = built.decls[i];
+    let p = built.decls[i];
     if (p.bodyless) {
-      n_bodyless = n_bodyless + 1;
+      n_bodyless += 1;
     } else if (p.dropped) {
-      n_spliced = n_spliced + 1;
+      n_spliced += 1;
     } else if (!p.ok) {
       refusals = hist_bump(refusals, p.why);
       leaves = hist_bump(leaves, leaf(p.why));
@@ -162,8 +162,8 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
         print("  refused " + merged.funcs[i].name + ": " + p.why);
       }
     } else {
-      n_produced = n_produced + 1;
-      let st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+      n_produced += 1;
+      let st = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
       if (p.template) {
         st = template_stage(p.key, built.instances, stages);
       } else {
@@ -172,15 +172,15 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
       if (!st.planned) {
         plan_why = hist_bump(plan_why, st.plan_why);
       } else {
-        n_planned = n_planned + 1;
+        n_planned += 1;
         if (!st.lowered) {
           rc_why = hist_bump(rc_why, st.rc_why);
         } else {
-          n_lowered = n_lowered + 1;
+          n_lowered += 1;
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   print("functions      " + util.i32_to_string(total));
   print("bodyless       " + util.i32_to_string(n_bodyless));
@@ -200,30 +200,30 @@ function embedded_stdlib(): modloader.Overlay {
 }
 
 function main(): i32 {
-  let av: string[] = args();
+  let av = args();
   if (av.len() < 2) {
     eprint("usage: semsource_census_run <entry.fern>");
     return 2;
   }
-  let entry_path: string = av[1];
-  let dir: string = modloader.dirname(entry_path);
+  let entry_path = av[1];
+  let dir = modloader.dirname(entry_path);
   match (read_file(entry_path)) {
     Ok(src) => {
-      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      let g: modloader.Graph = modloader.load_graph(embedded_stdlib(), entry_path, entry, "");
+      let entry = parser.parse_module(lexer.tokenize(src));
+      let g = modloader.load_graph(embedded_stdlib(), entry_path, entry, "");
       entry = g.entry;
-      let loaded: flatten.LoadedModule[] = g.loaded;
-      let missing: string[] = g.missing;
+      let loaded = g.loaded;
+      let missing = g.missing;
       if (modloader.report_unresolved(missing, "semsource_census_run")) {
         return 2;
       }
-      let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, "arm64-linux", "");
+      let merged = modloader.bundle(entry_path, entry, loaded, "arm64-linux", "");
       merged = modloader.merge_builtins(dir, merged);
-      let desc: platforms.Descriptor = platforms.for_target("arm64-linux");
+      let desc = platforms.for_target("arm64-linux");
       merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
       merged = parser.module_with_builtins_typed(merged);
       merged = lift.lift_lambdas_typed(merged);
-      let tab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(merged.structs));
+      let tab = irtables.struct_tab(parser.erase_view_structs(merged.structs));
 
       report(merged, tab);
       return 0;

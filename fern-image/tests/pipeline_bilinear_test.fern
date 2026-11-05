@@ -124,7 +124,7 @@ function cancellation(): test.TestOutcome {
       calls.set(calls.get() + 1);
       return calls.get() >= stop;
     };
-    let during = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled()) => true, _ => false };
+    let during = match (pipeline.render_row(graph, 0, limits, cancelled)) { Err(pipeline.Cancelled) => true, _ => false };
     good = good && during && calls.get() == stop;
   }
   let after = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v.data.len() == 512, Err(_) => false };

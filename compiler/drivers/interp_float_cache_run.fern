@@ -4,7 +4,7 @@ import "./rundriver";
 import "../interp";
 
 function main(): i32 {
-  let mod: parser.Module = rundriver.parse_stdin("interp_float_cache_run");
+  let mod = rundriver.parse_stdin("interp_float_cache_run");
   if (mod.top_stmts.len() != 1) {
     return 1;
   }
@@ -15,9 +15,9 @@ function main(): i32 {
       }
       // Keep the parsed bits, but replace the text with a different value.
       let changed: ast.Expr = ast.ExprNumber { ...number, text: "0.0", raw: "0.0" };
-      let probe: parser.Module = parser.Module { ...mod, top_stmts: [ast.StmtReturn { ...ret, value: changed }] };
-      let expected: i64 = number.bits;
-      let i: i32 = 0;
+      let probe = parser.Module { ...mod, top_stmts: [ast.StmtReturn { ...ret, value: changed }] };
+      let expected = number.bits;
+      let i = 0;
       while (i < 16) {
         match (interp.eval_module(probe)) {
           interp.VFloat(value) => {
@@ -29,7 +29,7 @@ function main(): i32 {
             return 4;
           }
         }
-        i = i + 1;
+        i += 1;
       }
       return 7;
     }

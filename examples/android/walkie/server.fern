@@ -1,0 +1,363 @@
+// The server of the internet mode: the room signaling over TLS on a TCP port,
+// and the relay of the voice datagrams on the UDP port of the same number.
+//
+//   server CERT.pem KEY.pem [PORT]
+//
+// One event loop serves all the sockets. A client sends one request line and
+// gets one reply line, and then the server closes the connection.
+import "std/async";
+import "std/clock";
+import "std/i32";
+import "std/net";
+import "std/rand";
+import "std/time";
+import "std/tls/identity";
+import "std/tls/pem";
+import "std/tls/server";
+import "./rooms";
+
+// The most clients at one time, and the time that each one has.
+const MAX_CLIENTS: i32 = 256;
+
+const CLIENT_MS: i64 = 10000i64;
+
+// The most datagrams that the relay reads before it serves the clients.
+const BURST: i32 = 256;
+
+struct Client {
+  sock: Socket,
+  ip: string,
+  tls: server.Session,
+  line: u8[],
+  out: u8[],
+  until: i64,
+  answered: boolean,
+  closing: boolean,
+}
+
+struct Server {
+  listener: Socket,
+  udp: Socket,
+  config: server.Config,
+  rooms: rooms.Rooms,
+  clients: Client[],
+}
+
+function now_ms(): i64 {
+  return monotonic_ns() / 1000000i64;
+}
+
+function say(text: string): void {
+  eprint("walkie server: " + text + "\n");
+}
+
+function load_identity(cert_path: string, key_path: string): Option[identity.Identity] {
+  let Ok(cert_text) = read_file(cert_path) else {
+    say("cannot read " + cert_path);
+    return None;
+  };
+  let Ok(key_text) = read_file(key_path) else {
+    say("cannot read " + key_path);
+    return None;
+  };
+  let Ok(chain) = pem.certificates(cert_text) else {
+    say(cert_path + " has no certificate");
+    return None;
+  };
+  let Ok(key) = identity.private_key_from_pem(key_text) else {
+    say(key_path + " has no usable private key");
+    return None;
+  };
+  match (identity.pair(chain, key)) {
+    Ok(id) => {
+      return Some(id);
+    },
+    Err(e) => {
+      say("the key does not match the certificate: " + e.message());
+    }
+  }
+  return None;
+}
+
+// A UDP socket on all the addresses: IPv6 and IPv4 when the host has IPv6.
+function open_udp(port: i32): Option[Socket] {
+  match (net.udp_socket(net.socket_addr(net.ipv6_unspecified(), port))) {
+    Ok(s) => {
+      return Some(s);
+    },
+    Err(_) => {}
+  }
+  match (net.udp_socket(net.socket_addr(net.ipv4_unspecified(), port))) {
+    Ok(s) => {
+      return Some(s);
+    },
+    Err(e) => {
+      say("cannot open UDP port " + port.to_string() + ": " + e.message());
+    }
+  }
+  return None;
+}
+
+function open_server(id: identity.Identity, port: i32): Option[Server] {
+  let Ok(listener) = net.listen_any(port, net.listen_options()) else {
+    say("cannot listen on TCP port " + port.to_string());
+    return None;
+  };
+  let Some(udp) = open_udp(port) else {
+    return None;
+  };
+  let a: Result[void, net.NetError] = net.set_nonblocking(listener, true);
+  let b: Result[void, net.NetError] = net.set_nonblocking(udp, true);
+  let config = server.config(id, rand.bytes(32)).without_tickets();
+  return Some(Server { listener: listener, udp: udp, config: config, rooms: rooms.empty(), clients: [] });
+}
+
+// The address without its port, so the rate limit counts a host once.
+function host_of(sock: Socket): string {
+  match (net.peer_addr(sock)) {
+    Ok(a) => {
+      return a.ip.to_canonical().to_string();
+    },
+    Err(_) => {}
+  }
+  return "unknown";
+}
+
+function new_client(s: Server, own sock: Socket, now: i64): Option[Client] {
+  if (s.clients.len() >= MAX_CLIENTS) {
+    let full: Result[void, net.NetError] = net.close(sock);
+    return None;
+  }
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let ip: string = host_of(sock);
+  match (server.start(s.config, rand.bytes(server.entropy(s.config)))) {
+    Ok(step) => {
+      return Some(Client { sock: sock, ip: ip, tls: step.session, line: [], out: step.output, until: now + CLIENT_MS, answered: false, closing: false });
+    },
+    Err(_) => {
+      let failed: Result[void, net.NetError] = net.close(sock);
+    }
+  }
+  return None;
+}
+
+function accept_all(own s0: Server, now: i64): Server {
+  let s: Server = s0;
+  for k in 0..MAX_CLIENTS {
+    let Ok(sock) = net.accept(s.listener) else {
+      return s;
+    };
+    if let Some(c) = new_client(s, sock, now) {
+      s = Server { ...s, clients: s.clients.append(c) };
+    }
+  }
+  return s;
+}
+
+function relay_all(own s0: Server, now: i64): Server {
+  let s: Server = s0;
+  let buf: u8[] = [];
+  for k in 0..2048 {
+    buf = buf.append(0u8);
+  }
+  for k in 0..BURST {
+    let Ok((n, from)) = net.recv_from(s.udp, buf) else {
+      return s;
+    };
+    let r: rooms.Relayed = rooms.relay(s.rooms, from, buf, n, now);
+    if let Some(f) = r.out {
+      let sent: Result[i32, net.NetError] = net.send_to(s.udp, f.data, f.to);
+    }
+    s = Server { ...s, rooms: r.rooms };
+  }
+  return s;
+}
+
+function line_end(line: [u8]): i32 {
+  for k in 0..line.len() {
+    if (line[k] == 10u8) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// A line of printable ASCII, or None.
+function text_of(line: [u8], n: i32): Option[string] {
+  let out: u8[] = [];
+  for k in 0..n {
+    let b: u8 = line[k];
+    if (b != 13u8 && (b < 32u8 || b > 126u8)) {
+      return None;
+    }
+    out = out.append(b);
+  }
+  return Some(string_from_bytes_unchecked(out));
+}
+
+struct Served { rooms: rooms.Rooms, client: Client }
+
+// The reply to a whole request line, and the end of the TLS session.
+function answer_line(r: rooms.Rooms, own c: Client, now: i64): Served {
+  let n: i32 = line_end(c.line);
+  if (c.answered || n < 0 && c.line.len() <= rooms.LINE_MAX) {
+    return Served { rooms: r, client: c };
+  }
+  let reply: string = "ERROR the request is not a line\n";
+  let next: rooms.Rooms = r;
+  if let Some(text) = text_of(c.line, n) {
+    let a: rooms.Answer = rooms.answer(r, c.ip, text, now, rand.bytes(rooms.RANDOM_LEN));
+    next = a.rooms;
+    reply = rooms.reply_line(a.reply);
+  }
+  let out: u8[] = c.out;
+  let tls: server.Session = c.tls;
+  if let Ok(w) = tls.write(reply.as_bytes()) {
+    out = cat(out, w.output);
+    tls = w.session;
+  }
+  if let Ok(e) = tls.close() {
+    out = cat(out, e.output);
+    tls = e.session;
+  }
+  return Served { rooms: next, client: Client { ...c, tls: tls, out: out, answered: true, closing: true } };
+}
+
+function cat(a: [u8], b: [u8]): u8[] {
+  let out: u8[] = [];
+  for x in a {
+    out = out.append(x);
+  }
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+// Reads what the client sent and gives it to its TLS session.
+function read_client(own c: Client): Client {
+  if (c.closing) {
+    return c;
+  }
+  match (net.read_up_to(c.sock, 4096)) {
+    Ok(input) => {
+      if (input.len() == 0) {
+        return Client { ...c, closing: true };
+      }
+      return tls_input(c, input);
+    },
+    Err(net.WouldBlock) => {
+      return c;
+    },
+    Err(_) => {}
+  }
+  return Client { ...c, closing: true };
+}
+
+function tls_input(own c: Client, input: [u8]): Client {
+  match (c.tls.read(input, clock.now())) {
+    Ok(step) => {
+      return Client { ...c, tls: step.session, out: cat(c.out, step.output), line: cat(c.line, step.data), closing: step.closed };
+    },
+    Err(f) => {
+      return Client { ...c, out: cat(c.out, f.alert), closing: true };
+    }
+  }
+  return c;
+}
+
+// Writes what the client can take now.
+function flush_client(own c: Client): Client {
+  if (c.out.len() == 0) {
+    return c;
+  }
+  match (net.write_rest(c.sock, c.out)) {
+    Ok(rest) => {
+      return Client { ...c, out: rest };
+    },
+    Err(_) => {}
+  }
+  return Client { ...c, out: [], closing: true };
+}
+
+function close_client(own c: Client): void {
+  let closed: Result[void, net.NetError] = net.close(c.sock);
+}
+
+// True when the server is done with the client.
+function finished(c: Client, now: i64): boolean {
+  return c.closing && c.out.len() == 0 || now >= c.until;
+}
+
+function serve_clients(own s: Server, now: i64): Server {
+  let r: rooms.Rooms = s.rooms;
+  let kept: Client[] = [];
+  for c0 in s.clients {
+    let served: Served = answer_line(r, read_client(c0), now);
+    r = served.rooms;
+    let c: Client = flush_client(served.client);
+    if (finished(c, now)) {
+      close_client(c);
+    } else {
+      kept = kept.append(c);
+    }
+  }
+  return Server { ...s, rooms: rooms.expire(r, now), clients: kept };
+}
+
+function watch_set(s: Server): i32[] {
+  let set: i32[] = [s.listener.fd, 1, s.udp.fd, 1];
+  for c in s.clients {
+    let interest: i32 = 1;
+    if (c.out.len() > 0) {
+      interest = 2;
+    }
+    set = set.append(c.sock.fd).append(interest);
+  }
+  return set;
+}
+
+function run(own s0: Server): void {
+  let s: Server = s0;
+  while (true) {
+    let until = clock.instant().add(time.duration_millis(1000i64));
+    let wake: async.Wake = async.wait_any(watch_set(s), Some(until));
+    let now: i64 = now_ms();
+    s = serve_clients(relay_all(accept_all(s, now), now), now);
+  }
+}
+
+function port_arg(argv: string[]): i32 {
+  if (argv.len() < 4) {
+    return rooms.PORT;
+  }
+  match (i32.parse_i32(argv[3])) {
+    Ok(p) => {
+      return p;
+    },
+    Err(_) => {}
+  }
+  return -1;
+}
+
+pub function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() < 3 || argv.len() > 4) {
+    say("usage: server CERT.pem KEY.pem [PORT]");
+    return 2;
+  }
+  let port: i32 = port_arg(argv);
+  if (port <= 0 || port > 65535) {
+    say("the port must be a number from 1 to 65535");
+    return 2;
+  }
+  let Some(id) = load_identity(argv[1], argv[2]) else {
+    return 1;
+  };
+  let Some(s) = open_server(id, port) else {
+    return 1;
+  };
+  say("listening on port " + port.to_string());
+  run(s);
+  return 0;
+}

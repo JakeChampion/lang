@@ -12,9 +12,9 @@ function invalid(why: string): Layout {
 
 function ordered(a: TokenSpan, b: TokenSpan): i32 {
   if (a.start != b.start) {
-    return if (a.start < b.start) { 0 - 1 } else { 1 };
+    return if (a.start < b.start) { -1 } else { 1 };
   }
-  return if (a.row < b.row) { 0 - 1 } else if (a.row == b.row) { 0 } else { 1 };
+  return if (a.row < b.row) { -1 } else if (a.row == b.row) { 0 } else { 1 };
 }
 
 // Intervals include both endpoints. Each result index identifies its input row.
@@ -30,10 +30,10 @@ pub function assign(starts: i32[], ends: i32[]): Layout {
     spans = spans.append(TokenSpan { row: row, start: starts[row], end: ends[row] });
   }
   spans = cmp.sort_by_in_place(spans, ordered);
-  let slots: i32[] = __alloc_i32(starts.len());
+  let slots = __alloc_i32(starts.len());
   let occupied_until: i32[] = [];
   for span in spans {
-    let slot: i32 = occupied_until.len();
+    let slot = occupied_until.len();
     for candidate in 0..occupied_until.len() {
       if (occupied_until[candidate] < span.start) {
         slot = candidate;
@@ -86,10 +86,10 @@ pub function region(starts: i32[][], ends: i32[][], first: i32): Region {
     return invalid_region("invalid token region dimensions");
   }
   let blocks: Layout[] = [];
-  let keep_count: i32 = 0;
-  let vacant: Layout = Layout { ok: true, why: "", slots: [], count: 0 };
+  let keep_count = 0;
+  let vacant = Layout { ok: true, why: "", slots: [], count: 0 };
   for block in 0..starts.len() {
-    let layout: Layout = vacant;
+    let layout = vacant;
     if (starts[block].len() != 0 || ends[block].len() != 0) {
       layout = assign(starts[block], ends[block]);
     }
@@ -113,7 +113,7 @@ function invalid_region_dimensions(starts: i32[][], ends: i32[][], first: i32, r
 }
 
 function used_slots(layout: Layout): i32 {
-  let used: i32 = 0;
+  let used = 0;
   for slot in layout.slots {
     if (slot + 1 > used) {
       used = slot + 1;
@@ -129,17 +129,17 @@ pub function verify_region(starts: i32[][], ends: i32[][], first: i32, r: Region
   if (r.keep_count > 2147483647 - first - 1 || r.scratch_start != first + 1 + r.keep_count) {
     return "invalid token scratch boundary";
   }
-  let most: i32 = 0;
+  let most = 0;
   for block in 0..starts.len() {
-    let layout: Layout = r.blocks[block];
+    let layout = r.blocks[block];
     if (!layout.ok) {
       return "invalid token block layout";
     }
-    let why: string = verify(starts[block], ends[block], layout.slots, layout.count);
+    let why = verify(starts[block], ends[block], layout.slots, layout.count);
     if (why != "") {
       return why;
     }
-    let used: i32 = used_slots(layout);
+    let used = used_slots(layout);
     if (used != layout.count) {
       return "token block reserves an unused trailing slot";
     }

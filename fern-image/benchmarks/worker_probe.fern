@@ -95,7 +95,7 @@ function work(mode: string): i32 {
           return polls.get() >= stop;
         };
         match (regions.render_cached_tile(graph, region, limits, 12288, cancelled)) {
-          Err(pipeline.PipelineError.Cancelled()) => {},
+          Err(pipeline.PipelineError.Cancelled) => {},
           _ => {
             return 18;
           }

@@ -6,10 +6,10 @@ import "../asmcore";
 import "../semlower";
 
 function main(): i32 {
-  let decide: boolean = false;
-  let reactor: boolean = false;
-  let av: string[] = args();
-  let ai: i32 = 1;
+  let decide = false;
+  let reactor = false;
+  let av = args();
+  let ai = 1;
   while (ai < av.len()) {
     if (av[ai] == "-decide") {
       decide = true;
@@ -17,15 +17,15 @@ function main(): i32 {
     if (av[ai] == "-reactor") {
       reactor = true;
     }
-    ai = ai + 1;
+    ai += 1;
   }
-  let mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+  let mod = rundriver.parse_stdin("wasm_runio_run");
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
-  let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");
+  let d = semlower.driven(mod, "wasm32-wasi");
   if (decide) {
-    let plm: parser.Module = wasm_ir.route_normalized(d.full);
+    let plm = wasm_ir.route_normalized(d.full);
     if (wasm_ir.ir_route_ok(plm, true, true, d.sub)) {
       print("ir\n");
     } else {

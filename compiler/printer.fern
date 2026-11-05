@@ -12,7 +12,7 @@ function hex_digit(d: i32): u8 {
 }
 
 function append_hex_escape(out: u8[], b: i32): u8[] {
-  let a: u8[] = out;
+  let a = out;
   a = a.append(92 as u8);
   a = a.append(120 as u8);
   a = a.append(hex_digit(b / 16));
@@ -26,9 +26,9 @@ function is_control_byte(b: i32): boolean {
 
 function escape_lit_body(s: string, fstring: boolean): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);
       out = out.append(34 as u8);
@@ -52,7 +52,7 @@ function escape_lit_body(s: string, fstring: boolean): string {
     } else {
       out = out.append(s[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -187,27 +187,27 @@ function print_lambda_params(lm: ast.ExprLambda, depth: i32): string {
 }
 
 function print_params_with(params: ast.ParamDecl[], pats: string[], defaults: boolean, depth: i32): string {
-  let out: string = "(";
-  let pi: i32 = 0;
+  let out = "(";
+  let pi = 0;
   while (pi < params.len()) {
     if (pi > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     if (params[pi].send) {
-      out = out + "send ";
+      out += "send ";
     } else if (params[pi].own) {
-      out = out + "own ";
+      out += "own ";
     }
     if (pi < pats.len() && pats[pi].len() > 0) {
-      out = out + pats[pi];
+      out += pats[pi];
     } else {
-      out = out + written_name(params[pi].name);
+      out += written_name(params[pi].name);
     }
     if (params[pi].type_name.len() > 0) {
       out = out + ": " + params[pi].type_name;
     }
-    out = out + print_param_default(params[pi], defaults, depth);
-    pi = pi + 1;
+    out += print_param_default(params[pi], defaults, depth);
+    pi += 1;
   }
   return out + ")";
 }
@@ -224,10 +224,10 @@ function drop_prelude(body: ast.Stmt[], n: i32): ast.Stmt[] {
     return body;
   }
   let out: ast.Stmt[] = [];
-  let i: i32 = n;
+  let i = n;
   while (i < body.len()) {
     out = out.append(body[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -288,7 +288,7 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
       if (lm.origin != parser.ORIGIN_BLOCK || lm.body.len() == 0) {
         return ("", f);
       }
-      let last: ast.Stmt = lm.body[lm.body.len() - 1];
+      let last = lm.body[lm.body.len() - 1];
       if (print_return_only([last], depth).len() == 0) {
         return ("", f);
       }
@@ -316,7 +316,7 @@ function tail_expr(st: ast.Stmt): ast.Expr {
 }
 
 function iife_value_local(first: ast.Stmt, last: ast.Stmt): string {
-  let name: string = "";
+  let name = "";
   match (first) {
     ast.StmtVar(v) => {
       name = v.name;
@@ -352,7 +352,7 @@ function print_if_value_branch(body: ast.Stmt[], dead: boolean, depth: i32, f: F
   if (body.len() == 0) {
     return ("", f);
   }
-  let last: ast.Stmt = body[body.len() - 1];
+  let last = body[body.len() - 1];
   if (print_return_only([last], depth) == "") {
     return ("", f);
   }
@@ -447,7 +447,7 @@ function if_value_parens(text: string, parent_prec: i32): string {
 
 // A value match whose result goes through a local: `let v; match ...; return v`.
 function print_value_local_body(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
-  let vl: string = iife_value_local(body[0], body[2]);
+  let vl = iife_value_local(body[0], body[2]);
   if (vl.len() == 0) {
     return ("", f);
   }
@@ -499,7 +499,7 @@ function print_value_local_iife(c: ast.ExprCall, depth: i32, f: Fmt): (string, F
       if (lm.params.len() != 0 || lm.body.len() != 3) {
         return ("", f);
       }
-      let v: string = value_local_name(lm.body[0], lm.body[2]);
+      let v = value_local_name(lm.body[0], lm.body[2]);
       if (v.len() == 0) {
         return ("", f);
       }
@@ -524,7 +524,7 @@ function print_value_local_iife(c: ast.ExprCall, depth: i32, f: Fmt): (string, F
 }
 
 function value_local_name(first: ast.Stmt, last: ast.Stmt): string {
-  let declared: string = "";
+  let declared = "";
   match (first) {
     ast.StmtVar(vd) => {
       declared = vd.name;
@@ -558,8 +558,8 @@ function value_local_name(first: ast.Stmt, last: ast.Stmt): string {
 }
 
 function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32, f: Fmt): (string, Fmt) {
-  let arms: ast.MatchArm[] = m.arms;
-  let val: string = v;
+  let arms = m.arms;
+  let val = v;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
     val = "";
@@ -567,7 +567,7 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32, f: Fmt):
   if (arms.len() == 0) {
     return ("", f);
   }
-  let sg: ast.MatchSugar = ast.MatchSugar { scrut: m.scrutinee, tup: [], strct: [], lits: [], arms: arms, line: m.line, col: m.col, origin: m.origin, else_chained: m.else_chained, arms_open: m.arms_open };
+  let sg = ast.MatchSugar { scrut: m.scrutinee, tup: [], strct: [], lits: [], arms: arms, line: m.line, col: m.col, origin: m.origin, else_chained: m.else_chained, arms_open: m.arms_open };
   if (m.origin == "if_let") {
     return print_sugared_match_expr(sg, v, depth, f);
   }
@@ -575,11 +575,11 @@ function print_match_expr_arms(m: ast.StmtMatch, v: string, depth: i32, f: Fmt):
 }
 
 function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32, f: Fmt): (string, Fmt) {
-  let value_local: string = v;
+  let value_local = v;
   if (sg.arms.len() > 0 && sg.origin != "if_let") {
     value_local = "";
   }
-  let arms: WrittenArm[] = sugar_written_arms(sg);
+  let arms = sugar_written_arms(sg);
   if (arms.len() == 0) {
     return ("", f);
   }
@@ -590,11 +590,11 @@ function print_sugared_match_expr(sg: ast.MatchSugar, v: string, depth: i32, f: 
 }
 
 function print_value_if_let(sg: ast.MatchSugar, arms: WrittenArm[], v: string, depth: i32, f: Fmt): (string, Fmt) {
-  let head: string = arms[0].head;
-  let i: i32 = 1;
+  let head = arms[0].head;
+  let i = 1;
   while (i < arms.len() - 1) {
     head = head + " | " + arms[i].head;
-    i = i + 1;
+    i += 1;
   }
   let (yes, g) = arm_expr_value(arms[0].body, v, false, depth, f);
   let (no, g1) = arm_expr_value(arms[arms.len() - 1].body, v, sg.else_chained, depth, g);
@@ -609,13 +609,13 @@ function print_value_if_let(sg: ast.MatchSugar, arms: WrittenArm[], v: string, d
 // fit on one line.
 function print_value_match(scrut: ast.Expr, open: i32, arms: WrittenArm[], v: string, depth: i32, f: Fmt): (string, Fmt) {
   let (sv, g) = print_expr_c(scrut, prec_lowest(), depth, f);
-  let head: string = "match (" + sv + ") {";
+  let head = "match (" + sv + ") {";
   if (keep_list_lines(g, open, arms[arms.len() - 1].line)) {
     return value_match_lines(head, arms, v, depth, g);
   }
-  let out: string = head + " ";
-  let h: Fmt = g;
-  let i: i32 = 0;
+  let out = head + " ";
+  let h = g;
+  let i = 0;
   while (i < arms.len()) {
     let (av, g1) = print_value_arm(arms[i], v, depth, h);
     if (av.len() == 0) {
@@ -625,11 +625,11 @@ function print_value_match(scrut: ast.Expr, open: i32, arms: WrittenArm[], v: st
       return value_match_lines(head, arms, v, depth, g);
     }
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + av;
+    out += av;
     h = g1;
-    i = i + 1;
+    i += 1;
   }
   return (out + " }", h);
 }
@@ -645,28 +645,28 @@ function value_match_lines(head: string, arms: WrittenArm[], v: string, depth: i
 // Arm groups written on one source line stay together, but an arm group that
 // spans lines ends its line.
 function print_value_arm_lines(arms: WrittenArm[], v: string, depth: i32, f: Fmt): (string, Fmt) {
-  let out: string = "\n";
-  let g: Fmt = f;
-  let i: i32 = 0;
+  let out = "\n";
+  let g = f;
+  let i = 0;
   while (i < arms.len()) {
-    let ln: i32 = arms[i].line;
+    let ln = arms[i].line;
     let (lead, g1) = drain_leading(g, ln, depth + 1);
     out = out + lead + indent_str(depth + 1);
     g = g1;
-    let j: i32 = i;
-    let spans: boolean = false;
+    let j = i;
+    let spans = false;
     while (j < arms.len() && (j == i || arms[j].line == ln && !spans)) {
       let (av, g2) = print_value_arm(arms[j], v, depth + 1, g);
       if (av.len() == 0) {
         return ("", f);
       }
       if (j > i) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + av;
+      out += av;
       spans = util.contains(av, "\n");
       g = g2;
-      j = j + 1;
+      j += 1;
     }
     let (trail, g3) = emit_trailing(g, ln);
     out = out + "," + trail + "\n";
@@ -677,8 +677,8 @@ function print_value_arm_lines(arms: WrittenArm[], v: string, depth: i32, f: Fmt
 }
 
 function print_value_arm(a: WrittenArm, v: string, depth: i32, f: Fmt): (string, Fmt) {
-  let out: string = a.head;
-  let g: Fmt = f;
+  let out = a.head;
+  let g = f;
   if (a.has_guard) {
     let (gv, g1) = print_expr_c(a.guard, prec_lowest(), depth, g);
     out = out + " when " + gv;
@@ -697,7 +697,7 @@ function arm_expr_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32, 
   if (body.len() == 0) {
     return ("", f);
   }
-  let last: ast.Stmt = body[body.len() - 1];
+  let last = body[body.len() - 1];
   if (v.len() > 0) {
     return local_arm_value(body, v, bare, depth, f);
   }
@@ -716,7 +716,7 @@ function arm_expr_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32, 
 // local_arm_value prints an arm body that ends in an assignment to the value
 // local v.
 function local_arm_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32, f: Fmt): (string, Fmt) {
-  let last: ast.Stmt = body[body.len() - 1];
+  let last = body[body.len() - 1];
   if let Some(set) = assign_parts(last) {
     if (print_expr(set.place, depth) == v) {
       if (print_expr(set.value, depth).len() == 0) {
@@ -738,14 +738,14 @@ function local_arm_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32,
 // when show_tail is set. The block is on one line when it was written on one
 // line, and has one statement on each line otherwise.
 function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean, depth: i32, f: Fmt): (string, Fmt) {
-  let n: i32 = body.len() - 1;
-  let last: i32 = 0;
+  let n = body.len() - 1;
+  let last = 0;
   if (show_tail) {
     last = first_line(tail);
   } else if (n > 0) {
     last = ast.stmt_line(body[n - 1]);
   }
-  let first: i32 = last;
+  let first = last;
   if (n > 0 && ast.stmt_line(body[0]) > 0) {
     first = ast.stmt_line(body[0]);
   }
@@ -753,9 +753,9 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
   if (keep_list_lines(g, open, last)) {
     return print_value_block_lines(body, n, tail, show_tail, depth, g);
   }
-  let out: string = "{ ";
-  let h: Fmt = g;
-  let i: i32 = 0;
+  let out = "{ ";
+  let h = g;
+  let i = 0;
   while (i < n) {
     let (text, h1) = print_stmt_body(body[i], 0, h);
     if (util.contains(text, "\n")) {
@@ -763,7 +763,7 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
     }
     out = out + text + " ";
     h = h1;
-    i = i + 1;
+    i += 1;
   }
   if (show_tail) {
     let (tv, h2) = print_expr_c(tail, prec_lowest(), depth, h);
@@ -774,35 +774,35 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
 }
 
 function print_value_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_tail: boolean, depth: i32, f: Fmt): (string, Fmt) {
-  let out: string = "{\n";
-  let g: Fmt = f;
-  let i: i32 = 0;
+  let out = "{\n";
+  let g = f;
+  let i = 0;
   while (i < n) {
-    let ln: i32 = ast.stmt_line(body[i]);
+    let ln = ast.stmt_line(body[i]);
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
-      out = out + "\n";
+      out += "\n";
     }
     if (ln > 0) {
       let (lead, g1) = drain_leading(g, ln, depth + 1);
-      out = out + lead;
+      out += lead;
       g = g1;
     }
     let (text, g2) = print_stmt(body[i], depth + 1, g);
-    out = out + text;
+    out += text;
     g = g2;
-    i = i + 1;
+    i += 1;
   }
   if (show_tail) {
     let (tv, g3) = print_value_tail(tail, n > 0, depth + 1, g);
-    out = out + tv;
+    out += tv;
     g = g3;
   }
   return (out + indent_str(depth) + "}", g);
 }
 
 function print_value_tail(tail: ast.Expr, after_stmt: boolean, depth: i32, f: Fmt): (string, Fmt) {
-  let ln: i32 = first_line(tail);
-  let out: string = "";
+  let ln = first_line(tail);
+  let out = "";
   if (after_stmt && ln > 0 && f.blank_before(ln)) {
     out = "\n";
   }
@@ -821,16 +821,16 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
 function print_unary_c(u: ast.ExprUnary, parent_prec: i32, depth: i32, f: Fmt): (string, Fmt) {
   // Both cast forms are written after their operand. The checked form
   // uses the same precedence and parentheses as a plain cast.
-  let checked_cast: boolean = u.op.len() > 4 && util.str_has_prefix(u.op, "as?_");
+  let checked_cast = u.op.len() > 4 && util.str_has_prefix(u.op, "as?_");
   if (checked_cast || u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
     let (co, cf) = print_expr_c(u.operand, prec_unary(), depth, f);
-    let start: i32 = 3;
-    let cast_op: string = " as ";
+    let start = 3;
+    let cast_op = " as ";
     if (checked_cast) {
       start = 4;
       cast_op = " as? ";
     }
-    let cinner: string = co + cast_op + slice_unchecked(u.op, start, u.op.len());
+    let cinner = co + cast_op + slice_unchecked(u.op, start, u.op.len());
     if (parent_prec >= prec_cast()) {
       return ("(" + cinner + ")", cf);
     }
@@ -841,7 +841,7 @@ function print_unary_c(u: ast.ExprUnary, parent_prec: i32, depth: i32, f: Fmt): 
     return (to + "?", tf);
   }
   let (uo, uf) = print_expr_c(u.operand, prec_unary(), depth, f);
-  let uinner: string = u.op + uo;
+  let uinner = u.op + uo;
   if (parent_prec >= prec_unary()) {
     return ("(" + uinner + ")", uf);
   }
@@ -851,14 +851,14 @@ function print_unary_c(u: ast.ExprUnary, parent_prec: i32, depth: i32, f: Fmt): 
 function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (string, Fmt) {
   match (e) {
     ast.ExprBytes(bs) => {
-      let out: string = "[";
-      let i: i32 = 0;
+      let out = "[";
+      let i = 0;
       while (i < bs.value.len()) {
         if (i > 0) {
-          out = out + ", ";
+          out += ", ";
         }
         out = out + util.i32_to_string(bs.value[i] as i32) + "u8";
-        i = i + 1;
+        i += 1;
       }
       return (out + "]", f);
     },
@@ -889,12 +889,12 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         let (nr, nf2) = print_expr_c(b.right, prec_lowest(), depth, nf);
         return (nl + " = " + nr, nf2);
       }
-      let p: i32 = binary_prec(b.op);
+      let p = binary_prec(b.op);
       let (bl, bf) = print_expr_c(b.left, p, depth, f);
-      let gap: string = " ";
+      let gap = " ";
       if (written_break(b, f.spans)) {
         let (tr, tf) = emit_trailing(bf, last_line(b.left, bf.spans));
-        let lead: string = "";
+        let lead = "";
         if (tf.ci < tf.comments.len() && tf.comments[tf.ci].line > first_line(b.left)) {
           let (ld, lf) = drain_leading(tf, b.line, depth + 1);
           lead = ld;
@@ -904,7 +904,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         bf = tf;
       }
       let (br, bf2) = print_expr_c(b.right, p + 1, depth, bf);
-      let inner: string = bl + gap + b.op + " " + br;
+      let inner = bl + gap + b.op + " " + br;
       if (p < parent_prec) {
         return ("(" + inner + ")", bf2);
       }
@@ -935,14 +935,14 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return ("[" + elems + "]", af);
     },
     ast.ExprTuple(t) => {
-      let out: string = "(";
-      let i: i32 = 0;
+      let out = "(";
+      let i = 0;
       while (i < t.elements.len()) {
         if (i > 0) {
-          out = out + ", ";
+          out += ", ";
         }
-        out = out + print_expr(t.elements[i], depth);
-        i = i + 1;
+        out += print_expr(t.elements[i], depth);
+        i += 1;
       }
       return (out + ")", f);
     },
@@ -952,11 +952,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return (xa + "[" + xi + "]", xf2);
     },
     ast.ExprSlice(sl) => {
-      let lo: string = "";
+      let lo = "";
       if (!sl.open_start) {
         lo = print_expr(sl.start, depth);
       }
-      let hi: string = "";
+      let hi = "";
       if (!sl.open_end) {
         hi = print_expr(sl.end, depth);
       }
@@ -969,13 +969,13 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         vals = vals.append(sl.base);
         prefixes = prefixes.append("...");
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < sl.field_names.len()) {
         vals = vals.append(sl.field_values[i]);
         prefixes = prefixes.append(sl.field_names[i] + ": ");
-        i = i + 1;
+        i += 1;
       }
-      let lns: i32[] = list_lines(vals, sl.line, f);
+      let lns = list_lines(vals, sl.line, f);
       if (vals.len() > 0 && keep_list_lines(f, sl.line, lns[lns.len() - 1])) {
         let (lines, lf) = print_list_lines(vals, lns, prefixes, depth, f);
         return (sl.type_name + " {" + lines + indent_str(depth) + "}", lf);
@@ -989,40 +989,40 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     },
     ast.ExprLambda(lm) => {
       let (pats, npre) = param_patterns_for(lm.params, lm.body);
-      let out: string = print_params_with(lm.params, pats, false, depth);
+      let out = print_params_with(lm.params, pats, false, depth);
       if (lm.ret_type.len() > 0) {
         out = out + ": " + arrow_return_type(lm.ret_type);
       }
-      out = out + " => ";
+      out += " => ";
       let (text, g) = print_lambda_body(drop_prelude(lm.body, npre), depth, f);
-      out = out + text;
+      out += text;
       if (parent_prec > prec_assign()) {
         return ("(" + out + ")", g);
       }
       return (out, g);
     },
     ast.ExprFString(fs) => {
-      let out: string = "f\"";
-      let i: i32 = 0;
+      let out = "f\"";
+      let i = 0;
       while (i < fs.lits.len()) {
         if (fs.is_expr[i]) {
           out = out + "{" + print_expr(fs.exprs[i], depth) + "}";
         } else {
-          out = out + escape_fstring_lit(fs.lits[i]);
+          out += escape_fstring_lit(fs.lits[i]);
         }
-        i = i + 1;
+        i += 1;
       }
       return (out + "\"", f);
     },
     ast.ExprMapLit(ml) => {
-      let out: string = "Map {";
-      let i: i32 = 0;
+      let out = "Map {";
+      let i = 0;
       while (i < ml.keys.len()) {
         if (i > 0) {
-          out = out + ",";
+          out += ",";
         }
         out = out + " " + print_expr(ml.keys[i], depth) + ": " + print_expr(ml.vals[i], depth);
-        i = i + 1;
+        i += 1;
       }
       return (out + " }", f);
     },
@@ -1036,7 +1036,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
 }
 
 function elem_line(e: ast.Expr, prev: i32): i32 {
-  let ln: i32 = first_line(e);
+  let ln = first_line(e);
   if (ln == 0) {
     return prev;
   }
@@ -1045,7 +1045,7 @@ function elem_line(e: ast.Expr, prev: i32): i32 {
 
 function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
   let out: i32[] = [];
-  let prev: i32 = open_line;
+  let prev = open_line;
   for x in elems {
     prev = elem_line(x, prev);
     out = out.append(prev);
@@ -1060,15 +1060,15 @@ function list_lines(elems: ast.Expr[], open_line: i32, f: Fmt): i32[] {
 // An element after a lambda closing brace on the same line stays in its group.
 // The lambda body spans are looked up from span index from.
 function grouped_lines(elems: ast.Expr[], open_line: i32, spans: parser.BlockSpans, from: i32): i32[] {
-  let lines: i32[] = elem_lines(elems, open_line);
+  let lines = elem_lines(elems, open_line);
   for i in 1..elems.len() {
     if (first_line(elems[i]) == first_line(elems[i - 1])) {
       lines = lines.with(i, lines[i - 1]);
     } else if let ast.ExprLambda(lm) = elems[i - 1] {
       let (_, npre) = param_patterns_for(lm.params, lm.body);
       if (npre < lm.body.len()) {
-        let first: i32 = ast.stmt_line(lm.body[npre]);
-        let j: i32 = from;
+        let first = ast.stmt_line(lm.body[npre]);
+        let j = from;
         while (j < spans.firsts.len()) {
           if (spans.firsts[j] == first && spans.opens[j] >= lm.line) {
             if (spans.closes[j] == first_line(elems[i])) {
@@ -1076,7 +1076,7 @@ function grouped_lines(elems: ast.Expr[], open_line: i32, spans: parser.BlockSpa
             }
             break;
           }
-          j = j + 1;
+          j += 1;
         }
       }
     }
@@ -1089,7 +1089,7 @@ function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i3
   for x in elems {
     prefixes = prefixes.append(prefix);
   }
-  let lns: i32[] = list_lines(elems, open_line, f);
+  let lns = list_lines(elems, open_line, f);
   if (elems.len() > 0 && keep_list_lines(f, open_line, lns[lns.len() - 1])) {
     let (lines, lf) = print_list_lines(elems, lns, prefixes, depth, f);
     return (lines + indent_str(depth), lf);
@@ -1098,39 +1098,39 @@ function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i3
 }
 
 function print_list_flat(elems: ast.Expr[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
-  let out: string = "";
-  let g: Fmt = f;
-  let i: i32 = 0;
+  let out = "";
+  let g = f;
+  let i = 0;
   while (i < elems.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     let (t, g2) = print_expr_c(elems[i], prec_lowest(), depth, g);
     out = out + prefixes[i] + t;
     g = g2;
-    i = i + 1;
+    i += 1;
   }
   return (out, g);
 }
 
 function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], depth: i32, f: Fmt): (string, Fmt) {
-  let out: string = "\n";
-  let g: Fmt = f;
-  let i: i32 = 0;
+  let out = "\n";
+  let g = f;
+  let i = 0;
   while (i < elems.len()) {
-    let ln: i32 = lns[i];
+    let ln = lns[i];
     let (lead, g1) = drain_leading(g, ln, depth + 1);
     out = out + lead + indent_str(depth + 1);
     g = g1;
-    let j: i32 = i;
+    let j = i;
     while (j < elems.len() && (j == i || lns[j] == ln)) {
       if (j > i) {
-        out = out + ", ";
+        out += ", ";
       }
       let (t, g2) = print_expr_c(elems[j], prec_lowest(), depth + 1, g);
       out = out + prefixes[j] + t;
       g = g2;
-      j = j + 1;
+      j += 1;
     }
     let (trail, g3) = emit_trailing(g, ln);
     out = out + "," + trail + "\n";
@@ -1141,11 +1141,11 @@ function print_list_lines(elems: ast.Expr[], lns: i32[], prefixes: string[], dep
 }
 
 function indent_str(depth: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < depth) {
-    out = out + "  ";
-    i = i + 1;
+    out += "  ";
+    i += 1;
   }
   return out;
 }
@@ -1165,12 +1165,12 @@ function take_span(f: Fmt, first: i32): (i32, i32, Fmt) {
   if (first <= 0) {
     return (0, 0, f);
   }
-  let i: i32 = f.si;
+  let i = f.si;
   while (i < f.spans.firsts.len()) {
     if (f.spans.firsts[i] == first) {
       return (f.spans.opens[i], f.spans.closes[i], Fmt { ...f, si: i + 1 });
     }
-    i = i + 1;
+    i += 1;
   }
   return (0, 0, f);
 }
@@ -1183,7 +1183,7 @@ function (f: Fmt) blank_at(line: i32): boolean {
 }
 
 function (f: Fmt) blank_before(line: i32): boolean {
-  let top: i32 = line;
+  let top = line;
   if (f.ci < f.comments.len() && f.comments[f.ci].line < line) {
     top = f.comments[f.ci].line;
   }
@@ -1191,12 +1191,12 @@ function (f: Fmt) blank_before(line: i32): boolean {
 }
 
 function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
-  let out: string = "";
-  let g: Fmt = f;
-  let last: i32 = 0;
+  let out = "";
+  let g = f;
+  let last = 0;
   while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
     if (last > 0 && g.blank_at(g.comments[g.ci].line - 1)) {
-      out = out + "\n";
+      out += "\n";
     }
     last = g.comments[g.ci].line;
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
@@ -1207,8 +1207,8 @@ function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
 
 function drain_decl_leading(f: Fmt, line: i32): (string, Fmt) {
   let chunks: string[] = [];
-  let g: Fmt = f;
-  let last: i32 = 0;
+  let g = f;
+  let last = 0;
   while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
     if (last > 0 && g.blank_at(g.comments[g.ci].line - 1)) {
       chunks = chunks.append("\n");
@@ -1234,7 +1234,7 @@ function written_break(b: ast.ExprBinary, spans: parser.BlockSpans): boolean {
   if (b.line == 0) {
     return false;
   }
-  let left: i32 = last_line(b.left, spans);
+  let left = last_line(b.left, spans);
   return left > 0 && b.line > left || first_line(b.right) > b.line;
 }
 
@@ -1244,7 +1244,7 @@ function first_line(e: ast.Expr): i32 {
       return first_line(b.left);
     },
     ast.ExprCall(c) => {
-      let ln: i32 = first_line(c.callee);
+      let ln = first_line(c.callee);
       if (ln == 0) {
         return c.line;
       }
@@ -1277,7 +1277,7 @@ function is_postfix_unary(op: string): boolean {
 }
 
 function last_line(e: ast.Expr, spans: parser.BlockSpans): i32 {
-  let ln: i32 = ast.expr_line(e);
+  let ln = ast.expr_line(e);
   match (e) {
     ast.ExprBinary(b) => {
       return max_line(max_line(ln, last_line(b.left, spans)), last_line(b.right, spans));
@@ -1327,7 +1327,7 @@ function list_closer(open: i32, es: ast.Expr[], spans: parser.BlockSpans): i32 {
   if (open <= 0 || es.len() == 0) {
     return 0;
   }
-  let lns: i32[] = grouped_lines(es, open, spans, 0);
+  let lns = grouped_lines(es, open, spans, 0);
   if (lns[lns.len() - 1] > open) {
     return 1;
   }
@@ -1335,7 +1335,7 @@ function list_closer(open: i32, es: ast.Expr[], spans: parser.BlockSpans): i32 {
 }
 
 function last_line_of(es: ast.Expr[], spans: parser.BlockSpans): i32 {
-  let m: i32 = 0;
+  let m = 0;
   for x in es {
     m = max_line(m, last_line(x, spans));
   }
@@ -1354,39 +1354,39 @@ function keep_list_lines(f: Fmt, open: i32, last: i32): boolean {
 }
 
 function inner_comment_pending(f: Fmt, decl_line: i32, last: i32): boolean {
-  let i: i32 = f.ci;
+  let i = f.ci;
   while (i < f.comments.len()) {
-    let ln: i32 = f.comments[i].line;
+    let ln = f.comments[i].line;
     if (ln > last) {
       return false;
     }
     if (ln > decl_line) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function field_lines_for(flines: parser.FieldLines[], name: string, decl_line: i32): i32[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < flines.len()) {
     if (flines[i].name == name && flines[i].decl_line == decl_line) {
       return flines[i].lines;
     }
-    i = i + 1;
+    i += 1;
   }
   let none: i32[] = [];
   return none;
 }
 
 function drain_all(f: Fmt, depth: i32, wrote: boolean): (string, Fmt) {
-  let out: string = "";
-  let g: Fmt = f;
-  let last: i32 = 0;
+  let out = "";
+  let g = f;
+  let last = 0;
   while (g.ci < g.comments.len()) {
     if (g.blank_at(g.comments[g.ci].line - 1) && (last > 0 || wrote)) {
-      out = out + "\n";
+      out += "\n";
     }
     last = g.comments[g.ci].line;
     out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
@@ -1410,36 +1410,36 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     return print_empty_block(depth, f);
   }
   let (open_line, close_line, g) = take_span(f, ast.stmt_line(body[0]));
-  let span: i32 = -1;
+  let span = -1;
   if (open_line > 0) {
     span = g.si - 1;
   }
-  let out: string = "{";
+  let out = "{";
   if (open_line > 0 && !nested_block_owns_trailing(body[0], open_line, g)) {
     let (tc, gt) = emit_trailing(g, open_line);
-    out = out + tc;
+    out += tc;
     g = gt;
   }
-  out = out + "\n";
-  let i: i32 = 0;
+  out += "\n";
+  let i = 0;
   while (i < body.len()) {
-    let ln: i32 = ast.stmt_line(body[i]);
+    let ln = ast.stmt_line(body[i]);
     if (i > 0 && ln > 0 && g.blank_before(ln)) {
-      out = out + "\n";
+      out += "\n";
     }
     if (ln > 0) {
       let (lead, g1) = drain_leading(g, ln, depth + 1);
-      out = out + lead;
+      out += lead;
       g = g1;
     }
     let (body_text, g2) = print_stmt(body[i], depth + 1, g);
-    out = out + body_text;
+    out += body_text;
     g = g2;
-    i = i + 1;
+    i += 1;
   }
   if (close_line > 0) {
     let (tail, gc) = drain_leading(g, close_line, depth + 1);
-    out = out + tail;
+    out += tail;
     g = gc;
   }
   out = out + indent_str(depth) + "}";
@@ -1462,9 +1462,9 @@ function print_empty_block(depth: i32, f: Fmt): (string, Fmt) {
 
 // An empty block keeps the comments between its braces.
 function print_span_block(i: i32, depth: i32, f: Fmt): (string, Fmt) {
-  let open: i32 = f.spans.opens[i];
-  let close: i32 = f.spans.closes[i];
-  let g: Fmt = Fmt { ...f, own: i };
+  let open = f.spans.opens[i];
+  let close = f.spans.closes[i];
+  let g = Fmt { ...f, own: i };
   if (close <= open || g.ci >= g.comments.len() || g.comments[g.ci].line >= close) {
     return ("{}", g);
   }
@@ -1478,8 +1478,8 @@ function else_span(f: Fmt): i32 {
   if (f.own < 0) {
     return -1;
   }
-  let end: i32 = f.spans.closes[f.own];
-  let from: i32 = f.own + 1;
+  let end = f.spans.closes[f.own];
+  let from = f.own + 1;
   for i in from..f.spans.opens.len() {
     if (f.spans.else_of[i] == f.own) {
       return i;
@@ -1505,9 +1505,9 @@ function print_pattern(pat: ast.Pattern): string {
 function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
   match (pat) {
     ast.PatLiteral(literal) => {
-      let out: string = print_lit(literal.lit);
+      let out = print_lit(literal.lit);
       if (literal.has_range) {
-        let dots: string = "..";
+        let dots = "..";
         if (literal.range_inclusive) {
           dots = "..=";
         }
@@ -1522,7 +1522,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       return "_";
     },
     ast.PatVariant(pv) => {
-      let head: string = pv.type_name;
+      let head = pv.type_name;
       if (pv.at_binding.len() > 0) {
         head = pv.at_binding + " @ " + pv.type_name;
       }
@@ -1530,18 +1530,18 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
         return head + " " + print_record_fields(pv);
       }
       if (pv.nested.len() > 0) {
-        let np: string = head + "(";
-        let ni: i32 = 0;
+        let np = head + "(";
+        let ni = 0;
         while (ni < pv.nested.len()) {
           if (ni > 0) {
-            np = np + ", ";
+            np += ", ";
           }
           if (pv_pattern_name(pv.nested[ni]).len() > 0) {
-            np = np + print_pattern_ctx(pv.nested[ni], true);
+            np += print_pattern_ctx(pv.nested[ni], true);
           } else {
-            np = np + payload_slot(pv, nested_slot_binder(pv, ni));
+            np += payload_slot(pv, nested_slot_binder(pv, ni));
           }
-          ni = ni + 1;
+          ni += 1;
         }
         return np + ")";
       }
@@ -1549,16 +1549,16 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
         return head + "(" + print_tuple_elems(pv.tup_kinds, pv.tup_binds, pv.tup_lits, pv.tup_pats) + ")";
       }
       if (pv.binding.len() == 0) {
-        if (always_parens) {
+        if (always_parens && !pv.type_name.contains(".")) {
           return head + "()";
         }
         return head;
       }
-      let out: string = head + "(" + payload_slot(pv, pv.binding);
-      let i: i32 = 0;
+      let out = head + "(" + payload_slot(pv, pv.binding);
+      let i = 0;
       while (i < pv.extra_bindings.len()) {
         out = out + ", " + payload_slot(pv, pv.extra_bindings[i]);
-        i = i + 1;
+        i += 1;
       }
       return out + ")";
     }
@@ -1622,7 +1622,7 @@ function range_pair(lo: ast.Expr, hi: ast.Expr, binder: string): string {
               return "";
             }
           }
-          let sep: string = "..";
+          let sep = "..";
           if (hb.op == "<=") {
             sep = "..=";
           }
@@ -1646,11 +1646,11 @@ function range_slot_for(cond: ast.Expr, binder: string): string {
       if (b.op != "&&") {
         return "";
       }
-      let here: string = range_pair(b.left, b.right, binder);
+      let here = range_pair(b.left, b.right, binder);
       if (here.len() > 0) {
         return here;
       }
-      let l: string = range_slot_for(b.left, binder);
+      let l = range_slot_for(b.left, binder);
       if (l.len() > 0) {
         return l;
       }
@@ -1667,11 +1667,11 @@ function payload_slot(pv: ast.PatVariant, binder: string): string {
   if (!pv.has_lit_cond) {
     return binder;
   }
-  let rng: string = range_slot_for(pv.lit_cond, binder);
+  let rng = range_slot_for(pv.lit_cond, binder);
   if (rng.len() > 0) {
     return rng;
   }
-  let lit: ast.Expr = lit_cond_for(pv.lit_cond, binder);
+  let lit = lit_cond_for(pv.lit_cond, binder);
   if (expr_is_missing(lit)) {
     return binder;
   }
@@ -1682,7 +1682,7 @@ function lit_cond_for(cond: ast.Expr, binder: string): ast.Expr {
   match (cond) {
     ast.ExprBinary(b) => {
       if (b.op == "&&") {
-        let left: ast.Expr = lit_cond_for(b.left, binder);
+        let left = lit_cond_for(b.left, binder);
         if (!expr_is_missing(left)) {
           return left;
         }
@@ -1722,14 +1722,14 @@ function print_tuple_elem(kind: i32, bind: string, lit: ast.Expr, pat: ast.Patte
 }
 
 function print_tuple_elems(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): string {
-  let out: string = "(";
-  let i: i32 = 0;
+  let out = "(";
+  let i = 0;
   while (i < kinds.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + print_tuple_elem(kinds[i], binds[i], lits[i], pats[i]);
-    i = i + 1;
+    out += print_tuple_elem(kinds[i], binds[i], lits[i], pats[i]);
+    i += 1;
   }
   return out + ")";
 }
@@ -1741,7 +1741,7 @@ function print_tup_arm(a: ast.TupArm): string {
     }
     return "_";
   }
-  let pat: string = print_tuple_elems(a.elem_kinds, a.binds, a.lits, a.elem_pats);
+  let pat = print_tuple_elems(a.elem_kinds, a.binds, a.lits, a.elem_pats);
   if (a.at_binding.len() > 0) {
     return a.at_binding + " @ " + pat;
   }
@@ -1749,22 +1749,22 @@ function print_tup_arm(a: ast.TupArm): string {
 }
 
 function print_record_fields(pv: ast.PatVariant): string {
-  let out: string = "{ ";
-  let i: i32 = 0;
+  let out = "{ ";
+  let i = 0;
   while (i < pv.field_names.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    let field: string = pv.field_names[i];
-    let slot: string = payload_slot(pv, nested_slot_binder(pv, i));
+    let field = pv.field_names[i];
+    let slot = payload_slot(pv, nested_slot_binder(pv, i));
     if (i < pv.nested.len() && pv_pattern_name(pv.nested[i]).len() > 0) {
       slot = print_pattern_ctx(pv.nested[i], true);
     }
-    out = out + field;
+    out += field;
     if (slot != field) {
       out = out + ": " + slot;
     }
-    i = i + 1;
+    i += 1;
   }
   return out + rest_suffix(pv.rest_written, pv.field_names.len()) + " }";
 }
@@ -1786,13 +1786,13 @@ function print_struct_arm(a: ast.StructArm): string {
     }
     return "_";
   }
-  let out: string = a.type_name + " { ";
-  let i: i32 = 0;
+  let out = a.type_name + " { ";
+  let i = 0;
   while (i < a.fields.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + a.fields[i];
+    out += a.fields[i];
     if (a.field_kinds[i] == 2) {
       out = out + ": " + print_lit(a.field_lits[i]);
     } else if (a.field_kinds[i] == 3) {
@@ -1800,10 +1800,10 @@ function print_struct_arm(a: ast.StructArm): string {
     } else if (a.binds[i] != a.fields[i]) {
       out = out + ": " + a.binds[i];
     }
-    i = i + 1;
+    i += 1;
   }
-  out = out + rest_suffix(a.rest_written, a.fields.len());
-  out = out + " }";
+  out += rest_suffix(a.rest_written, a.fields.len());
+  out += " }";
   if (a.at_binding.len() > 0) {
     return a.at_binding + " @ " + out;
   }
@@ -1814,27 +1814,27 @@ struct WrittenArm { head: string, body: ast.Stmt[], guard: ast.Expr, has_guard: 
 
 function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
   let out: WrittenArm[] = [];
-  let i: i32 = 0;
+  let i = 0;
   if (sg.arms.len() > 0) {
     while (i < sg.arms.len()) {
-      let a: ast.MatchArm = sg.arms[i];
-      let ahead: string = print_pattern(a.pattern);
+      let a = sg.arms[i];
+      let ahead = print_pattern(a.pattern);
       while (i + 1 < sg.arms.len() && sg.arms[i + 1].alt_cont) {
-        i = i + 1;
+        i += 1;
         ahead = ahead + " | " + print_pattern(sg.arms[i].pattern);
       }
       out = out.append(WrittenArm { head: ahead, body: a.body, guard: a.guard, has_guard: a.has_guard, line: a.line });
-      i = i + 1;
+      i += 1;
     }
     return out;
   }
-  let n: i32 = sg.tup.len() + sg.strct.len() + sg.lits.len();
+  let n = sg.tup.len() + sg.strct.len() + sg.lits.len();
   while (i < n) {
-    let head: string = "";
+    let head = "";
     let body: ast.Stmt[] = [];
-    let guard: ast.Expr = parser.e_bool(true);
-    let has_guard: boolean = false;
-    let line: i32 = 0;
+    let guard = parser.e_bool(true);
+    let has_guard = false;
+    let line = 0;
     if (sg.tup.len() > 0) {
       head = print_tup_arm(sg.tup[i]);
       body = sg.tup[i].body;
@@ -1842,7 +1842,7 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
       guard = sg.tup[i].guard;
       has_guard = sg.tup[i].has_guard;
       while (i + 1 < n && sg.tup[i + 1].alt_cont) {
-        i = i + 1;
+        i += 1;
         head = head + " | " + print_tup_arm(sg.tup[i]);
       }
     } else {
@@ -1859,23 +1859,23 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
         guard = sg.lits[i].guard;
         has_guard = sg.lits[i].has_guard;
         while (i + 1 < n && sg.lits[i + 1].alt_cont) {
-          i = i + 1;
+          i += 1;
           head = head + " | " + print_lit_pat(sg.lits[i]);
         }
       }
     }
     out = out.append(WrittenArm { head: head, body: body, guard: guard, has_guard: has_guard, line: line });
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-  let pad: string = indent_str(depth);
-  let arms: WrittenArm[] = sugar_written_arms(sg);
-  let out: string = "match (" + print_expr(sg.scrut, depth) + ") {\n";
-  let g: Fmt = f;
-  let i: i32 = 0;
+  let pad = indent_str(depth);
+  let arms = sugar_written_arms(sg);
+  let out = "match (" + print_expr(sg.scrut, depth) + ") {\n";
+  let g = f;
+  let i = 0;
   while (i < arms.len()) {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
     g = g1;
@@ -1885,69 +1885,69 @@ function print_sugared_match(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, F
     }
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + "\n";
-    i = i + 1;
+    out += "\n";
+    i += 1;
   }
   return (out + pad + "}", g);
 }
 
 function print_sugared_let_else(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-  let arms: WrittenArm[] = sugar_written_arms(sg);
+  let arms = sugar_written_arms(sg);
   if (arms.len() < 2) {
     return print_sugared_match(sg, depth, f);
   }
-  let g: Fmt = f;
+  let g = f;
   let (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
   g = g1;
-  let head: string = "";
-  let hi: i32 = 0;
+  let head = "";
+  let hi = 0;
   while (hi + 1 < arms.len()) {
     if (hi > 0) {
-      head = head + " | ";
+      head += " | ";
     }
-    head = head + arms[hi].head;
-    hi = hi + 1;
+    head += arms[hi].head;
+    hi += 1;
   }
-  let out: string = "let " + head + " = " + print_expr(sg.scrut, depth) + " else " + els + ";";
-  let rest: ast.Stmt[] = arms[0].body;
-  let i: i32 = 0;
+  let out = "let " + head + " = " + print_expr(sg.scrut, depth) + " else " + els + ";";
+  let rest = arms[0].body;
+  let i = 0;
   while (i < rest.len()) {
-    let ln: i32 = ast.stmt_line(rest[i]);
-    out = out + "\n";
+    let ln = ast.stmt_line(rest[i]);
+    out += "\n";
     if (ln > 0 && g.blank_before(ln)) {
-      out = out + "\n";
+      out += "\n";
     }
     if (ln > 0) {
       let (lead, gl) = drain_leading(g, ln, depth);
-      out = out + lead;
+      out += lead;
       g = gl;
     }
     let (stext, g2) = print_stmt_line(rest[i], depth, g);
-    out = out + stext;
+    out += stext;
     g = g2;
-    i = i + 1;
+    i += 1;
   }
   return (out, g);
 }
 
 function print_sugared_if_let(sg: ast.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-  let arms: WrittenArm[] = sugar_written_arms(sg);
+  let arms = sugar_written_arms(sg);
   if (arms.len() < 2) {
     return print_sugared_match(sg, depth, f);
   }
-  let g: Fmt = f;
+  let g = f;
   let (then_block, g1) = print_block(arms[0].body, depth, g);
   g = g1;
-  let out: string = "if let ";
-  let i: i32 = 0;
+  let out = "if let ";
+  let i = 0;
   while (i + 1 < arms.len()) {
     if (i > 0) {
-      out = out + " | ";
+      out += " | ";
     }
-    out = out + arms[i].head;
-    i = i + 1;
+    out += arms[i].head;
+    i += 1;
   }
   out = out + " = " + print_header_expr(sg.scrut, depth) + " " + then_block;
   let (else_text, g2) = print_else(arms[arms.len() - 1].body, sg.else_chained, depth, g);
@@ -1965,7 +1965,7 @@ function print_lit_pat(a: ast.LitArm): string {
     return a.at_binding + " @ " + print_lit_pat(ast.LitArm { ...a, at_binding: "" });
   }
   if (a.has_range) {
-    let dots: string = "..";
+    let dots = "..";
     if (a.range_inclusive) {
       dots = "..=";
     }
@@ -1975,21 +1975,21 @@ function print_lit_pat(a: ast.LitArm): string {
 }
 
 function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
-  let pad: string = indent_str(depth);
-  let out: string = "match (" + print_expr(m.scrutinee, depth) + ") {\n";
-  let g: Fmt = f;
-  let arms: ast.MatchArm[] = m.arms;
+  let pad = indent_str(depth);
+  let out = "match (" + print_expr(m.scrutinee, depth) + ") {\n";
+  let g = f;
+  let arms = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < arms.len()) {
     let (arm_body, g1) = print_block(arms[i].body, depth + 1, anchored(g, arms[i].line));
     g = g1;
-    let head: string = print_pattern(arms[i].pattern);
-    let guarded: ast.MatchArm = arms[i];
+    let head = print_pattern(arms[i].pattern);
+    let guarded = arms[i];
     while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
-      i = i + 1;
+      i += 1;
       head = head + " | " + print_pattern(arms[i].pattern);
     }
     out = out + indent_str(depth + 1) + head;
@@ -1998,30 +1998,30 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     }
     out = out + " => " + arm_body;
     if (i + 1 < arms.len()) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + "\n";
-    i = i + 1;
+    out += "\n";
+    i += 1;
   }
   return (out + pad + "}", g);
 }
 
 function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
-  let arms: ast.MatchArm[] = m.arms;
+  let arms = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
-  let g: Fmt = f;
+  let g = f;
   let (then_block, g1) = print_block(arms[0].body, depth, g);
   g = g1;
-  let out: string = "if let ";
-  let i: i32 = 0;
+  let out = "if let ";
+  let i = 0;
   while (i + 1 < arms.len()) {
     if (i > 0) {
-      out = out + " | ";
+      out += " | ";
     }
-    out = out + print_pattern(arms[i].pattern);
-    i = i + 1;
+    out += print_pattern(arms[i].pattern);
+    i += 1;
   }
   out = out + " = " + print_header_expr(m.scrutinee, depth) + " " + then_block;
   let (else_text, g2) = print_else(arms[arms.len() - 1].body, m.else_chained, depth, g);
@@ -2029,40 +2029,40 @@ function print_if_let(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
-  let arms: ast.MatchArm[] = m.arms;
+  let arms = m.arms;
   if (m.sugar.len() > 0) {
     arms = m.sugar;
   }
-  let g: Fmt = f;
+  let g = f;
   let (els, g1) = print_block(arms[arms.len() - 1].body, depth, g);
   g = g1;
-  let head: string = "";
-  let hi: i32 = 0;
+  let head = "";
+  let hi = 0;
   while (hi + 1 < arms.len()) {
     if (hi > 0) {
-      head = head + " | ";
+      head += " | ";
     }
-    head = head + print_pattern(arms[hi].pattern);
-    hi = hi + 1;
+    head += print_pattern(arms[hi].pattern);
+    hi += 1;
   }
-  let out: string = "let " + head + " = " + print_expr(m.scrutinee, depth) + " else " + els + ";";
-  let rest: ast.Stmt[] = arms[0].body;
-  let i: i32 = 0;
+  let out = "let " + head + " = " + print_expr(m.scrutinee, depth) + " else " + els + ";";
+  let rest = arms[0].body;
+  let i = 0;
   while (i < rest.len()) {
-    let ln: i32 = ast.stmt_line(rest[i]);
-    out = out + "\n";
+    let ln = ast.stmt_line(rest[i]);
+    out += "\n";
     if (ln > 0 && g.blank_before(ln)) {
-      out = out + "\n";
+      out += "\n";
     }
     if (ln > 0) {
       let (lead, gl) = drain_leading(g, ln, depth);
-      out = out + lead;
+      out += lead;
       g = gl;
     }
     let (stext, g2) = print_stmt_line(rest[i], depth, g);
-    out = out + stext;
+    out += stext;
     g = g2;
-    i = i + 1;
+    i += 1;
   }
   return (out, g);
 }
@@ -2079,10 +2079,10 @@ function as_use(e: ast.Expr): Option[UseSugar] {
         return None;
       }
       let written: ast.Expr[] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i + 1 < c.args.len()) {
         written = written.append(c.args[i]);
-        i = i + 1;
+        i += 1;
       }
       let call: ast.Expr = ast.ExprCall { ...c, args: written };
       return Some(UseSugar { name: lm.params[0].name, type_name: lm.params[0].type_name, call: call, body: lm.body });
@@ -2092,33 +2092,33 @@ function as_use(e: ast.Expr): Option[UseSugar] {
 }
 
 function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
-  let out: string = "use " + written_name(us.name);
+  let out = "use " + written_name(us.name);
   if (us.type_name.len() > 0) {
     out = out + ": " + us.type_name;
   }
   out = out + " <- " + print_expr(us.call, depth) + ";";
-  let g: Fmt = f;
+  let g = f;
   if (line > 0) {
     let (tr, g0) = emit_trailing(g, line);
-    out = out + tr;
+    out += tr;
     g = g0;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < us.body.len()) {
-    let ln: i32 = ast.stmt_line(us.body[i]);
-    out = out + "\n";
+    let ln = ast.stmt_line(us.body[i]);
+    out += "\n";
     if (ln > 0 && g.blank_before(ln)) {
-      out = out + "\n";
+      out += "\n";
     }
     if (ln > 0) {
       let (lead, gl) = drain_leading(g, ln, depth);
-      out = out + lead;
+      out += lead;
       g = gl;
     }
     let (stext, g2) = print_stmt_line(us.body[i], depth, g);
-    out = out + stext;
+    out += stext;
     g = g2;
-    i = i + 1;
+    i += 1;
   }
   return (out, g);
 }
@@ -2166,13 +2166,13 @@ function stmt_is_single_line(st: ast.Stmt): boolean {
 }
 
 function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
-  let cond: ast.Expr = ifs.cond;
+  let cond = ifs.cond;
   if let ast.ExprUnary(u) = ifs.cond {
     cond = u.operand;
   }
   let (cs, cf) = print_expr_c(cond, prec_lowest(), depth, f);
-  let out: string = "assert(" + cs;
-  let g: Fmt = cf;
+  let out = "assert(" + cs;
+  let g = cf;
   if (ifs.then_body.len() > 0) {
     if let ast.StmtExpr(se) = ifs.then_body[0] {
       if let ast.ExprCall(c) = se.value {
@@ -2210,8 +2210,8 @@ function print_chain_assign(stmts: ast.Stmt[], depth: i32): Option[string] {
     return None;
   }
   let first: AssignParts = match (assign_parts(stmts[0])) { Some(parts) => parts, None => { return None; } };
-  let out: string = "";
-  let i: i32 = stmts.len() - 1;
+  let out = "";
+  let i = stmts.len() - 1;
   while (i > 0) {
     match (assign_parts(stmts[i])) {
       Some(parts) => {
@@ -2221,7 +2221,7 @@ function print_chain_assign(stmts: ast.Stmt[], depth: i32): Option[string] {
         return None;
       }
     }
-    i = i - 1;
+    i -= 1;
   }
   return Some(out + print_expr(first.place, depth) + " = " + print_expr(first.value, depth) + ";");
 }
@@ -2299,11 +2299,11 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) {
     return None;
   }
-  let outer: ast.Stmt[] = ifs.then_body;
+  let outer = ifs.then_body;
   if (outer.len() < 2) {
     return None;
   }
-  let flag: string = "";
+  let flag = "";
   match (outer[outer.len() - 2]) {
     ast.StmtVar(v) => {
       if (is_forc_name(v.name) && expr_is_true(v.init)) {
@@ -2316,8 +2316,8 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
     return None;
   }
   let wbody: ast.Stmt[] = [];
-  let label: string = "";
-  let have_while: boolean = false;
+  let label = "";
+  let have_while = false;
   match (outer[outer.len() - 1]) {
     ast.StmtWhile(w) => {
       if (expr_is_true(w.cond)) {
@@ -2333,7 +2333,7 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   }
 
   let step: ast.Stmt[] = [];
-  let step_ok: boolean = false;
+  let step_ok = false;
   match (wbody[0]) {
     ast.StmtIf(s) => {
       if (is_not_of_ident(s.cond, flag) && s.else_body.len() == 0) {
@@ -2347,7 +2347,7 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
     return None;
   }
 
-  let assign_ok: boolean = false;
+  let assign_ok = false;
   match (wbody[1]) {
     ast.StmtAssign(a) => {
       if (a.target == flag && expr_is_false(a.value)) {
@@ -2361,7 +2361,7 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   }
 
   let cond: ast.Expr = ast.ExprBool { value: true, line: 0, col: 0 };
-  let cond_ok: boolean = false;
+  let cond_ok = false;
   match (wbody[2]) {
     ast.StmtIf(c) => {
       if (c.else_body.len() == 0 && c.then_body.len() == 1) {
@@ -2390,16 +2390,16 @@ pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   }
 
   let init: ast.Stmt[] = [];
-  let ii: i32 = 0;
+  let ii = 0;
   while (ii + 2 < outer.len()) {
     init = init.append(outer[ii]);
-    ii = ii + 1;
+    ii += 1;
   }
   let body: ast.Stmt[] = [];
-  let bi: i32 = 3;
+  let bi = 3;
   while (bi < wbody.len()) {
     body = body.append(wbody[bi]);
-    bi = bi + 1;
+    bi += 1;
   }
   return Some(ForCSugar { init: init, cond: cond, step: step, body: body, label: label });
 }
@@ -2455,11 +2455,11 @@ function is_not_of_ident(e: ast.Expr, name: string): boolean {
 }
 
 function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
-  let init: string = "";
+  let init = "";
   if (fc.init.len() == 1) {
     init = strip_semi(print_stmt_inline(fc.init[0], depth));
   }
-  let step: string = "";
+  let step = "";
   if (fc.step.len() == 1) {
     step = strip_semi(print_stmt_inline(fc.step[0], depth));
   }
@@ -2483,7 +2483,7 @@ function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
 
 function print_else(els: ast.Stmt[], chained: boolean, depth: i32, f: Fmt): (string, Fmt) {
   if (els.len() == 0) {
-    let at: i32 = else_span(f);
+    let at = else_span(f);
     if (at < 0) {
       return ("", f);
     }
@@ -2514,10 +2514,10 @@ function for_binder(var_name: string): string {
 
 function drop_first_stmt(stmts: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < stmts.len()) {
     out = out.append(stmts[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -2551,9 +2551,9 @@ function print_stmt(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 
 function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
   let (text, g) = print_stmt_body(st, depth, anchored(f, ast.stmt_line(st)));
-  let out: string = indent_str(depth) + text;
+  let out = indent_str(depth) + text;
   if (stmt_is_single_line(st)) {
-    let ln: i32 = ast.stmt_line(st);
+    let ln = ast.stmt_line(st);
     if (ln > 0) {
       let (tr, g2) = emit_trailing(g, ln);
       let (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln, g2.spans));
@@ -2586,14 +2586,14 @@ function stmt_last_line(st: ast.Stmt, ln: i32, spans: parser.BlockSpans): i32 {
 
 function split_commas(csv: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || csv[i] == b',') {
       out = out.append(slice_unchecked(csv, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -2606,33 +2606,33 @@ function written_name(name: string): string {
 }
 
 function written_part(part: string): string {
-  let lead: i32 = 0;
+  let lead = 0;
   while (lead < part.len() && part[lead] == b'(') {
-    lead = lead + 1;
+    lead += 1;
   }
-  let trail: i32 = part.len();
+  let trail = part.len();
   while (trail > lead && part[trail - 1] == b')') {
-    trail = trail - 1;
+    trail -= 1;
   }
   return slice_unchecked(part, 0, lead) + written_name(slice_unchecked(part, lead, trail) + "") + slice_unchecked(part, trail, part.len());
 }
 
 function join_csv(csv: string): string {
-  let parts: string[] = split_commas(csv);
-  let out: string = "";
-  let i: i32 = 0;
+  let parts = split_commas(csv);
+  let out = "";
+  let i = 0;
   while (i < parts.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + written_part(parts[i]);
-    i = i + 1;
+    out += written_part(parts[i]);
+    i += 1;
   }
   return out;
 }
 
 function destr_at_prefix(type_name: string): string {
-  let at: string = parser.destr_marker_split(type_name).at;
+  let at = parser.destr_marker_split(type_name).at;
   if (at.len() == 0) {
     return "";
   }
@@ -2644,35 +2644,35 @@ function print_struct_destructure(v: ast.StmtVar, depth: i32): string {
 }
 
 function struct_destr_pattern(v: ast.StmtVar): string {
-  let sd_marker: string = parser.destr_marker_split(v.type_name).tag;
-  let rest: str = slice_unchecked(sd_marker, 4, sd_marker.len());
-  let colon: i32 = 0 - 1;
-  let ri: i32 = 0;
+  let sd_marker = parser.destr_marker_split(v.type_name).tag;
+  let rest = slice_unchecked(sd_marker, 4, sd_marker.len());
+  let colon: i32 = -1;
+  let ri = 0;
   while (ri < rest.len()) {
     if (rest[ri] == b':' && colon < 0) {
       colon = ri;
     }
-    ri = ri + 1;
+    ri += 1;
   }
   if (colon < 0) {
     return "";
   }
-  let struct_name: str = slice_unchecked(rest, 0, colon);
-  let fields: string[] = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
-  let binds: string[] = split_commas(v.name);
-  let out: string = struct_name + " { ";
-  let i: i32 = 0;
+  let struct_name = slice_unchecked(rest, 0, colon);
+  let fields = split_commas(slice_unchecked(rest, colon + 1, rest.len()));
+  let binds = split_commas(v.name);
+  let out = struct_name + " { ";
+  let i = 0;
   while (i < fields.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + fields[i];
+    out += fields[i];
     if (i < binds.len() && binds[i] != fields[i]) {
       out = out + ": " + written_name(binds[i]);
     }
-    i = i + 1;
+    i += 1;
   }
-  out = out + rest_suffix(parser.destr_marker_split(v.type_name).rest_written, fields.len());
+  out += rest_suffix(parser.destr_marker_split(v.type_name).rest_written, fields.len());
   return out + " }";
 }
 
@@ -2682,7 +2682,7 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
       if (!parser.is_param_prelude_marker(v.type_name)) {
         return "";
       }
-      let from_holder: boolean = false;
+      let from_holder = false;
       match (v.init) {
         ast.ExprIdent(id) => {
           if (id.name == holder) {
@@ -2694,7 +2694,7 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
       if (!from_holder) {
         return "";
       }
-      let at: string = "";
+      let at = "";
       if (!util.str_has_prefix(holder, "__ptuple_")) {
         at = holder + " @ ";
       }
@@ -2713,40 +2713,40 @@ function param_pattern_from(st: ast.Stmt, holder: string): string {
 
 function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[], i32) {
   let pats: string[] = [];
-  let pi: i32 = 0;
+  let pi = 0;
   while (pi < params.len()) {
     pats = pats.append("");
-    pi = pi + 1;
+    pi += 1;
   }
 
-  let n: i32 = 0;
+  let n = 0;
   while (n < body.len()) {
-    let matched: boolean = false;
-    let k: i32 = 0;
+    let matched = false;
+    let k = 0;
     while (k < params.len()) {
       if (pats[k].len() == 0) {
-        let pat: string = param_pattern_from(body[n], params[k].name);
+        let pat = param_pattern_from(body[n], params[k].name);
         if (pat.len() > 0) {
           pats = pats.with(k, pat);
           matched = true;
           k = params.len();
         }
       }
-      k = k + 1;
+      k += 1;
     }
     if (!matched) {
       n = body.len();
     } else {
-      n = n + 1;
+      n += 1;
     }
   }
-  let found: i32 = 0;
-  let j: i32 = 0;
+  let found = 0;
+  let j = 0;
   while (j < pats.len()) {
     if (pats[j].len() > 0) {
-      found = found + 1;
+      found += 1;
     }
-    j = j + 1;
+    j += 1;
   }
   return (pats, found);
 }
@@ -2754,7 +2754,7 @@ function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[
 function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
   match (v.init) {
     ast.ExprLambda(lm) => {
-      let out: string = "function " + v.name + print_lambda_params(lm, depth);
+      let out = "function " + v.name + print_lambda_params(lm, depth);
       if (lm.ret_type.len() > 0) {
         out = out + ": " + lm.ret_type;
       }
@@ -2771,12 +2771,12 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
   match (st) {
     ast.StmtDefer(d) => {
       if (is_block_stmt(d.action)) {
-        let blk: ast.Stmt[] = block_stmts(d.action);
-        let inl: string = "{ ";
-        let bi: i32 = 0;
+        let blk = block_stmts(d.action);
+        let inl = "{ ";
+        let bi = 0;
         while (bi < blk.len()) {
           inl = inl + print_stmt_inline(blk[bi], 0) + " ";
-          bi = bi + 1;
+          bi += 1;
         }
         if (d.on_error != 0) {
           return ("errdefer " + inl + "}", f);
@@ -2799,7 +2799,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       if (util.contains(v.name, ",")) {
         return ("let " + destr_at_prefix(v.type_name) + "(" + join_csv(v.name) + ") = " + print_expr(v.init, depth) + ";", f);
       }
-      let ann: string = "";
+      let ann = "";
       if (v.type_name.len() > 0) {
         ann = ": " + v.type_name;
       }
@@ -2889,14 +2889,14 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return print_match(m, depth, f);
     },
     ast.StmtFor(fo) => {
-      let fo_body: ast.Stmt[] = fo.body;
-      let fo_binder: string = for_binder(fo.var_name);
+      let fo_body = fo.body;
+      let fo_binder = for_binder(fo.var_name);
       if (util.str_has_prefix(fo.var_name, "$forpat_") && fo.body.len() > 0) {
         match (fo.body[0]) {
           ast.StmtVar(fpv) => {
             fo_binder = destr_at_prefix(fpv.type_name);
             if (parser.is_struct_destr_marker(fpv.type_name)) {
-              fo_binder = fo_binder + struct_destr_pattern(fpv);
+              fo_binder += struct_destr_pattern(fpv);
             } else {
               fo_binder = fo_binder + "(" + join_csv(fpv.name) + ")";
             }
@@ -2934,18 +2934,18 @@ function print_tparam_list(names: string[], bounds: string[]): string {
   if (names.len() == 0) {
     return "";
   }
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < names.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    let bound: string = "";
+    let bound = "";
     if (i < bounds.len()) {
       bound = bounds[i];
     }
-    out = out + print_tparam(names[i], bound);
-    i = i + 1;
+    out += print_tparam(names[i], bound);
+    i += 1;
   }
   return out + "]";
 }
@@ -2978,7 +2978,7 @@ function print_tparam(name: string, bound: string): string {
 }
 
 function print_resource_decl(rd: parser.ResourceDecl): string {
-  let out: string = "";
+  let out = "";
   if (rd.iface.len() > 0) {
     out = "@import(" + quote_string(rd.iface) + ", " + quote_string(rd.wit) + ")\n";
   }
@@ -2997,74 +2997,74 @@ function import_attr(fd: parser.FuncDecl): string {
 }
 
 function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_never: boolean, f: Fmt): (string, Fmt) {
-  let out: string = "";
-  out = out + import_attr(fd);
+  let out = "";
+  out += import_attr(fd);
   if (has_inline_hint) {
     if (inline_never) {
-      out = out + "@noinline\n";
+      out += "@noinline\n";
     } else {
-      out = out + "@inline\n";
+      out += "@inline\n";
     }
   }
   if (fd.is_pub) {
-    out = out + "pub ";
+    out += "pub ";
   }
   if (fd.is_package) {
-    out = out + "pub(package) ";
+    out += "pub(package) ";
   }
   if (fd.fip || fd.fbip) {
     if (fd.fip) {
-      out = out + "fip";
+      out += "fip";
     } else {
-      out = out + "fbip";
+      out += "fbip";
     }
     if (fd.fip_allowance > 0) {
       out = out + "(" + util.i32_to_string(fd.fip_allowance) + ")";
     }
-    out = out + " ";
+    out += " ";
   }
   if (fd.async) {
-    out = out + "async ";
+    out += "async ";
   }
   if (fd.is_unsafe) {
-    out = out + "unsafe ";
+    out += "unsafe ";
   }
-  out = out + "function ";
-  let tps: string = print_type_params(fd);
+  out += "function ";
+  let tps = print_type_params(fd);
   if (fd.receiver_name.len() > 0) {
-    let rp: parser.RecvPrint = parser.receiver_with_bounds(fd);
+    let rp = parser.receiver_with_bounds(fd);
     tps = print_tparam_list(rp.names, rp.bounds);
     out = out + "(" + receiver_mode(fd) + fd.receiver_name;
     if (rp.recv.len() > 0) {
       out = out + ": " + rp.recv;
     }
-    out = out + ") ";
+    out += ") ";
   }
   out = out + fd.name + tps;
   let (dpats, dpre) = param_patterns_for(fd.params, fd.body);
-  out = out + "(";
-  let i: i32 = 0;
+  out += "(";
+  let i = 0;
   while (i < fd.params.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     if (fd.params[i].send) {
-      out = out + "send ";
+      out += "send ";
     } else if (fd.params[i].own) {
-      out = out + "own ";
+      out += "own ";
     }
     if (i < dpats.len() && dpats[i].len() > 0) {
-      out = out + dpats[i];
+      out += dpats[i];
     } else {
-      out = out + written_name(fd.params[i].name);
+      out += written_name(fd.params[i].name);
     }
     if (fd.params[i].type_name.len() > 0) {
       out = out + ": " + fd.params[i].type_name;
     }
-    out = out + print_param_default(fd.params[i], true, 0);
-    i = i + 1;
+    out += print_param_default(fd.params[i], true, 0);
+    i += 1;
   }
-  out = out + ")";
+  out += ")";
   if (fd.ret_type.len() > 0) {
     out = out + ": " + fd.ret_type;
   }
@@ -3076,73 +3076,73 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
 }
 
 function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
-  let out: string = "";
+  let out = "";
   if (sd.derives.len() > 0) {
-    out = out + "@derive(";
-    let di: i32 = 0;
+    out += "@derive(";
+    let di = 0;
     while (di < sd.derives.len()) {
       if (di > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + sd.derives[di];
-      di = di + 1;
+      out += sd.derives[di];
+      di += 1;
     }
-    out = out + ")\n";
+    out += ")\n";
   }
   if (sd.must_consume) {
-    out = out + "@must_consume\n";
+    out += "@must_consume\n";
   }
   if (sd.is_pub) {
-    out = out + "pub ";
+    out += "pub ";
   }
   if (sd.is_package) {
-    out = out + "pub(package) ";
+    out += "pub(package) ";
   }
   if (sd.opaque) {
-    out = out + "opaque ";
+    out += "opaque ";
   }
   out = out + "struct " + sd.name + print_decl_tparams(sd.type_params, sd.const_params);
-  let lns: i32[] = field_lines_for(flines, sd.name, sd.line);
+  let lns = field_lines_for(flines, sd.name, sd.line);
   if (lns.len() == sd.fields.len() && lns.len() > 0 && keep_list_lines(f, sd.line, lns[lns.len() - 1])) {
-    out = out + " {\n";
-    let mi: i32 = 0;
+    out += " {\n";
+    let mi = 0;
     while (mi < sd.fields.len()) {
       let (lead, f1) = drain_leading(f, lns[mi], 1);
-      out = out + lead;
+      out += lead;
       f = f1;
       out = out + indent_str(1) + sd.fields[mi].name + ": " + sd.fields[mi].type_name + ",";
       let (tr, f2) = emit_trailing(f, lns[mi]);
       out = out + tr + "\n";
       f = f2;
-      mi = mi + 1;
+      mi += 1;
     }
     return (out + "}\n", f);
   }
-  out = out + " { ";
-  let i: i32 = 0;
+  out += " { ";
+  let i = 0;
   while (i < sd.fields.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     out = out + sd.fields[i].name + ": " + sd.fields[i].type_name;
-    i = i + 1;
+    i += 1;
   }
   return (out + " }\n", f);
 }
 
 function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
-  let out: string = "";
+  let out = "";
   if (fd.is_pub) {
-    out = out + "pub ";
+    out += "pub ";
   }
   if (fd.is_package) {
-    out = out + "pub(package) ";
+    out += "pub(package) ";
   }
   out = out + "const " + fd.name;
   if (fd.ret_type.len() > 0) {
     out = out + ": " + fd.ret_type;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < fd.body.len()) {
     match (fd.body[i]) {
       ast.StmtReturn(r) => {
@@ -3151,113 +3151,113 @@ function print_const_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return (out + ";\n", f);
 }
 
 function enum_index(enums: parser.EnumDecl[], name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < enums.len()) {
     if (enums[i].name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < structs.len()) {
     if (structs[i].enum_owner == owner && structs[i].name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
-  let out: string = "";
-  let d0: i32 = 0 - 1;
+  let out = "";
+  let d0: i32 = -1;
   if (ed.variant_names.len() > 0) {
     d0 = variant_decl_index(structs, ed.name, ed.variant_names[0]);
   }
   if (d0 >= 0 && structs[d0].derives.len() > 0) {
-    out = out + "@derive(";
-    let di: i32 = 0;
+    out += "@derive(";
+    let di = 0;
     while (di < structs[d0].derives.len()) {
       if (di > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + structs[d0].derives[di];
-      di = di + 1;
+      out += structs[d0].derives[di];
+      di += 1;
     }
-    out = out + ")\n";
+    out += ")\n";
   }
   if (ed.must_consume) {
-    out = out + "@must_consume\n";
+    out += "@must_consume\n";
   }
   if (ed.is_pub) {
-    out = out + "pub ";
+    out += "pub ";
   }
   if (ed.is_package) {
-    out = out + "pub(package) ";
+    out += "pub(package) ";
   }
   out = out + "enum " + ed.name + print_decl_tparams(ed.type_params, ed.const_params);
-  let lns: i32[] = field_lines_for(flines, ed.name, ed.line);
+  let lns = field_lines_for(flines, ed.name, ed.line);
   if (lns.len() == ed.variant_names.len() && lns.len() > 0 && keep_list_lines(f, ed.line, lns[lns.len() - 1])) {
-    out = out + " {\n";
-    let mvi: i32 = 0;
+    out += " {\n";
+    let mvi = 0;
     while (mvi < ed.variant_names.len()) {
       let (lead, f1) = drain_leading(f, lns[mvi], 1);
-      out = out + lead;
+      out += lead;
       f = f1;
       out = out + indent_str(1) + print_enum_variant(ed, structs, mvi) + ",";
       let (tr, f2) = emit_trailing(f, lns[mvi]);
       out = out + tr + "\n";
       f = f2;
-      mvi = mvi + 1;
+      mvi += 1;
     }
     return (out + "}\n", f);
   }
-  out = out + " { ";
-  let vi: i32 = 0;
+  out += " { ";
+  let vi = 0;
   while (vi < ed.variant_names.len()) {
     if (vi > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + print_enum_variant(ed, structs, vi);
-    vi = vi + 1;
+    out += print_enum_variant(ed, structs, vi);
+    vi += 1;
   }
   return (out + " }\n", f);
 }
 
 function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], vi: i32): string {
-  let out: string = ed.variant_names[vi];
-  let si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
+  let out = ed.variant_names[vi];
+  let si = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
   if (si >= 0 && structs[si].variant_field_names.len() > 0) {
-    out = out + " {";
-    let ri: i32 = 0;
+    out += " {";
+    let ri = 0;
     while (ri < structs[si].fields.len()) {
       if (ri > 0) {
-        out = out + ",";
+        out += ",";
       }
       out = out + " " + structs[si].variant_field_names[ri] + ": " + structs[si].fields[ri].type_name;
-      ri = ri + 1;
+      ri += 1;
     }
     return out + " }";
   }
   if (si >= 0 && structs[si].fields.len() > 0) {
-    out = out + "(";
-    let fi: i32 = 0;
+    out += "(";
+    let fi = 0;
     while (fi < structs[si].fields.len()) {
       if (fi > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + structs[si].fields[fi].type_name;
-      fi = fi + 1;
+      out += structs[si].fields[fi].type_name;
+      fi += 1;
     }
     return out + ")";
   }
@@ -3265,48 +3265,48 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
 }
 
 function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
-  let out: string = "impl";
+  let out = "impl";
   if (id.type_params.len() > 0) {
-    out = out + "[";
-    let tpi: i32 = 0;
+    out += "[";
+    let tpi = 0;
     while (tpi < id.type_params.len()) {
       if (tpi > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      let bound: string = "";
+      let bound = "";
       if (tpi < id.bounds.len()) {
         bound = id.bounds[tpi];
       }
-      out = out + print_tparam(id.type_params[tpi], bound);
-      tpi = tpi + 1;
+      out += print_tparam(id.type_params[tpi], bound);
+      tpi += 1;
     }
-    out = out + "]";
+    out += "]";
   }
   out = out + " " + id.trait_ref + " for " + id.type_ref;
   if (id.methods.len() == 0 && id.assoc_names.len() == 0) {
     return (out + " {}\n", f);
   }
-  out = out + " {\n";
-  let abi: i32 = 0;
+  out += " {\n";
+  let abi = 0;
   while (abi < id.assoc_names.len()) {
-    let abv: string = "";
+    let abv = "";
     if (abi < id.assoc_values.len()) {
       abv = id.assoc_values[abi];
     }
     out = out + indent_str(1) + "type " + id.assoc_names[abi] + " = " + abv + ";\n";
-    abi = abi + 1;
+    abi += 1;
   }
-  let g: Fmt = f;
-  let mi: i32 = 0;
+  let g = f;
+  let mi = 0;
   while (mi < id.methods.len()) {
     if (mi > 0 && g.blank_before(id.methods[mi].line)) {
-      out = out + "\n";
+      out += "\n";
     }
     let (lead, lg) = drain_leading(g, id.methods[mi].line, 1);
     let (mtext, mg) = print_impl_method(id.methods[mi], lg);
     out = out + lead + mtext;
     g = mg;
-    mi = mi + 1;
+    mi += 1;
   }
   return (out + "}\n", g);
 }
@@ -3319,7 +3319,7 @@ function receiver_mode(fd: parser.FuncDecl): string {
 }
 
 function print_const_member(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
-  let out: string = indent_str(1) + "const " + m.name + ": " + m.ret_type;
+  let out = indent_str(1) + "const " + m.name + ": " + m.ret_type;
   if (m.body.len() > 0) {
     if let ast.StmtReturn(r) = m.body[0] {
       let (cv, cf) = print_expr_c(r.value, prec_lowest(), 0, f);
@@ -3334,33 +3334,33 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   if (m.is_const) {
     return print_const_member(m, f);
   }
-  let out: string = indent_str(1);
+  let out = indent_str(1);
   if (m.always_inline) {
     out = out + "@inline\n" + indent_str(1);
   } else if (m.no_inline) {
     out = out + "@noinline\n" + indent_str(1);
   }
   if (m.is_unsafe) {
-    out = out + "unsafe ";
+    out += "unsafe ";
   }
   out = out + "function " + m.name + print_type_params(m) + "(";
-  let first: boolean = true;
-  let i: i32 = 0;
+  let first = true;
+  let i = 0;
   while (i < m.params.len()) {
     if (!first) {
-      out = out + ", ";
+      out += ", ";
     }
     if (m.params[i].own) {
-      out = out + "own ";
+      out += "own ";
     }
-    out = out + written_name(m.params[i].name);
+    out += written_name(m.params[i].name);
     if (m.params[i].type_name.len() > 0) {
       out = out + ": " + m.params[i].type_name;
     }
     first = false;
-    i = i + 1;
+    i += 1;
   }
-  out = out + ")";
+  out += ")";
   if (m.ret_type.len() > 0) {
     out = out + ": " + m.ret_type;
   }
@@ -3372,45 +3372,45 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
 }
 
 function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
-  let out: string = "";
+  let out = "";
   if (td.is_pub) {
-    out = out + "pub ";
+    out += "pub ";
   }
   if (td.is_package) {
-    out = out + "pub(package) ";
+    out += "pub(package) ";
   }
   out = out + "trait " + td.name + print_decl_tparams(td.type_params, td.const_params);
   if (td.supertraits.len() > 0) {
-    out = out + ": ";
-    let spi: i32 = 0;
+    out += ": ";
+    let spi = 0;
     while (spi < td.supertraits.len()) {
       if (spi > 0) {
-        out = out + " + ";
+        out += " + ";
       }
-      out = out + td.supertraits[spi];
-      spi = spi + 1;
+      out += td.supertraits[spi];
+      spi += 1;
     }
   }
   if (td.methods.len() == 0 && td.assoc_types.len() == 0) {
     return (out + " {}\n", f);
   }
-  out = out + " {\n";
-  let ati: i32 = 0;
+  out += " {\n";
+  let ati = 0;
   while (ati < td.assoc_types.len()) {
     out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
-    ati = ati + 1;
+    ati += 1;
   }
-  let g: Fmt = f;
-  let mi: i32 = 0;
+  let g = f;
+  let mi = 0;
   while (mi < td.methods.len()) {
     if (mi > 0 && g.blank_before(td.methods[mi].line)) {
-      out = out + "\n";
+      out += "\n";
     }
     let (lead, lg) = drain_leading(g, td.methods[mi].line, 1);
     let (mtext, mg) = print_trait_method(td.methods[mi], lg);
     out = out + lead + mtext;
     g = mg;
-    mi = mi + 1;
+    mi += 1;
   }
   return (out + "}\n", g);
 }
@@ -3419,26 +3419,26 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   if (m.is_const) {
     return print_const_member(m, f);
   }
-  let out: string = indent_str(1);
+  let out = indent_str(1);
   if (m.is_unsafe) {
-    out = out + "unsafe ";
+    out += "unsafe ";
   }
   out = out + "function " + m.name + print_type_params(m) + "(";
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.params.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     if (m.params[i].own) {
-      out = out + "own ";
+      out += "own ";
     }
-    out = out + written_name(m.params[i].name);
+    out += written_name(m.params[i].name);
     if (m.params[i].type_name.len() > 0) {
       out = out + ": " + m.params[i].type_name;
     }
-    i = i + 1;
+    i += 1;
   }
-  out = out + ")";
+  out += ")";
   if (m.ret_type.len() > 0) {
     out = out + ": " + m.ret_type;
   }
@@ -3451,44 +3451,44 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
 }
 
 function print_type_alias(a: parser.TypeAlias): string {
-  let out: string = "";
+  let out = "";
   if (a.is_pub) {
-    out = out + "pub ";
+    out += "pub ";
   }
   if (a.is_package) {
-    out = out + "pub(package) ";
+    out += "pub(package) ";
   }
   out = out + "type " + a.name + print_decl_tparams(a.type_params, a.const_params);
-  out = out + " = ";
-  let ln: i32[] = a.variant_lines;
-  let n: i32 = ln.len();
-  let kept: boolean = n == a.variants.len() && n > 0 && ln[0] > 0 && ln[n - 1] > ln[0];
-  let i: i32 = 0;
+  out += " = ";
+  let ln = a.variant_lines;
+  let n = ln.len();
+  let kept = n == a.variants.len() && n > 0 && ln[0] > 0 && ln[n - 1] > ln[0];
+  let i = 0;
   while (i < a.variants.len()) {
     if (i > 0 && kept && ln[i] > ln[i - 1]) {
       out = out + "\n" + indent_str(1) + "| ";
     } else if (i > 0) {
-      out = out + " | ";
+      out += " | ";
     }
-    out = out + a.variants[i];
+    out += a.variants[i];
     if (i < a.variant_args.len() && a.variant_args[i].len() > 0) {
       out = out + "[" + a.variant_args[i] + "]";
     }
-    i = i + 1;
+    i += 1;
   }
   return out + ";\n";
 }
 
 function print_import(im: parser.Import): string {
   if (im.is_reexport) {
-    let re: string = "pub use " + quote_string(im.path) + ".{";
-    let ri: i32 = 0;
+    let re = "pub use " + quote_string(im.path) + ".{";
+    let ri = 0;
     while (ri < im.reexport_names.len()) {
       if (ri > 0) {
-        re = re + ", ";
+        re += ", ";
       }
-      re = re + im.reexport_names[ri];
-      ri = ri + 1;
+      re += im.reexport_names[ri];
+      ri += 1;
     }
     return re + "};\n";
   }
@@ -3514,7 +3514,7 @@ function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBin
   let prefix = "";
   for binding in exports {
     if (binding.func_name == fd.name && !binding.c_abi && fd.receiver_name.len() > 0 == binding.method) {
-      let attr: string = "@export(";
+      let attr = "@export(";
       if (binding.jni) {
         attr = "@jni(";
       }
@@ -3533,23 +3533,23 @@ function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBin
 }
 
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
-  let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1 };
+  let f = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1 };
   let chunks: string[] = [];
-  let wrote: boolean = false;
+  let wrote = false;
   let kinds: i32[] = [];
   let idxs: i32[] = [];
   let lines: i32[] = [];
-  let ii: i32 = 0;
+  let ii = 0;
   while (ii < mod.imports.len()) {
     kinds = kinds.append(6);
     idxs = idxs.append(ii);
     lines = lines.append(mod.imports[ii].line);
-    ii = ii + 1;
+    ii += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.structs.len()) {
-    let owner: string = mod.structs[i].enum_owner;
-    let ei: i32 = 0 - 1;
+    let owner = mod.structs[i].enum_owner;
+    let ei: i32 = -1;
     if (owner.len() > 0) {
       ei = enum_index(mod.enums, owner);
     }
@@ -3562,75 +3562,75 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
       idxs = idxs.append(ei);
       lines = lines.append(mod.enums[ei].line);
     }
-    i = i + 1;
+    i += 1;
   }
-  let vi: i32 = 0;
+  let vi = 0;
   while (vi < mod.enums.len()) {
     if (mod.enums[vi].variant_names.len() == 0) {
       kinds = kinds.append(1);
       idxs = idxs.append(vi);
       lines = lines.append(mod.enums[vi].line);
     }
-    vi = vi + 1;
+    vi += 1;
   }
-  let ai: i32 = 0;
+  let ai = 0;
   while (ai < mod.aliases.len()) {
     kinds = kinds.append(2);
     idxs = idxs.append(ai);
     lines = lines.append(mod.aliases[ai].line);
-    ai = ai + 1;
+    ai += 1;
   }
-  let ri: i32 = 0;
+  let ri = 0;
   while (ri < mod.resources.len()) {
     kinds = kinds.append(7);
     idxs = idxs.append(ri);
     lines = lines.append(mod.resources[ri].line);
-    ri = ri + 1;
+    ri += 1;
   }
-  let ti2: i32 = 0;
+  let ti2 = 0;
   while (ti2 < traits.len()) {
     kinds = kinds.append(4);
     idxs = idxs.append(ti2);
     lines = lines.append(traits[ti2].line);
-    ti2 = ti2 + 1;
+    ti2 += 1;
   }
-  let ipi: i32 = 0;
+  let ipi = 0;
   while (ipi < impls.len()) {
     kinds = kinds.append(5);
     idxs = idxs.append(ipi);
     lines = lines.append(impls[ipi].line);
-    ipi = ipi + 1;
+    ipi += 1;
   }
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].line > 0) {
       kinds = kinds.append(3);
       idxs = idxs.append(fi);
       lines = lines.append(mod.funcs[fi].line);
     }
-    fi = fi + 1;
+    fi += 1;
   }
-  let si: i32 = 1;
+  let si = 1;
   while (si < lines.len()) {
-    let sj: i32 = si;
+    let sj = si;
     while (sj > 0 && lines[sj - 1] > lines[sj]) {
-      let tl: i32 = lines[sj - 1];
-      let tk: i32 = kinds[sj - 1];
-      let ti: i32 = idxs[sj - 1];
+      let tl = lines[sj - 1];
+      let tk = kinds[sj - 1];
+      let ti = idxs[sj - 1];
       lines = lines.with(sj - 1, lines[sj]);
       kinds = kinds.with(sj - 1, kinds[sj]);
       idxs = idxs.with(sj - 1, idxs[sj]);
       lines = lines.with(sj, tl);
       kinds = kinds.with(sj, tk);
       idxs = idxs.with(sj, ti);
-      sj = sj - 1;
+      sj -= 1;
     }
-    si = si + 1;
+    si += 1;
   }
-  let hint_cursor: i32 = 0;
-  let di: i32 = 0;
+  let hint_cursor = 0;
+  let di = 0;
   while (di < kinds.len()) {
-    let dline: i32 = lines[di];
+    let dline = lines[di];
     if (di > 0 && !(kinds[di] == 6 && kinds[di - 1] == 6)) {
       chunks = chunks.append("\n");
     }
@@ -3676,7 +3676,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         wrote = true;
         f = cf;
       } else {
-        let fd: parser.FuncDecl = mod.funcs[idxs[di]];
+        let fd = mod.funcs[idxs[di]];
         let (ftext, ff, next_hint) = print_annotated_function(fd, mod.exports, hints, hint_cursor, f);
         hint_cursor = next_hint;
         chunks = chunks.append(ftext);
@@ -3684,9 +3684,9 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = ff;
       }
     }
-    di = di + 1;
+    di += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < mod.top_stmts.len()) {
     if (wrote) {
       chunks = chunks.append("\n");
@@ -3696,7 +3696,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     chunks = chunks.append(stext);
     wrote = true;
     f = sf;
-    j = j + 1;
+    j += 1;
   }
   let (tail, _) = drain_all(f, 0, chunks.len() > 0);
   chunks = chunks.append(tail);
@@ -3704,20 +3704,20 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
 }
 
 function roundtrip_verbatim(src: string): parser.Module {
-  let mod: parser.Module = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
+  let mod = parser.parse_module_verbatim(lexer.tokenize(src)).pmod;
   return parser.parse_module_verbatim(lexer.tokenize(print_module(mod))).pmod;
 }
 
 function roundtrip_module(src: string): parser.Module {
-  let toks: lexer.Token[] = lexer.tokenize(src);
-  let mod: parser.Module = parser.parse_module(toks);
-  let emitted: string = print_module(mod);
-  let toks2: lexer.Token[] = lexer.tokenize(emitted);
+  let toks = lexer.tokenize(src);
+  let mod = parser.parse_module(toks);
+  let emitted = print_module(mod);
+  let toks2 = lexer.tokenize(emitted);
   return parser.parse_module(toks2);
 }
 
 function main(): i32 {
-  let rc: i32 = check_expressions_and_control_flow();
+  let rc = check_expressions_and_control_flow();
   if (rc != 0) {
     return rc;
   }
@@ -3786,10 +3786,10 @@ function main(): i32 {
 }
 
 function check_expressions_and_control_flow(): i32 {
-  let toks1: lexer.Token[] = lexer.tokenize("let a = 1 + 2 * 3; return a;");
-  let mod1: parser.Module = parser.parse_module(toks1);
-  let s1: string = print_module(mod1);
-  let rt1: parser.Module = parser.parse_module(lexer.tokenize(s1));
+  let toks1 = lexer.tokenize("let a = 1 + 2 * 3; return a;");
+  let mod1 = parser.parse_module(toks1);
+  let s1 = print_module(mod1);
+  let rt1 = parser.parse_module(lexer.tokenize(s1));
   if (rt1.top_stmts.len() != 2) {
     return 10;
   }
@@ -3814,8 +3814,8 @@ function check_expressions_and_control_flow(): i32 {
     }
   }
 
-  let src2: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
-  let rt2: parser.Module = roundtrip_module(src2);
+  let src2 = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
+  let rt2 = roundtrip_module(src2);
   if (rt2.funcs.len() != 2) {
     return 20;
   }
@@ -3832,8 +3832,8 @@ function check_expressions_and_control_flow(): i32 {
     return 24;
   }
 
-  let src3: string = "let x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
-  let rt3: parser.Module = roundtrip_module(src3);
+  let src3 = "let x = 5; if (x < 10) { x = x + 1; } else { x = 0; } return x;";
+  let rt3 = roundtrip_module(src3);
   if (rt3.top_stmts.len() != 3) {
     return 30;
   }
@@ -3851,8 +3851,8 @@ function check_expressions_and_control_flow(): i32 {
     }
   }
 
-  let src4: string = "let a = [3, 5, 7]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
-  let rt4: parser.Module = roundtrip_module(src4);
+  let src4 = "let a = [3, 5, 7]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
+  let rt4 = roundtrip_module(src4);
   if (rt4.top_stmts.len() != 5) {
     return 40;
   }
@@ -3888,8 +3888,8 @@ function check_expressions_and_control_flow(): i32 {
 }
 
 function check_string_and_slice_literals(): i32 {
-  let src5: string = "let s = \"hello\\nworld\"; return 0;";
-  let rt5: parser.Module = roundtrip_module(src5);
+  let src5 = "let s = \"hello\\nworld\"; return 0;";
+  let rt5 = roundtrip_module(src5);
   match (rt5.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -3904,8 +3904,8 @@ function check_string_and_slice_literals(): i32 {
     }
   }
 
-  let src6: string = "let s = \"hello\"; let t = s[1:4]; return 0;";
-  let rt6: parser.Module = roundtrip_module(src6);
+  let src6 = "let s = \"hello\"; let t = s[1:4]; return 0;";
+  let rt6 = roundtrip_module(src6);
   match (rt6.top_stmts[1]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -3920,8 +3920,8 @@ function check_string_and_slice_literals(): i32 {
     }
   }
 
-  let srcOB: string = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
-  let outOB: string = print_module(parser.parse_module(lexer.tokenize(srcOB)));
+  let srcOB = "function f(s: string): string { return s[1:] + s[:3] + s[:] + s[1:3]; }";
+  let outOB = print_module(parser.parse_module(lexer.tokenize(srcOB)));
   if (!util.contains(outOB, "s[1:]")) {
     return 62;
   }
@@ -3946,7 +3946,7 @@ function check_string_and_slice_literals(): i32 {
 
 function check_structs_and_aliases(): i32 {
   let src7: string = "struct Point { x: i32, y: i32 } function main(): i32 { let p = Point { x: 3, y: 4 }; return p.x; }";
-  let rt7: parser.Module = roundtrip_module(src7);
+  let rt7 = roundtrip_module(src7);
   if (rt7.structs.len() != 1) {
     return 70;
   }
@@ -3960,8 +3960,8 @@ function check_structs_and_aliases(): i32 {
     return 73;
   }
 
-  let src8: string = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
-  let rt8: parser.Module = roundtrip_module(src8);
+  let src8 = "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { return 0; }";
+  let rt8 = roundtrip_module(src8);
   if (rt8.aliases.len() != 1) {
     return 80;
   }
@@ -3971,8 +3971,8 @@ function check_structs_and_aliases(): i32 {
   if (rt8.aliases[0].variants.len() != 2) {
     return 82;
   }
-  let src8g: string = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
-  let rt8g: parser.Module = roundtrip_verbatim(src8g);
+  let src8g = "struct Leaf[T] { v: T } struct Lit { v: i32 } pub type Tree[T, U] = Leaf[T] | Lit | Leaf[Leaf[U]]; function main(): i32 { return 0; }";
+  let rt8g = roundtrip_verbatim(src8g);
   if (rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != "U") {
     return 83;
   }
@@ -3984,8 +3984,8 @@ function check_structs_and_aliases(): i32 {
 }
 
 function check_match_statements(): i32 {
-  let src9: string = "let x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
-  let rt9: parser.Module = roundtrip_module(src9);
+  let src9 = "let x = 0; match (x) { Foo(f) => { return 1; }, _ => { return 0; } }";
+  let rt9 = roundtrip_module(src9);
   if (rt9.top_stmts.len() != 2) {
     return 90;
   }
@@ -4017,8 +4017,8 @@ function check_match_statements(): i32 {
 }
 
 function check_annotations_and_receivers(): i32 {
-  let srcA: string = "let n: i32 = 7; let sh: Shape = c; return n;";
-  let rtA: parser.Module = roundtrip_module(srcA);
+  let srcA = "let n: i32 = 7; let sh: Shape = c; return n;";
+  let rtA = roundtrip_module(srcA);
   match (rtA.top_stmts[0]) {
     ast.StmtVar(v) => {
       if (v.type_name != "i32") {
@@ -4040,8 +4040,8 @@ function check_annotations_and_receivers(): i32 {
     }
   }
 
-  let srcB: string = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
-  let rtB: parser.Module = roundtrip_module(srcB);
+  let srcB = "function (p: Par) advance(): Par { return p; } function main(): i32 { return 0; }";
+  let rtB = roundtrip_module(srcB);
   if (rtB.funcs.len() != 2) {
     return 110;
   }
@@ -4062,8 +4062,8 @@ function check_annotations_and_receivers(): i32 {
 }
 
 function check_imports(): i32 {
-  let srcC: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
-  let rtC: parser.Module = roundtrip_module(srcC);
+  let srcC = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
+  let rtC = roundtrip_module(srcC);
   if (rtC.imports.len() != 2) {
     return 120;
   }
@@ -4081,8 +4081,8 @@ function check_imports(): i32 {
 }
 
 function check_loops_and_tuples(): i32 {
-  let srcD: string = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
-  let rtD: parser.Module = roundtrip_module(srcD);
+  let srcD = "for n in [1, 2, 3] { if (n == 2) { break; } if (n == 1) { continue; } }";
+  let rtD = roundtrip_module(srcD);
   if (rtD.top_stmts.len() != 1) {
     return 130;
   }
@@ -4126,8 +4126,8 @@ function check_loops_and_tuples(): i32 {
     }
   }
 
-  let srcE: string = "let t = (10, 20, 30); let x = t.0; return x;";
-  let rtE: parser.Module = roundtrip_module(srcE);
+  let srcE = "let t = (10, 20, 30); let x = t.0; return x;";
+  let rtE = roundtrip_module(srcE);
   if (rtE.top_stmts.len() != 3) {
     return 140;
   }
@@ -4170,8 +4170,8 @@ function check_loops_and_tuples(): i32 {
 }
 
 function check_lambdas(): i32 {
-  let srcF: string = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
-  let rtF: parser.Module = roundtrip_module(srcF);
+  let srcF = "function main(): i32 { let f = (x: i32): i32 => { return x + 1; }; return f(41); }";
+  let rtF = roundtrip_module(srcF);
   if (rtF.funcs.len() != 1) {
     return 150;
   }
@@ -4211,8 +4211,8 @@ function check_lambdas(): i32 {
     }
   }
 
-  let srcG: string = "function main(): i32 { return (): i32 => { return 7; }(); }";
-  let rtG: parser.Module = roundtrip_module(srcG);
+  let srcG = "function main(): i32 { return (): i32 => { return 7; }(); }";
+  let rtG = roundtrip_module(srcG);
   match (rtG.funcs[0].body[0]) {
     ast.StmtReturn(r) => {
       match (r.value) {
@@ -4234,16 +4234,16 @@ function check_lambdas(): i32 {
     }
   }
 
-  let srcR: string = "function main(): i32 { let g = (): (string, i32) => { return (\"ab\", 7); }; let h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
-  let pfR: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcR));
-  let outR: string = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
+  let srcR = "function main(): i32 { let g = (): (string, i32) => { return (\"ab\", 7); }; let h = (p: i32): (i32) => i32 => (q: i32) => p + q; return 0; }";
+  let pfR = parser.parse_module_verbatim(lexer.tokenize(srcR));
+  let outR = format_module(pfR.pmod, pfR.ptraits, pfR.pimpls, pfR.pflines, [], []);
   if (!util.contains(outR, "let g = (): (string, i32) => (\"ab\", 7);")) {
     return 371;
   }
   if (!util.contains(outR, "let h = (p: i32): ((i32) => i32) => (q: i32) => p + q;")) {
     return 372;
   }
-  let pfR2: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outR));
+  let pfR2 = parser.parse_module_verbatim(lexer.tokenize(outR));
   if (format_module(pfR2.pmod, pfR2.ptraits, pfR2.pimpls, pfR2.pflines, [], []) != outR) {
     return 373;
   }
@@ -4269,8 +4269,8 @@ function check_lambdas(): i32 {
 }
 
 function check_qualified_names_and_externs(): i32 {
-  let srcH: string = "function main(): i32 { return parser.parse_module(42); }";
-  let rtH: parser.Module = roundtrip_module(srcH);
+  let srcH = "function main(): i32 { return parser.parse_module(42); }";
+  let rtH = roundtrip_module(srcH);
   match (rtH.funcs[0].body[0]) {
     ast.StmtReturn(r) => {
       match (r.value) {
@@ -4306,8 +4306,8 @@ function check_qualified_names_and_externs(): i32 {
     }
   }
 
-  let srcI: string = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
-  let modI: parser.Module = parser.parse_module(lexer.tokenize(srcI));
+  let srcI = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
+  let modI = parser.parse_module(lexer.tokenize(srcI));
   if (modI.funcs.len() != 2) {
     return 180;
   }
@@ -4326,7 +4326,7 @@ function check_qualified_names_and_externs(): i32 {
   if (modI.funcs[1].import_iface.len() != 0) {
     return 185;
   }
-  let rtI: parser.Module = roundtrip_module(srcI);
+  let rtI = roundtrip_module(srcI);
   if (rtI.funcs.len() != 2) {
     return 186;
   }
@@ -4344,8 +4344,8 @@ function check_qualified_names_and_externs(): i32 {
 }
 
 function check_declaration_modifiers(): i32 {
-  let srcM: string = "fip function pure_add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return pure_add(1, 2); }";
-  let rtM: parser.Module = roundtrip_module(srcM);
+  let srcM = "fip function pure_add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return pure_add(1, 2); }";
+  let rtM = roundtrip_module(srcM);
   if (rtM.funcs.len() != 2) {
     return 190;
   }
@@ -4362,8 +4362,8 @@ function check_declaration_modifiers(): i32 {
     return 193;
   }
 
-  let srcFB: string = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
-  let rtFB: parser.Module = roundtrip_module(srcFB);
+  let srcFB = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
+  let rtFB = roundtrip_module(srcFB);
   if (rtFB.funcs.len() != 2) {
     return 165;
   }
@@ -4374,8 +4374,8 @@ function check_declaration_modifiers(): i32 {
     return 167;
   }
 
-  let srcFG: string = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
-  let rtFG: parser.Module = roundtrip_module(srcFG);
+  let srcFG = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
+  let rtFG = roundtrip_module(srcFG);
   if (rtFG.funcs.len() != 3) {
     return 168;
   }
@@ -4387,7 +4387,7 @@ function check_declaration_modifiers(): i32 {
   }
 
   let srcMC: string = "@must_consume\nstruct Res { code: i32 } function main(): i32 { let r: Res = Res { code: 7 }; return r.code; }";
-  let rtMC: parser.Module = roundtrip_module(srcMC);
+  let rtMC = roundtrip_module(srcMC);
   if (rtMC.structs.len() != 1) {
     return 194;
   }
@@ -4396,8 +4396,8 @@ function check_declaration_modifiers(): i32 {
   }
 
   let srcDrv: string = "@derive(Eq)\nstruct Pt { x: i32 } function main(): i32 { let p: Pt = Pt { x: 1 }; return p.x; }";
-  let modDrv: parser.Module = parser.parse_module(lexer.tokenize(srcDrv));
-  let rtDrv: parser.Module = roundtrip_module(srcDrv);
+  let modDrv = parser.parse_module(lexer.tokenize(srcDrv));
+  let rtDrv = roundtrip_module(srcDrv);
   if (rtDrv.structs.len() != 1) {
     return 196;
   }
@@ -4411,8 +4411,8 @@ function check_declaration_modifiers(): i32 {
     return 199;
   }
 
-  let srcJ: string = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
-  let modJ: parser.Module = parser.parse_module(lexer.tokenize(srcJ));
+  let srcJ = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
+  let modJ = parser.parse_module(lexer.tokenize(srcJ));
   if (modJ.funcs.len() != 2) {
     return 200;
   }
@@ -4422,7 +4422,7 @@ function check_declaration_modifiers(): i32 {
   if (modJ.funcs[1].async) {
     return 202;
   }
-  let rtJ: parser.Module = roundtrip_module(srcJ);
+  let rtJ = roundtrip_module(srcJ);
   if (rtJ.funcs.len() != 2) {
     return 203;
   }
@@ -4432,14 +4432,14 @@ function check_declaration_modifiers(): i32 {
   if (rtJ.funcs[1].async) {
     return 205;
   }
-  let rtK: parser.Module = roundtrip_module("pub async function w(): i32 { return 1; }");
+  let rtK = roundtrip_module("pub async function w(): i32 { return 1; }");
   if (rtK.funcs.len() != 1) {
     return 206;
   }
   if (!rtK.funcs[0].async) {
     return 207;
   }
-  let rtL: parser.Module = roundtrip_module("function main(): i32 { let async: i32 = 3; return async + 4; }");
+  let rtL = roundtrip_module("function main(): i32 { let async: i32 = 3; return async + 4; }");
   if (rtL.funcs.len() != 1) {
     return 208;
   }
@@ -4451,9 +4451,9 @@ function check_declaration_modifiers(): i32 {
 }
 
 function check_enums(): i32 {
-  let srcEnum: string = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { let c: Color = Red; return 0; }";
-  let modEnum: parser.Module = parser.parse_module(lexer.tokenize(srcEnum));
-  let rtEnum: parser.Module = roundtrip_module(srcEnum);
+  let srcEnum = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { let c: Color = Red; return 0; }";
+  let modEnum = parser.parse_module(lexer.tokenize(srcEnum));
+  let rtEnum = roundtrip_module(srcEnum);
   if (rtEnum.enums.len() != 1) {
     return 210;
   }
@@ -4469,7 +4469,7 @@ function check_enums(): i32 {
   if (rtEnum.enums[0].variant_names[1] != "Green") {
     return 214;
   }
-  let rgi: i32 = variant_decl_index(rtEnum.structs, "Color", "Green");
+  let rgi = variant_decl_index(rtEnum.structs, "Color", "Green");
   if (rgi < 0) {
     return 215;
   }
@@ -4479,19 +4479,19 @@ function check_enums(): i32 {
   if (rtEnum.structs[rgi].fields[0].type_name != "i32") {
     return 217;
   }
-  let rri: i32 = variant_decl_index(rtEnum.structs, "Color", "Red");
+  let rri = variant_decl_index(rtEnum.structs, "Color", "Red");
   if (rri < 0) {
     return 218;
   }
   if (rtEnum.structs[rri].fields.len() != 0) {
     return 219;
   }
-  let esi: i32 = 0;
+  let esi = 0;
   while (esi < rtEnum.structs.len()) {
     if (rtEnum.structs[esi].enum_owner.len() == 0) {
       return 220;
     }
-    esi = esi + 1;
+    esi += 1;
   }
   if (rtEnum.structs[rgi].derives.len() != 1) {
     return 221;
@@ -4503,9 +4503,9 @@ function check_enums(): i32 {
     return 223;
   }
 
-  let srcEG: string = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
-  let modEG: parser.Module = parser.parse_module(lexer.tokenize(srcEG));
-  let rtEG: parser.Module = roundtrip_module(srcEG);
+  let srcEG = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
+  let modEG = parser.parse_module(lexer.tokenize(srcEG));
+  let rtEG = roundtrip_module(srcEG);
   if (rtEG.enums.len() != 1) {
     return 224;
   }
@@ -4518,7 +4518,7 @@ function check_enums(): i32 {
   if (rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]) {
     return 227;
   }
-  let fgi: i32 = variant_decl_index(rtEG.structs, "Slot", "Full");
+  let fgi = variant_decl_index(rtEG.structs, "Slot", "Full");
   if (fgi < 0) {
     return 228;
   }
@@ -4529,9 +4529,9 @@ function check_enums(): i32 {
     return 274;
   }
 
-  let srcEM: string = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
-  let rtEM: parser.Module = roundtrip_module(srcEM);
-  let tpi: i32 = variant_decl_index(rtEM.structs, "Pair", "Two");
+  let srcEM = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
+  let rtEM = roundtrip_module(srcEM);
+  let tpi = variant_decl_index(rtEM.structs, "Pair", "Two");
   if (tpi < 0) {
     return 230;
   }
@@ -4545,9 +4545,9 @@ function check_enums(): i32 {
     return 233;
   }
 
-  let srcER: string = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
-  let rtER: parser.Module = roundtrip_module(srcER);
-  let rcvi: i32 = variant_decl_index(rtER.structs, "Shape", "Rect");
+  let srcER = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
+  let rtER = roundtrip_module(srcER);
+  let rcvi = variant_decl_index(rtER.structs, "Shape", "Rect");
   if (rcvi < 0) {
     return 234;
   }
@@ -4572,7 +4572,7 @@ function check_enums(): i32 {
   if (rtER.structs[rcvi].fields[1].type_name != "string") {
     return 241;
   }
-  let uri: i32 = variant_decl_index(rtER.structs, "Shape", "Unit");
+  let uri = variant_decl_index(rtER.structs, "Shape", "Unit");
   if (uri < 0) {
     return 242;
   }
@@ -4580,8 +4580,8 @@ function check_enums(): i32 {
     return 243;
   }
 
-  let srcPB: string = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
-  let rtPB: parser.Module = roundtrip_module(srcPB);
+  let srcPB = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
+  let rtPB = roundtrip_module(srcPB);
   if (rtPB.funcs.len() < 1) {
     return 244;
   }
@@ -4613,8 +4613,8 @@ function check_enums(): i32 {
 }
 
 function check_record_patterns(): i32 {
-  let src: string = "function f(s: Shape): i32 { match (s) { Rect { h: hh, .. } => { return hh; }, Circle { .. } => { return 0; } } return 0; } function main(): i32 { return 0; }";
-  let rt: parser.Module = roundtrip_module(src);
+  let src = "function f(s: Shape): i32 { match (s) { Rect { h: hh, .. } => { return hh; }, Circle { .. } => { return 0; } } return 0; } function main(): i32 { return 0; }";
+  let rt = roundtrip_module(src);
   if (rt.funcs.len() < 1) {
     return 377;
   }
@@ -4642,18 +4642,18 @@ function check_record_patterns(): i32 {
 }
 
 function check_const_and_for_sugar(): i32 {
-  let srcConst: string = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
-  let rtConst: parser.Module = roundtrip_module(srcConst);
+  let srcConst = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
+  let rtConst = roundtrip_module(srcConst);
   if (rtConst.funcs.len() != 2) {
     return 250;
   }
-  let limit_i: i32 = 0 - 1;
-  let ci: i32 = 0;
+  let limit_i: i32 = -1;
+  let ci = 0;
   while (ci < rtConst.funcs.len()) {
     if (rtConst.funcs[ci].name == "LIMIT") {
       limit_i = ci;
     }
-    ci = ci + 1;
+    ci += 1;
   }
   if (limit_i < 0) {
     return 251;
@@ -4664,7 +4664,7 @@ function check_const_and_for_sugar(): i32 {
   if (rtConst.funcs[limit_i].ret_type != "i32") {
     return 253;
   }
-  let rtFn: parser.Module = roundtrip_module("function LIMIT(): i32 { return 41; }");
+  let rtFn = roundtrip_module("function LIMIT(): i32 { return 41; }");
   if (rtFn.funcs.len() != 1) {
     return 254;
   }
@@ -4672,15 +4672,15 @@ function check_const_and_for_sugar(): i32 {
     return 255;
   }
 
-  let srcCFor: string = "function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
-  let outCFor: string = print_module(parser.parse_module(lexer.tokenize(srcCFor)));
+  let srcCFor = "function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
+  let outCFor = print_module(parser.parse_module(lexer.tokenize(srcCFor)));
   if (!util.contains(outCFor, "for (let i: i32 = 0; i < 3; i = i + 1) {")) {
     return 260;
   }
   if (util.contains(outCFor, "__forc_")) {
     return 261;
   }
-  let rtCFor: parser.Module = roundtrip_module(srcCFor);
+  let rtCFor = roundtrip_module(srcCFor);
   if (rtCFor.funcs.len() != 1) {
     return 262;
   }
@@ -4725,8 +4725,8 @@ function check_const_and_for_sugar(): i32 {
     return 269;
   }
 
-  let srcLabels: string = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for (let i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
-  let outLabels: string = print_module(parser.parse_module(lexer.tokenize(srcLabels)));
+  let srcLabels = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for (let i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
+  let outLabels = print_module(parser.parse_module(lexer.tokenize(srcLabels)));
   if (!util.contains(outLabels, "outer: while (t < 10) {")) {
     return 270;
   }
@@ -4744,8 +4744,8 @@ function check_const_and_for_sugar(): i32 {
 }
 
 function check_visibility_and_destructuring(): i32 {
-  let srcVis: string = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
-  let rtVis: parser.Module = roundtrip_module(srcVis);
+  let srcVis = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
+  let rtVis = roundtrip_module(srcVis);
   if (!rtVis.structs[struct_index(rtVis.structs, "A")].is_pub) {
     return 280;
   }
@@ -4768,9 +4768,9 @@ function check_visibility_and_destructuring(): i32 {
     return 286;
   }
 
-  let srcTd: string = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
-  let rtTd: parser.Module = roundtrip_module(srcTd);
-  let mti: i32 = func_index(rtTd.funcs, "main");
+  let srcTd = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
+  let rtTd = roundtrip_module(srcTd);
+  let mti = func_index(rtTd.funcs, "main");
   if (mti < 0) {
     return 287;
   }
@@ -4791,8 +4791,8 @@ function check_visibility_and_destructuring(): i32 {
     }
   }
   let srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
-  let rtSd: parser.Module = roundtrip_module(srcSd);
-  let msi: i32 = func_index(rtSd.funcs, "main");
+  let rtSd = roundtrip_module(srcSd);
+  let msi = func_index(rtSd.funcs, "main");
   if (msi < 0) {
     return 292;
   }
@@ -4810,9 +4810,9 @@ function check_visibility_and_destructuring(): i32 {
     }
   }
 
-  let srcMt: string = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
-  let rtMt: parser.Module = roundtrip_module(srcMt);
-  let mmi: i32 = func_index(rtMt.funcs, "map");
+  let srcMt = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
+  let rtMt = roundtrip_module(srcMt);
+  let mmi = func_index(rtMt.funcs, "map");
   if (mmi < 0) {
     return 296;
   }
@@ -4827,10 +4827,10 @@ function check_visibility_and_destructuring(): i32 {
 }
 
 function check_traits_and_impls(): i32 {
-  let srcTr: string = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
-  let pfTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcTr));
-  let outTr: string = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
-  let rtTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outTr));
+  let srcTr = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
+  let pfTr = parser.parse_module_verbatim(lexer.tokenize(srcTr));
+  let outTr = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
+  let rtTr = parser.parse_module_verbatim(lexer.tokenize(outTr));
   if (rtTr.ptraits.len() != 1) {
     return 299;
   }
@@ -4883,8 +4883,8 @@ function check_traits_and_impls(): i32 {
     return 314;
   }
 
-  let srcIm: string = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
-  let pfIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcIm));
+  let srcIm = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
+  let pfIm = parser.parse_module_verbatim(lexer.tokenize(srcIm));
   if (pfIm.pimpls.len() != 2) {
     return 315;
   }
@@ -4903,14 +4903,14 @@ function check_traits_and_impls(): i32 {
   if (func_index(pfIm.pmod.funcs, "to_string") >= 0) {
     return 320;
   }
-  let outIm: string = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
+  let outIm = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
   if (!util.contains(outIm, "impl Display for i32 {}")) {
     return 321;
   }
   if (!util.contains(outIm, "function to_string(self: Self): string {")) {
     return 322;
   }
-  let rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
+  let rtIm = parser.parse_module_verbatim(lexer.tokenize(outIm));
   if (rtIm.pimpls.len() != 2) {
     return 323;
   }
@@ -4921,7 +4921,7 @@ function check_traits_and_impls(): i32 {
   if (pfPa.pimpls.len() != 1) {
     return 328;
   }
-  let outPa: string = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
+  let outPa = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
   if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) {
     return 329;
   }
@@ -4932,7 +4932,7 @@ function check_traits_and_impls(): i32 {
   let pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
     "function main(): i32 { let x: f64 = 1e309; return 0; }",
   ));
-  let outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
+  let outOor = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
   if (!util.contains(outOor, "let x: f64 = 1e309;")) {
     return 331;
   }
@@ -4956,10 +4956,10 @@ function check_traits_and_impls(): i32 {
   if (escape_fstring_lit("é{😀") != "é{{😀") {
     return 348;
   }
-  let srcMb: string = "function main(): i32 { let s: string = \"héllo\"; let f: string = f\"pré {s}\"; return 0; }";
-  let pfMb: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcMb));
-  let outMb: string = format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
-  let rtMb: parser.Module = parser.parse_module(lexer.tokenize(outMb));
+  let srcMb = "function main(): i32 { let s: string = \"héllo\"; let f: string = f\"pré {s}\"; return 0; }";
+  let pfMb = parser.parse_module_verbatim(lexer.tokenize(srcMb));
+  let outMb = format_module(pfMb.pmod, pfMb.ptraits, pfMb.pimpls, pfMb.pflines, [], []);
+  let rtMb = parser.parse_module(lexer.tokenize(outMb));
   if (rtMb.funcs.len() != 1) {
     return 342;
   }
@@ -4969,7 +4969,7 @@ function check_traits_and_impls(): i32 {
   if (!util.contains(outMb, "f\"pré {s}\"")) {
     return 344;
   }
-  let dl: string[] = diff_split_lines("é\nü");
+  let dl = diff_split_lines("é\nü");
   if (dl.len() != 2) {
     return 345;
   }
@@ -4977,7 +4977,7 @@ function check_traits_and_impls(): i32 {
     return 346;
   }
 
-  let dcode: i32 = diff_selftest();
+  let dcode = diff_selftest();
   if (dcode != 0) {
     return dcode;
   }
@@ -4986,25 +4986,25 @@ function check_traits_and_impls(): i32 {
 }
 
 function struct_index(structs: parser.StructDecl[], name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < structs.len()) {
     if (structs[i].name == name && structs[i].enum_owner.len() == 0) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function func_index(funcs: parser.FuncDecl[], name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function diff_split_lines(s: string): string[] {
@@ -5012,14 +5012,14 @@ function diff_split_lines(s: string): string[] {
   if (s.len() == 0) {
     return out;
   }
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] == b'\n') {
       out = out.append(slice_unchecked(s, start, i + 1) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (start < s.len()) {
     out = out.append(slice_unchecked(s, start, s.len()) + "");
@@ -5039,17 +5039,17 @@ function diff_intern(a: string[], b: string[]): DiffIds {
   let ids: Map[string, i32] = map_new(a.len() + b.len() + 1);
   let ia: i32[] = [];
   let ib: i32[] = [];
-  let next: i32 = 0;
+  let next = 0;
   let i: i32 = 0;
   while (i < a.len()) {
     let ida: i32 = ids.get_or(a[i], 0 - 1);
     if (ida < 0) {
       ida = next;
       ids = ids.insert(a[i], ida);
-      next = next + 1;
+      next += 1;
     }
     ia = ia.append(ida);
-    i = i + 1;
+    i += 1;
   }
   let j: i32 = 0;
   while (j < b.len()) {
@@ -5057,45 +5057,45 @@ function diff_intern(a: string[], b: string[]): DiffIds {
     if (idb < 0) {
       idb = next;
       ids = ids.insert(b[j], idb);
-      next = next + 1;
+      next += 1;
     }
     ib = ib.append(idb);
-    j = j + 1;
+    j += 1;
   }
   return DiffIds { ia: ia, ib: ib, distinct: next };
 }
 
 function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi: i32, blo: i32, bhi: i32): (i32, i32) {
-  let na: i32 = ahi - alo;
-  let nb: i32 = bhi - blo;
-  let best_f: i32 = 0;
-  let fx: i32 = 0;
-  let fy: i32 = 0;
-  let best_r: i32 = 0;
-  let rx: i32 = 0;
-  let ry: i32 = 0;
-  let o: i32 = 0;
+  let na = ahi - alo;
+  let nb = bhi - blo;
+  let best_f = 0;
+  let fx = 0;
+  let fy = 0;
+  let best_r = 0;
+  let rx = 0;
+  let ry = 0;
+  let o = 0;
   while (o < size) {
-    let j: i32 = o - off;
-    let xf: i32 = vf[o];
+    let j = o - off;
+    let xf = vf[o];
     if (xf >= 0) {
-      let yf: i32 = xf - j;
+      let yf = xf - j;
       if (xf <= na && yf >= 0 && yf <= nb && xf + yf > best_f) {
         best_f = xf + yf;
         fx = xf;
         fy = yf;
       }
     }
-    let xr: i32 = vr[o];
+    let xr = vr[o];
     if (xr >= 0) {
-      let yr: i32 = xr - j;
+      let yr = xr - j;
       if (xr <= na && yr >= 0 && yr <= nb && xr + yr > best_r) {
         best_r = xr + yr;
         rx = na - xr;
         ry = nb - yr;
       }
     }
-    o = o + 1;
+    o += 1;
   }
   if (best_f >= best_r) {
     if (best_f > 0 && (fx < na || fy < nb)) {
@@ -5108,107 +5108,107 @@ function diff_furthest(vf: i32[], vr: i32[], off: i32, size: i32, alo: i32, ahi:
 }
 
 function diff_bisect(ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i32, max_cost: i32): (i32, i32) {
-  let na: i32 = ahi - alo;
-  let nb: i32 = bhi - blo;
+  let na = ahi - alo;
+  let nb = bhi - blo;
   let maxd: i32 = (na + nb + 3) / 2;
-  let budget: i32 = maxd;
+  let budget = maxd;
   if (budget > max_cost) {
     budget = max_cost;
   }
-  let off: i32 = budget + 1;
-  let size: i32 = 2 * budget + 4;
+  let off = budget + 1;
+  let size = 2 * budget + 4;
   let vf: i32[] = [];
   let vr: i32[] = [];
-  let z: i32 = 0;
+  let z = 0;
   while (z < size) {
-    vf = vf.append(0 - 1);
-    vr = vr.append(0 - 1);
-    z = z + 1;
+    vf = vf.append(-1);
+    vr = vr.append(-1);
+    z += 1;
   }
   vf = vf.with(off + 1, 0);
   vr = vr.with(off + 1, 0);
-  let delta: i32 = na - nb;
-  let meet_forward: boolean = delta % 2 != 0;
-  let flo: i32 = 0;
-  let fhi: i32 = 0;
-  let rlo: i32 = 0;
-  let rhi: i32 = 0;
-  let k: i32 = 0;
+  let delta = na - nb;
+  let meet_forward = delta % 2 != 0;
+  let flo = 0;
+  let fhi = 0;
+  let rlo = 0;
+  let rhi = 0;
+  let k = 0;
   while (k < budget) {
-    let jf: i32 = 0 - k + flo;
+    let jf = -k + flo;
     while (jf <= k - fhi) {
-      let o: i32 = off + jf;
-      let x: i32 = 0;
-      if (jf == 0 - k || jf != k && vf[o - 1] < vf[o + 1]) {
+      let o = off + jf;
+      let x = 0;
+      if (jf == -k || jf != k && vf[o - 1] < vf[o + 1]) {
         x = vf[o + 1];
       } else {
         x = vf[o - 1] + 1;
       }
-      let y: i32 = x - jf;
+      let y = x - jf;
       while (x < na && y < nb && ia[alo + x] == ib[blo + y]) {
-        x = x + 1;
-        y = y + 1;
+        x += 1;
+        y += 1;
       }
       vf = vf.with(o, x);
       if (x > na) {
-        fhi = fhi + 2;
+        fhi += 2;
       } else if (y > nb) {
-        flo = flo + 2;
+        flo += 2;
       } else if (meet_forward) {
-        let ro: i32 = off + delta - jf;
+        let ro = off + delta - jf;
         if (ro >= 0 && ro < size && vr[ro] >= 0 && x >= na - vr[ro]) {
           return (alo + x, blo + y);
         }
       }
-      jf = jf + 2;
+      jf += 2;
     }
-    let jr: i32 = 0 - k + rlo;
+    let jr = -k + rlo;
     while (jr <= k - rhi) {
-      let o2: i32 = off + jr;
-      let x2: i32 = 0;
-      if (jr == 0 - k || jr != k && vr[o2 - 1] < vr[o2 + 1]) {
+      let o2 = off + jr;
+      let x2 = 0;
+      if (jr == -k || jr != k && vr[o2 - 1] < vr[o2 + 1]) {
         x2 = vr[o2 + 1];
       } else {
         x2 = vr[o2 - 1] + 1;
       }
-      let y2: i32 = x2 - jr;
+      let y2 = x2 - jr;
       while (x2 < na && y2 < nb && ia[ahi - 1 - x2] == ib[bhi - 1 - y2]) {
-        x2 = x2 + 1;
-        y2 = y2 + 1;
+        x2 += 1;
+        y2 += 1;
       }
       vr = vr.with(o2, x2);
       if (x2 > na) {
-        rhi = rhi + 2;
+        rhi += 2;
       } else if (y2 > nb) {
-        rlo = rlo + 2;
+        rlo += 2;
       } else if (!meet_forward) {
-        let fo: i32 = off + delta - jr;
+        let fo = off + delta - jr;
         if (fo >= 0 && fo < size && vf[fo] >= 0 && vf[fo] >= na - x2) {
           return (alo + vf[fo], blo + vf[fo] - (delta - jr));
         }
       }
-      jr = jr + 2;
+      jr += 2;
     }
-    k = k + 1;
+    k += 1;
   }
   return diff_furthest(vf, vr, off, size, alo, ahi, blo, bhi);
 }
 
 function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, blo: i32, bhi: i32, max_cost: i32): i32[] {
-  let lo_a: i32 = alo;
-  let lo_b: i32 = blo;
+  let lo_a = alo;
+  let lo_b = blo;
   while (lo_a < ahi && lo_b < bhi && ia[lo_a] == ib[lo_b]) {
     anchors = anchors.append(lo_a);
     anchors = anchors.append(lo_b);
-    lo_a = lo_a + 1;
-    lo_b = lo_b + 1;
+    lo_a += 1;
+    lo_b += 1;
   }
-  let suffix: i32 = 0;
+  let suffix = 0;
   while (ahi - suffix > lo_a && bhi - suffix > lo_b && ia[ahi - 1 - suffix] == ib[bhi - 1 - suffix]) {
-    suffix = suffix + 1;
+    suffix += 1;
   }
-  let hi_a: i32 = ahi - suffix;
-  let hi_b: i32 = bhi - suffix;
+  let hi_a = ahi - suffix;
+  let hi_b = bhi - suffix;
   if (lo_a < hi_a && lo_b < hi_b) {
     let (x, y) = diff_bisect(ia, ib, lo_a, hi_a, lo_b, hi_b, max_cost);
     if ((x != lo_a || y != lo_b) && (x != hi_a || y != hi_b)) {
@@ -5216,48 +5216,48 @@ function diff_compare(anchors: i32[], ia: i32[], ib: i32[], alo: i32, ahi: i32, 
       anchors = diff_compare(anchors, ia, ib, x, hi_a, y, hi_b, max_cost);
     }
   }
-  let s: i32 = 0;
+  let s = 0;
   while (s < suffix) {
     anchors = anchors.append(hi_a + s);
     anchors = anchors.append(hi_b + s);
-    s = s + 1;
+    s += 1;
   }
   return anchors;
 }
 
 function diff_edit_script(a: string[], b: string[]): DiffScript {
-  let m: i32 = a.len();
-  let n: i32 = b.len();
-  let ids: DiffIds = diff_intern(a, b);
-  let ia: i32[] = ids.ia;
-  let ib: i32[] = ids.ib;
+  let m = a.len();
+  let n = b.len();
+  let ids = diff_intern(a, b);
+  let ia = ids.ia;
+  let ib = ids.ib;
 
-  let pre: i32 = 0;
+  let pre = 0;
   while (pre < m && pre < n && ia[pre] == ib[pre]) {
-    pre = pre + 1;
+    pre += 1;
   }
-  let suf: i32 = 0;
+  let suf = 0;
   while (suf < m - pre && suf < n - pre && ia[m - 1 - suf] == ib[n - 1 - suf]) {
-    suf = suf + 1;
+    suf += 1;
   }
 
   let in_a: boolean[] = [];
   let in_b: boolean[] = [];
-  let z: i32 = 0;
+  let z = 0;
   while (z < ids.distinct) {
     in_a = in_a.append(false);
     in_b = in_b.append(false);
-    z = z + 1;
+    z += 1;
   }
-  let i: i32 = pre;
+  let i = pre;
   while (i < m - suf) {
     in_a = in_a.with(ia[i], true);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = pre;
+  let j = pre;
   while (j < n - suf) {
     in_b = in_b.with(ib[j], true);
-    j = j + 1;
+    j += 1;
   }
   let fa: i32[] = [];
   let map_a: i32[] = [];
@@ -5269,7 +5269,7 @@ function diff_edit_script(a: string[], b: string[]): DiffScript {
       fa = fa.append(ia[i]);
       map_a = map_a.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   j = pre;
   while (j < n - suf) {
@@ -5277,54 +5277,54 @@ function diff_edit_script(a: string[], b: string[]): DiffScript {
       fb = fb.append(ib[j]);
       map_b = map_b.append(j);
     }
-    j = j + 1;
+    j += 1;
   }
   let anchors: i32[] = [];
   anchors = diff_compare(anchors, fa, fb, 0, fa.len(), 0, fb.len(), diff_max_search_cost());
 
   let kinds: i32[] = [];
   let lines: string[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < pre) {
     kinds = kinds.append(0);
     lines = lines.append(a[p]);
-    p = p + 1;
+    p += 1;
   }
-  let q: i32 = pre;
-  let t: i32 = 0;
+  let q = pre;
+  let t = 0;
   while (t < anchors.len()) {
-    let ai: i32 = map_a[anchors[t]];
-    let bj: i32 = map_b[anchors[t + 1]];
+    let ai = map_a[anchors[t]];
+    let bj = map_b[anchors[t + 1]];
     while (p < ai) {
       kinds = kinds.append(1);
       lines = lines.append(a[p]);
-      p = p + 1;
+      p += 1;
     }
     while (q < bj) {
       kinds = kinds.append(2);
       lines = lines.append(b[q]);
-      q = q + 1;
+      q += 1;
     }
     kinds = kinds.append(0);
     lines = lines.append(a[p]);
-    p = p + 1;
-    q = q + 1;
-    t = t + 2;
+    p += 1;
+    q += 1;
+    t += 2;
   }
   while (p < m - suf) {
     kinds = kinds.append(1);
     lines = lines.append(a[p]);
-    p = p + 1;
+    p += 1;
   }
   while (q < n - suf) {
     kinds = kinds.append(2);
     lines = lines.append(b[q]);
-    q = q + 1;
+    q += 1;
   }
   while (p < m) {
     kinds = kinds.append(0);
     lines = lines.append(a[p]);
-    p = p + 1;
+    p += 1;
   }
   return DiffScript { kinds: kinds, lines: lines };
 }
@@ -5333,23 +5333,23 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
   if (before == after) {
     return "";
   }
-  let script: DiffScript = diff_edit_script(diff_split_lines(before), diff_split_lines(after));
-  let kinds: i32[] = script.kinds;
+  let script = diff_edit_script(diff_split_lines(before), diff_split_lines(after));
+  let kinds = script.kinds;
   if (kinds.len() == 0) {
     return "";
   }
-  let context: i32 = 3;
+  let context = 3;
 
   let lo: i32[] = [];
   let hi: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < kinds.len()) {
     if (kinds[i] == 0) {
-      i = i + 1;
+      i += 1;
     } else {
-      let s: i32 = i;
+      let s = i;
       while (i < kinds.len() && kinds[i] != 0) {
-        i = i + 1;
+        i += 1;
       }
       if (lo.len() > 0 && s - hi[hi.len() - 1] <= 2 * context) {
         hi = hi.with(hi.len() - 1, i);
@@ -5363,103 +5363,103 @@ pub function unified_diff(before: string, after: string, path_before: string, pa
     return "";
   }
 
-  let out: string = "--- " + path_before + "\n+++ " + path_after + "\n";
-  let h: i32 = 0;
+  let out = "--- " + path_before + "\n+++ " + path_after + "\n";
+  let h = 0;
   while (h < lo.len()) {
-    let start: i32 = lo[h] - context;
+    let start = lo[h] - context;
     if (start < 0) {
       start = 0;
     }
-    let end: i32 = hi[h] + context;
+    let end = hi[h] + context;
     if (end > kinds.len()) {
       end = kinds.len();
     }
-    let a_pos: i32 = 0;
-    let b_pos: i32 = 0;
-    let k: i32 = 0;
+    let a_pos = 0;
+    let b_pos = 0;
+    let k = 0;
     while (k < start) {
       if (kinds[k] != 2) {
-        a_pos = a_pos + 1;
+        a_pos += 1;
       }
       if (kinds[k] != 1) {
-        b_pos = b_pos + 1;
+        b_pos += 1;
       }
-      k = k + 1;
+      k += 1;
     }
-    let a_len: i32 = 0;
-    let b_len: i32 = 0;
+    let a_len = 0;
+    let b_len = 0;
     k = start;
     while (k < end) {
       if (kinds[k] != 2) {
-        a_len = a_len + 1;
+        a_len += 1;
       }
       if (kinds[k] != 1) {
-        b_len = b_len + 1;
+        b_len += 1;
       }
-      k = k + 1;
+      k += 1;
     }
     out = out + "@@ -" + util.i32_to_string(a_pos + 1) + "," + util.i32_to_string(a_len)
       + " +" + util.i32_to_string(b_pos + 1) + "," + util.i32_to_string(b_len) + " @@\n";
     k = start;
     while (k < end) {
-      let mark: string = " ";
+      let mark = " ";
       if (kinds[k] == 1) {
         mark = "-";
       }
       if (kinds[k] == 2) {
         mark = "+";
       }
-      let line: string = script.lines[k];
+      let line = script.lines[k];
       out = out + mark + line;
       if (line.len() == 0 || line[line.len() - 1] != b'\n') {
-        out = out + "\n";
+        out += "\n";
       }
-      k = k + 1;
+      k += 1;
     }
-    h = h + 1;
+    h += 1;
   }
   return out;
 }
 
 function diff_replay(sc: DiffScript, keep: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < sc.kinds.len()) {
     if (sc.kinds[i] == 0 || sc.kinds[i] == keep) {
-      out = out + sc.lines[i];
+      out += sc.lines[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function diff_edits(sc: DiffScript): i32 {
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let n = 0;
+  let i = 0;
   while (i < sc.kinds.len()) {
     if (sc.kinds[i] != 0) {
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function diff_lcs_edits(a: string[], b: string[]): i32 {
-  let m: i32 = a.len();
-  let n: i32 = b.len();
+  let m = a.len();
+  let n = b.len();
   let prev: i32[] = [];
   let cur: i32[] = [];
-  let z: i32 = 0;
+  let z = 0;
   while (z <= n) {
     prev = prev.append(0);
     cur = cur.append(0);
-    z = z + 1;
+    z += 1;
   }
-  let i: i32 = m - 1;
+  let i = m - 1;
   while (i >= 0) {
     prev = cur;
-    let j: i32 = n - 1;
+    let j = n - 1;
     while (j >= 0) {
       if (a[i] == b[j]) {
         cur = cur.with(j, prev[j + 1] + 1);
@@ -5468,9 +5468,9 @@ function diff_lcs_edits(a: string[], b: string[]): i32 {
       } else {
         cur = cur.with(j, cur[j + 1]);
       }
-      j = j - 1;
+      j -= 1;
     }
-    i = i - 1;
+    i -= 1;
   }
   return m + n - 2 * cur[0];
 }
@@ -5482,31 +5482,31 @@ function diff_rand(s: i64): i64 {
 function diff_lines_from(seed: i64, n: i32, alphabet: i32): string[] {
   let vocab: string[] = ["a\n", "b\n", "c\n", "d\n", "e\n"];
   let out: string[] = [];
-  let s: i64 = seed;
-  let i: i32 = 0;
+  let s = seed;
+  let i = 0;
   while (i < n) {
     s = diff_rand(s);
     out = out.append(vocab[(s % (alphabet as i64)) as i32]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function diff_selftest(): i32 {
   let s: i64 = 12345i64;
-  let iter: i32 = 0;
+  let iter = 0;
   while (iter < 300) {
     s = diff_rand(s);
-    let alphabet: i32 = 2 + (s % 4i64) as i32;
+    let alphabet = 2 + (s % 4i64) as i32;
     s = diff_rand(s);
-    let na: i32 = (s % 14i64) as i32;
+    let na = (s % 14i64) as i32;
     s = diff_rand(s);
-    let nb: i32 = (s % 14i64) as i32;
+    let nb = (s % 14i64) as i32;
     s = diff_rand(s);
-    let a: string[] = diff_lines_from(s, na, alphabet);
+    let a = diff_lines_from(s, na, alphabet);
     s = diff_rand(s);
-    let b: string[] = diff_lines_from(s, nb, alphabet);
-    let sc: DiffScript = diff_edit_script(a, b);
+    let b = diff_lines_from(s, nb, alphabet);
+    let sc = diff_edit_script(a, b);
     if (diff_replay(sc, 1) != util.str_join_chunks(a)) {
       return 350;
     }
@@ -5516,12 +5516,12 @@ function diff_selftest(): i32 {
     if (diff_edits(sc) != diff_lcs_edits(a, b)) {
       return 352;
     }
-    iter = iter + 1;
+    iter += 1;
   }
 
-  let la: string[] = diff_lines_from(777i64, 400, 3);
-  let lb: string[] = diff_lines_from(999i64, 400, 3);
-  let lsc: DiffScript = diff_edit_script(la, lb);
+  let la = diff_lines_from(777i64, 400, 3);
+  let lb = diff_lines_from(999i64, 400, 3);
+  let lsc = diff_edit_script(la, lb);
   if (diff_replay(lsc, 1) != util.str_join_chunks(la)) {
     return 353;
   }
@@ -5532,9 +5532,9 @@ function diff_selftest(): i32 {
     return 355;
   }
 
-  let pa: string[] = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
-  let pb: string[] = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
-  let psc: DiffScript = diff_edit_script(pa, pb);
+  let pa = diff_split_lines("one\ntwo\nthree\nfour\nfive\n");
+  let pb = diff_split_lines("one\ntwo\nTHREE\nfour\nfive\n");
+  let psc = diff_edit_script(pa, pb);
   if (diff_edits(psc) != 2) {
     return 356;
   }
@@ -5545,7 +5545,7 @@ function diff_selftest(): i32 {
     return 358;
   }
 
-  let ud: string = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
+  let ud = unified_diff("one\ntwo\nthree\nfour\nfive\n", "one\ntwo\nTHREE\nfour\nfive\n", "x.fern", "x.fern");
   if (ud != "--- x.fern\n+++ x.fern\n@@ -1,5 +1,5 @@\n one\n two\n-three\n+THREE\n four\n five\n") {
     return 359;
   }
@@ -5557,12 +5557,12 @@ function diff_selftest(): i32 {
 
 function check_checked_casts(): i32 {
   for src in ["let x = value as? u8;", "let x = (value + 1) as? u8;", "let x = (value as i64) as? u32;", "let x = (value as? ByteStream)?;"] {
-    let m: parser.Module = parser.parse_module(lexer.tokenize(src));
-    let printed: string = print_module(m);
+    let m = parser.parse_module(lexer.tokenize(src));
+    let printed = print_module(m);
     if (!util.contains(printed, " as? ")) {
       return 361;
     }
-    let again: parser.Module = parser.parse_module(lexer.tokenize(printed));
+    let again = parser.parse_module(lexer.tokenize(printed));
     if (again.top_stmts.len() != 1 || print_module(again) != printed) {
       return 362;
     }

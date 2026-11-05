@@ -37,23 +37,23 @@ function part_mods(parts: flatten.PerModule[]): parser.Module[] {
 }
 
 function entry_index(parts: flatten.PerModule[]): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < parts.len()) {
     if (parts[i].is_entry) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
 
 function targeted(merged: parser.Module, target: string): parser.Module {
-  let md: platforms.Descriptor = platforms.for_target(target);
+  let md = platforms.for_target(target);
   return constfold.prune_literal_branches(constfold.fold_target_name(merged, md.environment, md.isa));
 }
 
 function checked_or_exit(merged: parser.Module, prune: boolean, target: string): parser.Module {
-  let gated: util.Diag[] = checker.build_gate_diags(merged);
+  let gated = checker.build_gate_diags(merged);
   if (gated.len() > 0) {
     eprint(util.format_diags(gated));
     exit(1);
@@ -62,7 +62,7 @@ function checked_or_exit(merged: parser.Module, prune: boolean, target: string):
 }
 
 function decided(merged: parser.Module, prune: boolean, target: string): semlower.Verdict {
-  let gated: util.Diag[] = checker.build_gate_diags(merged);
+  let gated = checker.build_gate_diags(merged);
   if (gated.len() > 0) {
     return semlower.Verdict { ok: false, errors: gated, rows: [] };
   }
@@ -70,23 +70,23 @@ function decided(merged: parser.Module, prune: boolean, target: string): semlowe
 }
 
 function main(): i32 {
-  let av: string[] = args();
+  let av = args();
   if (av.len() < 2) {
     eprint("usage: asm_load_run <entry.fern> [stdlib-root]");
     return 2;
   }
-  let entry_path: string = av[1];
-  let root: string = "";
-  let probe: boolean = false;
-  let pm_mode: string = "";
-  let pm_index: i32 = 0 - 1;
+  let entry_path = av[1];
+  let root = "";
+  let probe = false;
+  let pm_mode = "";
+  let pm_index: i32 = -1;
   let pm_extra: string[] = [];
-  let do_treeshake: boolean = false;
-  let no_treeshake: boolean = false;
-  let do_decide: boolean = false;
-  let target: string = "x86-64-linux";
-  let emit_form: string = "";
-  let ag: i32 = 2;
+  let do_treeshake = false;
+  let no_treeshake = false;
+  let do_decide = false;
+  let target = "x86-64-linux";
+  let emit_form = "";
+  let ag = 2;
   while (ag < av.len()) {
     if (av[ag] == "-ir-probe") {
       probe = true;
@@ -98,10 +98,10 @@ function main(): i32 {
       do_decide = true;
     } else if (av[ag] == "-target" && ag + 1 < av.len()) {
       target = av[ag + 1];
-      ag = ag + 1;
+      ag += 1;
     } else if (av[ag] == "-emit" && ag + 1 < av.len()) {
       emit_form = av[ag + 1];
-      ag = ag + 1;
+      ag += 1;
     } else if (av[ag] == "-per-module-count") {
       pm_mode = "count";
     } else if (av[ag] == "-per-module-needs") {
@@ -109,14 +109,14 @@ function main(): i32 {
     } else if (av[ag] == "-per-module-emit" && ag + 1 < av.len()) {
       pm_mode = "emit";
       pm_index = util.digits_to_i32(av[ag + 1]);
-      ag = ag + 1;
+      ag += 1;
     } else if (av[ag] == "-extra-need" && ag + 1 < av.len()) {
       pm_extra = pm_extra.append(av[ag + 1]);
-      ag = ag + 1;
+      ag += 1;
     } else if (root == "") {
       root = av[ag];
     }
-    ag = ag + 1;
+    ag += 1;
   }
 
   if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin" && target != "wasm32-wasi") {
@@ -128,8 +128,8 @@ function main(): i32 {
     return 2;
   }
 
-  let esrc: string = "";
-  let eok: boolean = false;
+  let esrc = "";
+  let eok = false;
   match (read_file(entry_path)) {
     Ok(s) => {
       esrc = s;
@@ -143,14 +143,14 @@ function main(): i32 {
     eprint("asm_load_run: cannot read entry file");
     return 1;
   }
-  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
+  let entry_mod = parser.parse_module(lexer.tokenize(esrc));
 
-  let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry_mod, root);
+  let g = modloader.load_graph(modloader.no_overlay(), entry_path, entry_mod, root);
   if (modloader.report_unresolved(g.missing, "asm_load_run")) {
     return 1;
   }
   entry_mod = g.entry;
-  let loaded: flatten.LoadedModule[] = g.loaded;
+  let loaded = g.loaded;
 
   let parsed: parser.Module[] = [entry_mod];
   for lm in loaded {
@@ -160,20 +160,20 @@ function main(): i32 {
     return 1;
   }
 
-  let prune: boolean = (do_treeshake || root.len() > 0) && !no_treeshake;
+  let prune = (do_treeshake || root.len() > 0) && !no_treeshake;
 
   if (pm_mode.len() > 0) {
-    let parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
+    let parts = flatten.bundle_per_module(entry_mod, loaded, target);
     if (pm_mode == "count") {
       print(util.i32_to_string(parts.len()) + "\n");
       return 0;
     }
     if (pm_mode == "needs") {
-      let needs: string[] = ircore.all_runtime_need_roots();
-      let no: i32 = 0;
+      let needs = ircore.all_runtime_need_roots();
+      let no = 0;
       while (no < needs.len()) {
         print(needs[no] + "\n");
-        no = no + 1;
+        no += 1;
       }
       return 0;
     }
@@ -185,18 +185,18 @@ function main(): i32 {
     if (parts[pm_index].is_entry) {
       extra = pm_extra;
     }
-    let pd: semlower.Driven = lowered(checked_or_exit(modloader.bundle(entry_path, entry_mod, loaded, target, root), prune, target), target, prune);
+    let pd = lowered(checked_or_exit(modloader.bundle(entry_path, entry_mod, loaded, target, root), prune, target), target, prune);
     ircore.refuse_claims(pd.sub.refused);
-    let pg: ircore.Gated = semlower.program(pd);
-    let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
-    write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pu.physical[pm_index], pd.sub.rt_lower, 0 as usize, asmcore.env_switches()));
+    let pg = semlower.program(pd);
+    let pu = ircore.split_units(pg, part_mods(parts), entry_index(parts));
+    write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, -1, pu.caches[pm_index], pu.physical[pm_index], pd.sub.rt_lower, 0 as usize, asmcore.env_switches()));
     return 0;
   }
 
-  let merged: parser.Module = modloader.bundle(entry_path, entry_mod, loaded, target, root);
+  let merged = modloader.bundle(entry_path, entry_mod, loaded, target, root);
 
   if (do_decide || probe) {
-    let v: semlower.Verdict = decided(merged, prune, target);
+    let v = decided(merged, prune, target);
     if (probe) {
       write(semlower.verdict_text(v));
     } else if (v.ok) {
@@ -210,14 +210,14 @@ function main(): i32 {
   merged = checked_or_exit(merged, prune, target);
 
   if (target == "wasm32-wasi") {
-    let dw: semlower.Driven = lowered(merged, target, prune);
+    let dw = lowered(merged, target, prune);
     if (emit_form == "component-core") {
-      let shape: i32 = wasm_ir.component_shape(dw.full, dw.sub.switches);
+      let shape = wasm_ir.component_shape(dw.full, dw.sub.switches);
       if (shape < 0) {
         eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame");
         return 1;
       }
-      let io: boolean = wasm_ir.lowered_shape(dw.full, dw.sub.switches, util.append_all(dw.sub.bodies, dw.sub.extra)) != 0;
+      let io = wasm_ir.lowered_shape(dw.full, dw.sub.switches, util.append_all(dw.sub.bodies, dw.sub.extra)) != 0;
       write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, io, dw.sub));
       return 0;
     }
@@ -225,16 +225,16 @@ function main(): i32 {
     return 0;
   }
   if (target == "arm64-linux") {
-    let d64: semlower.Driven = lowered(merged, target, prune);
+    let d64 = lowered(merged, target, prune);
     write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
   if (target == "arm64-darwin") {
-    let dd: semlower.Driven = lowered(merged, target, prune);
+    let dd = lowered(merged, target, prune);
     write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
-  let d: semlower.Driven = lowered(merged, target, prune);
+  let d = lowered(merged, target, prune);
   write(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
   return 0;
 }

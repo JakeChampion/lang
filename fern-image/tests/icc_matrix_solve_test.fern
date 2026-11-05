@@ -70,7 +70,7 @@ function admission(): test.TestOutcome {
         polls.set(polls.get() + 1);
         return false;
       });
-      if (polls.get() != 0 || match (result) { Err(matrix_solve.SolveError.Unsupported()) => false, _ => true }) {
+      if (polls.get() != 0 || match (result) { Err(matrix_solve.SolveError.Unsupported) => false, _ => true }) {
         return test.fail("every coefficient bound before callbacks");
       }
     }
@@ -98,7 +98,7 @@ function cancellation(): test.TestOutcome {
       polls.set(polls.get() + 1);
       return polls.get() == stop;
     });
-    if (polls.get() != stop || match (result) { Err(matrix_solve.SolveError.Cancelled()) => false, _ => true }) {
+    if (polls.get() != stop || match (result) { Err(matrix_solve.SolveError.Cancelled) => false, _ => true }) {
       return test.fail("both solve cancellation polls");
     }
   }

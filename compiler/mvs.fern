@@ -71,15 +71,15 @@ function ver_cmp_s(a: string, b: string): Result[i32, string] {
 }
 
 pub function parse_index(src: string): Result[Index, string] {
-  let serial: string = "";
+  let serial = "";
   let entries: Entry[] = [];
-  let pkg: string = "";
-  let lines: string[] = split_char(src, b'\n');
+  let pkg = "";
+  let lines = split_char(src, b'\n');
   let positions: Map[string, i32] = map_new(lines.len());
-  let ln: i32 = 0;
+  let ln = 0;
   while (ln < lines.len()) {
-    let line: string = fern_toml.line_content(lines[ln]);
-    ln = ln + 1;
+    let line = fern_toml.line_content(lines[ln]);
+    ln += 1;
     if (line.len() == 0) {
       continue;
     }
@@ -134,14 +134,14 @@ pub function parse_index(src: string): Result[Index, string] {
 
 // A line above the first section: only `serial = N`.
 function index_top_level(line: string, serial: string): Result[string, string] {
-  let eq: i32 = index_of_char(line, b'=', 0);
+  let eq = index_of_char(line, b'=', 0);
   if (eq < 0 || util.trim(slice_unchecked(line, 0, eq) + "") != "serial") {
     return Err("version entry outside a [package] section");
   }
   if (serial.len() > 0) {
     return Err("serial given twice");
   }
-  let v: string = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
+  let v = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
   if let Err(message) = fern_toml.validate_serial(v) {
     return Err("serial " + message);
   }
@@ -152,23 +152,23 @@ function parse_source(val: string): Result[Source, string] {
   if (val.len() < 2 || val[0] != b'{' || val[val.len() - 1] != b'}') {
     return Err("expected an inline table { path = … } or { url = …, hash = … }");
   }
-  let path: string = "";
-  let url: string = "";
-  let hash: string = "";
-  let parts: string[] = split_char(util.trim(slice_unchecked(val, 1, val.len() - 1) + ""), b',');
-  let i: i32 = 0;
+  let path = "";
+  let url = "";
+  let hash = "";
+  let parts = split_char(util.trim(slice_unchecked(val, 1, val.len() - 1) + ""), b',');
+  let i = 0;
   while (i < parts.len()) {
-    let part: string = util.trim(parts[i]);
-    i = i + 1;
+    let part = util.trim(parts[i]);
+    i += 1;
     if (part.len() == 0) {
       continue;
     }
-    let eq: i32 = index_of_char(part, b'=', 0);
+    let eq = index_of_char(part, b'=', 0);
     if (eq < 0) {
       return Err("expected `key = value`, got " + docsummary.quote(part));
     }
-    let k: string = util.trim(slice_unchecked(part, 0, eq) + "");
-    let raw: string = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
+    let k = util.trim(slice_unchecked(part, 0, eq) + "");
+    let raw = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
     let v: string = match (fern_toml.parse_quoted(raw)) { Ok(value) => value, Err(message) => { return Err(k + ": " + message); } };
     if (k == "path") {
       path = v;
@@ -230,27 +230,27 @@ pub function index_versions(ix: Index, pkg: string): string[] {
 }
 
 pub function index_has(ix: Index, pkg: string, ver: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < ix.entries.len()) {
     if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function index_source(ix: Index, pkg: string, ver: string): Option[Source] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < ix.entries.len()) {
     if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) {
-      let s: Source = ix.entries[i].src;
+      let s = ix.entries[i].src;
       if (s.path.len() > 0 && !is_abs(s.path)) {
         return Some(Source { path: join_path(ix.dir, s.path), url: s.url, hash: s.hash });
       }
       return Some(Source { path: s.path + "", url: s.url + "", hash: s.hash + "" });
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -259,14 +259,14 @@ function vers_list(vs: string[]): string {
   if (vs.len() == 0) {
     return "none";
   }
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < vs.len()) {
     if (i > 0) {
-      s = s + ", ";
+      s += ", ";
     }
-    s = s + vs[i];
-    i = i + 1;
+    s += vs[i];
+    i += 1;
   }
   return s;
 }
@@ -277,14 +277,14 @@ pub function begin(roots: Req[], bans: Ban[], ix: Index): State {
     names: [], vers: [], qpkg: [], qver: [], qhead: 0,
     need_pkg: "", need_ver: "", err: "",
   };
-  let sorted: Req[] = sort_reqs(roots);
-  let i: i32 = 0;
+  let sorted = sort_reqs(roots);
+  let i = 0;
   while (i < sorted.len()) {
     st = raise(st, sorted[i].pkg, sorted[i].min, "");
     if (st.err.len() > 0) {
       return st;
     }
-    i = i + 1;
+    i += 1;
   }
   return advance(st);
 }
@@ -293,11 +293,11 @@ pub function supply(st: State, deps: Req[]): State {
   if (st.err.len() > 0 || st.need_pkg.len() == 0) {
     return st;
   }
-  let pkg: string = st.need_pkg;
-  let ver: string = st.need_ver;
-  let via: string = "via " + pkg + "@" + ver + ": ";
-  let sorted: Req[] = sort_reqs(deps);
-  let i: i32 = 0;
+  let pkg = st.need_pkg;
+  let ver = st.need_ver;
+  let via = "via " + pkg + "@" + ver + ": ";
+  let sorted = sort_reqs(deps);
+  let i = 0;
   while (i < sorted.len()) {
     if (selected_version(st, pkg) != ver) {
       i = sorted.len();
@@ -307,7 +307,7 @@ pub function supply(st: State, deps: Req[]): State {
     if (st.err.len() > 0) {
       return st;
     }
-    i = i + 1;
+    i += 1;
   }
   return advance(st);
 }
@@ -331,32 +331,32 @@ pub function selected(st: State): Result[Sel[], string] {
     return Err("resolution needs dependencies of " + st.need_pkg + "@" + st.need_ver);
   }
   let taken: i32[] = [];
-  let t: i32 = 0;
+  let t = 0;
   while (t < st.names.len()) {
     taken = taken.append(0);
-    t = t + 1;
+    t += 1;
   }
   let names: string[] = [];
-  let n: i32 = 0;
+  let n = 0;
   while (n < st.names.len()) {
-    let best: i32 = 0 - 1;
-    let j: i32 = 0;
+    let best: i32 = -1;
+    let j = 0;
     while (j < st.names.len()) {
       if (taken[j] == 0) {
         if (best < 0 || util.str_less(st.names[j], st.names[best])) {
           best = j;
         }
       }
-      j = j + 1;
+      j += 1;
     }
     taken = taken.with(best, 1);
     names = names.append(st.names[best] + "");
-    n = n + 1;
+    n += 1;
   }
   let out: Sel[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < names.len()) {
-    let v: string = selected_version(st, names[k]);
+    let v = selected_version(st, names[k]);
     match (index_source(st.ix, names[k], v)) {
       Some(src) => {
         out = out.append(Sel { name: names[k], ver: v, src: src });
@@ -365,25 +365,25 @@ pub function selected(st: State): Result[Sel[], string] {
         return Err("registry has no source for " + names[k] + "@" + v);
       }
     }
-    k = k + 1;
+    k += 1;
   }
   return Ok(out);
 }
 
 function raise(st: State, pkg: string, min: string, via: string): State {
   let v = match (parse_version(min)) { Ok(value) => value, Err(message) => { return with_err(st, via + "dependency " + quoted(pkg) + ": " + message); } };
-  let ver: string = version_string(v);
+  let ver = version_string(v);
   if (banned(st, pkg, ver)) {
-    let avail: string[] = index_versions(st.ix, pkg);
-    let up: string = "";
-    let i: i32 = 0;
+    let avail = index_versions(st.ix, pkg);
+    let up = "";
+    let i = 0;
     while (i < avail.len()) {
       let order = match (ver_cmp_s(avail[i], ver)) { Ok(value) => value, Err(message) => { return with_err(st, message); } };
       if (order > 0 && !banned(st, pkg, avail[i])) {
         up = avail[i];
         i = avail.len();
       } else {
-        i = i + 1;
+        i += 1;
       }
     }
     if (up.len() == 0) {
@@ -397,15 +397,15 @@ function raise(st: State, pkg: string, min: string, via: string): State {
     return with_err(st, via + "dependency " + quoted(pkg) + " has no version " + ver
       + " in the index (available: " + vers_list(index_versions(st.ix, pkg)) + ")");
   }
-  let cur: string = selected_version(st, pkg);
+  let cur = selected_version(st, pkg);
   if (cur.len() > 0) {
     let order = match (ver_cmp_s(ver, cur)) { Ok(value) => value, Err(message) => { return with_err(st, message); } };
     if (order <= 0) {
       return st;
     }
   }
-  let names: string[] = st.names;
-  let vers: string[] = st.vers;
+  let names = st.names;
+  let vers = st.vers;
   if (cur.len() == 0) {
     names = names.append(pkg + "");
     vers = vers.append(ver + "");
@@ -422,11 +422,11 @@ function raise(st: State, pkg: string, min: string, via: string): State {
 }
 
 function advance(st: State): State {
-  let head: i32 = st.qhead;
+  let head = st.qhead;
   while (head < st.qpkg.len()) {
-    let pkg: string = st.qpkg[head];
-    let ver: string = st.qver[head];
-    head = head + 1;
+    let pkg = st.qpkg[head];
+    let ver = st.qver[head];
+    head += 1;
     if (selected_version(st, pkg) == ver) {
       return State {
         ix: st.ix, bans: st.bans, names: st.names, vers: st.vers,
@@ -451,7 +451,7 @@ function with_err(st: State, msg: string): State {
 }
 
 function selected_version(st: State, pkg: string): string {
-  let i: i32 = util.index_of_str(st.names, pkg);
+  let i = util.index_of_str(st.names, pkg);
   if (i < 0) {
     return "";
   }
@@ -459,7 +459,7 @@ function selected_version(st: State, pkg: string): string {
 }
 
 function banned(st: State, pkg: string, ver: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < st.bans.len()) {
     if (st.bans[i].pkg == pkg) {
       match (parse_version(st.bans[i].ver)) {
@@ -471,46 +471,46 @@ function banned(st: State, pkg: string, ver: string): boolean {
         Err(_) => {}
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function sort_reqs(rs: Req[]): Req[] {
   let taken: i32[] = [];
-  let t: i32 = 0;
+  let t = 0;
   while (t < rs.len()) {
     taken = taken.append(0);
-    t = t + 1;
+    t += 1;
   }
   let out: Req[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < rs.len()) {
-    let best: i32 = 0 - 1;
-    let j: i32 = 0;
+    let best: i32 = -1;
+    let j = 0;
     while (j < rs.len()) {
       if (taken[j] == 0) {
         if (best < 0 || util.str_less(rs[j].pkg, rs[best].pkg)) {
           best = j;
         }
       }
-      j = j + 1;
+      j += 1;
     }
     taken = taken.with(best, 1);
     out = out.append(rs[best]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 pub function lock_text(serial: string, sel: Sel[]): string {
-  let out: string = "# generated by `fern -resolve`; do not edit by hand\n";
+  let out = "# generated by `fern -resolve`; do not edit by hand\n";
   if (serial.len() > 0) {
     out = out + "index_serial = " + serial + "\n";
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < sel.len()) {
-    out = out + "\n[[package]]\n";
+    out += "\n[[package]]\n";
     out = out + "name = " + quoted(sel[i].name) + "\n";
     out = out + "version = " + quoted(sel[i].ver) + "\n";
     if (sel[i].src.path.len() > 0) {
@@ -519,7 +519,7 @@ pub function lock_text(serial: string, sel: Sel[]): string {
       out = out + "url = " + quoted(sel[i].src.url) + "\n";
       out = out + "hash = " + quoted(sel[i].src.hash) + "\n";
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -529,14 +529,14 @@ pub function split_char(s: string, c: u8): string[] {
 }
 
 function index_of_char(s: string, c: u8, from: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < s.len()) {
     if (s[i] == c) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function quoted(s: string): string {
@@ -548,13 +548,13 @@ pub function is_abs(p: string): boolean {
 }
 
 pub function join_path(dir: string, rel: string): string {
-  let abs: boolean = is_abs(dir);
+  let abs = is_abs(dir);
   let segs: string[] = [];
-  let parts: string[] = split_char(dir + "/" + rel, b'/');
-  let i: i32 = 0;
+  let parts = split_char(dir + "/" + rel, b'/');
+  let i = 0;
   while (i < parts.len()) {
-    let p: string = parts[i];
-    i = i + 1;
+    let p = parts[i];
+    i += 1;
     if (p.len() == 0 || p == ".") {
       continue;
     }
@@ -569,14 +569,14 @@ pub function join_path(dir: string, rel: string): string {
     }
     segs = segs.append(p + "");
   }
-  let out: string = "";
-  let k: i32 = 0;
+  let out = "";
+  let k = 0;
   while (k < segs.len()) {
     if (k > 0) {
-      out = out + "/";
+      out += "/";
     }
-    out = out + segs[k];
-    k = k + 1;
+    out += segs[k];
+    k += 1;
   }
   if (abs) {
     return "/" + out;
@@ -589,10 +589,10 @@ pub function join_path(dir: string, rel: string): string {
 
 function drop_last(xs: string[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < xs.len()) {
     out = out.append(xs[i] + "");
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

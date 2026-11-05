@@ -26,7 +26,7 @@ pub function canonical_dir(dir: string): string {
 }
 
 pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.Manifest): ManifestAt[] {
-  let explicit: boolean = false;
+  let explicit = false;
   for dep in man.deps {
     if (dep.governed) {
       explicit = true;
@@ -35,31 +35,31 @@ pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.M
   if (!explicit) {
     return mans;
   }
-  let key: string = canonical_dir(dir);
-  let i: i32 = 0;
+  let key = canonical_dir(dir);
+  let i = 0;
   while (i < mans.len()) {
     if (mans[i].dir == key) {
       return mans;
     }
-    i = i + 1;
+    i += 1;
   }
   return mans.append(ManifestAt { dir: key, man: man });
 }
 
 function union_grant(own held: Holding[], dir: string, grants: string[]): Holding[] {
-  let at: i32 = -1;
-  let i: i32 = 0;
+  let at = -1;
+  let i = 0;
   while (i < held.len()) {
     if (held[i].dir == dir) {
       at = i;
     }
-    i = i + 1;
+    i += 1;
   }
   if (at < 0) {
     at = held.len();
     held = held.append(Holding { dir: dir, grants: [] });
   }
-  let merged: string[] = held[at].grants;
+  let merged = held[at].grants;
   for cap in grants {
     if (!util.has_str(merged, cap)) {
       merged = merged.append(cap);
@@ -71,14 +71,14 @@ function union_grant(own held: Holding[], dir: string, grants: string[]): Holdin
 struct GrantEdge { from: string, to: string, grants: string[] }
 
 function holding_index(held: Holding[], dir: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < held.len()) {
     if (held[i].dir == dir) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function grant_edges(mans: ManifestAt[]): GrantEdge[] {
@@ -88,7 +88,7 @@ function grant_edges(mans: ManifestAt[]): GrantEdge[] {
       if (dep.governed) {
         match (modloader.dependency_dir(m.man, m.dir + "/", dep.name)) {
           Some(dir) => {
-            let to: string = canonical_dir(dir);
+            let to = canonical_dir(dir);
             edges = edges.append(GrantEdge { from: m.dir, to: to, grants: dep.caps });
           },
           None => {}
@@ -108,14 +108,14 @@ function empty_holdings(edges: GrantEdge[]): Holding[] {
 }
 
 function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
-  let edges: GrantEdge[] = grant_edges(mans);
-  let held: Holding[] = empty_holdings(edges);
-  let changed: boolean = true;
+  let edges = grant_edges(mans);
+  let held = empty_holdings(edges);
+  let changed = true;
   while (changed) {
     changed = false;
     for edge in edges {
-      let from: i32 = holding_index(held, edge.from);
-      let to: i32 = holding_index(held, edge.to);
+      let from = holding_index(held, edge.from);
+      let to = holding_index(held, edge.to);
       let allowed: string[] = [];
       for cap in edge.grants {
         if (from < 0 || edge.from == root_dir || util.has_str(held[from].grants, cap)) {
@@ -138,16 +138,16 @@ function sorted_unique(input: string[]): string[] {
   for x in input {
     xs = xs.append(x);
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < xs.len()) {
-    let j: i32 = i;
+    let j = i;
     while (j > 0 && util.str_less(xs[j], xs[j - 1])) {
-      let a: string = xs[j];
-      let b: string = xs[j - 1];
+      let a = xs[j];
+      let b = xs[j - 1];
       xs = xs.with(j - 1, a).with(j, b);
-      j = j - 1;
+      j -= 1;
     }
-    i = i + 1;
+    i += 1;
   }
   let out: string[] = [];
   for x in xs {
@@ -159,14 +159,14 @@ function sorted_unique(input: string[]): string[] {
 }
 
 function joined(xs: string[], sep: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
-      out = out + sep;
+      out += sep;
     }
-    out = out + xs[i];
-    i = i + 1;
+    out += xs[i];
+    i += 1;
   }
   return out;
 }
@@ -195,7 +195,7 @@ function attenuation_refusals(mans: ManifestAt[], held: Holding[], root_dir: str
   }
   let out: Refusal[] = [];
   for dir in sorted_unique(dirs) {
-    let at: i32 = holding_index(held, dir);
+    let at = holding_index(held, dir);
     for m in mans {
       if (m.dir == dir && at >= 0 && dir != root_dir) {
         out = violations(m, held[at].grants, out);
@@ -214,29 +214,29 @@ function within(dir: string, parent: string): boolean {
 }
 
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
-  let held: Holding[] = holdings(mans, root.dir);
+  let held = holdings(mans, root.dir);
   let pkgs: caps.Pkg[] = [root];
-  let i: i32 = 0;
+  let i = 0;
   while (i < modules.len()) {
-    let m: ModuleAt = modules[i];
+    let m = modules[i];
     if (!m.stdlib) {
       pkgs = pkgs.append(module_package(m, prefixes[i], root, held));
     }
-    i = i + 1;
+    i += 1;
   }
   return Checked { pkgs: pkgs, refused: attenuation_refusals(mans, held, root.dir) };
 }
 
 function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holding[]): caps.Pkg {
-  let dir: string = m.owner_dir;
-  let name: string = m.name;
+  let dir = m.owner_dir;
+  let name = m.name;
   for h in held {
     if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
       dir = h.dir;
       name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()) + "";
     }
   }
-  let at: i32 = holding_index(held, dir);
+  let at = holding_index(held, dir);
   let grants: string[] = [];
   if (at >= 0) {
     grants = held[at].grants;

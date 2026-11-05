@@ -14,7 +14,7 @@ import "std/envflag";
 pub struct Gate { sigs: irverify.NameIndex, seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize, memo: rcmemo.Memo, verify: boolean, certify: i32 }
 
 pub function gate(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rccertify.Abis): Gate {
-  let g: Gate = gate_unreported(sigs, kinds, abis);
+  let g = gate_unreported(sigs, kinds, abis);
   if (!report_on()) {
     return g;
   }
@@ -22,8 +22,8 @@ pub function gate(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rcc
 }
 
 pub function gate_unreported(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rccertify.Abis): Gate {
-  let certify: i32 = util.certify_mode();
-  let census: usize = 0 as usize;
+  let certify = util.certify_mode();
+  let census = 0 as usize;
   if (certify == 1) {
     census = buf_new(256);
   }
@@ -32,9 +32,9 @@ pub function gate_unreported(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable
 
 // External declarations keep their source arity when a unit has no lowered body.
 function physical_signatures(sigs: irverify.NameIndex, abis: rccertify.Abis): irverify.NameIndex {
-  let params: i32[] = sigs.params;
+  let params = sigs.params;
   for i in 0..sigs.names.len() {
-    let at: i32 = abis.names.find(sigs.names[i]);
+    let at = abis.names.find(sigs.names[i]);
     if (at >= 0 && params[i] != abis.modes[at].len()) {
       params = params.with(i, abis.modes[at].len());
     }
@@ -57,7 +57,7 @@ pub function open_memo(target: string): rcmemo.Memo {
 }
 
 pub function close_memo(m: rcmemo.Memo): void {
-  let line: string = rcmemo.close(m);
+  let line = rcmemo.close(m);
   if (line != "" && report_on()) {
     eprint("FERN_RC_CERTIFY: memo " + line);
   }
@@ -76,7 +76,7 @@ pub function report_on(): boolean {
 
 pub function report(g: Gate): void {
   if (g.census != 0 as usize) {
-    let lines: string = buf_take(g.census);
+    let lines = buf_take(g.census);
     buf_free(g.census);
     if (lines.len() > 0) {
       eprint(lines);
@@ -85,8 +85,8 @@ pub function report(g: Gate): void {
   if (!report_on()) {
     return;
   }
-  let seen: i32 = buf_len(g.seen);
-  let modelled: i32 = buf_len(g.modelled);
+  let seen = buf_len(g.seen);
+  let modelled = buf_len(g.modelled);
   eprint("FERN_IR_VERIFY: " + util.i32_to_string(seen) + " functions verified, " + util.i32_to_string(modelled)
     + " modelled by the stack verifier, " + util.i32_to_string(seen - modelled) + " skipped");
   buf_free(g.seen);
@@ -100,18 +100,18 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
 }
 
 pub function verdict(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): Verdict {
-  let out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, g.sigs);
-  let sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops, g.kinds.pops);
-  let i: i32 = 0;
+  let out = irverify.verify_fn(fn_name, ops, n_params, n_locals, g.sigs);
+  let sr = irverifystack.verify_stack_fn(fn_name, ops, g.kinds.pops);
+  let i = 0;
   while (i < sr.problems.len()) {
     out = out.append(sr.problems[i]);
-    i = i + 1;
+    i += 1;
   }
-  let rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fn_name, ops);
-  let j: i32 = 0;
+  let rr = irverifyrc.verify_rc_fn(fn_name, ops);
+  let j = 0;
   while (j < rr.problems.len()) {
     out = out.append(rr.problems[j]);
-    j = j + 1;
+    j += 1;
   }
   return Verdict { problems: out, modelled: sr.bail.len() == 0 };
 }
@@ -120,14 +120,14 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
   if (!g.verify) {
     return 0;
   }
-  let v: Verdict = verdict(fn_name, ops, n_params, n_locals, g);
+  let v = verdict(fn_name, ops, n_params, n_locals, g);
   if (g.seen != 0 as usize) {
     buf_push_byte(g.seen, 1);
     if (v.modelled) {
       buf_push_byte(g.modelled, 1);
     }
   }
-  let ps: irverify.Problem[] = v.problems;
+  let ps = v.problems;
   if (ps.len() == 0) {
     return 0;
   }
@@ -138,19 +138,19 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
 }
 
 pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[], g: Gate): i32 {
-  let mode: i32 = g.certify;
+  let mode = g.certify;
   if (mode == 0) {
     return 0;
   }
-  let f: ssa.SFunc = decided(lifted);
-  let k: string = "";
+  let f = decided(lifted);
+  let k = "";
   if (mode == 2 && g.memo.on) {
     k = rcmemo.key(g.memo, fn_name, f, ops, g.abis);
     if (rcmemo.hit(g.memo, k)) {
       return 0;
     }
   }
-  let r: rccertify.Report = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
+  let r = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
   if (mode == 1) {
     report_one(fn_name, f, r, g);
     return 0;
@@ -162,11 +162,11 @@ pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[],
     return 0;
   }
   dump_if_asked(fn_name, f);
-  let out: string = "FERN_RC_CERTIFY: " + fn_name + " emits unbalanced reference counting (#11908):";
-  let i: i32 = 0;
+  let out = "FERN_RC_CERTIFY: " + fn_name + " emits unbalanced reference counting (#11908):";
+  let i = 0;
   while (i < r.findings.len() && i < 20) {
     out = out + "\n    " + rccertify.render(fn_name, r.findings[i]);
-    i = i + 1;
+    i += 1;
   }
   eprint(out);
   exit(5);
@@ -213,9 +213,9 @@ function decided(f: ssa.SFunc): ssa.SFunc {
     }
   }
   let blocks: ssa.SBlock[] = [];
-  let changed: boolean = false;
+  let changed = false;
   for b in f.blocks {
-    let taken: i32 = branch_taken(defs, b.term);
+    let taken = branch_taken(defs, b.term);
     if (taken >= 0) {
       blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { kind_tag: 2, cond: 0, target: taken, t: 0, f: 0, value: 0 } });
       changed = true;
@@ -226,34 +226,34 @@ function decided(f: ssa.SFunc): ssa.SFunc {
   if (!changed) {
     return f;
   }
-  let folded: ssa.SFunc = ssa.SFunc { ...f, blocks: blocks };
+  let folded = ssa.SFunc { ...f, blocks: blocks };
   // A block no branch reaches now drops out, with its inputs to the phis it fed.
-  let live: boolean[] = ssadeps.reachable_blocks(folded);
+  let live = ssadeps.reachable_blocks(folded);
   let kept: ssa.SBlock[] = [];
   for i in 0..folded.blocks.len() {
     if (live[i]) {
       kept = kept.append(folded.blocks[i]);
     }
   }
-  let out: ssa.SFunc = ssa.SFunc { ...folded, blocks: kept };
+  let out = ssa.SFunc { ...folded, blocks: kept };
   return ssa.prune_trivial_phis(ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) }).f;
 }
 
 // The block a branch takes when its condition compares two constants, or -1.
 function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
   if (t.kind_tag != 3 || t.cond < 0 || t.cond >= defs.len()) {
-    return 0 - 1;
+    return -1;
   }
-  let c: ssa.SInst = defs[t.cond];
+  let c = defs[t.cond];
   if (c.kind_tag != 9 || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
-    return 0 - 1;
+    return -1;
   }
-  let a: ssa.SInst = defs[c.args[0]];
-  let b: ssa.SInst = defs[c.args[1]];
+  let a = defs[c.args[0]];
+  let b = defs[c.args[1]];
   if (a.kind_tag != 1 || b.kind_tag != 1 || a.str != "" || b.str != "") {
-    return 0 - 1;
+    return -1;
   }
-  let same: boolean = a.imm == b.imm;
+  let same = a.imm == b.imm;
   if (same == (c.str == "eq")) {
     return t.t;
   }
@@ -269,16 +269,16 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
   if (r.skipped != "") {
     line = line + " skipped=" + r.skipped;
   }
-  let own: rccertify.Abi = g.abis.lookup(fn_name);
+  let own = g.abis.lookup(fn_name);
   if (!own.known) {
-    line = line + " abi=unknown";
+    line += " abi=unknown";
   } else {
-    line = line + " abi=";
+    line += " abi=";
     for m in own.modes {
-      line = line + util.i32_to_string(m);
+      line += util.i32_to_string(m);
     }
     if (own.result_unit) {
-      line = line + ">unit";
+      line += ">unit";
     }
   }
   for name in r.opaque {
