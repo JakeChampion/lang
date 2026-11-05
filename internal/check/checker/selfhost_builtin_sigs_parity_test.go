@@ -29,7 +29,7 @@ func TestSelfHostBuiltinSigsMatch(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(extra)
 	if len(missing) > 0 {
-		t.Errorf("%d native builtin signature(s) compiler/checker.fern's builtin_sigs() "+
+		t.Errorf("%d native builtin signature(s) compiler/builtinsigs.fern's builtin_sigs() "+
 			"lacks or spells differently; the rows native renders are:\n        \"%s\",",
 			len(missing), strings.Join(missing, "\",\n        \""))
 	}
@@ -116,13 +116,13 @@ var (
 
 func selfHostBuiltinSigRows(t *testing.T) map[string]string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "checker.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "builtinsigs.fern"))
 	if err != nil {
-		t.Fatalf("read self-host checker.fern: %v", err)
+		t.Fatalf("read self-host builtinsigs.fern: %v", err)
 	}
 	m := selfHostBuiltinSigsRE.FindStringSubmatch(string(b))
 	if m == nil {
-		t.Fatal("cannot find builtin_sigs() in compiler/checker.fern — " +
+		t.Fatal("cannot find builtin_sigs() in compiler/builtinsigs.fern — " +
 			"the pattern no longer matches, so this test proves nothing")
 	}
 	out := map[string]string{}

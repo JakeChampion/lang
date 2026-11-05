@@ -674,7 +674,7 @@ Unsupported constructs refuse the whole function with a reason.
 
   The `__c_callN` trampolines are the exception to the op rule: each is a
   direct call of the shim the native backends emit for the name, typed from
-  the checker's `builtin_sigs`, every argument a value and the result a
+  the `builtin_sigs` table of `compiler/builtinsigs.fern`, every argument a value and the result a
   scalar.
 
 - `Map[K, V]` at every shape `ssasem.is_supported_map` admits runs on
