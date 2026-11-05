@@ -43,7 +43,7 @@ Only `-sanitize` detects that, through its quarantine, and `docs/SANITIZER.md` r
 
 A raw free of an address outside the arena linked that address into a free list, so a later allocation of that class returned it.
 An unmapped address ended the program by signal, and a mapped one gave the caller a block on the stack or in the data segment.
-`__free` now compares the address with the arena bounds and aborts with `fern: release of memory outside the heap`, status 134.
+`__free` now compares the address with the arena bounds and aborts with `fern: release of memory outside the heap`, status 134. A worker child keeps the bounds of the parent's image, and a raw free of a block in the image does nothing: the kernel reclaims the image at exit (`docs/WORKERS.md`).
 `TestSelfHostRawFreeOutsideHeap` pins the abort and the control on both targets.
 
 A raw block has no count. A second `__free` of it linked the block to itself, and the next two allocations of its class returned one address.

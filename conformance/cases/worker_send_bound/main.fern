@@ -1,0 +1,22 @@
+// spec: WK-07
+// A generic function sends a value of its type parameter when the bound
+// names worker.Send. The bound holds for a record and for an array of
+// strings, and the copies that come back carry the same contents.
+
+import "std/worker";
+
+struct Report { total: i32, name: string }
+
+function twice[T: worker.Send](x: T): (T, T) {
+    let w = worker.spawn((): T => x);
+    let y: T = w.join();
+    return (x, y);
+}
+
+function main(): i32 {
+    let r: (Report, Report) = twice(Report { total: 6, name: "six" });
+    print(r.0.name + ":" + r.1.total.to_string());
+    let names: (string[], string[]) = twice(["ada", "rush"]);
+    print(names.1[0] + "," + names.1[1] + ":" + names.0.len().to_string());
+    return 0;
+}

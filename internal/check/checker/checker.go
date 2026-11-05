@@ -2613,6 +2613,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", demangle(impl.Trait))
 			continue
 		}
+		if impl.Trait == SendTrait {
+			c.errfCode(impl.P, "E021", "impl %s for %s: Send is not implemented by hand; every send-safe type satisfies it", demangle(impl.Trait), demangle(typeName))
+			continue
+		}
 		if len(impl.TraitArgs) != len(td.TypeParams) {
 			c.errfCode(impl.TraitPos, "E021", "trait %s takes %d type argument(s), %d supplied",
 				demangle(impl.Trait), len(td.TypeParams), len(impl.TraitArgs))
@@ -7241,6 +7245,9 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 // impl[T: Eq] Eq for T[] covers t only when the parts of t bound to its type
 // parameters implement their bounds in turn.
 func (c *checker) implements(t ast.Type, trait string) bool {
+	if trait == SendTrait {
+		return c.sendUnsafeReason(t, map[string]bool{}) == ""
+	}
 	if _, isParam := t.(ast.ParamType); isParam {
 		return true
 	}

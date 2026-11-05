@@ -74,20 +74,32 @@ A type is send-safe when every part of it is:
 | a tuple of send-safe parts | `dyn Trait`: a dyn value hides its concrete type |
 | a struct or enum whose fields and payloads are send-safe, with its type arguments applied | a view, `[T]` or `str`: a view borrows another value's storage |
 | `Option[T]` and `Result[T, E]` of send-safe arguments | `Reader`, `Writer`, `Dir`, `Socket`: a built-in handle owns a descriptor |
-| | a resource handle: it is not copied |
-| | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
-| | `Map[K, V]`: a Map does not cross a worker boundary in this release |
-| | a type parameter: it is not known to be send-safe |
+| a `Map[K, V]` of a send-safe key and value | a resource handle: it is not copied |
+| a type parameter bounded by `worker.Send` | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
+| | a type parameter without that bound: it is not known to be send-safe |
 
-The last row is the conservative choice of this release. A generic function
-cannot send a value of its type parameter, because the check runs once on
-the generic body.
+The check runs once on the generic body, so a type parameter is send-safe
+only when its bound says so. `worker.Send` is a marker trait with no
+methods. A type satisfies it when every part of the type is send-safe, and
+the call that binds the type parameter checks the bound (`E021`).
+
+No impl declares `Send`: an `impl worker.Send for T` is refused (`E021`),
+because an impl could name a type whose parts cannot be copied. `spawn`,
+`spawn_on` and `join` carry the bound, so the module itself sends through it.
+
+```fern
+function twice[T: worker.Send](x: T): (T, T) {
+    let w = worker.spawn((): T => x);
+    return (x, w.join());
+}
+```
 
 The rule is `send_guard_call` in `compiler/checker.fern` and `guardSendArg`
 in `internal/check/checker/send.go`. The two checkers give one message. The
-cases are `conformance/cases/diag_e100` and
-`conformance/cases/diag_e100_closure_value`, and the rows named `send-` in
-`TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
+cases are `conformance/cases/diag_e100`,
+`conformance/cases/diag_e100_closure_value`, `worker_send_bound`,
+`diag_e021_send_bound` and `diag_e021_send_impl`, and the rows named `send-`
+in `TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
 
 ## Sequential degrade
 
@@ -160,7 +172,7 @@ them.
 | Builtin | Role |
 |---|---|
 | `__worker_region(size)` | Maps a shared anonymous region that the fork inherits at the same address. The interpreters return zero. |
-| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too. |
+| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too, and keeps the old bounds as the parent's image. A raw free of a block in the image does nothing, because the kernel reclaims the image at exit. |
 | `__send_root(v)` | Gives up `v` and returns the address of its root box. |
 | `__send_release(v)` | Releases `v` where it is written, not at its last use. |
 | `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |
@@ -181,6 +193,25 @@ What this costs and what it buys is listed below.
 - The thread design of `MULTICORE-RESEARCH.md` stays open. Its API is this
   API, and `__send_copy` and the region adoption carry over to it.
 
+The table gives the measured cost of a spawn and a join. The host was
+x86-64 Linux 6.18 with a Xeon at 2.1 GHz, on 2026-11-04. The body of the
+worker returns a number. The program built the parent heap first, then
+spawned and joined 1,000 workers in a loop. Each row is the time of the
+loop over the count.
+
+The cost grows with the live heap of the parent, because the fork copies its
+page tables. A thread pays neither cost.
+
+| live parent heap | one spawn and join |
+|---|--:|
+| under 1 MiB | 0.7 ms |
+| 64 MiB | 2.7 ms |
+| 256 MiB | 6.4 ms |
+| 1 GiB | 20 ms |
+
+A workload shows the fork cost when its bodies run for less than these
+times. A parent with a heap of hundreds of MiB shows it too.
+
 ### `__send_copy`
 
 `__send_copy(v)` is a builtin that returns a fresh deep copy of a send-safe
@@ -189,11 +220,12 @@ named `__sem_send_` and the type's key, beside the release helpers.
 
 A string copies its bytes. An array copies each element. A record, a tuple and an
 enum variant allocate a fresh box and copy each field. An `Option` copies
-its payload.
+its payload. A map reads its key and value columns, and a fresh map of the
+same size takes a copy of each pair.
 
 Both checkers refuse a value that is not send-safe with `E100`. The
 interpreters copy every array store, so a builtin that writes through a
-box cannot reach the original. A `Map` does not cross in this release.
+box cannot reach the original.
 
 The case is `conformance/cases/send_copy_deep`.
 

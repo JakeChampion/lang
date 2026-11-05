@@ -24,7 +24,7 @@ An unknown profile name exits 2 and names the four profiles.
 
 ## The build manifest
 
-Every native executable carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... heap_limit=... quarantine=...`.
+Every native executable and shared object carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... heap_limit=... quarantine=...`.
 `fern -manifest IMAGE` prints it one field per line, and answers exit 1 with a cause for a file without one.
 The line is deterministic, so a reproducible build stays reproducible.
 
@@ -52,6 +52,6 @@ The refusals of a bad name and of a profile the target cannot carry exit 2.
 
 ## Remaining limits
 
-- A shared object carries no manifest, and a wasm image carries none either. A Darwin image carries one.
+- A wasm image carries no manifest. A Darwin image carries one.
 - The `verified` cell is a fixed text per feature, not a measurement on the running host.
 - The manifest is a line in the image, not an ELF note, so a generic tool reads it with `strings` rather than `readelf -n`.

@@ -53,7 +53,14 @@ func writerSetTimesSource(dir string, closed bool) string {
             if (s.atime != 1600000000i64 || s.atime_nsec != 11i64 || s.mtime != 1600000001i64 || s.mtime_nsec != 22i64) { return 15; }
           }
         }
-        let before: i64 = now_ns();
+        // The kernel stamps UTIME_NOW from its coarse clock, which can lag now_ns(),
+        // so the lower bound is a stamp of the same clock, read from the other file.
+        match (set_file_times(%[1]q, 1, 2, 1, 2, 24)) { Err(_) => { return 19; }, Ok(_) => {} }
+        let before = 0i64;
+        match (stat(%[1]q)) {
+          Err(_) => { return 21; },
+          Ok(s) => { before = s.mtime * 1000000000i64 + s.mtime_nsec; }
+        }
         match (w.set_times(1, 2, 1, 2, 24)) { Err(_) => { return 16; }, Ok(_) => {} }
         let after: i64 = now_ns();
         match (w.stat()) {

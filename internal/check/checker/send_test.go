@@ -3,6 +3,8 @@ package checker
 import (
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
 const spawnDecl = `function spawn(send body: () => i32): i32 { return body(); }
@@ -26,8 +28,8 @@ func TestSendParameterRefusesWhatCannotCrossAWorkerBoundary(t *testing.T) {
 			`captures "w" of type Writer, which cannot cross a worker boundary: a built-in handle owns a descriptor`},
 		{"function_value", `function main(): i32 { let f: () => i32 = (): i32 => 1; return spawn((): i32 => f()); }`,
 			`captures "f" of type () => i32, which cannot cross a worker boundary: a function value carries its environment`},
-		{"map", `import "core/map"; function main(): i32 { let m: Map[string, i32] = map_new(4); return spawn((): i32 => m.len()); }`,
-			`captures "m" of type Map[string, i32], which cannot cross a worker boundary: a Map does not cross a worker boundary in this release`},
+		{"map_of_cell", `import "core/map"; function main(): i32 { let m: Map[string, Cell[i32]] = map_new(4); return spawn((): i32 => m.len()); }`,
+			`captures "m" of type Map[string, Cell[i32]], which cannot cross a worker boundary: a Cell is shared by aliasing`},
 		{"dyn", `function main(): i32 { let d: dyn Shape = Box { n: 1 }; return spawn((): i32 => d.area()); }`,
 			`captures "d" of type dyn Shape, which cannot cross a worker boundary: a dyn value hides its concrete type`},
 		{"must_consume", `function main(): i32 { let t: Ticket = Ticket { id: 1 }; return spawn((): i32 => t.id); }`,
@@ -71,5 +73,47 @@ func TestSendParameterAdmitsSendSafeValues(t *testing.T) {
 		if err := checkSource(t, spawnDecl+tc.src); err != nil {
 			t.Errorf("%s: unexpected error: %v", tc.name, err)
 		}
+	}
+}
+
+// A type parameter bounded by `worker.Send` crosses the worker boundary in a
+// generic body; the bound holds for every send-safe type argument, and no
+// impl declares the marker.
+func TestSendBoundAdmitsATypeParameter(t *testing.T) {
+	const twice = `import "std/worker";
+struct Box { n: i32 }
+function twice[T: worker.Send](x: T): (T, T) { let w = worker.spawn((): T => x); let y: T = w.join(); return (x, y); }
+`
+	cases := []struct{ name, src, frag string }{
+		{"bounded_record", twice + `function main(): i32 { let p: (Box, Box) = twice(Box { n: 2 }); return p.0.n + p.1.n; }`, ""},
+		{"bounded_string_array", twice + `function main(): i32 { let p: (string[], string[]) = twice(["a"]); return p.0.len() + p.1.len(); }`, ""},
+		{"bound_unsatisfied", twice + `function main(): i32 { let p: (Cell[i32], Cell[i32]) = twice(cell_new(1)); return p.0.get(); }`,
+			`type argument T = Cell[i32] does not implement trait worker.Send required by twice`},
+		{"impl_by_hand", `import "std/worker";
+struct Box { n: i32 }
+impl worker.Send for Box {}
+function main(): i32 { return 0; }`,
+			`impl worker.Send for Box: Send is not implemented by hand; every send-safe type satisfies it`},
+		{"unbounded", `import "std/worker";
+function once[T](x: T): T { let w = worker.spawn((): T => x); return w.join(); }
+function main(): i32 { return once(1); }`,
+			`captures "x" of type T, which cannot cross a worker boundary: type parameter T is not known to be send-safe`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, _, err := modload.LoadSource(tc.src)
+			if err == nil {
+				_, err = Check(prog)
+			}
+			if tc.frag == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.frag) {
+				t.Fatalf("got %v, want %q", err, tc.frag)
+			}
+		})
 	}
 }

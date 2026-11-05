@@ -1786,10 +1786,100 @@ function arithmetic(b: ast.ExprBinary, left: i32, right: i32, s: State): Value {
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "operator contract: " + typeinfo.spelling(s.values[left]) + " " + b.op + " " + typeinfo.spelling(s.values[right]));
   }
-  if let Some(v) = folded_constants(s, b.op, left, right, ty) {
-    return folded(s, v, ty, [left, right], literal_operand(b.left) && literal_operand(b.right));
+  if let Some(v) = folded_value(s, b.op, left, right, ty, literal_operand(b.left) && literal_operand(b.right)) {
+    return v;
   }
   return define(s, 9, [left, right], 0, b.op, ty);
+}
+
+// An i32 or i64 operation on constants that the block just defined, folded.
+function folded_value(s: State, op: string, left: i32, right: i32, ty: typeinfo.Type, literal: boolean): Option[Value] {
+  if let Some(v) = folded_constants(s, op, left, right, ty) {
+    return Some(folded(s, v, ty, [left, right], literal));
+  }
+  if (!ssasem.is_i64(ty)) {
+    return None;
+  }
+  if let Some(a) = recent_wide(s, left) {
+    if let Some(b) = recent_wide(s, right) {
+      if let Some(v) = folded_i64(op, a.value, b.value) {
+        return Some(folded_text(s, v, ty, a.temps.concat(b.temps), literal));
+      }
+    }
+  }
+  return None;
+}
+
+// An i64 constant that the block's last instructions define: a text constant,
+// or a widening cast of the i32 constant just before it. temps are the
+// instructions that define it.
+struct Wide { value: i64, temps: i32[] }
+
+function recent_wide(s: State, v: i32): Option[Wide] {
+  if (!ssasem.is_i64(s.values[v])) {
+    return None;
+  }
+  let n = s.cur.insts.len();
+  for i in 0..3 {
+    if (i < n && s.cur.insts[n - 1 - i].result == v) {
+      return wide_at(s, n - 1 - i);
+    }
+  }
+  return None;
+}
+
+function wide_at(s: State, at: i32): Option[Wide] {
+  let ins = s.cur.insts[at];
+  if (ins.kind_tag == 1 && ins.args.len() == 0 && util.is_decimal_i64(ins.str)) {
+    return Some(Wide { value: util.lit_to_i64(ins.str), temps: [ins.result] });
+  }
+  if (ins.kind_tag != ssasem.cast() || ins.args.len() != 1 || at == 0) {
+    return None;
+  }
+  return widened_constant(s, s.cur.insts[at - 1], ins);
+}
+
+function widened_constant(s: State, src: ssa.SInst, cast: ssa.SInst): Option[Wide] {
+  if (src.result != cast.args[0] || src.kind_tag != 1 || src.args.len() != 0) {
+    return None;
+  }
+  if (src.str == "" && ssasem.is_i32(s.values[src.result])) {
+    return Some(Wide { value: src.imm as i64, temps: [src.result, cast.result] });
+  }
+  if (util.is_decimal_i32(src.str) && src.str[0] != b'-') {
+    return Some(Wide { value: util.lit_to_i64(src.str), temps: [src.result, cast.result] });
+  }
+  return None;
+}
+
+// The i64 sum or difference of two constants, when it fits and is not the
+// least i64, whose text the lowering does not read back.
+function folded_i64(op: string, a: i64, b: i64): Option[i64] {
+  if (!wide_fits(op, a, b)) {
+    return None;
+  }
+  if (op == "+") {
+    return Some(a + b);
+  }
+  if (op == "-") {
+    return Some(a - b);
+  }
+  return None;
+}
+
+function wide_fits(op: string, a: i64, b: i64): boolean {
+  let most = 9223372036854775807i64;
+  if (op == "+") {
+    return !(b > 0 && a > most - b || b < 0 && a <= -most - b);
+  }
+  return !(b < 0 && a > most + b || b > 0 && a <= -most + b);
+}
+
+function folded_text(s: State, v: i64, ty: typeinfo.Type, temps: i32[], literal: boolean): Value {
+  if (literal) {
+    return define(without_temporaries(s, temps), 1, [], 0, util.i64_to_string(v), ty);
+  }
+  return define(s, 1, [], 0, util.i64_to_string(v), ty);
 }
 
 // The constant v in place of an operation on constants. The constants of a
@@ -1810,7 +1900,7 @@ function literal_operand(e: ast.Expr): boolean {
       return !n.is_float;
     },
     ast.ExprUnary(u) => {
-      return u.op == "-" && literal_operand(u.operand);
+      return (u.op == "-" || util.str_has_prefix(u.op, "as_")) && literal_operand(u.operand);
     },
     ast.ExprBinary(b) => {
       return (b.op == "+" || b.op == "-" || b.op == "*") && literal_operand(b.left) && literal_operand(b.right);
@@ -2021,7 +2111,24 @@ function unary_op(s: State, op: string, operand: i32, ty: typeinfo.Type, literal
       }
     }
   }
+  if (op == "-") {
+    if let Some(v) = negated_wide(s, operand, ty, literal) {
+      return v;
+    }
+  }
   return define(s, 10, [operand], 0, op, ty);
+}
+
+function negated_wide(s: State, operand: i32, ty: typeinfo.Type, literal: boolean): Option[Value] {
+  if (!ssasem.is_i64(ty)) {
+    return None;
+  }
+  if let Some(a) = recent_wide(s, operand) {
+    if let Some(v) = folded_i64("-", 0, a.value) {
+      return Some(folded_text(s, v, ty, a.temps, literal));
+    }
+  }
+  return None;
 }
 
 function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {

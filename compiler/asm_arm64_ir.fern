@@ -6103,6 +6103,10 @@ function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
   s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    ldr x3, [x2]\n    cmp x0, x3\n    b.lo " + move.name + "\n");
   s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    ldr x3, [x2]\n    cmp x0, x3\n    b.lo " + keep.name + "\n");
   s = s.write(move.name + ":\n");
+  s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    ldr x3, [x2]\n");
+  s = s.write("    adrp x2, __fern_image_lo\n    add x2, x2, :lo12:__fern_image_lo\n    str x3, [x2]\n");
+  s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    ldr x3, [x2]\n");
+  s = s.write("    adrp x2, __fern_image_hi\n    add x2, x2, :lo12:__fern_image_hi\n    str x3, [x2]\n");
   s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    str x0, [x2]\n");
   if (s.leak_check) {
     s = s.write("    adrp x2, __fern_lc_adopt_lo\n    add x2, x2, :lo12:__fern_lc_adopt_lo\n    str x0, [x2]\n");
@@ -8826,6 +8830,10 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 3\n");
   s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("__fern_image_lo: .quad 0\n");
+    s = s.write("__fern_image_hi: .quad 0\n");
+  }
   s = s.write("    .align 3\n");
   s = s.write("__fern_rc_underflow: .quad 0\n");
   s = s.write("    .align 3\n");
@@ -9904,6 +9912,11 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(rt_frame(s));
   s = s.write("    mov x29, sp\n");
   s = s.write("    cbz x0, .Lrawfree_done\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("    adrp x9, __fern_image_lo\n    add x9, x9, :lo12:__fern_image_lo\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_own\n");
+    s = s.write("    adrp x9, __fern_image_hi\n    add x9, x9, :lo12:__fern_image_hi\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_done\n");
+    s = s.write(".Lrawfree_own:\n");
+  }
   s = s.write("    adrp x9, __fern_heap_base\n    add x9, x9, :lo12:__fern_heap_base\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_bad\n");
   s = s.write("    adrp x9, __fern_heap_end\n    add x9, x9, :lo12:__fern_heap_end\n    ldr x9, [x9]\n    cmp x0, x9\n    b.hs .Lrawfree_bad\n");
   s = s.write("    add x1, x1, #7\n");
@@ -10499,8 +10512,8 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s, darwin);
     s = emit_startup_failures(s);
-    s = asmcore.emit_build_manifest(s);
   }
+  s = asmcore.emit_build_manifest(s);
   s = emit_rt_report(s);
   if (asmcore.is_android(s.build_target)) {
     s = emit_runtime("__fern_logcat", s);

@@ -2923,6 +2923,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 8\n");
   s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("__fern_image_lo: .quad 0\n");
+    s = s.write("__fern_image_hi: .quad 0\n");
+  }
   s = s.write("    .align 8\n");
   if (s.has_need("alloc_count")) {
     s = s.write("    .globl __fern_alloc_count\n");
@@ -3255,6 +3259,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_raw_free:\n");
   s = s.write("    testq %rdi, %rdi\n");
   s = s.write("    jz .Lrawfree_ret\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("    cmpq __fern_image_lo(%rip), %rdi\n");
+    s = s.write("    jb .Lrawfree_own\n");
+    s = s.write("    cmpq __fern_image_hi(%rip), %rdi\n");
+    s = s.write("    jb .Lrawfree_ret\n");
+    s = s.write(".Lrawfree_own:\n");
+  }
   s = s.write("    cmpq __fern_heap_base(%rip), %rdi\n");
   s = s.write("    jb .Lrawfree_bad\n");
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
@@ -11165,6 +11176,10 @@ function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
   s = s.write("    cmpq __fern_heap_base(%rip), %rax\n    jb " + move.name + "\n");
   s = s.write("    cmpq __fern_heap_end(%rip), %rax\n    jb " + keep.name + "\n");
   s = s.write(move.name + ":\n");
+  s = s.write("    pushq %rcx\n");
+  s = s.write("    movq __fern_heap_base(%rip), %rcx\n    movq %rcx, __fern_image_lo(%rip)\n");
+  s = s.write("    movq __fern_heap_end(%rip), %rcx\n    movq %rcx, __fern_image_hi(%rip)\n");
+  s = s.write("    popq %rcx\n");
   s = s.write("    movq %rax, __fern_heap_base(%rip)\n");
   if (s.leak_check) {
     s = s.write("    movq %rax, __fern_lc_adopt_lo(%rip)\n    movq %rdx, __fern_lc_adopt_hi(%rip)\n");
@@ -12102,8 +12117,8 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s);
     s = emit_startup_failures(s);
-    s = asmcore.emit_build_manifest(s);
   }
+  s = asmcore.emit_build_manifest(s);
   s = emit_report(s);
   s = emit_logcat_runtime(s);
   if (s.shared) {

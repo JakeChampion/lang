@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**123 of 126** claims are pinned by a conformance case. The remaining
+**124 of 127** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -153,9 +153,10 @@ of them.
 | `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
 | `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
 | `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |
-| `WK-04` | `docs/WORKERS.md` | `__send_copy` returns a fresh deep copy with the same contents, for a string, an array, a tuple, a record and an enum in either layout | `send_copy_deep` |
+| `WK-04` | `docs/WORKERS.md` | `__send_copy` returns a fresh deep copy with the same contents, for a string, an array, a tuple, a record, an enum in either layout and a map | `send_copy_deep` |
 | `WK-05` | `docs/WORKERS.md` | On native Linux a worker runs as another process, and its result crosses back through the shared region | `worker_runs_in_its_own_process` |
 | `WK-06` | `docs/WORKERS.md` | A simulation is a worker scheduler: a worker spawned on it parks on the virtual clock, its result crosses back at the join, and the joins move the clock to the deadlines | `worker_runs_on_the_simulation` |
+| `WK-07` | `docs/WORKERS.md` | A type parameter bounded by `worker.Send` crosses the worker boundary, the bound holds only for a send-safe type argument (`E021`), and no impl declares `Send` (`E021`) | `worker_send_bound` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 | `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |
