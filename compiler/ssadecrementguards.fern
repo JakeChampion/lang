@@ -41,7 +41,7 @@ function initial(family: i32, register_entry: boolean): State {
   let i = 0;
   while (i < 16) {
     regs = regs.append(if (i == 4) { token(3, 0) } else { token(1, i) });
-    i = i + 1;
+    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, pointer(family));
@@ -200,7 +200,7 @@ function finished(s: State, family: i32): boolean {
     if (!same_word(s.regs[i], expected)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -236,7 +236,7 @@ function path(p: isa.ArrayProgram, family: i32, register_entry: boolean): boolea
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;

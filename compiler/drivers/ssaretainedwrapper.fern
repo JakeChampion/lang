@@ -79,7 +79,7 @@ function boundaries(rows: ssaprepare.Emitted[], architecture: string): void {
   let hits = 0;
   for row in rows {
     if (util.has_str(wanted(), row.label_name)) {
-      hits = hits + 1;
+      hits += 1;
       let rest = without(rows, row.label_name);
       check(rest, architecture, false);
       check(rows.append(row), architecture, false);
@@ -172,7 +172,7 @@ function independent_producer(rows: ssaprepare.Emitted[], arm: boolean, architec
     let hits = 0;
     for row in independent {
       if (row.label_name == "parent") {
-        hits = hits + 1;
+        hits += 1;
         require(row.body.selected.origin.producer == 0, 68);
         check(without(rows, "parent").append(row), architecture, !wide);
       }

@@ -5,28 +5,28 @@ import "../modloader";
 import "../platforms";
 
 function main(): i32 {
-  let a: string[] = args();
+  let a = args();
   if (a.len() < 2) {
     eprint("usage: platforms_reach_run <entry.fern>");
     return 2;
   }
-  let entry_path: string = a[1];
+  let entry_path = a[1];
   match (read_file(entry_path)) {
     Ok(src) => {
-      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
+      let entry = parser.parse_module(lexer.tokenize(src));
+      let g = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
       entry = g.entry;
-      let loaded: flatten.LoadedModule[] = g.loaded;
-      let missing: string[] = g.missing;
+      let loaded = g.loaded;
+      let missing = g.missing;
       if (modloader.report_unresolved(missing, "platforms_reach_run")) {
         return 1;
       }
-      let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, "", "");
-      let caps: string[] = platforms.reach(merged);
-      let i: i32 = 0;
+      let merged = modloader.bundle(entry_path, entry, loaded, "", "");
+      let caps = platforms.reach(merged);
+      let i = 0;
       while (i < caps.len()) {
         print(caps[i]);
-        i = i + 1;
+        i += 1;
       }
       return 0;
     },

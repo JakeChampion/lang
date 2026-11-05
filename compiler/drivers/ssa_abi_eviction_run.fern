@@ -7,40 +7,40 @@ function ins(k: i32, id: i32, args: i32[], text: string): ssa.SInst {
 
 function probe(op: string, fixed: boolean, regs: i32): i32 {
   let ops: ssa.SInst[] = [ins(1, 0, [], ""), ins(1, 1, [], "")];
-  let i: i32 = 2;
+  let i = 2;
   while (i < 12) {
     ops = ops.append(ins(10, i, [1], "clz"));
-    i = i + 1;
+    i += 1;
   }
   ops = ops.append(ins(10, 23, [0], "clz"));
   ops = ops.append(ins(9, 12, [1, 1], op));
   i = 13;
   while (i < 23) {
     ops = ops.append(ins(10, i, [1], "clz"));
-    i = i + 1;
+    i += 1;
   }
-  let f: ssa.SFunc = ssa.SFunc { name: "probe", nparams: 0, nvals: 24, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } }] };
+  let f = ssa.SFunc { name: "probe", nparams: 0, nvals: 24, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } }] };
   let nh: boolean[] = [false, false];
   i = 2;
   while (i < 24) {
     nh = nh.append(true);
-    i = i + 1;
+    i += 1;
   }
-  let a: ssa.Alloc = ssa.regalloc_linear(f, regs, 0, 0, fixed, nh, [], [], 0, 0);
+  let a = ssa.regalloc_linear(f, regs, 0, 0, fixed, nh, [], [], 0, 0);
   return a.reg_of[1];
 }
 
 function main(): i32 {
-  let failures: i32 = 0;
+  let failures = 0;
   for op in ["div_s", "div_u", "rem_s", "rem_u", "mulhi_u"] {
     if (probe(op, true, 1) >= 0) {
-      failures = failures + 1;
+      failures += 1;
     }
     if (probe(op, false, 1) != 0) {
-      failures = failures + 1;
+      failures += 1;
     }
     if (probe(op, true, 2) != 1) {
-      failures = failures + 1;
+      failures += 1;
     }
   }
   print("failures=" + util.i32_to_string(failures));

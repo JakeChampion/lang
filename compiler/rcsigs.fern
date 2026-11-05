@@ -82,7 +82,7 @@ function add(own rows: Rows, names: string[], s: Sig): Rows {
 }
 
 pub function table(): Table {
-  let rows: Rows = Rows { names: [], sigs: [] };
+  let rows = Rows { names: [], sigs: [] };
   rows = add(rows, ["__fern_rc_inc", "__fern_str_inc", "__fern_arr_share_inc"], sig(0, effect_retain(), result_operand()));
   rows = add(rows, release_helpers(), sig(0, effect_release(), result_none()));
   rows = add(rows, ["__fern_rc_is_unique", "__fern_rc_underflow_get", "__rc_get"], sig(0, effect_inspect(), result_none()));
@@ -166,7 +166,7 @@ pub function is_children_drop(name: string): boolean {
 }
 
 pub function (t: Table) lookup(name: string): Sig {
-  let at: i32 = t.names.find(name);
+  let at = t.names.find(name);
   if (at >= 0) {
     return t.sigs[at];
   }
@@ -202,7 +202,7 @@ function sealing_ops(): string[] {
 pub struct OpTable { names: util.NameIndex, sigs: Sig[] }
 
 pub function op_table(): OpTable {
-  let rows: Rows = Rows { names: [], sigs: [] };
+  let rows = Rows { names: [], sigs: [] };
   rows = add(rows, fresh_ops(), inert(result_fresh()));
   rows = add(rows, move_ops(), sig(0, effect_move(), result_fresh()));
   rows = add(rows, handing_ops(), sig(0, effect_move(), result_none()));
@@ -219,11 +219,11 @@ pub function op_table(): OpTable {
 }
 
 pub function (t: OpTable) op_lookup(kind: string): Sig {
-  let at: i32 = t.names.find(kind);
+  let at = t.names.find(kind);
   if (at >= 0) {
     return t.sigs[at];
   }
-  let n: i32 = kind.len();
+  let n = kind.len();
   if (n > 3 && slice_unchecked(kind, n - 3, n) == "_u8") {
     return t.op_lookup(slice_unchecked(kind, 0, n - 3) + "");
   }

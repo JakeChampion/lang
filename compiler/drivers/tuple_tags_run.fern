@@ -2,7 +2,7 @@ import "../asmcore";
 import "../util";
 
 function split_line(tt: string): string {
-  let r: asmcore.TwoTags = asmcore.split_tuple_ret(tt);
+  let r = asmcore.split_tuple_ret(tt);
   return "split(" + tt + ") = {" + asmcore.ty_tag(r.a) + ", " + asmcore.ty_tag(r.b) + "}";
 }
 
@@ -11,7 +11,7 @@ function at_line(tt: string, idx: i32): string {
 }
 
 function main(): i32 {
-  let out: string = "";
+  let out = "";
   out = out + split_line("(i32, string)") + "\n";
   out = out + split_line("(string, i32)") + "\n";
   out = out + split_line("(Map[string, i32], Err)") + "\n";

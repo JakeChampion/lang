@@ -30,7 +30,7 @@ function validate(sub: ircore.Sub): void {
   let i = 0;
   for origin in origins.extra {
     require(origin.producer >= 0 && origin.producer < origins.producers.len() && origin.symbol == sub.extra[i].name, 155);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -49,16 +49,16 @@ function keys(target: string): void {
   let app_count = 0;
   for origin in origins.extra {
     if (origin.producer == 1) {
-      key_count = key_count + 1;
+      key_count += 1;
       let matches = 0;
       for c in origins.producers[1].contracts {
         if (c.name == origin.symbol) {
-          matches = matches + 1;
+          matches += 1;
         }
       }
       require(matches == 1, 158);
     } else {
-      app_count = app_count + 1;
+      app_count += 1;
     }
   }
   require(key_count >= 2 && app_count > 0, 159);
@@ -71,7 +71,7 @@ function instances(target: string): void {
   for origin in sub.physical_origins.extra {
     if (util.str_has_prefix(origin.symbol, "identity")) {
       require(origin.producer == 0, 161);
-      found = found + 1;
+      found += 1;
     }
   }
   require(found == 2, 162);
@@ -84,7 +84,7 @@ function methods(target: string): void {
   let count = 0;
   for origin in sub.physical_origins.declarations {
     if (origin.symbol == "Token.drop" || origin.symbol == "Other.drop") {
-      count = count + 1;
+      count += 1;
     }
   }
   require(count == 2, 164);
@@ -94,7 +94,7 @@ function methods(target: string): void {
   let i = 0;
   for symbol in lowered.declarations {
     require(origins[i].symbol == symbol && origins[i].producer == 7, 166);
-    i = i + 1;
+    i += 1;
   }
 }
 

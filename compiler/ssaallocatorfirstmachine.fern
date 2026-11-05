@@ -66,14 +66,14 @@ function initial(request: i32): State {
   let i = 0;
   while (i < 16) {
     regs = regs.append(if (i == 4) { token(2, 0) } else { if (i == 7) { number(request as i64) } else { token(1, i as i64) } });
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < 32) {
     let w = initial_word(i);
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
-    i = i + 1;
+    i += 1;
   }
   return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, mappings: 0, ok: true };
 }
@@ -135,7 +135,7 @@ function store(s: State, at: i32, width: i32, w: Word): State {
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
-    i = i + 1;
+    i += 1;
   }
   return State { ...s, memory: memory, writes: writes };
 }
@@ -371,7 +371,7 @@ function shift(s: State, op: isa.Op): State {
     if (n > 4294967295) {
       return State { ...s, ok: false };
     }
-    count = count - 1;
+    count -= 1;
   }
   return write(unknown(s), op.destination, number(n));
 }
@@ -524,7 +524,7 @@ function finished_memory(s: State, original: State, request: i32): boolean {
     if (!same(s.memory[i], expected) || s.writes[i] != count) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -543,7 +543,7 @@ function finished(s: State, request: i32): boolean {
     if (!equal(s.regs[i], expected)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return s.ok && s.mappings == 1 && finished_memory(s, original, request);
 }
@@ -571,7 +571,7 @@ function path(p: isa.Program, request: i32): boolean {
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;

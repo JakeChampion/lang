@@ -53,7 +53,7 @@ function first_error(a: Value, b: Value): Value {
 }
 
 function number(v: i64, ty: string): Value {
-  let n: i64 = v;
+  let n = v;
   if (ty == "i32") {
     n = (v as i32) as i64;
   }
@@ -134,7 +134,7 @@ function bitwise(op: string, a: i64, b: i64, ty: string): Value {
   if (ty == "i32" || ty == "u32" || ty == "u8") {
     mask = 31;
   }
-  let shift: i64 = b & mask;
+  let shift = b & mask;
   if (op == "<<") {
     return number(a << shift, ty);
   }
@@ -330,7 +330,7 @@ function unary(op: string, v: Value, ty: string): Value {
 }
 
 function element_type(ty: parser.TypeRef, tuple: boolean, i: i32): parser.TypeRef {
-  let elem: parser.TypeRef = parser.parse_type_ref("");
+  let elem = parser.parse_type_ref("");
   if (tuple && ty.is_tuple && i < ty.args.len()) {
     elem = ty.args[i];
   }
@@ -341,10 +341,10 @@ function element_type(ty: parser.TypeRef, tuple: boolean, i: i32): parser.TypeRe
 }
 
 function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values: Value[], tuple: boolean): Value {
-  let out: Value = empty();
+  let out = empty();
   for i in 0..elems.len() {
-    let elem: parser.TypeRef = element_type(ty, tuple, i);
-    let v: Value = evaluate(elems[i], elem, names, values);
+    let elem = element_type(ty, tuple, i);
+    let v = evaluate(elems[i], elem, names, values);
     if (v.error.len() == 0 && elem.array_depth == 0 && !elem.is_tuple) {
       v = settle(v, elem.base);
     }
@@ -356,7 +356,7 @@ function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values
 }
 
 pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: Value[]): Value {
-  let width: string = scalar_width(ty);
+  let width = scalar_width(ty);
   match (e) {
     ast.ExprNumber(n) => {
       return literal_number(n);
@@ -415,7 +415,7 @@ function integer_type(ty: string): boolean {
 }
 
 function scalar_width(ty: parser.TypeRef): string {
-  let width: string = "";
+  let width = "";
   if (ty.array_depth == 0 && !ty.is_tuple) {
     width = ty.base;
   }
@@ -435,7 +435,7 @@ function literal_number(n: ast.ExprNumber): Value {
 }
 
 function earlier_value(name: string, names: string[], values: Value[]): Value {
-  let i: i32 = util.index_of_str(names, name);
+  let i = util.index_of_str(names, name);
   if (i >= 0) {
     return values[i];
   }
@@ -443,8 +443,8 @@ function earlier_value(name: string, names: string[], values: Value[]): Value {
 }
 
 function evaluate_binary(b: ast.ExprBinary, ty: parser.TypeRef, names: string[], values: Value[]): Value {
-  let left: Value = evaluate(b.left, ty, names, values);
-  let right: Value = evaluate(b.right, ty, names, values);
+  let left = evaluate(b.left, ty, names, values);
+  let right = evaluate(b.right, ty, names, values);
   if let FloatValue(_) = left.data {
     right = beside_float(b.right, right, names, values);
   } else if let FloatValue(_) = right.data {

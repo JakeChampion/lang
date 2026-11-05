@@ -7,42 +7,42 @@ struct Scopes { scope_of: i32[], parent: i32[], depth: i32[], loop_start: i32[],
 struct Slots { first: i32[], last: i32[], share: boolean[], pinned: boolean[] }
 
 pub function coalesce(ops: ir.Op[], n_params: i32, n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[]): Frame {
-  let sc: Scopes = scopes(ops);
-  let sl: Slots = slots(ops, n_params, n_locals, sc);
-  let last: i32[] = extend_over_loops(sl, sc);
-  let types: i32[] = slot_types(n_locals, i64_slots, f64_slots, v128_slots);
-  let map: i32[] = assign(ops, n_params, Slots { ...sl, last: last }, types);
-  let new_types: i32[] = remapped_types(map, types);
+  let sc = scopes(ops);
+  let sl = slots(ops, n_params, n_locals, sc);
+  let last = extend_over_loops(sl, sc);
+  let types = slot_types(n_locals, i64_slots, f64_slots, v128_slots);
+  let map = assign(ops, n_params, Slots { ...sl, last: last }, types);
+  let new_types = remapped_types(map, types);
   return Frame { ops: rewrite(ops, map), n_locals: new_types.len(), i64_slots: slots_of_type(new_types, 1), f64_slots: slots_of_type(new_types, 2), v128_slots: slots_of_type(new_types, 3) };
 }
 
 function scopes(ops: ir.Op[]): Scopes {
-  let k_block: i32 = ir.K_BLOCK;
-  let k_loop: i32 = ir.K_LOOP;
-  let k_if: i32 = ir.K_IF;
-  let k_else: i32 = ir.K_ELSE;
-  let k_end: i32 = ir.K_END;
+  let k_block = ir.K_BLOCK;
+  let k_loop = ir.K_LOOP;
+  let k_if = ir.K_IF;
+  let k_else = ir.K_ELSE;
+  let k_end = ir.K_END;
   let scope_of: i32[] = [];
   let parent: i32[] = [0];
   let depth: i32[] = [0];
   let loop_start: i32[] = [];
   let loop_end: i32[] = [];
   let open_loop: i32[] = [];
-  let nopen: i32 = 0;
-  let cur: i32 = 0;
-  let i: i32 = 0;
+  let nopen = 0;
+  let cur = 0;
+  let i = 0;
   while (i < ops.len()) {
-    let k: i32 = ops[i].kind_tag;
+    let k = ops[i].kind_tag;
     scope_of = scope_of.append(cur);
     if (k == k_block || k == k_loop || k == k_if) {
-      let li: i32 = 0 - 1;
+      let li: i32 = -1;
       if (k == k_loop) {
         li = loop_start.len();
         loop_start = loop_start.append(i);
         loop_end = loop_end.append(ops.len());
       }
       open_loop = pushed(open_loop, nopen, li);
-      nopen = nopen + 1;
+      nopen += 1;
       parent = parent.append(cur);
       depth = depth.append(depth[cur] + 1);
       cur = parent.len() - 1;
@@ -51,13 +51,13 @@ function scopes(ops: ir.Op[]): Scopes {
       depth = depth.append(depth[cur]);
       cur = parent.len() - 1;
     } else if (k == k_end && nopen > 0) {
-      nopen = nopen - 1;
+      nopen -= 1;
       if (open_loop[nopen] >= 0) {
         loop_end = loop_end.with(open_loop[nopen], i);
       }
       cur = parent[cur];
     }
-    i = i + 1;
+    i += 1;
   }
   return Scopes { scope_of: scope_of, parent: parent, depth: depth, loop_start: loop_start, loop_end: loop_end };
 }
@@ -70,8 +70,8 @@ function pushed(stack: i32[], n: i32, v: i32): i32[] {
 }
 
 function common_scope(sc: Scopes, a: i32, b: i32): i32 {
-  let x: i32 = a;
-  let y: i32 = b;
+  let x = a;
+  let y = b;
   while (sc.depth[x] > sc.depth[y]) {
     x = sc.parent[x];
   }
@@ -86,20 +86,20 @@ function common_scope(sc: Scopes, a: i32, b: i32): i32 {
 }
 
 function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
-  let k_load: i32 = ir.K_LOAD_LOCAL;
-  let k_store: i32 = ir.K_STORE_LOCAL;
-  let k_tee: i32 = ir.K_TEE_LOCAL;
-  let first: i32[] = filled_i32(n_locals, 0 - 1);
-  let last: i32[] = filled_i32(n_locals, 0 - 1);
-  let first_scope: i32[] = filled_i32(n_locals, 0);
-  let inner: i32[] = filled_i32(n_locals, 0);
-  let stored_first: boolean[] = filled_bool(n_locals, false);
-  let i: i32 = 0;
+  let k_load = ir.K_LOAD_LOCAL;
+  let k_store = ir.K_STORE_LOCAL;
+  let k_tee = ir.K_TEE_LOCAL;
+  let first = filled_i32(n_locals, -1);
+  let last = filled_i32(n_locals, -1);
+  let first_scope = filled_i32(n_locals, 0);
+  let inner = filled_i32(n_locals, 0);
+  let stored_first = filled_bool(n_locals, false);
+  let i = 0;
   while (i < ops.len()) {
-    let k: i32 = ops[i].kind_tag;
+    let k = ops[i].kind_tag;
     if (k == k_load || k == k_store || k == k_tee) {
-      let s: i32 = ops[i].i32_imm;
-      let at: i32 = sc.scope_of[i];
+      let s = ops[i].i32_imm;
+      let at = sc.scope_of[i];
       if (first[s] < 0) {
         first = first.with(s, i);
         first_scope = first_scope.with(s, at);
@@ -110,27 +110,27 @@ function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
       }
       last = last.with(s, i);
     }
-    i = i + 1;
+    i += 1;
   }
-  let pinned: boolean[] = dyn_dispatch_slots(ops, n_locals);
+  let pinned = dyn_dispatch_slots(ops, n_locals);
   let share: boolean[] = [];
-  let s: i32 = 0;
+  let s = 0;
   while (s < n_locals) {
     share = share.append(s >= n_params && !pinned[s] && stored_first[s] && first_scope[s] == inner[s]);
-    s = s + 1;
+    s += 1;
   }
   return Slots { first: first, last: last, share: share, pinned: pinned };
 }
 
 function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
-  let k_dyn: i32 = ir.K_DYN_DISPATCH;
-  let pinned: boolean[] = filled_bool(n_locals, false);
+  let k_dyn = ir.K_DYN_DISPATCH;
+  let pinned = filled_bool(n_locals, false);
   for o in ops {
     if (o.kind_tag == k_dyn) {
-      let j: i32 = 0;
+      let j = 0;
       while (j < o.width) {
         pinned = pinned.with(o.i32_imm + j, true);
-        j = j + 1;
+        j += 1;
       }
     }
   }
@@ -138,27 +138,27 @@ function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
 }
 
 function extend_over_loops(sl: Slots, sc: Scopes): i32[] {
-  let last: i32[] = sl.last;
-  let s: i32 = 0;
+  let last = sl.last;
+  let s = 0;
   while (s < sl.share.len()) {
     if (sl.share[s]) {
-      let l: i32 = last[s];
-      let j: i32 = 0;
+      let l = last[s];
+      let j = 0;
       while (j < sc.loop_start.len()) {
         if (sc.loop_start[j] > sl.first[s] && sc.loop_start[j] < l && sc.loop_end[j] > l) {
           l = sc.loop_end[j];
         }
-        j = j + 1;
+        j += 1;
       }
       last = last.with(s, l);
     }
-    s = s + 1;
+    s += 1;
   }
   return last;
 }
 
 function slot_types(n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[]): i32[] {
-  let types: i32[] = filled_i32(n_locals, 0);
+  let types = filled_i32(n_locals, 0);
   for s in i64_slots {
     types = types.with(s, 1);
   }
@@ -172,27 +172,27 @@ function slot_types(n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slot
 }
 
 function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
-  let n: i32 = sl.first.len();
-  let map: i32[] = filled_i32(n, 0 - 1);
-  let starts: i32[] = filled_i32(ops.len(), 0 - 1);
-  let next: i32 = 0;
-  let s: i32 = 0;
+  let n = sl.first.len();
+  let map = filled_i32(n, -1);
+  let starts = filled_i32(ops.len(), -1);
+  let next = 0;
+  let s = 0;
   while (s < n) {
     if (s < n_params || sl.pinned[s] || sl.first[s] >= 0 && !sl.share[s]) {
       map = map.with(s, next);
-      next = next + 1;
+      next += 1;
     } else if (sl.share[s]) {
       starts = starts.with(sl.first[s], s);
     }
-    s = s + 1;
+    s += 1;
   }
   let kind: i32[] = [];
   let until: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < starts.len()) {
-    let t: i32 = starts[i];
+    let t = starts[i];
     if (t >= 0) {
-      let k: i32 = free_local(kind, until, types[t], i);
+      let k = free_local(kind, until, types[t], i);
       if (k < 0) {
         k = kind.len();
         kind = kind.append(types[t]);
@@ -202,58 +202,58 @@ function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
       }
       map = map.with(t, next + k);
     }
-    i = i + 1;
+    i += 1;
   }
   return map;
 }
 
 function free_local(kind: i32[], until: i32[], ty: i32, at: i32): i32 {
-  let k: i32 = 0;
+  let k = 0;
   while (k < kind.len()) {
     if (kind[k] == ty && until[k] < at) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function remapped_types(map: i32[], types: i32[]): i32[] {
-  let n: i32 = 0;
+  let n = 0;
   for m in map {
     n = max_i32(n, m + 1);
   }
-  let out: i32[] = filled_i32(n, 0);
-  let s: i32 = 0;
+  let out = filled_i32(n, 0);
+  let s = 0;
   while (s < map.len()) {
     if (map[s] >= 0) {
       out = out.with(map[s], types[s]);
     }
-    s = s + 1;
+    s += 1;
   }
   return out;
 }
 
 function slots_of_type(types: i32[], ty: i32): i32[] {
   let out: i32[] = [];
-  let s: i32 = 0;
+  let s = 0;
   while (s < types.len()) {
     if (types[s] == ty) {
       out = out.append(s);
     }
-    s = s + 1;
+    s += 1;
   }
   return out;
 }
 
 function rewrite(ops: ir.Op[], map: i32[]): ir.Op[] {
-  let k_load: i32 = ir.K_LOAD_LOCAL;
-  let k_store: i32 = ir.K_STORE_LOCAL;
-  let k_tee: i32 = ir.K_TEE_LOCAL;
-  let k_dyn: i32 = ir.K_DYN_DISPATCH;
+  let k_load = ir.K_LOAD_LOCAL;
+  let k_store = ir.K_STORE_LOCAL;
+  let k_tee = ir.K_TEE_LOCAL;
+  let k_dyn = ir.K_DYN_DISPATCH;
   let out: ir.Op[] = [];
   for o in ops {
-    let k: i32 = o.kind_tag;
+    let k = o.kind_tag;
     if (k == k_load || k == k_store || k == k_tee || k == k_dyn) {
       out = out.append(ir.Op { ...o, i32_imm: map[o.i32_imm] });
     } else {
@@ -272,20 +272,20 @@ function max_i32(a: i32, b: i32): i32 {
 
 function filled_i32(n: i32, v: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(v);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function filled_bool(n: i32, v: boolean): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(v);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

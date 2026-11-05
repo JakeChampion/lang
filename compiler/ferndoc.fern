@@ -24,42 +24,42 @@ function own(v: string): string {
 }
 
 pub function trim_space(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && is_space(s[a] as i32)) {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && is_space(s[b - 1] as i32)) {
-    b = b - 1;
+    b -= 1;
   }
   return own(slice_unchecked(s, a, b));
 }
 
 function run_end(cs: lexer.Comment[], start: i32): i32 {
-  let e: i32 = start;
+  let e = start;
   while (e + 1 < cs.len() && cs[e + 1].line == cs[e].line + 1) {
-    e = e + 1;
+    e += 1;
   }
   return e;
 }
 
 function join_run(cs: lexer.Comment[], start: i32, end: i32): string {
-  let out: string = "";
-  let i: i32 = start;
+  let out = "";
+  let i = start;
   while (i <= end) {
     if (i > start) {
-      out = out + "\n";
+      out += "\n";
     }
-    out = out + trim_space(cs[i].text);
-    i = i + 1;
+    out += trim_space(cs[i].text);
+    i += 1;
   }
   return out;
 }
 
 pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeResult {
-  let cur: i32 = cursor;
+  let cur = cursor;
   while (cur < cs.len() && cs[cur].line < decl_line - 1) {
-    let e0: i32 = run_end(cs, cur);
+    let e0 = run_end(cs, cur);
     if (cs[e0].line == decl_line - 1) {
       return TakeResult { doc: join_run(cs, cur, e0), cursor: e0 + 1 };
     }
@@ -68,7 +68,7 @@ pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeRes
   if (cur >= cs.len()) {
     return TakeResult { doc: "", cursor: cur };
   }
-  let e: i32 = run_end(cs, cur);
+  let e = run_end(cs, cur);
   if (cs[e].line != decl_line - 1) {
     return TakeResult { doc: "", cursor: cur };
   }
@@ -82,14 +82,14 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   if (cs[0].line != 1) {
     return "";
   }
-  let end: i32 = 0;
-  let i: i32 = 0;
+  let end = 0;
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].line != i + 1) {
       break;
     }
     end = i + 1;
-    i = i + 1;
+    i += 1;
   }
   if (end == 0) {
     return "";
@@ -97,14 +97,14 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   if (first_decl_line > 0 && first_decl_line == end + 1) {
     return "";
   }
-  let out: string = "";
-  let j: i32 = 0;
+  let out = "";
+  let j = 0;
   while (j < end) {
     if (j > 0) {
-      out = out + "\n";
+      out += "\n";
     }
-    out = out + trim_space(cs[j].text);
-    j = j + 1;
+    out += trim_space(cs[j].text);
+    j += 1;
   }
   return out;
 }
@@ -119,9 +119,9 @@ function quote(s: string): string {
 
 pub function public_decls(mod: parser.Module): DocDecl[] {
   let out: DocDecl[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[i];
+    let fd = mod.funcs[i];
     if (fd.is_const) {
       if (fd.is_pub) {
         out = insert_sorted(out, DocDecl { kind: "const", name: fd.name, line: fd.line, col: fd.col, index: i, doc: "" });
@@ -129,31 +129,31 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
     } else if (fd.is_pub && !starts_with_dunder(fd.name)) {
       out = insert_sorted(out, DocDecl { kind: "function", name: fd.name, line: fd.line, col: fd.col, index: i, doc: "" });
     }
-    i = i + 1;
+    i += 1;
   }
-  let si: i32 = 0;
+  let si = 0;
   while (si < mod.structs.len()) {
-    let sd: parser.StructDecl = mod.structs[si];
+    let sd = mod.structs[si];
     if (sd.is_pub && sd.enum_owner.len() == 0) {
       out = insert_sorted(out, DocDecl { kind: "struct", name: sd.name, line: sd.line, col: sd.col, index: si, doc: "" });
     }
-    si = si + 1;
+    si += 1;
   }
-  let ei: i32 = 0;
+  let ei = 0;
   while (ei < mod.enums.len()) {
-    let ed: parser.EnumDecl = mod.enums[ei];
+    let ed = mod.enums[ei];
     if (ed.is_pub) {
       out = insert_sorted(out, DocDecl { kind: "enum", name: ed.name, line: ed.line, col: ed.col, index: ei, doc: "" });
     }
-    ei = ei + 1;
+    ei += 1;
   }
-  let di: i32 = 0;
+  let di = 0;
   while (di < mod.trait_decls.len()) {
-    let td: parser.TraitDecl = mod.trait_decls[di];
+    let td = mod.trait_decls[di];
     if (td.is_pub) {
       out = insert_sorted(out, DocDecl { kind: "trait", name: td.name, line: td.line, col: td.col, index: di, doc: "" });
     }
-    di = di + 1;
+    di += 1;
   }
   return out;
 }
@@ -167,15 +167,15 @@ function insert_sorted(own xs: DocDecl[], d: DocDecl): DocDecl[] {
     return xs.append(d);
   }
   let out: DocDecl[] = [];
-  let placed: boolean = false;
-  let i: i32 = 0;
+  let placed = false;
+  let i = 0;
   while (i < xs.len()) {
     if (!placed && before(d, xs[i])) {
       out = out.append(d);
       placed = true;
     }
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   if (!placed) {
     out = out.append(d);
@@ -191,31 +191,31 @@ function before(a: DocDecl, b: DocDecl): boolean {
 }
 
 pub function first_decl_line(mod: parser.Module): i32 {
-  let min: i32 = 0;
-  let i: i32 = 0;
+  let min = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
     min = min_line(min, mod.funcs[i].line);
-    i = i + 1;
+    i += 1;
   }
-  let si: i32 = 0;
+  let si = 0;
   while (si < mod.structs.len()) {
     min = min_line(min, mod.structs[si].line);
-    si = si + 1;
+    si += 1;
   }
-  let ei: i32 = 0;
+  let ei = 0;
   while (ei < mod.enums.len()) {
     min = min_line(min, mod.enums[ei].line);
-    ei = ei + 1;
+    ei += 1;
   }
-  let ti: i32 = 0;
+  let ti = 0;
   while (ti < mod.aliases.len()) {
     min = min_line(min, mod.aliases[ti].line);
-    ti = ti + 1;
+    ti += 1;
   }
-  let tdi: i32 = 0;
+  let tdi = 0;
   while (tdi < mod.trait_decls.len()) {
     min = min_line(min, mod.trait_decls[tdi].line);
-    tdi = tdi + 1;
+    tdi += 1;
   }
   return min;
 }
@@ -232,13 +232,13 @@ function min_line(min: i32, line: i32): i32 {
 
 pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
   let out: DocDecl[] = [];
-  let cursor: i32 = 0;
-  let i: i32 = 0;
+  let cursor = 0;
+  let i = 0;
   while (i < decls.len()) {
-    let t: TakeResult = take_doc(cs, cursor, decls[i].line);
+    let t = take_doc(cs, cursor, decls[i].line);
     cursor = t.cursor;
     out = out.append(DocDecl { ...decls[i], doc: t.doc });
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -246,9 +246,9 @@ pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
 pub struct DocModule { intro: string, decls: DocDecl[] }
 
 pub function docs_of(src: string): DocModule {
-  let lr: lexer.LexResult = lexer.tokenize_full(src);
-  let mod: parser.Module = parser.parse_module_verbatim(lr.tokens).pmod;
-  let decls: DocDecl[] = public_decls(mod);
+  let lr = lexer.tokenize_full(src);
+  let mod = parser.parse_module_verbatim(lr.tokens).pmod;
+  let decls = public_decls(mod);
   return DocModule {
     intro: module_intro(lr.comments, first_decl_line(mod)),
     decls: associate(lr.comments, decls),
@@ -266,16 +266,16 @@ function param_type_str(p: ast.ParamDecl): string {
   if (p.type_name != "fn") {
     return type_str(p.type_name);
   }
-  let out: string = "(";
+  let out = "(";
   if (p.fn_param_types.len() > 0) {
-    let parts: string[] = split_commas(p.fn_param_types);
-    let i: i32 = 0;
+    let parts = split_commas(p.fn_param_types);
+    let i = 0;
     while (i < parts.len()) {
       if (i > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + parts[i];
-      i = i + 1;
+      out += parts[i];
+      i += 1;
     }
   }
   if (p.fn_ret.len() == 0) {
@@ -286,25 +286,25 @@ function param_type_str(p: ast.ParamDecl): string {
 
 function split_commas(s: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] as i32 == 44) {
       out = out.append(own(slice_unchecked(s, start, i)));
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out.append(own(slice_unchecked(s, start, s.len())));
 }
 
 function join_plus(names: string[]): string {
-  let out: string = "";
+  let out = "";
   for n in names {
     if (out.len() > 0) {
-      out = out + " + ";
+      out += " + ";
     }
-    out = out + n;
+    out += n;
   }
   return out;
 }
@@ -313,14 +313,14 @@ function join_type_params(tps: string[]): string {
   if (tps.len() == 0) {
     return "";
   }
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < tps.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + tps[i];
-    i = i + 1;
+    out += tps[i];
+    i += 1;
   }
   return out + "]";
 }
@@ -333,28 +333,28 @@ function doc_block(doc: string): string {
 }
 
 function render_func(fd: parser.FuncDecl, doc: string): string {
-  let out: string = "## `" + fd.name + "`\n\n```fern\npub function ";
-  let tps: string[] = fd.type_params;
+  let out = "## `" + fd.name + "`\n\n```fern\npub function ";
+  let tps = fd.type_params;
   if (fd.receiver_type.len() > 0) {
-    let rp: parser.RecvPrint = parser.receiver_with_bounds(fd);
+    let rp = parser.receiver_with_bounds(fd);
     tps = rp.names;
     out = out + "(" + fd.receiver_name + ": " + rp.recv + ") ";
   }
   out = out + fd.name + join_type_params(tps) + "(";
-  let i: i32 = 0;
+  let i = 0;
   while (i < fd.params.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     out = out + fd.params[i].name + ": " + param_type_str(fd.params[i]);
-    i = i + 1;
+    i += 1;
   }
   out = out + "): " + type_str(fd.ret_type) + "\n```\n\n";
   return out + doc_block(doc);
 }
 
 function render_const(fd: parser.FuncDecl, doc: string): string {
-  let out: string = "## `const " + fd.name + "`\n\n```fern\npub const " + fd.name;
+  let out = "## `const " + fd.name + "`\n\n```fern\npub const " + fd.name;
   if (fd.ret_type.len() > 0) {
     out = out + ": " + fd.ret_type;
   }
@@ -364,37 +364,37 @@ function render_const(fd: parser.FuncDecl, doc: string): string {
 function render_struct(sd: parser.StructDecl, doc: string): string {
   let out: string = "## `struct " + sd.name + "`\n\n```fern\npub struct "
     + sd.name + join_type_params(sd.type_params) + " { ";
-  let i: i32 = 0;
+  let i = 0;
   while (i < sd.fields.len()) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     out = out + sd.fields[i].name + ": " + type_str(sd.fields[i].type_name);
-    i = i + 1;
+    i += 1;
   }
   return out + " }\n```\n\n" + doc_block(doc);
 }
 
 function variant_payloads(enum_name: string, variant: string, structs: parser.StructDecl[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < structs.len()) {
-    let sd: parser.StructDecl = structs[i];
+    let sd = structs[i];
     if (sd.enum_owner == enum_name && sd.name == variant) {
       if (sd.fields.len() == 0) {
         return "";
       }
-      let out: string = "(";
-      let f: i32 = 0;
+      let out = "(";
+      let f = 0;
       while (f < sd.fields.len()) {
         if (f > 0) {
-          out = out + ", ";
+          out += ", ";
         }
-        out = out + type_str(sd.fields[f].type_name);
-        f = f + 1;
+        out += type_str(sd.fields[f].type_name);
+        f += 1;
       }
       return out + ")";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -402,35 +402,35 @@ function variant_payloads(enum_name: string, variant: string, structs: parser.St
 function render_enum(ed: parser.EnumDecl, structs: parser.StructDecl[], doc: string): string {
   let out: string = "## `enum " + ed.name + "`\n\n```fern\npub enum "
     + ed.name + join_type_params(ed.type_params) + " {\n";
-  let v: i32 = 0;
+  let v = 0;
   while (v < ed.variant_names.len()) {
     out = out + "    " + ed.variant_names[v]
       + variant_payloads(ed.name, ed.variant_names[v], structs) + ",\n";
-    v = v + 1;
+    v += 1;
   }
   return out + "}\n```\n\n" + doc_block(doc);
 }
 
 function render_trait(td: parser.TraitDecl, doc: string): string {
-  let out: string = "## `trait " + td.name + "`\n\n```fern\npub trait " + td.name + join_type_params(td.type_params);
+  let out = "## `trait " + td.name + "`\n\n```fern\npub trait " + td.name + join_type_params(td.type_params);
   if (td.supertraits.len() > 0) {
     out = out + ": " + join_plus(td.supertraits);
   }
-  out = out + " {\n";
-  let m: i32 = 0;
+  out += " {\n";
+  let m = 0;
   while (m < td.methods.len()) {
-    let md: parser.FuncDecl = td.methods[m];
+    let md = td.methods[m];
     out = out + "    function " + md.name + "(";
-    let pi: i32 = 0;
+    let pi = 0;
     while (pi < md.params.len()) {
       if (pi > 0) {
-        out = out + ", ";
+        out += ", ";
       }
       out = out + md.params[pi].name + ": " + param_type_str(md.params[pi]);
-      pi = pi + 1;
+      pi += 1;
     }
     out = out + "): " + type_str(md.ret_type) + ";\n";
-    m = m + 1;
+    m += 1;
   }
   return out + "}\n```\n\n" + doc_block(doc);
 }
@@ -445,40 +445,40 @@ function trait_label(im: parser.ImplInfo): string {
 function render_impls(impls: parser.ImplInfo[]): string {
   let order: string[] = [];
   let cells: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < impls.len()) {
-    let tn: string = trait_label(impls[i]);
-    let at: i32 = util.index_of_str(order, tn);
+    let tn = trait_label(impls[i]);
+    let at = util.index_of_str(order, tn);
     if (at < 0) {
       order = order.append(tn);
       cells = cells.append(impls[i].impl_type);
     } else {
       cells = cells.with(at, cells[at] + "`, `" + impls[i].impl_type);
     }
-    i = i + 1;
+    i += 1;
   }
   if (order.len() == 0) {
     return "";
   }
-  let out: string = "## Implementations\n\n| Trait | Implementing types |\n| ----- | ------------------ |\n";
-  let t: i32 = 0;
+  let out = "## Implementations\n\n| Trait | Implementing types |\n| ----- | ------------------ |\n";
+  let t = 0;
   while (t < order.len()) {
     out = out + "| `" + order[t] + "` | `" + cells[t] + "` |\n";
-    t = t + 1;
+    t += 1;
   }
   return out + "\n";
 }
 
 pub function render_page(src: string, mod_path: string): string {
-  let lr: lexer.LexResult = lexer.tokenize_full(src);
-  let mod: parser.Module = parser.parse_module_verbatim(lr.tokens).pmod;
-  let decls: DocDecl[] = associate(lr.comments, public_decls(mod));
+  let lr = lexer.tokenize_full(src);
+  let mod = parser.parse_module_verbatim(lr.tokens).pmod;
+  let decls = associate(lr.comments, public_decls(mod));
   if (decls.len() == 0 && mod.impls.len() == 0) {
     return "";
   }
 
-  let intro: string = module_intro(lr.comments, first_decl_line(mod));
-  let description: string = module_summary(intro);
+  let intro = module_intro(lr.comments, first_decl_line(mod));
+  let description = module_summary(intro);
   if (description.len() == 0) {
     description = "Standard library reference for " + mod_path + ".";
   }
@@ -488,21 +488,21 @@ pub function render_page(src: string, mod_path: string): string {
     out = out + intro + "\n\n";
   }
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < decls.len()) {
-    let d: DocDecl = decls[i];
+    let d = decls[i];
     if (d.kind == "function") {
-      out = out + render_func(mod.funcs[d.index], d.doc);
+      out += render_func(mod.funcs[d.index], d.doc);
     } else if (d.kind == "const") {
-      out = out + render_const(mod.funcs[d.index], d.doc);
+      out += render_const(mod.funcs[d.index], d.doc);
     } else if (d.kind == "struct") {
-      out = out + render_struct(mod.structs[d.index], d.doc);
+      out += render_struct(mod.structs[d.index], d.doc);
     } else if (d.kind == "enum") {
-      out = out + render_enum(mod.enums[d.index], mod.structs, d.doc);
+      out += render_enum(mod.enums[d.index], mod.structs, d.doc);
     } else if (d.kind == "trait") {
-      out = out + render_trait(mod.trait_decls[d.index], d.doc);
+      out += render_trait(mod.trait_decls[d.index], d.doc);
     }
-    i = i + 1;
+    i += 1;
   }
   return out + render_impls(mod.impls);
 }

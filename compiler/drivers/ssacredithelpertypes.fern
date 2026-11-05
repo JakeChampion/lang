@@ -37,7 +37,7 @@ function same(a: ssarc.Helpers, b: ssarc.Helpers): boolean {
     if (entry.row != other.row || entry.children_only != other.children_only || !semtypes.equal(entry.ty, other.ty)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -48,9 +48,9 @@ function pair(h: ssarc.Helpers, ty: typeinfo.Type): void {
   for entry in h.types {
     if (semtypes.equal(entry.ty, ty)) {
       if (entry.children_only) {
-        drops = drops + 1;
+        drops += 1;
       } else {
-        releases = releases + 1;
+        releases += 1;
       }
     }
   }
@@ -109,7 +109,7 @@ pub function run(target: string): void {
   let original = helpers;
   let i = built.decls.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     if (built.decls[i].ok) {
       helpers = collect(helpers, built.decls[i].func);
     }

@@ -34,7 +34,7 @@ function same(a: irtables.LowerResult[], b: irtables.LowerResult[]): void {
   for x in a {
     require(x.name == b[i].name && x.ok == b[i].ok && x.why == b[i].why && x.superseded == b[i].superseded, 132);
     require(x.n_params == b[i].n_params && x.n_locals == b[i].n_locals, 147);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -95,7 +95,7 @@ function check_prune(mod: parser.Module, bodies: irtables.LowerResult[], extra: 
   for at in indices {
     require(mapped.extra_indices[i] == at, 140);
     same([mapped.result.extra[i]], [extra[at]]);
-    i = i + 1;
+    i += 1;
   }
   return mapped;
 }

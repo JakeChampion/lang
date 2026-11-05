@@ -75,7 +75,7 @@ function member_records(row: ssaprepare.Emitted, e: semrecords.Enum): void {
   let i = 0;
   for r in m.records.list {
     if (semtypes.equal(r.ty, ty)) {
-      hits = hits + 1;
+      hits += 1;
       require(r.fields.len() == 2);
       let changed = [
         semrecords.Record { ...r, fields: [] },
@@ -89,7 +89,7 @@ function member_records(row: ssaprepare.Emitted, e: semrecords.Enum): void {
       }
       check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(m.records.list.append(r)) }), false);
     }
-    i = i + 1;
+    i += 1;
   }
   require(hits == 1);
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: [] } }), false);
@@ -109,7 +109,7 @@ pub function run(row: ssaprepare.Emitted): void {
     let count = 0;
     for e in selected.metadata(row).enums {
       if (semtypes.equal(e.ty, cs[0].params[0])) {
-        count = count + 1;
+        count += 1;
         variants(row, e);
         producers(row, e);
         member_records(row, e);

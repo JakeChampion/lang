@@ -63,7 +63,7 @@ function text(row: ssaprepare.Emitted, old: string, replacement: string): ssapre
   let i = 1;
   while (i < parts.len()) {
     out = out + replacement + parts[i];
-    i = i + 1;
+    i += 1;
   }
   return ssaprepare.Emitted { ...row, assembly: out };
 }
@@ -188,7 +188,7 @@ function records(row: ssaprepare.Emitted): void {
     let hits = 0;
     for r in selected.metadata(row).records.list {
       if (semtypes.equal(r.ty, c.params[0])) {
-        hits = hits + 1;
+        hits += 1;
         record_schema(row, c, r);
       }
     }
@@ -227,12 +227,12 @@ function annotations(row: ssaprepare.Emitted): void {
       if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
         require(op.imm == 4);
         ops = ops.with(j, ssa.SInst { ...op, imm: 0 });
-        hits = hits + 1;
+        hits += 1;
       }
-      j = j + 1;
+      j += 1;
     }
     blocks = blocks.with(i, ssa.SBlock { ...block, insts: ops });
-    i = i + 1;
+    i += 1;
   }
   require(hits == 1);
   let changed = ssa.SFunc { ...f, blocks: blocks };

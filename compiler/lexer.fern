@@ -63,7 +63,7 @@ function is_keyword(name: string): boolean {
   if (name.len() < 2 || name.len() > 8) {
     return false;
   }
-  let c: u8 = name[0];
+  let c = name[0];
   if (c == b'f') {
     return name == "function" || name == "for" || name == "false" || name == "f32" || name == "f64" || name == "f32x4" || name == "f64x2";
   }
@@ -129,22 +129,22 @@ function suffix_end(src: string, i: i32, n: i32): i32 {
   if (i + 5 <= n && slice_unchecked(src, i, i + 5) == "usize") {
     return i + 5;
   }
-  let e: i32 = i + 1;
+  let e = i + 1;
   while (e < n && is_digit(src[e] as i32)) {
-    e = e + 1;
+    e += 1;
   }
   return e;
 }
 
 function digit_run_end(src: string, i: i32, n: i32, base: i32, separators: boolean): i32 {
-  let e: i32 = i;
+  let e = i;
   while (e < n) {
-    let c: i32 = src[e] as i32;
+    let c = src[e] as i32;
     if (is_base_digit(c, base)) {
-      e = e + 1;
+      e += 1;
     } else if (separators && c == 95 && e > i && e + 1 < n
       && (is_base_digit(src[e + 1] as i32, base) || base < 10 && is_digit(src[e + 1] as i32))) {
-      e = e + 1;
+      e += 1;
     } else {
       return e;
     }
@@ -164,11 +164,11 @@ function misplaced_separator(src: string, begin: i32, end: i32, n: i32): boolean
 }
 
 function without_separators(text: string): string {
-  let out: string = "";
-  let from: i32 = 0;
+  let out = "";
+  let from = 0;
   for at in 0..text.len() {
     if (text[at] == b'_') {
-      out = out + slice_unchecked(text, from, at);
+      out += slice_unchecked(text, from, at);
       from = at + 1;
     }
   }
@@ -183,16 +183,16 @@ function match_multipunct(src: string, i: i32, n: i32): string {
   if (i >= n) {
     return "";
   }
-  let b0: i32 = src[i] as i32;
-  let b1: i32 = 0 - 1;
+  let b0 = src[i] as i32;
+  let b1: i32 = -1;
   if (i + 1 < n) {
     b1 = src[i + 1] as i32;
   }
-  let b2: i32 = 0 - 1;
+  let b2: i32 = -1;
   if (i + 2 < n) {
     b2 = src[i + 2] as i32;
   }
-  let three: string = punct3(b0, b1, b2);
+  let three = punct3(b0, b1, b2);
   if (three.len() > 0) {
     return three;
   }
@@ -348,7 +348,7 @@ function punct_double(b0: i32, b1: i32): string {
 }
 
 function single_punct(b: i32): string {
-  let op: string = single_punct_op(b);
+  let op = single_punct_op(b);
   if (op.len() > 0) {
     return op;
   }
@@ -434,12 +434,12 @@ function single_punct_op(b: i32): string {
 pub struct Comment { line: i32, col: i32, text: string, trailing: boolean }
 
 function code_before(src: string, i: i32): boolean {
-  let j: i32 = i - 1;
+  let j = i - 1;
   while (j >= 0 && src[j] != b'\n') {
     if (src[j] != b' ' && src[j] != b'\t' && src[j] != b'\r' && src[j] != 11u8 && src[j] != 12u8) {
       return true;
     }
-    j = j - 1;
+    j -= 1;
   }
   return false;
 }
@@ -485,27 +485,27 @@ function (own l: Lex) skip(k: i32): Lex {
 }
 
 function skip_trivia(own l: Lex, keep: boolean): Lex {
-  let i: i32 = l.i;
-  let line: i32 = l.line;
-  let col: i32 = l.col;
+  let i = l.i;
+  let line = l.line;
+  let col = l.col;
   while (i < l.n) {
-    let b: i32 = l.src[i] as i32;
+    let b = l.src[i] as i32;
     if (b == 10) {
-      line = line + 1;
+      line += 1;
       col = 1;
-      i = i + 1;
+      i += 1;
     } else if (is_space(b)) {
-      col = col + 1;
-      i = i + 1;
+      col += 1;
+      i += 1;
     } else if (b == 47 && i + 1 < l.n && l.src[i + 1] == b'/') {
-      let ce: i32 = __memchr(l.src, 10, i + 2);
+      let ce = __memchr(l.src, 10, i + 2);
       if (ce < 0) {
         ce = l.n;
       }
       if (keep) {
         l = Lex { ...l, comments: l.comments.append(comment_tok(line, col, slice_unchecked(l.src, i + 2, ce), code_before(l.src, i))) };
       }
-      col = col + (ce - i);
+      col += ce - i;
       i = ce;
     } else {
       break;
@@ -575,9 +575,9 @@ function offset_col(base_col: i32, line: i32, col: i32): i32 {
 
 function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStringPart[] {
   let out: FStringPart[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < parts.len()) {
-    let p: FStringPart = parts[i];
+    let p = parts[i];
     if (p.is_expr) {
       out = out.append(FStringPart {
         lit: p.lit, expr: p.expr, is_expr: true,
@@ -586,16 +586,16 @@ function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStr
     } else {
       out = out.append(p);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[] {
   let out: Token[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < toks.len()) {
-    let t: Token = toks[i];
+    let t = toks[i];
     match (t) {
       TokEof(x) => {
         out = out.append(eof_tok(offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
@@ -622,18 +622,18 @@ pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[
         out = out.append(fstring_tok(rebase_parts(x.parts, base_line, base_col), offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function is_blank_range(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (!is_space(s[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -651,25 +651,25 @@ pub function is_error_tok(t: Token): boolean {
 }
 
 pub function has_error(toks: Token[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < toks.len()) {
     if (is_error_tok(toks[i])) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col: i32): NumResult {
-  let begin: i32 = l.i;
-  let is_hex: boolean = false;
+  let begin = l.i;
+  let is_hex = false;
   if (l.peek_byte() == 48 && l.i + 1 < l.n
     && (l.src[l.i + 1] == b'x' || l.src[l.i + 1] == b'X')) {
     is_hex = true;
     l = l.skip(2);
-    let hex_start: i32 = l.i;
-    let run_end: i32 = digit_run_end(l.src, l.i, l.n, 16, true);
+    let hex_start = l.i;
+    let run_end = digit_run_end(l.src, l.i, l.n, 16, true);
     l = l.advance_in_line(run_end);
     if (misplaced_separator(l.src, hex_start, l.i, l.n)) {
       return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
@@ -678,22 +678,22 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
       return NumResult { lex: l, tok: num_error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
     }
   } else if (radix_prefix(l.src, l.i, l.n) != 0) {
-    let base: i32 = radix_prefix(l.src, l.i, l.n);
+    let base = radix_prefix(l.src, l.i, l.n);
     return scan_radix_number(l, base, start_line, start_col);
   } else {
-    let int_start: i32 = l.i;
-    let run_end: i32 = digit_run_end(l.src, l.i, l.n, 10, !after_dot);
+    let int_start = l.i;
+    let run_end = digit_run_end(l.src, l.i, l.n, 10, !after_dot);
     l = l.advance_in_line(run_end);
     if (!after_dot && misplaced_separator(l.src, int_start, l.i, l.n)) {
       return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
     }
   }
-  let is_float: boolean = false;
+  let is_float = false;
   if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == b'.' && is_digit(l.src[l.i + 1] as i32)) {
     is_float = true;
     l = l.skip(1);
-    let frac_start: i32 = l.i;
-    let run_end: i32 = digit_run_end(l.src, l.i, l.n, 10, true);
+    let frac_start = l.i;
+    let run_end = digit_run_end(l.src, l.i, l.n, 10, true);
     l = l.advance_in_line(run_end);
     if (misplaced_separator(l.src, frac_start, l.i, l.n)) {
       return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
@@ -701,9 +701,9 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   }
   if (!is_hex && !after_dot && !l.at_end()
     && (l.peek_byte() == 101 || l.peek_byte() == 69)) {
-    let j: i32 = l.i + 1;
+    let j = l.i + 1;
     if (j < l.n && (l.src[j] == b'+' || l.src[j] == b'-')) {
-      j = j + 1;
+      j += 1;
     }
     if (j < l.n && is_digit(l.src[j] as i32)) {
       is_float = true;
@@ -711,19 +711,19 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
       if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
         l = l.skip(1);
       }
-      let exp_start: i32 = l.i;
-      let run_end: i32 = digit_run_end(l.src, l.i, l.n, 10, true);
+      let exp_start = l.i;
+      let run_end = digit_run_end(l.src, l.i, l.n, 10, true);
       l = l.advance_in_line(run_end);
       if (misplaced_separator(l.src, exp_start, l.i, l.n)) {
         return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
       }
     }
   }
-  let text: str = slice_unchecked(l.src, begin, l.i);
-  let suffix: string = "";
+  let text = slice_unchecked(l.src, begin, l.i);
+  let suffix = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
-    let s_begin: i32 = l.i;
-    let run_end: i32 = suffix_end(l.src, l.i, l.n);
+    let s_begin = l.i;
+    let run_end = suffix_end(l.src, l.i, l.n);
     l = l.advance_in_line(run_end);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix)) {
@@ -736,13 +736,13 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   if (!is_float && suffix.len() > 0 && suffix[0] == b'f') {
     is_float = true;
   }
-  let spelled: string = text + "";
-  let digits: string = without_separators(spelled);
+  let spelled = text + "";
+  let digits = without_separators(spelled);
   if (digits.len() != spelled.len()) {
-    let raw: string = slice_unchecked(l.src, begin, l.i) + "";
+    let raw = slice_unchecked(l.src, begin, l.i) + "";
     return NumResult { lex: l, tok: TokNumber { text: digits, suffix: suffix, raw: raw, is_float: is_float, line: start_line, col: start_col } };
   }
-  let tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
+  let tok = number_tok(text, suffix, is_float, start_line, start_col);
   return NumResult { lex: l, tok: tok };
 }
 
@@ -750,7 +750,7 @@ function radix_prefix(src: string, i: i32, n: i32): i32 {
   if (src[i] != b'0' || i + 1 >= n) {
     return 0;
   }
-  let c: u8 = src[i + 1];
+  let c = src[i + 1];
   if (c == b'o' || c == b'O') {
     return 8;
   }
@@ -761,18 +761,18 @@ function radix_prefix(src: string, i: i32, n: i32): i32 {
 }
 
 function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i32): NumResult {
-  let l: Lex = l0;
-  let begin: i32 = l.i;
-  let prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
+  let l = l0;
+  let begin = l.i;
+  let prefix = slice_unchecked(l.src, l.i, l.i + 2) + "";
   l = l.skip(2);
   let digits: i32[] = [];
-  let e: i32 = digit_run_end(l.src, l.i, l.n, base, true);
+  let e = digit_run_end(l.src, l.i, l.n, base, true);
   for at in l.i..e {
     if (l.src[at] != b'_') {
       digits = digits.append(l.src[at] as i32 - 48);
     }
   }
-  let run_start: i32 = l.i;
+  let run_start = l.i;
   l = l.advance_in_line(e);
   if (misplaced_separator(l.src, run_start, l.i, l.n)) {
     return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
@@ -783,30 +783,30 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
   if (!l.at_end() && is_digit(l.peek_byte())) {
     return NumResult { lex: l, tok: num_error_tok("invalid digit " + quote_char(l.src, l.i, l.n) + " in a " + prefix + " literal", start_line, start_col) };
   }
-  let suffix: string = "";
+  let suffix = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
-    let s_begin: i32 = l.i;
-    let run_end: i32 = suffix_end(l.src, l.i, l.n);
+    let s_begin = l.i;
+    let run_end = suffix_end(l.src, l.i, l.n);
     l = l.advance_in_line(run_end);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix) || suffix[0] == b'f') {
       return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
     }
   }
-  let raw: string = slice_unchecked(l.src, begin, l.i) + "";
+  let raw = slice_unchecked(l.src, begin, l.i) + "";
   return NumResult { lex: l, tok: TokNumber { text: radix_digits_hex(digits, base), suffix: suffix, raw: raw, is_float: false, line: start_line, col: start_col } };
 }
 
 function radix_digits_hex(digits: i32[], base: i32): string {
-  let cur: i32[] = digits;
-  let hex: string = "";
-  let hexch: string = "0123456789abcdef";
+  let cur = digits;
+  let hex = "";
+  let hexch = "0123456789abcdef";
   while (cur.len() > 0) {
     let next: i32[] = [];
-    let rem: i32 = 0;
+    let rem = 0;
     for d in cur {
-      let acc: i32 = rem * base + d;
-      let q: i32 = acc / 16;
+      let acc = rem * base + d;
+      let q = acc / 16;
       rem = acc % 16;
       if (next.len() > 0 || q != 0) {
         next = next.append(q);
@@ -855,13 +855,13 @@ function dec_str(v: i32): string {
   let rev: u8[] = [];
   while (v > 0) {
     rev = rev.append((48 + v % 10) as u8);
-    v = v / 10;
+    v /= 10;
   }
-  let out: string = "";
-  let i: i32 = rev.len() - 1;
+  let out = "";
+  let i = rev.len() - 1;
   while (i >= 0) {
-    out = out + string_from_bytes_unchecked([rev[i]]);
-    i = i - 1;
+    out += string_from_bytes_unchecked([rev[i]]);
+    i -= 1;
   }
   return out;
 }
@@ -869,12 +869,12 @@ function dec_str(v: i32): string {
 struct Utf8 { val: i32, len: i32 }
 
 function decode_utf8(src: string, i: i32, n: i32): Utf8 {
-  let b0: i32 = src[i] as i32;
+  let b0 = src[i] as i32;
   if (b0 < 128) {
     return Utf8 { val: b0, len: 1 };
   }
-  let need: i32 = 0;
-  let val: i32 = 0;
+  let need = 0;
+  let val = 0;
   if (b0 >= 240 && b0 <= 244) {
     need = 3;
     val = b0 & 7;
@@ -890,14 +890,14 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
   if (i + need >= n) {
     return Utf8 { val: 0, len: 0 };
   }
-  let k: i32 = 1;
+  let k = 1;
   while (k <= need) {
-    let c: i32 = src[i + k] as i32;
+    let c = src[i + k] as i32;
     if (c < 128 || c >= 192) {
       return Utf8 { val: 0, len: 0 };
     }
     val = val << 6 | c & 63;
-    k = k + 1;
+    k += 1;
   }
   if (val > 1114111 || val >= 55296 && val <= 57343
     || need == 1 && val < 128 || need == 2 && val < 2048
@@ -919,7 +919,7 @@ function quoted(s: string): string {
 }
 
 function quote_char(src: string, i: i32, n: i32): string {
-  let b: i32 = src[i] as i32;
+  let b = src[i] as i32;
   if (b == 39 || b == 92) {
     return "'\\" + string_from_bytes_unchecked([b as u8]) + "'";
   }
@@ -947,11 +947,11 @@ function hex_digit(d: i32, digits: string): string {
 }
 
 function bad_char_message(src: string, i: i32, n: i32): string {
-  let b: i32 = src[i] as i32;
+  let b = src[i] as i32;
   if (b >= 128 && decode_utf8(src, i, n).len == 0) {
     return "invalid UTF-8 byte 0x" + hex_digit(b >> 4, "0123456789ABCDEF") + hex_digit(b & 15, "0123456789ABCDEF");
   }
-  let ch: char = decode_utf8(src, i, n).val as char;
+  let ch = decode_utf8(src, i, n).val as char;
   if (ch.is_letter() || ch.is_digit()) {
     return "identifiers must be ASCII; found " + quote_char(src, i, n);
   }
@@ -959,25 +959,25 @@ function bad_char_message(src: string, i: i32, n: i32): string {
 }
 
 pub function decode_source(bytes: u8[]): Result[string, TokError] {
-  let src: string = string_from_bytes_unchecked(bytes);
+  let src = string_from_bytes_unchecked(bytes);
   if (utf8.is_valid(src)) {
     return Ok(src);
   }
-  let i: i32 = 0;
-  let line: i32 = 1;
-  let col: i32 = 1;
+  let i = 0;
+  let line = 1;
+  let col = 1;
   while (i < src.len()) {
-    let rune: Utf8 = decode_utf8(src, i, src.len());
+    let rune = decode_utf8(src, i, src.len());
     if (rune.len == 0) {
       return Err(TokError { msg: bad_char_message(src, i, src.len()), code: "P001", line: line, col: col });
     }
     if (rune.val == 10) {
-      line = line + 1;
+      line += 1;
       col = 1;
     } else {
-      col = col + rune.len;
+      col += rune.len;
     }
-    i = i + rune.len;
+    i += rune.len;
   }
   return Err(TokError { msg: "invalid UTF-8 source", code: "P001", line: 1, col: 1 });
 }
@@ -989,7 +989,7 @@ function quoted_escape(own l: Lex, is_byte: boolean, kind_name: string): EscVal 
   if (l.at_end()) {
     return EscVal { lex: l, val: 0, err: "unterminated " + kind_name + " literal" };
   }
-  let esc: i32 = l.peek_byte();
+  let esc = l.peek_byte();
   l = l.advance();
   if (esc == 110) {
     return EscVal { lex: l, val: 10, err: "" };
@@ -1028,11 +1028,11 @@ function hex_escape(own l: Lex, is_byte: boolean, kind_name: string): EscVal {
   if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i] as i32) || !is_hex_digit(l.src[l.i + 1] as i32)) {
     return EscVal { lex: l, val: 0, err: "\\x escape needs two hex digits" };
   }
-  let v: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
+  let v = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
   l = l.advance();
   l = l.advance();
   if (!is_byte && v > 127) {
-    let hx: string = upper_hex(v);
+    let hx = upper_hex(v);
     return EscVal { lex: l, val: 0, err: "\\x" + hx + " is above ASCII in " + literal_name(kind_name) + "; write \\u{" + hx + "} for the scalar" };
   }
   return EscVal { lex: l, val: v, err: "" };
@@ -1050,14 +1050,14 @@ function unicode_escape(own l: Lex): EscVal {
     return EscVal { lex: l, val: 0, err: "\\u escape needs braces: \\u{1F600}" };
   }
   l = l.advance();
-  let digits: i32 = 0;
-  let uv: i32 = 0;
+  let digits = 0;
+  let uv = 0;
   while (!l.at_end() && is_hex_digit(l.peek_byte())) {
     if (digits == 6) {
       return EscVal { lex: l, val: 0, err: "\\u{...} takes at most 6 hex digits" };
     }
     uv = uv * 16 + hex_val(l.peek_byte());
-    digits = digits + 1;
+    digits += 1;
     l = l.advance();
   }
   if (digits == 0) {
@@ -1077,7 +1077,7 @@ function unicode_escape(own l: Lex): EscVal {
 }
 
 function upper_hex(v: i32): string {
-  let out: string = hex_digit(v & 15, "0123456789ABCDEF");
+  let out = hex_digit(v & 15, "0123456789ABCDEF");
   v = v >> 4;
   while (v > 0 || out.len() < 2) {
     out = hex_digit(v & 15, "0123456789ABCDEF") + out;
@@ -1100,20 +1100,20 @@ function utf8_encode(v: i32): string {
 }
 
 function closing_quote_ahead(l: Lex): boolean {
-  let j: i32 = l.i;
+  let j = l.i;
   while (j < l.n && l.src[j] != b'\n') {
     if (l.src[j] == b'\'') {
       return true;
     }
-    j = j + 1;
+    j += 1;
   }
   return false;
 }
 
 function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i32): NumResult {
-  let begin: i32 = l.i;
-  let kind_name: string = "character";
-  let suffix: string = "char";
+  let begin = l.i;
+  let kind_name = "character";
+  let suffix = "char";
   if (is_byte) {
     kind_name = "byte";
     suffix = "u8";
@@ -1123,7 +1123,7 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
   if (l.at_end()) {
     return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
   }
-  let c: i32 = l.peek_byte();
+  let c = l.peek_byte();
   if (c == 39) {
     l = l.advance();
     return NumResult { lex: l, tok: error_tok("empty " + kind_name + " literal", start_line, start_col) };
@@ -1131,9 +1131,9 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
   if (c == 10) {
     return NumResult { lex: l, tok: error_tok("newline inside " + kind_name + " literal", start_line, start_col) };
   }
-  let val: i32 = 0;
+  let val = 0;
   if (c == 92) {
-    let ev: EscVal = quoted_escape(l, is_byte, kind_name);
+    let ev = quoted_escape(l, is_byte, kind_name);
     l = ev.lex;
     if (ev.err.len() > 0) {
       return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
@@ -1146,7 +1146,7 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
     val = c;
     l = l.advance();
   } else {
-    let u: Utf8 = decode_utf8(l.src, l.i, l.n);
+    let u = decode_utf8(l.src, l.i, l.n);
     if (u.len == 0) {
       return NumResult { lex: l, tok: error_tok("invalid UTF-8 byte in character literal", start_line, start_col) };
     }
@@ -1160,32 +1160,32 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
     return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
   }
   l = l.advance();
-  let raw: string = slice_unchecked(l.src, begin, l.i) + "";
+  let raw = slice_unchecked(l.src, begin, l.i) + "";
   return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, raw, start_line, start_col) };
 }
 
 function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();
-  let out: string = "";
+  let out = "";
   while (!l.at_end() && l.peek_byte() != 34) {
-    let c: i32 = l.peek_byte();
+    let c = l.peek_byte();
     if (c == 10) {
       return NumResult { lex: l, tok: error_tok("newline inside string literal", start_line, start_col) };
     }
     if (c == 92) {
-      let ev: EscVal = quoted_escape(l, false, "string");
+      let ev = quoted_escape(l, false, "string");
       l = ev.lex;
       if (ev.err.len() > 0) {
         return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
       }
-      out = out + utf8_encode(ev.val);
+      out += utf8_encode(ev.val);
       continue;
     }
-    let re: i32 = l.i;
+    let re = l.i;
     while (re < l.n && l.src[re] != b'"' && l.src[re] != 92 && l.src[re] != b'\n') {
-      re = re + 1;
+      re += 1;
     }
-    out = out + slice_unchecked(l.src, l.i, re);
+    out += slice_unchecked(l.src, l.i, re);
     l = l.advance_in_line(re);
   }
   if (l.at_end()) {
@@ -1197,11 +1197,11 @@ function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
 
 function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();
-  let lit: string = "";
-  let have_lit: boolean = false;
+  let lit = "";
+  let have_lit = false;
   let parts: FStringPart[] = [];
   while (!l.at_end()) {
-    let c: i32 = l.peek_byte();
+    let c = l.peek_byte();
     if (c == 34) {
       l = l.advance();
       if (have_lit) {
@@ -1213,18 +1213,18 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
       return NumResult { lex: l, tok: error_tok("newline inside f-string literal", start_line, start_col) };
     }
     if (c == 92) {
-      let ev: EscVal = quoted_escape(l, false, "f-string");
+      let ev = quoted_escape(l, false, "f-string");
       l = ev.lex;
       if (ev.err.len() > 0) {
         return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
       }
-      lit = lit + utf8_encode(ev.val);
+      lit += utf8_encode(ev.val);
       have_lit = true;
       continue;
     }
     if (c == 123) {
       if (l.i + 1 < l.n && l.src[l.i + 1] == b'{') {
-        lit = lit + "{";
+        lit += "{";
         have_lit = true;
         l = l.advance();
         l = l.advance();
@@ -1236,16 +1236,16 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
         lit = "";
         have_lit = false;
       }
-      let expr_start: i32 = l.i;
-      let expr_line: i32 = l.line;
-      let expr_col: i32 = l.col;
-      let depth: i32 = 1;
+      let expr_start = l.i;
+      let expr_line = l.line;
+      let expr_col = l.col;
+      let depth = 1;
       while (!l.at_end() && depth > 0) {
-        let d: i32 = l.peek_byte();
+        let d = l.peek_byte();
         if (d == 123) {
-          depth = depth + 1;
+          depth += 1;
         } else if (d == 125) {
-          depth = depth - 1;
+          depth -= 1;
           if (depth == 0) {
             break;
           }
@@ -1272,7 +1272,7 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
       if (depth != 0) {
         return NumResult { lex: l, tok: error_tok("unterminated `{` in f-string", start_line, start_col) };
       }
-      let expr_text: str = slice_unchecked(l.src, expr_start, l.i);
+      let expr_text = slice_unchecked(l.src, expr_start, l.i);
       l = l.advance();
       if (is_blank_range(expr_text)) {
         return NumResult { lex: l, tok: error_tok("empty `{}` in f-string", start_line, start_col) };
@@ -1282,7 +1282,7 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
     }
     if (c == 125) {
       if (l.i + 1 < l.n && l.src[l.i + 1] == b'}') {
-        lit = lit + "}";
+        lit += "}";
         have_lit = true;
         l = l.advance();
         l = l.advance();
@@ -1290,12 +1290,12 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
       }
       return NumResult { lex: l, tok: error_tok("unmatched `}` in f-string (use `}}` for a literal `}`)", start_line, start_col) };
     }
-    let le: i32 = l.i;
+    let le = l.i;
     while (le < l.n && l.src[le] != b'"' && l.src[le] != 92 && l.src[le] != b'\n'
       && l.src[le] != b'{' && l.src[le] != b'}') {
-      le = le + 1;
+      le += 1;
     }
-    lit = lit + slice_unchecked(l.src, l.i, le);
+    lit += slice_unchecked(l.src, l.i, le);
     have_lit = true;
     l = l.advance_in_line(le);
   }
@@ -1315,18 +1315,18 @@ pub function tokenize_full(src: string): LexResult {
 }
 
 function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
-  let l: Lex = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1, comments: [] };
+  let l = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1, comments: [] };
   let out: Token[] = [];
-  let after_dot: boolean = false;
+  let after_dot = false;
   while (true) {
     l = skip_trivia(l, keep);
     if (l.at_end()) {
       out = out.append(TokEof { line: l.line, col: l.col });
       return LexResult { tokens: out, comments: l.comments };
     }
-    let start_line: i32 = l.line;
-    let start_col: i32 = l.col;
-    let b: i32 = l.peek_byte();
+    let start_line = l.line;
+    let start_col = l.col;
+    let b = l.peek_byte();
     if (b == 102 && l.i + 1 < l.n && l.src[l.i + 1] == b'"') {
       l = l.advance();
       let rf = scan_fstring(l, start_line, start_col);
@@ -1369,8 +1369,8 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       continue;
     }
     if (is_alpha(b)) {
-      let e: i32 = ident_end(l);
-      let tok: Token = ident_or_keyword(slice_unchecked(l.src, l.i, e), start_line, start_col);
+      let e = ident_end(l);
+      let tok = ident_or_keyword(slice_unchecked(l.src, l.i, e), start_line, start_col);
       l = l.advance_in_line(e);
       out = out.append(tok);
       after_dot = false;
@@ -1386,18 +1386,18 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       after_dot = false;
       continue;
     }
-    let mp: string = match_multipunct(l.src, l.i, l.n);
+    let mp = match_multipunct(l.src, l.i, l.n);
     if (mp.len() > 0) {
-      let i: i32 = 0;
+      let i = 0;
       while (i < mp.len()) {
         l = l.advance();
-        i = i + 1;
+        i += 1;
       }
       out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
       after_dot = false;
       continue;
     }
-    let text: string = single_punct(b);
+    let text = single_punct(b);
     if (text.len() > 0) {
       l = l.advance();
       out = out.append(TokPunct { text: text, line: start_line, col: start_col });
@@ -1411,8 +1411,8 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
 }
 
 function test_mixed(): i32 {
-  let src: string = "let x: i32 = 42i64; // a comment\nreturn x + 1.5f64;\n";
-  let toks: Token[] = tokenize(src);
+  let src = "let x: i32 = 42i64; // a comment\nreturn x + 1.5f64;\n";
+  let toks = tokenize(src);
 
   if (toks.len() != 13) {
     return 1;
@@ -1565,7 +1565,7 @@ function test_mixed(): i32 {
 }
 
 function test_hex(): i32 {
-  let toks: Token[] = tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8");
+  let toks = tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8");
   if (toks.len() != 6) {
     return 1400;
   }
@@ -1637,7 +1637,7 @@ function test_hex(): i32 {
 }
 
 function test_scientific(): i32 {
-  let toks: Token[] = tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23");
+  let toks = tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23");
   if (toks.len() != 6) {
     return 1500;
   }
@@ -1698,7 +1698,7 @@ function test_scientific(): i32 {
 }
 
 function test_bare_e(): i32 {
-  let toks: Token[] = tokenize("1e foo");
+  let toks = tokenize("1e foo");
   if (toks.len() != 4) {
     return 1550;
   }
@@ -1736,7 +1736,7 @@ function test_bare_e(): i32 {
 }
 
 function test_chained_tuple(): i32 {
-  let toks: Token[] = tokenize("t.1.0");
+  let toks = tokenize("t.1.0");
   if (toks.len() != 6) {
     return 1600;
   }
@@ -1800,19 +1800,19 @@ function test_chained_tuple(): i32 {
 }
 
 function test_float_after_nondot(): i32 {
-  let toks: Token[] = tokenize("let f = 1.5;");
-  let floats: i32 = 0;
-  let i: i32 = 0;
+  let toks = tokenize("let f = 1.5;");
+  let floats = 0;
+  let i = 0;
   while (i < toks.len()) {
     match (toks[i]) {
       TokNumber(t) => {
         if (t.is_float) {
-          floats = floats + 1;
+          floats += 1;
         }
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   if (floats != 1) {
     return 1650;
@@ -1872,7 +1872,7 @@ function test_string_errors(): i32 {
 }
 
 function lex_error_is(src: string, msg: string, code: string): boolean {
-  let toks: Token[] = tokenize(src);
+  let toks = tokenize(src);
   if let TokError(e) = toks[toks.len() - 1] {
     return e.msg == msg && e.code == code;
   }
@@ -1953,7 +1953,7 @@ function test_unknown_char(): i32 {
 }
 
 function string_is(src: string, want: string): boolean {
-  let t: Token[] = tokenize(src);
+  let t = tokenize(src);
   if (t.len() != 2) {
     return false;
   }
@@ -1970,15 +1970,15 @@ function test_string_escapes(): i32 {
   if (!string_is("\"\\0\\'\\\"\\\\\"", "\x00'\"\\")) {
     return 1931;
   }
-  let top: string = string_from_bytes_unchecked([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
+  let top = string_from_bytes_unchecked([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
   if (!string_is("\"\\u{41}\\u{e9}\\u{20AC}\\u{1F600}\\u{10FFFF}\"", "Aé€😀" + top)) {
     return 1932;
   }
-  let edges: string = string_from_bytes_unchecked([237 as u8, 159 as u8, 191 as u8, 238 as u8, 128 as u8, 128 as u8]);
+  let edges = string_from_bytes_unchecked([237 as u8, 159 as u8, 191 as u8, 238 as u8, 128 as u8, 128 as u8]);
   if (!string_is("\"\\u{D7FF}\\u{E000}\"", edges)) {
     return 1933;
   }
-  let ft: Token[] = tokenize("f\"\\u{1F600}{x}\\u{7B}\"");
+  let ft = tokenize("f\"\\u{1F600}{x}\\u{7B}\"");
   if let TokFString(f) = ft[0] {
     if (f.parts.len() != 3 || f.parts[0].lit != "😀" || f.parts[1].expr != "x" || f.parts[2].lit != "{") {
       return 1934;
@@ -1990,7 +1990,7 @@ function test_string_escapes(): i32 {
 }
 
 function check_quoted(src: string, want_text: string, want_suffix: string): boolean {
-  let t: Token[] = tokenize(src);
+  let t = tokenize(src);
   if (t.len() != 2) {
     return false;
   }
@@ -2093,7 +2093,7 @@ function test_quoted_literals(): i32 {
     return 1981;
   }
 
-  let idt: Token[] = tokenize("b bytes");
+  let idt = tokenize("b bytes");
   match (idt[0]) {
     TokIdent(x) => {
       if (x.name != "b") {
@@ -2131,7 +2131,7 @@ function check_part(p: FStringPart, want_expr: boolean, want_text: string, want_
 }
 
 function test_fstring(): i32 {
-  let t0: Token[] = tokenize("f\"\"");
+  let t0 = tokenize("f\"\"");
   if (t0.len() != 2) {
     return 2000;
   }
@@ -2145,7 +2145,7 @@ function test_fstring(): i32 {
       return 2002;
     }
   }
-  let t1: Token[] = tokenize("f\"plain\"");
+  let t1 = tokenize("f\"plain\"");
   match (t1[0]) {
     TokFString(f) => {
       if (f.parts.len() != 1) {
@@ -2159,7 +2159,7 @@ function test_fstring(): i32 {
       return 2012;
     }
   }
-  let t2: Token[] = tokenize("f\"a{x}b\"");
+  let t2 = tokenize("f\"a{x}b\"");
   match (t2[0]) {
     TokFString(f) => {
       if (f.parts.len() != 3) {
@@ -2179,7 +2179,7 @@ function test_fstring(): i32 {
       return 2024;
     }
   }
-  let t3: Token[] = tokenize("f\"{{lit}}\"");
+  let t3 = tokenize("f\"{{lit}}\"");
   match (t3[0]) {
     TokFString(f) => {
       if (f.parts.len() != 1) {
@@ -2193,7 +2193,7 @@ function test_fstring(): i32 {
       return 2032;
     }
   }
-  let t4: Token[] = tokenize("f\"k={\"x\"}\"");
+  let t4 = tokenize("f\"k={\"x\"}\"");
   match (t4[0]) {
     TokFString(f) => {
       if (f.parts.len() != 2) {
@@ -2210,7 +2210,7 @@ function test_fstring(): i32 {
       return 2043;
     }
   }
-  let t5: Token[] = tokenize("f\"sum {a + b}\"");
+  let t5 = tokenize("f\"sum {a + b}\"");
   match (t5[0]) {
     TokFString(f) => {
       if (f.parts.len() != 2) {
@@ -2227,7 +2227,7 @@ function test_fstring(): i32 {
       return 2053;
     }
   }
-  let t6: Token[] = tokenize("f\"hi\\nthere\"");
+  let t6 = tokenize("f\"hi\\nthere\"");
   match (t6[0]) {
     TokFString(f) => {
       if (f.parts.len() != 1) {
@@ -2257,7 +2257,7 @@ function test_fstring(): i32 {
 }
 
 function test_fstring_positions(): i32 {
-  let t: Token[] = tokenize("let s = f\"a{aaa} b{bbb}\";");
+  let t = tokenize("let s = f\"a{aaa} b{bbb}\";");
   match (t[3]) {
     TokFString(f) => {
       if (f.parts.len() != 4) {
@@ -2284,7 +2284,7 @@ function test_fstring_positions(): i32 {
       return 2091;
     }
   }
-  let sub: Token[] = rebase_tokens(tokenize("a\nb"), 4, 10);
+  let sub = rebase_tokens(tokenize("a\nb"), 4, 10);
   match (sub[0]) {
     TokIdent(x) => {
       if (x.line != 4 || x.col != 10) {
@@ -2313,8 +2313,8 @@ function check_comment(c: Comment, line: i32, col: i32, text: string): boolean {
 }
 
 function test_comments(): i32 {
-  let src: string = "// leading\nlet u: string = \"http://x//y\"; // trailing\nlet n: i32 = 1;\n//: last\n";
-  let r: LexResult = tokenize_full(src);
+  let src = "// leading\nlet u: string = \"http://x//y\"; // trailing\nlet n: i32 = 1;\n//: last\n";
+  let r = tokenize_full(src);
   if (r.comments.len() != 3) {
     return 2100;
   }
@@ -2336,7 +2336,7 @@ function test_comments(): i32 {
   if (tokenize_full("// kept\nlet s: string = \"oops\n").comments.len() != 1) {
     return 2106;
   }
-  let tail: LexResult = tokenize_full("let x: i32 = 1; // tail");
+  let tail = tokenize_full("let x: i32 = 1; // tail");
   if (tail.comments.len() != 1 || !check_comment(tail.comments[0], 1, 17, " tail")) {
     return 2107;
   }
@@ -2344,9 +2344,9 @@ function test_comments(): i32 {
 }
 
 function test_multibyte(): i32 {
-  let src: string = "let s: string = \"héllo wörld\"; s <<= 1; // cömment é\nlet f = f\"pré {s} pöst\";\n";
-  let r: LexResult = tokenize_full(src);
-  let toks: Token[] = r.tokens;
+  let src = "let s: string = \"héllo wörld\"; s <<= 1; // cömment é\nlet f = f\"pré {s} pöst\";\n";
+  let r = tokenize_full(src);
+  let toks = r.tokens;
   if (toks.len() != 17) {
     return 2200;
   }
@@ -2395,7 +2395,7 @@ function test_multibyte(): i32 {
   if (r.comments[0].text != " cömment é") {
     return 2211;
   }
-  let t2: Token[] = tokenize("a<é");
+  let t2 = tokenize("a<é");
   if (t2.len() != 3) {
     return 2212;
   }
@@ -2447,7 +2447,7 @@ function test_source_decoding(): i32 {
 }
 
 function main(): i32 {
-  let c: i32 = 0;
+  let c = 0;
   c = test_mixed();
   if (c != 0) {
     return c;

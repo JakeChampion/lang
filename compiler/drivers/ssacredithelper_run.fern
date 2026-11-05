@@ -29,11 +29,11 @@ function expect(p: proof.Proof, ok: boolean, name: string, id: i32): void {
 
 function rename_call(r: irtables.LowerResult, from: string, to: string): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for op in r.ops {
     if (op.kind_tag == ir.kind_id("call_direct") && op.str == from) {
       ops = ops.append(ir.op_call_direct(to, op.i32_imm));
-      hits = hits + 1;
+      hits += 1;
     } else {
       ops = ops.append(op);
     }
@@ -44,11 +44,11 @@ function rename_call(r: irtables.LowerResult, from: string, to: string): irtable
 
 function duplicate_call(r: irtables.LowerResult, name: string): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for op in r.ops {
     if (op.kind_tag == ir.kind_id("call_direct") && op.str == name) {
       ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct(name, 1)).append(ir.op_drop());
-      hits = hits + 1;
+      hits += 1;
     }
     ops = ops.append(op);
   }
@@ -80,11 +80,11 @@ function target_checks(target: string): void {
   let missing = lift(rename_call(drop, "__fern_rc_dec", "__fern_rc_is_unique"));
   expect(proof.release_body(r, missing, layout), false, d.name, 12);
   let wrong_slot: ir.Op[] = [];
-  let fields: i32 = 0;
+  let fields = 0;
   for op in drop.ops {
     if (op.kind_tag == ir.kind_id("struct_get")) {
       wrong_slot = wrong_slot.append(ir.Op { ...op, i32_imm: 1 });
-      fields = fields + 1;
+      fields += 1;
     } else {
       wrong_slot = wrong_slot.append(op);
     }
@@ -110,9 +110,9 @@ function target_checks(target: string): void {
   expect(proof.release_body(renamed, ssa.SFunc { ...d, name: "audited_child_drop" }, layout), true, r.name, 22);
   expect(proof.release_body(ssa.register_form(renamed).f, ssa.register_form(ssa.SFunc { ...d, name: "audited_child_drop" }).f, layout), true, r.name, 82);
   let reordered: ssa.SBlock[] = [];
-  let i: i32 = r.blocks.len();
+  let i = r.blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     reordered = reordered.append(r.blocks[i]);
   }
   expect(proof.release_body(ssa.SFunc { ...r, blocks: reordered }, d, layout), true, r.name, 23);
@@ -176,14 +176,14 @@ function many_checks(target: string): void {
   }
   many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8] }), false, d.name, "unsupported drop effects", 37);
   many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8, 16] }), false, d.name, "child slot mismatch", 38);
-  let mutation: i32 = 0;
+  let mutation = 0;
   while (mutation < 5) {
     let changed: ir.Op[] = [];
-    let calls: i32 = 0;
-    let fields: i32 = 0;
+    let calls = 0;
+    let fields = 0;
     for op in drop.ops {
       if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-        calls = calls + 1;
+        calls += 1;
         if (calls == 2 && mutation == 0) {
           changed = changed.append(ir.op_call_direct("__fern_rc_is_unique", 1));
         } else {
@@ -194,9 +194,9 @@ function many_checks(target: string): void {
         }
       } else {
         if (op.kind_tag == ir.kind_id("struct_get")) {
-          fields = fields + 1;
+          fields += 1;
           if (fields == 2 && mutation >= 2) {
-            let field: i32 = 0;
+            let field = 0;
             if (mutation == 3) {
               field = 1;
             }
@@ -221,7 +221,7 @@ function many_checks(target: string): void {
       why = "unsupported drop effects";
     }
     many_expect(proof.release_body_many(r, lift(irtables.LowerResult { ...drop, ops: changed }), layout), false, d.name, why, 40 + mutation);
-    mutation = mutation + 1;
+    mutation += 1;
   }
   let wrong_child = ops.with(5, ssa.SInst { ...ops[5], args: [ops[2].result] });
   many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: wrong_child }] }, layout), false, d.name, "child release mismatch", 45);
@@ -236,7 +236,7 @@ function optimized_drop(d: ssa.SFunc, layout: proof.FlatChildren): void {
   let b = d.blocks[0];
   let ops = b.insts;
   require(ops.len() == layout.offsets.len() * 2 + 2, 50);
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 10) {
     let changed = ops;
     let term = b.term;
@@ -272,7 +272,7 @@ function optimized_drop(d: ssa.SFunc, layout: proof.FlatChildren): void {
     }
     let bad = ssa.SFunc { ...d, nvals: d.nvals + 1, blocks: [ssa.SBlock { ...b, insts: changed, term: term }] };
     expect(proof.drop_body_many(bad, layout), false, d.name, 51 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
   if (layout.offsets.len() == 2) {
     let changed = ops.with(3, ssa.SInst { ...ops[3], imm: ops[1].imm });
@@ -349,7 +349,7 @@ function join_mutation(b: ssa.SBlock, r: ssa.SFunc, drop_name: string, mode: i32
 
 function optimized_release(r: ssa.SFunc, d: ssa.SFunc, layout: proof.FlatChildren): void {
   require(r.blocks.len() == 3, 63);
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 15) {
     let blocks: ssa.SBlock[] = [];
     for b in r.blocks {
@@ -364,7 +364,7 @@ function optimized_release(r: ssa.SFunc, d: ssa.SFunc, layout: proof.FlatChildre
       }
     }
     expect(proof.release_body_many(ssa.SFunc { ...r, nvals: r.nvals + 1, blocks: blocks }, d, layout), false, r.name, 64 + mode);
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -381,7 +381,7 @@ function optimized_checks(d: ssa.SFunc, r: ssa.SFunc, layout: proof.FlatChildren
   let reordered: ssa.SBlock[] = [];
   let i = final_release.blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     reordered = reordered.append(final_release.blocks[i]);
   }
   expect(proof.release_body_many(ssa.SFunc { ...final_release, blocks: reordered }, final_drop, layout), true, r.name, 81);

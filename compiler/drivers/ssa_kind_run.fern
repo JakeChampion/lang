@@ -2,30 +2,30 @@ import "../ssa";
 import "../util";
 
 function main(): i32 {
-  let n: i32 = ssa.kind_count();
+  let n = ssa.kind_count();
 
-  let failures: i32 = 0;
-  let ok: i32 = 0;
-  let retired: i32 = 0;
-  let id: i32 = 1;
+  let failures = 0;
+  let ok = 0;
+  let retired = 0;
+  let id = 1;
   while (id <= n) {
-    let name: string = ssa.kind_name(id);
-    let back: i32 = ssa.kind_id(name);
+    let name = ssa.kind_name(id);
+    let back = ssa.kind_id(name);
     if (ssa.kind_retired(id)) {
       if (name == "invalid") {
-        retired = retired + 1;
+        retired += 1;
       } else {
-        failures = failures + 1;
+        failures += 1;
       }
     } else if (name == "invalid" || back != id) {
-      failures = failures + 1;
+      failures += 1;
     } else {
-      ok = ok + 1;
+      ok += 1;
     }
-    id = id + 1;
+    id += 1;
   }
 
-  let out: string = "";
+  let out = "";
   out = out + "kind_count=" + util.i32_to_string(n) + "\n";
   out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
   out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
@@ -43,33 +43,33 @@ function main(): i32 {
   out = out + "select=" + util.i32_to_string(ssa.kind_id("select")) + "\n";
   out = out + "carry=" + util.i32_to_string(ssa.kind_id("carry")) + "\n";
 
-  let tn: i32 = ssa.term_count();
-  let tfailures: i32 = 0;
-  let tok: i32 = 0;
-  let tid: i32 = 1;
+  let tn = ssa.term_count();
+  let tfailures = 0;
+  let tok = 0;
+  let tid = 1;
   while (tid <= tn) {
-    let tname: string = ssa.term_name(tid);
-    let tback: i32 = ssa.term_id(tname);
+    let tname = ssa.term_name(tid);
+    let tback = ssa.term_id(tname);
     if (tname == "" || tback != tid) {
-      tfailures = tfailures + 1;
+      tfailures += 1;
     } else {
-      tok = tok + 1;
+      tok += 1;
     }
-    tid = tid + 1;
+    tid += 1;
   }
   out = out + "term_count=" + util.i32_to_string(tn) + "\n";
   out = out + "term_bijection_ok=" + util.i32_to_string(tok) + "\n";
   out = out + "term_bijection_failures=" + util.i32_to_string(tfailures) + "\n";
   out = out + "term_none_id=" + util.i32_to_string(ssa.term_id("")) + "\n";
-  let tnone: string = ssa.term_name(0);
+  let tnone = ssa.term_name(0);
   out = out + "term_none_name_len=" + util.i32_to_string(tnone.len()) + "\n";
   out = out + "ret=" + util.i32_to_string(ssa.term_id("ret")) + "\n";
   out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
 
-  let sid: i32 = 1;
+  let sid = 1;
   while (sid <= ssa.semantic_kind_count()) {
-    out = out + "semantic" + util.i32_to_string(sid) + "=" + ssa.kind_name(0 - sid) + "\n";
-    sid = sid + 1;
+    out = out + "semantic" + util.i32_to_string(sid) + "=" + ssa.kind_name(-sid) + "\n";
+    sid += 1;
   }
   out = out + "semantic_count=" + util.i32_to_string(sid - 1) + "\n";
 

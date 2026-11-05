@@ -132,7 +132,7 @@ function identities(s: string): void {
     mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
     mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
     mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
-    i = i + 1;
+    i += 1;
   }
   mutation(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);
   mutation(s, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);

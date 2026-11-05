@@ -1,7 +1,7 @@
 import "std/envflag";
 
 pub function arity_message(subject: string, want: i32, got: i32, unit: string): string {
-  let units: string = unit;
+  let units = unit;
   if (want != 1) {
     units = unit + "s";
   }
@@ -16,28 +16,28 @@ pub function i64_to_string(n: i64): string {
   if (n == 0) {
     return "0";
   }
-  if (n < 0 && 0 - n == n) {
+  if (n < 0 && -n == n) {
     return "-9223372036854775808";
   }
-  let neg: boolean = n < 0;
+  let neg = n < 0;
   if (neg) {
-    n = 0 - n;
+    n = -n;
   }
-  let len: i32 = 0;
-  let m: i64 = n;
+  let len = 0;
+  let m = n;
   while (m > 0) {
-    len = len + 1;
-    m = m / 10;
+    len += 1;
+    m /= 10;
   }
   if (neg) {
-    len = len + 1;
+    len += 1;
   }
-  let buf: u8[] = __alloc_u8(len);
-  let at: i32 = len;
+  let buf = __alloc_u8(len);
+  let at = len;
   while (n > 0) {
-    at = at - 1;
+    at -= 1;
     buf = buf.with(at, (48 + (n % 10) as i32) as u8);
-    n = n / 10;
+    n /= 10;
   }
   if (neg) {
     buf = buf.with(0, 45 as u8);
@@ -59,21 +59,21 @@ pub function roll(d: i64, w: i32): i64 {
 }
 
 pub function roll_text(d: i64, s: string): i64 {
-  let out: i64 = roll(d, s.len());
-  let i: i32 = 0;
+  let out = roll(d, s.len());
+  let i = 0;
   while (i < s.len()) {
     out = roll(out, s[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function roll_words(d: i64, xs: i32[]): i64 {
-  let out: i64 = roll(d, xs.len());
-  let i: i32 = 0;
+  let out = roll(d, xs.len());
+  let i = 0;
   while (i < xs.len()) {
     out = roll(out, xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -90,14 +90,14 @@ pub function digest_text(d: i64): string {
 }
 
 pub function hash_key(s: string): string {
-  let a: i32 = 208357;
-  let b: i32 = 5381;
-  let i: i32 = 0;
+  let a = 208357;
+  let b = 5381;
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     a = a * 31 + c + 1 & 1073741823;
     b = b * 131 + c + 7 & 1073741823;
-    i = i + 1;
+    i += 1;
   }
   a = a * 31 + s.len() & 1073741823;
   b = b * 131 + s.len() & 1073741823;
@@ -112,11 +112,11 @@ pub function hash_bucket(s: string, n: i32): i32 {
 }
 
 pub function minus_ones(n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
-  let i: i32 = 0;
+  let out = __alloc_i32(n);
+  let i = 0;
   while (i < n) {
-    out = out.with(i, 0 - 1);
-    i = i + 1;
+    out = out.with(i, -1);
+    i += 1;
   }
   return out;
 }
@@ -128,9 +128,9 @@ pub function name_bucket(s: string, mask: i32): i32 {
 }
 
 function bucket_count(n: i32): i32 {
-  let nb: i32 = 2;
+  let nb = 2;
   while (nb <= n * 2) {
-    nb = nb * 2;
+    nb *= 2;
   }
   return nb;
 }
@@ -139,35 +139,35 @@ pub function name_index(names: string[]): NameIndex {
   if (names.len() == 0) {
     return NameIndex { names: names, head: [], next: [] };
   }
-  let nb: i32 = bucket_count(names.len());
-  let head: i32[] = minus_ones(nb);
-  let next: i32[] = minus_ones(names.len());
-  let k: i32 = names.len() - 1;
+  let nb = bucket_count(names.len());
+  let head = minus_ones(nb);
+  let next = minus_ones(names.len());
+  let k = names.len() - 1;
   while (k >= 0) {
-    let b: i32 = name_bucket(names[k], nb - 1);
+    let b = name_bucket(names[k], nb - 1);
     next = next.with(k, head[b]);
     head = head.with(b, k);
-    k = k - 1;
+    k -= 1;
   }
   return NameIndex { names: names, head: head, next: next };
 }
 
 pub function (ix: NameIndex) chain(name: string): i32 {
   if (ix.head.len() == 0) {
-    return 0 - 1;
+    return -1;
   }
   return ix.head[name_bucket(name, ix.head.len() - 1)];
 }
 
 pub function (ix: NameIndex) find(name: string): i32 {
-  let i: i32 = ix.chain(name);
+  let i = ix.chain(name);
   while (i >= 0) {
     if (ix.names[i] == name) {
       return i;
     }
     i = ix.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function (ix: NameIndex) has(name: string): boolean {
@@ -175,18 +175,18 @@ pub function (ix: NameIndex) has(name: string): boolean {
 }
 
 pub function (ix: NameIndex) added(name: string): NameIndex {
-  let names: string[] = ix.names.append(name);
+  let names = ix.names.append(name);
   if (names.len() > ix.head.len()) {
     return name_index(names);
   }
-  let k: i32 = names.len() - 1;
-  let b: i32 = name_bucket(name, ix.head.len() - 1);
-  let head: i32[] = ix.head;
-  let next: i32[] = ix.next.append(0 - 1);
+  let k = names.len() - 1;
+  let b = name_bucket(name, ix.head.len() - 1);
+  let head = ix.head;
+  let next = ix.next.append(-1);
   if (head[b] < 0) {
     head = head.with(b, k);
   } else {
-    let t: i32 = head[b];
+    let t = head[b];
     while (next[t] >= 0) {
       t = next[t];
     }
@@ -199,18 +199,18 @@ pub function lit_to_i32(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  let neg: boolean = false;
-  let start: i32 = 0;
+  let neg = false;
+  let start = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X')) {
-    let acc: i32 = 0;
-    let i: i32 = start + 2;
+    let acc = 0;
+    let i = start + 2;
     while (i < s.len()) {
-      let b: i32 = s[i] as i32;
-      let d: i32 = 0 - 1;
+      let b = s[i] as i32;
+      let d: i32 = -1;
       if (b >= 48 && b <= 57) {
         d = b - 48;
       } else if (b >= 97 && b <= 102) {
@@ -222,26 +222,26 @@ pub function lit_to_i32(s: string): i32 {
         break;
       }
       acc = acc * 16 + d;
-      i = i + 1;
+      i += 1;
     }
     if (neg) {
-      return 0 - acc;
+      return -acc;
     }
     return acc;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'b' || s[start + 1] == b'B')) {
-    let bacc: i32 = 0;
-    let bi: i32 = start + 2;
+    let bacc = 0;
+    let bi = start + 2;
     while (bi < s.len()) {
-      let bb: i32 = s[bi] as i32;
+      let bb = s[bi] as i32;
       if (bb != 48 && bb != 49) {
         break;
       }
       bacc = bacc * 2 + (bb - 48);
-      bi = bi + 1;
+      bi += 1;
     }
     if (neg) {
-      return 0 - bacc;
+      return -bacc;
     }
     return bacc;
   }
@@ -252,18 +252,18 @@ pub function lit_to_i64(s: string): i64 {
   if (s.len() == 0) {
     return 0;
   }
-  let neg: boolean = false;
-  let start: i32 = 0;
+  let neg = false;
+  let start = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X')) {
     let acc: i64 = 0;
-    let i: i32 = start + 2;
+    let i = start + 2;
     while (i < s.len()) {
-      let b: i32 = s[i] as i32;
-      let d: i32 = 0 - 1;
+      let b = s[i] as i32;
+      let d: i32 = -1;
       if (b >= 48 && b <= 57) {
         d = b - 48;
       } else if (b >= 97 && b <= 102) {
@@ -275,26 +275,26 @@ pub function lit_to_i64(s: string): i64 {
         break;
       }
       acc = acc * 16 + d as i64;
-      i = i + 1;
+      i += 1;
     }
     if (neg) {
-      return 0 - acc;
+      return -acc;
     }
     return acc;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'b' || s[start + 1] == b'B')) {
     let bacc: i64 = 0;
-    let bi: i32 = start + 2;
+    let bi = start + 2;
     while (bi < s.len()) {
-      let bb: i32 = s[bi] as i32;
+      let bb = s[bi] as i32;
       if (bb != 48 && bb != 49) {
         break;
       }
       bacc = bacc * 2 + (bb - 48) as i64;
-      bi = bi + 1;
+      bi += 1;
     }
     if (neg) {
-      return 0 - bacc;
+      return -bacc;
     }
     return bacc;
   }
@@ -305,27 +305,27 @@ pub function digits_to_i32(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  let neg: boolean = false;
-  let start: i32 = 0;
+  let neg = false;
+  let start = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
-  let acc: i32 = 0;
-  let i: i32 = start;
+  let acc = 0;
+  let i = start;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       if (neg) {
-        return 0 - acc;
+        return -acc;
       }
       return acc;
     }
     acc = acc * 10 + (b - 48);
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
-    return 0 - acc;
+    return -acc;
   }
   return acc;
 }
@@ -339,25 +339,25 @@ pub function is_decimal_i64(s: string): boolean {
 }
 
 function decimal_within(s: string, pos: string, neg: string): boolean {
-  let start: i32 = 0;
+  let start = 0;
   if (s.len() > 0 && s[0] == b'-') {
     start = 1;
   }
-  let n: i32 = s.len() - start;
+  let n = s.len() - start;
   if (n == 0) {
     return false;
   }
-  let i: i32 = start;
+  let i = start;
   while (i < s.len()) {
     if (s[i] < b'0' || s[i] > b'9') {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   if (s[start] == b'0') {
     return n == 1 && start == 0;
   }
-  let limit: string = pos;
+  let limit = pos;
   if (start == 1) {
     limit = neg;
   }
@@ -369,7 +369,7 @@ function decimal_within(s: string, pos: string, neg: string): boolean {
     if (s[start + i] != limit[i]) {
       return s[start + i] < limit[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -378,27 +378,27 @@ pub function digits_to_i64(s: string): i64 {
   if (s.len() == 0) {
     return 0;
   }
-  let neg: boolean = false;
-  let start: i32 = 0;
+  let neg = false;
+  let start = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
   let acc: i64 = 0;
-  let i: i32 = start;
+  let i = start;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       if (neg) {
-        return 0 - acc;
+        return -acc;
       }
       return acc;
     }
     acc = acc * 10 + (b - 48) as i64;
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
-    return 0 - acc;
+    return -acc;
   }
   return acc;
 }
@@ -407,35 +407,35 @@ pub function is_all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function has_str(xs: string[], s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == s) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function base_type_name(t: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < t.len()) {
     if (t[i] == b'[') {
       return slice_unchecked(t, 0, i) + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return t;
 }
@@ -445,89 +445,89 @@ pub function is_tuple_type_name(t: string): boolean {
 }
 
 pub function mangled_module(name: string): string {
-  let i: i32 = 1;
+  let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
       return slice_unchecked(name, 0, i) + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function mangled_name(name: string): string {
-  let i: i32 = 1;
+  let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
       return slice_unchecked(name, i + 2, name.len()) + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return name;
 }
 
 pub function str_less(a: string, b: string): boolean {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (a[i] != b[i]) {
       return a[i] < b[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return a.len() < b.len();
 }
 
 pub function index_of_str(xs: string[], s: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == s) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function index_of_i32(xs: i32[], n: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == n) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function str_has_prefix(s: string, prefix: string): boolean {
   if (s.len() < prefix.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < prefix.len()) {
     if (s[i] != prefix[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function str_has_suffix(s: string, suffix: string): boolean {
-  let at: i32 = s.len() - suffix.len();
+  let at = s.len() - suffix.len();
   if (at < 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < suffix.len()) {
     if (s[at + i] != suffix[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -537,49 +537,49 @@ pub function contains(haystack: string, needle: string): boolean {
 }
 
 pub function index_of_sub(haystack: string, needle: string): i32 {
-  let n: i32 = needle.len();
+  let n = needle.len();
   if (n == 0) {
     return 0;
   }
-  let last: i32 = haystack.len() - n;
-  let first: i32 = needle[0] as i32;
-  let i: i32 = __memchr(haystack, first, 0);
+  let last = haystack.len() - n;
+  let first = needle[0] as i32;
+  let i = __memchr(haystack, first, 0);
   while (i >= 0 && i <= last) {
     if (__mismatch(haystack, i, needle, 0, n) == n) {
       return i;
     }
     i = __memchr(haystack, first, i + 1);
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function index_of_sub_from(haystack: string, needle: string, from: i32): i32 {
-  let start: i32 = from;
+  let start = from;
   if (start < 0) {
     start = 0;
   }
   if (start > haystack.len()) {
     start = haystack.len();
   }
-  let n: i32 = needle.len();
+  let n = needle.len();
   if (n == 0) {
     return start;
   }
-  let last: i32 = haystack.len() - n;
-  let first: i32 = needle[0] as i32;
-  let i: i32 = __memchr(haystack, first, start);
+  let last = haystack.len() - n;
+  let first = needle[0] as i32;
+  let i = __memchr(haystack, first, start);
   while (i >= 0 && i <= last) {
     if (__mismatch(haystack, i, needle, 0, n) == n) {
       return i;
     }
     i = __memchr(haystack, first, i + 1);
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function parse_f64_bits(s: string): i64 {
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
@@ -591,68 +591,68 @@ pub function parse_f64_bits(s: string): i64 {
     let one: i64 = 1;
     signbit = one << 63;
   }
-  let buf: i32[] = __alloc_i32(PF64_CAP);
-  let lo: i32 = PF64_HEAD;
-  let hi: i32 = PF64_HEAD;
-  let dp: i32 = 0;
-  let sticky: boolean = false;
-  let started: boolean = false;
+  let buf = __alloc_i32(PF64_CAP);
+  let lo = PF64_HEAD;
+  let hi = PF64_HEAD;
+  let dp = 0;
+  let sticky = false;
+  let started = false;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    let d: i32 = s[i] as i32 - 48;
+    let d = s[i] as i32 - 48;
     if (started || d != 0) {
       started = true;
       if (hi - lo < PF64_DIGITS) {
         buf = buf.with(hi, d);
-        hi = hi + 1;
+        hi += 1;
       } else {
         if (d != 0) {
           sticky = true;
         }
       }
-      dp = dp + 1;
+      dp += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] == b'.') {
-    i = i + 1;
+    i += 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      let fd: i32 = s[i] as i32 - 48;
+      let fd = s[i] as i32 - 48;
       if (started || fd != 0) {
         started = true;
         if (hi - lo < PF64_DIGITS) {
           buf = buf.with(hi, fd);
-          hi = hi + 1;
+          hi += 1;
         } else {
           if (fd != 0) {
             sticky = true;
           }
         }
       } else {
-        dp = dp - 1;
+        dp -= 1;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
-    i = i + 1;
-    let eneg: boolean = false;
+    i += 1;
+    let eneg = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
-      i = i + 1;
+      i += 1;
     } else if (i < s.len() && s[i] == b'+') {
-      i = i + 1;
+      i += 1;
     }
-    let exp: i32 = 0;
+    let exp = 0;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
       }
-      i = i + 1;
+      i += 1;
     }
     if (eneg) {
-      dp = dp - exp;
+      dp -= exp;
     } else {
-      dp = dp + exp;
+      dp += exp;
     }
   }
   hi = pf64_trim(buf, lo, hi);
@@ -663,43 +663,43 @@ pub function parse_f64_bits(s: string): i64 {
     let inf: i64 = 2047;
     return signbit | inf << 52;
   }
-  if (dp < 0 - 350) {
+  if (dp < -350) {
     return signbit;
   }
-  let bexp: i32 = 0;
+  let bexp = 0;
   while (dp > 0) {
-    let lead_zero: boolean = buf[lo] < 2;
-    let odd: boolean = buf[hi - 1] % 2 == 1;
+    let lead_zero = buf[lo] < 2;
+    let odd = buf[hi - 1] % 2 == 1;
     buf = pf64_halve(buf, lo, hi);
     if (odd) {
-      hi = hi + 1;
+      hi += 1;
     }
     if (lead_zero) {
-      lo = lo + 1;
-      dp = dp - 1;
+      lo += 1;
+      dp -= 1;
     }
-    bexp = bexp + 1;
+    bexp += 1;
     hi = pf64_trim(buf, lo, hi);
   }
   while (dp < 0 || hi > lo && buf[lo] < 5) {
-    let carry: boolean = buf[lo] >= 5;
+    let carry = buf[lo] >= 5;
     buf = pf64_double(buf, lo, hi);
     if (carry) {
-      lo = lo - 1;
-      dp = dp + 1;
+      lo -= 1;
+      dp += 1;
     }
-    bexp = bexp - 1;
+    bexp -= 1;
     hi = pf64_trim(buf, lo, hi);
     if (hi == lo) {
       return signbit;
     }
   }
-  let e: i32 = bexp + 1022;
+  let e = bexp + 1022;
   if (e >= 2047) {
     let inf2: i64 = 2047;
     return signbit | inf2 << 52;
   }
-  let nbits: i32 = 53;
+  let nbits = 53;
   if (e <= 0) {
     nbits = 52 + e;
   }
@@ -707,17 +707,17 @@ pub function parse_f64_bits(s: string): i64 {
     return signbit;
   }
   let mant: i64 = 0;
-  let k2: i32 = 0;
+  let k2 = 0;
   while (k2 < nbits) {
     mant = mant * 2 + pf64_top_bit(buf, lo);
     buf = pf64_double(buf, lo, hi);
-    k2 = k2 + 1;
+    k2 += 1;
   }
-  let roundbit: i64 = pf64_top_bit(buf, lo);
+  let roundbit = pf64_top_bit(buf, lo);
   buf = pf64_double(buf, lo, hi);
-  let st: boolean = sticky || pf64_trim(buf, lo, hi) > lo;
+  let st = sticky || pf64_trim(buf, lo, hi) > lo;
   if (roundbit == 1 && (st || (mant & 1) == 1)) {
-    mant = mant + 1;
+    mant += 1;
   }
   if (e <= 0) {
     return signbit | mant;
@@ -725,8 +725,8 @@ pub function parse_f64_bits(s: string): i64 {
   let full: i64 = 1;
   full = full << 53;
   if (mant == full) {
-    mant = mant / 2;
-    e = e + 1;
+    mant /= 2;
+    e += 1;
     if (e >= 2047) {
       let inf3: i64 = 2047;
       return signbit | inf3 << 52;
@@ -746,42 +746,42 @@ pub function f64_lit_out_of_range(s: string): boolean {
 }
 
 function f64_lit_reaches_1e309(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   if (i < s.len() && (s[i] == b'-' || s[i] == b'+')) {
-    i = i + 1;
+    i += 1;
   }
   while (i < s.len() && s[i] == b'0') {
-    i = i + 1;
+    i += 1;
   }
-  let intdigits: i32 = 0;
+  let intdigits = 0;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    intdigits = intdigits + 1;
-    i = i + 1;
+    intdigits += 1;
+    i += 1;
   }
   if (i < s.len() && s[i] == b'.') {
-    i = i + 1;
+    i += 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      i = i + 1;
+      i += 1;
     }
   }
-  let exp: i32 = 0;
+  let exp = 0;
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
-    i = i + 1;
-    let eneg: boolean = false;
+    i += 1;
+    let eneg = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
-      i = i + 1;
+      i += 1;
     } else if (i < s.len() && s[i] == b'+') {
-      i = i + 1;
+      i += 1;
     }
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
       }
-      i = i + 1;
+      i += 1;
     }
     if (eneg) {
-      exp = 0 - exp;
+      exp = -exp;
     }
   }
   return intdigits + exp >= 309;
@@ -800,7 +800,7 @@ pub function is_f64_range_kind(kind: string): boolean {
 }
 
 pub function f64_range_message(kind: string): string {
-  let pre: string = f64_range_prefix();
+  let pre = f64_range_prefix();
   return "invalid float literal \"" + slice_unchecked(kind, pre.len(), kind.len()) + "\": value out of range";
 }
 
@@ -813,13 +813,13 @@ const PF64_HEAD: i32 = 512;
 const PF64_CAP: i32 = 2560;
 
 function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
-  let r: i32 = 0;
-  let i: i32 = lo;
+  let r = 0;
+  let i = lo;
   while (i < hi) {
-    let cur: i32 = r * 10 + buf[i];
+    let cur = r * 10 + buf[i];
     buf = buf.with(i, cur / 2);
     r = cur % 2;
-    i = i + 1;
+    i += 1;
   }
   if (r != 0) {
     buf = buf.with(hi, 5);
@@ -828,13 +828,13 @@ function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
 }
 
 function pf64_double(own buf: i32[], lo: i32, hi: i32): i32[] {
-  let carry: i32 = 0;
-  let j: i32 = hi - 1;
+  let carry = 0;
+  let j = hi - 1;
   while (j >= lo) {
-    let cur: i32 = buf[j] * 2 + carry;
+    let cur = buf[j] * 2 + carry;
     buf = buf.with(j, cur % 10);
     carry = cur / 10;
-    j = j - 1;
+    j -= 1;
   }
   return buf.with(lo - 1, carry);
 }
@@ -847,9 +847,9 @@ function pf64_top_bit(buf: i32[], lo: i32): i64 {
 }
 
 function pf64_trim(buf: i32[], lo: i32, hi: i32): i32 {
-  let h: i32 = hi;
+  let h = hi;
   while (h > lo && buf[h - 1] == 0) {
-    h = h - 1;
+    h -= 1;
   }
   return h;
 }
@@ -857,7 +857,7 @@ function pf64_trim(buf: i32[], lo: i32, hi: i32): i32 {
 pub const RC_UNDERFLOW_EXIT: i32 = 120;
 
 pub function rc_underflow_guard(who: string, code: i32): i32 {
-  let n: i32 = __rc_underflow_count();
+  let n = __rc_underflow_count();
   if (n == 0) {
     return code;
   }
@@ -895,7 +895,7 @@ pub function certify_mode(): i32 {
 
 pub function arr_push_cliff_report(who: string, code: i32): i32 {
   if (envflag.on("FERN_CLIFF_REPORT")) {
-    let copied: i64 = __arr_push_shared_bytes();
+    let copied = __arr_push_shared_bytes();
     eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
       + " arr_push_shared_bytes=" + i64_to_string(copied)
       + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()));
@@ -904,14 +904,14 @@ pub function arr_push_cliff_report(who: string, code: i32): i32 {
 }
 
 pub function str_join_range(parts: string[], lo: i32, hi: i32): string {
-  let n: i32 = hi - lo;
+  let n = hi - lo;
   if (n <= 0) {
     return "";
   }
   if (n == 1) {
     return parts[lo];
   }
-  let mid: i32 = lo + n / 2;
+  let mid = lo + n / 2;
   return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
 }
 
@@ -936,17 +936,17 @@ pub function is_diagnostic_code(code: string): boolean {
   if (code.len() != 4) {
     return false;
   }
-  let head: i32 = code[0] as i32;
+  let head = code[0] as i32;
   if (head != 69 && head != 80 && head != 87) {
     return false;
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < 4) {
-    let b: i32 = code[i] as i32;
+    let b = code[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -966,7 +966,7 @@ pub function pos_file_index(line: i32): i32 {
 }
 
 pub function pos_file(files: string[], line: i32): string {
-  let k: i32 = line / LINE_SPAN - 1;
+  let k = line / LINE_SPAN - 1;
   if (k < 0 || k >= files.len()) {
     return "";
   }
@@ -974,8 +974,8 @@ pub function pos_file(files: string[], line: i32): string {
 }
 
 pub function pos_str(entry: string, files: string[], line: i32, col: i32): string {
-  let at: string = i32_to_string(pos_line(line)) + ":" + i32_to_string(col);
-  let f: string = pos_file(files, line);
+  let at = i32_to_string(pos_line(line)) + ":" + i32_to_string(col);
+  let f = pos_file(files, line);
   if (f.len() == 0) {
     f = entry;
   }
@@ -993,7 +993,7 @@ pub function no_line_map(): LineMap {
 
 pub function doc_diag(maps: LineMap[], d: Diag): Diag {
   let (line, col) = doc_pos(maps, d.line, d.col);
-  let out: Diag = Diag { ...d, line: line, col: col, related: doc_related(maps, d.related) };
+  let out = Diag { ...d, line: line, col: col, related: doc_related(maps, d.related) };
   if let Some(f) = d.fix {
     let (fl, fc) = doc_pos(maps, f.line, f.col);
     if (fl == 0) {
@@ -1016,15 +1016,15 @@ function doc_related(maps: LineMap[], related: Related[]): Related[] {
 }
 
 pub function doc_pos(maps: LineMap[], line: i32, col: i32): (i32, i32) {
-  let m: i32 = pos_file_index(line);
+  let m = pos_file_index(line);
   if (m < 0 || m >= maps.len() || maps[m].doc.len() == 0) {
     return (line, col);
   }
-  let k: i32 = pos_line(line);
+  let k = pos_line(line);
   if (k < 1 || k > maps[m].lits.len()) {
     return (0, 0);
   }
-  let c: i32 = col - maps[m].shifts[k - 1];
+  let c = col - maps[m].shifts[k - 1];
   if (c < 1) {
     c = 1;
   }
@@ -1032,22 +1032,22 @@ pub function doc_pos(maps: LineMap[], line: i32, col: i32): (i32, i32) {
 }
 
 pub function format_diags(diags: Diag[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < diags.len()) {
-    let d: Diag = diags[i];
-    let tag: string = "";
+    let d = diags[i];
+    let tag = "";
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
     }
     if (i > 0) {
-      out = out + "\n";
+      out += "\n";
     }
     out = out + tag + d.message + " (" + pos_str("", [], d.line, d.col) + ")";
     for r in d.related {
       out = out + "\n    note: " + r.message + " (" + pos_str("", [], r.line, r.col) + ")";
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1068,12 +1068,12 @@ pub function diag_after(a: Diag, b: Diag): boolean {
 pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
   let out: T[] = [];
   for x in xs {
-    let at: i32 = out.len();
+    let at = out.len();
     while (at > 0 && after(out[at - 1], x)) {
-      at = at - 1;
+      at -= 1;
     }
     let next: T[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i <= out.len()) {
       if (i == at) {
         next = next.append(x);
@@ -1081,7 +1081,7 @@ pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
       if (i < out.len()) {
         next = next.append(out[i]);
       }
-      i = i + 1;
+      i += 1;
     }
     out = next;
   }
@@ -1089,37 +1089,37 @@ pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
 }
 
 pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
     a = a.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
 
 pub function dunder_at(name: string): i32 {
-  let i: i32 = 1;
+  let i = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function show_type_vars(text: string): string {
-  let out: string = "";
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let out = "";
+  let start = 0;
+  let i = 0;
   while (i + 2 < text.len()) {
-    let boundary: boolean = i == 0 || !(ident_start_byte(text[i - 1]) || text[i - 1] >= b'0' && text[i - 1] <= b'9');
+    let boundary = i == 0 || !(ident_start_byte(text[i - 1]) || text[i - 1] >= b'0' && text[i - 1] <= b'9');
     if (boundary && text[i] == b'0' && text[i + 1] == b'_' && ident_start_byte(text[i + 2])) {
-      out = out + slice_unchecked(text, start, i);
+      out += slice_unchecked(text, start, i);
       start = i + 2;
-      i = i + 2;
+      i += 2;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
   if (start == 0) {
@@ -1129,17 +1129,17 @@ pub function show_type_vars(text: string): string {
 }
 
 pub function ident_from(line: string, col: i32, name: string): i32 {
-  let at: i32 = col - 1;
+  let at = col - 1;
   while (at >= 0 && at + name.len() <= line.len()) {
-    let i: i32 = index_of_sub(slice_unchecked(line, at, line.len()) + "", name);
+    let i = index_of_sub(slice_unchecked(line, at, line.len()) + "", name);
     if (i < 0) {
       return 0;
     }
-    at = at + i;
+    at += i;
     if (!ident_byte_at(line, at - 1) && !ident_byte_at(line, at + name.len())) {
       return at + 1;
     }
-    at = at + 1;
+    at += 1;
   }
   return 0;
 }
@@ -1156,18 +1156,18 @@ pub function is_ident(s: string): boolean {
   if (s.len() == 0 || !ident_start_byte(s[0])) {
     return false;
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < s.len()) {
     if (!ident_start_byte(s[i]) && !(s[i] >= b'0' && s[i] <= b'9')) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function demangle(name: string): string {
-  let cut: i32 = dunder_at(name);
+  let cut = dunder_at(name);
   if (cut < 0) {
     return name;
   }
@@ -1177,19 +1177,19 @@ pub function demangle(name: string): string {
 // demangle_named demangles each whole word of `text` that `mangled` holds,
 // leaving every other word as written.
 pub function demangle_named(text: string, mangled: NameIndex): string {
-  let out: string = "";
-  let kept: i32 = 0;
-  let i: i32 = 0;
+  let out = "";
+  let kept = 0;
+  let i = 0;
   while (i < text.len()) {
     if (!ident_byte_at(text, i)) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let j: i32 = i;
+    let j = i;
     while (ident_byte_at(text, j)) {
-      j = j + 1;
+      j += 1;
     }
-    let word: string = slice_unchecked(text, i, j) + "";
+    let word = slice_unchecked(text, i, j) + "";
     if (mangled.find(word) >= 0) {
       out = out + slice_unchecked(text, kept, i) + demangle(word);
       kept = j;
@@ -1203,15 +1203,15 @@ pub function demangle_named(text: string, mangled: NameIndex): string {
 }
 
 pub function derive_hint(tn: string, derive: string, trait_name: string): string {
-  let cut: i32 = dunder_at(tn);
-  let routes: string = "`@derive(" + derive + ")`";
+  let cut = dunder_at(tn);
+  let routes = "`@derive(" + derive + ")`";
   if (cut < 0) {
     if (trait_name.len() > 0) {
       routes = routes + " (or `impl " + trait_name + " for " + tn + "`)";
     }
     return "add " + routes + ", which requires `import \"core/cmp\";`";
   }
-  let orphan: string = "";
+  let orphan = "";
   if (trait_name.len() > 0) {
     routes = routes + " (or `impl " + trait_name + " for " + slice_unchecked(tn, cut + 2, tn.len()) + "`)";
     orphan = " (an impl written here instead would be an orphan impl)";
@@ -1220,19 +1220,19 @@ pub function derive_hint(tn: string, derive: string, trait_name: string): string
 }
 
 pub function last_slash(p: string): i32 {
-  let i: i32 = 0;
-  let last: i32 = 0 - 1;
+  let i = 0;
+  let last: i32 = -1;
   while (i < p.len()) {
     if (p[i] == b'/') {
       last = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return last;
 }
 
 pub function dir_of(p: string): string {
-  let ls: i32 = last_slash(p);
+  let ls = last_slash(p);
   if (ls < 0) {
     return "";
   }
@@ -1240,8 +1240,8 @@ pub function dir_of(p: string): string {
 }
 
 pub function module_name(import_path: string): string {
-  let path: string = without_fern_ext(import_path);
-  let ls: i32 = last_slash(path);
+  let path = without_fern_ext(import_path);
+  let ls = last_slash(path);
   if (ls >= 0) {
     return slice_unchecked(path, ls + 1, path.len()) + "";
   }
@@ -1259,18 +1259,18 @@ pub function without_fern_ext(path: string): string {
 }
 
 pub function dep_name(import_path: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < import_path.len()) {
     if (import_path[i] == b'/') {
       return slice_unchecked(import_path, 0, i) + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return import_path;
 }
 
 pub function dep_subpath(import_path: string): string {
-  let n: string = dep_name(import_path);
+  let n = dep_name(import_path);
   if (n.len() >= import_path.len()) {
     return "";
   }
@@ -1278,50 +1278,50 @@ pub function dep_subpath(import_path: string): string {
 }
 
 pub function import_qualifier(path: string): string {
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < path.len()) {
     if (path[i] == b'/') {
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  let end: i32 = path.len();
+  let end = path.len();
   if (str_has_suffix(path, ".fern")) {
-    end = end - 5;
+    end -= 5;
   }
-  let out: string = "";
-  let from: i32 = start;
+  let out = "";
+  let from = start;
   i = start;
   while (i < end) {
     if (path[i] == b'-') {
       out = out + slice_unchecked(path, from, i) + "_";
       from = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out + slice_unchecked(path, from, end);
 }
 
 pub function mangle_prefix(name: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < name.len()) {
-    let c: i32 = name[i] as i32;
-    let ok: boolean = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c == 95;
+    let c = name[i] as i32;
+    let ok = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c == 95;
     if (ok) {
-      out = out + slice_unchecked(name, i, i + 1);
+      out += slice_unchecked(name, i, i + 1);
     } else {
       if (c >= 48 && c <= 57) {
         if (i == 0) {
-          out = out + "_";
+          out += "_";
         }
-        out = out + slice_unchecked(name, i, i + 1);
+        out += slice_unchecked(name, i, i + 1);
       } else {
-        out = out + "_";
+        out += "_";
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (out.len() == 0) {
     return "_";
@@ -1337,18 +1337,18 @@ pub function is_local(import_path: string): boolean {
 }
 
 pub function clean_path(p: string): string {
-  let out: string = "";
-  let skip: i32 = 0;
-  let end: i32 = p.len();
-  let i: i32 = p.len() - 1;
-  while (i >= 0 - 1) {
+  let out = "";
+  let skip = 0;
+  let end = p.len();
+  let i = p.len() - 1;
+  while (i >= -1) {
     if (i < 0 || p[i] == b'/') {
-      let seg: string = slice_unchecked(p, i + 1, end) + "";
+      let seg = slice_unchecked(p, i + 1, end) + "";
       if (seg == "..") {
-        skip = skip + 1;
+        skip += 1;
       } else if (seg.len() > 0 && seg != ".") {
         if (skip > 0) {
-          skip = skip - 1;
+          skip -= 1;
         } else if (out.len() == 0) {
           out = seg;
         } else {
@@ -1357,7 +1357,7 @@ pub function clean_path(p: string): string {
       }
       end = i;
     }
-    i = i - 1;
+    i -= 1;
   }
   if (p.len() > 0 && p[0] == b'/') {
     return "/" + out;
@@ -1368,7 +1368,7 @@ pub function clean_path(p: string): string {
     } else {
       out = "../" + out;
     }
-    skip = skip - 1;
+    skip -= 1;
   }
   if (out.len() == 0) {
     return ".";
@@ -1419,7 +1419,7 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
   if (is_stdlib_path(import_path) && root.len() > 0) {
     return clean_path(root + "/" + without_fern_ext(import_path) + ".fern");
   }
-  let rel: string = without_fern_ext(import_path);
+  let rel = without_fern_ext(import_path);
   if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
     rel = slice_unchecked(rel, 2, rel.len()) + "";
   }
@@ -1427,13 +1427,13 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
 }
 
 pub function trim(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
-    b = b - 1;
+    b -= 1;
   }
   if (a == 0 && b == s.len()) {
     return s;
@@ -1452,21 +1452,21 @@ pub function levenshtein(a: string, b: string): i32 {
     return a.len();
   }
   let prev: i32[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j <= b.len()) {
     prev = prev.append(j);
-    j = j + 1;
+    j += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     let cur: i32[] = [i + 1];
-    let k: i32 = 0;
+    let k = 0;
     while (k < b.len()) {
-      let cost: i32 = 1;
+      let cost = 1;
       if (a[i] == b[k]) {
         cost = 0;
       }
-      let best: i32 = prev[k] + cost;
+      let best = prev[k] + cost;
       if (cur[k] + 1 < best) {
         best = cur[k] + 1;
       }
@@ -1474,10 +1474,10 @@ pub function levenshtein(a: string, b: string): i32 {
         best = prev[k + 1] + 1;
       }
       cur = cur.append(best);
-      k = k + 1;
+      k += 1;
     }
     prev = cur;
-    i = i + 1;
+    i += 1;
   }
   return prev[b.len()];
 }
@@ -1486,22 +1486,22 @@ pub function suggest(name: string, candidates: string[]): string {
   if (name.len() == 0 || candidates.len() == 0) {
     return "";
   }
-  let budget: i32 = 2;
+  let budget = 2;
   if (name.len() <= 3) {
     budget = 1;
   }
-  let best: string = "";
-  let best_dist: i32 = budget + 1;
-  let i: i32 = 0;
+  let best = "";
+  let best_dist = budget + 1;
+  let i = 0;
   while (i < candidates.len()) {
     if (candidates[i] != name) {
-      let d: i32 = levenshtein(name, candidates[i]);
+      let d = levenshtein(name, candidates[i]);
       if (d < best_dist) {
         best = candidates[i];
         best_dist = d;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (best_dist > budget) {
     return "";
@@ -1510,20 +1510,20 @@ pub function suggest(name: string, candidates: string[]): string {
 }
 
 pub function append_all[T](into: T[], more: T[]): T[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < more.len()) {
     into = into.append(more[i]);
-    i = i + 1;
+    i += 1;
   }
   return into;
 }
 
 pub function to_u8(b: i32[]): u8[] {
   let o: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
     o = o.append(b[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return o;
 }
@@ -1532,7 +1532,7 @@ pub function cache_base(): string {
   if let Some(d) = envflag.value("FERN_CACHE_DIR") {
     return d;
   }
-  let darwin: boolean = target_os() == "darwin";
+  let darwin = target_os() == "darwin";
   if (!darwin) {
     if let Some(x) = envflag.value("XDG_CACHE_HOME") {
       return x + "/fern";
@@ -1549,14 +1549,14 @@ pub function cache_base(): string {
 
 pub function split_char(s: string, c: u8): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] == c) {
       out = out.append(slice_unchecked(s, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   out = out.append(slice_unchecked(s, start, s.len()) + "");
   return out;

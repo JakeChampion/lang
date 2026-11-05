@@ -10,13 +10,13 @@ struct Ctx { files: string[], entry: string }
 struct Tab { keys: string[], head: i32[], next: i32[] }
 
 pub function instrument(mod: parser.Module, files: string[], entry: string): parser.Module {
-  let m: parser.Module = asmcore.synth_script_main(mod);
-  let ret: string = main_ret(m);
-  let wrap: boolean = ret == "i32" || ret == "" || ret == "void";
-  let ctx: Ctx = Ctx { files: files, entry: entry };
+  let m = asmcore.synth_script_main(mod);
+  let ret = main_ret(m);
+  let wrap = ret == "i32" || ret == "" || ret == "void";
+  let ctx = Ctx { files: files, entry: entry };
   let marked: parser.FuncDecl[] = [];
   for f in m.funcs {
-    let body: ast.Stmt[] = cover_stmts(f.body, ctx, true);
+    let body = cover_stmts(f.body, ctx, true);
     if (wrap && f.name == "main" && f.receiver_type == "") {
       marked = marked.append(parser.FuncDecl { ...f, name: "__fern_cov_main", body: body });
     } else {
@@ -29,7 +29,7 @@ pub function instrument(mod: parser.Module, files: string[], entry: string): par
       seen = astwalk.fold_stmt(st, seen, collect_site);
     }
   }
-  let t: Tab = table(seen);
+  let t = table(seen);
   function numbered(e: ast.Expr): ast.Expr {
     return number_site(e, t);
   }
@@ -37,7 +37,7 @@ pub function instrument(mod: parser.Module, files: string[], entry: string): par
   for f in marked {
     funcs = funcs.append(parser.FuncDecl { ...f, body: astwalk.map_stmts(f.body, numbered) });
   }
-  let helpers: parser.Module = helper_module(t.keys, ret);
+  let helpers = helper_module(t.keys, ret);
   for h in helpers.funcs {
     funcs = funcs.append(h);
   }
@@ -56,13 +56,13 @@ function main_ret(m: parser.Module): string {
 function table(seen: string[]): Tab {
   let head: i32[] = [];
   while (head.len() < 16381) {
-    head = head.append(0 - 1);
+    head = head.append(-1);
   }
   let keys: string[] = [];
   let next: i32[] = [];
   for key in seen {
-    let b: i32 = util.hash_bucket(key, head.len());
-    let i: i32 = head[b];
+    let b = util.hash_bucket(key, head.len());
+    let i = head[b];
     while (i >= 0 && keys[i] != key) {
       i = next[i];
     }
@@ -76,14 +76,14 @@ function table(seen: string[]): Tab {
 }
 
 function find(t: Tab, key: string): i32 {
-  let i: i32 = t.head[util.hash_bucket(key, t.head.len())];
+  let i = t.head[util.hash_bucket(key, t.head.len())];
   while (i >= 0) {
     if (t.keys[i] == key) {
       return i;
     }
     i = t.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function site_key(e: ast.Expr): string {
@@ -115,7 +115,7 @@ function site_key(e: ast.Expr): string {
 }
 
 function collect_site(e: ast.Expr, own seen: string[]): string[] {
-  let key: string = site_key(e);
+  let key = site_key(e);
   if (key == "") {
     return seen;
   }
@@ -123,7 +123,7 @@ function collect_site(e: ast.Expr, own seen: string[]): string[] {
 }
 
 function number_site(e: ast.Expr, t: Tab): ast.Expr {
-  let key: string = site_key(e);
+  let key = site_key(e);
   if (key == "") {
     return e;
   }
@@ -132,7 +132,7 @@ function number_site(e: ast.Expr, t: Tab): ast.Expr {
 }
 
 function file_of(c: Ctx, line: i32): string {
-  let f: string = util.pos_file(c.files, line);
+  let f = util.pos_file(c.files, line);
   if (f == "") {
     return c.entry;
   }
@@ -167,9 +167,9 @@ function report_stmt(): ast.Stmt {
 
 function cover_stmts(stmts: ast.Stmt[], c: Ctx, exprs: boolean): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let last: i32 = 0;
+  let last = 0;
   for st in stmts {
-    let line: i32 = ast.stmt_line(st);
+    let line = ast.stmt_line(st);
     if (line > 0 && line != last) {
       out = out.append(hit_stmt(line_key(c, line)));
       last = line;
@@ -222,7 +222,7 @@ function is_exit(st: ast.Stmt): boolean {
 }
 
 function guarded(cond: ast.Expr, c: Ctx, line: i32, exprs: boolean): ast.Expr {
-  let e: ast.Expr = cond;
+  let e = cond;
   if (exprs) {
     e = cover_expr(cond, c);
   }
@@ -259,18 +259,18 @@ function cover_stmt(st: ast.Stmt, c: Ctx, exprs: boolean): ast.Stmt {
       return ast.StmtAssign { ...a, value: maybe(a.value, c, exprs) };
     },
     ast.StmtIf(f) => {
-      let tb: ast.Stmt[] = cover_stmts(f.then_body, c, exprs);
-      let eb: ast.Stmt[] = cover_stmts(f.else_body, c, exprs);
+      let tb = cover_stmts(f.then_body, c, exprs);
+      let eb = cover_stmts(f.else_body, c, exprs);
       if (f.line > 0 && f.origin == "" && !literal_true(f.cond)) {
-        let taken: string = branch_key(c, f.line, start_col(f.cond), "T");
+        let taken = branch_key(c, f.line, start_col(f.cond), "T");
         return ast.StmtIf { ...f, cond: guarded(f.cond, c, f.line, exprs), then_body: opened(taken, tb), else_body: eb };
       }
       return ast.StmtIf { ...f, cond: maybe(f.cond, c, exprs), then_body: tb, else_body: eb };
     },
     ast.StmtWhile(w) => {
-      let body: ast.Stmt[] = cover_stmts(w.body, c, exprs);
+      let body = cover_stmts(w.body, c, exprs);
       if (w.line > 0 && !w.is_loop && !literal_true(w.cond)) {
-        let taken: string = branch_key(c, w.line, start_col(w.cond), "T");
+        let taken = branch_key(c, w.line, start_col(w.cond), "T");
         return ast.StmtWhile { ...w, cond: guarded(w.cond, c, w.line, exprs), body: opened(taken, body) };
       }
       return ast.StmtWhile { ...w, cond: maybe(w.cond, c, exprs), body: body };
@@ -281,7 +281,7 @@ function cover_stmt(st: ast.Stmt, c: Ctx, exprs: boolean): ast.Stmt {
     ast.StmtMatch(mt) => {
       let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
-        let g: ast.Expr = arm.guard;
+        let g = arm.guard;
         if (arm.has_guard) {
           g = maybe(arm.guard, c, exprs);
         }
@@ -351,8 +351,8 @@ function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
       if (b.op != "&&" && b.op != "||" || b.line <= 0) {
         return e;
       }
-      let ev: ast.Expr = hit(branch_key(c, b.line, b.col, "E"));
-      let tk: ast.Expr = hit(branch_key(c, b.line, b.col, "T"));
+      let ev = hit(branch_key(c, b.line, b.col, "E"));
+      let tk = hit(branch_key(c, b.line, b.col, "T"));
       if (b.op == "&&") {
         return ast.ExprBinary { ...b, left: and(ev, b.left), right: and(tk, b.right) };
       }
@@ -374,9 +374,9 @@ function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
 function cover_value_lambda(lm: ast.ExprLambda, c: Ctx): ast.Expr {
   let body: ast.Stmt[] = [];
   let prefix: ast.Stmt[] = [];
-  let last: i32 = 0;
+  let last = 0;
   for st in lm.body {
-    let line: i32 = ast.stmt_line(st);
+    let line = ast.stmt_line(st);
     if (line > 0 && line != last) {
       prefix = prefix.append(hit_stmt(line_key(c, line)));
       last = line;
@@ -393,9 +393,9 @@ function cover_value_lambda(lm: ast.ExprLambda, c: Ctx): ast.Expr {
 function helper_module(keys: string[], ret: string): parser.Module {
   let roots = "__fern_cov_hit __fern_cov_report";
   if (ret == "i32") {
-    roots = roots + " __fern_cov_entry_i32";
+    roots += " __fern_cov_entry_i32";
   } else if (ret == "" || ret == "void") {
-    roots = roots + " __fern_cov_entry_void";
+    roots += " __fern_cov_entry_void";
   }
   let names: string[] = [];
   for key in keys {

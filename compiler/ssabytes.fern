@@ -35,7 +35,7 @@ pub function read_word(value: i32, bytes: i32): ir.Op {
 }
 
 pub function read(value: i32, indexed: boolean, unchecked: boolean): ir.Op {
-  let op: ir.Op = ir.op_call_direct(length_name(), 1);
+  let op = ir.op_call_direct(length_name(), 1);
   if (indexed) {
     op = ir.op_call_direct(get_name(unchecked), 2);
   }
@@ -64,7 +64,7 @@ function read_value(op: ir.Op, call_direct: i32): i32 {
   if (op.kind_tag != call_direct && op.str == element_name()) {
     return op.decl;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function read_data(value: i32): ir.Op {
@@ -74,8 +74,8 @@ pub function read_data(value: i32): ir.Op {
 function decode(value: i32, base: i32): ir.Op[] {
   return [
     ir.op_load_local(value), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0),
-    ir.op_load_local(value), ir.op_const_i32(0 - 2), ir.op_raw_addr(), ir.view_string(ir.op_str_data()), ir.op_store_local(base),
-    ir.op_load_local(value), ir.op_const_i32(0 - 2), ir.op_raw_addr(), ir.view_string(ir.op_str_len()), ir.op_store_local(base + 1),
+    ir.op_load_local(value), ir.op_const_i32(-2), ir.op_raw_addr(), ir.view_string(ir.op_str_data()), ir.op_store_local(base),
+    ir.op_load_local(value), ir.op_const_i32(-2), ir.op_raw_addr(), ir.view_string(ir.op_str_len()), ir.op_store_local(base + 1),
     ir.op_else(), ir.op_load_local(value), ir.op_const_i32(8), ir.op_raw_addr(), ir.op_store_local(base),
     ir.op_const_i32(0), ir.op_store_local(base + 1),
     ir.op_load_local(value), ir.op_const_i32(0), ir.op_bin("ne", ir.width_ptr(), false), ir.op_if(0),
@@ -97,8 +97,8 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     ops = abort_if(ops);
   }
   if (op.str == element_name()) {
-    let slot: ir.Op = ir.Op { ...op, str: "", decl: 0 - 1, i32_imm: 1 };
-    return joined(ops, [ir.op_load_local(base), ir.op_const_i32(0 - 8), ir.op_raw_addr(), ir.op_load_local(index), slot]);
+    let slot = ir.Op { ...op, str: "", decl: 0 - 1, i32_imm: 1 };
+    return joined(ops, [ir.op_load_local(base), ir.op_const_i32(-8), ir.op_raw_addr(), ir.op_load_local(index), slot]);
   }
   if (op.str == check_name()) {
     return ops.append(ir.op_const_i32(0));
@@ -113,8 +113,8 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
 }
 
 pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState {
-  let call_direct: i32 = ir.K_CALL_DIRECT;
-  let reads: boolean = false;
+  let call_direct = ir.K_CALL_DIRECT;
+  let reads = false;
   for op in r.ops {
     if (read_value(op, call_direct) >= 0) {
       reads = true;
@@ -125,34 +125,34 @@ pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState 
     return r;
   }
   let slots: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.n_locals) {
-    slots = slots.append(0 - 1);
-    i = i + 1;
+    slots = slots.append(-1);
+    i += 1;
   }
-  let next: i32 = r.n_locals;
+  let next = r.n_locals;
   for op in r.ops {
-    let value: i32 = read_value(op, call_direct);
+    let value = read_value(op, call_direct);
     if (value >= 0 && slots[value] < 0) {
       slots = slots.with(value, next);
-      next = next + 2;
+      next += 2;
     }
   }
   if (next == r.n_locals) {
     return r;
   }
-  let store_local: i32 = ir.K_STORE_LOCAL;
-  let tee_local: i32 = ir.K_TEE_LOCAL;
+  let store_local = ir.K_STORE_LOCAL;
+  let tee_local = ir.K_TEE_LOCAL;
   let ops: ir.Op[] = [];
   i = 0;
   while (i < r.n_params) {
     if (slots[i] >= 0) {
       ops = joined(ops, decode(i, slots[i]));
     }
-    i = i + 1;
+    i += 1;
   }
   for op in r.ops {
-    let value: i32 = read_value(op, call_direct);
+    let value = read_value(op, call_direct);
     if (value >= 0) {
       ops = joined(ops, decoded_read(op, slots[value], next));
     } else {
@@ -185,7 +185,7 @@ function scaled(width: i32): ir.Op[] {
   if (width == 64) {
     stride = [ir.op_const_i64(8i64)];
   }
-  let ops: ir.Op[] = joined([ir.op_int_extend(true)], stride);
+  let ops = joined([ir.op_int_extend(true)], stride);
   return joined(ops, [ir.op_bin("mul", 64, false), ir.op_int_wrap_ptr()]);
 }
 
@@ -213,7 +213,7 @@ function tagged(): ir.Op[] {
 }
 
 function string_base(): ir.Op[] {
-  return [ir.op_load_local(0), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
+  return [ir.op_load_local(0), ir.op_const_i32(-2), ir.op_raw_addr()];
 }
 
 function joined(own left: ir.Op[], right: ir.Op[]): ir.Op[] {
@@ -224,7 +224,7 @@ function joined(own left: ir.Op[], right: ir.Op[]): ir.Op[] {
 }
 
 function reader(name: string, string_ops: ir.Op[], array_ops: ir.Op[], params: i32): irtables.LowerState {
-  let ops: ir.Op[] = joined(tagged(), string_base());
+  let ops = joined(tagged(), string_base());
   ops = joined(ops, string_ops);
   ops = joined(ops, [ir.op_return(), ir.op_end(), ir.op_load_local(0)]);
   ops = joined(ops, array_ops);
@@ -301,7 +301,7 @@ function crc32_view(name: string, string_op: ir.Op, array_op: ir.Op): irtables.L
     ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("eq", ir.width_ptr(), false), ir.op_if(0),
     ir.op_load_local(0), ir.op_return(), ir.op_end(),
     ir.op_load_local(1), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0),
-    ir.op_load_local(0), ir.op_load_local(1), ir.op_const_i32(0 - 2), ir.op_raw_addr(),
+    ir.op_load_local(0), ir.op_load_local(1), ir.op_const_i32(-2), ir.op_raw_addr(),
     string_op, ir.op_return(), ir.op_end(),
     ir.op_load_local(0), ir.op_load_local(1), ir.packed(array_op), ir.op_return(),
   ]);
@@ -321,8 +321,8 @@ pub function mismatch_name(): string {
 }
 
 function mismatch(): irtables.LowerState {
-  let a: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
-  let b: ir.Op[] = [ir.op_load_local(2), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
+  let a: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(-2), ir.op_raw_addr()];
+  let b: ir.Op[] = [ir.op_load_local(2), ir.op_const_i32(-2), ir.op_raw_addr()];
   let ops: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)];
   ops = joined(ops, [ir.op_load_local(2), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)]);
   ops = joined(ops, a);

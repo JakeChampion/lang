@@ -48,8 +48,8 @@ function target_at(p: lspquery.Program, line: i32, col: i32): Option[Target] {
 }
 
 function node_target(p: lspquery.Program, q: lspquery.Query, f: lspquery.Found): Option[Target] {
-  let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
-  let s: checker.Scope = lspquery.scope_at(q.v, fd, q.site);
+  let fd = q.v.mod.funcs[f.fd];
+  let s = lspquery.scope_at(q.v, fd, q.site);
   match (f.expr) {
     ast.ExprIdent(id) => {
       if (f.kind == lspquery.K_IDENT) {
@@ -76,7 +76,7 @@ function node_target(p: lspquery.Program, q: lspquery.Query, f: lspquery.Found):
 }
 
 function global_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, name: string): Option[Target] {
-  let owner: string = checker.variant_enum(s, name);
+  let owner = checker.variant_enum(s, name);
   if (owner.len() > 0) {
     return Some(variant_target(p, v, s, owner, name));
   }
@@ -89,7 +89,7 @@ function global_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
 }
 
 function type_named(p: lspquery.Program, v: checker.QueryView, name: string): Option[Target] {
-  let decl: Option[lspquery.SourceSpan] = lspquery.type_decl_def(p, v, name);
+  let decl = lspquery.type_decl_def(p, v, name);
   match (decl) {
     Some(_) => {},
     None => {
@@ -104,7 +104,7 @@ function variant_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sc
 }
 
 function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Option[Target] {
-  let owner: string = lspquery.enum_qualifier(s, fa);
+  let owner = lspquery.enum_qualifier(s, fa);
   if (owner.len() > 0) {
     return Some(variant_target(p, v, s, owner, fa.field));
   }
@@ -117,7 +117,7 @@ function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
     }
     return None;
   }
-  let decl: Option[lspquery.SourceSpan] = lspquery.field_def(p, v, s, fa);
+  let decl = lspquery.field_def(p, v, s, fa);
   if let typeinfo.TypeStruct(st) = checker.expr_type(fa.obj, s) {
     if let Some(_) = decl {
       return Some(Target { ...named_target(R_FIELD, fa.field, decl), owner: st.name });
@@ -127,7 +127,7 @@ function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
 }
 
 function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): Option[checker.MethodSig] {
-  let t: typeinfo.Type = checker.expr_type(fa.obj, s);
+  let t = checker.expr_type(fa.obj, s);
   if let typeinfo.TypeArray(a) = t {
     return checker.array_method_sig(s, fa.field, a.view);
   }
@@ -135,9 +135,9 @@ function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): Option[checker.Me
 }
 
 function type_target(p: lspquery.Program, v: checker.QueryView, candidates: string[]): Option[Target] {
-  let s: checker.Scope = checker.module_scope(v);
+  let s = checker.module_scope(v);
   for c in candidates {
-    let owner: string = checker.variant_enum(s, c);
+    let owner = checker.variant_enum(s, c);
     let t: Option[Target] = if (owner.len() > 0) { Some(variant_target(p, v, s, owner, c)) } else { type_named(p, v, c) };
     if let Some(value) = t {
       return Some(value);
@@ -150,8 +150,8 @@ function declared_target(p: lspquery.Program, q: lspquery.Query): Option[Target]
   if (q.site.dot_col > 0) {
     return None;
   }
-  let m: i32 = util.pos_file_index(q.site.line);
-  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  let m = util.pos_file_index(q.site.line);
+  let toks = lspquery.module_toks(p, m);
   if let Some(t) = func_declared(q, toks, m) {
     return Some(t);
   }
@@ -164,7 +164,7 @@ function declared_target(p: lspquery.Program, q: lspquery.Query): Option[Target]
 function func_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Option[Target] {
   for fd in q.v.mod.funcs {
     if (lspquery.declared_in(fd.line, m) && lspquery.unprefixed(fd.name, q.quals.own) == q.site.name) {
-      let a: Option[lspquery.SourceSpan] = named_after(toks, fd.line, fd.col, q.site.name);
+      let a = named_after(toks, fd.line, fd.col, q.site.name);
       if (at_site(a, q.site) && fd.receiver_type.len() > 0) {
         return Some(Target { ...named_target(R_METHOD, q.site.name, a), at_line: fd.line, at_col: fd.col });
       }
@@ -195,13 +195,13 @@ function type_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.To
 }
 
 function struct_declared(q: lspquery.Query, toks: lspquery.Tok[], sd: parser.StructDecl): Option[Target] {
-  let name: string = lspquery.unprefixed(sd.name, q.quals.own);
-  let a: Option[lspquery.SourceSpan] = named_after(toks, sd.line, sd.col, name);
+  let name = lspquery.unprefixed(sd.name, q.quals.own);
+  let a = named_after(toks, sd.line, sd.col, name);
   if (name == q.site.name && at_site(a, q.site)) {
     return Some(named_target(R_TYPE, sd.name, a));
   }
   let span: lspquery.SourceSpan = match (a) { Some(value) => value, None => { return None; } };
-  let f: Option[lspquery.SourceSpan] = tok_answer(toks, lspquery.field_tok(toks, lspquery.after(toks, span.line, span.col + span.len), q.site.name));
+  let f = tok_answer(toks, lspquery.field_tok(toks, lspquery.after(toks, span.line, span.col + span.len), q.site.name));
   if (at_site(f, q.site)) {
     return Some(Target { ...named_target(R_FIELD, q.site.name, f), owner: sd.name });
   }
@@ -209,13 +209,13 @@ function struct_declared(q: lspquery.Query, toks: lspquery.Tok[], sd: parser.Str
 }
 
 function enum_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.Tok[], ed: parser.EnumDecl): Option[Target] {
-  let a: Option[lspquery.SourceSpan] = named_after(toks, ed.line, ed.col, lspquery.unprefixed(ed.name, q.quals.own));
+  let a = named_after(toks, ed.line, ed.col, lspquery.unprefixed(ed.name, q.quals.own));
   if (at_site(a, q.site)) {
     return Some(named_target(R_TYPE, ed.name, a));
   }
   for vn in ed.variant_names {
     if (lspquery.unprefixed(vn, q.quals.own) == q.site.name) {
-      let va: Option[lspquery.SourceSpan] = lspquery.variant_def(p, q.v, ed.name, vn);
+      let va = lspquery.variant_def(p, q.v, ed.name, vn);
       if (at_site(va, q.site)) {
         return Some(Target { ...named_target(R_VARIANT, q.site.name, va), owner: ed.name });
       }
@@ -225,14 +225,14 @@ function enum_declared(p: lspquery.Program, q: lspquery.Query, toks: lspquery.To
 }
 
 function local_declared(q: lspquery.Query, toks: lspquery.Tok[], m: i32): Option[Target] {
-  let fi: i32 = lspquery.enclosing(q.v.mod, toks, m, q.site.line, q.site.col);
+  let fi = lspquery.enclosing(q.v.mod, toks, m, q.site.line, q.site.col);
   if (fi < 0) {
     return None;
   }
-  let fd: parser.FuncDecl = q.v.mod.funcs[fi];
+  let fd = q.v.mod.funcs[fi];
   for b in lexical.resolve_func(fd).bindings {
     if (b.name == q.site.name) {
-      let a: Option[lspquery.SourceSpan] = lspquery.binding_decl(toks, b, lspquery.is_param(b, fd), b.name);
+      let a = lspquery.binding_decl(toks, b, lspquery.is_param(b, fd), b.name);
       if (at_site(a, q.site)) {
         return Some(Target { ...named_target(R_LOCAL, b.symbol, a), fd: fi });
       }
@@ -259,7 +259,7 @@ function at_site(a: Option[lspquery.SourceSpan], site: lspquery.Site): boolean {
 struct Anchor { line: i32, col: i32, pattern: boolean }
 
 function uses(p: lspquery.Program, t: Target): Anchor[] {
-  let v: checker.QueryView = lspquery.view_of(p).types;
+  let v = lspquery.view_of(p).types;
   if (t.kind == R_LOCAL) {
     return local_uses(v.mod.funcs[t.fd], t.name);
   }
@@ -319,8 +319,8 @@ function global_uses(funcs: parser.FuncDecl[], name: string): Anchor[] {
 struct VariantFind { s: checker.Scope, owner: string, name: string, prefix: string, out: Anchor[] }
 
 function variant_uses(v: checker.QueryView, t: Target): Anchor[] {
-  let s: checker.Scope = checker.module_scope(v);
-  let f: VariantFind = VariantFind { s: s, owner: t.owner, name: t.name, prefix: checker.union_module(s, t.owner), out: [] };
+  let s = checker.module_scope(v);
+  let f = VariantFind { s: s, owner: t.owner, name: t.name, prefix: checker.union_module(s, t.owner), out: [] };
   for fd in v.mod.funcs {
     if (fd.line > 0) {
       for st in lexical.resolve_func(fd).func.body {
@@ -384,7 +384,7 @@ struct MemberSite { line: i32, col: i32, called: boolean, fa: ast.ExprFieldAcces
 struct Sites { name: string, out: MemberSite[] }
 
 function member_sites(body: ast.Stmt[], name: string): MemberSite[] {
-  let f: Sites = Sites { name: name, out: [] };
+  let f = Sites { name: name, out: [] };
   for st in body {
     f = astwalk.fold_stmt_nodes(st, f, sites_stmt, sites_expr, astwalk.descend_all);
   }
@@ -410,7 +410,7 @@ function sites_expr(e: ast.Expr, own f: Sites): Sites {
       }
     },
     ast.ExprStructLit(sl) => {
-      let i: i32 = util.index_of_str(sl.field_names, f.name);
+      let i = util.index_of_str(sl.field_names, f.name);
       if (i >= 0 && i < sl.field_lines.len()) {
         return Sites { ...f, out: f.out.append(MemberSite { line: sl.field_lines[i], col: sl.field_cols[i], called: false, fa: no_access(), literal: sl.type_name }) };
       }
@@ -435,8 +435,8 @@ function member_is(v: checker.QueryView, fd: parser.FuncDecl, site: MemberSite, 
   if (site.called != (t.kind == R_METHOD)) {
     return false;
   }
-  let at: lspquery.Site = lspquery.access_site(site.fa);
-  let s: checker.Scope = lspquery.scope_at(v, fd, at);
+  let at = lspquery.access_site(site.fa);
+  let s = lspquery.scope_at(v, fd, at);
   if (site.called) {
     if let Some(ms) = method_of(s, site.fa) {
       return ms.line == t.at_line && ms.col == t.at_col;
@@ -451,7 +451,7 @@ function member_is(v: checker.QueryView, fd: parser.FuncDecl, site: MemberSite, 
 
 function placed(p: lspquery.Program, t: Target, anchors: Anchor[]): Ref[] {
   let out: Ref[] = [];
-  let m: i32 = 0;
+  let m = 0;
   while (m < p.srcs.len()) {
     let mine: Anchor[] = [];
     for a in anchors {
@@ -459,18 +459,18 @@ function placed(p: lspquery.Program, t: Target, anchors: Anchor[]): Ref[] {
         mine = mine.append(a);
       }
     }
-    let quals: string[] = type_quals(p, t, m);
+    let quals = type_quals(p, t, m);
     let declared: boolean = match (t.decl) { Some(span) => util.pos_file_index(span.line) == m, None => false };
     if (mine.len() > 0 || quals.len() > 0 || declared) {
       out = module_refs(p, t, m, mine, quals, out);
     }
-    m = m + 1;
+    m += 1;
   }
   return out;
 }
 
 function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], quals: string[], own out: Ref[]): Ref[] {
-  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  let toks = lspquery.module_toks(p, m);
   let marks: i32[] = [];
   for tok in toks {
     marks = marks.append(0);
@@ -490,12 +490,12 @@ function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], 
       marks = marked(marks, decl_tok(toks, decl), 2);
     }
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < toks.len()) {
     if (marks[i] > 0) {
       out = out.append(Ref { line: toks[i].line, col: toks[i].col, len: toks[i].text.len(), decl: marks[i] == 2 });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -508,15 +508,15 @@ function marked(own marks: i32[], i: i32, mark: i32): i32[] {
 }
 
 function decl_tok(toks: lspquery.Tok[], a: lspquery.SourceSpan): i32 {
-  let i: i32 = lspquery.tok_at(toks, a.line, a.col);
+  let i = lspquery.tok_at(toks, a.line, a.col);
   if (i >= 0 && toks[i].ident) {
     return i;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): i32 {
-  let i: i32 = lspquery.tok_at(toks, a.line, a.col);
+  let i = lspquery.tok_at(toks, a.line, a.col);
   if (i < 0) {
     return i;
   }
@@ -524,20 +524,20 @@ function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): i32 {
   if (i < toks.len() && toks[i].ident && toks[i].text == name) {
     return i;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function pattern_marks(toks: lspquery.Tok[], a: Anchor, name: string, own marks: i32[]): i32[] {
-  let i: i32 = lspquery.tok_at(toks, a.line, a.col);
+  let i = lspquery.tok_at(toks, a.line, a.col);
   if (i < 0) {
     return marks;
   }
-  let end: i32 = lspquery.pattern_end(toks, i);
+  let end = lspquery.pattern_end(toks, i);
   while (i < end) {
     if (toks[i].ident && toks[i].text == name && lspquery.text_at(toks, i + 1) != ":") {
       marks = marked(marks, i, 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return marks;
 }
@@ -560,7 +560,7 @@ function type_quals(p: lspquery.Program, t: Target, m: i32): string[] {
   if (match (t.decl) { Some(span) => util.pos_file_index(span.line) == m, None => false }) {
     out = out.append("");
   }
-  let q: flatten.Qualifiers = lspquery.quals_of(lspquery.view_of(p), m);
+  let q = lspquery.quals_of(lspquery.view_of(p), m);
   for alias in q.aliases {
     if (flatten.qualified_name(q, alias, t.spelled) == t.name) {
       out = out.append(alias);
@@ -571,10 +571,10 @@ function type_quals(p: lspquery.Program, t: Target, m: i32): string[] {
 
 function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[], quals: string[], own marks: i32[]): i32[] {
   let values: Read[] = [];
-  let scanned: boolean = false;
-  let i: i32 = 0;
+  let scanned = false;
+  let i = 0;
   while (i < toks.len()) {
-    let at: i32 = type_ref_at(toks, i, t.spelled, quals);
+    let at = type_ref_at(toks, i, t.spelled, quals);
     if (at >= 0 && !(i + 1 < toks.len() && !toks[i + 1].ident && toks[i + 1].text == "(")) {
       if (!scanned) {
         values = value_idents(lspquery.view_of(p).types.mod.funcs, m, t.spelled);
@@ -584,25 +584,25 @@ function type_marks(p: lspquery.Program, t: Target, m: i32, toks: lspquery.Tok[]
         marks = marked(marks, i, 1);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return marks;
 }
 
 function type_ref_at(toks: lspquery.Tok[], i: i32, name: string, quals: string[]): i32 {
   if (!toks[i].ident || toks[i].text != name) {
-    return 0 - 1;
+    return -1;
   }
   if (!lspquery.punct_before(toks, i, ".")) {
     if (util.has_str(quals, "")) {
       return i;
     }
-    return 0 - 1;
+    return -1;
   }
   if (i >= 2 && toks[i - 2].text.len() > 0 && util.has_str(quals, toks[i - 2].text) && !lspquery.punct_before(toks, i - 2, ".")) {
     return i - 2;
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct Read { line: i32, col: i32, value: boolean }
@@ -610,7 +610,7 @@ struct Read { line: i32, col: i32, value: boolean }
 struct Reads { name: string, out: Read[] }
 
 function value_idents(funcs: parser.FuncDecl[], m: i32, name: string): Read[] {
-  let f: Reads = Reads { name: name, out: [] };
+  let f = Reads { name: name, out: [] };
   for fd in funcs {
     if (lspquery.declared_in(fd.line, m)) {
       for st in fd.body {
@@ -628,8 +628,8 @@ function reads_stmt(st: ast.Stmt, own f: Reads): Reads {
 function reads_expr(e: ast.Expr, own f: Reads): Reads {
   match (e) {
     ast.ExprIdent(id) => {
-      let n: i32 = f.out.len();
-      let qualifies: boolean = n > 0 && !f.out[n - 1].value && f.out[n - 1].line == id.line && f.out[n - 1].col == id.col;
+      let n = f.out.len();
+      let qualifies = n > 0 && !f.out[n - 1].value && f.out[n - 1].line == id.line && f.out[n - 1].col == id.col;
       if (!qualifies && util.str_has_suffix(id.name, f.name)) {
         return Reads { ...f, out: f.out.append(Read { line: id.line, col: id.col, value: true }) };
       }

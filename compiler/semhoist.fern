@@ -5,13 +5,13 @@ import "./util";
 pub struct Hoisted { f: ssasem.Func, moved: i32 }
 
 pub function hoist(f: ssasem.Func): Hoisted {
-  let g: ssa.SFunc = f.graph;
-  let moved: i32 = 0;
+  let g = f.graph;
+  let moved = 0;
   let blocks: ssa.SBlock[] = [];
   for b in g.blocks {
     let (insts, n) = hoist_block(b.insts);
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
-    moved = moved + n;
+    moved += n;
   }
   if (moved == 0) {
     return Hoisted { f: f, moved: 0 };
@@ -20,20 +20,20 @@ pub function hoist(f: ssasem.Func): Hoisted {
 }
 
 function hoist_block(insts: ssa.SInst[]): (ssa.SInst[], i32) {
-  let moved: i32 = 0;
-  let p: i32 = 0;
+  let moved = 0;
+  let p = 0;
   while (p < insts.len()) {
-    let v: i32 = consumed(insts[p]);
+    let v = consumed(insts[p]);
     let lifted: i32[] = [];
     if (v >= 0) {
       lifted = first_read(insts, p, v);
     }
     if (lifted.len() > 0) {
       insts = move_before(insts, p, lifted);
-      moved = moved + 1;
-      p = p + lifted.len();
+      moved += 1;
+      p += lifted.len();
     } else {
-      p = p + 1;
+      p += 1;
     }
   }
   return (insts, moved);
@@ -43,42 +43,42 @@ function consumed(ins: ssa.SInst): i32 {
   if ((ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.truncate()) && ins.args.len() > 0) {
     return ins.args[0];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function first_read(insts: ssa.SInst[], p: i32, v: i32): i32[] {
-  let q: i32 = p + 1;
+  let q = p + 1;
   while (q < insts.len() && passable(insts[q])) {
     if (reads(insts[q], v)) {
       return feeders(insts, p, q);
     }
-    q = q + 1;
+    q += 1;
   }
   return [];
 }
 
 function reads(ins: ssa.SInst, v: i32): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   return (k == ssasem.array_get() || k == ssasem.length()) && ins.args.len() > 0 && ins.args[0] == v;
 }
 
 function passable(ins: ssa.SInst): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   return ssasem.reorderable(ins) || k == ssasem.array_get() || k == ssasem.with() || k == ssasem.append();
 }
 
 function feeders(insts: ssa.SInst[], p: i32, q: i32): i32[] {
   let keep: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < insts.len()) {
     keep = keep.append(i == q);
-    i = i + 1;
+    i += 1;
   }
-  let at: i32 = q;
+  let at = q;
   while (at > p) {
     if (keep[at]) {
       for a in insts[at].args {
-        let d: i32 = defined_at(insts, p, at, a);
+        let d = defined_at(insts, p, at, a);
         if (d == p || d > p && !ssasem.reorderable(insts[d])) {
           return [];
         }
@@ -87,7 +87,7 @@ function feeders(insts: ssa.SInst[], p: i32, q: i32): i32[] {
         }
       }
     }
-    at = at - 1;
+    at -= 1;
   }
   let out: i32[] = [];
   i = p + 1;
@@ -95,28 +95,28 @@ function feeders(insts: ssa.SInst[], p: i32, q: i32): i32[] {
     if (keep[i]) {
       out = out.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function defined_at(insts: ssa.SInst[], p: i32, before: i32, v: i32): i32 {
-  let i: i32 = p;
+  let i = p;
   while (i < before) {
     if (insts[i].result == v) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function move_before(insts: ssa.SInst[], p: i32, lifted: i32[]): ssa.SInst[] {
   let out: ssa.SInst[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < p) {
     out = out.append(insts[i]);
-    i = i + 1;
+    i += 1;
   }
   for at in lifted {
     out = out.append(insts[at]);
@@ -125,7 +125,7 @@ function move_before(insts: ssa.SInst[], p: i32, lifted: i32[]): ssa.SInst[] {
     if (util.index_of_i32(lifted, i) < 0) {
       out = out.append(insts[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

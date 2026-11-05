@@ -5,28 +5,28 @@ import "../checker";
 import "../modloader";
 
 function main(): i32 {
-  let a: string[] = args();
+  let a = args();
   if (a.len() < 2) {
     eprint("usage: checker_modload_run <entry.fern>");
     return 2;
   }
-  let entry_path: string = a[1];
+  let entry_path = a[1];
   match (read_file(entry_path)) {
     Ok(src) => {
-      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
+      let entry = parser.parse_module(lexer.tokenize(src));
+      let g = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
       entry = g.entry;
-      let loaded: flatten.LoadedModule[] = g.loaded;
-      let missing: string[] = g.missing;
+      let loaded = g.loaded;
+      let missing = g.missing;
       if (modloader.report_unresolved(missing, "checker_modload_run")) {
         return 2;
       }
-      let merged: parser.Module = modloader.bundle(entry_path, entry, loaded, "", "");
-      let mt: checker.ModuleTypes = checker.check_module(merged);
-      let j: i32 = 0;
+      let merged = modloader.bundle(entry_path, entry, loaded, "", "");
+      let mt = checker.check_module(merged);
+      let j = 0;
       while (j < mt.diags.len()) {
         print(mt.diags[j].code + "\t" + mt.diags[j].message);
-        j = j + 1;
+        j += 1;
       }
       if (mt.diags.len() > 0) {
         return 1;

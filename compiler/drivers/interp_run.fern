@@ -4,7 +4,7 @@ import "./rundriver";
 import "../interp";
 
 function main(): i32 {
-  let mod: parser.Module = rundriver.parse_stdin("interp_run");
+  let mod = rundriver.parse_stdin("interp_run");
   let (is_status, status) = interp.exit_status(interp.eval_module(mod));
   if (is_status) {
     return status;

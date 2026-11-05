@@ -62,7 +62,7 @@ function controls(pair: ssaprepare.Emitted[], arch: string): void {
     let s = row.body.selected;
     let origin = physicalbody.Origin { ...s.origin, producer: s.producers.len() };
     check(pair.with(i, ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { ...s, origin: origin } } }), arch, false);
-    i = i + 1;
+    i += 1;
   }
   let wrong: ssaprepare.Emitted[] = [];
   for row in pair {

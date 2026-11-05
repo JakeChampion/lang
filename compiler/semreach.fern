@@ -10,42 +10,42 @@ import "./util";
 pub struct Reached { funcs: ssasem.Func[], live: boolean[], rewritten: boolean[], ok: boolean }
 
 pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blocked: boolean[], roots: boolean[]): Reached {
-  let ix: util.NameIndex = util.name_index(names);
-  let u: Universe = universe(funcs, usable);
-  let op: util.NameIndex = opaque_types(funcs, ix, usable, roots, u);
-  let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u) };
-  let w: World = start(ctx, roots, op, zeroed(funcs, usable));
+  let ix = util.name_index(names);
+  let u = universe(funcs, usable);
+  let op = opaque_types(funcs, ix, usable, roots, u);
+  let ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u) };
+  let w = start(ctx, roots, op, zeroed(funcs, usable));
   let walks: Walk[] = [];
   while (walks.len() < funcs.len()) {
     walks = walks.append(Walk { vals: [], exec: [], edges: [], edge_at: [], stale: [], keys: [], cut: [], waits: [], changed: false });
   }
   while (w.next < w.queue.len()) {
-    let i: i32 = w.queue[w.next];
+    let i = w.queue[w.next];
     w = World { ...w, next: w.next + 1, queued: w.queued.with(i, false) };
     if (usable[i]) {
-      let wk: Walk = walk(ctx, w, i);
+      let wk = walk(ctx, w, i);
       walks = walks.with(i, wk);
       w = absorb(ctx, w, i, wk);
     }
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     if (w.reach[i] && blocked[i]) {
       return Reached { funcs: funcs, live: w.reach, rewritten: [], ok: false };
     }
-    i = i + 1;
+    i += 1;
   }
   let out: ssasem.Func[] = [];
   let changed: boolean[] = [];
   i = 0;
   while (i < funcs.len()) {
-    let r: Rewritten = Rewritten { f: funcs[i], changed: false };
+    let r = Rewritten { f: funcs[i], changed: false };
     if (w.reach[i] && usable[i]) {
       r = rewritten(funcs[i], walks[i]);
     }
     out = out.append(r.f);
     changed = changed.append(r.changed);
-    i = i + 1;
+    i += 1;
   }
   return Reached { funcs: out, live: w.reach, rewritten: changed, ok: true };
 }
@@ -101,8 +101,8 @@ function variant_key(t: typeinfo.Type, name: string): string {
 }
 
 function universe(funcs: ssasem.Func[], usable: boolean[]): Universe {
-  let u: Universe = Universe { fields: util.name_index([]), field_owner: [], variants: util.name_index([]), variant_owner: [], variant_first: [], variant_last: [], rec_ix: util.name_index([]), recs: [], rec_fields: [], enum_ix: util.name_index([]), enums: [] };
-  let i: i32 = 0;
+  let u = Universe { fields: util.name_index([]), field_owner: [], variants: util.name_index([]), variant_owner: [], variant_first: [], variant_last: [], rec_ix: util.name_index([]), recs: [], rec_fields: [], enum_ix: util.name_index([]), enums: [] };
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
       for r in funcs[i].records.list {
@@ -112,33 +112,33 @@ function universe(funcs: ssasem.Func[], usable: boolean[]): Universe {
         u = with_enum(u, e);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return u;
 }
 
 function with_record(u: Universe, r: semrecords.Record): Universe {
-  let owner: string = ssasem.type_key(r.ty);
+  let owner = ssasem.type_key(r.ty);
   if (u.rec_ix.has(owner)) {
     return u;
   }
   u = Universe { ...u, rec_ix: u.rec_ix.added(owner), recs: u.recs.append(r) };
   let at: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < r.fields.len()) {
     if (tracked(r.fields[k].ty)) {
       at = at.append(u.field_owner.len());
       u = Universe { ...u, fields: u.fields.added(field_key(r.ty, k)), field_owner: u.field_owner.append(owner) };
     } else {
-      at = at.append(0 - 1);
+      at = at.append(-1);
     }
-    k = k + 1;
+    k += 1;
   }
   return Universe { ...u, rec_fields: u.rec_fields.append(at) };
 }
 
 function with_enum(u: Universe, e: semrecords.Enum): Universe {
-  let owner: string = ssasem.type_key(e.ty);
+  let owner = ssasem.type_key(e.ty);
   if (u.enum_ix.has(owner)) {
     return u;
   }
@@ -146,8 +146,8 @@ function with_enum(u: Universe, e: semrecords.Enum): Universe {
   if (e.layout != semrecords.layout_variant() && e.layout != semrecords.layout_option()) {
     return u;
   }
-  let first: i32 = u.variant_owner.len();
-  let last: i32 = first + e.variants.len() - 1;
+  let first = u.variant_owner.len();
+  let last = first + e.variants.len() - 1;
   for v in e.variants {
     u = Universe { ...u, variants: u.variants.added(variant_key(e.ty, v.name)), variant_owner: u.variant_owner.append(owner), variant_first: u.variant_first.append(first), variant_last: u.variant_last.append(last) };
   }
@@ -155,11 +155,11 @@ function with_enum(u: Universe, e: semrecords.Enum): Universe {
 }
 
 function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], roots: boolean[], u: Universe): util.NameIndex {
-  let op: util.NameIndex = util.name_index([]);
-  let i: i32 = 0;
+  let op = util.name_index([]);
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
-      let f: ssasem.Func = funcs[i];
+      let f = funcs[i];
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.result >= 0 && ins.result < f.values.len() && arrives(ins, f.values[ins.result], ix, usable, u)) {
@@ -173,13 +173,13 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return op;
 }
 
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[], u: Universe): boolean {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
     return call_arrives(ins, ix, usable);
   }
@@ -202,7 +202,7 @@ function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): bo
   if (ssasem.is_dyn_call(ins.str) || util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
     return false;
   }
-  let g: i32 = ix.find(ins.str);
+  let g = ix.find(ins.str);
   return g < 0 || !usable[g];
 }
 
@@ -222,7 +222,7 @@ function is_record(t: typeinfo.Type): boolean {
 
 function is_option_enum(t: typeinfo.Type, u: Universe): boolean {
   if let typeinfo.TypeUnion(_) = t {
-    let e: i32 = u.enum_ix.find(ssasem.type_key(t));
+    let e = u.enum_ix.find(ssasem.type_key(t));
     return e >= 0 && u.enums[e].layout == semrecords.layout_option();
   }
   return false;
@@ -230,7 +230,7 @@ function is_option_enum(t: typeinfo.Type, u: Universe): boolean {
 
 function is_variant_enum(t: typeinfo.Type, u: Universe): boolean {
   if let typeinfo.TypeUnion(_) = t {
-    let e: i32 = u.enum_ix.find(ssasem.type_key(t));
+    let e = u.enum_ix.find(ssasem.type_key(t));
     return e >= 0 && u.enums[e].layout == semrecords.layout_variant();
   }
   return false;
@@ -277,13 +277,13 @@ function opaque_all(ts: typeinfo.Type[], op: util.NameIndex, u: Universe): util.
 
 function held_types(u: Universe, key: string): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
-  let r: i32 = u.rec_ix.find(key);
+  let r = u.rec_ix.find(key);
   if (r >= 0) {
     for fl in u.recs[r].fields {
       out = out.append(fl.ty);
     }
   }
-  let e: i32 = u.enum_ix.find(key);
+  let e = u.enum_ix.find(key);
   if (e >= 0) {
     for v in u.enums[e].variants {
       for fl in v.fields {
@@ -296,10 +296,10 @@ function held_types(u: Universe, key: string): typeinfo.Type[] {
 
 function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
-      let f: ssasem.Func = funcs[i];
+      let f = funcs[i];
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.kind_tag == ssasem.zero() && ins.result >= 0 && ins.result < f.values.len()) {
@@ -308,7 +308,7 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -324,7 +324,7 @@ function lists(n: i32): i32[][] {
 }
 
 function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
-  let l: i32[] = xs[at];
+  let l = xs[at];
   if (l.len() > 0 && l[l.len() - 1] == i) {
     return xs;
   }
@@ -332,14 +332,14 @@ function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
 }
 
 function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): i32[][] {
-  let out: i32[][] = lists(funcs.len());
-  let i: i32 = 0;
+  let out = lists(funcs.len());
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
       for b in funcs[i].graph.blocks {
         for ins in b.insts {
           if (ins.kind_tag == ssasem.call()) {
-            let g: i32 = ix.find(ins.str);
+            let g = ix.find(ins.str);
             if (g >= 0) {
               out = noted(out, g, i);
             }
@@ -347,21 +347,21 @@ function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[])
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
-  let out: i32[][] = lists(u.field_owner.len());
-  let i: i32 = 0;
+  let out = lists(u.field_owner.len());
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
-      let f: ssasem.Func = funcs[i];
+      let f = funcs[i];
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1) {
-            let k: i32 = u.fields.find(field_key(f.values[ins.args[0]], ins.imm));
+            let k = u.fields.find(field_key(f.values[ins.args[0]], ins.imm));
             if (k >= 0) {
               out = noted(out, k, i);
             }
@@ -369,21 +369,21 @@ function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
-  let out: i32[][] = lists(u.variant_owner.len());
-  let i: i32 = 0;
+  let out = lists(u.variant_owner.len());
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
-      let f: ssasem.Func = funcs[i];
+      let f = funcs[i];
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.kind_tag == ssasem.variant_is() && ins.args.len() == 1) {
-            let v: i32 = u.variants.find(variant_key(f.values[ins.args[0]], ins.str));
+            let v = u.variants.find(variant_key(f.values[ins.args[0]], ins.str));
             if (v >= 0) {
               out = noted(out, v, i);
             }
@@ -391,21 +391,21 @@ function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
-  let out: i32[][] = lists(u.recs.len());
-  let i: i32 = 0;
+  let out = lists(u.recs.len());
+  let i = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
-      let f: ssasem.Func = funcs[i];
+      let f = funcs[i];
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.kind_tag == ssasem.length()) {
-            let r: i32 = element_record(u, f.values[ins.args[0]]);
+            let r = element_record(u, f.values[ins.args[0]]);
             if (r >= 0) {
               out = noted(out, r, i);
             }
@@ -413,7 +413,7 @@ function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -422,7 +422,7 @@ function own_record(u: Universe, t: typeinfo.Type): i32 {
   if let typeinfo.TypeStruct(_) = t {
     return u.rec_ix.find(ssasem.type_key(t));
   }
-  return 0 - 1;
+  return -1;
 }
 
 function element_record(u: Universe, t: typeinfo.Type): i32 {
@@ -431,14 +431,14 @@ function element_record(u: Universe, t: typeinfo.Type): i32 {
       return u.rec_ix.find(ssasem.type_key(a.elem));
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function keys_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
   let out: i32[][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < funcs.len()) {
-    let f: ssasem.Func = funcs[i];
+    let f = funcs[i];
     let keys: i32[] = [];
     if (usable[i]) {
       keys = util.minus_ones(f.graph.nvals);
@@ -451,13 +451,13 @@ function keys_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] 
       }
     }
     out = out.append(keys);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == ssasem.record_get()) {
     return u.fields.find(field_key(f.values[ins.args[0]], ins.imm));
   }
@@ -474,12 +474,12 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
     return element_record(u, f.values[ins.args[0]]);
   }
   if (k == ssasem.closure_new()) {
-    let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
+    let at = ssasem.find_contract_in(f.calls, ins.str);
     if (at >= 0 && f.calls[at].params.len() > 0) {
       return u.rec_ix.find(ssasem.type_key(f.calls[at].params[0]));
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 // waiters[r] are the functions with a call cut because no record r is built.
@@ -494,13 +494,13 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
   while (rets.len() < ctx.funcs.len()) {
     rets = rets.append(none());
   }
-  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), waiters: lists(ctx.u.recs.len()), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
-  let i: i32 = 0;
+  let w = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), waiters: lists(ctx.u.recs.len()), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
+  let i = 0;
   while (i < roots.len()) {
     if (roots[i]) {
       w = reached(w, i);
     }
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
@@ -511,7 +511,7 @@ function inhabited_at_start(u: Universe, op: util.NameIndex, zeros: typeinfo.Typ
     out = out.append(op.has(ssasem.type_key(r.ty)));
   }
   for t in zeros {
-    let r: i32 = u.rec_ix.find(ssasem.type_key(t));
+    let r = u.rec_ix.find(ssasem.type_key(t));
     if (r >= 0) {
       out = out.with(r, true);
     }
@@ -533,14 +533,14 @@ function opaque_fields(u: Universe, op: util.NameIndex): i64[] {
 
 function zero_fields(u: Universe, own fields: i64[], zeros: typeinfo.Type[]): i64[] {
   for t in zeros {
-    let r: i32 = u.rec_ix.find(ssasem.type_key(t));
-    let k: i32 = 0;
+    let r = u.rec_ix.find(ssasem.type_key(t));
+    let k = 0;
     while (r >= 0 && k < u.recs[r].fields.len()) {
-      let at: i32 = u.fields.find(field_key(t, k));
+      let at = u.fields.find(field_key(t, k));
       if (at >= 0) {
         fields = fields.with(at, join(fields[at], konst(0)));
       }
-      k = k + 1;
+      k += 1;
     }
   }
   return fields;
@@ -570,7 +570,7 @@ function reached(w: World, i: i32): World {
 }
 
 function reached_name(ctx: Ctx, w: World, name: string): World {
-  let g: i32 = ctx.ix.find(name);
+  let g = ctx.ix.find(name);
   if (g < 0) {
     return w;
   }
@@ -584,19 +584,19 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
 struct Walk { vals: i64[], exec: boolean[], edges: boolean[], edge_at: i32[], stale: boolean[], keys: i32[], cut: i32[], waits: i32[], changed: boolean }
 
 function walk(ctx: Ctx, w: World, i: i32): Walk {
-  let f: ssasem.Func = ctx.funcs[i];
-  let g: ssa.SFunc = f.graph;
-  let at: i32[] = ssadeps.position_of(g);
-  let edge_at: i32[] = edge_starts(g);
-  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: __alloc_bool(edge_at[g.blocks.len()]), edge_at: edge_at, stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
+  let f = ctx.funcs[i];
+  let g = f.graph;
+  let at = ssadeps.position_of(g);
+  let edge_at = edge_starts(g);
+  let wk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: __alloc_bool(edge_at[g.blocks.len()]), edge_at: edge_at, stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
   while (wk.changed) {
     wk = Walk { ...wk, changed: false };
-    let pos: i32 = 0;
+    let pos = 0;
     while (pos < g.blocks.len()) {
       if (wk.exec[pos]) {
         wk = walked_block(ctx, w, f, at, wk, pos);
       }
-      pos = pos + 1;
+      pos += 1;
     }
   }
   return wk;
@@ -615,8 +615,8 @@ function entry_values(g: ssa.SFunc): i64[] {
 }
 
 function edge_starts(g: ssa.SFunc): i32[] {
-  let starts: i32[] = __alloc_i32(g.blocks.len() + 1);
-  let n: i32 = 0;
+  let starts = __alloc_i32(g.blocks.len() + 1);
+  let n = 0;
   for pos in 0..g.blocks.len() {
     starts = starts.with(pos, n);
     n += g.blocks[pos].preds.len();
@@ -629,7 +629,7 @@ function valued(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa
   if (ins.result < 0 || ins.result >= f.graph.nvals) {
     return wk;
   }
-  let next: i64 = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
+  let next = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
   if (next == wk.vals[ins.result]) {
     return wk;
   }
@@ -639,24 +639,24 @@ function valued(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa
 // Where the block ends at call `ins`: 0 before it, when an argument holds no
 // value, 1 after it, when the callee cannot return, and -1 when it goes on.
 function call_cut(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): (Walk, i32) {
-  let r: i32 = none_held(ctx, w, f, wk, ins);
+  let r = none_held(ctx, w, f, wk, ins);
   if (r >= 0 && util.index_of_i32(wk.waits, r) < 0) {
     wk = Walk { ...wk, waits: wk.waits.append(r) };
   }
-  if (r != 0 - 1) {
+  if (r != -1) {
     return (wk, 0);
   }
   if (call_value(ctx, w, ins) == top()) {
     return (wk, 1);
   }
-  return (wk, 0 - 1);
+  return (wk, -1);
 }
 
 function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Walk {
-  let g: ssa.SFunc = f.graph;
-  let b: ssa.SBlock = g.blocks[pos];
+  let g = f.graph;
+  let b = g.blocks[pos];
   for n in 0..b.insts.len() {
-    let ins: ssa.SInst = b.insts[n];
+    let ins = b.insts[n];
     wk = valued(ctx, w, f, wk, pos, ins);
     if (ins.kind_tag == ssasem.call()) {
       let (next, off) = call_cut(ctx, w, f, wk, ins);
@@ -667,7 +667,7 @@ function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, p
     }
   }
   if (wk.cut[pos] >= 0) {
-    wk = Walk { ...wk, cut: wk.cut.with(pos, 0 - 1), changed: true };
+    wk = Walk { ...wk, cut: wk.cut.with(pos, -1), changed: true };
   }
   return followed(g, at, wk, pos, b);
 }
@@ -685,25 +685,25 @@ function cut_at(wk: Walk, pos: i32, n: i32): Walk {
 function none_held(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): i32 {
   for a in ins.args {
     if (wk.vals[a] == top()) {
-      return 0 - 2;
+      return -2;
     }
-    let r: i32 = own_record(ctx.u, f.values[a]);
+    let r = own_record(ctx.u, f.values[a]);
     if (r >= 0 && !w.inhabited[r]) {
       return r;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Walk {
-  let t: ssa.STerm = b.term;
+  let t = b.term;
   if (t.kind_tag == 2) {
     return entered(g, at, wk, b.id, t.target);
   }
   if (t.kind_tag != 3) {
     return wk;
   }
-  let c: i64 = wk.vals[t.cond];
+  let c = wk.vals[t.cond];
   if (c == top()) {
     return wk;
   }
@@ -717,14 +717,14 @@ function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): W
 }
 
 function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Walk {
-  let tp: i32 = at[to];
+  let tp = at[to];
   if (!wk.exec[tp]) {
     wk = Walk { ...wk, exec: wk.exec.with(tp, true), changed: true };
   }
-  let preds: i32[] = g.blocks[tp].preds;
-  let j: i32 = 0;
+  let preds = g.blocks[tp].preds;
+  let j = 0;
   while (j < preds.len() && preds[j] != from) {
-    j = j + 1;
+    j += 1;
   }
   if (j == preds.len()) {
     if (!wk.stale[tp]) {
@@ -732,7 +732,7 @@ function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Walk {
     }
     return wk;
   }
-  let e: i32 = wk.edge_at[tp] + j;
+  let e = wk.edge_at[tp] + j;
   if (!wk.edges[e]) {
     return Walk { ...wk, edges: wk.edges.with(e, true), changed: true };
   }
@@ -747,7 +747,7 @@ function eval(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.S
 }
 
 function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == 1 || k == 2) {
     return konst(ins.imm);
   }
@@ -770,7 +770,7 @@ function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {
 }
 
 function unary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
-  let a: i64 = wk.vals[ins.args[0]];
+  let a = wk.vals[ins.args[0]];
   if (ins.str != "!" || !ssasem.is_bool(f.values[ins.args[0]]) || a == bottom()) {
     return any();
   }
@@ -784,20 +784,20 @@ function phi_value(wk: Walk, pos: i32, ins: ssa.SInst): i64 {
   if (wk.stale[pos]) {
     return any();
   }
-  let out: i64 = none();
-  let j: i32 = 0;
-  let first: i32 = wk.edge_at[pos];
+  let out = none();
+  let j = 0;
+  let first = wk.edge_at[pos];
   while (j < ins.args.len() && first + j < wk.edge_at[pos + 1]) {
     if (wk.edges[first + j]) {
       out = join(out, wk.vals[ins.args[j]]);
     }
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
 
 function select_value(wk: Walk, ins: ssa.SInst): i64 {
-  let c: i64 = wk.vals[ins.args[0]];
+  let c = wk.vals[ins.args[0]];
   if (c == top()) {
     return none();
   }
@@ -811,16 +811,16 @@ function select_value(wk: Walk, ins: ssa.SInst): i64 {
 }
 
 function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
-  let k: i32 = ins.kind_tag;
+  let k = ins.kind_tag;
   if (k == ssasem.record_get()) {
-    let fk: i32 = wk.keys[ins.result];
+    let fk = wk.keys[ins.result];
     if (fk < 0) {
       return any();
     }
     return w.fields[fk];
   }
   if (k == ssasem.variant_is()) {
-    let vk: i32 = wk.keys[ins.result];
+    let vk = wk.keys[ins.result];
     if (vk >= 0 && !w.built[vk]) {
       return konst(0);
     }
@@ -833,7 +833,7 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
     return call_value(ctx, w, ins);
   }
   if (k == ssasem.length()) {
-    let r: i32 = wk.keys[ins.result];
+    let r = wk.keys[ins.result];
     if (r >= 0 && !w.inhabited[r]) {
       return konst(0);
     }
@@ -842,12 +842,12 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
 }
 
 function only_built(u: Universe, w: World, vk: i32): boolean {
-  let j: i32 = u.variant_first[vk];
+  let j = u.variant_first[vk];
   while (j <= u.variant_last[vk]) {
     if (j != vk && w.built[j]) {
       return false;
     }
-    j = j + 1;
+    j += 1;
   }
   return true;
 }
@@ -856,7 +856,7 @@ function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
   if (ssasem.is_dyn_call(ins.str) || ins.imm != 0) {
     return any();
   }
-  let g: i32 = ctx.ix.find(ins.str);
+  let g = ctx.ix.find(ins.str);
   if (g < 0 || !ctx.usable[g]) {
     return any();
   }
@@ -864,15 +864,15 @@ function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
 }
 
 function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
-  let a: i64 = wk.vals[ins.args[0]];
-  let b: i64 = wk.vals[ins.args[1]];
+  let a = wk.vals[ins.args[0]];
+  let b = wk.vals[ins.args[1]];
   if (a == bottom() || b == bottom()) {
     return any();
   }
   if (a == top() || b == top()) {
     return none();
   }
-  let t: typeinfo.Type = f.values[ins.args[0]];
+  let t = f.values[ins.args[0]];
   if (!comparable(t, f.values[ins.args[1]])) {
     return any();
   }
@@ -883,11 +883,11 @@ function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
 }
 
 function summed(op: string, x: i64, y: i64): i64 {
-  let r: i64 = x + y;
+  let r = x + y;
   if (op == "-") {
     r = x - y;
   }
-  if (r < (0 - 2147483647 - 1) as i64 || r > 2147483647 as i64) {
+  if (r < (-2147483647 - 1) as i64 || r > 2147483647 as i64) {
     return any();
   }
   return konst(r as i32);
@@ -930,7 +930,7 @@ function truth(b: boolean): i64 {
 }
 
 function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
-  let f: ssasem.Func = ctx.funcs[i];
+  let f = ctx.funcs[i];
   w = waited(w, i, wk);
   for pos in 0..f.graph.blocks.len() {
     if (wk.exec[pos]) {
@@ -952,8 +952,8 @@ function waited(w: World, i: i32, wk: Walk): World {
 
 // The instructions of block `pos` before its cut, and its return.
 function absorb_block(ctx: Ctx, w: World, f: ssasem.Func, i: i32, wk: Walk, pos: i32): World {
-  let b: ssa.SBlock = f.graph.blocks[pos];
-  let n: i32 = b.insts.len();
+  let b = f.graph.blocks[pos];
+  let n = b.insts.len();
   if (wk.cut[pos] >= 0 && wk.cut[pos] < n) {
     n = wk.cut[pos];
   }
@@ -977,11 +977,11 @@ function map_keys_reached(ctx: Ctx, w: World, f: ssasem.Func): World {
 }
 
 function returned(ctx: Ctx, w: World, i: i32, wk: Walk, value: i32): World {
-  let r: i64 = any();
+  let r = any();
   if (tracked(ctx.funcs[i].result) && value >= 0) {
     r = wk.vals[value];
   }
-  let next: i64 = join(w.rets[i], r);
+  let next = join(w.rets[i], r);
   if (next == w.rets[i]) {
     return w;
   }
@@ -999,13 +999,13 @@ function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SIns
     return built_record(ctx, w, wk.keys[ins.result], wk, ins.args, 1);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    let vk: i32 = wk.keys[ins.result];
+    let vk = wk.keys[ins.result];
     if (vk >= 0 && !w.built[vk]) {
       w = World { ...w, built: w.built.with(vk, true) };
-      let j: i32 = ctx.u.variant_first[vk];
+      let j = ctx.u.variant_first[vk];
       while (j <= ctx.u.variant_last[vk]) {
         w = queued_all(w, ctx.vtesters[j]);
-        j = j + 1;
+        j += 1;
       }
       return w;
     }
@@ -1030,17 +1030,17 @@ function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: 
   if (!w.inhabited[r]) {
     w = queued_all(queued_all(World { ...w, inhabited: w.inhabited.with(r, true) }, ctx.counters[r]), w.waiters[r]);
   }
-  let at: i32[] = ctx.u.rec_fields[r];
-  let k: i32 = 0;
+  let at = ctx.u.rec_fields[r];
+  let k = 0;
   while (k < args.len() && first + k < at.len()) {
-    let fk: i32 = at[first + k];
+    let fk = at[first + k];
     if (fk >= 0) {
-      let next: i64 = join(w.fields[fk], wk.vals[args[k]]);
+      let next = join(w.fields[fk], wk.vals[args[k]]);
       if (next != w.fields[fk]) {
         w = queued_all(World { ...w, fields: w.fields.with(fk, next) }, ctx.freaders[fk]);
       }
     }
-    k = k + 1;
+    k += 1;
   }
   return w;
 }
@@ -1048,7 +1048,7 @@ function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: 
 struct Rewritten { f: ssasem.Func, changed: boolean }
 
 function fresh_block_id(g: ssa.SFunc): i32 {
-  let dead: i32 = 0;
+  let dead = 0;
   for b in g.blocks {
     if (b.id >= dead) {
       dead = b.id + 1;
@@ -1060,7 +1060,7 @@ function fresh_block_id(g: ssa.SFunc): i32 {
 // Block `pos` cut after a call that cannot continue, or with a branch the
 // walk decided, and whether it changed.
 function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBlock, boolean) {
-  let cut: i32 = 0 - 1;
+  let cut: i32 = -1;
   if (wk.exec[pos]) {
     cut = wk.cut[pos];
   }
@@ -1068,7 +1068,7 @@ function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBloc
     return (ssa.SBlock { ...b, insts: b.insts.truncate(cut), term: unreachable() }, true);
   }
   if (wk.exec[pos] && b.term.kind_tag == 3) {
-    let t: ssa.STerm = decided(b.term, wk.vals[b.term.cond], dead);
+    let t = decided(b.term, wk.vals[b.term.cond], dead);
     if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
       return (ssa.SBlock { ...b, term: t }, true);
     }
@@ -1077,10 +1077,10 @@ function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBloc
 }
 
 function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
-  let g: ssa.SFunc = f.graph;
-  let dead: i32 = fresh_block_id(g);
-  let blocks: ssa.SBlock[] = g.blocks;
-  let changed: boolean = false;
+  let g = f.graph;
+  let dead = fresh_block_id(g);
+  let blocks = g.blocks;
+  let changed = false;
   for pos in 0..g.blocks.len() {
     let (b, moved) = block_rewrite(g.blocks[pos], wk, pos, dead);
     if (moved) {
@@ -1092,8 +1092,8 @@ function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
     return Rewritten { f: f, changed: false };
   }
   blocks = blocks.append(ssa.SBlock { id: dead, insts: [], term: unreachable(), preds: [] });
-  let moved: ssa.SFunc = ssa.SFunc { ...g, blocks: blocks };
-  let kept: ssa.SFunc = ssa.SFunc { ...moved, blocks: semthread.reachable_only(moved) };
+  let moved = ssa.SFunc { ...g, blocks: blocks };
+  let kept = ssa.SFunc { ...moved, blocks: semthread.reachable_only(moved) };
   return Rewritten { f: ssasem.Func { ...f, graph: ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) } }, changed: changed };
 }
 

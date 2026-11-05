@@ -3,9 +3,9 @@ import "../lexer";
 import "../parser";
 
 pub function parse_stdin(driver: string): parser.Module {
-  let src: string = read_stdin(driver);
-  let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-  let _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
+  let src = read_stdin(driver);
+  let mod = parser.parse_module(lexer.tokenize(src));
+  let _unresolved = parser.warn_unresolved_imports(mod, driver);
   return mod;
 }
 

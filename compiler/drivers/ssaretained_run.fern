@@ -37,7 +37,7 @@ function count(rows: ssaprepare.Emitted[], name: string): i32 {
   let n = 0;
   for row in rows {
     if (row.label_name == name) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
@@ -49,7 +49,7 @@ function find(rows: ssaprepare.Emitted[], name: string): i32 {
     if (row.label_name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }

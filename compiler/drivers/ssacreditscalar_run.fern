@@ -97,7 +97,7 @@ function select_controls(f: ssa.SFunc): void {
 
 function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for b in f.blocks {
     let exiting = exits_in(b);
     let insts: ssa.SInst[] = [];
@@ -118,37 +118,37 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
           next = ssa.SInst { ...op, imm: 4 };
         }
         if (mode < 6) {
-          hits = hits + 1;
+          hits += 1;
         }
       }
       if (mode == 6 && b.term.kind_tag == 1 && !exiting && op.result == b.term.value) {
         next = ssa.SInst { ...op, imm: 7 };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 7 && op.kind_tag == 8) {
         next = ssa.SInst { ...op, args: op.args.with(0, op.result) };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 8 && op.kind_tag == 6 && op.imm == 1) {
         next = ssa.SInst { ...op, imm: 0 };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 9 && op.kind_tag == 8) {
         next = ssa.SInst { ...op, args: [] };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 10 && op.kind_tag == 8) {
         require(op.args.len() == 2, 7);
         next = ssa.SInst { ...op, args: [op.args[1], op.args[0]] };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 11 && op.kind_tag == 6 && op.imm == 1) {
         next = ssa.SInst { ...op, result: 0 };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 12 && b.term.kind_tag == 1 && !exiting && op.result == b.term.value) {
         next = ssa.SInst { ...op, kind_tag: 7, args: [1] };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 13 && op.kind_tag == 50) {
         next = ssa.SInst { ...op, args: [f.nvals - 1] };
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 14 && b.term.kind_tag == 1 && exiting && op.result == b.term.value) {
         next = ssa.SInst { ...op, imm: 7 };
-        hits = hits + 1;
+        hits += 1;
       }
       insts = insts.append(next);
     }
@@ -159,14 +159,14 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
 }
 
 function with_join_phi(f: ssa.SFunc): ssa.SFunc {
-  let ex: Exits = exits_of(f);
+  let ex = exits_of(f);
   let blocks: ssa.SBlock[] = [];
-  let added: i32 = 0;
+  let added = 0;
   for b in f.blocks {
     if (b.preds.len() == 2) {
       let phi = ssa.SInst { kind_tag: 8, result: f.nvals, args: join_phi_args(b.preds, ex), imm: 0, str: "" };
       blocks = blocks.append(ssa.SBlock { ...b, insts: prepended(phi, b.insts) });
-      added = added + 1;
+      added += 1;
     } else {
       blocks = blocks.append(b);
     }
@@ -188,8 +188,8 @@ function exits_in(b: ssa.SBlock): boolean {
 // The helper with its exit block branching into the normal return block, the
 // two-predecessor join a CFG has when the exit does not end its block.
 function joined_form(f: ssa.SFunc): ssa.SFunc {
-  let normal: i32 = 0 - 1;
-  let exiting: i32 = 0 - 1;
+  let normal: i32 = -1;
+  let exiting: i32 = -1;
   for b in f.blocks {
     if (b.term.kind_tag == 1 && exits_in(b)) {
       exiting = b.id;
@@ -212,17 +212,17 @@ function joined_form(f: ssa.SFunc): ssa.SFunc {
 }
 
 function mutation_checks(form: ssa.SFunc, phi_form: ssa.SFunc, reasons: string[], first_id: i32): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < reasons.len()) {
     expect(changed(control_form(form, phi_form, i), i), false, reasons[i], first_id + i);
-    i = i + 1;
+    i += 1;
   }
 }
 
 struct Exits { zero: i32, blocks: i32[], results: i32[] }
 
 function exits_of(f: ssa.SFunc): Exits {
-  let ex: Exits = Exits { zero: 0 - 1, blocks: [], results: [] };
+  let ex = Exits { zero: 0 - 1, blocks: [], results: [] };
   for b in f.blocks {
     for op in b.insts {
       if (b.id == f.entry && op.kind_tag == 1 && op.imm == 0) {
@@ -239,9 +239,9 @@ function exits_of(f: ssa.SFunc): Exits {
 function join_phi_args(preds: i32[], ex: Exits): i32[] {
   let args: i32[] = [];
   for p in preds {
-    let at: i32 = 0;
+    let at = 0;
     while (at < ex.blocks.len() && ex.blocks[at] != p) {
-      at = at + 1;
+      at += 1;
     }
     if (at < ex.results.len()) {
       args = args.append(ex.results[at]);
@@ -291,9 +291,9 @@ function target_checks(target: string): void {
   mutation_checks(f, phi_form, reasons.append("scalar helper return not proven zero"), 10);
   mutation_checks(joined, phi_form, reasons, 60);
   let reverse: ssa.SBlock[] = [];
-  let i: i32 = f.blocks.len();
+  let i = f.blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     reverse = reverse.append(f.blocks[i]);
   }
   expect(ssa.SFunc { ...f, blocks: reverse, name: "renamed_assertion" }, true, "proved scalar zero-or-exit effects", 30);

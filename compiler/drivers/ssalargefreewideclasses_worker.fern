@@ -34,7 +34,7 @@ pub function main(): i32 {
     }
     print(line);
     print("end " + id.to_string());
-    at = at + 36;
+    at += 36;
   }
   return 0;
 }

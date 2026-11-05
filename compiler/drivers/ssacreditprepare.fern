@@ -23,7 +23,7 @@ function same(a: i32[], b: i32[]): boolean {
     if (v != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -33,7 +33,7 @@ function calls(f: ssa.SFunc): i32 {
   for b in f.blocks {
     for op in b.insts {
       if (op.kind_tag == 11) {
-        n = n + 1;
+        n += 1;
       }
     }
   }
@@ -80,7 +80,7 @@ pub function run(): void {
     prepared(leaf, selected, leaves, 13, debug);
   }
   let missing = physicalbody.select(physicalbody.no_collection(), 0);
-  require(missing.origin.producer == 0 - 1 && missing.producers.len() == 0, 197);
+  require(missing.origin.producer == -1 && missing.producers.len() == 0, 197);
   prepared(leaf, missing, leaves, 19, true);
-  require(physicalbody.select(physical, 0 - 1).origin.producer == 0 - 1 && physicalbody.select(physical, physical.rows.len()).origin.producer == 0 - 1, 198);
+  require(physicalbody.select(physical, -1).origin.producer == -1 && physicalbody.select(physical, physical.rows.len()).origin.producer == -1, 198);
 }

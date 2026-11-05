@@ -57,11 +57,11 @@ function self_checks(): i32 {
   }
 
   let two: lexer.Comment[] = [c(1, " a"), c(4, " b")];
-  let t1: ferndoc.TakeResult = ferndoc.take_doc(two, 0, 2);
+  let t1 = ferndoc.take_doc(two, 0, 2);
   if (t1.doc != "a" || t1.cursor != 1) {
     return 30;
   }
-  let t2: ferndoc.TakeResult = ferndoc.take_doc(two, t1.cursor, 5);
+  let t2 = ferndoc.take_doc(two, t1.cursor, 5);
   if (t2.doc != "b" || t2.cursor != 2) {
     return 31;
   }
@@ -128,7 +128,7 @@ function self_checks(): i32 {
     + "// Detached.\n"
     + "\n"
     + "pub function bare(): i32 { return 1; }\n";
-  let dm: ferndoc.DocModule = ferndoc.docs_of(src);
+  let dm = ferndoc.docs_of(src);
   if (dm.intro != "Header line.") {
     return 50;
   }
@@ -153,7 +153,7 @@ function self_checks(): i32 {
     + "\n"
     + "// Maker.\n"
     + "pub function make(): i32 { return 0; }\n";
-  let dm2: ferndoc.DocModule = ferndoc.docs_of(src2);
+  let dm2 = ferndoc.docs_of(src2);
   if (dm2.intro != "") {
     return 60;
   }
@@ -185,7 +185,7 @@ function self_checks(): i32 {
     + "pub function __internal(): i32 { return 0; }\n"
     + "// Shown.\n"
     + "pub function shown(): i32 { return 0; }\n";
-  let dm3: ferndoc.DocModule = ferndoc.docs_of(src3);
+  let dm3 = ferndoc.docs_of(src3);
   if (dm3.decls.len() != 1) {
     return 70;
   }
@@ -199,7 +199,7 @@ function self_checks(): i32 {
     + "pub function zero(): i32 { return 0; }\n"
     + "// Private, and skipped.\n"
     + "const HIDDEN: i32 = 1;\n";
-  let dm4: ferndoc.DocModule = ferndoc.docs_of(src4);
+  let dm4 = ferndoc.docs_of(src4);
   if (dm4.decls.len() != 2) {
     return 80;
   }
@@ -218,7 +218,7 @@ function self_checks(): i32 {
 
   let src5: string = "// Kept.\n"
     + "pub const __RAW: i32 = 2;\n";
-  let dm5: ferndoc.DocModule = ferndoc.docs_of(src5);
+  let dm5 = ferndoc.docs_of(src5);
   if (dm5.decls.len() != 1) {
     return 85;
   }
@@ -226,7 +226,7 @@ function self_checks(): i32 {
     return 86;
   }
 
-  let page: string = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
+  let page = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
   if (!util.contains(page, "## `const A`\n\n```fern\npub const A: i32\n```\n")) {
     return 87;
   }
@@ -241,7 +241,7 @@ function self_checks(): i32 {
 }
 
 function main(): i32 {
-  let rc: i32 = self_checks();
+  let rc = self_checks();
   if (rc != 0) {
     return rc;
   }

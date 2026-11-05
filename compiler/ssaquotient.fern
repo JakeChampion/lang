@@ -5,20 +5,20 @@ import "./typeinfo";
 import "./util";
 
 pub function shared_quotients(f: ssasem.Func): ssasem.Func {
-  let divisor: Divisors = shared_divisors(f);
+  let divisor = shared_divisors(f);
   if (!divisor.any) {
     return f;
   }
-  let gs: Groups = grouped(f, divisor);
+  let gs = grouped(f, divisor);
   if (!gs.any) {
     return f;
   }
-  let values: typeinfo.Type[] = f.values;
-  let quotient: i32[] = util.minus_ones(gs.x.len());
-  let g: i32 = 0;
+  let values = f.values;
+  let quotient = util.minus_ones(gs.x.len());
+  let g = 0;
   while (g < gs.x.len()) {
     if (gs.has_div[g] && gs.has_rem[g]) {
-      let lead: ssa.SInst = f.graph.blocks[gs.block[g]].insts[gs.index[g]];
+      let lead = f.graph.blocks[gs.block[g]].insts[gs.index[g]];
       if (lead.str == "/") {
         quotient = quotient.with(g, lead.result);
       } else {
@@ -26,21 +26,21 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
         values = values.append(f.values[lead.result]);
       }
     }
-    g = g + 1;
+    g += 1;
   }
   let blocks: ssa.SBlock[] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   for blk in f.graph.blocks {
-    let member: i32[] = gs.member[bi];
+    let member = gs.member[bi];
     let insts: ssa.SInst[] = [];
-    let ii: i32 = 0;
+    let ii = 0;
     for ins in blk.insts {
-      let k: i32 = member[ii];
-      let q: i32 = 0 - 1;
+      let k = member[ii];
+      let q: i32 = -1;
       if (k >= 0) {
         q = quotient[k];
       }
-      let leads: boolean = k >= 0 && gs.block[k] == bi && gs.index[k] == ii;
+      let leads = k >= 0 && gs.block[k] == bi && gs.index[k] == ii;
       if (q < 0 || leads && ins.str == "/") {
         insts = insts.append(ins);
       } else if (ins.str == "/") {
@@ -49,15 +49,15 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
         if (leads) {
           insts = insts.append(ssa.SInst { kind_tag: 9, result: q, args: ins.args, imm: 0, str: "/" });
         }
-        let product: i32 = values.len();
+        let product = values.len();
         values = values.append(f.values[ins.result]);
         insts = insts.append(ssa.SInst { kind_tag: 9, result: product, args: [q, ins.args[1]], imm: 0, str: "*" });
         insts = insts.append(ssa.SInst { kind_tag: 9, result: ins.result, args: [ins.args[0], product], imm: 0, str: "-" });
       }
-      ii = ii + 1;
+      ii += 1;
     }
     blocks = blocks.append(ssa.SBlock { ...blk, insts: insts });
-    bi = bi + 1;
+    bi += 1;
   }
   return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
@@ -74,29 +74,29 @@ struct Groups {
 }
 
 function grouped(f: ssasem.Func, divisor: Divisors): Groups {
-  let n: i32 = f.graph.blocks.len();
-  let d: ssadeps.Dom = ssadeps.dominates(f.graph);
-  let by_pre: i32[] = util.minus_ones(2 * n);
+  let n = f.graph.blocks.len();
+  let d = ssadeps.dominates(f.graph);
+  let by_pre = util.minus_ones(2 * n);
   let member: i32[][] = [];
-  let bi: i32 = 0;
+  let bi = 0;
   while (bi < n) {
     if (d.pre[bi] >= 0) {
       by_pre = by_pre.with(d.pre[bi], bi);
     }
     member = member.append(util.minus_ones(f.graph.blocks[bi].insts.len()));
-    bi = bi + 1;
+    bi += 1;
   }
-  let gs: Groups = Groups { x: [], y: [], block: [], index: [], has_div: [], has_rem: [], member: [], any: false };
+  let gs = Groups { x: [], y: [], block: [], index: [], has_div: [], has_rem: [], member: [], any: false };
   for at in by_pre {
     if (at < 0) {
       continue;
     }
-    let ii: i32 = 0;
+    let ii = 0;
     for ins in f.graph.blocks[at].insts {
       if (divides(f, divisor, ins)) {
-        let g: i32 = 0;
+        let g = 0;
         while (g < gs.x.len() && !(gs.x[g] == ins.args[0] && same_divisor(divisor, gs.y[g], ins.args[1]) && ssadeps.dom_holds(d, at, gs.block[g]))) {
-          g = g + 1;
+          g += 1;
         }
         if (g == gs.x.len()) {
           gs = Groups {
@@ -114,7 +114,7 @@ function grouped(f: ssasem.Func, divisor: Divisors): Groups {
         }
         member = member.with(at, member[at].with(ii, g));
       }
-      ii = ii + 1;
+      ii += 1;
     }
   }
   return Groups { ...gs, member: member };
@@ -123,12 +123,12 @@ function grouped(f: ssasem.Func, divisor: Divisors): Groups {
 struct Divisors { constant: boolean[], shared: boolean[], value: i64[], any: boolean }
 
 function shared_divisors(f: ssasem.Func): Divisors {
-  let known: boolean[] = __alloc_bool(f.values.len());
-  let value: i64[] = __alloc_i64(f.values.len());
+  let known = __alloc_bool(f.values.len());
+  let value = __alloc_i64(f.values.len());
   for blk in f.graph.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 1 && ins.result >= 0 && ins.result < known.len() && ssasem.is_integer(f.values[ins.result])) {
-        let c: i64 = ins.imm as i64;
+        let c = ins.imm as i64;
         if (ins.str != "") {
           c = util.lit_to_i64(ins.str);
         }
@@ -137,14 +137,14 @@ function shared_divisors(f: ssasem.Func): Divisors {
       }
     }
   }
-  let out: Divisors = Divisors { constant: known, shared: __alloc_bool(f.values.len()), value: value, any: false };
+  let out = Divisors { constant: known, shared: __alloc_bool(f.values.len()), value: value, any: false };
   for blk in f.graph.blocks {
     for ins in blk.insts {
       if (ins.result < 0 || ins.result >= known.len() || !ssasem.is_integer(f.values[ins.result])) {
         continue;
       }
-      let c: i64 = value[ins.result];
-      let ok: boolean = known[ins.result];
+      let c = value[ins.result];
+      let ok = known[ins.result];
       if (ins.kind_tag == ssasem.cast() && ins.args.len() == 1 && known[ins.args[0]]) {
         c = value[ins.args[0]];
         ok = c >= 0i64 && c <= 2147483647i64 && (!ssasem.is_u8(f.values[ins.result]) || c <= 255i64);
@@ -153,7 +153,7 @@ function shared_divisors(f: ssasem.Func): Divisors {
       if (ins.kind_tag == 9 && ins.str == "%" && ins.args.len() == 2 && !out.constant[ins.args[1]]) {
         out = Divisors { ...out, any: true };
       }
-      let mag: i64 = c;
+      let mag = c;
       if (mag < 0i64) {
         mag = 0i64 - mag;
       }

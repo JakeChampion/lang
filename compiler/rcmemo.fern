@@ -34,14 +34,14 @@ function root(): string {
 }
 
 pub function open(target: string): Memo {
-  let dir: string = root();
+  let dir = root();
   if (dir == "") {
     return off();
   }
   let Some(stamp) = build_stamp(dir) else {
     return off();
   };
-  let path: string = dir + "/certified/" + version() + "-" + target + ".txt";
+  let path = dir + "/certified/" + version() + "-" + target + ".txt";
   return Memo { on: true, path: path, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.K_CALL_DIRECT, stamp: stamp };
 }
 
@@ -50,22 +50,22 @@ pub function open(target: string): Memo {
 // file that maps the binary's device, inode, size and modification time to it,
 // so a compile hashes its binary only the first time it runs.
 function build_stamp(dir: string): Option[string] {
-  let path: string = own_binary();
+  let path = own_binary();
   if (path == "") {
     return None;
   }
   let Ok(r) = open_reader(path) else {
     return None;
   };
-  let measured: Result[FileStat, IoError] = r.stat();
+  let measured = r.stat();
   r.close();
   let Ok(st) = measured else {
     return None;
   };
-  let at: i64 = util.roll_wide(util.roll_wide(util.digest_start(), st.dev), st.ino);
-  let meta: string = util.digest_text(util.roll_wide(util.roll_wide(util.roll_wide(at, st.size), st.mtime), st.mtime_nsec));
-  let file: string = dir + "/certified/stamps-" + version() + ".txt";
-  let lines: string[] = lines_of(file);
+  let at = util.roll_wide(util.roll_wide(util.digest_start(), st.dev), st.ino);
+  let meta = util.digest_text(util.roll_wide(util.roll_wide(util.roll_wide(at, st.size), st.mtime), st.mtime_nsec));
+  let file = dir + "/certified/stamps-" + version() + ".txt";
+  let lines = lines_of(file);
   for line in lines {
     if (line.len() > meta.len() + 1 && util.str_has_prefix(line, meta + " ")) {
       return Some(slice_unchecked(line, meta.len() + 1, line.len()) + "");
@@ -74,9 +74,9 @@ function build_stamp(dir: string): Option[string] {
   let Ok(raw) = read_file_bytes(path) else {
     return None;
   };
-  let bytes: string = string_from_bytes_unchecked(raw);
-  let d: i64 = util.roll_wide(util.digest_start(), bytes.len() as i64);
-  let stamp: string = util.digest_text(util.roll(util.roll(d, __str_hash(bytes, 0)), __str_hash(bytes, 1)));
+  let bytes = string_from_bytes_unchecked(raw);
+  let d = util.roll_wide(util.digest_start(), bytes.len() as i64);
+  let stamp = util.digest_text(util.roll(util.roll(d, __str_hash(bytes, 0)), __str_hash(bytes, 1)));
   record_stamp(file, lines, meta + " " + stamp);
   return Some(stamp);
 }
@@ -84,7 +84,7 @@ function build_stamp(dir: string): Option[string] {
 // Keeps the newest stamps. A lost or torn line costs one hash, never a hit.
 function record_stamp(file: string, lines: string[], line: string): void {
   let chunks: string[] = [];
-  let from: i32 = 0;
+  let from = 0;
   if (lines.len() >= 64) {
     from = lines.len() - 63;
   }
@@ -92,21 +92,21 @@ function record_stamp(file: string, lines: string[], line: string): void {
     chunks = chunks.append(lines[i] + "\n");
   }
   chunks = chunks.append(line + "\n");
-  let cut: i32 = file.len();
+  let cut = file.len();
   while (cut > 0 && file[cut - 1] != b'/') {
-    cut = cut - 1;
+    cut -= 1;
   }
   let Ok(made) = create_dir_all(slice_unchecked(file, 0, cut) + "") else {
     return;
   };
-  let written: Result[void, IoError] = write_file(file, util.str_join_chunks(chunks));
+  let written = write_file(file, util.str_join_chunks(chunks));
 }
 
 function own_binary(): string {
   if (target_os() == "linux" || target_os() == "android") {
     return "/proc/self/exe";
   }
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() > 0 && has_slash(argv[0])) {
     return argv[0];
   }
@@ -135,8 +135,8 @@ function lines_of(path: string): string[] {
 
 function split_lines(text: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < text.len()) {
     if (text[i] == b'\n') {
       if (i > start) {
@@ -144,7 +144,7 @@ function split_lines(text: string): string[] {
       }
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (text.len() > start) {
     out = out.append(slice_unchecked(text, start, text.len()) + "");
@@ -157,16 +157,16 @@ function newest(lines: string[]): string[] {
     return lines;
   }
   let out: string[] = [];
-  let i: i32 = lines.len() - keep();
+  let i = lines.len() - keep();
   while (i < lines.len()) {
     out = out.append(lines[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
-  let d: i64 = util.roll_text(util.roll_text(util.digest_start(), m.stamp), fn_name);
+  let d = util.roll_text(util.roll_text(util.digest_start(), m.stamp), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
   d = util.roll(util.roll(util.roll_flag(util.roll(d, f.nparams), f.takes_env), f.nvals), f.blocks.len());
   for o in ops {
@@ -180,7 +180,7 @@ pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rcc
 }
 
 function roll_abi(d: i64, a: rccertify.Abi): i64 {
-  let out: i64 = util.roll_words(util.roll_flag(d, a.known), a.modes);
+  let out = util.roll_words(util.roll_flag(d, a.known), a.modes);
   out = util.roll_flag(util.roll_flag(out, a.result_unit), a.pair_first);
   out = util.roll(util.roll(util.roll(out, a.pair_second), a.split_second), a.split_third);
   return util.roll_flag(out, a.result_word);
@@ -208,8 +208,8 @@ pub function close(m: Memo): string {
   if (!m.on) {
     return "";
   }
-  let summary: string = "hits=" + util.i32_to_string(buf_len(m.hits)) + " misses=" + util.i32_to_string(buf_len(m.misses));
-  let adds: string = buf_take(m.adds);
+  let summary = "hits=" + util.i32_to_string(buf_len(m.hits)) + " misses=" + util.i32_to_string(buf_len(m.misses));
+  let adds = buf_take(m.adds);
   buf_free(m.adds);
   buf_free(m.hits);
   buf_free(m.misses);
@@ -220,9 +220,9 @@ pub function close(m: Memo): string {
 }
 
 function write(m: Memo, adds: string): void {
-  let cut: i32 = m.path.len();
+  let cut = m.path.len();
   while (cut > 0 && m.path[cut - 1] != b'/') {
-    cut = cut - 1;
+    cut -= 1;
   }
   match (create_dir_all(slice_unchecked(m.path, 0, cut) + "")) {
     Ok(made) => {},

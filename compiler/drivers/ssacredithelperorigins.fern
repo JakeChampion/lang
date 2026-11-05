@@ -46,9 +46,9 @@ function nominal(rows: physicalbody.Origin[], ty: typeinfo.Type): void {
       require(row.symbol == name, 236);
       if (semtypes.equal(h.ty, ty)) {
         if (h.children_only) {
-          drops = drops + 1;
+          drops += 1;
         } else {
-          releases = releases + 1;
+          releases += 1;
         }
       }
     }
@@ -66,7 +66,7 @@ function runtime(source: string): void {
     if (i < lowered.declarations.len()) {
       require(unknown(row), 240);
     }
-    i = i + 1;
+    i += 1;
   }
   nominal(rows, typeinfo.TypeUnion { name: "List", args: [] });
   require(ircore.lowered_digest(irtables.lowered_results(lowered.bodies)) == ircore.lowered_digest(irtables.lowered_results(semlower.runtime_bodies(source))), 241);
@@ -107,7 +107,7 @@ function generic(target: string): void {
   for origin in sub.physical_origins.extra {
     if (origin.producer == 1) {
       require(unknown(origin), 252);
-      keys = keys + 1;
+      keys += 1;
     }
   }
   require(keys > 0, 253);

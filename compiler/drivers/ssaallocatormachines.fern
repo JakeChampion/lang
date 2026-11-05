@@ -89,7 +89,7 @@ function identities(s: string): void {
     if (i != 4) {
       mutation(s, "ret", "pushq " + reg + "\npopq " + reg + "\nret", true);
     }
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -118,7 +118,7 @@ function numeric_flags(s: string): void {
     let prefix = code + "\n";
     mutation(s, "addq $7, %rdi", prefix + untaken[i] + " .Lnumeric_outside\naddq $7, %rdi", true);
     mutation(s, "addq $7, %rdi", prefix + taken[i] + " .Lnumeric_outside\naddq $7, %rdi", false);
-    i = i + 1;
+    i += 1;
   }
   mutation(s, "addq $7, %rdi", "movl $-2147483648, %eax\ncmpl $1, %eax\njno .Lnumeric_outside\naddq $7, %rdi", true);
   mutation(s, "addq $7, %rdi", "movl $-2147483648, %eax\ncmpl $1, %eax\njo .Lnumeric_outside\naddq $7, %rdi", false);
