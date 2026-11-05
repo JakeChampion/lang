@@ -170,3 +170,28 @@ pub function of_bytes(b: [u8]): Mode {
   }
   return at(b[0] as i32);
 }
+
+// True when `name` is a host name or an IPv4 address that the keyboard of
+// the server can type: at most 253 characters of a-z, 0-9, "." and "-", with
+// a letter or a digit first and last. The empty name is valid, and selects
+// the server of the build.
+pub function valid_host(name: string): boolean {
+  let b: [u8] = name.as_bytes();
+  if (b.len() == 0) {
+    return true;
+  }
+  if (b.len() > 253 || !host_end(b[0]) || !host_end(b[b.len() - 1])) {
+    return false;
+  }
+  for c in b {
+    if (!host_end(c) && c != 46u8 && c != 45u8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True for a-z and 0-9.
+function host_end(c: u8): boolean {
+  return c >= 97u8 && c <= 122u8 || c >= 48u8 && c <= 57u8;
+}

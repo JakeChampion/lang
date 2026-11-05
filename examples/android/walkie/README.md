@@ -66,11 +66,15 @@ settings. They choose the way to find the other phone:
 - WI-FI DIRECT uses only Wi-Fi Direct. The phone sends no beacon on the
   Wi-Fi network, and it takes datagrams only from its group.
 - INTERNET ROOM uses only the rooms of the server. The phone sends and takes
-  nothing until it is in a room. A build that names no server cannot choose
-  it.
+  nothing until it is in a room. With no server, the phone cannot choose it.
 
-A new mode starts the search again. The app keeps the mode in its private
-files, so the next start uses it. A test of one way does not need the other
+Below the modes, the SERVER card shows the room server. Tap it to type the
+host name or the IPv4 address of your own server, and tap SAVE. CLR and SAVE
+select the server of the build again. The server must serve the room port of
+`rooms.fern`.
+
+A new mode starts the search again. The app keeps the mode and the server in
+its private files, so the next start uses them. A test of one way does not need the other
 ways turned off on the phone.
 
 To test discovery and the code check on one phone, build the app a second
@@ -119,11 +123,13 @@ runs two engines on a simulated link.
 
 ## `ui.fern`
 
-The look of the screen: a dark theme with one accent colour for each state.
-The round talk button has a ring in the colour of the state. It fills while
-the phone talks or listens. A dot beside the status has the same colour. The
-code to compare shows in two groups of three digits, over a MATCH pill and a
-NO MATCH outline.
+The look of the screen: a black background, white and grey type, and red only
+for what is live. Titles, button labels and the code use the dot font of
+`matrix.fern`, 5 by 7 round dots for each character. The round talk button is
+a ring of dots. It fills red while the phone talks, and white while it
+listens. A dot beside the status has the colour of the state. The code to
+compare shows in two groups of three digits, over a MATCH pill and a NO MATCH
+outline.
 
 `ui.fern` draws a view of the app on a frame and does no other I/O.
 `ui_test.fern` draws each screen on a frame in memory and checks the colours
@@ -268,7 +274,8 @@ room through the relay table, and one node moves to a new address.
 
 The nightly build writes `server_host.fern` from the `WALKIE_SERVER`
 repository variable. Set the variable to the DNS name of the server, and the
-next nightly APK shows the room buttons.
+next nightly APK shows the room buttons. A user can also type a server on the
+settings screen.
 
 `rooms.fern` holds the room table and does no I/O. `rooms_test.fern` tests
 it. `TestWalkieRelayServer` runs the server on the host. Two clients make and

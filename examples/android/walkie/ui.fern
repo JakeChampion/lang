@@ -1,8 +1,12 @@
-// The look of the walkie-talkie screen: a dark theme with one accent colour
-// for each state, rounded shapes and a round talk button. It draws a View on
-// a frame and does no other I/O, so the host tests it on a frame in memory.
+// The look of the walkie-talkie screen, in the style of a dot-matrix
+// display: a black background, white and grey type, and red only for what is
+// live. Titles, labels and the code are rows of round dots. The talk button
+// is a ring of dots that fills red while the phone talks and white while it
+// listens. It draws a View on a frame and does no other I/O, so the host
+// tests it on a frame in memory.
 import "std/android/draw";
 import "std/string";
+import "./matrix";
 import "./modes";
 import "./rooms";
 import "./screen";
@@ -30,62 +34,52 @@ pub struct View {
   // whether each mode can be chosen.
   menu: Option[i32],
   available: boolean[],
+  // The room server on the settings screen, and the name that the user types
+  // while the keyboard for it shows.
+  server: string,
+  editing: Option[string],
 }
 
 pub function bg(): i32 {
-  return draw.rgb(14, 16, 20);
+  return draw.rgb(0, 0, 0);
 }
 
 pub function surface(): i32 {
-  return draw.rgb(30, 33, 40);
+  return draw.rgb(26, 26, 26);
 }
 
-function outline(): i32 {
-  return draw.rgb(66, 71, 82);
+pub function outline(): i32 {
+  return draw.rgb(60, 60, 60);
 }
 
 pub function ink(): i32 {
-  return draw.rgb(236, 238, 242);
+  return draw.rgb(255, 255, 255);
 }
 
 pub function muted(): i32 {
-  return draw.rgb(150, 156, 168);
-}
-
-pub function green(): i32 {
-  return draw.rgb(52, 199, 123);
-}
-
-pub function blue(): i32 {
-  return draw.rgb(72, 146, 255);
-}
-
-pub function amber(): i32 {
-  return draw.rgb(255, 184, 77);
+  return draw.rgb(140, 140, 140);
 }
 
 pub function red(): i32 {
-  return draw.rgb(240, 90, 86);
+  return draw.rgb(215, 25, 33);
 }
 
-// The accent of the state that the talk button shows.
+// The colour of the state that the talk button shows: red while it talks or
+// failed, white while it listens or is ready, and grey while it waits.
 pub function accent(label: string): i32 {
-  if (label == "TALKING" || label == "HOLD TO TALK") {
-    return green();
+  if (label == "TALKING" || label == "TAP TO SEARCH AGAIN") {
+    return red();
   }
-  if (label == "LISTENING") {
-    return blue();
+  if (label == "LISTENING" || label == "HOLD TO TALK") {
+    return ink();
   }
   if (label == "WAIT" || label == "WAITING") {
-    return amber();
-  }
-  if (label == "TAP TO SEARCH AGAIN") {
-    return red();
+    return muted();
   }
   return outline();
 }
 
-// The scale of the smaller text: the status, the notice and the peers.
+// The scale of the smaller text: the status, the notice and the help lines.
 function small_scale(sc: i32): i32 {
   if (sc * 3 / 4 < 1) {
     return 1;
@@ -102,84 +96,118 @@ pub function fit_scale(text: string, w: i32, cap: i32): i32 {
   return sc;
 }
 
-function centered(f: draw.Frame, r: screen.Rect, text: string, sc: i32, color: i32): void {
-  let ts: i32 = fit_scale(text, r.w * 8 / 10, sc);
-  f.text(screen.center_x(r, draw.text_width(text, ts)), r.y + r.h / 2 - draw.text_height(ts) / 2, text, ts, color);
+// Dot-matrix words in the middle of `r`, at most `cap` pixels from dot to dot.
+function dots_in(f: draw.Frame, r: screen.Rect, text: string, cap: i32, color: i32): void {
+  let p: i32 = matrix.fit_pitch(text, r.w * 8 / 10, cap);
+  matrix.text(f, screen.center_x(r, matrix.width(text, p)), r.y + (r.h - matrix.height(p)) / 2, text, p, color);
+}
+
+// The pitch of the dots of a button label: the label fills 40% of its height.
+function label_pitch(r: screen.Rect): i32 {
+  let p: i32 = r.h * 40 / 100 / matrix.ROWS;
+  if (p < 1) {
+    return 1;
+  }
+  return p;
 }
 
 // A pill: a rounded button with its words in the middle.
-pub function pill(f: draw.Frame, r: screen.Rect, label: string, fill: i32, text: i32, sc: i32): void {
+pub function pill(f: draw.Frame, r: screen.Rect, label: string, fill: i32, text: i32): void {
   f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, fill);
-  centered(f, r, label, sc, text);
+  dots_in(f, r, label, label_pitch(r), text);
 }
 
 // A pill with only its outline in `color`.
-function outlined(f: draw.Frame, r: screen.Rect, label: string, color: i32, sc: i32): void {
-  let t: i32 = r.h / 18 + 1;
+function outlined(f: draw.Frame, r: screen.Rect, label: string, color: i32): void {
+  let t: i32 = r.h / 24 + 1;
   f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, color);
   f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 2 - t, bg());
-  centered(f, r, label, sc, color);
+  dots_in(f, r, label, label_pitch(r), color);
+}
+
+// A card: a rounded rectangle of the surface, with an outline in `edge`.
+function card(f: draw.Frame, r: screen.Rect, edge: i32): void {
+  let t: i32 = r.h / 28 + 2;
+  f.round_rect(r.x, r.y, r.w, r.h, r.h / 4, edge);
+  f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 4 - t, surface());
+}
+
+// A ring of `n` round dots of radius `d` on the circle of radius `r`.
+function dotted_ring(f: draw.Frame, cx: i32, cy: i32, r: i32, d: i32, n: i32, color: i32): void {
+  for k in 0..n {
+    let a: f64 = 6.283185307179586 * (k as f64) / (n as f64);
+    f.disc(cx + (r as f64 * a.sin()) as i32, cy - (r as f64 * a.cos()) as i32, d, color);
+  }
 }
 
 pub function render(f: draw.Frame, v: View): void {
   let sc: i32 = screen.text_scale(f.width, draw.text_width("x", 1));
   f.fill(0, 0, f.width, f.height, bg());
   header(f, v, sc);
+  if let Some(name) = v.editing {
+    host_keyboard(f, name, sc);
+    return;
+  }
   if let Some(chosen) = v.menu {
-    settings(f, chosen, v.available, sc);
+    settings(f, chosen, v.available, v.server, sc);
     return;
   }
   if let Some(typed) = v.typing {
-    keypad(f, typed, sc);
+    keypad(f, typed);
     return;
   }
   if (v.mode_label.len() > 0) {
-    outlined(f, screen.mode_button(f.width, f.height), v.mode_label, muted(), small_scale(sc));
+    outlined(f, screen.mode_button(f.width, f.height), v.mode_label, muted());
   }
   if (v.code.len() > 0) {
-    compare(f, v.code, sc);
+    compare(f, v.code);
   } else if (v.searching) {
     peers(f, v.peers, sc);
   }
-  talk(f, v.label, sc);
+  talk(f, v.label);
   if (v.room_buttons) {
-    pill(f, screen.room_button(f.width, f.height), "NEW ROOM", draw.rgb(28, 58, 44), green(), sc);
-    pill(f, screen.join_button(f.width, f.height), "JOIN ROOM", draw.rgb(28, 44, 72), blue(), sc);
+    outlined(f, screen.room_button(f.width, f.height), "NEW ROOM", ink());
+    outlined(f, screen.join_button(f.width, f.height), "JOIN ROOM", ink());
   }
 }
 
-// The title, a dot in the colour of the state, the status and the notice.
+// The title in dots, a dot in the colour of the state, the status and the
+// notice.
 function header(f: draw.Frame, v: View, sc: i32): void {
   let left: i32 = f.width / 14;
+  let room: i32 = f.width - left * 2;
+  if (v.mode_label.len() > 0 && v.menu.is_none() && v.editing.is_none()) {
+    room = screen.mode_button(f.width, f.height).x - left * 2;
+  }
+  let p: i32 = matrix.fit_pitch(v.title, room, f.width / 90);
   let line: i32 = draw.text_height(sc) * 3 / 2;
-  let big: i32 = fit_scale(v.title, f.width - left * 2, sc * 3 / 2);
-  f.text(left, line - draw.text_height(big) / 3, v.title, big, ink());
+  matrix.text(f, left, screen.mode_button(f.width, f.height).y + (screen.mode_button(f.width, f.height).h - matrix.height(p)) / 2, v.title, p, ink());
   let small: i32 = small_scale(sc);
   let th: i32 = draw.text_height(small);
   let chars: i32 = screen.line_chars(f.width - left * 2 - th, draw.text_width("x", 1), small) * 10 / 9;
   let y: i32 = line * 2 + line / 2;
-  f.disc(left + th / 3, y + th / 2, th / 4, accent(v.label));
+  f.disc(left + th / 3, y + th / 2, th / 5, accent(v.label));
   for l in screen.wrap(v.status, chars) {
     f.text(left + th, y, l, small, muted());
     y = y + th * 4 / 3;
   }
   for l in screen.wrap(v.notice, chars) {
-    f.text(left + th, y, l, small, amber());
+    f.text(left + th, y, l, small, red());
     y = y + th * 4 / 3;
   }
 }
 
-// The code that the users compare, in two groups of three, and the two
+// The code that the users compare, in two groups of three dots, and the two
 // buttons.
-function compare(f: draw.Frame, code: string, sc: i32): void {
+function compare(f: draw.Frame, code: string): void {
   let shown: string = code;
   if (code.len() == 6) {
     shown = code.take(3) + " " + code.drop(3);
   }
-  let big: i32 = sc * 3;
-  f.text((f.width - draw.text_width(shown, big)) / 2, f.height / 5, shown, big, ink());
-  pill(f, screen.same_button(f.width, f.height), "MATCH", green(), bg(), sc);
-  outlined(f, screen.differ_button(f.width, f.height), "NO MATCH", red(), sc);
+  let p: i32 = matrix.fit_pitch(shown, f.width * 8 / 10, f.width / 45);
+  matrix.text(f, (f.width - matrix.width(shown, p)) / 2, f.height * 22 / 100, shown, p, ink());
+  pill(f, screen.same_button(f.width, f.height), "MATCH", ink(), bg());
+  outlined(f, screen.differ_button(f.width, f.height), "NO MATCH", red());
 }
 
 // The Wi-Fi Direct peers, one card each.
@@ -187,42 +215,41 @@ function peers(f: draw.Frame, list: Peer[], sc: i32): void {
   for k in 0..list.len() {
     if (k < screen.PEER_ROWS) {
       let row: screen.Rect = screen.peer_row(f.width, f.height, k);
-      f.round_rect(row.x, row.y, row.w, row.h, row.h / 4, surface());
+      card(f, row, surface());
       let ts: i32 = fit_scale(list[k].name, row.w * 6 / 10, small_scale(sc));
-      let ty: i32 = row.y + row.h / 2 - draw.text_height(ts) / 2;
-      f.text(row.x + row.h / 3, ty, list[k].name, ts, ink());
+      f.text(row.x + row.h / 3, row.y + row.h / 2 - draw.text_height(ts) / 2, list[k].name, ts, ink());
       if (list[k].invited) {
         let tag: string = "INVITED";
-        let tags: i32 = fit_scale(tag, row.w * 3 / 10, small_scale(sc));
-        f.text(row.x + row.w - row.h / 3 - draw.text_width(tag, tags), row.y + row.h / 2 - draw.text_height(tags) / 2, tag, tags, amber());
+        let tp: i32 = label_pitch(row) * 3 / 4 + 1;
+        matrix.text(f, row.x + row.w - row.h / 3 - matrix.width(tag, tp), row.y + (row.h - matrix.height(tp)) / 2, tag, tp, red());
       }
     }
   }
 }
 
-// The round talk button: filled while it talks or listens, and a ring in the
-// colour of the state otherwise.
-function talk(f: draw.Frame, label: string, sc: i32): void {
+// The round talk button: filled red while it talks and white while it
+// listens, and a ring of dots in the colour of the state otherwise.
+function talk(f: draw.Frame, label: string): void {
   let r: screen.Rect = screen.talk_button(f.width, f.height);
   let cx: i32 = r.x + r.w / 2;
   let cy: i32 = r.y + r.h / 2;
   let rad: i32 = r.w / 2;
-  let color: i32 = accent(label);
   let text: i32 = ink();
-  if (label == "TALKING" || label == "LISTENING") {
-    f.ring(cx, cy, rad + rad / 10, rad / 30 + 1, color);
-    f.disc(cx, cy, rad, color);
+  if (label == "TALKING") {
+    f.disc(cx, cy, rad, red());
+  } else if (label == "LISTENING") {
+    f.disc(cx, cy, rad, ink());
     text = bg();
   } else {
-    f.disc(cx, cy, rad, surface());
-    f.ring(cx, cy, rad, rad / 14 + 1, color);
+    f.disc(cx, cy, rad * 92 / 100, surface());
+    dotted_ring(f, cx, cy, rad - rad / 30, rad / 30 + 1, 72, accent(label));
   }
-  let ts: i32 = fit_scale(label, r.w * 7 / 10, sc * 3 / 2);
-  f.text(cx - draw.text_width(label, ts) / 2, cy - draw.text_height(ts) / 2, label, ts, text);
+  let p: i32 = matrix.fit_pitch(label, r.w * 7 / 10, r.w / 60 + 1);
+  matrix.text(f, cx - matrix.width(label, p) / 2, cy - matrix.height(p) / 2, label, p, text);
 }
 
 // The six boxes of the code, the keys, CANCEL and JOIN.
-function keypad(f: draw.Frame, typed: string, sc: i32): void {
+function keypad(f: draw.Frame, typed: string): void {
   let n: i32 = rooms.CODE_LEN;
   let gap: i32 = f.width / 60;
   let bw: i32 = (f.width * 8 / 10 - gap * (n - 1)) / n;
@@ -232,34 +259,39 @@ function keypad(f: draw.Frame, typed: string, sc: i32): void {
     let bx: i32 = f.width / 10 + k * (bw + gap);
     let edge: i32 = outline();
     if (k == typed.len()) {
-      edge = blue();
+      edge = ink();
     }
-    f.round_rect(bx, y, bw, bh, bw / 5, edge);
-    f.round_rect(bx + 3, y + 3, bw - 6, bh - 6, bw / 5 - 3, surface());
+    let box: screen.Rect = screen.Rect { x: bx, y: y, w: bw, h: bh };
+    card(f, box, edge);
     if (k < typed.len()) {
-      centered(f, screen.Rect { x: bx, y: y, w: bw, h: bh }, typed.drop(k).take(1), sc * 2, ink());
+      dots_in(f, box, typed.drop(k).take(1), bh / 12, ink());
     }
   }
   for k in 0..screen.DELETE_KEY + 1 {
     let key: screen.Rect = screen.key_rect(f.width, f.height, k);
-    let color: i32 = ink();
-    if (k == screen.DELETE_KEY) {
-      color = amber();
-    }
-    f.round_rect(key.x, key.y, key.w, key.h, key.w / 5, surface());
-    centered(f, key, screen.key_label(k), sc * 3 / 2, color);
+    key_cap(f, key, screen.key_label(k), k == screen.DELETE_KEY);
   }
-  outlined(f, screen.room_button(f.width, f.height), "CANCEL", muted(), sc);
+  outlined(f, screen.room_button(f.width, f.height), "CANCEL", muted());
   if (typed.len() == n) {
-    pill(f, screen.join_button(f.width, f.height), "JOIN", blue(), bg(), sc);
+    pill(f, screen.join_button(f.width, f.height), "JOIN", ink(), bg());
   } else {
-    pill(f, screen.join_button(f.width, f.height), "JOIN", surface(), muted(), sc);
+    pill(f, screen.join_button(f.width, f.height), "JOIN", surface(), muted());
   }
 }
 
+// One key: a dark cap with its label in dots, red for a key that removes.
+function key_cap(f: draw.Frame, key: screen.Rect, label: string, removes: boolean): void {
+  let color: i32 = ink();
+  if (removes) {
+    color = red();
+  }
+  f.round_rect(key.x, key.y, key.w, key.h, key.w / 5, surface());
+  dots_in(f, key, label, key.h / 14 + 1, color);
+}
+
 // The settings screen: a card for each mode with what it does, the chosen
-// mode in green, and BACK.
-function settings(f: draw.Frame, chosen: i32, available: [boolean], sc: i32): void {
+// mode outlined in white with a red dot, the room server, and BACK.
+function settings(f: draw.Frame, chosen: i32, available: [boolean], server: string, sc: i32): void {
   let list: modes.Mode[] = modes.all();
   let help_scale: i32 = small_scale(sc);
   let width: i32 = screen.mode_row(f.width, f.height, 0).w * 9 / 10;
@@ -272,14 +304,13 @@ function settings(f: draw.Frame, chosen: i32, available: [boolean], sc: i32): vo
     let open: boolean = k < available.len() && available[k];
     let edge: i32 = surface();
     if (k == chosen) {
-      edge = green();
+      edge = ink();
     }
-    let t: i32 = row.h / 24 + 2;
-    f.round_rect(row.x, row.y, row.w, row.h, row.h / 4, edge);
-    f.round_rect(row.x + t, row.y + t, row.w - 2 * t, row.h - 2 * t, row.h / 4 - t, surface());
-    mode_card(f, row, list[k], k == chosen, open, sc, help_scale);
+    card(f, row, edge);
+    mode_card(f, row, list[k], k == chosen, open, help_scale);
   }
-  outlined(f, screen.back_button(f.width, f.height), "BACK", muted(), sc);
+  server_card(f, server, help_scale);
+  outlined(f, screen.back_button(f.width, f.height), "BACK", muted());
 }
 
 const NO_SERVER: string = "needs a server";
@@ -293,18 +324,43 @@ function imin(a: i32, b: i32): i32 {
 
 // The name and the help of one mode in its card. Each help line has the
 // same scale `small`.
-function mode_card(f: draw.Frame, row: screen.Rect, m: modes.Mode, chosen: boolean, open: boolean, sc: i32, small: i32): void {
+function mode_card(f: draw.Frame, row: screen.Rect, m: modes.Mode, chosen: boolean, open: boolean, small: i32): void {
   let color: i32 = ink();
   let help: string = modes.help(m);
-  if (chosen) {
-    color = green();
-  }
   if (!open) {
     color = muted();
     help = NO_SERVER;
   }
   let left: i32 = row.x + row.h / 4;
-  let name_scale: i32 = fit_scale(modes.name(m), row.w * 8 / 10, sc);
-  f.text(left, row.y + row.h / 4 - draw.text_height(name_scale) / 3, modes.name(m), name_scale, color);
+  let p: i32 = matrix.fit_pitch(modes.name(m), row.w * 7 / 10, row.h / 22 + 1);
+  matrix.text(f, left, row.y + row.h / 5, modes.name(m), p, color);
   f.text(left, row.y + row.h * 64 / 100, help, small, muted());
+  if (chosen) {
+    f.disc(row.x + row.w - row.h / 4, row.y + row.h / 2, row.h / 12 + 1, red());
+  }
+}
+
+// The card of the room server: SERVER in dots, and the name in text.
+function server_card(f: draw.Frame, server: string, small: i32): void {
+  let row: screen.Rect = screen.server_row(f.width, f.height);
+  card(f, row, surface());
+  let left: i32 = row.x + row.h / 4;
+  matrix.text(f, left, row.y + row.h / 5, "SERVER", row.h / 22 + 1, ink());
+  let ts: i32 = fit_scale(server, row.w * 9 / 10, small);
+  f.text(left, row.y + row.h * 62 / 100, server, ts, muted());
+}
+
+// The field with the name of the server, the keys, CANCEL and SAVE.
+function host_keyboard(f: draw.Frame, name: string, sc: i32): void {
+  let field: screen.Rect = screen.host_field(f.width, f.height);
+  card(f, field, ink());
+  let shown: string = name + "_";
+  let ts: i32 = fit_scale(shown, field.w * 9 / 10, sc);
+  f.text(field.x + field.h / 3, field.y + (field.h - draw.text_height(ts)) / 2, shown, ts, ink());
+  for k in 0..screen.HOST_DELETE_KEY + 1 {
+    let key: screen.Rect = screen.host_key_rect(f.width, f.height, k);
+    key_cap(f, key, screen.host_key_label(k), k >= screen.CLEAR_KEY);
+  }
+  outlined(f, screen.room_button(f.width, f.height), "CANCEL", muted());
+  pill(f, screen.join_button(f.width, f.height), "SAVE", ink(), bg());
 }

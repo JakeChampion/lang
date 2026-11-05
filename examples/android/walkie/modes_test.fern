@@ -67,11 +67,22 @@ function test_a_mode_survives_its_file(): test.TestOutcome {
   return test.assert_eq(line, "AUTOMATIC, SAME WI-FI, WI-FI DIRECT, INTERNET ROOM, AUTOMATIC, AUTOMATIC");
 }
 
+// A host name or an IPv4 address is valid, and the empty name selects the
+// server of the build.
+function test_valid_host(): test.TestOutcome {
+  let line: string = "";
+  for name in ["", "rooms.example.com", "10.0.0.2", "a", "-rooms.example", "rooms.example.", "Rooms.example", "rooms example", "rooms:443"] {
+    line = line + modes.valid_host(name).to_string() + " ";
+  }
+  return test.assert_eq(line, "true true true true false false false false false ");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie modes");
   r = r.it("beacons go to the networks of the mode", test_beacons_go_to_the_networks_of_the_mode);
   r = r.it("each mode takes only its own network", test_each_mode_takes_only_its_own_network);
   r = r.it("rooms need a server", test_rooms_need_a_server);
   r = r.it("a mode survives its file", test_a_mode_survives_its_file);
+  r = r.it("a host name is valid", test_valid_host);
   return r.finish();
 }
