@@ -232,7 +232,7 @@ int main(void){
 			}
 			// fs_type is the table's zero-offset fallthrough.
 			checkStatfsLoads(t, fields, "fs_type", 64, host["type"])
-			buf := regexp.MustCompile(`let buf: usize = __raw_scratch\((\d+)\);`).FindStringSubmatch(source)
+			buf := regexp.MustCompile(`let buf(?:: usize)? = __raw_scratch\((\d+)\);`).FindStringSubmatch(source)
 			if buf == nil {
 				t.Fatal("runtime statfs helper has no scratch buffer declaration")
 			}

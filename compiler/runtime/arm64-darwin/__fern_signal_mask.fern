@@ -1,8 +1,8 @@
 function __fern_signal_mask(how: i32, mask: i64): i64 {
-  let buf: usize = __raw_scratch(16);
+  let buf = __raw_scratch(16);
   __store_i64(buf, mask);
   __store_i64(buf + 8, 0 as i64);
-  let rc: i32 = __syscall4(48, (how + 1) as i64, buf as i64, (buf + 8) as i64, 8) as i32;
+  let rc = __syscall4(48, (how + 1) as i64, buf as i64, (buf + 8) as i64, 8) as i32;
   if (rc < 0) {
     return rc as i64;
   }

@@ -1,5 +1,5 @@
 function __fern_ring_flush(blk: usize): i32 {
-  let queued: i32 = __fern_ring_queued(blk);
+  let queued = __fern_ring_queued(blk);
   if (queued == 0) {
     return 0;
   }

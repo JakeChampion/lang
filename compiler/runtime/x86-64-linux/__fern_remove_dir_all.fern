@@ -1,19 +1,19 @@
 function __fern_remove_dir_all(path: string): Result[void, IoError] {
-  let plen: i32 = path.len();
-  let pathz: usize = __raw_alloc(plen + 1);
-  let i: i32 = 0;
+  let plen = path.len();
+  let pathz = __raw_alloc(plen + 1);
+  let i = 0;
   while (i < plen) {
     __raw_store8(pathz, i, path[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   __raw_store8(pathz, plen, 0);
-  let fd: i32 = __syscall3(257, -100, pathz as i64, 65536) as i32;
+  let fd = __syscall3(257, -100, pathz as i64, 65536) as i32;
   if (fd < 0) {
-    let e: i32 = 0 - fd;
+    let e = -fd;
     if (e == 20) {
       __syscall3(263, -100, pathz as i64, 0);
     }
-    let pathz_own0: string = __raw_string(pathz, plen + 1);
+    let pathz_own0 = __raw_string(pathz, plen + 1);
     if (e == 2) {
       return Ok(());
     }
@@ -22,36 +22,36 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
     }
     return Err(__fern_io_error(e, __fern_path_copy(pathz_own0, plen)));
   }
-  let basep: usize = __raw_alloc(8);
-  let done: i32 = 0;
+  let basep = __raw_alloc(8);
+  let done = 0;
   while (done == 0) {
-    let buf: usize = __raw_alloc(65536);
-    let n: i32 = __syscall4(217, fd as i64, buf as i64, 65536, basep as i64) as i32;
+    let buf = __raw_alloc(65536);
+    let n = __syscall4(217, fd as i64, buf as i64, 65536, basep as i64) as i32;
     if (n <= 0) {
       done = 1;
     } else {
-      let pos: i32 = 0;
+      let pos = 0;
       while (pos < n) {
-        let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
-        let nlen: i32 = 0;
-        let room: i32 = reclen - 19;
-        let scan: i32 = 1;
+        let reclen = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
+        let nlen = 0;
+        let room = reclen - 19;
+        let scan = 1;
         while (scan == 1 && nlen + 8 <= room) {
-          let w: i64 = __load_i64(buf + pos + 19 + nlen);
-          let z: i64 = w - 72340172838076673 as i64 & (w ^ (0 - 1) as i64) & (0 - 9187201950435737472) as i64;
+          let w = __load_i64(buf + pos + 19 + nlen);
+          let z = w - 72340172838076673 as i64 & (w ^ (-1) as i64) & (-9187201950435737472) as i64;
           if (z != 0 as i64) {
-            nlen = nlen + (__ctz64(z as u64) >> 3);
+            nlen += __ctz64(z as u64) >> 3;
             scan = 0;
           } else {
-            nlen = nlen + 8;
+            nlen += 8;
           }
         }
         if (scan == 1) {
           while (__raw_load8(buf, pos + 19 + nlen) != 0) {
-            nlen = nlen + 1;
+            nlen += 1;
           }
         }
-        let skip: i32 = 0;
+        let skip = 0;
         if (nlen == 1) {
           if (__raw_load8(buf, pos + 19) == 46) {
             skip = 1;
@@ -65,8 +65,8 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
           }
         }
         if (skip == 0) {
-          let cl: i32 = plen + 1 + nlen;
-          let cb: usize = __raw_alloc(cl);
+          let cl = plen + 1 + nlen;
+          let cb = __raw_alloc(cl);
           __memcpy(cb, __raw_data(path), plen);
           __raw_store8(cb, plen, 47);
           __memcpy(cb + plen + 1, buf + pos + 19, nlen);
@@ -75,14 +75,14 @@ function __fern_remove_dir_all(path: string): Result[void, IoError] {
             Err(_) => {}
           }
         }
-        pos = pos + reclen;
+        pos += reclen;
       }
     }
-    let buf_own: string = __raw_string(buf, 65536);
+    let buf_own = __raw_string(buf, 65536);
   }
-  let basep_own: string = __raw_string(basep, 8);
+  let basep_own = __raw_string(basep, 8);
   __syscall3(3, fd as i64, 0, 0);
   __syscall3(263, -100, pathz as i64, 512);
-  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let pathz_own = __raw_string(pathz, plen + 1);
   return Ok(());
 }

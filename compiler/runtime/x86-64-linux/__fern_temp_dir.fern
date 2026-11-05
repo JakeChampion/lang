@@ -1,48 +1,48 @@
 function __fern_temp_dir(prefix: string): Result[string, IoError] {
-  let plen: i32 = prefix.len();
-  let si: i32 = 0;
+  let plen = prefix.len();
+  let si = 0;
   while (si < plen) {
     if (prefix[si] == 47) {
       return Err(__fern_io_error(22, __fern_path_copy(prefix, plen)));
     }
-    si = si + 1;
+    si += 1;
   }
-  let root: string = __fern_temp_root();
-  let rlen: i32 = root.len();
-  let total: i32 = rlen + 1 + plen + 1 + 16;
-  let tries: i32 = 0;
+  let root = __fern_temp_root();
+  let rlen = root.len();
+  let total = rlen + 1 + plen + 1 + 16;
+  let tries = 0;
   while (tries < 64) {
-    let rnd: u8[] = random_bytes(8);
-    let buf: usize = __raw_alloc(total + 1);
-    let i: i32 = 0;
+    let rnd = random_bytes(8);
+    let buf = __raw_alloc(total + 1);
+    let i = 0;
     while (i < rlen + 1 + plen) {
-      let c: i32 = 47;
+      let c = 47;
       if (i < rlen) {
         c = root[i] as i32;
       } else if (i > rlen) {
         c = prefix[i - rlen - 1] as i32;
       }
       __raw_store8(buf, i, c);
-      i = i + 1;
+      i += 1;
     }
     __raw_store8(buf, rlen + 1 + plen, 45);
-    let k: i32 = 0;
+    let k = 0;
     while (k < 8) {
-      let v: i32 = rnd[k] as i32;
+      let v = rnd[k] as i32;
       __raw_store8(buf, rlen + 2 + plen + 2 * k, __fern_hex_digit(v >> 4));
       __raw_store8(buf, rlen + 3 + plen + 2 * k, __fern_hex_digit(v & 15));
-      k = k + 1;
+      k += 1;
     }
     __raw_store8(buf, total, 0);
-    let rc: i32 = __syscall3(258, -100, buf as i64, 448) as i32;
-    let buf_own: string = __raw_string(buf, total + 1);
+    let rc = __syscall3(258, -100, buf as i64, 448) as i32;
+    let buf_own = __raw_string(buf, total + 1);
     if (rc >= 0) {
       return Ok(__fern_path_copy(buf_own, total));
     }
-    if (rc != 0 - 17) {
-      return Err(__fern_io_error(0 - rc, __fern_path_copy(prefix, plen)));
+    if (rc != -17) {
+      return Err(__fern_io_error(-rc, __fern_path_copy(prefix, plen)));
     }
-    tries = tries + 1;
+    tries += 1;
   }
   return Err(__fern_io_error(17, __fern_path_copy(prefix, plen)));
 }
@@ -59,9 +59,9 @@ function __fern_hex_digit(d: i32): i32 {
 function __fern_temp_root(): string {
   match (__fern_env("TMPDIR")) {
     Some(v) => {
-      let n: i32 = v.len();
+      let n = v.len();
       if (n > 1 && v[n - 1] == 47) {
-        n = n - 1;
+        n -= 1;
       }
       if (n > 1 && v[0] == 47) {
         return __fern_path_copy(v, n);

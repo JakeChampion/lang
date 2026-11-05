@@ -1,10 +1,10 @@
 function __fern_fd_flags(fd: i32): Result[i64, IoError] {
-  let r: i32 = __syscall3(25, fd as i64, 3, 0) as i32;
+  let r = __syscall3(25, fd as i64, 3, 0) as i32;
   if (r < 0) {
-    return Err(__fern_io_error(0 - r, ""));
+    return Err(__fern_io_error(-r, ""));
   }
-  let acc: i32 = r & 3;
-  let bits: i32 = 0;
+  let acc = r & 3;
+  let bits = 0;
   if (acc != 1) {
     bits = bits | 1;
   }

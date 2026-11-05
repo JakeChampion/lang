@@ -1,31 +1,31 @@
 function __fern_ring_recv_u8(ring: i64, fd: i32, buf: i32[]): i32 {
-  let max: i32 = buf.len();
-  let dst: usize = __raw_arr_ptr(buf) + 8;
+  let max = buf.len();
+  let dst = __raw_arr_ptr(buf) + 8;
   if (ring < 0 as i64 || fd < 0) {
-    return 0 - 9;
+    return -9;
   }
-  let blk: usize = ring as usize;
+  let blk = ring as usize;
   if (fd >= __load_i32(blk + 68)) {
-    return 0 - 9;
+    return -9;
   }
-  let ent: usize = __fern_ring_entry(blk, fd);
-  let pb: usize = __load_i64(blk + 160) as usize;
-  let got: i32 = 0;
+  let ent = __fern_ring_entry(blk, fd);
+  let pb = __load_i64(blk + 160) as usize;
+  let got = 0;
   while (got < max && __fern_ring_u16(ent, 8) != 0) {
-    let bid: i32 = __fern_ring_u16(ent, 8) - 1;
-    let meta: usize = pb + 4096 + bid as usize * 8;
-    let len: i32 = __fern_ring_u16(meta, 2);
-    let off: i32 = __fern_ring_u16(meta, 4);
-    let k: i32 = len - off;
+    let bid = __fern_ring_u16(ent, 8) - 1;
+    let meta = pb + 4096 + bid as usize * 8;
+    let len = __fern_ring_u16(meta, 2);
+    let off = __fern_ring_u16(meta, 4);
+    let k = len - off;
     if (k > max - got) {
       k = max - got;
     }
-    let src: usize = pb + 8192 + bid as usize * 4096 + off as usize;
-    let to: usize = dst + got as usize;
+    let src = pb + 8192 + bid as usize * 4096 + off as usize;
+    let to = dst + got as usize;
     __memcpy(to, src, k);
-    got = got + k;
+    got += k;
     if (off + k >= len) {
-      let nxt: i32 = __fern_ring_u16(meta, 0);
+      let nxt = __fern_ring_u16(meta, 0);
       __fern_ring_set16(ent, 8, nxt);
       if (nxt == 0) {
         __fern_ring_set16(ent, 10, 0);
@@ -39,12 +39,12 @@ function __fern_ring_recv_u8(ring: i64, fd: i32, buf: i32[]): i32 {
       __fern_ring_set16(meta, 4, off + k);
     }
   }
-  let ended: i32 = __raw_load8(ent, 6);
+  let ended = __raw_load8(ent, 6);
   if (got > 0 && (ended != 0 || __raw_load8(ent, 4) == 1 || __raw_load8(ent, 4) == 2 || got >= max)) {
     return got;
   }
   if (got > 0) {
-    let more: i32 = __syscall6(207, fd as i64, (dst + got as usize) as i64, (max - got) as i64, 64, 0, 0) as i32;
+    let more = __syscall6(207, fd as i64, (dst + got as usize) as i64, (max - got) as i64, 64, 0, 0) as i32;
     if (more > 0) {
       return got + more;
     }
@@ -57,7 +57,7 @@ function __fern_ring_recv_u8(ring: i64, fd: i32, buf: i32[]): i32 {
     return 0 - __raw_load8(ent, 7);
   }
   if (__raw_load8(ent, 4) == 1 || __raw_load8(ent, 4) == 2) {
-    return 0 - 11;
+    return -11;
   }
   if (max <= 0) {
     return 0;
