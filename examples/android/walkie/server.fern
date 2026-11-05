@@ -4,7 +4,9 @@
 //   server CERT.pem KEY.pem [PORT]
 //
 // One event loop serves all the sockets. A client sends one request line and
-// gets one reply line, and then the server closes the connection.
+// gets one reply line, and then the server closes the connection. Before it
+// accepts new clients, the server reads the two PEM files again, so a
+// certificate that an ACME client renews takes effect with no restart.
 import "std/async";
 import "std/clock";
 import "std/i32";
@@ -39,6 +41,11 @@ struct Server {
   listener: Socket,
   udp: Socket,
   config: server.Config,
+  // The PEM files, and the text of each that the config holds.
+  cert_path: string,
+  key_path: string,
+  cert_text: string,
+  key_text: string,
   rooms: rooms.Rooms,
   clients: Client[],
 }
@@ -51,7 +58,9 @@ function say(text: string): void {
   eprint("walkie server: " + text + "\n");
 }
 
-function load_identity(cert_path: string, key_path: string): Option[identity.Identity] {
+struct Pem { cert: string, key: string }
+
+function read_pem(cert_path: string, key_path: string): Option[Pem] {
   let Ok(cert_text) = read_file(cert_path) else {
     say("cannot read " + cert_path);
     return None;
@@ -60,11 +69,15 @@ function load_identity(cert_path: string, key_path: string): Option[identity.Ide
     say("cannot read " + key_path);
     return None;
   };
-  let Ok(chain) = pem.certificates(cert_text) else {
+  return Some(Pem { cert: cert_text, key: key_text });
+}
+
+function identity_of(cert_path: string, key_path: string, files: Pem): Option[identity.Identity] {
+  let Ok(chain) = pem.certificates(files.cert) else {
     say(cert_path + " has no certificate");
     return None;
   };
-  let Ok(key) = identity.private_key_from_pem(key_text) else {
+  let Ok(key) = identity.private_key_from_pem(files.key) else {
     say(key_path + " has no usable private key");
     return None;
   };
@@ -98,7 +111,29 @@ function open_udp(port: i32): Option[Socket] {
   return None;
 }
 
-function open_server(id: identity.Identity, port: i32): Option[Server] {
+// The config that serves `id` to new clients.
+function config_of(id: identity.Identity): server.Config {
+  return server.config(id, rand.bytes(32)).without_tickets();
+}
+
+// The server with the certificate and key that the files hold now. A pair
+// that does not load, such as a renewal that is half written, keeps the
+// identity that the server has.
+function refreshed(own s: Server): Server {
+  let Some(now) = read_pem(s.cert_path, s.key_path) else {
+    return s;
+  };
+  if (now.cert == s.cert_text && now.key == s.key_text) {
+    return s;
+  }
+  let Some(id) = identity_of(s.cert_path, s.key_path, now) else {
+    return s;
+  };
+  say("loaded the new certificate in " + s.cert_path);
+  return Server { ...s, config: config_of(id), cert_text: now.cert, key_text: now.key };
+}
+
+function open_server(cert_path: string, key_path: string, files: Pem, id: identity.Identity, port: i32): Option[Server] {
   let Ok(listener) = net.listen_any(port, net.listen_options()) else {
     say("cannot listen on TCP port " + port.to_string());
     return None;
@@ -108,8 +143,7 @@ function open_server(id: identity.Identity, port: i32): Option[Server] {
   };
   let a: Result[void, net.NetError] = net.set_nonblocking(listener, true);
   let b: Result[void, net.NetError] = net.set_nonblocking(udp, true);
-  let config = server.config(id, rand.bytes(32)).without_tickets();
-  return Some(Server { listener: listener, udp: udp, config: config, rooms: rooms.empty(), clients: [] });
+  return Some(Server { listener: listener, udp: udp, config: config_of(id), cert_path: cert_path, key_path: key_path, cert_text: files.cert, key_text: files.key, rooms: rooms.empty(), clients: [] });
 }
 
 // The address without its port, so the rate limit counts a host once.
@@ -147,6 +181,9 @@ function accept_all(own s0: Server, now: i64): Server {
     let Ok(sock) = net.accept(s.listener) else {
       return s;
     };
+    if (k == 0) {
+      s = refreshed(s);
+    }
     if let Some(c) = new_client(s, sock, now) {
       s = Server { ...s, clients: s.clients.append(c) };
     }
@@ -351,10 +388,13 @@ pub function main(): i32 {
     say("the port must be a number from 1 to 65535");
     return 2;
   }
-  let Some(id) = load_identity(argv[1], argv[2]) else {
+  let Some(files) = read_pem(argv[1], argv[2]) else {
     return 1;
   };
-  let Some(s) = open_server(id, port) else {
+  let Some(id) = identity_of(argv[1], argv[2], files) else {
+    return 1;
+  };
+  let Some(s) = open_server(argv[1], argv[2], files, id, port) else {
     return 1;
   };
   say("listening on port " + port.to_string());

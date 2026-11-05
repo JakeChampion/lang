@@ -44,6 +44,32 @@ curl --cacert ./local-root.crt https://localhost/healthz
 
 Do not disable certificate verification. Public hostnames use public certificates automatically.
 
+## The walkie-talkie room server
+
+The `walkie` service runs the room server of the walkie-talkie app, `examples/android/walkie/server.fern`. It is in the `walkie` profile, so it starts only when you ask for it.
+The server uses the certificate that Caddy keeps for `FERN_SITE_ADDRESS`, through a read-only mount of the proxy volume. Caddy keeps a P-256 key, which the server accepts.
+Before it accepts new clients, the server reads the certificate again. A renewal by Caddy thus takes effect with no restart.
+
+Permit inbound TCP port 47130 and UDP port 47130. The rooms use TCP, and the voice uses UDP. Point the hostname at this host directly: a proxy that passes only HTTP blocks the voice.
+
+Build the image from the repository root:
+
+```sh
+bin/fern -target x86-64-linux -O -o examples/android/walkie/walkie-server examples/android/walkie/server.fern
+docker build -t fern-walkie:latest examples/android/walkie
+```
+
+Start the services with the profile:
+
+```sh
+docker compose --env-file deploy/production.env -f compose.production.yaml --profile walkie up -d
+```
+
+Caddy must get the certificate before the room server can start. Until then, the room server stops, and Compose starts it again.
+Caddy keeps each certificate in a directory for its issuer. `FERN_WALKIE_ISSUER` names that directory. When Caddy gets the certificate from ZeroSSL, set it to `acme.zerossl.com-v2-dv90`.
+
+Set the `WALKIE_SERVER` repository variable to `FERN_SITE_ADDRESS`. The next nightly APK then shows the room buttons.
+
 ## Retained state
 
 The app volume contains two directories:

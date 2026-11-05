@@ -177,6 +177,12 @@ fern -o walkie-server examples/android/walkie/server.fern
 Open TCP port 47130 and UDP port 47130 in the firewall. The key can be P-256,
 P-384 or Ed25519. The server cannot sign with an RSA key.
 
+Before it accepts new clients, the server reads the two files again. A new
+pair takes effect with no restart. A pair that does not load, such as a
+renewal that is half written, keeps the old pair. The showcase deployment
+runs the server next to its Caddy proxy, with the certificate of Caddy. See
+the walkie-talkie section of `examples/showcase/deploy/README.md`.
+
 A client sends one request line, and the server sends one reply line:
 
 - `CREATE` opens a room. The reply is `ROOM`, the code and a token in hex.
@@ -211,7 +217,8 @@ next nightly APK shows the room buttons.
 `rooms.fern` holds the room table and does no I/O. `rooms_test.fern` tests
 it. `TestWalkieRelayServer` runs the server on the host. Two clients make and
 join a room over TLS, and the relay sends their datagrams. Then one client
-moves to a new address.
+moves to a new address. Last, the test replaces the certificate and the key
+while the server runs, and new clients get the new certificate.
 
 ## The floor
 
