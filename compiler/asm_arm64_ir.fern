@@ -3776,6 +3776,9 @@ function sym_addr_need(sym: string): string {
 }
 
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (s.shared && ins.str == "__fern_envp" && ins.imm == 1) {
+    return ssa_shared_environ(ins, reg_of, s);
+  }
   if (util.str_has_prefix(ins.str, "__fern_arr_push_")) {
     s = s.need("heap");
   }
@@ -3787,6 +3790,13 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (ins.imm == 1) {
     s = s.write("    ldr " + d + ", [" + d + "]\n");
   }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+function ssa_shared_environ(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("shared_environ");
+  let d = ssa_dst(reg_of, ins.result);
+  s = s.write("    adrp " + d + ", __fern_environ_slot\n    add " + d + ", " + d + ", :lo12:__fern_environ_slot\n    ldr " + d + ", [" + d + "]\n    ldr " + d + ", [" + d + "]\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -6935,6 +6945,26 @@ pub function busy_give_arm64(): string {
 
 // The arm64 form of emit_busy_lock_x86. Both routines keep every register
 // except x16, x17 and the flags.
+// A shared object has no _start. The loader calls each entry of
+// .init_array with argc, argv and envp, so this entry keeps them.
+function emit_shared_init_arm64(s: asmcore.EmitState): asmcore.EmitState {
+  let args: boolean = s.has_need("args");
+  let env: boolean = s.has_need("heap");
+  if (!args && !env) {
+    return s;
+  }
+  s = s.write("__fern_shared_init:\n");
+  s = ssa_landing_pad(s);
+  if (args) {
+    s = s.write("    sxtw x0, w0\n    adrp x3, __fern_argc\n    add x3, x3, :lo12:__fern_argc\n    str x0, [x3]\n");
+    s = s.write("    adrp x3, __fern_argv\n    add x3, x3, :lo12:__fern_argv\n    str x1, [x3]\n");
+  }
+  if (env) {
+    s = s.write("    adrp x3, __fern_envp\n    add x3, x3, :lo12:__fern_envp\n    str x2, [x3]\n");
+  }
+  return s.write("    ret\n    .section .data\n    .align 3\n__fern_init_array:\n    .quad __fern_shared_init\n    .text\n");
+}
+
 function emit_busy_lock_arm64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
   s = s.write("__fern_busy_take:\n    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, .Lfern_busy_wait\n    ret\n");
@@ -10491,6 +10521,10 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   if (s.shared) {
     s = emit_busy_lock_arm64(s);
     s = emit_harden_start(s);
+    s = emit_shared_init_arm64(s);
+    if (s.has_need("shared_environ")) {
+      s = s.write("    .section .data\n    .align 3\n__fern_environ_slot:\n    .quad 0\n    .text\n");
+    }
   }
   s = emit_san_uaf_abort(s);
   s = emit_san_waf_abort(s);

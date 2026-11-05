@@ -1,0 +1,110 @@
+// The look of the screen, drawn on a frame in memory. Each case checks the
+// colours at points of the buttons. With WALKIE_UI_PNG set to a directory,
+// the test also writes each screen there as a PNG file.
+import "std/android/draw";
+import "std/png";
+import "std/test";
+import "./screen";
+import "./ui";
+
+const W: i32 = 1080;
+
+const H: i32 = 2400;
+
+function frame(): draw.Frame {
+  unsafe {
+    let bits: usize = __alloc(W * H * 4);
+    return draw.Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: W, height: H, stride: W };
+  }
+}
+
+function free_frame(own f: draw.Frame): void {
+  unsafe {
+    __free(f.bits, f.stride * f.height * 4);
+  }
+}
+
+function base(label: string): ui.View {
+  return ui.View { title: "Walkie", status: "connected", notice: "", label: label, code: "", searching: false, peers: [], room_buttons: false, typing: None };
+}
+
+// Draws `v`, writes it as `name`.png when WALKIE_UI_PNG is set, and gives
+// the colours at the points.
+function colours(name: string, v: ui.View, points: i32[][]): i32[] {
+  let f: draw.Frame = frame();
+  defer free_frame(f);
+  ui.render(f, v);
+  if let Some(dir) = env("WALKIE_UI_PNG") {
+    save(f, dir + "/" + name + ".png");
+  }
+  let out: i32[] = [];
+  for p in points {
+    out = out.append(f.pixel(p[0], p[1]));
+  }
+  return out;
+}
+
+function save(f: draw.Frame, path: string): void {
+  let rgb: u8[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      let c: i32 = f.pixel(x, y);
+      rgb = rgb.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8);
+    }
+  }
+  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
+    let written = write_file_bytes(path, bytes);
+  }
+}
+
+// A point on the talk button below its words, and a point on its ring.
+function talk_points(): i32[][] {
+  let r: screen.Rect = screen.talk_button(W, H);
+  return [[r.x + r.w / 2, r.y + r.h * 4 / 5], [r.x + r.w / 2, r.y + 2]];
+}
+
+function test_ready_shows_a_green_ring(): test.TestOutcome {
+  let c: i32[] = colours("ready", base("HOLD TO TALK"), talk_points().append([2, 2]));
+  return test.assert_eq((c[0] == ui.surface()).to_string() + " " + (c[1] == ui.green()).to_string() + " " + (c[2] == ui.bg()).to_string(), "true true true");
+}
+
+function test_talking_fills_the_button(): test.TestOutcome {
+  let talking: i32[] = colours("talking", base("TALKING"), talk_points());
+  let listening: i32[] = colours("listening", base("LISTENING"), talk_points());
+  return test.assert_eq((talking[0] == ui.green()).to_string() + " " + (listening[0] == ui.blue()).to_string(), "true true");
+}
+
+// The code shows with a green MATCH pill and a red NO MATCH outline.
+function test_compare_has_two_pills(): test.TestOutcome {
+  let same: screen.Rect = screen.same_button(W, H);
+  let differ: screen.Rect = screen.differ_button(W, H);
+  let v: ui.View = ui.View { ...base("WAITING"), status: "do both phones show this code?", code: "482913" };
+  let c: i32[] = colours("compare", v, [[same.x + same.h / 3, same.y + same.h / 2], [differ.x + differ.h / 2, differ.y + 1], [differ.x + differ.h / 2, differ.y + differ.h / 2]]);
+  return test.assert_eq((c[0] == ui.green()).to_string() + " " + (c[1] == ui.red()).to_string() + " " + (c[2] == ui.bg()).to_string(), "true true true");
+}
+
+// Peers show as cards, and the room buttons as pills.
+function test_search_shows_peers_and_rooms(): test.TestOutcome {
+  let row: screen.Rect = screen.peer_row(W, H, 0);
+  let v: ui.View = ui.View { ...base("SEARCHING"), status: "looking for a phone on this Wi-Fi", searching: true, peers: [ui.Peer { name: "Pixel 8", invited: false }, ui.Peer { name: "Galaxy S24", invited: true }], room_buttons: true };
+  let c: i32[] = colours("search", v, [[row.x + row.w / 2, row.y + 2]]);
+  return test.assert_eq((c[0] == ui.surface()).to_string(), "true");
+}
+
+// The keypad draws its keys, and the typed letters in their boxes.
+function test_keypad(): test.TestOutcome {
+  let key: screen.Rect = screen.key_rect(W, H, 0);
+  let v: ui.View = ui.View { ...base("SEARCHING"), status: "type the code of the room", typing: Some("K7Q") };
+  let c: i32[] = colours("keypad", v, [[key.x + key.w / 2, key.y + 3]]);
+  return test.assert_eq((c[0] == ui.surface()).to_string(), "true");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie ui");
+  r = r.it("ready shows a green ring", test_ready_shows_a_green_ring);
+  r = r.it("talking and listening fill the button", test_talking_fills_the_button);
+  r = r.it("the code has two pills", test_compare_has_two_pills);
+  r = r.it("the search shows peers and rooms", test_search_shows_peers_and_rooms);
+  r = r.it("the keypad draws its keys", test_keypad);
+  return r.finish();
+}

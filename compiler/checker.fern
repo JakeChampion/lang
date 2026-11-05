@@ -3,6 +3,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./astwalk";
+import "./builtinsigs";
 import "./typeinfo";
 import "./decltypes";
 import "./semtypes";
@@ -1702,7 +1703,9 @@ function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
       }
     },
     typeinfo.TypeArray(a) => {
-      return Some([a.elem]);
+      if (!a.view) {
+        return Some([a.elem]);
+      }
     },
     typeinfo.TypeTuple(tup) => {
       return Some(tup.elements);
@@ -1712,8 +1715,19 @@ function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
   return None;
 }
 
+// True when `a` and `b` are arrays at the same depths, each of them owned or
+// a view on both sides. The rest of the type `type_eq` decides.
+function same_views(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(x) = a {
+    if let typeinfo.TypeArray(y) = b {
+      return x.view == y.view && same_views(x.elem, y.elem);
+    }
+  }
+  return true;
+}
+
 // cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// Ord and Hash for Option, Result, owned arrays and tuples when their parts
 // do, so the hint moves to the first part that is not a scalar, or else asks
 // for the import. A type that no module can implement the trait for gets
 // advice on its parts, not an impl that the orphan rule refuses.
@@ -4773,308 +4787,8 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
   return out;
 }
 
-function builtin_sigs(): string[] {
-  return [
-    "__c_call0(usize): usize",
-    "__c_call0_f32(usize): f32",
-    "__c_call0_f64(usize): f64",
-    "__c_call1(usize, usize): usize",
-    "__c_call1_f32(usize, usize): f32",
-    "__c_call1_f64(usize, usize): f64",
-    "__c_call2(usize, usize, usize): usize",
-    "__c_call2_f32(usize, usize, usize): f32",
-    "__c_call2_f64(usize, usize, usize): f64",
-    "__c_call3(usize, usize, usize, usize): usize",
-    "__c_call3_f32(usize, usize, usize, usize): f32",
-    "__c_call3_f64(usize, usize, usize, usize): f64",
-    "__c_call4(usize, usize, usize, usize, usize): usize",
-    "__c_call4_f32(usize, usize, usize, usize, usize): f32",
-    "__c_call4_f64(usize, usize, usize, usize, usize): f64",
-    "__c_call5(usize, usize, usize, usize, usize, usize): usize",
-    "__c_call5_f32(usize, usize, usize, usize, usize, usize): f32",
-    "__c_call5_f64(usize, usize, usize, usize, usize, usize): f64",
-    "__c_call6(usize, usize, usize, usize, usize, usize, usize): usize",
-    "__c_call6_f32(usize, usize, usize, usize, usize, usize, usize): f32",
-    "__c_call6_f64(usize, usize, usize, usize, usize, usize, usize): f64",
-    "__method_Dir_access(Dir, string, i32): Result[void, IoError]",
-    "__method_Dir_chmod(Dir, string, i32, boolean): Result[void, IoError]",
-    "__method_Dir_chown(Dir, string, i32, i32, boolean): Result[void, IoError]",
-    "__method_Dir_close(Dir): Result[void, IoError]",
-    "__method_Dir_close_unchecked(Dir): Result[void, IoError]",
-    "__method_Dir_entries(Dir): Result[string[], IoError]",
-    "__method_Dir_entries_bytes(Dir): Result[u8[][], IoError]",
-    "__method_Dir_lstat(Dir, string): Result[FileStat, IoError]",
-    "__method_Dir_open_dir(Dir, string): Result[Dir, IoError]",
-    "__method_Dir_open_reader(Dir, string): Result[Reader, IoError]",
-    "__method_Dir_open_reader_with(Dir, string, i32): Result[Reader, IoError]",
-    "__method_Dir_open_writer(Dir, string): Result[Writer, IoError]",
-    "__method_Dir_open_writer_with(Dir, string, i32): Result[Writer, IoError]",
-    "__method_Dir_remove_dir(Dir, string): Result[void, IoError]",
-    "__method_Dir_remove_file(Dir, string): Result[void, IoError]",
-    "__method_Dir_stat(Dir, string): Result[FileStat, IoError]",
-    "__method_Reader_close(Reader): Result[void, IoError]",
-    "__method_Reader_close_unchecked(Reader): Result[void, IoError]",
-    "__method_Reader_copy_range_to(Reader, Writer, i32): Result[i64, IoError]",
-    "__method_Reader_drop_cache(Reader, i64, i64): Result[void, IoError]",
-    "__method_Reader_dup_onto(Reader, i32): Result[void, IoError]",
-    "__method_Reader_fdatasync(Reader): Result[void, IoError]",
-    "__method_Reader_flags(Reader): Result[i64, IoError]",
-    "__method_Reader_fsync(Reader): Result[void, IoError]",
-    "__method_Reader_isatty(Reader): boolean",
-    "__method_Reader_read_chunk(Reader, i32): Result[string, IoError]",
-    "__method_Reader_read_chunk_bytes(Reader, i32): Result[u8[], IoError]",
-    "__method_Reader_seek(Reader, i64, i32): Result[i64, IoError]",
-    "__method_Reader_set_extproc(Reader, boolean): Result[void, IoError]",
-    "__method_Reader_set_window_size(Reader, i32, i32): Result[void, IoError]",
-    "__method_Reader_splice_to(Reader, Writer, i32): Result[i64, IoError]",
-    "__method_Reader_stat(Reader): Result[FileStat, IoError]",
-    "__method_Reader_syncfs(Reader): Result[void, IoError]",
-    "__method_Reader_termios_get(Reader): Result[i64[], IoError]",
-    "__method_Reader_termios_set(Reader, i32, i64[]): Result[void, IoError]",
-    "__method_Reader_window_size(Reader): Result[WinSize, IoError]",
-    "__method_Writer_close(Writer): Result[void, IoError]",
-    "__method_Writer_close_unchecked(Writer): Result[void, IoError]",
-    "__method_Writer_drop_cache(Writer, i64, i64): Result[void, IoError]",
-    "__method_Writer_dup_onto(Writer, i32): Result[void, IoError]",
-    "__method_Writer_fdatasync(Writer): Result[void, IoError]",
-    "__method_Writer_flags(Writer): Result[i64, IoError]",
-    "__method_Writer_fsync(Writer): Result[void, IoError]",
-    "__method_Writer_isatty(Writer): boolean",
-    "__method_Writer_seek(Writer, i64, i32): Result[i64, IoError]",
-    "__method_Writer_set_nonblocking(Writer, boolean): Result[void, IoError]",
-    "__method_Writer_set_times(Writer, i64, i64, i64, i64, i32): Result[void, IoError]",
-    "__method_Writer_splice_forever(Writer, string): Result[void, IoError]",
-    "__method_Writer_stat(Writer): Result[FileStat, IoError]",
-    "__method_Writer_syncfs(Writer): Result[void, IoError]",
-    "__method_Writer_truncate(Writer, i64): Result[void, IoError]",
-    "__method_Writer_write(Writer, string): Result[void, IoError]",
-    "__method_Writer_write_bytes(Writer, [u8]): Result[void, IoError]",
-    "__method_Writer_write_some(Writer, string): Result[i64, IoError]",
-    "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
-    "__method_boolean_to_string(boolean): string",
-    "__method_string_as_bytes(string): [u8]",
-    "__method_string_len(string): i32",
-    "__primitive_char_to_string(char): string",
-    "__primitive_f32_to_string(f32): string",
-    "__primitive_f64_to_string(f64): string",
-    "__primitive_i32_to_string(i32): string",
-    "__primitive_i64_to_string(i64): string",
-    "__primitive_string_to_string(string): string",
-    "__primitive_u32_to_string(u32): string",
-    "__primitive_u64_to_string(u64): string",
-    "__primitive_u8_to_string(u8): string",
-    "__primitive_usize_to_string(usize): string",
-    "access(string, i32): Result[void, IoError]",
-    "args(): string[]",
-    "buf_clear(usize): void",
-    "buf_decode_base32(usize, u8[], i32, i32, u8[]): i32",
-    "buf_free(usize): void",
-    "buf_len(usize): i32",
-    "buf_new(i32): usize",
-    "buf_push(usize, string): void",
-    "buf_push_base32(usize, u8[], i32, i32, u8[]): void",
-    "buf_push_base64(usize, u8[], i32, i32, u8[]): void",
-    "buf_push_byte(usize, i32): void",
-    "buf_push_bytes_expanded(usize, u8[], u8[]): void",
-    "buf_push_bytes_filtered(usize, u8[], u8[]): void",
-    "buf_push_bytes_mapped(usize, u8[], u8[]): void",
-    "buf_push_bytes_range(usize, u8[], i32, i32): void",
-    "buf_push_decimal(usize, u64): void",
-    "buf_push_expanded(usize, string, u8[]): void",
-    "buf_push_filtered(usize, string, u8[]): void",
-    "buf_push_mapped(usize, string, u8[]): void",
-    "buf_push_range(usize, string, i32, i32): void",
-    "buf_push_u64(usize, u64): void",
-    "buf_take(usize): string",
-    "buf_take_bytes(usize): u8[]",
-    "cell_new(T): Cell",
-    "chdir(string): Result[void, IoError]",
-    "chmod(string, i32): Result[void, IoError]",
-    "chmod_at(string, i32, boolean): Result[void, IoError]",
-    "chown_at(string, i32, i32, boolean): Result[void, IoError]",
-    "chroot(string): Result[void, IoError]",
-    "clock_resolution(): i64",
-    "clock_set(i64, i64): Result[void, IoError]",
-    "clone_file(string, string): Result[void, IoError]",
-    "config_get(string): Option[string]",
-    "cpu_count(): i32",
-    "create_dir(string, i32): Result[void, IoError]",
-    "create_dir_all(string): Result[void, IoError]",
-    "create_link(string, string): Result[void, IoError]",
-    "create_symlink(string, string): Result[void, IoError]",
-    "disable_core_dumps(): boolean",
-    "env(string): Option[string]",
-    "environ(): string[]",
-    "eprint(string): void",
-    "exit(i32): void",
-    "f32_bits(f32): i32",
-    "f32_from_bits(i32): f32",
-    "f64_bits(f64): i64",
-    "f64_from_bits(i64): f64",
-    "getcwd(): Result[string, IoError]",
-    "getegid(): u32",
-    "geteuid(): u32",
-    "getgid(): u32",
-    "getgroups(): i64[]",
-    "getuid(): u32",
-    "getxattr(string, string): Result[string, IoError]",
-    "getxattr_bytes(string, string): Result[u8[], IoError]",
-    "hostname(): string",
-    "isatty(i32): boolean",
-    "lgetxattr(string, string): Result[string, IoError]",
-    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
-    "lsetxattr(string, string, string): Result[void, IoError]",
-    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
-    "lstat(string): Result[FileStat, IoError]",
-    "map_new(i32): Map",
-    "mknod(string, i32, i32, i32): Result[void, IoError]",
-    "monotonic_ns(): i64",
-    "mounts(): Result[MountEntry[], IoError]",
-    "now_ns(): i64",
-    "now_unix_ms(): i64",
-    "open_appender(string): Result[Writer, IoError]",
-    "open_dir(string): Result[Dir, IoError]",
-    "open_exclusive(string): Result[Writer, IoError]",
-    "open_reader(string): Result[Reader, IoError]",
-    "open_reader_with(string, i32): Result[Reader, IoError]",
-    "open_writer(string): Result[Writer, IoError]",
-    "open_writer_with(string, i32): Result[Writer, IoError]",
-    "pipe(): Result[Pipe, IoError]",
-    "poll(i32[], i32): i32",
-    "prctl_query(i32): i64",
-    "print(string): void",
-    "priority(): i32",
-    "proc_exec(string, string[]): i32",
-    "proc_exec_as(string, string[], string[]): i32",
-    "proc_fork(): i32",
-    "proc_waitpid(i32): i32",
-    "proc_waitpid_nohang(i32): i32",
-    "proc_waitpid_status(i32): i32",
-    "process_alive(i32): boolean",
-    "putchar(i32): void",
-    "random_bytes(i32): u8[]",
-    "random_i32(): i32",
-    "reactor_ctl(i32, i32, i32, i32): i32",
-    "reactor_new(): i32",
-    "reactor_wait(i32, i32[], i32): i32",
-    "read_dir(string): Result[string[], IoError]",
-    "read_dir_all(string): Result[string[], IoError]",
-    "read_dir_bytes(string): Result[u8[][], IoError]",
-    "read_dir_ino(string): Result[DirEntry[], IoError]",
-    "read_dir_ino_all(string): Result[DirEntry[], IoError]",
-    "read_file(string): Result[string, IoError]",
-    "read_file_bytes(string): Result[u8[], IoError]",
-    "read_link(string): Result[string, IoError]",
-    "read_link_bytes(string): Result[u8[], IoError]",
-    "remove_dir(string): Result[void, IoError]",
-    "remove_dir_all(string): Result[void, IoError]",
-    "remove_file(string): Result[void, IoError]",
-    "rename(string, string): Result[void, IoError]",
-    "rename_exchange(string, string): Result[void, IoError]",
-    "rename_noreplace(string, string): Result[void, IoError]",
-    "ring_ctl(i64, i32, i32, i32): i32",
-    "ring_new(i32): i64",
-    "ring_recv(i64, i32, u8[]): i32",
-    "ring_send_zc(i64, i32, u8[], i32): i32",
-    "ring_wait(i64, i32[], i32): i32",
-    "rlimit_nofile(): i64",
-    "set_args(string[]): void",
-    "set_extproc(i32, boolean): Result[void, IoError]",
-    "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
-    "set_priority(i32): Result[void, IoError]",
-    "set_process_group(i32, i32): Result[void, IoError]",
-    "set_window_size(i32, i32, i32): Result[void, IoError]",
-    "setgid(i64): Result[void, IoError]",
-    "setgroups(i64[]): Result[void, IoError]",
-    "setuid(i64): Result[void, IoError]",
-    "setxattr(string, string, string): Result[void, IoError]",
-    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
-    "signal_catch(i32): i32",
-    "signal_catch_interrupting(i32): i32",
-    "signal_default(i32): i32",
-    "signal_disposition(i32): i32",
-    "signal_ignore(i32): i32",
-    "signal_mask(i32, i64): i64",
-    "signal_raise(i32): i32",
-    "signal_send(i32, i32): Result[void, IoError]",
-    "signal_taken(i32): boolean",
-    "sleep_ms(i64): void",
-    "sleep_ns(i64): void",
-    "slice_unchecked(string, i32, i32): str",
-    "stat(string): Result[FileStat, IoError]",
-    "statfs(string): Result[FsStat, IoError]",
-    "stderr(): Writer",
-    "stdin(): Reader",
-    "stdout(): Writer",
-    "string_from_bytes_range_unchecked(u8[], i32, i32): string",
-    "string_from_bytes_unchecked(u8[]): string",
-    "subprocess(string, string[], string): ProcessResult",
-    "sync(): void",
-    "sysctl(i32[]): Result[u8[], IoError]",
-    "target_arch(): string",
-    "target_os(): string",
-    "tcp_accept(Socket): Socket",
-    "tcp_addr_into(Socket, boolean, u8[]): i32",
-    "tcp_close(Socket): i32",
-    "tcp_connect_with(u8[], i32, boolean): Socket",
-    "tcp_ktls(Socket, i32, i32, u8[]): i32",
-    "tcp_listen(i32): Socket",
-    "tcp_listen_with(u8[], i32, i32, boolean): Socket",
-    "tcp_local_port(Socket): i32",
-    "tcp_pollable(i32): i32",
-    "tcp_recv_into(Socket, u8[]): i32",
-    "tcp_send_buf(Socket, usize, i32): i32",
-    "tcp_send_bytes(Socket, u8[]): i32",
-    "tcp_sendfile(Socket, i32, i32): i32",
-    "tcp_socket_ctl(Socket, i32, i32): i32",
-    "temp_dir(string): Result[string, IoError]",
-    "termios_get(i32): Result[i64[], IoError]",
-    "termios_set(i32, i32, i64[]): Result[void, IoError]",
-    "timer_fd(i32): i32",
-    "truncate(string, i64): Result[void, IoError]",
-    "udp_bind(u8[], i32): Socket",
-    "udp_bind_with(u8[], i32, boolean): Socket",
-    "udp_connect(Socket, u8[], i32): i32",
-    "udp_recvfrom(Socket, u8[], u8[]): i32",
-    "udp_sendto(Socket, u8[], i32, string): i32",
-    "udp_sendto_bytes(Socket, u8[], i32, u8[]): i32",
-    "umask(i32): i32",
-    "uname_field(i32): string",
-    "unix_connect(string): Socket",
-    "unix_listen(string, i32): Socket",
-    "wasm_block(i32): i32",
-    "wasm_poll(i32[]): i32",
-    "wasm_pollable_drop(i32): i32",
-    "wasm_timer_pollable(i64): i32",
-    "window_size(i32): Result[WinSize, IoError]",
-    "write(string): void",
-    "write_file(string, string): Result[void, IoError]",
-    "write_file_bytes(string, u8[]): Result[void, IoError]",
-    "write_file_exec(string, string): Result[void, IoError]",
-  ];
-}
-
-function builtin_row(name: string): string {
-  let rows = builtin_sigs();
-  let head = name + "(";
-  let lo = 0;
-  let hi = rows.len();
-  while (lo < hi) {
-    let mid: i32 = (lo + hi) / 2;
-    if (util.str_less(rows[mid], head)) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  if (lo < rows.len() && util.str_has_prefix(rows[lo], head)) {
-    return rows[lo];
-  }
-  return "";
-}
-
 pub function builtin_sig(name: string): typeinfo.Type {
-  let row = builtin_row(name);
+  let row = builtinsigs.builtin_row(name);
   if (row.len() == 0) {
     return t_unknown("not a builtin: " + name);
   }
@@ -5091,7 +4805,7 @@ pub function builtin_sig(name: string): typeinfo.Type {
 
 // Primitive display signatures are completed by private runtime source bodies.
 function is_primitive_display_builtin(name: string): boolean {
-  return util.str_has_prefix(name, "__primitive_") && builtin_row(name).len() > 0;
+  return util.str_has_prefix(name, "__primitive_") && builtinsigs.builtin_row(name).len() > 0;
 }
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
@@ -10358,7 +10072,7 @@ function is_unsafe_intrinsic(name: string): boolean {
 // A builtin a program names without calling it; a local or a declared
 // function of the same name is the program's own value.
 function builtin_value_named(name: string, s: Scope): boolean {
-  return builtin_row(name).len() > 0 && !s.defines(name) && !s.has_sig(name);
+  return builtinsigs.builtin_row(name).len() > 0 && !s.defines(name) && !s.has_sig(name);
 }
 
 function unsafe_value_diag(name: string, line: i32, col: i32): util.Diag {
@@ -15015,8 +14729,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
     }
   }
   if (b.op == "==" || b.op == "!=") {
-    let eq_widths: boolean = type_eq(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
-      || settles_to(b.left, brt, s) || settles_to(b.right, blt, s);
+    let eq_widths: boolean = (type_eq(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
+      || settles_to(b.left, brt, s) || settles_to(b.right, blt, s)) && same_views(blt, brt);
     if (!is_unknown(blt) && !is_unknown(brt) && !eq_widths) {
       out = out.append(dg_at("E041", "cannot compare " + type_label(blt) + " with " + type_label(brt) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
     } else if (!is_unknown(blt) && eq_widths && is_composite_type(blt) && !s.has_cmp_method("eq", blt)) {
@@ -17952,12 +17666,65 @@ function const_init_diags(mod: parser.Module): util.Diag[] {
   return const_init(mod).diags;
 }
 
+// The consts of `mod` in the order to fold them. A const comes after each
+// const of another module that its initializer reads, so a module can use
+// the consts of a module it imports whatever the merge order is. Within a
+// module the source order stays, so a forward reference stays an error.
+// Consts on a cycle keep their order and get the diagnostic they had.
+function const_fold_order(mod: parser.Module): parser.FuncDecl[] {
+  let pending: parser.FuncDecl[] = [];
+  let names: string[] = [];
+  let modules: string[] = [];
+  for fd in mod.funcs {
+    if (fd.is_const && fd.receiver_type.len() == 0) {
+      pending = pending.append(fd);
+      names = names.append(fd.name);
+      modules = modules.append(fd.module);
+    }
+  }
+  let done: string[] = [];
+  let out: parser.FuncDecl[] = [];
+  while (pending.len() > 0) {
+    let next: parser.FuncDecl[] = [];
+    let blocked: string[] = [];
+    for fd in pending {
+      if (util.has_str(blocked, fd.module) || !const_ready(fd, names, modules, done)) {
+        blocked = blocked.append(fd.module);
+        next = next.append(fd);
+      } else {
+        out = out.append(fd);
+        done = done.append(fd.name);
+      }
+    }
+    if (next.len() == pending.len()) {
+      return out.concat(next);
+    }
+    pending = next;
+  }
+  return out;
+}
+
+// True when each const of another module that `fd` reads is in `done`.
+function const_ready(fd: parser.FuncDecl, names: string[], modules: string[], done: string[]): boolean {
+  for stmt in fd.body {
+    if let ast.StmtReturn(r) = stmt {
+      for id in astwalk.collect_idents_expr(r.value, []) {
+        let k = util.index_of_str(names, id);
+        if (k >= 0 && modules[k] != fd.module && !util.has_str(done, id)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 function const_init(mod: parser.Module): ConstInit {
   let out = ConstInit { diags: [], deferred: [], messages: [] };
   let earlier: string[] = [];
   let evaluated_names: string[] = [];
   let values: consteval.Value[] = [];
-  for fd in mod.funcs {
+  for fd in const_fold_order(mod) {
     if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
         if let ast.StmtReturn(r) = stmt {
@@ -18187,7 +17954,7 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
   }
   // A free function named like a builtin or an intrinsic redeclares it, as
   // native's pre-registered signature makes it there.
-  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
+  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -18554,7 +18321,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[], send: boolean[] }
+pub struct OwnFunc { name: string, flags: boolean[], send: boolean[] }
 
 pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
 
@@ -20601,32 +20368,7 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
   return -1;
 }
 
-// Whether no later read of the name belongs to the binding that `id` reads:
-// no read after `id` inside the block that declares it.
-function lu_is_last_in(fx: LuFn, site: LuSite, id: ast.ExprIdent): boolean {
-  let scope = lu_binding_level(site.frames, id.name);
-  if (scope < 0) {
-    return lu_is_last(fx, id);
-  }
-  let f = site.frames[scope];
-  for j in f.idx..f.stmts.len() {
-    if (lu_later_in(f.stmts[j], id)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
-  for ofn in fx.ofuncs.rows {
-    if (ofn.name == callee) {
-      return i >= ofn.arr.len() || ofn.arr[i];
-    }
-  }
-  return true;
-}
-
-function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
+function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name = aid.name;
   let elem = lu_elem_fresh(fx, site, name);
   if (!lu_is_local(fx, name) && !elem) {
@@ -20646,9 +20388,6 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
     return false;
   }
   if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
-    return false;
-  }
-  if (arr && !lu_is_last_in(fx, site, aid)) {
     return false;
   }
   return !lu_live_after(fx, site, call, aid);
@@ -20844,7 +20583,7 @@ function lu_iter_owned(fx: LuFn, iter: ast.Expr): boolean {
 function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): string[] {
   match (e) {
     ast.ExprIdent(aid) => {
-      if (lu_dies(fx, e, false, aid, e, false, site) && lu_loose_tag(fx, site, aid.name).len() == 0) {
+      if (lu_dies(fx, e, aid, e, false, site) && lu_loose_tag(fx, site, aid.name).len() == 0) {
         return acc.append(lu_key(aid.line, aid.col));
       }
       if (lu_own_param(fx, aid.name) && !util.has_str(fx.facts.escaping, aid.name) && !lu_live_after(fx, site, e, aid)) {
@@ -21052,7 +20791,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
     if (flags[i]) {
       match (c.args[i]) {
         ast.ExprIdent(aid) => {
-          if (lu_dies(fx, e, lu_arr_position(fx, cname, i), aid, outer, has_outer, site)) {
+          if (lu_dies(fx, e, aid, outer, has_outer, site)) {
             acc = acc.append(lu_key(aid.line, aid.col) + lu_loose_tag(fx, site, aid.name));
           }
         },
@@ -21073,11 +20812,8 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
 
 function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = a {
-    if (lu_dies(fx, e, true, id, outer, has_outer, site)) {
+    if (lu_dies(fx, e, id, outer, has_outer, site)) {
       return acc.append(lu_key(id.line, id.col) + lu_loose_tag(fx, site, id.name));
-    }
-    if (lu_dies(fx, e, false, id, outer, has_outer, site)) {
-      return acc.append(lu_key(id.line, id.col) + "~" + lu_loose_tag(fx, site, id.name));
     }
   }
   if let ast.ExprFieldAccess(fa) = a {
@@ -21458,7 +21194,7 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
   return out;
 }
 
-struct OwnCall { args: ast.Expr[], flags: boolean[], arr: boolean[], recv: i32 }
+struct OwnCall { args: ast.Expr[], flags: boolean[], recv: i32 }
 
 const RECV_NONE: i32 = 0;
 
@@ -21474,24 +21210,10 @@ function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
       for a in c.args {
         args = args.append(a);
       }
-      let row = ctx.ofuncs.names.find(key);
-      let arr: boolean[] = [];
-      if (row >= 0) {
-        arr = ctx.ofuncs.rows[row].arr;
-      }
-      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), arr: arr, recv: ow_recv_kind(key) };
+      return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), recv: ow_recv_kind(key) };
     }
   }
-  let flags = ow_call_arg_flags(c.callee, ctx);
-  let arr: boolean[] = [];
-  if (flags.len() > 0) {
-    if let typeinfo.TypeFunc(ft) = check_expr(c.callee, ctx.scope) {
-      for t in ft.param_types {
-        arr = arr.append(is_owned_array(t) || is_arr_view(t) || is_unknown(t));
-      }
-    }
-  }
-  return OwnCall { args: c.args, flags: flags, arr: arr, recv: RECV_NONE };
+  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), recv: RECV_NONE };
 }
 
 function ow_recv_kind(key: string): i32 {
@@ -21501,24 +21223,12 @@ function ow_recv_kind(key: string): i32 {
   return RECV_METHOD;
 }
 
-function ow_arg_dies(oc: OwnCall, i: i32, ctx: OwnCtx): boolean {
-  if (oc.recv == RECV_DYN || i >= oc.arr.len() || oc.arr[i]) {
-    return false;
-  }
-  if let ast.ExprIdent(id) = oc.args[i] {
-    let key = lu_key(id.line, id.col) + "~";
-    return util.has_str(ctx.last_use, key) || util.has_str(ctx.last_use, key + "^") && ow_expr_holds_no_handle(oc.args[i], ctx);
-  }
-  return false;
-}
-
 function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
   let oc = ow_own_call(c, ctx);
   let i = 0;
   while (i < oc.args.len() && i < oc.flags.len()) {
-    let exempt = oc.recv == RECV_DYN || ow_arg_dies(oc, i, ctx);
-    if (oc.flags[i] && !exempt && !ow_is_owned_expr(oc.args[i], ctx)) {
+    if (oc.flags[i] && oc.recv != RECV_DYN && !ow_is_owned_expr(oc.args[i], ctx)) {
       let aline = ast.expr_line(oc.args[i]);
       let acol = ast.expr_col(oc.args[i]);
       if (aline <= 0) {
@@ -22507,28 +22217,25 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
     }
     let any_own = func.receiver_own;
     let flags: boolean[] = [];
-    let arr: boolean[] = [];
     let send: boolean[] = [];
     if (func.receiver_name.len() > 0) {
       flags = flags.append(func.receiver_own);
-      arr = arr.append(ow_type_is_array(func.receiver_type));
       send = send.append(false);
     }
     for param in func.params {
       let o = param.own;
       flags = flags.append(o);
-      arr = arr.append(ow_type_is_array(param.type_name));
       send = send.append(param.send);
       if (o) {
         any_own = true;
       }
     }
     if (any_own && func.receiver_name.len() == 0) {
-      out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr, send: send });
+      out = out.append(OwnFunc { name: func.name, flags: flags, send: send });
       names = names.append(func.name);
     } else if (any_own) {
       let key = ow_receiver_ns(func.receiver_type) + "." + func.name;
-      out = out.append(OwnFunc { name: key, flags: flags, arr: arr, send: send });
+      out = out.append(OwnFunc { name: key, flags: flags, send: send });
       names = names.append(key);
       methods = methods.append(func.name);
     }
@@ -22537,10 +22244,10 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   // not a value the program reads again.
   for h in ["Reader", "Writer", "Dir"] {
     let key = h + ".close";
-    out = out.append(OwnFunc { name: key, flags: [true], arr: [false], send: [] });
+    out = out.append(OwnFunc { name: key, flags: [true], send: [] });
     names = names.append(key);
   }
-  out = out.append(OwnFunc { name: "tcp_close", flags: [true], arr: [false], send: [] });
+  out = out.append(OwnFunc { name: "tcp_close", flags: [true], send: [] });
   names = names.append("tcp_close");
   methods = methods.append("close");
   for td in mod.trait_decls {
@@ -22578,12 +22285,10 @@ function ow_takes_own_self(m: parser.FuncDecl): boolean {
 
 function ow_trait_row(tname: string, m: parser.FuncDecl): OwnFunc {
   let flags: boolean[] = [];
-  let arr: boolean[] = [];
   for param in m.params {
     flags = flags.append(param.own);
-    arr = arr.append(ow_type_is_array(param.type_name));
   }
-  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, arr: arr, send: [] };
+  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, send: [] };
 }
 
 function ow_receiver_ns(rt: string): string {
@@ -22594,10 +22299,6 @@ function ow_receiver_ns(rt: string): string {
     return "[]";
   }
   return util.base_type_name(receiver_namespace(rt));
-}
-
-function ow_type_is_array(tn: string): boolean {
-  return tn.len() >= 2 && tn[tn.len() - 2] == b'[' && tn[tn.len() - 1] == b']';
 }
 
 function ow_method_key(c: ast.ExprCall, ctx: OwnCtx): string {
@@ -27557,7 +27258,7 @@ pub function methods_on(s: Scope, recv: string): MethodSig[] {
 pub function builtin_method_names(recv: string): string[] {
   let head = "__method_" + recv + "_";
   let out: string[] = [];
-  for row in builtin_sigs() {
+  for row in builtinsigs.builtin_sigs() {
     let open = util.index_of_sub(row, "(");
     if (open > head.len() && util.str_has_prefix(row, head)) {
       out = out.append(slice_unchecked(row, head.len(), open) + "");

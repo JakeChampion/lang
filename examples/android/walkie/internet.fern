@@ -1,0 +1,86 @@
+// The internet mode of the app. One phone makes a room on the server and
+// shows its code, and the other phone joins with the code. Then the node runs
+// as on a LAN, but each of its datagrams goes to the relay with the token of
+// the room, and the relay sends it to the other phone.
+import "std/dns";
+import "std/net";
+import "std/time";
+import "std/tls/client";
+import "std/tls/verify";
+import "./rooms";
+
+pub struct Room { code: string, token: u8[], relay: net.SocketAddr }
+
+// The datagram that goes to the relay for one datagram of the node.
+pub function wrap(r: Room, data: [u8]): u8[] {
+  return rooms.wrap(r.token, data);
+}
+
+// The relay address of `host`. The app socket is IPv4, so an IPv4 address
+// comes first.
+pub function relay_of(host: string): Option[net.SocketAddr] {
+  let Ok(addrs) = dns.resolve(host) else {
+    return None;
+  };
+  for a in addrs {
+    if (a.is_v4()) {
+      return Some(net.socket_addr(a, rooms.PORT));
+    }
+  }
+  return None;
+}
+
+// Sends one request line to the server of `host` over TLS, and gives the reply.
+pub function ask(host: string, line: string): rooms.Reply {
+  let Some(roots) = verify.system_roots() else {
+    return rooms.Refused("this phone has no trusted certificates");
+  };
+  match (client.connect(host, rooms.PORT, client.config(host, roots), time.duration_seconds(10 as i64))) {
+    Ok(c) => {
+      return exchange(c, line);
+    },
+    Err(e) => {
+      return rooms.Refused("cannot reach the server: " + e.message());
+    }
+  }
+  return rooms.Refused("cannot reach the server");
+}
+
+function exchange(c0: client.Connection, line: string): rooms.Reply {
+  let Ok(c) = c0.write((line + "\n").as_bytes()) else {
+    return rooms.Refused("the server closed the connection");
+  };
+  let got: u8[] = [];
+  let conn: client.Connection = c;
+  for k in 0..16 {
+    match (conn.read(time.duration_seconds(10 as i64))) {
+      Ok(r) => {
+        got = got.concat(r.data);
+        conn = r.conn;
+        if (got.contains(10u8) || r.ended) {
+          let closed = conn.close();
+          return rooms.parse_reply(string_from_bytes_unchecked(got));
+        }
+      },
+      Err(e) => {
+        return rooms.Refused("the server did not reply: " + e.message());
+      }
+    }
+  }
+  let closed = conn.close();
+  return rooms.Refused("the server did not reply");
+}
+
+// The room of a reply, with the relay of `host`.
+pub function room_of(reply: rooms.Reply, code: string, relay: net.SocketAddr): Option[Room] {
+  match (reply) {
+    rooms.Created(c, token) => {
+      return Some(Room { code: c, token: token, relay: relay });
+    },
+    rooms.Joined(token) => {
+      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay });
+    },
+    rooms.Refused(_) => {}
+  }
+  return None;
+}

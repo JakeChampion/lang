@@ -7,6 +7,9 @@ function __fern_env(name: string): Option[string] {
     k0 = 1;
   }
   let envp: usize = __raw_environ();
+  if (envp == 0 as usize) {
+    return None;
+  }
   let idx: i32 = 0;
   let entry: usize = __raw_load_ptr(envp, 0);
   while (entry != 0) {

@@ -378,6 +378,13 @@ function received(s: Session, m: protocol.Message, now: i64): (Session, Action[]
     },
     protocol.Error(_) => {
       return end(s, Failed, "the peer reported an error");
+    },
+    protocol.KeyOffer(_, _) => {
+      // The node runs the rekey before the session sees a message.
+      return (s, []);
+    },
+    protocol.KeyAccept(_, _) => {
+      return (s, []);
     }
   }
 }

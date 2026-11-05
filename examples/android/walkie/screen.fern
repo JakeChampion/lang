@@ -1,11 +1,14 @@
 // The layout of the walkie-talkie screen. It has no Android code, so the
 // host tests it.
 //
-// The top of the screen holds the status lines. The talk button fills the
-// lower half. While the users compare the authentication string, two
-// buttons in the middle confirm or reject it.
+// The top fifth of the screen holds the title and the status lines. The
+// middle holds the code to compare and its two buttons, or the list of
+// peers. The round talk button sits in the lower half, and the room buttons
+// below it make or join a room of the internet mode. A keypad takes the code
+// of a room.
 
 import "std/string";
+import "./rooms";
 
 pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
 
@@ -62,18 +65,31 @@ pub function wrap(text: string, max: i32): string[] {
   return lines;
 }
 
+// The square around the round talk button.
 pub function talk_button(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h / 2, w: w * 8 / 10, h: h * 2 / 5 };
+  let d: i32 = w * 7 / 10;
+  if (h * 3 / 10 < d) {
+    d = h * 3 / 10;
+  }
+  return Rect { x: (w - d) / 2, y: h * 68 / 100 - d / 2, w: d, h: d };
+}
+
+// True when (x, y) is on the disc inside the square `r`.
+pub function in_circle(r: Rect, x: f32, y: f32): boolean {
+  let dx: f32 = x - (r.x + r.w / 2) as f32;
+  let dy: f32 = y - (r.y + r.h / 2) as f32;
+  let rad: f32 = (r.w / 2) as f32;
+  return dx * dx + dy * dy < rad * rad;
 }
 
 // The button that says the two strings are the same.
 pub function same_button(w: i32, h: i32): Rect {
-  return Rect { x: w / 10, y: h * 3 / 10, w: w * 7 / 20, h: h / 8 };
+  return Rect { x: w / 10, y: h * 33 / 100, w: w * 37 / 100, h: h * 6 / 100 };
 }
 
 // The button that says the two strings differ.
 pub function differ_button(w: i32, h: i32): Rect {
-  return Rect { x: w * 11 / 20, y: h * 3 / 10, w: w * 7 / 20, h: h / 8 };
+  return Rect { x: w * 53 / 100, y: h * 33 / 100, w: w * 37 / 100, h: h * 6 / 100 };
 }
 
 // The number of Wi-Fi Direct peers that the screen lists.
@@ -87,4 +103,70 @@ pub function peer_row(w: i32, h: i32, k: i32): Rect {
 // The x of `text_w` pixels of text in the middle of `r`.
 pub function center_x(r: Rect, text_w: i32): i32 {
   return r.x + (r.w - text_w) / 2;
+}
+
+// The button that makes a room, and the button that joins one, in the row
+// below the talk button.
+pub function room_button(w: i32, h: i32): Rect {
+  return Rect { x: w / 10, y: h * 885 / 1000, w: w * 37 / 100, h: h * 6 / 100 };
+}
+
+pub function join_button(w: i32, h: i32): Rect {
+  return Rect { x: w * 53 / 100, y: h * 885 / 1000, w: w * 37 / 100, h: h * 6 / 100 };
+}
+
+// The keypad for the code of a room: a key for each letter of the code, and
+// a last key that deletes a letter. It fills the place of the talk button and
+// of the peer list.
+pub const KEY_COLS: i32 = 8;
+
+pub const KEY_ROWS: i32 = 4;
+
+pub const DELETE_KEY: i32 = 31;
+
+pub function key_rect(w: i32, h: i32, k: i32): Rect {
+  let cell_w: i32 = w * 9 / 10 / KEY_COLS;
+  let cell_h: i32 = h * 56 / 100 / KEY_ROWS;
+  if (cell_h > cell_w * 5 / 4) {
+    cell_h = cell_w * 5 / 4;
+  }
+  // The keys sit just above the room buttons, as a keyboard does.
+  let top: i32 = room_button(w, h).y - h / 40 - KEY_ROWS * cell_h;
+  let x: i32 = w / 20 + k % KEY_COLS * cell_w;
+  let y: i32 = top + k / KEY_COLS * cell_h;
+  return Rect { x: x + cell_w / 20, y: y + cell_h / 20, w: cell_w * 9 / 10, h: cell_h * 9 / 10 };
+}
+
+// The key at (x, y), or -1.
+pub function key_at(w: i32, h: i32, x: f32, y: f32): i32 {
+  for k in 0..DELETE_KEY + 1 {
+    if (contains(key_rect(w, h, k), x, y)) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The label of key `k`.
+pub function key_label(k: i32): string {
+  if (k == DELETE_KEY) {
+    return "DEL";
+  }
+  let letters: [u8] = rooms.ALPHABET.as_bytes();
+  return string_from_bytes_unchecked([letters[k]]);
+}
+
+// The code after a press of key `k`: a letter adds itself up to the length of
+// a code, and DEL takes off the last letter.
+pub function typed(code: string, k: i32): string {
+  if (k == DELETE_KEY) {
+    if (code.len() == 0) {
+      return code;
+    }
+    return code.take(code.len() - 1);
+  }
+  if (k < 0 || k > DELETE_KEY || code.len() >= rooms.CODE_LEN) {
+    return code;
+  }
+  return code + key_label(k);
 }

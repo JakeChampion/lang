@@ -5,11 +5,11 @@ push-to-talk, an offline mode over Wi-Fi Direct and an internet mode through
 rooms. It is a NativeActivity app with no Java source, and `fern -apk`
 writes its APK.
 
-## The LAN build
+## The app
 
-`app.fern` is a first build for two phones on the same Wi-Fi network. It
-sends Opus voice at 16 kHz, about 24 kbit/s. Wi-Fi Direct and the internet
-rooms come after it. A phone with an older build of the app refuses the
+`app.fern` connects two phones in three ways: on the same Wi-Fi network, over
+Wi-Fi Direct, and in a room of the room server. It sends Opus voice at
+16 kHz, about 24 kbit/s. A phone with an older build of the app refuses the
 session, because the older build sends raw audio.
 
 The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-walkie.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
@@ -29,11 +29,12 @@ Use it:
    Allow the microphone when the app asks.
 2. Each phone sends a UDP beacon to the broadcast address on port 47120. When
    the phones find each other, they make keys and show a six-digit code.
-3. Compare the codes, and tap SAME on each phone when they are the same. Tap
-   DIFFERENT when they are not: then a third device can be in the middle.
+3. Compare the codes, and tap MATCH on each phone when they are the same. Tap
+   NO MATCH when they are not: then a third device can be in the middle.
 4. The first phone to confirm shows WAITING until the other phone confirms.
 5. Hold the button to talk. The other phone shows LISTENING and plays the
-   voice. Only one phone can talk at a time.
+   voice on its loudspeaker, at the media volume. Only one phone can talk at
+   a time.
 6. When the connection is lost, tap the button to search again.
 
 With no shared Wi-Fi network, the phones connect over Wi-Fi Direct:
@@ -45,6 +46,17 @@ With no shared Wi-Fi network, the phones connect over Wi-Fi Direct:
 3. The other phone asks its user to accept the invitation. Accept it.
 4. The two phones then make a group. They send the beacons on the group
    too, and the code check and the talk button work as on a Wi-Fi network.
+
+When the phones are on different networks, they meet in a room on the room
+server. The app shows the room buttons when its build names a server (see
+`server_host.fern`).
+
+1. On one phone, tap NEW ROOM. The phone shows the code of the room in its
+   title.
+2. Tell the code to the other user. On the other phone, tap JOIN ROOM, type
+   the code on the keypad, and tap JOIN.
+3. The phones find each other through the relay of the server. The code
+   check and the talk button work as on a Wi-Fi network.
 
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
@@ -76,7 +88,7 @@ with no loss and with 5% and 20% loss. Each node must stay connected and hear
 most of the voice of the other. The two must never talk at the same time.
 
 `emulator_check.py` runs two copies of the APK on the Android emulator in CI,
-with the freezer of cached apps off. It taps SAME in each copy, holds the
+with the freezer of cached apps off. It taps MATCH in each copy, holds the
 talk button of each, and reads the result in logcat.
 
 ## `protocol.fern`
@@ -90,12 +102,29 @@ and it does not know the transport. `step` takes the session, one event and
 the time, and gives the next session and its actions. `session_test.fern`
 runs two engines on a simulated link.
 
+## `ui.fern`
+
+The look of the screen: a dark theme with one accent colour for each state.
+The round talk button has a ring in the colour of the state. It fills while
+the phone talks or listens. A dot beside the status has the same colour. The
+code to compare shows in two groups of three digits, over a MATCH pill and a
+NO MATCH outline.
+
+`ui.fern` draws a view of the app on a frame and does no other I/O.
+`ui_test.fern` draws each screen on a frame in memory and checks the colours
+of its buttons. With `WALKIE_UI_PNG` set to a directory, it also writes each
+screen there as a PNG file.
+
 ## `lan.fern`, `pcm.fern` and `screen.fern`
 
 The LAN transport: the datagram format, the beacons, and the key exchange
 with a resend of each message that has no answer. A linear resampler between
 the rate of the device and 16 kHz. The layout of the screen. `lan_test.fern`,
 `pcm_test.fern` and `screen_test.fern` test them.
+
+`pcm.fern` also has a gain for the microphone. It raises quiet speech up to
+8 times, and it falls at once for a loud word. It also keeps the samples
+that the speaker did not take yet, for the next write.
 
 ## `voice.fern`
 
@@ -114,9 +143,50 @@ concealment.
 
 ## `secure.fern`
 
-The secure channel. Its key exchange uses ephemeral X25519 keys, and the
-initiator commits to its key before it sees the other key. The two users then
-compare a six-digit authentication string.
+The secure channel. Its key exchange is a hybrid of ephemeral X25519 and
+ML-KEM-768. The initiator commits to its X25519 key before it sees the other
+key, and it sends its ML-KEM encapsulation key in the first message. The
+responder sends an ML-KEM ciphertext with its X25519 key. Both shared secrets
+go into the key derivation, so a recording of the traffic stays secret while
+one of the two problems stays hard. The two users then compare a six-digit
+authentication string.
+
+Each side fixes its values before it sees the values of the other side. So a
+party in the middle cannot try keys until the two strings match. For this
+reason the initiator holds the ML-KEM key pair: the side that encapsulates
+chooses its value after it sees the key. The first message is 1217 bytes, so
+a phone with an older build cannot pair with this build.
+
+Each transmission gives the voice of the speaker a new key. When the
+speaker presses the button, its phone offers a new X25519 public key on the
+control channel. The other phone accepts with a new key of its own, and both
+put the shared secret into the key chain of that direction. Then both erase
+the private keys, the old chain and the key before the last. A voice frame
+carries the epoch of its key, so the frames in flight still open.
+
+The offer goes again each half second until the accept comes. The two
+directions rekey on their own.
+
+So a recording of a transmission stays secret when a phone is taken later.
+A party that took the keys and only listens loses them at the next
+transmission. The control keys stay the same for the session. Thus a party
+that took them and changes the traffic can still take part in a rekey.
+
+Each phone keeps an Ed25519 identity key. After the exchange, each phone
+signs the transcript of the exchange with its identity key and sends the
+signature in a sealed control frame. The frame also tells whether the phone
+knows the identity of the other phone. When the users tap MATCH, each phone
+adds the identity of the other phone to its list of known phones.
+
+When two phones meet again and each one knows the other, they connect with
+no string to compare. A phone that knows the other phone requires a valid
+signature from it. When only one phone knows the other, both show the
+string. So a party in the middle must have the identity key of a phone to
+skip the comparison.
+
+The app keeps the seed of the identity key and the list of known phones in
+its private storage, not in the Android Keystore. So a party that can read
+the files of the app can copy the identity of the phone.
 
 Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. Both go over datagrams, so a frame can be lost
@@ -148,6 +218,12 @@ fern -o walkie-server examples/android/walkie/server.fern
 Open TCP port 47130 and UDP port 47130 in the firewall. The key can be P-256,
 P-384 or Ed25519. The server cannot sign with an RSA key.
 
+Before it accepts new clients, the server reads the two files again. A new
+pair takes effect with no restart. A pair that does not load, such as a
+renewal that is half written, keeps the old pair. The showcase deployment
+runs the server next to its Caddy proxy, with the certificate of Caddy. See
+the walkie-talkie section of `examples/showcase/deploy/README.md`.
+
 A client sends one request line, and the server sends one reply line:
 
 - `CREATE` opens a room. The reply is `ROOM`, the code and a token in hex.
@@ -169,10 +245,21 @@ because the phones seal it with the keys of their own exchange. A relay that
 changes the datagrams of the key exchange gives the two phones different
 codes. The users then see that the codes are not the same.
 
+`internet.fern` is the side of the app. It asks the server for a room over
+TLS. It puts the token in front of each datagram to the relay. In a room, the
+app takes a datagram only from the relay. So a phone on the same network
+cannot take the place of the peer. `internet_test.fern` runs two nodes in one
+room through the relay table, and one node moves to a new address.
+
+The nightly build writes `server_host.fern` from the `WALKIE_SERVER`
+repository variable. Set the variable to the DNS name of the server, and the
+next nightly APK shows the room buttons.
+
 `rooms.fern` holds the room table and does no I/O. `rooms_test.fern` tests
 it. `TestWalkieRelayServer` runs the server on the host. Two clients make and
 join a room over TLS, and the relay sends their datagrams. Then one client
-moves to a new address.
+moves to a new address. Last, the test replaces the certificate and the key
+while the server runs, and new clients get the new certificate.
 
 ## The floor
 

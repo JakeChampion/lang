@@ -120,7 +120,7 @@ func selfHostParameterisedBuiltins(t *testing.T) []string {
 	body := selfHostFileSection(t, "checker.fern",
 		`(?s)function intrinsic_params\(.*?\n\}`)
 	seen := map[string]bool{}
-	rows := selfHostFileSection(t, "checker.fern", `(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`)
+	rows := selfHostFileSection(t, "builtinsigs.fern", `(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`)
 	for _, m := range sigRowNameRE.FindAllStringSubmatch(rows, -1) {
 		if !strings.HasPrefix(m[1], "__method_") {
 			seen[m[1]] = true

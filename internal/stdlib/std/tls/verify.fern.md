@@ -260,6 +260,10 @@ pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
 ```fern
 <<9 const BUNDLES: string[]>>=
 const BUNDLES: string[] = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"];
+
+// Android has no bundle file. It keeps one root in each file of a directory,
+// and since Android 14 the conscrypt module holds the current set.
+const ANDROID_ROOT_DIRS: string[] = ["/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"];
 ```
 
 ### `10 pub function roots_from_file(path: string): Result[Roots, VerifyError]`
@@ -283,6 +287,8 @@ pub function system_roots(): Option[Roots] {
   let paths = BUNDLES;
   if let Some(p) = env("SSL_CERT_FILE") {
     paths = [p];
+  } else if (target_os() == "android") {
+    return android_roots();
   }
   for p in paths {
     if let Ok(r) = roots_from_file(p) {
@@ -290,6 +296,34 @@ pub function system_roots(): Option[Roots] {
     }
   }
   return None;
+}
+
+function android_roots(): Option[Roots] {
+  for dir in ANDROID_ROOT_DIRS {
+    if let Ok(r) = roots_from_dir(dir) {
+      return Some(r);
+    }
+  }
+  return None;
+}
+
+// The roots in the PEM files of directory `dir`, one or more in each file.
+// A file that has no certificate adds nothing.
+pub function roots_from_dir(dir: string): Result[Roots, VerifyError] {
+  let ders: u8[][] = [];
+  if let Ok(names) = read_dir(dir) {
+    for name in names {
+      if let Ok(text) = read_file(dir + "/" + name) {
+        if let Ok(found) = pem.certificates(text) {
+          ders = ders.concat(found);
+        }
+      }
+    }
+  }
+  if (ders.len() == 0) {
+    return Err(RootsUnreadable(dir));
+  }
+  return Ok(roots(ders));
 }
 ```
 

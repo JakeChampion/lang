@@ -1,12 +1,24 @@
-// A NativeActivity app for the emulator check of std/dns on Android. At the
-// first Resume it resolves a public name, which netd answers because no hosts
-// file has it, and an IP literal. It logs what it found, and finishes.
+// A NativeActivity app for the emulator check of std/dns and the TLS roots on
+// Android. At the first Resume it resolves a public name, which netd answers
+// because no hosts file has it, and an IP literal. Then it opens a TLS
+// connection that the system roots verify. It logs what it found, and
+// finishes.
 import "std/android";
 import "std/dns";
+import "std/jni";
 import "std/log";
 import "std/net";
+import "std/time";
+import "std/tls/client";
+import "std/tls/verify";
 
 struct App { done: boolean }
+
+@import("libc.so", "setenv")
+function c_setenv(name: usize, value: usize, overwrite: i32): i32;
+
+@import("libc.so", "unsetenv")
+function c_unsetenv(name: usize): i32;
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   android.start(activity, app_main_entry());
@@ -26,6 +38,7 @@ function step(ctx: usize, s: App, e: android.Event): App {
       if (!s.done) {
         report("dns.google");
         report("192.0.2.7");
+        tls_check("dns.google");
         android.finish(ctx);
       }
       return App { done: true };
@@ -49,4 +62,46 @@ function report(name: string): void {
       log.warn("dnstest: " + name + " failed: " + e.message());
     }
   }
+}
+
+function tls_check(host: string): void {
+  if (!override_check()) {
+    log.warn("dnstest: environment failed: SSL_CERT_FILE override was not visible");
+    return;
+  }
+  log.warn("dnstest: SSL_CERT_FILE overrides system roots");
+  let Some(roots) = verify.system_roots() else {
+    log.warn("dnstest: no system roots");
+    return;
+  };
+  match (client.connect(host, 443, client.config(host, roots), time.duration_seconds(10 as i64))) {
+    Ok(c) => {
+      let closed = c.close();
+      log.warn("dnstest: tls to " + host + " verified with " + roots.certs.len().to_string() + " system roots");
+    },
+    Err(e) => {
+      log.warn("dnstest: tls to " + host + " failed: " + e.message());
+    }
+  }
+}
+
+function override_check(): boolean {
+  let name = jni.cstr("SSL_CERT_FILE");
+  let empty = jni.cstr("");
+  let set = c_setenv(name, empty, 1);
+  jni.free_buffer(empty);
+  if (set != 0) {
+    jni.free_buffer(name);
+    return false;
+  }
+  let overridden = false;
+  match (verify.system_roots()) {
+    None => {
+      overridden = true;
+    },
+    Some(_) => {}
+  }
+  let unset = c_unsetenv(name);
+  jni.free_buffer(name);
+  return overridden && unset == 0;
 }

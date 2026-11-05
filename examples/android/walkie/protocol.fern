@@ -23,6 +23,11 @@ pub enum Message {
   Bye(i32),
   // reason code
   Error(i32),
+  // The rekey of one voice direction, at the start of a transmission: the
+  // epoch of the new key and a new X25519 public key. The speaker sends the
+  // offer, and the listener sends the accept.
+  KeyOffer(i32, u8[]),
+  KeyAccept(i32, u8[]),
 }
 
 // Reason codes of Bye and Error.
@@ -51,6 +56,13 @@ const T_HEARTBEAT: i32 = 6;
 const T_BYE: i32 = 7;
 
 const T_ERROR: i32 = 8;
+
+const T_KEY_OFFER: i32 = 9;
+
+const T_KEY_ACCEPT: i32 = 10;
+
+// The length of an X25519 public key.
+pub const KEY_LEN: i32 = 32;
 
 function put8(out: u8[], v: i32): u8[] {
   return out.append((v & 255) as u8);
@@ -93,8 +105,38 @@ pub function encode(m: Message): u8[] {
     },
     Error(reason) => {
       return put16(put8([], T_ERROR), reason);
+    },
+    KeyOffer(epoch, public) => {
+      return key_message(T_KEY_OFFER, epoch, public);
+    },
+    KeyAccept(epoch, public) => {
+      return key_message(T_KEY_ACCEPT, epoch, public);
     }
   }
+}
+
+function key_message(t: i32, epoch: i32, public: [u8]): u8[] {
+  let out: u8[] = put32(put8([], t), epoch);
+  for b in public {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// A rekey message: the type, the epoch, and a public key of KEY_LEN bytes.
+function decode_key(b: [u8]): Option[Message] {
+  if (b.len() != 5 + KEY_LEN) {
+    return None;
+  }
+  let epoch: i32 = b[1] as i32 << 24 | b[2] as i32 << 16 | b[3] as i32 << 8 | b[4] as i32;
+  let public: u8[] = [];
+  for k in 5..b.len() {
+    public = public.append(b[k]);
+  }
+  if (b[0] as i32 == T_KEY_OFFER) {
+    return Some(KeyOffer(epoch, public));
+  }
+  return Some(KeyAccept(epoch, public));
 }
 
 // A cursor over the bytes of a message. A read past the end sets `bad`.
@@ -121,8 +163,11 @@ pub function decode(b: u8[]): Option[Message] {
   if (b.len() == 0) {
     return None;
   }
-  let r: Cursor = Cursor { b: b, at: 1, bad: false };
   let t: i32 = b[0] as i32;
+  if (t == T_KEY_OFFER || t == T_KEY_ACCEPT) {
+    return decode_key(b);
+  }
+  let r: Cursor = Cursor { b: b, at: 1, bad: false };
   let m: Message = Bye(0);
   if (t == T_HELLO) {
     let (r1, version) = take(r, 2);

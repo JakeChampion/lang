@@ -101,8 +101,31 @@ function state_of(x: session.Session): string {
   return session.state_name(x.state);
 }
 
+// A public key of 32 bytes for the rekey messages.
+function key_bytes(k: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..protocol.KEY_LEN {
+    out = out.append(((i * 13 + k * 7) % 256) as u8);
+  }
+  return out;
+}
+
+// A rekey message needs a whole public key.
+function test_codec_rejects_a_short_key(): test.TestOutcome {
+  let b: u8[] = protocol.encode(protocol.KeyOffer(7, key_bytes(1)));
+  let cut: u8[] = [];
+  for k in 0..b.len() - 1 {
+    cut = cut.append(b[k]);
+  }
+  let none: boolean = true;
+  if let Some(_) = protocol.decode(cut) {
+    none = false;
+  }
+  return test.assert_eq(b.len().to_string() + " " + none.to_string(), "37 true");
+}
+
 function test_codec_round_trip(): test.TestOutcome {
-  let ms: protocol.Message[] = [protocol.Hello(1, 1234567890123 as i64, 1, 5), protocol.PttRequest(9 as i64, 2, 3, 4000 as i64), protocol.PttGrant(3, 2, 3000), protocol.PttDeny(4, 1), protocol.PttRelease(3), protocol.Heartbeat(9 as i64, 12), protocol.Bye(1), protocol.Error(4)];
+  let ms: protocol.Message[] = [protocol.Hello(1, 1234567890123 as i64, 1, 5), protocol.PttRequest(9 as i64, 2, 3, 4000 as i64), protocol.PttGrant(3, 2, 3000), protocol.PttDeny(4, 1), protocol.PttRelease(3), protocol.Heartbeat(9 as i64, 12), protocol.Bye(1), protocol.Error(4), protocol.KeyOffer(7, key_bytes(1)), protocol.KeyAccept(7, key_bytes(2))];
   let ok: i32 = 0;
   for m in ms {
     let b: u8[] = protocol.encode(m);
@@ -366,6 +389,7 @@ function test_random_presses_never_overlap(): test.TestOutcome {
 
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie session engine");
+  r = r.it("a rekey message needs a whole key", test_codec_rejects_a_short_key);
   r = r.it("the codec round-trips each message", test_codec_round_trip);
   r = r.it("the codec rejects cut, long and unknown bytes", test_codec_rejects_bad_bytes);
   r = r.it("two engines connect and listen", test_connects_and_listens);

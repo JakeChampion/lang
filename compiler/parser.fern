@@ -3,6 +3,7 @@ import "./ast";
 import "./astwalk";
 import "./util";
 import "./lexer";
+import "./builtinsigs";
 import "./typeinfo";
 import "std/envflag";
 
@@ -11175,15 +11176,26 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
     result = func_ret_of(funcs, name);
   }
   if (result.len() == 0) {
-    result = fn_spelling_ret(env.elook(name));
-  }
-  if (result.len() == 0) {
-    result = variant_call_type(c, name, env, funcs);
+    result = unsigned_call_type(c, name, env, funcs);
   }
   if (result.len() == 0 || hides_bare_var(result, funcs)) {
     return stamped_type(c.ty);
   }
   return result;
+}
+
+// The result of a call of a name with no Fern signature: a function value,
+// a generic variant, or a builtin. The checker has not typed the call yet.
+function unsigned_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: MFns): string {
+  let fn_value = fn_spelling_ret(env.elook(name));
+  if (fn_value.len() > 0) {
+    return fn_value;
+  }
+  let variant = variant_call_type(c, name, env, funcs);
+  if (variant.len() > 0 || !is_builtin_function(name)) {
+    return variant;
+  }
+  return builtinsigs.builtin_result(name);
 }
 
 // A generic variant constructor has the enum instance its arguments bind.

@@ -661,9 +661,6 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			if heldByEnclosingCall(body, c, aid.Name) {
 				continue
 			}
-			if !lastInBinding(body, c, aid, order) && arrayArgPosition(info, c, aid) {
-				continue
-			}
 			if liveAfterBinding(info, body, c, aid, order, declNode[aid.Name]) {
 				continue
 			}
@@ -1271,31 +1268,6 @@ func callContains(p *ast.Call, target *ast.Call) bool {
 		return true
 	})
 	return found
-}
-
-func arrayArgPosition(info *Info, c *ast.Call, aid *ast.Ident) bool {
-	if info == nil {
-		return true
-	}
-	callee, isID := c.Callee.(*ast.Ident)
-	if !isID {
-		return true
-	}
-	sig := info.FuncSigs[callee.Name]
-	if sig == nil {
-		return true
-	}
-	for i, a := range c.Args {
-		if id, ok := a.(*ast.Ident); !ok || id != aid {
-			continue
-		}
-		if i >= len(sig.Params) {
-			return true
-		}
-		_, isArr := sig.Params[i].(ast.ArrayType)
-		return isArr
-	}
-	return true
 }
 
 func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, target string) {

@@ -213,6 +213,23 @@ jobs:
           printf '%s\n' "$APK_KEY" > "$RUNNER_TEMP/keys/apk.key.pem"
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/keys/stopwatch.keystore"
 
+      # The walkie-talkie shows its room buttons when WALKIE_SERVER names the
+      # host of its room server. The name must be a plain DNS name.
+      - name: Write the room server of the walkie-talkie
+        env:
+          WALKIE_SERVER: ${{ vars.WALKIE_SERVER }}
+        run: |
+          set -euo pipefail
+          if [ -z "$WALKIE_SERVER" ]; then
+            echo "WALKIE_SERVER is not set: the walkie-talkie has no internet mode"
+            exit 0
+          fi
+          if ! printf '%s' "$WALKIE_SERVER" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'; then
+            echo "::error::WALKIE_SERVER is not a DNS name"
+            exit 1
+          fi
+          printf 'pub const SERVER_HOST: string = "%s";\n' "$WALKIE_SERVER" > examples/android/walkie/server_host.fern
+
       - name: Build and sign the APKs
         env:
           KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}

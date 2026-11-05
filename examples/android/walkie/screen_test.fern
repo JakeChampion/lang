@@ -47,6 +47,67 @@ function test_peer_rows_fit_above_the_talk_button(): test.TestOutcome {
   return test.pass();
 }
 
+// The keys of the keypad fit, do not overlap, leave the room buttons free,
+// and each key is the key at its middle. The text says what is wrong.
+function keys_fit(w: i32, h: i32): string {
+  let room: screen.Rect = screen.room_button(w, h);
+  let join: screen.Rect = screen.join_button(w, h);
+  for k in 0..screen.DELETE_KEY + 1 {
+    let key: screen.Rect = screen.key_rect(w, h, k);
+    if (!inside(key, w, h) || overlap(key, room) || overlap(key, join)) {
+      return "key " + k.to_string() + " is off the screen or on a room button";
+    }
+    if (k > 0 && overlap(key, screen.key_rect(w, h, k - 1))) {
+      return "keys overlap";
+    }
+    if (screen.key_at(w, h, (key.x + key.w / 2) as f32, (key.y + key.h / 2) as f32) != k) {
+      return "the middle of key " + k.to_string() + " is not that key";
+    }
+  }
+  return "";
+}
+
+// The room buttons sit below the talk button, and the keypad fits.
+function test_room_buttons_and_keypad_fit(): test.TestOutcome {
+  for size in [[1080, 2400], [720, 1280], [320, 480]] {
+    let w: i32 = size[0];
+    let h: i32 = size[1];
+    let talk: screen.Rect = screen.talk_button(w, h);
+    let room: screen.Rect = screen.room_button(w, h);
+    let join: screen.Rect = screen.join_button(w, h);
+    if (!inside(room, w, h) || !inside(join, w, h) || overlap(room, talk) || overlap(join, talk) || overlap(room, join)) {
+      return test.fail("a room button is off the screen or on a button at " + w.to_string() + "x" + h.to_string());
+    }
+    let keys: string = keys_fit(w, h);
+    if (keys != "") {
+      return test.fail(keys + " at " + w.to_string() + "x" + h.to_string());
+    }
+  }
+  return test.assert_eq(screen.key_at(1080, 2400, 1.0f32, 1.0f32).to_string(), "-1");
+}
+
+// The keys type the letters of a code, up to its length, and DEL takes one off.
+function test_keypad_types_a_code(): test.TestOutcome {
+  let code: string = "";
+  for k in [0, 30, 1, 2, 3, 4, 5] {
+    code = screen.typed(code, k);
+  }
+  let full: string = code;
+  code = screen.typed(screen.typed(code, screen.DELETE_KEY), 8);
+  let empty: string = screen.typed("", screen.DELETE_KEY);
+  return test.assert_eq(full + " " + code + " [" + empty + "] " + screen.key_label(screen.DELETE_KEY), "A9BCDE A9BCDJ [] DEL");
+}
+
+// A touch counts on the round talk button, and not in the corners of its
+// square.
+function test_talk_button_is_round(): test.TestOutcome {
+  let r: screen.Rect = screen.talk_button(1080, 2400);
+  let mid_x: f32 = (r.x + r.w / 2) as f32;
+  let mid_y: f32 = (r.y + r.h / 2) as f32;
+  let s: string = screen.in_circle(r, mid_x, mid_y).to_string() + " " + screen.in_circle(r, (r.x + 2) as f32, (r.y + 2) as f32).to_string() + " " + (r.w == r.h).to_string();
+  return test.assert_eq(s, "true false true");
+}
+
 function test_contains_is_half_open(): test.TestOutcome {
   let r: screen.Rect = screen.Rect { x: 10, y: 20, w: 5, h: 5 };
   let s: string = screen.contains(r, 10.0f32, 20.0f32).to_string() + " " + screen.contains(r, 15.0f32, 22.0f32).to_string() + " " + screen.contains(r, 14.5f32, 24.9f32).to_string();
@@ -84,6 +145,9 @@ function main(): i32 {
   let r: test.TestRunner = test.new("walkie screen");
   r = r.it("the buttons fit and do not overlap", test_buttons_fit_and_do_not_overlap);
   r = r.it("the peer rows fit above the talk button", test_peer_rows_fit_above_the_talk_button);
+  r = r.it("the room buttons and the keypad fit", test_room_buttons_and_keypad_fit);
+  r = r.it("the keypad types a code", test_keypad_types_a_code);
+  r = r.it("the talk button is round", test_talk_button_is_round);
   r = r.it("contains is half-open", test_contains_is_half_open);
   r = r.it("the text scale follows the width", test_text_scale);
   r = r.it("text wraps at spaces", test_wrap);

@@ -1,20 +1,25 @@
-// The walkie-talkie app, LAN build. Two phones on the same Wi-Fi network find
-// each other by UDP broadcast, run the key exchange, and the users compare
-// the six-digit string. Then one holds the button to talk, and the other
-// hears. The voice is Opus at 16 kHz, about 24 kbit/s.
+// The walkie-talkie app. Two phones find each other by UDP broadcast on a
+// Wi-Fi network or a Wi-Fi Direct group, or through the relay of a room on
+// the room server. They run the key exchange, and the users compare the
+// six-digit string. Then one holds the button to talk, and the other hears.
+// The voice is Opus at 16 kHz, about 24 kbit/s.
 //
 // `node` holds the logic. This file does its input and output: the socket,
 // the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/audio";
-import "std/android/draw";
+import "std/hex";
 import "std/log";
 import "std/net";
 import "std/rand";
+import "./internet";
 import "./lan";
 import "./node";
 import "./pcm";
+import "./rooms";
 import "./screen";
+import "./server_host";
+import "./ui";
 import "./voice";
 
 const MIC: string = "android.permission.RECORD_AUDIO";
@@ -42,6 +47,9 @@ struct App {
   capturing: boolean,
   up: pcm.Resampler,
   down: pcm.Resampler,
+  agc: pcm.Agc,
+  // The samples at the rate of the speaker that it did not take yet.
+  queue: i32[],
   pressed: boolean,
   drawn: string,
   asked: boolean,
@@ -49,6 +57,14 @@ struct App {
   p2p: Option[android.P2p],
   peers: android.P2pPeer[],
   group_broadcast: Option[net.IpAddr],
+  // The room of the internet mode, and the code that the user types.
+  room: Option[internet.Room],
+  entering: Option[string],
+  // The private directory of the app, this phone's identity seed, and the
+  // identities of the phones that a user confirmed, as the files hold them.
+  dir: string,
+  id_seed: u8[],
+  pins: u8[][],
 }
 
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
@@ -110,9 +126,60 @@ function open_socket(): (Option[Socket], i32) {
   return (None, lan.PORT);
 }
 
-function fresh_node(notice: string): node.Node {
-  let n: node.Node = node.new(node_id(), rand.bytes(node.SEED_BYTES), now_ms());
+function fresh_node(notice: string, id_seed: [u8], pins: u8[][]): node.Node {
+  let n: node.Node = node.with_identity(node.new(node_id(), rand.bytes(node.SEED_BYTES), now_ms()), id_seed, pins);
   return node.Node { ...n, notice: notice };
+}
+
+// This phone's identity seed in `dir`, which the first start makes. With no
+// directory the identity lasts until the app stops.
+function identity_seed(dir: string): u8[] {
+  let path: string = dir + "/identity";
+  if (dir.len() > 0) {
+    if let Ok(b) = read_file_bytes(path) {
+      if (b.len() == 32) {
+        return b;
+      }
+    }
+  }
+  let seed: u8[] = rand.bytes(32);
+  if (dir.len() > 0) {
+    let written = write_file_bytes(path, seed);
+  }
+  return seed;
+}
+
+// The identities of the phones that a user confirmed, 32 bytes each.
+function load_pins(dir: string): u8[][] {
+  let out: u8[][] = [];
+  if (dir.len() == 0) {
+    return out;
+  }
+  let Ok(b) = read_file_bytes(dir + "/peers") else {
+    return out;
+  };
+  let at: i32 = 0;
+  while (at + 32 <= b.len()) {
+    out = out.append(b.drop(at).take(32));
+    at += 32;
+  }
+  return out;
+}
+
+// The file of known phones again, when the node learned a phone.
+function save_pins(s: App): App {
+  if (s.node.pins.len() == s.pins.len() || s.dir.len() == 0) {
+    return s;
+  }
+  let all: u8[] = [];
+  for p in s.node.pins {
+    for x in p {
+      all = all.append(x);
+    }
+  }
+  let written = write_file_bytes(s.dir + "/peers", all);
+  log.info("walkie: known phones " + s.node.pins.len().to_string());
+  return App { ...s, pins: s.node.pins };
 }
 
 function app_main(ctx: usize): usize {
@@ -127,9 +194,13 @@ function app_main(ctx: usize): usize {
     notice = "no network: ports " + lan.PORT.to_string() + " and " + lan.SECOND_PORT.to_string() + " are busy";
   }
   android.keep_screen_on(ctx, true);
-  let n: node.Node = fresh_node(notice);
+  let dir: string = android.data_dir(ctx);
+  let id_seed: u8[] = identity_seed(dir);
+  let pins: u8[][] = load_pins(dir);
+  let n: node.Node = fresh_node(notice, id_seed, pins);
+  log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -339,6 +410,9 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     return s;
   }
   let down: boolean = action == 0;
+  if let Some(code) = s.entering {
+    return keypad_touch(s, w, h, x, y, down, code);
+  }
   match (s.node.link.phase) {
     lan.Verifying => {
       return verify_touch(s, w, h, x, y, down);
@@ -348,10 +422,65 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
       if (down && k >= 0) {
         return invite(s, k);
       }
+      return search_touch(s, w, h, action, x, y);
     },
     _ => {}
   }
   return talk_touch(s, w, h, action, x, y);
+}
+
+// The room buttons show while the phone searches, with no room yet.
+function room_buttons(s: App): boolean {
+  return server_host.SERVER_HOST.len() > 0 && s.room.is_none() && s.entering.is_none();
+}
+
+function search_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
+  if (action != 0 || !room_buttons(s)) {
+    return talk_touch(s, w, h, action, x, y);
+  }
+  if (screen.contains(screen.room_button(w, h), x, y)) {
+    return enter_room(s, "CREATE", "");
+  }
+  if (screen.contains(screen.join_button(w, h), x, y)) {
+    return App { ...s, entering: Some(""), drawn: "" };
+  }
+  return talk_touch(s, w, h, action, x, y);
+}
+
+// A key of the keypad, CANCEL, or JOIN when the code is whole.
+function keypad_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean, code: string): App {
+  if (!down) {
+    return s;
+  }
+  if (screen.contains(screen.room_button(w, h), x, y)) {
+    return App { ...s, entering: None, drawn: "" };
+  }
+  if (screen.contains(screen.join_button(w, h), x, y) && code.len() == rooms.CODE_LEN) {
+    return enter_room(App { ...s, entering: None }, "JOIN " + code, code);
+  }
+  let k: i32 = screen.key_at(w, h, x, y);
+  if (k < 0) {
+    return s;
+  }
+  return App { ...s, entering: Some(screen.typed(code, k)), drawn: "" };
+}
+
+// Asks the server for a room with `line`, and keeps the room it gives.
+function enter_room(own s: App, line: string, code: string): App {
+  let host: string = server_host.SERVER_HOST;
+  let Some(relay) = internet.relay_of(host) else {
+    return App { ...s, node: node.noticed(s.node, "cannot find the server " + host), drawn: "" };
+  };
+  let reply: rooms.Reply = internet.ask(host, line);
+  if let Some(r) = internet.room_of(reply, code, relay) {
+    log.info("walkie: room " + r.code + " on " + relay.to_string());
+    return App { ...s, room: Some(r), node: node.noticed(s.node, "room " + r.code + ": the other phone joins with this code"), drawn: "" };
+  }
+  let why: string = "the server refused";
+  if let rooms.Refused(text) = reply {
+    why = text;
+  }
+  return App { ...s, node: node.noticed(s.node, "no room: " + why), drawn: "" };
 }
 
 // SAME or DIFFERENT, while the users compare the strings.
@@ -370,7 +499,7 @@ function verify_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean)
 function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
   let now: i64 = now_ms();
   let down: boolean = action == 0;
-  if (down && screen.contains(screen.talk_button(w, h), x, y)) {
+  if (down && screen.in_circle(screen.talk_button(w, h), x, y)) {
     if (node.ended(s.node)) {
       return restart(s);
     }
@@ -384,15 +513,15 @@ function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): Ap
 
 function restart(own s: App): App {
   node.close(s.node);
-  return App { ...s, node: fresh_node(""), pressed: false, drawn: "" };
+  return App { ...s, node: fresh_node("", s.id_seed, s.pins), pressed: false, drawn: "", room: None, entering: None };
 }
 
 // The network, the timers and the microphone, after each event.
 function pump(s: App, now: i64): App {
   let t: App = receive_all(s, now);
-  t = App { ...t, node: node.tick(t.node, now) };
+  t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   t = speak(sync_mic(t, now));
-  return flush(t);
+  return save_pins(flush(t));
 }
 
 function receive_all(s: App, now: i64): App {
@@ -407,7 +536,9 @@ function receive_all(s: App, now: i64): App {
   for k in 0..64 {
     match (net.recv_from(sock, buf)) {
       Ok((len, from)) => {
-        n = node.receive(n, buf, len, from, now);
+        if (from_room(s.room, from)) {
+          n = node.receive(n, buf, len, from, now);
+        }
       },
       Err(_) => {
         return App { ...s, node: n };
@@ -437,6 +568,7 @@ function sync_mic(s: App, now: i64): App {
   if (!mic.start()) {
     return App { ...s, mic: mic, node: node.mic_lost(s.node, "the microphone did not start", now) };
   }
+  log.info("walkie: microphone rate " + mic.rate.to_string());
   return App { ...s, mic: mic, capturing: true, up: pcm.resampler(mic.rate, voice.RATE) };
 }
 
@@ -446,31 +578,55 @@ function speak(s: App): App {
     return s;
   }
   let (up, wire) = pcm.resample(s.up, s.mic.read(s.mic.rate / 10, 0));
-  return App { ...s, up: up, node: node.voice(s.node, wire) };
+  let (agc, loud) = pcm.amplify(s.agc, wire);
+  return App { ...s, up: up, agc: agc, node: node.voice(s.node, loud) };
+}
+
+// In a room, a datagram counts only when it comes from the relay, so that a
+// phone on the same network cannot take the place of the peer.
+function from_room(room: Option[internet.Room], from: net.SocketAddr): boolean {
+  if let Some(r) = room {
+    return from.eq(r.relay);
+  }
+  return true;
+}
+
+// The datagrams of the node: in a room each one goes to the relay, and on a
+// LAN the beacons go to the broadcast address.
+function send_out(sock: Socket, n: node.Node, room: Option[internet.Room], group: Option[net.IpAddr]): void {
+  for d in n.out {
+    if let Some(r) = room {
+      let relayed: Result[i32, net.NetError] = net.send_to(sock, internet.wrap(r, d.data), r.relay);
+    } else if (d.broadcast) {
+      beacon(sock, d.data, group);
+    } else {
+      let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
+    }
+  }
 }
 
 // Sends the datagrams of the node, plays its frames and writes its log lines.
 function flush(s: App): App {
   let n: node.Node = s.node;
   if let Some(sock) = s.sock {
-    for d in n.out {
-      if (d.broadcast) {
-        beacon(sock, d.data, s.group_broadcast);
-      } else {
-        let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
-      }
-    }
+    send_out(sock, n, s.room, s.group_broadcast);
   }
   let down: pcm.Resampler = s.down;
+  let queue: i32[] = s.queue;
   for f in n.heard {
     let (d2, samples) = pcm.resample(down, f);
-    let written: i32 = s.spk.write(samples, 0);
+    for v in samples {
+      queue = queue.append(v);
+    }
     down = d2;
+  }
+  if (queue.len() > 0) {
+    queue = pcm.unplayed(queue, s.spk.write(queue, 0), s.spk.rate * 3 / 10);
   }
   for l in n.logs {
     log.info("walkie: " + l);
   }
-  return App { ...s, down: down, node: node.drained(n) };
+  return App { ...s, down: down, queue: queue, node: node.drained(n) };
 }
 
 // A beacon goes to the broadcast address on each walkie port, and to the
@@ -487,50 +643,6 @@ function beacon(sock: Socket, data: u8[], group: Option[net.IpAddr]): void {
   }
 }
 
-// The Wi-Fi Direct peers, one row each, while the phone looks for a peer.
-function draw_peers(f: android.Frame, s: App, sc: i32): void {
-  let white: i32 = android.rgb(230, 230, 230);
-  for k in 0..s.peers.len() {
-    if (k < screen.PEER_ROWS) {
-      let row: screen.Rect = screen.peer_row(f.width, f.height, k);
-      let label: string = s.peers[k].name;
-      if (s.peers[k].status == 1) {
-        label = label + " (invited)";
-      }
-      f.fill(row.x, row.y, row.w, row.h, android.rgb(60, 60, 110));
-      f.text(row.x + row.w / 30, row.y + row.h / 2 - draw.text_height(sc) / 2, label, sc, white);
-    }
-  }
-}
-
-function button_color(label: string): i32 {
-  if (label == "TALKING") {
-    return android.rgb(40, 170, 80);
-  }
-  if (label == "WAIT" || label == "WAITING") {
-    return android.rgb(200, 160, 30);
-  }
-  if (label == "LISTENING") {
-    return android.rgb(40, 110, 200);
-  }
-  if (label == "HOLD TO TALK") {
-    return android.rgb(70, 70, 70);
-  }
-  if (label == "TAP TO SEARCH AGAIN") {
-    return android.rgb(90, 90, 90);
-  }
-  return android.rgb(50, 50, 50);
-}
-
-// The largest scale up to `cap` at which `text` fits in `w` pixels.
-function fit_scale(text: string, w: i32, cap: i32): i32 {
-  let sc: i32 = cap;
-  while (sc > 1 && draw.text_width(text, sc) > w) {
-    sc = sc - 1;
-  }
-  return sc;
-}
-
 // The peers as they show, so that a change draws the screen again.
 function peer_key(s: App): string {
   let out: string = "";
@@ -540,11 +652,41 @@ function peer_key(s: App): string {
   return out;
 }
 
+// The screen as `ui` draws it.
+function view(s: App, label: string): ui.View {
+  let n: node.Node = s.node;
+  let code: string = "";
+  let searching: boolean = false;
+  match (n.link.phase) {
+    lan.Verifying => {
+      code = n.link.sas;
+    },
+    lan.Searching => {
+      searching = true;
+    },
+    _ => {}
+  }
+  let peers: ui.Peer[] = [];
+  for p in s.peers {
+    peers = peers.append(ui.Peer { name: p.name, invited: p.status == 1 });
+  }
+  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering };
+}
+
+// In a room, the phone waits for the other phone there, not on this Wi-Fi.
+function status_text(s: App): string {
+  if let Some(r) = s.room {
+    if let lan.Searching = s.node.link.phase {
+      return "waiting for the other phone to join";
+    }
+  }
+  return node.status(s.node);
+}
+
 function draw(s: App): App {
   let n: node.Node = s.node;
   let label: string = node.button(n, now_ms());
-  let status: string = node.status(n);
-  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s);
+  let key: string = status_text(s) + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s);
   if (s.window == 0 as usize || key == s.drawn) {
     return s;
   }
@@ -553,45 +695,26 @@ function draw(s: App): App {
   if (f.width == 0) {
     return s;
   }
-  let fw: i32 = f.width;
-  let fh: i32 = f.height;
-  let cell: i32 = draw.text_width("x", 1);
-  let sc: i32 = screen.text_scale(fw, cell);
-  let chars: i32 = screen.line_chars(fw, cell, sc);
-  let line: i32 = draw.text_height(sc) * 3 / 2;
-  let white: i32 = android.rgb(230, 230, 230);
-  f.fill(0, 0, fw, fh, android.rgb(0, 0, 0));
-  f.text(fw / 20, line, "Fern Walkie (LAN)", sc, white);
-  let y: i32 = 2 * line;
-  for l in screen.wrap(status, chars) {
-    f.text(fw / 20, y, l, sc, android.rgb(160, 160, 160));
-    y = y + line;
-  }
-  for l in screen.wrap(n.notice, chars) {
-    f.text(fw / 20, y, l, sc, android.rgb(230, 120, 80));
-    y = y + line;
-  }
-  match (n.link.phase) {
-    lan.Verifying => {
-      let big: i32 = sc * 3;
-      let cw: i32 = draw.text_width(n.link.sas, big);
-      f.text((fw - cw) / 2, fh / 5, n.link.sas, big, white);
-      let same: screen.Rect = screen.same_button(fw, fh);
-      let differ: screen.Rect = screen.differ_button(fw, fh);
-      f.fill(same.x, same.y, same.w, same.h, android.rgb(40, 150, 70));
-      f.fill(differ.x, differ.y, differ.w, differ.h, android.rgb(170, 50, 50));
-      f.text(screen.center_x(same, draw.text_width("SAME", sc)), same.y + same.h / 2 - draw.text_height(sc) / 2, "SAME", sc, white);
-      f.text(screen.center_x(differ, draw.text_width("DIFFERENT", sc)), differ.y + differ.h / 2 - draw.text_height(sc) / 2, "DIFFERENT", sc, white);
-    },
-    lan.Searching => {
-      draw_peers(f, s, sc);
-    },
-    _ => {}
-  }
-  let b: screen.Rect = screen.talk_button(fw, fh);
-  f.fill(b.x, b.y, b.w, b.h, button_color(label));
-  let bs: i32 = fit_scale(label, b.w * 9 / 10, sc * 2);
-  f.text(screen.center_x(b, draw.text_width(label, bs)), b.y + b.h / 2 - draw.text_height(bs) / 2, label, bs, white);
+  ui.render(f, view(s, label));
   android.post(f);
   return App { ...s, drawn: key };
+}
+
+function title(s: App): string {
+  if let Some(r) = s.room {
+    return "Walkie  ROOM " + r.code;
+  }
+  return "Walkie";
+}
+
+// The room and the typed code as they show, so that a change draws again.
+function room_key(s: App): string {
+  let out: string = "";
+  if let Some(r) = s.room {
+    out = r.code;
+  }
+  if let Some(code) = s.entering {
+    out = out + "/" + code;
+  }
+  return out;
 }

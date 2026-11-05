@@ -403,7 +403,7 @@ func TestSelfHostIntrinsicNamesAreInternal(t *testing.T) {
 }
 
 func TestSelfHostBuiltinRowsAreSorted(t *testing.T) {
-	body := selfHostSection(t, "checker.fern",
+	body := selfHostSection(t, "builtinsigs.fern",
 		regexp.MustCompile(`(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`))
 	var rows []string
 	for _, m := range regexp.MustCompile(`(?m)^\s*"([^"]*)",$`).FindAllStringSubmatch(body, -1) {

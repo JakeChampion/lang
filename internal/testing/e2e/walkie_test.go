@@ -77,3 +77,14 @@ func TestWalkieScreen(t *testing.T) {
 func TestWalkieRooms(t *testing.T) {
 	runWalkieTest(t, "rooms_test.fern")
 }
+
+// The internet mode: two nodes in one room, with each datagram through the
+// relay of the server, and one node that moves to a new address.
+func TestWalkieInternet(t *testing.T) {
+	runWalkieTest(t, "internet_test.fern")
+}
+
+// The look of the screen: each screen drawn on a frame in memory.
+func TestWalkieUi(t *testing.T) {
+	runWalkieTest(t, "ui_test.fern")
+}

@@ -14,6 +14,10 @@ var arrayMethodSyntaxCases = []struct {
 	{"sum_squared", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_squared(); }\n", 99},
 	{"sum_abs", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_abs(); }\n", 17},
 	{"reversed", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reverse(); return b[0]; }\n", 1},
+	// A payload of a builtin's Result has the builtin's element type, so the
+	// fold of the method finds its instance (#14229).
+	{"drop_of_builtin_payload", "import \"std/array\";\nfunction main(): i32 { match (read_file_bytes(\"/nonexistent/fern\")) { Ok(b) => { return b.drop(1).len(); }, Err(_) => { return 7; } } }\n", 7},
+	{"take_after_let_else", "import \"std/array\";\nfunction main(): i32 { let Ok(b) = read_file_bytes(\"/nonexistent/fern\") else { return 9; }; return b.take(1).len(); }\n", 9},
 }
 
 func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {
