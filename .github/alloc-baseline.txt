@@ -93,5 +93,6 @@
 # Measured 2026-11-04 (PR #14170): CI recorded 38,587,649 on 6858ecfe.
 # Keep the prior limits while the compiler cost is repaired. A higher
 # measurement does not authorize a higher limit.
-x86_64/checker.allocs	36037176
-x86_64/checker.frees	36037176
+# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
+x86_64/checker.allocs	35541047
+x86_64/checker.frees	35541047

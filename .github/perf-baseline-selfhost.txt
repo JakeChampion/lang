@@ -241,7 +241,8 @@ selfhost/arm64-linux/pmap_insert.emit	3204
 selfhost/arm64-linux/pvec_with.emit	3167
 selfhost/arm64-linux/record_update.emit	1513
 selfhost/arm64-linux/sort_inplace.emit	1686
-selfhost/arm64-linux/sort_ints.emit	2175
+# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
+selfhost/arm64-linux/sort_ints.emit	2012
 selfhost/arm64-linux/sort_strings.emit	3451
 selfhost/arm64-linux/string_build.emit	2241
 selfhost/arm64-linux/string_count_byte.emit	1445
@@ -298,7 +299,7 @@ selfhost/x86-64-linux/byte_copy_with.emit	1202
 selfhost/x86-64-linux/call_overhead.emit	305
 selfhost/x86-64-linux/closure_call.emit	916
 selfhost/x86-64-linux/deflate_decode.emit	12766
-selfhost/x86-64-linux/deflate_encode.emit	7275
+selfhost/x86-64-linux/deflate_encode.emit	7125
 selfhost/x86-64-linux/enum_match.emit	886
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	15117
@@ -311,8 +312,8 @@ selfhost/x86-64-linux/pmap_insert.emit	2906
 selfhost/x86-64-linux/pvec_with.emit	2915
 selfhost/x86-64-linux/record_update.emit	1296
 selfhost/x86-64-linux/sort_inplace.emit	1497
-selfhost/x86-64-linux/sort_ints.emit	1964
-selfhost/x86-64-linux/sort_strings.emit	3096
+selfhost/x86-64-linux/sort_ints.emit	1735
+selfhost/x86-64-linux/sort_strings.emit	3054
 selfhost/x86-64-linux/string_build.emit	1883
 selfhost/x86-64-linux/string_count_byte.emit	1180
 selfhost/x86-64-linux/string_find_byte.emit	1535
