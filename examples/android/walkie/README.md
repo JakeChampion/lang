@@ -172,6 +172,22 @@ A party that took the keys and only listens loses them at the next
 transmission. The control keys stay the same for the session. Thus a party
 that took them and changes the traffic can still take part in a rekey.
 
+Each phone keeps an Ed25519 identity key. After the exchange, each phone
+signs the transcript of the exchange with its identity key and sends the
+signature in a sealed control frame. The frame also tells whether the phone
+knows the identity of the other phone. When the users tap MATCH, each phone
+adds the identity of the other phone to its list of known phones.
+
+When two phones meet again and each one knows the other, they connect with
+no string to compare. A phone that knows the other phone requires a valid
+signature from it. When only one phone knows the other, both show the
+string. So a party in the middle must have the identity key of a phone to
+skip the comparison.
+
+The app keeps the seed of the identity key and the list of known phones in
+its private storage, not in the Android Keystore. So a party that can read
+the files of the app can copy the identity of the phone.
+
 Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. Both go over datagrams, so a frame can be lost
 or arrive out of order. Each frame opens once, inside a window of 64

@@ -8,6 +8,7 @@
 // the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/audio";
+import "std/hex";
 import "std/log";
 import "std/net";
 import "std/rand";
@@ -59,6 +60,11 @@ struct App {
   // The room of the internet mode, and the code that the user types.
   room: Option[internet.Room],
   entering: Option[string],
+  // The private directory of the app, this phone's identity seed, and the
+  // identities of the phones that a user confirmed, as the files hold them.
+  dir: string,
+  id_seed: u8[],
+  pins: u8[][],
 }
 
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
@@ -120,9 +126,60 @@ function open_socket(): (Option[Socket], i32) {
   return (None, lan.PORT);
 }
 
-function fresh_node(notice: string): node.Node {
-  let n: node.Node = node.new(node_id(), rand.bytes(node.SEED_BYTES), now_ms());
+function fresh_node(notice: string, id_seed: [u8], pins: u8[][]): node.Node {
+  let n: node.Node = node.with_identity(node.new(node_id(), rand.bytes(node.SEED_BYTES), now_ms()), id_seed, pins);
   return node.Node { ...n, notice: notice };
+}
+
+// This phone's identity seed in `dir`, which the first start makes. With no
+// directory the identity lasts until the app stops.
+function identity_seed(dir: string): u8[] {
+  let path: string = dir + "/identity";
+  if (dir.len() > 0) {
+    if let Ok(b) = read_file_bytes(path) {
+      if (b.len() == 32) {
+        return b;
+      }
+    }
+  }
+  let seed: u8[] = rand.bytes(32);
+  if (dir.len() > 0) {
+    let written = write_file_bytes(path, seed);
+  }
+  return seed;
+}
+
+// The identities of the phones that a user confirmed, 32 bytes each.
+function load_pins(dir: string): u8[][] {
+  let out: u8[][] = [];
+  if (dir.len() == 0) {
+    return out;
+  }
+  let Ok(b) = read_file_bytes(dir + "/peers") else {
+    return out;
+  };
+  let at: i32 = 0;
+  while (at + 32 <= b.len()) {
+    out = out.append(b.drop(at).take(32));
+    at += 32;
+  }
+  return out;
+}
+
+// The file of known phones again, when the node learned a phone.
+function save_pins(s: App): App {
+  if (s.node.pins.len() == s.pins.len() || s.dir.len() == 0) {
+    return s;
+  }
+  let all: u8[] = [];
+  for p in s.node.pins {
+    for x in p {
+      all = all.append(x);
+    }
+  }
+  let written = write_file_bytes(s.dir + "/peers", all);
+  log.info("walkie: known phones " + s.node.pins.len().to_string());
+  return App { ...s, pins: s.node.pins };
 }
 
 function app_main(ctx: usize): usize {
@@ -137,9 +194,13 @@ function app_main(ctx: usize): usize {
     notice = "no network: ports " + lan.PORT.to_string() + " and " + lan.SECOND_PORT.to_string() + " are busy";
   }
   android.keep_screen_on(ctx, true);
-  let n: node.Node = fresh_node(notice);
+  let dir: string = android.data_dir(ctx);
+  let id_seed: u8[] = identity_seed(dir);
+  let pins: u8[][] = load_pins(dir);
+  let n: node.Node = fresh_node(notice, id_seed, pins);
+  log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -452,7 +513,7 @@ function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): Ap
 
 function restart(own s: App): App {
   node.close(s.node);
-  return App { ...s, node: fresh_node(""), pressed: false, drawn: "", room: None, entering: None };
+  return App { ...s, node: fresh_node("", s.id_seed, s.pins), pressed: false, drawn: "", room: None, entering: None };
 }
 
 // The network, the timers and the microphone, after each event.
@@ -460,7 +521,7 @@ function pump(s: App, now: i64): App {
   let t: App = receive_all(s, now);
   t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   t = speak(sync_mic(t, now));
-  return flush(t);
+  return save_pins(flush(t));
 }
 
 function receive_all(s: App, now: i64): App {

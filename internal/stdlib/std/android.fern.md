@@ -42,6 +42,7 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 // This module runs an Android app with no Java code, through NativeActivity.
 import "std/android/draw";
 import "std/jni";
+import "std/utf8";
 ```
 
 ### `C functions`
@@ -243,7 +244,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle and the JNIEnv of the loop thread: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, and the JNIEnv at 32.
 
-The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
+The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
 
 ```fern
 <<the UI thread>>=
@@ -534,6 +535,24 @@ pub function sdk_version(ctx: usize): i32 {
   unsafe {
     return __load_i32(__load_ptr(ctx + 16 as usize) + 48 as usize);
   }
+}
+
+// The directory of the private files of the app, or "" when the activity
+// gives none. Other apps cannot read the files in it.
+pub function data_dir(ctx: usize): string {
+  let bytes: u8[] = [];
+  unsafe {
+    let path: usize = __load_ptr(__load_ptr(ctx + 16 as usize) + 32 as usize);
+    if (path == 0 as usize) {
+      return "";
+    }
+    let i = 0;
+    while (i < 4096 && __load_u8(path + i as usize) != 0) {
+      bytes = bytes.append(__load_u8(path + i as usize) as u8);
+      i += 1;
+    }
+  }
+  return utf8.from_bytes_lossy(bytes);
 }
 
 // The app has permission `name`, such as "android.permission.RECORD_AUDIO".

@@ -126,7 +126,11 @@ function ended_notice(n: node.Node): string {
 
 // Runs nodes 5 and 9 on the network until `end` ms, with the cues.
 function run(nw: Network, cues: Cue[], end: i64): Sim {
-  let s: Sim = Sim { nodes: [node.new(5i64, seed(1), 0i64), node.new(9i64, seed(2), 0i64)], flights: [], rng: 12345i64, now: 0i64, heard: [0, 0], lost: ["", ""], overlap: false };
+  return run_nodes([node.new(5i64, seed(1), 0i64), node.new(9i64, seed(2), 0i64)], nw, cues, end);
+}
+
+function run_nodes(start: node.Node[], nw: Network, cues: Cue[], end: i64): Sim {
+  let s: Sim = Sim { nodes: start, flights: [], rng: 12345i64, now: 0i64, heard: [0, 0], lost: ["", ""], overlap: false };
   let voice: i32[] = tone();
   let done: boolean[] = [];
   for c in cues {
@@ -208,8 +212,10 @@ function talk_script(): Cue[] {
 // `min_a` and `min_b` frames of the 750 and 250 that the other sends. Each
 // transmission has its own voice key: node 5 talks twice and node 9 once.
 function check_talk(nw: Network, min_heard_by_b: i32, min_heard_by_a: i32): test.TestOutcome {
-  let end: i64 = 100000i64;
-  let s: Sim = run(nw, talk_script(), end);
+  return check_session(run(nw, talk_script(), 100000i64), 100000i64, min_heard_by_b, min_heard_by_a);
+}
+
+function check_session(s: Sim, end: i64, min_heard_by_b: i32, min_heard_by_a: i32): test.TestOutcome {
   let a: node.Node = s.nodes[0];
   let b: node.Node = s.nodes[1];
   let ok: boolean = s.lost[0] == "" && s.lost[1] == "" && !s.overlap && session.connected(a.sess) && session.connected(b.sess) && a.link.sas.len() == 6 && a.link.sas == b.link.sas && s.heard[1] >= min_heard_by_b && s.heard[0] >= min_heard_by_a && s.heard[1] <= 750 && s.heard[0] <= 250 && node.button(a, end) == "HOLD TO TALK" && node.button(b, end) == "HOLD TO TALK" && epochs(a) == "2/1" && epochs(b) == "1/2";
@@ -217,6 +223,59 @@ function check_talk(nw: Network, min_heard_by_b: i32, min_heard_by_a: i32): test
     return test.fail(summary(s, end));
   }
   return test.pass();
+}
+
+// A 32-byte identity seed of phone `k`, and the public key that it gives.
+function id_seed(k: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..32 {
+    out = out.append(((i * 11 + k * 53) % 256) as u8);
+  }
+  return out;
+}
+
+function key_of(k: i32): u8[] {
+  return node.identity_key(node.with_identity(node.new(1i64, seed(9), 0i64), id_seed(k), []));
+}
+
+// Nodes 5 and 9 with identities 1 and 2, which know the phones in `pins_a`
+// and `pins_b`.
+function phones(pins_a: u8[][], pins_b: u8[][]): node.Node[] {
+  return [node.with_identity(node.new(5i64, seed(1), 0i64), id_seed(1), pins_a), node.with_identity(node.new(9i64, seed(2), 0i64), id_seed(2), pins_b)];
+}
+
+// The talk script with no user who confirms the string.
+function presses(): Cue[] {
+  let out: Cue[] = [];
+  for c in talk_script() {
+    if (c.what != CONFIRM) {
+      out = out.append(c);
+    }
+  }
+  return out;
+}
+
+// Two phones that know each other need no string: they connect, talk and
+// rekey with no user who confirms.
+function test_known_phones_need_no_string(): test.TestOutcome {
+  let s: Sim = run_nodes(phones([key_of(2)], [key_of(1)]), Network { loss: 50i64, delay: 5i64, jitter: 20i64 }, presses(), 100000i64);
+  return check_session(s, 100000i64, 700, 230);
+}
+
+// Two new phones show the string. After the users confirm it, each phone
+// knows the other.
+function test_new_phones_learn_each_other(): test.TestOutcome {
+  let s: Sim = run_nodes(phones([], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, talk_script(), 100000i64);
+  let a: node.Node = s.nodes[0];
+  let b: node.Node = s.nodes[1];
+  let learned: boolean = a.pins.len() == 1 && a.pins[0] == key_of(2) && b.pins.len() == 1 && b.pins[0] == key_of(1);
+  return test.assert_eq(learned.to_string() + " " + session.connected(a.sess).to_string() + " " + session.connected(b.sess).to_string(), "true true true");
+}
+
+// When only one phone knows the other, both still show the string.
+function test_one_known_side_shows_the_string(): test.TestOutcome {
+  let s: Sim = run_nodes(phones([key_of(2)], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, presses(), 20000i64);
+  return test.assert_eq(shows_code(s.nodes[0]).to_string() + " " + shows_code(s.nodes[1]).to_string(), "true true");
 }
 
 function test_clean_network(): test.TestOutcome {
@@ -249,6 +308,9 @@ function test_peer_that_never_confirms(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie nodes");
   r = r.it("two nodes talk on a clean network", test_clean_network);
+  r = r.it("two phones that know each other need no string", test_known_phones_need_no_string);
+  r = r.it("two new phones learn each other after the string", test_new_phones_learn_each_other);
+  r = r.it("one known side still shows the string", test_one_known_side_shows_the_string);
   r = r.it("two nodes talk with 5% loss and reordering", test_five_percent_loss_and_reordering);
   r = r.it("two nodes talk with 20% loss", test_twenty_percent_loss);
   r = r.it("a press before the peer confirms waits", test_press_before_the_peer_confirms);

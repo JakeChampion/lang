@@ -23,6 +23,9 @@ pub const CONTROL: i32 = 3;
 
 pub const VOICE: i32 = 4;
 
+// A proof of identity, while the users compare the string.
+pub const IDENTITY: i32 = 5;
+
 const MAGIC: u8 = 247u8;
 
 // The time between two beacons, and between two sends of a handshake
@@ -102,6 +105,8 @@ pub enum Heard {
   Failed,
   // A control or voice frame of the peer, for the secure channel.
   Frame(i32, u8[]),
+  // A proof of identity of the peer, for `secure.check_proof`.
+  Identity(u8[]),
 }
 
 // The datagrams to send to the peer after a step.
@@ -215,6 +220,14 @@ pub function heard(l: Link, p: Packet, now: i64): Step {
   }
   if (p.kind == HANDSHAKE) {
     return handshake(l, p.body, now);
+  }
+  if (p.kind == IDENTITY) {
+    match (l.phase) {
+      Verifying => {
+        return Step { link: l, out: [], heard: Identity(p.body) };
+      },
+      _ => {}
+    }
   }
   if (p.kind == CONTROL || p.kind == VOICE) {
     match (l.phase) {

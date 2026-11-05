@@ -34,6 +34,7 @@
 // transmission.
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
+import "std/crypto/ed25519";
 import "std/crypto/mlkem768";
 import "std/crypto/x25519";
 
@@ -71,7 +72,13 @@ const CLOSED: i32 = 3;
 // secret. `ek` and `ct` are the public ML-KEM values of the exchange.
 pub struct Handshake { initiator: boolean, private: Cell[u8[]], kem: Cell[u8[]], phase: Cell[i32], public: u8[], nonce: u8[], ek: u8[], ct: u8[], commit: u8[], peer_key: u8[], peer_nonce: u8[], done: boolean, failed: boolean }
 
-pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string }
+// `binding` names this exchange for the proofs of identity, and the two id
+// keys seal them, one in each direction.
+pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string, binding: u8[], send_id: Cell[u8[]], recv_id: Cell[u8[]] }
+
+// A proof of identity that opened: the Ed25519 public key of the peer, and
+// whether the peer knows this side.
+pub struct Proof { identity: u8[], knows: boolean }
 
 // One direction of one channel: its key and its sequence state. For a voice
 // receiver, `high` is the highest number seen and `seen` marks the numbers
@@ -285,6 +292,9 @@ pub function keys(h: Handshake): Option[Keys] {
   let i2r_voice: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r voice"), 32);
   let r2i_voice: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i voice"), 32);
   let sas_bytes: u8[] = crypto.hkdf_sha256_expand(prk, text("sas"), 4);
+  let binding: u8[] = crypto.hkdf_sha256_expand(prk, text("identity binding"), 32);
+  let i2r_id: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r identity"), 32);
+  let r2i_id: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i identity"), 32);
   crypto.erase(prk);
   let n: i64 = (sas_bytes[0] as i64 << 24 as i64 | sas_bytes[1] as i64 << 16 as i64 | sas_bytes[2] as i64 << 8 as i64 | sas_bytes[3] as i64) % (1000000 as i64);
   let sas: string = n.to_string();
@@ -292,9 +302,9 @@ pub function keys(h: Handshake): Option[Keys] {
     sas = "0" + sas;
   }
   if (h.initiator) {
-    return Some(Keys { send_ctl: cell_new(i2r_ctl), recv_ctl: cell_new(r2i_ctl), send_voice: cell_new(i2r_voice), recv_voice: cell_new(r2i_voice), sas: sas });
+    return Some(Keys { send_ctl: cell_new(i2r_ctl), recv_ctl: cell_new(r2i_ctl), send_voice: cell_new(i2r_voice), recv_voice: cell_new(r2i_voice), sas: sas, binding: binding, send_id: cell_new(i2r_id), recv_id: cell_new(r2i_id) });
   }
-  return Some(Keys { send_ctl: cell_new(r2i_ctl), recv_ctl: cell_new(i2r_ctl), send_voice: cell_new(r2i_voice), recv_voice: cell_new(i2r_voice), sas: sas });
+  return Some(Keys { send_ctl: cell_new(r2i_ctl), recv_ctl: cell_new(i2r_ctl), send_voice: cell_new(r2i_voice), recv_voice: cell_new(i2r_voice), sas: sas, binding: binding, send_id: cell_new(r2i_id), recv_id: cell_new(i2r_id) });
 }
 
 function way(own key: u8[]): Way {
@@ -319,8 +329,11 @@ function take_key(slot: Cell[u8[]]): u8[] {
   return key;
 }
 
-// A key bundle creates one channel. Copies see the same drained slots.
+// A key bundle creates one channel. Copies see the same drained slots. The
+// id keys go too: a proof of identity comes before the channel.
 pub function channel(k: Keys): Channel {
+  crypto.erase(take_key(k.send_id));
+  crypto.erase(take_key(k.recv_id));
   let send_ctl = take_key(k.send_ctl);
   let recv_ctl = take_key(k.recv_ctl);
   let send_voice = take_key(k.send_voice);
@@ -330,6 +343,8 @@ pub function channel(k: Keys): Channel {
 
 // Clear a rejected key bundle, for example after a failed string comparison.
 pub function close_keys(k: Keys): void {
+  crypto.erase(take_key(k.send_id));
+  crypto.erase(take_key(k.recv_id));
   let send_ctl = take_key(k.send_ctl);
   let recv_ctl = take_key(k.recv_ctl);
   let send_voice = take_key(k.send_voice);
@@ -507,6 +522,63 @@ function erase_way(own w: Way): void {
   crypto.erase(key);
   crypto.erase(old);
   crypto.erase(chain);
+}
+
+// A proof of identity is a flag byte and then, sealed with the id key of the
+// direction, the Ed25519 public key, the flag again and a signature of the
+// binding and both. Each value of the flag has its own nonce.
+const PROOF_PLAIN: i32 = 33 + 64;
+
+function proof_nonce(knows: u8): u8[] {
+  let out: u8[] = [knows];
+  for k in 0..11 {
+    out = out.append(0 as u8);
+  }
+  return out;
+}
+
+// The proof of identity of this side for the peer of `k`: the public key
+// of `identity`, and whether this side knows the peer. Only the peer opens
+// it, and it is good for this exchange alone.
+pub function prove(k: Keys, identity: ed25519.PrivateKey, knows: boolean): u8[] {
+  let flag: u8 = 0 as u8;
+  if (knows) {
+    flag = 1 as u8;
+  }
+  let plain: u8[] = cat(identity.public_point(), [flag]);
+  let signed: u8[] = cat(plain, identity.sign(cat(cat(text("walkie identity"), k.binding), plain)));
+  let Ok(key) = chacha20poly1305.key(k.send_id.get()) else {
+    return [];
+  };
+  let Ok(sealed) = key.seal(proof_nonce(flag), signed, cat(text("walkie identity"), [flag])) else {
+    return [];
+  };
+  return cat([flag], sealed);
+}
+
+// The identity of the peer in its proof, when the proof opens and its
+// signature is good for this exchange.
+pub function check_proof(k: Keys, frame: [u8]): Option[Proof] {
+  if (frame.len() != 1 + PROOF_PLAIN + 16 || frame[0] > 1 as u8) {
+    return None;
+  }
+  let Ok(key) = chacha20poly1305.key(k.recv_id.get()) else {
+    return None;
+  };
+  let Ok(signed) = key.open(proof_nonce(frame[0]), frame[1:frame.len()], cat(text("walkie identity"), [frame[0]])) else {
+    return None;
+  };
+  if (signed[32] != frame[0]) {
+    return None;
+  }
+  let plain: u8[] = part(signed, 0, 33);
+  let Ok(public) = ed25519.public_key(part(signed, 0, 32)) else {
+    return None;
+  };
+  if (!public.verify(cat(cat(text("walkie identity"), k.binding), plain), part(signed, 33, 64))) {
+    return None;
+  }
+  return Some(Proof { identity: part(signed, 0, 32), knows: frame[0] == 1 as u8 });
 }
 
 // The epoch of the key that this side sends voice with, and of the key that

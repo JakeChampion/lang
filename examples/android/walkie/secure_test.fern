@@ -1,5 +1,6 @@
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
+import "std/crypto/ed25519";
 import "std/test";
 import "./secure";
 
@@ -38,7 +39,7 @@ function channels(a: secure.Handshake, b: secure.Handshake): (secure.Channel, se
     },
     None => {}
   }
-  return (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "" }), secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "x" }));
+  return (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "", binding: [], send_id: cell_new([]), recv_id: cell_new([]) }), secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "x", binding: [], send_id: cell_new([]), recv_id: cell_new([]) }));
 }
 
 // The text and the sequence number of an opened voice frame.
@@ -489,6 +490,65 @@ function test_directions_rekey_on_their_own(): test.TestOutcome {
   return test.assert_eq(voiced(got_b) + " " + voiced(got_a), "ok:to b@0 ok:to a@0");
 }
 
+function id_key(name: string): Option[ed25519.PrivateKey] {
+  if let Ok(k) = ed25519.private_key(bytes(name + " identity", 32)) {
+    return Some(k);
+  }
+  return None;
+}
+
+// The key bundles of a finished handshake between `a` and `b`.
+function bundles(a: string, b: string): Option[(secure.Keys, secure.Keys)] {
+  let (ha, hb) = pair(party(true, a), party(false, b));
+  let Some(ka) = secure.keys(ha) else {
+    return None;
+  };
+  let Some(kb) = secure.keys(hb) else {
+    return None;
+  };
+  return Some((ka, kb));
+}
+
+function proof_text(p: Option[secure.Proof], want: u8[]): string {
+  if let Some(x) = p {
+    return (x.identity == want).to_string() + "/" + x.knows.to_string();
+  }
+  return "refused";
+}
+
+// A proof of identity opens on the other side, with the key and the flag.
+function test_identity_proof_opens(): test.TestOutcome {
+  let Some((ka, kb)) = bundles("alice", "bob") else {
+    return test.fail("no keys");
+  };
+  let Some(ida) = id_key("alice") else {
+    return test.fail("no identity");
+  };
+  let unknown = secure.check_proof(kb, secure.prove(ka, ida, false));
+  let known = secure.check_proof(kb, secure.prove(ka, ida, true));
+  let back = secure.check_proof(ka, secure.prove(ka, ida, false));
+  return test.assert_eq(proof_text(unknown, ida.public_point()) + " " + proof_text(known, ida.public_point()) + " " + proof_text(back, ida.public_point()), "true/false true/true refused");
+}
+
+// A proof is good for its exchange alone: a party in the middle cannot pass
+// it on to another exchange, and a changed byte or flag does not open.
+function test_identity_proof_is_bound_to_its_exchange(): test.TestOutcome {
+  let Some((ka, kb)) = bundles("alice", "bob") else {
+    return test.fail("no keys");
+  };
+  let Some((km, kc)) = bundles("mallory", "carol") else {
+    return test.fail("no keys");
+  };
+  let Some(ida) = id_key("alice") else {
+    return test.fail("no identity");
+  };
+  let proof: u8[] = secure.prove(ka, ida, false);
+  let moved = secure.check_proof(kc, proof);
+  let changed = secure.check_proof(kb, proof.with(20, proof[20] ^ 1 as u8));
+  let flag = secure.check_proof(kb, proof.with(0, 1 as u8));
+  return test.assert_eq(proof_text(moved, ida.public_point()) + " " + proof_text(changed, ida.public_point()) + " " + proof_text(flag, ida.public_point()), "refused refused refused");
+}
+
 function test_initiator_must_commit_before_a_key_reply(): test.TestOutcome {
   let a = party(true, "alice");
   let other = party(true, "other");
@@ -531,6 +591,8 @@ function main(): i32 {
   r = r.it("a rekey refuses a wrong offer", test_rekey_refuses_a_wrong_offer);
   r = r.it("an offer is used once", test_offer_is_used_once);
   r = r.it("the two directions rekey on their own", test_directions_rekey_on_their_own);
+  r = r.it("a proof of identity opens on the other side", test_identity_proof_opens);
+  r = r.it("a proof of identity is bound to its exchange", test_identity_proof_is_bound_to_its_exchange);
   r = r.it("a changed frame is refused", test_changed_frame_is_refused);
   r = r.it("a control frame opens once, in any order", test_control_replay_is_refused_and_order_is_free);
   r = r.it("voice frames open once inside the window", test_voice_window);

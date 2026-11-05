@@ -38,6 +38,9 @@ function heard_name(h: lan.Heard): string {
     },
     lan.Frame(kind, _) => {
       return "frame " + kind.to_string();
+    },
+    lan.Identity(_) => {
+      return "identity";
     }
   }
   return "";
@@ -132,7 +135,7 @@ function test_frames_after_confirmation(): test.TestOutcome {
   let (b1, cb) = lan.confirm(s3.link);
   let (ca1, frame) = match (ca) {
     Some(c) => secure.seal_voice(c, [1u8, 2u8]),
-    None => (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "" }), []),
+    None => (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "", binding: [], send_id: cell_new([]), recv_id: cell_new([]) }), []),
   };
   let got: lan.Step = lan.heard(b1, packet(lan.encode(lan.VOICE, 5i64, frame)), 5i64);
   let stranger: lan.Step = lan.heard(b1, packet(lan.encode(lan.VOICE, 7i64, frame)), 6i64);
