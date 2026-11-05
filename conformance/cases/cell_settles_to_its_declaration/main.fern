@@ -1,0 +1,31 @@
+// A cell_new argument settles to the declared element type of the cell,
+// as a literal settles to its declaration: at a let, at a parameter, at a
+// return, and at a struct field. The cell then holds a value of that type,
+// so a later set of a wide value is accepted on every engine.
+
+struct Counter { total: Cell[i64], ratio: Cell[f64] }
+
+function take(c: Cell[i64]): i64 {
+    c.set(c.get() + 4000000000i64);
+    return c.get();
+}
+
+function fresh(): Cell[i64] {
+    return cell_new(7);
+}
+
+function main(): i32 {
+    let a: Cell[i64] = cell_new(2);
+    a.set(a.get() + 4000000000i64);
+    let b: i64 = take(cell_new(3));
+    let r: Cell[i64] = fresh();
+    r.set(r.get() + 4000000000i64);
+    let k: Counter = Counter { total: cell_new(5), ratio: cell_new(1) };
+    k.total.set(k.total.get() + 4000000000i64);
+    k.ratio.set(k.ratio.get() + 0.5);
+    let f: Cell[f64] = cell_new(2);
+    f.set(f.get() * 1.25);
+    print(a.get().to_string() + " " + b.to_string() + " " + r.get().to_string() + " " + k.total.get().to_string());
+    print(k.ratio.get().to_string() + " " + f.get().to_string());
+    return 0;
+}
