@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func writerSetTimesSource(dir string, closed bool) string {
@@ -119,6 +121,20 @@ func TestInterpWriterSetTimes(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, writerSetTimesSource(dir, true)); code != 0 {
 		t.Fatalf("exit=%d, want 0", code)
+	}
+	checkWriterSetTimesContents(t, dir)
+}
+
+func TestSelfHostInterpWriterSetTimes(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(source, []byte(writerSetTimesSource(dir, true)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fern := e2eharness.SelfHostCLI(t)
+	cmd := exec.Command(fern, "-interp", source, e2eharness.SelfHostStdlibRoot(t))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host interpreter: %v\n%s", err, out)
 	}
 	checkWriterSetTimesContents(t, dir)
 }
