@@ -7134,8 +7134,10 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_lc_free_count: .quad 0\n");
   s = s.write("__fern_lc_free_bytes: .quad 0\n");
   s = s.write("__fern_lc_exited: .quad 0\n");
-  s = s.write("__fern_lc_adopt_lo: .quad 0\n");
-  s = s.write("__fern_lc_adopt_hi: .quad 0\n");
+  if (s.has_need("heap_adopt")) {
+    s = s.write("__fern_lc_adopt_lo: .quad 0\n");
+    s = s.write("__fern_lc_adopt_hi: .quad 0\n");
+  }
   s = s.write("    .section .rodata\n");
   s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
   s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
