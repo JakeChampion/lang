@@ -49,6 +49,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION examples/android/walkie/app.fern
       - uses: actions/upload-artifact@v7
@@ -60,6 +61,7 @@ jobs:
             build/android-stopwatch/fern-native.apk
             build/android-stopwatch/fern-dextest.apk
             build/android-stopwatch/fern-audiotest.apk
+            build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-walkie.apk
             build/android-stopwatch/fern-walkie2.apk
           if-no-files-found: error
@@ -92,6 +94,7 @@ jobs:
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
+            python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}

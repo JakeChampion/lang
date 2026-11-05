@@ -192,6 +192,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<88 pub function (r: Resolver) resolve_plain(name: string): Result[net.IpAddr[], DnsError]>>
 
 <<89 function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError]>>
+
+<<90 pub function netd_request(name: string): Option[u8[]]>>
 ```
 
 ### `module introduction`
@@ -2907,6 +2909,242 @@ function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string
   if (hosts.len() > 0) {
     return Ok(hosts);
   }
+  if (target_os() == "android") {
+    return netd_lookup(name);
+  }
   return found_addresses(conf, name);
+}
+```
+
+### `90 pub function netd_request(name: string): Option[u8[]]`
+
+Android has no `/etc/resolv.conf`. An app resolves a name through netd, over
+the socket that bionic's `getaddrinfo` uses. The request is one text command
+with a NUL byte at the end. The reply is the code `222` and one record for
+each address, or the code `401` and an error code. The fields of a record
+are big-endian 32-bit words, and its address is a `sockaddr`.
+
+```fern
+<<90 pub function netd_request(name: string): Option[u8[]]>>=
+pub const NETD_SOCKET: string = "/dev/socket/dnsproxyd";
+
+// The getaddrinfo command for `name`, or None when the name has a byte that
+// the text command cannot carry. The hints are AI_ADDRCONFIG, any family,
+// SOCK_STREAM and the default network.
+pub function netd_request(name: string): Option[u8[]] {
+  let b = name.as_bytes();
+  if (b.len() == 0 || b.len() > 253) {
+    return None;
+  }
+  for x in b {
+    if (x <= 32u8 || x >= 127u8) {
+      return None;
+    }
+  }
+  let out: u8[] = [];
+  for x in ("getaddrinfo " + name + " ^ 1024 0 1 0 0").as_bytes() {
+    out = out.append(x);
+  }
+  return Some(out.append(0u8));
+}
+
+pub enum NetdReply {
+  NetdMore,
+  NetdDone(Result[net.IpAddr[], DnsError]),
+}
+
+function netd_word(b: [u8], at: i32): i32 {
+  return b[at] as i32 << 24 | b[at + 1] as i32 << 16 | b[at + 2] as i32 << 8 | b[at + 3] as i32;
+}
+
+// The reply code in the first 4 bytes: 3 ASCII digits and a NUL byte.
+function netd_code(b: [u8]): i32 {
+  if (b[3] != 0u8) {
+    return -1;
+  }
+  let code: i32 = 0;
+  for k in 0..3 {
+    if (b[k] < 48u8 || b[k] > 57u8) {
+      return -1;
+    }
+    code = code * 10 + (b[k] - 48u8) as i32;
+  }
+  return code;
+}
+
+// The reply in the bytes that netd sent so far: NetdMore while it is not
+// whole.
+pub function netd_reply(b: [u8]): NetdReply {
+  if (b.len() < 4) {
+    return NetdMore;
+  }
+  let code: i32 = netd_code(b);
+  if (code == 222) {
+    return netd_records(b);
+  }
+  if (code != 401) {
+    return NetdDone(Err(Malformed));
+  }
+  if (b.len() < 8) {
+    return NetdMore;
+  }
+  return NetdDone(Err(netd_error(netd_word(b, 4))));
+}
+
+// The DnsError of a getaddrinfo error code of bionic.
+function netd_error(code: i32): DnsError {
+  if (code == 8) {
+    return NoSuchName;
+  }
+  if (code == 7) {
+    return NoData;
+  }
+  if (code == 2) {
+    return NoReply;
+  }
+  return ServerFailure;
+}
+
+// One record at `at`: the offset after it and its address, or `more` when the
+// bytes stop inside it.
+struct NetdRecord { more: boolean, bad: boolean, next: i32, ip: Option[net.IpAddr] }
+
+function netd_record(b: [u8], at: i32): NetdRecord {
+  let more = NetdRecord { more: true, bad: false, next: at, ip: None };
+  if (b.len() < at + 24) {
+    return more;
+  }
+  let addr_len: i32 = netd_word(b, at + 20);
+  if (addr_len < 0 || addr_len > 128) {
+    return NetdRecord { ...more, more: false, bad: true };
+  }
+  let addr: i32 = at + 24;
+  if (b.len() < addr + addr_len + 4) {
+    return more;
+  }
+  let name_len: i32 = netd_word(b, addr + addr_len);
+  if (name_len < 0 || name_len > 1025) {
+    return NetdRecord { ...more, more: false, bad: true };
+  }
+  let ip = sockaddr_ip(b, addr, addr_len, netd_word(b, at + 8));
+  return NetdRecord { more: false, bad: false, next: addr + addr_len + 4 + name_len, ip: ip };
+}
+
+function netd_records(b: [u8]): NetdReply {
+  let at: i32 = 4;
+  let found: net.IpAddr[] = [];
+  for k in 0..64 {
+    if (b.len() < at + 4) {
+      return NetdMore;
+    }
+    if (netd_word(b, at) == 0) {
+      return netd_found(found);
+    }
+    let r: NetdRecord = netd_record(b, at);
+    if (r.more || r.bad) {
+      return netd_partial(r);
+    }
+    if let Some(ip) = r.ip {
+      found = found.append(ip);
+    }
+    at = r.next;
+  }
+  return NetdDone(Err(Malformed));
+}
+
+function netd_found(found: net.IpAddr[]): NetdReply {
+  if (found.len() == 0) {
+    return NetdDone(Err(NoData));
+  }
+  return NetdDone(Ok(found));
+}
+
+function netd_partial(r: NetdRecord): NetdReply {
+  if (r.bad) {
+    return NetdDone(Err(Malformed));
+  }
+  return NetdMore;
+}
+
+// The address in a sockaddr_in (family 2) or a sockaddr_in6 (family 10).
+function sockaddr_ip(b: [u8], at: i32, len: i32, family: i32): Option[net.IpAddr] {
+  if (family == 2 && len >= 8) {
+    return Some(net.ipv4(b[at + 4] as i32, b[at + 5] as i32, b[at + 6] as i32, b[at + 7] as i32));
+  }
+  if (family == 10 && len >= 24) {
+    let v6: u8[] = [];
+    for k in 0..16 {
+      v6 = v6.append(b[at + 8 + k]);
+    }
+    return net.ipv6(v6);
+  }
+  return None;
+}
+
+// Asks netd for the addresses of `name`.
+function netd_lookup(name: string): Result[net.IpAddr[], DnsError] {
+  let Some(request) = netd_request(name) else {
+    return Err(NoSuchName);
+  };
+  match (net.connect_unix(NETD_SOCKET)) {
+    Ok(sock) => {
+      let reply: Result[net.IpAddr[], DnsError] = netd_exchange(sock, request);
+      let closed = net.close(sock);
+      return reply;
+    },
+    Err(e) => {
+      return Err(NetFailed(e));
+    }
+  }
+  return Err(NoReply);
+}
+
+function netd_exchange(sock: Socket, request: u8[]): Result[net.IpAddr[], DnsError] {
+  if let Some(e) = netd_send(sock, request) {
+    return Err(e);
+  }
+  let got: u8[] = [];
+  for k in 0..256 {
+    match (net.read_deadline(sock, 4096, time.duration_seconds(10 as i64))) {
+      Ok(net.Chunk(c)) => {
+        if (c.len() == 0) {
+          return Err(NoReply);
+        }
+        got = got.concat(c);
+        if let NetdDone(r) = netd_reply(got) {
+          return r;
+        }
+      },
+      Ok(_) => {
+        return Err(NoReply);
+      },
+      Err(e) => {
+        return Err(NetFailed(e));
+      }
+    }
+  }
+  return Err(Malformed);
+}
+
+// Writes the whole request, or gives the error that stopped it.
+function netd_send(sock: Socket, request: u8[]): Option[DnsError] {
+  let rest: u8[] = request;
+  for k in 0..16 {
+    if (rest.len() == 0) {
+      return None;
+    }
+    match (net.write_rest(sock, rest)) {
+      Ok(left) => {
+        rest = left;
+      },
+      Err(e) => {
+        return Some(NetFailed(e));
+      }
+    }
+  }
+  if (rest.len() > 0) {
+    return Some(NoReply);
+  }
+  return None;
 }
 ```
