@@ -27,7 +27,7 @@ bare `arm64` meaning arm64-Linux. There is no x86-64 Darwin target.
 | x86-64-android | x86-64 | android | ELF (ET_DYN, PIE) | System V AMD64 | same syscalls as x86-64-linux; stderr and aborts also go to logcat |
 | wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | a wasi:cli/run component by default |
 | wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler (docs/WASI-PREVIEW2.md) |
-| arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#14245) |
+| arm64-freestanding, x86-64-freestanding | | freestanding | assembly (`-emit asm`) | AAPCS64 / System V AMD64 | no host; the embedder calls `__fern_heap_init` and the `-export` functions (docs/FREESTANDING-CORE.md) |
 
 Two axes are deliberately NOT in the name: `-backend` names the target's
 emitter, and `-emit` an alternate output form (#6536). Each target has one

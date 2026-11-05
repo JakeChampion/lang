@@ -1733,15 +1733,33 @@ function export_entries(merged: parser.Module, names: string[], arm64: boolean, 
   for n in names {
     let f = merged.funcs[export_func_index(merged, n)];
     if (arm64) {
-      out += export_entry_arm64(f, harden);
+      out += export_entry_arm64(f, harden, true);
     } else {
-      out += export_entry(f, harden);
+      out += export_entry(f, harden, true);
     }
   }
   return out;
 }
 
-function export_entry(f: parser.FuncDecl, harden: boolean): string {
+// The export entries of a freestanding artifact. Each one is a global symbol
+// with the name of its function, and no lock, because only one context calls
+// in.
+function freestanding_exports(merged: parser.Module, names: string[], arm64: boolean): string {
+  let out = "";
+  for n in names {
+    let f = merged.funcs[export_func_index(merged, n)];
+    if (arm64) {
+      out += "    .globl " + n + "\n    .type " + n + ", %function\n" + n + ":\n" + export_entry_arm64(f, false, false);
+    } else {
+      out += "    .globl " + n + "\n    .type " + n + ", @function\n" + n + ":\n" + export_entry(f, false, false);
+    }
+  }
+  return out;
+}
+
+// A locked entry takes the busy lock, because a shared object can be called
+// from more than one thread.
+function export_entry(f: parser.FuncDecl, harden: boolean, locked: boolean): string {
   let ints: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
   let srcs: string[] = [];
   let ni = 0;
@@ -1760,8 +1778,8 @@ function export_entry(f: parser.FuncDecl, harden: boolean): string {
       stack += 8;
     }
   }
-  let out = "__fern_export_" + f.name + ":\n" + harden_text(harden, "    endbr64\n") + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n" + asm_ir.busy_take_x86() + "    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n";
-  out += harden_text(harden, "    cmpq $0, __fern_rng_state(%rip)\n    jne .Lfern_export_ready_" + f.name + "\n    call __fern_harden_start\n.Lfern_export_ready_" + f.name + ":\n");
+  let out = "__fern_export_" + f.name + ":\n" + text_when(harden, "    endbr64\n") + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n" + text_when(locked, asm_ir.busy_take_x86()) + "    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n";
+  out += text_when(harden, "    cmpq $0, __fern_rng_state(%rip)\n    jne .Lfern_export_ready_" + f.name + "\n    call __fern_harden_start\n.Lfern_export_ready_" + f.name + ":\n");
   let i = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
@@ -1773,7 +1791,7 @@ function export_entry(f: parser.FuncDecl, harden: boolean): string {
   } else if (f.ret_type == "f32") {
     out += "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
   }
-  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n" + asm_ir.busy_give_x86() + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n" + text_when(locked, asm_ir.busy_give_x86()) + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
 }
 
 function export_arg(src: string, t: string): string {
@@ -1796,7 +1814,7 @@ function export_arg(src: string, t: string): string {
   return load;
 }
 
-function export_entry_arm64(f: parser.FuncDecl, harden: boolean): string {
+function export_entry_arm64(f: parser.FuncDecl, harden: boolean, locked: boolean): string {
   let srcs: string[] = [];
   let ni = 0;
   let nf = 0;
@@ -1815,8 +1833,8 @@ function export_entry_arm64(f: parser.FuncDecl, harden: boolean): string {
     }
   }
   let n = f.params.len();
-  let out = "__fern_export_" + f.name + ":\n" + harden_text(harden, "    bti c\n    paciasp\n") + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + asm_arm64_ir.busy_take_arm64() + "    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n";
-  out += harden_text(harden, "    adrp x16, __fern_rng_state\n    ldr x16, [x16, :lo12:__fern_rng_state]\n    cbnz x16, .Lfern_export_ready_" + f.name + "\n    bl __fern_harden_start\n.Lfern_export_ready_" + f.name + ":\n");
+  let out = "__fern_export_" + f.name + ":\n" + text_when(harden, "    bti c\n    paciasp\n") + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + text_when(locked, asm_arm64_ir.busy_take_arm64()) + "    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n";
+  out += text_when(harden, "    adrp x16, __fern_rng_state\n    ldr x16, [x16, :lo12:__fern_rng_state]\n    cbnz x16, .Lfern_export_ready_" + f.name + "\n    bl __fern_harden_start\n.Lfern_export_ready_" + f.name + ":\n");
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -1831,12 +1849,12 @@ function export_entry_arm64(f: parser.FuncDecl, harden: boolean): string {
   } else if (f.ret_type == "f32") {
     out += "    fmov d0, x0\n    fcvt s0, d0\n";
   }
-  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n" + asm_arm64_ir.busy_give_arm64() + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n" + harden_text(harden, "    autiasp\n") + "    ret\n";
+  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n" + text_when(locked, asm_arm64_ir.busy_give_arm64()) + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n" + text_when(harden, "    autiasp\n") + "    ret\n";
 }
 
-// The export entry's text that only a -harden build carries.
-function harden_text(harden: boolean, text: string): string {
-  if (harden) {
+// `text` when `on`, else nothing.
+function text_when(on: boolean, text: string): string {
+  if (on) {
     return text;
   }
   return "";
@@ -2128,6 +2146,12 @@ function is_flag(a: string): boolean {
   return a[0] == b'-';
 }
 
+// A target with no host: its artifact is assembly that an embedder links and
+// calls through the -export functions.
+function is_freestanding(t: string): boolean {
+  return platforms.for_target(t).environment == "freestanding";
+}
+
 // The targets with a native backend and a binary image.
 function is_native_target(t: string): boolean {
   return t == "x86-64-linux" || t == "arm64-linux" || t == "x86-64-android" || t == "arm64-android" || t == "arm64-darwin";
@@ -2339,7 +2363,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
-      cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export, besides the @jni ones (default main)"),
+      cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
       cli_flag("-jni-java", "DIR", "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       cli_flag("-jni-dex", "FILE", "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
       cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
@@ -2648,9 +2672,6 @@ function list_targets(): i32 {
     let kinds = platforms.handler_kinds(name);
     if (kinds.len() > 0) {
       line = line + "    handlers:     " + bracket_words(kinds) + "\n";
-    }
-    if (!platforms.emits_code(name)) {
-      line += "    note:         check-only — no backend emits for this target yet\n";
     }
     write(line);
     i += 1;
@@ -5564,14 +5585,10 @@ pub function emit_refusal(target: string, emit: string): string {
   return "";
 }
 
-pub function backend_refusal(target: string): string {
-  if (platforms.emits_code(target)) {
-    return "";
-  }
-  return "fern: -target " + target + ": check-only — no backend emits for this target yet";
-}
-
 function output_form(target: string, emit: string, has_out: boolean): (string, string) {
+  if (is_freestanding(target) && emit != "asm") {
+    return ("", "-target " + target + " writes assembly only; pass -emit asm");
+  }
   if (has_out || emit == "asm") {
     return (core_form(emit), "");
   }
@@ -5598,6 +5615,10 @@ function run_output(target: string, emit: string, shared: boolean, out_path: str
   }
   if (target == "wasm32-wasi-http") {
     eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
+    return ("", "", 2);
+  }
+  if (is_freestanding(target)) {
+    eprint("fern: -run cannot run -target " + target + ": the target has no host to run it on");
     return ("", "", 2);
   }
   if (out_path.len() > 0) {
@@ -6779,7 +6800,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
 
-  let (exported_module, shared_roots, export_bad) = shared_exports(merged, shared, export_list, jni);
+  let (exported_module, shared_roots, export_bad) = shared_exports(merged, shared || is_freestanding(target), export_list, jni);
   if (export_bad.len() > 0) {
     eprint("fern: " + export_bad);
     return 2;
@@ -6810,12 +6831,6 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
 
   merged = treeshake.treeshake(merged);
-
-  let no_backend = backend_refusal(target);
-  if (no_backend.len() > 0) {
-    eprint(no_backend);
-    return 2;
-  }
 
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
@@ -6855,6 +6870,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         return 2;
       }
     }
+  } else if (target == "arm64-freestanding") {
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, 0 as usize);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    out_asm = freestanding_exports(merged, shared_roots, true) + out_asm;
   } else if (target == "arm64-android") {
     let recs = word_buf(emit_text);
     out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
@@ -6950,6 +6971,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+  } else if (target == "x86-64-freestanding") {
+    out_asm = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    out_asm = freestanding_exports(merged, shared_roots, false) + out_asm;
   } else {
     let recs = word_buf(emit_text);
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
