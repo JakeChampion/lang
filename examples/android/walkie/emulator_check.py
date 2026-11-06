@@ -218,11 +218,14 @@ def tap_notice_button(label, out):
 def talk_from_notice(a, b, out):
     """TALK in a notification makes its copy transmit while it is not in
     front, and STOP TALKING makes it listen again."""
+    # Before the tap: the listener can log "hearing the peer" in the same flush as the talk line.
+    before = logcat()
+    marks = {a: len(lines_of(before, a)), b: len(lines_of(before, b))}
     tap_notice_button("Talk", out)
     wait_for("a copy talks from its notification", lambda log: has(log, a, "walkie: talk from the notification true") or has(log, b, "walkie: talk from the notification true"), 10)
     log = logcat()
     talker, listener = (a, b) if has(log, a, "walkie: talk from the notification true") else (b, a)
-    mark = len(lines_of(log, listener))
+    mark = marks[listener]
     wait_for("the other copy hears the notification talk", lambda log: any("walkie: hearing the peer" in line for line in lines_of(log, listener)[mark:]), 10)
     tap_notice_button("Stop talking", out)
     wait_for("the copy stops talking from its notification", lambda log: last_state(log, talker) == "CONNECTED_LISTENING", 10)
