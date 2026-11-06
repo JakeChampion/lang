@@ -62,10 +62,11 @@ func TestSelfHostByteBuilderMapsPerModule(t *testing.T) {
 				units = append(units, path)
 			}
 			for _, operation := range []string{"mapped", "filtered", "expanded"} {
-				for _, suffix := range []string{"", "_u8"} {
-					if !strings.Contains(asm.String(), ".globl __fern_buf_push_bytes_"+operation+suffix+"\n") {
-						t.Fatalf("missing runtime export: %s%s", operation, suffix)
-					}
+				if !strings.Contains(asm.String(), ".globl __fern_buf_push_bytes_"+operation+"\n") {
+					t.Fatalf("missing runtime export: %s", operation)
+				}
+				if strings.Contains(asm.String(), "__fern_buf_push_bytes_"+operation+"_u8") {
+					t.Fatalf("a second table helper for %s: the packed body is the only one", operation)
 				}
 			}
 			bin := filepath.Join(t.TempDir(), "builders")
