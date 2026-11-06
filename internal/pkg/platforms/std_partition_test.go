@@ -33,6 +33,7 @@ var stdModuleReach = map[string]string{
 	"std/envflag":       "env",
 	"std/errno":         "",
 	"std/fetch":         "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",
+	"std/filetime":      "fs",
 	"std/f64":           "",
 	"std/format":        "",
 	"std/fuzz":          "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",

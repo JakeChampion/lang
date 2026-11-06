@@ -332,6 +332,7 @@ function release(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, f: ssa
   return helper(r, slot, release_name(t, f));
 }
 
+@noinline
 function emit(own r: irtables.LowerState, op: ir.Op): irtables.LowerState {
   return irtables.LowerState { ...r, ops: r.ops.append(op) };
 }
