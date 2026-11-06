@@ -37,6 +37,21 @@ The cost is one store per word of each released block, and a large block costs a
 On x86-64 the push calls `__fern_scrub`, which uses `rep stosq`. On arm64 the push writes the zeros in a loop at each release site.
 The release build does not change.
 
+A `scripts/profile-costs` run measures the cost of the hardened profile.
+Each hardened image grows by 128 to 288 bytes, and by 43 to 73 emitted lines.
+On x86-64 the instructions that Valgrind counts grow by these amounts. Valgrind counts each word of `rep stosq` as one instruction.
+
+| Program | Instructions |
+|---|---:|
+| `array_append` | +24.5% |
+| `http_hello` | +7.5% |
+| `deflate_decode` | +2.7% |
+| `map_string` | +0.9% |
+| `closure_call` | +0.3% |
+| `call_overhead`, `enum_match`, `int_loop`, `startup` | 0 |
+
+`array_append` builds an array of 20000 elements 40 times. Each growth releases the previous storage, and the scrub zeroes it, so its cost is the largest.
+
 ## Erasure
 
 `std/crypto` gains `erase(own bytes: u8[]): void`.
