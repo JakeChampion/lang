@@ -209,6 +209,5 @@ class NotificationTalkTest(unittest.TestCase):
                 self.replay(talker, True, hears=False)
 
 
-
 if __name__ == "__main__":
     unittest.main()

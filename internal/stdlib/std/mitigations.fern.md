@@ -28,7 +28,7 @@ A cell is `Unknown` when its file cannot be read or has no line of the expected 
 
 The kernel has no interface that enables indirect branch tracking for user space. The `ibt` row therefore reads `kernel` and `process` from the same line. Both stay `No` on a current kernel.
 
-The build manifest is the line that starts with `FERNBUILD1 ` in the image at `/proc/self/exe`. `build_line` finds it in any byte array, and `parse_build` reads its `key=value` fields. Without the line, which an interpreted or a wasm program has, every `compiled` cell is `unknown`. A software feature counts as `enabled` when it is compiled, because nothing can turn it off. A hardware feature takes `enabled` from the `process` cell of `report`.
+The build manifest is the line that starts with `FERNBUILD1 ` in the image at `/proc/self/exe`. `build_line` finds it in any byte array, and `parse_build` reads its `key=value` fields. An interpreted or a wasm program cannot read its own image, so every `compiled` cell is `unknown`. A software feature counts as `enabled` when it is compiled, because nothing can turn it off. A hardware feature takes `enabled` from the `process` cell of `report`.
 
 ## Executable example
 

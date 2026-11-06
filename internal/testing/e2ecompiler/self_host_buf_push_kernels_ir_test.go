@@ -139,6 +139,11 @@ function main(): i32 {
     k = 0;
     while (k < 384) { every = every + string_from_bytes_unchecked([(k % 128) as u8]); k = k + 1; }
     if (!check_expanded(b, "gh", every, ex)) { return 15; }
+    // Every row of the table, the last-packed rows first.
+    let down: u8[] = [];
+    k = 0;
+    while (k < 512) { down = down.append((255 - k % 256) as u8); k = k + 1; }
+    if (!check_expanded(b, "", string_from_bytes_unchecked(down), ex)) { return 18; }
     let scram: u8[] = __alloc_u8(256);
     k = 0;
     while (k < 256) { scram = scram.with(k, ((k * 167 + 29) % 256) as u8); k = k + 1; }
