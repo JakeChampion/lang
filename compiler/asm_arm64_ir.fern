@@ -6622,12 +6622,14 @@ function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
     s = s.write("    cbnz x0, .Lfern_signal_stack_failed\n");
   }
   s = s.write("    adrp x9, __fern_segv\n    add x9, x9, :lo12:__fern_segv\n");
+  // The handler runs with every signal it handles blocked: SIGSEGV and SIGBUS
+  // on Darwin (mask 0x600), SIGSEGV, SIGILL and SIGBUS on Linux (mask 0x448).
   if (darwin) {
-    s = s.write("    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n    mov x11, #0x41\n    lsl x11, x11, #32\n");
+    s = s.write("    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n    mov x11, #0x41\n    lsl x11, x11, #32\n    orr x11, x11, #0x600\n    stp x9, x10, [sp]\n    stp x11, xzr, [sp, #16]\n");
   } else {
-    s = s.write("    mov x10, #4\n    movk x10, #0x800, lsl #16\n    mov x11, #0\n");
+    s = s.write("    mov x10, #4\n    movk x10, #0x800, lsl #16\n    mov x11, #0x448\n    stp x9, x10, [sp]\n    stp xzr, x11, [sp, #16]\n");
   }
-  s = s.write("    stp x9, x10, [sp]\n    stp x11, xzr, [sp, #16]\n    bl .Lfern_fault_install\n");
+  s = s.write("    bl .Lfern_fault_install\n");
   if (darwin) {
     return s.write("    add sp, sp, #32\n.Lfern_segv_skip:\n");
   }

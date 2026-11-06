@@ -11895,8 +11895,9 @@ function emit_stack_map(own s: asmcore.EmitState, size: i32): asmcore.EmitState 
 
 // Installs the action the caller built at its (%rsp) for SIGSEGV, SIGILL and
 // SIGBUS, and returns the first refusal in %rax, or 0.
+// The handler runs with SIGSEGV, SIGILL and SIGBUS blocked (mask 0x448).
 function emit_fault_install(own s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write(".Lfern_fault_install:\n    leaq .Lfern_segv_restorer(%rip), %rax\n    movq %rax, 24(%rsp)\n    movq $0, 32(%rsp)\n    leaq 8(%rsp), %rsi\n    xorl %edx, %edx\n    movl $8, %r10d\n");
+  s = s.write(".Lfern_fault_install:\n    leaq .Lfern_segv_restorer(%rip), %rax\n    movq %rax, 24(%rsp)\n    movq $0x448, 32(%rsp)\n    leaq 8(%rsp), %rsi\n    xorl %edx, %edx\n    movl $8, %r10d\n");
   for signo in [11, 4, 7] {
     s = s.write("    movl $" + util.i32_to_string(signo) + ", %edi\n    movl $13, %eax\n").syscall(13);
     s = s.write("    testq %rax, %rax\n    jnz .Lfern_fault_install_done\n");

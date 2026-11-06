@@ -21,21 +21,25 @@ func TestSelfHostFatalSignalReport(t *testing.T) {
 	if err := os.WriteFile(src, []byte("function main(): i32 {\n  print(\"before\");\n  return 7;\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	const mainEntry = "__fn_main.r:\n"
 	x86gcc, runner := x86_64Tooling(t)
 	armgcc, qemu := arm64Tooling(t)
-	// patched links main with `insn` at its register entry, before any work.
-	patched := func(t *testing.T, target, name, insn string) string {
+	// patched links main with each instruction after its label: the register
+	// entry of main is "__fn_main.r:\n", before any work.
+	patched := func(t *testing.T, target, name string, edits ...[2]string) string {
 		t.Helper()
 		text, err := os.ReadFile(cli.emit(t, src, target))
 		if err != nil {
 			t.Fatal(err)
 		}
-		const entry = "__fn_main.r:\n"
-		if !bytes.Contains(text, []byte(entry)) {
-			t.Fatalf("no %q in the %s output", entry, target)
+		for _, e := range edits {
+			if !bytes.Contains(text, []byte(e[0])) {
+				t.Fatalf("no %q in the %s output", e[0], target)
+			}
+			text = bytes.Replace(text, []byte(e[0]), []byte(e[0]+e[1]), 1)
 		}
 		asm := filepath.Join(dir, name+".s")
-		if err := os.WriteFile(asm, bytes.Replace(text, []byte(entry), []byte(entry+insn), 1), 0o644); err != nil {
+		if err := os.WriteFile(asm, text, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(dir, name)
@@ -68,7 +72,7 @@ func TestSelfHostFatalSignalReport(t *testing.T) {
 			if f.sig == syscall.SIGBUS && len(runner) > 0 {
 				t.Skip("the alignment-check flag needs a native x86-64 host")
 			}
-			cmd := run(f.target, patched(t, f.target, f.name, f.insn))
+			cmd := run(f.target, patched(t, f.target, f.name, [2]string{mainEntry, f.insn}))
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
 			err := cmd.Run()
@@ -77,6 +81,28 @@ func TestSelfHostFatalSignalReport(t *testing.T) {
 			}
 			if want := f.cause + "backtrace:\n  0x"; !strings.HasPrefix(stderr.String(), want) {
 				t.Errorf("stderr %q, want it to start with %q", stderr.String(), want)
+			}
+		})
+	}
+	// A second fault inside the handler is blocked, so the kernel takes the
+	// default action for it at once: no nested handler and no report.
+	nested := []struct {
+		target, name, fault, anchor, inHandler string
+		sig                                    syscall.Signal
+	}{
+		{"x86-64-linux", "segv-then-ill", "    movq 0, %rax\n", ".Lfern_segv_other:\n", "    ud2\n", syscall.SIGILL},
+		{"arm64-linux", "segv-then-ill", "    mov x9, #0\n    ldr x9, [x9]\n", ".Lfern_segv_other:\n", "    udf #0\n", syscall.SIGILL},
+		{"x86-64-linux", "ill-then-segv", "    ud2\n", ".Lfern_fatal_signal:\n", "    movq 0, %rax\n", syscall.SIGSEGV},
+		{"arm64-linux", "ill-then-segv", "    udf #0\n", ".Lfern_fatal_signal:\n", "    mov x9, #0\n    ldr x9, [x9]\n", syscall.SIGSEGV},
+	}
+	for _, f := range nested {
+		t.Run(f.target+"/"+f.name, func(t *testing.T) {
+			cmd := run(f.target, patched(t, f.target, f.name, [2]string{mainEntry, f.fault}, [2]string{f.anchor, f.inHandler}))
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			if got := signalOf(err); got != f.sig || strings.Contains(stderr.String(), "fern: ") {
+				t.Errorf("ended by %v (%v), stderr %q; want %v and no report", got, err, stderr.String(), f.sig)
 			}
 		})
 	}

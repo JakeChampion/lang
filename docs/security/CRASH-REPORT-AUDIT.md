@@ -39,8 +39,8 @@ Any other fault resets the disposition to the default and returns.
 The instruction faults again, and the kernel ends the process with a bare `SIGSEGV`.
 `TestSelfHostStackOverflow` pins all three outcomes on both targets: the overflow report, a million-deep control, and a bare fault from a wild read.
 
-The handler does not set `SA_NODEFER` or `SA_RESETHAND`.
-A second fault while the handler runs is delivered with `SIGSEGV` blocked, so the kernel ends the process with the default action.
+The handler blocks all the signals it handles while it runs, and it does not set `SA_NODEFER` or `SA_RESETHAND`.
+A second fault inside the handler is then blocked, so the kernel ends the process with the default action of that signal.
 There is no recursion and no second report.
 A fault on the alternate stack itself has the same outcome.
 
@@ -66,6 +66,7 @@ It now also stops at a frame pointer at or above the application stack's top.
 
 The top is the stack pointer after the startup switch, stored in `__fern_stack_top`.
 A shared object runs on its caller's stack. Each export wrapper stores its own frame address there on entry, so the walk ends at the wrapper.
+
 The first frame of a walk is the reporter's own record and is not checked against the top.
 The overflow handler builds that record on the alternate signal stack, which the kernel can map above the application stack.
 It leaves the faulting stack pointer in `__fern_bt_floor`, and the walk takes that as the lower bound of the frames after the first.
@@ -86,6 +87,7 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 | An overflow report walks past the handler's record into the application stack | `TestSelfHostStackOverflow` requires two frames or more |
 | The sanitizer's use-after-free report carries a backtrace | `TestSelfHostSanitizeReportCarriesBacktrace` |
 | A `SIGILL` writes its cause and a backtrace and ends by `SIGILL` on both targets, a `SIGBUS` does the same on x86-64, and a sent `SIGBUS` exits 135 with no report | `TestSelfHostFatalSignalReport` |
+| A `SIGILL` inside the `SIGSEGV` handler, or a `SIGSEGV` inside the `SIGILL` handler, ends the process by the second signal with no report | `TestSelfHostFatalSignalReport`, on x86-64 and arm64 under QEMU |
 
 ## Gaps
 
@@ -115,6 +117,12 @@ A corrupt frame pointer above the stack then faulted inside the walk.
 Each export wrapper now records its frame as the stack top on entry.
 The handler keeps the top and leaves the faulting stack pointer as the floor of the frames after its record.
 The walk checks the top on every frame after the first, so a report ends at the wrapper or at the stack top.
+
+The handler blocked only the signal that it handled.
+A `SIGILL` inside the `SIGSEGV` handler then entered the handler again.
+That second entry wrote an illegal instruction report for a fault in the runtime.
+The handler now blocks `SIGSEGV`, `SIGILL` and `SIGBUS` on Linux, and `SIGSEGV` and `SIGBUS` on Darwin.
+The nested fault tests show the second report against the previous compiler and a bare death by signal against this one.
 
 ## Commands
 
