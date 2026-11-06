@@ -94,13 +94,16 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 	switch rng.IntN(4) {
 	case 0:
 		at := rng.IntN(len(s.blk.Stmts) + 1)
+		if emiSplitsUse(s.blk.Stmts, at) {
+			return "", false
+		}
 		s.blk.Stmts = insertStmt(s.blk.Stmts, at, emiIf("emi_false", donor, nil))
 	case 1:
 		if len(s.blk.Stmts) == 0 {
 			return "", false
 		}
 		at := rng.IntN(len(s.blk.Stmts))
-		if !emiWrappable(s.blk.Stmts[at]) {
+		if !emiWrappable(s.blk.Stmts[at]) || emiUsePart(s.blk.Stmts, at) {
 			return "", false
 		}
 		var els ast.Stmt
@@ -113,7 +116,7 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 			return "", false
 		}
 		at := rng.IntN(len(s.blk.Stmts))
-		if !emiWrappable(s.blk.Stmts[at]) || emiLoopSensitive(s.blk.Stmts[at]) {
+		if !emiWrappable(s.blk.Stmts[at]) || emiLoopSensitive(s.blk.Stmts[at]) || emiUsePart(s.blk.Stmts, at) {
 			return "", false
 		}
 		s.blk.Stmts[at] = &ast.Loop{Body: &ast.Block{Stmts: []ast.Stmt{s.blk.Stmts[at], &ast.Break{}}}}
@@ -126,6 +129,9 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 			jump = &ast.Continue{}
 		}
 		at := rng.IntN(len(s.blk.Stmts) + 1)
+		if emiSplitsUse(s.blk.Stmts, at) {
+			return "", false
+		}
 		s.blk.Stmts = insertStmt(s.blk.Stmts, at, emiIf("emi_false", jump, nil))
 	}
 	return printer.Format(prog), true
@@ -139,8 +145,8 @@ func (w *emiWalk) stmt(s ast.Stmt, loop bool) {
 			return
 		}
 		w.sites = append(w.sites, emiSite{blk: s, fn: w.fn, loop: loop, outer: slices.Clone(w.outer)})
-		for _, st := range s.Stmts {
-			if _, ok := st.(*ast.Block); !ok {
+		for i, st := range s.Stmts {
+			if _, ok := st.(*ast.Block); !ok && !emiUsePart(s.Stmts, i) {
 				w.donors[w.fn] = append(w.donors[w.fn], st)
 			}
 			w.outer = append(w.outer, st)
@@ -173,6 +179,23 @@ func (w *emiWalk) stmt(s ast.Stmt, loop bool) {
 			w.stmt(a.Body, loop)
 		}
 	}
+}
+
+// The parser lowers `use x <- f(a);` to a local callback function and the
+// statement `return f(a, callback);`. The printer writes the pair back as
+// `use` only while the two statements stay together, so a step must not copy,
+// wrap or separate them.
+func emiUsePart(stmts []ast.Stmt, i int) bool {
+	return emiUseCallback(stmts[i]) || i > 0 && emiUseCallback(stmts[i-1])
+}
+
+func emiSplitsUse(stmts []ast.Stmt, at int) bool {
+	return at > 0 && at < len(stmts) && emiUseCallback(stmts[at-1])
+}
+
+func emiUseCallback(s ast.Stmt) bool {
+	fn, ok := s.(*ast.FuncDecl)
+	return ok && fn.UseSource != nil
 }
 
 // emiWrappable reports whether a statement means the same inside a block of
