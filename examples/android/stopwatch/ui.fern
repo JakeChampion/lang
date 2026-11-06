@@ -139,7 +139,7 @@ pub function render(f: draw.Frame, v: View): void {
   } else if (v.page == screen.ABOUT) {
     about(f, v);
   } else {
-    main(f, v);
+    main_screen(f, v);
   }
 }
 
@@ -152,7 +152,7 @@ function dot_r(pitch: i32, thin: boolean): i32 {
   return pitch * 2 / 5;
 }
 
-function main(f: draw.Frame, v: View): void {
+function main_screen(f: draw.Frame, v: View): void {
   let w = f.width;
   let h = f.height;
   if (stopwatch.on(v.values, "clock_enabled")) {
