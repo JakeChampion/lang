@@ -3012,6 +3012,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
+	c.checkNoRCFunctions(prog)
 	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
@@ -5734,6 +5735,7 @@ type checker struct {
 	// Apply the casts after checking so every consumer sees the same AST.
 	numericTypes      map[ast.Expr]ast.Type
 	numericCasts      map[ast.Expr]*ast.CastExpr
+	noRCIdentTypes    map[*ast.Ident]ast.Type
 	callee            ast.Expr
 	funcSources       map[string]string
 	consts            map[string]*ast.ConstDecl
@@ -13952,7 +13954,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		c.numericTypes[e] = t
 	}
-	return c.postNumericType(e, t)
+	t = c.postNumericType(e, t)
+	if c.current != nil && c.current.NoRC {
+		if id, ok := e.(*ast.Ident); ok {
+			if c.noRCIdentTypes == nil {
+				c.noRCIdentTypes = make(map[*ast.Ident]ast.Type)
+			}
+			c.noRCIdentTypes[id] = t
+		}
+	}
+	return t
 }
 
 func (c *checker) checkCastTarget(target ast.Type, pos ast.Position) bool {

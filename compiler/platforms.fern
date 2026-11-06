@@ -438,9 +438,9 @@ pub function provider_signature(capability: string): string {
 // The capabilities that a provider in the program adds to the target's set.
 pub function provided(mod: parser.Module): string[] {
   let out: string[] = [];
-  for pv in mod.providers {
-    if (util.has_str(providable(), pv.capability) && !util.has_str(out, pv.capability)) {
-      out = out.append(pv.capability);
+  for pv in parser.marked(mod, "provide") {
+    if (util.has_str(providable(), pv.arg) && !util.has_str(out, pv.arg)) {
+      out = out.append(pv.arg);
     }
   }
   return out;
@@ -581,33 +581,33 @@ function sorted(xs: string[]): string[] {
   return out;
 }
 
-// The E101 diagnostics of the program's providers: a capability that takes no
+// The E101 diagnostics of the program's marks: a capability that takes no
 // provider, a provider with the wrong signature, or two providers of one
 // capability.
 pub function provider_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let seen: string[] = [];
   let seen_fn: string[] = [];
-  for pv in mod.providers {
+  for pv in parser.marked(mod, "provide") {
     let msg = provider_problem(mod, pv);
-    let at = util.index_of_str(seen, pv.capability);
+    let at = util.index_of_str(seen, pv.arg);
     if (msg.len() == 0 && at >= 0) {
-      msg = "capability `" + pv.capability + "` has two providers, \"" + util.mangled_name(seen_fn[at]) + "\" and \"" + util.mangled_name(pv.func_name) + "\"";
+      msg = "capability `" + pv.arg + "` has two providers, \"" + util.mangled_name(seen_fn[at]) + "\" and \"" + util.mangled_name(pv.func_name) + "\"";
     }
     if (msg.len() > 0) {
       out = out.append(util.violation_diag("E101", msg, util.mangled_module(pv.func_name), pv.line, pv.col));
     } else {
-      seen = seen.append(pv.capability);
+      seen = seen.append(pv.arg);
       seen_fn = seen_fn.append(pv.func_name);
     }
   }
   return out;
 }
 
-function provider_problem(mod: parser.Module, pv: parser.Provider): string {
-  let sig = provider_signature(pv.capability);
+function provider_problem(mod: parser.Module, pv: parser.FuncMark): string {
+  let sig = provider_signature(pv.arg);
   if (sig.len() == 0) {
-    return "`@provide(\"" + pv.capability + "\")`: no capability `" + pv.capability + "` takes a provider; a provider can implement `log`";
+    return "`@provide(\"" + pv.arg + "\")`: no capability `" + pv.arg + "` takes a provider; a provider can implement `log`";
   }
   for fd in mod.funcs {
     if (fd.name == pv.func_name) {
@@ -617,7 +617,7 @@ function provider_problem(mod: parser.Module, pv: parser.Provider): string {
       }
     }
   }
-  return "the `" + pv.capability + "` provider \"" + util.mangled_name(pv.func_name) + "\" must be a function with the signature " + sig;
+  return "the `" + pv.arg + "` provider \"" + util.mangled_name(pv.func_name) + "\" must be a function with the signature " + sig;
 }
 
 pub function violation_diag(v: Violation): util.Diag {

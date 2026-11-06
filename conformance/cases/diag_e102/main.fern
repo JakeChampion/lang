@@ -1,0 +1,15 @@
+// A `@norc` function calls only `@norc` functions and the raw memory
+// intrinsics, so that nothing it reaches can allocate.
+
+function helper(x: i32): i32 {
+    return x + 1;
+}
+
+@norc
+function tick(n: i32): i32 {
+    return helper(n);
+}
+
+function main(): i32 {
+    return tick(-1);
+}

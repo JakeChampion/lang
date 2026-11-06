@@ -148,6 +148,7 @@ bare_variant_resolves_against_expected_type           0
 base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bitwise_not                                          0
+bitwise_precedence                                   0
 bool_in_tuple_with_i64                               0
 bool_match_true_false_closes                         0
 bool_to_string                                       0
