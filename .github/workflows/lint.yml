@@ -95,6 +95,13 @@ jobs:
       - name: fern -check sources
         if: ${{ !cancelled() }}
         run: make check-sources
+      # TestEveryExampleChecks checks each program file alone, but only in the
+      # full suite. This checks the files that the change touches.
+      - name: fern -check changed programs
+        if: ${{ !cancelled() && (github.event.pull_request.base.sha || github.event.before) }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/check-changed-programs "$BASE"
       - name: fern test cache
         if: ${{ !cancelled() }}
         run: make fern-test-cache

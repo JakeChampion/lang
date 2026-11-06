@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# check-changed-programs BASE [HEAD] — checks each .fern file under
+# examples/, tests/, bench/ and scripts/ that changed from BASE to HEAD, with
+# the Go front end, as TestEveryExampleChecks does for every such file. That
+# test runs only in the full suite, and a file can pass every build that
+# imports it and still fail the check alone (#14285).
+set -uo pipefail
+
+base=${1:?usage: check-changed-programs BASE [HEAD]}
+head=${2:-HEAD}
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# A shallow clone, as in CI, can lack BASE.
+if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+  git fetch -q --depth=1 origin "$base" || { echo "check-changed-programs: cannot fetch $base" >&2; exit 1; }
+fi
+
+mapfile -t files < <(git diff --name-only --diff-filter=d "$base" "$head" -- \
+  'examples/*.fern' 'tests/*.fern' 'bench/*.fern' 'scripts/*.fern')
+[ "${#files[@]}" -gt 0 ] || exit 0
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+go build -o "$tmp/fern" ./cmd/fern || exit 1
+
+status=0
+for f in "${files[@]}"; do
+  [ -f "$f" ] || continue
+  if ! "$tmp/fern" -check "$f"; then
+    status=1
+  fi
+done
+[ "$status" -eq 0 ] || echo "check-changed-programs: fix the files above; TestEveryExampleChecks checks each file alone" >&2
+exit $status
