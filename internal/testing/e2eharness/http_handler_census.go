@@ -60,7 +60,7 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	end += burstStart
 	body, burst := src[start:burstStart], src[burstStart:end]
 	const answered = "more = answered.1;"
-	const burstCall = "let burst: (__Conns, __Flights) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk);"
+	const burstCall = "let burst = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk);"
 	const burstSignature = "stop: __Stop, clk: __Clock): (__Conns, __Flights) {"
 	const burstReturn = "return (conns, flights);"
 	if strings.Count(body, "while (true)") != 1 || strings.Count(burst, answered) != 1 ||
