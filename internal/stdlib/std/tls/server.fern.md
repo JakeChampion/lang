@@ -475,9 +475,9 @@ const TICKET_ENTROPY: i32 = 16;
 ```fern
 <<14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket>>=
 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket {
-  let nonce: u8[] = [0 as u8];
+  let nonce = [0 as u8];
   let lifetime = config.ticket_lifetime.as_millis() / (1000 as i64);
-  let body: u8[] = [TICKET_VERSION as u8];
+  let body = [TICKET_VERSION as u8];
   body = __u16(body, srv.cipher_suite().code());
   body = __i64(body, now);
   body = __u16(__i64(body, lifetime), srv.server_name.bytes().len());
@@ -668,7 +668,7 @@ struct Shook { session: Session, pending: u8[], ended: boolean }
 ```fern
 <<18 function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Shook, tls.TlsError]>>=
 function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Shook, tls.TlsError] {
-  let s: Session = start(config, random_bytes(entropy(config)))?.session;
+  let s = start(config, random_bytes(entropy(config)))?.session;
   let pending: u8[] = [];
   let ended = false;
   while (!s.connected() && !ended) {
@@ -684,7 +684,7 @@ function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Sho
     if (input.len() == 0) {
       return Err(tls.ClosedEarly);
     }
-    let step: Step = __exchange_fd(sock, s, input)?;
+    let step = __exchange_fd(sock, s, input)?;
     s = step.session;
     pending = __cat(pending, step.data);
     ended = step.closed;
@@ -705,7 +705,7 @@ pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]
     __send_fd(c.sock, data)?;
     return Ok(c);
   }
-  let step: Step = c.session.write(data)?;
+  let step = c.session.write(data)?;
   __send_fd(c.sock, step.output)?;
   return Ok(Connection { ...c, session: step.session });
 }
@@ -879,7 +879,7 @@ function __exchange_fd(sock: Socket, s: Session, input: [u8]): Result[Step, tls.
   match (s.read(input, clock.now())) {
     Ok(step) => {
       __send_out(sock, s, step.output)?;
-      let r: i32 = ktls.install(sock, step.rekeyed);
+      let r = ktls.install(sock, step.rekeyed);
       if (r < 0) {
         return Err(tls.KeysRefused(-r));
       }
@@ -897,7 +897,7 @@ function __send_out(sock: Socket, s: Session, out: [u8]): Result[void, tls.TlsEr
   if (!s.offloaded()) {
     return __send_fd(sock, out);
   }
-  let r: i32 = ktls.send_records(sock, out);
+  let r = ktls.send_records(sock, out);
   if (r < 0) {
     return Err(tls.NetFailed(net.error_from_host(-r)));
   }
@@ -914,8 +914,8 @@ pub function (c: Connection) close(): Result[void, tls.TlsError] {
     return Ok(());
   }
   c.open.set(false);
-  let notified: Result[void, tls.TlsError] = __close_notify(c);
-  let r: i32 = __shut(c);
+  let notified = __close_notify(c);
+  let r = __shut(c);
   notified?;
   if (r < 0) {
     return Err(tls.NetFailed(net.error_from_host(-r)));
@@ -940,9 +940,9 @@ function __close_notify(c: Connection): Result[void, tls.TlsError] {
 ```fern
 <<24 function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError]>>=
 function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError] {
-  let at: i32 = 0;
+  let at = 0;
   while (at < data.len()) {
-    let n: i32 = tcp_send_bytes(sock, __cat([], data[at:data.len()]));
+    let n = tcp_send_bytes(sock, __cat([], data[at:data.len()]));
     if (n < 0) {
       return Err(tls.NetFailed(net.error_from_host(-n)));
     }
@@ -955,7 +955,7 @@ function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError] {
 }
 
 function __await(sock: Socket, deadline: i64): Result[Option[u8[]], tls.TlsError] {
-  let left: i64 = deadline - monotonic_ns();
+  let left = deadline - monotonic_ns();
   if (left <= 0) {
     return Ok(None);
   }

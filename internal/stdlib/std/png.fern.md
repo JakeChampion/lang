@@ -120,18 +120,18 @@ pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opt
   if (width <= 0 || height <= 0 || width as i64 * 3 + 1 > 2147483647) {
     return Err(InvalidDimensions);
   }
-  let stride: i64 = width as i64 * 3;
-  let bytes: i64 = (stride + 1) * (height as i64);
+  let stride = width as i64 * 3;
+  let bytes = (stride + 1) * (height as i64);
   if (bytes > 2147483647) {
     return Err(InvalidDimensions);
   }
   if (pixels.len() as i64 != stride * (height as i64)) {
     return Err(InvalidBufferLength);
   }
-  let rows: u8[] = __alloc_u8(bytes as i32);
+  let rows = __alloc_u8(bytes as i32);
   let row = 0;
   while (row < height) {
-    let filter: i32 = filter_id(opts.filter);
+    let filter = filter_id(opts.filter);
     if (filter == 5) {
       filter = best_filter(pixels, row * (stride as i32), stride as i32);
     }
@@ -139,8 +139,8 @@ pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opt
     rows = write_row(rows, row * (stride as i32 + 1) + 1, pixels, row * (stride as i32), stride as i32, filter);
     row += 1;
   }
-  let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
-  let header: u8[] = binary.append_u32_be([], width as u32);
+  let output = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
+  let header = binary.append_u32_be([], width as u32);
   header = binary.append_u32_be(header, height as u32);
   header = header.append(8 as u8).append(2 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
   output = chunk(output, "IHDR", header);
@@ -153,7 +153,7 @@ pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opt
       payload = deflate.deflate_fast(rows);
     }
   }
-  let compressed: u8[] = binary.append_bytes([120 as u8, 1 as u8], payload);
+  let compressed = binary.append_bytes([120 as u8, 1 as u8], payload);
   compressed = binary.append_u32_be(compressed, deflate.adler32(rows));
   output = chunk(output, "IDAT", compressed);
   return Ok(chunk(output, "IEND", []));
@@ -219,10 +219,10 @@ function predictor(pixels: [u8], start: i32, at: i32, stride: i32, filter: i32):
   if (filter == 3) {
     return (left + up) / 2;
   }
-  let estimate: i32 = left + up - corner;
-  let a: i32 = absolute(estimate - left);
-  let b: i32 = absolute(estimate - up);
-  let c: i32 = absolute(estimate - corner);
+  let estimate = left + up - corner;
+  let a = absolute(estimate - left);
+  let b = absolute(estimate - up);
+  let c = absolute(estimate - corner);
   if (a <= b && a <= c) {
     return left;
   }
@@ -285,7 +285,7 @@ function best_filter(pixels: [u8], start: i32, stride: i32): i32 {
 }
 
 function chunk(own output: u8[], kind: string, data: u8[]): u8[] {
-  let checksum: u32 = crc32.new().update(kind.as_bytes()).update(data).finish();
+  let checksum = crc32.new().update(kind.as_bytes()).update(data).finish();
   output = binary.append_u32_be(output, data.len() as u32);
   output = binary.append_bytes(output, kind.as_bytes());
   output = binary.append_bytes(output, data);

@@ -846,7 +846,7 @@ function __month_of(token: string): i32 {
   if (token.len() < 3) {
     return 0;
   }
-  let months: string[] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   let head = token.slice_snap(0, 3).to_lower();
   let i = 0;
   while (i < 12) {

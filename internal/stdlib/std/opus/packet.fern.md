@@ -513,9 +513,9 @@ function long_header(base: i32, frames: [u8[]], max: i32, pad: boolean): Result[
     amount = max - tot;
   }
   if (amount != 0) {
-    flags = flags | 64;
+    flags |= 64;
   }
-  let out: u8[] = [(base | 3) as u8, flags as u8];
+  let out = [(base | 3) as u8, flags as u8];
   if (amount != 0) {
     out = put_padding(out, amount);
   }

@@ -121,7 +121,7 @@ pub function v7(): string {
   let ms = now_unix_ms();
   let r = random_bytes(10);
   let b: u8[] = [];
-  let shift: i64 = 40;
+  let shift = 40;
   while (shift >= 0) {
     b = b.append((ms >> shift & 255) as u8);
     shift -= 8;

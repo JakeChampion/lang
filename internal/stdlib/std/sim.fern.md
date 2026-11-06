@@ -360,7 +360,7 @@ function __cancel_at(cancel_at: Option[Instant][], i: i32): Option[Instant] {
 // The virtual nanosecond a wait is due at, never before the clock: -1 when
 // nothing is due.
 function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[Instant]): i64 {
-  let due: i64 = -1;
+  let due = -1;
   for at in [w.until, cancel] {
     if let Some(i) = at {
       let ns = time.instant_nanos(i);
@@ -377,7 +377,7 @@ function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[Instant]): i64 {
 
 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32 {
   let now_ns = drv.clock_ns.get();
-  let best: i64 = 0 - 1;
+  let best = -1;
   let ties: i32[] = [];
   for i in 0..out.len() {
     if let Suspended(w) = out[i] {
@@ -393,7 +393,7 @@ function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[I
     }
   }
   if (ties.len() == 0) {
-    return 0 - 1;
+    return -1;
   }
   if (ties.len() == 1) {
     return ties[0];
@@ -509,7 +509,7 @@ function __worker_turns(s: Sim, until: i32): void {
     } else if (__roll(s, 2) == 0) {
       return;
     }
-    let next: i32 = __next_slot(s);
+    let next = __next_slot(s);
     if (next < 0) {
       if (until < 0) {
         return;

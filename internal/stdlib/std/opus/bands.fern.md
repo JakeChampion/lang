@@ -657,7 +657,7 @@ function code_n1(own w: Work, r: Ref): Work {
   if (!w1.ctx.resynth) {
     return w1;
   }
-  let v: f32 = 1.0f32;
+  let v = 1.0f32;
   if (negative) {
     v = -1.0f32;
   }
@@ -1016,8 +1016,8 @@ function quant_band_stereo(own w: Work, x: Ref, y: Ref, n: i32, b: i32, big_b: i
     return quant_band_n1(w, x, y, lowband_out);
   }
   let (w1, s) = compute_theta(w, x, y, n, b, big_b, big_b, lm, true, fill);
-  let mid: f32 = 1.0f32 / 32768.0f32 * (s.imid as f32);
-  let side: f32 = 1.0f32 / 32768.0f32 * (s.iside as f32);
+  let mid = 1.0f32 / 32768.0f32 * (s.imid as f32);
+  let side = 1.0f32 / 32768.0f32 * (s.iside as f32);
   if (n == 2) {
     let (w2, cm) = quant_band_stereo2(w1, x, y, s, big_b, lowband, lm, lowband_out, scratch, fill, mid, side);
     return (finish_stereo(w2, x, y, n, mid, s.inv), cm);
@@ -1322,7 +1322,7 @@ pub function normalise_bands(freq: [f32], band_e: [f32], end: i32, channels: i32
       out = out.append(0.0f32);
     }
     for i in 0..end {
-      let g: f32 = 1.0f32 / (ENERGY_FLOOR + band_e[i + c * modes.BANDS]);
+      let g = 1.0f32 / (ENERGY_FLOOR + band_e[i + c * modes.BANDS]);
       for j in m * modes.EBANDS[i]..m * modes.EBANDS[i + 1] {
         out = out.with(j + c * n, freq[j + c * n] * g);
       }
@@ -1408,10 +1408,10 @@ pub function spreading_decision(x: [f32], s: Spread, update_hf: boolean, end: i3
       if (n > 8) {
         let t = small_counts(x, m * modes.EBANDS[i] + c * n0, n);
         if (i > modes.BANDS - 4) {
-          hf_sum = hf_sum + 32 * (t.sixteenth + t.quarter) / n;
+          hf_sum += 32 * (t.sixteenth + t.quarter) / n;
         }
         let tmp = half_or_more(t.tiny, n) + half_or_more(t.sixteenth, n) + half_or_more(t.quarter, n);
-        sum = sum + tmp * weights[i];
+        sum += tmp * weights[i];
         bands += weights[i];
       }
     }

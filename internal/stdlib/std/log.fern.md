@@ -222,7 +222,7 @@ pub function (e: LogEntry) emit(msg: string): void {
   if (e.level < e.min_level) {
     return;
   }
-  let sink: (string) => void = e.sink;
+  let sink = e.sink;
   sink(__line(e, msg));
 }
 ```

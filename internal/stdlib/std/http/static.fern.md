@@ -504,13 +504,13 @@ function __suffix_range(n: i64, size: i64): Range {
 
 function __digits(s: string): i64 {
   if (s.len() == 0) {
-    return 0 - 1 as i64;
+    return -1i64;
   }
-  let cap: i64 = 4611686018427387904;
+  let cap = 4611686018427387904;
   let n = 0 as i64;
   for b in s.bytes() {
     if (b < 48 as u8 || b > 57 as u8) {
-      return 0 - 1 as i64;
+      return -1i64;
     }
     if (n < cap) {
       n = n * (10 as i64) + (b - 48 as u8) as i64;
@@ -530,8 +530,8 @@ pub function content_type(path: string): string {
     return "application/octet-stream";
   };
   let ext = name.slice_snap(dot + 1, name.len()).to_lower();
-  let exts: string[] = ["html", "htm", "css", "js", "mjs", "json", "map", "txt", "md", "csv", "xml", "svg", "wasm", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "pdf", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3", "ogg", "wav", "zip", "webmanifest"];
-  let types: string[] = ["text/html; charset=utf-8", "text/html; charset=utf-8", "text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8", "application/json", "application/json", "text/plain; charset=utf-8", "text/markdown; charset=utf-8", "text/csv; charset=utf-8", "application/xml", "image/svg+xml", "application/wasm", "image/png", "image/jpeg", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/vnd.microsoft.icon", "application/pdf", "font/woff", "font/woff2", "font/ttf", "font/otf", "video/mp4", "video/webm", "audio/mpeg", "audio/ogg", "audio/wav", "application/zip", "application/manifest+json"];
+  let exts = ["html", "htm", "css", "js", "mjs", "json", "map", "txt", "md", "csv", "xml", "svg", "wasm", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "pdf", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3", "ogg", "wav", "zip", "webmanifest"];
+  let types = ["text/html; charset=utf-8", "text/html; charset=utf-8", "text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8", "application/json", "application/json", "text/plain; charset=utf-8", "text/markdown; charset=utf-8", "text/csv; charset=utf-8", "application/xml", "image/svg+xml", "application/wasm", "image/png", "image/jpeg", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/vnd.microsoft.icon", "application/pdf", "font/woff", "font/woff2", "font/ttf", "font/otf", "video/mp4", "video/webm", "audio/mpeg", "audio/ogg", "audio/wav", "application/zip", "application/manifest+json"];
   let i = __position(exts, ext);
   if (i < exts.len()) {
     return types[i];

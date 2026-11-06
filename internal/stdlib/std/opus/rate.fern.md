@@ -110,7 +110,7 @@ pub function bits2pulses(band: i32, lm: i32, bits: i32): i32 {
       lo = mid;
     }
   }
-  let below: i32 = -1;
+  let below = -1;
   if (lo > 0) {
     below = modes.CACHE_BITS[at + lo];
   }
@@ -545,7 +545,7 @@ pub function compute_allocation(own c: range.Coder, r: Request): (range.Coder, A
   let span = modes.EBANDS[coded] - modes.EBANDS[r.start];
   let left = total - psum2;
   let percoeff = left / span;
-  left = left - span * percoeff;
+  left -= span * percoeff;
   let bits3 = bits2;
   for k in r.start..coded {
     bits3 = bits3.with(k, bits3[k] + percoeff * width(k));

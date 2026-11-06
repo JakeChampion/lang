@@ -243,7 +243,7 @@ function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, 
 }
 
 function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32, sOrigin: i32, nOrigin: i32, step: i32): i32 {
-  let cf: (i32, i32) = __str_critical_factorization(needle, m, nOrigin, step);
+  let cf = __str_critical_factorization(needle, m, nOrigin, step);
   let crit = cf.0;
   let period = cf.1;
   let last = sLen - m;
@@ -561,12 +561,12 @@ pub function (s: string) trailing_count(b: u8): i32 {
 }
 
 pub function (s: string) hash_fnv32(): u32 {
-  let h: u32 = 2166136261u32;
-  let prime: u32 = 16777619u32;
+  let h = 2166136261u32;
+  let prime = 16777619u32;
   let n = s.len();
   let i = 0;
   while (i < n) {
-    h = h ^ s[i] as u32;
+    h ^= s[i] as u32;
     h *= prime;
     i += 1;
   }
