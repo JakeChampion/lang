@@ -1,6 +1,6 @@
-# 2026-11-06: SEC-021, a local scripts/perf-bench run (x86_64) and an arm64-linux text count. Startup installs the fault
-# handler for SIGILL and SIGBUS too, through one shared install routine, and the handler reports both with a backtrace.
-# Every native image grows by 38 lines on x86-64 and 51 on arm64. The .ir rows stay within tolerance.
+# 2026-11-06: SEC-021. Matched primary compilers compare this change with main a0e50a15.
+# Each static limit adds at most the measured native increase to its previous value.
+# Preserve previous limits for unrelated growth. All tolerances and the warning policy stay fixed.
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
 # #14134 into the branch. x86_64/deflate_encode.ir rises 1.44% to 42176472.
 # Retain the preceding limit. The measured regression must remain visible.
@@ -208,16 +208,16 @@
 # utf8_ingest_validated.ir -1.1% on aarch64). Values are the perf-x86_64 and
 # perf-aarch64 lanes' measurements of the branch.
 
-x86_64/array_append.text	1183
+x86_64/array_append.text	1178
 x86_64/array_append.ir	13371022
-x86_64/array_index.text	1184
+x86_64/array_index.text	1179
 x86_64/array_index.ir	16315371
-x86_64/array_scale_f64.text	1309
+x86_64/array_scale_f64.text	1306
 x86_64/array_scale_f64.ir	21309613
 # 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_with.ir	36120760
-x86_64/array_with.text	1338
-x86_64/ascii_scan.text	1392
+x86_64/array_with.text	1334
+x86_64/ascii_scan.text	1391
 x86_64/ascii_scan.ir	37315742
 x86_64/byte_copy_append.text	1283
 x86_64/byte_copy_append.ir	13442091
@@ -225,7 +225,7 @@ x86_64/byte_copy_with.text	1240
 x86_64/byte_copy_with.ir	12841267
 x86_64/call_overhead.text	343
 x86_64/call_overhead.ir	8250814
-x86_64/closure_call.text	959
+x86_64/closure_call.text	955
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	33837238
@@ -233,7 +233,7 @@ x86_64/deflate_decode.text	12766
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 x86_64/deflate_encode.text	7125
-x86_64/enum_match.text	930
+x86_64/enum_match.text	925
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 x86_64/http_hello.text	15117
@@ -253,7 +253,7 @@ x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	2953
 x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	36120760
-x86_64/record_update.text	1338
+x86_64/record_update.text	1335
 x86_64/sort_inplace.text	1534
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1774
@@ -262,19 +262,19 @@ x86_64/sort_strings.text	3093
 x86_64/sort_strings.ir	96173451
 x86_64/string_build.text	1921
 x86_64/string_build.ir	42886116
-x86_64/string_count_byte.text	1222
+x86_64/string_count_byte.text	1219
 x86_64/string_count_byte.ir	135589355
-x86_64/string_find_byte.text	1589
+x86_64/string_find_byte.text	1574
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1737
 x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2161
 x86_64/string_scan.ir	52670002
-x86_64/string_slice.text	940
+x86_64/string_slice.text	934
 x86_64/string_slice.ir	38460093
 x86_64/struct_drop.text	2336
 x86_64/struct_drop.ir	200820598
-x86_64/tokenize.text	1243
+x86_64/tokenize.text	1237
 x86_64/tokenize.ir	37860093
 x86_64/utf8_ingest_unchecked.text	7713
 x86_64/utf8_ingest_unchecked.ir	2207993
@@ -501,7 +501,7 @@ aarch64/array_index.text	1401
 aarch64/array_index.ir	18388238
 aarch64/array_scale_f64.text	1498
 aarch64/array_scale_f64.ir	25340945
-aarch64/array_with.text	1559
+aarch64/array_with.text	1557
 aarch64/array_with.ir	34494442
 aarch64/ascii_scan.text	1700
 aarch64/ascii_scan.ir	68639570
@@ -509,9 +509,9 @@ aarch64/byte_copy_append.text	1518
 aarch64/byte_copy_append.ir	31926661
 aarch64/byte_copy_with.text	1469
 aarch64/byte_copy_with.ir	31274981
-aarch64/call_overhead.text	439
+aarch64/call_overhead.text	437
 aarch64/call_overhead.ir	11250826
-aarch64/closure_call.text	1199
+aarch64/closure_call.text	1198
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
@@ -519,13 +519,13 @@ aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13560
 aarch64/deflate_encode.ir	43566583
 aarch64/deflate_encode.text	7829
-aarch64/enum_match.text	1163
+aarch64/enum_match.text	1161
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16225
+aarch64/http_hello.text	16078
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23616615
-aarch64/int_loop.text	381
+aarch64/int_loop.text	379
 aarch64/int_loop.ir	18000085
 # 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.
 aarch64/map_int.text	8504
@@ -555,17 +555,17 @@ aarch64/string_build.text	2289
 aarch64/string_build.ir	46680569
 aarch64/string_count_byte.text	1493
 aarch64/string_count_byte.ir	295207223
-aarch64/string_find_byte.text	1904
+aarch64/string_find_byte.text	1892
 aarch64/string_find_byte.ir	55921279
 aarch64/string_rfind_byte.text	2011
 aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2488
 aarch64/string_scan.ir	59787692
-aarch64/string_slice.text	1186
+aarch64/string_slice.text	1181
 aarch64/string_slice.ir	43620107
 aarch64/struct_drop.text	2595
 aarch64/struct_drop.ir	218300904
-aarch64/tokenize.text	1442
+aarch64/tokenize.text	1437
 aarch64/tokenize.ir	38350109
 aarch64/utf8_ingest_unchecked.text	8158
 aarch64/utf8_ingest_unchecked.ir	2689511
@@ -573,7 +573,7 @@ aarch64/utf8_ingest_validated.text	8706
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1957
+x86_64/perceus_cfold.text	1954
 x86_64/perceus_cfold.ir	54520496
 x86_64/perceus_deriv.text	2722
 x86_64/perceus_deriv.ir	66585210

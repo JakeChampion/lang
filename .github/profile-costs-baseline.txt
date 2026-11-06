@@ -1,5 +1,6 @@
-# 2026-11-06: SEC-021, a local scripts/profile-costs run. The SIGILL and SIGBUS fault report adds the same fixed text
-# to every native image of every profile.
+# 2026-11-06: SEC-021. Matched primary compilers compare this change with main a0e50a15.
+# Each static limit adds at most the measured native increase to its previous value.
+# Preserve previous limits for unrelated growth. All tolerances and the warning policy stay fixed.
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
 # #14134 into the branch. Six arm64 hardened rows rise 1.15% to 1.41%. Four http_hello rows fall 1.27% to 1.50%.
 # Retain the preceding limits for higher-cost rows and keep all measured reductions.
@@ -61,8 +62,8 @@
 # Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
 profile/arm64-linux/array_append.diagnostic.bytes	13752
 profile/arm64-linux/array_append.diagnostic.emit	1803
-profile/arm64-linux/array_append.hardened.bytes	8136
-profile/arm64-linux/array_append.hardened.emit	1781
+profile/arm64-linux/array_append.hardened.bytes	8040
+profile/arm64-linux/array_append.hardened.emit	1757
 profile/arm64-linux/array_append.minimal.bytes	6072
 profile/arm64-linux/array_append.minimal.emit	1314
 profile/arm64-linux/array_append.safe.bytes	6424
@@ -77,8 +78,8 @@ profile/arm64-linux/call_overhead.safe.bytes	2456
 profile/arm64-linux/call_overhead.safe.emit	439
 profile/arm64-linux/closure_call.diagnostic.bytes	13696
 profile/arm64-linux/closure_call.diagnostic.emit	1677
-profile/arm64-linux/closure_call.hardened.bytes	7288
-profile/arm64-linux/closure_call.hardened.emit	1563
+profile/arm64-linux/closure_call.hardened.bytes	7208
+profile/arm64-linux/closure_call.hardened.emit	1545
 profile/arm64-linux/closure_call.minimal.bytes	5320
 profile/arm64-linux/closure_call.minimal.emit	1118
 profile/arm64-linux/closure_call.safe.bytes	5624
@@ -94,8 +95,8 @@ profile/arm64-linux/deflate_decode.safe.bytes	58712
 profile/arm64-linux/deflate_decode.safe.emit	13560
 profile/arm64-linux/enum_match.diagnostic.bytes	12944
 profile/arm64-linux/enum_match.diagnostic.emit	1646
-profile/arm64-linux/enum_match.hardened.bytes	7096
-profile/arm64-linux/enum_match.hardened.emit	1509
+profile/arm64-linux/enum_match.hardened.bytes	7016
+profile/arm64-linux/enum_match.hardened.emit	1490
 profile/arm64-linux/enum_match.minimal.bytes	5192
 profile/arm64-linux/enum_match.minimal.emit	1083
 profile/arm64-linux/enum_match.safe.bytes	5496
@@ -105,8 +106,8 @@ profile/arm64-linux/http_hello.diagnostic.bytes	124872
 profile/arm64-linux/http_hello.diagnostic.emit	15983
 profile/arm64-linux/http_hello.hardened.bytes	78712
 profile/arm64-linux/http_hello.hardened.emit	17529
-profile/arm64-linux/http_hello.minimal.bytes	60904
-profile/arm64-linux/http_hello.minimal.emit	13048
+profile/arm64-linux/http_hello.minimal.bytes	60344
+profile/arm64-linux/http_hello.minimal.emit	12912
 profile/arm64-linux/http_hello.safe.bytes	73016
 profile/arm64-linux/http_hello.safe.emit	16098
 profile/arm64-linux/int_loop.diagnostic.bytes	5064
@@ -133,7 +134,7 @@ profile/arm64-linux/startup.minimal.bytes	1912
 profile/arm64-linux/startup.minimal.emit	303
 profile/arm64-linux/startup.safe.bytes	2136
 profile/arm64-linux/startup.safe.emit	364
-profile/x86-64-linux/array_append.diagnostic.bytes	11112
+profile/x86-64-linux/array_append.diagnostic.bytes	11048
 profile/x86-64-linux/array_append.diagnostic.emit	1430
 profile/x86-64-linux/array_append.diagnostic.ir	68240505
 profile/x86-64-linux/array_append.hardened.bytes	6656
@@ -157,7 +158,7 @@ profile/x86-64-linux/call_overhead.minimal.ir	8250814
 profile/x86-64-linux/call_overhead.safe.bytes	2144
 profile/x86-64-linux/call_overhead.safe.emit	343
 profile/x86-64-linux/call_overhead.safe.ir	8250814
-profile/x86-64-linux/closure_call.diagnostic.bytes	11232
+profile/x86-64-linux/closure_call.diagnostic.bytes	11192
 profile/x86-64-linux/closure_call.diagnostic.emit	1330
 profile/x86-64-linux/closure_call.diagnostic.ir	42030322
 profile/x86-64-linux/closure_call.hardened.bytes	5840
@@ -182,7 +183,7 @@ profile/x86-64-linux/deflate_decode.minimal.ir	41284729
 profile/x86-64-linux/deflate_decode.safe.bytes	51376
 profile/x86-64-linux/deflate_decode.safe.emit	12766
 profile/x86-64-linux/deflate_decode.safe.ir	33826804
-profile/x86-64-linux/enum_match.diagnostic.bytes	10488
+profile/x86-64-linux/enum_match.diagnostic.bytes	10456
 profile/x86-64-linux/enum_match.diagnostic.emit	1309
 profile/x86-64-linux/enum_match.diagnostic.ir	29250209
 profile/x86-64-linux/enum_match.hardened.bytes	5712
@@ -194,18 +195,18 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4496
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	114872
-profile/x86-64-linux/http_hello.diagnostic.emit	14910
+profile/x86-64-linux/http_hello.diagnostic.bytes	113456
+profile/x86-64-linux/http_hello.diagnostic.emit	14794
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	39724679
 profile/x86-64-linux/http_hello.hardened.bytes	69136
-profile/x86-64-linux/http_hello.hardened.emit	15673
+profile/x86-64-linux/http_hello.hardened.emit	15539
 profile/x86-64-linux/http_hello.hardened.ir	27649630
-profile/x86-64-linux/http_hello.minimal.bytes	54112
-profile/x86-64-linux/http_hello.minimal.emit	12620
+profile/x86-64-linux/http_hello.minimal.bytes	53600
+profile/x86-64-linux/http_hello.minimal.emit	12493
 profile/x86-64-linux/http_hello.minimal.ir	23248401
-profile/x86-64-linux/http_hello.safe.bytes	64784
-profile/x86-64-linux/http_hello.safe.emit	15251
+profile/x86-64-linux/http_hello.safe.bytes	64192
+profile/x86-64-linux/http_hello.safe.emit	15117
 profile/x86-64-linux/http_hello.safe.ir	21796408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5208
 profile/x86-64-linux/int_loop.diagnostic.emit	508
