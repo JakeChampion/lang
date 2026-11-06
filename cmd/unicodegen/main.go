@@ -1334,13 +1334,13 @@ function _fld(t: string, i: i32): i32 {
 }
 
 function _case_apply(cp: i32, want_upper: boolean): i32 {
-    let t: string = _case_table();
-    let lo: i32 = 0;
-    let hi: i32 = t.len() / 20 - 1;
+    let t = _case_table();
+    let lo = 0;
+    let hi = t.len() / 20 - 1;
     while (lo <= hi) {
-        let mid: i32 = lo + (hi - lo) / 2;
-        let base: i32 = mid * 20;
-        let rlo: i32 = _fld(t, base);
+        let mid = lo + (hi - lo) / 2;
+        let base = mid * 20;
+        let rlo = _fld(t, base);
         if (cp < rlo) {
             hi = mid - 1;
         } else if (cp > _fld(t, base + 4)) {
@@ -1350,7 +1350,7 @@ function _case_apply(cp: i32, want_upper: boolean): i32 {
                 if (want_upper) { return cp + _fld(t, base + 12) - 8388608; }
                 return cp + _fld(t, base + 16) - 8388608;
             }
-            let odd: i32 = (cp - rlo) & 1;
+            let odd = (cp - rlo) & 1;
             if (want_upper) { return cp - odd; }
             return cp + 1 - odd;
         }
@@ -1375,31 +1375,31 @@ function _lower_cp(cp: i32): i32 {
 }
 
 function _is_ascii(s: string): boolean {
-    let n: i32 = s.len();
-    let i: i32 = 0;
+    let n = s.len();
+    let i = 0;
     while (i < n) {
         if (s[i] >= 128) { return false; }
-        i = i + 1;
+        i += 1;
     }
     return true;
 }
 
 function _ascii_fold(s: string, from: i32, to: i32): string {
-    let n: i32 = s.len();
-    let first: i32 = 0;
+    let n = s.len();
+    let first = 0;
     while (first < n && (s[first] as i32 < from || s[first] as i32 >= from + 26)) {
-        first = first + 1;
+        first += 1;
     }
     if (first == n) {
         return s;
     }
-    let buf: u8[] = __alloc_u8(n);
-    let i: i32 = 0;
+    let buf = __alloc_u8(n);
+    let i = 0;
     while (i < n) {
-        let b: i32 = s[i] as i32;
-        if (b >= from && b < from + 26) { b = b + (to - from); }
+        let b = s[i] as i32;
+        if (b >= from && b < from + 26) { b += (to - from); }
         buf = buf.with(i, b as u8);
-        i = i + 1;
+        i += 1;
     }
     return string_from_bytes_unchecked(buf);
 }
@@ -1409,21 +1409,21 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
 // Binary search over 16-character records; a trailing 0 field means the
 // expansion is shorter than 3 code points.
 function _full_case_append(out: char[], cp: i32, want_upper: boolean): char[] {
-    let t: string = _full_lower_table();
+    let t = _full_lower_table();
     if (want_upper) { t = _full_upper_table(); }
-    let lo: i32 = 0;
-    let hi: i32 = t.len() / 16 - 1;
+    let lo = 0;
+    let hi = t.len() / 16 - 1;
     while (lo <= hi) {
-        let mid: i32 = lo + (hi - lo) / 2;
-        let base: i32 = mid * 16;
-        let from: i32 = _fld(t, base);
+        let mid = lo + (hi - lo) / 2;
+        let base = mid * 16;
+        let from = _fld(t, base);
         if (cp < from) { hi = mid - 1; }
         else if (cp > from) { lo = mid + 1; }
         else {
             out = out.append(_fld(t, base + 4) as char);
-            let c2: i32 = _fld(t, base + 8);
+            let c2 = _fld(t, base + 8);
             if (c2 != 0) { out = out.append(c2 as char); }
-            let c3: i32 = _fld(t, base + 12);
+            let c3 = _fld(t, base + 12);
             if (c3 != 0) { out = out.append(c3 as char); }
             return out;
         }
@@ -1686,11 +1686,11 @@ pub function (s: string) title_case(): string {
 }
 
 function _in_ranges(t: string, cp: i32): boolean {
-    let lo: i32 = 0;
-    let hi: i32 = t.len() / 8 - 1;
+    let lo = 0;
+    let hi = t.len() / 8 - 1;
     while (lo <= hi) {
-        let mid: i32 = lo + (hi - lo) / 2;
-        let base: i32 = mid * 8;
+        let mid = lo + (hi - lo) / 2;
+        let base = mid * 8;
         if (cp < _fld(t, base)) { hi = mid - 1; }
         else if (cp > _fld(t, base + 4)) { lo = mid + 1; }
         else { return true; }
@@ -1763,12 +1763,12 @@ pub function (c: char) is_lower(): boolean {
 }
 
 function _all_cp(s: string, kind: i32): boolean {
-    let n: i32 = s.len();
+    let n = s.len();
     if (n == 0) { return false; }
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
-        let cp: i32 = 65533;
-        let w: i32 = 1;
+        let cp = 65533;
+        let w = 1;
         match (utf8.decode_at(s, i)) {
             Some(pr) => { cp = pr.0; w = pr.1; },
             None => { }
@@ -1776,7 +1776,7 @@ function _all_cp(s: string, kind: i32): boolean {
         if (kind == 0) { if (!_is_letter_cp(cp)) { return false; } }
         else if (kind == 1) { if (!_is_alnum_cp(cp)) { return false; } }
         else { if (!_is_digit_cp(cp)) { return false; } }
-        i = i + w;
+        i += w;
     }
     return true;
 }
@@ -2051,31 +2051,31 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 		graphemeScanner("pub function grapheme_count(s: string): i32", "let out: i32 = 1;", "0", "out = out + 1;", "out") +
 		graphemeScanner("function _grapheme_ends(s: string): i32[]", "let out: i32[] = [];", "out", "out = out.append(i);", "out.append(n)") + `
 pub function reverse_graphemes(s: string): string {
-    let n: i32 = s.len();
+    let n = s.len();
     if (n == 0) { return ""; }
-    let ends: i32[] = _grapheme_ends(s);
-    let bytes: u8[] = s.bytes();
-    let h: usize = buf_new(n);
-    let i: i32 = ends.len() - 1;
+    let ends = _grapheme_ends(s);
+    let bytes = s.bytes();
+    let h = buf_new(n);
+    let i = ends.len() - 1;
     while (i >= 0) {
-        let start: i32 = 0;
+        let start = 0;
         if (i > 0) { start = ends[i - 1]; }
         buf_push_bytes_range(h, bytes, start, ends[i]);
-        i = i - 1;
+        i -= 1;
     }
-    let result: string = string_from_bytes_unchecked(buf_take_bytes(h));
+    let result = string_from_bytes_unchecked(buf_take_bytes(h));
     buf_free(h);
     return result;
 }
 
 function _wb_of(cp: char): i32 {
-    let t: string = _wb_ranges();
-    let n: i32 = cp as i32;
-    let lo: i32 = 0;
-    let hi: i32 = t.len() / 12 - 1;
+    let t = _wb_ranges();
+    let n = cp as i32;
+    let lo = 0;
+    let hi = t.len() / 12 - 1;
     while (lo <= hi) {
-        let mid: i32 = lo + (hi - lo) / 2;
-        let base: i32 = mid * 12;
+        let mid = lo + (hi - lo) / 2;
+        let base = mid * 12;
         if (n < _fld(t, base)) { hi = mid - 1; }
         else if (n > _fld(t, base + 4)) { lo = mid + 1; }
         else { return _fld(t, base + 8); }
@@ -2144,17 +2144,17 @@ function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri
 }
 
 function _wb_is_word(s: string, a: i32, b: i32): boolean {
-    let i: i32 = a;
+    let i = a;
     while (i < b) {
-        let cp: char = 0 as char;
-        let w: i32 = 1;
+        let cp = 0 as char;
+        let w = 1;
         match (utf8.decode_at(s, i)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[i]) as char; w = 1; }
         }
-        let n: i32 = cp as i32;
+        let n = cp as i32;
         if (_is_letter_cp(n) || _is_digit_cp(n)) { return true; }
-        i = i + w;
+        i += w;
     }
     return false;
 }
