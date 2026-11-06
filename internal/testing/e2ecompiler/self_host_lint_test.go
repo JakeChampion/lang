@@ -290,7 +290,9 @@ func TestSelfHostLintRules(t *testing.T) {
 		"    option cyclomatic-complexity.max = 10 (default)\n" +
 		"change-risk  [warn]\n" +
 		"    function is complex and mostly untested: complexity^2 * (1 - coverage)^3 + complexity, scored from the -cover run -lint-cover names\n" +
-		"    option change-risk.max = 30 (default)\n"
+		"    option change-risk.max = 30 (default)\n" +
+		"modern-form  [allow]\n" +
+		"    an annotation that the initializer already gives, `x = x op e` for `x op= e`, or `0 - e` for `-e`\n"
 	if err != nil || string(out) != want {
 		t.Errorf("-lint-rules: %v\n--- got ---\n%s--- want ---\n%s", err, out, want)
 	}
