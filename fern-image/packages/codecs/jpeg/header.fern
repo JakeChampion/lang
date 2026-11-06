@@ -244,8 +244,8 @@ pub function parse(input: [u8], limits: HeaderLimits, cancelled: () => boolean):
     return Err(JpegError.Signature);
   }
   let info: Option[FrameInfo] = None;
-  let quant: Option[QuantTable][] = [None, None, None, None];
-  let codes: Option[HuffmanTable][] = [None, None, None, None];
+  let quant = [None, None, None, None];
+  let codes = [None, None, None, None];
   let interval = 0;
   let metadata = 0;
   let segments = 0;
