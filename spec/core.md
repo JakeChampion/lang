@@ -438,6 +438,9 @@ is the number of slots it leaves.
 | `sha256_hw` | 409 | 0 | 1 |
 | `sha256_hw_blocks` | 410 | 2 | 1 |
 | `bswap` | 411 | 1 | 1 |
+| `mmio_load` | 412 | 1 | 1 |
+| `mmio_store` | 413 | 2 | 1 |
+| `fence` | 414 | 0 | 1 |
 | `open_dir` | 420 | 1 | 1 |
 | `dir_open` | 421 | 2 | 1 |
 | `dir_entries` | 422 | 1 | 1 |
