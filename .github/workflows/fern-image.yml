@@ -23,7 +23,7 @@ jobs:
         with:
           wasmtime: "true"
       - run: make build
-      - run: ./fern-image/scripts/test.sh
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test.sh ./fern-image/scripts/test-wasm.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - name: Use cgroupfs for worker OOM events
@@ -43,9 +43,6 @@ jobs:
           docker info --format 'After: {{.ServerVersion}} {{.CgroupDriver}} {{.CgroupVersion}}'
           test "$(docker info --format '{{.CgroupDriver}}')" = cgroupfs
       - run: ./fern-image/scripts/qualify-workers.sh
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-wasm.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/setup-python@v6
