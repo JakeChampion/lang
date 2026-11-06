@@ -85,6 +85,10 @@ The second finds the read-only mapping of its data segment and stores a byte int
 The third patches the image's entry point to a data segment and writes an exit system call over its first bytes. It takes the writable segment, or the read-only one when the writable segment has no file bytes.
 All three must end with `SIGSEGV`. The suite supports native Linux ARM64 and x86-64, with QEMU for the other target.
 
+The 64 KiB-page variant runs under QEMU with `-p 65536` on both arm64 targets.
+QEMU can omit file names from those mappings.
+The first probe of that variant therefore stores into its own entry instruction, and the second stores into a string constant.
+
 `TestSelfHostWrittenLiteralImage` runs a program that hands a literal to `reactor_wait`, directly and through a callee, and sets the length of the empty array.
 It must exit 0 on a fixed-address image and on a PIE image. `TestSelfHostWrittenLiteralIsHeapX86_64` pins the plan: such a literal is a heap box, and a literal a callee only reads stays a constant.
 
