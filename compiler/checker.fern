@@ -31326,9 +31326,6 @@ function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
       let (r, rids) = lit_tree(b.right, s, lids);
       return (l && r, rids);
     },
-    ast.ExprCall(c) => {
-      return lit_block_tree(c, s, ids);
-    },
     _ => {
       return (false, ids);
     }
@@ -31336,63 +31333,79 @@ function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
   return (false, ids);
 }
 
-// A value `if`, `match` or block whose each arm that yields gives a literal
-// tree, as unsettled_value_block decides it.
-function lit_block_tree(c: ast.ExprCall, s: Scope, ids: i32[]): (boolean, i32[]) {
-  let ast.ExprLambda(lm) = c.callee else {
-    return (false, ids);
-  };
-  let branches = lm.body.len() == 1 && (lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR);
-  if (c.args.len() > 0 || lm.params.len() > 0 || !branches && lm.origin != parser.ORIGIN_BLOCK) {
-    return (false, ids);
+// The literal ids of a `let` or assignment value. A value `if`, `match` or
+// block seeds when each arm that yields gives a literal tree. The walk of its
+// arms is kept only when it seeds.
+function lit_seed(e: ast.Expr, s: Scope, st: LitInfer): (boolean, i32[], LitInfer) {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lm) = c.callee {
+      let branches = lm.body.len() == 1 && (lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR);
+      if (c.args.len() > 0 || lm.params.len() > 0 || !branches && lm.origin != parser.ORIGIN_BLOCK) {
+        return (false, [], st);
+      }
+      let (n, ids, out) = lit_arms(lm.body, lambda_body_scope(lm, s), [], st);
+      if (n > 0) {
+        return (true, ids, out);
+      }
+      return (false, [], st);
+    }
   }
-  let (n, out) = lit_arms(lm.body, s, ids);
-  return (n > 0, out);
+  let (seed, ids) = lit_tree(e, s, []);
+  return (seed, ids, st);
 }
 
 // The literal arms of a branch body: 0 when it leaves, -1 when an arm yields
-// something else. An arm with statements before its value, or one that binds
-// names, counts as something else.
-function lit_arms(body: ast.Stmt[], s: Scope, ids: i32[]): (i32, i32[]) {
+// something else.
+function lit_arms(body: ast.Stmt[], s: Scope, ids: i32[], st: LitInfer): (i32, i32[], LitInfer) {
   if (!mx_branch_yields(body)) {
-    return (0, ids);
+    return (0, ids, lit_stmts(body, s, st));
   }
-  if (body.len() > 1) {
-    return (0 - 1, ids);
+  let cur = s;
+  let out = st;
+  let last = body.len() - 1;
+  for i in 0..last {
+    let (ns, nst) = lit_stmt(body[i], cur, out);
+    cur = ns;
+    out = nst;
   }
-  match (body[0]) {
+  match (body[last]) {
     ast.StmtReturn(r) => {
-      let (seed, out) = lit_tree(r.value, s, ids);
+      let (seed, rids) = lit_tree(r.value, cur, ids);
       if (seed) {
-        return (1, out);
+        return (1, rids, out);
       }
-      return (0 - 1, ids);
+      return (0 - 1, ids, out);
     },
     ast.StmtIf(f) => {
-      let (a, aids) = lit_arms(f.then_body, s, ids);
-      let (b, bids) = lit_arms(f.else_body, s, aids);
-      return (unsettled_arm_sum(a, b), bids);
+      let (a, aids, tst) = lit_arms(f.then_body, cur, ids, lit_expr(f.cond, cur, out));
+      let (b, bids, bst) = lit_arms(f.else_body, cur, aids, tst);
+      return (unsettled_arm_sum(a, b), bids, bst);
     },
     ast.StmtMatch(m) => {
-      return lit_match_arms(m, s, ids);
+      return lit_match_arms(m, cur, ids, out);
     },
     _ => {}
   }
-  return (0, ids);
+  let (ls, lst) = lit_stmt(body[last], cur, out);
+  return (0, ids, lst);
 }
 
-function lit_match_arms(m: ast.StmtMatch, s: Scope, ids: i32[]): (i32, i32[]) {
+function lit_match_arms(m: ast.StmtMatch, s: Scope, ids: i32[], st: LitInfer): (i32, i32[], LitInfer) {
+  let whole = check_expr(m.scrutinee, s);
+  let out = lit_arg(m.scrutinee, s, st);
   let n = 0;
-  let out = ids;
+  let kids = ids;
   for arm in m.arms {
-    if (astwalk.pattern_binders(arm.pattern, []).len() > 0) {
-      return (0 - 1, ids);
+    let asc = annotate_arm_scope(arm, s, whole);
+    if (arm.has_guard) {
+      out = lit_expr(arm.guard, asc, out);
     }
-    let (k, kids) = lit_arms(arm.body, s, out);
+    let (k, nids, nst) = lit_arms(arm.body, asc, kids, out);
     n = unsettled_arm_sum(n, k);
-    out = kids;
+    kids = nids;
+    out = nst;
   }
-  return (n, out);
+  return (n, kids, out);
 }
 
 function lit_find(st: LitInfer, k: i32): i32 {
@@ -32517,7 +32530,7 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       if (v.type_name.len() > 0) {
         return (bind_stmt(stmt, s), lit_demand(v.init, var_declared_type(v, s), s, st));
       }
-      let (seed, ids) = lit_tree(v.init, s, []);
+      let (seed, ids, sst) = lit_seed(v.init, s, st);
       if (!seed) {
         if let ast.ExprCall(call) = v.init {
           let (enum_type, enum_state) = lit_enum_local(call, s, st);
@@ -32558,17 +32571,17 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
         }
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
-      let k = st.parent.len();
-      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(st, lit_var_key(v)), ids.append(k)));
+      let k = sst.parent.len();
+      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_key(v)), ids.append(k)));
     },
     ast.StmtAssign(a) => {
       let tk = lit_id(s.lookup(a.target));
       if (tk < 0) {
         return (s, lit_demand(a.value, s.lookup(a.target), s, st));
       }
-      let (seed2, ids2) = lit_tree(a.value, s, []);
+      let (seed2, ids2, ast2) = lit_seed(a.value, s, st);
       if (seed2) {
-        return (s, lit_link(st, ids2.append(tk)));
+        return (s, lit_link(ast2, ids2.append(tk)));
       }
       let walked = lit_expr(a.value, s, st);
       return (s, lit_fix(walked, [tk], check_expr(a.value, s)));
