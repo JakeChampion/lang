@@ -1186,6 +1186,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jae .Lbt_done\n");
   s = s.write("    jmp .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
+  s = emit_signal_resume_check(s);
   s = s.write("    movq %r15, %rdi\n");
   s = s.write("    movq $231, %rax\n");
   s = s.syscall(231);
@@ -2956,9 +2957,19 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp __fern_bt_exit\n");
     return emit_bt_exit(s);
   }
+  s = emit_signal_resume_check(s);
   s = s.write("    movq %r15, %rdi\n");
   s = s.write("    movq $231, %rax\n");
   return s.syscall(231);
+}
+
+// A negative status is a fatal signal's report: the handler resumes, takes
+// the default action again, and the process ends by the signal.
+function emit_signal_resume_check(own s: asmcore.EmitState): asmcore.EmitState {
+  if (s.shared) {
+    return s;
+  }
+  return s.write("    testq %r15, %r15\n    js .Lfern_signal_resume\n");
 }
 
 function emit_quarantine_data(s: asmcore.EmitState): asmcore.EmitState {
@@ -11915,8 +11926,7 @@ function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_signal_stack_map_failed\n    subq $32, %rsp\n    movq %rax, (%rsp)\n    movq $0, 8(%rsp)\n    movq $65536, 16(%rsp)\n    movq %rsp, %rdi\n    xorl %esi, %esi\n    movl $131, %eax\n");
   s = s.syscall(131);
   s = s.write("    testq %rax, %rax\n    jnz .Lfern_signal_stack_failed\n    leaq __fern_segv(%rip), %rax\n    movq %rax, (%rsp)\n    movq $0x0c000004, 8(%rsp)\n");
-  s = emit_segv_install(s);
-  return s.write("    testq %rax, %rax\n    jnz .Lfern_fault_handler_failed\n    addq $32, %rsp\n");
+  return s.write("    call .Lfern_fault_install\n    testq %rax, %rax\n    jnz .Lfern_fault_handler_failed\n    addq $32, %rsp\n");
 }
 
 function emit_stack_map(own s: asmcore.EmitState, size: i32): asmcore.EmitState {
@@ -11924,21 +11934,36 @@ function emit_stack_map(own s: asmcore.EmitState, size: i32): asmcore.EmitState 
   return s.syscall(9);
 }
 
-function emit_segv_install(own s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    leaq .Lfern_segv_restorer(%rip), %rax\n    movq %rax, 16(%rsp)\n    movq $0, 24(%rsp)\n    movl $11, %edi\n    movq %rsp, %rsi\n    xorl %edx, %edx\n    movl $8, %r10d\n    movl $13, %eax\n");
-  return s.syscall(13);
+// Installs the action the caller built at its (%rsp) for SIGSEGV, SIGILL and
+// SIGBUS, and returns the first refusal in %rax, or 0.
+// The handler runs with SIGSEGV, SIGILL and SIGBUS blocked (mask 0x448).
+function emit_fault_install(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".Lfern_fault_install:\n    leaq .Lfern_segv_restorer(%rip), %rax\n    movq %rax, 24(%rsp)\n    movq $0x448, 32(%rsp)\n    leaq 8(%rsp), %rsi\n    xorl %edx, %edx\n    movl $8, %r10d\n");
+  for signo in [11, 4, 7] {
+    s = s.write("    movl $" + util.i32_to_string(signo) + ", %edi\n    movl $13, %eax\n").syscall(13);
+    s = s.write("    testq %rax, %rax\n    jnz .Lfern_fault_install_done\n");
+  }
+  return s.write(".Lfern_fault_install_done:\n    ret\n");
 }
 
 function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
   let msg = aborts.stack_overflow();
-  s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
+  let ill = aborts.illegal_instruction();
+  let bus = aborts.bus_error();
+  s = s.write("    .section .bss\n    .align 8\n__fern_sig_sp: .quad 0\n    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n.Lmsg_illegal_instruction:\n    .ascii \"" + ill + "\\n\"\n.Lmsg_bus_error:\n    .ascii \"" + bus + "\\n\"\n    .text\n");
   // A fault inside the guard of the runtime's own stack is an overflow. On
   // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
   // of the stack pointer counts as one.
-  s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    movq __fern_stack_top(%rip), %rcx\n    testq %rcx, %rcx\n    jz .Lfern_segv_near_sp\n    subq $1073741808, %rcx\n    subq %rcx, %rax\n    cmpq $1048576, %rax\n    jb .Lfern_segv_overflow\n    jmp .Lfern_segv_other\n.Lfern_segv_near_sp:\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n.Lfern_segv_overflow:\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq 160(%rdx), %rax\n    movq %rax, __fern_bt_floor(%rip)\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
-  s = emit_segv_install(s);
-  s = s.write("    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
-  return s.syscall(15);
+  s = s.write("__fern_segv:\n    cmpq $11, %rdi\n    jne .Lfern_fatal_signal\n    movq 16(%rsi), %rax\n    movq __fern_stack_top(%rip), %rcx\n    testq %rcx, %rcx\n    jz .Lfern_segv_near_sp\n    subq $1073741808, %rcx\n    subq %rcx, %rax\n    cmpq $1048576, %rax\n    jb .Lfern_segv_overflow\n    jmp .Lfern_segv_other\n.Lfern_segv_near_sp:\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n.Lfern_segv_overflow:\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq 160(%rdx), %rax\n    movq %rax, __fern_bt_floor(%rip)\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
+  s = s.write("    call .Lfern_fault_install\n    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
+  s = s.syscall(15);
+  s = emit_fault_install(s);
+  // A SIGILL or SIGBUS the kernel raised writes its cause and takes the
+  // default action again: the return repeats the fault. A sent one exits.
+  s = s.write(".Lfern_fatal_signal:\n    movslq 8(%rsi), %rax\n    testq %rax, %rax\n    jle .Lfern_signal_sent\n    movq %rsp, __fern_sig_sp(%rip)\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq 160(%rdx), %rax\n    movq %rax, __fern_bt_floor(%rip)\n");
+  s = s.write("    leaq .Lmsg_illegal_instruction(%rip), %rsi\n    movq $" + util.i32_to_string(ill.len() + 1) + ", %rdx\n    cmpq $4, %rdi\n    je .Lfern_fatal_report\n    leaq .Lmsg_bus_error(%rip), %rsi\n    movq $" + util.i32_to_string(bus.len() + 1) + ", %rdx\n.Lfern_fatal_report:\n    movq $-1, %rdi\n    jmp __fern_report\n");
+  s = s.write(".Lfern_signal_resume:\n    movq __fern_sig_sp(%rip), %rsp\n    jmp .Lfern_segv_other\n.Lfern_signal_sent:\n    addq $128, %rdi\n    movl $231, %eax\n");
+  return s.syscall(231);
 }
 
 function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
