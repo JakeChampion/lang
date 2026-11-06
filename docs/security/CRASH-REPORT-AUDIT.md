@@ -24,7 +24,10 @@ The bounds and allocation aborts exit with status 134.
 
 ## The fault handler
 
-Startup maps a 64 KiB alternate signal stack and installs `__fern_segv` for `SIGSEGV` with `SA_ONSTACK`, `SA_SIGINFO`, and `SA_RESTORER`.
+Startup maps a 64 KiB alternate signal stack and installs `__fern_segv` for `SIGSEGV`, `SIGILL` and `SIGBUS` with `SA_ONSTACK`, `SA_SIGINFO`, and `SA_RESTORER`.
+A refused install of any of the three stops startup with `fern: could not install the fault handler`.
+Darwin installs it for `SIGSEGV` and `SIGBUS` alone, because a wild read raises `SIGBUS` there.
+
 The handler reads the fault address from the signal information.
 A fault inside the 1 MiB guard of the runtime's own stack is a stack overflow.
 The runtime keeps the kernel's stack when its own mapping fails. There a fault within 1 MiB of the context's stack pointer counts as one.
@@ -40,6 +43,19 @@ The handler does not set `SA_NODEFER` or `SA_RESETHAND`.
 A second fault while the handler runs is delivered with `SIGSEGV` blocked, so the kernel ends the process with the default action.
 There is no recursion and no second report.
 A fault on the alternate stack itself has the same outcome.
+
+On Linux the handler sends a `SIGILL` or a `SIGBUS` to its own path.
+When the kernel raised the signal, the handler builds a frame record from the context, as the overflow path does.
+It enters the report path with `fern: illegal instruction` or `fern: bus error`, and the backtrace follows.
+A negative status marks the report, so after the walk the report resets the three signals to the default action and returns from the handler.
+
+The faulting instruction runs again, and the process ends by the same signal.
+So a parent, a debugger, or a fault test sees the signal it expects. A BTI or a PAC fault is such a signal.
+
+A signal that another process sent (`si_code` at or below zero) writes no cause line, because no instruction faulted.
+That path exits with 128 plus the signal number, as a shell reports a death by that signal.
+The handler does not send the signal again with `kill`.
+That call can signal other processes, and every program's seccomp allowlist then holds it.
 
 ## The backtrace walk
 
@@ -69,6 +85,7 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 | An abort in a shared object prints the Fern frames and stops at the export wrapper | `TestSharedLibX86AbortBacktrace`, `TestArm64SharedLibAbortBacktrace` |
 | An overflow report walks past the handler's record into the application stack | `TestSelfHostStackOverflow` requires two frames or more |
 | The sanitizer's use-after-free report carries a backtrace | `TestSelfHostSanitizeReportCarriesBacktrace` |
+| A `SIGILL` writes its cause and a backtrace and ends by `SIGILL` on both targets, a `SIGBUS` does the same on x86-64, and a sent `SIGBUS` exits 135 with no report | `TestSelfHostFatalSignalReport` |
 
 ## Gaps
 
@@ -76,8 +93,7 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 |---|---|
 | A corrupt frame pointer inside the stack range | The walk prints whatever the frame holds, up to 64 lines, and stops at the first failed check; it cannot fault, because every address it reads is inside the mapped stack |
 | A frame the backend turned into a tail jump, or an x86-64 function that needs no frame pointer | The walk cannot see it; `docs/security/ABI-AUDIT.md` records both rules |
-| Page probes and canaries | Not started; `docs/security/STACK-GUARD.md` records the remaining SEC-015 work |
-| `SIGBUS` and `SIGILL` | No handler is installed; the kernel's default action ends the process with no cause line |
+| A real `SIGBUS` on arm64 | QEMU user mode does not enforce alignment, so the arm64 test covers the sent signal alone |
 | A report from a thread | The runtime has one context, so no second thread exists to report |
 
 ## Changes in this record
