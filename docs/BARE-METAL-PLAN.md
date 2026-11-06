@@ -104,9 +104,62 @@ context. The rule needs a checker, not a runtime mechanism.
 **Do not preempt the kernel heap.** TamaGo has no asynchronous preemption of
 goroutines, and it keeps at most one OS thread for each CPU (`M <= P`). The Fern
 kernel takes the same rule. A context switch occurs only at a wait in the reactor
-or between processes. Thus no interrupt stops the kernel heap in the middle of an
-RC operation. Per-process heaps make the switch between processes safe (see the
-north-star section).
+or between processes. An interrupt can arrive in the middle of an RC operation,
+but its top half touches no RC value, and no other context runs RC code before
+the main context continues. Per-process heaps make the switch between processes
+safe (see the north-star section).
+
+### The decision (#14250)
+
+The rule above is the decision. These are its details.
+
+**The shared state is raw memory.** Fern has no module-level mutable state, and a
+top half holds no RC value. So the only state that a top half shares with the main
+context is the IRQ region: raw memory that the memory layout reserves (#14254). The
+region holds one pending word for each 32 IRQ lines. Both sides access it only
+with `__mmio_load32` and `__mmio_store32`, so that no pass removes, merges or
+moves an access (#14249).
+
+**What a top half can do.** A top half has the no-RC property (#14253). It can:
+
+- read its IRQ number, which is a scalar argument
+- read and write device registers and the IRQ region with `__mmio_*`
+- use scalar arithmetic and the effect intrinsics (#14252), for example to
+  acknowledge the IRQ at the interrupt controller
+- call only functions that have the no-RC property.
+
+It cannot allocate, read or write an RC value, call a function without the
+property, or wait.
+
+**How a top half wakes the reactor.** The top half sets the bit of its IRQ in the
+pending word, and returns. That is a read, an OR and a write of one word. The main
+context clears bits only while IRQs are masked, so on one core the two
+read-modify-write sequences cannot interleave. No atomic operation is necessary,
+and C1 stays true. SMP needs one IRQ region for each core, or atomics (#14258).
+
+**The idle wait cannot lose a wakeup.** When no task can run, the reactor:
+
+1. masks IRQs
+2. reads the pending words, and clears the bits that it reads
+3. if no bit was set, waits for an interrupt with IRQs still masked, then goes
+   back to step 2
+4. unmasks IRQs, and makes ready each task whose IRQ bit was set.
+
+On arm64, a pending IRQ wakes WFI, also when PSTATE masks the IRQ. Thus an IRQ
+between steps 2 and 3 is not lost. On x86-64, `sti; hlt` is the wait, because
+`sti` delays the interrupt until after the next instruction. The effect intrinsics
+must give this wait as one operation, for example `__irq_wait()`: it starts and
+ends with IRQs masked.
+
+**The bottom half is a task.** Each IRQ line that a driver uses has one
+`std/async` task, which waits on an IRQ pollable. The reactor is the only code
+that reads the pending words and readies those tasks. Thus the task table, which
+holds RC values, is touched only by the main context.
+
+**A trap preempts a user process.** A timer IRQ during a user process enters the
+kernel through a top half. The top half saves the registers of the process in raw
+memory and sets the timer bit. Then it returns to the kernel main context at its
+last wait. The kernel heap was not active, so nothing is half done.
 
 ## The mechanical pieces, in dependency order
 
@@ -128,16 +181,29 @@ forwards a store to a load or moves a load out of a loop.
 `PERFORMANCE-RESEARCH.md`'s headline recommendation is the cross-block
 optimisation work that ends those two facts.
 
-So an MMIO access cannot be a plain `__raw_load*` or `__raw_store*`. It must be an
-op of its own kind, which `inst_has_effect` marks as an effect. Then no pass can
-remove, merge or move it. That is a small change, and it can come with the first
-driver. A `volatile` type qualifier can follow the need for drivers in Fern, not
-come before it.
+So an MMIO access is not a plain load or store. The `unsafe` intrinsics
+`__mmio_load8`, `__mmio_load16`, `__mmio_load32` and `__mmio_load64`, and the
+matching `__mmio_store*`, lower to the IR ops `mmio_load` and `mmio_store`
+(#14249). The SSA lift makes each one a host call (kind 50), which
+`inst_has_effect` marks as an effect, `merge_duplicates` does not merge and
+`speculable` does not move. Each backend then emits one load or store of the
+width. `internal/testing/e2ecompiler/self_host_mmio_test.go` makes sure that an
+unread MMIO load and two loads of one register stay in the output. A `volatile`
+type qualifier can follow the need for drivers in Fern, not come before it.
 
 ### 2. Effect intrinsics, not an asm block
 
 The privileged instructions have no data-flow shape: `msr`/`mrs`, `csrrw`, `wfi`,
 `dsb`/`isb`/`fence`, cache and TLB maintenance. They are pure effects.
+
+The first one exists: `__fence()` (#14252). Every memory and device access before
+it completes before any access after it starts. It is `dsb sy` on arm64 and
+`mfence` on x86-64, and it does nothing on wasm and in the interpreters. It runs at
+every privilege level, so it needs no `unsafe` block. A driver uses it, for
+example, between the writes to a DMA ring and the MMIO write that rings the
+doorbell. It takes the host-call path of the MMIO ops, so no pass removes it or
+moves an access across it. The privileged ops wait for an environment that grants
+them (#14254).
 
 Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops —
 `__raw_barrier`, `__raw_wfi`, `__raw_csr_read`/`_write` — rather than opening a
@@ -310,12 +376,23 @@ check time, in the same mechanism that enforces the OS boundary today.
   outside the Go runtime, so that the GC never touches them. For Fern, DMA memory
   is a second region that the RC machinery never sees, used through the
   `__raw_*` surface. It is not a flag on ordinary boxes.
-- **Panic scope** (#14257). A Fern panic stops the program: `__fern_report` exits the
-  process, and off the process entry it is a trap (#14245). eggshell's kernel
-  uses no unsafe code, and a panic during a syscall ends the process that made the call,
-  not the kernel. Per-process heaps let FernOS do the same: discard the heap of
-  the process and end only that process. Decide this before milestone 4,
-  because it decides what a panic in kernel code means.
+- **Panic scope** (#14257, decided). A Fern panic stops the program:
+  `__fern_report` exits the process, and off the process entry it is a trap. Fern
+  has no unwind, so the scope of a panic is the heap that the panicking code can
+  change:
+  - A panic in a user process ends only that process. The process has its own
+    heap, so the kernel discards that heap and nothing else changes.
+  - A panic in kernel code stops the machine, as it does today. The kernel heap is
+    the one shared graph. A syscall can store a new value in a kernel structure
+    before it panics. Then a release of only what the syscall allocated can free a
+    value that the structure still holds.
+  - Thus a syscall handler checks each argument at the syscall boundary, and
+    returns an error for a bad one. It does not panic. A bad argument then ends
+    only the process that made the call, if that process does not handle the
+    error. This is the milestone 4 test.
+  - eggshell's kernel continues after a panic during a syscall, because Go can
+    recover. A per-syscall region with a commit point can give Fern the same
+    result later. It is not part of the first kernel.
 - **A network stack in Fern** (#14259). TamaGo uses the pure-Go gVisor TCP/IP stack over
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
@@ -370,18 +447,17 @@ environment over the FernOS syscalls can come later, as an improvement.
 
 1. **Done: the freestanding codegen is in the compiler** (#14245). It reads the
    entry shape from the descriptor, so `EntryReset` can be a second value.
-2. **Give MMIO loads and stores an effect kind** (#14249) when the first driver
-   needs them. Add a test that `ssa.prune_dead` keeps an unused MMIO load. The
-   compiler removes an unused plain raw load today (see "Volatile").
-3. **Decide the interrupt/RC rule** (#14250). Design work, no code, and it gates 3 of the
-   5 mechanical pieces. The proposed answer is the TamaGo shape above: a checked
-   top half, a bottom half in the reactor, and no preemption of the kernel heap.
+2. **Done: MMIO loads and stores that no pass removes** (#14249). The compiler
+   still removes an unused plain raw load (see "Volatile").
+3. **Done: the interrupt/RC rule** (#14250). "The decision (#14250)" above records
+   it: a checked top half, the IRQ region in raw memory, a masked idle wait, and a
+   bottom half in the reactor.
 4. Then: capability providers (#14251) → effect intrinsics (#14252) → function
    attributes and the no-RC property (#14253) → memory layout (#14254) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-5. Beside those: the DMA region (#14255), the raw-pointer surface (#14256), the
-   panic scope decision (#14257, before milestone 4) and a TCP/IP stack in Fern
-   (#14259).
+5. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+   TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
+   north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 
