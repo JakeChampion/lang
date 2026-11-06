@@ -2803,6 +2803,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
   return (e_unknown_at("primary", p.peek_line(), p.peek_col()), p);
 }
 
+// The lowest precedence inside one literal of a pattern: the operators that
+// bind tighter than `|`, which separates the alternatives of a pattern.
+function pattern_min_prec(): i32 {
+  return precedence("|") + 1;
+}
+
 function precedence(op: string): i32 {
   if (op == "||") {
     return 1;
@@ -2810,19 +2816,19 @@ function precedence(op: string): i32 {
   if (op == "&&") {
     return 2;
   }
-  if (op == "|") {
+  if (op == "==" || op == "!=") {
     return 3;
   }
-  if (op == "^") {
+  if (op == "<" || op == ">" || op == "<=" || op == ">=") {
     return 4;
   }
-  if (op == "&") {
+  if (op == "|") {
     return 5;
   }
-  if (op == "==" || op == "!=") {
+  if (op == "^") {
     return 6;
   }
-  if (op == "<" || op == ">" || op == "<=" || op == ">=") {
+  if (op == "&") {
     return 7;
   }
   if (op == "<<" || op == ">>" || op == "<<|" || op == "<<?" || op == ">>?") {
@@ -2984,12 +2990,12 @@ function wider_rt(a: string, b: string): string {
 }
 
 function parse_lit_or_range(p: Par): (ast.Expr, ast.Expr, boolean, boolean, Par) {
-  let (lo_expr, lo_p) = parse_binary(p, 4);
+  let (lo_expr, lo_p) = parse_binary(p, pattern_min_prec());
   p = lo_p;
   let pk = p.peek_punct();
   if (pk == ".." || pk == "..=") {
     p = p.advance();
-    let (hi_expr, hi_p) = parse_binary(p, 4);
+    let (hi_expr, hi_p) = parse_binary(p, pattern_min_prec());
     p = hi_p;
     return (lo_expr, hi_expr, true, pk == "..=", p);
   }
@@ -4911,7 +4917,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
       } else if (p.peek_is_pat_literal()) {
         let lit_line = p.peek_line();
         let lit_col = p.peek_col();
-        let (lit_expr, lit_p) = parse_binary(p, 4);
+        let (lit_expr, lit_p) = parse_binary(p, pattern_min_prec());
         p = lit_p;
         let slot = "__pl" + dl_itoa(lit_line) + "_" + dl_itoa(lit_col);
         if (bn == 0) {
@@ -4923,7 +4929,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
         let rng = p.peek_punct();
         if (rng == ".." || rng == "..=") {
           p = p.advance();
-          let (hi_expr, hi_p) = parse_binary(p, 4);
+          let (hi_expr, hi_p) = parse_binary(p, pattern_min_prec());
           p = hi_p;
           let hi_op = "<";
           if (rng == "..=") {

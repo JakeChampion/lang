@@ -4715,7 +4715,7 @@ func (p *parser) parseLogicOr() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseLogicAnd, "||")
 }
 func (p *parser) parseLogicAnd() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseBitOr, "&&")
+	return p.parseBinaryLeft(p.parseEquality, "&&")
 }
 func (p *parser) parseBitOr() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseBitXor, "|")
@@ -4724,13 +4724,13 @@ func (p *parser) parseBitXor() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseBitAnd, "^")
 }
 func (p *parser) parseBitAnd() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseEquality, "&")
+	return p.parseBinaryLeft(p.parseShift, "&")
 }
 func (p *parser) parseEquality() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseRelational, "==", "!=")
 }
 func (p *parser) parseRelational() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseShift, "<", ">", "<=", ">=")
+	return p.parseBinaryLeft(p.parseBitOr, "<", ">", "<=", ">=")
 }
 func (p *parser) parseShift() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseAdditive, "<<", ">>", "<<|", "<<?", ">>?")

@@ -224,59 +224,6 @@ func TestPrecedence(t *testing.T) {
 	}
 }
 
-func TestBitwiseLooserThanCompare(t *testing.T) {
-	prog, err := Parse("function f(a: i32, b: i32, c: i32): boolean { return a & b == c; }")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
-	bin, ok := ret.Value.(*ast.Binary)
-	if !ok {
-		t.Fatalf("return value = %T, want *ast.Binary", ret.Value)
-	}
-	if bin.Op != "&" {
-		t.Fatalf("outer op = %q, want & (== should bind tighter)", bin.Op)
-	}
-	rhs, ok := bin.Right.(*ast.Binary)
-	if !ok || rhs.Op != "==" {
-		t.Fatalf("rhs = %v, want == binary", bin.Right)
-	}
-
-	prog, err = Parse("function f(a: i32, b: i32, c: i32): boolean { return (a & b) == c; }")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ret = prog.Funcs[0].Body.Stmts[0].(*ast.Return)
-	bin, ok = ret.Value.(*ast.Binary)
-	if !ok {
-		t.Fatalf("return value = %T, want *ast.Binary", ret.Value)
-	}
-	if bin.Op != "==" {
-		t.Fatalf("outer op = %q, want == (parens force bitwise-first)", bin.Op)
-	}
-	lhs, ok := bin.Left.(*ast.Binary)
-	if !ok || lhs.Op != "&" {
-		t.Fatalf("lhs = %v, want & binary", bin.Left)
-	}
-
-	prog, err = Parse("function f(a: i32, b: i32, c: i32): i32 { return a & b | c; }")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ret = prog.Funcs[0].Body.Stmts[0].(*ast.Return)
-	bin, ok = ret.Value.(*ast.Binary)
-	if !ok {
-		t.Fatalf("return value = %T, want *ast.Binary", ret.Value)
-	}
-	if bin.Op != "|" {
-		t.Fatalf("outer op = %q, want | (& should bind tighter)", bin.Op)
-	}
-	lhs, ok = bin.Left.(*ast.Binary)
-	if !ok || lhs.Op != "&" {
-		t.Fatalf("lhs = %v, want & binary", bin.Left)
-	}
-}
-
 func TestArrayLitAndIndex(t *testing.T) {
 	prog, err := Parse("function f(): i32 { let a: i32[] = [1,2,3]; return a[1]; }")
 	if err != nil {

@@ -1667,11 +1667,11 @@ const (
 	precIfExpr  = 3
 	precOr      = 4
 	precAnd     = 5
-	precBitOr   = 6
-	precBitXor  = 7
-	precBitAnd  = 8
-	precEq      = 9
-	precCmp     = 10
+	precEq      = 6
+	precCmp     = 7
+	precBitOr   = 8
+	precBitXor  = 9
+	precBitAnd  = 10
 	precShift   = 11
 	precAdd     = 12
 	precMul     = 13
@@ -1679,6 +1679,29 @@ const (
 	precUnary   = 15
 	precPrimary = 16
 )
+
+func isBitwiseOp(op string) bool { return op == "&" || op == "|" || op == "^" }
+
+func isComparisonOp(op string) bool {
+	switch op {
+	case "==", "!=", "<", "<=", ">", ">=":
+		return true
+	}
+	return false
+}
+
+// operandPrec is the precedence to format operand of the binary op at. Where
+// a bitwise operator and a comparison meet, the operand keeps its
+// parentheses, so the grouping does not depend on the reader's memory of the
+// table.
+func operandPrec(op string, operand ast.Expr, base int) int {
+	if c, ok := operand.(*ast.Binary); ok {
+		if isBitwiseOp(op) && isComparisonOp(c.Op) || isComparisonOp(op) && isBitwiseOp(c.Op) {
+			return precPrimary
+		}
+	}
+	return base
+}
 
 func binaryPrec(op string) int {
 	switch op {
@@ -1851,7 +1874,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
-		f.formatExpr(x.Left, p)
+		f.formatExpr(x.Left, operandPrec(x.Op, x.Left, p))
 		if writtenBreak(x) {
 			f.emitTrailing(lastLine(x.Left))
 			f.b.WriteByte('\n')
@@ -1864,7 +1887,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		}
 		f.b.WriteString(x.Op)
 		f.b.WriteByte(' ')
-		f.formatExpr(x.Right, p+1)
+		f.formatExpr(x.Right, operandPrec(x.Op, x.Right, p+1))
 		if needsParens {
 			f.b.WriteByte(')')
 		}

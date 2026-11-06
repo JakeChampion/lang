@@ -101,20 +101,20 @@ except where noted.
 | 4          | `*` `/` `%` `*\|` `*?` `/?` `%?` | left         |
 | 5          | `+` `-` `+\|` `-\|` `+?` `-?`   | left          |
 | 6          | `<<` `>>` `<<\|` `<<?` `>>?`     | left          |
-| 7          | `<` `<=` `>` `>=`               | left          |
-| 8          | `==` `!=`                       | left          |
-| 9          | `&`                             | left          |
-| 10         | `^`                             | left          |
-| 11         | `\|`                            | left          |
+| 7          | `&`                             | left          |
+| 8          | `^`                             | left          |
+| 9          | `\|`                            | left          |
+| 10         | `<` `<=` `>` `>=`               | left          |
+| 11         | `==` `!=`                       | left          |
 | 12         | `&&`                            | left          |
 | 13         | `\|\|`                          | left          |
 | 14         | `..` `..=`                      | none          |
 | 15         | `\|>`                           | left          |
 | 16 (lowest)| `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | right |
 
-The bitwise operators bind **looser** than comparison, as in C:
-`a & 3 == 2` parses as `a & (3 == 2)` and is a type error, so write
-`(a & 3) == 2`. A cast binds tighter than unary minus, so `-a as i64` is
+The bitwise operators bind **tighter** than comparison, as in Rust, Go and
+Zig: `a & 3 == 2` is `(a & 3) == 2`. The formatter writes the parentheses
+where a bitwise operator and a comparison meet, so the grouping is visible. A cast binds tighter than unary minus, so `-a as i64` is
 `-(a as i64)`, and a range takes whole arithmetic operands:
 `0..n + 1` is `0..(n + 1)`.
 
