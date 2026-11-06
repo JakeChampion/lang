@@ -1,5 +1,5 @@
-# 2026-10-31: PR #13897 at 16e65aa. CI run 41151971877, driver-sizes-x86_64.
-# The stage-2 compiler image measured 15858592 bytes after the lifetime and shared-helper repairs.
+# 2026-11-06: PR #14323 at da7bfc6a. CI run 42228921110, driver-sizes-x86_64.
+# Every row is the measured value. fern.fern was 5.2% over its baseline.
 # Sizes, in BYTES, of the self-host driver binaries CI already builds, plus
 # the compiler's own output for itself — checked against every run by
 # scripts/ci-check-driver-sizes (#6826).
@@ -588,14 +588,14 @@
 # 2026-10-30 (#13910): all 11 rows measured by CI 41084272131 with
 # stage0-20261030-7cf0706, after the pin refresh and the consuming close.
 # 2026-10-31 (#13921): five rows measured by the driver-sizes-x86_64 lane after the pin refresh to stage0-20261031-0c1f501 (asm_modload_run, asm_ir_run, asm_run, asm_pathprobe_run, checker_modload_run, each 5.5% to 7.5% larger).
-fern.fern/stage2 15881456
-fern.fern 15853232
-drivers/asm_load_run.fern 12721632
-drivers/asm_modload_run.fern 11425488
-drivers/asm_ir_run.fern 11018128
-drivers/asm_run.fern 10189728
-drivers/wasm_ir_run.fern 9815536
-drivers/wasm_run.fern 9823760
-drivers/wasm_runio_run.fern 9805056
-drivers/asm_pathprobe_run.fern 6589808
-drivers/checker_modload_run.fern 3717520
+fern.fern/stage2 16523824
+fern.fern 16677296
+drivers/asm_load_run.fern 13032192
+drivers/asm_modload_run.fern 11675824
+drivers/asm_ir_run.fern 11285904
+drivers/asm_run.fern 10413664
+drivers/wasm_ir_run.fern 10045440
+drivers/wasm_run.fern 10055664
+drivers/wasm_runio_run.fern 10033568
+drivers/asm_pathprobe_run.fern 6495120
+drivers/checker_modload_run.fern 3729936
