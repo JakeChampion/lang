@@ -38,7 +38,8 @@ On x86-64 the push calls `__fern_scrub`, which uses `rep stosq`. On arm64 the pu
 The release build does not change.
 
 A `scripts/profile-costs` run measures the cost of the hardened profile.
-Each hardened image grows by 128 to 288 bytes, and by 43 to 73 emitted lines.
+The affected hardened images grow by 128 to 288 bytes, and by 43 to 73 emitted lines.
+The other hardened images and the diagnostic images do not change on the same inputs.
 On x86-64 the instructions that Valgrind counts grow by these amounts. Valgrind counts each word of `rep stosq` as one instruction.
 
 | Program | Instructions |
