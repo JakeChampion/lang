@@ -333,6 +333,7 @@ func (p *parser) parseProgram() *ast.Program {
 		inlineHint := ast.InlineHintNone
 		attrName := ""
 		provides := ""
+		noRC := false
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -355,6 +356,7 @@ func (p *parser) parseProgram() *ast.Program {
 			inlineHint = attr.inlineHint
 			attrName = attr.name
 			provides = attr.provides
+			noRC = attr.noRC
 		}
 		isPub := false
 		isPackage := false
@@ -626,6 +628,7 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.Async = isAsync
 			fn.InlineHint = inlineHint
 			fn.Provides = provides
+			fn.NoRC = noRC
 			if importIface != "" {
 				if fn.Body != nil {
 					attr := "@import"
@@ -1135,6 +1138,7 @@ type declAttr struct {
 	tryMarker   bool
 	inlineHint  ast.InlineHint
 	provides    string
+	noRC        bool
 }
 
 func (p *parser) parseAttribute() (declAttr, error) {
@@ -1178,6 +1182,8 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		return declAttr{name: attr, inlineHint: ast.InlineHintAlways}, nil
 	case "noinline":
 		return declAttr{name: attr, inlineHint: ast.InlineHintNever}, nil
+	case "norc":
+		return declAttr{name: attr, noRC: true}, nil
 	case "import", "export", "jni":
 		iface, name, err := p.parseIfaceNamePair()
 		if err != nil {
@@ -1203,7 +1209,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{name: attr, provides: capability}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
@@ -1237,6 +1243,8 @@ func attrMisplaced(name string) string {
 		return "@callback only applies to a function declaration"
 	case "provide":
 		return "@provide only applies to a function declaration"
+	case "norc":
+		return "@norc only applies to a function declaration"
 	}
 	return "@inline / @noinline only applies to a function declaration"
 }

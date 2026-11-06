@@ -848,6 +848,10 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.Provides)
 		f.b.WriteString("\")\n")
 	}
+	if fn.NoRC {
+		f.indent(depth)
+		f.b.WriteString("@norc\n")
+	}
 	if fn.ImportIface == ast.CallbackIface {
 		f.indent(depth)
 		f.b.WriteString("@callback(\"")

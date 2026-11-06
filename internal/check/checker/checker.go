@@ -3012,6 +3012,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
+	c.checkNoRCFunctions(prog)
 	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
