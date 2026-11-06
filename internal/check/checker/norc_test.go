@@ -26,6 +26,11 @@ function sum(n: i32): i32 {
   put(t);
   return t as i32;
 }
+@norc
+function after_shadow(): i32 {
+  if (true) { let sum = 1; }
+  return sum(2);
+}
 function main(): i32 { return sum(5) - 10; }
 `
 	if errs := checkErrors(t, src); len(errs) != 0 {
@@ -90,4 +95,51 @@ function main(): i32 { return 0; }
 		}
 	}
 	t.Error("a @norc method was accepted")
+}
+
+func TestNoRCRefusesFunctionValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"shadowed callee", "let allowed = allocating; return allowed();", "may not call a method or a function value"},
+		{"inferred function value", "let value = allowed; return 0;", `uses "allowed" of type () => i32, which is not a scalar`},
+		{"bare function value", "allowed; return 0;", `uses "allowed" of type () => i32, which is not a scalar`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "@norc\nfunction allowed(): i32 { return 1; }\n" +
+				"function allocating(): i32 { let xs = [1]; return xs.len(); }\n" +
+				"@norc\nfunction bad(): i32 { " + tc.body + " }\n" +
+				"function main(): i32 { return 0; }\n"
+			errs := checkErrors(t, src)
+			for _, err := range errs {
+				if err.ErrCode == "E102" && strings.HasSuffix(err.Msg, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("want E102 ending %q, got %v", tc.want, errs)
+		})
+	}
+}
+
+func TestNoRCRefusesNonScalarReads(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prelude string
+		body    string
+		want    string
+	}{
+		{"enum", "enum Kind { One, Two }", "One;", `uses "One" of type Kind, which is not a scalar`},
+		{"constant after local scope", `const text: string = "heap";`, "if (true) { let text = 1; } text;", `uses "text" of type string, which is not a scalar`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tc.prelude + "\n@norc\nfunction bad(): i32 { " + tc.body +
+				" return 0; }\nfunction main(): i32 { return 0; }\n"
+			errs := checkErrors(t, src)
+			if len(errs) != 1 || errs[0].ErrCode != "E102" || !strings.HasSuffix(errs[0].Msg, tc.want) {
+				t.Fatalf("want one E102 ending %q, got %v", tc.want, errs)
+			}
+		})
+	}
 }

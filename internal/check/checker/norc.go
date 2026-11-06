@@ -62,9 +62,7 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 		bad(fn.P, "must be a plain function, not a method or a generic function")
 		return
 	}
-	locals := map[string]bool{}
 	for _, p := range fn.Params {
-		locals[p.Name] = true
 		if !noRCScalar(p.Type) {
 			bad(p.NamePos, "takes %q of type %s, which is not a scalar", p.Name, p.Type)
 		}
@@ -75,10 +73,10 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 	if fn.Body == nil {
 		return
 	}
-	ast.Walk(fn.Body, func(n ast.Node) bool {
+	var visit func(ast.Node) bool
+	visit = func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
-			locals[x.Name] = true
 			if x.WasAnnotated && !noRCScalar(x.Type) {
 				bad(x.P, "declares %q of type %s, which is not a scalar", x.Name, x.Type)
 			}
@@ -99,21 +97,22 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 				return false
 			}
 		case *ast.Ident:
-			if !locals[x.Name] {
-				if t, ok := c.constTypes[x.Name]; ok && !noRCScalar(t) {
-					bad(x.P, "uses %q of type %s, which is not a scalar", x.Name, t)
-				}
+			if t := c.noRCIdentTypes[x]; t != nil && !noRCScalar(t) {
+				bad(x.P, "uses %q of type %s, which is not a scalar", x.Name, t)
 			}
 		case *ast.CastExpr:
 			if !noRCScalar(x.Target) {
 				bad(x.P, "casts to %s, which is not a scalar", x.Target)
 			}
 		case *ast.Call:
-			if id, ok := x.Callee.(*ast.Ident); ok && x.Method == nil {
+			if id, ok := x.Callee.(*ast.Ident); ok && x.Method == nil && !id.Local {
 				if !callable[id.Name] {
 					bad(x.P, "may call only `@norc` functions and the raw memory intrinsics, not %q", id.Name)
 				}
-				return true
+				for _, arg := range x.Args {
+					ast.Walk(arg, visit)
+				}
+				return false
 			}
 			bad(x.P, "may not call a method or a function value")
 			return false
@@ -149,5 +148,6 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 			return false
 		}
 		return true
-	})
+	}
+	ast.Walk(fn.Body, visit)
 }
