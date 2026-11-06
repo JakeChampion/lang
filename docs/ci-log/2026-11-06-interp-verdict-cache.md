@@ -26,6 +26,10 @@ package, whose embedded self-host sources `-interp` does not read. A
 compiler-only change therefore keeps every verdict. Of the last 76 merges on
 main, 23 changed Go code that the interpreter links, and 16 changed the stdlib.
 
+When `FERN_BIN` is set, the harness bypasses the verdict cache. The binary
+suite executes that external program, which can change at the same path.
+The environment value alone cannot identify its behavior.
+
 Each `selfhost-stdtest` leg restores and saves the verdict files through the
 Actions cache. With a warm cache, four cases took 10.8 seconds in place of
 128 seconds on the dev container.

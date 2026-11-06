@@ -21,23 +21,28 @@ import (
 const fernModulePath = "github.com/jakechampion/lang"
 
 // InterpVerdict runs `interpBin -interp src` and returns its stdout and exit
-// status. With FERN_SELFHOST_BUILD_CACHE set, the verdict is kept there,
-// keyed by every input the Go interpreter reads: the Go sources and embedded
-// files of the packages cmd/fern links (less the compiler sources it embeds
-// for -target), the source's relative import closure, and the FERN_*
-// environment.
+// status. FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the Go
+// interpreter's source and embedded files, the suite's relative import closure,
+// and the FERN_* environment. It excludes the compiler package's embedded
+// self-host sources, which -interp does not read.
+// FERN_BIN suites also run an external executable. Run them
+// without the verdict cache because that executable can change at the same path.
 func InterpVerdict(t testing.TB, interpBin, src string) ([]byte, int) {
 	t.Helper()
-	key, err := interpVerdictKey(src)
-	if err != nil {
-		t.Fatalf("interpreter verdict key for %s: %v", src, err)
-	}
-	if out, exit, ok := readInterpVerdict(key); ok {
-		return out, exit
+	var key string
+	if os.Getenv("FERN_BIN") == "" {
+		var err error
+		key, err = interpVerdictKey(src)
+		if err != nil {
+			t.Fatalf("interpreter verdict key for %s: %v", src, err)
+		}
+		if out, exit, ok := readInterpVerdict(key); ok {
+			return out, exit
+		}
 	}
 	var out []byte
 	exit := 0
-	err = WithBuildMemoryMB(1024, func() error {
+	err := WithBuildMemoryMB(1024, func() error {
 		var runErr error
 		out, runErr = exec.Command(interpBin, "-interp", src).Output()
 		var ee *exec.ExitError
@@ -50,7 +55,9 @@ func InterpVerdict(t testing.TB, interpBin, src string) ([]byte, int) {
 	if err != nil {
 		t.Fatalf("interpreter on %s: %v", src, err)
 	}
-	writeInterpVerdict(key, out, exit)
+	if key != "" {
+		writeInterpVerdict(key, out, exit)
+	}
 	return out, exit
 }
 
