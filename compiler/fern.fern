@@ -2663,12 +2663,10 @@ function manifest_candidate(b: u8[], start: i32, end: i32): boolean {
   if (end >= b.len() || b[end] != b'\n' || b[start + 7] == b' ') {
     return false;
   }
-  let k = start;
-  while (k < end) {
+  for k in start..end {
     if (b[k] < 32 || b[k] > 126) {
       return false;
     }
-    k += 1;
   }
   return true;
 }
