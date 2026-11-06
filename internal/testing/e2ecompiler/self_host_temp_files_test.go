@@ -101,6 +101,26 @@ const cloexecSrc = `function main(): i32 {
 }
 `
 
+// The same probe through proc_fork and proc_exec, which subprocess does not
+// use. The child writes its listing to the stdout it shares with the parent.
+const cloexecForkSrc = `function main(): i32 {
+  let path: string = args()[1];
+  match (open_reader(path)) {
+    Ok(r) => {
+      let pid: i32 = proc_fork();
+      if (pid == 0) {
+        proc_exec("/bin/sh", ["-c", "ls -l /proc/self/fd"]);
+        return 71;
+      }
+      print("child exit " + proc_waitpid(pid).to_string());
+      match (r.close()) { Ok(_) => { }, Err(_) => { } }
+    },
+    Err(_) => { print("open err"); }
+  }
+  return 0;
+}
+`
+
 var tempNameRe = regexp.MustCompile(`^/tmp/sec-[0-9a-f]{16}$`)
 
 func TestSelfHostTempFiles(t *testing.T) {
@@ -247,6 +267,23 @@ func TestSelfHostTempFiles(t *testing.T) {
 				}
 				out := run(t, target, build(t, target, "cloexec", cloexecSrc), secret)
 				if !strings.Contains(out, "child exit 0") || !strings.Contains(out, "/proc/self/fd") && !strings.Contains(out, "->") {
+					t.Fatalf("the child did not list its descriptors:\n%s", out)
+				}
+				if strings.Contains(out, secret) {
+					t.Errorf("the child inherited the open file:\n%s", out)
+				}
+			})
+			t.Run("close-on-exec-fork", func(t *testing.T) {
+				if target == "arm64-linux" {
+					t.Skip("the child is a host shell; QEMU user mode keeps descriptors of its own open in it")
+				}
+				d := t.TempDir()
+				secret := filepath.Join(d, "held-open.txt")
+				if err := os.WriteFile(secret, []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				out := run(t, target, build(t, target, "cloexecfork", cloexecForkSrc), secret)
+				if !strings.Contains(out, "child exit 0") || !strings.Contains(out, "->") {
 					t.Fatalf("the child did not list its descriptors:\n%s", out)
 				}
 				if strings.Contains(out, secret) {

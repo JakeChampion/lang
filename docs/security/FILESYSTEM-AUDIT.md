@@ -60,6 +60,7 @@ The self-hosted interpreter reaches the entry through the descriptor's `/proc` l
 - `names`: three `temp_dir` calls and two `io.temp_file` calls must print distinct names that match `/tmp/sec-[0-9a-f]{16}`. Each directory must have mode 0700. Each file must be a regular file with mode 0600 and the six written bytes. The call must refuse a prefix with a separator with errno 22.
 - `symlinks`: the directory holds a file, a link to it, and a dangling link. `open_exclusive` must answer `AlreadyExists` for both links and must not create the dangling link's target. `open_reader_with` with the no-follow bit must answer errno 40 for the link and succeed for the file. `open_reader` must follow the link, which is the control.
 - `close-on-exec`: a program that holds a file open runs `/bin/sh -c 'ls -l /proc/self/fd'` through `subprocess`, and the child's listing must not name the file. Before the change the listing named it. The case runs natively on x86-64, because a host shell under QEMU user mode lists descriptors QEMU itself holds.
+- `close-on-exec-fork`: the same probe through `proc_fork` and `proc_exec`, which `subprocess` does not use. The child's listing must not name the file. It runs natively on x86-64 for the same reason.
 
 The `DirHandle` tests in `internal/testing/e2e` run on both native targets and under the Go oracle.
 Their `open_under` function reads a file through the handle and names a missing entry.
@@ -80,5 +81,4 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostTempFiles' -count=1 -ti
 ## Remaining limits
 
 - A plain `open_writer` follows a symbolic link, including a dangling one, and creates its target. A caller that writes into a directory other users can write uses `open_exclusive` or the no-follow bit.
-- `subprocess` makes its capture pipes the child's standard streams with `dup2`, as intended. The test does not cover `proc_exec` after `proc_fork`, which runs the same `execve`.
 - Ownership of a descriptor after `close` is the gap recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md).
