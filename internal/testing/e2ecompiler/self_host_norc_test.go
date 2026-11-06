@@ -50,8 +50,8 @@ function f(s: string, n: i32): i32 {
   let xs: i32[] = [1, 2];
   let t = "hi";
   let u = helper(n);
-  while (u < n) {
-    u += 1;
+  for i in 0..n {
+    u += i;
   }
   return u + xs.len();
 }
@@ -100,6 +100,7 @@ func TestSelfHostNoRCRefusesEachBreach(t *testing.T) {
 		"bad.fern:7:19: error[E102]: `@norc` function \"f\" may not use an array literal",
 		"bad.fern:8:11: error[E102]: `@norc` function \"f\" may not use a string",
 		"bad.fern:9:17: error[E102]: `@norc` function \"f\" may call only `@norc` functions and the raw memory intrinsics, not \"helper\"",
+		"bad.fern:10:3: error[E102]: `@norc` function \"f\" may not use a `for` loop, which iterates a value; use `while`",
 		"bad.fern:13:20: error[E102]: `@norc` function \"f\" may not call a method or a function value",
 	} {
 		if !strings.Contains(string(out), want) {

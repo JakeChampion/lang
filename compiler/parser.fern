@@ -5832,6 +5832,7 @@ function parse_loop_stmt(p: Par): (ast.Stmt, Par) {
 }
 
 function parse_for_stmt(p: Par): (ast.Stmt, Par) {
+  let for_col = p.peek_col();
   p = p.advance();
   if (p.peek_punct() == "(") {
     let cfl = p.peek_line();
@@ -5905,7 +5906,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     p = kvi_p.with_no_struct(kv_saved);
     let (kvb_body, kvb_p) = parse_block(p);
     p = kvb_p;
-    return (ast.StmtFor { var_name: kvnames, iter: kvi_expr, body: kvb_body, label: "", line: 0, col: kv_open.peek_col() }, p);
+    return (ast.StmtFor { var_name: kvnames, iter: kvi_expr, body: kvb_body, label: "", line: 0, col: for_col }, p);
   }
   let fpre: ast.Stmt[] = [];
   let fvar = "";
@@ -5973,7 +5974,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     fpre = fpre.append(fb_body[fbi]);
     fbi += 1;
   }
-  return (s_for(fvar, iter_expr, fpre), p);
+  return (ast.StmtFor { var_name: fvar, iter: iter_expr, body: fpre, label: "", line: 0, col: for_col }, p);
 }
 
 function for_refused(p: Par, kind: string): (ast.Stmt, Par) {
