@@ -763,11 +763,13 @@ pub function dedupe_weak_defs(asm_text: string): string {
 const BUF_CALL_SYMS: string[] = [
   "__fern_buf_take", "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8", "__fern_buf_push_bytes_range",
   "__fern_buf_push_bytes_range_u8", "__fern_buf_push_decimal", "__fern_buf_push_base64",
-  "__fern_buf_push_base32", "__fern_buf_decode_base32",
+  "__fern_buf_push_base32", "__fern_buf_decode_base32", "__fern_buf_push_mapped", "__fern_buf_push_filtered",
+  "__fern_buf_push_expanded",
 ];
 
 const BUF_CALL_NEEDS: string[] = [
-  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64", "buf_base32", "buf_decode32",
+  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64", "buf_base32", "buf_decode32", "buf_table", "buf_table",
+  "buf_table",
 ];
 
 // The runtime pieces a call to the buffer helper `sym` needs.
@@ -787,13 +789,7 @@ function buf_call_need(sym: string): string {
     }
   }
   if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
-    if (util.str_has_suffix(sym, "_u8")) {
-      return "buf_bytes_u8";
-    }
     return "buf_bytes";
-  }
-  if (util.str_has_suffix(sym, "_u8")) {
-    return "buf_u8";
   }
   return "";
 }
@@ -843,9 +839,6 @@ pub function buf_table_helper(kind: i32, packed: boolean): string {
   }
   if (packed && kind == 351) {
     return "__fern_buf_push_bytes_range_u8";
-  }
-  if (packed && (kind == 325 || kind == 326 || kind == 328 || kind == 370 || kind == 371 || kind == 372)) {
-    return buf_helper(kind) + "_u8";
   }
   return buf_helper(kind);
 }
@@ -3816,6 +3809,9 @@ function builtin_i32_names(): string[] {
     "__crc32_cksum",
     "__mismatch",
     "__load_i32",
+    "__mmio_load8",
+    "__mmio_load16",
+    "__mmio_load32",
     "buf_new",
     "buf_len",
     "exit",
@@ -4024,7 +4020,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__fern_str_eq") {
     return ty_bool();
   }
-  if (id.name == "__load_i64") {
+  if (id.name == "__load_i64" || id.name == "__mmio_load64") {
     return ty_i64();
   }
   if (id.name == "__heap_bump_bytes") {
@@ -4600,7 +4596,7 @@ function direct_need_deps(name: string): string[] {
     let dbuf: string[] = ["heap", "memcpy"];
     return dbuf;
   }
-  if (name == "buf_u8" || name == "buf_bytes" || name == "buf_bytes_u8") {
+  if (name == "buf_table" || name == "buf_bytes") {
     let dbu8: string[] = ["buf", "heap"];
     return dbu8;
   }
@@ -6446,7 +6442,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
-    "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8",
     "__fern_args", "__fern_arg_at",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
     "__fn___fern_str_own", "__fn___fern_str_borrow", "__fn___fern_str_grow", "__fn___fern_str_grow_range",

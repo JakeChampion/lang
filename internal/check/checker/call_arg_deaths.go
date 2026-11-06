@@ -10,6 +10,10 @@ import (
 func StmtReferencesName(st ast.Node, name string) bool {
 	found := false
 	ast.Walk(st, func(n ast.Node) bool {
+		if lm, ok := n.(*ast.Lambda); ok {
+			found = found || lambdaFreeNames(lm)[name]
+			return false
+		}
 		if id, ok := n.(*ast.Ident); ok && id.Name == name {
 			found = true
 		}
@@ -52,6 +56,19 @@ func LambdaNames(body ast.Node) map[string]bool {
 	return escapingNames(body, false)
 }
 
+func lambdaFreeNames(lm *ast.Lambda) map[string]bool {
+	names := map[string]bool{}
+	w := &ast.ScopeWalker{}
+	w.Visit = func(slot *ast.Expr, w *ast.ScopeWalker) bool {
+		if id, ok := (*slot).(*ast.Ident); ok && !w.IsBound(id.Name) {
+			names[id.Name] = true
+		}
+		return true
+	}
+	w.WalkFunc(&ast.FuncDecl{Params: lm.Params, Body: lm.Body})
+	return names
+}
+
 func escapingNames(body ast.Node, withDefer bool) map[string]bool {
 	esc := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
@@ -63,7 +80,10 @@ func escapingNames(body ast.Node, withDefer bool) map[string]bool {
 			}
 			sub = d.Expr
 		case *ast.Lambda:
-			sub = n
+			for name := range lambdaFreeNames(d) {
+				esc[name] = true
+			}
+			return false
 		default:
 			return true
 		}
@@ -1922,6 +1942,9 @@ func liveAfterBinding(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, o
 	}
 	later := false
 	ast.Walk(st, func(m ast.Node) bool {
+		if lm, ok := m.(*ast.Lambda); ok && !lambdaFreeNames(lm)[aid.Name] {
+			return false
+		}
 		if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
 			later = true
 		}
@@ -2200,6 +2223,9 @@ func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder
 	later := false
 	for _, st := range f.stmts[f.idx:] {
 		ast.Walk(st, func(m ast.Node) bool {
+			if lm, ok := m.(*ast.Lambda); ok && !lambdaFreeNames(lm)[aid.Name] {
+				return false
+			}
 			if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > at {
 				later = true
 			}
