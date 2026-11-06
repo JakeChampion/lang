@@ -30964,6 +30964,37 @@ function lit_struct_read(e: ast.Expr, s: Scope): boolean {
   return false;
 }
 
+// lit_marked_read is true for a read of a local whose type holds an integer
+// literal, such as `bytes` after `let bytes = [1, 2];`.
+function lit_marked_read(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprIdent(id) = e {
+    return lit_marked(s.lookup(id.name));
+  }
+  return false;
+}
+
+function lit_marked(t: typeinfo.Type): boolean {
+  if (lit_id(t) >= 0) {
+    return true;
+  }
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return lit_marked(a.elem);
+    },
+    typeinfo.TypeTuple(tt) => {
+      for el in tt.elements {
+        if (lit_marked(el)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
 // An open enum local is an unannotated local whose type holds a generic
 // enum with no type arguments, such as `let e = Empty;`. Its first use at a
 // known type writes that type on the local.
@@ -31434,7 +31465,7 @@ function lit_union_demand(e: ast.Expr, wu: typeinfo.TypeUnion, s: Scope, st: Lit
         out = lit_type_demand(have.args[j], wu.args[j], out);
         j += 1;
       }
-      return out;
+      return lit_other_demand(e, wu, s, out);
     }
   }
   return lit_other_demand(e, wu, s, st);
@@ -31791,7 +31822,7 @@ function variant_payload_types(c: ast.ExprCall, s: Scope): typeinfo.Type[] {
 // settle from the parameter type.
 function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
   let (seed, ids) = lit_tree(arg, s, []);
-  return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s);
+  return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s) || lit_marked_read(arg, s);
 }
 
 // lit_open_receiver gives an open map local the key and value types that a

@@ -6,6 +6,15 @@ function sum(bytes: u8[]): i32 {
   return total;
 }
 
+function keep(bytes: u8[]): u8[] {
+  return bytes;
+}
+
+function wrapped(): Option[u8[]] {
+  let bytes = [1, 2];
+  return Some(keep(bytes));
+}
+
 function main(): i32 {
   let bytes = [120, 156];
   let b: u8 = 255;
@@ -13,6 +22,12 @@ function main(): i32 {
   bytes = bytes.with(0, b);
   if (sum(bytes) != 666) {
     return 1;
+  }
+  let Some(kept) = wrapped() else {
+    return 2;
+  };
+  if (sum(kept) != 3) {
+    return 3;
   }
   print("ok");
   return 0;
