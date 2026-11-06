@@ -43,15 +43,7 @@ func TestSelfHostArm64DarwinHTTPHandlerCensus(t *testing.T) {
 func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string, client func(*testing.T, *exec.Cmd, int) string, rounds int) {
 	t.Helper()
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	src := filepath.Join(dir, "server.fern")
 	if err := os.WriteFile(src, []byte(e2eharness.HTTPHandlerCensusSource(t, "../../..", rounds)), 0o644); err != nil {
 		t.Fatal(err)

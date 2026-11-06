@@ -26,16 +26,7 @@ func TestSelfHostArm64DarwinSocketSetupReclaimsDescriptors(t *testing.T) {
 
 func checkSelfHostSocketSetup(t *testing.T, targets []string) {
 	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build host compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	connectErrno := e2eharness.NativeSocketConnectError(t)
 	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {

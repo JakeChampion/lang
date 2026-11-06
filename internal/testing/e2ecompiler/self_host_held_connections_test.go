@@ -15,16 +15,7 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 		t.Skip("requires the Linux x86-64 native target")
 	}
 	_, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	stdlib, err := filepath.Abs("../../stdlib")
 	if err != nil {
 		t.Fatal(err)

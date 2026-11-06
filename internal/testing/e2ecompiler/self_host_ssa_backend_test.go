@@ -779,12 +779,6 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 			ssaHostSkip = skip
 			return
 		}
-		fern := buildLangBinForInterp(t)
-		src, err := filepath.Abs("../../../compiler/fern.fern")
-		if err != nil {
-			ssaHostSkip = err.Error()
-			return
-		}
 		stdlib, err := filepath.Abs("../../stdlib")
 		if err != nil {
 			ssaHostSkip = err.Error()
@@ -795,12 +789,12 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 			ssaHostSkip = err.Error()
 			return
 		}
-		cli := filepath.Join(dir, "fern")
-		if out, err := exec.Command(fern, "-target", cliTarget, "-o", cli, src).CombinedOutput(); err != nil {
-			ssaHostErr = fmt.Sprintf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
-			return
-		}
-		ssaHost = ssaBackendHost{cli: cli, native: fern, targets: targets, stdlib: stdlib}
+		// A t.Fatal inside the build still completes the Once, so this stays set for later callers.
+		ssaHostErr = "building the self-host CLI for " + cliTarget + " failed in the first test that asked for it"
+		copySelfHostDriver(t, dir, "fern.fern")
+		cli := buildSelfHostBinFor(t, dir, "fern.fern", "fern", cliTarget)
+		ssaHostErr = ""
+		ssaHost = ssaBackendHost{cli: cli, native: buildLangBinForInterp(t), targets: targets, stdlib: stdlib}
 	})
 	if ssaHostErr != "" {
 		t.Fatal(ssaHostErr)
