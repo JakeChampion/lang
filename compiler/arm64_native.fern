@@ -9166,7 +9166,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     let colon = arm64_gas_label_colon(line);
     if (colon > 0) {
       let before = slice_unchecked(line, 0, colon);
-      if (arm64_gas_dlabel_idx(p, before + "") >= 0 || arm64_gas_bss_off(p, before + "") >= 0) {
+      if (!arm64_gas_is_digits(before + "") && (arm64_gas_dlabel_idx(p, before + "") >= 0 || arm64_gas_bss_off(p, before + "") >= 0 || section != 0 && arm64_asm_label_off(a, before + "") >= 0)) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("label " + before + " defined twice") };
       }
       if (arm64_data_like(section)) {

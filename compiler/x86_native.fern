@@ -6534,7 +6534,7 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
     if (name.len() == 0) {
       continue;
     }
-    if (x86_bucket_find(names, head, next, name) >= 0) {
+    if (!x86_gas_number_label(name) && x86_bucket_find(names, head, next, name) >= 0) {
       twice = twice.append(name);
     }
     let at = names.len();
@@ -6554,6 +6554,18 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
 
 function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
   return x86_bucket_find(labs.names, labs.head, labs.next, name);
+}
+
+function x86_gas_number_label(name: string): boolean {
+  if (name.len() == 0) {
+    return false;
+  }
+  for b in name {
+    if (b < b'0' || b > b'9') {
+      return false;
+    }
+  }
+  return true;
 }
 
 function x86_bucket_find(names: string[], head: i32[], next: i32[], name: string): i32 {
