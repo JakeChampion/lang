@@ -256,7 +256,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread and the window flags: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, the JNIEnv at 32, and the flags at 40.
 
-Only the UI thread can change the views of the activity. So `immersive` sets bit 0 of the flags, and the focus callback hides the system bars on the UI thread, through the JNIEnv of that thread at 16 of the activity. The window gets the focus after it shows, and again each time the user comes back to it.
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread at 16 of the activity. The window gets the focus after it shows, and again each time the user returns to it.
 
 The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
 
@@ -265,6 +265,8 @@ The offsets of the activity are the LP64 layout of `ANativeActivity`: the callba
 const CTX_SIZE: i32 = 48;
 
 const FLAG_IMMERSIVE: i32 = 1;
+
+const FLAG_IMMERSIVE_SET: i32 = 2;
 
 // View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY, FULLSCREEN, HIDE_NAVIGATION,
 // LAYOUT_STABLE, LAYOUT_FULLSCREEN and LAYOUT_HIDE_NAVIGATION.
@@ -384,33 +386,47 @@ function on_destroy(activity: usize): void {
 
 function on_focus(activity: usize, focused: i32): void {
   if (focused != 0) {
-    hide_bars(activity);
+    apply_system_bars(activity);
   }
   send(activity, FOCUS, focused as usize);
 }
 
-// Hides the status bar and the navigation bar when the app asked for it. It
-// runs on the UI thread.
-function hide_bars(activity: usize): void {
+// Applies the requested bar visibility on the UI thread.
+function apply_system_bars(activity: usize): void {
   unsafe {
     let ctx: usize = __load_ptr(activity + 56 as usize);
-    if (ctx == 0 as usize || (__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE) == 0) {
+    if (ctx == 0 as usize || (__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE_SET) == 0) {
       return;
+    }
+    let ui: i32 = 0;
+    let fullscreen: i32 = 0;
+    if ((__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE) != 0) {
+      ui = IMMERSIVE_UI;
+      fullscreen = 1024;
     }
     let e: usize = __load_ptr(activity + 16 as usize);
     let obj: usize = __load_ptr(activity + 24 as usize);
+    let activity_class: usize = jni.get_object_class(e, obj);
     let none: usize = jni.jvalue_alloc(0);
-    let window: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "getWindow", "()Landroid/view/Window;"), none);
-    let decor: usize = jni.call_object_method_a(e, window, jni.get_method_id(e, jni.get_object_class(e, window), "getDecorView", "()Landroid/view/View;"), none);
+    let window: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, activity_class, "getWindow", "()Landroid/view/Window;"), none);
+    let window_class: usize = jni.get_object_class(e, window);
+    let decor: usize = jni.call_object_method_a(e, window, jni.get_method_id(e, window_class, "getDecorView", "()Landroid/view/View;"), none);
     jni.free_buffer(none);
-    let args: usize = jni.jvalues([IMMERSIVE_UI as usize]);
-    let ignored: usize = jni.call_void_method_a(e, decor, jni.get_method_id(e, jni.get_object_class(e, decor), "setSystemUiVisibility", "(I)V"), args);
+    let window_args: usize = jni.jvalues([fullscreen as usize, 1024 as usize]);
+    let changed: usize = jni.call_void_method_a(e, window, jni.get_method_id(e, window_class, "setFlags", "(II)V"), window_args);
+    jni.free_buffer(window_args);
+    let decor_class: usize = jni.get_object_class(e, decor);
+    let args: usize = jni.jvalues([ui as usize]);
+    let ignored: usize = jni.call_void_method_a(e, decor, jni.get_method_id(e, decor_class, "setSystemUiVisibility", "(I)V"), args);
     jni.free_buffer(args);
     if (jni.exception_occurred(e) != 0 as usize) {
       let cleared: usize = jni.exception_clear(e);
     }
     let a: usize = jni.delete_local_ref(e, decor);
     let b: usize = jni.delete_local_ref(e, window);
+    let c: usize = jni.delete_local_ref(e, decor_class);
+    let d: usize = jni.delete_local_ref(e, window_class);
+    let f: usize = jni.delete_local_ref(e, activity_class);
   }
 }
 
@@ -665,7 +681,7 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
 // swipe from the edge shows the bars for a short time.
 pub function immersive(ctx: usize, on: boolean): void {
   unsafe {
-    let flags: i32 = __load_i32(ctx + 40 as usize);
+    let flags: i32 = __load_i32(ctx + 40 as usize) | FLAG_IMMERSIVE_SET;
     if (on) {
       __store_i32(ctx + 40 as usize, flags | FLAG_IMMERSIVE);
     } else {
@@ -679,9 +695,11 @@ pub function immersive(ctx: usize, on: boolean): void {
 pub function volume_stream(ctx: usize, stream: i32): void {
   let e: usize = env(ctx);
   let obj: usize = activity_object(ctx);
+  let class: usize = jni.get_object_class(e, obj);
   let args: usize = jni.jvalues([stream as usize]);
-  let ignored: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), "setVolumeControlStream", "(I)V"), args);
+  let ignored: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"), args);
   jni.free_buffer(args);
+  let deleted: usize = jni.delete_local_ref(e, class);
 }
 
 // The offset of the local time of the device from UTC, in milliseconds, at
