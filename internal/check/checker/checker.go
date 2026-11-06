@@ -93,6 +93,9 @@ type Info struct {
 	TryShapes           map[string]TryShape
 	AssocBindingPattern map[string]map[string]ast.Type
 	DynCoercions        map[ast.Expr]DynCoercion
+	// recheckOpenLocals: a map local settled after a use that the check
+	// passed over, so checkTarget checks the program again.
+	recheckOpenLocals bool
 }
 
 func (c *checker) tryEnumWithOk(t ast.EnumType, ok ast.Type) (ast.EnumType, bool) {
@@ -533,6 +536,9 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	}
 	expandVecImpls(prog)
 	info, err := checkImpl(ctx, prog, target)
+	if info != nil && info.recheckOpenLocals {
+		info, err = checkImpl(ctx, prog, target)
+	}
 	if info != nil {
 		info.Target = target
 	}
@@ -5750,6 +5756,7 @@ type checker struct {
 	litFields         map[*ast.FieldAccess]*litLocal
 	litCompositeReads map[*ast.Ident]*ast.Var
 	openEnumLocals    map[*ast.Var]*scope
+	openPassedOver    map[*ast.Var]bool
 	current           *ast.FuncDecl
 	loopDepth         int
 	unsafeDepth       int
@@ -9364,6 +9371,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	}
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
+	c.finishOpenEnumLocals()
 	if infer {
 		c.inferReturnType(fn, rets)
 	}
@@ -11598,6 +11606,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				got = widened
 			}
 			n.Type = got
+			if emptyMapLit(n.Init) {
+				n.Type = ast.StructType{Name: "Map"}
+			}
 			if litLocal {
 				s.bindVar(n.Name, n.Type, n)
 				c.info.VarTypes[n] = n.Type
@@ -14689,6 +14700,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var recvType ast.Type
 		var recvIsArg0 bool
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			c.settleOpenMapByCall(n, fa, s)
 			tt := c.receiverType(fa.Target, s)
 			recvFA, recvType = fa, tt
 			if tt == nil {
@@ -15523,6 +15535,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		c.expectedType = nil
 		c.elemHint = nil
+		if id, ok := n.Target.(*ast.Ident); ok && bareMap(lt) {
+			// A call of insert on the right side can give the map its type.
+			lt, _ = s.lookup(id.Name)
+		}
 		if id, ok := n.Target.(*ast.Ident); ok && c.litIdents[id] != nil {
 			if rn, ok := rt.(ast.NumberType); ok && !rn.Polymorphic {
 				c.fixLitLocal(c.litIdents[id], rn, n.P)
@@ -16000,7 +16016,11 @@ func (c *checker) receiverType(e ast.Expr, s *scope) ast.Type {
 		c.typedRecv, c.typedRecvType = nil, nil
 		return t
 	}
-	return c.checkExpr(e, s)
+	t := c.checkExpr(e, s)
+	if c.quietOpenReceiver(e) {
+		return nil
+	}
+	return t
 }
 
 func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast.Type {

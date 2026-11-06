@@ -6932,11 +6932,29 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (v.type_name.len() > 0) {
         return s.bind(v.name, var_declared_type(v, s));
       }
-      return s.bind_inferred(v, check_expr(v.init, rec_local_scope(v, s)));
+      let inferred = check_expr(v.init, rec_local_scope(v, s));
+      if (bare_map(inferred)) {
+        return s.bind(v.name, t_unknown("map without types"));
+      }
+      return s.bind_inferred(v, inferred);
     },
     _ => {}
   }
   return s;
+}
+
+// bare_map is a map type whose key or value type no expression gave, as the
+// type of an unannotated `let m = Map { };`.
+function bare_map(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeMap(m) = t {
+    return map_new_column(m.key) || map_new_column(m.value);
+  }
+  return false;
+}
+
+function map_new_column(t: typeinfo.Type): boolean {
+  let reason = unknown_reason(t);
+  return reason == MAP_NEW_KEY || reason == MAP_NEW_VALUE;
 }
 
 function check_block(body: ast.Stmt[], s: Scope): boolean {
@@ -17305,6 +17323,14 @@ function var_pattern_diags(v: ast.StmtVar, s: Scope, tuple_pattern: boolean): ut
   return out;
 }
 
+// An unannotated map local that settle_literal_locals could not give a type.
+function open_map_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
+  if (v.type_name.len() > 0 || !bare_map(check_expr(v.init, s))) {
+    return [];
+  }
+  return [dg_at("E020", "map \"" + v.name + "\" needs a type annotation: no use gives the types of its keys and values", v.line, v.col)];
+}
+
 function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], tuple_pattern: boolean): util.Diag[] {
   let out: util.Diag[] = [];
   let cur = s;
@@ -17331,6 +17357,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
         if (v.type_name.len() == 0 && int_literal_tree(v.init)) {
           out = util.append_diags(out, int_range_diags(v.init, "i64", false));
         }
+        out = util.append_diags(out, open_map_diags(v, cur));
         out = util.append_diags(out, var_pattern_diags(v, cur, tuple_pattern));
       },
       ast.StmtAssign(a) => {
@@ -30943,6 +30970,9 @@ function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
     typeinfo.TypeStruct(st) => {
       return any_open_enum(st.args, s);
     },
+    typeinfo.TypeMap(_) => {
+      return bare_map(t);
+    },
     typeinfo.TypeArray(a) => {
       return holds_open_enum(a.elem, s);
     },
@@ -31045,10 +31075,22 @@ function fill_open_enum(have: typeinfo.Type, want: typeinfo.Type): (typeinfo.Typ
       let (elems, ok) = fill_open_args(h.elements, w.elements);
       return (t_tuple(elems), ok);
     },
+    typeinfo.TypeMap(h) => {
+      return fill_open_map(h, want);
+    },
     _ => {
       return (have, true);
     }
   }
+}
+
+function fill_open_map(h: typeinfo.TypeMap, want: typeinfo.Type): (typeinfo.Type, boolean) {
+  let typeinfo.TypeMap(w) = want else {
+    return (want, false);
+  };
+  let key = if (map_new_column(h.key)) { w.key } else { h.key };
+  let value = if (map_new_column(h.value)) { w.value } else { h.value };
+  return (t_map(key, value), known_type(key) && known_type(value));
 }
 
 function fill_open_union(h: typeinfo.TypeUnion, want: typeinfo.Type): (typeinfo.Type, boolean) {
@@ -31078,6 +31120,9 @@ function known_type(t: typeinfo.Type): boolean {
     },
     typeinfo.TypeArray(a) => {
       return known_type(a.elem);
+    },
+    typeinfo.TypeMap(m) => {
+      return known_type(m.key) && known_type(m.value);
     },
     typeinfo.TypeTuple(tt) => {
       return all_known(tt.elements);
@@ -31118,6 +31163,9 @@ function open_spelling(t: typeinfo.Type): string {
       }
       return "(" + parts + ")";
     },
+    typeinfo.TypeMap(m) => {
+      return open_nominal("Map", [m.key, m.value]);
+    },
     _ => {
       return typeinfo.spelling(t);
     }
@@ -31148,6 +31196,13 @@ function open_spelling_list(ts: typeinfo.Type[]): string {
     out += one;
   }
   return out;
+}
+
+function unknown_reason(t: typeinfo.Type): string {
+  if let typeinfo.TypeUnknown(u) = t {
+    return u.reason;
+  }
+  return "";
 }
 
 function lit_open_fill(st: LitInfer, k: i32, want: typeinfo.Type): LitInfer {
@@ -31695,11 +31750,43 @@ function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
   return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s);
 }
 
+// lit_open_receiver gives an open map local the key and value types that a
+// call of insert or get_or passes to it, as a map literal takes them from its
+// entries.
+function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
+  let ast.ExprFieldAccess(fa) = c.callee else {
+    return st;
+  };
+  let ast.ExprIdent(id) = fa.obj else {
+    return st;
+  };
+  let k = lit_open_id(s.lookup(id.name));
+  if (k < 0 || !bare_map(st.otypes[k]) || c.args.len() != 2 || fa.field != "insert" && fa.field != "get_or") {
+    return st;
+  }
+  return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], s)), settled_literal(check_expr(c.args[1], s))));
+}
+
+// settled_literal is the type an untyped literal settles to by default.
+function settled_literal(t: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeI32(i) = t {
+    if (i.polymorphic) {
+      return t_i32();
+    }
+  }
+  if let typeinfo.TypeFloat(f) = t {
+    if (f.polymorphic) {
+      return typeinfo.TypeFloat { width: 64, polymorphic: false };
+    }
+  }
+  return t;
+}
+
 function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   if (parser.is_value_block(c)) {
     return lit_value_block(c, t_unknown("value block"), s, st);
   }
-  let out = lit_expr(c.callee, s, st);
+  let out = lit_expr(c.callee, s, lit_open_receiver(c, s, st));
   let reads = false;
   for arg in c.args {
     reads = reads || lit_arg_reads(arg, s);
