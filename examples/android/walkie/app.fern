@@ -8,6 +8,8 @@
 // the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/audio";
+import "std/android/p2p";
+import "std/android/service";
 import "std/hex";
 import "std/log";
 import "std/net";
@@ -55,8 +57,8 @@ struct App {
   drawn: string,
   asked: boolean,
   serving: boolean,
-  p2p: Option[android.P2p],
-  peers: android.P2pPeer[],
+  p2p: Option[p2p.Manager],
+  peers: p2p.Peer[],
   group_broadcast: Option[net.IpAddr],
   // The room of the internet mode, and the code that the user types.
   room: Option[internet.Room],
@@ -74,14 +76,14 @@ struct App {
   server: string,
   host_edit: Option[string],
   // The wake lock and the Wi-Fi lock, while the foreground service runs.
-  awake: Option[android.Awake],
+  awake: Option[service.Awake],
   // Whether the notification shows the phone as talking.
   noticed: boolean,
 }
 
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
 pub function direct_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
-  android.p2p_received(env, thiz, intent);
+  p2p.received(env, thiz, intent);
 }
 
 @jni("dev.fern.walkie.Talk extends android.app.Service", "android.os.IBinder onBind(android.content.Intent)")
@@ -91,15 +93,15 @@ pub function talk_bind(env: usize, thiz: usize, intent: usize): usize {
 
 @jni("dev.fern.walkie.Talk", "int onStartCommand(android.content.Intent, int, int)")
 pub function talk_command(env: usize, thiz: usize, intent: usize, flags: i32, id: i32): i32 {
-  return android.service_command(env, thiz, intent, notice(false));
+  return service.command(env, thiz, intent, notice(false));
 }
 
 // The notification of the service. Its TALK action talks while the app is
 // in the background, and a second tap stops.
-function notice(talking: boolean): android.Notice {
-  let n: android.Notice = android.Notice { channel: "walkie", channel_name: "Walkie-talkie", title: "Fern Walkie", text: "The walkie-talkie is on.", action: "Talk", stop: "Disconnect" };
+function notice(talking: boolean): service.Notice {
+  let n: service.Notice = service.Notice { channel: "walkie", channel_name: "Walkie-talkie", title: "Fern Walkie", text: "The walkie-talkie is on.", action: "Talk", stop: "Disconnect" };
   if (talking) {
-    return android.Notice { ...n, text: "Talking. The other phone hears you.", action: "Stop talking" };
+    return service.Notice { ...n, text: "Talking. The other phone hears you.", action: "Stop talking" };
   }
   return n;
 }
@@ -323,43 +325,52 @@ function lifecycle_event(own s: App, e: android.Event): App {
     android.Resume => {
       return resumed(s);
     },
-    android.ServiceAction => {
-      return toggle_talk(s);
-    },
-    android.ServiceStopped => {
-      return leave(App { ...s, serving: false });
-    },
     android.Destroy => {
       return destroyed(s);
     },
     _ => {
-      return direct_event(s, e);
+      return service_event(s, e);
+    }
+  }
+}
+
+// The actions of the notification of the foreground service.
+function service_event(own s: App, e: android.Event): App {
+  let Some(ev) = service.event(e) else {
+    return direct_event(s, e);
+  };
+  match (ev) {
+    service.Action => {
+      return toggle_talk(s);
+    },
+    service.Stopped => {
+      return leave(App { ...s, serving: false });
     }
   }
 }
 
 // The Wi-Fi Direct events.
 function direct_event(own s: App, e: android.Event): App {
-  match (e) {
-    android.P2pEnabled(on) => {
+  let Some(ev) = p2p.event(e) else {
+    return s;
+  };
+  match (ev) {
+    p2p.Enabled(on) => {
       log.info("walkie: Wi-Fi Direct " + on.to_string());
       return discover(s);
     },
-    android.P2pPeers(list) => {
+    p2p.Peers(list) => {
       return App { ...s, peers: list, drawn: "" };
     },
-    android.P2pGroup(g) => {
+    p2p.Group(g) => {
       return grouped(s, g);
-    },
-    _ => {
-      return s;
     }
   }
 }
 
 function discover(own s: App): App {
   if let Some(p) = s.p2p {
-    let started: boolean = android.p2p_discover(s.ctx, p);
+    let started: boolean = p2p.discover(s.ctx, p);
     log.info("walkie: looking for Wi-Fi Direct peers " + started.to_string());
   }
   return s;
@@ -382,7 +393,7 @@ function subnet_broadcast(owner: string): Option[net.IpAddr] {
   }
 }
 
-function grouped(own s: App, g: android.P2pGroup): App {
+function grouped(own s: App, g: p2p.Group): App {
   if (!g.formed) {
     log.info("walkie: no Wi-Fi Direct group");
     return App { ...s, group_broadcast: None, drawn: "" };
@@ -404,7 +415,7 @@ function start_direct(own s: App): App {
   if (!modes.uses_direct(s.mode) || s.p2p.is_some() || !android.has_permission(s.ctx, nearby_permission(s.ctx))) {
     return s;
   }
-  match (android.p2p_start(s.ctx, RECEIVER)) {
+  match (p2p.start(s.ctx, RECEIVER)) {
     Some(p) => {
       return discover(App { ...s, p2p: Some(p) });
     },
@@ -430,8 +441,8 @@ function invite(own s: App, k: i32): App {
   let Some(p) = s.p2p else {
     return s;
   };
-  let peer: android.P2pPeer = s.peers[k];
-  let sent: boolean = android.p2p_connect(s.ctx, p, peer.address);
+  let peer: p2p.Peer = s.peers[k];
+  let sent: boolean = p2p.connect(s.ctx, p, peer.address);
   log.info("walkie: invited " + peer.name + " " + sent.to_string());
   return App { ...s, node: node.noticed(s.node, "invited " + peer.name + ": accept on the other phone"), drawn: "" };
 }
@@ -446,13 +457,13 @@ function resumed(own s: App): App {
     android.request_permissions(s.ctx, [MIC, nearby]);
   }
   let serving: boolean = s.serving;
-  let awake: Option[android.Awake] = s.awake;
+  let awake: Option[service.Awake] = s.awake;
   if (mic && !serving) {
-    serving = android.start_service(s.ctx, SERVICE);
+    serving = service.start(s.ctx, SERVICE);
     log.info("walkie: foreground service " + serving.to_string());
   }
   if (serving && awake.is_none()) {
-    awake = Some(android.stay_awake(s.ctx, "fern:walkie"));
+    awake = Some(service.stay_awake(s.ctx, "fern:walkie"));
     log.info("walkie: awake with the screen off");
   }
   return start_direct(App { ...s, asked: true, serving: serving, awake: awake, drawn: "" });
@@ -479,13 +490,13 @@ function key(own s: App, code: i32, action: i32): App {
 // The activity is not valid after Destroy, so the service stops first.
 function destroyed(own s: App): App {
   if (s.serving) {
-    android.stop_service(s.ctx, SERVICE);
+    service.stop(s.ctx, SERVICE);
   }
   if let Some(p) = s.p2p {
-    android.p2p_stop(s.ctx, p);
+    p2p.stop(s.ctx, p);
   }
   if let Some(a) = s.awake {
-    android.release_awake(s.ctx, a);
+    service.release_awake(s.ctx, a);
   }
   return App { ...s, serving: false, p2p: None, awake: None };
 }
@@ -665,7 +676,7 @@ function drop_direct(own s: App): App {
     return s;
   }
   if let Some(p) = s.p2p {
-    android.p2p_stop(s.ctx, p);
+    p2p.stop(s.ctx, p);
   }
   return App { ...s, p2p: None, peers: [], group_broadcast: None };
 }
@@ -762,7 +773,7 @@ function sync_notice(s: App): App {
   if (!s.serving || s.pressed == s.noticed) {
     return s;
   }
-  android.update_notice(s.ctx, SERVICE, notice(s.pressed));
+  service.update(s.ctx, SERVICE, notice(s.pressed));
   return App { ...s, noticed: s.pressed };
 }
 

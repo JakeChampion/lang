@@ -579,6 +579,37 @@ pub function call_static_void_method_a(env: usize, clazz: usize, method: usize, 
   return call3(env, 143, clazz, method, args);
 }
 
+// Calls the object method `name` of `obj`, with the signature `sig` and the
+// arguments `values`, and gives its result.
+pub function call_object(env: usize, obj: usize, name: string, sig: string, values: usize[]): usize {
+  let args: usize = jvalues(values);
+  let got: usize = call_object_method_a(env, obj, get_method_id(env, get_object_class(env, obj), name, sig), args);
+  free_buffer(args);
+  return got;
+}
+
+// Calls the void method `name` of `obj`, with the signature `sig` and the
+// arguments `values`. It is false, and it clears the exception, when the
+// method throws.
+pub function call_void(env: usize, obj: usize, name: string, sig: string, values: usize[]): boolean {
+  let args: usize = jvalues(values);
+  let done: usize = call_void_method_a(env, obj, get_method_id(env, get_object_class(env, obj), name, sig), args);
+  free_buffer(args);
+  if (exception_occurred(env) != 0 as usize) {
+    exception_clear(env);
+    return false;
+  }
+  return true;
+}
+
+// The class `name`, in the Java form "a.b.C", loaded through the class
+// loader of `obj`. On Android, the classes of an app load only this way
+// from a thread that native code started.
+pub function load_class(env: usize, obj: usize, name: string): usize {
+  let loader: usize = call_object(env, obj, "getClassLoader", "()Ljava/lang/ClassLoader;", []);
+  return call_object(env, loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", [new_string(env, name)]);
+}
+
 // The text of the Java string `jstr`, or "" for null. JNI gives modified
 // UTF-8, and a byte that is not UTF-8 becomes U+FFFD.
 pub function string_of(env: usize, jstr: usize): string {
