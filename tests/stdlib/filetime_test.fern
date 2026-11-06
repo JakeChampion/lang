@@ -1,0 +1,103 @@
+import "std/clock";
+import "std/filetime";
+import "std/io";
+import "std/option";
+import "std/result";
+import "std/test";
+import "std/time";
+
+// A new temporary file, which the test removes.
+function file(): string {
+  match (io.temp_file("filetime-test")) {
+    Ok(t) => {
+      return t.path;
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function times(path: string): (time.Timestamp, time.Timestamp) {
+  match (stat(path)) {
+    Ok(s) => {
+      return (s.accessed(), s.modified());
+    },
+    Err(_) => {
+      return (time.timestamp_from_unix(-1), time.timestamp_from_unix(-1));
+    }
+  }
+}
+
+function text(t: time.Timestamp): string {
+  return t.sec.to_string() + "." + t.nsec.to_string();
+}
+
+function test_set(): test.TestOutcome {
+  let path = file();
+  let a = time.Timestamp { sec: 1650000000, nsec: 123456789 };
+  let m = time.Timestamp { sec: 1700000000, nsec: 987654321 };
+  let ok = filetime.set(path, a, m).is_ok();
+  let (got_a, got_m) = times(path);
+  let removed = remove_file(path);
+  return test.assert_eq(ok.to_string() + " " + text(got_a) + " " + text(got_m), "true 1650000000.123456789 1700000000.987654321");
+}
+
+function test_set_modified(): test.TestOutcome {
+  let path = file();
+  let a = time.timestamp_from_unix(1600000000);
+  let set = filetime.set(path, a, a);
+  let ok = filetime.set_modified(path, time.timestamp_from_unix(1700000000)).is_ok();
+  let (got_a, got_m) = times(path);
+  let removed = remove_file(path);
+  return test.assert_eq(ok.to_string() + " " + got_a.sec.to_string() + " " + got_m.sec.to_string(), "true 1600000000 1700000000");
+}
+
+function test_touch(): test.TestOutcome {
+  let path = file();
+  let old = time.timestamp_from_unix(1000000000);
+  let set = filetime.set(path, old, old);
+  let before = clock.now().sec;
+  let ok = filetime.touch(path).is_ok();
+  let (got_a, got_m) = times(path);
+  let removed = remove_file(path);
+  return test.assert_eq(ok.to_string() + " " + (got_a.sec >= before - 1).to_string() + " " + (got_m.sec >= before - 1).to_string(), "true true true");
+}
+
+function test_touch_needs_a_file(): test.TestOutcome {
+  let path = file();
+  let removed = remove_file(path);
+  return test.assert_eq(filetime.touch(path).is_err(), true);
+}
+
+function test_changed_and_created(): test.TestOutcome {
+  let path = file();
+  let before = clock.now().sec;
+  let set = filetime.set(path, time.timestamp_from_unix(1), time.timestamp_from_unix(1));
+  let changed: i64 = 0;
+  let created = "none";
+  match (stat(path)) {
+    Ok(s) => {
+      changed = s.changed().sec;
+      if let Some(c) = s.created() {
+        created = (c.sec >= before - 60).to_string();
+      }
+    },
+    Err(_) => {}
+  }
+  let removed = remove_file(path);
+  // The change of the times is a change of the metadata, so the status
+  // time is now. A file system that records no birth time gives none.
+  let ok = created == "none" || created == "true";
+  return test.assert_eq((changed >= before - 1).to_string() + " " + ok.to_string(), "true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/filetime");
+  r = r.it("set gives both times to the nanosecond", test_set);
+  r = r.it("set_modified keeps the access time", test_set_modified);
+  r = r.it("touch sets both times to the clock", test_touch);
+  r = r.it("touch does not make a file", test_touch_needs_a_file);
+  r = r.it("changed is the time of the last change, and created is the birth", test_changed_and_created);
+  return r.finish();
+}
