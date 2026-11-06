@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -22,15 +21,7 @@ func checkSelfHostWasmHTTPHandlerCensus(t *testing.T, client func(*testing.T, st
 	t.Helper()
 	e2eharness.Wasmtime(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
 	if err := os.WriteFile(src, []byte(e2eharness.WasiHTTPHandlerCensusSource(t, "../../..", rounds)), 0o644); err != nil {
 		t.Fatal(err)
