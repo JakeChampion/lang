@@ -346,7 +346,7 @@ function __peel(keys: string[], seed: u64, lay: Layout): Peeled {
     out_found = out_found.with(stack, found);
     stack += 1;
     let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
-    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let h012 = [h0, h1, h2, h0, h1];
     let other1 = h012[found + 1];
     alone = alone.with(q, other1);
     if (count[other1] >> 2 == 2) {
@@ -373,7 +373,7 @@ function __assign(p: Peeled, values: u64[], lay: Layout): u64[] {
   while (i >= 0) {
     let h = p.hashes[i];
     let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
-    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let h012 = [h0, h1, h2, h0, h1];
     let found = p.found[i];
     let target = h012[found];
     data = data.with(target, values[p.indices[i]] ^ data[h012[found + 1]] ^ data[h012[found + 2]]);

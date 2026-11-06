@@ -107,7 +107,7 @@ The index counts the codewords before `y` in an order that starts from the last 
 pub function index(y: [i32]): u32 {
   let n = y.len();
   let j = n - 1;
-  let i: u32 = 0u32;
+  let i = 0u32;
   if (y[j] < 0) {
     i = 1u32;
   }
@@ -191,7 +191,7 @@ pub function codeword(n: i32, k: i32, index: u32): (i32[], i32) {
     let st = front(n - dims, left, i);
     let val = signed(left - st.left, st.negative);
     y = y.append(val);
-    yy = yy + val * val;
+    yy += val * val;
     i = st.index;
     left = st.left;
   }
@@ -203,7 +203,7 @@ pub function codeword(n: i32, k: i32, index: u32): (i32[], i32) {
   let before2 = left;
   left = (i + 1u32 >> 1u32) as i32;
   if (left > 0) {
-    i = i - (2 * left - 1) as u32;
+    i -= (2 * left - 1) as u32;
   }
   let a = signed(before2 - left, negative2);
   let b = signed(left, i != 0u32);

@@ -892,7 +892,7 @@ function _db_mul192_lo(x: u64, chi: u64, clo: u64): u64 {
 function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
   let hi = _db_mul_hi(x, chi);
   if (_db_mul192_lo(x, chi, clo) < x * chi) {  // carry out of the low half
-    hi = hi + 1 as u64;
+    hi += 1 as u64;
   }
   return hi;
 }
@@ -959,13 +959,13 @@ function __db_shortest64(n: f64): (i64, i32) {
     if (two_fc == 0 as u64) {
       return __db_shorter64(be);
     }
-    two_fc = two_fc | 9007199254740992 as u64;  // implicit bit, << 1
+    two_fc |= 9007199254740992 as u64;  // implicit bit, << 1
   }
 
   let mk = _db_log10_pow2(be) - 2;
   let k = -mk;
   let beta = be + _db_log2_pow10(k);
-  let at: i32 = (k + 292) * 2;
+  let at = (k + 292) * 2;
   let chi = DB_CACHE64[at];
   let clo = DB_CACHE64[at + 1];
 
@@ -982,7 +982,7 @@ function __db_shortest64(n: f64): (i64, i32) {
   let smaller = false;
   if (r < deltai) {
     if (r == 0 as u64 && z_int && !closed) {
-      sig = sig - 1 as u64;
+      sig -= 1 as u64;
       r = 1000 as u64;
       smaller = true;
     }
@@ -1006,13 +1006,13 @@ function __db_shortest64(n: f64): (i64, i32) {
   // small_divisor / 2 is 50, which is even, so this is just dist's parity.
   let approx = (dist & 1 as u64) != 0 as u64;
   let divisible = dist % (100 as u64) == 0 as u64;
-  sig = sig + dist / (100 as u64);
+  sig += dist / (100 as u64);
   if (divisible) {
     let yp = _db_parity64(two_fc, chi, clo, beta);
     if ((yp & 1) != 0 != approx) {
-      sig = sig - 1 as u64;
+      sig -= 1 as u64;
     } else if (sig % (2 as u64) != 0 as u64 && (yp & 2) != 0) {
-      sig = sig - 1 as u64;
+      sig -= 1 as u64;
     }
   }
   return (sig as i64, mk + 2);

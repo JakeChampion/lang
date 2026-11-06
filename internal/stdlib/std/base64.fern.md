@@ -108,7 +108,7 @@ pub function encode(bs: [u8]): string {
   if (n == 0) {
     return "";
   }
-  let out_len: i32 = (n + 2) / 3 * 4;
+  let out_len = (n + 2) / 3 * 4;
   let buf = __alloc_u8(out_len);
   let i = 0;
   let j = 0;
@@ -189,7 +189,7 @@ pub function decode_url(input: string): Result[u8[], codec.DecodeError] {
 ```fern
 <<7 function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError]>>=
 function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError] {
-  let encoding: string = if (url) { "base64url" } else { "base64" };
+  let encoding = if (url) { "base64url" } else { "base64" };
   let n = 0;
   while (n < input.len() && input[n] != 61) {
     if (__b64_decode_char(input[n] as i32, url) < 0) {

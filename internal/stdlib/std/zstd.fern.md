@@ -384,8 +384,8 @@ function __frame_header(input: [u8], at: i32): Result[__Header, ZstdError] {
   if ((d & 8) != 0) {
     return Err(Malformed("reserved bit"));
   }
-  let single: boolean = (d & 32) != 0;
-  let dict: i32 = [0, 1, 2, 4][d & 3];
+  let single = (d & 32) != 0;
+  let dict = [0, 1, 2, 4][d & 3];
   let fcs = __fcs_width(d >> 6, single);
   let pos = at + 2;
   if (single) {
@@ -398,7 +398,7 @@ function __frame_header(input: [u8], at: i32): Result[__Header, ZstdError] {
     return Err(Unsupported("dictionary"));
   }
   pos += dict;
-  let size: i64 = -1;
+  let size = -1;
   if (fcs > 0) {
     size = __le(input, pos, fcs);
   }
@@ -655,7 +655,7 @@ function __read_fse(buf: [u8], at: i32, end: i32, max_sym: i32, max_log: i32): R
   if (at >= end) {
     return Err(Truncated);
   }
-  let log: i32 = (buf[at] as i32 & 15) + 5;
+  let log = (buf[at] as i32 & 15) + 5;
   if (log > max_log) {
     return Err(Malformed("FSE accuracy"));
   }
@@ -710,7 +710,7 @@ function __nc_count(buf: [u8], c: __Nc): __Nc {
   let nbits = c.nbits;
   while (remaining < threshold && nbits > 1) {
     nbits -= 1;
-    threshold = threshold >> 1;
+    threshold >>= 1;
   }
   return __Nc { probs: c.probs.append(prob), bit: bit, remaining: remaining, threshold: threshold, nbits: nbits, zero: prob == 0 };
 }
@@ -744,7 +744,7 @@ function __literals(input: [u8], at: i32, end: i32, prev: __Huf): Result[__Liter
   if (kind < 2) {
     return __plain_literals(input, at, end, prev, kind);
   }
-  let sizes: (i32, i32, i32, i32) = __coded_sizes(input, at, end)?;
+  let sizes = __coded_sizes(input, at, end)?;
   let start = at + sizes.2;
   if (start + sizes.1 > end) {
     return Err(Truncated);
@@ -752,7 +752,7 @@ function __literals(input: [u8], at: i32, end: i32, prev: __Huf): Result[__Liter
   let huf = prev;
   let streams = start;
   if (kind == 2) {
-    let read: (__Huf, i32) = __read_huf(input, start, start + sizes.1)?;
+    let read = __read_huf(input, start, start + sizes.1)?;
     huf = read.0;
     streams = start + read.1;
   }
@@ -793,13 +793,13 @@ function __plain_literals(input: [u8], at: i32, end: i32, prev: __Huf, kind: i32
 
 function __coded_sizes(input: [u8], at: i32, end: i32): Result[(i32, i32, i32, i32), ZstdError] {
   let format = input[at] as i32 >> 2 & 3;
-  let head: i32 = [3, 3, 4, 5][format];
-  let bits: i32 = [10, 10, 14, 18][format];
+  let head = [3, 3, 4, 5][format];
+  let bits = [10, 10, 14, 18][format];
   if (at + head > end) {
     return Err(Truncated);
   }
   let v = __le(input, at, head) >> 4;
-  let mask: i64 = (1 as i64 << bits) - 1;
+  let mask = (1 as i64 << bits) - 1;
   let streams = 4;
   if (format == 0) {
     streams = 1;
@@ -834,13 +834,13 @@ function __read_huf(input: [u8], at: i32, end: i32): Result[(__Huf, i32), ZstdEr
 }
 
 function __fse_weights(input: [u8], at: i32, end: i32): Result[i32[], ZstdError] {
-  let read: (__Fse, i32) = __read_fse(input, at, end, 255, 6)?;
+  let read = __read_fse(input, at, end, 255, 6)?;
   let t = read.0;
   let start = at + read.1;
   let pos = __back_start(input, start, end)?;
   let s1 = __back(input, start, pos, t.log);
   let s2 = __back(input, start, pos - t.log, t.log);
-  pos = pos - 2 * t.log;
+  pos -= 2 * t.log;
   let out: i32[] = [];
   while (out.len() < 255) {
     out = out.append(t.sym[s1]);
@@ -1038,7 +1038,7 @@ function __of_bits(): i32[] {
 }
 
 function __sequences(input: [u8], at: i32, end: i32, lits: u8[], own out: u8[], z: __Tables, base: i32, max_out: i32): Result[__Block, ZstdError] {
-  let count: (i32, i32) = __seq_count(input, at, end)?;
+  let count = __seq_count(input, at, end)?;
   if (count.0 == 0) {
     if (count.1 != end) {
       return Err(Malformed("sequences section"));
@@ -1050,9 +1050,9 @@ function __sequences(input: [u8], at: i32, end: i32, lits: u8[], own out: u8[], 
     return Err(Malformed("sequence modes"));
   }
   let modes = input[count.1] as i32;
-  let ll: (__Seqt, i32) = __seq_table(input, pos, end, modes >> 6, z.ll, __ll_field())?;
-  let of: (__Seqt, i32) = __seq_table(input, pos + ll.1, end, modes >> 4 & 3, z.of, __of_field())?;
-  let ml: (__Seqt, i32) = __seq_table(input, pos + ll.1 + of.1, end, modes >> 2 & 3, z.ml, __ml_field())?;
+  let ll = __seq_table(input, pos, end, modes >> 6, z.ll, __ll_field())?;
+  let of = __seq_table(input, pos + ll.1, end, modes >> 4 & 3, z.of, __of_field())?;
+  let ml = __seq_table(input, pos + ll.1 + of.1, end, modes >> 2 & 3, z.ml, __ml_field())?;
   let t = __Tables { ...z, ll: ll.0, of: of.0, ml: ml.0 };
   return __run(out, lits, input, pos + ll.1 + of.1 + ml.1, end, count.0, t, base, max_out);
 }
@@ -1114,7 +1114,7 @@ function __seq_table(input: [u8], at: i32, end: i32, mode: i32, prev: __Seqt, f:
     return Ok((__seqt(__rle_fse(input[at] as i32), f), 1));
   }
   if (mode == 2) {
-    let read: (__Fse, i32) = __read_fse(input, at, end, f.max_sym, f.max_log)?;
+    let read = __read_fse(input, at, end, f.max_sym, f.max_log)?;
     return Ok((__seqt(read.0, f), read.1));
   }
   if (prev.log < 0) {
@@ -1358,13 +1358,13 @@ pub function compress(input: [u8]): u8[] {
   let window = __window_for(input.len());
   let m = __ztokens(input, window);
   let out = __frame_head(input.len(), window);
-  let reps: i32[] = [1, 4, 8];
+  let reps = [1, 4, 8];
   let at = 0;
   let t = 0;
   while (at < input.len() || at == 0) {
     let end = cmp.min(at + 131072, input.len());
     let b = __block_seqs(input, m, t, at, end);
-    let seqs: (u8[], i32[]) = __seq_section(b, reps);
+    let seqs = __seq_section(b, reps);
     let body = __appended(__lits_section(b.lits), seqs.0, 0, seqs.0.len());
     let kind = __kind(input, at, end, body);
     if (kind == 2) {
@@ -1429,7 +1429,7 @@ function __ztokens(input: [u8], window: i32): __Matches {
   let prev = __filled_neg(window);
   let starts: i32[] = [];
   let out: i64[] = [];
-  let held: (i32, i32) = (-1, 0);
+  let held = (-1, 0);
   let skip = 0;
   let rep = 1;
   let pos = 0;
@@ -1442,7 +1442,7 @@ function __ztokens(input: [u8], window: i32): __Matches {
       head = head.with(h, pos);
     }
     if (pos >= skip) {
-      let cur: (i32, i32) = __zmatch_at(input, pos, cand, prev, window, rep);
+      let cur = __zmatch_at(input, pos, cand, prev, window, rep);
       if (held.0 >= 4 && __gain(cur.0, cur.1, rep) <= __gain(held.0, held.1, rep) + 4) {
         starts = starts.append(pos - 1);
         out = out.append(held.0 as i64 << 32 | held.1 as i64);
@@ -1492,7 +1492,7 @@ function __zmatch_at(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32,
   if (rep <= pos && input[pos - rep] == input[pos]) {
     len = __mismatch_bytes(input, pos - rep, input, pos, limit - pos);
   }
-  let best: (i32, i32) = __chain(input, pos, cand, prev, window, rep, limit, (len, rep));
+  let best = __chain(input, pos, cand, prev, window, rep, limit, (len, rep));
   if (best.0 < 4) {
     return (0, 0);
   }
@@ -1779,7 +1779,7 @@ function __huf_encode(lits: u8[], codes: i32[], lens: i32[]): u8[] {
 }
 
 function __huf_one(own out: u8[], lits: u8[], from: i32, to: i32, codes: i32[], lens: i32[]): u8[] {
-  let acc: i64 = 0;
+  let acc = 0;
   let nb = 0;
   let i = to - 1;
   while (i >= from) {
@@ -1788,8 +1788,8 @@ function __huf_one(own out: u8[], lits: u8[], from: i32, to: i32, codes: i32[], 
     nb += lens[s];
     if (nb >= 32) {
       out = __flushed(out, acc, nb);
-      acc = acc >> (nb >> 3 << 3);
-      nb = nb & 7;
+      acc >>= nb >> 3 << 3;
+      nb &= 7;
     }
     i -= 1;
   }
@@ -1944,14 +1944,14 @@ function __write_ncount(probs: i32[], log: i32): u8[] {
       acc = __acc(acc, nb, run as i64, 2);
       nb += 2;
     }
-    let field: (i32, i32) = __ncount_field(c);
+    let field = __ncount_field(c);
     acc = __acc(acc, nb, field.0 as i64, field.1);
     nb += field.1;
     c = __nc_after(c);
     if (nb >= 32) {
       out = __flushed(out, acc, nb);
-      acc = acc >> (nb >> 3 << 3);
-      nb = nb & 7;
+      acc >>= nb >> 3 << 3;
+      nb &= 7;
     }
   }
   return __flushed(out, acc, nb + 7 >> 3 << 3);

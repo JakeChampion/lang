@@ -263,11 +263,11 @@ function __bits(own s: __State, data: [u8], need: i32): __State {
     if (pos >= data.len()) {
       return __fail(s, Truncated);
     }
-    val = val | data[pos] as i32 << cnt;
+    val |= data[pos] as i32 << cnt;
     pos += 1;
     cnt += 8;
   }
-  let mask: i32 = (1 << need) - 1;
+  let mask = (1 << need) - 1;
   return __State { ...s, pos: pos, bitbuf: val >> need, bitcnt: cnt - need, last: val & mask };
 }
 
@@ -327,10 +327,10 @@ function __construct(lengths: i32[], n: i32): __Huff {
   let left = 1;
   let len = 1;
   while (len <= 15) {
-    left = left << 1;
+    left <<= 1;
     left -= count[len];
     if (left < 0) {
-      return __Huff { count: count, symbol: [], left: 0 - 1 };
+      return __Huff { count: count, symbol: [], left: -1 };
     }
     len += 1;
   }
@@ -372,14 +372,14 @@ function __decode(own s: __State, data: [u8], h: __Huff): __State {
     if (s.failed) {
       return s;
     }
-    code = code | s.last;
+    code |= s.last;
     let count = h.count[len];
     if (code - count < first) {
       return __State { ...s, last: h.symbol[index + (code - first)] };
     }
     index += count;
     first = first + count << 1;
-    code = code << 1;
+    code <<= 1;
     len += 1;
   }
   return __fail(s, Malformed("a bit pattern that is no code"));
@@ -440,7 +440,7 @@ function __table(h: __Huff, bits: i32, lit: boolean): i32[] {
       index += 1;
       k += 1;
     }
-    code = code << 1;
+    code <<= 1;
     len += 1;
   }
   return table;
@@ -476,14 +476,14 @@ function __walk(h: __Huff, bits: u64, avail: i32, lit: boolean): i32 {
     if (len > avail) {
       return 0;
     }
-    code = code | (bits >> (len - 1) as u64 & 1u64) as i32;
+    code |= (bits >> (len - 1) as u64 & 1u64) as i32;
     let count = h.count[len];
     if (code - count < first) {
       return __entry(h.symbol[index + (code - first)], len, lit);
     }
     index += count;
     first = first + count << 1;
-    code = code << 1;
+    code <<= 1;
     len += 1;
   }
   return E_NO_CODE;
@@ -532,7 +532,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
   }
   while (!done) {
     while (bitcnt <= 48 && pos < n) {
-      bitbuf = bitbuf | data[pos] as u64 << bitcnt as u64;
+      bitbuf |= data[pos] as u64 << bitcnt as u64;
       pos += 1;
       bitcnt += 8;
     }
@@ -545,7 +545,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
       error = Some(Truncated);
       done = true;
     } else {
-      bitbuf = bitbuf >> used as u64;
+      bitbuf >>= used as u64;
       bitcnt -= used;
       if ((e & E_LITERAL) != 0) {
         if (out.len() >= max_out) {
@@ -564,10 +564,10 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
           error = Some(Truncated);
           done = true;
         } else {
-          bitbuf = bitbuf >> lx as u64;
+          bitbuf >>= lx as u64;
           bitcnt -= lx;
           while (bitcnt <= 48 && pos < n) {
-            bitbuf = bitbuf | data[pos] as u64 << bitcnt as u64;
+            bitbuf |= data[pos] as u64 << bitcnt as u64;
             pos += 1;
             bitcnt += 8;
           }
@@ -580,7 +580,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
             error = Some(Truncated);
             done = true;
           } else {
-            bitbuf = bitbuf >> dused as u64;
+            bitbuf >>= dused as u64;
             bitcnt -= dused;
             let dx = d >> 4 & 15;
             if ((d & (E_NO_CODE | E_PAST)) != 0) {
@@ -591,7 +591,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
               done = true;
             } else {
               let dist = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
-              bitbuf = bitbuf >> dx as u64;
+              bitbuf >>= dx as u64;
               bitcnt -= dx;
               if (dist > out.len()) {
                 error = Some(Malformed("a distance before the start of the output"));
@@ -609,7 +609,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
     }
   }
   let back = bitcnt >> 3;
-  bitcnt = bitcnt & 7;
+  bitcnt &= 7;
   s = __State { ...s, out: out, pos: pos - back, bitbuf: (bitbuf & (1u64 << bitcnt as u64) - 1u64) as i32, bitcnt: bitcnt };
   match (error) {
     Some(err) => {
@@ -650,9 +650,9 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
   }
   let e = -1;
   while (pos <= fast_in && out.len() <= fast_out) {
-    bitbuf = bitbuf | __le64(data, pos) << bitcnt as u64;
+    bitbuf |= __le64(data, pos) << bitcnt as u64;
     pos += (bitcnt >> 3 ^ 7) & 7;
-    bitcnt = bitcnt | 56;
+    bitcnt |= 56;
     if (e < 0) {
       e = lit[(bitbuf & LIT_MASK) as i32];
     }
@@ -660,13 +660,13 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
       e = __walk(lencode, bitbuf, bitcnt, true);
     }
     let used = e & 15;
-    bitbuf = bitbuf >> used as u64;
+    bitbuf >>= used as u64;
     bitcnt -= used;
     if ((e & E_LITERAL) != 0) {
       out = out.append((e >> 16) as u8);
       e = lit[(bitbuf & LIT_MASK) as i32];
       if ((e & E_LITERAL) != 0) {
-        bitbuf = bitbuf >> (e & 15) as u64;
+        bitbuf >>= (e & 15) as u64;
         bitcnt -= e & 15;
         out = out.append((e >> 16) as u8);
         e = lit[(bitbuf & LIT_MASK) as i32];
@@ -679,14 +679,14 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
     }
     let lx = e >> 4 & 15;
     let len = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
-    bitbuf = bitbuf >> lx as u64;
+    bitbuf >>= lx as u64;
     bitcnt -= lx;
     let d = dtab[(bitbuf & DIST_MASK) as i32];
     if (d == 0) {
       d = __walk(distcode, bitbuf, bitcnt, false);
     }
     let dused = d & 15;
-    bitbuf = bitbuf >> dused as u64;
+    bitbuf >>= dused as u64;
     bitcnt -= dused;
     if ((d & (E_NO_CODE | E_PAST)) != 0) {
       status = __fast_status(d, F_DISTANCE_PAST);
@@ -694,7 +694,7 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
     }
     let dx = d >> 4 & 15;
     let dist = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
-    bitbuf = bitbuf >> dx as u64;
+    bitbuf >>= dx as u64;
     bitcnt -= dx;
     if (dist > out.len()) {
       status = F_TOO_FAR;
@@ -1065,25 +1065,25 @@ pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] 
 // The sums take their modulus once for each 5552 bytes, zlib's NMAX: the
 // most bytes after which b cannot pass 2^32.
 pub function adler32(bs: [u8]): u32 {
-  let a: u32 = 1;
-  let b: u32 = 0;
+  let a = 1;
+  let b = 0;
   let n = bs.len();
   let i = 0;
   while (i < n) {
     let end = cmp.min(n, i + 5552);
     while (i + 4 <= end) {
-      a = a + bs[i] as u32;
+      a += bs[i] as u32;
       b += a;
-      a = a + bs[i + 1] as u32;
+      a += bs[i + 1] as u32;
       b += a;
-      a = a + bs[i + 2] as u32;
+      a += bs[i + 2] as u32;
       b += a;
-      a = a + bs[i + 3] as u32;
+      a += bs[i + 3] as u32;
       b += a;
       i += 4;
     }
     while (i < end) {
-      a = a + bs[i] as u32;
+      a += bs[i] as u32;
       b += a;
       i += 1;
     }
@@ -1103,7 +1103,7 @@ pub function deflate_fast(input: [u8]): u8[] {
 
 pub function gzip(input: [u8]): u8[] {
   let crc = crc32.new().update(input).finish();
-  let head: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
+  let head = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
   return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
 }
 ```
@@ -1143,7 +1143,7 @@ function __put(w: __Bits, value: i32, bits: i32): __Bits {
   let out = w.out;
   while (n >= 8) {
     out = out.append((acc & 255) as u8);
-    acc = acc >> 8;
+    acc >>= 8;
     n -= 8;
   }
   return __Bits { out: out, acc: acc, n: n };
@@ -1302,7 +1302,7 @@ function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
 }
 
 function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
-  let fixed: (__Code, __Code) = (__fixed_lit(), __fixed_dist());
+  let fixed = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
   let w = __Bits { out: empty, acc: 0, n: 0 };
   let s = __Span { from: 0, len: 0, at: 0, end: 0, last: false };
@@ -1352,7 +1352,7 @@ function __span(toks: i32[], at: i32, end: i32): i32 {
 }
 
 function __put_block(w: __Bits, input: [u8], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
-  let f: (i32[], i32[]) = __freqs(toks, s.at, s.end);
+  let f = __freqs(toks, s.at, s.end);
   let lit = __canonical(huffman_lengths(__two_used(f.0), 15));
   let dist = __canonical(huffman_lengths(__two_used(f.1), 15));
   let h = __header(lit.lens, dist.lens);
@@ -1465,13 +1465,13 @@ function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Co
   while (i < s.end) {
     let t = toks[i];
     if (t < 256) {
-      acc = acc | lcodes[t] as u64 << n as u64;
+      acc |= lcodes[t] as u64 << n as u64;
       n += llens[t];
     } else {
       let e = words[t >> 16];
-      acc = acc | (e >> 8) as u64 << n as u64;
-      n = n + (e & 255i64) as i32;
-      let x: i32 = (t & 65535) - 1;
+      acc |= (e >> 8) as u64 << n as u64;
+      n += (e & 255i64) as i32;
+      let x = (t & 65535) - 1;
       let di = x;
       let nb = 0;
       if (x >= 4) {
@@ -1479,12 +1479,12 @@ function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Co
         di = 2 * k + (x >> k - 1 & 1);
         nb = k - 1;
       }
-      acc = acc | (dcodes[di] | (x & (1 << nb) - 1) << dlens[di]) as u64 << n as u64;
+      acc |= (dcodes[di] | (x & (1 << nb) - 1) << dlens[di]) as u64 << n as u64;
       n = n + dlens[di] + nb;
     }
     while (n >= 8) {
       out = out.append((acc & 255u64) as u8);
-      acc = acc >> 8u64;
+      acc >>= 8u64;
       n -= 8;
     }
     i += 1;
@@ -1782,7 +1782,7 @@ function __tokens(input: [u8], window: i32): i32[] {
   let head4 = __filled(65536, -1);
   let prev = __alloc_i64(window);
   let out: i32[] = [];
-  let held: (i32, i32) = (-1, 0);
+  let held = (-1, 0);
   let skip = 0;
   let pos = 0;
   while (pos < n) {
@@ -1798,7 +1798,7 @@ function __tokens(input: [u8], window: i32): i32[] {
       head4 = head4.with(h4, pos);
       prev = prev.with(pos & window - 1, c3 as i64 << 32 | (c4 as u32) as i64);
     }
-    let cur: (i32, i32) = (0, 0);
+    let cur = (0, 0);
     if (pos >= skip && held.0 < 65) {
       cur = __longest(input, pos, c3, c4, prev, window, held.0);
     }
@@ -2009,7 +2009,7 @@ pub function inflate_reader(input: u8[], max_out: i32): Result[InflateReader, In
   let empty = __Huff { count: [], symbol: [], left: 0 };
   let initial = __ReadCursor {
     state: bits, literal: empty, distance_code: empty, history: [], total: 0, phase: ReadHeader,
-    final_block: false, remaining: 0, distance: 0, byte: 0 - 1, cancelled: false,
+    final_block: false, remaining: 0, distance: 0, byte: -1, cancelled: false,
   };
   let state = cell_new(Some(initial));
   let read = (count: i32, cancelled: () => boolean): Result[InflateChunk, InflateReadError] => __read_request(state, input, count, cancelled);
@@ -2059,7 +2059,7 @@ function __read_run(own cursor: __ReadCursor, input: [u8], count: i32, cancelled
 }
 
 function __read_step(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
-  cursor = __ReadCursor { ...cursor, byte: 0 - 1 };
+  cursor = __ReadCursor { ...cursor, byte: -1 };
   let phase = cursor.phase;
   return match (phase) { ReadHeader => __read_header(cursor, input), ReadStored => __read_stored_byte(cursor, input), ReadCodes => __read_code(cursor, input), ReadCopy => __read_copy_byte(cursor), ReadEnd => cursor };
 }

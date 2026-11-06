@@ -315,7 +315,7 @@ function __mb_header(own d: __D, data: [u8]): __D {
     }
   }
   d = __get(d, data, 2);
-  let nibbles: i32 = [4, 5, 6, 0][d.v];
+  let nibbles = [4, 5, 6, 0][d.v];
   if (nibbles == 0) {
     return __metadata(d, data, last);
   }
@@ -534,7 +534,7 @@ function __entry(tab: i32[], at: i32, buf: u64): i32 {
   if ((e & 15) <= 8) {
     return e;
   }
-  let mask: u64 = (1u64 << ((e & 15) - 8) as u64) - 1u64;
+  let mask = (1u64 << ((e & 15) - 8) as u64) - 1u64;
   return tab[at + (e >> 16) + (buf >> 8u64 & mask) as i32] + 8;
 }
 ```
@@ -566,7 +566,7 @@ function __simple(own d: __D, data: [u8], size: i32): __D {
     }
     syms = syms.append(d.v);
   }
-  let shape: i32[] = [[1], [1, 1], [1, 2, 2], [2, 2, 2, 2]][n - 1];
+  let shape = [[1], [1, 1], [1, 2, 2], [2, 2, 2, 2]][n - 1];
   if (n == 4) {
     d = __get(d, data, 1);
     if (d.v == 1) {
@@ -1010,7 +1010,7 @@ function __commands(own d: __D, data: [u8], m: __Mb, end: i32, window: i32): __D
       code = de >> 16;
       let nb = __extra_bits(code, dcodes);
       dist = __distance(code, dcodes, (buf & (1u64 << nb as u64) - 1u64) as i32 << postfix, r0, r1, r2, r3);
-      buf = buf >> nb as u64;
+      buf >>= nb as u64;
       cnt -= nb;
       if (dist <= 0) {
         bad = 2;

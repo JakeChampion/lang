@@ -188,7 +188,7 @@ pub function decoder(): Decoder {
 }
 
 pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
-  let unmarked: (Decoder, u8[]) = __unmarked(d, d.buf.concat(bytes));
+  let unmarked = __unmarked(d, d.buf.concat(bytes));
   d = unmarked.0;
   let buf = unmarked.1;
   let out: Event[] = [];
@@ -200,7 +200,7 @@ pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
       break;
     }
     if (brk > 0) {
-      let lined: (Decoder, Option[Event]) = __line(d, utf8.from_bytes_lossy(array.slice(buf, start, i)));
+      let lined = __line(d, utf8.from_bytes_lossy(array.slice(buf, start, i)));
       d = lined.0;
       match (lined.1) {
         Some(e) => {

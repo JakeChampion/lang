@@ -239,7 +239,7 @@ pub function (f: Frame) text(x: i32, y: i32, s: string, scale: i32, color: i32):
   for c in s.bytes() {
     if (c < 128 as u8 || c >= 192 as u8) {
       glyph(f, at, y, c as i32, scale, color);
-      at = at + font.CELL_W * scale;
+      at += font.CELL_W * scale;
     }
   }
 }

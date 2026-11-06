@@ -127,7 +127,7 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
       if (tj >= t.len() || t[tj] == 47) {
         return false;
       }
-      let res: (boolean, i32) = __glob_class(p, pi, t[tj] as i32);
+      let res = __glob_class(p, pi, t[tj] as i32);
       if (!res.0) {
         return false;
       }

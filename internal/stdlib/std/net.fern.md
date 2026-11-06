@@ -1530,7 +1530,7 @@ pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[R
 
 pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
   let until = monotonic_ns() + wait.as_nanos();
-  let set: i32[] = [sock.fd, interest];
+  let set = [sock.fd, interest];
   while (true) {
     let at = until;
     if (at - monotonic_ns() < 1000000i64) {

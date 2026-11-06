@@ -1433,7 +1433,7 @@ function __bench_sort_us(samples: i64[]): i64[] {
   let out: i64[] = [];
   i = 0;
   while (i < n) {
-    let best: i32 = 0 - 1;
+    let best = -1;
     let j = 0;
     while (j < n) {
       if (!taken[j]) {

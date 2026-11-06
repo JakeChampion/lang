@@ -26,6 +26,14 @@ pub function signal_stack(): string {
   return "fern: could not install the signal stack";
 }
 
+pub function illegal_instruction(): string {
+  return "fern: illegal instruction";
+}
+
+pub function bus_error(): string {
+  return "fern: bus error";
+}
+
 pub function fault_handler(): string {
   return "fern: could not install the fault handler";
 }

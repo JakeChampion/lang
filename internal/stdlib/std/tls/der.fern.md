@@ -255,7 +255,7 @@ pub function only(b: [u8], tag: i32): Result[Element, DerError] {
 }
 
 pub function children(b: [u8], e: Element): Result[Element[], DerError] {
-  let inner: [u8] = b[0:e.to];
+  let inner = b[0:e.to];
   let out: Element[] = [];
   let at = e.from;
   while (at < e.to) {
@@ -329,7 +329,7 @@ pub function oid(b: [u8], e: Element): Result[string, DerError] {
     return Err(BadValue("object identifier"));
   }
   let out = "";
-  let arc: i64 = 0;
+  let arc = 0;
   let start = true;
   let i = e.from;
   while (i < e.to) {

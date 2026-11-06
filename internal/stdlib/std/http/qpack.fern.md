@@ -223,7 +223,7 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
   if (at >= buf.len()) {
     return Err(SHORT);
   }
-  let coded: boolean = (buf[at] as i32 & 1 << prefix) != 0;
+  let coded = (buf[at] as i32 & 1 << prefix) != 0;
   let (n, from) = __int(buf, at, prefix)?;
   if (n > __most_coded(room, coded)) {
     return Err(TOO_LONG);
@@ -415,7 +415,7 @@ function __instruction(t: Table, buf: [u8], at: i32): Result[(Table, i32), Optio
 }
 
 function __insert_named(t: Table, buf: [u8], at: i32): Result[(Table, i32), Option[QpackError]] {
-  let is_static: boolean = (buf[at] as i32 & 64) != 0;
+  let is_static = (buf[at] as i32 & 64) != 0;
   let (i, next) = __enc_int(buf, at, 6)?;
   let name = "";
   if (is_static) {
@@ -607,7 +607,7 @@ function (d: Decoder) __required(encoded: i64): Result[i64, QpackError] {
 
 function (d: Decoder) __lines(section: [u8], from: i32, required: i64, base: i64): Result[Field[], QpackError] {
   let fields: Field[] = [];
-  let total: i64 = 0;
+  let total = 0;
   let at = from;
   while (at < section.len()) {
     let (f, next) = d.__line(section, at, required, base, d.max_list - total)?;
@@ -778,7 +778,7 @@ pub function (e: Encoder) put_length(own out: u8[], n: i64): u8[] {
     }
   }
   o = __put_int(o, 0, 7, digits as i64);
-  let p: i64 = 1;
+  let p = 1;
   for _ in 1..digits {
     p *= 10;
   }
@@ -898,7 +898,7 @@ function __put_int(out: u8[], pattern: i32, prefix: i32, value: i64): u8[] {
 }
 
 function (e: Encoder) __put_str(out: u8[], pattern: i32, prefix: i32, s: string): u8[] {
-  let bytes: [u8] = s.as_bytes();
+  let bytes = s.as_bytes();
   if (e.huffman) {
     let coded = huffman.encoded_len(bytes);
     if (coded < bytes.len()) {
