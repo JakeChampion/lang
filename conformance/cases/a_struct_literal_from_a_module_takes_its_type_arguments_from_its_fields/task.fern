@@ -1,0 +1,7 @@
+pub struct Task[T] { id: i32, entry: () => T }
+
+pub struct Pair[A, B] { left: A, right: B }
+
+pub function run[T](t: Task[T]): T {
+  return t.entry();
+}
