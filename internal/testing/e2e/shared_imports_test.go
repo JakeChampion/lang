@@ -273,7 +273,12 @@ func TestSharedCImportRefusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := tc.decl + "\npub function use_it(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"
+			// An executable refuses only an import that main reaches.
+			body := "return 0;"
+			if !tc.shared {
+				body = "return c();"
+			}
+			src := tc.decl + "\npub function use_it(): i32 { return 0; }\nfunction main(): i32 { " + body + " }\n"
 			dir := t.TempDir()
 			path := filepath.Join(dir, "m.fern")
 			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
