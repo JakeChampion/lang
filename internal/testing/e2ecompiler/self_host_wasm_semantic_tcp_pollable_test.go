@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,15 +15,7 @@ import (
 func TestSelfHostWasmSemanticTCPPollable(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
 	const probe = `function main(): i32 {
     let fd: Socket = tcp_listen(0);
