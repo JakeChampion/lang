@@ -61,6 +61,9 @@ func Check(entry string, prog *ast.Program, target string, assets *embed.Set) ([
 	if errs := Ambient(entry, prog); errs != nil {
 		return warns, errs
 	}
+	if errs := Providers(prog); errs != nil {
+		return warns, errs
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return warns, err
 	}
@@ -73,6 +76,15 @@ func Check(entry string, prog *ast.Program, target string, assets *embed.Set) ([
 		}
 	}
 	return warns, nil
+}
+
+// Providers reports each E101 of the program's capability providers.
+func Providers(prog *ast.Program) diag.Errors {
+	var errs diag.Errors
+	for _, pp := range platforms.ProviderProblems(prog) {
+		errs = append(errs, &checker.Error{Pos: pp.Pos, Msg: pp.Msg, ErrCode: "E101"})
+	}
+	return errs
 }
 
 func Ambient(entry string, prog *ast.Program) diag.Errors {
@@ -123,6 +135,7 @@ func Target(entry string, prog *ast.Program, info *checker.Info, target string, 
 		preShake = append([]*ast.FuncDecl(nil), prog.Funcs...)
 		defer func() { prog.Funcs = preShake }()
 	}
+	extras = append(extras, platforms.ProviderEntries(prog, target)...)
 	treeshake.Run(prog, info, extras...)
 	vs := platforms.Enforce(prog, target)
 	if len(vs) == 0 {

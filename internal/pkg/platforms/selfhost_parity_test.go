@@ -211,3 +211,23 @@ func TestSelfHostEquivalentsMatch(t *testing.T) {
 		t.Errorf("equivalents here %v, in the self-host %v", equivalents, found)
 	}
 }
+
+func TestSelfHostProvidersMatch(t *testing.T) {
+	src := readSelfHostPlatforms(t)
+	list := regexp.MustCompile(`(?s)pub function providable\(\): string\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(src)
+	if list == nil {
+		t.Fatalf("no providable() found in %s — the extraction pattern has gone stale", selfHostPlatformsSrc)
+	}
+	found := map[string]string{}
+	for _, capability := range fernStringList(list[1]) {
+		sig := regexp.MustCompile(`if \(capability == "` + regexp.QuoteMeta(capability) + `"\) \{\s*return "([^"]+)";`).FindStringSubmatch(src)
+		if sig == nil {
+			t.Errorf("the self-host provides %q with no provider_signature", capability)
+			continue
+		}
+		found[capability] = sig[1]
+	}
+	if !maps.Equal(found, providerSignatures) {
+		t.Errorf("provider signatures here %v, in the self-host %v", providerSignatures, found)
+	}
+}

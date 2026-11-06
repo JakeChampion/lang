@@ -1728,6 +1728,17 @@ pub function freestanding_roots(merged: parser.Module, export_list: string): (pa
   return shared_exports(merged, true, export_list, []);
 }
 
+// A provider of a capability that the target does not grant is an entry. The
+// runtime calls it, as an embedder calls an -export entry.
+pub function provider_entries(m: parser.Module, target: string): parser.Module {
+  for pv in m.providers {
+    if (!platforms.has_capability(target, pv.capability)) {
+      m = parser.Module { ...m, exports: m.exports.append(parser.ExportBinding { func_name: pv.func_name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
+    }
+  }
+  return m;
+}
+
 function shared_exports(merged: parser.Module, shared: boolean, export_list: string, jni: JniMethod[]): (parser.Module, string[], string) {
   let roots: string[] = [];
   if (!shared) {
@@ -2756,8 +2767,8 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 }
 
 pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
-  let out: util.Diag[] = [];
-  if (platforms.enforce(merged, target).len() == 0) {
+  let out = platforms.provider_diags(merged);
+  if (out.len() > 0 || platforms.enforce(merged, target).len() == 0) {
     return out;
   }
   let desc = platforms.for_target(target);
@@ -4034,7 +4045,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
     return Checked { findings: entry_diags, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
   let mt = checker.check_module_with_file(merged, modloader.base_name(entry_display(entry_path)));
-  let bounds: Finding[] = [];
+  let bounds = errors_of(platforms.provider_diags(merged));
   if (target_given) {
     bounds = errors_of(capability_diags(merged, target));
   }
@@ -6873,7 +6884,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     eprint("fern: " + export_bad);
     return 2;
   }
-  merged = exported_module;
+  merged = provider_entries(exported_module, target);
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
     return 1;
   }

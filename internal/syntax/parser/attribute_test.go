@@ -22,6 +22,7 @@ func TestAttributePlacement(t *testing.T) {
 		{"@inline\nresource R;", "2:1", inlineMsg},
 		{"@derive(Eq)\nresource R;", "2:1", "@derive " + structOrEnum},
 		{"@export(\"a:b/c\", \"d\")\nresource R;", "2:1", "@export only applies to a function declaration"},
+		{"@provide(\"log\")\nstruct S { a: i32 }", "2:1", "@provide only applies to a function declaration"},
 		{"@derive(Eq)\npub use \"./helper\".{ answer };", "2:5", "@derive " + structOrEnum},
 		{"@try\nstruct S { a: i32 }\nfunction main(): void {}", "2:1", enumOnly},
 		{"@try\npub function f(): void {}", "2:5", enumOnly},
@@ -30,7 +31,7 @@ func TestAttributePlacement(t *testing.T) {
 		{"@derive(Eq)", "2:1", "@derive " + structOrEnum},
 		{"pub @derive(Eq) struct S { a: i32 }", "1:1", "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"},
 		{"pub(foo) function f(): void {}", "1:1", "`pub(...)` only supports `pub(package)`"},
-		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @callback, @must_consume, @try, @inline, and @noinline are supported)"},
+		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @callback, @provide, @must_consume, @try, @inline, and @noinline are supported)"},
 	} {
 		_, err := Parse(tc.src + "\n")
 		var batch diag.Errors
@@ -64,6 +65,8 @@ resource R;
 function f(): void;
 @export("a:b/c", "g")
 function g(): void {}
+@provide("log")
+function uart(data: usize, len: i32): void {}
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +80,7 @@ function g(): void {}
 	if len(prog.Resources) != 1 || prog.Resources[0].ImportWITName != "r" {
 		t.Errorf("resource not bound: %+v", prog.Resources)
 	}
-	if len(prog.Funcs) != 2 || prog.Funcs[0].ImportWITName != "f" || prog.Funcs[1].ExportWITName != "g" {
+	if len(prog.Funcs) != 3 || prog.Funcs[0].ImportWITName != "f" || prog.Funcs[1].ExportWITName != "g" || prog.Funcs[2].Provides != "log" || prog.Funcs[1].Provides != "" {
 		t.Errorf("functions not bound: %+v", prog.Funcs)
 	}
 }

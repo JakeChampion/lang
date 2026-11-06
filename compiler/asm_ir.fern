@@ -11585,6 +11585,17 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
   return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
 
+// A string write for print or eprint. With a `log` provider it passes the bytes
+// and the length to the provider, and returns the length.
+function emit_log_write(name: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (s.log_provider.len() == 0) {
+    return emit_runtime(name, s);
+  }
+  s = s.write("__fn_" + name + ":\n    movq 8(%rsp), %rax\n__fn_" + name + ".r:\n    pushq %rbp\n    movq %rsp, %rbp\n");
+  s = s.write("    movslq 8(%rax), %rcx\n    pushq %rcx\n    pushq %rcx\n    pushq 0(%rax)\n    call " + s.log_provider + "\n");
+  return s.write("    movq -8(%rbp), %rax\n    leave\n    ret\n");
+}
+
 function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let fns = m.funcs;
   let lit0 = s.string_lits.len();
@@ -11725,7 +11736,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
 pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches, retain: boolean): ssaprepare.Output {
   let s = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("x86-64") };
-  s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), all_funcs);
+  s = asmcore.with_funcs(asmcore.with_log_provider(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), mod), all_funcs);
   let derrs = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
@@ -12415,7 +12426,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");
-    s = emit_runtime("__fern_print_str", s);
+    s = emit_log_write("__fern_print_str", s);
   }
   if (s.has_need("putchar")) {
     s = s.write("    .text\n");
@@ -12423,7 +12434,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("eprint")) {
     s = s.write("    .text\n");
-    s = emit_runtime("__fern_eprint_str", s);
+    s = emit_log_write("__fern_eprint_str", s);
   }
   s = emit_rt_clocks(s);
   if (needs_fs_runtime(s)) {

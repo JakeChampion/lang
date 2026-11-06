@@ -288,11 +288,20 @@ cannot know which capabilities a board gives. Without a way to say so, each
 freestanding program calls its own UART driver directly, and `print` is not
 available.
 
-So the missing piece is a **capability provider**: a Fern module that implements
-a capability for a target. The E066 gate then grants each capability that the
-provider implements, in addition to the descriptor set. The parity tests between
-`internal/pkg/platforms` and `compiler/platforms.fern` must cover the provider
-rule too. The mechanism that names the board module for a build is not decided.
+So the missing piece is a **capability provider**: a Fern function that implements
+a capability for a target. The E066 gate then grants each capability that a
+provider implements, in addition to the descriptor set.
+
+**The decision (#14251).** A board module marks its provider with
+`@provide("log")`, and the program names its board with an import, as a TamaGo
+program does. No flag and no package-config entry is necessary. Only `log` takes a
+provider now. Its signature is `(data: usize, len: i32): void`, so the call changes
+no reference count and does not allocate.
+
+On a target that grants the capability, the descriptor wins and the provider is an
+ordinary function. Thus a hosted build keeps its own implementation.
+`docs/FREESTANDING-CORE.md` ("A board supplies a capability") has the rule and E101.
+`now` and `random` can take providers in the same way when a board needs them.
 
 Go gets this slot late. TamaGo keeps a Go fork for each Go release, and
 golang/go#73608 (`GOOS=custom`) asks upstream Go to accept a user package as the
@@ -452,10 +461,12 @@ environment over the FernOS syscalls can come later, as an improvement.
 3. **Done: the interrupt/RC rule** (#14250). "The decision (#14250)" above records
    it: a checked top half, the IRQ region in raw memory, a masked idle wait, and a
    bottom half in the reactor.
-4. Then: capability providers (#14251) → effect intrinsics (#14252) → function
+4. **Done: capability providers** (#14251). A board module supplies `log` with a
+   `@provide("log")` function (section 6).
+5. Then: effect intrinsics (#14252) → function
    attributes and the no-RC property (#14253) → memory layout (#14254) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-5. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+6. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 

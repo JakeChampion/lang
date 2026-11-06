@@ -1,0 +1,10 @@
+// A `log` provider is a byte sink: it gets an address and a length. A provider
+// that takes a string has the wrong signature.
+
+@provide("log")
+function uart_write(text: string): void {
+}
+
+function main(): i32 {
+    return 0;
+}

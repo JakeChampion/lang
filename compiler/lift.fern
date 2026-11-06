@@ -4112,6 +4112,6 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
     acc = LiftAcc { funcs: [], counter: acc.counter };
     wi += 1;
   }
-  let result = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts, todo_sites: mod.todo_sites, sights: mod.sights };
+  let result = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, providers: mod.providers, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts, todo_sites: mod.todo_sites, sights: mod.sights };
   return parser.infer_ret_types_module(parser.lower_defers_module(result));
 }
