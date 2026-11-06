@@ -1,0 +1,1 @@
+`@norc` function "tick" may call only `@norc` functions and the raw memory intrinsics, not "helper"

@@ -2,7 +2,6 @@ package e2ecompiler
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -53,20 +52,8 @@ func TestSelfHostArm64DarwinReactorCompiles(t *testing.T) {
 
 func checkSelfHostReactorSignal(t *testing.T, targets []string) {
 	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
-	stdlib, err := filepath.Abs("../../stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := selfHostCLIForHost(t)
+	driver, stdlib := h.cli, h.stdlib
 	for _, target := range targets {
 		mode := "native"
 		if target == "wasm32-wasi" {
@@ -80,20 +67,8 @@ func checkSelfHostReactorSignal(t *testing.T, targets []string) {
 
 func checkSelfHostReactorFloor(t *testing.T, targets []string) {
 	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
-	stdlib, err := filepath.Abs("../../stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := selfHostCLIForHost(t)
+	driver, stdlib := h.cli, h.stdlib
 	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {
 			checkSelfHostSocketProbe(t, driver, stdlib, target, e2eharness.ReactorProbe())

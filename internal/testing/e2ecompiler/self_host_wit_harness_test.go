@@ -7,56 +7,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
-)
-
-var (
-	witCLIOnce   sync.Once
-	witCLIBin    string
-	witCLIStdlib string
-	witCLIErr    string
-	witCLISkip   string
 )
 
 func witSelfHostCLI(t *testing.T) (string, string) {
 	t.Helper()
-	witCLIOnce.Do(func() {
-		cliTarget, _, skip := hostTargets()
-		if skip != "" {
-			witCLISkip = skip
-			return
-		}
-		fern := buildLangBinForInterp(t)
-		src, err := filepath.Abs("../../../compiler/fern.fern")
-		if err != nil {
-			witCLIErr = err.Error()
-			return
-		}
-		stdlib, err := filepath.Abs("../../stdlib")
-		if err != nil {
-			witCLIErr = err.Error()
-			return
-		}
-		dir, err := os.MkdirTemp("", "selfhost-wit-cli-")
-		if err != nil {
-			witCLIErr = err.Error()
-			return
-		}
-		cli := filepath.Join(dir, "fern")
-		if out, err := exec.Command(fern, "-target", cliTarget, "-o", cli, src).CombinedOutput(); err != nil {
-			witCLIErr = fmt.Sprintf("building the self-host CLI for %s: %v\n%s", cliTarget, err, out)
-			return
-		}
-		witCLIBin, witCLIStdlib = cli, stdlib
-	})
-	if witCLIErr != "" {
-		t.Fatal(witCLIErr)
-	}
-	if witCLISkip != "" {
-		t.Skip(witCLISkip)
-	}
-	return witCLIBin, witCLIStdlib
+	h := selfHostCLIForHost(t)
+	return h.cli, h.stdlib
 }
 
 var witModules = []string{"watbin", "wit_decode", "wit_compose", "wit_proxy_world"}

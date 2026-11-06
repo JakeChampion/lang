@@ -72,7 +72,7 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
   if (target_given) {
     diags = util.append_diags(diags, fern.capability_diags(merged, target));
   }
-  if (report_diags(util.append_diags(diags, fern.ambient_diags(merged)), files)) {
+  if (report_diags(util.append_diags(diags, fern.annotated_diags(merged)), files)) {
     return 1;
   }
   return 0;
@@ -238,7 +238,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   if (report_diags(fern.capability_diags(merged, target), files)) {
     return 1;
   }
-  if (report_diags(fern.ambient_diags(merged), files)) {
+  if (report_diags(fern.annotated_diags(merged), files)) {
     return 1;
   }
   merged = constfold.fold_module(merged);

@@ -31,16 +31,7 @@ func TestSelfHostArm64DarwinSocketV6(t *testing.T) {
 
 func checkSelfHostSocketV6(t *testing.T, targets []string) {
 	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	probes := []struct {
 		name string
 		src  string

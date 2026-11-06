@@ -2259,8 +2259,8 @@ pub function with_log_provider(s: EmitState, mod: parser.Module): EmitState {
   if (platforms.has_capability(s.build_target, "log")) {
     return s;
   }
-  for pv in mod.providers {
-    if (pv.capability == "log") {
+  for pv in parser.marked(mod, "provide") {
+    if (pv.arg == "log") {
       return EmitState { ...s, log_provider: "__fn_" + sanitize_label(pv.func_name) };
     }
   }

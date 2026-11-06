@@ -18,15 +18,7 @@ func TestSelfHostHTTPCorpus(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	_ = gcc
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	host := "x86-64-linux"
-	if runtime.GOARCH == "arm64" {
-		host = "arm64-" + runtime.GOOS
-	}
-	driver := filepath.Join(dir, "fern")
-	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
-		t.Fatalf("build compiler: %v\n%s", err, out)
-	}
+	driver := selfHostCLIForHost(t).cli
 	cases := e2eharness.HTTPCorpusCases(t, "../e2e/testdata/http-corpus")
 	src := filepath.Join(dir, "corpus.fern")
 	if err := os.WriteFile(src, []byte(e2eharness.HTTPCorpusSource(cases)), 0o644); err != nil {

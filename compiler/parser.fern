@@ -70,7 +70,7 @@ pub function module_rank(sights: ModuleSight[], from: string, decl: string): i32
   return 2;
 }
 
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], providers: Provider[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], marks: FuncMark[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
 pub function with_stdlib_origin(mod: Module, path: string): Module {
   if (!util.is_stdlib_path(path)) {
@@ -213,9 +213,19 @@ pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, c
 // Java class and `wit` the Java declaration.
 pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean, jni: boolean }
 
-// A function that `@provide("log")` marks as the implementation of a
-// capability on a target that does not grant it.
-pub struct Provider { capability: string, func_name: string, line: i32, col: i32 }
+// An attribute on a function that a later pass reads: `@provide("log")`, with
+// the capability as `arg`, or `@norc`.
+pub struct FuncMark { attr: string, arg: string, func_name: string, line: i32, col: i32 }
+
+pub function marked(mod: Module, attr: string): FuncMark[] {
+  let out: FuncMark[] = [];
+  for m in mod.marks {
+    if (m.attr == attr) {
+      out = out.append(m);
+    }
+  }
+  return out;
+}
 
 pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], const_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
@@ -2803,6 +2813,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
   return (e_unknown_at("primary", p.peek_line(), p.peek_col()), p);
 }
 
+// The lowest precedence inside one literal of a pattern: the operators that
+// bind tighter than `|`, which separates the alternatives of a pattern.
+function pattern_min_prec(): i32 {
+  return precedence("|") + 1;
+}
+
 function precedence(op: string): i32 {
   if (op == "||") {
     return 1;
@@ -2810,19 +2826,19 @@ function precedence(op: string): i32 {
   if (op == "&&") {
     return 2;
   }
-  if (op == "|") {
+  if (op == "==" || op == "!=") {
     return 3;
   }
-  if (op == "^") {
+  if (op == "<" || op == ">" || op == "<=" || op == ">=") {
     return 4;
   }
-  if (op == "&") {
+  if (op == "|") {
     return 5;
   }
-  if (op == "==" || op == "!=") {
+  if (op == "^") {
     return 6;
   }
-  if (op == "<" || op == ">" || op == "<=" || op == ">=") {
+  if (op == "&") {
     return 7;
   }
   if (op == "<<" || op == ">>" || op == "<<|" || op == "<<?" || op == ">>?") {
@@ -2984,12 +3000,12 @@ function wider_rt(a: string, b: string): string {
 }
 
 function parse_lit_or_range(p: Par): (ast.Expr, ast.Expr, boolean, boolean, Par) {
-  let (lo_expr, lo_p) = parse_binary(p, 4);
+  let (lo_expr, lo_p) = parse_binary(p, pattern_min_prec());
   p = lo_p;
   let pk = p.peek_punct();
   if (pk == ".." || pk == "..=") {
     p = p.advance();
-    let (hi_expr, hi_p) = parse_binary(p, 4);
+    let (hi_expr, hi_p) = parse_binary(p, pattern_min_prec());
     p = hi_p;
     return (lo_expr, hi_expr, true, pk == "..=", p);
   }
@@ -4911,7 +4927,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
       } else if (p.peek_is_pat_literal()) {
         let lit_line = p.peek_line();
         let lit_col = p.peek_col();
-        let (lit_expr, lit_p) = parse_binary(p, 4);
+        let (lit_expr, lit_p) = parse_binary(p, pattern_min_prec());
         p = lit_p;
         let slot = "__pl" + dl_itoa(lit_line) + "_" + dl_itoa(lit_col);
         if (bn == 0) {
@@ -4923,7 +4939,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
         let rng = p.peek_punct();
         if (rng == ".." || rng == "..=") {
           p = p.advance();
-          let (hi_expr, hi_p) = parse_binary(p, 4);
+          let (hi_expr, hi_p) = parse_binary(p, pattern_min_prec());
           p = hi_p;
           let hi_op = "<";
           if (rng == "..=") {
@@ -5822,6 +5838,7 @@ function parse_loop_stmt(p: Par): (ast.Stmt, Par) {
 }
 
 function parse_for_stmt(p: Par): (ast.Stmt, Par) {
+  let for_col = p.peek_col();
   p = p.advance();
   if (p.peek_punct() == "(") {
     let cfl = p.peek_line();
@@ -5895,7 +5912,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     p = kvi_p.with_no_struct(kv_saved);
     let (kvb_body, kvb_p) = parse_block(p);
     p = kvb_p;
-    return (ast.StmtFor { var_name: kvnames, iter: kvi_expr, body: kvb_body, label: "", line: 0, col: kv_open.peek_col() }, p);
+    return (ast.StmtFor { var_name: kvnames, iter: kvi_expr, body: kvb_body, label: "", line: 0, col: for_col }, p);
   }
   let fpre: ast.Stmt[] = [];
   let fvar = "";
@@ -5963,7 +5980,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     fpre = fpre.append(fb_body[fbi]);
     fbi += 1;
   }
-  return (s_for(fvar, iter_expr, fpre), p);
+  return (ast.StmtFor { var_name: fvar, iter: iter_expr, body: fpre, label: "", line: 0, col: for_col }, p);
 }
 
 function for_refused(p: Par, kind: string): (ast.Stmt, Par) {
@@ -23934,10 +23951,10 @@ function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (name == "provide") {
     return parse_string_arg("provide", "", p);
   }
-  if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline") {
+  if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline" || name == "norc") {
     return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
   }
-  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @must_consume, @try, @inline, and @noinline are supported)")], p);
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @norc, @must_consume, @try, @inline, and @noinline are supported)")], p);
 }
 
 function parse_binding_args(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
@@ -24067,6 +24084,9 @@ function attr_misplaced(name: string): string {
   }
   if (name == "provide") {
     return "@provide only applies to a function declaration";
+  }
+  if (name == "norc") {
+    return "@norc only applies to a function declaration";
   }
   return "@inline / @noinline only applies to a function declaration";
 }
@@ -25865,7 +25885,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   let enums: EnumDecl[] = [];
   let resources: ResourceDecl[] = [];
   let exports: ExportBinding[] = [];
-  let providers: Provider[] = [];
+  let marks: FuncMark[] = [];
   let traits: TraitDecl[] = [];
   let impl_decls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
@@ -25988,8 +26008,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
       exports = with_attr_export(exports, attr, fr_func);
-      if (attr.name == "provide") {
-        providers = providers.append(Provider { capability: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
+      if (attr.name == "provide" || attr.name == "norc") {
+        marks = marks.append(FuncMark { attr: attr.name, arg: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
       }
       let fr_out = fr_pub;
       if (decl_fip || decl_fbip) {
@@ -26153,7 +26173,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     },
     None => {}
   }
-  let parsed = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, providers: providers, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
+  let parsed = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, marks: marks, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
   if (!verbatim) {
     let inferred = unannotated_const_names(funcs);
     let nothing: string[] = [];
@@ -26188,7 +26208,7 @@ function coded_kind(code: string, msg: string): string {
 }
 
 function lex_error_module(le: lexer.TokError): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let m = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], providers: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
+  let m = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], marks: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
   let traits: TraitDecl[] = [];
   let impls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
@@ -26261,9 +26281,9 @@ pub function merge_module(into: Module, from: Module): Module {
     nresources = nresources.append(from.resources[ri]);
     ri += 1;
   }
-  let nproviders = into.providers;
-  for pv in from.providers {
-    nproviders = nproviders.append(pv);
+  let nmarks = into.marks;
+  for pv in from.marks {
+    nmarks = nmarks.append(pv);
   }
   let nexports = into.exports;
   let xi = 0;
@@ -26289,7 +26309,7 @@ pub function merge_module(into: Module, from: Module): Module {
     ntreqs = ntreqs.append(from.trait_reqs[nti]);
     nti += 1;
   }
-  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, providers: nproviders, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
+  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, marks: nmarks, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
 pub function merge_module_prefixed(into: Module, from: Module, prefix: string): Module {
@@ -26321,9 +26341,9 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     nresources = nresources.append(ResourceDecl { ...rd, name: prefix + "." + rd.name });
     ri += 1;
   }
-  let nproviders = into.providers;
-  for pv in from.providers {
-    nproviders = nproviders.append(Provider { ...pv, func_name: prefix + "." + pv.func_name });
+  let nmarks = into.marks;
+  for pv in from.marks {
+    nmarks = nmarks.append(FuncMark { ...pv, func_name: prefix + "." + pv.func_name });
   }
   let nexports = into.exports;
   let xi = 0;
@@ -26350,7 +26370,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     ntreqs = ntreqs.append(from.trait_reqs[nti]);
     nti += 1;
   }
-  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, providers: nproviders, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
+  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, marks: nmarks, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
 function main(): i32 {

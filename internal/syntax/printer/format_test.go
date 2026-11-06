@@ -196,14 +196,15 @@ func TestFormatMinimalParens(t *testing.T) {
 	}
 }
 
-func TestFormatBitwiseLooserThanCompare(t *testing.T) {
+func TestFormatBitwiseComparisonGrouping(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`(a & b) == 0`, `(a & b) == 0`},
 		{`(a | b) == 0`, `(a | b) == 0`},
 		{`(a ^ b) == 0`, `(a ^ b) == 0`},
 		{`(a & b) != 0`, `(a & b) != 0`},
 		{`(a & b) < 16`, `(a & b) < 16`},
-		{`a == b & c`, `a == b & c`},
+		{`a == b & c`, `a == (b & c)`},
+		{`(a == b) & c`, `(a == b) & c`},
 		{`a & b | c`, `a & b | c`},
 		{`a | b & c`, `a | b & c`},
 		{`(a | b) & c`, `(a | b) & c`},
@@ -500,6 +501,13 @@ func TestFormatProvideAttr(t *testing.T) {
 	got := formatSrc(t, `@provide("log") pub function uart(data: usize, len: i32): void {}`)
 	if !strings.Contains(got, "@provide(\"log\")\npub function uart(") {
 		t.Errorf("@provide not preserved:\n%s", got)
+	}
+}
+
+func TestFormatNoRCAttr(t *testing.T) {
+	got := formatSrc(t, `@norc function tick(n: i32): i32 { return n; }`)
+	if !strings.Contains(got, "@norc\nfunction tick(") {
+		t.Errorf("@norc not preserved:\n%s", got)
 	}
 }
 

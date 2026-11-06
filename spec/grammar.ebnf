@@ -316,12 +316,12 @@ Expr        = Pipe ;
 Pipe        = Range { '|>' Range } ;
 Range       = LogicOr [ ( '..=' | '..' ) LogicOr ] ;
 LogicOr     = LogicAnd { '||' LogicAnd } ;
-LogicAnd    = BitOr { '&&' BitOr } ;
+LogicAnd    = Equality { '&&' Equality } ;
+Equality    = Relational { ( '==' | '!=' ) Relational } ;
+Relational  = BitOr { ( '<=' | '>=' | '<' | '>' ) BitOr } ;
 BitOr       = BitXor { '|' BitXor } ;
 BitXor      = BitAnd { '^' BitAnd } ;
-BitAnd      = Equality { '&' Equality } ;
-Equality    = Relational { ( '==' | '!=' ) Relational } ;
-Relational  = Shift { ( '<=' | '>=' | '<' | '>' ) Shift } ;
+BitAnd      = Shift { '&' Shift } ;
 Shift       = Additive { ( '<<|' | '<<?' | '>>?' | '<<' | '>>' ) Additive } ;
 Additive    = Multiplicative { ( '+|' | '-|' | '+?' | '-?' | '+' | '-' ) Multiplicative } ;
 Multiplicative
@@ -364,16 +364,16 @@ NoStructRange
 NoStructLogicOr
             = NoStructLogicAnd { '||' NoStructLogicAnd } ;
 NoStructLogicAnd
-            = NoStructBitOr { '&&' NoStructBitOr } ;
+            = NoStructEquality { '&&' NoStructEquality } ;
+NoStructEquality
+            = NoStructRelational { ( '==' | '!=' ) NoStructRelational } ;
+NoStructRelational
+            = NoStructBitOr { ( '<=' | '>=' | '<' | '>' ) NoStructBitOr } ;
 NoStructBitOr = NoStructBitXor { '|' NoStructBitXor } ;
 NoStructBitXor
             = NoStructBitAnd { '^' NoStructBitAnd } ;
 NoStructBitAnd
-            = NoStructEquality { '&' NoStructEquality } ;
-NoStructEquality
-            = NoStructRelational { ( '==' | '!=' ) NoStructRelational } ;
-NoStructRelational
-            = NoStructShift { ( '<=' | '>=' | '<' | '>' ) NoStructShift } ;
+            = NoStructShift { '&' NoStructShift } ;
 NoStructShift
             = NoStructAdditive { ( '<<|' | '<<?' | '>>?' | '<<' | '>>' ) NoStructAdditive } ;
 NoStructAdditive

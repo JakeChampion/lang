@@ -3012,6 +3012,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
+	c.checkNoRCFunctions(prog)
 	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
@@ -5734,6 +5735,7 @@ type checker struct {
 	// Apply the casts after checking so every consumer sees the same AST.
 	numericTypes      map[ast.Expr]ast.Type
 	numericCasts      map[ast.Expr]*ast.CastExpr
+	noRCIdentTypes    map[*ast.Ident]ast.Type
 	callee            ast.Expr
 	funcSources       map[string]string
 	consts            map[string]*ast.ConstDecl
@@ -13952,7 +13954,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		c.numericTypes[e] = t
 	}
-	return c.postNumericType(e, t)
+	t = c.postNumericType(e, t)
+	if c.current != nil && c.current.NoRC {
+		if id, ok := e.(*ast.Ident); ok {
+			if c.noRCIdentTypes == nil {
+				c.noRCIdentTypes = make(map[*ast.Ident]ast.Type)
+			}
+			c.noRCIdentTypes[id] = t
+		}
+	}
+	return t
 }
 
 func (c *checker) checkCastTarget(target ast.Type, pos ast.Position) bool {
@@ -14701,6 +14712,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var recvIsArg0 bool
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			c.settleOpenMapByCall(n, fa, s)
+			c.settleLitArrayByCall(n, fa, s)
 			tt := c.receiverType(fa.Target, s)
 			recvFA, recvType = fa, tt
 			if tt == nil {
@@ -15541,7 +15553,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		c.expectedType = nil
 		c.elemHint = nil
-		if id, ok := n.Target.(*ast.Ident); ok && c.holdsOpenEnum(lt) {
+		if id, ok := n.Target.(*ast.Ident); ok && (c.holdsOpenEnum(lt) || c.litNestedOf[s.lookupVarDecl(id.Name)] != nil) {
 			// A use of the open local on the right side can give it its type.
 			lt, _ = s.lookup(id.Name)
 		}
