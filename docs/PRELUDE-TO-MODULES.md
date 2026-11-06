@@ -333,6 +333,10 @@ function dynArea(a: dyn facade.Area): i32 { return a.area(); }   // → shapes__
 let p: facade.Point = facade.Point { x: 6, y: 7 };               // → shapes__Point
 ```
 
+A re-exported enum brings its variants. When `shapes.Shape` has a variant
+`Circle(i32)`, `facade.Circle(3)` constructs it and `facade.Circle(r) => ...`
+matches it, also through a facade of the facade.
+
 Implementation (`internal/pkg/modload/modload.go`): `pub use` targets are
 loaded like imports; after mangle prefixes are assigned,
 `resolveReexports` builds two per-module tables — `reexports` (values:
