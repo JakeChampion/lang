@@ -697,7 +697,7 @@ replaces it is `Descriptor.Entry`, an `EntryShape` on the environment (#6510):
 | --- | --- | --- |
 | `EntryProcess` | a kernel / dyld, with a populated process stack | `_start` (`_main` on Mach-O) + the argc/argv/envp capture |
 | `EntryExports` | nobody; the embedder calls exported symbols | neither |
-| `EntryReset` | a reset vector, with no stack pointer | no design yet |
+| `EntryReset` | a boot loader or a VMM, with no stack pointer | a reset `_start` that sets the stack, clears .bss, seeds the heap and calls `main` (`arm64-kernel`) |
 
 Freestanding is `EntryExports`. The compiler reads the shape through
 `platforms.entry_shape`, and its backends through `asmcore.process_entry`.

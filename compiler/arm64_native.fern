@@ -1315,6 +1315,12 @@ pub function arm64_fixed_word(mnem: string): i64 {
   if (mnem == "yield") {
     return 0xd503203f;
   }
+  if (mnem == "wfe") {
+    return 0xd503205f;
+  }
+  if (mnem == "wfi") {
+    return 0xd503207f;
+  }
   if (mnem == "paciasp") {
     return 0xd503233f;
   }
@@ -3017,6 +3023,9 @@ function arm64_mrs_base(name: string): i64 {
   if (name == "dczid_el0") {
     return 0xd53b00e0;
   }
+  if (name == "mpidr_el1") {
+    return 0xd53800a0;
+  }
   return -1;
 }
 
@@ -3036,6 +3045,9 @@ function arm64_msr_base(name: string): i64 {
   }
   if (name == "fpsr") {
     return 0xd51b4420;
+  }
+  if (name == "cpacr_el1") {
+    return 0xd5181040;
   }
   return -1;
 }
@@ -4788,6 +4800,16 @@ function arm64_gas_family_len3(mnem: string): i32 {
   }
   if (c == b'x' && mnem == "xtn") {
     return arm64_fam_narrow();
+  }
+  if (c == b'w') {
+    return arm64_gas_family_len3_w(mnem);
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len3_w(mnem: string): i32 {
+  if (mnem == "wfe" || mnem == "wfi") {
+    return arm64_fam_fixed();
   }
   return 0 - 1;
 }
@@ -9248,7 +9270,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("mov:vec") };
       }
     }
-    if (mnem == "yield" && ops.len() != 0) {
+    if ((mnem == "yield" || mnem == "wfe" || mnem == "wfi") && ops.len() != 0) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":operands") };
     }
     let lmem = arm64_gas_line_mem(ops);

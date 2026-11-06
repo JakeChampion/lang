@@ -796,6 +796,25 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad));
 }
 
+// A kernel image: the position-independent layout at `base`, as an ET_EXEC that
+// the loader enters at _start.
+function arm64_kernel_image(asm: string, words: u8[], base: i32): string {
+  let p = arm64_native.arm64_gas_program_words(asm, words);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-kernel", "assembler", p.unknown);
+  }
+  let tv = (base + elf.elf_text_vaddr_pie()) as i64;
+  let dv = (base + elf.elf_data_vaddr_pie(p.asm.text.len())) as i64;
+  let gap = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
+  p = arm64_native.arm64_relro_gap(p, gap);
+  p = arm64_native.arm64_gas_link(p, tv, dv);
+  if (p.unknown.len() > 0) {
+    return arm64_refusals("arm64-kernel", "linker", p.unknown);
+  }
+  let eoff = arm64_native.arm64_asm_label_off(p.asm, "_start");
+  return string_from_bytes_unchecked(elf.elf_image_kernel(p.asm.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, base));
+}
+
 // The startup reads the address and the page-rounded length of the read-only
 // region from two data slots. Fixed-address images use a read-only load
 // segment instead. A relocating image with constant bytes needs both slots.
@@ -2204,6 +2223,11 @@ pub function is_freestanding(t: string): boolean {
   return platforms.for_target(t).environment == "freestanding";
 }
 
+// A target with no host under the program: freestanding or a kernel image.
+function is_hostless(t: string): boolean {
+  return platforms.for_target(t).capabilities.len() == 0 && platforms.for_target(t).known;
+}
+
 // The targets with a native backend and a binary image.
 function is_native_target(t: string): boolean {
   return t == "x86-64-linux" || t == "arm64-linux" || t == "x86-64-android" || t == "arm64-android" || t == "arm64-darwin";
@@ -2326,6 +2350,71 @@ function heap_limit_bytes(text: string, target: string): i64 {
   return value;
 }
 
+// The -ram layout of a kernel image: its base and its size in bytes. The base
+// is a multiple of 64K below 2G, because the image writer keeps 32-bit
+// addresses, and the size holds the 1M stack and some heap.
+function ram_layout(text: string, target: string): (i64, i64, boolean) {
+  let kernel = platforms.entry_shape(target) == "reset";
+  if (text.len() == 0) {
+    if (kernel) {
+      eprint("fern: -target " + target + " needs -ram BASE,SIZE, the RAM that the loader puts the image in");
+    }
+    return (0i64, 0i64, !kernel);
+  }
+  if (!kernel) {
+    eprint("fern: -ram is only for a kernel target such as arm64-kernel (got \"" + target + "\")");
+    return (0i64, 0i64, false);
+  }
+  let parts = text.split(",");
+  let base = -1i64;
+  let size = -1i64;
+  if (parts.len() == 2) {
+    base = ram_number(parts[0]);
+    size = ram_number(parts[1]);
+  }
+  if (base < 0i64 || size < 4194304i64 || base % 65536i64 != 0i64 || base + size > 2147483648i64) {
+    eprint("fern: -ram takes BASE,SIZE: a BASE that is a multiple of 64K, a SIZE of at least 4M, and an end at or below 2G (got \"" + text + "\")");
+    return (0i64, 0i64, false);
+  }
+  return (base, size, true);
+}
+
+// A decimal or 0x hex number with an optional K, M or G suffix, or -1.
+function ram_number(text: string): i64 {
+  if (!text.starts_with("0x")) {
+    let v = size_bytes(text);
+    if (v <= 0i64 && text != "0") {
+      return -1i64;
+    }
+    return v;
+  }
+  let v = 0i64;
+  let i = 2;
+  while (i < text.len()) {
+    let d = hex_digit(text[i]);
+    if (d < 0i64 || v > 4294967296i64) {
+      return -1i64;
+    }
+    v = v * 16i64 + d;
+    i += 1;
+  }
+  if (text.len() == 2) {
+    return -1i64;
+  }
+  return v;
+}
+
+function hex_digit(c: u8): i64 {
+  if (c >= b'0' && c <= b'9') {
+    return (c - b'0') as i64;
+  }
+  let lower = c | 32u8;
+  if (lower >= b'a' && lower <= b'f') {
+    return (lower - b'a') as i64 + 10i64;
+  }
+  return -1i64;
+}
+
 // The -quarantine value in bytes: the default without the flag, zero for an
 // unbounded quarantine, below zero after a refusal.
 function quarantine_bytes(text: string, sanitize: boolean): i64 {
@@ -2429,6 +2518,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
+      cli_flag("-ram", "BASE,SIZE", "arm64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
       cli_flag("-quarantine", "SIZE", "with -sanitize: the byte budget of released blocks held before reuse, 1M to 16G with a K, M or G suffix, or 0 for no bound (default 64M)"),
       cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
@@ -5699,7 +5789,7 @@ function run_output(target: string, emit: string, shared: boolean, out_path: str
     eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
     return ("", "", 2);
   }
-  if (is_freestanding(target)) {
+  if (is_hostless(target)) {
     eprint("fern: -run cannot run -target " + target + ": the target has no host to run it on");
     return ("", "", 2);
   }
@@ -6510,6 +6600,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false };
   let harden = false;
   let heap_limit_text = "";
+  let ram_text = "";
   let quarantine_text = "";
   let pie = false;
   let remap_specs: string[] = [];
@@ -6590,6 +6681,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       harden = f.on;
     } else if (f.name == "-heap-limit") {
       heap_limit_text = f.value;
+    } else if (f.name == "-ram") {
+      ram_text = f.value;
     } else if (f.name == "-quarantine") {
       quarantine_text = f.value;
     } else if (f.name == "-pie") {
@@ -6809,6 +6902,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
   }
+  let (ram_base, ram_size, ram_ok) = ram_layout(ram_text, target);
+  if (!ram_ok) {
+    return 2;
+  }
   pie = executable_pie(pie, target, shared);
   let (remaps, remaps_ok) = path_remaps(remap_specs);
   if (!remaps_ok) {
@@ -6962,7 +7059,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }
@@ -6993,6 +7090,18 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     } else if (!emit_text) {
       out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), harden, pie);
       util.arr_push_cliff_report("arm64:image", 0);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  } else if (target == "arm64-kernel") {
+    let recs = word_buf(emit_text);
+    out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, recs);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (!emit_text) {
+      out_asm = arm64_kernel_image(out_asm, words_of(recs), ram_base as i32);
       if (out_asm.len() == 0) {
         return 2;
       }

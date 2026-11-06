@@ -278,6 +278,28 @@ package. Fern can do the same from the start: the descriptor holds the ISA rules
 and the board package (section 6) holds the addresses. A new board is then a new
 package, not a compiler change.
 
+**The first slice (#14254): `-target arm64-kernel`.** The target's environment
+is `kernel`, with the `EntryReset` shape and no capabilities. A board module
+supplies `log`. `-ram BASE,SIZE` gives the RAM that the loader puts the image
+in. It is a flag until a board module can supply it. The compiler writes an
+ELF `ET_EXEC` image:
+
+- The text segment starts at BASE and is not writable. The data segment follows
+  it and is not executable.
+- The reset `_start` runs on the boot core with the MMU off. It parks the other
+  cores, sets the stack at BASE + SIZE, and enables the FP and SIMD unit
+  (`CPACR_EL1`).
+- Then it clears `.bss` and gives the heap the RAM between the image and the
+  1 MiB stack. It calls `main`, and after `main` it waits with `wfe`.
+- The image keeps 32-bit addresses, so the end of the RAM must be at or below
+  2 GiB. That covers qemu-virt, where the RAM starts at `0x40000000`. Firecracker
+  puts the RAM at `0x80000000`, so it needs 64-bit addresses in `compiler/elf.fern`.
+
+`internal/testing/e2ecompiler/self_host_kernel_test.go` reads the program
+headers and the entry point. The image boots on `qemu-system-aarch64 -M virt`
+and prints through a PL011 provider. That boot is milestone 1 (#14260), with its
+own test and CI lane.
+
 ### 5. Atomics
 
 Genuinely absent — there is no atomic surface in the language at all (the
@@ -482,10 +504,12 @@ environment over the FernOS syscalls can come later, as an improvement.
    `@provide("log")` function (section 6).
 5. **Done: the no-RC property** (#14253), as `@norc` (section 3). The
    `interrupt` and `naked` attributes wait for a kernel environment.
-6. Then: memory layout and the reset entry (#14254) → effect intrinsics
+6. **First slice done: memory layout and the reset entry** (#14254), as
+   `arm64-kernel` (section 4).
+7. Then: milestone 1 on qemu-virt (#14260) → effect intrinsics
    (#14252) → `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-7. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+8. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 

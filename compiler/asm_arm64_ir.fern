@@ -6857,6 +6857,9 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   if (asmcore.process_entry(s)) {
     s = s.write("    .globl _start\n");
   }
+  if (asmcore.reset_entry(s)) {
+    s = s.write("    .globl _start\n    .section .bss\n__fern_bss_start:\n");
+  }
   s = s.write("    .text\n");
   let vgate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs, mod.funcs, cache), s.kinds, physicalbody.abis(physical)), s.memo);
   let unit = asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache, s.kinds);
@@ -6874,10 +6877,36 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
   s = emit_cfi_stubs_from(s, 0);
   irverifygate.report(vgate);
+  if (asmcore.reset_entry(s)) {
+    return emit_reset_start(s);
+  }
   if (!asmcore.process_entry(s)) {
     return s;
   }
   return emit_ir_start(s, darwin);
+}
+
+// The kernel image's stack holds the top 1 MiB of the RAM, and the heap holds
+// the rest above the image.
+function reset_stack_bytes(): i64 {
+  return 1048576i64;
+}
+
+// The reset entry runs on the boot core with the MMU off. It parks the other
+// cores, sets the stack, enables the FP and SIMD unit (CPACR_EL1.FPEN), clears
+// .bss, gives the heap the RAM between the image and the stack, and calls main.
+function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
+  let top = s.ram_base + s.ram_size;
+  s = s.write("_start:\n    mrs x9, mpidr_el1\n    and x9, x9, #255\n    cbnz x9, .Lreset_park\n");
+  s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
+  s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
+  s = s.write("    adrp x0, __fern_bss_start\n    add x0, x0, :lo12:__fern_bss_start\n");
+  s = s.write("    adrp x1, __fern_bss_end\n    add x1, x1, :lo12:__fern_bss_end\n");
+  s = s.write(".Lreset_clear:\n    cmp x0, x1\n    b.hs .Lreset_cleared\n    str xzr, [x0], #8\n    b .Lreset_clear\n.Lreset_cleared:\n");
+  s = s.write("    add x0, x1, #15\n    and x0, x0, #-16\n");
+  s = s.write(mov_imm64("x1", top - reset_stack_bytes()) + "    sub x1, x1, x0\n    bl __fern_heap_init\n");
+  s = s.write("    bl __fn_main\n.Lreset_park:\n    wfe\n    b .Lreset_park\n");
+  return s;
 }
 
 function rt_arm64_str_eq(): string {
@@ -12453,6 +12482,9 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
   s = emit_ir_runtime_settled(s, darwin);
   if (asmcore.sandbox_on()) {
     s = emit_seccomp_install(s);
+  }
+  if (asmcore.reset_entry(s)) {
+    s = s.write("    .section .data\n    .p2align 4\n    .section .bss\n    .p2align 4\n__fern_bss_end:\n    .text\n");
   }
   irverifygate.close_memo(s.memo);
   let leak = asmcore.hostless_syscall_refusal(s);

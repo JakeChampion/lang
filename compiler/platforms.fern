@@ -46,12 +46,14 @@ function environment_profile(environment: string): string {
   if (environment == "wasi-http") {
     return "wasi-proxy";
   }
-  if (environment == "freestanding") {
+  if (environment == "freestanding" || environment == "kernel") {
     return "none";
   }
   return "";
 }
 
+// One branch for each environment's targets.
+// fern-lint: allow cyclomatic-complexity
 function target_environment(name: string): string {
   if (name == "x86-64-linux" || name == "arm64-linux") {
     return "linux";
@@ -71,6 +73,9 @@ function target_environment(name: string): string {
   if (name == "arm64-freestanding" || name == "x86-64-freestanding") {
     return "freestanding";
   }
+  if (name == "arm64-kernel") {
+    return "kernel";
+  }
   return "";
 }
 
@@ -86,11 +91,13 @@ function target_isa(name: string): string {
 
 pub function targets(): string[] {
   return [
-    "arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-linux",
+    "arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-kernel", "arm64-linux",
     "wasm32-wasi", "wasm32-wasi-http", "x86-64-android", "x86-64-freestanding", "x86-64-linux",
   ];
 }
 
+// One branch for each target, in the shape that the parity test reads.
+// fern-lint: allow cyclomatic-complexity
 pub function description(name: string): string {
   if (name == "arm64-linux") {
     return "ARM64 Linux ELF (AWS Graviton, Apple Silicon via container; ARMv8.2-A with the crypto extensions).";
@@ -103,6 +110,9 @@ pub function description(name: string): string {
   }
   if (name == "arm64-freestanding") {
     return "ARM64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.";
+  }
+  if (name == "arm64-kernel") {
+    return "ARM64 kernel image — an ELF that the boot loader or the VMM loads at -ram BASE. The reset entry sets the stack, clears .bss and calls main. No host and no syscalls.";
   }
   if (name == "x86-64-linux") {
     return "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).";
@@ -144,6 +154,9 @@ pub function entry_shape(name: string): string {
   let env_name = target_environment(name);
   if (env_name == "wasi-http" || env_name == "freestanding") {
     return "exports";
+  }
+  if (env_name == "kernel") {
+    return "reset";
   }
   return "process";
 }
