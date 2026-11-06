@@ -466,3 +466,8 @@ profile/x86-64-linux/startup.minimal.ir	74
 profile/x86-64-linux/startup.safe.bytes	1904
 profile/x86-64-linux/startup.safe.emit	267
 profile/x86-64-linux/startup.safe.ir	74
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
