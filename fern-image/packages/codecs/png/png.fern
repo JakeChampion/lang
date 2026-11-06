@@ -595,7 +595,7 @@ pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError]
   }
   let header = append32(append32([], image.layout.width as u32), image.layout.height as u32);
   header = header.append(8);
-  let color_type: u8 = if (channels == 4) { 6 } else { 2 };
+  let color_type = if (channels == 4) { 6 } else { 2 };
   header = header.append(color_type).append(0).append(0).append(0);
   let output = [137, 80, 78, 71, 13, 10, 26, 10];
   output = chunk(output, CHUNK_IHDR, header);

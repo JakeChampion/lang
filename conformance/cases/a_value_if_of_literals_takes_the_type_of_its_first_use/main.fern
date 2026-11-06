@@ -1,0 +1,19 @@
+function narrow(b: u8): i32 {
+  return b as i32;
+}
+
+function pick(c: boolean): i32 {
+  let header: u8[] = [];
+  let kind = if (c) { 6 } else { 2 };
+  header = header.append(kind);
+  let width = if (c) { 200 } else { 1 };
+  return narrow(width) + (header[0] as i32);
+}
+
+function main(): i32 {
+  if (pick(true) != 206 || pick(false) != 3) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}

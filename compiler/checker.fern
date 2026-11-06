@@ -12737,8 +12737,42 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
   return out;
 }
 
+// block_results is the value of each path through the body of a value block.
+function block_results(body: ast.Stmt[], own acc: ast.Expr[]): ast.Expr[] {
+  if (body.len() == 0) {
+    return acc;
+  }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => {
+      return acc.append(r.value);
+    },
+    ast.StmtIf(f) => {
+      return block_results(f.else_body, block_results(f.then_body, acc));
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        acc = block_results(arm.body, acc);
+      }
+      return acc;
+    },
+    _ => {
+      return acc;
+    }
+  }
+}
+
 function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
+  if let ast.ExprCall(vc) = e {
+    if let ast.ExprLambda(vb) = vc.callee {
+      if (parser.is_value_block(vc)) {
+        for r in block_results(vb.body, []) {
+          out = util.append_diags(out, int_dest_range_diags(r, want));
+        }
+        return out;
+      }
+    }
+  }
   if let ast.ExprUnary(tu) = e {
     if let ast.ExprCall(tc) = tu.operand {
       if (tu.op == "try_" && ctor_variant_name(tc) == "Some" && tc.args.len() == 1) {
@@ -31910,6 +31944,40 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   return out;
 }
 
+// lit_value_local gives a literal class to a local whose value block yields a
+// literal tree on each path, such as `let x = if (c) { 6 } else { 2 };`, so
+// its first use gives its type. It is -1 for any other initializer.
+function lit_value_local(v: ast.StmtVar, c: ast.ExprCall, s: Scope, st: LitInfer): (i32, LitInfer) {
+  if (!parser.is_value_block(c)) {
+    return (-1, st);
+  }
+  let ast.ExprLambda(vb) = c.callee else {
+    return (-1, st);
+  };
+  let (seed, ids) = lit_body_seed(vb.body, s, []);
+  if (!seed) {
+    return (-1, st);
+  }
+  let k = st.parent.len();
+  return (k, lit_link(lit_new(st, lit_var_key(v)), ids.append(k)));
+}
+
+function lit_body_seed(body: ast.Stmt[], s: Scope, ids: i32[]): (boolean, i32[]) {
+  if (body.len() == 0) {
+    return (false, ids);
+  }
+  let last = body[body.len() - 1];
+  if let ast.StmtReturn(r) = last {
+    return lit_tree(r.value, s, ids);
+  }
+  if let ast.StmtIf(f) = last {
+    let (a, aids) = lit_body_seed(f.then_body, s, ids);
+    let (b, bids) = lit_body_seed(f.else_body, s, aids);
+    return (a && b, bids);
+  }
+  return (false, ids);
+}
+
 function lit_value_block(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
   if (is_unknown(want) || is_float(want)) {
     want = check_expr(c, lit_typed_scope(s, st));
@@ -32517,6 +32585,10 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           let (enum_type, enum_state) = lit_enum_local(call, s, st);
           if (!is_unknown(enum_type)) {
             return (s.bind(v.name, enum_type), enum_state);
+          }
+          let (vk, vst) = lit_value_local(v, call, s, st);
+          if (vk >= 0) {
+            return (s.bind(v.name, lit_marker(vk)), vst);
           }
         }
         if let ast.ExprArray(ea) = v.init {
@@ -33139,7 +33211,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       if (v.type_name.len() > 0 || name_has_comma(v.name)) {
         return false;
       }
-      return lit_holds_int_literal(v.init) || names_unit_variant(v.init);
+      return lit_holds_int_literal(v.init) || names_unit_variant(v.init) || value_block_literal(v.init);
     },
     ast.StmtFor(fr) => {
       if (!for_iter_is_range(fr.iter)) {
@@ -33166,6 +33238,32 @@ function variant_shaped(name: string): boolean {
     }
   }
   return at < name.len() && name[at] >= b'A' && name[at] <= b'Z';
+}
+
+// value_block_literal is true for a value block that yields an integer
+// literal on some path, such as `if (c) { 6 } else { n }`.
+function value_block_literal(e: ast.Expr): boolean {
+  let ast.ExprCall(c) = e else {
+    return false;
+  };
+  let ast.ExprLambda(vb) = c.callee else {
+    return false;
+  };
+  return parser.is_value_block(c) && body_yields_literal(vb.body);
+}
+
+function body_yields_literal(body: ast.Stmt[]): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  let last = body[body.len() - 1];
+  if let ast.StmtReturn(r) = last {
+    return int_literal_tree(r.value);
+  }
+  if let ast.StmtIf(f) = last {
+    return body_yields_literal(f.then_body) || body_yields_literal(f.else_body);
+  }
+  return false;
 }
 
 function names_unit_variant(e: ast.Expr): boolean {
