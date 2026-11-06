@@ -12739,6 +12739,14 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
 
 function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
+  if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c)) {
+      for value in mx_body_result_exprs(parser.vb_body(c)) {
+        out = util.append_diags(out, int_dest_range_diags(value, want));
+      }
+      return out;
+    }
+  }
   if let ast.ExprUnary(tu) = e {
     if let ast.ExprCall(tc) = tu.operand {
       if (tu.op == "try_" && ctor_variant_name(tc) == "Some" && tc.args.len() == 1) {
@@ -31370,9 +31378,9 @@ function lit_arms(body: ast.Stmt[], s: Scope, ids: i32[], st: LitInfer): (i32, i
   }
   match (body[last]) {
     ast.StmtReturn(r) => {
-      let (seed, rids) = lit_tree(r.value, cur, ids);
+      let (seed, rids, rst) = lit_seed(r.value, cur, out);
       if (seed) {
-        return (1, rids, out);
+        return (1, util.append_all(ids, rids), rst);
       }
       return (0 - 1, ids, out);
     },
