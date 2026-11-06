@@ -584,7 +584,7 @@ pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError]
   }
   let compressed = deflate.deflate(raw);
   let checksum = deflate.adler32(raw);
-  let zlib: u8[] = [120, 156];
+  let zlib = [120, 156];
   for b in compressed {
     zlib = zlib.append(b);
   }
