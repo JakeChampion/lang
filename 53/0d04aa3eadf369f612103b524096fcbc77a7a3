@@ -528,3 +528,26 @@ tls/server/go.bulk_mbytes_per_s	158.3
 tls/server/curl.bulk_mbytes_per_s	150.3
 tls/server/handshakes_per_s	540.7
 tls/server/resumed_handshakes_per_s	602.7
+
+# lane: net-soak
+soak/static.requests	38407146
+soak/static.failed	0
+soak/static.rss_warm_kb	684
+soak/static.rss_end_kb	684
+soak/static.rss_growth_kb	0
+soak/static.allocs	374404
+soak/static.live_bytes	0
+soak/echo.requests	30989440
+soak/echo.failed	0
+soak/echo.rss_warm_kb	704
+soak/echo.rss_end_kb	704
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	1487718850
+soak/echo.live_bytes	0
+soak/recent.requests	21783743
+soak/recent.failed	0
+soak/recent.rss_warm_kb	1396
+soak/recent.rss_end_kb	1396
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	784848825
+soak/recent.live_bytes	0
