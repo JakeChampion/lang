@@ -6701,9 +6701,17 @@ function emit_fault_install(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
   if (darwin) {
     signals = [11, 10];
   }
-  s = s.write(".Lfern_fault_install:\n    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n");
+  // A Darwin system call returns a second value in x1, so there each call
+  // loads its arguments again.
+  let args = "    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n";
+  let each = "";
+  if (darwin) {
+    each = args;
+    args = "";
+  }
+  s = s.write(".Lfern_fault_install:\n" + args);
   for signo in signals {
-    s = s.write("    mov x0, #" + util.i32_to_string(signo) + "\n    mov x8, #134\n").svc(134);
+    s = s.write(each + "    mov x0, #" + util.i32_to_string(signo) + "\n    mov x8, #134\n").svc(134);
     s = s.write("    cbnz x0, .Lfern_fault_install_done\n");
   }
   return s.write(".Lfern_fault_install_done:\n    ret\n");
