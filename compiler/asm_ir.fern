@@ -358,6 +358,7 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    xorq %rdx, %r8\n");
   s = s.write(".Lfltake_store:\n");
   s = s.write("    movq %r8, (%rsi)\n");
+  s = s.write("    movq $0, (%rax)\n");
   s = s.write(".Lfltake_done:\n");
   s = s.write("    popq %r8\n");
   s = s.write("    popq %rsi\n");
@@ -376,7 +377,17 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq __fern_heap_end(%rip), %r8\n");
   s = s.write("    jae __fern_free_link_abort\n");
   s = s.write(".Lfltake_next_ok:\n");
-  return s.write("    ret\n");
+  s = s.write("    ret\n");
+  return emit_scrub(s);
+}
+
+// __fern_scrub zeroes words 1 to words - 1 of a block. It takes the block and
+// then its size in words on the stack, and keeps every register.
+function emit_scrub(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_scrub:\n    pushq %rdi\n    pushq %rcx\n    pushq %rax\n");
+  s = s.write("    movq 40(%rsp), %rcx\n    subq $1, %rcx\n    jbe .Lscrub_done\n");
+  s = s.write("    movq 32(%rsp), %rdi\n    addq $8, %rdi\n    xorl %eax, %eax\n    rep stosq\n");
+  return s.write(".Lscrub_done:\n    popq %rax\n    popq %rcx\n    popq %rdi\n    ret\n");
 }
 
 // The key of a free block's link under -harden: the process canary mixed
@@ -436,12 +447,13 @@ function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: st
 // Pushes ptr on the free list of its class. With `twice` set, a block that is
 // already the head of the list jumps to that label instead.
 function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string, twice: string): asmcore.EmitState {
-  return freelist_push_slot(s, ptr, "(%r8," + words + ",8)", tmp, twice);
+  return freelist_push_slot(s, ptr, words, "(%r8," + words + ",8)", tmp, twice);
 }
 
-// Pushes ptr on the free list whose head is `slot`, an operand over the
-// list table in %r8.
-function freelist_push_slot(s: asmcore.EmitState, ptr: string, slot: string, tmp: string, twice: string): asmcore.EmitState {
+// Pushes ptr, a block of `words` words, on the free list whose head is
+// `slot`, an operand over the list table in %r8.
+function freelist_push_slot(s: asmcore.EmitState, ptr: string, words: string, slot: string, tmp: string, twice: string): asmcore.EmitState {
+  s = freelist_scrub(s, ptr, words);
   s = s.write("    leaq __fern_freelist(%rip), %r8\n");
   s = s.write("    movq " + slot + ", " + tmp + "\n");
   if (twice != "") {
@@ -450,6 +462,15 @@ function freelist_push_slot(s: asmcore.EmitState, ptr: string, slot: string, tmp
   s = freelist_encode(s, ptr, tmp, "%r9");
   s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
   return s.write("    movq " + ptr + ", " + slot + "\n");
+}
+
+// Under -harden, zeroes words 1 to words - 1 of the block at ptr before its
+// push, so a released block keeps no bytes of its owner.
+function freelist_scrub(s: asmcore.EmitState, ptr: string, words: string): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  return s.write("    pushq " + words + "\n    pushq " + ptr + "\n    call __fern_scrub\n    leaq 16(%rsp), %rsp\n");
 }
 
 // Jumps to `twice` when `ptr` is already on the free list whose head is in
@@ -3257,6 +3278,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write("__fern_large_push_now:\n");
   }
+  if (s.harden) {
+    s = s.write("    pushq %rsi\n    shrq $3, (%rsp)\n    pushq %r8\n    call __fern_scrub\n    leaq 16(%rsp), %rsp\n");
+  }
   s = s.write("    movq %rsi, %rax\n");
   s = large_class(s);
   s = s.write("    movq %rdx, %rax\n");
@@ -3443,7 +3467,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq -8(%rax), %rdx\n");
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
-    s = freelist_push_slot(s, "%rdx", "24(%r8)", "%rsi", "");
+    s = freelist_push_slot(s, "%rdx", "$3", "24(%r8)", "%rsi", "");
   } else {
     s = quar_push(s, "%rdx", "$3", 0);
   }
@@ -3541,7 +3565,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
-    s = freelist_push_slot(s, "%rdx", "24(%r8)", "%rsi", "");
+    s = freelist_push_slot(s, "%rdx", "$3", "24(%r8)", "%rsi", "");
   } else {
     s = quar_push(s, "%rdx", "$3", 0);
   }
@@ -11390,8 +11414,12 @@ function emit_ir_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.Emi
   s = s.write("    popq %rax\n");
   s = s.write("    testq %rax, %rax\n");
   s = s.write("    jz " + hrl_done + "\n");
-  s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
+  if (s.harden) {
+    s = s.write("    movq __fern_heap_ptr(%rip), %rcx\n    subq %rax, %rcx\n    jbe " + hrl_done + "_kept\n");
+    s = s.write("    pushq %rax\n    movq %rax, %rdi\n    xorl %eax, %eax\n    rep stosb\n    popq %rax\n" + hrl_done + "_kept:\n");
+  }
+  s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    leaq __fern_freelist_shadow(%rip), %rsi\n");
   s = s.write("    leaq __fern_freelist(%rip), %rdi\n");
   s = s.write("    movl $65536, %ecx\n    rep movsq\n");

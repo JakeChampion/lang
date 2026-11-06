@@ -80,6 +80,13 @@ The cost is one load of the canary and three logical operations per push and per
 `TestSelfHostFreeListLinkForgery` pins the abort for a small class and a large class on both targets.
 `TestSelfHostHardenFreeListRoundTrip` recycles twelve blocks of each class through the encoded lists.
 
+The take under `-harden` writes zero over the link word of the block it hands out.
+Before that change, a raw allocation from a free list read the encoded link.
+The link of the last block of a list is the key itself.
+With the key, a program can forge a link that decodes to a valid address.
+The encoding therefore did not hold against the raw floor.
+`TestSelfHostHardenScrubsReleasedBlocks` pins a zero link word on both targets.
+
 ## Size checks at each entry
 
 | Entry | Check |
@@ -100,6 +107,7 @@ The cost is one load of the canary and three logical operations per push and per
 | A freed large block is a donor for the next request of its class | `TestSelfHostAllocReuseLargeDonor` |
 | A second raw free of the same block in a row aborts, small and large, on both backends | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free`, `raw_double_free_large`) |
 | Under `-harden` a second raw free after other frees of the class aborts, small and large, on both backends | `TestSelfHostHardenRawInterleavedDoubleFree` |
+| Under `-harden` a released block holds zeros and a taken block has no link word, small and large, on both backends | `TestSelfHostHardenScrubsReleasedBlocks` |
 | A freed block above one gigabyte is reused, on both backends | `TestSelfHostAllocReuseAboveOneGigabyte` |
 | A request whose bump wraps the address space aborts with the size cause, on both backends; the probe calls the allocator from patched assembly, because no checked entry passes such a size | `TestSelfHostAllocRefusesWrappedBump` |
 | Every rc corpus case reclaims everything on three targets | `TestX86_64RcCorpusLeakGate`, `TestArm64RcCorpusLeakGate`, `TestWASMRcCorpusLeakGate` |
@@ -111,7 +119,7 @@ The cost is one load of the canary and three logical operations per push and per
 |---|---|
 | Free list link inside the freed block | In the release build a raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address. `-harden` encodes the link and aborts on a bad one, and `-sanitize` quarantines freed blocks and detects the touch (SEC-023) |
 | A raw double free with another free of the same class between the two | In the release build `__free` compares the block with the head of its list alone, so a free of another block of the class between the two frees hides the second. `-harden` walks the first 64 blocks of the list, so only a second free with 64 or more frees of the class between them links the block twice (SEC-023) |
-| No zeroing on free | A secret stays in the arena until the block is reused and zero-filled. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
+| No zeroing on free in the release build | A secret stays in the arena until the block is reused and zero-filled. `-harden` zeroes each block before its push and clears the link word at the take. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |
 | `munmap` | The arena is never unmapped; a freed block returns to a list, never to the kernel |

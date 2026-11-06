@@ -6261,7 +6261,12 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
   s = s.need("heap");
   s = s.write("    ldr x0, [sp], #16\n");
   s = s.write("    cbz x0, " + hr_done + "\n");
-  s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n    str x0, [x1]\n");
+  s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n");
+  if (s.harden) {
+    s = s.write("    ldr x9, [x1]\n    mov x10, x0\n" + hr_done + "_zero:\n    cmp x10, x9\n    b.hs " + hr_done + "_kept\n");
+    s = s.write("    strb wzr, [x10], #1\n    b " + hr_done + "_zero\n" + hr_done + "_kept:\n");
+  }
+  s = s.write("    str x0, [x1]\n");
   s = arm64_copy_words(s, "__fern_freelist_shadow", "__fern_freelist", 65536);
   s = arm64_copy_words(s, "__fern_large_freelist_shadow", "__fern_large_freelist", 2560);
   s = s.write(hr_done + ":\n");
@@ -7639,6 +7644,7 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    eor x12, x12, x16\n");
   s = s.write(".Lfltake_store:\n");
   s = s.write("    str x12, [x11]\n");
+  s = s.write("    str xzr, [x0]\n");
   s = s.write(".Lfltake_done:\n");
   s = s.write("    ldr x13, [sp], #16\n");
   return s.write("    ret\n");
@@ -8222,12 +8228,13 @@ function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
 // Pushes ptr on the free list of its class. With `twice` set, a block that is
 // already the head of the list branches to that label instead.
 function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string, twice: string): asmcore.EmitState {
-  return freelist_push_slot(s, ptr, base, base + ", " + words + ", lsl #3", tmp, twice);
+  return freelist_push_slot(s, ptr, words + ", lsl #3", base, base + ", " + words + ", lsl #3", tmp, twice);
 }
 
 // Pushes ptr on the free list whose head is at `slot`, an address over the
-// list table in `base`.
-function freelist_push_slot(s: asmcore.EmitState, ptr: string, base: string, slot: string, tmp: string, twice: string): asmcore.EmitState {
+// list table in `base`. `size` is the block's byte size as an add operand.
+function freelist_push_slot(s: asmcore.EmitState, ptr: string, size: string, base: string, slot: string, tmp: string, twice: string): asmcore.EmitState {
+  s = freelist_scrub(s, ptr, size, base, tmp);
   s = s.write("    adrp " + base + ", __fern_freelist\n");
   s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
   s = s.write("    ldr " + tmp + ", [" + slot + "]\n");
@@ -8237,6 +8244,19 @@ function freelist_push_slot(s: asmcore.EmitState, ptr: string, base: string, slo
   s = freelist_encode(s, ptr, tmp);
   s = s.write("    str " + tmp + ", [" + ptr + "]\n");
   return s.write("    str " + ptr + ", [" + slot + "]\n");
+}
+
+// Under -harden, zeroes the block at ptr from its second word to `size` bytes
+// before its push, so a released block keeps no bytes of its owner. `cur`
+// and `end` are scratch.
+function freelist_scrub(s: asmcore.EmitState, ptr: string, size: string, cur: string, end: string): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  let l = asmcore.fresh_label(s);
+  s = l.state.write("    add " + cur + ", " + ptr + ", #8\n    add " + end + ", " + ptr + ", " + size + "\n");
+  s = s.write(l.name + ":\n    cmp " + cur + ", " + end + "\n    b.hs " + l.name + "_done\n");
+  return s.write("    str xzr, [" + cur + "], #8\n    b " + l.name + "\n" + l.name + "_done:\n");
 }
 
 // Branches to `twice` when `ptr` is already on the free list whose head is in
@@ -10015,6 +10035,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write("__fern_large_push_now:\n");
   }
+  s = freelist_scrub(s, "x1", "x2", "x3", "x4");
   s = arm64_large_class(s, "x2", "x4", "x3");
   s = s.write("    mov x2, x4\n");
   s = s.write("    adrp x3, __fern_large_freelist\n");
@@ -10170,7 +10191,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    sub x1, x0, #8\n");
   s = lc_bump_free_add(s, "#24", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
-    s = freelist_push_slot(s, "x1", "x3", "x3, #24", "x10", "");
+    s = freelist_push_slot(s, "x1", "#24", "x3", "x3, #24", "x10", "");
   } else {
     s = quar_push(s, "x1", "#3", 0);
   }
@@ -10267,7 +10288,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));
   s = lc_bump_free_add(s, "#24", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
-    s = freelist_push_slot(s, "x1", "x3", "x3, #24", "x10", "");
+    s = freelist_push_slot(s, "x1", "#24", "x3", "x3, #24", "x10", "");
   } else {
     s = quar_push(s, "x1", "#3", 0);
   }
