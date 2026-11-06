@@ -102,7 +102,7 @@ pub function description(name: string): string {
     return "ARM64 Android — Linux ELF as a static position-independent executable (ET_DYN, W^X), so it loads at an arbitrary base under Android's loader. Same syscalls / AAPCS64 as arm64-linux.";
   }
   if (name == "arm64-freestanding") {
-    return "ARM64 with no host — no kernel, no syscalls, no process. Type-checkable today; no backend emits for it yet (#6510).";
+    return "ARM64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.";
   }
   if (name == "x86-64-linux") {
     return "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).";
@@ -111,7 +111,7 @@ pub function description(name: string): string {
     return "x86-64 Android (emulators and x86-64 devices) — Linux ELF as a static position-independent executable, like arm64-android. Same syscalls / System V ABI as x86-64-linux.";
   }
   if (name == "x86-64-freestanding") {
-    return "x86-64 with no host — no kernel, no syscalls, no process. Type-checkable today; no backend emits for it yet (#6510).";
+    return "x86-64 with no host — no kernel, no syscalls, no process. Writes assembly for an embedder to link, entered through the -export functions.";
   }
   if (name == "wasm32-wasi") {
     return "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).";
@@ -137,8 +137,15 @@ pub function handler_kinds(name: string): string[] {
   return empty;
 }
 
-pub function emits_code(name: string): boolean {
-  return name != "arm64-freestanding" && name != "x86-64-freestanding";
+// How control reaches the artifact: "process" is a kernel or a loader with a
+// process stack, "exports" is an embedder that calls exported symbols, and
+// "reset" is a reset vector. An unknown target is "process".
+pub function entry_shape(name: string): string {
+  let env_name = target_environment(name);
+  if (env_name == "wasi-http" || env_name == "freestanding") {
+    return "exports";
+  }
+  return "process";
 }
 
 pub function for_target(name: string): Descriptor {

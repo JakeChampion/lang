@@ -171,6 +171,33 @@ func TestSelfHostListingMatches(t *testing.T) {
 	}
 }
 
+func TestSelfHostEntryShapesMatch(t *testing.T) {
+	body := regexp.MustCompile(`(?s)pub function entry_shape\(name: string\): string \{(.*?)\n\}`).FindStringSubmatch(readSelfHostPlatforms(t))
+	if body == nil {
+		t.Fatalf("no entry_shape() found in %s — the extraction pattern has gone stale", selfHostPlatformsSrc)
+	}
+	shapes := map[string]EntryShape{}
+	for _, m := range regexp.MustCompile(`(?s)if \(([^{]*)\) \{\s*return "([^"]+)";`).FindAllStringSubmatch(body[1], -1) {
+		for _, env := range fernStringList(m[1]) {
+			shapes[env] = EntryShape(m[2])
+		}
+	}
+	fallback := regexp.MustCompile(`\n  return "([^"]+)";\s*$`).FindStringSubmatch(body[1])
+	if len(shapes) == 0 || fallback == nil {
+		t.Fatalf("extracted %d entry shapes and fallback %v from %s — the extraction pattern has gone stale", len(shapes), fallback, selfHostPlatformsSrc)
+	}
+	for _, name := range Targets() {
+		d := ForTarget(name)
+		got, ok := shapes[d.Environment]
+		if !ok {
+			got = EntryShape(fallback[1])
+		}
+		if got != d.Entry {
+			t.Errorf("target %q: entry shape here %q, in the self-host %q", name, d.Entry, got)
+		}
+	}
+}
+
 func TestSelfHostEquivalentsMatch(t *testing.T) {
 	body := regexp.MustCompile(`(?s)function equivalent\(builtin: string\): string \{(.*?)\n\}`).FindStringSubmatch(readSelfHostPlatforms(t))
 	if body == nil {

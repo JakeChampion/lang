@@ -50,10 +50,10 @@ function main(): i32 {
   if (platforms.for_target("arm64-freestanding").capabilities.len() != 0) {
     return 7;
   }
-  if (platforms.emits_code("arm64-freestanding")) {
+  if (platforms.entry_shape("arm64-freestanding") != "exports") {
     return 8;
   }
-  if (!platforms.emits_code("arm64-linux")) {
+  if (platforms.entry_shape("arm64-linux") != "process") {
     return 9;
   }
 

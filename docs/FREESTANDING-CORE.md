@@ -523,8 +523,8 @@ than an `unknown callee` out of the emitter:
 The three are enumerated in both hosted profiles and granted by neither wasi
 profile nor by `none`. A freestanding target could in principle honour `cabi` — a
 calling convention is an ISA property, and nothing about a kernel forbids one — but
-`none` grants nothing at all by construction, and no backend emits for a freestanding
-target yet, so there is nothing to observe. Revisit it with #6510, not before.
+`none` grants nothing at all by construction. Revisit it when a freestanding embedder
+needs a C call.
 
 **A handle method reports only what its target can measure, and `flags()` is
 where that bit.** `r.flags()` / `w.flags()` (#9219) answer three bits about how
@@ -652,17 +652,31 @@ every target would grant `alloc` and the capability would carry no information.
 
 ## The target
 
-`-target arm64-freestanding` / `-target x86-64-freestanding` exist and grant nothing (#6509). It is **check-only**: the
-descriptor is declared, `fern -targets` lists it, and `fern -check -target arm64-freestanding`
-type-checks against its empty capability set — but no backend emits for it. A compile
-for it stops with `fern: -target arm64-freestanding: check-only — no backend emits for
-this target yet` (`backend_refusal` in `compiler/fern.fern`). It does not stop with the
-"unknown target" error, because that error is false for this target.
+`-target arm64-freestanding` / `-target x86-64-freestanding` grant no capability (#6509).
+The compiler writes assembly for them:
 
-The Go native backends emitted for freestanding (#6510, #6511). The native retirement
-deleted them (`docs/NATIVE-RETIREMENT.md`), and the compiler did not get that work.
-#14245 ports it. The two sections below are the contract that the port implements.
-`compiler/platforms.fern` `emits_code` becomes true for freestanding when the port lands.
+```
+fern -target arm64-freestanding -export add,total -emit asm -o lib.s lib.fern STDLIB
+```
+
+The compiler has no object writer, so the embedder assembles the output with its own
+toolchain and links it. With no `-o`, the assembly goes to stdout, as for the hosted
+native targets. `-o` with no `-emit asm` stops with `-target T writes assembly only;
+pass -emit asm`, because there is no binary to write. `-run` stops because the target
+has no host. The playground builds the same assembly, with `main` as its export.
+
+The artifact has no `_start`. Each function in `-export` (default `main`) is a global
+symbol with its own name, over the C-ABI export entry that `-shared` also uses
+(`freestanding_exports` in `compiler/fern.fern`). The entry does not take the busy lock,
+because only one context calls a freestanding artifact. The embedder calls
+`__fern_heap_init` before the first export that allocates (see below).
+
+The capability gate keeps the hosted runtime out of the artifact. As a second check, the
+backend refuses a freestanding build whose output contains a syscall, and names the
+syscall (`hostless_syscall_refusal` in `compiler/asmcore.fern`). A runtime switch such
+as `FERN_SANITIZE` or `FERN_LEAKCHECK` writes a report, so it causes this refusal.
+`internal/testing/e2ecompiler/self_host_freestanding_test.go` links the output of each
+ISA into a C embedder with no libc, runs it, and checks the two trap paths below.
 
 Two consequences worth knowing:
 
@@ -670,9 +684,8 @@ Two consequences worth knowing:
   `arm64-linux`, so threading it unconditionally would silently start enforcing that
   capability set against every `fern -check` — refusing `sysctl`, which only Darwin
   grants. A bare `fern -check` still means "does this type-check".
-- **`log` is no longer universal.** `TestNoTargetMissesLogCapability` exempts targets
-  marked `NoBackend`. Keyed on the flag rather than the name, so the day something emits
-  for freestanding the invariant applies again.
+- **`log` is not universal.** `TestNoTargetMissesLogCapability` exempts the
+  freestanding environment, which has no host to log to.
 
 ## The entry shape
 
@@ -685,7 +698,8 @@ replaces it is `Descriptor.Entry`, an `EntryShape` on the environment (#6510):
 | `EntryExports` | nobody; the embedder calls exported symbols | neither |
 | `EntryReset` | a reset vector, with no stack pointer | no design yet |
 
-Freestanding is `EntryExports` today. The compiler does not read `Entry` yet (#14245).
+Freestanding is `EntryExports`. The compiler reads the shape through
+`platforms.entry_shape`, and its backends through `asmcore.process_entry`.
 **`EntryReset` exists so the kernel posture is a second value rather than a rewrite** of everything keyed on "freestanding means exported
 symbols" — Fern targets both postures (`docs/BARE-METAL-PLAN.md`). The zero value
 resolves to `EntryProcess` via `OrDefault`, so a descriptor that does not set `Entry`
@@ -700,14 +714,16 @@ way, because nothing in the program has to name them:
 
 - **`__fern_report`**, the abort reporter, emitted for every program — it writes the
   cause to stderr and `exit_group`s.
-- **`__fern_exit`**, because `exit` is core (above) and so must exist everywhere.
+- **`exit`**, which lowers inline to the exit syscall, because `exit` is core (above)
+  and so must exist everywhere.
 - **`__fern_alloc`'s lazy `mmap`**, because essentially every program allocates.
 
 On an entry shape other than `EntryProcess` all three become a trap — `ud2` on x86-64,
 `brk #1` on arm64 — rather than a syscall. That is the answer to *where does a
 freestanding artifact put a panic message?*: it does not have one, and stopping is the
-only honest thing left. The symbols stay defined (call sites branch to them); only the
-bodies change, and the backtrace string is dropped since nothing writes it.
+only honest thing left. `__fern_report` stays defined, because call sites branch to it.
+Only its body changes, and the backtrace code is not emitted, because nothing can write
+it. A dynamic dispatch with no matching arm also traps, for the same reason.
 
 ### The heap is handed in, not acquired
 
@@ -726,7 +742,9 @@ where it came from — `docs/ARENA-DECISION.md` is why there is exactly one curs
 reseed. Hosted targets keep the lazy `mmap` and do *not* get this symbol; one allocator
 with two ways to seed its cursor is two sources of truth.
 
-The contract is that the embedder calls it once before anything that allocates.
+The contract is that the embedder calls it once before anything that allocates, with a
+16-byte aligned base. A program that never allocates still exports the symbol, as a
+function that only returns.
 
 **Two defined failure modes, both a trap:**
 

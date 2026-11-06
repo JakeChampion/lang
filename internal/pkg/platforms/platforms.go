@@ -20,8 +20,6 @@ type Descriptor struct {
 	Environment string
 
 	Entry EntryShape
-
-	NoBackend bool
 }
 
 type EntryShape string
@@ -83,7 +81,6 @@ var table = map[string]struct {
 	isa         string
 	environment string
 	description string
-	noBackend   bool
 }{
 	"arm64-linux": {
 		isa: "arm64", environment: "linux",
@@ -100,9 +97,9 @@ var table = map[string]struct {
 			"Android's loader. Same syscalls / AAPCS64 as arm64-linux.",
 	},
 	"arm64-freestanding": {
-		isa: "arm64", environment: "freestanding", noBackend: true,
+		isa: "arm64", environment: "freestanding",
 		description: "ARM64 with no host — no kernel, no syscalls, no process. " +
-			"Type-checkable today; no backend emits for it yet (#6510).",
+			"Writes assembly for an embedder to link, entered through the -export functions.",
 	},
 	"x86-64-linux": {
 		isa: "x86-64", environment: "linux",
@@ -115,9 +112,9 @@ var table = map[string]struct {
 			"syscalls / System V ABI as x86-64-linux.",
 	},
 	"x86-64-freestanding": {
-		isa: "x86-64", environment: "freestanding", noBackend: true,
+		isa: "x86-64", environment: "freestanding",
 		description: "x86-64 with no host — no kernel, no syscalls, no process. " +
-			"Type-checkable today; no backend emits for it yet (#6510).",
+			"Writes assembly for an embedder to link, entered through the -export functions.",
 	},
 	"wasm32-wasi": {
 		isa: "wasm32", environment: "wasi",
@@ -151,7 +148,6 @@ func ForTarget(name string) *Descriptor {
 		HandlerKinds: env.handlerKinds,
 		Bindings:     env.bindings,
 		Entry:        env.entry,
-		NoBackend:    t.noBackend,
 	}
 }
 
