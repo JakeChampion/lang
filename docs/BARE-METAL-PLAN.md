@@ -305,9 +305,9 @@ ELF `ET_EXEC` image:
   (`CPACR_EL1`).
 - Then it clears `.bss` and gives the heap the RAM between the image and the
   1 MiB stack. It calls `main`, and after `main` it waits with `wfe`.
-- The image keeps 32-bit addresses, so the end of the RAM must be at or below
-  2 GiB. That covers qemu-virt, where the RAM starts at `0x40000000`. Firecracker
-  puts the RAM at `0x80000000`, so it needs 64-bit addresses in `compiler/elf.fern`.
+- The image has 64-bit addresses, and the end of the RAM must be at or below
+  1 TiB, the 40-bit physical address space. That covers qemu-virt, where the
+  RAM starts at `0x40000000`, and Firecracker, where it starts at `0x80000000`.
 - qemu-virt puts the device tree at the start of its RAM for an image that is
   not a Linux kernel. So `-ram 0x40200000,126M` keeps the first 2 MiB for it.
 
