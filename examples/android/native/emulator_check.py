@@ -14,6 +14,8 @@ pauses it after two seconds or more, and the back key that closes it. It
 fails on a crash in logcat. OUT_DIR gets the frames and logcat.
 """
 
+import json
+from pathlib import Path
 import re
 import struct
 import subprocess
@@ -81,12 +83,38 @@ def check_libs(package, libs):
         fail("Android did not extract the deflated library")
     if libs == "mapped" and found:
         fail("Android extracted the stored library, which it can map from the APK")
+    return base, found
+
+
+def installed_size(apk, package, base, libs, extracted):
+    """Measure the download file and the installation before the app starts."""
+    directory = base.rsplit("/", 1)[0]
+    device_apk_bytes = int(adb("shell", "stat", "-c", "%s", base).strip())
+    library_bytes = 0
+    if extracted:
+        library_bytes = int(adb("shell", "stat", "-c", "%s", directory + "/lib/x86_64/libapp.so").strip())
+    allocated_kib = int(adb("shell", "du", "-sk", directory).split()[0])
+    return {
+        "package": package,
+        "abi": "x86_64",
+        "library_form": libs,
+        "download_bytes": Path(apk).stat().st_size,
+        "device_apk_bytes": device_apk_bytes,
+        "extracted_library_bytes": library_bytes,
+        "install_directory_allocated_bytes": allocated_kib * 1024,
+        "scope": "Installation before app launch. This record excludes app data.",
+    }
 
 
 def main(apk, package, out, libs="mapped"):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", apk)
-    check_libs(package, libs)
+    base, extracted = check_libs(package, libs)
+    sizes = installed_size(apk, package, base, libs, extracted)
+    Path(out, "installed-size.json").write_text(json.dumps(sizes, indent=2) + "\n")
+    print("installed size: " + json.dumps(sizes, sort_keys=True), flush=True)
+    if sizes["device_apk_bytes"] != sizes["download_bytes"]:
+        fail("The APK size on the device differs from the download file")
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", package + "/android.app.NativeActivity")
 

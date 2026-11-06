@@ -118,6 +118,14 @@ but the installed app is the APK and the libraries:
 | stored (default) | 589 KB | 589 KB |
 | `-apk-compress` | 131 KB | 131 KB and 280 KB for the library of the ABI |
 
+The Android emulator check records exact measurements for both library forms
+in `native/installed-size.json` and `native-compressed/installed-size.json`
+inside the `fern-stopwatch-emulator` CI artifact. Each record includes the
+download file size, the APK and extracted library sizes on the device, and
+the allocated storage of the installation directory before the app starts.
+The measurements exclude app data. They distinguish file sizes from allocated
+storage. Directory and block allocation can make these totals differ.
+
 Use the default for an app from a store, which compresses the download
 itself. Use `-apk-compress` for an APK that people download as a file.
 
