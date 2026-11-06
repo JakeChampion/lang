@@ -2014,7 +2014,36 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
     }
     i += 1;
   }
+  return with_reexported_variants(ReexportTable { keys: keys, targets: targets }, imports, pfxs);
+}
+
+// The table with each variant of a re-exported enum: the facade's qualified
+// variant resolves to the variant of the enum's own module, as the enum does.
+function with_reexported_variants(rx: ReexportTable, imports: LoadedModule[], pfxs: string[]): ReexportTable {
+  let keys = rx.keys;
+  let targets = rx.targets;
+  for k in 0..rx.keys.len() {
+    let enum_name = decltypes.follow_reexports(rx.targets[k], rx.keys, rx.targets);
+    let ns = slice_unchecked(rx.keys[k], 0, rx.keys[k].len() - mangled_tail(rx.targets[k]).len() + 2) + "";
+    for i in 0..imports.len() {
+      for sd in imports[i].mod.structs {
+        if (sd.enum_owner.len() > 0 && pfxs[i] + "__" + sd.enum_owner == enum_name) {
+          keys = keys.append(ns + sd.name);
+          targets = targets.append(pfxs[i] + "__" + sd.name);
+        }
+      }
+    }
+  }
   return ReexportTable { keys: keys, targets: targets };
+}
+
+// The name after the last "__" of a mangled name, with that "__".
+function mangled_tail(mangled: string): string {
+  let at = mangled.len() - 2;
+  while (at > 0 && slice_unchecked(mangled, at, at + 2) != "__") {
+    at -= 1;
+  }
+  return slice_unchecked(mangled, at, mangled.len()) + "";
 }
 
 pub struct PerModule { ns: string, ident: string, mod: parser.Module, is_entry: boolean }

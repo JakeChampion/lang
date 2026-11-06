@@ -231,11 +231,37 @@ function declared_keys(loaded: flatten.LoadedModule[]): string[] {
       if (im.is_reexport) {
         for name in im.reexport_names {
           out = out.append(prefix + name);
+          for v in reexported_variants(loaded, im.resolved, name, 0) {
+            out = out.append(prefix + v);
+          }
         }
       }
     }
   }
   return out;
+}
+
+// The variants of the enum `name` that the module `ident` declares or
+// re-exports. A re-exported enum brings its variants with it.
+function reexported_variants(loaded: flatten.LoadedModule[], ident: string, name: string, depth: i32): string[] {
+  if (depth > loaded.len()) {
+    return [];
+  }
+  for lm in loaded {
+    if (module_key(lm) == ident) {
+      for en in lm.mod.enums {
+        if (en.name == name) {
+          return en.variant_names;
+        }
+      }
+      for im in lm.mod.imports {
+        if (im.is_reexport && util.has_str(im.reexport_names, name)) {
+          return reexported_variants(loaded, im.resolved, name, depth + 1);
+        }
+      }
+    }
+  }
+  return [];
 }
 
 function member_name_after(a: string, b: string): boolean {

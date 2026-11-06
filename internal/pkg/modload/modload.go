@@ -163,6 +163,8 @@ type module struct {
 	allDecls         map[string]bool
 	reexports        map[string]string
 	reexportTypes    map[string]string
+	// The variants of each re-exported enum, by variant name.
+	reexportVariants map[string]reexportedVariant
 	pubUses          []pubUseEntry
 	packageScoped    map[string]bool
 	packageVariants  map[string]string
@@ -288,6 +290,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		allConsts:        map[string]bool{},
 		allDecls:         map[string]bool{},
 		reexports:        map[string]string{},
+		reexportVariants: map[string]reexportedVariant{},
 		reexportTypes:    map[string]string{},
 		packageScoped:    map[string]bool{},
 	}
@@ -993,6 +996,13 @@ func (m *module) exportedMangled(name string) (mangled string, isType bool, ok b
 	return "", false, false
 }
 
+// A variant of an enum that a module re-exports: the mangled enum, and the
+// path of the module that declares it.
+type reexportedVariant struct {
+	enum string
+	path string
+}
+
 type pendingReexport struct {
 	mod     *module
 	child   *module
@@ -1051,6 +1061,18 @@ func resolveReexports(loaded map[string]*module) error {
 				w.mod.publicStructs[w.name] = true
 				if w.child.allEnums[w.name] {
 					w.mod.allEnums[w.name] = true
+				}
+				// A re-exported enum brings its variants: those the child
+				// declares, and those it re-exports in turn.
+				for v, en := range w.child.publicVariants {
+					if en == w.name {
+						w.mod.reexportVariants[v] = reexportedVariant{enum: mangled, path: w.child.path}
+					}
+				}
+				for v, rv := range w.child.reexportVariants {
+					if rv.enum == mangled {
+						w.mod.reexportVariants[v] = rv
+					}
 				}
 			} else {
 				w.mod.reexports[w.name] = mangled
@@ -1806,6 +1828,10 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, bra
 		}
 		*armModule = mod.path
 		structNamed := braces && mod.publicStructs[*armName]
+		if rv, ok := mod.reexportVariants[*armName]; ok && !structNamed {
+			*armModule = rv.path
+			return
+		}
 		if _, isVariant := mod.publicVariants[*armName]; isVariant && !structNamed {
 			return
 		}
@@ -1853,6 +1879,9 @@ func (r *rewriter) rewritePatElem(el *ast.TuplePatElem, pos ast.Position) {
 func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Position) (string, bool) {
 	if mod.publicPlainFuncs[name] || mod.publicConsts[name] {
 		return "", false
+	}
+	if rv, ok := mod.reexportVariants[name]; ok {
+		return rv.enum, true
 	}
 	if en, ok := mod.publicVariants[name]; ok {
 		if en == "" {
