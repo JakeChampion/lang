@@ -1540,12 +1540,15 @@ function x86_ghash_blocks4_at(p: string): string {
   return o + x86_ghash_reduce() + "    addq $64, %rsi\n    subq $64, %rdx\n    jmp " + p + "_loop4\n";
 }
 
-function x86_ghash_blocks_at(p: string, done: string, pad: string): string {
+// The tail gathers the last partial block into rax (bytes 0 to 7) and r10 (bytes 8 to 14), one byte at a time.
+// On x86-64, a 16-byte load cannot take its bytes from narrower stores in the store buffer.
+function x86_ghash_blocks_at(p: string, done: string): string {
   let o: string = x86_ghash_blocks4_at(p) + p + "_loop:\n    cmpq $16, %rdx\n    jb " + p + "_tail\n    movdqu (%rsi), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n"
     + "    addq $16, %rsi\n    subq $16, %rdx\n    jmp " + p + "_loop\n";
-  return o + p + "_tail:\n    testq %rdx, %rdx\n    jz " + done + "\n    pxor %xmm2, %xmm2\n    movdqu %xmm2, " + pad + "(%rbp)\n    xorq %r9, %r9\n"
-    + p + "_tailb:\n    movzbl (%rsi,%r9), %eax\n    movb %al, " + pad + "(%rbp,%r9)\n    addq $1, %r9\n    cmpq %rdx, %r9\n    jb " + p + "_tailb\n"
-    + "    movdqu " + pad + "(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n";
+  return o + p + "_tail:\n    testq %rdx, %rdx\n    jz " + done + "\n    xorl %eax, %eax\n    xorl %r10d, %r10d\n    movq %rdx, %r9\n"
+    + p + "_tailh:\n    cmpq $8, %r9\n    jbe " + p + "_taill\n    shlq $8, %r10\n    movzbl -1(%rsi,%r9), %ecx\n    orq %rcx, %r10\n    decq %r9\n    jmp " + p + "_tailh\n"
+    + p + "_taill:\n    shlq $8, %rax\n    movzbl -1(%rsi,%r9), %ecx\n    orq %rcx, %rax\n    decq %r9\n    jnz " + p + "_taill\n"
+    + "    movq %rax, %xmm2\n    pinsrq $1, %r10, %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n";
 }
 
 // Seals or opens buf[at:at + n] in place under the nonce iv ^ seq, authenticating buf[aad_at:aad_at + aad_n],
@@ -1561,15 +1564,16 @@ function x86_aes_gcm(seal: boolean): string {
     + x86_aes_view("%rsi", "%r10", "%r11", p + "_h") + "    movq %r10, -16(%rbp)\n    movq %r11, -88(%rbp)\n"
     + x86_aes_view("%rdi", "%r10", "%r11", p + "_k") + "    movq %r10, -8(%rbp)\n";
   o = o + x86_aes_gcm_checks(p) + x86_aes_gcm_own(p)
-    + "    movq -56(%rbp), %r9\n    movq (%r9), %rax\n    movl 8(%r9), %r10d\n    movq %rax, -112(%rbp)\n    movl %r10d, -104(%rbp)\n"
-    + "    movq -168(%rbp), %rax\n    bswapq %rax\n    xorq %rax, -108(%rbp)\n    movl $33554432, -100(%rbp)\n"
+    + "    movq -56(%rbp), %r9\n    movq (%r9), %rax\n    movl 8(%r9), %r10d\n    movq -168(%rbp), %rcx\n    bswapq %rcx\n"
+    + "    movq %rcx, %r11\n    shlq $32, %r11\n    xorq %r11, %rax\n    shrq $32, %rcx\n    xorq %rcx, %r10\n    btsq $57, %r10\n"
+    + "    movq %rax, %xmm0\n    pinsrq $1, %r10, %xmm0\n    movdqu %xmm0, -112(%rbp)\n"
     + "    movq -48(%rbp), %rax\n    addq $8, %rax\n    movq -176(%rbp), %r9\n    addq %rax, %r9\n    movq %r9, -24(%rbp)\n    addq -184(%rbp), %rax\n    movq %rax, -64(%rbp)\n";
   if (seal) {
     o = o + x86_aes_gcm_ctr(p) + x86_aes_gcm_hash(p);
   } else {
     o = o + x86_aes_gcm_hash(p) + x86_aes_gcm_ctr(p);
   }
-  o = o + "    movl $16777216, -100(%rbp)\n    movdqu -112(%rbp), %xmm0\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    call .Lctr_enc1\n"
+  o = o + "    movdqu -112(%rbp), %xmm0\n    movl $16777216, %eax\n    pinsrd $3, %eax, %xmm0\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    call .Lctr_enc1\n"
     + "    movdqu -160(%rbp), %xmm5\n    pxor %xmm5, %xmm0\n    movq -24(%rbp), %rax\n    addq -32(%rbp), %rax\n";
   if (seal) {
     o += "    movdqu %xmm0, (%rax)\n";
@@ -1604,16 +1608,16 @@ function x86_aes_gcm_ctr(p: string): string {
 
 function x86_aes_gcm_hash(p: string): string {
   return "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n    pxor %xmm0, %xmm0\n"
-    + "    movq -64(%rbp), %rsi\n    movq -72(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_ga", p + "_gadone", "-128") + p + "_gadone:\n"
-    + "    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_gc", p + "_gcdone", "-128") + p + "_gcdone:\n"
-    + "    movq -72(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, -144(%rbp)\n"
-    + "    movq -32(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, -136(%rbp)\n"
-    + "    movdqu -144(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n    pshufb %xmm15, %xmm0\n    movdqu %xmm0, -160(%rbp)\n";
+    + "    movq -64(%rbp), %rsi\n    movq -72(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_ga", p + "_gadone") + p + "_gadone:\n"
+    + "    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_gc", p + "_gcdone") + p + "_gcdone:\n"
+    + "    movq -72(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, %xmm2\n"
+    + "    movq -32(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    pinsrq $1, %rax, %xmm2\n"
+    + "    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n    pshufb %xmm15, %xmm0\n    movdqu %xmm0, -160(%rbp)\n";
 }
 
 function x86_ghash(): string {
   let o: string = "    .globl __fern_ghash\n    .type __fern_ghash, @function\n__fern_ghash:\n"
-    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $64, %rsp\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n"
     + x86_aes_view("%rdx", "%r8", "%r9", ".Lgh_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
     + x86_aes_view("%rsi", "%r8", "%r10", ".Lgh_y") + "    movq %r8, -16(%rbp)\n"
     + x86_aes_view("%rdi", "%r8", "%r9", ".Lgh_h") + "    movq %r8, -8(%rbp)\n"
@@ -1621,7 +1625,7 @@ function x86_ghash(): string {
     + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Lgh_ret\n"
     + "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -8(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n"
     + "    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm0\n    pshufb %xmm15, %xmm0\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
-  o += x86_ghash_blocks_at(".Lgh", ".Lgh_out", "-64");
+  o += x86_ghash_blocks_at(".Lgh", ".Lgh_out");
   return o + ".Lgh_out:\n    pshufb %xmm15, %xmm0\n    movq -48(%rbp), %rax\n    movdqu %xmm0, 8(%rax)\n.Lgh_ret:\n" + x86_aes_epilogue()
     + x86_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
 }
@@ -2634,8 +2638,12 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    cmpq $256, %r13\n    jb " + le + "_loop\n");
   s = s.write("    subq $2048, %rsp\n");
   s = s.write(le + "_pack:\n");
-  s = s.write("    movzbq 8(%r14,%rcx" + sc + "), %rax\n    movb %al, (%rsp,%rcx)\n");
-  s = s.write("    incq %rcx\n    cmpq $2048, %rcx\n    jb " + le + "_pack\n");
+  // A packed row is stored as one u64, so the 8-byte row load in the fast loop takes it from the store buffer.
+  if (packed) {
+    s = s.write("    movq 8(%r14,%rcx,8), %rax\n    movq %rax, (%rsp,%rcx,8)\n    incq %rcx\n    cmpq $256, %rcx\n    jb " + le + "_pack\n");
+  } else {
+    s = s.write("    movzbq 8(%r14,%rcx,8), %rax\n    movb %al, (%rsp,%rcx)\n    incq %rcx\n    cmpq $2048, %rcx\n    jb " + le + "_pack\n");
+  }
   s = s.write("    xorq %rcx, %rcx\n    movq $7, %r10\n");
   s = s.write(le + "_fast:\n");
   s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n    movq (%rsp,%rax,8), %r8\n");

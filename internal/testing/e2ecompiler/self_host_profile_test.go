@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // A profile is a flag set, every native executable carries a build
@@ -135,6 +137,34 @@ func TestSelfHostProfiles(t *testing.T) {
 				if !strings.Contains(out, line+"\n") {
 					t.Errorf("the manifest of the %s object lacks %q:\n%s", target, line, out)
 				}
+			}
+		}
+	})
+	// A wasm module and a wasm component carry the manifest in their
+	// fern.build custom section, and wasmtime still runs them.
+	t.Run("wasm", func(t *testing.T) {
+		prog := filepath.Join(dir, "wasm.fern")
+		if err := os.WriteFile(prog, []byte("function main(): i32 {\n  print(\"wasm\");\n  return 0;\n}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, form := range [][]string{nil, {"-emit", "core-module"}} {
+			out := filepath.Join(dir, "prog"+strings.Join(form, "")+".wasm")
+			args := append(append([]string{"-profile", "safe", "-target", "wasm32-wasi"}, form...), "-o", out, prog, cli.stdlib)
+			if _, errout, code := fern(args...); code != 0 {
+				t.Fatalf("build %v: exit %d\n%s", form, code, errout)
+			}
+			got, errout, code := fern("-manifest", out)
+			if code != 0 {
+				t.Fatalf("-manifest %v: exit %d\n%s", form, code, errout)
+			}
+			for _, line := range []string{"target: wasm32-wasi", "profile: safe", "harden: no", "shared: no"} {
+				if !strings.Contains(got, line+"\n") {
+					t.Errorf("the manifest of the %v image lacks %q:\n%s", form, line, got)
+				}
+			}
+			run, err := exec.Command(e2eharness.Wasmtime(t), "run", out).CombinedOutput()
+			if err != nil || string(run) != "wasm\n" {
+				t.Errorf("run %v: %v, output %q", form, err, run)
 			}
 		}
 	})

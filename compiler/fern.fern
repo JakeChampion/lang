@@ -2588,7 +2588,7 @@ function help(embedded: boolean): i32 {
   return 0;
 }
 
-// Prints the build manifest a native image carries, one field per line.
+// Prints the build manifest a native or wasm image carries, one field per line.
 function run_manifest(path: string): i32 {
   let image: u8[] = [];
   match (read_file_bytes(path)) {
@@ -6973,7 +6973,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   } else if (target == "wasm32-wasi" && emit_text) {
     out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
   } else if (target == "wasm32-wasi" && emit == "core-module") {
-    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
+    out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches)));
   } else if (target == "wasm32-wasi") {
     let comp = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
@@ -6990,7 +6990,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (hwat.len() == 0) {
       return 2;
     }
-    out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+    out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches)));
   } else if (target == "wasm32-wasi-http") {
     let hc = emitforms.wasm_http_component(full, sub);
     if (hc.bytes.len() == 0) {
