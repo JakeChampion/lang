@@ -367,12 +367,23 @@ check time, in the same mechanism that enforces the OS boundary today.
   outside the Go runtime, so that the GC never touches them. For Fern, DMA memory
   is a second region that the RC machinery never sees, used through the
   `__raw_*` surface. It is not a flag on ordinary boxes.
-- **Panic scope** (#14257). A Fern panic stops the program: `__fern_report` exits the
-  process, and off the process entry it is a trap (#14245). eggshell's kernel
-  uses no unsafe code, and a panic during a syscall ends the process that made the call,
-  not the kernel. Per-process heaps let FernOS do the same: discard the heap of
-  the process and end only that process. Decide this before milestone 4,
-  because it decides what a panic in kernel code means.
+- **Panic scope** (#14257, decided). A Fern panic stops the program:
+  `__fern_report` exits the process, and off the process entry it is a trap. Fern
+  has no unwind, so the scope of a panic is the heap that the panicking code can
+  change:
+  - A panic in a user process ends only that process. The process has its own
+    heap, so the kernel discards that heap and nothing else changes.
+  - A panic in kernel code stops the machine, as it does today. The kernel heap is
+    the one shared graph. A syscall can store a new value in a kernel structure
+    before it panics. Then a release of only what the syscall allocated can free a
+    value that the structure still holds.
+  - Thus a syscall handler checks each argument at the syscall boundary, and
+    returns an error for a bad one. It does not panic. A bad argument then ends
+    only the process that made the call, if that process does not handle the
+    error. This is the milestone 4 test.
+  - eggshell's kernel continues after a panic during a syscall, because Go can
+    recover. A per-syscall region with a commit point can give Fern the same
+    result later. It is not part of the first kernel.
 - **A network stack in Fern** (#14259). TamaGo uses the pure-Go gVisor TCP/IP stack over
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
@@ -435,9 +446,9 @@ environment over the FernOS syscalls can come later, as an improvement.
 4. Then: capability providers (#14251) → effect intrinsics (#14252) → function
    attributes and the no-RC property (#14253) → memory layout (#14254) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-5. Beside those: the DMA region (#14255), the raw-pointer surface (#14256), the
-   panic scope decision (#14257, before milestone 4) and a TCP/IP stack in Fern
-   (#14259).
+5. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+   TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
+   north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 
