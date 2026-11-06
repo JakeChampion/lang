@@ -8495,8 +8495,7 @@ function emit_buf_push_decimal(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .text\n");
 }
 
-function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: boolean): asmcore.EmitState {
-  let sfx = asmcore.packed_suffix(packed);
+function emit_buf_table_helpers(s: asmcore.EmitState, raw: boolean): asmcore.EmitState {
   let prefix = "__fern_buf_push_";
   let label = "";
   if (raw) {
@@ -8509,30 +8508,12 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
     source_len = "    ldr x22, [x20]\n";
     source_data = "    add x1, x20, #8\n";
   }
-  let lm = ".Lbufmap" + label + sfx;
-  let lf = ".Lbuffilt" + label + sfx;
-  let le = ".Lbufexp" + label + sfx;
-  let srcstep = "1";
-  if (raw && !packed) {
-    srcstep = "8";
-  }
-  let tsh = ", lsl #3";
-  let pk = "ldr x8, [x6, x7, lsl #3]";
-  let rsh = "6";
-  let rlen = "ldr x7, [x6, #8]";
-  let rstart = "16";
-  let rbyte = "ldr x8, [x6], #8";
-  if (packed) {
-    tsh = "";
-    pk = "ldrb w8, [x6, x7]";
-    rsh = "3";
-    rlen = "ldrb w7, [x6, #8]";
-    rstart = "9";
-    rbyte = "ldrb w8, [x6], #1";
-  }
-  s = s.write(".globl " + prefix + "mapped" + sfx + "\n");
-  s = s.write(".type " + prefix + "mapped" + sfx + ", %function\n");
-  s = s.write(prefix + "mapped" + sfx + ":\n");
+  let lm = ".Lbufmap" + label;
+  let lf = ".Lbuffilt" + label;
+  let le = ".Lbufexp" + label;
+  s = s.write(".globl " + prefix + "mapped\n");
+  s = s.write(".type " + prefix + "mapped, %function\n");
+  s = s.write(prefix + "mapped:\n");
   s = s.write(rt_frame(s));
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -8559,22 +8540,20 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    mov x2, x22\n");
   s = s.write("    cmp x4, #256\n");
   s = s.write("    b.lo " + lm + "_short\n");
-  if (packed) {
-    s = emit_buf_mapped_neon(s, lm);
-  }
+  s = emit_buf_mapped_neon(s, lm);
   s = s.write(lm + "_full:\n");
-  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
-  s = s.write("    add x6, x21, x5" + tsh + "\n");
+  s = s.write("    ldrb w5, [x1], #1\n");
+  s = s.write("    add x6, x21, x5\n");
   s = s.write("    ldrb w5, [x6, #8]\n");
   s = s.write("    strb w5, [x3], #1\n");
   s = s.write("    sub x2, x2, #1\n");
   s = s.write("    cbnz x2, " + lm + "_full\n");
   s = s.write("    b " + lm + "_len\n");
   s = s.write(lm + "_short:\n");
-  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
+  s = s.write("    ldrb w5, [x1], #1\n");
   s = s.write("    cmp x5, x4\n");
   s = s.write("    b.hs " + lm + "_keep\n");
-  s = s.write("    add x6, x21, x5" + tsh + "\n");
+  s = s.write("    add x6, x21, x5\n");
   s = s.write("    ldrb w5, [x6, #8]\n");
   s = s.write(lm + "_keep:\n");
   s = s.write("    strb w5, [x3], #1\n");
@@ -8589,10 +8568,10 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
-  s = s.write(".size " + prefix + "mapped" + sfx + ", .-" + prefix + "mapped" + sfx + "\n");
-  s = s.write(".globl " + prefix + "filtered" + sfx + "\n");
-  s = s.write(".type " + prefix + "filtered" + sfx + ", %function\n");
-  s = s.write(prefix + "filtered" + sfx + ":\n");
+  s = s.write(".size " + prefix + "mapped, .-" + prefix + "mapped\n");
+  s = s.write(".globl " + prefix + "filtered\n");
+  s = s.write(".type " + prefix + "filtered, %function\n");
+  s = s.write(prefix + "filtered:\n");
   s = s.write(rt_frame(s));
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -8622,7 +8601,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    b.lo " + lf + "_loop\n");
   s = s.write(lf + "_full:\n");
   s = s.write("    ldrb w5, [x1], #1\n");
-  s = s.write("    add x6, x21, x5" + tsh + "\n");
+  s = s.write("    add x6, x21, x5\n");
   s = s.write("    ldrb w6, [x6, #8]\n");
   s = s.write("    strb w5, [x3, x7]\n");
   s = s.write("    cmp w6, #0\n");
@@ -8631,10 +8610,10 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    cbnz x2, " + lf + "_full\n");
   s = s.write("    b " + lf + "_len\n");
   s = s.write(lf + "_loop:\n");
-  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
+  s = s.write("    ldrb w5, [x1], #1\n");
   s = s.write("    cmp x5, x4\n");
   s = s.write("    b.hs " + lf + "_keep\n");
-  s = s.write("    add x6, x21, x5" + tsh + "\n");
+  s = s.write("    add x6, x21, x5\n");
   s = s.write("    ldrb w6, [x6, #8]\n");
   s = s.write("    cbnz w6, " + lf + "_next\n");
   s = s.write(lf + "_keep:\n");
@@ -8652,10 +8631,10 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
-  s = s.write(".size " + prefix + "filtered" + sfx + ", .-" + prefix + "filtered" + sfx + "\n");
-  s = s.write(".globl " + prefix + "expanded" + sfx + "\n");
-  s = s.write(".type " + prefix + "expanded" + sfx + ", %function\n");
-  s = s.write(prefix + "expanded" + sfx + ":\n");
+  s = s.write(".size " + prefix + "filtered, .-" + prefix + "filtered\n");
+  s = s.write(".globl " + prefix + "expanded\n");
+  s = s.write(".type " + prefix + "expanded, %function\n");
+  s = s.write(prefix + "expanded:\n");
   s = s.write(rt_frame(s));
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -8687,30 +8666,30 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    cmp x2, #256\n    b.lo " + le + "_loop\n");
   s = s.write("    sub sp, sp, #2048\n    add x6, x21, #8\n    mov x7, #0\n");
   s = s.write(le + "_pack:\n");
-  s = s.write("    " + pk + "\n    strb w8, [sp, x7]\n");
+  s = s.write("    ldrb w8, [x6, x7]\n    strb w8, [sp, x7]\n");
   s = s.write("    add x7, x7, #1\n    cmp x7, #2048\n    b.lo " + le + "_pack\n");
   s = s.write("    mov x9, #7\n");
   s = s.write(le + "_fast:\n");
-  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n    ldr x8, [sp, x5, lsl #3]\n");
+  s = s.write("    ldrb w5, [x1], #1\n    ldr x8, [sp, x5, lsl #3]\n");
   s = s.write("    and x7, x8, #255\n    cmp x7, x9\n    csel x7, x7, x9, ls\n");
   s = s.write("    lsr x8, x8, #8\n    str x8, [x3]\n    add x3, x3, x7\n");
   s = s.write("    subs x2, x2, #1\n    b.ne " + le + "_fast\n");
   s = s.write("    add sp, sp, #2048\n    b " + le + "_len\n");
   s = s.write(le + "_loop:\n");
   s = s.write("    cbz x2, " + le + "_len\n");
-  s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
+  s = s.write("    ldrb w5, [x1], #1\n");
   s = s.write("    cmp x5, x4\n");
   s = s.write("    b.hs " + le + "_keep\n");
-  s = s.write("    add x6, x21, x5, lsl #" + rsh + "\n");
-  s = s.write("    " + rlen + "\n");
+  s = s.write("    add x6, x21, x5, lsl #3\n");
+  s = s.write("    ldrb w7, [x6, #8]\n");
   s = s.write("    cmp x7, #7\n");
   s = s.write("    b.ls " + le + "_room\n");
   s = s.write("    mov x7, #7\n");
   s = s.write(le + "_room:\n");
-  s = s.write("    add x6, x6, #" + rstart + "\n");
+  s = s.write("    add x6, x6, #9\n");
   s = s.write(le + "_byte:\n");
   s = s.write("    cbz x7, " + le + "_next\n");
-  s = s.write("    " + rbyte + "\n");
+  s = s.write("    ldrb w8, [x6], #1\n");
   s = s.write("    strb w8, [x3], #1\n");
   s = s.write("    sub x7, x7, #1\n");
   s = s.write("    b " + le + "_byte\n");
@@ -8728,7 +8707,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    ldp x19, x20, [sp], #16\n");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
-  s = s.write(".size " + prefix + "expanded" + sfx + ", .-" + prefix + "expanded" + sfx + "\n");
+  s = s.write(".size " + prefix + "expanded, .-" + prefix + "expanded\n");
   return s;
 }
 
@@ -9304,15 +9283,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    add x5, x4, x3\n");
     s = s.write("    b .Lbufrange_copy\n");
     s = s.write(".size __fern_buf_push_range, .-__fern_buf_push_range\n");
-    s = emit_buf_table_helpers(s, false, false);
-    if (s.has_need("buf_u8")) {
-      s = emit_buf_table_helpers(s, true, false);
+    if (s.has_need("buf_table")) {
+      s = emit_buf_table_helpers(s, false);
     }
     if (s.has_need("buf_bytes")) {
-      s = emit_buf_table_helpers(s, false, true);
-    }
-    if (s.has_need("buf_bytes_u8")) {
-      s = emit_buf_table_helpers(s, true, true);
+      s = emit_buf_table_helpers(s, true);
     }
     s = s.write(".globl __fern_buf_push_byte\n");
     s = s.write(".type __fern_buf_push_byte, %function\n");
