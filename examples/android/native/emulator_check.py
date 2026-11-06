@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Drives the native stopwatch APK on a running Android device or emulator.
 
-Usage: emulator_check.py APK PACKAGE OUT_DIR
+Usage: emulator_check.py APK PACKAGE OUT_DIR [LIBS]
 
 It installs the APK, which fern -apk wrote, and starts its NativeActivity.
+LIBS is "mapped" for stored libraries, which Android maps from the APK, or
+"extracted" for the libraries of -apk-compress, which Android extracts at
+install. The check requires the library in the lib directory of the app
+for "extracted" only.
 It requires the window line of the app in logcat, the grey face of a paused
 stopwatch, a tap that starts it and turns the face green, a second tap that
 pauses it after two seconds or more, and the back key that closes it. It
@@ -64,9 +68,25 @@ def frame(out, name):
     return width, height, counts
 
 
-def main(apk, package, out):
+def check_libs(package, libs):
+    """The library is in the lib directory of the app when Android extracted
+    it, and not there when Android maps it from the APK."""
+    if subprocess.run(["adb", "root"], capture_output=True).returncode == 0:
+        adb("wait-for-device")
+    base = adb("shell", "pm", "path", package).strip().removeprefix("package:")
+    listing = subprocess.run(["adb", "shell", "ls", base.rsplit("/", 1)[0] + "/lib/x86_64"], capture_output=True, text=True)
+    print(f"lib/x86_64: {listing.stdout.strip()!r} {listing.stderr.strip()!r}", flush=True)
+    found = "libapp.so" in listing.stdout
+    if libs == "extracted" and not found:
+        fail("Android did not extract the deflated library")
+    if libs == "mapped" and found:
+        fail("Android extracted the stored library, which it can map from the APK")
+
+
+def main(apk, package, out, libs="mapped"):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", apk)
+    check_libs(package, libs)
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", package + "/android.app.NativeActivity")
 
@@ -110,6 +130,6 @@ def main(apk, package, out):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5) or sys.argv[4:] not in ([], ["mapped"], ["extracted"]):
         sys.exit(__doc__)
     main(*sys.argv[1:])

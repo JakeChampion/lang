@@ -1,10 +1,17 @@
 // The APK writer of fern -apk. An APK for a NativeActivity app has a binary
 // AndroidManifest.xml, the library of each ABI, and no Java code. An app
 // with an icon also has the PNG and a resources.arsc that names it. The zip
-// archive has stored entries only, each one aligned, and an APK Signature
-// Scheme v2 block with a self-signed P-256 certificate.
+// archive has aligned entries and an APK Signature Scheme v2 block with a
+// self-signed P-256 certificate.
+//
+// The libraries are stored by default, and the manifest sets
+// extractNativeLibs to false: Android maps each library from the APK, so the
+// installed app is the APK alone. With `compress`, the libraries are
+// deflated, and Android extracts them at install. Then the APK is smaller,
+// but the installed app is the APK and the libraries.
 import "std/base64";
 import "std/crypto";
+import "std/deflate";
 import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 import "std/hash/crc32";
@@ -15,8 +22,8 @@ import "./util";
 // of the app, or is empty.
 // `permissions` are the full names of the permissions the app uses, and
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
-// launcher icon, or is empty.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[] }
+// launcher icon, or is empty. `compress` deflates the libraries.
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean }
 
 // A service of the app: its Java class, and its foreground service types as
 // the flags of android:foregroundServiceType, or 0.
@@ -89,10 +96,10 @@ function prefixed(b: [u8]): u8[] {
 // gives those IDs. The rest of the pool follows `pool_strings`.
 
 // android:theme, label, icon, name, hasCode, exported, configChanges, value,
-// minSdkVersion, versionCode, versionName, targetSdkVersion and
-// foregroundServiceType.
+// minSdkVersion, versionCode, versionName, targetSdkVersion,
+// extractNativeLibs and foregroundServiceType.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844010, 16844185];
 }
 
 const S_THEME: i32 = 0;
@@ -119,17 +126,19 @@ const S_VERSION_NAME: i32 = 10;
 
 const S_TARGET_SDK: i32 = 11;
 
-const S_FOREGROUND_TYPE: i32 = 12;
+const S_EXTRACT_NATIVE_LIBS: i32 = 12;
 
-const S_PREFIX: i32 = 13;
+const S_FOREGROUND_TYPE: i32 = 13;
 
-const S_URI: i32 = 14;
+const S_PREFIX: i32 = 14;
 
-const S_PACKAGE: i32 = 15;
+const S_URI: i32 = 15;
+
+const S_PACKAGE: i32 = 16;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "foregroundServiceType",
+    "theme", "label", "icon", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "extractNativeLibs", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -282,7 +291,11 @@ pub function manifest(app: App): u8[] {
     app_attrs = app_attrs.append(attr_int(S_ICON, 1, ICON_ID));
     activity_attrs = activity_attrs.append(attr_int(S_ICON, 1, ICON_ID));
   }
-  body = start(body, 3, application, app_attrs.append(attr_int(S_HAS_CODE, 18, has_code)));
+  let extract = 0;
+  if (app.compress) {
+    extract = -1;
+  }
+  body = start(body, 3, application, app_attrs.append(attr_int(S_HAS_CODE, 18, has_code)).append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract)));
   activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1)).append(attr_int(S_CONFIG_CHANGES, 17, 1184));
   body = start(body, 4, activity, activity_attrs);
   body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));
@@ -346,17 +359,17 @@ function resource_table(package: string): u8[] {
   return chunk(2, put32([], 1), cat(string_pool([ICON_PATH]), pkg));
 }
 
-// The zip archive. Each entry is stored, and its data starts at a multiple
-// of its alignment: 16384 bytes for a library, so that a device with 16 KB
+// The zip archive. The data of each entry starts at a multiple of its
+// alignment: 16384 bytes for a stored library, so that a device with 16 KB
 // pages can map it, and 4 bytes for the rest. The 0xd935 extra field holds
-// the padding, as zipalign writes it.
+// the padding, as zipalign writes it. A deflated entry has method 8.
 
-pub struct Entry { name: string, data: u8[] }
+pub struct Entry { name: string, data: u8[], deflated: boolean }
 
 pub struct Zip { body: u8[], central: u8[], count: i32 }
 
-function align_of(name: string): i32 {
-  if (name.ends_with(".so")) {
+function align_of(e: Entry): i32 {
+  if (e.name.ends_with(".so") && !e.deflated) {
     return 16384;
   }
   return 4;
@@ -365,18 +378,24 @@ function align_of(name: string): i32 {
 function add_entry(z: Zip, e: Entry): Zip {
   let off = z.body.len();
   let crc = crc32.of(e.data) as i32;
-  let align = align_of(e.name);
+  let align = align_of(e);
+  let method = 0;
+  let data = e.data;
+  if (e.deflated) {
+    method = 8;
+    data = deflate.deflate(e.data);
+  }
   let pad = (align - (off + 36 + e.name.len()) % align) % align;
-  let head = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), 0), 0), 33);
-  head = put16(put16(put32(put32(put32(head, crc), e.data.len()), e.data.len()), e.name.len()), 6 + pad);
+  let head = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), method), 0), 33);
+  head = put16(put16(put32(put32(put32(head, crc), data.len()), e.data.len()), e.name.len()), 6 + pad);
   head = put16(put16(put16(cat(head, text(e.name)), 55605), 2 + pad), align);
   for k in 0..pad {
     head = head.append(0 as u8);
   }
-  let cd = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), 0), 0), 33);
-  cd = put16(put16(put16(put16(put32(put32(put32(cd, crc), e.data.len()), e.data.len()), e.name.len()), 0), 0), 0);
+  let cd = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), method), 0), 33);
+  cd = put16(put16(put16(put16(put32(put32(put32(cd, crc), data.len()), e.data.len()), e.name.len()), 0), 0), 0);
   cd = cat(put32(put32(put16(cd, 0), 0), off), text(e.name));
-  return Zip { body: cat(cat(z.body, head), e.data), central: cd, count: z.count + 1 };
+  return Zip { body: cat(cat(z.body, head), data), central: cd, count: z.count + 1 };
 }
 
 function slice_bytes(b: [u8], from: i32, to: i32): u8[] {
@@ -636,15 +655,15 @@ pub function write(app: App, libs: Lib[], d: [u8]): u8[] {
 }
 
 function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
-  let entries: Entry[] = [Entry { name: "AndroidManifest.xml", data: manifest(app) }];
+  let entries: Entry[] = [Entry { name: "AndroidManifest.xml", data: manifest(app), deflated: false }];
   if (app.dex.len() > 0) {
-    entries = entries.append(Entry { name: "classes.dex", data: app.dex });
+    entries = entries.append(Entry { name: "classes.dex", data: app.dex, deflated: false });
   }
   if (app.icon.len() > 0) {
-    entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app.package) }).append(Entry { name: ICON_PATH, data: app.icon });
+    entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app.package), deflated: false }).append(Entry { name: ICON_PATH, data: app.icon, deflated: false });
   }
   for l in libs {
-    entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image });
+    entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image, deflated: app.compress });
   }
   let z = zip(entries);
   let at = z.body.len();
