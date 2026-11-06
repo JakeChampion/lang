@@ -3,6 +3,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./astwalk";
+import "./lexical";
 import "./builtinsigs";
 import "./typeinfo";
 import "./decltypes";
@@ -19170,15 +19171,25 @@ function lu_arm_yields_fresh(fx: LuFn, arm: ast.MatchArm): boolean {
     return true;
   }
   if let ast.ExprIdent(id) = r.value {
-    if (util.has_str(astwalk.pattern_binders(arm.pattern, []), id.name)) {
+    if (util.has_str(astwalk.pattern_binders(arm.pattern, []), id.name) || lu_stmts_declare(arm.body, id.name)) {
       return lu_arm_payload_fresh(fx, arm.body, id.name);
     }
   }
   return lu_fresh_value(fx, r.value);
 }
 
-// Use the final declaration in this block. A declaration in a nested block
-// does not replace the payload that this block returns.
+function lu_stmts_declare(body: ast.Stmt[], name: string): boolean {
+  for st in body {
+    if (lu_stmt_declares(st, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Use the final declaration in this block, of the payload or of a local the
+// arm declares. A declaration in a nested block does not replace the value
+// that this block returns.
 function lu_arm_payload_fresh(fx: LuFn, body: ast.Stmt[], name: string): boolean {
   let start = 0;
   let fresh = true;
@@ -21299,6 +21310,8 @@ function lu_own_names(fn: parser.FuncDecl): string[] {
   return out;
 }
 
+// `fn` is resolved, so two bindings of one name in sibling scopes are
+// different names here.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
@@ -23454,7 +23467,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
+    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(lexical.resolve_func(fn).func, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
