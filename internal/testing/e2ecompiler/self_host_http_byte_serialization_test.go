@@ -16,7 +16,7 @@ func TestSelfHostHTTPByteSerialization(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.HTTPByteSerializationProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	if _, err := exec.LookPath("wasmtime"); err == nil {
 		targets = append(targets, ssaBackendTarget{target: "wasm32-wasi", runner: []string{"wasmtime", "run"}})
 	}

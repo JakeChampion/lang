@@ -20,7 +20,7 @@ func TestSelfHostFileBytes(t *testing.T) {
 	t.Run("bootstrap/interpreter", func(t *testing.T) {
 		e2eharness.CheckFileBytes(t, exec.Command(bootstrap, "-interp", src))
 	})
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	if _, err := exec.LookPath("wasmtime"); err == nil {
 		targets = append(targets, ssaBackendTarget{target: "wasm32-wasi", runner: []string{"wasmtime", "run", "--dir=."}})
 	}
@@ -79,7 +79,7 @@ func TestSelfHostFileBytesFullDevice(t *testing.T) {
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	for _, target := range targets {
 		t.Run("primary/"+target.target+"/checked", func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "full")

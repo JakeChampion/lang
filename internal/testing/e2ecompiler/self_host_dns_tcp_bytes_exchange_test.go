@@ -13,7 +13,7 @@ import (
 func TestSelfHostDnsTCPBytesExchange(t *testing.T) {
 	primary, stdlib := witSelfHostCLI(t)
 	bootstrap := buildLangBinForInterp(t)
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	targets = append(targets, ssaBackendTarget{target: "wasm32-wasi"})
 	for _, compiler := range []struct{ name, path string }{{"primary", primary}, {"bootstrap", bootstrap}} {
 		for _, target := range targets {

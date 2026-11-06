@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 type ssaBackendProgram struct {
@@ -743,10 +744,9 @@ var (
 	ssaHostOnce sync.Once
 	ssaHost     ssaBackendHost
 	ssaHostSkip string
-	ssaHostErr  string
 )
 
-func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
+func hostTargets() (targets []ssaBackendTarget, skip string) {
 	emulated := func(target, qemu string) {
 		if q, err := exec.LookPath(qemu); err == nil {
 			targets = append(targets, ssaBackendTarget{target: target, runner: []string{q}})
@@ -754,15 +754,12 @@ func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
 	}
 	switch {
 	case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
-		cliTarget = "arm64-darwin"
 		targets = append(targets, ssaBackendTarget{target: "arm64-darwin"})
 		emulated("x86-64-linux", "qemu-x86_64")
 	case runtime.GOOS == "linux" && runtime.GOARCH == "arm64":
-		cliTarget = "arm64-linux"
 		targets = append(targets, ssaBackendTarget{target: "arm64-linux"})
 		emulated("x86-64-linux", "qemu-x86_64")
 	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
-		cliTarget = "x86-64-linux"
 		targets = append(targets, ssaBackendTarget{target: "x86-64-linux"})
 		emulated("arm64-linux", "qemu-aarch64")
 	default:
@@ -774,7 +771,7 @@ func hostTargets() (cliTarget string, targets []ssaBackendTarget, skip string) {
 func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 	t.Helper()
 	ssaHostOnce.Do(func() {
-		cliTarget, targets, skip := hostTargets()
+		targets, skip := hostTargets()
 		if skip != "" {
 			ssaHostSkip = skip
 			return
@@ -784,25 +781,15 @@ func selfHostCLIForHost(t *testing.T) ssaBackendHost {
 			ssaHostSkip = err.Error()
 			return
 		}
-		dir, err := os.MkdirTemp("", "selfhost-ssa-cli-")
-		if err != nil {
-			ssaHostSkip = err.Error()
-			return
-		}
-		// A t.Fatal inside the build still completes the Once, so this stays set for later callers.
-		ssaHostErr = "building the self-host CLI for " + cliTarget + " failed in the first test that asked for it"
-		copySelfHostDriver(t, dir, "fern.fern")
-		cli := buildSelfHostBinFor(t, dir, "fern.fern", "fern", cliTarget)
-		ssaHostErr = ""
-		ssaHost = ssaBackendHost{cli: cli, native: buildLangBinForInterp(t), targets: targets, stdlib: stdlib}
+		ssaHost = ssaBackendHost{targets: targets, stdlib: stdlib}
 	})
-	if ssaHostErr != "" {
-		t.Fatal(ssaHostErr)
-	}
 	if ssaHostSkip != "" {
 		t.Skip(ssaHostSkip)
 	}
-	return ssaHost
+	h := ssaHost
+	h.cli = e2eharness.SelfHostCLI(t)
+	h.native = buildLangBinForInterp(t)
+	return h
 }
 
 func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out string, extra ...string) {

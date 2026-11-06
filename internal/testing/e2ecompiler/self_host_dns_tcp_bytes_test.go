@@ -102,7 +102,7 @@ func TestSelfHostDnsTCPBytesFaults(t *testing.T) {
 	if err := os.WriteFile(src, []byte(dnsTCPBytesFaultSource(t)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	targets = append(targets, ssaBackendTarget{target: "wasm32-wasi"})
 	for _, compiler := range []struct{ name, path string }{{"primary", primary}, {"bootstrap", bootstrap}} {
 		for _, target := range targets {
