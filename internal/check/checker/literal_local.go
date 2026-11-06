@@ -238,6 +238,9 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *s
 	if decl == nil || c.litNestedOf[decl] == nil {
 		return
 	}
+	if _, array := decl.Type.(ast.ArrayType); !array {
+		return
+	}
 	at := -1
 	switch {
 	case fa.Field == "append" && len(call.Args) == 1:
