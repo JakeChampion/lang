@@ -14,9 +14,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The board is qemu-virt: its UART is a PL011, and its PSCI firmware takes a
-// call through hvc.
+// The board is qemu-virt. Its UART is a PL011, and the firmware puts the
+// device tree at the start of the RAM. PSCI takes a call through hvc or smc,
+// as the device tree says.
 const kernelBoardSrc = `const UART: usize = 0x09000000;
+
+const DEVICE_TREE: usize = 0x40000000;
 
 @provide("log")
 pub function uart_write(data: usize, len: i32): void {
@@ -29,16 +32,53 @@ pub function uart_write(data: usize, len: i32): void {
   }
 }
 
+// A copy of the device tree, with the length that its header gives.
+pub function device_tree(): u8[] {
+  let out: u8[] = [];
+  unsafe {
+    let size = 0;
+    for k in 4..8 {
+      size = size << 8 | __load_u8(DEVICE_TREE + k as usize);
+    }
+    for k in 0..size {
+      out = out.append(__load_u8(DEVICE_TREE + k as usize) as u8);
+    }
+  }
+  return out;
+}
+
 // PSCI SYSTEM_OFF.
 @norc
-pub function power_off(): void {
+pub function power_off_hvc(): void {
   unsafe {
     __hvc(0x84000008i64, 0i64, 0i64, 0i64);
+  }
+}
+
+@norc
+pub function power_off_smc(): void {
+  unsafe {
+    __smc(0x84000008i64, 0i64, 0i64, 0i64);
   }
 }
 `
 
 const kernelMainSrc = `import "./board";
+import "std/fdt";
+import "std/option";
+
+function describe(t: fdt.Tree): string {
+  let Some(uart) = t.find_compatible("arm,pl011") else {
+    return "no uart";
+  };
+  let Some(r) = t.reg(uart, 0) else {
+    return "no uart reg";
+  };
+  let Some(psci) = t.find_name("psci") else {
+    return "no psci";
+  };
+  return "uart " + r.address.to_string() + " psci " + t.property_string(psci, "method").unwrap_or("none");
+}
 
 function main(): i32 {
   let xs: i32[] = [];
@@ -48,7 +88,19 @@ function main(): i32 {
     i += 1;
   }
   print("hello from fern, total " + xs.len().to_string());
-  board.power_off();
+  match (fdt.parse(board.device_tree())) {
+    Ok(t) => {
+      let line = describe(t);
+      print(line);
+      if (line.ends_with(" smc")) {
+        board.power_off_smc();
+      }
+    },
+    Err(e) => {
+      print(e.message());
+    }
+  }
+  board.power_off_hvc();
   return 0;
 }
 `
@@ -134,8 +186,9 @@ func TestSelfHostKernelImageLayout(t *testing.T) {
 	}
 }
 
-// The image boots on qemu-virt, prints through the board's UART, and stops the
-// VM through PSCI. qemu exits 0 when the guest powers off.
+// The image boots on qemu-virt and prints through the board's UART. It finds
+// the UART and the PSCI conduit in the device tree, and stops the VM through
+// PSCI. qemu exits 0 when the guest powers off.
 func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 	qemu := e2eharness.QemuSystemArm64(t)
 	cli := buildSelfHostCLI(t)
@@ -154,8 +207,10 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qemu: %v; console:\n%s", err, console)
 	}
-	if !strings.Contains(string(console), "hello from fern, total 10\n") {
-		t.Errorf("console:\n%s\nwant the line %q", console, "hello from fern, total 10")
+	for _, want := range []string{"hello from fern, total 10\n", "uart 150994944 psci hvc\n"} {
+		if !strings.Contains(string(console), want) {
+			t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
+		}
 	}
 }
 
