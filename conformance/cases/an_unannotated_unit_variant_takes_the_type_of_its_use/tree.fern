@@ -1,0 +1,36 @@
+pub enum Node[T] { Empty, Leaf(T), Branch(Node[T][]) }
+
+pub struct Holder[T] { size: i32, root: Node[T] }
+
+pub function emptied[T](n: Node[T]): Node[T] {
+  let e = Empty;
+  return e;
+}
+
+pub function cleared[T](kids: Node[T][]): Node[T][] {
+  let e = Empty;
+  return kids.with(0, e);
+}
+
+pub function (h: Holder[T]) dropped(): Holder[T] {
+  let e = Empty;
+  return Holder { ...h, root: e };
+}
+
+pub function leaves[T](n: Node[T]): i32 {
+  match (n) {
+    Empty => {
+      return 0;
+    },
+    Leaf(_) => {
+      return 1;
+    },
+    Branch(kids) => {
+      let total = 0;
+      for k in kids {
+        total += leaves(k);
+      }
+      return total;
+    }
+  }
+}

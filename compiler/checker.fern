@@ -30826,7 +30826,7 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
   return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
 }
 
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[] }
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[], okeys: string[], otypes: typeinfo.Type[], ofills: typeinfo.Type[] }
 
 struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[], pargs: string[], ptypes: typeinfo.Type[] }
 
@@ -30904,6 +30904,266 @@ function lit_struct_read(e: ast.Expr, s: Scope): boolean {
   if let ast.ExprIdent(id) = e {
     let (name, ids) = lit_struct_of(s.lookup(id.name));
     return name.len() > 0;
+  }
+  return false;
+}
+
+// An open enum local is an unannotated local whose type holds a generic
+// enum with no type arguments, such as `let e = Empty;`. Its first use at a
+// known type writes that type on the local.
+const LIT_OPEN_MARK: string = "open enum local #";
+
+function lit_open_marker(k: i32): typeinfo.Type {
+  return t_unknown(LIT_OPEN_MARK + util.i32_to_string(k));
+}
+
+function lit_open_id(t: typeinfo.Type): i32 {
+  let typeinfo.TypeUnknown(u) = t else {
+    return -1;
+  };
+  let n = LIT_OPEN_MARK.len();
+  if (u.reason.len() <= n || slice_unchecked(u.reason, 0, n) != LIT_OPEN_MARK) {
+    return -1;
+  }
+  let k = 0;
+  for i in n..u.reason.len() {
+    k = k * 10 + u.reason[i] as i32 - 48;
+  }
+  return k;
+}
+
+function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      if (bare_union(u)) {
+        return open_union_arity(s, u.name) > 0;
+      }
+      return any_open_enum(u.args, s);
+    },
+    typeinfo.TypeStruct(st) => {
+      return any_open_enum(st.args, s);
+    },
+    typeinfo.TypeArray(a) => {
+      return holds_open_enum(a.elem, s);
+    },
+    typeinfo.TypeTuple(tt) => {
+      return any_open_enum(tt.elements, s);
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function open_union_arity(s: Scope, name: string): i32 {
+  if (name == "Option") {
+    return 1;
+  }
+  if (name == "Result") {
+    return 2;
+  }
+  return union_type_params(s, name).len();
+}
+
+// bare_union is a union named without its arguments: none, or each one never.
+function bare_union(u: typeinfo.TypeUnion): boolean {
+  for a in u.args {
+    if let typeinfo.TypeNever(_) = a {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+function any_open_enum(ts: typeinfo.Type[], s: Scope): boolean {
+  for t in ts {
+    if (unbound_enum_argument(t) || holds_open_enum(t, s)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function all_known(ts: typeinfo.Type[]): boolean {
+  for t in ts {
+    if (!known_type(t)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo.Type[], boolean) {
+  let out: typeinfo.Type[] = [];
+  if (have.len() != want.len()) {
+    return (out, false);
+  }
+  for i in 0..have.len() {
+    if (unbound_enum_argument(have[i])) {
+      if (!known_type(want[i])) {
+        return (out, false);
+      }
+      out = out.append(want[i]);
+      continue;
+    }
+    let (t, ok) = fill_open_enum(have[i], want[i]);
+    if (!ok) {
+      return (out, false);
+    }
+    out = out.append(t);
+  }
+  return (out, true);
+}
+
+// fill_open_enum gives each enum without arguments in `have` the arguments
+// that `want` has at the same place. It is false when the shapes differ or
+// `want` does not know the arguments.
+function fill_open_enum(have: typeinfo.Type, want: typeinfo.Type): (typeinfo.Type, boolean) {
+  match (have) {
+    typeinfo.TypeUnion(h) => {
+      return fill_open_union(h, want);
+    },
+    typeinfo.TypeStruct(h) => {
+      let typeinfo.TypeStruct(w) = want else {
+        return (have, false);
+      };
+      let (args, ok) = fill_open_args(h.args, w.args);
+      return (typeinfo.TypeStruct { name: h.name, args: args }, ok && w.name == h.name);
+    },
+    typeinfo.TypeArray(h) => {
+      let typeinfo.TypeArray(w) = want else {
+        return (have, false);
+      };
+      let (elem, ok) = fill_open_enum(h.elem, w.elem);
+      return (typeinfo.TypeArray { ...h, elem: elem }, ok);
+    },
+    typeinfo.TypeTuple(h) => {
+      let typeinfo.TypeTuple(w) = want else {
+        return (have, false);
+      };
+      let (elems, ok) = fill_open_args(h.elements, w.elements);
+      return (t_tuple(elems), ok);
+    },
+    _ => {
+      return (have, true);
+    }
+  }
+}
+
+function fill_open_union(h: typeinfo.TypeUnion, want: typeinfo.Type): (typeinfo.Type, boolean) {
+  let typeinfo.TypeUnion(w) = want else {
+    return (want, false);
+  };
+  if (w.name != h.name) {
+    return (want, false);
+  }
+  if (bare_union(h)) {
+    return (want, w.args.len() > 0 && known_type(want));
+  }
+  let (args, ok) = fill_open_args(h.args, w.args);
+  return (typeinfo.TypeUnion { name: h.name, args: args }, ok);
+}
+
+function known_type(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeUnknown(_) => {
+      return false;
+    },
+    typeinfo.TypeUnion(u) => {
+      return all_known(u.args);
+    },
+    typeinfo.TypeStruct(st) => {
+      return all_known(st.args);
+    },
+    typeinfo.TypeArray(a) => {
+      return known_type(a.elem);
+    },
+    typeinfo.TypeTuple(tt) => {
+      return all_known(tt.elements);
+    },
+    _ => {
+      return true;
+    }
+  }
+}
+
+// open_spelling writes a filled type as an annotation the checker reads back,
+// with a type parameter under its erased name.
+function open_spelling(t: typeinfo.Type): string {
+  match (t) {
+    typeinfo.TypeErased(e) => {
+      return e.name;
+    },
+    typeinfo.TypeUnion(u) => {
+      return open_nominal(u.name, u.args);
+    },
+    typeinfo.TypeStruct(st) => {
+      return open_nominal(st.name, st.args);
+    },
+    typeinfo.TypeArray(a) => {
+      let elem = open_spelling(a.elem);
+      if (elem.len() == 0) {
+        return "";
+      }
+      if (a.view) {
+        return "[" + elem + "]";
+      }
+      return elem + "[]";
+    },
+    typeinfo.TypeTuple(tt) => {
+      let parts = open_spelling_list(tt.elements);
+      if (parts.len() == 0) {
+        return "";
+      }
+      return "(" + parts + ")";
+    },
+    _ => {
+      return typeinfo.spelling(t);
+    }
+  }
+}
+
+function open_nominal(name: string, args: typeinfo.Type[]): string {
+  if (args.len() == 0) {
+    return name;
+  }
+  let parts = open_spelling_list(args);
+  if (parts.len() == 0) {
+    return "";
+  }
+  return name + "[" + parts + "]";
+}
+
+function open_spelling_list(ts: typeinfo.Type[]): string {
+  let out = "";
+  for i in 0..ts.len() {
+    let one = open_spelling(ts[i]);
+    if (one.len() == 0) {
+      return "";
+    }
+    if (i > 0) {
+      out += ", ";
+    }
+    out += one;
+  }
+  return out;
+}
+
+function lit_open_fill(st: LitInfer, k: i32, want: typeinfo.Type): LitInfer {
+  if (!is_unknown(st.ofills[k])) {
+    return st;
+  }
+  let (filled, ok) = fill_open_enum(st.otypes[k], want);
+  if (!ok) {
+    return st;
+  }
+  return LitInfer { ...st, ofills: st.ofills.with(k, filled) };
+}
+
+function lit_open_read(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprIdent(id) = e {
+    return lit_open_id(s.lookup(id.name)) >= 0;
   }
   return false;
 }
@@ -31428,6 +31688,13 @@ function gcall_arg_key(c: ast.ExprCall, k: i32): string {
   return "c" + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col) + "#" + util.i32_to_string(k);
 }
 
+// lit_arg_reads is true when a call argument holds something the pass must
+// settle from the parameter type.
+function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
+  let (seed, ids) = lit_tree(arg, s, []);
+  return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s);
+}
+
 function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   if (parser.is_value_block(c)) {
     return lit_value_block(c, t_unknown("value block"), s, st);
@@ -31435,8 +31702,7 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   let out = lit_expr(c.callee, s, st);
   let reads = false;
   for arg in c.args {
-    let (seed, ids) = lit_tree(arg, s, []);
-    reads = reads || seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s);
+    reads = reads || lit_arg_reads(arg, s);
   }
   let pts: typeinfo.Type[] = [];
   if (reads) {
@@ -31648,6 +31914,10 @@ function lit_typed_type(t: typeinfo.Type, st: LitInfer, poly: boolean): typeinfo
 }
 
 function lit_type_demand(have: typeinfo.Type, want: typeinfo.Type, st: LitInfer): LitInfer {
+  let o = lit_open_id(have);
+  if (o >= 0) {
+    return lit_open_fill(st, o, want);
+  }
   let k = lit_id(have);
   if (k >= 0) {
     return lit_fix(st, [k], want);
@@ -31784,13 +32054,36 @@ function lit_array(arr: ast.ExprArray, s: Scope, st: LitInfer): LitInfer {
   return lit_fix(lit_link(out, ids), ids, sibling);
 }
 
+// A struct literal with a base takes the type arguments of the base.
+function spread_struct_args(sl: ast.ExprStructLit, sig: StructSig, largs: typeinfo.Type[], s: Scope): typeinfo.Type[] {
+  if (!sl.has_base) {
+    return largs;
+  }
+  let typeinfo.TypeStruct(bt) = check_expr(sl.base, s) else {
+    return largs;
+  };
+  if (bt.name != sig.name || bt.args.len() != sig.type_params.len()) {
+    return largs;
+  }
+  return bt.args;
+}
+
+// lit_field_want is the type a field of a generic struct literal demands. An
+// open enum local takes the whole field type.
+function lit_field_want(value: ast.Expr, sig: StructSig, j: i32, largs: typeinfo.Type[], s: Scope): typeinfo.Type {
+  if (lit_open_read(value, s) && largs.len() == sig.type_params.len()) {
+    return type_from_ref_subst(parser.parse_type_ref(sig.field_type_names[j]), sig.type_params, largs, s.type_names());
+  }
+  return widened_field_type(sig, j, largs, s);
+}
+
 function lit_struct_lit(sl: ast.ExprStructLit, s: Scope, st: LitInfer): LitInfer {
   let out = st;
   let found = s.lookup_struct(sl.type_name);
   let largs: typeinfo.Type[] = [];
   if let Some(sig) = found {
     if (sig.type_params.len() > 0) {
-      largs = struct_lit_args(sl, sig, s);
+      largs = spread_struct_args(sl, sig, struct_lit_args(sl, sig, s), s);
     }
   }
   let i = 0;
@@ -31803,7 +32096,7 @@ function lit_struct_lit(sl: ast.ExprStructLit, s: Scope, st: LitInfer): LitInfer
           if (sig.field_names[j] == sl.field_names[i] && j < sig.field_types.len()) {
             want = sig.field_types[j];
             if (sig.type_params.len() > 0 && j < sig.field_type_names.len()) {
-              want = widened_field_type(sig, j, largs, s);
+              want = lit_field_want(sl.field_values[i], sig, j, largs, s);
             }
           }
           j += 1;
@@ -32061,6 +32354,12 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
             return (s.bind(v.name, ct), LitInfer { ...cs, tkeys: cs.tkeys.append(lit_var_key(v)), ttypes: cs.ttypes.append(ct) });
           }
         }
+        let open_type = check_expr(v.init, s);
+        if (holds_open_enum(open_type, s)) {
+          let ost = lit_expr(v.init, s, st);
+          let k = ost.okeys.len();
+          return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
+        }
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       let k = st.parent.len();
@@ -32316,6 +32615,18 @@ function lit_struct_tags(st: LitInfer): (string[], string[]) {
   return (keys, tags);
 }
 
+// open_rewrites adds the type of each settled open enum local to the keys and
+// tags of the rewrites.
+function open_rewrites(st: LitInfer, own keys: string[], own tags: string[]): (string[], string[]) {
+  for oi in 0..st.okeys.len() {
+    if (!is_unknown(st.ofills[oi])) {
+      keys = keys.append(st.okeys[oi]);
+      tags = tags.append(open_spelling(st.ofills[oi]));
+    }
+  }
+  return (keys, tags);
+}
+
 function lit_rewrites(st: LitInfer): LitRewrite {
   let keys: string[] = [];
   let tags: string[] = [];
@@ -32350,6 +32661,9 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     i += 1;
   }
   let (sk, stg) = lit_struct_tags(st);
+  let (ook, oot) = open_rewrites(st, ok, ot);
+  ok = ook;
+  ot = oot;
   let ti = 0;
   while (ti < st.tkeys.len()) {
     ok = ok.append(st.tkeys[ti]);
@@ -32635,7 +32949,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       if (v.type_name.len() > 0 || name_has_comma(v.name)) {
         return false;
       }
-      return lit_holds_int_literal(v.init);
+      return lit_holds_int_literal(v.init) || names_unit_variant(v.init);
     },
     ast.StmtFor(fr) => {
       if (!for_iter_is_range(fr.iter)) {
@@ -32649,6 +32963,40 @@ function lit_candidate_at(st: ast.Stmt): boolean {
     }
   }
   return false;
+}
+
+// A capitalised name, alone or as an argument, can be a unit variant whose
+// type arguments come from a later use. A variant of another module has
+// that module's prefix, as `tree__Empty`.
+function variant_shaped(name: string): boolean {
+  let at = 0;
+  for i in 1..name.len() {
+    if (name[i - 1] == b'_' && name[i] == b'_') {
+      at = i + 1;
+    }
+  }
+  return at < name.len() && name[at] >= b'A' && name[at] <= b'Z';
+}
+
+function names_unit_variant(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return variant_shaped(id.name);
+    },
+    ast.ExprCall(c) => {
+      for a in c.args {
+        if let ast.ExprIdent(id) = a {
+          if (variant_shaped(id.name)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
 }
 
 function needs_lit_settle(stmts: ast.Stmt[], generics: string[]): boolean {
@@ -32673,7 +33021,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  let st = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [], pargs: [], ptypes: [] }));
+  let st = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [], pargs: [], ptypes: [], okeys: [], otypes: [], ofills: [] }));
   let rw = lit_rewrites(st);
   if (rw.keys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;

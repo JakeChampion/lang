@@ -5749,6 +5749,7 @@ type checker struct {
 	litNestedOf       map[*ast.Var][]*litLocal
 	litFields         map[*ast.FieldAccess]*litLocal
 	litCompositeReads map[*ast.Ident]*ast.Var
+	openEnumLocals    map[*ast.Var]*scope
 	current           *ast.FuncDecl
 	loopDepth         int
 	unsafeDepth       int
@@ -11625,6 +11626,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if unannotated {
 			c.beginLitNestedLocal(n, s)
+			c.beginOpenEnumLocal(n, s)
 		}
 	case *ast.Destructure:
 		got := c.checkExpr(n.Init, s)
@@ -14961,7 +14963,15 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var deferredArgs []deferredEmptyArg
 		for i := range n.Args {
 			if i < len(ft.Params) {
-				c.setElemHintFor(n.Args[i], ft.Params[i])
+				hp := ft.Params[i]
+				if sub != nil {
+					hp = substituteType(hp, sub)
+				}
+				if !containsParamType(hp) {
+					c.setElemHintFor(n.Args[i], hp)
+				} else {
+					c.elemHint = nil
+				}
 			}
 			at := recvType
 			if !(recvIsArg0 && i == 0) {
