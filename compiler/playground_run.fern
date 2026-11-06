@@ -262,7 +262,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
       if (hwat.len() == 0) {
         return 2;
       }
-      out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+      out = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches)));
     } else {
       let hc = emitforms.wasm_http_component(full, sub);
       if (hc.bytes.len() == 0) {
@@ -276,7 +276,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   } else if (form == "asm") {
     out = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
   } else if (form == "core-module") {
-    out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
+    out = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches)));
   } else {
     let comp = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
