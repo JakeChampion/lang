@@ -269,7 +269,7 @@ pub function fold_blocks[S, E](input: [u8], limits: BlockLimits, cancelled: () =
   let h = match (scan_header(input, limits, cancelled)) { Ok(v) => v, Err(e) => { return Err(BlockDecode(e)); } };
   let p = match (prepared(h, limits)) { Ok(v) => v, Err(e) => { return Err(BlockDecode(e)); } };
   let cursor = cell_new(BitCursor { at: h.entropy_offset, byte: 0, remaining: 0 });
-  let predictors: i32[] = [0, 0, 0];
+  let predictors = [0, 0, 0];
   let restart = 0;
   let mcu = 0;
   while (mcu < p.plan.mcus) {

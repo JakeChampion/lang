@@ -91,7 +91,7 @@ function predict(filter: i32, left: i32, above: i32, upper_left: i32): i32 {
 }
 
 function reconstruct(filtered: [u8], layout: pixels.Layout): Result[pixels.Image, PngError] {
-  let bytes: u8[] = __alloc_u8(layout.bytes);
+  let bytes = __alloc_u8(layout.bytes);
   let channels = pixels.channels(layout.format);
   for y in 0..layout.height {
     let start = y * (layout.stride + 1);
