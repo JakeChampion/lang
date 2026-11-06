@@ -11,6 +11,9 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
+		"admitted mmio_load pops=1 pushes=1\n" +
+		"admitted mmio_store pops=2 pushes=1\n" +
+		"admitted fence pops=0 pushes=1\n" +
 		"admitted heap_adopt pops=2 pushes=1\n" +
 		"admitted worker_region pops=1 pushes=1\n" +
 		"admitted worker_exit pops=2 pushes=1\n" +
