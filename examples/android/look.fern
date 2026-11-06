@@ -1,0 +1,132 @@
+// The look of the Fern Android apps, in the style of a dot-matrix display: a
+// black background, white and grey dots, and red only for what is live.
+// Labels are rows of round dots in the font of matrix.fern. It draws on a
+// frame and does no other I/O, so the host tests it on a frame in memory.
+import "std/android/draw";
+import "std/string";
+import "./matrix";
+
+pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
+
+pub function contains(r: Rect, x: f32, y: f32): boolean {
+  return x >= r.x as f32 && y >= r.y as f32 && x < (r.x + r.w) as f32 && y < (r.y + r.h) as f32;
+}
+
+pub function bg(): i32 {
+  return draw.rgb(0, 0, 0);
+}
+
+pub function surface(): i32 {
+  return draw.rgb(26, 26, 26);
+}
+
+pub function outline(): i32 {
+  return draw.rgb(60, 60, 60);
+}
+
+pub function ink(): i32 {
+  return draw.rgb(255, 255, 255);
+}
+
+pub function muted(): i32 {
+  return draw.rgb(140, 140, 140);
+}
+
+pub function red(): i32 {
+  return draw.rgb(215, 25, 33);
+}
+
+// `color` blended over `under`: opacity 20 is `color`, and 0 is `under`.
+pub function blend(color: i32, under: i32, opacity: i32): i32 {
+  let a = opacity;
+  if (a < 0) {
+    a = 0;
+  }
+  if (a > 20) {
+    a = 20;
+  }
+  let r = ((color & 255) * a + (under & 255) * (20 - a)) / 20;
+  let g = ((color >> 8 & 255) * a + (under >> 8 & 255) * (20 - a)) / 20;
+  let b = ((color >> 16 & 255) * a + (under >> 16 & 255) * (20 - a)) / 20;
+  return draw.rgb(r, g, b);
+}
+
+// The x of `text_w` pixels of text in the middle of `r`.
+pub function center_x(r: Rect, text_w: i32): i32 {
+  return r.x + (r.w - text_w) / 2;
+}
+
+// Dot-matrix words in the middle of `r`, at most `cap` pixels from dot to dot.
+pub function dots_in(f: draw.Frame, r: Rect, text: string, cap: i32, color: i32): void {
+  let p = matrix.fit_pitch(text, r.w * 8 / 10, cap);
+  matrix.text(f, center_x(r, matrix.width(text, p)), r.y + (r.h - matrix.height(p)) / 2, text, p, color);
+}
+
+// The pitch of the dots of a button label: the label fills 40% of its height.
+pub function label_pitch(r: Rect): i32 {
+  let p = r.h * 40 / 100 / matrix.ROWS;
+  if (p < 1) {
+    return 1;
+  }
+  return p;
+}
+
+// A pill: a rounded button with its words in the middle.
+pub function pill(f: draw.Frame, r: Rect, label: string, fill: i32, text: i32): void {
+  f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, fill);
+  dots_in(f, r, label, label_pitch(r), text);
+}
+
+// A pill with only its outline in `color`.
+pub function outlined(f: draw.Frame, r: Rect, label: string, color: i32): void {
+  let t = r.h / 24 + 1;
+  f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, color);
+  f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 2 - t, bg());
+  dots_in(f, r, label, label_pitch(r), color);
+}
+
+// A card: a rounded rectangle of the surface, with an outline in `edge`.
+pub function card(f: draw.Frame, r: Rect, edge: i32): void {
+  let t = r.h / 28 + 2;
+  f.round_rect(r.x, r.y, r.w, r.h, r.h / 4, edge);
+  f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 4 - t, surface());
+}
+
+// A ring of `n` round dots of radius `d` on the circle of radius `r`.
+pub function dotted_ring(f: draw.Frame, cx: i32, cy: i32, r: i32, d: i32, n: i32, color: i32): void {
+  for k in 0..n {
+    let a: f64 = 6.283185307179586 * (k as f64) / (n as f64);
+    f.disc(cx + (r as f64 * a.sin()) as i32, cy - (r as f64 * a.cos()) as i32, d, color);
+  }
+}
+
+// The lines of `text` with at most `max` characters each, broken at spaces.
+// A word longer than `max` is cut.
+pub function wrap(text: string, max: i32): string[] {
+  let lines: string[] = [];
+  let line = "";
+  for word in text.split(" ") {
+    let w = word;
+    while (w.len() > max) {
+      if (line.len() > 0) {
+        lines = lines.append(line);
+        line = "";
+      }
+      let (head, rest) = w.split_at(max);
+      lines = lines.append(head);
+      w = rest;
+    }
+    if (line.len() == 0) {
+      line = w;
+    } else if (line.len() + 1 + w.len() <= max) {
+      line = line + " " + w;
+    } else {
+      lines = lines.append(line);
+      line = w;
+    }
+  }
+  if (line.len() > 0) {
+    lines = lines.append(line);
+  }
+  return lines;
+}

@@ -3244,7 +3244,7 @@ func vb_bare {
 }
 
 modes 1 result i32
-v0:i32 v1:i32 v2:(i32, i32) v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:i32 v9:boolean v10:boolean v11:i32 v12:i32 v13:i32 v14:boolean v15:boolean v16:i32 v17:boolean v18:i32
+v0:i32 v1:i32 v2:(i32, i32) v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:boolean v9:i32 v10:boolean v11:boolean v12:i32 v13:i32 v14:i32 v15:boolean v16:boolean v17:i32 v18:boolean v19:i32
 func tm_line {
   b0:
     v0 = param 0
@@ -3257,24 +3257,25 @@ func tm_line {
     v5 = tuple_get 0 v2
     v6 = tuple_get 1 v2
     v7 = const_bool 0
+    v8 = const_bool 1
     br b7
   b7:
-    v8 = const_int 1
-    v9 = binary == v5 v8
-    brif v9 b4 b5
+    v9 = const_int 1
+    v10 = binary == v5 v9
+    brif v10 b4 b5
   b4:
-    v10 = const_bool 1
-    v11 = const_int 10
-    v12 = binary * v6 v11
+    v11 = const_bool 1
+    v12 = const_int 10
+    v13 = binary * v6 v12
     br b3
   b5:
     br b8
   b8:
-    v15 = const_bool 1
+    v16 = const_bool 1
     br b3
   b3:
-    v18 = phi v5 v12
-    ret v18
+    v19 = phi v5 v13
+    ret v19
 }
 
 modes 2 result Ints

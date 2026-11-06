@@ -106,9 +106,15 @@ pub function fit_pitch(s: string, w: i32, cap: i32): i32 {
   return p;
 }
 
-// Draws `s` with the top-left dot cell at x and y.
+// Draws `s` with the top-left dot cell at x and y. A dot has 2/5 of the
+// pitch as its radius.
 pub function text(f: draw.Frame, x: i32, y: i32, s: string, pitch: i32, color: i32): void {
-  let r: i32 = pitch * 2 / 5;
+  text_dots(f, x, y, s, pitch, pitch * 2 / 5, color);
+}
+
+// Draws `s` as `text` does, with dots of radius `r`, at least 1.
+pub function text_dots(f: draw.Frame, x: i32, y: i32, s: string, pitch: i32, r0: i32, color: i32): void {
+  let r: i32 = r0;
   if (r < 1) {
     r = 1;
   }

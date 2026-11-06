@@ -3393,6 +3393,15 @@ function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkc
   return build_tuple_match_sized(scrut, arms, n_elems, mkline, mkcol);
 }
 
+// The test of an arm of a match lowered to a chain of ifs: no earlier arm
+// set done. The first arm tests true, because done is false there.
+function done_flag_cond(done: string, first: boolean): ast.Expr {
+  if (first) {
+    return e_bool(true);
+  }
+  return e_unary("!", e_ident(done));
+}
+
 pub function build_tuple_match_sized(scrut: ast.Expr, arms: ast.TupArm[], n_elems: i32, mkline: i32, mkcol: i32): ast.Stmt {
   if (n_elems < 2) {
     return s_unknown_at("tuple match with no tuple arm", mkline, mkcol);
@@ -3417,6 +3426,7 @@ pub function build_tuple_match_sized(scrut: ast.Expr, arms: ast.TupArm[], n_elem
     outer = outer.append(s_var_at(names, "", scrut, mkline, mkcol));
   }
   outer = outer.append(s_var(done, "", e_bool(false)));
+  let first = true;
   let ai = 0;
   while (ai < arms.len()) {
     let a = arms[ai];
@@ -3425,7 +3435,8 @@ pub function build_tuple_match_sized(scrut: ast.Expr, arms: ast.TupArm[], n_elem
       ai += 1;
       continue;
     }
-    let cond = e_unary("!", e_ident(done));
+    let cond = done_flag_cond(done, first);
+    first = false;
     let inner: ast.Stmt[] = [];
     if (a.is_wild) {
       if (a.has_guard) {
@@ -3622,7 +3633,7 @@ function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mklin
   let ai = 0;
   while (ai < arms.len()) {
     let a = arms[ai];
-    let cond = e_unary("!", e_ident(done));
+    let cond = done_flag_cond(done, ai == 0);
     let inner: ast.Stmt[] = [];
     if (a.is_wild) {
       if (a.has_guard) {
@@ -5293,7 +5304,7 @@ function build_nested_arm_match(scrut: ast.Expr, arms: ast.MatchArm[], written: 
   let ai = 0;
   while (ai < arms.len()) {
     let a = arms[ai];
-    let cond = e_unary("!", e_ident(done));
+    let cond = done_flag_cond(done, ai == 0);
     let flagged: ast.Stmt[] = [];
     flagged = flagged.append(s_assign(done, e_bool(true)));
     let bi = 0;

@@ -1,0 +1,328 @@
+// The layout of the stopwatch screens. It has no Android code, so the host
+// tests it. Sizes are in units of a dp: 1/400 of the short side of the
+// window, about the dp of a phone.
+//
+// The main screen has the clock above the dial of the stopwatch, in the
+// middle of the window. A tap shows the title at the top left and the MENU
+// button at the top right, and the menu opens below the button. The settings
+// and the About screen are lists of cards that scroll.
+import "../look";
+import "../matrix";
+import "./stopwatch";
+pub use "../look".{Rect, contains};
+
+pub const MAIN: i32 = 0;
+
+pub const SETTINGS: i32 = 1;
+
+pub const ABOUT: i32 = 2;
+
+// `n` dp in pixels on a window of `w` by `h`.
+pub function dp(w: i32, h: i32, n: i32): i32 {
+  let short = w;
+  if (h < short) {
+    short = h;
+  }
+  return n * short / 400;
+}
+
+function at_least_one(n: i32): i32 {
+  if (n < 1) {
+    return 1;
+  }
+  return n;
+}
+
+// The pitch of the dots of text with a size setting of `size` sp: the
+// digits are about 7/10 of the size high.
+pub function size_pitch(w: i32, h: i32, size: i32): i32 {
+  return at_least_one(dp(w, h, size) / 10);
+}
+
+// The pitch of the clock.
+pub function clock_pitch(w: i32, h: i32, values: i32[]): i32 {
+  return size_pitch(w, h, stopwatch.value(values, "clock_size"));
+}
+
+// The gap between the clock and the dial.
+function gap(w: i32, h: i32): i32 {
+  return dp(w, h, 16);
+}
+
+// The diameter of the dial: the digits fill 62% of it, and it fits in the
+// window below the clock.
+pub function dial_size(w: i32, h: i32, values: i32[]): i32 {
+  let want = matrix.width("0:00:00", size_pitch(w, h, stopwatch.value(values, "stopwatch_size"))) * 100 / 62;
+  let room = h * 92 / 100;
+  if (stopwatch.on(values, "clock_enabled")) {
+    room = room - matrix.height(clock_pitch(w, h, values)) - gap(w, h);
+  }
+  let d = want;
+  if (w * 88 / 100 < d) {
+    d = w * 88 / 100;
+  }
+  if (room < d) {
+    d = room;
+  }
+  return at_least_one(d);
+}
+
+// The width and the height of the clock and the dial together.
+pub function content_size(w: i32, h: i32, values: i32[], clock_text: string): (i32, i32) {
+  let cw: i32 = 0;
+  let ch: i32 = 0;
+  if (stopwatch.on(values, "clock_enabled")) {
+    cw = matrix.width(clock_text, clock_pitch(w, h, values));
+    ch = matrix.height(clock_pitch(w, h, values));
+  }
+  if (stopwatch.on(values, "stopwatch_enabled")) {
+    let d = dial_size(w, h, values);
+    if (d > cw) {
+      cw = d;
+    }
+    if (ch > 0) {
+      ch += gap(w, h);
+    }
+    ch += d;
+  }
+  return (cw, ch);
+}
+
+// The top left corner of the content, in the middle of the window and moved
+// by the burn-in offset.
+pub function content_origin(w: i32, h: i32, size: (i32, i32), dx: i32, dy: i32): (i32, i32) {
+  return ((w - size.0) / 2 + dx, (h - size.1) / 2 + dy);
+}
+
+// The box of the clock text.
+pub function clock_box(w: i32, h: i32, values: i32[], clock_text: string, dx: i32, dy: i32): look.Rect {
+  let size = content_size(w, h, values, clock_text);
+  let (x, y) = content_origin(w, h, size, dx, dy);
+  let p = clock_pitch(w, h, values);
+  let cw = matrix.width(clock_text, p);
+  return look.Rect { x: x + (size.0 - cw) / 2, y: y, w: cw, h: matrix.height(p) };
+}
+
+// The square of the dial.
+pub function dial_box(w: i32, h: i32, values: i32[], clock_text: string, dx: i32, dy: i32): look.Rect {
+  let size = content_size(w, h, values, clock_text);
+  let (x, y) = content_origin(w, h, size, dx, dy);
+  let d = dial_size(w, h, values);
+  return look.Rect { x: x + (size.0 - d) / 2, y: y + size.1 - d, w: d, h: d };
+}
+
+// The band at each end that the title and the menu button use, which the
+// burn-in offset keeps the content clear of.
+pub function bar(w: i32, h: i32): i32 {
+  return dp(w, h, 28 + 44);
+}
+
+// The height of a button.
+pub function button_h(w: i32, h: i32): i32 {
+  return dp(w, h, 44);
+}
+
+// The pitch of the title of a screen.
+pub function title_pitch(w: i32, h: i32): i32 {
+  return at_least_one(dp(w, h, 32) / 10);
+}
+
+pub function title_box(w: i32, h: i32, title: string): look.Rect {
+  return look.Rect { x: dp(w, h, 24), y: dp(w, h, 28), w: matrix.width(title, title_pitch(w, h)), h: button_h(w, h) };
+}
+
+// An outlined button of `label` at the top right, as MENU and BACK are.
+pub function corner_button(w: i32, h: i32, label: string): look.Rect {
+  let bh = button_h(w, h);
+  let bw = matrix.width(label, look.label_pitch(look.Rect { x: 0, y: 0, w: 0, h: bh })) + bh * 11 / 10;
+  return look.Rect { x: w - dp(w, h, 24) - bw, y: dp(w, h, 28), w: bw, h: bh };
+}
+
+pub const MENU_ITEMS: i32 = 2;
+
+pub function menu_panel(w: i32, h: i32): look.Rect {
+  let pw = dp(w, h, 200);
+  let ph = dp(w, h, 12) + MENU_ITEMS * (button_h(w, h) + dp(w, h, 8)) + dp(w, h, 4);
+  return look.Rect { x: w - dp(w, h, 24) - pw, y: dp(w, h, 28 + 44 + 12), w: pw, h: ph };
+}
+
+// Item `k` of the menu: 0 SETTINGS and 1 ABOUT.
+pub function menu_item(w: i32, h: i32, k: i32): look.Rect {
+  let p = menu_panel(w, h);
+  let pad = dp(w, h, 12);
+  return look.Rect { x: p.x + pad, y: p.y + pad + k * (button_h(w, h) + dp(w, h, 8)), w: p.w - 2 * pad, h: button_h(w, h) };
+}
+
+// The rows of the settings screen and of the About screen, in the
+// coordinates of the list: y 0 is the top of the list when it does not
+// scroll.
+
+// The left and right margin of a list.
+pub function margin(w: i32, h: i32): i32 {
+  return dp(w, h, 20);
+}
+
+// The padding inside a card.
+pub function pad(w: i32, h: i32): i32 {
+  return dp(w, h, 18);
+}
+
+// The y of the first item of a list, below the title.
+pub function list_top(w: i32, h: i32): i32 {
+  return dp(w, h, 28 + 44 + 12);
+}
+
+// The pitch of the name of a section.
+pub function section_pitch(w: i32, h: i32): i32 {
+  return at_least_one(dp(w, h, 22) / 10);
+}
+
+// The height of the name of a section, with its space above and below.
+pub function section_h(w: i32, h: i32): i32 {
+  return dp(w, h, 24) + matrix.height(section_pitch(w, h)) + dp(w, h, 10);
+}
+
+// The pitch of the value of a slider.
+pub function value_pitch(w: i32, h: i32): i32 {
+  return at_least_one(dp(w, h, 26) / 10);
+}
+
+pub function switch_w(w: i32, h: i32): i32 {
+  return dp(w, h, 52);
+}
+
+pub function switch_h(w: i32, h: i32): i32 {
+  return dp(w, h, 30);
+}
+
+pub function slider_h(w: i32, h: i32): i32 {
+  return dp(w, h, 32);
+}
+
+// The height of a line of the summary text at text scale `ts`, whose
+// characters are `cell_h` pixels high at scale 1.
+pub function line_h(cell_h: i32, ts: i32): i32 {
+  return cell_h * ts * 5 / 4;
+}
+
+// The card of setting `k`, given the number of summary lines of each card,
+// the height of a line of summary and the height of a title.
+pub function setting_card(w: i32, h: i32, k: i32, lines: i32[], line: i32, title_h: i32): look.Rect {
+  let all = stopwatch.settings();
+  let y = list_top(w, h);
+  let section: string = "";
+  for i in 0..k + 1 {
+    if (all[i].section != section) {
+      section = all[i].section;
+      y += section_h(w, h);
+    }
+    let ch = card_h(w, h, all[i].toggle, lines[i], line, title_h);
+    if (i == k) {
+      return look.Rect { x: margin(w, h), y: y, w: w - 2 * margin(w, h), h: ch };
+    }
+    y = y + ch + dp(w, h, 8);
+  }
+  return look.Rect { x: 0, y: 0, w: 0, h: 0 };
+}
+
+// The height of a card with `lines` lines of summary.
+pub function card_h(w: i32, h: i32, toggle: boolean, lines: i32, line: i32, title_h: i32): i32 {
+  let body = head_h(w, h, toggle, title_h);
+  if (lines > 0) {
+    body = body + dp(w, h, 6) + lines * line;
+  }
+  if (!toggle) {
+    body = body + dp(w, h, 10) + slider_h(w, h);
+  }
+  return 2 * pad(w, h) + body;
+}
+
+// The height of the first line of a card: the title, and the switch or the
+// value.
+pub function head_h(w: i32, h: i32, toggle: boolean, title_h: i32): i32 {
+  let body = title_h;
+  if (toggle && body < switch_h(w, h)) {
+    body = switch_h(w, h);
+  }
+  return body;
+}
+
+// The switch of a toggle card.
+pub function switch_box(w: i32, h: i32, card: look.Rect, title_h: i32): look.Rect {
+  let sw = switch_w(w, h);
+  let p = pad(w, h);
+  let y = card.y + p + (head_h(w, h, true, title_h) - switch_h(w, h)) / 2;
+  return look.Rect { x: card.x + card.w - p - sw, y: y, w: sw, h: switch_h(w, h) };
+}
+
+// The track of a slider card, at its bottom, with `value_w` pixels at its
+// right for the value.
+pub function slider_box(w: i32, h: i32, card: look.Rect, value_w: i32): look.Rect {
+  let p = pad(w, h);
+  let sh = slider_h(w, h);
+  return look.Rect { x: card.x + p, y: card.y + card.h - p - sh, w: card.w - 2 * p - value_w - dp(w, h, 12), h: sh };
+}
+
+// The width of the widest value of slider setting `k`.
+pub function value_w(w: i32, h: i32, k: i32): i32 {
+  let s = stopwatch.settings()[k];
+  let a = matrix.width(stopwatch.setting_value_text(k, s.min), value_pitch(w, h));
+  let b = matrix.width(stopwatch.setting_value_text(k, s.max), value_pitch(w, h));
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+// The track of slider setting `k` in its card.
+pub function track(w: i32, h: i32, k: i32, card: look.Rect): look.Rect {
+  return slider_box(w, h, card, value_w(w, h, k));
+}
+
+// The number of dots of a slider, and the radius of its knob.
+pub const SLIDER_DOTS: i32 = 24;
+
+pub function knob(w: i32, h: i32): i32 {
+  return dp(w, h, 7);
+}
+
+// The value of a slider from `lo` to `hi` at x on its track.
+pub function slider_value(w: i32, h: i32, track: look.Rect, lo: i32, hi: i32, x: f32): i32 {
+  let k = knob(w, h);
+  let span = track.w - 2 * k;
+  if (span < 1) {
+    span = 1;
+  }
+  let frac = (x - (track.x + k) as f32) / (span as f32);
+  if (frac < 0.0) {
+    frac = 0.0;
+  }
+  if (frac > 1.0) {
+    frac = 1.0;
+  }
+  return lo + (frac * ((hi - lo) as f32) + 0.5) as i32;
+}
+
+// The dot of a slider that shows `v` from `lo` to `hi`.
+pub function slider_dot(v: i32, lo: i32, hi: i32): i32 {
+  let span = hi - lo;
+  if (span < 1) {
+    span = 1;
+  }
+  return ((v - lo) * (SLIDER_DOTS - 1) * 2 + span) / (2 * span);
+}
+
+// How far a list scrolls at most: the bottom of its last card, with a margin,
+// reaches the bottom of the window.
+pub function max_scroll(h: i32, bottom: i32, end_pad: i32): i32 {
+  let m = bottom + end_pad - h;
+  if (m < 0) {
+    return 0;
+  }
+  return m;
+}
+
+// A move of more than this many pixels is a drag, not a tap.
+pub function slop(w: i32, h: i32): i32 {
+  return dp(w, h, 8);
+}

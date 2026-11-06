@@ -3743,8 +3743,13 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
-    s = s.write(profile_exit_asm(s));
-    s = s.write("    mov x8, #94\n").svc(94).write("    mov x0, #0\n");
+    if (asmcore.process_entry(s)) {
+      s = s.write(profile_exit_asm(s));
+      s = s.write("    mov x8, #94\n").svc(94);
+    } else {
+      s = s.write("    brk #1\n");
+    }
+    s = s.write("    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   s = s.need("heap");
@@ -6359,8 +6364,12 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
     }
     dfi += 1;
   }
-  s = s.write(profile_exit_asm(s));
-  s = s.write("    mov x0, #134\n    mov x8, #94\n").svc(94);
+  if (asmcore.process_entry(s)) {
+    s = s.write(profile_exit_asm(s));
+    s = s.write("    mov x0, #134\n    mov x8, #94\n").svc(94);
+  } else {
+    s = s.write("    brk #1\n");
+  }
   s = s.write(dend + ":\n");
   return s;
 }
@@ -6622,12 +6631,14 @@ function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
     s = s.write("    cbnz x0, .Lfern_signal_stack_failed\n");
   }
   s = s.write("    adrp x9, __fern_segv\n    add x9, x9, :lo12:__fern_segv\n");
+  // The handler runs with every signal it handles blocked: SIGSEGV and SIGBUS
+  // on Darwin (mask 0x600), SIGSEGV, SIGILL and SIGBUS on Linux (mask 0x448).
   if (darwin) {
-    s = s.write("    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n    mov x11, #0x41\n    lsl x11, x11, #32\n");
+    s = s.write("    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n    mov x11, #0x41\n    lsl x11, x11, #32\n    orr x11, x11, #0x600\n    stp x9, x10, [sp]\n    stp x11, xzr, [sp, #16]\n");
   } else {
-    s = s.write("    mov x10, #4\n    movk x10, #0x800, lsl #16\n    mov x11, #0\n");
+    s = s.write("    mov x10, #4\n    movk x10, #0x800, lsl #16\n    mov x11, #0x448\n    stp x9, x10, [sp]\n    stp xzr, x11, [sp, #16]\n");
   }
-  s = emit_segv_install(s.write("    stp x9, x10, [sp]\n    stp x11, xzr, [sp, #16]\n"), darwin);
+  s = s.write("    bl .Lfern_fault_install\n");
   if (darwin) {
     return s.write("    add sp, sp, #32\n.Lfern_segv_skip:\n");
   }
@@ -6682,16 +6693,20 @@ function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitStat
   return s;
 }
 
-function emit_segv_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  s = emit_sigaction(s, 11);
+// Installs the action the caller built at its sp for SIGSEGV, and for SIGBUS
+// on Darwin, where a wild read raises it. Linux adds SIGILL and SIGBUS. It
+// returns the first refusal in x0, or 0.
+function emit_fault_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  let signals = [11, 4, 7];
   if (darwin) {
-    s = emit_sigaction(s, 10);
+    signals = [11, 10];
   }
-  return s;
-}
-
-function emit_sigaction(s: asmcore.EmitState, signo: i32): asmcore.EmitState {
-  return s.write("    mov x0, #" + util.i32_to_string(signo) + "\n    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n    mov x8, #134\n").svc(134);
+  s = s.write(".Lfern_fault_install:\n    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n");
+  for signo in signals {
+    s = s.write("    mov x0, #" + util.i32_to_string(signo) + "\n    mov x8, #134\n").svc(134);
+    s = s.write("    cbnz x0, .Lfern_fault_install_done\n");
+  }
+  return s.write(".Lfern_fault_install_done:\n    ret\n");
 }
 
 function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -6704,12 +6719,20 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
     ctx = "    ldr x10, [x13, #264]\n    and x10, x10, #0x0000ffffffffffff\n";
     frame = "    ldr x11, [x13, #272]\n    ldr x12, [x13, #248]\n    and x11, x11, #0x0000ffffffffffff\n    and x12, x12, #0x0000ffffffffffff\n";
   }
-  s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
+  let ill = aborts.illegal_instruction();
+  let bus = aborts.bus_error();
+  let dispatch = "    cmp x0, #11\n    b.ne .Lfern_fatal_signal\n";
+  if (darwin) {
+    s = s.write("    .section .bss\n    .align 8\n__fern_sig_sp: .quad 0, 0\n    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
+    dispatch = "";
+  } else {
+    s = s.write("    .section .bss\n    .align 8\n__fern_sig_sp: .quad 0, 0\n    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n.Lmsg_illegal_instruction:\n    .ascii \"" + ill + "\\n\"\n.Lmsg_bus_error:\n    .ascii \"" + bus + "\\n\"\n    .text\n");
+  }
   // A fault inside the guard of the runtime's own stack is an overflow. On
   // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
   // of the stack pointer counts as one.
   let guard = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    cbz x14, .Lfern_segv_near_sp\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.lo .Lfern_segv_overflow\n    b .Lfern_segv_other\n.Lfern_segv_near_sp:\n";
-  s = s.write("__fern_segv:\n" + landing_pad(s) + addr + guard + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n.Lfern_segv_overflow:\n" + frame);
+  s = s.write("__fern_segv:\n" + landing_pad(s) + dispatch + addr + guard + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n.Lfern_segv_overflow:\n" + frame);
   s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n" + ctx + "    adrp x9, __fern_bt_floor\n    add x9, x9, :lo12:__fern_bt_floor\n    str x10, [x9]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp = "xzr";
   if (darwin) {
@@ -6718,12 +6741,19 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   } else {
     s = s.write(".Lfern_segv_other:\n");
   }
-  s = emit_segv_install(s.write(rt_frame(s) + "    sub sp, sp, #32\n    stp xzr, " + tramp + ", [sp]\n    stp xzr, xzr, [sp, #16]\n"), darwin);
-  s = s.write("    add sp, sp, #32\n" + rt_unframe(s) + "    ret\n");
+  s = s.write(rt_frame(s) + "    sub sp, sp, #32\n    stp xzr, " + tramp + ", [sp]\n    stp xzr, xzr, [sp, #16]\n    bl .Lfern_fault_install\n");
+  s = emit_fault_install(s.write("    add sp, sp, #32\n" + rt_unframe(s) + "    ret\n"), darwin);
+  if (!darwin) {
+    // A SIGILL or SIGBUS the kernel raised writes its cause and takes the
+    // default action again: the return repeats the fault. A sent one exits.
+    s = s.write(".Lfern_fatal_signal:\n    ldrsw x9, [x1, #8]\n    cmp x9, #0\n    b.le .Lfern_signal_sent\n    mov x15, x0\n    adrp x10, __fern_sig_sp\n    add x10, x10, :lo12:__fern_sig_sp\n    mov x9, sp\n    str x9, [x10]\n    str x30, [x10, #8]\n" + frame + "    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n" + ctx + "    adrp x9, __fern_bt_floor\n    add x9, x9, :lo12:__fern_bt_floor\n    str x10, [x9]\n");
+    s = s.write("    adrp x1, .Lmsg_illegal_instruction\n    add x1, x1, :lo12:.Lmsg_illegal_instruction\n    mov x2, #" + util.i32_to_string(ill.len() + 1) + "\n    cmp x15, #4\n    b.eq .Lfern_fatal_report\n    adrp x1, .Lmsg_bus_error\n    add x1, x1, :lo12:.Lmsg_bus_error\n    mov x2, #" + util.i32_to_string(bus.len() + 1) + "\n.Lfern_fatal_report:\n    mov x0, #-1\n    b __fern_report\n");
+    s = s.write(".Lfern_signal_sent:\n    add x0, x0, #128\n    mov x8, #94\n").svc(94);
+  }
   if (darwin) {
     s = s.write("__fern_segv_trampoline:\n" + landing_pad(s) + rt_frame(s) + "    mov x29, sp\n    stp x1, x4, [sp, #-16]!\n    stp x5, xzr, [sp, #-16]!\n    mov x16, x0\n    mov x0, x2\n    mov x1, x3\n    mov x2, x4\n    blr x16\n    ldp x2, xzr, [sp], #16\n    ldp x1, x0, [sp], #16\n" + rt_unframe(s) + "    mov x16, #184\n    svc #0x80\n    brk #0\n");
   }
-  return s;
+  return s.write(".Lfern_signal_resume:\n    adrp x10, __fern_sig_sp\n    add x10, x10, :lo12:__fern_sig_sp\n    ldr x9, [x10]\n    ldr x30, [x10, #8]\n    mov sp, x9\n    b .Lfern_segv_other\n");
 }
 
 function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
@@ -6774,7 +6804,9 @@ function emit_startup_failure(s: asmcore.EmitState, label: string, msg: string):
 
 pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
   s = asmcore.with_funcs(s, mod.funcs);
-  s = s.write("    .globl _start\n");
+  if (asmcore.process_entry(s)) {
+    s = s.write("    .globl _start\n");
+  }
   s = s.write("    .text\n");
   let vgate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs, mod.funcs, cache), s.kinds, physicalbody.abis(physical)), s.memo);
   let unit = asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache, s.kinds);
@@ -6792,6 +6824,9 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
   s = emit_cfi_stubs_from(s, 0);
   irverifygate.report(vgate);
+  if (!asmcore.process_entry(s)) {
+    return s;
+  }
   return emit_ir_start(s, darwin);
 }
 
@@ -7960,6 +7995,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    subs x21, x21, #1\n");
   s = s.write("    b.ne .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
+  s = s.write(signal_resume_check(s));
   s = s.write("    mov x0, x19\n");
   s = s.write(profile_exit_asm(s));
   s = s.write("    mov x8, #94\n");
@@ -8751,6 +8787,9 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("abort_134")) {
     s = s.write("__fern_abort_134:\n    mov x0, #134\n");
   }
+  if (!asmcore.process_entry(s)) {
+    return s.write("__fern_report:\n    brk #1\n.size __fern_report, .-__fern_report\n");
+  }
   s = s.write("__fern_report:\n");
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x0, #2\n");
@@ -8766,11 +8805,21 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".size __fern_report, .-__fern_report\n");
     return emit_bt_exit(s);
   }
+  s = s.write(signal_resume_check(s));
   s = s.write("    mov x0, x19\n");
   s = s.write(profile_exit_asm(s));
   s = s.write("    mov x8, #94\n");
   s = s.svc(94);
   return s.write(".size __fern_report, .-__fern_report\n");
+}
+
+// A negative status is a fatal signal's report: the handler resumes,
+// takes the default action again, and the process ends by the signal.
+function signal_resume_check(s: asmcore.EmitState): string {
+  if (s.shared) {
+    return "";
+  }
+  return "    tbnz x19, #63, .Lfern_signal_resume\n";
 }
 
 function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
@@ -8813,6 +8862,63 @@ function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    sub x2, x2, x10\n");
   s = s.write("    mov x0, #123\n");
   return s.write("    b __fern_report\n");
+}
+
+// The first allocation maps the arena, and leaves x1 at __fern_heap_ptr.
+function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  s = s.write("    stp x4, x5, [sp, #-16]!\n");
+  s = s.write("    stp x8, x9, [sp, #-16]!\n");
+  s = s.write("    mov x9, x0\n");
+  if (high_heap_probe_on()) {
+    s = s.write("    mov x0, #32\n");
+  } else {
+    s = s.write("    mov x0, #1\n");
+  }
+  s = s.write("    lsl x0, x0, #28\n");
+  s = s.write(mov_imm64("x1", s.heap_limit));
+  s = s.write("    mov x2, #3\n");
+  if (darwin) {
+    s = s.write("    mov x3, #0x1002\n");
+  } else {
+    s = s.write("    mov x3, #0x4022\n");
+  }
+  s = s.write("    mov x4, #0\n");
+  s = s.write("    sub x4, x4, #1\n");
+  s = s.write("    mov x5, #0\n");
+  s = s.write("    mov x8, #222\n");
+  s = s.svc(222);
+  s = s.write("    cmn x0, #0\n");
+  s = s.write("    b.mi .Lalloc_map_fail\n");
+  s = s.write("    adrp x1, __fern_heap_ptr\n");
+  s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
+  s = s.write("    str x0, [x1]\n");
+  s = s.write("    adrp x1, __fern_heap_base\n");
+  s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
+  s = s.write("    str x0, [x1]\n");
+  s = s.write(mov_imm64("x2", s.heap_limit));
+  s = s.write("    add x2, x0, x2\n");
+  s = s.write("    adrp x3, __fern_heap_end\n");
+  s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
+  s = s.write("    str x2, [x3]\n");
+  s = s.write("    mov x0, x9\n");
+  s = s.write("    ldp x8, x9, [sp], #16\n");
+  s = s.write("    ldp x4, x5, [sp], #16\n");
+  s = s.write("    adrp x1, __fern_heap_ptr\n");
+  s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
+  return s;
+}
+
+// A target with no host gets its heap from the embedder, which calls
+// __fern_heap_init(base, len) once before anything allocates. The base is
+// 16-byte aligned.
+function emit_heap_init(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .text\n    .globl __fern_heap_init\n    .type __fern_heap_init, %function\n__fern_heap_init:\n");
+  if (s.has_need("heap")) {
+    s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
+    s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    str x0, [x2]\n");
+    s = s.write("    add x1, x0, x1\n    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");
+  }
+  return s.write("    ret\n.size __fern_heap_init, .-__fern_heap_init\n");
 }
 
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -8926,45 +9032,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
   s = s.write("    ldr x2, [x1]\n");
   s = s.write("    cbnz x2, .Lalloc_inited\n");
-  s = s.write("    stp x4, x5, [sp, #-16]!\n");
-  s = s.write("    stp x8, x9, [sp, #-16]!\n");
-  s = s.write("    mov x9, x0\n");
-  if (high_heap_probe_on()) {
-    s = s.write("    mov x0, #32\n");
+  if (asmcore.process_entry(s)) {
+    s = emit_arena_map(s, darwin);
   } else {
-    s = s.write("    mov x0, #1\n");
+    s = s.write("    brk #1\n");
   }
-  s = s.write("    lsl x0, x0, #28\n");
-  s = s.write(mov_imm64("x1", s.heap_limit));
-  s = s.write("    mov x2, #3\n");
-  if (darwin) {
-    s = s.write("    mov x3, #0x1002\n");
-  } else {
-    s = s.write("    mov x3, #0x4022\n");
-  }
-  s = s.write("    mov x4, #0\n");
-  s = s.write("    sub x4, x4, #1\n");
-  s = s.write("    mov x5, #0\n");
-  s = s.write("    mov x8, #222\n");
-  s = s.svc(222);
-  s = s.write("    cmn x0, #0\n");
-  s = s.write("    b.mi .Lalloc_map_fail\n");
-  s = s.write("    adrp x1, __fern_heap_ptr\n");
-  s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
-  s = s.write("    str x0, [x1]\n");
-  s = s.write("    adrp x1, __fern_heap_base\n");
-  s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
-  s = s.write("    str x0, [x1]\n");
-  s = s.write(mov_imm64("x2", s.heap_limit));
-  s = s.write("    add x2, x0, x2\n");
-  s = s.write("    adrp x3, __fern_heap_end\n");
-  s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
-  s = s.write("    str x2, [x3]\n");
-  s = s.write("    mov x0, x9\n");
-  s = s.write("    ldp x8, x9, [sp], #16\n");
-  s = s.write("    ldp x4, x5, [sp], #16\n");
-  s = s.write("    adrp x1, __fern_heap_ptr\n");
-  s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
   s = s.write(".Lalloc_inited:\n");
   if (s.harden && !darwin) {
     s = emit_guard_bump(s);
@@ -8984,7 +9056,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
   s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
-  s = emit_map_fail_trap(s);
+  if (asmcore.process_entry(s)) {
+    s = emit_map_fail_trap(s);
+  }
   s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
   s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", aborts.arr_oob(), 134);
@@ -10509,9 +10583,12 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     s = emit_rt_net(s, darwin);
   }
   s = emit_lc_report(s);
-  if (!s.shared) {
+  if (!s.shared && asmcore.process_entry(s)) {
     s = emit_stack_overflow_runtime(s, darwin);
     s = emit_startup_failures(s);
+  }
+  if (!asmcore.process_entry(s)) {
+    s = emit_heap_init(s);
   }
   s = asmcore.emit_build_manifest(s);
   s = emit_rt_report(s);
@@ -12307,6 +12384,12 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
     s = emit_seccomp_install(s);
   }
   irverifygate.close_memo(s.memo);
+  let leak = asmcore.hostless_syscall_refusal(s);
+  if (leak.len() > 0) {
+    eprint(leak);
+    exit(2);
+    return "";
+  }
   return s.take_text();
 }
 

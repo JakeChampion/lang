@@ -31,7 +31,7 @@ func TestHandlerKindsMatchWhatTheCompilerAccepts(t *testing.T) {
 
 	for _, target := range platforms.Targets() {
 		d := platforms.ForTarget(target)
-		if d == nil || d.NoBackend {
+		if d == nil || d.Environment == "freestanding" {
 			continue
 		}
 		t.Run(target, func(t *testing.T) {

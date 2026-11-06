@@ -1,12 +1,14 @@
 # Fern on Android — building a JNI `.so` and packaging an APK
 
-For an app with no Java code, see `native/`: `std/android` runs it in
-NativeActivity, and `fern -apk` writes the signed APK with no Android SDK.
+An app with no Java code runs in NativeActivity through `std/android`, and
+`fern -apk` writes the signed APK with no Android SDK. `native/` is the
+smallest such app. [`stopwatch/`](stopwatch/README.md) and
+[`walkie/`](walkie/README.md) are complete apps. They share the dot font of
+`matrix.fern` and the look of `look.fern`.
 
-Fern compiles to a native, position-independent shared object that an
-Android app loads with `System.loadLibrary`. This directory shows the
-smallest JNI library. [`stopwatch/`](stopwatch/README.md) is a complete app:
-a Fern library, a small Java shell, and a script that builds a signed APK.
+Fern also compiles to a native, position-independent shared object that an
+Android app with Java code loads with `System.loadLibrary`. This directory
+shows the smallest JNI library.
 
 ## 1. Build the shared object (verified in CI)
 
@@ -39,15 +41,17 @@ pub function char_code_at(env: usize, thiz: usize, s: usize, i: i32): i32 {
 ```
 
 The function takes the `JNIEnv*` and the `jobject` (or the `jclass` of a
-`static` method) first, then the Java arguments. Each Fern type must have the
-width of its Java type, and the compiler refuses one that does not:
+`static` method) first, then the Java arguments. Each Java type has the Fern
+type in this table, and the compiler refuses a different one. The wrapper
+extends a `byte` or a `short` with its sign and a `char` with zeros, so the
+Fern function gets the Java value:
 
 | Java | Fern |
 |---|---|
 | a reference, such as `String`, `Object` or `int[]` | `usize` |
 | `boolean` | `u8` |
-| `byte`, `char`, `short` | `i8`, `u16`, `i16` |
-| `int`, `long` | `i32`, `i64` |
+| `byte`, `char`, `short`, `int` | `i32` |
+| `long` | `i64` |
 | `float`, `double` | `f32`, `f64` |
 
 The compiler exports each method under its JNI symbol, so `-export` is not
@@ -97,23 +101,16 @@ Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
 class with one `native` method for each `@jni` function. Compile it with the
 rest of the app, in Java or in Kotlin.
 
-> **Kotlin-free option:** point `AndroidManifest.xml` at the framework's
-> `android.app.NativeActivity` with an `android.app.lib_name` meta-data tag
-> and implement `ANativeActivity_onCreate` (a C-ABI export) in Fern — no
-> author-written Java. That route trades the Java shim for NDK
-> `native_app_glue`-style FFI through `ANativeActivity` (same `__c_call` /
-> `__load_ptr` pattern as `std/jni`). The JNI-library route above is the
-> smaller, more standard starting point.
+An app with no Java code at all needs no class of its own: `std/android`
+runs it in NativeActivity, as in `native/`, `stopwatch/` and `walkie/`.
 
 ## 3. Package the APK
 
-[`stopwatch/build.sh`](stopwatch/build.sh) is a complete recipe with no
-Gradle: `aapt` for the resources, `javac` and `d8` for the Java shell,
-`zipalign`, then `apksigner`. The Android CI lane runs it and keeps the
-APK as a build artifact.
-
-With Gradle, put the `.so` in `src/main/jniLibs/arm64-v8a/` of a standard
-app module, and the generated `Native.java` in its sources.
+`fern -apk` packages an app with no Java code. For an app with a Java
+shell, use the Android SDK: `aapt` for the resources, `javac` and `d8` for
+the Java code, `zipalign`, then `apksigner`. With Gradle, put the `.so` in
+`src/main/jniLibs/arm64-v8a/` of a standard app module, and the generated
+`Native.java` in its sources.
 
 ## What's validated where
 
@@ -122,7 +119,6 @@ app module, and the generated `Native.java` in its sources.
 | Fern → arm64/x86-64 `.so` with JNI exports | ✅ (CI) | |
 | JNI method ABI (`env`/`thiz`/args, `jint` return) | ✅ (host dlopen) | |
 | `JNIEnv` method dispatch via `std/jni` | ✅ (fake-env dlopen) | |
-| a desktop JVM calls the JNI methods | ✅ (`TestAndroidStopwatchHostJVM`) | |
 | section headers that Android's loader checks | ✅ (`sharedImageCheck`) | |
-| `aapt`/`d8`/`zipalign`/`apksigner` packaging | ✅ (`stopwatch/build.sh` in CI) | |
+| `fern -apk` packaging | ✅ (`TestApk*`, and the emulator lane in CI) | |
 | install + run on a device | — | ✅ |

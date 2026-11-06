@@ -9,6 +9,9 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"hash/adler32"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,6 +123,18 @@ func TestApkRefusals(t *testing.T) {
 			t.Errorf("-apk-min-sdk %s: want a refusal, got %v\n%s", level, err, o)
 		}
 	}
+	notPng := filepath.Join(dir, "icon.txt")
+	if err := os.WriteFile(notPng, []byte("not a picture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, icon := range []string{notPng, filepath.Join(dir, "missing.png")} {
+		args := []string{"-apk", filepath.Join(dir, "w.apk"), "-apk-icon", icon, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-icon") {
+			t.Errorf("-apk-icon %s: want a refusal, got %v\n%s", icon, err, o)
+		}
+	}
 	bad := filepath.Join(dir, "bad.pem")
 	if err := os.WriteFile(bad, []byte("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -147,6 +162,63 @@ func TestApkRefusals(t *testing.T) {
 			t.Errorf("the key link target changed: %v", err)
 		}
 	})
+}
+
+// -apk-icon puts the PNG and a resource table that names it in the APK, and
+// the application and the activity of the manifest refer to it.
+func TestApkIcon(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 48; x++ {
+			img.Set(x, y, color.RGBA{215, 25, 33, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	icon := filepath.Join(dir, "icon.png")
+	if err := os.WriteFile(icon, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, raw := buildApk(t, dir, "-apk-icon", icon)
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+		if off, err := f.DataOffset(); err != nil || off%4 != 0 || f.Method != zip.Store {
+			t.Errorf("%s: method %d at %d, want stored at a multiple of 4 (%v)", f.Name, f.Method, off, err)
+		}
+	}
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml resources.arsc res/drawable/icon.png lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+		t.Errorf("entries = %s", got)
+	}
+	if got := readZipEntry(t, zr, "res/drawable/icon.png"); !bytes.Equal(got, buf.Bytes()) {
+		t.Error("the icon in the APK is not the PNG of -apk-icon")
+	}
+	table := readZipEntry(t, zr, "resources.arsc")
+	if len(table)%4 != 0 || binary.LittleEndian.Uint32(table[4:]) != uint32(len(table)) {
+		t.Errorf("the resource table has %d bytes and gives the size %d", len(table), binary.LittleEndian.Uint32(table[4:]))
+	}
+	for _, s := range []string{"res/drawable/icon.png", "drawable", "icon", "dev.fern.app"} {
+		if !bytes.Contains(table, utf16le(s)) {
+			t.Errorf("the resource table has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the resource table is not parsed")
+	}
+	o, err := exec.Command(aapt, "dump", "badging", path).CombinedOutput()
+	if err != nil || !strings.Contains(string(o), "application: label='app' icon='res/drawable/icon.png'") ||
+		!strings.Contains(string(o), "launchable-activity: name='android.app.NativeActivity'  label='app' icon='res/drawable/icon.png'") {
+		t.Errorf("aapt dump badging: %v\n%s", err, o)
+	}
 }
 
 func readZipEntry(t *testing.T, zr *zip.Reader, name string) []byte {

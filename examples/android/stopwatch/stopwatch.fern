@@ -1,6 +1,8 @@
-// The behaviour of the Fern Stopwatch app. Every function is pure: the
-// Android side passes in the clock, the stored state and the settings, and
-// shows what comes back. native.fern exposes these functions over JNI.
+// The behaviour of the Fern Stopwatch app. Every function is pure: app.fern
+// passes in the clock, the stored state and the settings, and shows what
+// comes back.
+import "std/f64";
+import "../look";
 
 // A stopwatch is two numbers. `started_at` is the wall-clock time of the
 // current run, or 0 when paused. `anteriority` is the sum of all earlier runs.
@@ -61,26 +63,82 @@ pub function clock_tick_in(local_ms: i64): i64 {
   return 60010 - floor_mod(local_ms, 60000);
 }
 
-pub const WHITE: i64 = 16777215;
-
-pub const RED: i64 = 15619413;
-
-// The text colour as ARGB. The stopwatch is white while it runs and red while
-// it is paused. `opacity` is a setting from 1 to 20.
-pub function stopwatch_color(running: boolean, opacity: i32): i32 {
-  if (running) {
-    return argb(opacity, WHITE);
+// The colour of the digits. They are red while the stopwatch is paused with
+// time on it, and white otherwise.
+pub function stopwatch_color(running: boolean, elapsed: i64): i32 {
+  if (!running && elapsed > 0) {
+    return look.red();
   }
-  return argb(opacity, RED);
+  return look.ink();
 }
 
-pub function clock_color(opacity: i32): i32 {
-  return argb(opacity, WHITE);
+// The words under the digits.
+pub function status_text(running: boolean, elapsed: i64): string {
+  if (running) {
+    return "RUNNING";
+  }
+  if (elapsed > 0) {
+    return "HOLD TO RESET";
+  }
+  return "TAP TO START";
 }
 
-function argb(opacity: i32, rgb: i64): i32 {
-  let alpha = clamp(opacity, 1, 20) as i64 * 255 / 20;
-  return (alpha * 16777216 + rgb) as i32;
+// The ring around the digits has one dot for each second of the current
+// minute, or for each minute of the current hour when the seconds are hidden.
+pub const RING_DOTS: i32 = 60;
+
+// The dot of the ring that the stopwatch is on.
+pub function ring_position(elapsed: i64, show_seconds: boolean): i32 {
+  let unit: i64 = 1000;
+  if (!show_seconds) {
+    unit = 60000;
+  }
+  return (nonneg(elapsed) / unit % (RING_DOTS as i64)) as i32;
+}
+
+// The colour of dot `k` of the ring. The dots that passed are white while the
+// stopwatch runs and grey while it is paused. The current dot is red while it
+// runs. The other dots are dim.
+pub function ring_color(k: i32, elapsed: i64, show_seconds: boolean, running: boolean): i32 {
+  let at = ring_position(elapsed, show_seconds);
+  if (running && k == at) {
+    return look.red();
+  }
+  if (k < at && running) {
+    return look.ink();
+  }
+  if (k < at) {
+    return look.muted();
+  }
+  return look.outline();
+}
+
+// A press on the stopwatch that lasts this long resets it.
+pub const LONG_PRESS_MS: i64 = 500;
+
+// The milliseconds of a beep, and its pitch in hertz.
+pub const BEEP_MS: i32 = 200;
+
+pub const BEEP_HZ: i32 = 880;
+
+// The samples of one beep at `rate` samples a second: a sine at half of the
+// full scale, which rises and falls over 10 ms at each end so that it does
+// not click.
+pub function beep_samples(rate: i32): i32[] {
+  let n = rate * BEEP_MS / 1000;
+  let edge = rate / 100;
+  let out: i32[] = [];
+  for k in 0..n {
+    let gain: f64 = 1.0;
+    if (k < edge) {
+      gain = k as f64 / (edge as f64);
+    } else if (n - k < edge) {
+      gain = (n - k) as f64 / (edge as f64);
+    }
+    let a: f64 = 6.283185307179586 * (BEEP_HZ as f64) * (k as f64) / (rate as f64);
+    out = out.append((16000.0 * gain * a.sin()) as i32);
+  }
+  return out;
 }
 
 // The screen keeps on while the stopwatch runs. With the stopwatch turned
@@ -120,6 +178,95 @@ pub function next_beep_in(elapsed: i64, interval_minutes: i32): i64 {
   }
   let period = interval_minutes as i64 * 60000;
   return period - floor_mod(elapsed, period);
+}
+
+// The stored values of the app are lines of "key=value", with an integer
+// value. The value of `key` in `text`, or `fallback` when no line has it.
+pub function stored(text: string, key: string, fallback: i64): i64 {
+  for line in text.split("\n") {
+    if (line.starts_with(key + "=")) {
+      if let Some(v) = parse_i64(line.drop(key.len() + 1)) {
+        return v;
+      }
+    }
+  }
+  return fallback;
+}
+
+// The text of a file of stored values.
+pub function store(keys: string[], values: i64[]): string {
+  let out = "";
+  for k in 0..keys.len() {
+    out = out + keys[k] + "=" + values[k].to_string() + "\n";
+  }
+  return out;
+}
+
+// The value of each setting in `text`, clamped to its range, or its default.
+pub function load_settings(text: string): i32[] {
+  let all = settings();
+  let out: i32[] = [];
+  for s in all {
+    let v = stored(text, s.key, s.default as i64);
+    if (v < s.min as i64) {
+      v = s.min as i64;
+    }
+    if (v > s.max as i64) {
+      v = s.max as i64;
+    }
+    out = out.append(v as i32);
+  }
+  return out;
+}
+
+pub function save_settings(values: i32[]): string {
+  let keys: string[] = [];
+  let vs: i64[] = [];
+  let all = settings();
+  for k in 0..all.len() {
+    keys = keys.append(all[k].key);
+    vs = vs.append(values[k] as i64);
+  }
+  return store(keys, vs);
+}
+
+// The value of setting `key` in `values`, or 0 when there is no such setting.
+pub function value(values: i32[], key: string): i32 {
+  let i = setting_index(key);
+  if (i < 0 || i >= values.len()) {
+    return 0;
+  }
+  return values[i];
+}
+
+pub function on(values: i32[], key: string): boolean {
+  return value(values, key) != 0;
+}
+
+function parse_i64(s: string): Option[i64] {
+  if (s.len() == 0) {
+    return None;
+  }
+  let neg = s[0] as i32 == 45;
+  let start = 0;
+  if (neg) {
+    start = 1;
+  }
+  if (start >= s.len()) {
+    return None;
+  }
+  let v: i64 = 0;
+  for k in start..s.len() {
+    let c = s[k] as i32;
+    if (c < 48 || c > 57) {
+      return None;
+    }
+    v = v * 10 + (c - 48) as i64;
+  }
+  if (neg) {
+    return Some(-v);
+  }
+  return Some(v);
 }
 
 pub function about_text(total_runtime_ms: i64): string {

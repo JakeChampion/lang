@@ -4,9 +4,9 @@ This module captures and plays mono 16-bit audio through AAudio.
 
 ## Model
 
-A `Stream` is one AAudio stream: a capture stream from the microphone, or a playback stream to the loudspeaker. Both streams carry speech.
+A `Stream` is one AAudio stream: a capture stream from the microphone, or a playback stream to the loudspeaker.
 
-A capture stream uses the voice-communication input preset. This preset turns on the noise suppressor and the gain control of the device. A playback stream uses the media usage, so it plays on the loudspeaker at the media volume. The voice-communication usage plays on the earpiece. The earpiece is too quiet when the phone is not at the ear.
+A capture stream uses the voice-communication input preset. This preset turns on the noise suppressor and the gain control of the device. A playback stream from `playback` carries speech with the media usage, so it plays on the loudspeaker at the media volume. `playback_for` gives a stream with another usage: `USAGE_ALARM` plays at the alarm volume, also when the phone is silent, and `USAGE_NOTIFICATION` at the notification volume. These two streams carry sounds, not speech. The voice-communication usage plays on the earpiece. The earpiece is too quiet when the phone is not at the ear.
 
 Each stream uses the full capacity of its buffer and not the low-latency mode. In the low-latency mode, a buffer can hold less than 10 ms. Then one frame of speech does not fit in it.
 
@@ -100,13 +100,19 @@ function c_set_buffer_size(stream: usize, frames: i32): i32;
 
 ### `streams`
 
-The AAudio constants: the direction is 0 for output and 1 for input, and the format 1 is 16-bit PCM. The performance mode 10 is none, and the usage 1 is media. The content type 1 is speech, and the input preset 7 is voice communication.
+The AAudio constants: the direction is 0 for output and 1 for input, and the format 1 is 16-bit PCM. The performance mode 10 is none. The usage 1 is media, 4 is alarm and 5 is notification. The content type 1 is speech and 4 is sonification, and the input preset 7 is voice communication.
 
 ```fern
 <<streams>>=
 pub struct Stream { ptr: usize, rate: i32 }
 
-function open(input: boolean, rate: i32): Stream {
+pub const USAGE_MEDIA: i32 = 1;
+
+pub const USAGE_ALARM: i32 = 4;
+
+pub const USAGE_NOTIFICATION: i32 = 5;
+
+function open(input: boolean, rate: i32, usage: i32): Stream {
   unsafe {
     let slot: usize = __alloc(8);
     __store_ptr(slot, 0 as usize);
@@ -124,11 +130,15 @@ function open(input: boolean, rate: i32): Stream {
     c_set_channel_count(builder, 1);
     c_set_format(builder, 1);
     c_set_performance_mode(builder, 10);
-    c_set_content_type(builder, 1);
+    if (usage == USAGE_MEDIA) {
+      c_set_content_type(builder, 1);
+    } else {
+      c_set_content_type(builder, 4);
+    }
     if (input) {
       c_set_input_preset(builder, 7);
     } else {
-      c_set_usage(builder, 1);
+      c_set_usage(builder, usage);
     }
     __store_ptr(slot, 0 as usize);
     let opened: i32 = c_open_stream(builder, slot);
@@ -146,12 +156,18 @@ function open(input: boolean, rate: i32): Stream {
 // A capture stream from the microphone at `rate` samples a second. The
 // device can choose another rate, which `rate` of the stream gives.
 pub function capture(rate: i32): Stream {
-  return open(true, rate);
+  return open(true, rate, USAGE_MEDIA);
 }
 
-// A playback stream at `rate` samples a second.
+// A playback stream of speech at `rate` samples a second.
 pub function playback(rate: i32): Stream {
-  return open(false, rate);
+  return open(false, rate, USAGE_MEDIA);
+}
+
+// A playback stream of sounds at `rate` samples a second, with `usage`:
+// USAGE_ALARM or USAGE_NOTIFICATION.
+pub function playback_for(rate: i32, usage: i32): Stream {
+  return open(false, rate, usage);
 }
 
 pub function (s: Stream) start(): boolean {

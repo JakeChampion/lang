@@ -4,6 +4,7 @@ import "./parser";
 import "./astwalk";
 import "./util";
 import "./rtprofile";
+import "./platforms";
 import "./ir";
 import "./irtables";
 import "./ssa";
@@ -2255,6 +2256,27 @@ pub function runtime_files(s: EmitState, isa_key: string): string {
     return s.build_target;
   }
   return isa_key;
+}
+
+// A kernel or a loader enters the artifact as a process. Only then can the
+// runtime make syscalls and own the startup.
+pub function process_entry(s: EmitState): boolean {
+  return platforms.entry_shape(s.build_target) == "process";
+}
+
+// A target with no host has no kernel to trap into. A syscall in its output
+// is a runtime path that the capability gate did not remove.
+pub function hostless_syscall_refusal(s: EmitState): string {
+  if (process_entry(s)) {
+    return "";
+  }
+  if (s.raw_syscall != "") {
+    return "fern: -target " + s.build_target + " has no host, but the program reaches " + s.raw_syscall + ", which makes a syscall";
+  }
+  if (s.syscalls.len() > 0) {
+    return "fern: -target " + s.build_target + " has no host, but this build needs syscall " + util.i32_to_string(s.syscalls[0]) + ". A runtime switch such as FERN_SANITIZE or FERN_LEAKCHECK needs a host";
+  }
+  return "";
 }
 
 pub function is_android(target: string): boolean {

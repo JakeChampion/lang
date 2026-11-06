@@ -1,0 +1,587 @@
+// The Fern Stopwatch app: a NativeActivity with no Java code. stopwatch.fern
+// holds the behaviour, screen.fern the layout and ui.fern the look. This
+// file does the input and output: the touches, the keys, the timers, the
+// files of the app, the beeper and the screen.
+import "std/android";
+import "std/android/audio";
+import "std/log";
+import "std/rand";
+import "./screen";
+import "./stopwatch";
+import "./ui";
+
+// A touch from its down event to its up event. `slider` is the setting whose
+// slider it drags, or -1.
+struct Press { active: boolean, x: f32, y: f32, at: i64, moved: boolean, fired: boolean, on_dial: boolean, scroll0: i32, slider: i32 }
+
+struct App {
+  ctx: usize,
+  window: usize,
+  dir: string,
+  // The stopwatch: the wall-clock time of the current run, or 0 when paused,
+  // and the sum of the earlier runs. `total` is the run time of all resets.
+  started_at: i64,
+  anteriority: i64,
+  total: i64,
+  values: i32[],
+  page: i32,
+  menu: boolean,
+  // The title and the MENU button show until this monotonic time.
+  chrome_until: i64,
+  press: Press,
+  scroll: i32,
+  // The burn-in offset, and the monotonic time of its next move.
+  dx: i32,
+  dy: i32,
+  burn_at: i64,
+  // The offset of the local time from UTC, and the minute it is for.
+  offset: i32,
+  offset_minute: i64,
+  // The beep period in milliseconds, and the count of periods on the
+  // stopwatch at the last beep.
+  beep_period: i64,
+  beep_mark: i64,
+  tone: audio.Stream,
+  tone_usage: i32,
+  // The window shows: from the Start event to the Stop event.
+  shown: boolean,
+  screen_on: boolean,
+  drawn: string,
+}
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+function mono_ms(): i64 {
+  return monotonic_ns() / 1000000i64;
+}
+
+function no_press(): Press {
+  return Press { active: false, x: 0.0, y: 0.0, at: 0, moved: false, fired: false, on_dial: false, scroll0: 0, slider: -1 };
+}
+
+function app_main(ctx: usize): usize {
+  let first = App { ctx: ctx, window: 0 as usize, dir: android.data_dir(ctx), started_at: 0, anteriority: 0, total: 0, values: stopwatch.load_settings(""), page: screen.MAIN, menu: false, chrome_until: 0, press: no_press(), scroll: 0, dx: 0, dy: 0, burn_at: 0, offset: 0, offset_minute: -1, beep_period: 0, beep_mark: 0, tone: audio.Stream { ptr: 0 as usize, rate: 0 }, tone_usage: 0, shown: false, screen_on: false, drawn: "" };
+  let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => timeout(s, mono_ms()));
+  log.info("stopwatch: destroyed");
+  close_tone(last);
+  return 0 as usize;
+}
+
+function step(own s: App, e: android.Event): App {
+  let t = sync_offset(event(s, e));
+  return draw(update(t, mono_ms()));
+}
+
+function event(own s: App, e: android.Event): App {
+  match (e) {
+    android.Start => {
+      return started(s);
+    },
+    android.Stop => {
+      return stopped(s);
+    },
+    android.WindowCreated(w) => {
+      log.info("stopwatch: window " + w.width().to_string() + "x" + w.height().to_string());
+      return placed(App { ...s, window: w.ptr, drawn: "" });
+    },
+    android.WindowResized(w) => {
+      log.info("stopwatch: window " + w.width().to_string() + "x" + w.height().to_string());
+      return placed(App { ...s, window: w.ptr, drawn: "" });
+    },
+    android.WindowRedraw(w) => {
+      return App { ...s, window: w.ptr, drawn: "" };
+    },
+    android.WindowDestroyed(_) => {
+      return App { ...s, window: 0 as usize };
+    },
+    android.Touch(action, x, y) => {
+      return touch(s, action, x, y);
+    },
+    android.Key(code, action) => {
+      return key(s, code, action);
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+// The files of the app hold the stopwatch and the settings.
+function read_text(path: string): string {
+  if let Ok(b) = read_file_bytes(path) {
+    return string_from_bytes_unchecked(b);
+  }
+  return "";
+}
+
+function save_state(s: App): void {
+  if (s.dir.len() > 0) {
+    let written = write_file(s.dir + "/state", stopwatch.store(["started_at", "anteriority", "total"], [s.started_at, s.anteriority, s.total]));
+  }
+}
+
+function save_settings(s: App): void {
+  if (s.dir.len() > 0) {
+    let written = write_file(s.dir + "/settings", stopwatch.save_settings(s.values));
+  }
+}
+
+// The window shows: read the files of the state and the settings.
+function started(own s: App): App {
+  let state = read_text(s.dir + "/state");
+  android.immersive(s.ctx, true);
+  let t = App { ...s, started_at: stopwatch.stored(state, "started_at", 0), anteriority: stopwatch.stored(state, "anteriority", 0), total: stopwatch.stored(state, "total", 0), values: stopwatch.load_settings(read_text(s.dir + "/settings")), offset_minute: -1, shown: true, drawn: "" };
+  return show_chrome(main_settings(t), mono_ms());
+}
+
+// The window does not show: no timers, no beeps and no screen lock.
+function stopped(own s: App): App {
+  close_tone(s);
+  android.keep_screen_on(s.ctx, false);
+  return App { ...s, shown: false, screen_on: false, menu: false, press: no_press(), tone: audio.Stream { ptr: 0 as usize, rate: 0 }, tone_usage: 0 };
+}
+
+function close_tone(s: App): void {
+  if (s.tone.ptr != 0 as usize) {
+    s.tone.stop();
+    s.tone.close();
+  }
+}
+
+// The settings take effect on the main screen: a hidden stopwatch pauses,
+// the volume keys change the volume of the beeps, and the beeper starts
+// from the current time.
+function main_settings(own s: App): App {
+  let t = s;
+  if (!stopwatch.on(t.values, "stopwatch_enabled") && stopwatch.is_running(t.started_at)) {
+    t = pause(t);
+  }
+  android.volume_stream(t.ctx, beep_stream(t));
+  return placed(mark_beeps(t));
+}
+
+function beep_usage(s: App): i32 {
+  if (stopwatch.on(s.values, "beep_override_silent")) {
+    return audio.USAGE_ALARM;
+  }
+  return audio.USAGE_NOTIFICATION;
+}
+
+// The AudioManager stream of the beeps: 4 alarm or 5 notification.
+function beep_stream(s: App): i32 {
+  if (beep_usage(s) == audio.USAGE_ALARM) {
+    return 4;
+  }
+  return 5;
+}
+
+function now_wall(): i64 {
+  return now_unix_ms();
+}
+
+function elapsed(s: App): i64 {
+  return stopwatch.elapsed_ms(s.started_at, s.anteriority, now_wall());
+}
+
+function local_ms(s: App): i64 {
+  return now_wall() + s.offset as i64;
+}
+
+// The offset of the local time again, once a minute: a change of the time
+// zone or of summer time shows at the next minute.
+function sync_offset(own s: App): App {
+  let now = now_wall();
+  let minute = now / 60000;
+  if (minute == s.offset_minute) {
+    return s;
+  }
+  return App { ...s, offset: android.utc_offset_ms(s.ctx, now), offset_minute: minute };
+}
+
+function clock_text(s: App): string {
+  return stopwatch.clock_text(local_ms(s));
+}
+
+function pause(own s: App): App {
+  let t = App { ...s, anteriority: stopwatch.pause(s.started_at, s.anteriority, now_wall()), started_at: 0 };
+  save_state(t);
+  log.info("stopwatch: paused at " + t.anteriority.to_string() + " ms");
+  return t;
+}
+
+function toggle(own s: App): App {
+  if (stopwatch.is_running(s.started_at)) {
+    return pause(s);
+  }
+  let t = App { ...s, started_at: stopwatch.start(s.started_at, now_wall()) };
+  save_state(t);
+  log.info("stopwatch: started at " + t.anteriority.to_string() + " ms");
+  return mark_beeps(t);
+}
+
+function reset(own s: App): App {
+  log.info("stopwatch: reset at " + elapsed(s).to_string() + " ms");
+  let t = App { ...s, total: s.total + elapsed(s), started_at: 0, anteriority: 0 };
+  save_state(t);
+  return mark_beeps(t);
+}
+
+// The beeper counts the periods from the current time on the stopwatch.
+function mark_beeps(own s: App): App {
+  let period = stopwatch.value(s.values, "beep_interval") as i64 * 60000;
+  let mark: i64 = 0;
+  if (period > 0) {
+    mark = elapsed(s) / period;
+  }
+  return App { ...s, beep_period: period, beep_mark: mark };
+}
+
+function beep(own s: App): App {
+  let usage = beep_usage(s);
+  let tone = s.tone;
+  if (tone.ptr == 0 as usize || s.tone_usage != usage) {
+    close_tone(s);
+    tone = audio.playback_for(48000, usage);
+  }
+  log.info("stopwatch: beep at " + elapsed(s).to_string() + " ms");
+  if (tone.start()) {
+    let wrote = tone.write(stopwatch.beep_samples(tone.rate), stopwatch.BEEP_MS * 2);
+    tone.stop();
+  }
+  return App { ...s, tone: tone, tone_usage: usage };
+}
+
+function show_chrome(own s: App, now: i64): App {
+  return App { ...s, chrome_until: now + stopwatch.BUTTONS_HIDE_DELAY_MS as i64 };
+}
+
+function size(s: App): (i32, i32) {
+  if (s.window == 0 as usize) {
+    return (0, 0);
+  }
+  let w = android.Window { ptr: s.window };
+  return (w.width(), w.height());
+}
+
+// Moves the content to a new burn-in offset, or to the middle when the
+// protection is off.
+function placed(own s: App): App {
+  let (w, h) = size(s);
+  let amount = stopwatch.value(s.values, "burn_in");
+  let next = mono_ms() + stopwatch.BURN_IN_PERIOD_MS as i64;
+  if (w == 0 || amount == 0) {
+    return App { ...s, dx: 0, dy: 0, burn_at: next };
+  }
+  let (cw, ch) = screen.content_size(w, h, s.values, clock_text(s));
+  let rx: i32 = 0;
+  let ry = screen.bar(w, h);
+  if (w > h) {
+    rx = ry;
+    ry = 0;
+  }
+  let dx = stopwatch.burn_in_offset(w, cw, rx, amount, random());
+  let dy = stopwatch.burn_in_offset(h, ch, ry, amount, random());
+  return App { ...s, dx: dx, dy: dy, burn_at: next };
+}
+
+function random(): i32 {
+  return rand.next_i32() & 2147483647;
+}
+
+// The timers: the long press, the beeps, the burn-in move and the screen
+// lock.
+function update(own s: App, now: i64): App {
+  let t = s;
+  if (t.press.active && t.press.on_dial && !t.press.moved && !t.press.fired && now - t.press.at >= stopwatch.LONG_PRESS_MS) {
+    let fired = Press { ...t.press, fired: true };
+    t = reset(t);
+    t = App { ...t, press: fired };
+  }
+  let period = stopwatch.value(t.values, "beep_interval") as i64 * 60000;
+  if (period != t.beep_period) {
+    t = mark_beeps(t);
+  }
+  if (t.shown && period > 0 && stopwatch.is_running(t.started_at) && elapsed(t) / period > t.beep_mark) {
+    let mark = elapsed(t) / period;
+    t = beep(t);
+    t = App { ...t, beep_mark: mark };
+  }
+  if (t.page == screen.MAIN && now >= t.burn_at) {
+    t = placed(t);
+  }
+  let on = t.shown && stopwatch.keep_screen_on(stopwatch.is_running(t.started_at), stopwatch.on(t.values, "stopwatch_enabled"));
+  if (on != t.screen_on) {
+    android.keep_screen_on(t.ctx, on);
+    t = App { ...t, screen_on: on };
+  }
+  return t;
+}
+
+// The milliseconds until the next step: the next change of the text, beep,
+// burn-in move, end of the title and the menu button, or long press. -1
+// waits for the next event.
+function timeout(s: App, now: i64): i32 {
+  if (!s.shown) {
+    return -1;
+  }
+  let running = stopwatch.is_running(s.started_at);
+  let e = elapsed(s);
+  let wait: i64 = -1;
+  if (s.press.active && s.press.on_dial && !s.press.fired) {
+    wait = sooner(wait, s.press.at + stopwatch.LONG_PRESS_MS - now);
+  }
+  if (running) {
+    wait = sooner(wait, stopwatch.next_beep_in(e, stopwatch.value(s.values, "beep_interval")));
+  }
+  if (s.page == screen.MAIN) {
+    if (running && stopwatch.on(s.values, "stopwatch_enabled")) {
+      wait = sooner(wait, stopwatch.stopwatch_tick_in(e, stopwatch.on(s.values, "stopwatch_seconds")));
+    }
+    if (stopwatch.on(s.values, "clock_enabled")) {
+      wait = sooner(wait, stopwatch.clock_tick_in(local_ms(s)));
+    }
+    if (stopwatch.value(s.values, "burn_in") > 0) {
+      wait = sooner(wait, s.burn_at - now);
+    }
+    if (s.chrome_until > now) {
+      wait = sooner(wait, s.chrome_until - now);
+    }
+  }
+  if (wait < 0) {
+    return -1;
+  }
+  if (wait < 1) {
+    return 1;
+  }
+  if (wait > 3600000) {
+    return 3600000;
+  }
+  return wait as i32;
+}
+
+// The sooner of a wait `a`, or none when it is -1, and a wait `b`, or none
+// when it is negative.
+function sooner(a: i64, b: i64): i64 {
+  if (b < 0) {
+    return a;
+  }
+  if (a < 0 || b < a) {
+    return b;
+  }
+  return a;
+}
+
+function key(own s: App, code: i32, action: i32): App {
+  if (code != 4 || action != 1) {
+    return s;
+  }
+  if (s.menu) {
+    return App { ...s, menu: false };
+  }
+  if (s.page != screen.MAIN) {
+    return to_main(s);
+  }
+  android.finish(s.ctx);
+  return s;
+}
+
+function to_main(own s: App): App {
+  log.info("stopwatch: page main");
+  return show_chrome(main_settings(App { ...s, page: screen.MAIN, scroll: 0, menu: false }), mono_ms());
+}
+
+function in_circle(r: screen.Rect, x: f32, y: f32): boolean {
+  let dx = x - (r.x + r.w / 2) as f32;
+  let dy = y - (r.y + r.h / 2) as f32;
+  let rad = (r.w / 2) as f32;
+  return dx * dx + dy * dy < rad * rad;
+}
+
+function max_scroll(s: App, w: i32, h: i32): i32 {
+  if (s.page == screen.SETTINGS) {
+    return ui.settings_max_scroll(w, h);
+  }
+  if (s.page == screen.ABOUT) {
+    return ui.about_max_scroll(w, h, stopwatch.about_text(s.total));
+  }
+  return 0;
+}
+
+function touch(own s: App, action: i32, x: f32, y: f32): App {
+  let (w, h) = size(s);
+  if (w == 0) {
+    return s;
+  }
+  let now = mono_ms();
+  if (action == 0) {
+    return down(s, w, h, x, y, now);
+  }
+  if (!s.press.active) {
+    return s;
+  }
+  if (action == 2) {
+    return moved(s, w, h, x, y);
+  }
+  if (action == 1) {
+    let p = s.press;
+    let t = App { ...s, press: no_press() };
+    if (p.slider >= 0) {
+      save_settings(t);
+      log.info("stopwatch: setting " + stopwatch.settings()[p.slider].key + " " + t.values[p.slider].to_string());
+      return t;
+    }
+    if (p.moved || p.fired) {
+      return t;
+    }
+    return tap(t, w, h, x, y, p.on_dial, now);
+  }
+  return App { ...s, press: no_press() };
+}
+
+function down(own s: App, w: i32, h: i32, x: f32, y: f32, now: i64): App {
+  let on_dial = s.page == screen.MAIN && !s.menu && stopwatch.on(s.values, "stopwatch_enabled") && in_circle(screen.dial_box(w, h, s.values, clock_text(s), s.dx, s.dy), x, y);
+  let p = Press { active: true, x: x, y: y, at: now, moved: false, fired: false, on_dial: on_dial, scroll0: s.scroll, slider: -1 };
+  if (s.page == screen.SETTINGS) {
+    let all = stopwatch.settings();
+    let ly = y + s.scroll as f32;
+    for k in 0..all.len() {
+      if (!all[k].toggle) {
+        let track = screen.track(w, h, k, ui.setting_card(w, h, k));
+        if (screen.contains(track, x, ly)) {
+          let v = screen.slider_value(w, h, track, all[k].min, all[k].max, x);
+          return App { ...s, press: Press { ...p, slider: k }, values: with_value(s.values, k, v) };
+        }
+      }
+    }
+  }
+  return App { ...s, press: p };
+}
+
+function with_value(values: i32[], k: i32, v: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..values.len() {
+    if (i == k) {
+      out = out.append(stopwatch.setting_clamp(k, v));
+    } else {
+      out = out.append(values[i]);
+    }
+  }
+  return out;
+}
+
+function moved(own s: App, w: i32, h: i32, x: f32, y: f32): App {
+  let p = s.press;
+  let far = screen.slop(w, h) as f32;
+  let dx = x - p.x;
+  let dy = y - p.y;
+  if (!p.moved && dx * dx + dy * dy > far * far) {
+    p = Press { ...p, moved: true };
+  }
+  if (p.slider >= 0) {
+    let all = stopwatch.settings();
+    let track = screen.track(w, h, p.slider, ui.setting_card(w, h, p.slider));
+    let v = screen.slider_value(w, h, track, all[p.slider].min, all[p.slider].max, x);
+    return App { ...s, press: p, values: with_value(s.values, p.slider, v) };
+  }
+  if (p.moved && s.page != screen.MAIN) {
+    let top = p.scroll0 - dy as i32;
+    let most = max_scroll(s, w, h);
+    if (top > most) {
+      top = most;
+    }
+    if (top < 0) {
+      top = 0;
+    }
+    return App { ...s, press: p, scroll: top };
+  }
+  return App { ...s, press: p };
+}
+
+function tap(own s: App, w: i32, h: i32, x: f32, y: f32, on_dial: boolean, now: i64): App {
+  if (s.page == screen.SETTINGS) {
+    let ly = y + s.scroll as f32;
+    return settings_tap(s, w, h, x, ly);
+  }
+  if (s.page == screen.ABOUT) {
+    if (screen.contains(screen.corner_button(w, h, "BACK"), x, y + s.scroll as f32)) {
+      return to_main(s);
+    }
+    return s;
+  }
+  if (s.menu) {
+    if (screen.contains(screen.menu_item(w, h, 0), x, y)) {
+      log.info("stopwatch: page settings");
+      return App { ...s, page: screen.SETTINGS, menu: false, scroll: 0 };
+    }
+    if (screen.contains(screen.menu_item(w, h, 1), x, y)) {
+      log.info("stopwatch: page about");
+      return App { ...s, page: screen.ABOUT, menu: false, scroll: 0 };
+    }
+    if (screen.contains(screen.menu_panel(w, h), x, y)) {
+      return s;
+    }
+  }
+  if (now < s.chrome_until && screen.contains(screen.corner_button(w, h, "MENU"), x, y)) {
+    log.info("stopwatch: menu " + (!s.menu).to_string());
+    return show_chrome(App { ...s, menu: !s.menu }, now);
+  }
+  if (on_dial) {
+    return toggle(App { ...s, menu: false });
+  }
+  return show_chrome(App { ...s, menu: false }, now);
+}
+
+// A tap on the settings screen, at y in list coordinates: BACK, or the card
+// of a toggle.
+function settings_tap(own s: App, w: i32, h: i32, x: f32, y: f32): App {
+  if (screen.contains(screen.corner_button(w, h, "BACK"), x, y)) {
+    return to_main(s);
+  }
+  let all = stopwatch.settings();
+  for k in 0..all.len() {
+    if (all[k].toggle && screen.contains(ui.setting_card(w, h, k), x, y)) {
+      let t = App { ...s, values: with_value(s.values, k, 1 - s.values[k]) };
+      save_settings(t);
+      log.info("stopwatch: setting " + all[k].key + " " + t.values[k].to_string());
+      return t;
+    }
+  }
+  return s;
+}
+
+function view(s: App): ui.View {
+  return ui.View { page: s.page, chrome: mono_ms() < s.chrome_until, menu: s.menu, clock: clock_text(s), elapsed: elapsed(s), running: stopwatch.is_running(s.started_at), values: s.values, dx: s.dx, dy: s.dy, scroll: s.scroll, about: stopwatch.about_text(s.total) };
+}
+
+// The text of a view, so that the screen draws again only when it changes.
+function view_key(v: ui.View): string {
+  let key = v.page.to_string() + "|" + v.chrome.to_string() + v.menu.to_string() + "|" + v.clock + "|" + stopwatch.stopwatch_text(v.elapsed, stopwatch.on(v.values, "stopwatch_seconds")) + v.running.to_string() + "|" + v.dx.to_string() + "," + v.dy.to_string() + "," + v.scroll.to_string() + "|" + v.about;
+  for x in v.values {
+    key = key + "," + x.to_string();
+  }
+  return key;
+}
+
+function draw(own s: App): App {
+  if (s.window == 0 as usize || !s.shown) {
+    return s;
+  }
+  let v = view(s);
+  let key = view_key(v);
+  if (key == s.drawn) {
+    return s;
+  }
+  let w = android.Window { ptr: s.window };
+  let f = w.lock();
+  if (f.width == 0) {
+    return s;
+  }
+  ui.render(f, v);
+  android.post(f);
+  return App { ...s, drawn: key };
+}

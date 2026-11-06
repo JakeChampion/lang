@@ -137,3 +137,36 @@ func emiExit(t *testing.T, src string) int {
 	}
 	return code
 }
+
+// The parser lowers `use` to a callback and a return of the call. A step that
+// copies, wraps or separates the two leaves the callback's internal name in
+// the printed source (seed 143184 of the nightly EMI leg).
+func TestEMIKeepsUseWhole(t *testing.T) {
+	src, err := os.ReadFile("../../../conformance/cases/use_callback_bind/main.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := func(src string) bool { return checkGenerated(t, src) == nil }
+	mutated := 0
+	for _, seed := range append([]uint64{143184}, seqSeeds(64)...) {
+		got, kept := fernsmith.EMI(string(src), seed, 4, valid)
+		if kept == 0 {
+			continue
+		}
+		mutated++
+		if strings.Contains(got, "__use_") {
+			t.Fatalf("seed %d: the mutant names the parser's callback:\n%s", seed, got)
+		}
+	}
+	if mutated == 0 {
+		t.Fatal("no seed mutated the program")
+	}
+}
+
+func seqSeeds(n uint64) []uint64 {
+	out := make([]uint64, n)
+	for i := range out {
+		out[i] = uint64(i)
+	}
+	return out
+}

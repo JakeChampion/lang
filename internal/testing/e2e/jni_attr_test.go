@@ -102,6 +102,7 @@ func TestJNIAttributeRefusals(t *testing.T) {
 		{"width", `@jni("a.B", "static int f(int)") pub function f(env: usize, cls: usize, n: i64): i32 { return 0; }`, true, "parameter n is i64, but the Java int needs i32"},
 		{"two heads", "@jni(\"a.B implements java.lang.Runnable\", \"void run()\") pub function f(env: usize, o: usize): void { }\n@jni(\"a.B extends java.lang.Thread\", \"void go()\") pub function g(env: usize, o: usize): void { }", true, "class a.B is declared as implements java.lang.Runnable and as extends java.lang.Thread"},
 		{"bad head", `@jni("a.B implements", "void run()") pub function f(env: usize, o: usize): void { }`, true, "is not \"name [extends class] [implements interface, ...]\""},
+		{"char", `@jni("a.B", "static int f(char)") pub function f(env: usize, cls: usize, c: u8): i32 { return 0; }`, true, "parameter c is u8, but the Java char needs i32"},
 		{"result", `@jni("a.B", "static boolean f()") pub function f(env: usize, cls: usize): i32 { return 0; }`, true, "the result is i32, but the Java boolean needs u8"},
 		{"arity", `@jni("a.B", "static int f(int, int)") pub function f(env: usize, cls: usize, n: i32): i32 { return 0; }`, true, "so it needs 4 parameters (it has 3)"},
 		{"env", `@jni("a.B", "static int f()") pub function f(env: i32, cls: usize): i32 { return 0; }`, true, "the JNIEnv* and the jobject or jclass come first, each as usize"},
@@ -203,6 +204,101 @@ public class Check {
 		t.Fatalf("javac: %v\n%s", err, out)
 	}
 	out, err := exec.Command(java, "-Djava.library.path="+dir, "-cp", classes, "dev.fern.strtest.Check").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "ok") {
+		t.Fatalf("round trip: %v\n%s", err, out)
+	}
+}
+
+// A Java byte, short or char is an i32 in Fern (#14268). The wrapper extends
+// each argument and each result from its Java width, so the Fern function
+// sees the Java value and Java sees the Fern result wrapped to its type.
+func TestJNINarrowTypesRoundTrip(t *testing.T) {
+	host := e2eharness.HostSelfHostTarget()
+	if runtime.GOOS != "linux" || host == "" {
+		t.Skipf("-shared does not build for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	javac, err := exec.LookPath("javac")
+	if err != nil {
+		t.Skip("javac not on PATH")
+	}
+	java, err := exec.LookPath("java")
+	if err != nil {
+		t.Skip("java not on PATH")
+	}
+	const src = `@jni("dev.fern.narrow.Narrow", "static int widen(byte, short, char)")
+pub function widen(env: usize, cls: usize, b: i32, s: i32, c: i32): i32 {
+  return b * 1000000 + s * 10 + c;
+}
+
+@jni("dev.fern.narrow.Narrow", "static byte negate(byte)")
+pub function negate(env: usize, cls: usize, b: i32): i32 {
+  return 0 - b;
+}
+
+@jni("dev.fern.narrow.Narrow", "static short add(short, short)")
+pub function add(env: usize, cls: usize, a: i32, b: i32): i32 {
+  return a + b;
+}
+
+@jni("dev.fern.narrow.Narrow", "static char next(char)")
+pub function next(env: usize, cls: usize, c: i32): i32 {
+  return c + 1;
+}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lib.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	javaDir := filepath.Join(dir, "java")
+	so := filepath.Join(dir, "libnarrow.so")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-shared", "-jni-java", javaDir, "-o", so, path, e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	check := `package dev.fern.narrow;
+
+public class Check {
+    static void expect(String what, long got, long want) {
+        if (got != want) {
+            System.out.println(what + ": got " + got + ", want " + want);
+            System.exit(1);
+        }
+    }
+
+    public static void main(String[] args) {
+        byte[] bs = {0, 1, -1, 127, -128};
+        short[] ss = {0, 1, -1, 32767, -32768};
+        char[] cs = {0, 1, 0x7fff, 0x8000, 0xffff};
+        for (byte b : bs) {
+            expect("negate(" + b + ")", Narrow.negate(b), (byte) -b);
+            for (short s : ss) {
+                expect("add(" + s + ", " + b + ")", Narrow.add(s, b), (short) (s + b));
+                for (char c : cs) {
+                    expect("widen(" + b + ", " + s + ", " + (int) c + ")", Narrow.widen(b, s, c), b * 1000000 + s * 10 + c);
+                }
+            }
+        }
+        for (short s : ss) {
+            expect("add(" + s + ", " + s + ")", Narrow.add(s, s), (short) (s + s));
+        }
+        for (char c : cs) {
+            expect("next(" + (int) c + ")", Narrow.next(c), (char) (c + 1));
+        }
+        System.out.println("ok");
+    }
+}
+`
+	checkPath := filepath.Join(javaDir, "dev", "fern", "narrow", "Check.java")
+	if err := os.WriteFile(checkPath, []byte(check), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	classes := filepath.Join(dir, "classes")
+	if out, err := exec.Command(javac, "-d", classes, filepath.Join(javaDir, "dev", "fern", "narrow", "Narrow.java"), checkPath).CombinedOutput(); err != nil {
+		t.Fatalf("javac: %v\n%s", err, out)
+	}
+	out, err := exec.Command(java, "-Djava.library.path="+dir, "-cp", classes, "dev.fern.narrow.Check").CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "ok") {
 		t.Fatalf("round trip: %v\n%s", err, out)
 	}

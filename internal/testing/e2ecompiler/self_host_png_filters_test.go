@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/binary"
+	"image"
 	"image/png"
 	"io"
 	"os"
@@ -36,6 +37,23 @@ function main(): i32 {
           },
           Err(_) => { return 2; },
         }
+      }
+    }
+  }
+  for width in [1, 2, 7, 32] {
+    let pixels: u8[] = __alloc_u8(width * 5 * 4);
+    let at: i32 = 0;
+    while (at < pixels.len()) {
+      pixels = pixels.with(at, ((at * 73 + at / 7 * 31) & 255) as u8);
+      at = at + 1;
+    }
+    for filter in [png.Filter.Unfiltered, png.Filter.Sub, png.Filter.Up, png.Filter.Average, png.Filter.Paeth, png.Filter.Adaptive] {
+      match (png.encode_rgba8_with_options(width, 5, pixels, png.Options { filter: filter, compression: png.Compression.Balanced })) {
+        Ok(image) => {
+          let frame: u8[] = binary.append_bytes(binary.append_u32_be([], image.len() as u32), image);
+          match (stdout().write_bytes(frame)) { Ok(_) => {}, Err(_) => { return 1; }, }
+        },
+        Err(_) => { return 2; },
       }
     }
   }
@@ -105,6 +123,32 @@ function main(): i32 {
 									t.Fatalf("width %d pair %d pixel %d,%d channel %d = %d, want %d", width, pair, x, y, channel, got, want)
 								}
 							}
+						}
+					}
+				}
+			}
+			for _, width := range []int{1, 2, 7, 32} {
+				for filter := 0; filter < 6; filter++ {
+					if len(stream) < 4 {
+						t.Fatal("missing RGBA PNG length")
+					}
+					n := int(binary.BigEndian.Uint32(stream[:4]))
+					stream = stream[4:]
+					if n > len(stream) {
+						t.Fatal("truncated RGBA PNG frame")
+					}
+					decoded, err := png.Decode(bytes.NewReader(stream[:n]))
+					if err != nil {
+						t.Fatalf("RGBA width %d filter %d: %v", width, filter, err)
+					}
+					stream = stream[n:]
+					nrgba, ok := decoded.(*image.NRGBA)
+					if !ok || nrgba.Bounds().Dx() != width || nrgba.Bounds().Dy() != 5 {
+						t.Fatalf("RGBA width %d filter %d: decoded as %T with bounds %v", width, filter, decoded, decoded.Bounds())
+					}
+					for at := 0; at < width*5*4; at++ {
+						if want := byte((at*73 + at/7*31) & 255); nrgba.Pix[at] != want {
+							t.Fatalf("RGBA width %d filter %d byte %d = %d, want %d", width, filter, at, nrgba.Pix[at], want)
 						}
 					}
 				}
