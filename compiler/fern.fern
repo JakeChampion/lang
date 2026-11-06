@@ -1723,6 +1723,11 @@ function jni_export_refusal(f: parser.FuncDecl): string {
   return "";
 }
 
+// The functions a freestanding build exports: -export, or main without it.
+pub function freestanding_roots(merged: parser.Module, export_list: string): (parser.Module, string[], string) {
+  return shared_exports(merged, true, export_list, []);
+}
+
 function shared_exports(merged: parser.Module, shared: boolean, export_list: string, jni: JniMethod[]): (parser.Module, string[], string) {
   let roots: string[] = [];
   if (!shared) {
@@ -1768,7 +1773,7 @@ function export_entries(merged: parser.Module, names: string[], arm64: boolean, 
 // The export entries of a freestanding artifact. Each one is a global symbol
 // with the name of its function, and no lock, because only one context calls
 // in.
-function freestanding_exports(merged: parser.Module, names: string[], arm64: boolean): string {
+pub function freestanding_exports(merged: parser.Module, names: string[], arm64: boolean): string {
   let out = "";
   for n in names {
     let f = merged.funcs[export_func_index(merged, n)];
@@ -2172,7 +2177,7 @@ function is_flag(a: string): boolean {
 
 // A target with no host: its artifact is assembly that an embedder links and
 // calls through the -export functions.
-function is_freestanding(t: string): boolean {
+pub function is_freestanding(t: string): boolean {
   return platforms.for_target(t).environment == "freestanding";
 }
 
@@ -5610,7 +5615,7 @@ pub function emit_refusal(target: string, emit: string): string {
 }
 
 function output_form(target: string, emit: string, has_out: boolean): (string, string) {
-  if (is_freestanding(target) && emit != "asm") {
+  if (is_freestanding(target) && has_out && emit != "asm") {
     return ("", "-target " + target + " writes assembly only; pass -emit asm");
   }
   if (has_out || emit == "asm") {

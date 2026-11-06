@@ -24,6 +24,17 @@ function main(): i32 {
 }
 `
 
+// A freestanding program reaches no host capability, so it has no print.
+const playgroundFreestandingProgram = `function main(): i32 {
+    let xs: i32[] = [3, 4, 5];
+    let t = 0;
+    for x in xs {
+        t += x;
+    }
+    return t;
+}
+`
+
 func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -34,6 +45,11 @@ func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 	drv := buildPlaygroundDriver(t)
 	srcPath := filepath.Join(t.TempDir(), "prog.fern")
 	if err := os.WriteFile(srcPath, []byte(playgroundFormsProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	freePath := filepath.Join(t.TempDir(), "free.fern")
+	if err := os.WriteFile(freePath, []byte(playgroundFreestandingProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,6 +69,8 @@ func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 		{"arm64-linux", playgroundFormsProgram, srcPath, []string{"-target", "arm64-linux", "-emit", "asm"}, []string{"-target", "arm64-linux"}},
 		{"arm64-android", playgroundFormsProgram, srcPath, []string{"-target", "arm64-android", "-emit", "asm"}, []string{"-target", "arm64-android"}},
 		{"arm64-darwin", playgroundFormsProgram, srcPath, []string{"-target", "arm64-darwin", "-emit", "asm"}, []string{"-target", "arm64-darwin", "-emit", "asm"}},
+		{"x86-64-freestanding", playgroundFreestandingProgram, freePath, []string{"-target", "x86-64-freestanding", "-emit", "asm"}, []string{"-target", "x86-64-freestanding"}},
+		{"arm64-freestanding", playgroundFreestandingProgram, freePath, []string{"-target", "arm64-freestanding", "-emit", "asm"}, []string{"-target", "arm64-freestanding", "-emit", "asm"}},
 		{"wasm-asm", playgroundFormsProgram, srcPath, []string{"-target", "wasm32-wasi", "-emit", "asm"}, []string{"-emit", "asm"}},
 		{"wasm-core-module", playgroundFormsProgram, srcPath, []string{"-target", "wasm32-wasi", "-emit", "core-module"}, []string{"-emit", "core-module"}},
 		{"wasm-command-module", playgroundFormsProgram, srcPath, []string{"-target", "wasm32-wasi", "-emit", "command-module"}, []string{"-emit", "command-module"}},
@@ -118,8 +136,6 @@ func TestSelfHostPlaygroundRefusesUnknownForms(t *testing.T) {
 		{"-emit", "component"},
 		{"-target", "x86-64-linux", "-emit", "core-module"},
 		{"-target", "wasm32-wasi-http", "-emit", "command-module"},
-		{"-target", "arm64-freestanding"},
-		{"-target", "x86-64-freestanding", "-emit", "asm"},
 	} {
 		cmd := exec.Command(cli, append(append([]string{}, args...), "-o", filepath.Join(t.TempDir(), "out"), srcPath, e2eharness.SelfHostStdlibRoot(t))...)
 		var cliErr strings.Builder
