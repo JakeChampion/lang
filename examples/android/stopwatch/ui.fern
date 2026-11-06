@@ -1,0 +1,386 @@
+// The look of the stopwatch screens, in the dot-matrix style of look.fern.
+// The main screen is a clock above a dark disc in a ring of 60 dots, with
+// the time in large dots and the state in small dots below it. The settings
+// and the About screen are cards that scroll. It draws a View on a frame and
+// does no other I/O, so the host tests it on a frame in memory.
+import "std/android/draw";
+import "std/string";
+import "../look";
+import "../matrix";
+import "./screen";
+import "./stopwatch";
+
+pub struct View {
+  page: i32,
+  // The title and the MENU button show, and the menu is open.
+  chrome: boolean,
+  menu: boolean,
+  clock: string,
+  elapsed: i64,
+  running: boolean,
+  values: i32[],
+  // The burn-in offset of the main screen.
+  dx: i32,
+  dy: i32,
+  // How far the list of the settings or the About screen scrolls.
+  scroll: i32,
+  about: string,
+}
+
+// The text scale of the titles and the summaries of the lists: the text is
+// about 17 dp high.
+pub function text_scale(w: i32, h: i32): i32 {
+  let s = (screen.dp(w, h, 17) + draw.text_height(1) / 2) / draw.text_height(1);
+  if (s < 1) {
+    return 1;
+  }
+  return s;
+}
+
+pub function title_h(w: i32, h: i32): i32 {
+  return draw.text_height(text_scale(w, h));
+}
+
+pub function line_h(w: i32, h: i32): i32 {
+  return screen.line_h(draw.text_height(1), text_scale(w, h));
+}
+
+// The lines of the summary of each setting.
+pub function summaries(w: i32, h: i32): string[][] {
+  let all = stopwatch.settings();
+  let inner = w - 2 * screen.margin(w, h) - 2 * screen.pad(w, h);
+  let chars = inner / draw.text_width("x", text_scale(w, h));
+  let out: string[][] = [];
+  for s in all {
+    if (s.summary.len() == 0) {
+      out = out.append([]);
+    } else {
+      out = out.append(look.wrap(s.summary, chars));
+    }
+  }
+  return out;
+}
+
+pub function summary_counts(w: i32, h: i32): i32[] {
+  let out: i32[] = [];
+  for lines in summaries(w, h) {
+    out = out.append(lines.len());
+  }
+  return out;
+}
+
+// The card of setting `k` on a window of `w` by `h`.
+pub function setting_card(w: i32, h: i32, k: i32): screen.Rect {
+  return screen.setting_card(w, h, k, summary_counts(w, h), line_h(w, h), title_h(w, h));
+}
+
+// How far the settings scroll at most.
+pub function settings_max_scroll(w: i32, h: i32): i32 {
+  let last = setting_card(w, h, stopwatch.settings().len() - 1);
+  return screen.max_scroll(h, last.y + last.h, screen.dp(w, h, 32));
+}
+
+// The About text as cards: each paragraph with more than one line is a
+// heading and its lines. A paragraph of one line is a note.
+pub struct AboutPart { heading: string, lines: string[] }
+
+pub function about_parts(text: string): AboutPart[] {
+  let out: AboutPart[] = [];
+  for para in text.split("\n\n") {
+    let lines = para.split("\n");
+    if (lines.len() == 1) {
+      out = out.append(AboutPart { heading: "", lines: lines });
+    } else {
+      out = out.append(AboutPart { heading: lines[0], lines: lines.drop(1) });
+    }
+  }
+  return out;
+}
+
+// The height of one line of an About card.
+pub function about_row_h(w: i32, h: i32): i32 {
+  return draw.text_height(text_scale(w, h)) + screen.dp(w, h, 20);
+}
+
+// The card of each About part, in list coordinates. A note has no card: its
+// box holds its text.
+pub function about_boxes(w: i32, h: i32, parts: AboutPart[]): screen.Rect[] {
+  let out: screen.Rect[] = [];
+  let y = screen.list_top(w, h);
+  let m = screen.margin(w, h);
+  for part in parts {
+    if (part.heading.len() == 0) {
+      y += screen.dp(w, h, 24);
+      out = out.append(look.Rect { x: m, y: y, w: w - 2 * m, h: line_h(w, h) });
+      y += line_h(w, h);
+    } else {
+      y += screen.section_h(w, h);
+      let ch = part.lines.len() * about_row_h(w, h) + screen.dp(w, h, 16);
+      out = out.append(look.Rect { x: m, y: y, w: w - 2 * m, h: ch });
+      y = y + ch + screen.dp(w, h, 8);
+    }
+  }
+  return out;
+}
+
+pub function about_max_scroll(w: i32, h: i32, text: string): i32 {
+  let boxes = about_boxes(w, h, about_parts(text));
+  if (boxes.len() == 0) {
+    return 0;
+  }
+  let last = boxes[boxes.len() - 1];
+  return screen.max_scroll(h, last.y + last.h, screen.dp(w, h, 32));
+}
+
+pub function render(f: draw.Frame, v: View): void {
+  f.fill(0, 0, f.width, f.height, look.bg());
+  if (v.page == screen.SETTINGS) {
+    settings(f, v);
+  } else if (v.page == screen.ABOUT) {
+    about(f, v);
+  } else {
+    main_screen(f, v);
+  }
+}
+
+// The radius of a dot of text with `pitch`, for the thin font or the normal
+// font.
+function dot_r(pitch: i32, thin: boolean): i32 {
+  if (thin) {
+    return pitch * 26 / 100;
+  }
+  return pitch * 2 / 5;
+}
+
+function main_screen(f: draw.Frame, v: View): void {
+  let w = f.width;
+  let h = f.height;
+  if (stopwatch.on(v.values, "clock_enabled")) {
+    let r = screen.clock_box(w, h, v.values, v.clock, v.dx, v.dy);
+    let p = screen.clock_pitch(w, h, v.values);
+    let color = look.blend(look.ink(), look.bg(), stopwatch.value(v.values, "clock_opacity"));
+    matrix.text_dots(f, r.x, r.y, v.clock, p, dot_r(p, stopwatch.on(v.values, "clock_thin")), color);
+  }
+  if (stopwatch.on(v.values, "stopwatch_enabled")) {
+    dial(f, screen.dial_box(w, h, v.values, v.clock, v.dx, v.dy), v);
+  }
+  if (v.chrome) {
+    let t = screen.title_box(w, h, TITLE);
+    let tp = screen.title_pitch(w, h);
+    matrix.text(f, t.x, t.y + (t.h - matrix.height(tp)) / 2, TITLE, tp, look.ink());
+    look.outlined(f, screen.corner_button(w, h, "MENU"), "MENU", look.muted());
+  }
+  if (v.menu) {
+    look.card(f, screen.menu_panel(w, h), look.outline());
+    look.outlined(f, screen.menu_item(w, h, 0), "SETTINGS", look.ink());
+    look.outlined(f, screen.menu_item(w, h, 1), "ABOUT", look.ink());
+  }
+}
+
+pub const TITLE: string = "STOPWATCH";
+
+// The dial: a dark disc in a ring of dots, the time and the state.
+function dial(f: draw.Frame, r: screen.Rect, v: View): void {
+  let cx = r.x + r.w / 2;
+  let cy = r.y + r.h / 2;
+  let rad = r.w / 2;
+  let dot = rad / 40 + 1;
+  let opacity = stopwatch.value(v.values, "stopwatch_opacity");
+  let seconds = stopwatch.on(v.values, "stopwatch_seconds");
+  f.disc(cx, cy, rad * 90 / 100, look.surface());
+  for k in 0..stopwatch.RING_DOTS {
+    let a: f64 = 6.283185307179586 * (k as f64) / (stopwatch.RING_DOTS as f64);
+    let color = look.blend(stopwatch.ring_color(k, v.elapsed, seconds, v.running), look.bg(), opacity);
+    f.disc(cx + ((rad - dot) as f64 * a.sin()) as i32, cy - ((rad - dot) as f64 * a.cos()) as i32, dot, color);
+  }
+  let text = stopwatch.stopwatch_text(v.elapsed, seconds);
+  let p = screen.size_pitch(f.width, f.height, stopwatch.value(v.values, "stopwatch_size"));
+  let fit = rad * 13 / 10 / (text.len() * (matrix.COLS + 1) - 1);
+  if (fit < p) {
+    p = fit;
+  }
+  if (p < 1) {
+    p = 1;
+  }
+  let th = matrix.height(p);
+  let top = cy - th / 2;
+  let color = look.blend(stopwatch.stopwatch_color(v.running, v.elapsed), look.surface(), opacity);
+  matrix.text_dots(f, cx - matrix.width(text, p) / 2, top, text, p, dot_r(p, stopwatch.on(v.values, "stopwatch_thin")), color);
+  let status = stopwatch.status_text(v.running, v.elapsed);
+  let sp = rad / 60;
+  if (sp < 1) {
+    sp = 1;
+  }
+  matrix.text(f, cx - matrix.width(status, sp) / 2, top + th + th * 55 / 100, status, sp, look.blend(look.muted(), look.surface(), opacity));
+}
+
+// The title of a list screen and its BACK button, moved up by `scroll`.
+function list_header(f: draw.Frame, title: string, scroll: i32): void {
+  let w = f.width;
+  let h = f.height;
+  let t = screen.title_box(w, h, title);
+  let tp = screen.title_pitch(w, h);
+  matrix.text(f, t.x, t.y - scroll + (t.h - matrix.height(tp)) / 2, title, tp, look.ink());
+  let b = screen.corner_button(w, h, "BACK");
+  look.outlined(f, look.Rect { ...b, y: b.y - scroll }, "BACK", look.muted());
+}
+
+function visible(f: draw.Frame, r: screen.Rect): boolean {
+  return r.y + r.h > 0 && r.y < f.height;
+}
+
+function settings(f: draw.Frame, v: View): void {
+  let w = f.width;
+  let h = f.height;
+  list_header(f, "SETTINGS", v.scroll);
+  let all = stopwatch.settings();
+  let lines = summaries(w, h);
+  let counts = summary_counts(w, h);
+  let lh = line_h(w, h);
+  let ts = text_scale(w, h);
+  let p = screen.value_pitch(w, h);
+  let sp = screen.section_pitch(w, h);
+  let section: string = "";
+  for k in 0..all.len() {
+    let c = screen.setting_card(w, h, k, counts, lh, title_h(w, h));
+    let r = look.Rect { ...c, y: c.y - v.scroll };
+    if (all[k].section != section) {
+      section = all[k].section;
+      let name = section;
+      matrix.text(f, r.x + screen.dp(w, h, 4), r.y - screen.dp(w, h, 10) - matrix.height(sp), name, sp, look.muted());
+    }
+    if (visible(f, r)) {
+      setting(f, v, k, r, p, lines[k], lh, ts);
+    }
+  }
+}
+
+// One card of the settings screen: the title, the value or the switch, the
+// summary and the slider.
+function setting(f: draw.Frame, v: View, k: i32, r: screen.Rect, p: i32, summary: string[], lh: i32, ts: i32): void {
+  let w = f.width;
+  let h = f.height;
+  let s = stopwatch.settings()[k];
+  let value = v.values[k];
+  look.card(f, r, look.surface());
+  let pad = screen.pad(w, h);
+  let th = draw.text_height(ts);
+  let head = screen.head_h(w, h, s.toggle, th);
+  if (s.toggle) {
+    toggle(f, screen.switch_box(w, h, r, th), value != 0);
+  } else {
+    let text = stopwatch.setting_value_text(k, value);
+    let t = screen.track(w, h, k, r);
+    matrix.text(f, r.x + r.w - pad - matrix.width(text, p), t.y + (t.h - matrix.height(p)) / 2, text, p, look.ink());
+    slider(f, t, value, s.min, s.max);
+  }
+  f.text(r.x + pad, r.y + pad + (head - th) / 2, s.title, ts, look.ink());
+  let ly = r.y + pad + head + screen.dp(w, h, 6);
+  for line in summary {
+    f.text(r.x + pad, ly, line, ts, look.muted());
+    ly += lh;
+  }
+}
+
+// A switch: a white pill with a black dot when on, and an outline with a
+// grey dot when off.
+function toggle(f: draw.Frame, r: screen.Rect, on: boolean): void {
+  let rad = r.h / 2;
+  if (on) {
+    f.round_rect(r.x, r.y, r.w, r.h, rad, look.ink());
+    f.disc(r.x + r.w - rad, r.y + rad, rad / 2, look.bg());
+    return;
+  }
+  let t = r.h / 20 + 1;
+  f.round_rect(r.x, r.y, r.w, r.h, rad, look.outline());
+  f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, rad - t, look.surface());
+  f.disc(r.x + rad, r.y + rad, rad * 42 / 100, look.muted());
+}
+
+// A slider: a row of dots, white up to the value, with a large dot at it.
+function slider(f: draw.Frame, r: screen.Rect, value: i32, lo: i32, hi: i32): void {
+  let kn = screen.knob(f.width, f.height);
+  let small = screen.dp(f.width, f.height, 24) / 10;
+  if (small < 1) {
+    small = 1;
+  }
+  let at = screen.slider_dot(value, lo, hi);
+  let cy = r.y + r.h / 2;
+  for i in 0..screen.SLIDER_DOTS {
+    let x = r.x + kn + i * (r.w - 2 * kn) / (screen.SLIDER_DOTS - 1);
+    if (i == at) {
+      f.disc(x, cy, kn, look.ink());
+    } else if (i < at) {
+      f.disc(x, cy, small, look.ink());
+    } else {
+      f.disc(x, cy, small, look.outline());
+    }
+  }
+}
+
+function about(f: draw.Frame, v: View): void {
+  let w = f.width;
+  let h = f.height;
+  list_header(f, "ABOUT", v.scroll);
+  let parts = about_parts(v.about);
+  let boxes = about_boxes(w, h, parts);
+  let ts = text_scale(w, h);
+  let big = ts;
+  let sp = screen.section_pitch(w, h);
+  let pad = screen.pad(w, h);
+  for k in 0..parts.len() {
+    let r = look.Rect { ...boxes[k], y: boxes[k].y - v.scroll };
+    if (parts[k].heading.len() == 0) {
+      for line in look.wrap(parts[k].lines[0], (r.w - screen.dp(w, h, 8)) / draw.text_width("x", ts)) {
+        f.text(r.x + screen.dp(w, h, 4), r.y, line, ts, look.muted());
+        r = look.Rect { ...r, y: r.y + line_h(w, h) };
+      }
+    } else {
+      matrix.text(f, r.x + screen.dp(w, h, 4), r.y - screen.dp(w, h, 10) - matrix.height(sp), parts[k].heading, sp, look.muted());
+      look.card(f, r, look.surface());
+      let rh = about_row_h(w, h);
+      let y = r.y + screen.dp(w, h, 8) + (rh - draw.text_height(big)) / 2;
+      for line in parts[k].lines {
+        about_line(f, r, pad, y, line, big);
+        y += rh;
+      }
+    }
+  }
+}
+
+// A line "name: value" with the name in white at the left and the value in
+// grey at the right.
+function about_line(f: draw.Frame, r: screen.Rect, pad: i32, y: i32, line: string, ts: i32): void {
+  let parts = line.split(": ");
+  f.text(r.x + pad, y, parts[0], ts, look.ink());
+  if (parts.len() > 1) {
+    let value = parts[1];
+    f.text(r.x + r.w - pad - draw.text_width(value, ts), y, value, ts, look.muted());
+  }
+}
+
+// The launcher icon on a square frame: the dial of the stopwatch on a black
+// disc, with transparent corners. The passed seconds are white, the current
+// one is red, and the rest are grey.
+pub function icon(f: draw.Frame): void {
+  let n = f.width;
+  let c = n / 2;
+  f.fill(0, 0, n, n, 0);
+  f.disc(c, c, c, look.bg());
+  f.disc(c, c, c * 62 / 100, look.surface());
+  let dots: i32 = 24;
+  for k in 0..dots {
+    let a: f64 = 6.283185307179586 * (k as f64) / (dots as f64);
+    let color = look.outline();
+    if (k < 16) {
+      color = look.ink();
+    } else if (k == 16) {
+      color = look.red();
+    }
+    f.disc(c + ((c * 76 / 100) as f64 * a.sin()) as i32, c - ((c * 76 / 100) as f64 * a.cos()) as i32, c / 15, color);
+  }
+  let step = c * 14 / 100;
+  for d in [[0, -1], [0, 0], [1, 0]] {
+    f.disc(c + d[0] * step, c + d[1] * step, c / 18, look.ink());
+  }
+}

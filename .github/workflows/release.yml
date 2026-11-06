@@ -176,14 +176,11 @@ jobs:
           overwrite: true
 
   # The Android example apps. Android installs an update only over an app
-  # signed with the same certificate, so every nightly signs with the keys
-  # in the repository secrets:
-  #   - ANDROID_APK_KEY: the P-256 key in PEM form for `fern -apk`. `fern -apk`
-  #     writes a new one to the -apk-key file when that file does not exist.
-  #   - ANDROID_KEYSTORE: a keystore with one key, base64-encoded, for the
-  #     stopwatch's build.sh, and ANDROID_KEYSTORE_PASSWORD, its password.
-  # When a key is not set, the job signs with a one-off key, and the release
-  # notes say that those APKs do not install over an earlier nightly.
+  # signed with the same certificate, so every nightly signs with the key in
+  # the repository secret ANDROID_APK_KEY: the P-256 key in PEM form for
+  # `fern -apk`. When it is not set, `fern -apk` writes a one-off key to the
+  # -apk-key file, and the release notes say that those APKs do not install
+  # over an earlier nightly.
   # The certificate of `fern -apk` comes from the key alone, so one key gives
   # the same APK, byte for byte, from the same source. A failure of this job
   # does not stop the release of the compiler: the release then has no APKs,
@@ -199,35 +196,19 @@ jobs:
       - name: Build fern
         run: make bin/fern
 
-      - name: Write the signing keys
+      - name: Write the signing key
         id: keys
         env:
           APK_KEY: ${{ secrets.ANDROID_APK_KEY }}
-          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
-          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -n "$KEYSTORE_B64" ] && [ -z "$KEYSTORE_PASS" ]; then
-            echo "::error::ANDROID_KEYSTORE is set but ANDROID_KEYSTORE_PASSWORD is not"
-            exit 1
-          fi
-          if [ -z "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ]; then
-            echo "::error::ANDROID_KEYSTORE_PASSWORD is set but ANDROID_KEYSTORE is not"
-            exit 1
-          fi
           umask 077
           mkdir -p "$RUNNER_TEMP/keys"
           signing=release
           if [ -n "$APK_KEY" ]; then
             printf '%s\n' "$APK_KEY" > "$RUNNER_TEMP/keys/apk.key.pem"
           else
-            echo "::warning::ANDROID_APK_KEY is not set: fern-native.apk and fern-walkie.apk are signed with a one-off key"
-            signing=one-off
-          fi
-          if [ -n "$KEYSTORE_B64" ]; then
-            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/keys/stopwatch.keystore"
-          else
-            echo "::warning::ANDROID_KEYSTORE is not set: fern-stopwatch.apk is signed with a one-off key"
+            echo "::warning::ANDROID_APK_KEY is not set: the APKs are signed with a one-off key"
             signing=one-off
           fi
           echo "signing=$signing" >> "$GITHUB_OUTPUT"
@@ -250,16 +231,11 @@ jobs:
           printf 'pub const SERVER_HOST: string = "%s";\n' "$WALKIE_SERVER" > examples/android/walkie/server_host.fern
 
       - name: Build and sign the APKs
-        env:
-          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           key="$RUNNER_TEMP/keys/apk.key.pem"
-          keystore="$RUNNER_TEMP/keys/stopwatch.keystore"
-          [ -f "$keystore" ] || keystore=""
-          KEYSTORE="$keystore" examples/android/stopwatch/build.sh
           mkdir -p dist/apk
-          cp build/android-stopwatch/fern-stopwatch.apk dist/apk/
+          ./bin/fern -apk dist/apk/fern-stopwatch.apk -apk-key "$key" -apk-package dev.fern.stopwatch -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png -apk-min-sdk 28 examples/android/stopwatch/app.fern
           ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
 
@@ -366,11 +342,11 @@ jobs:
             arm64 phones and x86-64 emulators.
             ${{ needs.apk.outputs.signing == 'release' && 'Each nightly is signed with the same key, so it installs over the one before it.' || '' }}
 
-            | App                        | APK                  |
-            |----------------------------|----------------------|
-            | Walkie-talkie on the LAN   | `fern-walkie.apk`    |
-            | Stopwatch (Java views)     | `fern-stopwatch.apk` |
-            | Stopwatch (NativeActivity) | `fern-native.apk`    |
+            | App                          | APK                  |
+            |------------------------------|----------------------|
+            | Walkie-talkie on the LAN     | `fern-walkie.apk`    |
+            | Stopwatch                    | `fern-stopwatch.apk` |
+            | The smallest NativeActivity  | `fern-native.apk`    |
 
             Each `fern` archive ships a single self-contained binary:
             the self-hosted compiler with its standard library

@@ -1,14 +1,13 @@
 name: Android
 
-# Builds the Android example app and runs it on an emulator. The APK job
-# uses the runner image's Android SDK (ANDROID_HOME) for aapt, d8, zipalign,
-# apksigner and android.jar. The emulator job installs that APK on an x86-64
-# emulator with KVM, and examples/android/stopwatch/emulator_check.py drives
-# it: the content at the screen centre, a tap to start, a long tap to reset,
-# the settings screen, and no crash in logcat. It is the one gate that loads
-# a Fern library with Android's loader. The APK job also builds
-# examples/android/native with fern -apk, an app with no Java code, and
-# examples/android/native/emulator_check.py drives it on the same emulator.
+# Builds the Android example apps with fern -apk and runs them on an
+# emulator. The emulator job installs the stopwatch on an x86-64 emulator
+# with KVM, and examples/android/stopwatch/emulator_check.py drives it: the
+# dial on the screen, a tap to start, a long tap to reset, the menu and the
+# settings screen, and no crash in logcat. It is the one gate that loads a
+# Fern library with Android's loader. examples/android/native is the
+# smallest app with no Java code, and examples/android/native/emulator_check.py
+# drives it on the same emulator.
 # tests/android/dex is an app with @jni classes in the classes.dex that fern
 # -apk writes, and its check requires that ART loads, constructs and binds
 # them. tests/android/audio checks std/android/audio and a JNI call from
@@ -44,7 +43,8 @@ jobs:
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
-          examples/android/stopwatch/build.sh
+          mkdir -p build/android-stopwatch
+          ./bin/fern -apk build/android-stopwatch/fern-stopwatch.apk -apk-package dev.fern.stopwatch -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png -apk-min-sdk 28 examples/android/stopwatch/app.fern
           ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern

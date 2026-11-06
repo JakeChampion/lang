@@ -141,7 +141,7 @@ function c_pthread_detach(thread: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. `ServiceStopped` comes when the user stops the foreground service from its notification, and `ServiceAction` when the user taps the action of the app in it. `P2pEnabled`, `P2pPeers` and `P2pGroup` come from Wi-Fi Direct.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. `ServiceStopped` comes when the user stops the foreground service from its notification, and `ServiceAction` when the user taps the action of the app in it. `P2pEnabled`, `P2pPeers` and `P2pGroup` come from Wi-Fi Direct.
 
 ```fern
 <<events>>=
@@ -254,13 +254,23 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle and the JNIEnv of the loop thread: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, and the JNIEnv at 32.
+The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread and the window flags: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, the JNIEnv at 32, and the flags at 40.
+
+Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread at 16 of the activity. The window gets the focus after it shows, and again each time the user returns to it.
 
 The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
 
 ```fern
 <<the UI thread>>=
-const CTX_SIZE: i32 = 40;
+const CTX_SIZE: i32 = 48;
+
+const FLAG_IMMERSIVE: i32 = 1;
+
+const FLAG_IMMERSIVE_SET: i32 = 2;
+
+// View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY, FULLSCREEN, HIDE_NAVIGATION,
+// LAYOUT_STABLE, LAYOUT_FULLSCREEN and LAYOUT_HIDE_NAVIGATION.
+const IMMERSIVE_UI: i32 = 5894;
 
 @callback("on_start")
 function on_start_entry(): usize;
@@ -305,6 +315,8 @@ function on_input_destroyed_entry(): usize;
 pub function start(activity: usize, thread_main: usize): void {
   unsafe {
     let ctx: usize = __alloc(CTX_SIZE);
+    __store_ptr(ctx + 32 as usize, 0 as usize);
+    __store_i32(ctx + 40 as usize, 0);
     let ok: i32 = c_pipe2(ctx, 524288) | c_pipe2(ctx + 8 as usize, 524288);
     if (ok != 0) {
       c_activity_finish(activity);
@@ -373,7 +385,49 @@ function on_destroy(activity: usize): void {
 }
 
 function on_focus(activity: usize, focused: i32): void {
+  if (focused != 0) {
+    apply_system_bars(activity);
+  }
   send(activity, FOCUS, focused as usize);
+}
+
+// Applies the requested bar visibility on the UI thread.
+function apply_system_bars(activity: usize): void {
+  unsafe {
+    let ctx: usize = __load_ptr(activity + 56 as usize);
+    if (ctx == 0 as usize || (__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE_SET) == 0) {
+      return;
+    }
+    let ui: i32 = 0;
+    let fullscreen: i32 = 0;
+    if ((__load_i32(ctx + 40 as usize) & FLAG_IMMERSIVE) != 0) {
+      ui = IMMERSIVE_UI;
+      fullscreen = 1024;
+    }
+    let e: usize = __load_ptr(activity + 16 as usize);
+    let obj: usize = __load_ptr(activity + 24 as usize);
+    let activity_class: usize = jni.get_object_class(e, obj);
+    let none: usize = jni.jvalue_alloc(0);
+    let window: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, activity_class, "getWindow", "()Landroid/view/Window;"), none);
+    let window_class: usize = jni.get_object_class(e, window);
+    let decor: usize = jni.call_object_method_a(e, window, jni.get_method_id(e, window_class, "getDecorView", "()Landroid/view/View;"), none);
+    jni.free_buffer(none);
+    let window_args: usize = jni.jvalues([fullscreen as usize, 1024 as usize]);
+    let changed: usize = jni.call_void_method_a(e, window, jni.get_method_id(e, window_class, "setFlags", "(II)V"), window_args);
+    jni.free_buffer(window_args);
+    let decor_class: usize = jni.get_object_class(e, decor);
+    let args: usize = jni.jvalues([ui as usize]);
+    let ignored: usize = jni.call_void_method_a(e, decor, jni.get_method_id(e, decor_class, "setSystemUiVisibility", "(I)V"), args);
+    jni.free_buffer(args);
+    if (jni.exception_occurred(e) != 0 as usize) {
+      let cleared: usize = jni.exception_clear(e);
+    }
+    let a: usize = jni.delete_local_ref(e, decor);
+    let b: usize = jni.delete_local_ref(e, window);
+    let c: usize = jni.delete_local_ref(e, decor_class);
+    let d: usize = jni.delete_local_ref(e, window_class);
+    let f: usize = jni.delete_local_ref(e, activity_class);
+  }
 }
 
 function on_window_created(activity: usize, window: usize): void {
@@ -494,8 +548,11 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           state = step(state, Touch(c_motion_action(ev) & 255, c_motion_x(ev, 0 as usize), c_motion_y(ev, 0 as usize)));
           handled = 1;
         } else if (kind == 1) {
-          state = step(state, Key(c_key_code(ev), c_key_action(ev)));
-          handled = 1;
+          let code: i32 = c_key_code(ev);
+          state = step(state, Key(code, c_key_action(ev)));
+          if (!system_key(code)) {
+            handled = 1;
+          }
         }
         c_queue_finish_event(lp.queue, ev, handled);
       }
@@ -503,6 +560,11 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
     __free(slot, 8);
   }
   return state;
+}
+
+// The volume keys and the mute key, which the system handles after the app.
+function system_key(code: i32): boolean {
+  return code == 24 || code == 25 || code == 164;
 }
 
 // Attaches the loop thread to the JVM of the activity, and keeps its
@@ -612,6 +674,53 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
       c_activity_window_flags(activity, 0, 128);
     }
   }
+}
+
+// Hides the status bar and the navigation bar while the window has the
+// focus, or shows them again the next time the window gets the focus. A
+// swipe from the edge shows the bars for a short time.
+pub function immersive(ctx: usize, on: boolean): void {
+  unsafe {
+    let flags: i32 = __load_i32(ctx + 40 as usize) | FLAG_IMMERSIVE_SET;
+    if (on) {
+      __store_i32(ctx + 40 as usize, flags | FLAG_IMMERSIVE);
+    } else {
+      __store_i32(ctx + 40 as usize, flags & 0 - 1 - FLAG_IMMERSIVE);
+    }
+  }
+}
+
+// The audio stream that the volume keys change while the window shows, as
+// an android.media.AudioManager stream: 3 music, 4 alarm and 5 notification.
+pub function volume_stream(ctx: usize, stream: i32): void {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let class: usize = jni.get_object_class(e, obj);
+  let args: usize = jni.jvalues([stream as usize]);
+  let ignored: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"), args);
+  jni.free_buffer(args);
+  let deleted: usize = jni.delete_local_ref(e, class);
+}
+
+// The offset of the local time of the device from UTC, in milliseconds, at
+// `unix_ms`. It comes from java.util.TimeZone, so it follows the time zone
+// and the zone data of the device. Call it on the loop thread.
+pub function utc_offset_ms(ctx: usize, unix_ms: i64): i32 {
+  let e: usize = env(ctx);
+  let class: usize = jni.find_class(e, "java/util/TimeZone");
+  let none: usize = jni.jvalue_alloc(0);
+  let zone: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getDefault", "()Ljava/util/TimeZone;"), none);
+  jni.free_buffer(none);
+  let args: usize = jni.jvalues([unix_ms as usize]);
+  let offset: i32 = jni.call_int_method_a(e, zone, jni.get_method_id(e, class, "getOffset", "(J)I"), args);
+  jni.free_buffer(args);
+  if (jni.exception_occurred(e) != 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    offset = 0;
+  }
+  let a: usize = jni.delete_local_ref(e, zone);
+  let b: usize = jni.delete_local_ref(e, class);
+  return offset;
 }
 
 // Moves the task of the activity behind the other apps, as the home key
