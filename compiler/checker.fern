@@ -1088,11 +1088,20 @@ pub function device_intrinsic(name: string): boolean {
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
 // other name.
 pub function mmio_width(name: string): i32 {
-  for w in [8, 16, 32, 64] {
-    let n = util.i32_to_string(w);
-    if (name == "__mmio_load" + n || name == "__mmio_store" + n) {
-      return w;
-    }
+  if (!util.str_has_prefix(name, "__mmio_")) {
+    return 0;
+  }
+  if (name == "__mmio_load8" || name == "__mmio_store8") {
+    return 8;
+  }
+  if (name == "__mmio_load16" || name == "__mmio_store16") {
+    return 16;
+  }
+  if (name == "__mmio_load32" || name == "__mmio_store32") {
+    return 32;
+  }
+  if (name == "__mmio_load64" || name == "__mmio_store64") {
+    return 64;
   }
   return 0;
 }
