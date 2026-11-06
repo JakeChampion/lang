@@ -590,7 +590,7 @@ function __certificate(b: [u8]): Result[Message, MsgError] {
   let entries: CertificateEntry[] = [];
   let at = list.from;
   while (at < list.to) {
-    let l: [u8] = b[0:list.to];
+    let l = b[0:list.to];
     let data = __vec(l, at, 3, 1, 16777215, "cert_data")?;
     let ext = __vec(l, data.to, 2, 0, 65535, "CertificateEntry extensions")?;
     entries = entries.append(CertificateEntry { data: __copy(b, data.from, data.to), extensions: __read_exts(b[ext.from:ext.to])? });
@@ -632,7 +632,7 @@ pub struct Raw { kind: i32, bytes: u8[] }
 <<16 pub function decode(r: Raw): Result[Message, MsgError]>>=
 // fern-lint: allow cyclomatic-complexity
 pub function decode(r: Raw): Result[Message, MsgError] {
-  let b: [u8] = r.bytes[4:r.bytes.len()];
+  let b = r.bytes[4:r.bytes.len()];
   if (r.kind == CLIENT_HELLO) {
     return __client_hello(b);
   }

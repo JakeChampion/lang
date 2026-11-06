@@ -117,8 +117,8 @@ pub function exp_rotation(own x: f32[], len: i32, dir: i32, stride: i32, k: i32,
     return x;
   }
   let factor = SPREAD_FACTOR[spread - 1];
-  let gain: f32 = 1.0f32 * (len as f32) / ((len + factor * k) as f32);
-  let theta: f32 = 0.5f32 * (gain * gain);
+  let gain = 1.0f32 * (len as f32) / ((len + factor * k) as f32);
+  let theta = 0.5f32 * (gain * gain);
   let c = cos_norm(theta);
   let s = cos_norm(1.0f32 - theta);
   let stride2 = 0;
@@ -359,8 +359,8 @@ pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
     for i in 0..n {
       let m = x[i] + y[i];
       let s = x[i] - y[i];
-      emid = emid + m * m;
-      eside = eside + s * s;
+      emid += m * m;
+      eside += s * s;
     }
   } else {
     emid += inner_prod(x, x, n);

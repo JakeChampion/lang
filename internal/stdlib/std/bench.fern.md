@@ -156,7 +156,7 @@ pub function (r: Report) percentile_ns(per_mille: i32): i64 {
   if (n == 0) {
     return 0 as i64;
   }
-  let rank: i32 = (per_mille * n + 999) / 1000;
+  let rank = (per_mille * n + 999) / 1000;
   if (rank < 1) {
     rank = 1;
   }

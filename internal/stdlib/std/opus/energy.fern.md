@@ -129,7 +129,7 @@ pub function laplace_encode(own e: range.Encoder, value: i32, fs0: i32, decay: i
       let ndi_max = 32768 - fl + LAPLACE_MINP - 1;
       ndi_max = ndi_max - s >> 1;
       let di = min(val - i, ndi_max - 1);
-      fl = fl + (2 * di + 1 + s) * LAPLACE_MINP;
+      fl += (2 * di + 1 + s) * LAPLACE_MINP;
       fs = min(LAPLACE_MINP, 32768 - fl);
       out = i + di + s ^ s;
     } else {
@@ -161,7 +161,7 @@ pub function laplace_decode(own d: range.Decoder, fs0: i32, decay: i32): (range.
     if (fs <= LAPLACE_MINP) {
       let di = fm - fl >> 1;
       val += di;
-      fl = fl + 2 * di * LAPLACE_MINP;
+      fl += 2 * di * LAPLACE_MINP;
     }
     if (fm < fl + fs) {
       val = -val;
@@ -221,11 +221,11 @@ pub function unquant_coarse_energy(own d: range.Decoder, start: i32, end: i32, o
   let coef = coef_of(lm, intra);
   let beta = beta_of(lm, intra);
   let budget = d.storage * 8;
-  let prev: f32[] = [0.0f32, 0.0f32];
+  let prev = [0.0f32, 0.0f32];
   for i in start..end {
     for c in 0..channels {
       let left = budget - d.tell();
-      let qi: i32 = 0 - 1;
+      let qi = -1;
       if (left >= 15) {
         let at = model_at(lm, intra, i);
         let (d1, v) = laplace_decode(d, modes.E_PROB_MODEL[at] << 7, modes.E_PROB_MODEL[at + 1] << 6);
@@ -240,7 +240,7 @@ pub function unquant_coarse_energy(own d: range.Decoder, start: i32, end: i32, o
         d = d1;
         qi = 0;
         if (b) {
-          qi = 0 - 1;
+          qi = -1;
         }
       }
       let q = qi as f32;
@@ -320,7 +320,7 @@ function coarse_pass(own e0: range.Encoder, start: i32, end: i32, bands: [f32], 
   }
   let coef = coef_of(lm, intra);
   let beta = beta_of(lm, intra);
-  let prev: f32[] = [0.0f32, 0.0f32];
+  let prev = [0.0f32, 0.0f32];
   let badness = 0;
   for i in start..end {
     for c in 0..channels {

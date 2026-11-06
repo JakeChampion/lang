@@ -259,12 +259,23 @@ function reserve_expr(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-// Two bindings of the function share a name. Without that, resolve_func
-// changes no name.
+function bound_params(e: ast.Expr, own names: string[]): string[] {
+  if let ast.ExprLambda(lm) = e {
+    for p in lm.params {
+      names = astwalk.append_bound_name(names, p.name);
+    }
+  }
+  return names;
+}
+
+// Return true when two bindings use the same name.
 pub function binds_a_name_twice(fd: parser.FuncDecl): boolean {
-  let names = astwalk.collect_bound_stmts(fd.body, []);
+  let names: string[] = [];
+  for st in fd.body {
+    names = astwalk.fold_stmt_nodes(st, names, astwalk.binders_of, bound_params, astwalk.descend_all);
+  }
   for p in fd.params {
-    names = names.append(p.name);
+    names = astwalk.append_bound_name(names, p.name);
   }
   if (fd.receiver_name.len() > 0) {
     names = names.append(fd.receiver_name);

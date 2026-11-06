@@ -106,7 +106,7 @@ impl cmp.Display for HuffmanError {}
 pub function encoded_len(bytes: [u8]): i32 {
   let bits = 0;
   for b in bytes {
-    bits = bits + HUFF_LEN[b as i32] as i32;
+    bits += HUFF_LEN[b as i32] as i32;
   }
   return (bits + 7) / 8;
 }

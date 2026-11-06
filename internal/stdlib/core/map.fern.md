@@ -128,7 +128,7 @@ function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
     let p = i;
     while (p < cap + 8) {
       let wordOff = p & 0 - 4;
-      let shift: i32 = (p & 3) * 8;
+      let shift = (p & 3) * 8;
       let word = __load_i32(ctrlBase + wordOff);
       let keep = 255 << shift ^ 0 - 1;
       __store_i32(ctrlBase + wordOff, word & keep | v << shift);
@@ -145,11 +145,11 @@ function __map_seed(buf: usize): i32 {
 
 function __map_wang_mix(k: i32): i32 {
   let h = k ^ 61;
-  h = h ^ (h as u32 >> 16 as u32) as i32;
+  h ^= (h as u32 >> 16 as u32) as i32;
   h += h << 3;
-  h = h ^ (h as u32 >> 4 as u32) as i32;
+  h ^= (h as u32 >> 4 as u32) as i32;
   h *= 668265261;
-  h = h ^ (h as u32 >> 15 as u32) as i32;
+  h ^= (h as u32 >> 15 as u32) as i32;
   return h;
 }
 
@@ -170,11 +170,11 @@ function __map_fnv_str_seeded(s: string, seed: i32): i32 {
     h = (h ^ s[i] as u32) * prime;
     i += 1;
   }
-  h = h ^ h >> 16 as u32;
+  h ^= h >> 16 as u32;
   h *= 2246822507 as u32;
-  h = h ^ h >> 13 as u32;
+  h ^= h >> 13 as u32;
   h *= 3266489909 as u32;
-  h = h ^ h >> 16 as u32;
+  h ^= h >> 16 as u32;
   return h as i32;
 }
 ```
@@ -1082,14 +1082,14 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
         }
         j += 1;
       }
-      return 0 - 1;
+      return -1;
     }
 
     let h = __map_bucket_hash(k, hash_fn, __map_seed(buf));
     let bucket = h & mask;
     let homeB = __load_i32(buf + __map_hdr(buf) + bucket * 4);
-    if (homeB == 0 - 1) {
-      return 0 - 1;
+    if (homeB == -1) {
+      return -1;
     }
     if (homeB >= 0) {
       if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
@@ -1114,16 +1114,16 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
         if (eq_fn(entryK, k)) {
           return b;
         }
-        hits = hits & hits - 1 as u64;
+        hits &= hits - 1 as u64;
       }
       let y = w ^ eb;
       if ((y - lo & (y ^ all) & hi) != 0 as u64) {
-        return 0 - 1;
+        return -1;
       }
       bucket = bucket + 8 & mask;
       probed += 8;
     }
-    return 0 - 1;
+    return -1;
   }
 }
 ```

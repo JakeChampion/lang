@@ -194,7 +194,7 @@ function node_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: PMap[K, V][], k: K): i
     }
     i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 ```
 

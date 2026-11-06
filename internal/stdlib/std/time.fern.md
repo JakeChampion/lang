@@ -674,7 +674,7 @@ impl error.Error for TimeParseError {}
 impl cmp.Display for TimeParseError {}
 
 pub function (e: TimeParseError) message(): string {
-  let form: string = match (e.form) { IsoDate => "an ISO 8601 date (YYYY-MM-DD)", Rfc3339 => "an RFC 3339 timestamp", HttpDate => "an HTTP-date" };
+  let form = match (e.form) { IsoDate => "an ISO 8601 date (YYYY-MM-DD)", Rfc3339 => "an RFC 3339 timestamp", HttpDate => "an HTTP-date" };
   return "\"" + e.text + "\" is not " + form;
 }
 

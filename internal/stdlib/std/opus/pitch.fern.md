@@ -90,7 +90,7 @@ pub struct Xcorr { xcorr: f32[], max: f32 }
 // largest of them, which is at least 1.
 pub function pitch_xcorr(x: [f32], xa: i32, y: [f32], ya: i32, len: i32, max_pitch: i32): Xcorr {
   let xcorr: f32[] = [];
-  let max: f32 = 1.0f32;
+  let max = 1.0f32;
   for i in 0..max_pitch {
     let s = inner_prod(x, xa, y, ya + i, len);
     xcorr = xcorr.append(s);
@@ -117,9 +117,9 @@ pub function autocorr(x: [f32], at: i32, windowed: boolean, lag: i32, n: i32): f
   let fast = n - lag;
   let ac = pitch_xcorr(xx, 0, xx, 0, fast, lag + 1).xcorr;
   for k in 0..lag + 1 {
-    let d: f32 = 0.0f32;
+    let d = 0.0f32;
     for i in k + fast..n {
-      d = d + xx[i] * xx[i - k];
+      d += xx[i] * xx[i - k];
     }
     ac = ac.with(k, ac[k] + d);
   }
@@ -153,12 +153,12 @@ pub function lpc(ac: [f32], p: i32): f32[] {
   }
   let error = ac[0];
   for i in 0..p {
-    let rr: f32 = 0.0f32;
+    let rr = 0.0f32;
     for j in 0..i {
-      rr = rr + a[j] * ac[i - j];
+      rr += a[j] * ac[i - j];
     }
     rr += ac[i + 1];
-    let r: f32 = -(rr / error);
+    let r = -(rr / error);
     a = a.with(i, r);
     let half = i + 1 >> 1;
     for j in 0..half {
@@ -167,7 +167,7 @@ pub function lpc(ac: [f32], p: i32): f32[] {
       a = a.with(j, t1 + r * t2);
       a = a.with(i - 1 - j, t2 + r * t1);
     }
-    error = error - r * r * error;
+    error -= r * r * error;
     if (error <= THIRTY_DB * ac[0]) {
       break;
     }
@@ -182,7 +182,7 @@ pub function fir(x: [f32], at: i32, num: [f32], n: i32, ord: i32): f32[] {
   for i in 0..n {
     let s = x[at + i];
     for j in 0..ord {
-      s = s + num[ord - 1 - j] * x[at + i + j - ord];
+      s += num[ord - 1 - j] * x[at + i + j - ord];
     }
     y = y.append(s);
   }
@@ -202,20 +202,20 @@ function iir_block(x: [f32], at: i32, den: [f32], own y: f32[], own out: f32[], 
   let s3 = x[at + i + 3];
   for j in 0..ord {
     let d = den[ord - 1 - j];
-    s0 = s0 + d * y[i + j];
-    s1 = s1 + d * y[i + j + 1];
-    s2 = s2 + d * y[i + j + 2];
-    s3 = s3 + d * y[i + j + 3];
+    s0 += d * y[i + j];
+    s1 += d * y[i + j + 1];
+    s2 += d * y[i + j + 2];
+    s3 += d * y[i + j + 3];
   }
   y = y.with(i + ord, -s0);
-  s1 = s1 + y[i + ord] * den[0];
+  s1 += y[i + ord] * den[0];
   y = y.with(i + ord + 1, -s1);
-  s2 = s2 + y[i + ord + 1] * den[0];
-  s2 = s2 + y[i + ord] * den[1];
+  s2 += y[i + ord + 1] * den[0];
+  s2 += y[i + ord] * den[1];
   y = y.with(i + ord + 2, -s2);
-  s3 = s3 + y[i + ord + 2] * den[0];
-  s3 = s3 + y[i + ord + 1] * den[1];
-  s3 = s3 + y[i + ord] * den[2];
+  s3 += y[i + ord + 2] * den[0];
+  s3 += y[i + ord + 1] * den[1];
+  s3 += y[i + ord] * den[2];
   y = y.with(i + ord + 3, -s3);
   out = out.append(s0).append(s1).append(s2).append(s3);
   return Block { y: y, out: out };
@@ -264,7 +264,7 @@ const XCORR_SCALE: f32 = 9.999999960041972e-13f32;
 const INTERPOLATE: f32 = 0.699999988079071f32;
 
 function half_rate(x: [f32], at: i32, n: i32): f32[] {
-  let y: f32[] = [0.25f32 * x[at + 1] + 0.5f32 * x[at]];
+  let y = [0.25f32 * x[at + 1] + 0.5f32 * x[at]];
   for i in 1..n {
     y = y.append(0.25f32 * x[at + 2 * i - 1] + 0.25f32 * x[at + 2 * i + 1] + 0.5f32 * x[at + 2 * i]);
   }
@@ -308,12 +308,12 @@ pub function pitch_downsample(x0: [f32], a0: i32, x1: [f32], a1: i32, len: i32, 
     ac = ac.with(i, ac[i] - ac[i] * w * w);
   }
   let a = lpc(ac, 4);
-  let tmp: f32 = 1.0f32;
+  let tmp = 1.0f32;
   for i in 0..4 {
     tmp = LAG_DECAY * tmp;
     a = a.with(i, a[i] * tmp);
   }
-  let num: f32[] = [a[0] + ZERO_AT, a[1] + ZERO_AT * a[0], a[2] + ZERO_AT * a[1], a[3] + ZERO_AT * a[2], ZERO_AT * a[3]];
+  let num = [a[0] + ZERO_AT, a[1] + ZERO_AT * a[0], a[2] + ZERO_AT * a[1], a[3] + ZERO_AT * a[2], ZERO_AT * a[3]];
   return fir5(lp, num, n);
 }
 
@@ -321,9 +321,9 @@ struct Best { num0: f32, den0: f32, p0: i32, num1: f32, den1: f32, p1: i32 }
 
 // The two lags of `xcorr` with the best normalised correlation.
 function find_best_pitch(xcorr: [f32], y: [f32], len: i32, max_pitch: i32): Best {
-  let syy: f32 = 1.0f32;
+  let syy = 1.0f32;
   for j in 0..len {
-    syy = syy + y[j] * y[j];
+    syy += y[j] * y[j];
   }
   let b = Best { num0: -1.0f32, den0: 0.0f32, p0: 0, num1: -1.0f32, den1: 0.0f32, p1: 1 };
   for i in 0..max_pitch {
@@ -421,7 +421,7 @@ function pitch_gain(xy: f32, xx: f32, yy: f32): f32 {
 
 // The energy of the `n` values before `b - i`, for each `i` up to `max`.
 function yy_lookup(x: [f32], b: i32, n: i32, max: i32, xx: f32): f32[] {
-  let out: f32[] = [xx];
+  let out = [xx];
   let yy = xx;
   for i in 1..max + 1 {
     yy = yy + x[b - i] * x[b - i] - x[b + n - i] * x[b + n - i];
@@ -522,13 +522,13 @@ pub function remove_doubling(x: [f32], maxperiod: i32, minperiod: i32, n: i32, t
   let g0 = pitch_gain(xy0, xx, yy[t]);
   let best = Candidate { t: t, xy: xy0, yy: yy[t], g: g0 };
   for k in 2..16 {
-    let t1: i32 = (2 * t + k) / (2 * k);
+    let t1 = (2 * t + k) / (2 * k);
     if (t1 < min) {
       break;
     }
     let t1b = second_period(t, t1, k, max);
-    let xy: f32 = 0.5f32 * (inner_prod(x, max, x, max - t1, half) + inner_prod(x, max, x, max - t1b, half));
-    let yy1: f32 = 0.5f32 * (yy[t1] + yy[t1b]);
+    let xy = 0.5f32 * (inner_prod(x, max, x, max - t1, half) + inner_prod(x, max, x, max - t1b, half));
+    let yy1 = 0.5f32 * (yy[t1] + yy[t1b]);
     let g1 = pitch_gain(xy, xx, yy1);
     if (g1 > threshold(t1, min, g0, continuity(t1, k, t, prev, prev_gain))) {
       best = Candidate { t: t1, xy: xy, yy: yy1, g: g1 };
