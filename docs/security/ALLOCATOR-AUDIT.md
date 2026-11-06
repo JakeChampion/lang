@@ -53,6 +53,13 @@ A block that is the head aborts with `fern: release of memory that is already fr
 The check costs one load and one compare on the raw free path. The typed releases keep their count and do not pay it.
 `TestSelfHostRawDoubleFree` pins the abort and a control that frees two blocks of one class in turn, on both targets.
 
+The head compare does not see a second free when a free of another block of the class comes between the two.
+Under `-harden` the raw free walks the first 64 blocks of its list instead, and a match aborts with the same cause.
+The walk decodes each link with the check that `__fern_freelist_take` makes, so a corrupt link on the way aborts as a corrupt link.
+A large free walks its list the same way, whether the block is raw or typed.
+The release build keeps the head compare.
+`TestSelfHostHardenRawInterleavedDoubleFree` pins the abort after three frees of one class, for a small class and a large class on both targets.
+
 The WebAssembly runtime makes the same two checks in `$__fern_raw_free`.
 The two interpreters keep a table of the raw blocks a program took, and a release is checked against that table.
 The `raw_free_outside_heap`, `raw_double_free` and `raw_double_free_large` rows of the abort report suite pin the cause line on every target and in both interpreters.
@@ -92,6 +99,7 @@ The cost is one load of the canary and three logical operations per push and per
 | The arena's exit statuses and their lockstep on both backends | `TestArenaExhaustedExitCodeIsNot137`, `TestArenaExhaustedExitCodeSelfHostLockstep`, `TestX86_64ArenaCheckpoint`, `TestArm64ArenaCheckpoint` |
 | A freed large block is a donor for the next request of its class | `TestSelfHostAllocReuseLargeDonor` |
 | A second raw free of the same block in a row aborts, small and large, on both backends | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free`, `raw_double_free_large`) |
+| Under `-harden` a second raw free after other frees of the class aborts, small and large, on both backends | `TestSelfHostHardenRawInterleavedDoubleFree` |
 | A freed block above one gigabyte is reused, on both backends | `TestSelfHostAllocReuseAboveOneGigabyte` |
 | A request whose bump wraps the address space aborts with the size cause, on both backends; the probe calls the allocator from patched assembly, because no checked entry passes such a size | `TestSelfHostAllocRefusesWrappedBump` |
 | Every rc corpus case reclaims everything on three targets | `TestX86_64RcCorpusLeakGate`, `TestArm64RcCorpusLeakGate`, `TestWASMRcCorpusLeakGate` |
@@ -102,7 +110,7 @@ The cost is one load of the canary and three logical operations per push and per
 | Gap | Consequence |
 |---|---|
 | Free list link inside the freed block | In the release build a raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address. `-harden` encodes the link and aborts on a bad one, and `-sanitize` quarantines freed blocks and detects the touch (SEC-023) |
-| A raw double free with another free of the same class between the two | `__free` compares the block with the head of its list, so the second free of the same block in a row aborts. A free of another block of the class between them moves the head, and the second free then links the block twice (SEC-023) |
+| A raw double free with another free of the same class between the two | In the release build `__free` compares the block with the head of its list alone, so a free of another block of the class between the two frees hides the second. `-harden` walks the first 64 blocks of the list, so only a second free with 64 or more frees of the class between them links the block twice (SEC-023) |
 | No zeroing on free | A secret stays in the arena until the block is reused and zero-filled. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |
