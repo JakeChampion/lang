@@ -15,20 +15,22 @@ if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
   git fetch -q --depth=1 origin "$base" || { echo "check-changed-programs: cannot fetch $base" >&2; exit 1; }
 fi
 
-mapfile -t files < <(git diff --name-only --diff-filter=d "$base" "$head" -- \
-  'examples/*.fern' 'tests/*.fern' 'bench/*.fern' 'scripts/*.fern')
-[ "${#files[@]}" -gt 0 ] || exit 0
-
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+if ! git diff --name-only -z --diff-filter=d "$base" "$head" -- \
+  'examples/*.fern' 'tests/*.fern' 'bench/*.fern' 'scripts/*.fern' > "$tmp/files"; then
+  exit 1
+fi
+[ -s "$tmp/files" ] || exit 0
+
 go build -o "$tmp/fern" ./cmd/fern || exit 1
 
 status=0
-for f in "${files[@]}"; do
+while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
   if ! "$tmp/fern" -check "$f"; then
     status=1
   fi
-done
+done < "$tmp/files"
 [ "$status" -eq 0 ] || echo "check-changed-programs: fix the files above; TestEveryExampleChecks checks each file alone" >&2
 exit $status

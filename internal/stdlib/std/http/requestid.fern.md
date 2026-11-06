@@ -55,7 +55,7 @@ pub const HEADER: string = "X-Request-Id";
 ```fern
 <<4 pub function stamped[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest)>>=
 pub function stamped[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let id: string = incoming(req).unwrap_or_else((): string => fresh((): i32 => plat.random_i32()));
+  let id = incoming(req).unwrap_or_else((): string => fresh((): i32 => plat.random_i32()));
   let resp = http.respond(next(req.with_header(HEADER, id)));
   return Ok(resp.with_header(HEADER, id));
 }

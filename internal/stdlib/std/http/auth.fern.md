@@ -124,7 +124,7 @@ pub function token_eq(a: string, b: string): boolean {
   while (i < a.len()) {
     let x = a[i] as i32;
     let y = b[i] as i32;
-    diff = diff | x ^ y;
+    diff |= x ^ y;
     i += 1;
   }
   return diff == 0;

@@ -38,11 +38,13 @@ for gate in "go build ./..." "go vet ./..." "make gofmt-check" "make fmt-check" 
   echo "pre-push ==> $gate"
   if ! sh -c "$gate"; then echo "pre-push FAILED: $gate"; status=1; fi
 done
-for range in "${ranges[@]}"; do
-  echo "pre-push ==> scripts/check-changed-programs $range"
-  # shellcheck disable=SC2086
-  if ! scripts/check-changed-programs $range; then echo "pre-push FAILED: check-changed-programs"; status=1; fi
-done
+if [ "${#ranges[@]}" -gt 0 ]; then
+  for range in "${ranges[@]}"; do
+    echo "pre-push ==> scripts/check-changed-programs $range"
+    # shellcheck disable=SC2086
+    if ! scripts/check-changed-programs $range; then echo "pre-push FAILED: check-changed-programs"; status=1; fi
+  done
+fi
 if [ "$status" -ne 0 ]; then
   echo "pre-push: fix the failures above, or 'git push --no-verify' to push anyway" >&2
 fi

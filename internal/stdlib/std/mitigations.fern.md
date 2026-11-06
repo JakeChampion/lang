@@ -608,7 +608,7 @@ function __flag(on: boolean): string {
 }
 
 function __digits(text: string): i64 {
-  let n: i64 = 0i64;
+  let n = 0i64;
   for c in text.bytes() {
     if (c < b'0' || c > b'9') {
       return 0i64;

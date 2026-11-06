@@ -224,8 +224,8 @@ pub struct Transient { transient: boolean, weak: boolean, tf_estimate: f32, tf_c
 // The mask metric of channel `c`: `len` samples from `c * len`.
 function mask_metric(input: [f32], c: i32, len: i32, decay: f32): i32 {
   let tmp: f32[] = [];
-  let mem0: f32 = 0.0f32;
-  let mem1: f32 = 0.0f32;
+  let mem0 = 0.0f32;
+  let mem1 = 0.0f32;
   for i in 0..len {
     let x = input[i + c * len];
     let y = mem0 + x;
@@ -238,7 +238,7 @@ function mask_metric(input: [f32], c: i32, len: i32, decay: f32): i32 {
     }
   }
   let len2 = len / 2;
-  let mean: f32 = 0.0f32;
+  let mean = 0.0f32;
   mem0 = 0.0f32;
   // A forward pass gives the post-echo threshold.
   for i in 0..len2 {
@@ -249,7 +249,7 @@ function mask_metric(input: [f32], c: i32, len: i32, decay: f32): i32 {
     mem0 = v;
   }
   mem0 = 0.0f32;
-  let max_e: f32 = 0.0f32;
+  let max_e = 0.0f32;
   // A backward pass gives the pre-echo threshold.
   let i = len2 - 1;
   while (i >= 0) {
@@ -279,7 +279,7 @@ function mask_metric(input: [f32], c: i32, len: i32, decay: f32): i32 {
 }
 
 pub function transient_analysis(input: [f32], len: i32, channels: i32, allow_weak: boolean): Transient {
-  let decay: f32 = 0.0625f32;
+  let decay = 0.0625f32;
   if (allow_weak) {
     decay = 0.03125f32;
   }
@@ -300,7 +300,7 @@ pub function transient_analysis(input: [f32], len: i32, channels: i32, allow_wea
   }
   let tf_max = max32(0.0f32, ((27 * metric) as f64).sqrt() as f32 - 42.0f32);
   let scaled = (0.0069f32 * min32(163.0f32, tf_max)) as f64 - 0.139;
-  let tf_estimate: f32 = 0.0f32;
+  let tf_estimate = 0.0f32;
   if (scaled > 0.0) {
     tf_estimate = scaled.sqrt() as f32;
   }
@@ -334,7 +334,7 @@ pub function patch_transient_decision(new_e: [f32], old_e: [f32], bands: i32, st
   if (from < 2) {
     from = 2;
   }
-  let diff: f32 = 0.0f32;
+  let diff = 0.0f32;
   for c in 0..channels {
     for k in from..end - 1 {
       let x1 = max32(0.0f32, new_e[k + c * bands]);
@@ -508,8 +508,8 @@ function select_cost(metric: [i32], importance: [i32], row: i32, lambda: i32, tr
 // The flag of each band on the path of lowest cost.
 function viterbi(metric: [i32], importance: [i32], row: i32, lambda: i32, transient: boolean): i32[] {
   let len = metric.len();
-  let path0: i32[] = [0];
-  let path1: i32[] = [0];
+  let path0 = [0];
+  let path1 = [0];
   let (cost0, cost1) = first_costs(metric, importance, row, lambda, transient);
   for i in 1..len {
     let curr0 = cost1 + lambda;
@@ -633,7 +633,7 @@ function band_corr(x: [f32], n0: i32, lm: i32, i: i32): f32 {
 // The trim change and the stereo saving from the correlation of the
 // channels, in that order.
 function stereo_trim(x: [f32], n0: i32, lm: i32, intensity: i32, stereo_saving: f32): (f32, f32) {
-  let sum: f32 = 0.0f32;
+  let sum = 0.0f32;
   for i in 0..8 {
     sum += band_corr(x, n0, lm, i);
   }
@@ -650,7 +650,7 @@ function stereo_trim(x: [f32], n0: i32, lm: i32, intensity: i32, stereo_saving: 
 }
 
 pub function alloc_trim_analysis(x: [f32], band_log_e: [f32], end: i32, lm: i32, channels: i32, n0: i32, analysis: Analysis, stereo_saving: f32, tf_estimate: f32, intensity: i32, surround_trim: f32, equiv_rate: i32): Trim {
-  let trim: f32 = 5.0f32;
+  let trim = 5.0f32;
   if (equiv_rate < 64000) {
     trim = 4.0f32;
   } else if (equiv_rate < 80000) {
@@ -663,16 +663,16 @@ pub function alloc_trim_analysis(x: [f32], band_log_e: [f32], end: i32, lm: i32,
     saving = s;
   }
   // The spectral tilt.
-  let diff: f32 = 0.0f32;
+  let diff = 0.0f32;
   for c in 0..channels {
     for i in 0..end - 1 {
-      diff = diff + band_log_e[i + c * modes.BANDS] * ((2 + 2 * i - end) as f32);
+      diff += band_log_e[i + c * modes.BANDS] * ((2 + 2 * i - end) as f32);
     }
   }
   diff /= (channels * (end - 1)) as f32;
   trim -= max32(-2.0f32, min32(2.0f32, (diff + 1.0f32) / 6.0f32));
   trim -= surround_trim;
-  trim = trim - 2.0f32 * tf_estimate;
+  trim -= 2.0f32 * tf_estimate;
   if (analysis.valid) {
     trim -= max16(-2.0f32, min16(2.0f32, 2.0f32 * (analysis.tonality_slope + 0.05f32)));
   }
@@ -824,7 +824,7 @@ function spread_weights(e: [f32], noise: [f32], end: i32, channels: i32, max_dep
 // their median and to the noise floor.
 function follower_of(e2: [f32], c: i32, end: i32, noise: [f32]): f32[] {
   let base = c * modes.BANDS;
-  let f: f32[] = [e2[base]];
+  let f = [e2[base]];
   let last = 0;
   for i in 1..end {
     if (e2[base + i] > e2[base + i - 1] + 0.5f32) {
@@ -875,7 +875,7 @@ function boost_levels(e: [f32], e2: [f32], start: i32, end: i32, channels: i32, 
 function importance_of(levels: [f32], start: i32, end: i32): i32[] {
   let out = zeros_i(modes.BANDS);
   for i in start..end {
-    let v: f32 = 0.5f32 + 13.0f32 * ((0.6931471805599453094 * (min16(levels[i], 4.0f32) as f64)).exp() as f32);
+    let v = 0.5f32 + 13.0f32 * ((0.6931471805599453094 * (min16(levels[i], 4.0f32) as f64)).exp() as f32);
     out = out.with(i, (v as f64).floor() as i32);
   }
   return out;
@@ -1185,7 +1185,7 @@ pub function run_prefilter(st: PrefilterState, own input: f32[], mem: [f32], in_
   if (an.valid) {
     gain *= an.max_pitch_ratio;
   }
-  let on: boolean = !(gain < prefilter_threshold(st, pg.pitch, f.available_bytes));
+  let on = !(gain < prefilter_threshold(st, pg.pitch, f.available_bytes));
   let qg = 0;
   if (on) {
     qg = quantised_gain(gain, st.gain);
@@ -1421,7 +1421,7 @@ function short_scaled(e: [f32], c: i32, end: i32, lm: i32): f32[] {
     for i in 0..modes.BANDS {
       let v = e[modes.BANDS * ch + i];
       if (ch < c && i < end) {
-        v = v + 0.5f32 * (lm as f32);
+        v += 0.5f32 * (lm as f32);
       }
       out = out.append(v);
     }
@@ -1432,9 +1432,9 @@ function short_scaled(e: [f32], c: i32, end: i32, lm: i32): f32[] {
 // The change of the mean band energy from the long-term mean, which the
 // VBR target follows.
 function temporal_vbr(st: Encoder, log_e: [f32], short_blocks: i32, lm: i32): (f32, f32) {
-  let follow: f32 = -10.0f32;
-  let avg: f32 = 0.0f32;
-  let offset: f32 = 0.0f32;
+  let follow = -10.0f32;
+  let avg = 0.0f32;
+  let offset = 0.0f32;
   if (short_blocks > 0) {
     offset = 0.5f32 * (lm as f32);
   }
@@ -1534,7 +1534,7 @@ function biased(log_e: [f32], st: Encoder): f32[] {
   for at in 0..log_e.len() {
     let v = log_e[at];
     if (at < st.stream_channels * modes.BANDS && at % modes.BANDS < st.end && abs16(v - st.old_band_e[at]) < 2.0f32) {
-      v = v - st.energy_error[at] * 0.25f32;
+      v -= st.energy_error[at] * 0.25f32;
     }
     out = out.append(v);
   }
@@ -1718,7 +1718,7 @@ function frame_bands(own st: Encoder, own e: range.Encoder, own old: f32[], own 
   let res = bands.quant_all_bands(range.Encoding(fe), breq, half(q.x, 0, q.n), y, q.band_e);
   let e2 = encoding_of(res.c);
   if (rsv > 0) {
-    let on: u32 = 0u32;
+    let on = 0u32;
     if (st.consec_transient < 2) {
       on = 1u32;
     }

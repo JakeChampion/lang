@@ -129,7 +129,7 @@ pub function encoder(size: i32): Encoder {
   for i in 0..size {
     buf = buf.append(0 as u8);
   }
-  return Encoder { buf: buf, storage: size, offs: 0, end_offs: 0, end_window: 0u32, nend_bits: 0, nbits_total: 33, rng: CODE_TOP, val: 0u32, rem: 0 - 1, ext: 0, error: false };
+  return Encoder { buf: buf, storage: size, offs: 0, end_offs: 0, end_window: 0u32, nend_bits: 0, nbits_total: 33, rng: CODE_TOP, val: 0u32, rem: -1, ext: 0, error: false };
 }
 
 pub function (e: Encoder) tell(): i32 {
