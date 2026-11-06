@@ -217,9 +217,8 @@ def tap_notice_button(label, out):
 
 def talk_from_notice(a, b, out):
     """TALK in a notification makes its copy transmit while it is not in
-    front, and STOP TALKING makes it listen again. The other copy can hear
-    the talk before the check knows which copy talks, so the marks come
-    first."""
+    front, and STOP TALKING makes it listen again."""
+    # Before the tap: the listener can log "hearing the peer" in the same flush as the talk line.
     before = logcat()
     marks = {a: len(lines_of(before, a)), b: len(lines_of(before, b))}
     tap_notice_button("Talk", out)

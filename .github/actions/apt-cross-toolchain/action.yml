@@ -63,6 +63,8 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/disable-chrome-apt
+
     # The runner image's identity, read at RUNTIME. `${{ env.ImageOS }}`
     # interpolated straight into the cache key below resolves to the empty
     # string inside a composite action — measured, the saved key came back as
@@ -99,6 +101,21 @@ runs:
         QEMU_PKG: ${{ inputs.qemu-package }}
       run: |
         set -uo pipefail
+
+        # Limit package setup to ten minutes within the twenty-minute job.
+        deadline=$((SECONDS + 600))
+        privileged_run() {
+          local limit="$1" remaining=$((deadline - SECONDS))
+          shift
+          if [ "$remaining" -le 0 ]; then
+            return 124
+          fi
+          if [ "$limit" -gt "$remaining" ]; then
+            limit="$remaining"
+          fi
+          # Run timeout as root so it can terminate apt and its children.
+          sudo timeout --kill-after=10 "$limit" "$@"
+        }
 
         PACKAGES="$QEMU_PKG"
         if [ "$WANT_GCC" = "true" ]; then
@@ -142,7 +159,7 @@ runs:
         dpkg_ok=1
         if ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
           echo "::group::dpkg install from $(ls "$CACHE_DIR"/*.deb | wc -l) cached .debs"
-          sudo dpkg -i "$CACHE_DIR"/*.deb || dpkg_ok=0
+          privileged_run 120 dpkg -i "$CACHE_DIR"/*.deb || dpkg_ok=0
           echo "::endgroup::"
         fi
 
@@ -159,17 +176,14 @@ runs:
                      /etc/apt/sources.list.d/google-chrome.list \
                      /etc/apt/sources.list.d/*msprod* 2>/dev/null || true
 
-          # Retry with backoff and a per-attempt timeout. The timeout is
-          # the load-bearing half: without it a stalled mirror is not a
-          # failure that can be retried, it is a hang that ends the job.
-          # Downloads land in CACHE_DIR and are KEPT, so this fetch is what
-          # populates the cache for every later run.
+          # All attempts share the deadline, including the cached install.
+          # Keep downloaded packages for the next attempt and cache save.
           attempt=1
           max=4
           while [ "$attempt" -le "$max" ]; do
             echo "::group::apt attempt $attempt/$max"
-            if timeout 300 sudo apt-get update -qq &&
-               timeout 420 sudo apt-get install -y --no-install-recommends \
+            if privileged_run 300 apt-get update -qq &&
+               privileged_run 420 apt-get install -y --no-install-recommends \
                  -o "Dir::Cache::archives=$CACHE_DIR" \
                  -o APT::Keep-Downloaded-Packages=true \
                  $PACKAGES; then
@@ -177,11 +191,16 @@ runs:
               break
             fi
             echo "::endgroup::"
-            if [ "$attempt" -eq "$max" ]; then
-              echo "::error::apt failed ${max} times installing ${PACKAGES}. This is an infrastructure failure, not a test failure — no test has run at this point. Check whether the Ubuntu mirror is stalling or a repo is returning 403."
+            remaining=$((deadline - SECONDS))
+            if [ "$attempt" -eq "$max" ] || [ "$remaining" -le 0 ]; then
+              echo "::error::cross-toolchain setup failed after ${attempt} attempts or reached its 600-second limit. No tests ran. Check the Ubuntu mirror and apt repositories."
               exit 1
             fi
-            sleep $((attempt * 15))
+            delay=$((attempt * 15))
+            if [ "$delay" -gt "$remaining" ]; then
+              delay="$remaining"
+            fi
+            sleep "$delay"
             attempt=$((attempt + 1))
           done
         fi
