@@ -15535,8 +15535,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		c.expectedType = nil
 		c.elemHint = nil
-		if id, ok := n.Target.(*ast.Ident); ok && bareMap(lt) {
-			// A call of insert on the right side can give the map its type.
+		if id, ok := n.Target.(*ast.Ident); ok && c.holdsOpenEnum(lt) {
+			// A use of the open local on the right side can give it its type.
 			lt, _ = s.lookup(id.Name)
 		}
 		if id, ok := n.Target.(*ast.Ident); ok && c.litIdents[id] != nil {

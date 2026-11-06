@@ -31743,6 +31743,21 @@ function gcall_arg_key(c: ast.ExprCall, k: i32): string {
   return "c" + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col) + "#" + util.i32_to_string(k);
 }
 
+// variant_payload_types is the payload types of a variant constructor call,
+// with the type arguments the call gives its enum.
+function variant_payload_types(c: ast.ExprCall, s: Scope): typeinfo.Type[] {
+  let ast.ExprIdent(id) = c.callee else {
+    return [];
+  };
+  let Some(sig) = s.lookup_variant(id.name) else {
+    return [];
+  };
+  if (sig.enum_owner.len() == 0) {
+    return [];
+  }
+  return instantiated_variant(sig, s, check_expr(c, s)).field_types;
+}
+
 // lit_arg_reads is true when a call argument holds something the pass must
 // settle from the parameter type.
 function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
@@ -31794,6 +31809,9 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   let pts: typeinfo.Type[] = [];
   if (reads) {
     pts = s.call_param_types(c);
+    if (pts.len() == 0) {
+      pts = variant_payload_types(c, s);
+    }
   }
   let i = 0;
   while (i < c.args.len()) {
