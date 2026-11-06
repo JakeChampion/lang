@@ -158,7 +158,7 @@ function main_screen(f: draw.Frame, v: View): void {
   if (stopwatch.on(v.values, "clock_enabled")) {
     let r = screen.clock_box(w, h, v.values, v.clock, v.dx, v.dy);
     let p = screen.clock_pitch(w, h, v.values);
-    let color = look.blend(look.ink(), look.bg(), stopwatch.value(v.values, "clock_opacity"));
+    let color = look.faded(look.ink(), stopwatch.value(v.values, "clock_opacity"));
     matrix.text_dots(f, r.x, r.y, v.clock, p, dot_r(p, stopwatch.on(v.values, "clock_thin")), color);
   }
   if (stopwatch.on(v.values, "stopwatch_enabled")) {
@@ -190,7 +190,7 @@ function dial(f: draw.Frame, r: screen.Rect, v: View): void {
   f.disc(cx, cy, rad * 90 / 100, look.surface());
   for k in 0..stopwatch.RING_DOTS {
     let a: f64 = 6.283185307179586 * (k as f64) / (stopwatch.RING_DOTS as f64);
-    let color = look.blend(stopwatch.ring_color(k, v.elapsed, seconds, v.running), look.bg(), opacity);
+    let color = look.faded(stopwatch.ring_color(k, v.elapsed, seconds, v.running), opacity);
     f.disc(cx + ((rad - dot) as f64 * a.sin()) as i32, cy - ((rad - dot) as f64 * a.cos()) as i32, dot, color);
   }
   let text = stopwatch.stopwatch_text(v.elapsed, seconds);
@@ -204,14 +204,14 @@ function dial(f: draw.Frame, r: screen.Rect, v: View): void {
   }
   let th = matrix.height(p);
   let top = cy - th / 2;
-  let color = look.blend(stopwatch.stopwatch_color(v.running, v.elapsed), look.surface(), opacity);
+  let color = look.faded(stopwatch.stopwatch_color(v.running, v.elapsed), opacity);
   matrix.text_dots(f, cx - matrix.width(text, p) / 2, top, text, p, dot_r(p, stopwatch.on(v.values, "stopwatch_thin")), color);
   let status = stopwatch.status_text(v.running, v.elapsed);
   let sp = rad / 60;
   if (sp < 1) {
     sp = 1;
   }
-  matrix.text(f, cx - matrix.width(status, sp) / 2, top + th + th * 55 / 100, status, sp, look.blend(look.muted(), look.surface(), opacity));
+  matrix.text(f, cx - matrix.width(status, sp) / 2, top + th + th * 55 / 100, status, sp, look.faded(look.muted(), opacity));
 }
 
 // The title of a list screen and its BACK button, moved up by `scroll`.
@@ -365,7 +365,7 @@ function about_line(f: draw.Frame, r: screen.Rect, pad: i32, y: i32, line: strin
 pub function icon(f: draw.Frame): void {
   let n = f.width;
   let c = n / 2;
-  f.fill(0, 0, n, n, 0);
+  f.store(0, 0, n, n, 0);
   f.disc(c, c, c, look.bg());
   f.disc(c, c, c * 62 / 100, look.surface());
   let dots: i32 = 24;

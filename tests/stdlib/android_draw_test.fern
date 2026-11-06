@@ -71,6 +71,37 @@ function test_rgb(): test.TestOutcome {
   return test.assert_eq(draw.rgb(1, 2, 3), -16777216 | 3 << 16 | 2 << 8 | 1);
 }
 
+function test_rgba(): test.TestOutcome {
+  let half = draw.rgba(200, 100, 50, 128);
+  let got = (draw.rgba(1, 2, 3, 255) == draw.rgb(1, 2, 3)).to_string() + " " + (half >> 24 & 255).to_string() + " " + draw.over(half, draw.rgb(0, 0, 0)).to_string() + " " + draw.over(draw.rgba(9, 9, 9, 0), draw.rgb(1, 2, 3)).to_string();
+  // 200 * 128 / 255 = 100, 100 * 128 / 255 = 50 and 50 * 128 / 255 = 25.
+  return test.assert_eq(got, "true 128 " + draw.rgb(100, 50, 25).to_string() + " " + draw.rgb(1, 2, 3).to_string());
+}
+
+// A shape with an alpha blends over the pixels under it: a fill, and the
+// middle of a disc.
+function test_alpha_shapes(): test.TestOutcome {
+  let f = frame(40, 40);
+  defer free_frame(f);
+  f.fill(0, 0, 40, 20, draw.rgb(0, 0, 200));
+  let half = draw.rgba(255, 255, 255, 128);
+  f.fill(0, 0, 10, 40, half);
+  f.disc(30, 30, 6, half);
+  let got = (f.pixel(5, 5) == draw.over(half, draw.rgb(0, 0, 200))).to_string() + " " + (f.pixel(5, 35) == draw.over(half, draw.rgb(0, 0, 0))).to_string() + " " + (f.pixel(30, 30) == draw.over(half, draw.rgb(0, 0, 0))).to_string() + " " + (f.pixel(15, 5) == draw.rgb(0, 0, 200)).to_string();
+  return test.assert_eq(got, "true true true true");
+}
+
+// `store` writes the pixel word with no blend, and clips to the frame.
+function test_store(): test.TestOutcome {
+  let f = frame(10, 8);
+  defer free_frame(f);
+  f.fill(0, 0, 10, 8, draw.rgb(0, 0, 200));
+  let clear = draw.rgba(255, 255, 255, 0);
+  f.store(-3, -3, 5, 5, clear);
+  let got = (f.pixel(1, 1) == clear).to_string() + " " + (f.pixel(2, 2) == draw.rgb(0, 0, 200)).to_string() + " " + count(f, clear).to_string();
+  return test.assert_eq(got, "true true 4");
+}
+
 function test_fill_clips(): test.TestOutcome {
   let f = frame(10, 8);
   defer free_frame(f);
@@ -143,5 +174,8 @@ function main(): i32 {
   r = r.it("scale grows the text", test_scale_grows_the_text);
   r = r.it("the width counts characters, not bytes", test_width_counts_characters);
   r = r.it("text outside the frame is clipped", test_text_outside_is_clipped);
+  r = r.it("rgba carries an alpha", test_rgba);
+  r = r.it("store writes the pixel word with no blend", test_store);
+  r = r.it("a shape with an alpha blends", test_alpha_shapes);
   return r.finish();
 }
