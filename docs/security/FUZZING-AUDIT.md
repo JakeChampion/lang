@@ -15,7 +15,7 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 
 | Target | Boundary | Driver | Accepted outcomes |
 |---|---|---|---|
-| `FuzzSelfHostManifest` | `fern -manifest` reads a native image | the CLI | the fields with exit 0, or `fern: no build manifest in` with exit 1 |
+| `FuzzSelfHostManifest` | `fern -manifest` reads a native image | the CLI | the fields in printable ASCII with exit 0, or `fern: no build manifest in` with exit 1 |
 | `FuzzSelfHostIRVerify` | the structural, stack and reference-count verifiers read an op stream | `compiler/drivers/irverify_fuzz_run.fern` | a problem count from each verifier, exit 0 |
 | `FuzzSelfHostX86Assembler` | the x86-64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern x86` | a summary with exit 0, or an abort with a `fern:` cause |
 | `FuzzSelfHostArm64Assembler` | the arm64 assembler reads assembly text | `compiler/drivers/asm_fuzz_run.fern arm64` | the same |
