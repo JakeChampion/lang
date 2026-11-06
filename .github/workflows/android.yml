@@ -12,6 +12,8 @@ name: Android
 # -apk writes, and its check requires that ART loads, constructs and binds
 # them. tests/android/audio checks std/android/audio and a JNI call from
 # the loop thread, so the emulator runs with its audio on.
+# tests/android/tz/zone.fern requires that tz.local_zone follows the zone
+# that the emulator keeps in the property persist.sys.timezone.
 # examples/android/walkie is the LAN walkie-talkie: its check runs two
 # copies of it against each other, with the cached-app freezer disabled and
 # its effective state checked before either copy starts.
@@ -46,6 +48,7 @@ jobs:
           mkdir -p build/android-stopwatch
           ./bin/fern -apk build/android-stopwatch/fern-stopwatch.apk -apk-package dev.fern.stopwatch -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png -apk-min-sdk 28 examples/android/stopwatch/app.fern
           ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
+          ./bin/fern -target x86-64-android -o build/android-stopwatch/zone tests/android/tz/zone.fern
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
@@ -58,6 +61,7 @@ jobs:
           path: |
             build/android-stopwatch/fern-stopwatch.apk
             build/android-stopwatch/report
+            build/android-stopwatch/zone
             build/android-stopwatch/fern-native.apk
             build/android-stopwatch/fern-dextest.apk
             build/android-stopwatch/fern-audiotest.apk
@@ -95,6 +99,7 @@ jobs:
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
+            python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}

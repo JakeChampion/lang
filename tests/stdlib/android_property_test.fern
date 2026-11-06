@@ -1,0 +1,163 @@
+import "std/android/property";
+import "std/option";
+import "std/test";
+
+// `b` with the little-endian word `v` at its end.
+function w32(own b: u8[], v: i32): u8[] {
+  let out = b.append((v & 255) as u8);
+  out = out.append((v >> 8 & 255) as u8);
+  out = out.append((v >> 16 & 255) as u8);
+  return out.append((v >> 24 & 255) as u8);
+}
+
+// `b` with NUL bytes at its end until it has `n` bytes.
+function to(own b: u8[], n: i32): u8[] {
+  let out = b;
+  while (out.len() < n) {
+    out = out.append(0u8);
+  }
+  return out;
+}
+
+function text(own b: u8[], s: string): u8[] {
+  let out = b;
+  for c in s.as_bytes() {
+    out = out.append(c);
+  }
+  return out.append(0u8);
+}
+
+function words(own b: u8[], vs: i32[]): u8[] {
+  let out = b;
+  for v in vs {
+    out = w32(out, v);
+  }
+  return out;
+}
+
+// A property_info file. The root has the context default_prop and the
+// prefix "ro.b" with timezone_prop. Its child persist has no context, and
+// the child sys of persist has system_prop and the exact name timezone with
+// timezone_prop.
+function info(): u8[] {
+  let b: u8[] = [];
+  b = words(b, [1, 1, 304, 24, 40, 204]);
+  b = words(b, [3, 44, 60, 72]);
+  b = words(b, [0]);
+  b = text(to(b, 44), "default_prop");
+  b = text(to(b, 60), "system_prop");
+  b = text(to(b, 72), "timezone_prop");
+  b = text(to(b, 88), "");
+  b = text(to(b, 92), "persist");
+  b = text(to(b, 100), "sys");
+  b = text(to(b, 104), "timezone");
+  b = text(to(b, 116), "ro.b");
+  b = words(to(b, 124), [88, 0, 0, -1]);
+  b = words(b, [92, 7, -1, -1]);
+  b = words(b, [100, 3, 1, -1]);
+  b = words(b, [104, 8, 2, -1]);
+  b = words(b, [116, 4, 2, -1]);
+  b = words(to(b, 204), [124, 1, 288, 1, 292, 0, 0]);
+  b = words(b, [140, 1, 296, 0, 0, 0, 0]);
+  b = words(b, [156, 0, 0, 0, 0, 1, 300]);
+  return words(to(b, 288), [232, 188, 260, 172]);
+}
+
+function context(name: string): string {
+  return property.info_context(info(), name).unwrap_or("none");
+}
+
+function test_info_exact(): test.TestOutcome {
+  return test.assert_eq(context("persist.sys.timezone"), "timezone_prop");
+}
+
+function test_info_node(): test.TestOutcome {
+  return test.assert_eq(context("persist.sys.locale") + " " + context("persist.sys.timezone.x"), "system_prop system_prop");
+}
+
+function test_info_root(): test.TestOutcome {
+  return test.assert_eq(context("persist.other") + " " + context("x"), "default_prop default_prop");
+}
+
+function test_info_prefix(): test.TestOutcome {
+  return test.assert_eq(context("ro.build.id") + " " + context("ro.a"), "timezone_prop default_prop");
+}
+
+function test_info_version(): test.TestOutcome {
+  let b = words([], [2, 2]);
+  return test.assert_eq(property.info_context(b, "x").is_none(), true);
+}
+
+const CONTEXTS: string = "# a comment\n*\tdefault_prop\npersist.sys.   system_prop   string\npersist.sys.timezone timezone_prop\n\n";
+
+function text_context(name: string): string {
+  return property.text_context(CONTEXTS, name).unwrap_or("none");
+}
+
+function test_text_context(): test.TestOutcome {
+  let got = text_context("persist.sys.timezone") + " " + text_context("persist.sys.locale") + " " + text_context("ro.x");
+  return test.assert_eq(got, "timezone_prop system_prop default_prop");
+}
+
+// A property area. The root has the children persist and, to its left, ro.
+// sys under persist has timezone and, to its left, locale. ro has build,
+// which has id with a long value.
+function area(): u8[] {
+  let b: u8[] = [];
+  b = words(b, [328, 0, 1347375696, -59846485]);
+  b = to(b, 128);
+  b = words(b, [0, 0, 0, 0, 20]);
+  b = text(words(b, [7, 0, 48, 0, 72]), "persist");
+  b = text(words(to(b, 128 + 48), [2, 0, 0, 0, 156]), "ro");
+  b = text(words(to(b, 128 + 72), [3, 0, 0, 0, 96]), "sys");
+  b = text(words(to(b, 128 + 96), [8, 208, 128, 0, 0]), "timezone");
+  b = text(words(to(b, 128 + 128), [6, 328, 0, 0, 0]), "locale");
+  b = text(words(to(b, 128 + 156), [5, 0, 0, 0, 184]), "build");
+  b = text(words(to(b, 128 + 184), [2, 444, 0, 0, 0]), "id");
+  b = text(w32(to(b, 128 + 208), 2), "Asia/Kolkata");
+  b = text(to(b, 128 + 208 + 96), "persist.sys.timezone");
+  b = text(w32(to(b, 128 + 328), 4), "en-US");
+  b = text(to(b, 128 + 328 + 96), "persist.sys.locale");
+  b = w32(to(b, 128 + 444), 65536);
+  b = text(b, "the value is long");
+  b = w32(to(b, 128 + 444 + 60), 108);
+  b = text(to(b, 128 + 444 + 96), "ro.build.id");
+  return text(to(b, 128 + 444 + 108), "a value of more than 92 bytes");
+}
+
+function value(name: string): string {
+  return property.area_value(area(), name).unwrap_or("none");
+}
+
+function test_area_short(): test.TestOutcome {
+  return test.assert_eq(value("persist.sys.timezone") + " " + value("persist.sys.locale"), "Asia/Kolkata en-US");
+}
+
+function test_area_long(): test.TestOutcome {
+  return test.assert_eq(value("ro.build.id"), "a value of more than 92 bytes");
+}
+
+function test_area_missing(): test.TestOutcome {
+  let got = value("persist.sys") + " " + value("persist.sys.time") + " " + value("ro.build.id.x") + " " + value("") + " " + value("persist..x");
+  return test.assert_eq(got, "none none none none none");
+}
+
+function test_area_magic(): test.TestOutcome {
+  let b = words([], [0, 0, 1, 2]);
+  return test.assert_eq(property.area_value(to(b, 160), "x").is_none(), true);
+}
+
+function main(): i32 {
+  let r = test.new("std/android/property");
+  r = r.it("an exact name gives its context", test_info_exact);
+  r = r.it("a node gives its context to the names under it", test_info_node);
+  r = r.it("the root gives the context of the other names", test_info_root);
+  r = r.it("a prefix that is not a part gives its context", test_info_prefix);
+  r = r.it("a property_info of a later version gives none", test_info_version);
+  r = r.it("the longest prefix of the text gives the context", test_text_context);
+  r = r.it("an area gives a short value", test_area_short);
+  r = r.it("an area gives a long value", test_area_long);
+  r = r.it("an area gives none for a name that it does not have", test_area_missing);
+  r = r.it("an area with a different magic gives none", test_area_magic);
+  return r.finish();
+}

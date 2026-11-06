@@ -1,0 +1,15 @@
+// Prints the system property persist.sys.timezone and the offset of
+// tz.local_zone at 2026-01-01T00:00:00Z. The Android lane runs it on an
+// emulator, and android_tz_test.go on Linux.
+import "std/android/property";
+import "std/option";
+import "std/time";
+import "std/tz";
+
+function main(): i32 {
+  let name = property.get("persist.sys.timezone").unwrap_or("");
+  let z = tz.local_zone();
+  print("property " + name);
+  print("offset " + z.offset_at(time.timestamp_from_unix(1767225600i64)).to_string());
+  return 0;
+}
