@@ -18,7 +18,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 		"admitted send_adopt pops=1 pushes=1\n" +
 		"admitted worker_unmap pops=3 pushes=1\n" +
 		"admitted send_root pops=1 pushes=1\n" +
-		"registered=439 declined=3\n"
+		"registered=442 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
