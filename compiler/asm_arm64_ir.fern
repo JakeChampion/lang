@@ -7624,14 +7624,14 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cbz x0, .Lfltake_done\n");
   s = s.write(".Lfltake_walk:\n");
   s = s.write("    cbz x10, .Lfltake_unlink\n");
-  s = freelist_next(s);
+  s = freelist_next(s, "x0", "x12");
   s = s.write("    cbz x12, .Lfltake_unlink\n");
   s = s.write("    mov x11, x0\n");
   s = s.write("    mov x0, x12\n");
   s = s.write("    sub x10, x10, #1\n");
   s = s.write("    b .Lfltake_walk\n");
   s = s.write(".Lfltake_unlink:\n");
-  s = freelist_next(s);
+  s = freelist_next(s, "x0", "x12");
   s = s.write("    cmp x11, x13\n");
   s = s.write("    b.eq .Lfltake_store\n");
   s = s.write(freelist_key("x11", "x16"));
@@ -7659,21 +7659,21 @@ function freelist_key(block: string, into: string): string {
   return quar_addr(into, "__fern_canary") + "    ldr " + into + ", [" + into + "]\n    eor " + into + ", " + into + ", " + block + ", lsr #12\n";
 }
 
-// Decodes the link of the block in x0 into x12 and checks it: zero ends the
-// list, and a next block is 8-byte aligned and inside the arena.
-function freelist_next(s: asmcore.EmitState): asmcore.EmitState {
+// Decodes the link of the free block in `block` into `out` and checks it: zero
+// ends the list, and a next block is 8-byte aligned and inside the arena.
+function freelist_next(s: asmcore.EmitState, block: string, out: string): asmcore.EmitState {
   let ok = asmcore.fresh_label(s);
   s = ok.state;
-  s = s.write(freelist_key("x0", "x16"));
-  s = s.write("    ldr x12, [x0]\n");
-  s = s.write("    eor x12, x12, x16\n");
-  s = s.write("    cbz x12, " + ok.name + "\n");
-  s = s.write("    tst x12, #7\n");
+  s = s.write(freelist_key(block, "x16"));
+  s = s.write("    ldr " + out + ", [" + block + "]\n");
+  s = s.write("    eor " + out + ", " + out + ", x16\n");
+  s = s.write("    cbz " + out + ", " + ok.name + "\n");
+  s = s.write("    tst " + out + ", #7\n");
   s = s.write("    b.ne __fern_free_link_abort_leaf\n");
   s = s.write(quar_addr("x16", "__fern_heap_base"));
-  s = s.write("    ldr x16, [x16]\n    cmp x12, x16\n    b.lo __fern_free_link_abort_leaf\n");
+  s = s.write("    ldr x16, [x16]\n    cmp " + out + ", x16\n    b.lo __fern_free_link_abort_leaf\n");
   s = s.write(quar_addr("x16", "__fern_heap_end"));
-  s = s.write("    ldr x16, [x16]\n    cmp x12, x16\n    b.hs __fern_free_link_abort_leaf\n");
+  s = s.write("    ldr x16, [x16]\n    cmp " + out + ", x16\n    b.hs __fern_free_link_abort_leaf\n");
   return s.write(ok.name + ":\n");
 }
 
@@ -8231,12 +8231,30 @@ function freelist_push_slot(s: asmcore.EmitState, ptr: string, base: string, slo
   s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
   s = s.write("    ldr " + tmp + ", [" + slot + "]\n");
   if (twice != "") {
-    s = s.write("    cmp " + tmp + ", " + ptr + "\n");
-    s = s.write("    b.eq " + twice + "\n");
+    s = freelist_twice_check(s, tmp, ptr, twice);
   }
   s = freelist_encode(s, ptr, tmp);
   s = s.write("    str " + tmp + ", [" + ptr + "]\n");
   return s.write("    str " + ptr + ", [" + slot + "]\n");
+}
+
+// Branches to `twice` when `ptr` is already on the free list whose head is in
+// `head`. The release build compares the head alone. -harden walks the first
+// 64 blocks through freelist_next, so a second free with other frees of the
+// class between the two aborts too. x11 to x13 are kept, and x16 is scratch.
+function freelist_twice_check(s: asmcore.EmitState, head: string, ptr: string, twice: string): asmcore.EmitState {
+  if (!s.harden) {
+    return s.write("    cmp " + head + ", " + ptr + "\n    b.eq " + twice + "\n");
+  }
+  let l = asmcore.fresh_label(s);
+  let n = l.name;
+  let restore = "    ldr x13, [sp, #16]\n    ldp x11, x12, [sp], #32\n";
+  s = l.state.write("    stp x11, x12, [sp, #-32]!\n    str x13, [sp, #16]\n    mov x11, " + head + "\n    mov x13, #64\n");
+  s = s.write(n + "_loop:\n    cbz x11, " + n + "_done\n    cmp x11, " + ptr + "\n    b.eq " + n + "_hit\n");
+  s = freelist_next(s, "x11", "x12");
+  s = s.write("    mov x11, x12\n    subs x13, x13, #1\n    b.ne " + n + "_loop\n");
+  s = s.write(n + "_done:\n" + restore + "    b " + n + "_out\n" + n + "_hit:\n" + restore + "    b " + twice + "\n");
+  return s.write(n + "_out:\n");
 }
 
 // Frees the block at ptr of words words. With `raw` the block is a raw release,
@@ -10001,8 +10019,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x3, __fern_large_freelist\n");
   s = s.write("    add x3, x3, :lo12:__fern_large_freelist\n");
   s = s.write("    ldr x4, [x3, x2, lsl #3]\n");
-  s = s.write("    cmp x4, x1\n");
-  s = s.write("    b.eq __fern_double_free_abort_leaf\n");
+  s = freelist_twice_check(s, "x4", "x1", "__fern_double_free_abort_leaf");
   s = freelist_encode(s, "x1", "x4");
   s = s.write("    str x4, [x1]\n");
   s = s.write("    str x1, [x3, x2, lsl #3]\n");

@@ -445,12 +445,29 @@ function freelist_push_slot(s: asmcore.EmitState, ptr: string, slot: string, tmp
   s = s.write("    leaq __fern_freelist(%rip), %r8\n");
   s = s.write("    movq " + slot + ", " + tmp + "\n");
   if (twice != "") {
-    s = s.write("    cmpq " + ptr + ", " + tmp + "\n");
-    s = s.write("    je " + twice + "\n");
+    s = freelist_twice_check(s, tmp, ptr, twice);
   }
   s = freelist_encode(s, ptr, tmp, "%r9");
   s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
   return s.write("    movq " + ptr + ", " + slot + "\n");
+}
+
+// Jumps to `twice` when `ptr` is already on the free list whose head is in
+// `head`. The release build compares the head alone. -harden walks the first
+// 64 blocks through .Lfltake_next, so a second free with other frees of the
+// class between the two aborts too.
+function freelist_twice_check(s: asmcore.EmitState, head: string, ptr: string, twice: string): asmcore.EmitState {
+  if (!s.harden) {
+    return s.write("    cmpq " + ptr + ", " + head + "\n    je " + twice + "\n");
+  }
+  let l = asmcore.fresh_label(s);
+  let n = l.name;
+  let restore = "    popq %r11\n    popq %r10\n    popq %r8\n    popq %rax\n";
+  s = l.state.write("    pushq %rax\n    pushq %r8\n    pushq %r10\n    pushq %r11\n    movq " + ptr + ", %r10\n    movq " + head + ", %rax\n    movl $64, %r11d\n");
+  s = s.write(n + "_loop:\n    testq %rax, %rax\n    jz " + n + "_done\n    cmpq %r10, %rax\n    je " + n + "_hit\n");
+  s = s.write("    call .Lfltake_next\n    movq %r8, %rax\n    decl %r11d\n    jnz " + n + "_loop\n");
+  s = s.write(n + "_done:\n" + restore + "    jmp " + n + "_out\n" + n + "_hit:\n" + restore + "    jmp " + twice + "\n");
+  return s.write(n + "_out:\n");
 }
 
 // The abort a corrupt free list link takes, which only -harden checks.
@@ -3245,8 +3262,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdx, %rax\n");
   s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
   s = s.write("    movq (%rdx,%rax,8), %rcx\n");
-  s = s.write("    cmpq %r8, %rcx\n");
-  s = s.write("    je .Lrawfree_double\n");
+  s = freelist_twice_check(s, "%rcx", "%r8", ".Lrawfree_double");
   s = freelist_encode(s, "%r8", "%rcx", "%rsi");
   s = s.write("    movq %rcx, (%r8)\n");
   s = s.write("    movq %r8, (%rdx,%rax,8)\n");

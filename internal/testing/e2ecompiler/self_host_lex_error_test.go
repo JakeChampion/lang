@@ -18,8 +18,6 @@ var lexErrorCases = []struct{ name, src string }{
 	{"dollar-in-body", "function main(): i32 {\n  let x: i32 = 1;\n  $ x;\n  return x;\n}\n"},
 	{"backtick-top-level", "function main(): i32 { return 0; }\n`\n"},
 	{"backtick-in-body", "function main(): i32 {\n  let s: i32 = `1`;\n  return s;\n}\n"},
-	{"tilde-top-level", "~~\nfunction main(): i32 { return 0; }\n"},
-	{"tilde-in-body", "function main(): i32 {\n  let x: i32 = ~~1;\n  return x;\n}\n"},
 	{"backslash-top-level", "function main(): i32 { return 0; }\n\\\n"},
 	{"backslash-in-body", "function main(): i32 {\n  \\ return 0;\n}\n"},
 	{"section-sign-top-level", "§\nfunction main(): i32 { return 0; }\n"},

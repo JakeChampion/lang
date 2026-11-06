@@ -1,3 +1,6 @@
+# 2026-11-06: PR #14320 at 49f0b046. CI run 42231713106, driver-sizes-x86_64.
+# @noinline on ssarc.emit shares one body across its call sites. Seven drivers shrank 5.1% to 12.6%,
+# and each moves to its measured value. fern.fern measured 15.8 MB, inside the limit.
 # 2026-10-31: PR #13897 at 16e65aa. CI run 41151971877, driver-sizes-x86_64.
 # The stage-2 compiler image measured 15858592 bytes after the lifetime and shared-helper repairs.
 # Sizes, in BYTES, of the self-host driver binaries CI already builds, plus
@@ -591,11 +594,11 @@
 fern.fern/stage2 15881456
 fern.fern 15853232
 drivers/asm_load_run.fern 12721632
-drivers/asm_modload_run.fern 11425488
-drivers/asm_ir_run.fern 11018128
-drivers/asm_run.fern 10189728
-drivers/wasm_ir_run.fern 9815536
-drivers/wasm_run.fern 9823760
-drivers/wasm_runio_run.fern 9805056
-drivers/asm_pathprobe_run.fern 6589808
+drivers/asm_modload_run.fern 10839904
+drivers/asm_ir_run.fern 10449984
+drivers/asm_run.fern 9577776
+drivers/wasm_ir_run.fern 9208976
+drivers/wasm_run.fern 9219200
+drivers/wasm_runio_run.fern 9197104
+drivers/asm_pathprobe_run.fern 5756560
 drivers/checker_modload_run.fern 3717520

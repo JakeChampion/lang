@@ -143,3 +143,46 @@ func TestSelfHostRawDoubleFree(t *testing.T) {
 		}
 	}
 }
+
+// Under -harden a raw free walks the first 64 blocks of its list, so a second
+// free of a block with other frees of its class between the two aborts too.
+func rawInterleavedFreeSrc(size string) string {
+	return `function main(): i32 {
+  unsafe {
+    let a: usize = __alloc(` + size + `);
+    let b: usize = __alloc(` + size + `);
+    let c: usize = __alloc(` + size + `);
+    __free(a, ` + size + `);
+    __free(b, ` + size + `);
+    __free(c, ` + size + `);
+    print("three frees of one class");
+    __free(a, ` + size + `);
+    print("freed a block twice");
+    return 0;
+  }
+}
+`
+}
+
+func TestSelfHostHardenRawInterleavedDoubleFree(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	_, qemu := arm64Tooling(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		for _, size := range []string{"64", "1048576"} {
+			t.Run(target+"/"+size, func(t *testing.T) {
+				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawInterleavedFreeSrc(size), "-harden")
+				want := "three frees of one class\n"
+				if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: release of memory that is already free\n") {
+					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
+				}
+			})
+			t.Run(target+"/"+size+"/head", func(t *testing.T) {
+				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawDoubleFreeSrc(size), "-harden")
+				want := "true\ntwo frees of one class\n"
+				if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: release of memory that is already free\n") {
+					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
+				}
+			})
+		}
+	}
+}
