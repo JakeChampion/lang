@@ -6425,7 +6425,22 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__store_ptr") {
     return Lowered { found: true, r: emit(r, ir.op_store_ptr()) };
   }
+  if (util.str_has_prefix(ins.str, "__mmio_") || ins.str == "__fence") {
+    return Lowered { found: true, r: emit(r, device_op(ins.str)) };
+  }
   return raw_floor_site(r, ins);
+}
+
+// The IR op of a device intrinsic. An MMIO access has the width that ends its
+// name.
+function device_op(name: string): ir.Op {
+  if (name == "__fence") {
+    return ir.op_fence();
+  }
+  if (util.str_has_prefix(name, "__mmio_load")) {
+    return ir.op_mmio_load(util.digits_to_i32(slice_unchecked(name, 11, name.len()) + ""));
+  }
+  return ir.op_mmio_store(util.digits_to_i32(slice_unchecked(name, 12, name.len()) + ""));
 }
 
 struct RawOps { name: string, ops: ir.Op[] }
