@@ -6,7 +6,8 @@ name: Fern image
 #
 # One job. The native half and the wasm half each build the compiler and
 # install the Python reference. As two jobs they paid two builds, two setups
-# and two slots of the runner pool. The tests take about 28 minutes.
+# and two slots of the runner pool. scripts/both-modes.sh runs the native and
+# the wasm leg of each check at the same time on the runner's four CPUs.
 on:
   workflow_call:
   workflow_dispatch:
@@ -51,183 +52,105 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
-      - run: ./fern-image/scripts/test-png-corpus.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-png-corpus.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-png-corpus.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_coefficients_test.py
-      - run: ./fern-image/scripts/test-jpeg-coefficients.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-coefficients.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-coefficients.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_idct_test.py
-      - run: ./fern-image/scripts/test-jpeg-idct.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-idct.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-idct.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_grayscale_test.py
-      - run: ./fern-image/scripts/test-jpeg-grayscale.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-grayscale.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-grayscale.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_ycbcr_test.py
-      - run: ./fern-image/scripts/test-jpeg-ycbcr.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-ycbcr.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-ycbcr.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_planes_test.py
-      - run: ./fern-image/scripts/test-jpeg-planes.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-planes.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-planes.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_chroma_test.py
-      - run: ./fern-image/scripts/test-jpeg-chroma.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-chroma.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-chroma.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_rgb_test.py
-      - run: ./fern-image/scripts/test-jpeg-rgb.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-rgb.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-rgb.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_exif_test.py
-      - run: ./fern-image/scripts/test-jpeg-exif.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-exif.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-exif.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_orientation_test.py
-      - run: ./fern-image/scripts/test-jpeg-orientation.sh native
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-orientation.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-jpeg-orientation.sh wasm
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/check-icc-primitives.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/check-icc-primitives.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/check-icc-primitives.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_envelope_test.py
-      - run: ./fern-image/scripts/test-icc-envelope.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-envelope.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-envelope.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_tag_data_test.py
-      - run: ./fern-image/scripts/test-icc-tag-data.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-tag-data.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-tag-data.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_curv_eval_test.py
-      - run: ./fern-image/scripts/test-icc-curv-eval.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-curv-eval.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-curv-eval.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_curv_inverse_test.py
-      - run: ./fern-image/scripts/test-icc-curv-inverse.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-curv-inverse.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-curv-inverse.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_power_inverse_test.py
-      - run: ./fern-image/scripts/test-icc-power-inverse.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-power-inverse.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-power-inverse.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_affine_inverse_test.py
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_quadratic_inverse_test.py
-      - run: ./fern-image/scripts/test-icc-affine-inverse.sh native
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-affine-inverse.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-affine-inverse.sh wasm
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-quadratic-inverse.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-quadratic-inverse.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-quadratic-inverse.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_inverse_test.py
-      - run: ./fern-image/scripts/test-icc-inverse.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-inverse.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-inverse.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_parametric_eval_test.py
-      - run: ./fern-image/scripts/test-icc-parametric-eval.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-parametric-eval.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-parametric-eval.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_app2_test.py
-      - run: ./fern-image/scripts/test-icc-app2.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-app2.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-app2.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_eval_test.py
-      - run: ./fern-image/scripts/test-icc-matrix-eval.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-matrix-eval.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-matrix-eval.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_model_test.py
-      - run: ./fern-image/scripts/test-icc-matrix-model.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-matrix-model.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-matrix-model.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_trc_eval_test.py
-      - run: ./fern-image/scripts/test-icc-matrix-trc.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-matrix-trc.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-matrix-trc.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_solve_test.py
-      - run: ./fern-image/scripts/test-icc-matrix-solve.sh native
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-matrix-solve.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-icc-matrix-solve.sh wasm
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-deflate-reader.sh native
-        env:
-          FERN: ${{ github.workspace }}/bin/fern
-      - run: ./fern-image/scripts/test-deflate-reader.sh wasm
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-deflate-reader.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/upload-artifact@v7
