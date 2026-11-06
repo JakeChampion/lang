@@ -112,7 +112,7 @@ pub function (c: Cksum) finish(): u32 {
   let n = c.len;
   while (n != 0 as u64) {
     crc = crc << 8 ^ t[((crc >> 24 ^ (n & 255 as u64) as u32) & 255) as i32];
-    n = n >> 8 as u64;
+    n >>= 8 as u64;
   }
   return crc ^ 0xffffffff;
 }

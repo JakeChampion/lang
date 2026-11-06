@@ -271,7 +271,7 @@ function __rx_seq(errors: Cell[Option[CompileError]], depth: i32, p: string, i: 
 
 function __rx_alt(errors: Cell[Option[CompileError]], depth: i32, p: string, i: i32, g: i32): RParse {
   let first = __rx_seq(errors, depth, p, i, g);
-  let branches: RNode[] = [first.node];
+  let branches = [first.node];
   let pos = first.pos;
   let gi = first.g;
   while (pos < p.len() && p[pos] == 124) {  // '|'
@@ -470,7 +470,7 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
       return e;
     },
     RSeq(xs) => {
-      let cur: i32[] = [ti];
+      let cur = [ti];
       let k = 0;
       while (k < xs.len()) {
         let nextset: i32[] = [];
@@ -508,7 +508,7 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
       return out;
     },
     ROpt(inner) => {
-      let out: i32[] = [ti];
+      let out = [ti];
       let sub = __rx_match(inner, t, ti, ci);
       let s = 0;
       while (s < sub.len()) {
@@ -987,7 +987,7 @@ function __rx_expand_into(h: usize, tmpl: string, c: Captures): void {
       i += 1;
       continue;
     }
-    let ref: (i32, i32) = __rx_template_ref(tmpl, i, c);
+    let ref = __rx_template_ref(tmpl, i, c);
     if (ref.1 == i) {
       i += 1;
       continue;
@@ -1387,14 +1387,14 @@ function __rx_text(bytes: u8[]): Result[string, TextError] {
 
 pub function (prog: Regex) captures(text: string): Option[Captures] {
   let insts = prog.program;
-  let nslots: i32 = (prog.ngroups + 1) * 2;
+  let nslots = (prog.ngroups + 1) * 2;
   let caps = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
   return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
 }
 
 pub function (prog: Regex) captures_all(text: string): Captures[] {
   let insts = prog.program;
-  let nslots: i32 = (prog.ngroups + 1) * 2;
+  let nslots = (prog.ngroups + 1) * 2;
   let out: Captures[] = [];
   let pos = 0;
   while (pos <= text.len()) {

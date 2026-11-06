@@ -252,7 +252,7 @@ function __wrapped[P](r: Router[P], i: i32, req: HttpRequest, plat: P): Result[H
   if (i >= r.wraps.len()) {
     return __dispatch(r, req, plat);
   }
-  let middleware: (HttpRequest, P, (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]) => Result[HttpResponse, dyn http.ToResponse] = r.wraps[i];
+  let middleware = r.wraps[i];
   return middleware(req, plat, (inner: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => __wrapped(r, i + 1, inner, plat));
 }
 
@@ -261,7 +261,7 @@ function __dispatch[P](r: Router[P], req: HttpRequest, plat: P): Result[HttpResp
   let picked = __pick(r, req.path, end, req.method);
   if (picked >= 0) {
     let route = r.routes[picked];
-    let h: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] = route.handler;
+    let h = route.handler;
     return h(req, __bind(route, req.path, end), plat);
   }
   let allowed = __allowed(r, req.path, end, req.method);

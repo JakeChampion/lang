@@ -12,6 +12,7 @@ The position-independent image is described in [PIE.md](PIE.md), and the `.note.
 | the same with `-pie` | code read-execute, data read-write at load time, constants read-only after relocation under `PT_GNU_RELRO` | the same |
 | arm64-linux with `-harden` | the same plus `PT_GNU_PROPERTY` asking for BTI | the same |
 | x86-64-linux and arm64-linux `-shared` | code read-execute, data read-write, the dynamic tables read-write under `PT_GNU_RELRO`, `PT_DYNAMIC` | `PT_GNU_STACK` without execute |
+| arm64-linux `-shared` with `-harden` | the same plus `PT_GNU_PROPERTY` asking for BTI | the same |
 
 These final permissions also hold with `-harden`, `-g`, `-sanitize`, `-backtrace` and their combinations. PIE uses the relocation row.
 `-harden` stores its stubs in the code segment, so the allowed indirect targets are read-only ([CFI.md](CFI.md)).
@@ -100,4 +101,4 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 - PIE and Android protection rounds the length down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages can protect fewer pages than a kernel with 4 KiB pages. Fixed-address images have a separate read-only load segment on each supported page size.
 - The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.
-- A `-shared` object has no `PT_GNU_PROPERTY`, so a BTI host does not guard its pages.
+- A `-shared` object built without `-harden` has no `PT_GNU_PROPERTY`, so a BTI host does not guard its pages. `TestSelfHostHardenShared` requires the header in the hardened arm64 object and not in the plain one.

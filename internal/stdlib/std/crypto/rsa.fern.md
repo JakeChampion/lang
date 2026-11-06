@@ -379,7 +379,7 @@ function __pss_hash(hash: sha2.Hash, m_hash: [u8], salt: [u8]): u8[] {
 <<13 pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
 pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   let em_bits = key.bits - 1;
-  let em_len: i32 = (em_bits + 7) / 8;
+  let em_len = (em_bits + 7) / 8;
   let top = 8 * em_len - em_bits;
   let m_hash = hash.digest(msg);
   let h_len = m_hash.len();

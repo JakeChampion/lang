@@ -493,7 +493,7 @@ function anti_collapse(r: Collapse, own x: f32[], own y: f32[], log_e: [f32], pr
     let n0 = modes.EBANDS[i + 1] - modes.EBANDS[i];
     let depth = (1 + r.pulses[i]) / n0 >> r.lm;
     let thresh = 0.5f32 * exp2(-0.125f32 * (depth as f32));
-    let sqrt_1: f32 = 1.0f32 / (((n0 << r.lm) as f64).sqrt() as f32);
+    let sqrt_1 = 1.0f32 / (((n0 << r.lm) as f64).sqrt() as f32);
     let at = modes.EBANDS[i] << r.lm;
     let level0 = collapse_level(r, i, 0, log_e, prev1, prev2, thresh, sqrt_1);
     let f0 = fill_band(x, at, n0, r.lm, r.masks[i * r.channels], level0, seed);

@@ -349,11 +349,11 @@ function __poly_blocks(p: Poly, b: [u8], from: i32, len: i32, pad_one: boolean):
   let tail = __alloc_u8(16);
   let at = 0;
   while (at < len) {
-    let t0: u32 = 0;
-    let t1: u32 = 0;
-    let t2: u32 = 0;
-    let t3: u32 = 0;
-    let hibit: u32 = 1 << 24;
+    let t0 = 0;
+    let t1 = 0;
+    let t2 = 0;
+    let t3 = 0;
+    let hibit = 1 << 24;
     if (len - at >= 16) {
       t0 = __le32(b, from + at);
       t1 = __le32(b, from + at + 4);
@@ -402,9 +402,9 @@ function __poly_blocks(p: Poly, b: [u8], from: i32, len: i32, pad_one: boolean):
     d4 += c;
     c = d4 >> 26;
     h4 = (d4 & 0x3ffffff) as u32;
-    h0 = h0 + c as u32 * 5;
+    h0 += c as u32 * 5;
     let c2 = h0 >> 26;
-    h0 = h0 & 0x3ffffff;
+    h0 &= 0x3ffffff;
     h1 += c2;
     at += 16;
   }
@@ -423,34 +423,34 @@ function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
   let h3 = p.h3;
   let h4 = p.h4;
   let c = h1 >> 26;
-  h1 = h1 & 0x3ffffff;
+  h1 &= 0x3ffffff;
   h2 += c;
   c = h2 >> 26;
-  h2 = h2 & 0x3ffffff;
+  h2 &= 0x3ffffff;
   h3 += c;
   c = h3 >> 26;
-  h3 = h3 & 0x3ffffff;
+  h3 &= 0x3ffffff;
   h4 += c;
   c = h4 >> 26;
-  h4 = h4 & 0x3ffffff;
-  h0 = h0 + c * 5;
+  h4 &= 0x3ffffff;
+  h0 += c * 5;
   c = h0 >> 26;
-  h0 = h0 & 0x3ffffff;
+  h0 &= 0x3ffffff;
   h1 += c;
   let g0 = h0 + 5;
   c = g0 >> 26;
-  g0 = g0 & 0x3ffffff;
+  g0 &= 0x3ffffff;
   let g1 = h1 + c;
   c = g1 >> 26;
-  g1 = g1 & 0x3ffffff;
+  g1 &= 0x3ffffff;
   let g2 = h2 + c;
   c = g2 >> 26;
-  g2 = g2 & 0x3ffffff;
+  g2 &= 0x3ffffff;
   let g3 = h3 + c;
   c = g3 >> 26;
-  g3 = g3 & 0x3ffffff;
+  g3 &= 0x3ffffff;
   let g4 = h4 + c - (1 << 26);
-  let keep_g: u32 = (g4 >> 31) - 1;
+  let keep_g = (g4 >> 31) - 1;
   let keep_h = keep_g ^ 0xffffffff;
   h0 = h0 & keep_h | g0 & keep_g;
   h1 = h1 & keep_h | g1 & keep_g;
@@ -560,9 +560,9 @@ pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
 pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let st = __stream_seq(k, iv, seq)?;
   let want = __aead_tag(st, buf[aad_at:aad_at + aad_n], buf, at, n);
-  let diff: u8 = 0;
+  let diff = 0;
   for i in 0..16 {
-    diff = diff | want[i] ^ buf[at + n + i];
+    diff |= want[i] ^ buf[at + n + i];
   }
   want = want.with(0, diff);
   __ct_public(want[0:1]);

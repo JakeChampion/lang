@@ -927,7 +927,7 @@ pub function wait_any(set: i32[], until: Option[Instant]): Wake {
   if (in_task()) {
     return __park(set, until);
   }
-  let timeout_ms: i32 = -1;
+  let timeout_ms = -1;
   if let Some(at) = until {
     timeout_ms = __ms_until(time.instant_nanos(at) - monotonic_ns());
   }
@@ -1035,7 +1035,7 @@ function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
     i += 1;
   }
   let closed = drv.close();
-  let hit: i32 = -1;
+  let hit = -1;
   let k = 0;
   while (k + 1 < woke.len()) {
     i = 0;

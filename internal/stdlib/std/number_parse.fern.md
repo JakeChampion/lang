@@ -197,7 +197,7 @@ struct DecimalParts { digits: string, exponent: i32, negative: boolean }
 function _signed64(value: f64, negative: boolean): f64 {
   let bits = f64_bits(value);
   if (negative) {
-    bits = bits | 1 as i64 << 63;
+    bits |= 1 as i64 << 63;
   }
   return f64_from_bits(bits);
 }
@@ -205,7 +205,7 @@ function _signed64(value: f64, negative: boolean): f64 {
 function _signed32(bits_in: i32, negative: boolean): f32 {
   let bits = bits_in;
   if (negative) {
-    bits = bits | 1 << 31;
+    bits |= 1 << 31;
   }
   return f32_from_bits(bits);
 }
@@ -1214,14 +1214,14 @@ function _el_compute(w: u64, q: i32): u64 {
   // 9 bits all set).
   let lz = __clz64(w);
   let x = w << lz as u64;
-  let at: i32 = (q + 342) * 2;
+  let at = (q + 342) * 2;
   let hi = __mulhi_u64(x, EL_POW5[at]);
   let lo = x * EL_POW5[at];
   if ((hi & 511 as u64) == 511 as u64) {
     let carry = __mulhi_u64(x, EL_POW5[at + 1]);
     lo += carry;
     if (carry > lo) {
-      hi = hi + 1 as u64;
+      hi += 1 as u64;
     }
   }
   let upperbit = (hi >> 63 as u64) as i32;
@@ -1234,7 +1234,7 @@ function _el_compute(w: u64, q: i32): u64 {
     if (1 - pow2 >= 64) {
       return 0 as u64;
     }
-    mant = mant >> (1 - pow2) as u64;
+    mant >>= (1 - pow2) as u64;
     mant += mant & 1 as u64;
     // A carry into bit 52 is the exponent field's 1: rounding up lifted the
     // value into the normal range.
@@ -1250,7 +1250,7 @@ function _el_compute(w: u64, q: i32): u64 {
     }
   }
   mant += mant & 1 as u64;
-  mant = mant >> 1 as u64;
+  mant >>= 1 as u64;
   if (mant >= 9007199254740992 as u64) {  // carried out of 53 bits
     mant = 4503599627370496 as u64;
     pow2 += 1;

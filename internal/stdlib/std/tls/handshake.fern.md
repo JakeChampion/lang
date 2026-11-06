@@ -879,7 +879,7 @@ function __sealed_alert(p: record.Protection, plain: boolean, quic: boolean, e: 
   if (e.alert() == 0 || quic) {
     return [];
   }
-  let alert: u8[] = [2 as u8, e.alert() as u8];
+  let alert = [2 as u8, e.alert() as u8];
   if (plain) {
     return record.frame(record.Alert, 0x0303, alert);
   }
@@ -1147,7 +1147,7 @@ function __offering(hello: message.ClientHello, resume: Option[Resumption]): Res
 function __bound(hello: message.ClientHello, r: Resumption, before: [u8]): message.ClientHello {
   let h = r.suite.hash();
   let id = message.PskIdentity { identity: r.identity, obfuscated_age: r.obfuscated_age };
-  let blank: u8[][] = [__zeros(h.size())];
+  let blank = [__zeros(h.size())];
   let draft = message.ClientHello { ...hello, extensions: __without(hello.extensions, message.EXT_PRE_SHARED_KEY).append(message.ext_pre_shared_key(message.OfferedPsks { identities: [id], binders: blank })) };
   let bytes = message.encode(message.ClientHelloMsg(draft));
   let binder = __binder(h, r.psk, before, bytes[0:bytes.len() - message.binders_length(blank)]);
@@ -2476,7 +2476,7 @@ function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPs
 function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, psk: [u8], index: i32, out: Out): Result[ServerRun, HandshakeError] {
   let suite = n.suite;
   let share = __answer_share(s, n.choice)?;
-  let exts: message.Extension[] = [message.ext_key_share(message.KeyShareEntry { group: n.choice.group.code(), key: share.public }), message.ext_selected_version(message.TLS13)];
+  let exts = [message.ext_key_share(message.KeyShareEntry { group: n.choice.group.code(), key: share.public }), message.ext_selected_version(message.TLS13)];
   if (psk.len() > 0) {
     exts = exts.append(message.ext_selected_psk(index));
   }

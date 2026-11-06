@@ -56,7 +56,7 @@ function put(own w: Writer, value: i32, bits: i32): Writer {
   while (used >= 8) {
     bytes = write_byte(bytes, at, (acc & 255) as u8);
     at += 1;
-    acc = acc >> 8;
+    acc >>= 8;
     used -= 8;
   }
   return Writer { bytes: bytes, at: at, acc: acc, used: used };
@@ -139,7 +139,7 @@ function repeat_length(own w: Writer, count: i32): Writer {
   let digits: i32[] = [];
   let n = count;
   while (n > 6) {
-    let extra: i32 = (n - 3) % 4;
+    let extra = (n - 3) % 4;
     digits = digits.append(extra);
     n = (n - extra - 3) / 4 + 2;
   }
@@ -220,7 +220,7 @@ function copy_code(length: i32): i32 {
 function command(own w: Writer, insert: i32, copy: i32): Writer {
   let ic = insert_code(insert);
   let cc = copy_code(copy);
-  let cell: i32 = [2, 3, 6, 4, 5, 8, 7, 9, 10][ic / 8 * 3 + cc / 8];
+  let cell = [2, 3, 6, 4, 5, 8, 7, 9, 10][ic / 8 * 3 + cc / 8];
   let symbol = cell * 64 + ic % 8 * 8 + cc % 8;
   if (symbol < 320) {
     w = code(w, symbol, 9);

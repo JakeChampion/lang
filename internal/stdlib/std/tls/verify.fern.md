@@ -386,8 +386,8 @@ function __rsa(n: u8[], e: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Res
 
 function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
   let name = x509.algorithm_name(alg);
-  let hashes: string[] = ["sha256", "sha384", "sha512"];
-  let hs: sha2.Hash[] = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
+  let hashes = ["sha256", "sha384", "sha512"];
+  let hs = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
   let i = 0;
   while (i < 3) {
     if (name == "rsa_pkcs1_" + hashes[i]) {
@@ -424,8 +424,8 @@ function __ecdsa(curve: ecdsa.Curve, point: u8[], alg: x509.Algorithm, msg: [u8]
   match (ecdsa.public_key(curve, point)) {
     Ok(k) => {
       let name = x509.algorithm_name(alg);
-      let hashes: string[] = ["sha256", "sha384", "sha512"];
-      let hs: sha2.Hash[] = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
+      let hashes = ["sha256", "sha384", "sha512"];
+      let hs = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
       let i = 0;
       while (i < 3) {
         if (name == "ecdsa_" + hashes[i]) {
