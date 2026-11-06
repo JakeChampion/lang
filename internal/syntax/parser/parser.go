@@ -332,6 +332,7 @@ func (p *parser) parseProgram() *ast.Program {
 		tryMarker := false
 		inlineHint := ast.InlineHintNone
 		attrName := ""
+		provides := ""
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -353,6 +354,7 @@ func (p *parser) parseProgram() *ast.Program {
 			tryMarker = attr.tryMarker
 			inlineHint = attr.inlineHint
 			attrName = attr.name
+			provides = attr.provides
 		}
 		isPub := false
 		isPackage := false
@@ -623,6 +625,7 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.FipAllowance = fipAllowance
 			fn.Async = isAsync
 			fn.InlineHint = inlineHint
+			fn.Provides = provides
 			if importIface != "" {
 				if fn.Body != nil {
 					attr := "@import"
@@ -1131,6 +1134,7 @@ type declAttr struct {
 	mustConsume bool
 	tryMarker   bool
 	inlineHint  ast.InlineHint
+	provides    string
 }
 
 func (p *parser) parseAttribute() (declAttr, error) {
@@ -1187,13 +1191,19 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{name: attr, exportIface: iface, exportWIT: name}, nil
 	case "callback":
-		target, err := p.parseCallbackArg()
+		target, err := p.parseStringArg()
 		if err != nil {
 			return declAttr{}, err
 		}
 		return declAttr{name: attr, importIface: ast.CallbackIface, importWIT: target}, nil
+	case "provide":
+		capability, err := p.parseStringArg()
+		if err != nil {
+			return declAttr{}, err
+		}
+		return declAttr{name: attr, provides: capability}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
@@ -1225,12 +1235,15 @@ func attrMisplaced(name string) string {
 		return "@jni only applies to a function declaration"
 	case "callback":
 		return "@callback only applies to a function declaration"
+	case "provide":
+		return "@provide only applies to a function declaration"
 	}
 	return "@inline / @noinline only applies to a function declaration"
 }
 
-// parseCallbackArg reads ("f"), the function of a @callback declaration.
-func (p *parser) parseCallbackArg() (string, error) {
+// parseStringArg reads the one string argument of @callback("f") or
+// @provide("log").
+func (p *parser) parseStringArg() (string, error) {
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return "", err
 	}

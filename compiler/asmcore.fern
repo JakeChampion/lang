@@ -70,6 +70,7 @@ pub struct EmitState {
   cfi_sigs: i32[],
   build_profile: string,
   build_target: string,
+  log_provider: string,
   const_aggs: string[],
   const_agg_ix: util.NameIndex,
   ssa_frame: i32,
@@ -519,6 +520,7 @@ pub function new_state(): EmitState {
     cfi_sigs: [],
     build_profile: "",
     build_target: "",
+    log_provider: "",
     const_aggs: [],
     const_agg_ix: util.name_index([]),
     ssa_frame: 0,
@@ -2249,6 +2251,20 @@ pub function runtime_files(s: EmitState, isa_key: string): string {
     return s.build_target;
   }
   return isa_key;
+}
+
+// The label of the program's `log` provider when the target does not grant
+// `log`. Then print and eprint call it in place of a write syscall.
+pub function with_log_provider(s: EmitState, mod: parser.Module): EmitState {
+  if (platforms.has_capability(s.build_target, "log")) {
+    return s;
+  }
+  for pv in mod.providers {
+    if (pv.capability == "log") {
+      return EmitState { ...s, log_provider: "__fn_" + sanitize_label(pv.func_name) };
+    }
+  }
+  return s;
 }
 
 // A kernel or a loader enters the artifact as a process. Only then can the

@@ -7159,15 +7159,27 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
-    s = emit_runtime("__fern_print_str", s);
+    s = emit_log_write("__fern_print_str", s);
   }
   if (s.has_need("putchar")) {
     s = emit_runtime("__fern_putchar", s);
   }
   if (s.has_need("eprint")) {
-    s = emit_runtime("__fern_eprint_str", s);
+    s = emit_log_write("__fern_eprint_str", s);
   }
   return emit_rt_clocks(s, darwin, ctgt);
+}
+
+// A string write for print or eprint. With a `log` provider it passes the bytes
+// and the length to the provider, and returns the length.
+function emit_log_write(name: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (s.log_provider.len() == 0) {
+    return emit_runtime(name, s);
+  }
+  s = s.write("\n__fn_" + name + ":\n    ldr x0, [sp, #0]\n__fn_" + name + ".r:\n" + rt_frame_of(s, 32) + "    mov x29, sp\n");
+  s = s.write("    ldr x9, [x0, #0]\n    ldr x10, [x0, #8]\n    sxtw x10, w10\n    str x10, [x29, #16]\n");
+  s = s.write("    sub sp, sp, #32\n    str x9, [sp, #0]\n    str x10, [sp, #16]\n    bl " + s.log_provider + "\n    add sp, sp, #32\n");
+  return s.write("    ldr x0, [x29, #16]\n" + rt_unframe_of(s, 32) + "    ret\n");
 }
 
 function emit_rt_clocks(s: asmcore.EmitState, darwin: boolean, ctgt: string): asmcore.EmitState {
@@ -12397,7 +12409,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
     return "";
   }
   let s = asmcore.new_state();
-  s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod.funcs);
+  s = asmcore.with_funcs(asmcore.with_log_provider(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
   if (asmcore.sandbox_on()) {
@@ -12435,7 +12447,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   mod = parser.infer_ret_types_module(mod);
   let s = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("arm64") };
-  s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, sw), all_funcs);
+  s = asmcore.with_funcs(asmcore.with_log_provider(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, sw), mod), all_funcs);
   let derrs = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));

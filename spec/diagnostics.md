@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**89 of 109** codes are pinned by a conformance case. The table
+**90 of 110** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -173,6 +173,7 @@ language does not have. It is deleted.
 | `E098` | a builtin named as a value | `diag_e098` |
 | `E099` | a built-in handle built from a literal | `diag_e099` |
 | `E100` | a value that cannot cross a worker boundary passed to a `send` parameter | `diag_e100` |
+| `E101` | an incorrect capability provider | `diag_e101` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

@@ -70,7 +70,7 @@ pub function module_rank(sights: ModuleSight[], from: string, decl: string): i32
   return 2;
 }
 
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], providers: Provider[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
 pub function with_stdlib_origin(mod: Module, path: string): Module {
   if (!util.is_stdlib_path(path)) {
@@ -212,6 +212,10 @@ pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, c
 // and -export a C symbol (c_abi). @jni names a JNI method: `iface` is the
 // Java class and `wit` the Java declaration.
 pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean, jni: boolean }
+
+// A function that `@provide("log")` marks as the implementation of a
+// capability on a target that does not grant it.
+pub struct Provider { capability: string, func_name: string, line: i32, col: i32 }
 
 pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], const_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
@@ -23857,22 +23861,25 @@ function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (util.has_str(["import", "export", "jni", "callback"], name)) {
     return parse_binding_args(name, p);
   }
+  if (name == "provide") {
+    return parse_string_arg("provide", "", p);
+  }
   if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline") {
     return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
   }
-  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @must_consume, @try, @inline, and @noinline are supported)")], p);
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @must_consume, @try, @inline, and @noinline are supported)")], p);
 }
 
 function parse_binding_args(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (name == "callback") {
-    return parse_callback_arg(p);
+    return parse_string_arg("callback", CALLBACK_IFACE, p);
   }
   return parse_wit_pair(name, p);
 }
 
-// @callback("f"): the name of the function whose C entry address the
-// declaration returns.
-function parse_callback_arg(p: Par): (DeclAttr, ast.Stmt[], Par) {
+// The one string argument of @callback("f"), the function whose C entry address
+// the declaration returns, or of @provide("log"), the capability.
+function parse_string_arg(name: string, iface: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (p.peek_punct() != "(") {
     return (no_decl_attr(), expected_here(p, "\"(\""), p);
   }
@@ -23890,7 +23897,7 @@ function parse_callback_arg(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (p.peek_punct() != ")") {
     return (no_decl_attr(), expected_here(p, "\")\""), p);
   }
-  return (DeclAttr { ...no_decl_attr(), name: "callback", iface: CALLBACK_IFACE, wit: target }, [], p.advance());
+  return (DeclAttr { ...no_decl_attr(), name: name, iface: iface, wit: target }, [], p.advance());
 }
 
 function parse_derive_args(p: Par): (DeclAttr, ast.Stmt[], Par) {
@@ -23987,6 +23994,9 @@ function attr_misplaced(name: string): string {
   }
   if (name == "callback") {
     return "@callback only applies to a function declaration";
+  }
+  if (name == "provide") {
+    return "@provide only applies to a function declaration";
   }
   return "@inline / @noinline only applies to a function declaration";
 }
@@ -25785,6 +25795,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   let enums: EnumDecl[] = [];
   let resources: ResourceDecl[] = [];
   let exports: ExportBinding[] = [];
+  let providers: Provider[] = [];
   let traits: TraitDecl[] = [];
   let impl_decls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
@@ -25907,6 +25918,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
       exports = with_attr_export(exports, attr, fr_func);
+      if (attr.name == "provide") {
+        providers = providers.append(Provider { capability: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
+      }
       let fr_out = fr_pub;
       if (decl_fip || decl_fbip) {
         fr_out = FuncDecl { ...fr_pub, fip: decl_fip, fbip: decl_fbip, fip_allowance: decl_fip_allowance };
@@ -26069,7 +26083,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     },
     None => {}
   }
-  let parsed = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
+  let parsed = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, providers: providers, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
   if (!verbatim) {
     let inferred = unannotated_const_names(funcs);
     let nothing: string[] = [];
@@ -26104,7 +26118,7 @@ function coded_kind(code: string, msg: string): string {
 }
 
 function lex_error_module(le: lexer.TokError): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let m = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
+  let m = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], providers: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
   let traits: TraitDecl[] = [];
   let impls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
@@ -26177,6 +26191,10 @@ pub function merge_module(into: Module, from: Module): Module {
     nresources = nresources.append(from.resources[ri]);
     ri += 1;
   }
+  let nproviders = into.providers;
+  for pv in from.providers {
+    nproviders = nproviders.append(pv);
+  }
   let nexports = into.exports;
   let xi = 0;
   while (xi < from.exports.len()) {
@@ -26201,7 +26219,7 @@ pub function merge_module(into: Module, from: Module): Module {
     ntreqs = ntreqs.append(from.trait_reqs[nti]);
     nti += 1;
   }
-  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
+  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, providers: nproviders, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
 pub function merge_module_prefixed(into: Module, from: Module, prefix: string): Module {
@@ -26233,6 +26251,10 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     nresources = nresources.append(ResourceDecl { ...rd, name: prefix + "." + rd.name });
     ri += 1;
   }
+  let nproviders = into.providers;
+  for pv in from.providers {
+    nproviders = nproviders.append(Provider { ...pv, func_name: prefix + "." + pv.func_name });
+  }
   let nexports = into.exports;
   let xi = 0;
   while (xi < from.exports.len()) {
@@ -26258,7 +26280,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     ntreqs = ntreqs.append(from.trait_reqs[nti]);
     nti += 1;
   }
-  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
+  return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, providers: nproviders, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
 function main(): i32 {

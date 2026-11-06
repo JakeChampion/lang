@@ -232,7 +232,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
       eprint("fern: " + bad);
       return 2;
     }
-    merged = exported;
+    merged = fern.provider_entries(exported, target);
     roots = names;
   }
   if (report_diags(fern.capability_diags(merged, target), files)) {

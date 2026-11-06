@@ -1,0 +1,1 @@
+the `log` provider "uart_write" must be a function with the signature (data: usize, len: i32): void

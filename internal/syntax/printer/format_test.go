@@ -496,6 +496,13 @@ func TestFormatCallbackAttr(t *testing.T) {
 	}
 }
 
+func TestFormatProvideAttr(t *testing.T) {
+	got := formatSrc(t, `@provide("log") pub function uart(data: usize, len: i32): void {}`)
+	if !strings.Contains(got, "@provide(\"log\")\npub function uart(") {
+		t.Errorf("@provide not preserved:\n%s", got)
+	}
+}
+
 func TestFormatExportAttr(t *testing.T) {
 	got := formatSrc(t, `@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 0; }

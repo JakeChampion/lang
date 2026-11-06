@@ -3510,9 +3510,14 @@ pub function format_parsed(pf: parser.ParsedFmt, comments: lexer.Comment[], blan
   return format_module_with_inline(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, pf.pinline, pf.pspans, comments, blanks);
 }
 
-function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBinding[], hints: parser.FunctionInlineHint[], cursor: i32, f: Fmt): (string, Fmt, i32) {
+function print_annotated_function(fd: parser.FuncDecl, mod: parser.Module, hints: parser.FunctionInlineHint[], cursor: i32, f: Fmt): (string, Fmt, i32) {
   let prefix = "";
-  for binding in exports {
+  for pv in mod.providers {
+    if (pv.func_name == fd.name) {
+      prefix = prefix + "@provide(" + quote_string(pv.capability) + ")\n";
+    }
+  }
+  for binding in mod.exports {
     if (binding.func_name == fd.name && !binding.c_abi && fd.receiver_name.len() > 0 == binding.method) {
       let attr = "@export(";
       if (binding.jni) {
@@ -3677,7 +3682,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
         f = cf;
       } else {
         let fd = mod.funcs[idxs[di]];
-        let (ftext, ff, next_hint) = print_annotated_function(fd, mod.exports, hints, hint_cursor, f);
+        let (ftext, ff, next_hint) = print_annotated_function(fd, mod, hints, hint_cursor, f);
         hint_cursor = next_hint;
         chunks = chunks.append(ftext);
         wrote = true;

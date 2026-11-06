@@ -308,6 +308,9 @@ func (v Violation) Message(entryModule string) string {
 	}
 	msg := fmt.Sprintf("target %q does not provide `%s`, required by `%s`%s; targets providing it: %v",
 		v.Target, v.Capability, v.Builtin, where, TargetsProviding(v.Capability))
+	if _, ok := providerSignatures[v.Capability]; ok {
+		msg += fmt.Sprintf("; or import a module with a `@provide(\"%s\")` function", v.Capability)
+	}
 	if alt, ok := equivalents[v.Builtin]; ok && HasCapability(v.Target, gatedBuiltins[alt]) {
 		msg += fmt.Sprintf("; use `%s`, which this target provides", alt)
 	}
@@ -316,12 +319,83 @@ func (v Violation) Message(entryModule string) string {
 
 var equivalents = map[string]string{"timer_fd": "wasm_timer_pollable", "wasm_timer_pollable": "timer_fd"}
 
+// providerSignatures holds each capability that a module can implement with
+// @provide, and the signature of its provider. A `log` provider is a byte sink
+// that does not allocate.
+var providerSignatures = map[string]string{"log": "(data: usize, len: i32): void"}
+
+// Provided reports the capabilities that the program's providers add to the
+// target's set.
+func Provided(prog *ast.Program) map[string]bool {
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if _, ok := providerSignatures[fn.Provides]; ok {
+			out[fn.Provides] = true
+		}
+	}
+	return out
+}
+
+// ProviderEntries names each provider of a capability that the target does not
+// grant. The runtime calls it, so it is a root of the tree-shake.
+func ProviderEntries(prog *ast.Program, target string) []string {
+	var out []string
+	for _, fn := range prog.Funcs {
+		if fn.Provides != "" && !HasCapability(target, fn.Provides) {
+			out = append(out, fn.Name)
+		}
+	}
+	return out
+}
+
+// ProviderProblem is an E101: a capability that takes no provider, a provider
+// with the wrong signature, or two providers of one capability.
+type ProviderProblem struct {
+	Pos ast.Position
+	Msg string
+}
+
+func ProviderProblems(prog *ast.Program) []ProviderProblem {
+	var out []ProviderProblem
+	first := map[string]string{}
+	for _, fn := range prog.Funcs {
+		if fn.Provides == "" {
+			continue
+		}
+		msg := providerProblem(fn)
+		if prev, dup := first[fn.Provides]; msg == "" && dup {
+			msg = fmt.Sprintf("capability `%s` has two providers, %q and %q", fn.Provides, prev, fn.Name)
+		}
+		if msg != "" {
+			out = append(out, ProviderProblem{Pos: fn.P, Msg: msg})
+			continue
+		}
+		first[fn.Provides] = fn.Name
+	}
+	return out
+}
+
+func providerProblem(fn *ast.FuncDecl) string {
+	sig, ok := providerSignatures[fn.Provides]
+	if !ok {
+		return fmt.Sprintf("`@provide(%q)`: no capability `%s` takes a provider; a provider can implement `log`", fn.Provides, fn.Provides)
+	}
+	ret := "void"
+	if fn.ReturnType != nil {
+		ret = fn.ReturnType.String()
+	}
+	if fn.Receiver == nil && len(fn.TypeParams) == 0 && len(fn.Params) == 2 && fn.Params[0].Type.String() == "usize" && fn.Params[1].Type.String() == "i32" && ret == "void" {
+		return ""
+	}
+	return fmt.Sprintf("the `%s` provider %q must be a function with the signature %s", fn.Provides, fn.Name, sig)
+}
+
 func Enforce(prog *ast.Program, target string) []Violation {
 	d := ForTarget(target)
 	if d == nil {
 		return nil
 	}
-	granted := map[string]bool{}
+	granted := Provided(prog)
 	for _, c := range d.Capabilities {
 		granted[c] = true
 	}

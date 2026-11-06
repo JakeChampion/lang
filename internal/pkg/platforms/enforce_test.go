@@ -16,6 +16,12 @@ import (
 
 func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	t.Helper()
+	return preparedFor(t, src, httpDropMain, "")
+}
+
+// preparedFor keeps the providers that target calls as roots, as the gate does.
+func preparedFor(t *testing.T, src string, httpDropMain bool, target string) *ast.Program {
+	t.Helper()
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -43,6 +49,9 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	var extras []string
 	if httpDropMain {
 		extras = append(extras, "handle", "__method_HeaderMap_append")
+	}
+	if target != "" {
+		extras = append(extras, platforms.ProviderEntries(prog, target)...)
 	}
 	treeshake.Run(prog, info, extras...)
 	return prog
@@ -569,5 +578,61 @@ function main(): i32 { return 7; }`
 	}
 	if vs[0].Builtin != "print" {
 		t.Errorf("want the print violation, got %+v", vs[0])
+	}
+}
+
+const logProvider = "@provide(\"log\")\nfunction uart(data: usize, len: i32): void {}\n"
+
+func TestProviderGrantsItsCapability(t *testing.T) {
+	src := logProvider + `function main(): i32 { print("hi"); return 0; }`
+	if vs := platforms.Enforce(preparedFor(t, src, false, "arm64-freestanding"), "arm64-freestanding"); len(vs) != 0 {
+		t.Fatalf("a log provider should grant log on freestanding, got %+v", vs)
+	}
+	vs := platforms.Enforce(prepared(t, `function main(): i32 { print("hi"); return 0; }`, false), "arm64-freestanding")
+	if len(vs) != 1 || !strings.HasSuffix(vs[0].Message("main"), "; or import a module with a `@provide(\"log\")` function") {
+		t.Fatalf("without a provider, want one E066 that names @provide, got %+v", vs)
+	}
+}
+
+func TestProviderEntriesOnlyWhereTheTargetLacksTheCapability(t *testing.T) {
+	prog, _, err := modload.LoadSource(logProvider + `function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := platforms.ProviderEntries(prog, "x86-64-linux"); len(got) != 0 {
+		t.Errorf("x86-64-linux grants log, so its provider is no entry; got %v", got)
+	}
+	if got := platforms.ProviderEntries(prog, "x86-64-freestanding"); len(got) != 1 || got[0] != "uart" {
+		t.Errorf("x86-64-freestanding entries %v, want [uart]", got)
+	}
+}
+
+func TestProviderProblems(t *testing.T) {
+	prog, _, err := modload.LoadSource(`@provide("now")
+function a(data: usize, len: i32): void {}
+@provide("log")
+function b(data: string): void {}
+@provide("log")
+function c(data: usize, len: i32): void {}
+@provide("log")
+function d(data: usize, len: i32): void {}
+function main(): i32 { return 0; }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"`@provide(\"now\")`: no capability `now` takes a provider; a provider can implement `log`",
+		"the `log` provider \"b\" must be a function with the signature (data: usize, len: i32): void",
+		"capability `log` has two providers, \"c\" and \"d\"",
+	}
+	got := platforms.ProviderProblems(prog)
+	if len(got) != len(want) {
+		t.Fatalf("got %d problems %+v, want %d", len(got), got, len(want))
+	}
+	for i, p := range got {
+		if p.Msg != want[i] {
+			t.Errorf("problem %d: %q, want %q", i, p.Msg, want[i])
+		}
 	}
 }

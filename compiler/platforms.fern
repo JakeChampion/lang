@@ -422,7 +422,31 @@ pub function gated_capability(name: string): string {
   return "";
 }
 
-pub function forbidden_gates(target: string): Gate[] {
+// The capabilities that a module can provide with @provide, and the signature
+// of each provider. A `log` provider is a byte sink that does not allocate.
+pub function providable(): string[] {
+  return ["log"];
+}
+
+pub function provider_signature(capability: string): string {
+  if (capability == "log") {
+    return "(data: usize, len: i32): void";
+  }
+  return "";
+}
+
+// The capabilities that a provider in the program adds to the target's set.
+pub function provided(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for pv in mod.providers {
+    if (util.has_str(providable(), pv.capability) && !util.has_str(out, pv.capability)) {
+      out = out.append(pv.capability);
+    }
+  }
+  return out;
+}
+
+pub function forbidden_gates(target: string, provided_caps: string[]): Gate[] {
   let out: Gate[] = [];
   let d = for_target(target);
   if (!d.known) {
@@ -431,7 +455,7 @@ pub function forbidden_gates(target: string): Gate[] {
   let gates = gated_builtins();
   let i = 0;
   while (i < gates.len()) {
-    if (!util.has_str(d.capabilities, gates[i].capability)) {
+    if (!util.has_str(d.capabilities, gates[i].capability) && !util.has_str(provided_caps, gates[i].capability)) {
       out = out.append(gates[i]);
     }
     i += 1;
@@ -451,7 +475,7 @@ pub struct Violation {
 
 pub function enforce(mod: parser.Module, target: string): Violation[] {
   let out: Violation[] = [];
-  let forbidden = forbidden_gates(target);
+  let forbidden = forbidden_gates(target, provided(mod));
   if (forbidden.len() == 0) {
     return out;
   }
@@ -557,6 +581,45 @@ function sorted(xs: string[]): string[] {
   return out;
 }
 
+// The E101 diagnostics of the program's providers: a capability that takes no
+// provider, a provider with the wrong signature, or two providers of one
+// capability.
+pub function provider_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let seen: string[] = [];
+  let seen_fn: string[] = [];
+  for pv in mod.providers {
+    let msg = provider_problem(mod, pv);
+    let at = util.index_of_str(seen, pv.capability);
+    if (msg.len() == 0 && at >= 0) {
+      msg = "capability `" + pv.capability + "` has two providers, \"" + util.mangled_name(seen_fn[at]) + "\" and \"" + util.mangled_name(pv.func_name) + "\"";
+    }
+    if (msg.len() > 0) {
+      out = out.append(util.violation_diag("E101", msg, util.mangled_module(pv.func_name), pv.line, pv.col));
+    } else {
+      seen = seen.append(pv.capability);
+      seen_fn = seen_fn.append(pv.func_name);
+    }
+  }
+  return out;
+}
+
+function provider_problem(mod: parser.Module, pv: parser.Provider): string {
+  let sig = provider_signature(pv.capability);
+  if (sig.len() == 0) {
+    return "`@provide(\"" + pv.capability + "\")`: no capability `" + pv.capability + "` takes a provider; a provider can implement `log`";
+  }
+  for fd in mod.funcs {
+    if (fd.name == pv.func_name) {
+      let shape = fd.receiver_name.len() == 0 && fd.type_params.len() == 0 && fd.params.len() == 2;
+      if (shape && fd.params[0].type_name == "usize" && fd.params[1].type_name == "i32" && fd.ret_type == "void") {
+        return "";
+      }
+    }
+  }
+  return "the `" + pv.capability + "` provider \"" + util.mangled_name(pv.func_name) + "\" must be a function with the signature " + sig;
+}
+
 pub function violation_diag(v: Violation): util.Diag {
   return util.violation_diag("E066", violation_message(v), v.fn_module, v.line, v.col);
 }
@@ -578,6 +641,9 @@ pub function violation_message(v: Violation): string {
   }
   let msg: string = "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
     + v.builtin + "`" + where + "; targets providing it: [" + list + "]";
+  if (util.has_str(providable(), v.capability)) {
+    msg = msg + "; or import a module with a `@provide(\"" + v.capability + "\")` function";
+  }
   let alt = equivalent(v.builtin);
   if (alt.len() > 0 && has_capability(v.target, gated_capability(alt))) {
     msg = msg + "; use `" + alt + "`, which this target provides";

@@ -685,7 +685,8 @@ Two consequences worth knowing:
   capability set against every `fern -check` — refusing `sysctl`, which only Darwin
   grants. A bare `fern -check` still means "does this type-check".
 - **`log` is not universal.** `TestNoTargetMissesLogCapability` exempts the
-  freestanding environment, which has no host to log to.
+  freestanding environment, which has no host to log to. A board module can supply
+  it (see "A board supplies a capability" below).
 
 ## The entry shape
 
@@ -709,7 +710,8 @@ keeps the hosted behaviour.
 
 Capability gating removes most of the hosted runtime for free: a freestanding program
 *cannot call* `read_file` / `tcp_*` / `print` / the clocks, so nothing reaches their
-runtime helpers and their syscalls are never emitted. Three pieces do not fall out that
+runtime helpers and their syscalls are never emitted. (A board can supply `log`, and
+then `print` writes to the board's provider. See "A board supplies a capability" below.) Three pieces do not fall out that
 way, because nothing in the program has to name them:
 
 - **`__fern_report`**, the abort reporter, emitted for every program — it writes the
@@ -755,6 +757,43 @@ function that only returns.
   `__fern_report`, which off the process path is the trap above. So exhaustion is the
   same "stop" as every other hostless abort rather than an exit code the embedder cannot
   see anyway.
+
+### A board supplies a capability
+
+The descriptor of a freestanding target grants no capability. A board can supply some,
+for example `log` through a UART (#14251). A **provider** is a function that implements a
+capability. The `@provide` attribute marks it, in a module that the program imports:
+
+```
+@provide("log")
+pub function uart_write(data: usize, len: i32): void {
+  // Write len bytes, starting at data, to the device.
+}
+```
+
+The program names its board with an import, as a TamaGo program does. The rule:
+
+- **The E066 gate grants each capability that a provider implements**, in addition to
+  the descriptor set (`platforms.provided` in `compiler/platforms.fern`,
+  `platforms.Provided` in Go).
+- **Only `log` takes a provider.** Its signature is `(data: usize, len: i32): void`. The
+  provider gets an address and a length, not a string, so the call changes no
+  reference count.
+- **E101** refuses a capability that takes no provider, a provider with a different
+  signature, and two providers of one capability.
+- **The target's own implementation wins.** On a target that grants the capability, the
+  provider is an ordinary function. One board module can thus also compile for a hosted
+  test.
+
+On a target that does not grant `log`, the backend writes `__fern_print_str` and
+`__fern_eprint_str` as short stubs. Each stub passes the bytes and the length of the
+string to the provider (`emit_log_write` in each native backend). The provider is an
+entry of the build, as an `-export` function is, so the tree-shake keeps it
+(`provider_entries` in `compiler/fern.fern`). The output thus has no syscall.
+`internal/testing/e2ecompiler/self_host_provider_test.go` links a board with a UART at a
+fixed address into a C embedder, and checks the bytes that `print` and `eprint` write.
+
+`__fern_report` still traps. It does not call the provider yet.
 
 ## The `std/` partition
 
