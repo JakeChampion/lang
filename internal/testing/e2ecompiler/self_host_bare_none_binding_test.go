@@ -8,10 +8,12 @@ function round(i: i32): i32 {
     let o = None;
     let t: i32 = match (o) { Some(_) => 100, None => 1 };
     t = t + arg(o);
-    let p: Option[string] = o;
+    let s = None;
+    let p: Option[string] = s;
     t = t + match (p) { Some(_) => 100, None => 1 };
     t = t + match (ret()) { Some(_) => 100, None => 1 };
-    t = t + match (o) { Some(x) => x + 100, None => 1 };
+    let u = None;
+    t = t + match (u) { Some(x) => x + 100, None => 1 };
     let r = Ok(1);
     t = t + match (r) { Ok(x) => x, Err(e) => e +| 100 };
     return t + i % 2;
