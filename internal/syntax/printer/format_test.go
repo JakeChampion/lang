@@ -503,6 +503,13 @@ func TestFormatProvideAttr(t *testing.T) {
 	}
 }
 
+func TestFormatNoRCAttr(t *testing.T) {
+	got := formatSrc(t, `@norc function tick(n: i32): i32 { return n; }`)
+	if !strings.Contains(got, "@norc\nfunction tick(") {
+		t.Errorf("@norc not preserved:\n%s", got)
+	}
+}
+
 func TestFormatExportAttr(t *testing.T) {
 	got := formatSrc(t, `@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 0; }

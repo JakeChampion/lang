@@ -29,6 +29,7 @@ import "./ferndoc";
 import "./mvs";
 import "./treeshake";
 import "./ambient";
+import "./norc";
 import "./arm64_native";
 import "./x86_native";
 import "./elf";
@@ -1742,8 +1743,8 @@ pub function freestanding_roots(merged: parser.Module, export_list: string): (pa
 // A provider of a capability that the target does not grant is an entry. The
 // runtime calls it, as an embedder calls an -export entry.
 pub function provider_entries(m: parser.Module, target: string): parser.Module {
-  for pv in m.providers {
-    if (!platforms.has_capability(target, pv.capability)) {
+  for pv in parser.marked(m, "provide") {
+    if (!platforms.has_capability(target, pv.arg)) {
       m = parser.Module { ...m, exports: m.exports.append(parser.ExportBinding { func_name: pv.func_name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
     }
   }
@@ -2805,7 +2806,20 @@ pub function capability_diags(merged: parser.Module, target: string): util.Diag[
   return out;
 }
 
-pub function ambient_diags(merged: parser.Module): util.Diag[] {
+// The diagnostics of the rules that read the annotated module: E080 and E102.
+pub function annotated_diags(merged: parser.Module): util.Diag[] {
+  return util.append_diags(ambient_diags(merged), norc_diags(merged));
+}
+
+function norc_diags(merged: parser.Module): util.Diag[] {
+  if (parser.marked(merged, "norc").len() == 0) {
+    let none: util.Diag[] = [];
+    return none;
+  }
+  return norc.diags(checker.annotate_module(merged));
+}
+
+function ambient_diags(merged: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let has_bag = false;
   for fd in merged.funcs {
@@ -4076,7 +4090,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
     bounds = errors_of(capability_diags(merged, target));
   }
   bounds = util.append_all(bounds, package_findings(merged, b.pkgs));
-  bounds = util.append_all(bounds, errors_of(ambient_diags(merged)));
+  bounds = util.append_all(bounds, errors_of(annotated_diags(merged)));
   let fs = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
     if (has_error(bounds)) {
@@ -4139,7 +4153,7 @@ function interp_findings_with_file(merged: parser.Module, pkgs: caps.Pkg[], entr
     fs = with_findings(fs, package_findings(merged, pkgs));
   }
   if (!has_error(fs)) {
-    fs = with_findings(fs, errors_of(ambient_diags(merged)));
+    fs = with_findings(fs, errors_of(annotated_diags(merged)));
   }
   return fs;
 }
@@ -6922,7 +6936,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 1;
   }
 
-  if (eprint_findings(st, errors_of(ambient_diags(merged)), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(annotated_diags(merged)), entry_path, b.files, b.maps)) {
     return 1;
   }
 

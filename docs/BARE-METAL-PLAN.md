@@ -245,6 +245,23 @@ enforces: no allocation and no RC operation. The property covers three cases:
 Then the early setup is Fern code with effect intrinsics, not assembler.
 `interrupt` implies the property, and a reset entry requires it.
 
+**The decision (#14253): the property is `@norc`.** The checker reports a breach
+as E102. The rule is simple, so a reader can apply it too:
+
+- Each parameter, the result and each annotated local is a scalar.
+- A call names another `@norc` function or a raw memory intrinsic: the
+  `__load_*` and `__store_*` floor, the `__mmio_*` accesses, `__fence` and the
+  bit counts.
+- A string, an array, a struct, a closure, a method, a field access, an index,
+  `for` and `match` are refused.
+
+With only scalars, no value has a box, so nothing allocates and no RC operation
+occurs. The rule does not use `fip`. A `fip` function can drop an `own` value
+and can rebuild a struct in a reused box, and both touch the allocator. The
+attribute changes no code. `compiler/norc.fern` and
+`internal/check/checker/norc.go` hold the rule. `interrupt` and `naked` follow
+when a kernel environment can test them (#14254).
+
 ### 4. Memory layout
 
 Real firmware needs section placement (`.text` at the reset address, `.bss` in
@@ -463,10 +480,12 @@ environment over the FernOS syscalls can come later, as an improvement.
    bottom half in the reactor.
 4. **Done: capability providers** (#14251). A board module supplies `log` with a
    `@provide("log")` function (section 6).
-5. Then: effect intrinsics (#14252) → function
-   attributes and the no-RC property (#14253) → memory layout (#14254) →
+5. **Done: the no-RC property** (#14253), as `@norc` (section 3). The
+   `interrupt` and `naked` attributes wait for a kernel environment.
+6. Then: memory layout and the reset entry (#14254) → effect intrinsics
+   (#14252) → `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-6. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+7. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 
