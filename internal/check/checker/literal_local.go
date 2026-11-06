@@ -226,6 +226,34 @@ func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	}
 }
 
+// settleLitArrayByCall gives an integer-literal array local the element type
+// of a typed argument to append or with, as a literal takes the type of the other
+// operand of a binary operator.
+func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *scope) {
+	id, ok := fa.Target.(*ast.Ident)
+	if !ok {
+		return
+	}
+	decl := s.lookupVarDecl(id.Name)
+	if decl == nil || c.litNestedOf[decl] == nil {
+		return
+	}
+	at := -1
+	switch {
+	case fa.Field == "append" && len(call.Args) == 1:
+		at = 0
+	case fa.Field == "with" && len(call.Args) == 2:
+		at = 1
+	}
+	if at < 0 {
+		return
+	}
+	c.litCompositeReads[id] = decl
+	if t, ok := c.checkExpr(call.Args[at], s).(ast.NumberType); ok && !t.Polymorphic {
+		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
+	}
+}
+
 func literalNominalArgs(t ast.Type) (string, []ast.Type) {
 	switch t := t.(type) {
 	case ast.StructType:

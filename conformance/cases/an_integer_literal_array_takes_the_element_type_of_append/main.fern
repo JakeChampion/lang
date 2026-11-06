@@ -1,0 +1,19 @@
+function sum(bytes: u8[]): i32 {
+  let total = 0;
+  for b in bytes {
+    total += b as i32;
+  }
+  return total;
+}
+
+function main(): i32 {
+  let bytes = [120, 156];
+  let b: u8 = 255;
+  bytes = bytes.append(b);
+  bytes = bytes.with(0, b);
+  if (sum(bytes) != 666) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}

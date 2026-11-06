@@ -14701,6 +14701,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var recvIsArg0 bool
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			c.settleOpenMapByCall(n, fa, s)
+			c.settleLitArrayByCall(n, fa, s)
 			tt := c.receiverType(fa.Target, s)
 			recvFA, recvType = fa, tt
 			if tt == nil {
@@ -15541,7 +15542,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		c.expectedType = nil
 		c.elemHint = nil
-		if id, ok := n.Target.(*ast.Ident); ok && c.holdsOpenEnum(lt) {
+		if id, ok := n.Target.(*ast.Ident); ok && (c.holdsOpenEnum(lt) || c.litNestedOf[s.lookupVarDecl(id.Name)] != nil) {
 			// A use of the open local on the right side can give it its type.
 			lt, _ = s.lookup(id.Name)
 		}
