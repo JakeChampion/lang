@@ -159,14 +159,13 @@ until green, then merge. Subscribe to PR activity (`subscribe_pr_activity`)
 without being asked — the user prefers that to manual CI polling. Pause only for
 a genuine fork (an ambiguous review comment, an architectural decision).
 
-**A pull request runs the fast tier, and main runs the full suite.** "Green" on a
-PR means Lint and Preflight: the fixture corpus on every target and the x86-64
-legs of the unit, e2e, wasm, differential and coreutils lanes, about ten
-minutes. The full suite (aarch64, the self-host shards, macOS, perf, bootstrap,
-and the rest) runs on main after the merge, and `main-red.yml` opens an issue
-per red lane. **A red main is the next task for whoever sees it**, ahead of new
-work: look for a claim on its issue, and claim it before you start. Label a PR `ci-full` before pushing when the change is deep compiler work
-that should take the full suite before it merges.
+**Every pull request runs the full suite.** The lane table in
+`.github/workflows/ci.yml` skips only the lanes a change cannot reach. "Green"
+on a PR means `CI verdict`: Lint and every lane the change reaches
+(`docs/TEST-GATES.md`). Main runs the same suite after the merge, and
+`main-red.yml` opens an issue per red lane. **A red main is the next task for
+whoever sees it**, ahead of new work: look for a claim on its issue, and claim
+it before you start.
 
 **Open the PR EARLY.** CI is faster than this dev machine: this is a 4-core
 container where `internal/testing/e2e` runs 45+ minutes in one process, while CI shards
@@ -177,10 +176,10 @@ in flight — that is the honest report, and it beats a 45-minute stall before
 anyone can see the diff. This does not weaken the engineering bar; it says the PR
 is the place to wait, not your terminal.
 
-**The full suite is one run, and one at a time.** `ci-suite.yml` holds one
-FIFO queue for the full suite (main, dispatches, and `ci-full` pull requests);
-a push to a PR cancels its older run the moment it lands. The PR tier runs
-outside that queue.
+**Two pull requests run their suites at a time.** `ci-suite.yml` puts a PR in
+the `pr-ci-even` or the `pr-ci-odd` queue by its number. Each queue is first in,
+first out, and main runs outside both. A push to a PR cancels its older run the
+moment it lands.
 
 **Push as soon as a fix is ready.** Do not hold a validated commit back to let
 an in-flight run finish: the push cancels the older run, and that is accepted.
