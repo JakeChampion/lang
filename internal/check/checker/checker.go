@@ -8971,7 +8971,7 @@ var retiredNames = map[string]string{
 }
 
 var retiredHints = map[string]string{
-	"string_from_bytes": " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)",
+	"string_from_bytes": " (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)",
 }
 
 func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {

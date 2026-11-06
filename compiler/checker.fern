@@ -17520,7 +17520,7 @@ function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: type
 function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
   let d = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: util.show_type_vars(name).len() };
   if (name == "string_from_bytes") {
-    return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)");
+    return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)");
   }
   return with_fix(d, name, line, col, util.suggest(name, s.visible_names()), "");
 }
