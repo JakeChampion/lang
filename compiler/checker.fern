@@ -30999,10 +30999,14 @@ function lit_struct_read(e: ast.Expr, s: Scope): boolean {
 }
 
 // lit_marked_read is true for a read of a local whose type holds an integer
-// literal, such as `bytes` after `let bytes = [1, 2];`.
+// literal, or of one of its elements, such as `bytes` or `bytes[0]` after
+// `let bytes = [1, 2];`.
 function lit_marked_read(e: ast.Expr, s: Scope): boolean {
   if let ast.ExprIdent(id) = e {
     return lit_marked(s.lookup(id.name));
+  }
+  if let ast.ExprIndex(ix) = e {
+    return lit_marked_read(ix.array, s);
   }
   return false;
 }
@@ -31455,6 +31459,9 @@ function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): L
   if let ast.ExprIdent(id) = e {
     st = lit_type_demand(s.lookup(id.name), want, st);
   }
+  if let ast.ExprIndex(ix) = e {
+    st = lit_index_demand(ix, want, s, st);
+  }
   if ((is_integer(want) || is_float(want)) && open_tree(e, s)) {
     return demand_open(e, want, s, st);
   }
@@ -31474,6 +31481,22 @@ function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): L
     _ => {}
   }
   return lit_other_demand(e, want, s, st);
+}
+
+// lit_index_demand gives an integer-literal array local the type of a typed
+// destination of one of its elements, such as `let m: u8 = z[0];`.
+function lit_index_demand(ix: ast.ExprIndex, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  let ast.ExprIdent(id) = ix.array else {
+    return st;
+  };
+  let typeinfo.TypeArray(a) = s.lookup(id.name) else {
+    return st;
+  };
+  let k = lit_id(a.elem);
+  if (k < 0 || !is_integer(want) || is_poly_int(want)) {
+    return st;
+  }
+  return lit_fix(st, [k], want);
 }
 
 function lit_other_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
