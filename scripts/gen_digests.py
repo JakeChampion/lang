@@ -168,46 +168,46 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("}")
     p("")
     p(f"function __{tag}_absorb(own h: {struct}, bs: [u8]): {struct} {{")
-    p("    let n: i32 = bs.len();")
-    p("    let pos: i32 = 0;")
-    p("    let bl: i32 = h.buf_len;")
+    p("    let n = bs.len();")
+    p("    let pos = 0;")
+    p("    let bl = h.buf_len;")
     p("    if (bl > 0) {")
-    p(f"        let take: i32 = {block} - bl;")
+    p(f"        let take = {block} - bl;")
     p("        if (take > n) { take = n; }")
     p(f"        h = {struct} {{ ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) }};")
-    p("        bl = bl + take;")
+    p("        bl += take;")
     p("        pos = take;")
     p(f"        if (bl == {block}) {{")
     p(f"            h = __{tag}_blocks(h, h.buf, 0, 1);")
     p("            bl = 0;")
     p("        }")
     p("    }")
-    p(f"    let nb: i32 = (n - pos) / {block};")
+    p(f"    let nb = (n - pos) / {block};")
     p("    if (nb > 0) {")
     p(f"        h = __{tag}_blocks(h, bs, pos, nb);")
-    p(f"        pos = pos + nb * {block};")
+    p(f"        pos += nb * {block};")
     p("    }")
     p("    if (pos < n) {")
     p(f"        h = {struct} {{ ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) }};")
-    p("        bl = bl + (n - pos);")
+    p("        bl += n - pos;")
     p("    }")
     p(f"    return {struct} {{ ...h, buf_len: bl, total: h.total + (n as u64) }};")
     p("}")
     p("")
     emit_update(p, struct, tag)
     p(f"pub function (h: {struct}) finish(): u8[] {{")
-    p("    let bl: i32 = h.buf_len;")
-    p(f"    let plen: i32 = {block};")
+    p("    let bl = h.buf_len;")
+    p(f"    let plen = {block};")
     p(f"    if (bl >= {block - len_bytes}) {{ plen = {2 * block}; }}")
-    p("    let pad: u8[] = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);")
+    p("    let pad = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);")
     p("    pad = pad.with(bl, 0x80 as u8);")
-    p("    let bits: u64 = h.total << (3 as u64);")
+    p("    let bits = h.total << (3 as u64);")
     if big_endian:
         p("    pad = __put_be64(pad, plen - 8, bits);")
     else:
         p("    pad = __put_le64(pad, plen - 8, bits);")
-    p(f"    let st: {struct} = __{tag}_blocks(h, pad, 0, plen / {block});")
-    p("    let out: u8[] = __alloc_u8(st.out_len);")
+    p(f"    let st = __{tag}_blocks(h, pad, 0, plen / {block});")
+    p("    let out = __alloc_u8(st.out_len);")
     bpw = width // 8
     put = ("__put_be" if big_endian else "__put_le") + str(width)
     for i in range(nwords):
@@ -234,10 +234,10 @@ def emit_hw_blocks(p, tag, struct, nwords, block):
     p(f"// __{tag}_blocks uses hardware instructions when the target supports them.")
     p(f"function __{tag}_blocks(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
     p(f"    if (!__{tag}_hw()) {{ return __{tag}_soft_blocks(st, bs, from, nblocks); }}")
-    p(f"    let words: u8[] = __alloc_u8({4 * nwords});")
+    p(f"    let words = __alloc_u8({4 * nwords});")
     for i in range(nwords):
         p(f"    words = __put_le32(words, {4 * i}, st.h{i});")
-    p(f"    let out: u8[] = __{tag}_hw_blocks(words, bs[from:from + nblocks * {block}]);")
+    p(f"    let out = __{tag}_hw_blocks(words, bs[from:from + nblocks * {block}]);")
     fields = ", ".join(f"h{i}: __get_le32(out, {4 * i})" for i in range(nwords))
     p(f"    return {struct} {{ ...st, {fields} }};")
     p("}")
@@ -260,16 +260,16 @@ def sha2_rounds(width, rounds, K, bs0, bs1, ss0, ss1):
 
     def body(p):
         for i, n in enumerate(names):
-            p(f"    let {n}: {ty} = st.h{i};")
+            p(f"    let {n} = st.h{i};")
         for i in range(16):
-            p(f"    let w{i}: {ty} = {'0' if width == 32 else '(0 as u64)'};")
-        p("    let off: i32 = from;")
-        p("    let blk: i32 = 0;")
+            p(f"    let w{i} = {'0' if width == 32 else '(0 as u64)'};")
+        p("    let off = from;")
+        p("    let blk = 0;")
         p("    while (blk < nblocks) {")
         for i in range(16):
             p(f"        w{i} = {load_word(i, bpw, True, ty, width)};")
         for n in names:
-            p(f"        let {n}{n}: {ty} = {n};")
+            p(f"        let {n}{n} = {n};")
         work = [n + n for n in names]
         for i in range(rounds):
             A, B, C, D, E, F, G, H = [work[(k - i) % 8] for k in range(8)]
@@ -282,12 +282,12 @@ def sha2_rounds(width, rounds, K, bs0, bs1, ss0, ss1):
             sig1 = " ^ ".join(rotr(E, r, width) for r in bs1)
             sig0 = " ^ ".join(rotr(A, r, width) for r in bs0)
             p(f"        {H} = {H} + ({sig1}) + ({G} ^ ({E} & ({F} ^ {G}))) + {const(K[i], width)} + {w};")
-            p(f"        {D} = {D} + {H};")
+            p(f"        {D} += {H};")
             p(f"        {H} = {H} + ({sig0}) + ((({A} ^ {B}) & {C}) ^ ({A} & {B}));")
         for n in names:
-            p(f"        {n} = {n} + {n}{n};")
-        p(f"        off = off + {16 * bpw};")
-        p("        blk = blk + 1;")
+            p(f"        {n} += {n}{n};")
+        p(f"        off += {16 * bpw};")
+        p("        blk += 1;")
         p("    }")
     return body
 
@@ -295,16 +295,16 @@ def sha2_rounds(width, rounds, K, bs0, bs1, ss0, ss1):
 def sha1_rounds(p):
     names = list("abcde")
     for i, n in enumerate(names):
-        p(f"    let {n}: u32 = st.h{i};")
+        p(f"    let {n} = st.h{i};")
     for i in range(16):
-        p(f"    let w{i}: u32 = 0;")
-    p("    let off: i32 = from;")
-    p("    let blk: i32 = 0;")
+        p(f"    let w{i} = 0;")
+    p("    let off = from;")
+    p("    let blk = 0;")
     p("    while (blk < nblocks) {")
     for i in range(16):
         p(f"        w{i} = {load_word(i, 4, True, 'u32', 32)};")
     for n in names:
-        p(f"        let {n}{n}: u32 = {n};")
+        p(f"        let {n}{n} = {n};")
     work = [n + n for n in names]
     for i in range(80):
         A, B, C, D, E = [work[(k - i) % 5] for k in range(5)]
@@ -323,25 +323,25 @@ def sha1_rounds(p):
         p(f"        {E} = {E} + 0x{k:08x} + {w} + {f} + {rotl(A, 5, 32)};")
         p(f"        {B} = {rotl(B, 30, 32)};")
     for n in names:
-        p(f"        {n} = {n} + {n}{n};")
-    p("        off = off + 64;")
-    p("        blk = blk + 1;")
+        p(f"        {n} += {n}{n};")
+    p("        off += 64;")
+    p("        blk += 1;")
     p("    }")
 
 
 def md5_rounds(p):
     names = list("abcd")
     for i, n in enumerate(names):
-        p(f"    let {n}: u32 = st.h{i};")
+        p(f"    let {n} = st.h{i};")
     for i in range(16):
-        p(f"    let x{i}: u32 = 0;")
-    p("    let off: i32 = from;")
-    p("    let blk: i32 = 0;")
+        p(f"    let x{i} = 0;")
+    p("    let off = from;")
+    p("    let blk = 0;")
     p("    while (blk < nblocks) {")
     for i in range(16):
         p(f"        x{i} = {load_word(i, 4, False, 'u32', 32)};")
     for n in names:
-        p(f"        let {n}{n}: u32 = {n};")
+        p(f"        let {n}{n} = {n};")
     work = [n + n for n in names]
     for i in range(64):
         A, B, C, D = [work[(k - i) % 4] for k in range(4)]
@@ -357,9 +357,9 @@ def md5_rounds(p):
         t = f"({A} + 0x{MD5_K[i]:08x} + x{k} + {f})"
         p(f"        {A} = {B} + {rotl(t, MD5_S[i], 32)};")
     for n in names:
-        p(f"        {n} = {n} + {n}{n};")
-    p("        off = off + 64;")
-    p("        blk = blk + 1;")
+        p(f"        {n} += {n}{n};")
+    p("        off += 64;")
+    p("        blk += 1;")
     p("    }")
 
 
@@ -375,20 +375,20 @@ def sm3_rounds(p):
     about to become C and G."""
     names = list("abcdefgh")
     for i, n in enumerate(names):
-        p(f"    let {n}: u32 = st.h{i};")
+        p(f"    let {n} = st.h{i};")
     for i in range(20):
-        p(f"    let w{i}: u32 = 0;")
-    p("    let sw: u32 = 0;")
-    p("    let tt: u32 = 0;")
-    p("    let t12: u32 = 0;")
-    p("    let ss1: u32 = 0;")
-    p("    let off: i32 = from;")
-    p("    let blk: i32 = 0;")
+        p(f"    let w{i} = 0;")
+    p("    let sw = 0;")
+    p("    let tt = 0;")
+    p("    let t12 = 0;")
+    p("    let ss1 = 0;")
+    p("    let off = from;")
+    p("    let blk = 0;")
     p("    while (blk < nblocks) {")
     for i in range(16):
         p(f"        w{i} = {load_word(i, 4, True, 'u32', 32)};")
     for n in names:
-        p(f"        let {n}{n}: u32 = {n};")
+        p(f"        let {n}{n} = {n};")
     lo = [n + n for n in names[:4]]
     hi = [n + n for n in names[4:]]
     for j in range(64):
@@ -415,9 +415,9 @@ def sm3_rounds(p):
         p(f"        {B} = {rotl(B, 9, 32)};")
         p(f"        {F} = {rotl(F, 19, 32)};")
     for n in names:
-        p(f"        {n} = {n} ^ {n}{n};")
-    p("        off = off + 64;")
-    p("        blk = blk + 1;")
+        p(f"        {n} ^= {n}{n};")
+    p("        off += 64;")
+    p("        blk += 1;")
     p("    }")
 
 
@@ -441,7 +441,7 @@ def emit_blake2b(p):
     p("// blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.")
     p("// The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.")
     p("pub function blake2b_new(out_len: i32): Blake2b {")
-    p("    let n: i32 = out_len;")
+    p("    let n = out_len;")
     p("    if (n < 1) { n = 1; }")
     p("    if (n > 64) { n = 64; }")
     fields = ", ".join(f"h{i}: {u64(v)}" for i, v in enumerate(SHA512_IV))
@@ -455,19 +455,19 @@ def emit_blake2b(p):
     p("// `t` counts bytes after the first block. `last` identifies the final block.")
     p("function __blake2b_blocks(st: Blake2b, bs: [u8], from: i32, nblocks: i32, t: u64, last: boolean): Blake2b {")
     for i in range(8):
-        p(f"    let h{i}: u64 = st.h{i};")
+        p(f"    let h{i} = st.h{i};")
     for i in range(16):
-        p(f"    let v{i}: u64 = 0 as u64;")
-    p("    let counter: u64 = t;")
-    p("    let off: i32 = from;")
-    p("    let blk: i32 = 0;")
+        p(f"    let v{i} = 0 as u64;")
+    p("    let counter = t;")
+    p("    let off = from;")
+    p("    let blk = 0;")
     p("    while (blk < nblocks) {")
     for i in range(8):
         p(f"        v{i} = h{i};")
     for i in range(8):
         p(f"        v{i + 8} = {u64(SHA512_IV[i])};")
-    p("        v12 = v12 ^ counter;")
-    p("        if (last && blk == nblocks - 1) { v14 = v14 ^ (0xffffffffffffffff as u64); }")
+    p("        v12 ^= counter;")
+    p("        if (last && blk == nblocks - 1) { v14 ^= 0xffffffffffffffff as u64; }")
     for r in range(12):
         s = BLAKE2B_SIGMA[r % 10]
         for gi, (a, b, c, d) in enumerate([(0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
@@ -476,42 +476,42 @@ def emit_blake2b(p):
             va, vb, vc, vd = f"v{a}", f"v{b}", f"v{c}", f"v{d}"
             p(f"        {va} = {va} + {vb} + {x};")
             p(f"        {vd} = {rotr(f'({vd} ^ {va})', 32, 64)};")
-            p(f"        {vc} = {vc} + {vd};")
+            p(f"        {vc} += {vd};")
             p(f"        {vb} = {rotr(f'({vb} ^ {vc})', 24, 64)};")
             p(f"        {va} = {va} + {vb} + {y};")
             p(f"        {vd} = {rotr(f'({vd} ^ {va})', 16, 64)};")
-            p(f"        {vc} = {vc} + {vd};")
+            p(f"        {vc} += {vd};")
             p(f"        {vb} = {rotr(f'({vb} ^ {vc})', 63, 64)};")
     for i in range(8):
         p(f"        h{i} = h{i} ^ v{i} ^ v{i + 8};")
-    p("        counter = counter + (128 as u64);")
-    p("        off = off + 128;")
-    p("        blk = blk + 1;")
+    p("        counter += 128 as u64;")
+    p("        off += 128;")
+    p("        blk += 1;")
     p("    }")
     fields = ", ".join(f"h{i}: h{i}" for i in range(8))
     p(f"    return Blake2b {{ ...st, {fields} }};")
     p("}")
     p("")
     p("function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {")
-    p("    let n: i32 = bs.len();")
+    p("    let n = bs.len();")
     p("    if (n == 0) { return h; }")
-    p("    let pos: i32 = 0;")
-    p("    let bl: i32 = h.buf_len;")
-    p("    let total: u64 = h.total;")
+    p("    let pos = 0;")
+    p("    let bl = h.buf_len;")
+    p("    let total = h.total;")
     p("    // Compress a full block only when more input follows. The final block")
     p("    // must have `last` set.")
     p("    if (bl + n > 128) {")
-    p("        let take: i32 = 128 - bl;")
+    p("        let take = 128 - bl;")
     p("        if (take > 0) { h = Blake2b { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) }; }")
-    p("        total = total + (128 as u64);")
+    p("        total += 128 as u64;")
     p("        h = __blake2b_blocks(h, h.buf, 0, 1, total, false);")
     p("        bl = 0;")
     p("        pos = take;")
-    p("        let nb: i32 = (n - pos - 1) / 128;")
+    p("        let nb = (n - pos - 1) / 128;")
     p("        if (nb > 0) {")
     p("            h = __blake2b_blocks(h, bs, pos, nb, total + (128 as u64), false);")
-    p("            total = total + ((nb * 128) as u64);")
-    p("            pos = pos + nb * 128;")
+    p("            total += (nb * 128) as u64;")
+    p("            pos += nb * 128;")
     p("        }")
     p("    }")
     p("    h = Blake2b { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };")
@@ -520,10 +520,10 @@ def emit_blake2b(p):
     p("")
     emit_update(p, "Blake2b", "blake2b")
     p("pub function (h: Blake2b) finish(): u8[] {")
-    p("    let bl: i32 = h.buf_len;")
-    p("    let pad: u8[] = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);")
-    p("    let st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + (bl as u64), true);")
-    p("    let full: u8[] = __alloc_u8(64);")
+    p("    let bl = h.buf_len;")
+    p("    let pad = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);")
+    p("    let st = __blake2b_blocks(h, pad, 0, 1, h.total + (bl as u64), true);")
+    p("    let full = __alloc_u8(64);")
     for i in range(8):
         p(f"    full = __put_le64(full, {8 * i}, st.h{i});")
     p("    if (st.out_len == 64) { return full; }")

@@ -127,7 +127,7 @@ pub function compressible(content_type: string): boolean {
   if (t.starts_with("text/") || t.ends_with("+json") || t.ends_with("+xml")) {
     return true;
   }
-  let listed: string[] = ["application/json", "application/javascript", "application/ecmascript", "application/xml", "application/wasm", "application/x-ndjson", "application/graphql-response+json", "image/x-icon", "image/vnd.microsoft.icon", "font/ttf", "font/otf", "application/vnd.ms-fontobject"];
+  let listed = ["application/json", "application/javascript", "application/ecmascript", "application/xml", "application/wasm", "application/x-ndjson", "application/graphql-response+json", "image/x-icon", "image/vnd.microsoft.icon", "font/ttf", "font/otf", "application/vnd.ms-fontobject"];
   for l in listed {
     if (t == l) {
       return true;

@@ -206,7 +206,7 @@ function addr[T](a: NdArray[T], idx: i32[]): i32 {
     if (idx[k] < 0 || idx[k] >= a.shape[k]) {
       return -1;
     }
-    at = at + idx[k] * a.strides[k];
+    at += idx[k] * a.strides[k];
     k += 1;
   }
   return at;
@@ -291,7 +291,7 @@ pub function (a: NdArray[T]) reverse(axis: i32): NdArray[T] {
   let s = a.strides[axis];
   let offset = a.offset;
   if (n > 0) {
-    offset = offset + (n - 1) * s;
+    offset += (n - 1) * s;
   }
   return NdArray { data: a.data, shape: a.shape, strides: a.strides.with(axis, 0 - s), offset: offset };
 }
@@ -356,7 +356,7 @@ function addr_of[T](a: NdArray[T], idx: i32[]): i32 {
   let at = a.offset;
   let k = 0;
   while (k < idx.len()) {
-    at = at + idx[k] * a.strides[k];
+    at += idx[k] * a.strides[k];
     k += 1;
   }
   return at;
@@ -588,7 +588,7 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
   let at = a.offset;
   let k = 0;
   while (k < count) {
-    at = at + idx[idx_from + k] * a.strides[axis_from + k];
+    at += idx[idx_from + k] * a.strides[axis_from + k];
     k += 1;
   }
   return at;

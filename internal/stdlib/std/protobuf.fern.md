@@ -170,7 +170,7 @@ function __varint(bytes: [u8], at: i32, field: i32): Result[(i64, i32), DecodeEr
     if (shift == 63 && b > 1) {
       return Err(__error(VarintOverflow, i, field));
     }
-    value = value | (b & 127) as i64 << shift;
+    value |= (b & 127) as i64 << shift;
     i += 1;
     if (b < 128) {
       return Ok((value, i));

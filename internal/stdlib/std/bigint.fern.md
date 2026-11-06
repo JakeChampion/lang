@@ -369,7 +369,7 @@ pub function (a: BigInt) bit_length(): i32 {
   let bits = 0;
   while (v > 0 as u64) {
     bits += 1;
-    v = v >> 1 as u64;
+    v >>= 1 as u64;
   }
   return top * 32 + bits;
 }
@@ -533,7 +533,7 @@ pub function (a: BigInt) word64(i: i32): u64 {
     v = a.mag[lo];
   }
   if (lo + 1 < a.mag.len()) {
-    v = v | a.mag[lo + 1] << __bi_sh32();
+    v |= a.mag[lo + 1] << __bi_sh32();
   }
   return v;
 }
@@ -586,7 +586,7 @@ pub function (a: BigInt) shr(k: i32): BigInt {
   while (i < n) {
     let cur = a.mag[i + limbShift] >> bitShift;
     if (bitShift > 0 as u64 && i + limbShift + 1 < a.mag.len()) {
-      cur = cur | a.mag[i + limbShift + 1] << 32 as u64 - bitShift & mask;
+      cur |= a.mag[i + limbShift + 1] << 32 as u64 - bitShift & mask;
     }
     out = out.append(cur);
     i += 1;
@@ -614,7 +614,7 @@ pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
   if (__bi_is_zero_mag(b.mag)) {
     return (zero(), a);
   }
-  let qr: (u64[], u64[]) = __bi_divmod_mag(a.mag, b.mag);
+  let qr = __bi_divmod_mag(a.mag, b.mag);
   return (__bi_make(a.neg != b.neg, qr.0), __bi_make(a.neg, qr.1));
 }
 ```

@@ -325,7 +325,7 @@ pub function (s: Session) resumed(): boolean {
 pub function (s: Session) save(): Result[u8[], tls.TlsError] {
   let c = __handshake_ok(s.client.save())?;
   let n = c.len();
-  let out: u8[] = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  let out = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
   return Ok(__cat(__cat(out, c), s.held));
 }
 

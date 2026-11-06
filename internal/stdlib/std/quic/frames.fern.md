@@ -962,10 +962,10 @@ function __put_ids(own out: u8[], f: Frame): u8[] {
 pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, fin: boolean): u8[] {
   let kind = STREAM | 2;
   if (offset > 0) {
-    kind = kind | 4;
+    kind |= 4;
   }
   if (fin) {
-    kind = kind | 1;
+    kind |= 1;
   }
   out = put_varint(put_varint(out, kind), stream);
   if (offset > 0) {

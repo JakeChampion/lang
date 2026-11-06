@@ -870,7 +870,7 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
   let count = 0;
   let at = from;
   while (at < end) {
-    let split: (i32, i32) = __field_line(buf, at, end);
+    let split = __field_line(buf, at, end);
     let col = split.0;
     let e = split.1;
     if (col < 0) {
@@ -887,7 +887,7 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
       }
       same = false;
     }
-    let at_prev: i32 = -1;
+    let at_prev = -1;
     if (same) {
       at_prev = i;
     }
@@ -1542,7 +1542,7 @@ pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
   let out: u8[] = [];
   let at = 0;
   while (true) {
-    let step: (i32, ChunkDecoder, i32, u8[]) = __chunk_step(cur, buf, at, out);
+    let step = __chunk_step(cur, buf, at, out);
     cur = step.1;
     at = step.2;
     out = step.3;
@@ -1786,7 +1786,7 @@ pub function parse_request_framed(buf: u8[]): HttpFraming {
   let lim = limits();
   match (__request_head(buf, 0, lim, framed_none().request)) {
     Ok(head) => {
-      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, lim);
+      let body = __framed_body(buf, head.len, head.framing, head.version, lim);
       if (body.0 != 2) {
         return __unframed(body.0, head);
       }
@@ -1814,7 +1814,7 @@ pub function framed_kept(f: HttpFramed): HttpFramed {
 pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
   match (__request_head(buf, from, limits, prev.request)) {
     Ok(head) => {
-      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, head.framing, head.version, limits);
+      let body = __framed_body(buf, from + head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
         return __unframed(body.0, head);
       }
@@ -2071,7 +2071,7 @@ function __path_end(buf: u8[], from: i32, end: i32): i32 {
     return end;
   }
   if (!__query_ok(buf, q + 1, end)) {
-    return 0 - 1;
+    return -1;
   }
   return q;
 }
@@ -2758,7 +2758,7 @@ pub function (b: Body) bytes(): u8[] {
 ```fern
 <<60 function __chunks_joined(producer: ChunkProducer): u8[]>>=
 function __chunks_joined(producer: ChunkProducer): u8[] {
-  let next: (i32) => Option[u8[]] = producer.next;
+  let next = producer.next;
   let out: u8[] = [];
   let i = 0;
   while (true) {
@@ -2879,7 +2879,7 @@ pub function file_ranges_len(ranges: i64[], seams: u8[][]): i64 {
     i += 2;
   }
   for s in seams {
-    n = n + s.len() as i64;
+    n += s.len() as i64;
   }
   return n;
 }
@@ -3037,7 +3037,7 @@ pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limi
 
 // A field of prev that a response repeats is shared, not copied.
 pub function parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
-  let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
+  let shape = __head_shape(buf, from, limits);
   let first_crlf = shape.0;
   let headers_end = shape.1;
   let refused = __response_head_refused(buf, from, first_crlf, headers_end, shape.2);

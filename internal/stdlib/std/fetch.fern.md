@@ -2044,7 +2044,7 @@ function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, starte
 }
 
 function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
-  let fd: i32 = -1;
+  let fd = -1;
   match (__shared_socket(tr, req, t, started, __place_key(place), guard, roots, sh)?) {
     OnLoop(socket) => {
       fd = socket;
@@ -3135,7 +3135,7 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
 }
 
 function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64, size: i32): Result[u8[], FetchError] {
-  let ns_per_ms: i64 = 1000000;
+  let ns_per_ms = 1000000;
   let left_ms = timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));

@@ -1069,7 +1069,7 @@ pub function (m: OrdMap[K: cmp.Ord, V]) remove(k: K): OrdMap[K, V] {
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) get(k: K): Option[V] {
-  let f: (Node[K, V], i32) = find_leaf(m.root, k);
+  let f = find_leaf(m.root, k);
   if (f.1 < 0) {
     return None;
   }
@@ -1084,7 +1084,7 @@ pub function (m: OrdMap[K: cmp.Ord, V]) get(k: K): Option[V] {
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) get_or(k: K, fallback: V): V {
-  let f: (Node[K, V], i32) = find_leaf(m.root, k);
+  let f = find_leaf(m.root, k);
   if (f.1 < 0) {
     return fallback;
   }
@@ -1099,7 +1099,7 @@ pub function (m: OrdMap[K: cmp.Ord, V]) get_or(k: K, fallback: V): V {
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) contains(k: K): boolean {
-  let f: (Node[K, V], i32) = find_leaf(m.root, k);
+  let f = find_leaf(m.root, k);
   return f.1 >= 0;
 }
 
@@ -1162,7 +1162,7 @@ pub function (m: OrdMap[K, V]) key_at(i: i32): Option[K] {
   if (i < 0 || i >= m.len()) {
     return None;
   }
-  let f: (Node[K, V], i32) = node_at(m.root, i);
+  let f = node_at(m.root, i);
   match (f.0) {
     Leaf(pre, ws, ks, vs) => {
       return Some(ks[f.1]);
@@ -1177,7 +1177,7 @@ pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
   if (i < 0 || i >= m.len()) {
     return None;
   }
-  let f: (Node[K, V], i32) = node_at(m.root, i);
+  let f = node_at(m.root, i);
   match (f.0) {
     Leaf(pre, ws, ks, vs) => {
       return Some(vs[f.1]);

@@ -396,9 +396,9 @@ function __repeat_char(s: string, count: i32): string {
 ```fern
 <<6 pub function bytes(n: i64): string>>=
 pub function bytes(n: i64): string {
-  let units: string[] = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let u = 0;
-  let scale: i64 = 1;
+  let scale = 1;
   while (u + 1 < units.len() && (n / scale >= 1024 || n / scale <= -1024)) {
     scale *= 1024;
     u += 1;
@@ -424,7 +424,7 @@ pub function duration(d: Duration): string {
   let h = mag / 3600000;
   let rem = mag - h * 3600000;
   let m = rem / 60000;
-  rem = rem - m * 60000;
+  rem -= m * 60000;
   let s = rem / 1000;
   let msPart = rem - s * 1000;
   let out = "";
