@@ -584,7 +584,7 @@ pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError]
   }
   let compressed = deflate.deflate(raw);
   let checksum = deflate.adler32(raw);
-  let zlib: u8[] = [120, 156];
+  let zlib = [120, 156];
   for b in compressed {
     zlib = zlib.append(b);
   }
@@ -597,7 +597,7 @@ pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError]
   header = header.append(8);
   let color_type: u8 = if (channels == 4) { 6 } else { 2 };
   header = header.append(color_type).append(0).append(0).append(0);
-  let output: u8[] = [137, 80, 78, 71, 13, 10, 26, 10];
+  let output = [137, 80, 78, 71, 13, 10, 26, 10];
   output = chunk(output, CHUNK_IHDR, header);
   output = chunk(output, CHUNK_IDAT, zlib);
   return Ok(chunk(output, CHUNK_IEND, []));

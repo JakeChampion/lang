@@ -30964,6 +30964,37 @@ function lit_struct_read(e: ast.Expr, s: Scope): boolean {
   return false;
 }
 
+// lit_marked_read is true for a read of a local whose type holds an integer
+// literal, such as `bytes` after `let bytes = [1, 2];`.
+function lit_marked_read(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprIdent(id) = e {
+    return lit_marked(s.lookup(id.name));
+  }
+  return false;
+}
+
+function lit_marked(t: typeinfo.Type): boolean {
+  if (lit_id(t) >= 0) {
+    return true;
+  }
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return lit_marked(a.elem);
+    },
+    typeinfo.TypeTuple(tt) => {
+      for el in tt.elements {
+        if (lit_marked(el)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
 // An open enum local is an unannotated local whose type holds a generic
 // enum with no type arguments, such as `let e = Empty;`. Its first use at a
 // known type writes that type on the local.
@@ -31434,7 +31465,7 @@ function lit_union_demand(e: ast.Expr, wu: typeinfo.TypeUnion, s: Scope, st: Lit
         out = lit_type_demand(have.args[j], wu.args[j], out);
         j += 1;
       }
-      return out;
+      return lit_other_demand(e, wu, s, out);
     }
   }
   return lit_other_demand(e, wu, s, st);
@@ -31791,7 +31822,7 @@ function variant_payload_types(c: ast.ExprCall, s: Scope): typeinfo.Type[] {
 // settle from the parameter type.
 function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
   let (seed, ids) = lit_tree(arg, s, []);
-  return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s);
+  return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s) || lit_marked_read(arg, s);
 }
 
 // lit_open_receiver gives an open map local the key and value types that a
@@ -31809,6 +31840,31 @@ function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     return st;
   }
   return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], s)), settled_literal(check_expr(c.args[1], s))));
+}
+
+// lit_array_receiver gives an integer-literal array local the element type of
+// a typed argument to `append` or `with`, as a literal takes the type of the
+// other operand of a binary operator.
+function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
+  let ast.ExprFieldAccess(fa) = c.callee else {
+    return st;
+  };
+  let ast.ExprIdent(id) = fa.obj else {
+    return st;
+  };
+  let typeinfo.TypeArray(a) = s.lookup(id.name) else {
+    return st;
+  };
+  let k = lit_id(a.elem);
+  let at = if (fa.field == "append") { 0 } else if (fa.field == "with") { 1 } else { -1 };
+  if (k < 0 || at < 0 || c.args.len() != at + 1 || open_tree(c.args[at], s)) {
+    return st;
+  }
+  let have = check_expr(c.args[at], s);
+  if (is_integer(have) && !is_poly_int(have)) {
+    return lit_fix(st, [k], have);
+  }
+  return st;
 }
 
 // settled_literal is the type an untyped literal settles to by default.
@@ -31830,7 +31886,7 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   if (parser.is_value_block(c)) {
     return lit_value_block(c, t_unknown("value block"), s, st);
   }
-  let out = lit_expr(c.callee, s, lit_open_receiver(c, s, st));
+  let out = lit_expr(c.callee, s, lit_array_receiver(c, s, lit_open_receiver(c, s, st)));
   let reads = false;
   for arg in c.args {
     reads = reads || lit_arg_reads(arg, s);
