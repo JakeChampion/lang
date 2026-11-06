@@ -95,19 +95,19 @@ function binary_prec(op: string): i32 {
   if (op == "&&") {
     return 5;
   }
-  if (op == "|") {
+  if (op == "==" || op == "!=") {
     return 6;
   }
-  if (op == "^") {
+  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
     return 7;
   }
-  if (op == "&") {
+  if (op == "|") {
     return 8;
   }
-  if (op == "==" || op == "!=") {
+  if (op == "^") {
     return 9;
   }
-  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+  if (op == "&") {
     return 10;
   }
   if (op == "<<" || op == ">>" || op == "<<|" || op == "<<?" || op == ">>?") {
@@ -120,6 +120,26 @@ function binary_prec(op: string): i32 {
     return 13;
   }
   return prec_lowest();
+}
+
+function is_bitwise_op(op: string): boolean {
+  return op == "&" || op == "|" || op == "^";
+}
+
+function is_comparison_op(op: string): boolean {
+  return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=";
+}
+
+// The precedence to print `operand` of the binary `op` at. Where a bitwise
+// operator and a comparison meet, the operand keeps its parentheses, so the
+// grouping does not depend on the reader's memory of the table.
+function operand_prec(op: string, operand: ast.Expr, base: i32): i32 {
+  if let ast.ExprBinary(c) = operand {
+    if (is_bitwise_op(op) && is_comparison_op(c.op) || is_comparison_op(op) && is_bitwise_op(c.op)) {
+      return prec_primary();
+    }
+  }
+  return base;
 }
 
 function print_expr(e: ast.Expr, depth: i32): string {
@@ -890,7 +910,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         return (nl + " = " + nr, nf2);
       }
       let p = binary_prec(b.op);
-      let (bl, bf) = print_expr_c(b.left, p, depth, f);
+      let (bl, bf) = print_expr_c(b.left, operand_prec(b.op, b.left, p), depth, f);
       let gap = " ";
       if (written_break(b, f.spans)) {
         let (tr, tf) = emit_trailing(bf, last_line(b.left, bf.spans));
@@ -903,7 +923,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         gap = tr + "\n" + lead + indent_str(depth + 1);
         bf = tf;
       }
-      let (br, bf2) = print_expr_c(b.right, p + 1, depth, bf);
+      let (br, bf2) = print_expr_c(b.right, operand_prec(b.op, b.right, p + 1), depth, bf);
       let inner = bl + gap + b.op + " " + br;
       if (p < parent_prec) {
         return ("(" + inner + ")", bf2);

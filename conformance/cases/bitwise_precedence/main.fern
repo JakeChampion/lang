@@ -1,0 +1,13 @@
+// The bitwise operators bind tighter than the comparisons, as in Rust, Go
+// and Zig: `flags & 2 != 0` is `(flags & 2) != 0`.
+function main(): i32 {
+  let flags = 6;
+  print((flags & 2 != 0).to_string());
+  print((flags & 1 == 0).to_string());
+  print((flags | 1 == 7).to_string());
+  print((flags ^ 2 == 4).to_string());
+  print((1 + 2 & 3 == 3).to_string());
+  print((flags & 6 > 4 && flags | 8 < 16).to_string());
+  print((flags & 3 < 2).to_string());
+  return 0;
+}
