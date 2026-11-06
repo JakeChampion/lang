@@ -2417,6 +2417,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[fmt.Sprintf("__mmio_store%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT, value}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__fence"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
+	c.info.FuncSigs["__wfi"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
+	i64T := ast.NumberType{Width: 64, Signed: true}
+	for _, name := range []string{"__hvc", "__smc"} {
+		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
+	}
 
 	c.builtinFuncs = make(map[string]bool, len(c.info.FuncSigs))
 	for name := range c.info.FuncSigs {
@@ -9209,11 +9214,6 @@ func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
 	return c.identValueBinding(id.Name, s)
 }
 
-// UnsafeIntrinsics names the raw builtins that forge an address, change a
-// reference count or a length, or call foreign code, so a call to one is
-// only accepted inside an unsafe block. docs/security/UNSAFE-INVENTORY.md
-// lists each one with its obligation. compiler/checker.fern's
-// unsafe_intrinsics holds the same set.
 // UnsafeBuiltinMethods names the built-in methods that are unsafe. Each
 // close_unchecked closes a handle through a borrow, so the caller must make
 // sure that no copy of the handle is used after it. compiler/checker.fern's
@@ -9224,12 +9224,18 @@ var UnsafeBuiltinMethods = []string{
 	"__method_Dir_close_unchecked",
 }
 
+// UnsafeIntrinsics names the raw builtins that forge an address, change a
+// reference count or a length, call foreign code, or call the firmware, so a
+// call to one is only accepted inside an unsafe block.
+// docs/security/UNSAFE-INVENTORY.md lists each one with its obligation.
+// compiler/checker.fern's unsafe_intrinsics holds the same set.
 var UnsafeIntrinsics = map[string]bool{
 	"__alloc": true, "__alloc_reuse": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
 	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
+	"__hvc": true, "__smc": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,

@@ -26,6 +26,9 @@ function capability_profile(profile: string): string[] {
   if (profile == "wasi-proxy") {
     return ["log", "now", "config", "random", "fetch", "pollable"];
   }
+  if (profile == "kernel") {
+    return ["privileged"];
+  }
   let empty: string[] = [];
   return empty;
 }
@@ -46,8 +49,11 @@ function environment_profile(environment: string): string {
   if (environment == "wasi-http") {
     return "wasi-proxy";
   }
-  if (environment == "freestanding" || environment == "kernel") {
+  if (environment == "freestanding") {
     return "none";
+  }
+  if (environment == "kernel") {
+    return "kernel";
   }
   return "";
 }
@@ -399,6 +405,9 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__raw_task_state", capability: "rawmem" },
     Gate { builtin: "__raw_vdso", capability: "rawmem" },
     Gate { builtin: "__raw_vg_request", capability: "rawmem" },
+    Gate { builtin: "__wfi", capability: "privileged" },
+    Gate { builtin: "__hvc", capability: "privileged" },
+    Gate { builtin: "__smc", capability: "privileged" },
   ];
 }
 

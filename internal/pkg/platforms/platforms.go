@@ -51,6 +51,8 @@ var capabilityProfiles = map[string]capabilityProfile{
 
 	"wasi-proxy": {"log", "now", "config", "random", "fetch", "pollable"},
 
+	"kernel": {"privileged"},
+
 	"none": nil,
 }
 
@@ -76,7 +78,7 @@ var environments = map[string]environment{
 
 	"freestanding": {profile: "none", entry: EntryExports},
 
-	"kernel": {profile: "none", entry: EntryReset},
+	"kernel": {profile: "kernel", entry: EntryReset},
 }
 
 var table = map[string]struct {

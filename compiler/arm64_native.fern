@@ -566,20 +566,21 @@ function arm64_movreg_sized_word(rd: i32, rm: i32, w: boolean): i64 {
   return word;
 }
 
-function arm64_svc_word(imm16: i32): i64 {
-  return 0xd4000001 | (imm16 & 0xffff) as i64 << 5;
-}
-
 function arm64_ret_word(rn: i32): i64 {
   return 0xd65f0000 | (rn & 31) as i64 << 5;
 }
 
-function arm64_svc(buf: i32[], imm16: i32): i32[] {
-  return arm64_le32(buf, arm64_svc_word(imm16));
-}
-
-function arm64_brk(buf: i32[], imm16: i32): i32[] {
-  return arm64_le32(buf, 0xd4200000 | (imm16 & 0xffff) as i64 << 5);
+// An exception-generating instruction: svc, hvc, smc or brk.
+function arm64_exception(buf: i32[], mnem: string, imm16: i32): i32[] {
+  let base = 0xd4200000;
+  if (mnem == "svc") {
+    base = 0xd4000001;
+  } else if (mnem == "hvc") {
+    base = 0xd4000002;
+  } else if (mnem == "smc") {
+    base = 0xd4000003;
+  }
+  return arm64_le32(buf, base | (imm16 & 0xffff) as i64 << 5);
 }
 
 function arm64_ret(buf: i32[], rn: i32): i32[] {
@@ -4759,6 +4760,9 @@ function arm64_gas_family_len2(mnem: string): i32 {
 
 function arm64_gas_family_len3(mnem: string): i32 {
   let c: u8 = mnem[0];
+  if (arm64_is_exception(mnem)) {
+    return arm64_fam_sys();
+  }
   if (c == b'a') {
     return arm64_gas_family_len3_a(mnem);
   }
@@ -4814,6 +4818,10 @@ function arm64_gas_family_len3_w(mnem: string): i32 {
   return 0 - 1;
 }
 
+function arm64_is_exception(mnem: string): boolean {
+  return mnem == "svc" || mnem == "hvc" || mnem == "smc" || mnem == "brk";
+}
+
 function arm64_gas_family_len3_a(mnem: string): i32 {
   let c: u8 = mnem[1];
   if (c == b'd') {
@@ -4851,9 +4859,6 @@ function arm64_gas_family_len3_b(mnem: string): i32 {
   }
   if (c == b'l' && mnem == "blr") {
     return arm64_fam_indirect();
-  }
-  if (c == b'r' && mnem == "brk") {
-    return arm64_fam_sys();
   }
   if (c == b't' && mnem == "bti") {
     return arm64_fam_landing();
@@ -5041,9 +5046,6 @@ function arm64_gas_family_len3_s(mnem: string): i32 {
   }
   if (c == b'u' && mnem == "sub") {
     return arm64_fam_addsub();
-  }
-  if (c == b'v' && mnem == "svc") {
-    return arm64_fam_sys();
   }
   if (c == b'w' && mnem == "swp") {
     return arm64_fam_swap();
@@ -7387,11 +7389,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     if (ops.len() < 1) {
       return a;
     }
-    if (mnem == "svc") {
-      arm64_push_arr(a.code, arm64_svc([], arm64_gas_imm(ops[0])));
-      return a;
-    }
-    arm64_push_arr(a.code, arm64_brk([], arm64_gas_imm(ops[0])));
+    arm64_push_arr(a.code, arm64_exception([], mnem, arm64_gas_imm(ops[0])));
     return a;
   }
   if (fam == arm64_fam_indirect()) {

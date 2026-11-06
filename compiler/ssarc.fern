@@ -6426,7 +6426,7 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__store_ptr") {
     return Lowered { found: true, r: emit(r, ir.op_store_ptr()) };
   }
-  if (util.str_has_prefix(ins.str, "__mmio_") || ins.str == "__fence") {
+  if (device_name(ins.str)) {
     return Lowered { found: true, r: emit(r, device_op(ins.str)) };
   }
   return raw_floor_site(r, ins);
@@ -6438,10 +6438,31 @@ function device_op(name: string): ir.Op {
   if (name == "__fence") {
     return ir.op_fence();
   }
+  if (privileged_kind(name) > 0) {
+    return ir.op_privileged(privileged_kind(name));
+  }
   if (util.str_has_prefix(name, "__mmio_load")) {
     return ir.op_mmio_load(util.digits_to_i32(slice_unchecked(name, 11, name.len()) + ""));
   }
   return ir.op_mmio_store(util.digits_to_i32(slice_unchecked(name, 12, name.len()) + ""));
+}
+
+// An intrinsic that lowers to a device op: an MMIO access, __fence, or a
+// privileged op.
+function device_name(name: string): boolean {
+  return util.str_has_prefix(name, "__mmio_") || name == "__fence" || privileged_kind(name) > 0;
+}
+
+// The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.
+function privileged_kind(name: string): i32 {
+  if (!util.str_has_prefix(name, "__")) {
+    return 0;
+  }
+  let k = ir.kind_id(slice_unchecked(name, 2, name.len()) + "");
+  if (!ir.is_privileged_kind(k)) {
+    return 0;
+  }
+  return k;
 }
 
 struct RawOps { name: string, ops: ir.Op[] }

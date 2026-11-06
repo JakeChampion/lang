@@ -137,6 +137,17 @@ function overlapping_copy(): i32 {
   return 0;
 }
 
+function wait_for_interrupt(): i32 {
+  __wfi();
+  return 0;
+}
+
+function call_firmware(): i64 {
+  unsafe {
+    return __smc(0x84000000i64, 0i64, 0i64, 0i64);
+  }
+}
+
 function main(): i32 {
   return 0;
 }
@@ -212,6 +223,8 @@ func TestRawMemoryRefusesABrokenObligation(t *testing.T) {
 		{"read_after_free", "in a freed block"},
 		{"read_null", "not in a block from __alloc"},
 		{"overlapping_copy", "overlap"},
+		{"wait_for_interrupt", "__wfi: needs a kernel target"},
+		{"call_firmware", "__smc: needs a kernel target"},
 	} {
 		_, err := i.CallByName(c.fn, nil)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
