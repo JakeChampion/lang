@@ -2389,6 +2389,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
       cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module or command-module"),
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
+      cli_flag("-stdlib", "DIR", "compile against the standard library in DIR, not the one that this binary embeds"),
       cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
@@ -6590,6 +6591,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       embed_dir = f.value;
     } else if (f.name == "-o") {
       out_path = f.value;
+    } else if (f.name == "-stdlib") {
+      root = util.clean_path(f.value);
+      have_root = true;
     }
     i += 1;
   }
