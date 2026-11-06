@@ -38,6 +38,8 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `__free(p, n)` | `usize, i32 -> void` | `p` must be a live block of size `n` with no other reference. |
 | `__load_u8(p)`, `__load_i32(p)`, `__load_i64(p)`, `__load_ptr(p)` | `usize -> value` | `p` must point at initialized memory of the loaded width. |
 | `__store_u8(p, v)`, `__store_i32(p, v)`, `__store_i64(p, v)`, `__store_ptr(p, v)` | `usize, value -> void` | `p` must point at writable memory that no live value aliases. |
+| `__mmio_load8(p)`, `__mmio_load16(p)`, `__mmio_load32(p)`, `__mmio_load64(p)` | `usize -> i32 or i64` | `p` must be a device register or memory of the loaded width, aligned to that width. No pass removes, merges or moves the load. |
+| `__mmio_store8(p, v)`, `__mmio_store16(p, v)`, `__mmio_store32(p, v)`, `__mmio_store64(p, v)` | `usize, i32 or i64 -> void` | `p` must be a writable device register or memory of the stored width, aligned to that width. No pass removes, merges or moves the store. |
 | `__memcpy(d, s, n)`, `__memset(d, v, n)` | `usize, usize or i32, i32 -> void` | Both ranges must be valid for `n` bytes and must not overlap. |
 | `__str_bytes(s, p)` | `string, usize -> usize` | `p` must have room for the string's bytes. |
 | `__account_entry(k, p)` | `i32, usize -> usize` | `p` must be an allocator block header. |

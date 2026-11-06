@@ -258,6 +258,33 @@ function main(): i32 {
   };
   return lam();
 }`, nil},
+		{"last-use-before-lambda-parameter-shadow", `function arr(n: i32): i32[] { return [n]; }
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function main(): i32 {
+  let xs = arr(1);
+  let k = keep(xs);
+  let g = (xs: i32[]): i32 => xs[0];
+  return k + g(arr(2));
+}`, nil},
+		{"last-use-before-lambda-local-shadow", `function arr(n: i32): i32[] { return [n]; }
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function main(): i32 {
+  let xs = arr(1);
+  let k = keep(xs);
+  let g = (): i32 => {
+    let xs = arr(2);
+    return xs[0];
+  };
+  return k + g();
+}`, nil},
+		{"e051-last-use-before-real-lambda-capture", `function arr(n: i32): i32[] { return [n]; }
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function main(): i32 {
+  let xs = arr(1);
+  let k = keep(xs);
+  let g = (): i32 => xs[0];
+  return k + g();
+}`, []string{"E051"}},
 		{"lambda-pattern-shadowed-by-local-moved-at-last-use", `function make(): Result[i32[], string] { return Ok([1]); }
 function take(own xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
@@ -347,6 +374,8 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"unsafe-struct-method-outside-block", "struct Item { v: i32 } unsafe function (self: Item) raw(): i32 { unsafe { return self.v; } } function main(): i32 { let it: Item = Item { v: 1 }; return it.raw(); }", []string{"E095"}},
 		{"raw-builtin-outside-block", "function main(): i32 { let p: usize = __alloc(16); return 0; }", []string{"E095"}},
 		{"raw-builtin-store-outside-block", "function main(): i32 { let p: usize = 0 as usize; unsafe { p = __alloc(16); } __store_i32(p, 7); return 0; }", []string{"E095"}},
+		{"mmio-load-outside-block", "function main(): i32 { return __mmio_load32(4096 as usize); }", []string{"E095"}},
+		{"mmio-store-outside-block", "function main(): i32 { __mmio_store8(4096 as usize, 1); return 0; }", []string{"E095"}},
 		{"raw-builtin-inside-block", "function main(): i32 { let v: i32 = 0; unsafe { let p: usize = __alloc(16); __store_i32(p, 7); v = __load_i32(p); __free(p, 16); } return v - 7; }", nil},
 		{"unsafe-dyn-method-outside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via(r: dyn Read): i32 { return r.read(); } function main(): i32 { return via(Item { v: 1 }); }", []string{"E095"}},
 		{"unsafe-bound-method-outside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via[T: Read](r: T): i32 { return r.read(); } function main(): i32 { return via(Item { v: 1 }); }", []string{"E095"}},

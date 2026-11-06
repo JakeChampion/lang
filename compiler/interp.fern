@@ -7403,7 +7403,7 @@ function is_raw_mem_builtin(name: string): boolean {
   if (name == "__alloc" || name == "__free" || name == "__memcpy" || name == "__memset" || name == "__ptr_width") {
     return true;
   }
-  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") {
+  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr" || checker.device_intrinsic(name)) {
     return true;
   }
   return name == "__store_u8" || name == "__store_i32" || name == "__store_i64" || name == "__store_ptr";
@@ -7412,6 +7412,9 @@ function is_raw_mem_builtin(name: string): boolean {
 // The interpreter is a compiled program, so the raw builtins act on its own
 // heap, as the buffer builtins do.
 function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (checker.device_intrinsic(name)) {
+    return call_mmio_builtin(name, args);
+  }
   let want = 1;
   if (name == "__ptr_width") {
     want = 0;
@@ -7447,6 +7450,59 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
     return raw_mem_load(name, w[0] as usize);
   }
   return raw_mem_effect(heap, name, w);
+}
+
+function call_mmio_builtin(name: string, args: Value[]): Value {
+  if (name == "__fence") {
+    return v_void();
+  }
+  let want = 1;
+  if (util.str_has_prefix(name, "__mmio_store")) {
+    want = 2;
+  }
+  if (args.len() != want) {
+    return v_err(name + ": expected " + util.i32_to_string(want) + " args");
+  }
+  let w: i64[] = [];
+  for a in args {
+    if (!is_int_like(a)) {
+      return v_err(name + ": args must be integers");
+    }
+    w = w.append(vint_as_i64(a));
+  }
+  return raw_mmio(name, w);
+}
+
+// No device answers the interpreter, so an MMIO access is an ordinary access
+// to its own memory.
+function raw_mmio(name: string, w: i64[]): Value {
+  let bits = checker.mmio_width(name);
+  let p = w[0] as usize;
+  unsafe {
+    if (util.str_has_prefix(name, "__mmio_load")) {
+      if (bits == 8) {
+        return v_int(__load_u8(p));
+      }
+      if (bits == 16) {
+        return v_int(__load_u8(p) | __load_u8(p + 1) << 8);
+      }
+      if (bits == 32) {
+        return v_int(__load_i32(p));
+      }
+      return v_int64(__load_i64(p));
+    }
+    if (bits == 8) {
+      __store_u8(p, w[1] as i32 & 255);
+    } else if (bits == 16) {
+      __store_u8(p, w[1] as i32 & 255);
+      __store_u8(p + 1, w[1] as i32 >> 8 & 255);
+    } else if (bits == 32) {
+      __store_i32(p, w[1] as i32);
+    } else {
+      __store_i64(p, w[1]);
+    }
+  }
+  return v_void();
 }
 
 function raw_mem_load(name: string, p: usize): Value {
