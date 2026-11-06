@@ -70,7 +70,7 @@ function main(): void {
 `
 
 func TestSelfHostArrayElementTakeAcrossSplicedJoin(t *testing.T) {
-	_, targets, skip := hostTargets()
+	targets, skip := hostTargets()
 	if skip != "" {
 		t.Skip(skip)
 	}

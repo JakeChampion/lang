@@ -62,7 +62,7 @@ func tcpSendBufWant() []byte {
 func TestSelfHostTCPSendBuf(t *testing.T) {
 	primary, stdlib := witSelfHostCLI(t)
 	bootstrap := buildLangBinForInterp(t)
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	if _, err := exec.LookPath("wasmtime"); err == nil {
 		targets = append(targets, ssaBackendTarget{target: "wasm32-wasi"})
 	}

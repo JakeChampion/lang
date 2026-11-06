@@ -47,7 +47,7 @@ function main(): i32 {
 }
 `
 	cli, stdlib := witSelfHostCLI(t)
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	if _, err := exec.LookPath("wasmtime"); err == nil {
 		targets = append(targets, ssaBackendTarget{target: "wasm32-wasi", runner: []string{"wasmtime", "run"}})
 	}

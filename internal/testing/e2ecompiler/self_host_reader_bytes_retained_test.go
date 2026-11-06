@@ -13,7 +13,7 @@ import (
 
 func TestSelfHostReaderBytesRetainedShortReads(t *testing.T) {
 	cli, stdlib := witSelfHostCLI(t)
-	_, targets, _ := hostTargets()
+	targets, _ := hostTargets()
 	if wasmtime, err := exec.LookPath("wasmtime"); err == nil {
 		targets = append(targets, ssaBackendTarget{target: "wasm32-wasi", runner: []string{wasmtime, "run", "--dir=."}})
 	}
