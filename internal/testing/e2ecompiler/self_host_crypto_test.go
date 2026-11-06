@@ -17,9 +17,9 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "field25519", "x25519", "ed25519", "mlkem768", "montgomery", "p256", "rsa", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_verify", "tls_x509"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
-			want, err := exec.Command(interp, "-interp", src).Output()
-			if err != nil {
-				t.Fatalf("interpreter: %v\n%s", err, want)
+			want, exit := e2eharness.InterpVerdict(t, interp, src)
+			if exit != 0 {
+				t.Fatalf("interpreter exit %d\n%s", exit, want)
 			}
 			got, err := exec.Command(wasmtime, "run", cli.wasmComponent(t, src, "FERN_STRICT_IR=1")).Output()
 			if err != nil {

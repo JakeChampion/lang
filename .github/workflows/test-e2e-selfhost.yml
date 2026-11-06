@@ -270,6 +270,19 @@ jobs:
         with:
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
+      # The Go interpreter's verdict on each suite (e2eharness.InterpVerdict).
+      # A verdict file is named by the hash of its inputs, so any earlier
+      # directory is safe to restore. Each leg saves its own copy per commit.
+      - name: Restore the interpreter verdicts, and save them when the job ends
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/selfhost-unicache/*.interp
+          key: interp-verdicts-v1-${{ runner.os }}-${{ matrix.leg }}-${{ github.sha }}
+          restore-keys: |
+            interp-verdicts-v1-${{ runner.os }}-${{ matrix.leg }}-
+            interp-verdicts-v1-${{ runner.os }}-
+      - name: Drop interpreter verdicts no run has read for a week
+        run: find "$RUNNER_TEMP/selfhost-unicache" -maxdepth 1 -name '*.interp' -mtime +7 -delete
       - name: aarch64 cross-gcc + qemu
         if: startsWith(matrix.leg, 'arm64')
         uses: ./.github/actions/apt-cross-toolchain
