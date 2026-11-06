@@ -120,21 +120,29 @@ func TestSelfHostReproducibleAcrossPaths(t *testing.T) {
 			}
 		})
 	}
+	// The diagnostic profile turns the debug paths on too.
+	debug := []reproVariant{{"debug-info", []string{"-g"}}, {"diagnostic", []string{"-profile", "diagnostic"}}}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
-		t.Run(target+"/debug-info", func(t *testing.T) {
-			flags := []string{"-target", target, "-g"}
-			if bytes.Equal(a.build(t, cli, flags...), b.build(t, cli, flags...)) {
-				t.Errorf("%s -g: the images match without -remap-path-prefix, so the test no longer sees the paths it remaps", target)
+		for _, v := range debug {
+			if v.name == "diagnostic" && !strings.HasSuffix(target, "-linux") {
+				continue
 			}
-			x := a.build(t, cli, append(flags, a.remap()...)...)
-			y := b.build(t, cli, append(flags, b.remap()...)...)
-			same(t, target+" -g -remap-path-prefix", x, y)
-			for _, root := range []string{a.src, a.work} {
-				if bytes.Contains(x, []byte(root)) {
-					t.Errorf("%s -g -remap-path-prefix: the image still holds %s", target, root)
+			t.Run(target+"/"+v.name, func(t *testing.T) {
+				flags := append([]string{"-target", target}, v.flags...)
+				what := target + " " + strings.Join(v.flags, " ")
+				if bytes.Equal(a.build(t, cli, flags...), b.build(t, cli, flags...)) {
+					t.Errorf("%s: the images match without -remap-path-prefix, so the test no longer sees the paths it remaps", what)
 				}
-			}
-		})
+				x := a.build(t, cli, append(flags, a.remap()...)...)
+				y := b.build(t, cli, append(flags, b.remap()...)...)
+				same(t, what+" -remap-path-prefix", x, y)
+				for _, root := range []string{a.src, a.work} {
+					if bytes.Contains(x, []byte(root)) {
+						t.Errorf("%s -remap-path-prefix: the image still holds %s", what, root)
+					}
+				}
+			})
+		}
 	}
 }
 

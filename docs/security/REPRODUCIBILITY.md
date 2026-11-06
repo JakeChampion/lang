@@ -65,7 +65,7 @@ These inputs change the image, and a reproducible build must hold them fixed:
 - The compiler binary.
 - The command-line flags.
 - Environment variables named `FERN_*` that select a build mode, for example `FERN_SIZE`, `FERN_SANITIZE`, `FERN_BACKTRACE` and `FERN_COVER`.
-- Under `-g` only, the paths that the section above names.
+- Under `-g` only, the paths that the section above names. `-profile diagnostic` turns on the same debug information, so its images carry the paths too, and `-remap-path-prefix` maps them in the same way.
 
 ## Inputs that do not change an image
 
