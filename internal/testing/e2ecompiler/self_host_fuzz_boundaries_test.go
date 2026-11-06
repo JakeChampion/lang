@@ -139,7 +139,8 @@ const fuzzManifestMagic = "FERNBUILD1 target="
 
 // FuzzSelfHostManifest feeds hostile bytes to `fern -manifest`. The reader
 // documents two outcomes: the fields on stdout with exit 0, or a refusal
-// naming the file with exit 1.
+// naming the file with exit 1. The fields are printable ASCII, whatever the
+// file holds.
 func FuzzSelfHostManifest(f *testing.F) {
 	bin, stdlib := fuzzCLI(f)
 	image := filepath.Join(f.TempDir(), "image")
@@ -168,6 +169,9 @@ func FuzzSelfHostManifest(f *testing.F) {
 		[]byte(fuzzManifestMagic + strings.Repeat("x", 600) + "\n"),
 		[]byte(fuzzManifestMagic + " profile= heap_limit=\n"),
 		[]byte("FERNBUILD1 target=\x00 profile=safe heap_limit=0\n"),
+		[]byte("FERNBUILD1 target=\x1b]0;owned\x07 profile=safe heap_limit=0\n"),
+		[]byte("FERNBUILD1 target=x86-64-linux profile=\xff\xfe heap_limit=0\n"),
+		[]byte("FERNBUILD1 target=\x1b[2J profile=safe heap_limit=0\n" + line),
 		{},
 		{0x7f, 'E', 'L', 'F'},
 	} {
@@ -192,6 +196,12 @@ func FuzzSelfHostManifest(f *testing.F) {
 		case 0:
 			if !strings.HasPrefix(r.stdout, "target: ") {
 				t.Errorf("exit 0 without the target field on %d bytes\nstdout: %q", len(input), r.stdout)
+			}
+			for _, c := range []byte(r.stdout) {
+				if (c < 0x20 || c > 0x7e) && c != '\n' {
+					t.Errorf("the fields carry byte %#x on %d bytes\nstdout: %q", c, len(input), r.stdout)
+					break
+				}
 			}
 		case 1:
 			if !strings.HasPrefix(r.stderr, "fern: no build manifest in ") {

@@ -25,6 +25,23 @@ Invalid UTF-8 and NUL-byte controls also received `P001`.
 Valid Fern source passed.
 These probes establish source rejection, not ELF metadata validation.
 
+## The manifest reader
+
+`fern -manifest FILE` is the one compiler command that reads a binary file.
+It reads the whole file and searches the bytes for the manifest magic, `FERNBUILD1 target=`.
+It does not parse a header, a section, a symbol or a relocation of an ELF, Mach-O or wasm file.
+So a malformed header cannot change what it reads.
+
+A candidate line must end in a newline within 512 bytes of the magic.
+It must also name a target, carry the `profile=` and `heap_limit=` fields, and hold printable ASCII only.
+The reader skips any other candidate and searches on.
+Without an accepted candidate the command exits 1 with `fern: no build manifest in FILE`.
+
+The reader copied the bytes of a candidate to stdout unchecked.
+A file with an escape sequence or a NUL byte in its manifest line then wrote those bytes to the terminal.
+`FuzzSelfHostManifest` now requires printable ASCII on stdout, and four seeds pin the rule: a NUL, an escape sequence, bytes that are not UTF-8, and a hostile line before a valid one.
+Against the previous reader the four seeds failed, and against this one they pass.
+
 ## Security harness input
 
 `scripts/security-smoke` reads generated ELF images before it executes the positive controls.
