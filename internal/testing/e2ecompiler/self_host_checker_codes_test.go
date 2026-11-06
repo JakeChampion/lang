@@ -258,6 +258,33 @@ function main(): i32 {
   };
   return lam();
 }`, nil},
+		{"last-use-before-lambda-parameter-shadow", `function arr(n: i32): i32[] { return [n]; }
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function main(): i32 {
+  let xs = arr(1);
+  let k = keep(xs);
+  let g = (xs: i32[]): i32 => xs[0];
+  return k + g(arr(2));
+}`, nil},
+		{"last-use-before-lambda-local-shadow", `function arr(n: i32): i32[] { return [n]; }
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function main(): i32 {
+  let xs = arr(1);
+  let k = keep(xs);
+  let g = (): i32 => {
+    let xs = arr(2);
+    return xs[0];
+  };
+  return k + g();
+}`, nil},
+		{"e051-last-use-before-real-lambda-capture", `function arr(n: i32): i32[] { return [n]; }
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function main(): i32 {
+  let xs = arr(1);
+  let k = keep(xs);
+  let g = (): i32 => xs[0];
+  return k + g();
+}`, []string{"E051"}},
 		{"lambda-pattern-shadowed-by-local-moved-at-last-use", `function make(): Result[i32[], string] { return Ok([1]); }
 function take(own xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {

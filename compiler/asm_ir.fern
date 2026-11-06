@@ -2457,8 +2457,7 @@ function emit_buf_push_decimal(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .section .text\n");
 }
 
-function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: boolean): asmcore.EmitState {
-  let sfx = asmcore.packed_suffix(packed);
+function emit_buf_table_helpers(s: asmcore.EmitState, raw: boolean): asmcore.EmitState {
   let prefix = "__fern_buf_push_";
   let label = "";
   if (raw) {
@@ -2471,22 +2470,10 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
     source_len = "    movq (%r12), %r13\n";
     source_data = "    leaq 8(%r12), %rsi\n";
   }
-  let lm = ".Lbufmap" + label + sfx;
-  let lf = ".Lbuffilt" + label + sfx;
-  let le = ".Lbufexp" + label + sfx;
-  let srcscale = "";
-  if (raw && !packed) {
-    srcscale = ",8";
-  }
-  let sc = ",8";
-  let rshift = "6";
-  let rbyte = "16(%r10,%r8,8), %rax";
-  if (packed) {
-    sc = "";
-    rshift = "3";
-    rbyte = "9(%r10,%r8), %rax";
-  }
-  s = s.write(prefix + "mapped" + sfx + ":\n");
+  let lm = ".Lbufmap" + label;
+  let lf = ".Lbuffilt" + label;
+  let le = ".Lbufexp" + label;
+  s = s.write(prefix + "mapped:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rbx\n");
@@ -2515,22 +2502,20 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    xorq %rcx, %rcx\n");
   s = s.write("    cmpq $256, %r9\n");
   s = s.write("    jb " + lm + "_short\n");
-  if (packed) {
-    s = emit_buf_mapped_avx2(s, lm);
-  }
+  s = emit_buf_mapped_avx2(s, lm);
   s = s.write(lm + "_full:\n");
-  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
-  s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq 8(%r14,%rax), %rax\n");
   s = s.write("    movb %al, (%rdx,%rcx)\n");
   s = s.write("    incq %rcx\n");
   s = s.write("    cmpq %r13, %rcx\n");
   s = s.write("    jb " + lm + "_full\n");
   s = s.write("    jmp " + lm + "_len\n");
   s = s.write(lm + "_short:\n");
-  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
   s = s.write("    cmpq %r9, %rax\n");
   s = s.write("    jae " + lm + "_keep\n");
-  s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
+  s = s.write("    movzbq 8(%r14,%rax), %rax\n");
   s = s.write(lm + "_keep:\n");
   s = s.write("    movb %al, (%rdx,%rcx)\n");
   s = s.write("    incq %rcx\n");
@@ -2545,7 +2530,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    popq %rbx\n");
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
-  s = s.write(prefix + "filtered" + sfx + ":\n");
+  s = s.write(prefix + "filtered:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rbx\n");
@@ -2576,8 +2561,8 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    cmpq $256, %r9\n");
   s = s.write("    jb " + lf + "_short\n");
   s = s.write(lf + "_full:\n");
-  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
-  s = s.write("    movzbq 8(%r14,%rax" + sc + "), %r10\n");
+  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+  s = s.write("    movzbq 8(%r14,%rax), %r10\n");
   s = s.write("    movb %al, (%rdx,%r8)\n");
   s = s.write("    cmpq $1, %r10\n");
   s = s.write("    adcq $0, %r8\n");
@@ -2586,10 +2571,10 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    jb " + lf + "_full\n");
   s = s.write("    jmp " + lf + "_len\n");
   s = s.write(lf + "_short:\n");
-  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
   s = s.write("    cmpq %r9, %rax\n");
   s = s.write("    jae " + lf + "_keep\n");
-  s = s.write("    cmpb $0, 8(%r14,%rax" + sc + ")\n");
+  s = s.write("    cmpb $0, 8(%r14,%rax)\n");
   s = s.write("    jne " + lf + "_next\n");
   s = s.write(lf + "_keep:\n");
   s = s.write("    movb %al, (%rdx,%r8)\n");
@@ -2607,7 +2592,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    popq %rbx\n");
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
-  s = s.write(prefix + "expanded" + sfx + ":\n");
+  s = s.write(prefix + "expanded:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   s = s.write("    pushq %rbx\n");
@@ -2639,15 +2624,11 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    cmpq $256, %r13\n    jb " + le + "_loop\n");
   s = s.write("    subq $2048, %rsp\n");
   s = s.write(le + "_pack:\n");
-  // A packed row is stored as one u64, so the 8-byte row load in the fast loop takes it from the store buffer.
-  if (packed) {
-    s = s.write("    movq 8(%r14,%rcx,8), %rax\n    movq %rax, (%rsp,%rcx,8)\n    incq %rcx\n    cmpq $256, %rcx\n    jb " + le + "_pack\n");
-  } else {
-    s = s.write("    movzbq 8(%r14,%rcx,8), %rax\n    movb %al, (%rsp,%rcx)\n    incq %rcx\n    cmpq $2048, %rcx\n    jb " + le + "_pack\n");
-  }
+  // A row is stored as one u64, so the 8-byte row load in the fast loop takes it from the store buffer.
+  s = s.write("    movq 8(%r14,%rcx,8), %rax\n    movq %rax, (%rsp,%rcx,8)\n    incq %rcx\n    cmpq $256, %rcx\n    jb " + le + "_pack\n");
   s = s.write("    xorq %rcx, %rcx\n    movq $7, %r10\n");
   s = s.write(le + "_fast:\n");
-  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n    movq (%rsp,%rax,8), %r8\n");
+  s = s.write("    movzbq (%rsi,%rcx), %rax\n    movq (%rsp,%rax,8), %r8\n");
   s = s.write("    movzbq %r8b, %r9\n    cmpq %r10, %r9\n    cmovaq %r10, %r9\n");
   s = s.write("    shrq $8, %r8\n    movq %r8, (%rdx)\n    addq %r9, %rdx\n");
   s = s.write("    incq %rcx\n    cmpq %r13, %rcx\n    jb " + le + "_fast\n");
@@ -2655,11 +2636,11 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write(le + "_loop:\n");
   s = s.write("    cmpq %r13, %rcx\n");
   s = s.write("    jae " + le + "_len\n");
-  s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
+  s = s.write("    movzbq (%rsi,%rcx), %rax\n");
   s = s.write("    cmpq %r9, %rax\n");
   s = s.write("    jae " + le + "_keep\n");
   s = s.write("    movq %rax, %r10\n");
-  s = s.write("    shlq $" + rshift + ", %r10\n");
+  s = s.write("    shlq $3, %r10\n");
   s = s.write("    addq %r14, %r10\n");
   s = s.write("    movzbq 8(%r10), %r11\n");
   s = s.write("    cmpq $7, %r11\n");
@@ -2670,7 +2651,7 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write(le + "_byte:\n");
   s = s.write("    cmpq %r11, %r8\n");
   s = s.write("    jae " + le + "_next\n");
-  s = s.write("    movzbq " + rbyte + "\n");
+  s = s.write("    movzbq 9(%r10,%r8), %rax\n");
   s = s.write("    movb %al, (%rdx)\n");
   s = s.write("    incq %rdx\n");
   s = s.write("    incq %r8\n");
@@ -4110,15 +4091,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lbufrange_copy\n");
     s = s.write(".Lbufrange_done:\n");
     s = s.write("    ret\n");
-    s = emit_buf_table_helpers(s, false, false);
-    if (s.has_need("buf_u8")) {
-      s = emit_buf_table_helpers(s, true, false);
+    if (s.has_need("buf_table")) {
+      s = emit_buf_table_helpers(s, false);
     }
     if (s.has_need("buf_bytes")) {
-      s = emit_buf_table_helpers(s, false, true);
-    }
-    if (s.has_need("buf_bytes_u8")) {
-      s = emit_buf_table_helpers(s, true, true);
+      s = emit_buf_table_helpers(s, true);
     }
     s = s.write("__fern_buf_push_byte:\n");
     s = s.write("    movq 8(%rdi), %rax\n");

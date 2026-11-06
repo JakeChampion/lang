@@ -1,6 +1,7 @@
-# 2026-11-06: PR #14299, perf-x86_64 job 127734120327 on 6e9e3c10: 39,535,763 balanced events, +11.24%.
-# main at b225e71c measures 39,533,574 locally, and this PR 39,533,399, so the stdlib rewrite of #14280 moved it.
-# The drift is over the 10% ceiling of ci-check-perf, so the limit moves to the measured value.
+# 2026-11-06: PR #14284. A local selfhost-alloc-bench run per main merge puts a +1,483,941 step in #14272:
+# 38,044,519 at bf687b4b and 39,528,460 at f290670c. ecbc66e3 makes 1,341,434 of it: each function is now
+# resolved before the last-use pass, which rebuilds its body. Each limit adds only that measured step.
+# The earlier growth stays visible under #14179.
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the ownership-checker changes of #14145
 # and this PR: 38,890,700 balanced events, +7.92%.
 # Retain the preceding limits. The measured regression must remain visible.
@@ -103,5 +104,5 @@
 # assembly under QEMU. Both counts balance with zero live bytes.
 # This lowers the prior branch measurement of 35,915,045. No timing claim.
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/checker.allocs	39535763
-x86_64/checker.frees	39535763
+x86_64/checker.allocs	37024988
+x86_64/checker.frees	37024988

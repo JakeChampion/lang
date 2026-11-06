@@ -21322,8 +21322,16 @@ function lu_own_names(fn: parser.FuncDecl): string[] {
   return out;
 }
 
-// `fn` is resolved, so two bindings of one name in sibling scopes are
-// different names here.
+// Two bindings of one name, as in sibling scopes, get different names, so
+// the pass can key each local by its name.
+function lu_resolved(fn: parser.FuncDecl): parser.FuncDecl {
+  if (!lexical.binds_a_name_twice(fn)) {
+    return fn;
+  }
+  return lexical.resolve_func(fn).func;
+}
+
+// `fn` is resolved with lu_resolved.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
@@ -21337,7 +21345,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
-    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs, borrows, lenders, builtins, noret));
+    out = util.append_all(out, lu_last_use_args(lu_resolved(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }), ofuncs, borrows, lenders, builtins, noret));
   }
   return out;
 }
@@ -23479,7 +23487,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(lexical.resolve_func(fn).func, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
+    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(lu_resolved(fn), ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
