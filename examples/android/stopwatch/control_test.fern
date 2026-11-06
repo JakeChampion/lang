@@ -1,0 +1,182 @@
+// The behaviour of the stopwatch on a sequence of events, on the host. A
+// fake device gives each step the time the test chooses, a window of W by H
+// and a frame in memory. With STOPWATCH_CONTROL_PNG set to a directory, the
+// test writes the last frame of each case there as a PNG file.
+import "std/android";
+import "std/android/draw";
+import "std/png";
+import "std/test";
+import "../look";
+import "./control";
+import "./screen";
+import "./stopwatch";
+
+const W: i32 = 540;
+
+const H: i32 = 1200;
+
+// The Unix time in milliseconds at monotonic time 0: 2026-01-01T00:00:00Z.
+const EPOCH: i64 = 1767225600000;
+
+function frame(): draw.Frame {
+  unsafe {
+    let bits = __alloc(W * H * 4);
+    return draw.Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: W, height: H, stride: W };
+  }
+}
+
+function free_frame(own f: draw.Frame): void {
+  unsafe {
+    __free(f.bits, f.stride * f.height * 4);
+  }
+}
+
+// A device at monotonic time `now` that draws on `f`. It keeps no files and
+// opens no tone.
+function fake(now: i64, f: draw.Frame): control.Device {
+  return control.Device {
+    mono_ms: (): i64 => now,
+    wall_ms: (): i64 => EPOCH + now,
+    utc_offset_ms: (unix_ms: i64): i32 => 0,
+    read: (path: string): string => "",
+    write: (path: string, text: string): void => {},
+    size: (window: usize): (i32, i32) => (W, H),
+    lock: (window: usize): draw.Frame => f,
+    post: (g: draw.Frame): void => {},
+    immersive: (on: boolean): void => {},
+    keep_screen_on: (on: boolean): void => {},
+    volume_stream: (stream: i32): void => {},
+    finish: (): void => {},
+    open_tone: (usage: i32): (usize, i32) => (0 as usize, 0),
+    play_tone: (ptr: usize, rate: i32): void => {},
+    close_tone: (ptr: usize): void => {},
+    random: (): i32 => 0,
+  };
+}
+
+// The app after event `e` at monotonic time `now`.
+function at(own s: control.App, now: i64, f: draw.Frame, e: android.Event): control.App {
+  return control.step(control.App { ...s, dev: fake(now, f) }, e);
+}
+
+// The app after its window shows at time 0.
+function shown(f: draw.Frame): control.App {
+  let s = at(control.new(fake(0, f), ""), 0, f, android.Start);
+  return at(s, 0, f, android.WindowCreated(android.Window { ptr: 1 as usize }));
+}
+
+// A tap at x and y: down at `now`, and up 50 ms later.
+function tap(own s: control.App, now: i64, f: draw.Frame, x: i32, y: i32): control.App {
+  let t = at(s, now, f, android.Touch(0, x as f32, y as f32));
+  return at(t, now + 50, f, android.Touch(1, x as f32, y as f32));
+}
+
+function centre(r: screen.Rect): (i32, i32) {
+  return (r.x + r.w / 2, r.y + r.h / 2);
+}
+
+function save(f: draw.Frame, name: string): void {
+  let Some(dir) = env("STOPWATCH_CONTROL_PNG") else {
+    return;
+  };
+  let rgb: u8[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      let c = f.pixel(x, y);
+      rgb = rgb.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8);
+    }
+  }
+  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
+    let written = write_file_bytes(dir + "/" + name + ".png", bytes);
+  }
+}
+
+// The colour of ring dot `k` on the frame of `s`.
+function ring_pixel(s: control.App, f: draw.Frame, k: i32): i32 {
+  let r = screen.dial_box(W, H, s.values, stopwatch.clock_text(EPOCH + s.dev.mono_ms()), s.dx, s.dy);
+  let rad = r.w / 2;
+  let d = rad / 40 + 1;
+  let a: f64 = 6.283185307179586 * (k as f64) / (stopwatch.RING_DOTS as f64);
+  return f.pixel(r.x + rad + ((rad - d) as f64 * a.sin()) as i32, r.y + rad - ((rad - d) as f64 * a.cos()) as i32);
+}
+
+function test_tap_starts(): test.TestOutcome {
+  let f = frame();
+  defer free_frame(f);
+  let s = tap(shown(f), 100, f, W / 2, H / 2);
+  let running = stopwatch.is_running(s.started_at);
+  s = at(s, 5150, f, android.Tick);
+  save(f, "running");
+  let opacity = stopwatch.value(s.values, "stopwatch_opacity");
+  let red = draw.over(look.faded(stopwatch.ring_color(5, 5000, stopwatch.on(s.values, "stopwatch_seconds"), true), opacity), look.bg());
+  let got = running.to_string() + " " + stopwatch.elapsed_ms(s.started_at, s.anteriority, EPOCH + 5150).to_string() + " " + (ring_pixel(s, f, 5) == red).to_string();
+  return test.assert_eq(got, "true 5000 true");
+}
+
+function test_long_press_resets(): test.TestOutcome {
+  let f = frame();
+  defer free_frame(f);
+  let s = tap(shown(f), 100, f, W / 2, H / 2);
+  s = at(s, 3150, f, android.Touch(0, (W / 2) as f32, (H / 2) as f32));
+  s = at(s, 3150 + stopwatch.LONG_PRESS_MS, f, android.Tick);
+  let reset = s.started_at == 0 && s.anteriority == 0;
+  s = at(s, 3300 + stopwatch.LONG_PRESS_MS, f, android.Touch(1, (W / 2) as f32, (H / 2) as f32));
+  save(f, "reset");
+  let got = reset.to_string() + " " + s.total.to_string() + " " + stopwatch.is_running(s.started_at).to_string();
+  return test.assert_eq(got, "true " + (3000 + stopwatch.LONG_PRESS_MS).to_string() + " false");
+}
+
+function test_short_press_does_not_reset(): test.TestOutcome {
+  let f = frame();
+  defer free_frame(f);
+  let s = tap(shown(f), 100, f, W / 2, H / 2);
+  s = at(s, 3150, f, android.Touch(0, (W / 2) as f32, (H / 2) as f32));
+  s = at(s, 3150 + stopwatch.LONG_PRESS_MS / 2, f, android.Tick);
+  s = at(s, 3200 + stopwatch.LONG_PRESS_MS / 2, f, android.Touch(1, (W / 2) as f32, (H / 2) as f32));
+  return test.assert_eq(s.total.to_string() + " " + stopwatch.is_running(s.started_at).to_string(), "0 false");
+}
+
+function test_drag_scrolls_settings(): test.TestOutcome {
+  let f = frame();
+  defer free_frame(f);
+  let (mx, my) = centre(screen.corner_button(W, H, "MENU"));
+  let s = tap(shown(f), 100, f, mx, my);
+  let (ix, iy) = centre(screen.menu_item(W, H, 0));
+  s = tap(s, 300, f, ix, iy);
+  let page = s.page == screen.SETTINGS;
+  let before = s.values;
+  s = at(s, 500, f, android.Touch(0, 5.0, (H * 3 / 4) as f32));
+  s = at(s, 550, f, android.Touch(2, 5.0, (H / 2) as f32));
+  s = at(s, 600, f, android.Touch(2, 5.0, (H / 4) as f32));
+  let scrolled = s.scroll;
+  s = at(s, 650, f, android.Touch(1, 5.0, (H / 4) as f32));
+  save(f, "settings");
+  let same = s.values.len() == before.len();
+  for k in 0..before.len() {
+    same = same && s.values[k] == before[k];
+  }
+  let got = page.to_string() + " " + (scrolled > 0).to_string() + " " + (s.scroll == scrolled).to_string() + " " + same.to_string();
+  return test.assert_eq(got, "true true true true");
+}
+
+function test_back_key_leaves_settings(): test.TestOutcome {
+  let f = frame();
+  defer free_frame(f);
+  let (mx, my) = centre(screen.corner_button(W, H, "MENU"));
+  let s = tap(shown(f), 100, f, mx, my);
+  let (ix, iy) = centre(screen.menu_item(W, H, 0));
+  s = tap(s, 300, f, ix, iy);
+  s = at(s, 400, f, android.Key(4, 0));
+  s = at(s, 450, f, android.Key(4, 1));
+  return test.assert_eq(s.page == screen.MAIN, true);
+}
+
+function main(): i32 {
+  let r = test.new("android stopwatch control");
+  r = r.it("a tap on the dial starts the stopwatch", test_tap_starts);
+  r = r.it("a long press resets it", test_long_press_resets);
+  r = r.it("a short press does not reset it", test_short_press_does_not_reset);
+  r = r.it("a drag scrolls the settings", test_drag_scrolls_settings);
+  r = r.it("the back key leaves the settings", test_back_key_leaves_settings);
+  return r.finish();
+}
