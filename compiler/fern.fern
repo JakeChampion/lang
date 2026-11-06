@@ -2389,14 +2389,12 @@ function ram_number(text: string): i64 {
     return v;
   }
   let v = 0i64;
-  let i = 2;
-  while (i < text.len()) {
+  for i in 2..text.len() {
     let d = hex_digit(text[i]);
     if (d < 0i64 || v > 4294967296i64) {
       return -1i64;
     }
     v = v * 16i64 + d;
-    i += 1;
   }
   if (text.len() == 2) {
     return -1i64;
