@@ -4,6 +4,19 @@ function fill(c: Cell[Option[i32]]): void {
   c.set(Some(4));
 }
 
+function filled(xs: Option[string][]): Option[string][] {
+  return xs.with(1, Some("x"));
+}
+
+function second_slot(): string {
+  let slots = [None, None];
+  slots = filled(slots);
+  let Some(x) = slots[1] else {
+    return "";
+  };
+  return x;
+}
+
 function main(): i32 {
   if (tree.leaves(tree.emptied(tree.Leaf("a"))) != 0) {
     return 1;
@@ -24,6 +37,9 @@ function main(): i32 {
   };
   if (n != 4) {
     return 5;
+  }
+  if (second_slot() != "x") {
+    return 6;
   }
   print("ok");
   return 0;
