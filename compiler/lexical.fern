@@ -259,6 +259,26 @@ function reserve_expr(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
+// Two bindings of the function share a name. Without that, resolve_func
+// changes no name.
+pub function binds_a_name_twice(fd: parser.FuncDecl): boolean {
+  let names = astwalk.collect_bound_stmts(fd.body, []);
+  for p in fd.params {
+    names = names.append(p.name);
+  }
+  if (fd.receiver_name.len() > 0) {
+    names = names.append(fd.receiver_name);
+  }
+  for i in 0..names.len() {
+    for j in i + 1..names.len() {
+      if (names[i] == names[j]) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 pub function resolve_func(fd: parser.FuncDecl): ResolvedFunction {
   let reserved: string[] = [];
   for n in astwalk.collect_bound_stmts(fd.body, []) {
