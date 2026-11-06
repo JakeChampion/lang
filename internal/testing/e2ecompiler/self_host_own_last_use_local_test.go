@@ -139,6 +139,64 @@ func TestSelfHostOwnSupersededFieldArgument(t *testing.T) {
 	}
 }
 
+// A literal moves the field it replaces into a call that is an argument of
+// another call (#14357), on three targets, with a balanced census.
+func TestSelfHostOwnSupersededFieldNested(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_superseded_field_nested", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 61 {
+				t.Fatalf("exit %d, want 61 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			if _, code := cli.exitOf(t, supersededFieldNestedAllocSrc, target); code != 0 {
+				t.Errorf("64 nested moves made %d allocations, want fewer than 16: the field was copied", code)
+			}
+		})
+	}
+}
+
+// A copy of the field at each step would make at least 64 allocations. A move
+// appends in place, so the buffer only grows.
+const supersededFieldNestedAllocSrc = `struct Res { v: i32[] }
+
+struct Box { r: Res, n: i32 }
+
+@noinline
+function grow(own r: Res, k: i32): Res {
+  return Res { v: r.v.append(k) };
+}
+
+@noinline
+function twice(own r: Res): Res {
+  return Res { v: r.v.append(r.v.len()) };
+}
+
+@noinline
+function again(own b: Box, k: i32): Box {
+  b = Box { ...b, n: b.n + 1, r: twice(grow(b.r, k)) };
+  return b;
+}
+
+function main(): i32 {
+  let b: Box = Box { r: Res { v: [1, 2] }, n: 0 };
+  let before = __heap_alloc_count();
+  for k in 0..64 {
+    b = again(b, k);
+  }
+  let n = __heap_alloc_count() - before;
+  if (n < 16 && b.r.v.len() == 130) {
+    return 0;
+  }
+  return n as i32;
+}
+`
+
 // A local that every branch rebinds moves into the call that takes it, and a
 // break with no read after the loop leaves it, with a balanced census.
 func TestSelfHostOwnLocalReboundOnEveryBranch(t *testing.T) {
