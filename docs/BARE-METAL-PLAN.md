@@ -104,9 +104,62 @@ context. The rule needs a checker, not a runtime mechanism.
 **Do not preempt the kernel heap.** TamaGo has no asynchronous preemption of
 goroutines, and it keeps at most one OS thread for each CPU (`M <= P`). The Fern
 kernel takes the same rule. A context switch occurs only at a wait in the reactor
-or between processes. Thus no interrupt stops the kernel heap in the middle of an
-RC operation. Per-process heaps make the switch between processes safe (see the
-north-star section).
+or between processes. An interrupt can arrive in the middle of an RC operation,
+but its top half touches no RC value, and no other context runs RC code before
+the main context continues. Per-process heaps make the switch between processes
+safe (see the north-star section).
+
+### The decision (#14250)
+
+The rule above is the decision. These are its details.
+
+**The shared state is raw memory.** Fern has no module-level mutable state, and a
+top half holds no RC value. So the only state that a top half shares with the main
+context is the IRQ region: raw memory that the memory layout reserves (#14254). The
+region holds one pending word for each 32 IRQ lines. Both sides access it only
+with `__mmio_load32` and `__mmio_store32`, so that no pass removes, merges or
+moves an access (#14249).
+
+**What a top half can do.** A top half has the no-RC property (#14253). It can:
+
+- read its IRQ number, which is a scalar argument
+- read and write device registers and the IRQ region with `__mmio_*`
+- use scalar arithmetic and the effect intrinsics (#14252), for example to
+  acknowledge the IRQ at the interrupt controller
+- call only functions that have the no-RC property.
+
+It cannot allocate, read or write an RC value, call a function without the
+property, or wait.
+
+**How a top half wakes the reactor.** The top half sets the bit of its IRQ in the
+pending word, and returns. That is a read, an OR and a write of one word. The main
+context clears bits only while IRQs are masked, so on one core the two
+read-modify-write sequences cannot interleave. No atomic operation is necessary,
+and C1 stays true. SMP needs one IRQ region for each core, or atomics (#14258).
+
+**The idle wait cannot lose a wakeup.** When no task can run, the reactor:
+
+1. masks IRQs
+2. reads the pending words, and clears the bits that it reads
+3. if no bit was set, waits for an interrupt with IRQs still masked, then goes
+   back to step 2
+4. unmasks IRQs, and makes ready each task whose IRQ bit was set.
+
+On arm64, a pending IRQ wakes WFI, also when PSTATE masks the IRQ. Thus an IRQ
+between steps 2 and 3 is not lost. On x86-64, `sti; hlt` is the wait, because
+`sti` delays the interrupt until after the next instruction. The effect intrinsics
+must give this wait as one operation, for example `__irq_wait()`: it starts and
+ends with IRQs masked.
+
+**The bottom half is a task.** Each IRQ line that a driver uses has one
+`std/async` task, which waits on an IRQ pollable. The reactor is the only code
+that reads the pending words and readies those tasks. Thus the task table, which
+holds RC values, is touched only by the main context.
+
+**A trap preempts a user process.** A timer IRQ during a user process enters the
+kernel through a top half. The top half saves the registers of the process in raw
+memory and sets the timer bit. Then it returns to the kernel main context at its
+last wait. The kernel heap was not active, so nothing is half done.
 
 ## The mechanical pieces, in dependency order
 
@@ -376,9 +429,9 @@ environment over the FernOS syscalls can come later, as an improvement.
    entry shape from the descriptor, so `EntryReset` can be a second value.
 2. **Done: MMIO loads and stores that no pass removes** (#14249). The compiler
    still removes an unused plain raw load (see "Volatile").
-3. **Decide the interrupt/RC rule** (#14250). Design work, no code, and it gates 3 of the
-   5 mechanical pieces. The proposed answer is the TamaGo shape above: a checked
-   top half, a bottom half in the reactor, and no preemption of the kernel heap.
+3. **Done: the interrupt/RC rule** (#14250). "The decision (#14250)" above records
+   it: a checked top half, the IRQ region in raw memory, a masked idle wait, and a
+   bottom half in the reactor.
 4. Then: capability providers (#14251) → effect intrinsics (#14252) → function
    attributes and the no-RC property (#14253) → memory layout (#14254) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
