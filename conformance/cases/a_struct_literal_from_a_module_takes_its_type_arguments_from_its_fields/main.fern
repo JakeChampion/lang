@@ -1,0 +1,18 @@
+import "./task";
+
+function thunk(n: usize): () => usize {
+  return () => n * 2;
+}
+
+function main(): i32 {
+  let t = task.Task { id: 1, entry: thunk(21 as usize) };
+  if (task.run(t) != 42) {
+    return 1;
+  }
+  let p = task.Pair { left: "x", right: 7i64 };
+  if (p.left != "x" || p.right != 7i64) {
+    return 2;
+  }
+  print("ok");
+  return 0;
+}

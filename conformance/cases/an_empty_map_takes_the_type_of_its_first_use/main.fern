@@ -1,0 +1,43 @@
+import "core/map";
+
+struct Index { names: Map[string, i64] }
+
+function total(m: Map[string, i64]): i64 {
+  let sum = 0i64;
+  for k in m.keys() {
+    sum += m.get_or(k, 0);
+  }
+  return sum;
+}
+
+function fresh(): Map[i32, string] {
+  let m = map_new(8);
+  return m;
+}
+
+function main(): i32 {
+  let a = Map { };
+  let n = total(a);
+  a = a.insert("big", 5000000000);
+  a = a.insert("one", 1);
+  if (n != 0 || total(a) != 5000000001) {
+    return 1;
+  }
+  let b = Map { };
+  let ix = Index { names: b };
+  if (ix.names.len() != 0) {
+    return 2;
+  }
+  let f = fresh().insert(7, "seven");
+  if (f.get_or(7, "") != "seven") {
+    return 3;
+  }
+  let g = Map { };
+  let before = g.len();
+  g = g.insert("k", 2.5);
+  if (before != 0 || g.get_or("k", 0.0) != 2.5) {
+    return 4;
+  }
+  print("ok");
+  return 0;
+}

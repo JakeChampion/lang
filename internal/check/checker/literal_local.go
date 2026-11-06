@@ -200,6 +200,9 @@ func (c *checker) noteLitField(fa *ast.FieldAccess, t ast.Type, s *scope) {
 
 func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	decl := c.litCompositeReads[id]
+	if decl != nil {
+		c.settleOpenEnumLocal(decl, hint)
+	}
 	for _, ll := range c.litNestedOf[decl] {
 		if nt, ok := typeAt(hint, ll.path).(ast.NumberType); ok && !nt.Polymorphic && !ll.fixed {
 			c.fixLitLocal(ll, nt, id.P)
@@ -285,10 +288,10 @@ func (c *checker) litCompositeType(id *ast.Ident) ast.Type {
 }
 
 func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
-	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil {
+	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil && c.openEnumLocals == nil {
 		return
 	}
-	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil {
+	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil || c.openEnumLocals[decl] != nil {
 		c.litCompositeReads[id] = decl
 		return
 	}

@@ -1411,7 +1411,7 @@ pub function (prog: Regex) captures_all(text: string): Captures[] {
 }
 
 pub function compile(pattern: string): Result[Regex, CompileError] {
-  let errors: Cell[Option[CompileError]] = cell_new(None);
+  let errors = cell_new(None);
   let start = 0;
   let ci = false;
   if (pattern.starts_with("(?i)")) {

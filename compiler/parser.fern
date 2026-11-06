@@ -11723,7 +11723,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprFieldAccess { ...fa, obj: o.rexpr }, rins: o.rins };
     },
     ast.ExprStructLit(s) => {
-      return mono_struct_lit(s, s.written, env, funcs, ins);
+      return mono_struct_lit(s, literal_written(s, env, funcs), env, funcs, ins);
     },
     ast.ExprLambda(lm) => {
       let bodyr = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
@@ -11748,7 +11748,77 @@ function mono_struct_lit(s: ast.ExprStructLit, written: string, env: MEnv, funcs
     i += 1;
   }
   let rb = mono_expr(s.base, env, funcs, cur);
-  return RExpr { rexpr: ast.ExprStructLit { ...s, field_values: vals, base: rb.rexpr }, rins: rb.rins };
+  return RExpr { rexpr: ast.ExprStructLit { ...s, field_values: vals, base: rb.rexpr, written: written }, rins: rb.rins };
+}
+
+// literal_field_type spells the type of a field value. A call that returns a
+// function spells the whole function type, which mono_infer gives as `fn`.
+function literal_field_type(e: ast.Expr, env: MEnv, funcs: MFns): string {
+  let t = mono_infer(e, env, funcs);
+  if (t != "fn") {
+    return t;
+  }
+  let ast.ExprCall(c) = e else {
+    return t;
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return t;
+  };
+  let k = funcs.pix.find(id.name);
+  if (k < 0) {
+    return t;
+  }
+  let fd = funcs.decls[funcs.pat[k]];
+  if (fd.ret_fn_ret.len() == 0 || fd.type_params.len() > 0) {
+    return t;
+  }
+  return fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
+}
+
+// literal_written is the type of a generic struct literal with its type
+// arguments. A literal that does not write them takes them from its fields.
+function literal_written(s: ast.ExprStructLit, env: MEnv, funcs: MFns): string {
+  if (s.written.len() > 0 || s.has_base) {
+    return s.written;
+  }
+  let tparams = mono_struct_tparams(funcs, strip_struct_base(s.type_name));
+  if (tparams.len() == 0) {
+    return s.written;
+  }
+  let key = binds_to_key(tparams, literal_binds(s, tparams, env, funcs));
+  if (key.len() == 0) {
+    return s.written;
+  }
+  let args = "";
+  for a in split_inst_key(key) {
+    if (args.len() > 0) {
+      args += ", ";
+    }
+    args += a;
+  }
+  return s.type_name + "[" + args + "]";
+}
+
+function mono_struct_tparams(funcs: MFns, base: string): string[] {
+  let i = funcs.snames.chain(base);
+  while (i >= 0) {
+    if (funcs.structs[i].name == base) {
+      return funcs.structs[i].type_params;
+    }
+    i = funcs.snames.next[i];
+  }
+  return [];
+}
+
+function literal_binds(s: ast.ExprStructLit, tparams: string[], env: MEnv, funcs: MFns): MEnv {
+  let binds = MEnv { mnames: [], mtypes: [] };
+  for k in 0..s.field_values.len() {
+    let actual = literal_field_type(s.field_values[k], env, funcs);
+    if (actual.len() > 0) {
+      binds = bind_unify(me_field_spelling_of(funcs, s.type_name, s.field_names[k]), actual, tparams, binds, funcs);
+    }
+  }
+  return binds;
 }
 
 function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {

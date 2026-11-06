@@ -1,0 +1,30 @@
+import "./tree";
+
+function fill(c: Cell[Option[i32]]): void {
+  c.set(Some(4));
+}
+
+function main(): i32 {
+  if (tree.leaves(tree.emptied(tree.Leaf("a"))) != 0) {
+    return 1;
+  }
+  let kids = tree.cleared([tree.Leaf(1), tree.Leaf(2)]);
+  if (tree.leaves(tree.Branch(kids)) != 1) {
+    return 2;
+  }
+  let h = tree.Holder { size: 3, root: tree.Branch([tree.Leaf(1)]) };
+  let d = h.dropped();
+  if (d.size != 3 || tree.leaves(d.root) != 0) {
+    return 3;
+  }
+  let errors = cell_new(None);
+  fill(errors);
+  let Some(n) = errors.get() else {
+    return 4;
+  };
+  if (n != 4) {
+    return 5;
+  }
+  print("ok");
+  return 0;
+}
