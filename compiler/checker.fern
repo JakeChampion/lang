@@ -33099,7 +33099,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
   return false;
 }
 
-// A capitalised name, alone or as an argument, can be a unit variant whose
+// A capitalised name, alone, as an argument or as an element, can be a unit variant whose
 // type arguments come from a later use. A variant of another module has
 // that module's prefix, as `tree__Empty`.
 function variant_shaped(name: string): boolean {
@@ -33127,10 +33127,25 @@ function names_unit_variant(e: ast.Expr): boolean {
       }
       return false;
     },
+    ast.ExprArray(a) => {
+      return any_names_unit_variant(a.elements);
+    },
+    ast.ExprTuple(t) => {
+      return any_names_unit_variant(t.elements);
+    },
     _ => {
       return false;
     }
   }
+}
+
+function any_names_unit_variant(es: ast.Expr[]): boolean {
+  for el in es {
+    if (names_unit_variant(el)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function needs_lit_settle(stmts: ast.Stmt[], generics: string[]): boolean {

@@ -25,6 +25,8 @@ func TestOpenEnumLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"argument on the right side of its assignment", "enum List[T] { Nil, Cons(T, List[T]) }\n" +
 			"function size[T](l: List[T]): i32 { match (l) { Cons(_, t) => { return 1 + size(t); }, Nil => { return 0; } } }\n" +
 			"function main(): i32 { let g = Nil; g = Cons(\"a\", g); return size(g); }\n"},
+		{"array of unit variants as an argument in its assignment", "function keep(kids: Node[i32][]): Node[i32][] { return kids; }\n" +
+			"function main(): i32 { let kids = [Empty, Empty]; kids = keep(kids); return kids.len(); }\n"},
 		{"array literal of a generic enum argument", "function count[T](kids: Node[T][]): i32 { return kids.len(); }\n" +
 			"function main(): i32 { let n: Node[i32] = Leaf(1); return count([n, n]); }\n"},
 	} {
