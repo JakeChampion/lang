@@ -281,8 +281,8 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					}
 
 					probe := filepath.Join(dir, "code-write-"+v.name)
-					if tc.target == "arm64-android" && v.largePages {
-						// QEMU omits file names from these large-page mappings.
+					if v.largePages {
+						// QEMU can omit file names from large-page mappings.
 						// Store to the current instruction, then exit if it succeeds.
 						image, err := os.ReadFile(bin)
 						if err != nil {
@@ -309,7 +309,7 @@ func TestSelfHostImagePermissions(t *testing.T) {
 
 					relroProbe := filepath.Join(dir, "relro-write-"+v.name)
 					selectedRelroSrc := relroSrc
-					if tc.target == "arm64-android" && v.largePages {
+					if v.largePages {
 						selectedRelroSrc = write("direct-relro.fern", `function main(): i32 {
   unsafe { let s = "protected constant"; __store_u8(s as usize, 0); }
   return 3;
