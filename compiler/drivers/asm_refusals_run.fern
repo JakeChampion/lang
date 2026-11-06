@@ -1,0 +1,36 @@
+import "../x86_native";
+import "../arm64_native";
+
+// Feeds a text file to one in-process assembler and prints each line it
+// refuses. Exit 2 is a usage or read error.
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 3) {
+    eprint("usage: asm_refusals_run x86|arm64 FILE");
+    return 2;
+  }
+  let src = "";
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      src = string_from_bytes_unchecked(b);
+    },
+    Err(_) => {
+      eprint("asm_refusals_run: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  let refused: string[] = [];
+  if (av[1] == "x86") {
+    refused = x86_native.x86_gas_assemble(src).unknown;
+  } else if (av[1] == "arm64") {
+    refused = arm64_native.arm64_gas_program(src).unknown;
+  } else {
+    eprint("asm_refusals_run: unknown assembler " + av[1]);
+    return 2;
+  }
+  for r in refused {
+    print(r);
+  }
+  return 0;
+}
