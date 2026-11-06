@@ -284,6 +284,16 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
+// Under -sanitize a raw free of a block that is in the quarantine aborts as a
+// double free. The poison word selects the candidates, and a walk of the
+// quarantine decides, so a live block that holds the poison value is freed.
+function san_raw_twice_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    cmpl $" + rc_poison() + ", (%rdi)\n    jne .Lrawfree_fresh\n");
+  s = s.write("    movq __fern_quar_head(%rip), %rcx\n.Lrawfree_qscan:\n    testq %rcx, %rcx\n    jz .Lrawfree_fresh\n");
+  s = s.write("    cmpq %rdi, %rcx\n    je .Lrawfree_double\n    movq 16(%rcx), %rcx\n    jmp .Lrawfree_qscan\n");
+  return s.write(".Lrawfree_fresh:\n");
+}
+
 // Runs `body` on each payload word of the block at %rdi, words 3 to %rsi - 1,
 // with the word's address in %r8 and the poison pattern in %rax.
 function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore.EmitState {
@@ -3341,6 +3351,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
   if (s.rc_free_debug) {
+    s = san_raw_twice_check(s);
     s = s.write(quarantine_rc("(%rdi)", s.rc_free_debug));
   }
   s = s.write("    movq %rsi, %rcx\n");
