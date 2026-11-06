@@ -87,26 +87,6 @@ func TestSelfHostDarwinSignalContext(t *testing.T) {
 			}
 		})
 	}
-	// A Darwin system call returns a second value in x1, so each sigaction of
-	// the install routine loads its action pointer after the call before it.
-	t.Run("install", func(t *testing.T) {
-		start := strings.Index(string(text), "Lfern_fault_install:\n")
-		end := strings.Index(string(text), "Lfern_fault_install_done:\n")
-		if start < 0 || end <= start {
-			t.Fatal("the Darwin output has no fault handler install routine")
-		}
-		// Each part but the last ends at a call.
-		parts := strings.Split(string(text[start:end]), "    svc #0x80\n")
-		calls := parts[:len(parts)-1]
-		for i, call := range calls {
-			if !strings.Contains(call, "    mov x1, sp\n") {
-				t.Errorf("sigaction %d has no fresh action pointer after the call before it:\n%s", i+1, call)
-			}
-		}
-		if len(calls) < 2 {
-			t.Errorf("the install routine makes %d sigaction calls, want SIGSEGV and SIGBUS", len(calls))
-		}
-	})
 }
 
 type stackRun struct {

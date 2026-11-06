@@ -36,7 +36,7 @@ func TestHTTPHandlerCensusThreadsBoundAcrossBurst(t *testing.T) {
 				for _, text := range []string{
 					"let completed: i32 = 0;",
 					fmt.Sprintf("while (completed < %d || conns.open > 0)", rounds),
-					"let burst: (__Conns, __Flights, i32) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);",
+					"let burst = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);",
 					"completed = burst.2;",
 				} {
 					if strings.Count(loop, text) != 1 {

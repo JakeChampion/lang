@@ -61,3 +61,38 @@ func TestArm64DarwinStackOverflow(t *testing.T) {
 		})
 	}
 }
+
+// A Darwin system call returns a second value in x1. The install of the
+// fault handler must set x1 to the action again before each sigaction, or
+// the SIGBUS call gets a null action and installs nothing. A stack overflow
+// raises SIGBUS on Darwin, so the process then dies with no report. This
+// test reads the assembly, so it runs on any host.
+func TestArm64DarwinFaultInstallArguments(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 {\n  return 0;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, err := exec.Command(buildFernCLI(t), "-target", "arm64-darwin", src).CombinedOutput()
+	if err != nil {
+		t.Fatalf("arm64-darwin build failed: %v\n%s", err, asm)
+	}
+	text := string(asm)
+	start := strings.Index(text, "\nLfern_fault_install:\n")
+	end := strings.Index(text, "\nLfern_fault_install_done:\n")
+	if start < 0 || end < start {
+		t.Fatalf("no fault install routine in the assembly:\n%s", text)
+	}
+	calls := strings.Split(text[start:end], "    mov x16, #46\n")
+	if len(calls) != 3 {
+		t.Fatalf("the install routine has %d sigaction calls, want 2:\n%s", len(calls)-1, text[start:end])
+	}
+	for k, before := range calls[:2] {
+		if k > 0 {
+			before = before[strings.LastIndex(before, "svc #0x80"):]
+		}
+		if !strings.Contains(before, "    mov x1, sp\n") {
+			t.Errorf("sigaction call %d does not set x1 to the action after the call before it:\n%s", k+1, text[start:end])
+		}
+	}
+}
