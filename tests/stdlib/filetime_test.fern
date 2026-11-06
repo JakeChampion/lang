@@ -73,23 +73,27 @@ function test_touch_needs_a_file(): test.TestOutcome {
 function test_changed_and_created(): test.TestOutcome {
   let path = file();
   let before = clock.now().sec;
-  let set = filetime.set(path, time.timestamp_from_unix(1), time.timestamp_from_unix(1));
-  let changed: i64 = 0;
-  let created = "none";
+  let created = "stat-error";
+  // Read the birth time before the old modification time can lower it on Darwin.
   match (stat(path)) {
     Ok(s) => {
-      changed = s.changed().sec;
+      created = "none";
       if let Some(c) = s.created() {
         created = (c.sec >= before - 60).to_string();
       }
     },
     Err(_) => {}
   }
+  let set = filetime.set(path, time.timestamp_from_unix(1), time.timestamp_from_unix(1));
+  let changed: i64 = 0;
+  if let Ok(s) = stat(path) {
+    changed = s.changed().sec;
+  }
   let removed = remove_file(path);
   // The change of the times is a change of the metadata, so the status
   // time is now. A file system that records no birth time gives none.
   let ok = created == "none" || created == "true";
-  return test.assert_eq((changed >= before - 1).to_string() + " " + ok.to_string(), "true true");
+  return test.assert_eq(set.is_ok().to_string() + " " + (changed >= before - 1).to_string() + " " + ok.to_string(), "true true true");
 }
 
 function main(): i32 {
