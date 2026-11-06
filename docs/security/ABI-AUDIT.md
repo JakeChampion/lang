@@ -35,7 +35,7 @@ A raw syscall (`__syscall3` to `__syscall6`) is the kernel's convention, and `Te
 A foreign call (`__c_call0` to `__c_call6`) goes through one shim per arity (`emit_ccall_shim1` in `compiler/asm_ir.fern`, `emit_ccall_shim1_arm64` in `compiler/asm_arm64_ir.fern`).
 
 The shim builds a frame record and loads the callee from the stack entry.
-It loads up to four integer arguments into the platform argument registers, and calls.
+It loads up to six integer arguments into the platform argument registers, and calls.
 On x86-64 it aligns the stack pointer to 16 bytes before the call.
 It also zeroes `%al`, which System V reads as the vector register count for a variadic callee.
 On arm64 the stack pointer stays 16-byte aligned because every slot is 16 bytes, and the hardware faults on a misaligned stack-pointer access.
@@ -49,7 +49,7 @@ An `f32` or `f64` result moves from `%xmm0` or `d0` into that register after a w
 |---|---|
 | The shim's register loads, alignment, and call on x86-64 | `TestSelfHostCCallIRX86_64` |
 | The shim's register loads and call on arm64 | `TestSelfHostCCallIRArm64` |
-| A C callee entered through the shim sees a 16-byte aligned stack, and a callee that clobbers every caller-saved integer and vector register leaves the Fern caller's live values intact | `TestSharedLibX86CCallFFI`, `TestArm64SharedLibCCallFFI` |
+| A C callee entered through the shim sees a 16-byte aligned stack, and a callee that clobbers every caller-saved integer and vector register leaves the Fern caller's live values intact. A six-argument callee gets each argument in its own position | `TestSharedLibX86CCallFFI`, `TestArm64SharedLibCCallFFI` |
 | A float result returns in the result register | `TestSelfHostCCallFPShimsReturnInTheResultRegister` |
 | Exported Fern functions called from C with integer, float, and ten-argument signatures | `TestSharedLibX86ExportDlopen`, `TestSharedLibX86ExportArgsJNI` |
 | A leaf builds no frame and a frame that saves a register records the CFA offset | `TestSelfHostLeafFrame` |
@@ -64,7 +64,7 @@ An `f32` or `f64` result moves from `%xmm0` or `d0` into that register after a w
 
 | Gap | Consequence |
 |---|---|
-| A foreign call takes at most four integer arguments and no float argument | A C function with a float parameter or a fifth parameter has no safe call; the checker refuses nothing, because the shim count is the whole surface |
+| A foreign call takes at most six integer arguments and no float argument | A C function with a float parameter or a seventh parameter has no safe call; the checker refuses nothing, because the shim count is the whole surface |
 | A variadic C callee on arm64-darwin | Apple's convention passes variadic arguments on the stack; the shim passes them in registers, so such a call is wrong on that target |
 | Tail calls | A call in tail position to a register entry is a jump (`jmp __fn_f.r`, `b __fn_f.r`), so the caller's frame is gone and a backtrace omits it; `TestSelfHostAbortBacktraceCorruptFrame` keeps work after its call for that reason |
 | The register entry `.r` is not exported | A C caller reaches only the stack entry, which is the exported symbol, so this is a limit on size and not on safety |
@@ -77,6 +77,10 @@ System V reads `%al` as an upper bound on the vector registers a variadic callee
 A variadic callee therefore read whatever the register held.
 The shim now zeroes it, which is correct for every callee because the shim passes no vector argument.
 `TestSelfHostCCallIRX86_64` asserts the instruction, and `TestSharedLibX86CCallFFI` gains the alignment callee and the clobbering callee.
+
+This record said that the shim loads four integer arguments. Both shims load six, and `__c_call5` and `__c_call6` exist on both targets.
+No test called a C function with more than four arguments.
+`TestSharedLibX86CCallFFI` and `TestArm64SharedLibCCallFFI` now call a six-argument C function that weighs each argument by its position, and they require the weighted sum.
 
 The arm64 shim had no run-time test. `TestArm64SharedLibCCallFFI` now loads an arm64 shared object from a C program under QEMU and calls back into C through every shim arity.
 Its callees check the AAPCS64 stack alignment and clobber every caller-saved integer and vector register.

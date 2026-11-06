@@ -1,0 +1,223 @@
+import "./ast";
+import "./parser";
+import "./util";
+
+// A `@norc` function allocates nothing and does no RC operation, so it can run
+// before the heap exists, in the top half of an interrupt handler, or on DMA
+// memory. Every value in it is a scalar, and it calls only `@norc` functions
+// and the raw memory intrinsics. The checker reports each breach as E102.
+
+struct Ctx { fname: string, module: string, callable: string[] }
+
+pub function scalar(ty: string): boolean {
+  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "f32", "f64", "boolean", "char"], ty);
+}
+
+// The intrinsics that a `@norc` function may call. Each takes and returns
+// scalars and touches no heap box.
+pub function intrinsics(): string[] {
+  return [
+    "__load_u8", "__load_i32", "__load_i64", "__load_ptr", "__store_u8", "__store_i32", "__store_i64", "__store_ptr",
+    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
+    "__fence", "__clz32", "__clz64", "__ctz32", "__ctz64", "__popcount32", "__popcount64",
+  ];
+}
+
+// `mod` is annotated, so each identifier and call carries its type.
+pub function diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let marks = parser.marked(mod, "norc");
+  if (marks.len() == 0) {
+    return out;
+  }
+  let callable = intrinsics();
+  for m in marks {
+    callable = callable.append(m.func_name);
+  }
+  for m in marks {
+    for fd in mod.funcs {
+      if (fd.name == m.func_name) {
+        out = check_function(fd, Ctx { fname: util.mangled_name(fd.name), module: util.mangled_module(fd.name), callable: callable }, m, out);
+      }
+    }
+  }
+  return out;
+}
+
+function bad(cx: Ctx, what: string, line: i32, col: i32, own out: util.Diag[]): util.Diag[] {
+  return out.append(util.violation_diag("E102", "`@norc` function \"" + cx.fname + "\" " + what, cx.module, line, col));
+}
+
+function check_function(fd: parser.FuncDecl, cx: Ctx, m: parser.FuncMark, own out: util.Diag[]): util.Diag[] {
+  if (fd.receiver_name.len() > 0 || fd.type_params.len() > 0) {
+    return bad(cx, "must be a plain function, not a method or a generic function", m.line, m.col, out);
+  }
+  for p in fd.params {
+    if (!scalar(p.type_name)) {
+      out = bad(cx, "takes \"" + p.name + "\" of type " + p.type_name + ", which is not a scalar", p.line, p.col, out);
+    }
+  }
+  if (fd.ret_type != "void" && !scalar(fd.ret_type)) {
+    out = bad(cx, "returns " + fd.ret_type + ", which is not a scalar", m.line, m.col, out);
+  }
+  return check_block(fd.body, cx, out);
+}
+
+function check_block(body: ast.Stmt[], cx: Ctx, own out: util.Diag[]): util.Diag[] {
+  for s in body {
+    out = check_stmt(s, cx, out);
+  }
+  return out;
+}
+
+function check_stmt(s: ast.Stmt, cx: Ctx, own out: util.Diag[]): util.Diag[] {
+  match (s) {
+    ast.StmtVar(v) => {
+      if (v.type_name.len() > 0 && !scalar(v.type_name)) {
+        out = bad(cx, "declares \"" + v.name + "\" of type " + v.type_name + ", which is not a scalar", v.line, v.col, out);
+      }
+      return check_expr(v.init, cx, out);
+    },
+    ast.StmtAssign(a) => {
+      if (a.target.contains(".") || a.target.contains("[")) {
+        return bad(cx, "may not write to a field or an element", a.line, a.col, out);
+      }
+      return check_expr(a.value, cx, out);
+    },
+    ast.StmtExpr(e) => {
+      return check_expr(e.value, cx, out);
+    },
+    ast.StmtReturn(r) => {
+      return check_expr(r.value, cx, out);
+    },
+    ast.StmtIf(i) => {
+      out = check_expr(i.cond, cx, out);
+      out = check_block(i.then_body, cx, out);
+      return check_block(i.else_body, cx, out);
+    },
+    ast.StmtWhile(w) => {
+      out = check_expr(w.cond, cx, out);
+      return check_block(w.body, cx, out);
+    },
+    ast.StmtBreak(_) => {
+      return out;
+    },
+    ast.StmtContinue(_) => {
+      return out;
+    },
+    ast.StmtFor(f) => {
+      return bad(cx, "may not use a `for` loop, which iterates a value; use `while`", f.line, f.col, out);
+    },
+    ast.StmtMatch(m) => {
+      return bad(cx, "may not use `match`", m.line, m.col, out);
+    },
+    _ => {
+      return bad(cx, "may not use this statement", stmt_line(s), 0, out);
+    }
+  }
+}
+
+function stmt_line(s: ast.Stmt): i32 {
+  match (s) {
+    ast.StmtDefer(d) => {
+      return d.line;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function check_expr(e: ast.Expr, cx: Ctx, own out: util.Diag[]): util.Diag[] {
+  match (e) {
+    ast.ExprNumber(_) => {
+      return out;
+    },
+    ast.ExprBool(_) => {
+      return out;
+    },
+    ast.ExprUnknown(_) => {
+      return out;
+    },
+    ast.ExprIdent(id) => {
+      if (!scalar(id.ty)) {
+        return bad(cx, "uses \"" + id.name + "\" of type " + util.demangle(id.ty) + ", which is not a scalar", id.line, id.col, out);
+      }
+      return out;
+    },
+    ast.ExprBinary(b) => {
+      out = check_expr(b.left, cx, out);
+      return check_expr(b.right, cx, out);
+    },
+    ast.ExprUnary(u) => {
+      if (util.str_has_prefix(u.op, "as") && !scalar(u.ty)) {
+        out = bad(cx, "casts to " + util.demangle(u.ty) + ", which is not a scalar", u.line, u.col, out);
+      }
+      return check_expr(u.operand, cx, out);
+    },
+    ast.ExprCall(c) => {
+      return check_call(c, cx, out);
+    },
+    _ => {
+      return bad(cx, "may not use " + form(e), ast.expr_line(e), ast.expr_col(e), out);
+    }
+  }
+}
+
+function check_call(c: ast.ExprCall, cx: Ctx, own out: util.Diag[]): util.Diag[] {
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      if (!util.has_str(cx.callable, id.name)) {
+        return bad(cx, "may call only `@norc` functions and the raw memory intrinsics, not \"" + util.mangled_name(id.name) + "\"", c.line, c.col, out);
+      }
+    },
+    _ => {
+      return bad(cx, "may not call a method or a function value", c.line, c.col, out);
+    }
+  }
+  for a in c.args {
+    out = check_expr(a, cx, out);
+  }
+  return out;
+}
+
+function form(e: ast.Expr): string {
+  match (e) {
+    ast.ExprString(_) => {
+      return "a string";
+    },
+    ast.ExprFString(_) => {
+      return "a string";
+    },
+    ast.ExprBytes(_) => {
+      return "a byte string";
+    },
+    ast.ExprArray(_) => {
+      return "an array literal";
+    },
+    ast.ExprMapLit(_) => {
+      return "a map literal";
+    },
+    ast.ExprStructLit(_) => {
+      return "a struct literal";
+    },
+    ast.ExprTuple(_) => {
+      return "a tuple";
+    },
+    ast.ExprLambda(_) => {
+      return "a closure";
+    },
+    ast.ExprFieldAccess(_) => {
+      return "a field access";
+    },
+    ast.ExprIndex(_) => {
+      return "an index";
+    },
+    ast.ExprSlice(_) => {
+      return "a slice";
+    },
+    _ => {
+      return "this expression";
+    }
+  }
+}

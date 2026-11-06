@@ -1958,6 +1958,8 @@ type FuncDecl struct {
 	ExportWITName string
 	// Provides is the capability that @provide("log") names.
 	Provides string
+	// NoRC is @norc: the function allocates nothing and does no RC operation.
+	NoRC bool
 	// @jni(JNIClass, JNIDecl): the Java class and the Java declaration of
 	// the JNI method that this function implements.
 	JNIClass                 string
