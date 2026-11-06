@@ -507,8 +507,10 @@ jobs:
 
   suite:
     name: Full suite
-    # Every event uses the same suite, without requiring a label.
+    # Every event uses the same suite, without requiring a label. A change that
+    # reaches no lane skips it, so it does not wait for a suite queue slot.
     needs: [changes]
+    if: ${{ contains(needs.changes.outputs.lanes, 'true') }}
     uses: ./.github/workflows/ci-suite.yml
     with:
       lanes: ${{ needs.changes.outputs.lanes }}

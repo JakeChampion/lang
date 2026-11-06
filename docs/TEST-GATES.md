@@ -15,7 +15,9 @@ the single path filter both events read (`TestGateLanesRunOnMain`,
 
 Every pull request runs `Lint`, the `changes` job that picks the lanes, and
 the full suite through `ci-suite.yml`. No `ci-full` label is required.
-The existing path filters still skip lanes unrelated to the change.
+The existing path filters still skip lanes unrelated to the change. A change
+that reaches no lane, such as a docs-only change, skips the suite and does
+not wait for a suite queue slot. `CI verdict` accepts that skip.
 `Preflight` remains available through a manual workflow dispatch for diagnosis;
 it does not replace the full suite on pull requests.
 
