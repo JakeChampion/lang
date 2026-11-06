@@ -196,7 +196,7 @@ function __ntt(own f: i32[], at: i32): i32[] {
         f = f.with(j, __csubq(a + t));
         j += 1;
       }
-      start = start + 2 * len;
+      start += 2 * len;
     }
     len /= 2;
   }
@@ -219,7 +219,7 @@ function __inv_ntt(own f: i32[], at: i32): i32[] {
         f = f.with(j + len, __reduce(zeta * (u - t + Q)));
         j += 1;
       }
-      start = start + 2 * len;
+      start += 2 * len;
     }
     len *= 2;
   }
@@ -285,7 +285,7 @@ function __sample_ntt(own a: i32[], at: i32, rho: [u8], j: i32, i: i32): i32[] {
   let x = crypto.shake128_new().update(seed).reader();
   let n = 0;
   while (n < 256) {
-    let next: (u8[], crypto.ShakeReader) = x.squeeze(168);
+    let next = x.squeeze(168);
     let b = next.0;
     x = next.1;
     let k = 0;
@@ -329,7 +329,7 @@ function __cbd(own f: i32[], at: i32, s: [u8], n: i32): i32[] {
   let i = 0;
   while (i < 128) {
     let x = b[i] as i32;
-    let t: i32 = (x & 0x55) + (x >> 1 & 0x55);
+    let t = (x & 0x55) + (x >> 1 & 0x55);
     f = f.with(at + 2 * i, __csubq((t & 3) - (t >> 2 & 3) + Q));
     f = f.with(at + 2 * i + 1, __csubq((t >> 4 & 3) - (t >> 6 & 3) + Q));
     i += 1;
@@ -358,19 +358,19 @@ function __encode(own out: u8[], at: i32, f: [i32], count: i32, d: i32): u8[] {
 
 function __decode(b: [u8], from: i32, count: i32, d: i32): i32[] {
   let f = __alloc_i32(count);
-  let mask: i64 = (1 as i64 << d) - 1;
-  let acc: i64 = 0;
+  let mask = (1 as i64 << d) - 1;
+  let acc = 0;
   let bits = 0;
   let pos = from;
   let i = 0;
   while (i < count) {
     while (bits < d) {
-      acc = acc | b[pos] as i64 << bits;
+      acc |= b[pos] as i64 << bits;
       bits += 8;
       pos += 1;
     }
     f = f.with(i, (acc & mask) as i32);
-    acc = acc >> d;
+    acc >>= d;
     bits -= d;
     i += 1;
   }
@@ -423,7 +423,7 @@ function __keygen(d: [u8], z: [u8]): KeyPair {
   let rs = __g(d, [3 as u8]);
   let rho = __bytes_into(__alloc_u8(32), 0, rs, 0, 32);
   __ct_public(rho);
-  let sigma: [u8] = rs[32:64];
+  let sigma = rs[32:64];
   let a = __matrix(rho, false);
   let s = __alloc_i32(768);
   let e = __alloc_i32(768);
@@ -543,7 +543,7 @@ pub function decaps(dk: [u8], c: [u8]): Result[u8[], MlKemError] {
   let diff = 0;
   let i = 0;
   while (i < 1088) {
-    diff = diff | (c[i] ^ again[i]) as i32;
+    diff |= (c[i] ^ again[i]) as i32;
     i += 1;
   }
   let keep = diff - 1 >> 31 & 255;

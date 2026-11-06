@@ -286,7 +286,7 @@ function stage(own f: f32[], at: i32, s: i32, i: i32, m: i32, stride: i32): f32[
 
 // The FFT of size index `s`, in place, on the complex values from `at`.
 pub function fft_impl(own f: f32[], at: i32, s: i32): f32[] {
-  let fstride: i32[] = [1];
+  let fstride = [1];
   let l = 0;
   let m = 0;
   while (m != 1) {
@@ -343,7 +343,7 @@ function fold(x: [f32], at: i32, n2: i32, n4: i32): f32[] {
   let xp1 = at + (ov >> 1);
   let xp2 = at + n2 - 1 + (ov >> 1);
   let wp1 = ov >> 1;
-  let wp2: i32 = (ov >> 1) - 1;
+  let wp2 = (ov >> 1) - 1;
   let y: f32[] = [];
   for i in 0..q {
     y = y.append(win(wp2) * x[xp1 + n2] + win(wp1) * x[xp2]);

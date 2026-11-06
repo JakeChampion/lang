@@ -267,7 +267,7 @@ pub function (r: Reader) next(): Result[Step, MultipartError] {
     return Ok(NoMoreParts);
   }
   cur = __boundary_line_end(cur)?;
-  let head: (Part, Reader) = __part_head(cur)?;
+  let head = __part_head(cur)?;
   return __opened(head.0, head.1);
 }
 ```
@@ -348,7 +348,7 @@ pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError] {
   let cur = r;
   let done = !cur.in_part;
   while (!done) {
-    let piece: (u8[], boolean, Reader) = cur.read(65536)?;
+    let piece = cur.read(65536)?;
     out = out.concat(piece.0);
     done = piece.1;
     cur = piece.2;
@@ -583,7 +583,7 @@ function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
 }
 
 function __pull(r: Reader): Result[Reader, MultipartError] {
-  let got: (u8[], ByteStream) = r.s.read_n(4096);
+  let got = r.s.read_n(4096);
   if (got.0.len() == 0) {
     if let Some(fault) = got.1.fault() {
       return Err(MultipartBody(http.EndedEarly(fault)));

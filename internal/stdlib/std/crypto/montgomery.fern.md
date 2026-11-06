@@ -72,7 +72,7 @@ pub struct Modulus { p: i64[], n0: i64, r2: i64[], one: i64[], limbs: i32, bytes
 ```fern
 <<4 pub function modulus(hex: string, bytes: i32): Modulus>>=
 pub function modulus(hex: string, bytes: i32): Modulus {
-  let limbs: i32 = (8 * bytes + 26) / 26;
+  let limbs = (8 * bytes + 26) / 26;
   let p = __hex_int(hex);
   let r = bigint.from_u64(1 as u64).shl(26 * limbs);
   let pl = __limbs_of(p, limbs);
@@ -301,7 +301,7 @@ pub function to_bytes(m: Modulus, a: [i64]): u8[] {
     let shift = bit % 26;
     let byte = v[limb] >> shift as i64;
     if (shift > 18 && limb + 1 < m.limbs) {
-      byte = byte | v[limb + 1] << (26 - shift) as i64;
+      byte |= v[limb + 1] << (26 - shift) as i64;
     }
     out = out.append((byte & 255 as i64) as u8);
     i -= 1;

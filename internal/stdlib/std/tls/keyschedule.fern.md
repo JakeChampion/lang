@@ -213,7 +213,7 @@ pub function hkdf_extract(h: Hash, salt: [u8], ikm: [u8]): u8[] {
 }
 
 pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
-  let full: [u8] = label.as_bytes();
+  let full = label.as_bytes();
   let info = __alloc_u8(10 + full.len() + context.len());
   info = info.with(0, (length >> 8 & 255) as u8).with(1, (length & 255) as u8).with(2, (6 + full.len()) as u8);
   info = __put(info, 3, "tls13 ".as_bytes());

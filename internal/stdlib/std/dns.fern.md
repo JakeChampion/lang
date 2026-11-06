@@ -348,7 +348,7 @@ pub struct Message {
 ```fern
 <<8 pub function query(id: i32, name: string, qtype: i32): Message>>=
 pub function query(id: i32, name: string, qtype: i32): Message {
-  let qs: Question[] = [Question { name: name, qtype: qtype, qclass: CLASS_IN }];
+  let qs = [Question { name: name, qtype: qtype, qclass: CLASS_IN }];
   return Message {
     id: id & 65535, response: false, opcode: 0, authoritative: false, truncated: false,
     recursion_desired: true, recursion_available: false, rcode: 0,
@@ -1039,7 +1039,7 @@ pub struct ResolvConf {
 pub const PORT: i32 = 53;
 
 pub function resolv_defaults(host: string): ResolvConf {
-  let ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), PORT)];
+  let ns = [net.socket_addr(net.ipv4_loopback(), PORT)];
   return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout: time.duration_seconds(5 as i64), attempts: 2, rotate: false };
 }
 
@@ -1951,7 +1951,7 @@ pub function lookup_addresses(conf: ResolvConf, name: string): Result[net.IpAddr
 ```fern
 <<58 function found_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError]>>=
 function found_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  let a: Answer = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
+  let a = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
   return Ok(addresses_of(a.records));
 }
 
@@ -2175,7 +2175,7 @@ pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
       let m = 128;
       while (m > 0 && (x & m) == 0) {
         bits += 1;
-        m = m >> 1;
+        m >>= 1;
       }
       return bits;
     }
@@ -2219,7 +2219,7 @@ pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): ne
   }
   let placed = 0;
   while (placed < dsts.len()) {
-    let best: i32 = -1;
+    let best = -1;
     i = 0;
     while (i < dsts.len()) {
       if (!taken[i] && (best < 0 || prefers(dsts[i], srcs[i], dsts[best], srcs[best]) < 0)) {
@@ -2555,7 +2555,7 @@ pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
     return None;
   }
   let b = aaaa.bytes();
-  let lengths: i32[] = [96, 64, 56, 48, 40, 32];
+  let lengths = [96, 64, 56, 48, 40, 32];
   let i = 0;
   while (i < lengths.len()) {
     match (aaaa.embedded_v4(lengths[i])) {
@@ -2881,7 +2881,7 @@ pub function (r: Resolver) resolve(name: string): Result[net.IpAddr[], DnsError]
 }
 
 pub function (r: Resolver) synthesized(addrs: net.IpAddr[]): net.IpAddr[] {
-  let src: (net.IpAddr) => Option[net.IpAddr] = (d: net.IpAddr): Option[net.IpAddr] => r.source(d);
+  let src = (d: net.IpAddr): Option[net.IpAddr] => r.source(d);
   return sort_by(nat64_by(addrs, src, (): Nat64Prefix[] => r.prefixes()), src);
 }
 
@@ -2978,7 +2978,7 @@ pub function netd_reply(b: [u8]): NetdReply {
   if (b.len() < 4) {
     return NetdMore;
   }
-  let code: i32 = netd_code(b);
+  let code = netd_code(b);
   if (code == 222) {
     return netd_records(b);
   }
@@ -3014,15 +3014,15 @@ function netd_record(b: [u8], at: i32): NetdRecord {
   if (b.len() < at + 24) {
     return more;
   }
-  let addr_len: i32 = netd_word(b, at + 20);
+  let addr_len = netd_word(b, at + 20);
   if (addr_len < 0 || addr_len > 128) {
     return NetdRecord { ...more, more: false, bad: true };
   }
-  let addr: i32 = at + 24;
+  let addr = at + 24;
   if (b.len() < addr + addr_len + 4) {
     return more;
   }
-  let name_len: i32 = netd_word(b, addr + addr_len);
+  let name_len = netd_word(b, addr + addr_len);
   if (name_len < 0 || name_len > 1025) {
     return NetdRecord { ...more, more: false, bad: true };
   }
@@ -3031,7 +3031,7 @@ function netd_record(b: [u8], at: i32): NetdRecord {
 }
 
 function netd_records(b: [u8]): NetdReply {
-  let at: i32 = 4;
+  let at = 4;
   let found: net.IpAddr[] = [];
   for k in 0..64 {
     if (b.len() < at + 4) {
@@ -3040,7 +3040,7 @@ function netd_records(b: [u8]): NetdReply {
     if (netd_word(b, at) == 0) {
       return netd_found(found);
     }
-    let r: NetdRecord = netd_record(b, at);
+    let r = netd_record(b, at);
     if (r.more || r.bad) {
       return netd_partial(r);
     }

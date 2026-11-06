@@ -681,7 +681,7 @@ function __connect_ms(n: Net, addr: string, port: i32): i64 {
       return l.connect.as_millis();
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __addrs_of(n: Net, host: string): net.IpAddr[] {
@@ -830,7 +830,7 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
 function __response_entry(s: Server, bytes: u8[]): string {
   match (http.parse_request_framed(bytes)) {
     http.Complete(f) => {
-      let h: (HttpRequest) => HttpResponse = s.handler;
+      let h = s.handler;
       let resp = h(f.request);
       let flag = "c";
       if (f.keep_alive) {
@@ -942,7 +942,7 @@ function __int(s: string): i32 {
 }
 
 function __field64(row: string[], i: i32): i64 {
-  let v: i64 = 0;
+  let v = 0;
   if (i >= row.len()) {
     return v;
   }

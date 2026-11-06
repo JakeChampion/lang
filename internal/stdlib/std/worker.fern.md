@@ -117,15 +117,15 @@ The child copies its result, because a box the body built can point at a box the
 ```fern
 <<4 function __spawn_process[T: Send](own body: () => T): Worker[T]>>=
 function __spawn_process[T: Send](own body: () => T): Worker[T] {
-  let size: i64 = 4294967296i64;
-  let region: i64 = 0i64;
+  let size = 4294967296i64;
+  let region = 0i64;
   unsafe {
     region = __worker_region(size);
   }
   if (region <= 0i64) {
     return __spawn_on(inline(), body);
   }
-  let pid: i32 = proc_fork();
+  let pid = proc_fork();
   if (pid < 0) {
     __unmap_region(region, size, false);
     return __spawn_on(inline(), body);
@@ -133,9 +133,9 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
   if (pid == 0) {
     unsafe {
       __heap_adopt(region + 64i64, region + size);
-      let out: T = body();
+      let out = body();
       __heap_adopt(__heap_mark(), region + size);
-      let root: usize = __send_root(__send_copy(Some(out)));
+      let root = __send_root(__send_copy(Some(out)));
       __worker_exit(region, root);
     }
   }
@@ -223,8 +223,8 @@ A signal that lands while the parent waits makes `proc_waitpid` return `EINTR`, 
 ```fern
 <<7 function __wait_worker(pid: i32): i32>>=
 function __wait_worker(pid: i32): i32 {
-  let status: i32 = proc_waitpid(pid);
-  while (status == 0 - 4) {
+  let status = proc_waitpid(pid);
+  while (status == -4) {
     status = proc_waitpid(pid);
   }
   return status;
@@ -254,7 +254,7 @@ Removes the region before a fallback, failure, or completed join. A completed jo
 <<9 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>=
 function __unmap_region(region: i64, size: i64, reaped: boolean): void {
   unsafe {
-    let rc: i32 = __worker_unmap(region, size, reaped);
+    let rc = __worker_unmap(region, size, reaped);
     if (rc != 0) {
       eprint("worker: cannot remove the worker region: " + rc.to_string());
       exit(134);
@@ -315,7 +315,7 @@ function __spawn_on[T: Send](s: dyn Scheduler, own body: () => T): Worker[T] {
       return __send_root(Some(body()));
     }
   };
-  let index: i32 = s.admit(run);
+  let index = s.admit(run);
   return Worker { sched: Some(s), index: index, pid: 0, region: 0i64, size: 0i64 };
 }
 ```

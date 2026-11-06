@@ -113,16 +113,16 @@ pub struct Recovery {
 ```fern
 <<4 pub function new(max_datagram: i32, server: boolean): Recovery>>=
 pub function new(max_datagram: i32, server: boolean): Recovery {
-  let empty = Space { sent: [], largest_acked: 0 - 1 as i64, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 };
+  let empty = Space { sent: [], largest_acked: -1i64, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 };
   let md = max_datagram as i64;
-  let window: i64 = 14720;
+  let window = 14720;
   if (window < 2 * md) {
     window = 2 * md;
   }
   if (window > 10 * md) {
     window = 10 * md;
   }
-  return Recovery { spaces: [empty, empty, empty], latest_rtt: 0 as i64, smoothed_rtt: INITIAL_RTT.as_nanos(), rttvar: INITIAL_RTT.as_nanos() / 2, min_rtt: 0 as i64, first_rtt_sample: 0 as i64, pto_count: 0, max_ack_delay: 0 as i64, max_datagram: md, bytes_in_flight: 0 as i64, cwnd: window, ssthresh: frames.MAX_VARINT, recovery_start: 0 - 1 as i64, handshake_confirmed: false, peer_validated: server, acked: [], lost: [], probe: 0 - 1, refused: 0 as i64 };
+  return Recovery { spaces: [empty, empty, empty], latest_rtt: 0 as i64, smoothed_rtt: INITIAL_RTT.as_nanos(), rttvar: INITIAL_RTT.as_nanos() / 2, min_rtt: 0 as i64, first_rtt_sample: 0 as i64, pto_count: 0, max_ack_delay: 0 as i64, max_datagram: md, bytes_in_flight: 0 as i64, cwnd: window, ssthresh: frames.MAX_VARINT, recovery_start: -1i64, handshake_confirmed: false, peer_validated: server, acked: [], lost: [], probe: -1, refused: 0 as i64 };
 }
 
 pub function (r: Recovery) with_max_ack_delay(d: Duration): Recovery {
@@ -164,7 +164,7 @@ pub function (r: Recovery) on_sent(space: i32, p: Sent): Recovery {
   }
   let flight = r.bytes_in_flight;
   if (p.in_flight) {
-    flight = flight + p.size as i64;
+    flight += p.size as i64;
   }
   return Recovery { ...r, spaces: r.spaces.with(space, s), bytes_in_flight: flight };
 }
@@ -181,10 +181,10 @@ pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: Durati
 function (r: Recovery) __on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64): Recovery {
   let largest = ack.ranges[0].high;
   if (largest > largest_sent) {
-    return Recovery { ...r, acked: [], lost: [], probe: 0 - 1, refused: frames.PROTOCOL_VIOLATION };
+    return Recovery { ...r, acked: [], lost: [], probe: -1, refused: frames.PROTOCOL_VIOLATION };
   }
   let acked = __acked_of(r.spaces[space].sent, ack);
-  let cur = Recovery { ...r, spaces: r.spaces.with(space, r.spaces[space].__after_ack(ack, largest, acked.len() > 0)), acked: acked, lost: [], probe: 0 - 1, refused: 0 as i64 };
+  let cur = Recovery { ...r, spaces: r.spaces.with(space, r.spaces[space].__after_ack(ack, largest, acked.len() > 0)), acked: acked, lost: [], probe: -1, refused: 0 as i64 };
   if (acked.len() == 0) {
     return cur;
   }
@@ -201,7 +201,7 @@ function (r: Recovery) __on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now
 }
 
 pub function (r: Recovery) outcome_taken(): Recovery {
-  return Recovery { ...r, acked: [], lost: [], probe: 0 - 1, refused: 0 as i64 };
+  return Recovery { ...r, acked: [], lost: [], probe: -1, refused: 0 as i64 };
 }
 
 function (s: Space) __after_ack(ack: frames.Ack, largest: i64, any: boolean): Space {
@@ -281,7 +281,7 @@ function (r: Recovery) __rtt_sample(latest: i64, ack_delay: i64, space: i32): Re
   if (latest < min) {
     min = latest;
   }
-  let delay: i64 = 0;
+  let delay = 0;
   if (space == APPLICATION && r.handshake_confirmed) {
     delay = ack_delay;
     if (delay > r.max_ack_delay) {
@@ -306,14 +306,14 @@ function (r: Recovery) __on_acked(acked: Sent[]): Recovery {
     if (!p.in_flight) {
       continue;
     }
-    flight = flight - p.size as i64;
+    flight -= p.size as i64;
     if (time.instant_nanos(p.at) <= r.recovery_start) {
       continue;
     }
     if (cwnd < r.ssthresh) {
-      cwnd = cwnd + p.size as i64;
+      cwnd += p.size as i64;
     } else {
-      cwnd = cwnd + r.max_datagram * (p.size as i64) / cwnd;
+      cwnd += r.max_datagram * (p.size as i64) / cwnd;
     }
   }
   return Recovery { ...r, bytes_in_flight: flight, cwnd: cwnd };
@@ -353,7 +353,7 @@ function __is_lost(s: Space, p: Sent, lost_before: i64): boolean {
 
 function (s: Space) __past_loss(lost_before: i64, delay: i64): Space {
   let kept: Sent[] = [];
-  let loss_time: i64 = 0;
+  let loss_time = 0;
   for p in s.sent {
     if (!__is_lost(s, p, lost_before)) {
       kept = kept.append(p);
@@ -376,10 +376,10 @@ function (r: Recovery) __on_lost(lost: Sent[], now: i64): Recovery {
     return r;
   }
   let flight = r.bytes_in_flight;
-  let newest: i64 = 0;
+  let newest = 0;
   for p in lost {
     if (p.in_flight) {
-      flight = flight - p.size as i64;
+      flight -= p.size as i64;
     }
     if (time.instant_nanos(p.at) > newest) {
       newest = time.instant_nanos(p.at);
@@ -394,7 +394,7 @@ function (r: Recovery) __on_lost(lost: Sent[], now: i64): Recovery {
     cur = Recovery { ...cur, recovery_start: now, ssthresh: half, cwnd: half };
   }
   if (cur.__persistent(lost)) {
-    cur = Recovery { ...cur, cwnd: 2 * cur.max_datagram, recovery_start: 0 - 1 as i64 };
+    cur = Recovery { ...cur, cwnd: 2 * cur.max_datagram, recovery_start: -1i64 };
   }
   return cur;
 }
@@ -470,7 +470,7 @@ pub function (r: Recovery) timer(): Option[Instant] {
 ```fern
 <<10 function (r: Recovery) __earliest_loss(): (i64, i32)>>=
 function (r: Recovery) __earliest_loss(): (i64, i32) {
-  let at: i64 = 0;
+  let at = 0;
   let space = -1;
   let i = 0;
   while (i < 3) {
@@ -486,7 +486,7 @@ function (r: Recovery) __earliest_loss(): (i64, i32) {
 
 function (r: Recovery) __pto_time(): (i64, i32) {
   let backoff = 1 as i64 << r.pto_count as i64;
-  let at: i64 = 0;
+  let at = 0;
   let space = -1;
   let i = 0;
   while (i < 3) {
@@ -541,7 +541,7 @@ pub function (r: Recovery) discard(space: i32): Recovery {
   let flight = r.bytes_in_flight;
   for p in s.sent {
     if (p.in_flight) {
-      flight = flight - p.size as i64;
+      flight -= p.size as i64;
     }
   }
   return Recovery { ...r, spaces: r.spaces.with(space, Space { sent: [], largest_acked: s.largest_acked, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 }), bytes_in_flight: flight, pto_count: 0 };

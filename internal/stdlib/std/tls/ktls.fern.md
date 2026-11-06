@@ -181,7 +181,7 @@ pub function read_now(sock: Socket): Read {
 }
 
 pub function framed(t: i32, content: [u8]): u8[] {
-  let out: u8[] = [t as u8, 3 as u8, 3 as u8, (content.len() >> 8) as u8, (content.len() & 255) as u8];
+  let out = [t as u8, 3 as u8, 3 as u8, (content.len() >> 8) as u8, (content.len() & 255) as u8];
   for b in content {
     out = out.append(b);
   }
@@ -189,7 +189,7 @@ pub function framed(t: i32, content: [u8]): u8[] {
 }
 
 pub function alert(sock: Socket, code: i32): void {
-  let body: u8[] = [2 as u8, code as u8];
+  let body = [2 as u8, code as u8];
   __ktls(sock, 4, 21, body);
 }
 ```

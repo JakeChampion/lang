@@ -210,8 +210,8 @@ function __added(t: Table, name: string, value: string): Table {
   if (need > t.max) {
     return room;
   }
-  let names: string[] = [name];
-  let values: string[] = [value];
+  let names = [name];
+  let values = [value];
   let i = 0;
   while (i < room.names.len()) {
     names = names.append(room.names[i]);
@@ -492,7 +492,7 @@ function __integer(st: Decoder, block: u8[], prefix: i32): Decoder {
   if (at >= st.end) {
     return __failed(st, Truncated);
   }
-  let limit: i32 = (1 << prefix) - 1;
+  let limit = (1 << prefix) - 1;
   let value = block[at] as i32 & limit;
   let i = at + 1;
   if (value < limit) {
@@ -623,7 +623,7 @@ pub function (e: Encoder) begin_in(own out: u8[]): Encoding {
   if (e.update < 0) {
     return Encoding { encoder: e, out: out };
   }
-  return Encoding { encoder: Encoder { ...e, update: 0 - 1 }, out: __put_integer(out, 32, 5, e.update) };
+  return Encoding { encoder: Encoder { ...e, update: -1 }, out: __put_integer(out, 32, 5, e.update) };
 }
 
 pub function (en: Encoding) put(name: string, value: string, sensitive: boolean): Encoding {

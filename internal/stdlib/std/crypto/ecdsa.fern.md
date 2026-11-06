@@ -484,8 +484,8 @@ pub function (k: PrivateKey) public_point(): u8[] {
     _ => {}
   }
   let s = __signer(k.curve);
-  let xy: (u8[], u8[]) = __affine(s, __base_mul(s, k.d));
-  let out: u8[] = [4 as u8];
+  let xy = __affine(s, __base_mul(s, k.d));
+  let out = [4 as u8];
   for b in xy.0 {
     out = out.append(b);
   }
@@ -545,11 +545,11 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
 function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
   let drbg = __drbg_new(hash, d, e);
   while (true) {
-    let next: (Drbg, u8[]) = __drbg_next(drbg, d.len());
+    let next = __drbg_next(drbg, d.len());
     drbg = next.0;
     let k = next.1;
     if (__revealed(in_range(k))) {
-      let rs: (u8[], u8[]) = rs_of(k);
+      let rs = rs_of(k);
       __ct_public(rs.0);
       __ct_public(rs.1);
       if (!__all_zero(rs.0) && !__all_zero(rs.1)) {
@@ -570,7 +570,7 @@ function __sign_with(s: Signer, d: [u8], e: [i64], k: [u8]): (u8[], u8[]) {
 }
 
 function __revealed(flag: i64): boolean {
-  let verdict: u8[] = [flag as u8];
+  let verdict = [flag as u8];
   __ct_public(verdict);
   return verdict[0] == 1 as u8;
 }
@@ -618,7 +618,7 @@ function __base_mul(s: Signer, k: [u8]): Proj {
 }
 
 function __scalar_mul(s: Signer, point: Proj, k: [u8]): Proj {
-  let table: Proj[] = [__identity(s), point];
+  let table = [__identity(s), point];
   let i = 2;
   while (i < 16) {
     table = table.append(__padd(s, table[i - 1], point));
@@ -662,7 +662,7 @@ function __affine(s: Signer, p: Proj): (u8[], u8[]) {
 function __der(r: [u8], s: [u8]): u8[] {
   let ri = __der_integer(r);
   let si = __der_integer(s);
-  let out: u8[] = [48 as u8, (ri.len() + si.len()) as u8];
+  let out = [48 as u8, (ri.len() + si.len()) as u8];
   for b in ri {
     out = out.append(b);
   }
@@ -690,7 +690,7 @@ function __der_integer(v: [u8]): u8[] {
     body = body.append(v[at]);
     at += 1;
   }
-  let out: u8[] = [2 as u8, body.len() as u8];
+  let out = [2 as u8, body.len() as u8];
   for b in body {
     out = out.append(b);
   }

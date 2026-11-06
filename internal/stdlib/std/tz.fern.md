@@ -287,7 +287,7 @@ function two_digits(n: i32): string {
 
 // A fixed zone for an RFC 3339 time with a `Z` or `±hh:mm` offset. A nonzero offset names the zone `UTC+hh:mm` or `UTC-hh:mm`.
 pub function zoned_parse_rfc3339(s: string): Result[Zoned, time.TimeParseError] {
-  let parsed: (time.Timestamp, i32) = time.timestamp_parse_rfc3339_offset(s)?;
+  let parsed = time.timestamp_parse_rfc3339_offset(s)?;
   if (parsed.1 == 0) {
     return Ok(utc_zone().at(parsed.0));
   }
@@ -367,7 +367,7 @@ pub function iana_zone(name: string): Result[Zone, ZoneError] {
   let Some(at) = names.index_of(";" + name + "=") else {
     return Err(UnknownZone(name));
   };
-  let off: (i32, i32) = table_uint(names, at + name.len() + 2);
+  let off = table_uint(names, at + name.len() + 2);
   return Ok(decode_record(iana_records(), off.0));
 }
 ```
@@ -501,7 +501,7 @@ function table_digit(c: i32): i32 {
 }
 
 function be32(bs: [u8], o: i32): i64 {
-  let v: i64 = 0;
+  let v = 0;
   let i = 0;
   while (i < 4) {
     v = v * (256 as i64) + bs[o + i] as i64;
@@ -541,7 +541,7 @@ struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: 
 ```fern
 <<14 function read_counts(bs: [u8], off: i32): Counts>>=
 function read_counts(bs: [u8], off: i32): Counts {
-  let bad = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
+  let bad = Counts { isut: -1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
   if (off < 0 || off + 44 > bs.len()) {
     return bad;
   }
@@ -656,7 +656,7 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
   let tdst: boolean[] = [];
   i = 0;
   while (i < c.time) {
-    let t: i64 = 0;
+    let t = 0;
     if (width == 8) {
       t = be64s(bs, off + i * 8);
     } else {
@@ -721,26 +721,26 @@ function read_footer(bs: [u8], start: i32): Option[string] {
 <<17 pub function parse_posix(s: string): Rule>>=
 pub function parse_posix(s: string): Rule {
   let r = utc_rule();
-  let std_name: (string, i32) = take_name(s, 0);
+  let std_name = take_name(s, 0);
   if (std_name.1 <= 0) {
     return r;
   }
   let p = std_name.1;
-  let std: (boolean, i32, i32) = parse_offset(s, p);
+  let std = parse_offset(s, p);
   let std_off = 0;
   if (std.0) {
     std_off = 0 - std.1;
     p = std.2;
   }
   r = Rule { ...r, valid: true, std_off: std_off, dst_off: std_off, std_name: std_name.0, dst_name: std_name.0 };
-  let dst_name: (string, i32) = take_name(s, p);
+  let dst_name = take_name(s, p);
   if (dst_name.1 <= p) {
     return r;
   }
   r = Rule { ...r, has_dst: true, dst_off: r.std_off + 3600, dst_name: dst_name.0 };
   p = dst_name.1;
   if (p < s.len() && s[p] as i32 != 44) {
-    let d: (boolean, i32, i32) = parse_offset(s, p);
+    let d = parse_offset(s, p);
     if (!d.0) {
       return Rule { ...r, valid: false };
     }
@@ -751,11 +751,11 @@ pub function parse_posix(s: string): Rule {
   if (p >= s.len() || s[p] as i32 != 44) {
     return fallback;
   }
-  let a: (boolean, DateRule, i32) = parse_date_rule(s, p + 1);
+  let a = parse_date_rule(s, p + 1);
   if (!a.0 || a.2 >= s.len() || s[a.2] as i32 != 44) {
     return fallback;
   }
-  let b: (boolean, DateRule, i32) = parse_date_rule(s, a.2 + 1);
+  let b = parse_date_rule(s, a.2 + 1);
   if (!b.0) {
     return fallback;
   }
@@ -845,7 +845,7 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
       v = 59;
     }
     if (k == 0) {
-      total = total + v * 60;
+      total += v * 60;
     } else {
       total += v;
     }
@@ -867,15 +867,15 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
   let i = p;
   let out = bad;
   if (i < s.len() && s[i] as i32 == 77) {
-    let m: (boolean, i32, i32) = parse_uint(s, i + 1);
+    let m = parse_uint(s, i + 1);
     if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
       return (false, bad, p);
     }
-    let w: (boolean, i32, i32) = parse_uint(s, m.2 + 1);
+    let w = parse_uint(s, m.2 + 1);
     if (!w.0 || w.2 >= s.len() || s[w.2] as i32 != 46) {
       return (false, bad, p);
     }
-    let d: (boolean, i32, i32) = parse_uint(s, w.2 + 1);
+    let d = parse_uint(s, w.2 + 1);
     if (!d.0) {
       return (false, bad, p);
     }
@@ -885,14 +885,14 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
     out = DateRule { kind: 0, mon: m.1, week: w.1, day: d.1, n: 0, time: 7200 };
     i = d.2;
   } else if (i < s.len() && s[i] as i32 == 74) {
-    let j: (boolean, i32, i32) = parse_uint(s, i + 1);
+    let j = parse_uint(s, i + 1);
     if (!j.0 || j.1 < 1 || j.1 > 365) {
       return (false, bad, p);
     }
     out = DateRule { kind: 1, mon: 0, week: 0, day: 0, n: j.1, time: 7200 };
     i = j.2;
   } else {
-    let z: (boolean, i32, i32) = parse_uint(s, i);
+    let z = parse_uint(s, i);
     if (!z.0) {
       return (false, bad, p);
     }
@@ -900,7 +900,7 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
     i = z.2;
   }
   if (i < s.len() && s[i] as i32 == 47) {
-    let t: (boolean, i32, i32) = parse_rule_time(s, i + 1);
+    let t = parse_rule_time(s, i + 1);
     if (!t.0) {
       return (false, bad, p);
     }
@@ -989,7 +989,7 @@ function rule_instant(d: DateRule, year: i32): i64 {
 function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
   let first = time.days_from_civil(year as i64, mon, 1);
   let wd = (first + 4).rem_euclid(7) as i32;
-  let dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
+  let dom = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
   let last = time.days_in_month(year, mon);
   while (dom > last) {
     dom -= 7;

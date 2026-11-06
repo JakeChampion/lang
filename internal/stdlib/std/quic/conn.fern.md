@@ -278,7 +278,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
 }
 ```
 
@@ -640,7 +640,7 @@ function (c: Conn) __update_keys(now: i64): Result[Conn, string] {
   let Some(recv) = c.key_next_recv else {
     return Err("quic: next keys are not prepared");
   };
-  return Ok(c.__promote_keys(send, recv, 0 - 1 as i64, now, false));
+  return Ok(c.__promote_keys(send, recv, -1i64, now, false));
 }
 ```
 
@@ -651,7 +651,7 @@ function (c: Conn) __update_keys(now: i64): Result[Conn, string] {
 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean): Conn {
   let s = c.spaces[recovery.APPLICATION];
   let pto = c.recovery.pto_ns(recovery.APPLICATION);
-  let discard: i64 = 0;
+  let discard = 0;
   if (remote) {
     discard = now + 3 * pto;
   }
@@ -872,7 +872,7 @@ function (c: Conn) __opening_failed(datagram: [u8], h: packet.Header, keys: pack
       return c.__maybe_reset(datagram, h, now);
     }
   }
-  let limit: i64 = 4503599627370496;
+  let limit = 4503599627370496;
   match (keys.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
       limit = 68719476736;
@@ -1078,11 +1078,11 @@ function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
 }
 
 function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
-  let exponent: i64 = 3;
+  let exponent = 3;
   if let Some(p) = c.peer_params {
     exponent = p.ack_delay_exponent;
   }
-  let delay: i64 = (a.delay << exponent) * 1000;
+  let delay = (a.delay << exponent) * 1000;
   let cur = Conn { ...c, recovery: c.recovery.on_ack(space, a, time.duration_nanos(delay), time.instant_from_nanos(now), c.spaces[space].next_pn - 1) };
   let refused = cur.recovery.refused;
   if (refused != 0) {
@@ -1530,7 +1530,7 @@ function (c: Conn) __datagram_guarded(now: i64): Conn {
     let n = cur.plans[space].payload.len();
     if (n > 0) {
       room = room - n - 64;
-      planned = planned | 1 << space;
+      planned |= 1 << space;
     }
   }
   if (planned == 0) {
@@ -1806,7 +1806,7 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
   if (extra > 0) {
     payload = frames.put(payload, frames.Padding(extra));
   }
-  let n: i32 = packet.pn_len(s.next_pn, 0 - 1 as i64);
+  let n = packet.pn_len(s.next_pn, -1i64);
   if (p.space == recovery.APPLICATION) {
     return packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
   }
@@ -1844,7 +1844,7 @@ function (c: Conn) __close_datagram(): Conn {
   for space in 0..3 {
     let s = c.spaces[space];
     if (!s.discarded && s.send.is_some()) {
-      planned = planned | 1 << space;
+      planned |= 1 << space;
       cur = Conn { ...cur, plans: cur.plans.with(space, Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [], sized: false }) };
     }
   }

@@ -241,10 +241,10 @@ function __accept(req: HttpRequest, opts: Options, h: Handlers, push: Option[(Co
     return Err(KeyMissing);
   }
   let protocol = __protocol(req, opts);
-  let deflated: (i32, string) = __negotiated(req, opts);
+  let deflated = __negotiated(req, opts);
   let conn = __conn(req, protocol, deflated.0, opts);
   let body = req.body;
-  let resp: HttpResponse = http.chunks(101, (i: i32): Option[u8[]] => __run(i, conn, body, h));
+  let resp = http.chunks(101, (i: i32): Option[u8[]] => __run(i, conn, body, h));
   resp = resp.with_header("Upgrade", "websocket").with_header("Sec-WebSocket-Accept", accept_key(key));
   if (protocol.len() > 0) {
     resp = resp.with_header("Sec-WebSocket-Protocol", protocol);
@@ -361,9 +361,9 @@ pub function accept_key(key: string): string {
 pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {
   let b0 = opcode;
   if (fin) {
-    b0 = b0 | 128;
+    b0 |= 128;
   }
-  let out: u8[] = [b0 as u8];
+  let out = [b0 as u8];
   let masked = 0;
   if (mask.len() == 4) {
     masked = 128;
@@ -464,7 +464,7 @@ function __protocol(req: HttpRequest, opts: Options): string {
 
 function __conn(req: HttpRequest, protocol: string, window: i32, opts: Options): Conn {
   let none: u8[] = [];
-  let write: (u8[]) => i32 = (b: u8[]): i32 => -95;
+  let write = (b: u8[]): i32 => -95;
   match (req.body.source) {
     Some(src) => {
       write = src.send;
@@ -501,7 +501,7 @@ pub function (c: Conn) flush(): SendResult {
   while (c.out.get().len() > 0) {
     let bytes = c.out.get();
     c.out.set([] as u8[]);
-    let send: (u8[]) => i32 = c.write;
+    let send = c.write;
     if (send(bytes) < 0) {
       c.writing.set(false);
       c.state.set(2);
@@ -524,7 +524,7 @@ function __flush(c: Conn, h: Handlers): boolean {
   }
   if (c.pressured.get() == 1) {
     c.pressured.set(0);
-    let drain: (Conn) => void = h.drain;
+    let drain = h.drain;
     drain(c);
     return __flush(c, h);
   }
@@ -551,20 +551,20 @@ function __run(i: i32, c: Conn, body: ByteStream, h: Handlers): Option[u8[]] {
   if (i > 0) {
     return None;
   }
-  let open: (Conn) => void = h.open;
+  let open = h.open;
   open(c);
   let none: u8[] = [];
   let r = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, history: none, peer_closed: false, code: 1006, reason: "" };
   let s = body;
   let going = __flush(c, h);
   while (going) {
-    let step: (__Reading, ByteStream, boolean) = __step(c, h, r, s);
+    let step = __step(c, h, r, s);
     r = step.0;
     s = step.1;
     going = step.2;
   }
   buf_free(r.parts);
-  let closed: (Conn, i32, string) => void = h.close;
+  let closed = h.close;
   closed(c, __final_code(c, r), __final_reason(c, r));
   return None;
 }
@@ -590,11 +590,11 @@ function __final_reason(c: Conn, r: __Reading): string {
 }
 
 function __step(c: Conn, h: Handlers, r: __Reading, s: ByteStream): (__Reading, ByteStream, boolean) {
-  let read: (__Read, ByteStream) = __read_frame(s, c.opts.max_message, c.window > 0);
+  let read = __read_frame(s, c.opts.max_message, c.window > 0);
   s = read.1;
   match (read.0) {
     FrameRead(f) => {
-      let acted: (__Reading, boolean) = __on_frame(c, h, r, f);
+      let acted = __on_frame(c, h, r, f);
       let flushed = __flush(c, h);
       return (acted.0, s, acted.1 && flushed);
     },
@@ -699,7 +699,7 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
   buf_push_bytes_range(r.parts, f.payload, 0, f.payload.len());
   let next = __Reading { ...r, opcode: opcode, compressed: r.compressed || f.rsv1 };
   if (opcode == 1 && !next.compressed) {
-    let checked: (__Reading, boolean) = __text_checked(next, f);
+    let checked = __text_checked(next, f);
     next = checked.0;
     if (!checked.1) {
       return __violated(c, r, 1007);

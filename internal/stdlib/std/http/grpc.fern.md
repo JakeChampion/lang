@@ -184,7 +184,7 @@ function __unit(unit: i32, n: i64): Option[Duration] {
 <<6 pub function frame(message: u8[]): u8[]>>=
 pub function frame(message: u8[]): u8[] {
   let n = message.len();
-  let head: u8[] = [0 as u8, (n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  let head = [0 as u8, (n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
   return head.concat(message);
 }
 

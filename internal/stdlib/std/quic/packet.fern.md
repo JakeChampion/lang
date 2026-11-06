@@ -509,16 +509,16 @@ pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result
     return Err(PacketTooShortToSample);
   }
   let m = mask(k, datagram[h.pn_at + 4:h.pn_at + 20]);
-  let long: boolean = (datagram[h.at] as i32 & 128) != 0;
+  let long = (datagram[h.at] as i32 & 128) != 0;
   let low = 31;
   if (long) {
     low = 15;
   }
   let b0 = datagram[h.at] as i32 ^ m[0] as i32 & low;
-  let n: i32 = (b0 & 3) + 1;
+  let n = (b0 & 3) + 1;
   let header = __slice(datagram, h.at, h.pn_at + n);
   header = header.with(0, b0 as u8);
-  let truncated: i64 = 0;
+  let truncated = 0;
   let i = 0;
   while (i < n) {
     let at = h.pn_at - h.at + i;
@@ -597,10 +597,10 @@ pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: b
     let blen = __padded_len(payload.len(), n);
     let b0 = 64 | n - 1;
     if (key_phase) {
-      b0 = b0 | 4;
+      b0 |= 4;
     }
     if (spin) {
-      b0 = b0 | 32;
+      b0 |= 32;
     }
     let pn_at = 1 + dcid.len();
     let head = __empty(pn_at + n + blen + TAG_LEN).append(b0 as u8);
@@ -706,7 +706,7 @@ pub function retry_valid(packet: [u8], odcid: [u8]): boolean {
   let diff = 0;
   let i = 0;
   while (i < TAG_LEN) {
-    diff = diff | want[i] as i32 ^ packet[at + i] as i32;
+    diff |= want[i] as i32 ^ packet[at + i] as i32;
     i += 1;
   }
   return want.len() == TAG_LEN && diff == 0;
