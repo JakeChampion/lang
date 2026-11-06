@@ -2626,7 +2626,7 @@ function run_manifest(path: string): i32 {
 
 // The manifest line of an image, or "" without one. The magic is built from
 // bytes so that this compiler's own literal pool never holds it, and a
-// candidate must name its target and end in a newline within 512 bytes.
+// candidate must end in a newline within 512 bytes.
 function image_manifest_line(image: u8[]): string {
   let magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
   let from = 0;
@@ -2640,7 +2640,7 @@ function image_manifest_line(image: u8[]): string {
     while (end < image.len() && end - start < 512 && image[end] != b'\n') {
       end += 1;
     }
-    if (end < image.len() && image[end] == b'\n' && image[start + 7] != b' ') {
+    if (manifest_candidate(image, start, end)) {
       let bytes: u8[] = [];
       let k = start;
       while (k < end) {
@@ -2655,6 +2655,22 @@ function image_manifest_line(image: u8[]): string {
     from = at + 1;
   }
   return "";
+}
+
+// A candidate ends in a newline, names its target, and holds printable ASCII
+// only, so a hostile file cannot send control bytes to the terminal.
+function manifest_candidate(b: u8[], start: i32, end: i32): boolean {
+  if (end >= b.len() || b[end] != b'\n' || b[start + 7] == b' ') {
+    return false;
+  }
+  let k = start;
+  while (k < end) {
+    if (b[k] < 32 || b[k] > 126) {
+      return false;
+    }
+    k += 1;
+  }
+  return true;
 }
 
 // "harden=1" prints as "harden: yes"; a value that is not a flag prints as it is.
