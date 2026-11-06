@@ -196,14 +196,15 @@ func TestFormatMinimalParens(t *testing.T) {
 	}
 }
 
-func TestFormatBitwiseLooserThanCompare(t *testing.T) {
+func TestFormatBitwiseComparisonGrouping(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`(a & b) == 0`, `(a & b) == 0`},
 		{`(a | b) == 0`, `(a | b) == 0`},
 		{`(a ^ b) == 0`, `(a ^ b) == 0`},
 		{`(a & b) != 0`, `(a & b) != 0`},
 		{`(a & b) < 16`, `(a & b) < 16`},
-		{`a == b & c`, `a == b & c`},
+		{`a == b & c`, `a == (b & c)`},
+		{`(a == b) & c`, `(a == b) & c`},
 		{`a & b | c`, `a & b | c`},
 		{`a | b & c`, `a | b & c`},
 		{`(a | b) & c`, `(a | b) & c`},
