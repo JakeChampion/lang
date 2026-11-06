@@ -82,6 +82,9 @@ func TestApkWriter(t *testing.T) {
 			t.Errorf("the manifest has no string %q", s)
 		}
 	}
+	if v, ok := applicationAttr(t, man, extractNativeLibsID); !ok || v != 0 {
+		t.Errorf("android:extractNativeLibs = %#x (set %v), want false for stored libraries", v, ok)
+	}
 	verifyApkV2(t, raw)
 	if apksigner, err := exec.LookPath("apksigner"); err == nil {
 		if o, err := exec.Command(apksigner, "verify", "--min-sdk-version", "24", path).CombinedOutput(); err != nil {
@@ -101,6 +104,88 @@ func TestApkWriter(t *testing.T) {
 	if !bytes.Equal(raw, again) {
 		t.Error("two builds with the same key give different APKs")
 	}
+}
+
+// -apk-compress deflates the libraries, and the manifest tells Android to
+// extract them. The other entries stay stored, and the signature verifies.
+func TestApkCompress(t *testing.T) {
+	dir := t.TempDir()
+	_, stored := buildApk(t, dir)
+	path, raw := buildApk(t, dir, "-apk-compress")
+	if len(raw) >= len(stored) {
+		t.Errorf("the compressed APK has %d bytes, and the stored one %d", len(raw), len(stored))
+	}
+	zs, err := zip.NewReader(bytes.NewReader(stored), int64(len(stored)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range zr.File {
+		want := zip.Store
+		if strings.HasSuffix(f.Name, ".so") {
+			want = zip.Deflate
+			if !bytes.Equal(readZipEntry(t, zr, f.Name), readZipEntry(t, zs, f.Name)) {
+				t.Errorf("%s inflates to other bytes than the stored library", f.Name)
+			}
+		}
+		if f.Method != want {
+			t.Errorf("%s: method %d, want %d", f.Name, f.Method, want)
+		}
+		if off, err := f.DataOffset(); err != nil || off%4 != 0 {
+			t.Errorf("%s: data at %d, want a multiple of 4 (%v)", f.Name, off, err)
+		}
+	}
+	if v, ok := applicationAttr(t, readZipEntry(t, zr, "AndroidManifest.xml"), extractNativeLibsID); !ok || v != 0xffffffff {
+		t.Errorf("android:extractNativeLibs = %#x (set %v), want true for deflated libraries", v, ok)
+	}
+	verifyApkV2(t, raw)
+	if apksigner, err := exec.LookPath("apksigner"); err == nil {
+		if o, err := exec.Command(apksigner, "verify", "--min-sdk-version", "24", path).CombinedOutput(); err != nil {
+			t.Errorf("apksigner verify: %v\n%s", err, o)
+		}
+	}
+}
+
+const extractNativeLibsID = 0x010104ea
+
+// The value of the attribute with the resource ID `id` on the application
+// element of the binary manifest `man`. The application element is the one
+// with android:hasCode.
+func applicationAttr(t *testing.T, man []byte, id uint32) (uint32, bool) {
+	t.Helper()
+	le := binary.LittleEndian
+	var resmap []uint32
+	for off := 8; off+8 <= len(man); {
+		typ := le.Uint16(man[off:])
+		size := int(le.Uint32(man[off+4:]))
+		if size < 8 || off+size > len(man) {
+			t.Fatalf("the manifest has a bad chunk at %d", off)
+		}
+		switch typ {
+		case 0x180:
+			for p := off + 8; p+4 <= off+size; p += 4 {
+				resmap = append(resmap, le.Uint32(man[p:]))
+			}
+		case 0x102:
+			attrs := map[uint32]uint32{}
+			for k := 0; k < int(le.Uint16(man[off+28:])); k++ {
+				a := off + 36 + 20*k
+				if name := int(le.Uint32(man[a+4:])); name < len(resmap) {
+					attrs[resmap[name]] = le.Uint32(man[a+16:])
+				}
+			}
+			if _, ok := attrs[0x0101000c]; ok {
+				v, ok := attrs[id]
+				return v, ok
+			}
+		}
+		off += size
+	}
+	t.Fatal("the manifest has no application element")
+	return 0, false
 }
 
 func TestApkRefusals(t *testing.T) {

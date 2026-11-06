@@ -47,9 +47,11 @@ beeps.
 | `stopwatch.fern` | The behaviour: the state changes, the text, the colours of the dial, when to update next, the burn-in position, the beep times and samples, the files of the app and the settings table. Every function is pure. |
 | `screen.fern` | The layout of each screen. |
 | `ui.fern` | The look of each screen and of the launcher icon. It draws on a frame and does no other I/O. |
-| `app.fern` | The NativeActivity: the touches, the keys, the timers, the files, the beeper and the window. |
+| `control.fern` | The behaviour of the app on its events: the touches, the keys, the timers, the files, the beeper and the window. Each input and output goes through a `Device`. |
+| `app.fern` | The NativeActivity, and the `Device` of the phone. |
 | `stopwatch_test.fern` | The tests for `stopwatch.fern` (`std/test`). |
 | `ui_test.fern` | Draws each screen on a frame in memory and checks the colours of its parts and its layout. |
+| `control_test.fern` | Gives `control.fern` touches, keys and times on the host through a fake `Device`, and checks the state and the frame. |
 | `icon.png` | The launcher icon that `ui.icon` draws. |
 
 The settings screen makes one card for each entry of the table in
@@ -103,3 +105,6 @@ requires these results:
 It keeps the screenshots and logcat as the `fern-stopwatch-emulator`
 artifact. To run the check on a phone, connect the phone with `adb`. Then
 run the script with the APK and an output directory.
+
+`control_test.fern` writes the last frame of each case to the directory in
+`STOPWATCH_CONTROL_PNG`, when it is set.

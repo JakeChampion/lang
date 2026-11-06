@@ -106,7 +106,30 @@ runs it in NativeActivity, as in `native/`, `stopwatch/` and `walkie/`.
 
 ## 3. Package the APK
 
-`fern -apk` packages an app with no Java code. For an app with a Java
+`fern -apk` packages an app with no Java code. By default it stores each
+library, aligned for 16 KB pages, and the manifest sets
+`android:extractNativeLibs` to false. Android then maps the library from
+the APK, and the installed app is the APK alone. `-apk-compress` deflates
+the libraries, and Android extracts them at install. The file is smaller,
+but the installed app is the APK and the libraries:
+
+| stopwatch | APK file | installed |
+|---|---|---|
+| stored (default) | 589 KB | 589 KB |
+| `-apk-compress` | 131 KB | 131 KB and 280 KB for the library of the ABI |
+
+The Android emulator check records exact measurements for both library forms
+in `native/installed-size.json` and `native-compressed/installed-size.json`
+inside the `fern-stopwatch-emulator` CI artifact. Each record includes the
+download file size, the APK and extracted library sizes on the device, and
+the allocated storage of the installation directory before the app starts.
+The measurements exclude app data. They distinguish file sizes from allocated
+storage. Directory and block allocation can make these totals differ.
+
+Use the default for an app from a store, which compresses the download
+itself. Use `-apk-compress` for an APK that people download as a file.
+
+For an app with a Java
 shell, use the Android SDK: `aapt` for the resources, `javac` and `d8` for
 the Java code, `zipalign`, then `apksigner`. With Gradle, put the `.so` in
 `src/main/jniLibs/arm64-v8a/` of a standard app module, and the generated

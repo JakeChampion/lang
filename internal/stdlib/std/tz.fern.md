@@ -6,6 +6,7 @@ This module provides the time-zone type and loads zones from the IANA database, 
 
 A zone combines recorded transitions with a fallback rule. TZif data and POSIX text provide the offsets, abbreviations, and seasonal clock policy.
 A fixed-offset zone has no transitions and no rule.
+`local_zone` reads the `TZ` variable. When `TZ` is not set, it reads `/etc/localtime`, and on Android it reads the IANA name in the system property `persist.sys.timezone`. With none of them, the local zone is UTC.
 A `Zoned` value pairs a `time.Timestamp` with a zone, and gives the local civil time there.
 
 ## Contracts
@@ -79,6 +80,7 @@ import "std/result";
 import "std/time";
 import "std/utf8";
 import "std/i64";
+import "std/android/property";
 ```
 
 ### `2 pub struct Zone`
@@ -159,6 +161,9 @@ pub function zone_from_tz(spec: string): Zone {
 ```fern
 <<4 function default_zone(): Zone>>=
 function default_zone(): Zone {
+  if (target_os() == "android") {
+    return android_zone();
+  }
   match (read_zone_file("/etc/localtime")) {
     Some(z) => {
       return z;
@@ -167,6 +172,23 @@ function default_zone(): Zone {
       return utc_zone();
     }
   }
+}
+
+// Android has no /etc/localtime. It keeps the IANA name of the zone in the
+// system property persist.sys.timezone.
+function android_zone(): Zone {
+  match (property.get("persist.sys.timezone")) {
+    Some(name) => {
+      match (iana_zone(name)) {
+        Ok(z) => {
+          return z;
+        },
+        Err(_) => {}
+      }
+    },
+    None => {}
+  }
+  return utc_zone();
 }
 
 function rule_zone(r: Rule): Zone {

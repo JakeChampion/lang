@@ -36,8 +36,8 @@ pub function red(): i32 {
   return draw.rgb(215, 25, 33);
 }
 
-// `color` blended over `under`: opacity 20 is `color`, and 0 is `under`.
-pub function blend(color: i32, under: i32, opacity: i32): i32 {
+// `color` with the opacity `opacity`, from 0 for none to 20 for opaque.
+pub function faded(color: i32, opacity: i32): i32 {
   let a = opacity;
   if (a < 0) {
     a = 0;
@@ -45,10 +45,7 @@ pub function blend(color: i32, under: i32, opacity: i32): i32 {
   if (a > 20) {
     a = 20;
   }
-  let r = ((color & 255) * a + (under & 255) * (20 - a)) / 20;
-  let g = ((color >> 8 & 255) * a + (under >> 8 & 255) * (20 - a)) / 20;
-  let b = ((color >> 16 & 255) * a + (under >> 16 & 255) * (20 - a)) / 20;
-  return draw.rgb(r, g, b);
+  return draw.rgba(color & 255, color >> 8 & 255, color >> 16 & 255, a * 255 / 20);
 }
 
 // The x of `text_w` pixels of text in the middle of `r`.

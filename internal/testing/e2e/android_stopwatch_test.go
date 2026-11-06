@@ -34,6 +34,28 @@ func TestAndroidStopwatchLogic(t *testing.T) {
 	}
 }
 
+// control_test.fern gives the behaviour of the app a sequence of touches,
+// keys and times on the host, through a fake device: a tap starts the
+// stopwatch, a long press resets it, and a drag scrolls the settings. The
+// Android lane runs the same app on an emulator.
+func TestAndroidStopwatchControl(t *testing.T) {
+	host := e2eharness.HostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	bin := filepath.Join(t.TempDir(), "control_test")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-o", bin,
+		e2eharness.RepoPath(stopwatchApp, "control_test.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build control_test.fern: %v\n%s", err, out)
+	}
+	out, err := exec.Command(bin).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "# fail 0") {
+		t.Fatalf("control_test.fern: %v\n%s", err, out)
+	}
+}
+
 // ui_test.fern draws each screen of the app on a frame in memory, and the
 // launcher icon it draws is the icon.png that the APK carries.
 func TestAndroidStopwatchUI(t *testing.T) {

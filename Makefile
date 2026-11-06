@@ -4,7 +4,7 @@ BINS     := $(addprefix build/,$(EXAMPLES))
 # diagnostics pin line and column, and testdata inputs kept as written.
 FERN_SRCS := $(shell git ls-files '*.fern' '*.fern.md' | grep -v -e '^conformance/' -e '/testdata/')
 
-.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check walkie-emulator-check
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check walkie-emulator-check native-emulator-check
 
 all: build test
 
@@ -79,6 +79,9 @@ perf-history-check:
 
 walkie-emulator-check:
 	uv run --no-project python -B -m unittest discover -s scripts -p test_walkie_emulator_check.py
+
+native-emulator-check:
+	uv run --no-project python -B -m unittest discover -s scripts -p test_native_emulator_check.py
 
 vet:
 	go vet ./...
@@ -297,7 +300,7 @@ gofmt-check:
 # (`make -j -k lint-fast`): each is seconds of work and independent of the
 # others. check-sources and fern-test-cache stay apart: the cache probe appends
 # to a source file while it runs, which a concurrent source check would read.
-lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check walkie-emulator-check runtime-bundle-check
+lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check walkie-emulator-check native-emulator-check runtime-bundle-check
 
 lint-all:
 	@status=0; \

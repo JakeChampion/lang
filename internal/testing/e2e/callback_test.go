@@ -109,7 +109,7 @@ func TestCallbackQsort(t *testing.T) {
 }
 
 func TestCallbackRefusals(t *testing.T) {
-	const tail = "\nfunction cmp(a: usize, b: usize): i32 { return 0; }\npub function f(): usize { return entry(); }\nfunction main(): i32 { return 0; }\n"
+	const tail = "\nfunction cmp(a: usize, b: usize): i32 { return 0; }\npub function f(): usize { return entry(); }\nfunction main(): i32 { return f() as i32; }\n"
 	cases := []struct{ name, target, src, want string }{
 		{"executable", "x86-64-linux", "@callback(\"cmp\")\nfunction entry(): usize;" + tail,
 			"@callback entry: a callback needs -shared and a native target"},
@@ -139,6 +139,40 @@ func TestCallbackRefusals(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			if err == nil || !strings.Contains(string(out), c.want) {
 				t.Fatalf("want a refusal with %q, got %v:\n%s", c.want, err, out)
+			}
+		})
+	}
+}
+
+// A @callback or a C @import that nothing reaches is not refused, so a
+// program for the host or for WASI can import a module for Android and use
+// its types.
+func TestUnreachedNativeDeclarations(t *testing.T) {
+	src := "@callback(\"cmp\")\nfunction entry(): usize;\n@import(\"libc.so.6\", \"getpid\")\nfunction c(): i32;\n" +
+		"function cmp(a: usize, b: usize): i32 { return 0; }\npub function f(): usize { return entry() + c() as usize; }\n" +
+		"function main(): i32 {\n  print(\"ok\");\n  return 0;\n}\n"
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "m.fern")
+			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-o", filepath.Join(dir, "out"), path, e2eharness.SelfHostStdlibRoot(t))
+			cmd.Env = e2eharness.ChildEnv()
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("an unreached callback and import are refused: %v\n%s", err, out)
+			}
+			if target != "x86-64-linux" {
+				return
+			}
+			run := exec.Command(filepath.Join(dir, "out"))
+			if runner := e2eharness.X86_64Runner(t); len(runner) > 0 {
+				run = exec.Command(runner[0], append(runner[1:], filepath.Join(dir, "out"))...)
+			}
+			out, err := run.CombinedOutput()
+			if err != nil || string(out) != "ok\n" {
+				t.Fatalf("run: %v, output %q", err, out)
 			}
 		})
 	}

@@ -6,6 +6,8 @@ This module draws rectangles and text on the pixels of an Android window.
 
 A `Frame` holds the pixels of a window while the window is locked: 4 bytes for each pixel, in the order red, green, blue and alpha, and `stride` pixels for each row. `std/android` locks a window and gives its frame. The functions here only write into the pixels, so a test can make a frame from plain memory.
 
+A color is a pixel word with an alpha from 0, for none, to 255, for opaque: `rgba` makes one, and `rgb` makes an opaque one. Each shape and each glyph blends its color over the pixels of the frame by the alpha and by the part of each pixel that it covers. A shape over opaque pixels leaves them opaque. `store` writes pixel words as they are, so it can make transparent pixels, for example the corners of an icon.
+
 Text uses the Fern raster of DejaVu Sans Mono in `std/android/font`. Each glyph pixel has a coverage from 0 to 15, and the text color blends over the frame by that coverage. `scale` draws each raster pixel as a square of `scale` by `scale` pixels.
 
 ## Contracts
@@ -42,7 +44,28 @@ pub struct Frame { window: usize, buffer: usize, bits: usize, width: i32, height
 
 // The pixel word of an opaque color.
 pub function rgb(r: i32, g: i32, b: i32): i32 {
-  return 0 - 16777216 | (b & 255) << 16 | (g & 255) << 8 | r & 255;
+  return rgba(r, g, b, 255);
+}
+
+// The pixel word of a color with the alpha `a`, from 0 for none to 255 for
+// opaque.
+pub function rgba(r: i32, g: i32, b: i32, a: i32): i32 {
+  return (a & 255) << 24 | (b & 255) << 16 | (g & 255) << 8 | r & 255;
+}
+
+// The opaque pixel word of `color` drawn over the pixel word `under`.
+pub function over(color: i32, under: i32): i32 {
+  return blend(color, under, weight(color, 15));
+}
+
+function alpha_of(color: i32): i32 {
+  return color >> 24 & 255;
+}
+
+// The weight from 0 to 255 of `color` on a pixel that it covers by `a`, from
+// 0 to 15.
+function weight(color: i32, a: i32): i32 {
+  return a * 17 * alpha_of(color) / 255;
 }
 
 function clamp(v: i32, lo: i32, hi: i32): i32 {
@@ -55,9 +78,24 @@ function clamp(v: i32, lo: i32, hi: i32): i32 {
   return v;
 }
 
-// Fills the rectangle at x and y, of width w and height h, with the pixel
-// word `color`. The part outside the frame is not drawn.
+// Fills the rectangle at x and y, of width w and height h, with `color`
+// blended over the frame. The part outside the frame is not drawn.
 pub function (f: Frame) fill(x: i32, y: i32, w: i32, h: i32, color: i32): void {
+  if (alpha_of(color) == 255) {
+    f.store(x, y, w, h, color);
+    return;
+  }
+  for row in clamp(y, 0, f.height)..clamp(y + h, 0, f.height) {
+    for col in clamp(x, 0, f.width)..clamp(x + w, 0, f.width) {
+      put(f, col, row, color, 15);
+    }
+  }
+}
+
+// Writes the pixel word `color` into each pixel of the rectangle at x and y,
+// of width w and height h, with no blend. The part outside the frame is not
+// written.
+pub function (f: Frame) store(x: i32, y: i32, w: i32, h: i32, color: i32): void {
   let x0 = clamp(x, 0, f.width);
   let y0 = clamp(y, 0, f.height);
   let x1 = clamp(x + w, 0, f.width);
@@ -106,7 +144,7 @@ function put(f: Frame, x: i32, y: i32, color: i32, a: i32): void {
   }
   unsafe {
     let at = f.bits + ((y * f.stride + x) * 4) as usize;
-    __store_i32(at, blend(color, __load_i32(at), a));
+    __store_i32(at, blend(color, __load_i32(at), weight(color, a)));
   }
 }
 
@@ -192,17 +230,18 @@ pub function text_height(scale: i32): i32 {
 }
 
 // One channel of `fg` over `bg`, with the coverage `a` from 0 to 15.
-function mix(fg: i32, bg: i32, shift: i32, a: i32): i32 {
+function mix(fg: i32, bg: i32, shift: i32, w: i32): i32 {
   let f = fg >> shift & 255;
   let b = bg >> shift & 255;
-  return (f * a + b * (15 - a)) / 15 << shift;
+  return (f * w + b * (255 - w)) / 255 << shift;
 }
 
-function blend(fg: i32, bg: i32, a: i32): i32 {
-  if (a >= 15) {
+// `fg` over `bg` with the weight `w` from 0 to 255. The result is opaque.
+function blend(fg: i32, bg: i32, w: i32): i32 {
+  if (w >= 255) {
     return fg;
   }
-  return -16777216 | mix(fg, bg, 16, a) | mix(fg, bg, 8, a) | mix(fg, bg, 0, a);
+  return -16777216 | mix(fg, bg, 16, w) | mix(fg, bg, 8, w) | mix(fg, bg, 0, w);
 }
 
 // Blends `color` over the square of `scale` pixels at x and y.
@@ -214,7 +253,7 @@ function dot(f: Frame, x: i32, y: i32, scale: i32, color: i32, a: i32): void {
       if (px >= 0 && py >= 0 && px < f.width && py < f.height) {
         unsafe {
           let at = f.bits + ((py * f.stride + px) * 4) as usize;
-          __store_i32(at, blend(color, __load_i32(at), a));
+          __store_i32(at, blend(color, __load_i32(at), weight(color, a)));
         }
       }
     }

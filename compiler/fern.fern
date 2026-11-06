@@ -997,11 +997,8 @@ function c_import_int(t: string): boolean {
   return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
 }
 
-function c_import_refusal(f: parser.FuncDecl, target: string, shared: boolean): string {
+function c_import_refusal(f: parser.FuncDecl): string {
   let what = "@import " + f.name + ": ";
-  if (!shared) {
-    return what + "an executable for -target " + target + " has no dynamic loader; build a -shared object to import " + f.import_wit + " from " + f.import_iface;
-  }
   if (f.params.len() > 6) {
     return what + "a C import takes at most 6 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
   }
@@ -1016,16 +1013,33 @@ function c_import_refusal(f: parser.FuncDecl, target: string, shared: boolean): 
   return "";
 }
 
-pub function native_import_refusal(m: parser.Module, target: string, shared: boolean): string {
+pub function native_import_refusal(m: parser.Module): string {
   for f in m.funcs {
-    if (is_c_library(f.import_iface) && !is_native_target(target)) {
-      return "@import " + f.name + ": -target " + target + " cannot load the C library " + f.import_iface;
-    }
     if (is_c_library(f.import_iface)) {
-      let bad = c_import_refusal(f, target, shared);
+      let bad = c_import_refusal(f);
       if (bad.len() > 0) {
         return bad;
       }
+    }
+  }
+  return "";
+}
+
+// The first @callback or C @import that the program still reaches after
+// tree shaking, and that the build cannot give it: a callback needs a
+// native -shared object, and a C import needs a dynamic loader. A
+// declaration that nothing reaches is not refused, so a host program can
+// use the types of a module for Android.
+function reached_native_refusal(m: parser.Module, target: string, shared: boolean): string {
+  for f in m.funcs {
+    if (is_callback(f) && !(shared && is_native_target(target))) {
+      return "@callback " + f.name + ": a callback needs -shared and a native target";
+    }
+    if (is_c_library(f.import_iface) && !is_native_target(target)) {
+      return "@import " + f.name + ": -target " + target + " cannot load the C library " + f.import_iface;
+    }
+    if (is_c_library(f.import_iface) && !shared) {
+      return "@import " + f.name + ": an executable for -target " + target + " has no dynamic loader; build a -shared object to import " + f.import_wit + " from " + f.import_iface;
     }
   }
   return "";
@@ -1052,13 +1066,10 @@ function callback_targets(m: parser.Module): string[] {
   return out;
 }
 
-function callback_refusal(m: parser.Module, target: string, shared: boolean): string {
+function callback_refusal(m: parser.Module): string {
   for f in m.funcs {
     if (is_callback(f)) {
       let what = "@callback " + f.name + ": ";
-      if (!(shared && is_native_target(target))) {
-        return what + "a callback needs -shared and a native target";
-      }
       if (f.params.len() > 0 || f.ret_type != "usize") {
         return what + "the declaration takes no parameters and returns usize";
       }
@@ -1184,8 +1195,8 @@ function has_c_imports(m: parser.Module): boolean {
   return false;
 }
 
-pub function native_imports(m: parser.Module, target: string): parser.Module {
-  if (!is_native_target(target) || !has_c_imports(m)) {
+pub function native_imports(m: parser.Module, target: string, shared: boolean): parser.Module {
+  if (!is_native_target(target) || !shared || !has_c_imports(m)) {
     return m;
   }
   let funcs: parser.FuncDecl[] = [];
@@ -1437,15 +1448,15 @@ function jni_method(f: parser.FuncDecl, class_text: string, decl: string): (JniM
 // or the first refusal of either.
 function native_bindings(m: parser.Module, target: string, shared: boolean, java_dir: string): (parser.Module, JniMethod[], string) {
   let none: JniMethod[] = [];
-  let callback_bad = callback_refusal(m, target, shared);
+  let callback_bad = callback_refusal(m);
   if (callback_bad.len() > 0) {
     return (m, none, callback_bad);
   }
-  let import_bad = native_import_refusal(m, target, shared);
+  let import_bad = native_import_refusal(m);
   if (import_bad.len() > 0) {
     return (m, none, import_bad);
   }
-  let imported = native_imports(m, target);
+  let imported = native_imports(m, target, shared);
   let (jni, jni_bad) = jni_build_methods(imported, target, shared, java_dir);
   if (jni_bad.len() > 0) {
     return (imported, jni, jni_bad);
@@ -2413,6 +2424,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-apk-permission", "NAMES", "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
       cli_flag("-apk-icon", "FILE", "with -apk: the PNG of the launcher icon (default: the icon of the system)"),
       cli_flag("-apk-min-sdk", "LEVEL", "with -apk: the lowest Android API level the app runs on (default 24)"),
+      cli_flag("-apk-compress", "", "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
@@ -6140,10 +6152,10 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
@@ -6174,6 +6186,9 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   if (f.name == "-apk-min-sdk") {
     return ApkOpts { ...o, min_sdk: f.value };
   }
+  if (f.name == "-apk-compress") {
+    return ApkOpts { ...o, compress: true };
+  }
   return o;
 }
 
@@ -6188,7 +6203,7 @@ function apk_build_args(av: string[]): (string[], string) {
     } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java", "-jni-dex"], name)) {
       return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
     } else if (util.str_has_prefix(name, "-apk")) {
-      value_next = !a.contains("=");
+      value_next = name != "-apk-compress" && !a.contains("=");
     } else {
       out = out.append(a);
     }
@@ -6359,7 +6374,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   for name in dex.subclasses_of(classes, "android.app.Service") {
     services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions) });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [] };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6478,7 +6493,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag = false;
   let shared = false;
   let export_list = "";
-  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "" };
+  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false };
   let harden = false;
   let heap_limit_text = "";
   let quarantine_text = "";
@@ -6924,6 +6939,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
 
   merged = treeshake.treeshake(merged);
+  let reached_bad = reached_native_refusal(merged, target, shared);
+  if (reached_bad.len() > 0) {
+    eprint("fern: " + reached_bad);
+    return 2;
+  }
 
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);

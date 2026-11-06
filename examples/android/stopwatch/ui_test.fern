@@ -101,7 +101,7 @@ function test_reset(): test.TestOutcome {
   let r = dial(v);
   // A point of the disc below the words, and the first dot of the ring.
   let c = colours("reset", v, [[r.x + r.w / 2, r.y + r.h * 85 / 100], ring_dot(r, 0), [5, 5]]);
-  let dim = look.blend(look.outline(), look.bg(), 13);
+  let dim = draw.over(look.faded(look.outline(), 13), look.bg());
   return test.assert_eq(same(c[0], look.surface()) + " " + same(c[1], dim) + " " + same(c[2], look.bg()), "true true true");
 }
 
@@ -109,7 +109,7 @@ function test_running(): test.TestOutcome {
   let v = ui.View { ...base(), elapsed: 5000, running: true };
   let r = dial(v);
   let c = colours("running", v, [ring_dot(r, 2), ring_dot(r, 5), ring_dot(r, 30)]);
-  let got = same(c[0], look.blend(look.ink(), look.bg(), 13)) + " " + same(c[1], look.blend(look.red(), look.bg(), 13)) + " " + same(c[2], look.blend(look.outline(), look.bg(), 13));
+  let got = same(c[0], draw.over(look.faded(look.ink(), 13), look.bg())) + " " + same(c[1], draw.over(look.faded(look.red(), 13), look.bg())) + " " + same(c[2], draw.over(look.faded(look.outline(), 13), look.bg()));
   return test.assert_eq(got, "true true true");
 }
 
@@ -117,7 +117,7 @@ function test_paused(): test.TestOutcome {
   let v = ui.View { ...base(), elapsed: 5000 };
   let r = dial(v);
   let c = colours("paused", v, [ring_dot(r, 2), ring_dot(r, 5)]);
-  return test.assert_eq(same(c[0], look.blend(look.muted(), look.bg(), 13)) + " " + same(c[1], look.blend(look.outline(), look.bg(), 13)), "true true");
+  return test.assert_eq(same(c[0], draw.over(look.faded(look.muted(), 13), look.bg())) + " " + same(c[1], draw.over(look.faded(look.outline(), 13), look.bg())), "true true");
 }
 
 function test_menu(): test.TestOutcome {
