@@ -2726,7 +2726,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let iife = e_call_at(e_lambda_origin(bx_params, bb_rt, bb_body, ORIGIN_BLOCK), bx_args, x.line, x.col);
         return parse_postfix(bb_p, iife);
       }
-      if (x.text == "-" || x.text == "!") {
+      if (util.has_str(["-", "!", "~"], x.text)) {
         let uline = p.peek_line();
         let ucol = p.peek_col();
         p = p.advance();

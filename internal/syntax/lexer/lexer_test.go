@@ -71,9 +71,19 @@ func TestPositions(t *testing.T) {
 }
 
 func TestUnknownChar(t *testing.T) {
-	_, _, err := Tokenize("~")
+	_, _, err := Tokenize("$")
 	if err == nil {
-		t.Fatal("expected error on '~'")
+		t.Fatal("expected error on '$'")
+	}
+}
+
+func TestBitwiseNotToken(t *testing.T) {
+	toks, _, err := Tokenize("~x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toks) < 2 || toks[0].Kind != Punct || toks[0].Text != "~" {
+		t.Fatalf("~x lexes as %v, want the punctuation ~ first", toks)
 	}
 }
 

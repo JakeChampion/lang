@@ -40,7 +40,7 @@ checker, as a warning.
 ## Rules
 
 A rule has a stable kebab-case name, a one-line description, a default
-severity and, optionally, `<rule>.<key>` options. There are two rules today,
+severity and, optionally, `<rule>.<key>` options. There are three rules today,
 and `lint.Config` holds each one's severity and threshold directly; a new rule
 adds its fields there, an arm to `set_pair` / `set_option`, its run to
 `lint_file`, and its entry to `rules_listing` and `known_rules`. An unknown key
@@ -126,6 +126,24 @@ linted files is a usage error (exit 2) — as is configuring the rule, by
 the ratchet test guards against, and this rule holds itself to the same bar.
 The repository ratchet does not include this rule: it needs a run of every
 suite, which the gate's one-parse-per-file cost cannot afford.
+
+### modern-form
+
+Default: `allow`. No options.
+
+The rule keeps the modern form that #14246 and #14280 gave to coreutils, the
+examples and the stdlib (#14288). It finds three things:
+
+- A `let` annotation that the initializer already gives. The parse tree has
+  no types, so the rule sees only an initializer whose syntax gives its type:
+  a string, a boolean, a number (`i32`, `f64` or the type of its suffix), a
+  struct literal, or a cast. `let w: u64 = 0;` stays, because the annotation
+  changes the type of the literal.
+- `x = x op e`, for `x op= e`, when the target is a name.
+- `0 - e`, for `-e`. `0 - 1` stays: in an unsigned type, `-1` does not fit.
+
+`TestModernFormRatchet` holds each of the three trees to a ceiling: the count
+of findings must not grow, and a change that removes findings lowers it.
 
 ### Why a tolerance, and why the asymmetry
 

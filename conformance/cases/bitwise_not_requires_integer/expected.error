@@ -1,0 +1,2 @@
+main.fern:3:11: error[E009]: operator "~" requires an integer type, got boolean
+main.fern:4:11: error[E009]: operator "~" requires an integer type, got f64

@@ -347,86 +347,17 @@ function punct_double(b0: i32, b1: i32): string {
   return "";
 }
 
-function single_punct(b: i32): string {
-  let op = single_punct_op(b);
-  if (op.len() > 0) {
-    return op;
-  }
-  if (b == 40) {
-    return "(";
-  }
-  if (b == 41) {
-    return ")";
-  }
-  if (b == 123) {
-    return "{";
-  }
-  if (b == 125) {
-    return "}";
-  }
-  if (b == 91) {
-    return "[";
-  }
-  if (b == 93) {
-    return "]";
-  }
-  if (b == 44) {
-    return ",";
-  }
-  if (b == 59) {
-    return ";";
-  }
-  if (b == 58) {
-    return ":";
-  }
-  if (b == 46) {
-    return ".";
-  }
-  if (b == 64) {
-    return "@";
-  }
-  return "";
-}
+// The bytes of the one-byte punctuation tokens, and the text of each one
+// in the same order.
+const PUNCT_BYTES: string = "+-*/%=<>!~&|^?(){}[],;:.@";
 
-function single_punct_op(b: i32): string {
-  if (b == 43) {
-    return "+";
-  }
-  if (b == 45) {
-    return "-";
-  }
-  if (b == 42) {
-    return "*";
-  }
-  if (b == 47) {
-    return "/";
-  }
-  if (b == 37) {
-    return "%";
-  }
-  if (b == 61) {
-    return "=";
-  }
-  if (b == 60) {
-    return "<";
-  }
-  if (b == 62) {
-    return ">";
-  }
-  if (b == 33) {
-    return "!";
-  }
-  if (b == 38) {
-    return "&";
-  }
-  if (b == 124) {
-    return "|";
-  }
-  if (b == 94) {
-    return "^";
-  }
-  if (b == 63) {
-    return "?";
+const PUNCT_TEXTS: string[] = ["+", "-", "*", "/", "%", "=", "<", ">", "!", "~", "&", "|", "^", "?", "(", ")", "{", "}", "[", "]", ",", ";", ":", ".", "@"];
+
+function single_punct(b: i32): string {
+  for i in 0..PUNCT_BYTES.len() {
+    if (PUNCT_BYTES[i] as i32 == b) {
+      return PUNCT_TEXTS[i];
+    }
   }
   return "";
 }
@@ -1892,7 +1823,7 @@ function test_unknown_char(): i32 {
   if (!lex_error_is("`", "unexpected character '`'", "P001")) {
     return 1903;
   }
-  if (!lex_error_is("~~", "unexpected character '~'", "P001")) {
+  if (has_error(tokenize("~x"))) {
     return 1904;
   }
   if (!lex_error_is("\\", "unexpected character '\\\\'", "P001")) {

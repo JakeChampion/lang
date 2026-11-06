@@ -6429,6 +6429,9 @@ function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typei
     }
     return t_unknown("unary `!` requires bool operand");
   }
+  if (u.op == "~") {
+    return bitwise_not_type(ot);
+  }
   if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
     return s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
   }
@@ -14839,6 +14842,25 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   return (out, binary_result_type(b, blt, brt, s));
 }
 
+function bitwise_not_type(ot: typeinfo.Type): typeinfo.Type {
+  if (is_integer(ot)) {
+    return ot;
+  }
+  return t_unknown("unary `~` requires an integer operand");
+}
+
+// `~` takes an integer operand.
+function bitwise_not_diags(u: ast.ExprUnary, s: Scope, own out: util.Diag[]): util.Diag[] {
+  if (u.op != "~") {
+    return out;
+  }
+  let bt = check_expr(u.operand, s);
+  if (!operand_open(bt) && !is_integer(bt)) {
+    return out.append(dg_at("E009", "operator \"~\" requires an integer type, got " + type_label(bt), u.line, u.col));
+  }
+  return out;
+}
+
 function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Diag[] {
   out = call_diags(u.operand, s);
   if (u.op == "!") {
@@ -14848,6 +14870,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     }
   }
   out = util.append_diags(out, tvar_neg_diags(u, s));
+  out = bitwise_not_diags(u, s, out);
   if (u.op == "-") {
     let nt = check_expr(u.operand, s);
     let nok = !is_unknown(s.unop_overload_ret(u.op, nt));
@@ -18168,11 +18191,17 @@ function return_type_diags(mod: parser.Module): util.Diag[] {
     }
   }
   for func in mod.funcs {
-    if (func.name == "main" && func.receiver_type == "" && func.import_iface == "") {
+    if (is_main_decl(func) && func.receiver_type == "" && func.import_iface == "") {
       out = main_signature_diags(func, out);
     }
   }
   return out;
+}
+
+// A function named main in any module, also an imported one, whose name has
+// the prefix of its module.
+function is_main_decl(func: parser.FuncDecl): boolean {
+  return func.name == "main" || func.module.len() > 0 && func.name == func.module + "__main";
 }
 
 function alias_diags(mod: parser.Module): util.Diag[] {

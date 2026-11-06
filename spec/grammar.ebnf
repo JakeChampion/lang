@@ -326,7 +326,7 @@ Shift       = Additive { ( '<<|' | '<<?' | '>>?' | '<<' | '>>' ) Additive } ;
 Additive    = Multiplicative { ( '+|' | '-|' | '+?' | '-?' | '+' | '-' ) Multiplicative } ;
 Multiplicative
             = Unary { ( '*|' | '*?' | '/?' | '%?' | '*' | '/' | '%' ) Unary } ;
-Unary       = ( '-' | '!' ) Unary | Cast ;
+Unary       = ( '-' | '!' | '~' ) Unary | Cast ;
 Cast        = Postfix { 'as' [ '?' ] Type } ;
 
 Postfix     = Primary { PostfixOp } ;
@@ -381,7 +381,7 @@ NoStructAdditive
 NoStructMultiplicative
             = NoStructUnary { ( '*|' | '*?' | '/?' | '%?' | '*' | '/' | '%' ) NoStructUnary } ;
 NoStructUnary
-            = ( '-' | '!' ) NoStructUnary | NoStructCast ;
+            = ( '-' | '!' | '~' ) NoStructUnary | NoStructCast ;
 NoStructCast = NoStructPostfix { 'as' [ '?' ] Type } ;
 NoStructPostfix
             = NoStructPrimary { PostfixOp } ;

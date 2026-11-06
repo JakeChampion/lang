@@ -1,0 +1,6 @@
+// `~` takes an integer. A boolean takes `!`, and a float has no `~`.
+function main(): i32 {
+  let b = ~true;
+  let f = ~1.5;
+  return 0;
+}

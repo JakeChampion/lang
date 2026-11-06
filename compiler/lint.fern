@@ -12,6 +12,8 @@ pub const RISK: string = "change-risk";
 
 pub const DIRECTIVE: string = "lint-directive";
 
+pub const MODERN: string = "modern-form";
+
 const DEFAULT_MAX: i32 = 10;
 
 const DEFAULT_RISK_MAX: i32 = 30;
@@ -39,14 +41,15 @@ pub struct Config {
   risk: i32,
   risk_max: i32,
   risk_configured: boolean,
+  modern: i32,
 }
 
 pub function default_config(): Config {
-  return Config { complexity: WARN, max: DEFAULT_MAX, risk: WARN, risk_max: DEFAULT_RISK_MAX, risk_configured: false };
+  return Config { complexity: WARN, max: DEFAULT_MAX, risk: WARN, risk_max: DEFAULT_RISK_MAX, risk_configured: false, modern: ALLOW };
 }
 
 pub function known_rules(): string {
-  return "known rules: " + COMPLEXITY + ", " + RISK;
+  return "known rules: " + COMPLEXITY + ", " + RISK + ", " + MODERN;
 }
 
 function parse_severity(v: string): i32 {
@@ -72,6 +75,17 @@ function severity_name(sev: i32): string {
   return "warn";
 }
 
+// Why `rule` takes no `<rule>.<key>` option, or "".
+function option_rule_error(dotted: string, rule: string): string {
+  if (rule == MODERN) {
+    return "lint option " + dotted + ": " + MODERN + " has no options";
+  }
+  if (rule != COMPLEXITY && rule != RISK) {
+    return "unknown lint rule \"" + rule + "\" (" + known_rules() + ")";
+  }
+  return "";
+}
+
 pub function set_option(c: Config, dotted: string, value: string): (Config, string) {
   let dot = util.index_of_sub(dotted, ".");
   if (dot < 0) {
@@ -79,8 +93,9 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   }
   let rule = slice_unchecked(dotted, 0, dot) + "";
   let key = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
-  if (rule != COMPLEXITY && rule != RISK) {
-    return (c, "unknown lint rule \"" + rule + "\" (" + known_rules() + ")");
+  let bad_rule = option_rule_error(dotted, rule);
+  if (bad_rule.len() > 0) {
+    return (c, bad_rule);
   }
   if (key != "max") {
     return (c, "lint option " + dotted + ": unknown option \"" + key + "\" (want max)");
@@ -109,6 +124,9 @@ pub function set_pair(c: Config, key: string, value: string): (Config, string) {
   if (key == RISK) {
     return (Config { ...c, risk: sev, risk_configured: true }, "");
   }
+  if (key == MODERN) {
+    return (Config { ...c, modern: sev }, "");
+  }
   if (key != COMPLEXITY) {
     return (c, "unknown lint rule \"" + key + "\" (" + known_rules() + ")");
   }
@@ -121,7 +139,9 @@ pub function rules_listing(): string {
     + "    option " + COMPLEXITY + ".max = " + util.i32_to_string(DEFAULT_MAX) + " (default)\n"
     + RISK + "  [warn]\n"
     + "    function is complex and mostly untested: complexity^2 * (1 - coverage)^3 + complexity, scored from the -cover run -lint-cover names\n"
-    + "    option " + RISK + ".max = " + util.i32_to_string(DEFAULT_RISK_MAX) + " (default)\n";
+    + "    option " + RISK + ".max = " + util.i32_to_string(DEFAULT_RISK_MAX) + " (default)\n"
+    + MODERN + "  [allow]\n"
+    + "    an annotation that the initializer already gives, `x = x op e` for `x op= e`, or `0 - e` for `-e`\n";
 }
 
 pub function score(fd: parser.FuncDecl): i32 {
@@ -572,6 +592,9 @@ pub function lint_file(c: Config, file: string, src: string, m: parser.Module, c
   if (c.complexity != ALLOW) {
     out = complexity_findings(c, file, m, sup, out);
   }
+  if (c.modern != ALLOW) {
+    out = modern_findings(c, file, m, sup, out);
+  }
   let cf = cover_of(cover, file);
   if (c.risk != ALLOW && cf >= 0) {
     out = risk_findings(c, file, m, sup, cover[cf], out);
@@ -608,6 +631,117 @@ function complexity_findings(c: Config, file: string, m: parser.Module, sup: Sup
     });
   }
   return out;
+}
+
+// The modern form of #14246: no `let` annotation that the initializer
+// already gives, a compound assignment for `x = x op e`, and `-e` for `0 - e`.
+// The parse tree has no types, so an annotation is redundant only when the
+// syntax of the initializer gives its type.
+function modern_findings(c: Config, file: string, m: parser.Module, sup: Suppressions, own out: Finding[]): Finding[] {
+  for fd in m.funcs {
+    if (!scored(m, fd)) {
+      continue;
+    }
+    for st in fd.body {
+      out = astwalk.fold_stmt_nodes(st, out, (s: ast.Stmt, own acc: Finding[]): Finding[] => modern_stmt(c, file, sup, s, acc), (e: ast.Expr, own acc: Finding[]): Finding[] => modern_expr(c, file, sup, e, acc), astwalk.descend_all);
+    }
+  }
+  return out;
+}
+
+function modern_finding(c: Config, file: string, line: i32, col: i32, msg: string, help: string): Finding {
+  return Finding { rule: MODERN, severity: c.modern, file: file, line: line, col: col, msg: msg, help: help, value: 0 };
+}
+
+function modern_stmt(c: Config, file: string, sup: Suppressions, st: ast.Stmt, own out: Finding[]): Finding[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      if (v.type_name.len() > 0 && evident_type(v.init) == v.type_name && !allows(sup, MODERN, v.line)) {
+        return out.append(modern_finding(c, file, v.line, v.col, "the initializer of `" + v.name + "` is already " + v.type_name, "write `let " + v.name + " = ...` with no annotation"));
+      }
+    },
+    ast.StmtAssign(a) => {
+      if (a.op.len() == 0 && !allows(sup, MODERN, a.line)) {
+        return modern_assign(c, file, a, out);
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
+// `x = x op e`, which `x op= e` says without the repeat.
+function modern_assign(c: Config, file: string, a: ast.StmtAssign, own out: Finding[]): Finding[] {
+  if let ast.ExprBinary(b) = a.value {
+    if let ast.ExprIdent(id) = b.left {
+      if (id.name == a.target && util.has_str(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"], b.op)) {
+        return out.append(modern_finding(c, file, a.target_line, a.target_col, "`" + a.target + " = " + a.target + " " + b.op + " ...` repeats `" + a.target + "`", "write `" + a.target + " " + b.op + "= ...`"));
+      }
+    }
+  }
+  return out;
+}
+
+function modern_expr(c: Config, file: string, sup: Suppressions, e: ast.Expr, own out: Finding[]): Finding[] {
+  if let ast.ExprBinary(b) = e {
+    if let ast.ExprNumber(n) = b.left {
+      if (b.op == "-" && !n.is_float && n.text == "0" && n.suffix.len() == 0 && !literal(b.right) && !allows(sup, MODERN, b.line)) {
+        return out.append(modern_finding(c, file, n.line, n.col, "`0 - e` subtracts from zero", "write `-e`"));
+      }
+    }
+  }
+  return out;
+}
+
+// A literal number. `0 - 1` stays: in an unsigned type, `-1` does not fit.
+function literal(e: ast.Expr): boolean {
+  if let ast.ExprNumber(_) = e {
+    return true;
+  }
+  return false;
+}
+
+// The type of a number literal with no context: its suffix, f64 or i32. A
+// literal too wide for an i32 has its type from the checker.
+function number_type(n: ast.ExprNumber): string {
+  if (n.suffix.len() > 0) {
+    return n.suffix;
+  }
+  if (n.is_float) {
+    return "f64";
+  }
+  if (parser.literal_is_i64(n.text)) {
+    return "";
+  }
+  return "i32";
+}
+
+// The type that the syntax of `e` gives, or "" when only the checker knows.
+function evident_type(e: ast.Expr): string {
+  match (e) {
+    ast.ExprString(_) => {
+      return "string";
+    },
+    ast.ExprFString(_) => {
+      return "string";
+    },
+    ast.ExprBool(_) => {
+      return "boolean";
+    },
+    ast.ExprNumber(n) => {
+      return number_type(n);
+    },
+    ast.ExprStructLit(sl) => {
+      return sl.type_name;
+    },
+    ast.ExprUnary(u) => {
+      if (util.str_has_prefix(u.op, "as_")) {
+        return slice_unchecked(u.op, 3, u.op.len()) + "";
+      }
+    },
+    _ => {}
+  }
+  return "";
 }
 
 function risk_findings(c: Config, file: string, m: parser.Module, sup: Suppressions, cf: coverreport.File, own out: Finding[]): Finding[] {
