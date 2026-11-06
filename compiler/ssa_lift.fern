@@ -280,7 +280,7 @@ function kind_facts(): KindFacts {
     "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
     "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
-    "clz", "ctz", "popcount", "bswap",
+    "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence",
   ];
   let f64_un: string[] = [
     "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
@@ -406,6 +406,20 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
 }
 
+// A device access is a host call, so no pass removes, merges or moves it. A load
+// pops the address, a store pops the address and the value, and a fence pops
+// nothing.
+function lift_device(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+  if (k == "fence") {
+    return lift_pop_push(lv, 0, 50, 0, "mmio_fence");
+  }
+  let pops = 1;
+  if (k == "mmio_store") {
+    pops = 2;
+  }
+  return lift_pop_push(lv, pops, 50, 0, k + ":" + util.i32_to_string(op.width));
+}
+
 function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "line") {
     return lift_line(op, lv);
@@ -415,6 +429,9 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   }
   if (k == "map_new") {
     return lift_pop_push(lv, 1, 50, 0, k);
+  }
+  if (ir.is_device_kind(op.kind_tag)) {
+    return lift_device(k, op, lv);
   }
   if (k == "args" || k == "map_hash_seed") {
     return lift_pop_push(lv, 0, 50, 0, k);
