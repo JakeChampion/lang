@@ -233,7 +233,7 @@ function node_insert[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32,
         let grown = node_insert_at(kids, idx, fresh);
         return Branch(bm | bit, s + 1, grown);
       }
-      let e: PMap[K, V] = Empty;
+      let e = Empty;
       let child = kids[idx];
       let rest = kids.with(idx, e);
       let old = node_size(child);
@@ -277,7 +277,7 @@ function node_find[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, k: K): PMap[K
       }
     }
   }
-  let e: PMap[K, V] = Empty;
+  let e = Empty;
   return e;
 }
 
@@ -338,7 +338,7 @@ function node_remove[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32,
     },
     Leaf(lh, lk, lv) => {
       if (lh == h && lk.eq(k)) {
-        let e: PMap[K, V] = Empty;
+        let e = Empty;
         return e;
       }
       return n;
@@ -511,7 +511,7 @@ function node_for_each[K, V](n: PMap[K, V], f: (K, V) => void): void {
 function node_map_values[K, V, W](n: PMap[K, V], f: (V) => W): PMap[K, W] {
   match (n) {
     Empty => {
-      let e: PMap[K, W] = Empty;
+      let e = Empty;
       return e;
     },
     Leaf(h, k, v) => {

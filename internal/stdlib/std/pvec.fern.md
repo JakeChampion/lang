@@ -127,7 +127,7 @@ function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T])
         return Branch(kids.append(leaf));
       }
       if (sub < kids.len()) {
-        let e: VNode[T] = Empty;
+        let e = Empty;
         let child = kids[sub];
         let rest = kids.with(sub, e);
         child = __pv_push_tail(child, shift - 5, len, leaf);
@@ -140,7 +140,7 @@ function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T])
       return Leaf(xs);
     },
     Empty => {
-      let e: VNode[T] = Empty;
+      let e = Empty;
       return e;
     }
   }
@@ -172,7 +172,7 @@ function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
   match (node) {
     Branch(kids) => {
       let sub = i >> shift & 31;
-      let e: VNode[T] = Empty;
+      let e = Empty;
       let child = kids[sub];
       let rest = kids.with(sub, e);
       child = __pv_with_in(child, shift - 5, i, x);
@@ -183,7 +183,7 @@ function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
       return Leaf(nx);
     },
     Empty => {
-      let e: VNode[T] = Empty;
+      let e = Empty;
       return e;
     }
   }
@@ -211,7 +211,7 @@ function __pv_pop_tail[T](node: VNode[T], shift: i32, len: i32): VNode[T] {
         }
       }
       if (sub == 0) {
-        let e: VNode[T] = Empty;
+        let e = Empty;
         return e;
       }
       return Branch(__pv_drop_last(kids));
@@ -408,8 +408,8 @@ pub function (v: PVec[T]) append(x: T): PVec[T] {
     return PVec { len: v.len + 1, shift: v.shift, root: v.root, tail: v.tail.append(x) };
   }
   let leaf = Leaf(v.tail);
-  let fresh: T[] = [x];
-  let e: VNode[T] = Empty;
+  let fresh = [x];
+  let e = Empty;
   let root = v.root;
   v = PVec { ...v, root: e };
   match (root) {
@@ -440,7 +440,7 @@ pub function (v: PVec[T]) with(i: i32, x: T): PVec[T] {
     v = PVec { ...v, tail: [] };
     return PVec { ...v, tail: tail.with(i - off, x) };
   }
-  let e: VNode[T] = Empty;
+  let e = Empty;
   let root = v.root;
   v = PVec { ...v, root: e };
   root = __pv_with_in(root, v.shift, i, x);
