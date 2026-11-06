@@ -67,6 +67,21 @@ seconds and fails CI most often — `go build`, `go vet`, `gofmt-check`,
 `freeze` stay in CI's lint lane. `git push --no-verify` skips it; it is a
 convenience, not a gate.
 
+Two more checks run in the hook. `make fmt-check` rebuilds `bin/fern`, and
+when `compiler/` or the stdlib changed, that compiles the compiler with the
+stage0 pin. So a construct that stage0 cannot compile fails at the push.
+`scripts/check-changed-programs` checks each `.fern` file under `examples/`,
+`tests/`, `bench/` and `scripts/` that the push changes, alone, with the Go
+front end.
+
+`TestEveryExampleChecks` does that for each file in the full suite. A file
+can pass each build that imports it and fail that check. The Lint lane runs
+the same script on the files of a pull request.
+
+`bin/fern` compiles with the stdlib that `make build` embedded in it. After an
+edit to `internal/stdlib`, run `make build`, or give `-stdlib internal/stdlib`
+to compile against the files in the tree without a rebuild.
+
 ## Perf history: `scripts/perf-history`
 
 Every main-branch run of `perf.yml` appends its report to that commit's note
@@ -637,6 +652,19 @@ written with `termios_set` does not read back through `termios_get` — while
 arm64 lane, which runs natively, is green. It is qemu-user's ioctl emulation,
 not a Fern defect, and it is not worth chasing: a full local `internal/testing/e2e`
 therefore reports two failures CI never shows.
+
+## Android apps: host tests here, the device in CI
+
+An Android app tests its logic and its screens on the host, as the walkie and
+the stopwatch do (`ui_test.fern` draws each screen into a frame in memory).
+`fern -apk` builds the APK with no Android SDK.
+
+Do not try an Android emulator in a container with no KVM. With software
+emulation, the CPU model of an x86-64 image has no BMI2 and no AVX2. The
+x86-64 baseline needs both, so a Fern library gets SIGILL at its first use. With
+`-qemu -cpu max`, an Android 7 image did not finish its boot in 30 minutes
+(measured 2026-11-05). The Android lane of CI runs the emulator with KVM, and
+its `emulator_check.py` scripts are the device check.
 
 ## WASM toolchain
 

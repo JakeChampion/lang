@@ -6698,14 +6698,12 @@ function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitStat
 // returns the first refusal in x0, or 0.
 function emit_fault_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   let signals = [11, 4, 7];
-  if (darwin) {
-    signals = [11, 10];
-  }
-  // A Darwin system call returns a second value in x1, so there each call
-  // loads its arguments again.
   let args = "    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n";
   let each = "";
+  // A Darwin system call returns a second value in x1, so each call there
+  // sets its arguments again.
   if (darwin) {
+    signals = [11, 10];
     each = args;
     args = "";
   }

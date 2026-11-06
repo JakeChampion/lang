@@ -3,17 +3,30 @@
 #
 # Installed per clone by `make hooks` (core.hooksPath). Runs the part of
 # `make lint-all` that finishes in seconds and fails CI most often;
-# check-sources, deadcode and freeze stay in CI's lint lane. Keeps going after
-# a failure and reports the set, like lint-all. `git push --no-verify` skips it.
+# check-sources, deadcode and freeze stay in CI's lint lane. `make fmt-check`
+# rebuilds bin/fern, and that compiles the compiler with the stage0 pin when
+# compiler/ or the stdlib changed, so a construct that stage0 cannot compile
+# fails here. The hook also checks each program file that the push changes
+# alone (scripts/check-changed-programs), for a push of the checked-out
+# branch. Keeps going after a failure and reports the set, like lint-all.
+# `git push --no-verify` skips it.
 set -uo pipefail
 
-# A push that only deletes refs has nothing to lint.
+# A push that only deletes refs has nothing to lint. A new branch is
+# compared with origin/main.
+zero=0000000000000000000000000000000000000000
 deleting_only=yes
-while read -r _local_ref local_sha _remote_ref _remote_sha; do
+ranges=()
+while read -r _local_ref local_sha _remote_ref remote_sha; do
   case "$local_sha" in
-    0000000000000000000000000000000000000000) ;;
-    *) deleting_only=no ;;
+    "$zero") continue ;;
   esac
+  deleting_only=no
+  [ "$local_sha" = "$(git rev-parse HEAD)" ] || continue
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    remote_sha=$(git merge-base "$local_sha" origin/main 2>/dev/null) || continue
+  fi
+  ranges+=("$remote_sha $local_sha")
 done
 [ "$deleting_only" = no ] || exit 0
 
@@ -25,6 +38,13 @@ for gate in "go build ./..." "go vet ./..." "make gofmt-check" "make fmt-check" 
   echo "pre-push ==> $gate"
   if ! sh -c "$gate"; then echo "pre-push FAILED: $gate"; status=1; fi
 done
+if [ "${#ranges[@]}" -gt 0 ]; then
+  for range in "${ranges[@]}"; do
+    echo "pre-push ==> scripts/check-changed-programs $range"
+    # shellcheck disable=SC2086
+    if ! scripts/check-changed-programs $range; then echo "pre-push FAILED: check-changed-programs"; status=1; fi
+  done
+fi
 if [ "$status" -ne 0 ]; then
   echo "pre-push: fix the failures above, or 'git push --no-verify' to push anyway" >&2
 fi

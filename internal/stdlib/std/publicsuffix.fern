@@ -33,12 +33,12 @@ pub function public_suffix(host: string): string {
 }
 
 pub function registrable_domain(host: string): Option[string] {
-  let labels: string[] = __labels(host);
-  let suffix: string = public_suffix(host);
+  let labels = __labels(host);
+  let suffix = public_suffix(host);
   if (suffix.len() == 0) {
     return None;
   }
-  let n: i32 = suffix.split(".").len();
+  let n = suffix.split(".").len();
   if (n >= labels.len()) {
     return None;
   }

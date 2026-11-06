@@ -187,7 +187,10 @@ jobs:
                 `completion and the failing-job list above is the whole set for it, not ` +
                 `just the first.\n\n` +
                 `This issue closes itself when \`${lane}\` next passes on main, or on the ` +
-                `run of the merged pull request whose tree main skipped re-testing.`;
+                `run of the merged pull request whose tree main skipped re-testing.\n\n` +
+                `**Claim this issue before you fix the lane:** assign yourself, or comment ` +
+                `\`claimed by\` and the name of your branch. Look for a claim first, so two ` +
+                `sessions do not fix the same lane.`;
 
               if (existing) {
                 await github.rest.issues.createComment({
