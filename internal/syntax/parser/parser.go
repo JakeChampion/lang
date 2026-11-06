@@ -4734,7 +4734,7 @@ func (p *parser) parseUnary() (ast.Expr, error) {
 		return nil, err
 	}
 	defer p.leave()
-	if t := p.peek(); t.Kind == lexer.Punct && (t.Text == "-" || t.Text == "!") {
+	if t := p.peek(); t.Kind == lexer.Punct && (t.Text == "-" || t.Text == "!" || t.Text == "~") {
 		op := p.advance()
 		operand, err := p.parseUnary()
 		if err != nil {

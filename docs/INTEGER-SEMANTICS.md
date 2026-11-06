@@ -58,6 +58,18 @@ is arithmetic (sign-propagating) for signed types and logical
 4294967288u32 >> 2 == 1073741822   // logical
 ```
 
+## Bitwise NOT: `~`
+
+`~x` flips each bit of the integer `x`, and its type is the type of `x`. So
+`~5` is `-6`, `~0x0fu8` is `240`, and `~0u64` is the largest `u64`. A bare
+literal operand is an `i32`: write `~0u8` for a `u8`. `~` takes no boolean
+(use `!`) and no float, and the checker reports E009 for each.
+
+The typed lowering writes `~x` as `x ^ (0 - 1)` in the type of `x`. The
+subtraction wraps to all ones in each integer type, so no backend has an
+operator of its own for `~`. Constant initializers fold it, so
+`const MASK: i32 = ~0;` is `-1`.
+
 ## `usize` is the pointer width
 
 `usize` is an address-sized unsigned integer: **64 bits on x86-64 and

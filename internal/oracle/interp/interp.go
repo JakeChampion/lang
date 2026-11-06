@@ -7180,6 +7180,15 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		case "!":
 			b, _ := v.(Bool)
 			return !b, nil
+		case "~":
+			n, ok := v.(Number)
+			if !ok {
+				return nil, fmt.Errorf("interp: unary ~ on %T", v)
+			}
+			if typ, checked := x.CheckedType.(ast.NumberType); checked {
+				return Number(narrowInt(^int64(n), resolvePtrWidth(typ.NormalWidth()), !typ.IsSigned())), nil
+			}
+			return ^n, nil
 		}
 		return nil, fmt.Errorf("interp: unsupported unary %q", x.Op)
 	case *ast.Assign:

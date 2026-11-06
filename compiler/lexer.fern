@@ -416,6 +416,9 @@ function single_punct_op(b: i32): string {
   if (b == 33) {
     return "!";
   }
+  if (b == 126) {
+    return "~";
+  }
   if (b == 38) {
     return "&";
   }
@@ -1892,7 +1895,7 @@ function test_unknown_char(): i32 {
   if (!lex_error_is("`", "unexpected character '`'", "P001")) {
     return 1903;
   }
-  if (!lex_error_is("~~", "unexpected character '~'", "P001")) {
+  if (has_error(tokenize("~x"))) {
     return 1904;
   }
   if (!lex_error_is("\\", "unexpected character '\\\\'", "P001")) {

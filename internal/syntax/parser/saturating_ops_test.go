@@ -24,6 +24,8 @@ func shape(e ast.Expr) string {
 	switch x := e.(type) {
 	case *ast.Binary:
 		return "(" + x.Op + " " + shape(x.Left) + " " + shape(x.Right) + ")"
+	case *ast.Unary:
+		return "(" + x.Op + " " + shape(x.Operand) + ")"
 	case *ast.Ident:
 		return x.Name
 	case *ast.NumberLit:

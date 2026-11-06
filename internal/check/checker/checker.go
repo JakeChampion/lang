@@ -15493,6 +15493,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		case "!":
 			c.requireBool(n.P, t, n.Op)
 			return ast.BoolType{}
+		case "~":
+			c.requireInteger(n.P, t, n.Op)
+			if nt, ok := t.(ast.NumberType); ok {
+				return nt
+			}
+			return ast.NumberType{}
 		}
 		return nil
 	case *ast.Assign:

@@ -326,6 +326,12 @@ function unary(op: string, v: Value, ty: string): Value {
     }
     return fail("unary `!` requires a boolean operand");
   }
+  if (op == "~") {
+    if let IntValue(n) = v.data {
+      return number(n.value ^ -1i64, ty);
+    }
+    return fail("unary `~` requires an integer operand");
+  }
   return fail("unary operator \"" + op + "\" is not allowed in constant expressions");
 }
 

@@ -1,0 +1,22 @@
+// `~` flips each bit of an integer, in the type of its operand. A literal
+// operand is an i32 unless its suffix gives another type. In a constant
+// initializer, `~0` folds to -1.
+const MASK: i32 = ~0;
+
+function main(): i32 {
+  let a: i32 = 5;
+  let b: u8 = 0x0f;
+  let c: u32 = 1;
+  let d: i64 = -1;
+  let e: u64 = 0;
+  print((~a).to_string());
+  print((~b).to_string());
+  print((~c).to_string());
+  print((~d).to_string());
+  print((~e).to_string());
+  print((~0u8).to_string());
+  print(MASK.to_string());
+  print((6 & ~2).to_string());
+  print((~(~a)).to_string());
+  return 0;
+}

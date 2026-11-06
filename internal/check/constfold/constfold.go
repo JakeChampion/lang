@@ -413,6 +413,12 @@ func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 			return nil, fmt.Errorf("unary `!` requires a boolean operand")
 		}
 		return &ast.BoolLit{P: n.P, Value: !v.Value}, nil
+	case "~":
+		v, ok := operand.(*ast.NumberLit)
+		if !ok {
+			return nil, fmt.Errorf("unary `~` requires an integer operand")
+		}
+		return &ast.NumberLit{P: n.P, Value: w.trunc(^v.Value)}, nil
 	}
 	return nil, fmt.Errorf("unary operator %q is not allowed in constant expressions", n.Op)
 }

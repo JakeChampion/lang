@@ -4522,6 +4522,30 @@ function f64_trunc_u64(v: f64): i64 {
   return 0;
 }
 
+// The bits of an integer value, each one flipped.
+function bitwise_not(ov: Value): Value {
+  match (ov) {
+    VInt(i) => {
+      if (i.is_byte) {
+        return v_byte(i.v ^ 255);
+      }
+      return v_int(i.v ^ -1);
+    },
+    VInt64(i) => {
+      if (i.ptr) {
+        return v_usize(unpack_i64(i) ^ -1i64);
+      }
+      return v_wide(unpack_i64(i) ^ -1i64, i.unsigned);
+    },
+    VUint(u) => {
+      return v_uint(u.v ^ -1);
+    },
+    _ => {
+      return v_err("unary `~` operand not an integer");
+    }
+  }
+}
+
 function eval_unary(op: string, ov: Value): Value {
   if (op == "-") {
     match (ov) {
@@ -4560,6 +4584,9 @@ function eval_unary(op: string, ov: Value): Value {
         return v_err("unary `!` operand not bool");
       }
     }
+  }
+  if (op == "~") {
+    return bitwise_not(ov);
   }
   if (op == "as_char") {
     return char_value(ov);

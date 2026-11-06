@@ -2080,6 +2080,9 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
   if (!s.ok) {
     return operand;
   }
+  if (u.op == "~") {
+    return bitwise_not(s, operand.id);
+  }
   if (u.op == "-") {
     let neg = nominal_method_key("neg", s.values[operand.id], s);
     if (neg != "") {
@@ -2100,6 +2103,27 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
     return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id]));
   }
   return unary_op(s, u.op, operand.id, ty, literal_operand(u.operand));
+}
+
+// `~x` is `x ^ (0 - 1)` in the type of x: the subtraction wraps to all ones
+// in each integer type, so no backend needs an operator of its own.
+function bitwise_not(s: State, operand: i32): Value {
+  let ot = s.values[operand];
+  if (!ssasem.is_integer(ot)) {
+    return refused(s, "operator contract: ~ " + typeinfo.spelling(ot));
+  }
+  let zero_text = "";
+  let one_text = "";
+  let one_imm = 1;
+  if (ssasem.text_constant(ot)) {
+    zero_text = "0";
+    one_text = "1";
+    one_imm = 0;
+  }
+  let zero = define(s, 1, [], 0, zero_text, ot);
+  let one = define(zero.s, 1, [], one_imm, one_text, ot);
+  let ones = define(one.s, 9, [zero.id, one.id], 0, "-", ot);
+  return define(ones.s, 9, [operand, ones.id], 0, "^", ot);
 }
 
 // A negation of an i32 constant that the block just defined is that constant.
