@@ -108,3 +108,37 @@ func TestSelfHostNoRCRefusesEachBreach(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfHostNoRCRefusesNonScalarReads(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	const functions = "@norc\nfunction allowed(): i32 { return 1; }\n" +
+		"function allocating(): i32 { let xs = [1]; return xs.len(); }\n"
+	for _, tc := range []struct {
+		name    string
+		prelude string
+		body    string
+	}{
+		{"shadowed callee", functions, "let allowed = allocating; return allowed();"},
+		{"inferred function value", functions, "let value = allowed; return 0;"},
+		{"bare function value", functions, "allowed; return 0;"},
+		{"enum", "enum Kind { One, Two }\n", "One; return 0;"},
+		{"constant after local scope", "const text: string = \"heap\";\n", "if (true) { let text = 1; } text; return 0;"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := tc.prelude + "@norc\nfunction bad(): i32 { " + tc.body +
+				" }\nfunction main(): i32 { return 0; }\n"
+			if got := goCheckerCodes(t, dir, src); len(got) != 1 || got[0] != "E102" {
+				t.Fatalf("Go checker codes = %v, want [E102]", got)
+			}
+			path := filepath.Join(dir, "bad.fern")
+			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib).CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "error[E102]") {
+				t.Fatalf("want E102 from fern -check, got %v:\n%s", err, out)
+			}
+		})
+	}
+}
