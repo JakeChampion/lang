@@ -792,7 +792,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__str_bytes") {
     return t_usize();
   }
-  if (mmio_width(name) > 0) {
+  if (device_intrinsic(name)) {
     return mmio_result(name);
   }
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
@@ -968,7 +968,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") {
     return ([t_usize()], true);
   }
-  if (mmio_width(name) > 0) {
+  if (device_intrinsic(name)) {
     return (mmio_params(name), true);
   }
   if (name == "__store_u8") {
@@ -1079,6 +1079,12 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   return ([], false);
 }
 
+// An intrinsic that reaches a device: an MMIO access or __fence. No pass
+// removes, merges or moves one.
+pub function device_intrinsic(name: string): boolean {
+  return mmio_width(name) > 0 || name == "__fence";
+}
+
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
 // other name.
 pub function mmio_width(name: string): i32 {
@@ -1092,7 +1098,7 @@ pub function mmio_width(name: string): i32 {
 }
 
 function mmio_result(name: string): typeinfo.Type {
-  if (util.str_has_prefix(name, "__mmio_store")) {
+  if (util.str_has_prefix(name, "__mmio_store") || name == "__fence") {
     return t_void();
   }
   if (mmio_width(name) == 64) {
@@ -1102,6 +1108,9 @@ function mmio_result(name: string): typeinfo.Type {
 }
 
 function mmio_params(name: string): typeinfo.Type[] {
+  if (name == "__fence") {
+    return [];
+  }
   let value = t_i32();
   if (mmio_width(name) == 64) {
     value = t_i64();
@@ -17922,7 +17931,7 @@ function registered_intrinsics(): string[] {
     "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
+    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence",
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",

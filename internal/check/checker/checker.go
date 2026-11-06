@@ -2410,6 +2410,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[fmt.Sprintf("__mmio_load%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: value}
 		c.info.FuncSigs[fmt.Sprintf("__mmio_store%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT, value}, Result: ast.VoidType{}}
 	}
+	c.info.FuncSigs["__fence"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 
 	c.builtinFuncs = make(map[string]bool, len(c.info.FuncSigs))
 	for name := range c.info.FuncSigs {

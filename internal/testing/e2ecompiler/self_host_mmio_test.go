@@ -63,6 +63,58 @@ func TestSelfHostMMIOAccessesSurvive(t *testing.T) {
 	}
 }
 
+// ring writes a descriptor, then rings the doorbell. The fence keeps the order of
+// the two stores for the device.
+const fenceRingSrc = `@noinline function ring(p: usize): void {
+  unsafe {
+    __mmio_store32(p, 7);
+  }
+  __fence();
+  unsafe {
+    __mmio_store32(p + 4, 1);
+  }
+}
+
+function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(16);
+    ring(p);
+    __free(p, 16);
+  }
+  return 0;
+}
+`
+
+var fenceRing = map[string][2]string{
+	"x86-64-linux": {"movl %eax, (%rcx)", "mfence"},
+	"arm64-linux":  {"str w0, [x9]", "dsb sy"},
+}
+
+// No pass removes a fence or moves an MMIO store across it.
+func TestSelfHostFenceOrdersMMIO(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "ring.fern")
+	if err := os.WriteFile(src, []byte(fenceRingSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := mmioFunctionBody(t, string(asm), "__fn_ring:")
+			store, fence := fenceRing[target][0], fenceRing[target][1]
+			first := strings.Index(body, store)
+			at := strings.Index(body, fence)
+			last := strings.LastIndex(body, store)
+			if first < 0 || at < 0 || first == last || !(first < at && at < last) {
+				t.Errorf("ring must be store, %s, store; got the store at %d and %d and the fence at %d\n%s", fence, first, last, at, body)
+			}
+		})
+	}
+}
+
 func mmioFunctionBody(t *testing.T, asm, label string) string {
 	t.Helper()
 	at := strings.Index(asm, "\n"+label+"\n")
@@ -87,6 +139,7 @@ const mmioRoundTripSrc = `function main(): i32 {
     __mmio_store64(p + 8, 1234567890123i64);
     let ok = __mmio_load8(p) == 200 && __mmio_load16(p + 2) == 40000 && __mmio_load32(p + 4) == -5 && __mmio_load64(p + 8) == 1234567890123i64;
     let bytes = __load_u8(p + 2) == 64 && __load_u8(p + 3) == 156;
+    __fence();
     __free(p, 64);
     if (ok && bytes) {
       RESULT_OK

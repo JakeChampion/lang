@@ -361,6 +361,7 @@ sha256_hw_blocks=410
 bswap=411
 mmio_load=412
 mmio_store=413
+fence=414
 open_dir=420
 dir_open=421
 dir_entries=422

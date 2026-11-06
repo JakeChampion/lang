@@ -8400,6 +8400,10 @@ function ssa_host_kind(op: string): boolean {
 // One device register access, at the width after the colon. It is a host
 // call to the allocator, so %rax and %rcx are free here.
 function ssa_mmio(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "mmio_fence") {
+    s = s.write("    mfence\n    xorl %eax, %eax\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  }
   let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
   if (util.str_has_prefix(ins.str, "mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "%rcx", s);

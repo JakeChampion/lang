@@ -196,6 +196,15 @@ type qualifier can follow the need for drivers in Fern, not come before it.
 The privileged instructions have no data-flow shape: `msr`/`mrs`, `csrrw`, `wfi`,
 `dsb`/`isb`/`fence`, cache and TLB maintenance. They are pure effects.
 
+The first one exists: `__fence()` (#14252). Every memory and device access before
+it completes before any access after it starts. It is `dsb sy` on arm64 and
+`mfence` on x86-64, and it does nothing on wasm and in the interpreters. It runs at
+every privilege level, so it needs no `unsafe` block. A driver uses it, for
+example, between the writes to a DMA ring and the MMIO write that rings the
+doorbell. It takes the host-call path of the MMIO ops, so no pass removes it or
+moves an access across it. The privileged ops wait for an environment that grants
+them (#14254).
+
 Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops —
 `__raw_barrier`, `__raw_wfi`, `__raw_csr_read`/`_write` — rather than opening a
 general `asm` block. The floor's ~14 ops work because each is a *portable

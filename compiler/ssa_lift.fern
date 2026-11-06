@@ -280,7 +280,7 @@ function kind_facts(): KindFacts {
     "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
     "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
-    "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store",
+    "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence",
   ];
   let f64_un: string[] = [
     "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
@@ -406,9 +406,13 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
 }
 
-// An MMIO access is a host call, so no pass removes, merges or moves it. A load
-// pops the address, and a store pops the address and the value.
-function lift_mmio(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+// A device access is a host call, so no pass removes, merges or moves it. A load
+// pops the address, a store pops the address and the value, and a fence pops
+// nothing.
+function lift_device(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+  if (k == "fence") {
+    return lift_pop_push(lv, 0, 50, 0, "mmio_fence");
+  }
   let pops = 1;
   if (k == "mmio_store") {
     pops = 2;
@@ -426,8 +430,8 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "map_new") {
     return lift_pop_push(lv, 1, 50, 0, k);
   }
-  if (util.str_has_prefix(k, "mmio_")) {
-    return lift_mmio(k, op, lv);
+  if (ir.is_device_kind(op.kind_tag)) {
+    return lift_device(k, op, lv);
   }
   if (k == "args" || k == "map_hash_seed") {
     return lift_pop_push(lv, 0, 50, 0, k);

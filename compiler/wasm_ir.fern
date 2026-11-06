@@ -4503,8 +4503,12 @@ function wasm_text_const(o: ir.Op): string {
 }
 
 // Wasm has no device memory, so an MMIO access is an ordinary access to
-// linear memory. A store leaves the void placeholder.
+// linear memory, and a fence has nothing to order. A store and a fence leave the
+// void placeholder.
 function mmio_wat(o: ir.Op): string {
+  if (o.kind_tag == ir.K_FENCE) {
+    return "    i32.const 0\n";
+  }
   if (o.kind_tag == ir.K_MMIO_LOAD) {
     if (o.width == 8) {
       return "    i32.load8_u\n";
@@ -4744,7 +4748,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    memory.fill\n    i32.const 0\n");
   } else if (o.kind_tag == 78) {
     parts = parts.append("    call $__fern_raw_free\n    i32.const 0\n");
-  } else if (o.kind_tag == ir.K_MMIO_LOAD || o.kind_tag == ir.K_MMIO_STORE) {
+  } else if (ir.is_device_kind(o.kind_tag)) {
     parts = parts.append(mmio_wat(o));
   } else if (o.kind_tag == 69 || o.kind_tag == 71) {
     parts = parts.append("    i32.load\n");
