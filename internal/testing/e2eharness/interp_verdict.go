@@ -1,3 +1,4 @@
+// CI-DARK: FERN_BIN — A person sets it to run fern_binary_e2e_test.fern against one fern executable. CI never sets it, and a run with it skips the verdict cache.
 package e2eharness
 
 import (
