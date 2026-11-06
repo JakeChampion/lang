@@ -18156,11 +18156,17 @@ function return_type_diags(mod: parser.Module): util.Diag[] {
     }
   }
   for func in mod.funcs {
-    if (func.name == "main" && func.receiver_type == "" && func.import_iface == "") {
+    if (is_main_decl(func) && func.receiver_type == "" && func.import_iface == "") {
       out = main_signature_diags(func, out);
     }
   }
   return out;
+}
+
+// A function named main in any module, also an imported one, whose name has
+// the prefix of its module.
+function is_main_decl(func: parser.FuncDecl): boolean {
+  return func.name == "main" || func.module.len() > 0 && func.name == func.module + "__main";
 }
 
 function alias_diags(mod: parser.Module): util.Diag[] {

@@ -2449,7 +2449,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	declaredFunctions := make(map[string]bool, len(prog.Funcs))
 	c.consumingTypes = map[string]bool{}
 	for _, fn := range prog.Funcs {
-		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
+		if declaredName(fn) == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
 		}
 		if fn.AssocType != "" {
@@ -17627,15 +17627,25 @@ func hasHandleDecl(prog *ast.Program) bool {
 	return false
 }
 
+// declaredName is the name of fn as its module declares it, before the
+// module loader gives it the prefix of its module.
+func declaredName(fn *ast.FuncDecl) string {
+	if fn.DeclName != "" {
+		return fn.DeclName
+	}
+	return fn.Name
+}
+
 func (c *checker) checkMainSignature(fn *ast.FuncDecl) {
+	mod := fn.BodyModule()
 	if len(fn.Params) > 0 {
-		c.errfCode(fn.P, "E084", "main takes no parameters; read the command line with args()")
+		c.report(mod, fn.P, "E084", "main takes no parameters; read the command line with args()")
 	}
 	switch fn.ReturnType.(type) {
 	case ast.NumberType, ast.BoolType, ast.VoidType:
 	default:
 		if !fn.ReturnUnannotated {
-			c.errfCode(fn.P, "E084", "main returns an integer, a boolean or void, not %s", fn.ReturnType)
+			c.report(mod, fn.P, "E084", fmt.Sprintf("main returns an integer, a boolean or void, not %s", fn.ReturnType))
 		}
 	}
 }
