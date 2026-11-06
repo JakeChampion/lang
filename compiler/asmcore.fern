@@ -6432,6 +6432,17 @@ pub function shape_label(s: EmitState, name: string): string {
   return shape_sym(name);
 }
 
+// A runtime routine and a program function with one name would be two
+// definitions of one symbol. The build stops and names the function.
+pub function refuse_runtime_name(s: EmitState, fns: parser.FuncDecl[]): void {
+  for f in fns {
+    if (!s.has_named(f.name) && s.funcs_ix.find(f.name) >= 0) {
+      eprint("fern: the program defines function \"" + f.name + "\", which is the name of a runtime routine; rename it");
+      exit(2);
+    }
+  }
+}
+
 pub function export_runtime_fns(s: EmitState, fns: parser.FuncDecl[]): EmitState {
   if (s.str_ns.len() == 0) {
     return s;

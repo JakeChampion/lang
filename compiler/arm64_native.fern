@@ -764,6 +764,7 @@ pub struct Arm64Asm {
   lid_offs: i32[],
   unres: string[],
   oor: string[],
+  twice: string[],
 }
 
 function arm64_dw_fields(line: string): string[] {
@@ -835,7 +836,7 @@ function arm64_asm_vacant(): Arm64Asm {
   return Arm64Asm {
     code: 0 as usize, text: [], patq: 0 as usize, lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [],
     lab_head: arm64_empty_buckets(), lab_next: [], lab_tail: arm64_empty_buckets(),
-    fixq: 0 as usize, fix_names: [], lid_offs: [], unres: [], oor: [],
+    fixq: 0 as usize, fix_names: [], lid_offs: [], unres: [], oor: [], twice: [],
   };
 }
 
@@ -866,6 +867,9 @@ function arm64_empty_buckets(): i32[] {
 }
 
 function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
+  if (arm64_asm_label_off(a, name) >= 0) {
+    a = Arm64Asm { ...a, twice: a.twice.append(name) };
+  }
   let at = a.lab_names.len();
   let b = arm64_name_bucket(name);
   let prev = a.lab_tail[b];
@@ -9162,6 +9166,9 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     let colon = arm64_gas_label_colon(line);
     if (colon > 0) {
       let before = slice_unchecked(line, 0, colon);
+      if (arm64_gas_dlabel_idx(p, before + "") >= 0 || arm64_gas_bss_off(p, before + "") >= 0) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("label " + before + " defined twice") };
+      }
       if (arm64_data_like(section)) {
         let doff = p.data.len();
         p = arm64_gas_dlabel(p, before, doff, section);
@@ -9446,6 +9453,9 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   while (ui < a.unres.len()) {
     p = Arm64GasProg { ...p, unknown: p.unknown.append("label:" + a.unres[ui]) };
     ui += 1;
+  }
+  for name in a.twice {
+    p = Arm64GasProg { ...p, unknown: p.unknown.append("label " + name + " defined twice") };
   }
   let oi = 0;
   while (oi < a.oor.len()) {

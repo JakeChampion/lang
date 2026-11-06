@@ -6967,6 +6967,7 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
 
 pub function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let fns = m.funcs;
+  asmcore.refuse_runtime_name(s, fns);
   let bodies = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
   let previous_regs = s.reg_entries;

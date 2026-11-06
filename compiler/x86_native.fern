@@ -6005,6 +6005,9 @@ pub function x86_gas_assemble_words_unlinked(src: string, words: u8[]): X86Asm {
   pl = x86_gas_link_labels(pl, labs);
   prog = GasText { ...prog, lines: pl };
   let a = x86_gas_assemble_pass_prepared(prog, labs, words);
+  for name in labs.twice {
+    a = x86_gas_bad(a, "label " + name + " defined twice");
+  }
   let plan = x86_relax_settle(a);
   if (x86_plan_long(plan)) {
     a = x86_relax_apply(a, plan);
@@ -6515,6 +6518,7 @@ struct GasLabels {
   tail: i32[],
   next: i32[],
   nids: i32,
+  twice: string[],
 }
 
 function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
@@ -6522,12 +6526,16 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
   let head = x86_empty_buckets();
   let tail = x86_empty_buckets();
   let next: i32[] = [];
+  let twice: string[] = [];
   let li = 0;
   while (li < pl.len()) {
     let name = pl[li].label;
     li += 1;
     if (name.len() == 0) {
       continue;
+    }
+    if (x86_bucket_find(names, head, next, name) >= 0) {
+      twice = twice.append(name);
     }
     let at = names.len();
     let b = x86_name_bucket(name);
@@ -6541,16 +6549,20 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
     }
     tail = tail.with(b, at);
   }
-  return GasLabels { names: names, head: head, tail: tail, next: next, nids: nids };
+  return GasLabels { names: names, head: head, tail: tail, next: next, nids: nids, twice: twice };
 }
 
 function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
-  let i = labs.head[x86_name_bucket(name)];
+  return x86_bucket_find(labs.names, labs.head, labs.next, name);
+}
+
+function x86_bucket_find(names: string[], head: i32[], next: i32[], name: string): i32 {
+  let i = head[x86_name_bucket(name)];
   while (i >= 0) {
-    if (labs.names[i] == name) {
+    if (names[i] == name) {
       return i;
     }
-    i = labs.next[i];
+    i = next[i];
   }
   return -1;
 }

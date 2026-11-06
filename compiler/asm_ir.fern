@@ -11598,6 +11598,7 @@ function emit_log_write(name: string, s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let fns = m.funcs;
+  asmcore.refuse_runtime_name(s, fns);
   let lit0 = s.string_lits.len();
   let agg0 = s.const_aggs.len();
   let sh0 = s.shape_lits.len();
