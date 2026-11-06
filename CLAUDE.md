@@ -165,7 +165,7 @@ legs of the unit, e2e, wasm, differential and coreutils lanes, about ten
 minutes. The full suite (aarch64, the self-host shards, macOS, perf, bootstrap,
 and the rest) runs on main after the merge, and `main-red.yml` opens an issue
 per red lane. **A red main is the next task for whoever sees it**, ahead of new
-work. Label a PR `ci-full` before pushing when the change is deep compiler work
+work: look for a claim on its issue, and claim it before you start. Label a PR `ci-full` before pushing when the change is deep compiler work
 that should take the full suite before it merges.
 
 **Open the PR EARLY.** CI is faster than this dev machine: this is a 4-core

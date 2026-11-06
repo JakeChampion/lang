@@ -69,7 +69,7 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 		t.Fatal("accept loop changed; update its bounded census fixture")
 	}
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("let completed: i32 = 0;\n    while (completed < %d || conns.open > 0)", rounds), 1)
-	body = strings.Replace(body, burstCall, "let burst: (__Conns, __Flights, i32) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);", 1)
+	body = strings.Replace(body, burstCall, "let burst = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);", 1)
 	body = strings.Replace(body, "flights = burst.1;", "flights = burst.1;\n      completed = burst.2;", 1)
 	burst = strings.Replace(burst, burstSignature, "stop: __Stop, clk: __Clock, census_completed: i32): (__Conns, __Flights, i32) {\n  let completed: i32 = census_completed;", 1)
 	burst = strings.Replace(burst, answered, answered+"\n                        completed = completed + 1;", 1)
