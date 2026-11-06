@@ -161,5 +161,54 @@ class DiagnosticTest(unittest.TestCase):
             self.assertIn("deadline reached", Path(directory, "diagnostics.txt").read_text())
 
 
+class NotificationTalkTest(unittest.TestCase):
+    def replay(self, talker, same_flush, hears=True):
+        listener = "202" if talker == "101" else "101"
+
+        def line(pid, text):
+            return f"I/fern( {pid}): walkie: {text}\n"
+
+        stale = line(listener, "hearing the peer")
+        event = line(listener, "hearing the peer") if hears else ""
+        current = stale
+        stopped = False
+
+        def tap(label, out):
+            nonlocal current, stopped
+            if label == "Talk":
+                current += line(talker, "talk from the notification true")
+                if same_flush:
+                    current += event
+            else:
+                stopped = True
+                current += line(talker, "state CONNECTED_LISTENING")
+
+        def wait(label, predicate, timeout):
+            nonlocal current
+            if "other copy hears" in label and not same_flush:
+                current += event
+            if not predicate(current):
+                raise walkie.Failure(label)
+            return current
+
+        with mock.patch.object(walkie, "logcat", side_effect=lambda: current), mock.patch.object(
+            walkie, "tap_notice_button", side_effect=tap
+        ), mock.patch.object(walkie, "wait_for", side_effect=wait):
+            walkie.talk_from_notice("101", "202", ".")
+        self.assertTrue(stopped)
+
+    def test_listener_audio_before_or_after_the_talk_log_read(self):
+        for talker in ["101", "202"]:
+            for same_flush in [False, True]:
+                with self.subTest(talker=talker, same_flush=same_flush):
+                    self.replay(talker, same_flush)
+
+    def test_stale_listener_audio_does_not_pass(self):
+        for talker in ["101", "202"]:
+            with self.subTest(talker=talker), self.assertRaisesRegex(walkie.Failure, "other copy hears"):
+                self.replay(talker, True, hears=False)
+
+
+
 if __name__ == "__main__":
     unittest.main()
