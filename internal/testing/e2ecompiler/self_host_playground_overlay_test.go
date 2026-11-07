@@ -73,6 +73,7 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("reports-an-unresolvable-import", func(t *testing.T) { playgroundReportsMissing(t, bin) })
 	t.Run("check-accepts-a-valid-program", func(t *testing.T) { playgroundCheckAccepts(t, bin) })
 	t.Run("check-names-a-type-error", func(t *testing.T) { playgroundCheckRejects(t, bin) })
+	t.Run("check-admits-a-package-method", func(t *testing.T) { playgroundCheckPackageMethod(t, bin) })
 	t.Run("check-demangles-an-imported-struct", func(t *testing.T) { playgroundCheckDemangles(t, bin) })
 	t.Run("check-derive-default-needs-a-field-default", func(t *testing.T) { playgroundCheckDeriveDefault(t, bin) })
 	t.Run("interp-runs-and-prints", func(t *testing.T) { playgroundInterpRuns(t, bin) })
@@ -230,6 +231,23 @@ func playgroundCheckAccepts(t *testing.T, bin string) {
 	}
 	if stderr != "" {
 		t.Errorf("-check reported a diagnostic on a valid program:\n%s", stderr)
+	}
+}
+
+// The http example reaches std/quic/conn, which calls the pub(package)
+// methods of std/quic/recovery's Recovery.
+const playgroundHTTPProgram = `import "std/http";
+import "std/serve";
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    return http.ok("hello, world");
+}
+`
+
+func playgroundCheckPackageMethod(t *testing.T, bin string) {
+	_, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundHTTPProgram, "-check", "-target", "wasm32-wasi-http")
+	if code != 0 || stderr != "" {
+		t.Fatalf("-check rejected a call of a pub(package) method from its own package: exit %d\n%s", code, stderr)
 	}
 }
 
