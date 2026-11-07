@@ -2,7 +2,9 @@
 
 Status: [reference] shipped. `-harden` is opt-in on the arm64-linux,
 x86-64-linux, arm64-android and x86-64-android executables and shared
-objects.
+objects. The Android lane of CI runs a `-harden` build of
+`examples/android/native` on the x86-64 emulator, under Android's loader
+and its app seccomp filter.
 
 `fern -harden -target arm64-linux -o OUT FILE.fern` builds an executable that
 turns on three protections:
