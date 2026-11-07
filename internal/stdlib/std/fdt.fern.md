@@ -74,6 +74,8 @@ function main(): i32 {
 <<module introduction>>=
 // This module reads a flattened device tree: the description of the hardware
 // that firmware or a VMM gives a kernel.
+import "core/cmp";
+import "core/error";
 import "std/binary";
 import "std/utf8";
 ```
@@ -83,6 +85,10 @@ import "std/utf8";
 ```fern
 <<model>>=
 pub struct FdtError { offset: i32, reason: string }
+
+impl error.Error for FdtError {}
+
+impl cmp.Display for FdtError {}
 
 pub function (e: FdtError) message(): string {
   return "device tree: " + e.reason + " at byte " + e.offset.to_string();

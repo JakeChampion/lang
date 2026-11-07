@@ -1,3 +1,5 @@
+import "core/cmp";
+import "core/error";
 import "std/binary";
 import "std/fdt";
 import "std/option";
@@ -217,6 +219,19 @@ function test_refuses_a_bad_structure(): test.TestOutcome {
   );
 }
 
+function display[T: cmp.Display](value: T): string {
+  return value.to_string();
+}
+
+function error_message(value: dyn error.Error): string {
+  return value.message();
+}
+
+function test_error_traits(): test.TestOutcome {
+  let problem = fdt.FdtError { offset: 7, reason: "invalid token" };
+  return test.assert_eq(display(problem) + "; " + error_message(problem), "device tree: invalid token at byte 7; device tree: invalid token at byte 7");
+}
+
 function main(): i32 {
   let r = test.new("std/fdt");
   r = r.it("each node has its name and the index of its parent", test_nodes_and_parents);
@@ -227,5 +242,6 @@ function main(): i32 {
   r = r.it("property_string and property_u32 read a value or give None", test_strings_and_words);
   r = r.it("parse refuses a bad header", test_refuses_a_bad_header);
   r = r.it("parse refuses a bad structure", test_refuses_a_bad_structure);
+  r = r.it("errors support Display and Error", test_error_traits);
   return r.finish();
 }
