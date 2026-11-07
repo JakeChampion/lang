@@ -3713,10 +3713,14 @@ function ssa_host_kind(op: string): boolean {
 }
 
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
-// convention.
+// convention. boot_info reads the x0 that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_wfi") {
     s = s.write("    wfi\n    mov x0, #0\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  }
+  if (ins.str == "dev_boot_info") {
+    s = s.write("    adrp x0, __fern_boot_info\n    ldr x0, [x0, :lo12:__fern_boot_info]\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   for i in 0..ins.args.len() {
@@ -6918,10 +6922,13 @@ function reset_stack_bytes(): i64 {
   return 1048576i64;
 }
 
-// The loader enters EL1 with the MMU and data cache off.
+// The loader enters EL1 with the MMU and data cache off, and with its boot
+// argument in x0.
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   let top = s.ram_base + s.ram_size;
+  s = s.write("    .section .data\n    .p2align 3\n__fern_boot_info:\n    .quad 0\n    .text\n");
   s = s.write("_start:\n    mrs x9, mpidr_el1\n    and x9, x9, #255\n    cbnz x9, .Lreset_park\n");
+  s = s.write("    adrp x10, __fern_boot_info\n    str x0, [x10, :lo12:__fern_boot_info]\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
   s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
   s = s.write("    adrp x0, __fern_bss_start\n    add x0, x0, :lo12:__fern_bss_start\n");

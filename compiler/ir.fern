@@ -1292,12 +1292,13 @@ pub function op_privileged(kind: i32): Op {
 }
 
 pub function is_privileged_kind(id: i32): boolean {
-  return id == K_WFI || id == K_HVC || id == K_SMC;
+  return id == K_WFI || id == K_HVC || id == K_SMC || id == K_BOOT_INFO;
 }
 
-// wfi takes nothing. hvc and smc take the function and three arguments.
+// wfi and boot_info take nothing. hvc and smc take the function and three
+// arguments.
 function privileged_pops(id: i32): i32 {
-  if (id == K_WFI) {
+  if (id == K_WFI || id == K_BOOT_INFO) {
     return 0;
   }
   return 4;
@@ -1332,6 +1333,9 @@ function device_kind_name(id: i32): string {
   }
   if (id == K_SMC) {
     return "smc";
+  }
+  if (id == K_BOOT_INFO) {
+    return "boot_info";
   }
   if (id == K_PORT_IN || id == K_PORT_OUT) {
     return port_kind_name(id);
@@ -2324,6 +2328,8 @@ pub const K_PORT_IN: i32 = 418;
 
 pub const K_PORT_OUT: i32 = 419;
 
+pub const K_BOOT_INFO: i32 = 499;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2527,6 +2533,9 @@ function kind_id_device(name: string): i32 {
   }
   if (name == "smc") {
     return K_SMC;
+  }
+  if (name == "boot_info") {
+    return K_BOOT_INFO;
   }
   return 0;
 }

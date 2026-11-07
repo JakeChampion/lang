@@ -2418,6 +2418,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__fence"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	c.info.FuncSigs["__wfi"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
+	c.info.FuncSigs["__boot_info"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
 	i64T := ast.NumberType{Width: 64, Signed: true}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}

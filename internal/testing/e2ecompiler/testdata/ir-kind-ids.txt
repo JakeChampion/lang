@@ -445,3 +445,4 @@ send_adopt=495
 worker_unmap=496
 send_root=497
 writer_set_times=498
+boot_info=499

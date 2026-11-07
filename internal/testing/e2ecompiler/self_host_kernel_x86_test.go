@@ -17,7 +17,9 @@ import (
 
 // The board is qemu microvm: COM1 at port 0x3f8, and the isa-debug-exit device
 // that the test adds at port 0xf4.
-const kernelX86BoardSrc = `const COM1: i32 = 0x3f8;
+const kernelX86BoardSrc = `import "std/pvh";
+
+const COM1: i32 = 0x3f8;
 
 @provide("log")
 pub function uart_write(data: usize, len: i32): void {
@@ -30,6 +32,30 @@ pub function uart_write(data: usize, len: i32): void {
   }
 }
 
+function copy(at: usize, n: i32): u8[] {
+  let out: u8[] = [];
+  unsafe {
+    for k in 0..n {
+      out = out.append(__load_u8(at + k as usize) as u8);
+    }
+  }
+  return out;
+}
+
+// The PVH start info, at the address that the VMM gave in %ebx.
+pub function start_info(): u8[] {
+  return copy(__boot_info(), pvh.START_INFO_BYTES);
+}
+
+pub function memmap(info: pvh.StartInfo): u8[] {
+  return copy(info.memmap_address as usize, info.memmap_entries as i32 * pvh.MEMMAP_ENTRY_BYTES);
+}
+
+// The command line, up to 256 bytes and its NUL.
+pub function command_line(info: pvh.StartInfo): u8[] {
+  return copy(info.cmdline_address as usize, 257);
+}
+
 // qemu exits with the status value * 2 + 1.
 @norc
 pub function exit_qemu(value: i32): void {
@@ -40,6 +66,30 @@ pub function exit_qemu(value: i32): void {
 `
 
 const kernelX86MainSrc = `import "./board";
+import "std/pvh";
+
+// Whether one RAM region of the memory map holds the image's RAM.
+function covers(regions: pvh.MemoryRegion[], start: u64, end: u64): boolean {
+  for r in regions {
+    if (r.is_ram() && r.address <= start && r.address + r.size >= end) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function describe(): string {
+  let Ok(info) = pvh.parse(board.start_info()) else {
+    return "no start info";
+  };
+  let Ok(regions) = pvh.parse_memmap(board.memmap(info), info.memmap_entries) else {
+    return "no memory map";
+  };
+  let Ok(line) = pvh.command_line(board.command_line(info)) else {
+    return "no command line";
+  };
+  return "pvh version " + info.version.to_string() + " cmdline " + line + " ram " + covers(regions, 0x200000 as u64, 0x7f00000 as u64).to_string();
+}
 
 function main(): i32 {
   let xs: i32[] = [];
@@ -49,15 +99,18 @@ function main(): i32 {
     i += 1;
   }
   print("hello from fern on x86-64, total " + xs.len().to_string());
+  print(describe());
   board.exit_qemu(16);
   return 0;
 }
 `
 
+// With -m 128M, the memory map of qemu microvm reserves the last page, so the
+// image's RAM ends below it.
 const (
 	kernelX86Base = 0x200000
-	kernelX86Size = 126 << 20
-	kernelX86RAM  = "0x200000,126M"
+	kernelX86Size = 125 << 20
+	kernelX86RAM  = "0x200000,125M"
 )
 
 func writeKernelX86Program(t *testing.T) string {
@@ -190,7 +243,7 @@ func TestSelfHostKernelX86BootsOnQemu(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, qemu, "-M", "microvm", "-cpu", "max", "-m", "128M",
 		"-nodefaults", "-no-user-config", "-nographic", "-serial", "stdio",
-		"-device", "isa-debug-exit,iobase=0xf4,iosize=4", "-kernel", out)
+		"-device", "isa-debug-exit,iobase=0xf4,iosize=4", "-kernel", out, "-append", "fern=pvh")
 	console, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("the VM did not exit in 60s; console:\n%s", console)
@@ -199,8 +252,10 @@ func TestSelfHostKernelX86BootsOnQemu(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 33 {
 		t.Fatalf("qemu: %v, want exit status 33 from isa-debug-exit; console:\n%s", err, console)
 	}
-	if !strings.Contains(string(console), "hello from fern on x86-64, total 10\n") {
-		t.Errorf("console:\n%s\nwant the line %q", console, "hello from fern on x86-64, total 10")
+	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n"} {
+		if !strings.Contains(string(console), want) {
+			t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
+		}
 	}
 }
 
