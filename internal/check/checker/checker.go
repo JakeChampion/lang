@@ -7771,6 +7771,12 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			return merged
 		}
 	}
+	if bareMap(a) && isMapType(b) {
+		return b
+	}
+	if bareMap(b) && isMapType(a) {
+		return a
+	}
 	if as, aok := a.(ast.StructType); aok {
 		if bs, bok := b.(ast.StructType); bok && as.Name == bs.Name && len(as.Args) == len(bs.Args) && len(as.Args) > 0 {
 			args := make([]ast.Type, len(as.Args))

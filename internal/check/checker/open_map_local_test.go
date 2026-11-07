@@ -23,6 +23,12 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"insert through a generic call", ident + "function main(): i32 { let m = id(Map { }); m = m.insert(\"a\", 1); return m.len(); }\n"},
 		{"generic call as an argument", ident + "function size(m: Map[string, i64]): i32 { return m.len(); }\nfunction main(): i32 { return size(id(Map { })); }\n"},
 		{"generic call as a statement", ident + "function main(): i32 { id(Map { }); return 0; }\n"},
+		{"empty first if arm", "import \"core/map\";\nfunction main(): i32 { let m = if (false) { Map { } } else { Map { 1: 2 } }; return m.len(); }\n"},
+		{"empty last if arm", "import \"core/map\";\nfunction main(): i32 { let m = if (false) { Map { 1: 2 } } else { Map { } }; return m.len(); }\n"},
+		{"empty if arm under an annotation", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = if (false) { Map { } } else { Map { 1: 2 } }; return m.len(); }\n"},
+		{"empty if arm in a return", "import \"core/map\";\nfunction f(b: boolean): Map[string, i32] { return if (b) { Map { } } else { Map { \"a\": 1 } }; }\nfunction main(): i32 { return f(true).len(); }\n"},
+		{"empty first match arm", "import \"core/map\";\nfunction main(): i32 { let k = 3; let m = match (k) { 1 => Map { }, _ => Map { 1: 2 } }; return m.len(); }\n"},
+		{"empty first array element", "import \"core/map\";\nfunction main(): i32 { let xs = [Map { }, Map { 1: 2 }]; return xs[0].len(); }\n"},
 	}
 	for _, c := range good {
 		if err := checkSource(t, c.src); err != nil {
@@ -33,6 +39,7 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"no use gives the types", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; return m.len(); }\n"},
 		{"no use", "import \"core/map\";\nfunction main(): i32 { let m = map_new(8); return 0; }\n"},
 		{"no use through a generic call", ident + "function main(): i32 { let m = id(Map { }); return 0; }\n"},
+		{"no arm gives the types", "import \"core/map\";\nfunction main(): i32 { let m = if (true) { Map { } } else { Map { } }; return m.len(); }\n"},
 	}
 	for _, c := range bad {
 		err := checkSource(t, c.src)
