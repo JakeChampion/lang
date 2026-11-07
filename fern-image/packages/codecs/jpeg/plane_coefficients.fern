@@ -1,0 +1,67 @@
+import "./component_blocks" as blocks;
+import "./dct";
+import "./quantization";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum PrepareError { Block(blocks.BlockError), Transform(dct.DctError), Quantization(quantization.QuantizationError), Limit, Cancelled }
+
+pub enum FoldError[E] { Prepare(PrepareError), Consumer(E) }
+
+pub struct Plan { columns: i32, rows: i32, blocks: i32 }
+
+pub struct QuantizedBlock { x: i32, y: i32, values: i32[] }
+
+pub struct Fold[S] { value: S, plan: Plan }
+
+pub function inspect(input: [u8], layout: blocks.PlaneLayout, quantizers: [u8], max_blocks: i32): Result[Plan, PrepareError] {
+  if let Err(e) = blocks.validate(input, layout) {
+    return Err(PrepareError.Block(e));
+  }
+  if (quantizers.len() != 64) {
+    return Err(PrepareError.Quantization(quantization.Shape));
+  }
+  for value in quantizers {
+    if (value == 0) {
+      return Err(PrepareError.Quantization(quantization.Quantizer));
+    }
+  }
+  let columns = (layout.width as i64 + 7i64) / 8i64;
+  let rows = (layout.height as i64 + 7i64) / 8i64;
+  let count = columns * rows;
+  if (max_blocks < 0 || count > max_blocks as i64) {
+    return Err(PrepareError.Limit);
+  }
+  return Ok(Plan { columns: columns as i32, rows: rows as i32, blocks: count as i32 });
+}
+
+function prepare(input: [u8], layout: blocks.PlaneLayout, x: i32, y: i32, edge: blocks.Edge, quantizers: [u8], cancelled: () => boolean): Result[QuantizedBlock, PrepareError] {
+  let samples = match (blocks.block(input, layout, x, y, edge, cancelled)) {
+    Ok(v) => v, Err(blocks.Cancelled) => { return Err(PrepareError.Cancelled); },
+    Err(e) => { return Err(PrepareError.Block(e)); },
+  };
+  let coefficients = match (dct.forward(samples, cancelled)) {
+    Ok(v) => v, Err(dct.Cancelled) => { return Err(PrepareError.Cancelled); },
+    Err(e) => { return Err(PrepareError.Transform(e)); },
+  };
+  let values = match (quantization.quantize(coefficients, quantizers, cancelled)) {
+    Ok(v) => v, Err(quantization.Cancelled) => { return Err(PrepareError.Cancelled); },
+    Err(e) => { return Err(PrepareError.Quantization(e)); },
+  };
+  return Ok(QuantizedBlock { x: x, y: y, values: values });
+}
+
+// Each consumer owns one natural-order block. Blocks follow plane row order.
+pub function fold_blocks[S, E](input: [u8], layout: blocks.PlaneLayout, quantizers: [u8], edge: blocks.Edge, max_blocks: i32, cancelled: () => boolean, value: S, consume: (S, QuantizedBlock) => Result[S, E]): Result[Fold[S], FoldError[E]] {
+  let plan = match (inspect(input, layout, quantizers, max_blocks)) { Ok(v) => v, Err(e) => { return Err(Prepare(e)); } };
+  for y in 0..plan.rows {
+    for x in 0..plan.columns {
+      let block = match (prepare(input, layout, x, y, edge, quantizers, cancelled)) { Ok(v) => v, Err(e) => { return Err(Prepare(e)); } };
+      value = match (consume(value, block)) { Ok(v) => v, Err(e) => { return Err(Consumer(e)); } };
+    }
+  }
+  if (cancelled()) {
+    return Err(Prepare(PrepareError.Cancelled));
+  }
+  return Ok(Fold[S] { value: value, plan: plan });
+}
