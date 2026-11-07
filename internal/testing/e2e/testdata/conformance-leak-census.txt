@@ -70,6 +70,7 @@ alloc_flat_under_reclaim                             0
 alloc_flat_writer_accumulator                        0
 alloc_grows_when_retained                            0
 an_at_binding_binds_its_own_alternative              0
+an_empty_map_arm_takes_the_type_of_the_other_arm     0
 an_empty_map_takes_the_type_of_its_first_use         0
 an_import_named_like_a_scalar_type                   0
 an_imported_module_does_not_see_the_programs_variants 0
@@ -1253,6 +1254,7 @@ union_lambda_param                                   0
 union_member_expected_type                           0
 union_member_widens_in_variant_payload               0
 unsafe_block_accepts_obligations                     0
+unsafe_block_accepts_pointer_casts                   0
 unsafe_block_accepts_raw_builtins                    0
 unsafe_block_holds_a_match_in_an_arm                 0
 url_codec                                            0

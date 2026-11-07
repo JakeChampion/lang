@@ -1,0 +1,13 @@
+pub struct Box { v: i32 }
+
+function (b: Box) secret(): i32 {
+    return b.v;
+}
+
+pub function (b: Box) open(): i32 {
+    return b.secret() + 1;
+}
+
+pub function make(): Box {
+    return Box { v: 3 };
+}

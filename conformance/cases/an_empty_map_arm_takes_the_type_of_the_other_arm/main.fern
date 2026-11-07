@@ -1,0 +1,23 @@
+import "core/map";
+
+function pick(b: boolean): Map[string, i32] {
+  return if (b) { Map { } } else { Map { "a": 1, "b": 2 } };
+}
+
+function main(): i32 {
+  let first = if (false) { Map { } } else { Map { 1: 2 } };
+  let last = if (false) { Map { 1: 2, 3: 4 } } else { Map { } };
+  let hinted: Map[i32, i32] = if (true) { Map { } } else { Map { 5: 6 } };
+  let k = 3;
+  let arm = match (k) { 1 => Map { }, _ => Map { 7: 8 } };
+  let elems = [Map { }, Map { 9: 10, 11: 12 }];
+  print(first.len().to_string());
+  print(last.len().to_string());
+  print(hinted.len().to_string());
+  print(arm.len().to_string());
+  print(elems[0].len().to_string());
+  print(elems[1].len().to_string());
+  print(pick(true).len().to_string());
+  print(pick(false).len().to_string());
+  return 0;
+}

@@ -359,16 +359,22 @@ function __map_eq_wide(a: usize, b: usize): boolean {
 }
 
 function __map_hash_str(k: usize): i32 {
-  return __map_fnv_str_seeded(k as string, 0);
+  unsafe {
+    return __map_fnv_str_seeded(k as string, 0);
+  }
 }
 
 function __map_eq_str(a: usize, b: usize): boolean {
-  return a as string == b as string;
+  unsafe {
+    return a as string == b as string;
+  }
 }
 
 function __map_bucket_hash(k: usize, hash_fn: (usize) => i32, seed: i32): i32 {
   if (seed != 0) {
-    return __map_fnv_str_seeded(k as string, seed);
+    unsafe {
+      return __map_fnv_str_seeded(k as string, seed);
+    }
   }
   return hash_fn(k);
 }

@@ -13,7 +13,9 @@ import (
 // A 48-byte box is 72 bytes with its header, and a raw allocation of that
 // size takes the freed block back from the same free list without a
 // zero-fill. The control releases the secret as is and must read its
-// bytes back; the erase path must read zeros.
+// bytes back; the erase path must read zeros. The word secret is six u64
+// elements of 0x4141414141414141, a value read at run time so the literal
+// is a heap box, and it is the same 48 bytes.
 const eraseSrc = `import "std/crypto";
 function secret(n: i32): u8[] {
   let b: u8[] = __alloc_u8(n);
@@ -34,6 +36,19 @@ function wipe(n: i32): i32 {
   crypto.erase(b);
   return len;
 }
+function secret_words(v: u64): u64[] {
+  return [v, v, v, v, v, v];
+}
+function release_words(v: u64): i32 {
+  let w: u64[] = secret_words(v);
+  return w.len();
+}
+function wipe_words(v: u64): i32 {
+  let w: u64[] = secret_words(v);
+  let len: i32 = w.len();
+  crypto.erase(w);
+  return len;
+}
 function stale(): i32 {
   unsafe {
     let found: i32 = 0;
@@ -51,8 +66,15 @@ function stale(): i32 {
   }
 }
 function main(): i32 {
-  if (args().len() > 1 && args()[1] == "erase") {
+  let mode: string = "release";
+  if (args().len() > 1) { mode = args()[1]; }
+  let word: u64 = 4702111234474983744u64 + (args().len() as u64) - 1u64;
+  if (mode == "erase") {
     wipe(48);
+  } else if (mode == "erase-words") {
+    wipe_words(word);
+  } else if (mode == "release-words") {
+    release_words(word);
   } else {
     release(48);
   }
@@ -97,11 +119,16 @@ func TestSelfHostEraseZeroesStorage(t *testing.T) {
 				}
 				return n
 			}
-			if control := run("release"); control < 48 {
-				t.Fatalf("the control read %d secret bytes back; the raw allocation no longer observes the released block", control)
-			}
-			if got := run("erase"); got != 0 {
-				t.Fatalf("after erase the raw allocation read %d secret bytes back, want 0", got)
+			for _, c := range []struct{ control, erase string }{
+				{"release", "erase"},
+				{"release-words", "erase-words"},
+			} {
+				if control := run(c.control); control < 48 {
+					t.Fatalf("%s read %d secret bytes back; the raw allocation no longer observes the released block", c.control, control)
+				}
+				if got := run(c.erase); got != 0 {
+					t.Fatalf("after %s the raw allocation read %d secret bytes back, want 0", c.erase, got)
+				}
 			}
 		})
 	}

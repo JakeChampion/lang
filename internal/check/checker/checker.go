@@ -9174,7 +9174,11 @@ func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, 
 		c.errfCode(pos, "E043", "%s", c.unknownMethodMessage(structName, field, ast.StructType{Name: structName}))
 		return
 	}
-	e := c.report(c.currentModule(), pos, "E043", fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field))
+	msg := fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field)
+	if module, ok := c.privateMethodModule(structName, field); ok {
+		msg += fmt.Sprintf(" — %q is declared without `pub` in module %q, so only that module can call it", field, moduleBaseName(module))
+	}
+	e := c.report(c.currentModule(), pos, "E043", msg)
 	if e == nil {
 		return
 	}
@@ -9399,6 +9403,13 @@ func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
 		name = n.SourceCallee
 	}
 	c.errfCode(n.P, "E095", "unsafe function %q is called outside an unsafe block", name)
+}
+
+// A cast between an integer and a heap value reads or forges an address.
+func (c *checker) checkPointerCast(n *ast.CastExpr, inner ast.Type) {
+	if c.unsafeDepth == 0 {
+		c.errfCode(n.P, "E095", "the cast from %s to %s reinterprets a pointer outside an unsafe block", inner, n.Target)
+	}
 }
 
 func (c *checker) checkUnsafeTraitCall(n *ast.Call, field string, unsafe bool) {
@@ -14212,6 +14223,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if nt, ok := n.Target.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 			switch inner.(type) {
 			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				c.checkPointerCast(n, inner)
 				return n.Target
 			}
 		}
@@ -14220,6 +14232,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			case ast.ArrayType, ast.StringType, ast.StructType:
 				if nt.NormalWidth() == 32 && !nt.IsPointerWidth() {
 					c.errfCode(n.P, "E069", "reinterpreting a 32-bit `%s` value as the pointer-shaped type `%s` via `as` truncates the address: the high 32 bits were lost when the value became `%s`, so this recovers a corrupt pointer once the heap exceeds 4 GiB — carry pointer-shaped values in a `usize` local/param instead", inner, n.Target, inner)
+				} else {
+					c.checkPointerCast(n, inner)
 				}
 				return n.Target
 			}
@@ -16236,8 +16250,8 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	prefix := st.Name + "."
 	var methodNames []string
-	for key := range c.info.Methods {
-		if strings.HasPrefix(key, prefix) {
+	for key, mangled := range c.info.Methods {
+		if strings.HasPrefix(key, prefix) && c.methodVisibleHere(mangled) {
 			methodNames = append(methodNames, key[len(prefix):])
 		}
 	}

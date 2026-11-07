@@ -50,7 +50,8 @@ func TestKnownCastTarget(t *testing.T) {
 	}{
 		{"numeric", `function main(): i32 { let v = 5 as i64; return v as i32; }`, ""},
 		{"checked numeric", `function main(): i32 { let v = 5 as? u8; return 0; }`, ""},
-		{"declared pointer", `struct Item { n: i32 } function main(): i32 { let p = (0 as usize) as Item; return 0; }`, ""},
+		{"declared pointer", `struct Item { n: i32 } function main(): i32 { unsafe { let p = (0 as usize) as Item; } return 0; }`, ""},
+		{"pointer outside unsafe", `struct Item { n: i32 } function main(): i32 { let p = (0 as usize) as Item; return 0; }`, "E095"},
 		{"type parameter", `function same[T](v: T): i32 { let value = v as T; return 0; } function main(): i32 { return 0; }`, "E033"},
 		{"lambda type parameter", `function same[T](v: T): i32 { let f = (() => v as T); return 0; } function main(): i32 { return 0; }`, "E033"},
 		{"pointer width", `struct Item { n: i32 } function main(): i32 { let p = 5 as Item; return 0; }`, "E069"},

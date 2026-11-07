@@ -642,9 +642,9 @@ function built_buf(n: i32): string {
 // ANCHORS its source, so the box outlives every read through the address. What
 // an anchor cannot cover is an address that leaves the frame, which is why
 // core/map writes an explicit rc-inc on the one it returns.
-function addr_as_text(p: usize): string { return p as string; }
-function addr_as_bytes(p: usize): u8[] { return p as u8[]; }
-function text_as_addr(s: string): usize { return s as usize; }
+function addr_as_text(p: usize): string { unsafe { return p as string; } }
+function addr_as_bytes(p: usize): u8[] { unsafe { return p as u8[]; } }
+function text_as_addr(s: string): usize { unsafe { return s as usize; } }
 // An address converts to and from a float at the pointer width, as it
 // extends and wraps at it: the golden pins one cast each way, the u64 forms
 // on a register backend and the u32 forms on wasm (#10874).
@@ -2872,9 +2872,11 @@ struct Half { v: f32, n: i32 }
 // column — __map_hash_str and __map_eq_str take a usize out of a slot and read
 // it as the string it points at — and main holds the boxes, so a frame here
 // that released one would be reading freed memory.
-@noinline function addr_text(p: usize): i32 { return (p as string).len(); }
+@noinline function addr_text(p: usize): i32 { unsafe { return (p as string).len(); } }
 @noinline function addr_eq(p: usize, q: usize): i32 {
-    if ((p as string) == (q as string)) { return 1; }
+    unsafe {
+        if ((p as string) == (q as string)) { return 1; }
+    }
     return 0;
 }
 @noinline function addr_walk(n: i32): i32 {
@@ -3822,7 +3824,7 @@ function main(): i32 {
     print_int(text_methods("ab", "cd")); print("");
     print_int(points(65)); print(""); print_int(point_eq(65)); print("");
     print_int(addr_walk(6)); print(""); print_int(addr_order(1)); print("");
-    print_int(addr_text("abcde" as usize)); print("");
+    unsafe { print_int(addr_text("abcde" as usize)); } print("");
     print_int(addr_eq("abcde" as usize, "abcde" as usize)); print("");
     print_int(addr_eq("abcde" as usize, "xyz" as usize)); print("");
     print_int(map_vstr("ab", "cd")); print(""); print_int(map_vwords("ab", "cd")); print("");
