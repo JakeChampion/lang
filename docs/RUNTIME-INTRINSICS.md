@@ -325,8 +325,10 @@ each backend lowers it, and the migration order.
 2. **No new IR concepts where avoidable.** Each intrinsic lowers to a *single*
    existing instruction (a load, a store, a `call __fern_alloc`, or a syscall)
    — the same shape the hand-written helpers already emit inline.
-3. **Unsafe, unchecked, internal.** These are `__`-prefixed, never part of the
-   user surface. They carry no bounds checks (the helpers that use them are
+3. **Unsafe, unchecked, internal.** These are `__`-prefixed and are not
+   documented user surface. Only the names in `unsafe_intrinsics()`
+   (`compiler/checker.fern`) need an `unsafe` block. The checker accepts the
+   other registered intrinsics in user code (#14400). They carry no bounds checks (the helpers that use them are
    audited), matching the language's no-runtime-check stance.
 4. **Same four-backend parity** as the helper migrations: x86-64 AST + IR,
    arm64 AST + IR, recognized once in `try_emit_builtin` (AST) and the IR op

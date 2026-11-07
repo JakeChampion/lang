@@ -17,6 +17,7 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"argument then method", size + "function main(): i32 { let m = Map { }; let n = size(m); m = m.insert(\"a\", 5000000000); return n; }\n"},
 		{"return", "import \"core/map\";\nfunction fresh(): Map[string, i32] { let m = map_new(8); return m; }\nfunction main(): i32 { return fresh().len(); }\n"},
 		{"insert", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; m = m.insert(1, 2); return m.len(); }\n"},
+		{"insert in a range loop", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; for i in 0..4 { m = m.insert(i * 7, i); } return m.len(); }\n"},
 		{"method before the use", size + "function main(): i32 { let m = Map { }; let n = m.len(); return n + size(m); }\n"},
 		{"through a generic call", ident + "function main(): i32 { let m = id(Map { }); let n: Map[string, i32] = m; return n.len(); }\n"},
 		{"insert through a generic call", ident + "function main(): i32 { let m = id(Map { }); m = m.insert(\"a\", 1); return m.len(); }\n"},

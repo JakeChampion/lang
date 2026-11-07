@@ -300,10 +300,14 @@ ELF `ET_EXEC` image:
 
 - The text segment starts at BASE and is not writable. The data segment follows
   it and is not executable.
-- The reset `_start` runs on the boot core with the MMU off. It parks the other
-  cores, sets the stack at BASE + SIZE, and enables the FP and SIMD unit
+- The loader enters EL1 with the MMU and data cache off. The reset `_start`
+  parks the other cores, sets the stack at BASE + SIZE, and enables the FP and SIMD unit
   (`CPACR_EL1`).
-- Then it clears `.bss` and gives the heap the RAM between the image and the
+- Then it clears `.bss` and enables a 40-bit identity map with 4 KiB tables.
+  The configured RAM uses Normal non-cacheable memory. Other addresses use
+  Device-nGnRnE memory with execute-never, so board MMIO keeps Device attributes.
+  Table storage stays outside the heap.
+- It gives the heap the RAM between the image and the
   1 MiB stack. It calls `main`, and after `main` it waits with `wfe`.
 - The image has 64-bit addresses, and the end of the RAM must be at or below
   1 TiB, the 40-bit physical address space. That covers qemu-virt, where the

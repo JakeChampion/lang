@@ -25,32 +25,79 @@ const fernModulePath = "github.com/jakechampion/lang"
 // status, through the verdict cache of oracleVerdict.
 func InterpVerdict(t testing.TB, oracle, src string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, "-interp", src, false)
+	return oracleVerdict(t, oracle, []string{"-interp"}, src, false)
 }
 
 // CheckVerdict runs `oracle -check src` and returns its combined stdout and
 // stderr and its exit status, through the verdict cache of oracleVerdict.
 func CheckVerdict(t testing.TB, oracle, src string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, "-check", src, true)
+	return oracleVerdict(t, oracle, []string{"-check"}, src, true)
 }
 
-// oracleVerdict runs the Go oracle with one mode flag on src.
+// CheckTargetVerdict runs `oracle -check -target target src` and returns its
+// combined stdout and stderr and its exit status, through the verdict cache.
+func CheckTargetVerdict(t testing.TB, oracle, src, target string) ([]byte, int) {
+	t.Helper()
+	return oracleVerdict(t, oracle, []string{"-check", "-target", target}, src, true)
+}
+
+// oracleVerdict runs the Go oracle with flags on src.
 // FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the oracle's Go
 // source and embedded files, the source's relative import closure, and the
 // FERN_* environment. It excludes the compiler package's embedded self-host
 // sources, which -interp and -check do not read.
 // FERN_BIN suites also run an external executable. Run them
 // without the verdict cache because that executable can change at the same path.
-func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byte, int) {
+func oracleVerdict(t testing.TB, oracle string, flags []string, src string, combined bool) ([]byte, int) {
 	t.Helper()
 	var key string
 	if os.Getenv("FERN_BIN") == "" {
 		var err error
-		key, err = oracleVerdictKey(flag, combined, src)
+		key, err = oracleVerdictKey(flags, combined, src)
 		if err != nil {
-			t.Fatalf("oracle verdict key for %s %s: %v", flag, src, err)
+			t.Fatalf("oracle verdict key for %s %s: %v", strings.Join(flags, " "), src, err)
 		}
+	}
+	cmd := exec.Command(oracle, append(append([]string{}, flags...), src)...)
+	return cachedOracleRun(t, key, cmd, combined)
+}
+
+// CheckSourceVerdict runs `oracle -check -` with source on stdin, and returns
+// its combined stdout and stderr and its exit status, through the verdict
+// cache. source can import only modules such as std/test: a program on stdin
+// has no directory for a relative import.
+func CheckSourceVerdict(t testing.TB, oracle, source string) ([]byte, int) {
+	t.Helper()
+	imports, err := fernSourceImports(source)
+	if err != nil {
+		t.Fatalf("CheckSourceVerdict: tokenize the source: %v", err)
+	}
+	for _, imp := range imports {
+		if !isExternalFernImport(imp) {
+			t.Fatalf("CheckSourceVerdict: the source imports %q, a relative module", imp)
+		}
+	}
+	var key string
+	if os.Getenv("FERN_BIN") == "" {
+		oracleKey, err := oracleSourcesKey()
+		if err != nil {
+			t.Fatalf("oracle verdict key for -check -: %v", err)
+		}
+		h := sha256.New()
+		fmt.Fprintf(h, "oracle-stdin-verdict-v1\x00%s\x00%d\x00%s\x00env\x00%s\x00", oracleKey, len(source), source, fernEnvKey())
+		key = hex.EncodeToString(h.Sum(nil))
+	}
+	cmd := exec.Command(oracle, "-check", "-")
+	cmd.Stdin = strings.NewReader(source)
+	return cachedOracleRun(t, key, cmd, true)
+}
+
+// cachedOracleRun returns the verdict under key, or runs cmd and keeps its
+// verdict there. An empty key runs cmd without the cache.
+func cachedOracleRun(t testing.TB, key string, cmd *exec.Cmd, combined bool) ([]byte, int) {
+	t.Helper()
+	if key != "" {
 		if out, exit, ok := readOracleVerdict(key); ok {
 			return out, exit
 		}
@@ -58,7 +105,6 @@ func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byt
 	var out []byte
 	exit := 0
 	err := WithBuildMemoryMB(1024, func() error {
-		cmd := exec.Command(oracle, flag, src)
 		var runErr error
 		if combined {
 			out, runErr = cmd.CombinedOutput()
@@ -73,7 +119,7 @@ func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byt
 		return runErr
 	})
 	if err != nil {
-		t.Fatalf("oracle %s on %s: %v", flag, src, err)
+		t.Fatalf("oracle %s: %v", strings.Join(cmd.Args, " "), err)
 	}
 	if key != "" {
 		writeOracleVerdict(key, out, exit)
@@ -81,7 +127,7 @@ func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byt
 	return out, exit
 }
 
-func oracleVerdictKey(flag string, combined bool, src string) (string, error) {
+func oracleVerdictKey(flags []string, combined bool, src string) (string, error) {
 	oracle, err := oracleSourcesKey()
 	if err != nil {
 		return "", err
@@ -90,18 +136,28 @@ func oracleVerdictKey(flag string, combined bool, src string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	closure, err := selfHostImportClosure(filepath.Dir(abs), filepath.Base(abs))
+	closure, missing, err := importClosureNotingMissing(filepath.Dir(abs), filepath.Base(abs))
 	if err != nil {
 		return "", err
 	}
 	sort.Strings(closure)
+	sort.Strings(missing)
 	h := sha256.New()
-	fmt.Fprintf(h, "oracle-verdict-v1\x00%s\x00%t\x00%s\x00%s\x00", flag, combined, oracle, abs)
+	fmt.Fprintf(h, "oracle-verdict-v2\x00%s\x00%t\x00%s\x00%s\x00%s\x00", strings.Join(flags, "\x00"), combined, oracle, src, abs)
 	for _, p := range closure {
 		if err := hashFile(h, p, p); err != nil {
 			return "", err
 		}
 	}
+	for _, p := range missing {
+		fmt.Fprintf(h, "missing\x00%s\x00", p)
+	}
+	fmt.Fprintf(h, "env\x00%s\x00", fernEnvKey())
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fernEnvKey is the FERN_* environment, less the cache directory itself.
+func fernEnvKey() string {
 	var env []string
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "FERN_") && !strings.HasPrefix(kv, "FERN_SELFHOST_BUILD_CACHE=") {
@@ -109,8 +165,7 @@ func oracleVerdictKey(flag string, combined bool, src string) (string, error) {
 		}
 	}
 	sort.Strings(env)
-	fmt.Fprintf(h, "env\x00%s\x00", strings.Join(env, "\x00"))
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return strings.Join(env, "\x00")
 }
 
 // oracleSourcesKey hashes the files of every package in this module that

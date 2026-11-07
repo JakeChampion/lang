@@ -59,7 +59,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | Intrinsic | Obligation |
 |---|---|
 | `__rc_inc(a)`, `__rc_dec(a)`, `__rc_get(a)`, `__fern_rc_dec(p)` | The count must match the real number of references after the call. |
-| `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. [The bounds audit](BOUNDS-AUDIT.md) shows a safe `main` that reads past a three-element array through it. |
+| `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. [The bounds audit](BOUNDS-AUDIT.md) shows an `unsafe` block that reads past a three-element array through it. Outside a block both checkers refuse the call as `E095`. |
 | `__arr_push_shared_bytes()`, `__arr_push_shared_count()` | Read-only counters. No obligation. |
 | `__heap_mark()`, `__heap_release_to(m)` | Every value allocated after the mark must be dead before the release. |
 | `__heap_adopt(start, end)` | The region must be mapped and writable, nothing allocated before the call may be read again, and only a forked worker calls it. |

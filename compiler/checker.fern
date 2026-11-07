@@ -2382,8 +2382,11 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
 }
 
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
+  // Read s before the bind, so that the bind is the last use of s and grows
+  // its arrays in place.
+  let unsettled = is_integer(t) && unsettled_tree(v.init, s.lit_locals);
   let b = s.bind(v.name, t);
-  if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
+  if (unsettled) {
     return Scope { ...b, lit_locals: b.lit_locals.append(v.name) };
   }
   return b;
@@ -6944,18 +6947,30 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
         return bind_destructure_names(s, v);
       }
-      if (v.type_name.len() > 0) {
-        return s.bind(v.name, var_declared_type(v, s));
-      }
-      let inferred = check_expr(v.init, rec_local_scope(v, s));
-      if (bare_map(inferred)) {
-        return s.bind(v.name, t_unknown("map without types"));
-      }
-      return s.bind_inferred(v, inferred);
+      return bind_var(v, s, var_bind_type(v, s));
     },
     _ => {}
   }
   return s;
+}
+
+// var_bind_type is the type that bind_stmt gives the local of v.
+function var_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
+  if (v.type_name.len() > 0) {
+    return var_declared_type(v, s);
+  }
+  let inferred = check_expr(v.init, rec_local_scope(v, s));
+  if (bare_map(inferred)) {
+    return t_unknown("map without types");
+  }
+  return inferred;
+}
+
+function bind_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): Scope {
+  if (v.type_name.len() > 0) {
+    return s.bind(v.name, t);
+  }
+  return s.bind_inferred(v, t);
 }
 
 // bare_map is a map type whose key or value type no expression gave, as the
@@ -21541,6 +21556,31 @@ function ow_count_field_reads(e: ast.Expr, target: string, field: string): i32 {
   return astwalk.fold_expr(e, 0, tally);
 }
 
+struct OwFieldMove { target: string, field: string, ofuncs: OwnFuncs, found: boolean }
+
+// A call in e, outside a lambda, takes target.field as an own argument. The
+// call can be at any depth of e.
+function ow_moves_field(e: ast.Expr, target: string, field: string, ofuncs: OwnFuncs): boolean {
+  return astwalk.fold_expr_pruned(e, OwFieldMove { target: target, field: field, ofuncs: ofuncs, found: false }, ow_field_move_call, astwalk.not_lambda).found;
+}
+
+function ow_field_move_call(e: ast.Expr, own m: OwFieldMove): OwFieldMove {
+  if (m.found) {
+    return m;
+  }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(cid) = c.callee {
+      let flags = ow_func_flags(m.ofuncs, cid.name);
+      for j in 0..c.args.len() {
+        if (j < flags.len() && flags[j] && ow_is_field_read(c.args[j], m.target, m.field)) {
+          return OwFieldMove { ...m, found: true };
+        }
+      }
+    }
+  }
+  return m;
+}
+
 function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): string[] {
   let out: string[] = [];
   match (value) {
@@ -21551,32 +21591,11 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
       if (ow_count_ident(value, target) - ow_count_field_reads(value, target, "") != 1) {
         return out;
       }
-      let i = 0;
-      while (i < sl.field_values.len() && i < sl.field_names.len()) {
+      for i in 0..sl.field_values.len() {
         let fname = sl.field_names[i];
-        match (sl.field_values[i]) {
-          ast.ExprCall(c) => {
-            match (c.callee) {
-              ast.ExprIdent(cid) => {
-                if (ow_is_own_func(ctx.ofuncs, cid.name) && ow_count_field_reads(value, target, fname) == 1) {
-                  let flags = ow_func_flags(ctx.ofuncs, cid.name);
-                  let j = 0;
-                  while (j < c.args.len() && j < flags.len()) {
-                    if (flags[j] && ow_is_field_read(c.args[j], target, fname)) {
-                      out = out.append(target + "." + fname);
-                      j = flags.len();
-                    } else {
-                      j += 1;
-                    }
-                  }
-                }
-              },
-              _ => {}
-            }
-          },
-          _ => {}
+        if (ow_count_field_reads(value, target, fname) == 1 && ow_moves_field(sl.field_values[i], target, fname, ctx.ofuncs)) {
+          out = out.append(target + "." + fname);
         }
-        i += 1;
       }
       return out;
     },
@@ -26862,7 +26881,7 @@ function calls_a_generic(stmts: ast.Stmt[], s: Scope): boolean {
   return hit;
 }
 
-function inst_stmts(stmts: ast.Stmt[], s: Scope, gens: parser.FuncDecl[], depth: i32, acc: Inst[]): Inst[] {
+function inst_stmts(stmts: ast.Stmt[], s: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
   let out = acc;
   let cur = s;
   for st in stmts {
@@ -26972,7 +26991,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
   return clones;
 }
 
-function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, acc: Inst[]): Inst[] {
+function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
   if (!calls_a_generic(fd.body, msc)) {
     return acc;
   }
@@ -29198,11 +29217,25 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let cur = s;
   for stmt in body {
-    let next = bind_stmt(stmt, cur);
-    out = out.append(annotate_stmt(stmt, cur, next));
+    let (annotated, next) = annotate_bound(stmt, cur);
+    out = out.append(annotated);
     cur = next;
   }
   return out;
+}
+
+// annotate_bound annotates stmt in s and binds what it declares. A plain local
+// is annotated before the bind, so that the bind is the last use of s.
+function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
+  if let ast.StmtVar(v) = stmt {
+    if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) {
+      let t = var_bind_type(v, s);
+      let annotated = annotate_var(v, s, t);
+      return (annotated, bind_var(v, s, t));
+    }
+  }
+  let next = bind_stmt(stmt, s);
+  return (annotate_stmt(stmt, s, next), next);
 }
 
 struct ForBinding { scope: Scope, valid: boolean }
@@ -29318,26 +29351,31 @@ function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
   return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
 }
 
+// annotate_var annotates v in s, where t is the type that the local gets.
+function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
+  let init = v.init;
+  if let ast.ExprLambda(lm) = v.init {
+    init = annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown(""));
+  } else {
+    init = annotate_expr(v.init, s);
+  }
+  if (v.type_name.len() > 0) {
+    init = settle_at(init, t);
+  }
+  let callable = decltypes.fn_param_from_type(v.name, t);
+  if (callable.type_name == "fn") {
+    return ast.StmtVar {
+      ...v, type_name: "fn", init: init,
+      fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types,
+    };
+  }
+  return ast.StmtVar { ...v, init: init };
+}
+
 function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      let init = v.init;
-      if let ast.ExprLambda(lm) = v.init {
-        init = annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown(""));
-      } else {
-        init = annotate_expr(v.init, s);
-      }
-      if (v.type_name.len() > 0) {
-        init = settle_at(init, after.lookup(v.name));
-      }
-      let callable = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
-      if (callable.type_name == "fn") {
-        return ast.StmtVar {
-          ...v, type_name: "fn", init: init,
-          fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types,
-        };
-      }
-      return ast.StmtVar { ...v, init: init };
+      return annotate_var(v, s, after.lookup(v.name));
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type), line: r.line, col: r.col };
@@ -31031,6 +31069,41 @@ function lit_marked(t: typeinfo.Type): boolean {
 // known type writes that type on the local.
 const LIT_OPEN_MARK: string = "open enum local #";
 
+// open_call_type is the type of a generic call that leaves a type parameter
+// unbound, such as `ordmap.new()`, with each unbound parameter open. It is
+// false when the call binds each parameter.
+function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
+  let none = t_unknown("not an open call");
+  let ast.ExprCall(c) = e else {
+    return (none, false);
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return (none, false);
+  };
+  if (c.type_args.len() > 0 || s.defines(id.name)) {
+    return (none, false);
+  }
+  let Some(sig) = s.lookup_sig(id.name) else {
+    return (none, false);
+  };
+  if (sig.all_type_params.len() == 0 || c.args.len() != sig.param_types.len() || sig.ret_type_name.len() == 0) {
+    return (none, false);
+  }
+  let (bn, bt) = call_type_bindings(sig, c, s);
+  let open = false;
+  for tp in sig.all_type_params {
+    if (util.index_of_str(bn, tp) < 0) {
+      bn = bn.append(tp);
+      bt = bt.append(t_unknown("unbound " + tp));
+      open = true;
+    }
+  }
+  if (!open) {
+    return (none, false);
+  }
+  return (type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names()), true);
+}
+
 function lit_open_marker(k: i32): typeinfo.Type {
   return t_unknown(LIT_OPEN_MARK + util.i32_to_string(k));
 }
@@ -31141,6 +31214,9 @@ function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo
 // that `want` has at the same place. It is false when the shapes differ or
 // `want` does not know the arguments.
 function fill_open_enum(have: typeinfo.Type, want: typeinfo.Type): (typeinfo.Type, boolean) {
+  if (unbound_enum_argument(have)) {
+    return (want, known_type(want));
+  }
   match (have) {
     typeinfo.TypeUnion(h) => {
       return fill_open_union(h, want);
@@ -31981,9 +32057,9 @@ function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
   return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s) || lit_marked_read(arg, s);
 }
 
-// lit_open_receiver gives an open map local the key and value types that a
-// call of insert or get_or passes to it, as a map literal takes them from its
-// entries.
+// lit_open_receiver gives an open local the type arguments that a method call
+// on it binds. An open map takes the key and value types that a call of
+// insert or get_or passes to it, as a map literal takes them from its entries.
 function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   let ast.ExprFieldAccess(fa) = c.callee else {
     return st;
@@ -31992,10 +32068,58 @@ function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     return st;
   };
   let k = lit_open_id(s.lookup(id.name));
-  if (k < 0 || !bare_map(st.otypes[k]) || c.args.len() != 2 || fa.field != "insert" && fa.field != "get_or") {
+  if (k < 0) {
     return st;
   }
-  return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], s)), settled_literal(check_expr(c.args[1], s))));
+  let ts = lit_typed_scope(s, st);
+  match (st.otypes[k]) {
+    typeinfo.TypeStruct(h) => {
+      return lit_open_fill(st, k, typeinfo.TypeStruct { name: h.name, args: lit_method_receiver(c, fa.field, h.name, h.args, ts) });
+    },
+    typeinfo.TypeUnion(h) => {
+      return lit_open_fill(st, k, typeinfo.TypeUnion { name: h.name, args: lit_method_receiver(c, fa.field, h.name, h.args, ts) });
+    },
+    _ => {}
+  }
+  if (!bare_map(st.otypes[k]) || c.args.len() != 2 || fa.field != "insert" && fa.field != "get_or") {
+    return st;
+  }
+  return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], ts)), settled_literal(check_expr(c.args[1], ts))));
+}
+
+// lit_method_receiver is the receiver type arguments that the arguments of a
+// method call bind, such as `[i32, string]` for `m.insert(1, "one")` with
+// `insert(k: K, v: V)` on `OrdMap[K, V]`. An argument that the call does not
+// bind stays as it is in `have`.
+function lit_method_receiver(c: ast.ExprCall, method: string, name: string, have: typeinfo.Type[], s: Scope): typeinfo.Type[] {
+  let Some(msig) = s.lookup_method(method, name) else {
+    return have;
+  };
+  let rref = parser.parse_type_ref(msig.receiver_type);
+  if (c.args.len() != msig.param_type_names.len() || rref.args.len() != have.len()) {
+    return have;
+  }
+  let tps: string[] = [];
+  for ar in rref.args {
+    tps = tps.append(ar.base);
+  }
+  let bn: string[] = [];
+  let bt: typeinfo.Type[] = [];
+  for i in 0..c.args.len() {
+    let (n2, t2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), settled_literal(check_expr(c.args[i], s)), tps, s.type_names(), bn, bt);
+    bn = n2;
+    bt = t2;
+  }
+  let args: typeinfo.Type[] = [];
+  for i in 0..have.len() {
+    let at = util.index_of_str(bn, tps[i]);
+    if (unbound_enum_argument(have[i]) && at >= 0) {
+      args = args.append(bt[at]);
+    } else {
+      args = args.append(have[i]);
+    }
+  }
+  return args;
 }
 
 // lit_array_receiver gives a literal array local the element type of a typed
@@ -32701,7 +32825,11 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           }
         }
         let open_type = check_expr(v.init, s);
-        if (holds_open_enum(open_type, s)) {
+        let (call_type, open_call) = open_call_type(v.init, s);
+        if (open_call) {
+          open_type = call_type;
+        }
+        if (open_call || holds_open_enum(open_type, s)) {
           let ost = lit_expr(v.init, s, st);
           let k = ost.okeys.len();
           return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
@@ -33202,10 +33330,23 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
 struct LitScan { found: boolean, generics: string[] }
 
 function lit_scan_stmt(st: ast.Stmt, own sc: LitScan): LitScan {
-  if (sc.found || !lit_candidate_at(st)) {
+  if (sc.found || !lit_candidate_at(st) && !open_call_candidate(st, sc.generics)) {
     return sc;
   }
   return LitScan { ...sc, found: true };
+}
+
+function open_call_candidate(st: ast.Stmt, generics: string[]): boolean {
+  let ast.StmtVar(v) = st else {
+    return false;
+  };
+  let ast.ExprCall(c) = v.init else {
+    return false;
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return false;
+  };
+  return v.type_name.len() == 0 && !name_has_comma(v.name) && c.type_args.len() == 0 && util.has_str(generics, id.name);
 }
 
 function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {

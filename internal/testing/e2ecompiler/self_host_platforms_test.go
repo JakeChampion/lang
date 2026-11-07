@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostPlatformsCapabilityRules(t *testing.T) {
@@ -43,7 +45,7 @@ func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	nativeBin := buildFernCLIBin(t)
+	oracle := e2eharness.BuildLangBinForInterp(t)
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
@@ -59,7 +61,7 @@ func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
 
 	var diffs []string
 	for _, c := range cases {
-		nativeOut, _ := exec.Command(nativeBin, "-check", "-target", "wasm32-wasi", c).CombinedOutput()
+		nativeOut, _ := e2eharness.CheckTargetVerdict(t, oracle, c, "wasm32-wasi")
 		shOut, _ := exec.Command(driverBin, "-check", "-target", "wasm32-wasi", c, stdlib).CombinedOutput()
 		want := strings.Join(e066Sites(string(nativeOut)), " ")
 		got := strings.Join(e066Sites(string(shOut)), " ")

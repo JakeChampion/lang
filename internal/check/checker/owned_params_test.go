@@ -1291,6 +1291,26 @@ function step(own a: Asm, v: i32): Asm {
 }`)
 }
 
+// The superseded field can move into a call that is an argument of another
+// call (#14357).
+func TestOwnGuardAllowsSupersededFieldMoveInNestedCall(t *testing.T) {
+	wantOK(t, "field-move-nested-call", fieldMovePrelude+`
+function again(own s: Cfi): Cfi { return s; }
+function step(own a: Asm, v: i32): Asm {
+    a = Asm { ...a, cfi: again(record(a.cfi, v)) };
+    return Asm { ...a, cfi: again(record(a.cfi, v)) };
+}`)
+}
+
+// A lambda in the field value can run later, so it does not take the field.
+func TestOwnGuardRejectsSupersededFieldMoveInLambda(t *testing.T) {
+	wantE051(t, "field-move-lambda", fieldMovePrelude+`
+function apply(f: () => Cfi): Cfi { return f(); }
+function step(own a: Asm, v: i32): Asm {
+    return Asm { ...a, cfi: apply(() => record(a.cfi, v)) };
+}`)
+}
+
 // A let initializer takes the superseded field as a return does (#14111).
 func TestOwnGuardAllowsSupersededFieldMoveOnLet(t *testing.T) {
 	wantOK(t, "field-move-let-form", fieldMovePrelude+`

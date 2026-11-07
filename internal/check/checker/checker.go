@@ -5763,6 +5763,9 @@ type checker struct {
 	litFields         map[*ast.FieldAccess]*litLocal
 	litCompositeReads map[*ast.Ident]*ast.Var
 	openEnumLocals    map[*ast.Var]*scope
+	openCallLet       *ast.Call
+	pendingOpenCall   *openCall
+	openGenericCalls  map[*ast.Var]*openCall
 	openPassedOver    map[*ast.Var]bool
 	current           *ast.FuncDecl
 	loopDepth         int
@@ -10383,27 +10386,38 @@ func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[s
 		return nil
 	}
 	return SupersededFieldMoves(sl, target, func(field string, value ast.Expr) *ast.FieldAccess {
-		call, ok := value.(*ast.Call)
-		if !ok || call.Method != nil {
-			return nil
-		}
-		cid, ok := call.Callee.(*ast.Ident)
-		if !ok {
-			return nil
-		}
-		flags, isOwn := ownFuncs[cid.Name]
-		if !isOwn {
-			return nil
-		}
-		for i, a := range call.Args {
-			if i >= len(flags) || !flags[i] {
-				continue
+		var found *ast.FieldAccess
+		callsOutsideLambdas(value, func(call *ast.Call) bool {
+			cid, ok := call.Callee.(*ast.Ident)
+			if !ok || call.Method != nil {
+				return false
 			}
-			if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == field {
-				return fa
+			flags := ownFuncs[cid.Name]
+			for i, a := range call.Args {
+				if fa, ok := a.(*ast.FieldAccess); ok && i < len(flags) && flags[i] && fa.Field == field {
+					found = fa
+					return true
+				}
 			}
+			return false
+		})
+		return found
+	})
+}
+
+// callsOutsideLambdas calls visit on each call in e that no lambda holds,
+// until visit returns true. A superseded field can move into a call at any
+// depth of the field's value.
+func callsOutsideLambdas(e ast.Expr, visit func(*ast.Call) bool) {
+	done := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if _, ok := n.(*ast.Lambda); ok || done {
+			return false
 		}
-		return nil
+		if c, ok := n.(*ast.Call); ok {
+			done = visit(c)
+		}
+		return !done
 	})
 }
 
@@ -11575,7 +11589,11 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		unannotated := n.Type == nil
 		c.setElemHintFor(n.Init, n.Type)
 		c.expectedType = n.Type
+		if call, ok := n.Init.(*ast.Call); ok && unannotated {
+			c.openCallLet = call
+		}
 		got := c.checkExpr(n.Init, s)
+		c.openCallLet = nil
 		c.expectedType = nil
 		c.elemHint = nil
 		if n.Type != nil {
@@ -11646,6 +11664,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if unannotated {
 			c.beginLitNestedLocal(n, s)
 			c.beginOpenEnumLocal(n, s)
+			c.beginOpenGenericCall(n)
 		}
 	case *ast.Destructure:
 		got := c.checkExpr(n.Init, s)
@@ -14718,6 +14737,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var recvIsArg0 bool
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			c.settleOpenMapByCall(n, fa, s)
+			c.settleOpenCallByMethod(n, fa, s)
 			c.settleLitArrayByCall(n, fa, s)
 			tt := c.receiverType(fa.Target, s)
 			recvFA, recvType = fa, tt
@@ -15139,6 +15159,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					c.errArgMismatch(n, d.i, recvIsArg0, want, ast.ArrayType{})
 				}
 			}
+			if c.openCallLet == n {
+				if result, open := c.openGenericResult(n, genericFn, ft, sub); open {
+					return result
+				}
+			}
 			args := make([]ast.Type, len(genericFn.TypeParams))
 			complete := true
 			for i, tp := range genericFn.TypeParams {
@@ -15148,8 +15173,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					}
 					args[i] = v
 				} else {
-					display, spelling := callSiteName(genericFn)
-					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
+					c.errUninferredParam(n, genericFn, tp)
 					complete = false
 				}
 			}

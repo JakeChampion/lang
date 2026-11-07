@@ -63,9 +63,125 @@ func TestOracleVerdictCachesByInputs(t *testing.T) {
 		t.Fatalf("a second -check ran the oracle again: %d runs, want 4", got)
 	}
 
+	expectRuns := func(want int, what string) {
+		t.Helper()
+		if got := runs(); got != want {
+			t.Fatalf("%s: the oracle ran %d times, want %d", what, got, want)
+		}
+	}
+	CheckTargetVerdict(t, fake, src, TargetWasm32Wasi)
+	expectRuns(5, "-check -target shared the -check verdict")
+	CheckTargetVerdict(t, fake, src, TargetWasm32Wasi)
+	expectRuns(5, "a second -check -target wasm32-wasi")
+	CheckTargetVerdict(t, fake, src, TargetX86_64Linux)
+	expectRuns(6, "a second target shared the first target's verdict")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(cwd, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	CheckTargetVerdict(t, fake, rel, TargetWasm32Wasi)
+	expectRuns(7, "a relative spelling, which the output names, shared the absolute one's verdict")
+
 	t.Setenv("FERN_SELFHOST_BUILD_CACHE", "")
-	check(5)
-	check(6)
+	check(8)
+	check(9)
+}
+
+func TestOracleVerdictKeysAMissingImport(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	work := t.TempDir()
+	calls := filepath.Join(work, "calls")
+	fake := filepath.Join(work, "fake-oracle")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho run >> "+calls+"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(work, "main.fern")
+	if err := os.WriteFile(src, []byte("import \"./missing\";\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() int {
+		data, _ := os.ReadFile(calls)
+		return strings.Count(string(data), "run")
+	}
+	CheckVerdict(t, fake, src)
+	CheckVerdict(t, fake, src)
+	if got := runs(); got != 1 {
+		t.Fatalf("a program with a missing import ran the oracle %d times, want 1", got)
+	}
+	if err := os.WriteFile(filepath.Join(work, "missing.fern"), []byte("pub function f(): i32 { return 1; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	CheckVerdict(t, fake, src)
+	if got := runs(); got != 2 {
+		t.Fatalf("the missing module appeared and the oracle ran %d times, want 2", got)
+	}
+}
+
+func TestOracleVerdictKeysASourceThatDoesNotLex(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	work := t.TempDir()
+	calls := filepath.Join(work, "calls")
+	fake := filepath.Join(work, "fake-oracle")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho run >> "+calls+"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(work, "main.fern")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := func() int {
+		data, _ := os.ReadFile(calls)
+		return strings.Count(string(data), "run")
+	}
+	write("function main(): i32 { return 1_; }\n")
+	CheckVerdict(t, fake, src)
+	CheckVerdict(t, fake, src)
+	if got := runs(); got != 1 {
+		t.Fatalf("a source that does not lex ran the oracle %d times, want 1", got)
+	}
+	write("function main(): i32 { return 2_; }\n")
+	CheckVerdict(t, fake, src)
+	if got := runs(); got != 2 {
+		t.Fatalf("the source changed and the oracle ran %d times, want 2", got)
+	}
+}
+
+func TestCheckSourceVerdictKeysTheSource(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	work := t.TempDir()
+	calls := filepath.Join(work, "calls")
+	fake := filepath.Join(work, "fake-oracle")
+	script := "#!/bin/sh\necho run >> " + calls + "\necho \"args $1 $2\"\ncat\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() int {
+		data, _ := os.ReadFile(calls)
+		return strings.Count(string(data), "run")
+	}
+	first := "import \"std/test\";\nfunction main(): i32 { return 0; }\n"
+	out, exit := CheckSourceVerdict(t, fake, first)
+	if exit != 1 || string(out) != "args -check -\n"+first {
+		t.Fatalf("verdict = %q exit %d, want the flags, the source on stdin and exit 1", out, exit)
+	}
+	CheckSourceVerdict(t, fake, first)
+	if got := runs(); got != 1 {
+		t.Fatalf("the same source ran the oracle %d times, want 1", got)
+	}
+	CheckSourceVerdict(t, fake, "import \"std/fs\";\nfunction main(): i32 { return 0; }\n")
+	if got := runs(); got != 2 {
+		t.Fatalf("a new source ran the oracle %d times, want 2", got)
+	}
 }
 
 func TestInterpVerdictRunsExternalFernAgain(t *testing.T) {

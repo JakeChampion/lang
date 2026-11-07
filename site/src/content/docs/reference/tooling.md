@@ -37,7 +37,8 @@ any flag that has no value: `-cover=false`, `-g=true`.
 | `x86-64-android` | Static position-independent ELF for Android emulators and x86-64 devices. |
 | `wasm32-wasi` | WASI Preview 2 component; run with `wasmtime run`. |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component; run with `wasmtime serve`. |
-| `arm64-freestanding`, `x86-64-freestanding` | Check only (`fern -check -target …`): no OS underneath, so no host capabilities at all. No backend emits for them yet. |
+| `arm64-freestanding`, `x86-64-freestanding` | Assembly for an embedder to link, entered through the `-export` functions. No OS underneath, so no host capabilities at all. |
+| `arm64-kernel` | ELF kernel image that a boot loader or a VMM loads at `-ram BASE`. No host and no syscalls. |
 
 Binaries are static and do no CPU feature detection at run time, so the
 baseline is a requirement, not a fast path. `fern -targets`

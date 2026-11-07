@@ -3,13 +3,13 @@ package e2ecompiler
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/stdlib"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostCheckAcceptsEveryStdlibImport(t *testing.T) {
@@ -51,8 +51,8 @@ func TestSelfHostCheckAcceptsEveryStdlibImport(t *testing.T) {
 			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if out, err := exec.Command(native, "-check", path).CombinedOutput(); err != nil {
-				t.Fatalf("native checker rejected the import: %v\n%s", err, out)
+			if out, exit := e2eharness.CheckSourceVerdict(t, native, src); exit != 0 {
+				t.Fatalf("native checker rejected the import: exit %d\n%s", exit, out)
 			}
 			cmd := runX86_64Bin(runner, driver)
 			cmd.Args = append(cmd.Args, "-check", path, root)
