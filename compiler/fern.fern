@@ -2381,42 +2381,25 @@ function ram_layout(text: string, target: string): (i64, i64, boolean) {
 
 // A decimal or 0x hex number with an optional K, M or G suffix, or -1.
 function ram_number(text: string): i64 {
-  let radix = 10i64;
-  let start = 0;
-  let end = text.len();
-  let scale = 1i64;
-  if (text.starts_with("0x")) {
-    radix = 16i64;
-    start = 2;
-  } else if (end > 0) {
-    let last = text[end - 1];
-    if (last == b'K') {
-      scale = 1024i64;
-      end -= 1;
-    } else if (last == b'M') {
-      scale = 1048576i64;
-      end -= 1;
-    } else if (last == b'G') {
-      scale = 1073741824i64;
-      end -= 1;
-    }
-  }
-  if (start >= end) {
-    return -1i64;
-  }
-  let limit = 1099511627776i64 / scale;
-  let v = 0i64;
-  for i in start..end {
-    let d = hex_digit(text[i]);
-    if (d < 0i64 || d >= radix || v > (limit - d) / radix) {
+  if (!text.starts_with("0x")) {
+    let v = size_bytes(text);
+    if (v <= 0i64 && text != "0") {
       return -1i64;
     }
-    v = v * radix + d;
+    return v;
   }
-  if (v == 0i64 && radix == 10i64 && text != "0") {
+  let v = 0i64;
+  for i in 2..text.len() {
+    let d = hex_digit(text[i]);
+    if (d < 0i64 || v > 1099511627776i64) {
+      return -1i64;
+    }
+    v = v * 16i64 + d;
+  }
+  if (text.len() == 2) {
     return -1i64;
   }
-  return v * scale;
+  return v;
 }
 
 function hex_digit(c: u8): i64 {
@@ -2451,9 +2434,13 @@ function quarantine_bytes(text: string, sanitize: boolean): i64 {
   return value;
 }
 
-// Digits with an optional K, M or G suffix, as bytes. Malformed text is zero.
+// Digits with an optional K, M or G suffix, as bytes. Malformed text, and a
+// value that does not fit in an i64, is zero.
 function size_bytes(text: string): i64 {
   let n = text.len();
+  if (n == 0) {
+    return 0i64;
+  }
   let scale: i64 = 1i64;
   let last = text[n - 1];
   if (last == b'K') {
@@ -2466,11 +2453,12 @@ function size_bytes(text: string): i64 {
     scale = 1073741824i64;
     n -= 1;
   }
+  let limit = 9223372036854775807i64 / scale;
   let value: i64 = 0i64;
   let i = 0;
   while (i < n) {
     let d = text[i] as i32 - 48;
-    if (d < 0 || d > 9 || value > 17179869184i64) {
+    if (d < 0 || d > 9 || value > (limit - d as i64) / 10i64) {
       return 0i64;
     }
     value = value * 10i64 + d as i64;

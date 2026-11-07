@@ -402,6 +402,7 @@ func TestSelfHostQuarantineFlag(t *testing.T) {
 		{[]string{"-quarantine", "1M"}, "needs -sanitize"},
 		{[]string{"-sanitize", "-quarantine", "512K"}, "0 for no bound, or a size from 1M to 16G"},
 		{[]string{"-sanitize", "-quarantine", "32G"}, "0 for no bound, or a size from 1M to 16G"},
+		{[]string{"-sanitize", "-quarantine", "17179869185G"}, "0 for no bound, or a size from 1M to 16G"},
 		{[]string{"-sanitize", "-quarantine", "lots"}, "0 for no bound, or a size from 1M to 16G"},
 	} {
 		args := append(append([]string{}, tc.flags...), "-target", "x86-64-linux", "-o", filepath.Join(t.TempDir(), "main"), src, cli.stdlib)

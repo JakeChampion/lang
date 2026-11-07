@@ -85,6 +85,7 @@ func TestSelfHostHeapLimit(t *testing.T) {
 			{[]string{"-target", "x86-64-linux", "-heap-limit", "512K"}, "fern: -heap-limit takes a size from 1M to 16G"},
 			{[]string{"-target", "x86-64-linux", "-heap-limit", "32G"}, "fern: -heap-limit takes a size from 1M to 16G"},
 			{[]string{"-target", "x86-64-linux", "-heap-limit", "99999999999999999999"}, "fern: -heap-limit takes a size from 1M to 16G"},
+			{[]string{"-target", "x86-64-linux", "-heap-limit", "17179869185G"}, "fern: -heap-limit takes a size from 1M to 16G"},
 			{[]string{"-target", "x86-64-linux", "-heap-limit", "64MB"}, "fern: -heap-limit takes a size from 1M to 16G"},
 			{[]string{"-target", "arm64-linux", "-heap-limit", "M"}, "fern: -heap-limit takes a size from 1M to 16G"},
 			{[]string{"-target", "wasm32-wasi", "-heap-limit", "64M"}, "fern: -heap-limit is only supported for the native targets (got \"wasm32-wasi\")"},
