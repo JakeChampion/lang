@@ -1095,6 +1095,25 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
   return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, raw, start_line, start_col) };
 }
 
+const STRING_STOP: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+];
+
 function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();
   let out = "";
@@ -1112,10 +1131,7 @@ function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
       out += utf8_encode(ev.val);
       continue;
     }
-    let re = l.i;
-    while (re < l.n && l.src[re] != b'"' && l.src[re] != 92 && l.src[re] != b'\n') {
-      re += 1;
-    }
+    let re = __scan_set(l.src, l.i, STRING_STOP);
     out += slice_unchecked(l.src, l.i, re);
     l = l.advance_in_line(re);
   }
@@ -2353,6 +2369,47 @@ function test_multibyte(): i32 {
   return 0;
 }
 
+function test_string_scan_boundaries(): i32 {
+  let text = "";
+  let prefix = "";
+  for n in 0..81 {
+    let src = prefix + "\"" + text + "é\\n\\\"\\u{1F600}" + text + "\";";
+    let toks = tokenize(src);
+    if (toks.len() != 3) {
+      return 2240;
+    }
+    match (toks[0]) {
+      TokString(t) => {
+        if (t.value != text + "é\n\"😀" + text || t.line != 1 || t.col != n + 1) {
+          return 2241;
+        }
+      },
+      _ => {
+        return 2242;
+      }
+    }
+    match (toks[1]) {
+      TokPunct(t) => {
+        if (t.text != ";" || t.col != src.len()) {
+          return 2243;
+        }
+      },
+      _ => {
+        return 2244;
+      }
+    }
+    if (!has_error(tokenize("\"" + text + "\n"))) {
+      return 2245;
+    }
+    if (!has_error(tokenize("\"" + text))) {
+      return 2246;
+    }
+    text += "x";
+    prefix += " ";
+  }
+  return 0;
+}
+
 function test_source_decoding(): i32 {
   match (decode_source([47 as u8, 47 as u8, 10 as u8, 32 as u8, 255 as u8])) {
     Ok(_) => {
@@ -2379,6 +2436,10 @@ function test_source_decoding(): i32 {
 
 function main(): i32 {
   let c = 0;
+  c = test_string_scan_boundaries();
+  if (c != 0) {
+    return c;
+  }
   c = test_mixed();
   if (c != 0) {
     return c;

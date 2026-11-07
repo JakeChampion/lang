@@ -22,9 +22,9 @@ func assertTokens(t *testing.T, src string, want []tokSpec) {
 		t.Fatalf("%q: got %d tokens, want %d: %v", src, len(toks), len(want), toks)
 	}
 	for i, w := range want {
-		if toks[i].Kind != w.k || toks[i].Text != w.s || toks[i].Suffix != w.suffix {
+		if toks[i].Kind != w.k || toks[i].Text != w.s || toks[i].Suffix() != w.suffix {
 			t.Errorf("%q: tok[%d] = (%v %q suffix=%q), want (%v %q suffix=%q)",
-				src, i, toks[i].Kind, toks[i].Text, toks[i].Suffix, w.k, w.s, w.suffix)
+				src, i, toks[i].Kind, toks[i].Text, toks[i].Suffix(), w.k, w.s, w.suffix)
 		}
 	}
 }

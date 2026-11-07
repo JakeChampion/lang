@@ -162,8 +162,8 @@ func TestStringLiteralHexEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fts[0].Kind != FString || len(fts[0].FParts) == 0 || fts[0].FParts[0].Lit != "A=" {
-		t.Errorf("f-string \\x: got %v, want first FPart Lit %q", fts[0].FParts, "A=")
+	if fts[0].Kind != FString || len(fts[0].FParts()) == 0 || fts[0].FParts()[0].Lit != "A=" {
+		t.Errorf("f-string \\x: got %v, want first FPart Lit %q", fts[0].FParts(), "A=")
 	}
 	if _, _, err := Tokenize(`"\xZ1"`); err == nil {
 		t.Error("expected error on \\x with non-hex digit")
@@ -201,7 +201,7 @@ func TestFStringLiteralUTF8(t *testing.T) {
 			t.Errorf("%s: lex error: %v", c.src, err)
 			continue
 		}
-		got := toks[0].FParts
+		got := toks[0].FParts()
 		if len(got) != len(c.want) {
 			t.Errorf("%s: got %d FParts, want %d:\ngot: %v", c.src, len(got), len(c.want), got)
 			continue
@@ -240,7 +240,7 @@ func TestStringEscapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := toks[0].FParts
+	parts := toks[0].FParts()
 	if len(parts) != 3 || parts[0].Lit != "😀" || parts[1].Expr != "x" || parts[2].Lit != "{" {
 		t.Errorf("f-string \\u{...} parts = %+v", parts)
 	}
@@ -282,7 +282,7 @@ func TestFStringParts(t *testing.T) {
 			t.Errorf("%s: got first token kind=%v, want FString", c.src, toks[0].Kind)
 			continue
 		}
-		got := toks[0].FParts
+		got := toks[0].FParts()
 		if len(got) != len(c.want) {
 			t.Errorf("%s: got %d FParts, want %d:\ngot: %v", c.src, len(got), len(c.want), got)
 			continue
@@ -379,9 +379,9 @@ func TestHexLiteral(t *testing.T) {
 		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want), toks)
 	}
 	for i, w := range want {
-		if toks[i].Kind != w.k || toks[i].Text != w.s || toks[i].Suffix != w.suffix {
+		if toks[i].Kind != w.k || toks[i].Text != w.s || toks[i].Suffix() != w.suffix {
 			t.Errorf("tok[%d] = (%v %q suffix=%q), want (%v %q suffix=%q)",
-				i, toks[i].Kind, toks[i].Text, toks[i].Suffix, w.k, w.s, w.suffix)
+				i, toks[i].Kind, toks[i].Text, toks[i].Suffix(), w.k, w.s, w.suffix)
 		}
 	}
 }
@@ -404,8 +404,8 @@ func TestRadixLiteral(t *testing.T) {
 		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want)+1, toks)
 	}
 	for i, w := range want {
-		if toks[i].Kind != Number || toks[i].Text != w.text || toks[i].Suffix != w.suffix {
-			t.Errorf("tok[%d] = (%v %q suffix=%q), want (Number %q suffix=%q)", i, toks[i].Kind, toks[i].Text, toks[i].Suffix, w.text, w.suffix)
+		if toks[i].Kind != Number || toks[i].Text != w.text || toks[i].Suffix() != w.suffix {
+			t.Errorf("tok[%d] = (%v %q suffix=%q), want (Number %q suffix=%q)", i, toks[i].Kind, toks[i].Text, toks[i].Suffix(), w.text, w.suffix)
 		}
 	}
 }
@@ -538,9 +538,9 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 			t.Errorf("%s: tokenize error: %v", c.src, err)
 			continue
 		}
-		if toks[0].Kind != c.kind || toks[0].Text != c.text || toks[0].Suffix != c.suffix {
+		if toks[0].Kind != c.kind || toks[0].Text != c.text || toks[0].Suffix() != c.suffix {
 			t.Errorf("%s: got %v Text=%q Suffix=%q, want %v Text=%q Suffix=%q",
-				c.src, toks[0].Kind, toks[0].Text, toks[0].Suffix, c.kind, c.text, c.suffix)
+				c.src, toks[0].Kind, toks[0].Text, toks[0].Suffix(), c.kind, c.text, c.suffix)
 		}
 	}
 }
