@@ -26,8 +26,7 @@ Keep addresses outside that RAM as Device memory for board MMIO.
   data cache off, initialized RAM, and no stack requirement.
 - Use 4 KiB translation tables across the existing 40-bit address space.
   Use blocks for uniform ranges and pages at RAM boundaries.
-- Round the RAM end to its containing page for translation attributes.
-  Keep the heap and stack inside the exact configured byte range.
+- Require a RAM size that is a multiple of 4 KiB, so no page is part RAM.
 - Use Normal non-cacheable RAM and Device-nGnRnE MMIO. Cache activation is a
   separate contract. Mark Device mappings execute-never.
 - Keep the table region outside the heap. Retain the boot core, FP/SIMD,
