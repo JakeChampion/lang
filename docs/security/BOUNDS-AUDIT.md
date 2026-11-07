@@ -30,12 +30,11 @@ A Wasm component reports only success or failure to wasmtime, so its exit code i
 | Pattern | Observation |
 |---|---|
 | A checked string slice `s[1:9]` past the end | Answers `None` on every target (`ST-01`). |
-| `__arr_set_len(xs, 1000000)` on a three-element array, then `xs[999999]` | No abort. The read returns whatever the address holds. |
+| `__arr_set_len(xs, 1000000)` on a three-element array inside an `unsafe` block, then `xs[999999]` | No abort. The read returns whatever the address holds. |
 
-The second row is the raw intrinsic hole that [the inventory](UNSAFE-INVENTORY.md) records.
-`__arr_set_len` is reachable from every source today.
-Its obligation, a length within the capacity, has no checker and no runtime check.
-The coordinated enforcement change must put it behind an `unsafe` block.
+The second row is a raw intrinsic that [the inventory](UNSAFE-INVENTORY.md) records.
+Both checkers refuse `__arr_set_len` outside an `unsafe` block as `E095`, and the `arr-set-len-outside-block` row of `TestSelfHostCheckerCodesX86_64` pins the refusal.
+Its obligation, a length within the capacity, has no runtime check, so the `unsafe` block carries it.
 
 ## Limits
 
