@@ -21,12 +21,22 @@ struct Sim {
   nodes: node.Node[],
   rooms: internet.Room[],
   table: rooms.Rooms,
-  // The address of each phone. Node 1 moves to a new address at `move_at`.
+  // The address of each phone.
   addrs: net.SocketAddr[],
   flights: Flight[],
   now: i64,
   heard: i32[],
+  // The frames that node 1 heard from the start of the outage to the last
+  // press and after it, and the new nodes after a lost transport.
+  heard_dark: i32,
+  heard_late: i32,
+  resumed: i32,
 }
+
+// Node 0 presses and releases the button at these times, and node 1 moves to
+// a new address at `move_at`. No datagram arrives from `dark_from` until
+// `dark_to`.
+struct Script { press: i64[], release: i64[], move_at: i64, dark_from: i64, dark_to: i64 }
 
 function addr(last: i32, port: i32): net.SocketAddr {
   return net.socket_addr(net.ipv4(198, 51, 100, last), port);
@@ -56,6 +66,14 @@ function entropy(k: i32, now: i64): u8[] {
   return out;
 }
 
+function id_seed(k: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..32 {
+    out = out.append(((i * 11 + k * 53) % 256) as u8);
+  }
+  return out;
+}
+
 function seed(k: i32): u8[] {
   let out: u8[] = [];
   for i in 0..node.SEED_BYTES {
@@ -78,7 +96,8 @@ function start(): Sim {
       r0 = r0.append(r);
     }
   }
-  return Sim { nodes: [node.new(5i64, seed(1), 0i64), node.new(9i64, seed(2), 0i64)], rooms: r0, table: joined.rooms, addrs: [addr(1, 47120), addr(2, 47120)], flights: [], now: 0i64, heard: [0, 0] };
+  let nodes = [node.with_identity(node.new(5i64, seed(1), 0i64), id_seed(1), []), node.with_identity(node.new(9i64, seed(2), 0i64), id_seed(2), [])];
+  return Sim { nodes: nodes, rooms: r0, table: joined.rooms, addrs: [addr(1, 47120), addr(2, 47120)], flights: [], now: 0i64, heard: [0, 0], heard_dark: 0, heard_late: 0, resumed: 0 };
 }
 
 function owner_of(s: Sim, a: net.SocketAddr): i32 {
@@ -110,10 +129,12 @@ function deliver(s0: Sim): Sim {
   return Sim { ...s, flights: left.concat(later) };
 }
 
-function send(s: Sim, i: i32): Sim {
+function send(s: Sim, i: i32, dark: boolean): Sim {
   let flights = s.flights;
-  for d in s.nodes[i].out {
-    flights = flights.append(Flight { at: s.now + STEP_MS, to: -1, from: s.addrs[i], data: internet.wrap(s.rooms[i], d.data) });
+  if (!dark) {
+    for d in s.nodes[i].out {
+      flights = flights.append(Flight { at: s.now + STEP_MS, to: -1, from: s.addrs[i], data: internet.wrap(s.rooms[i], d.data) });
+    }
   }
   let n = s.nodes[i];
   return Sim { ...s, flights: flights, heard: s.heard.with(i, s.heard[i] + n.heard.len()), nodes: s.nodes.with(i, node.drained(n)) };
@@ -138,32 +159,52 @@ function tone(): i32[] {
   return out;
 }
 
-// Both users confirm when the code shows. Node 0 holds the button from 5 s to
-// 15 s, and node 1 moves to a new address at 10 s.
-function run(end: i64): Sim {
+// Both users confirm when the code shows and the proof of the peer is in,
+// but not after the start of an outage. A node that lost its transport starts
+// again in the room, as the app does.
+function run(sc: Script, end: i64): Sim {
   let s = start();
   let voice = tone();
   while (s.now <= end) {
+    let dark = s.now >= sc.dark_from && s.now < sc.dark_to;
+    if (dark) {
+      s = Sim { ...s, flights: [] };
+    }
     s = deliver(s);
     let nodes = s.nodes;
+    let resumed = s.resumed;
+    let users_confirm = sc.dark_from < 0i64 || s.now < sc.dark_from;
     for i in 0..2 {
       let n = nodes[i];
-      if (shows_code(n)) {
+      if (users_confirm && shows_code(n) && n.peer_identity.len() > 0) {
         n = node.confirm(n, s.now);
       }
-      if (i == 0 && s.now == 5000i64) {
+      if (i == 0 && sc.press.contains(s.now)) {
         n = node.press(n, s.now);
       }
-      if (i == 0 && s.now == 15000i64) {
+      if (i == 0 && sc.release.contains(s.now)) {
         n = node.release(n, s.now);
       }
-      nodes = nodes.with(i, node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice));
+      n = node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice);
+      if (node.reconnecting(n)) {
+        n = node.resume(n, 15i64 + 4i64 * (i as i64), seed(i + 3), s.now);
+        resumed = resumed + 1;
+      }
+      nodes = nodes.with(i, n);
     }
-    s = Sim { ...s, nodes: nodes };
-    if (s.now == 10000i64) {
+    s = Sim { ...s, nodes: nodes, resumed: resumed };
+    if (s.now == sc.move_at) {
       s = Sim { ...s, addrs: s.addrs.with(1, addr(7, 40000)) };
     }
-    s = send(send(s, 0), 1);
+    let before = s.heard[1];
+    s = send(send(s, 0, dark), 1, dark);
+    if (sc.dark_from >= 0i64 && s.now >= sc.dark_from) {
+      if (s.now < sc.press[sc.press.len() - 1]) {
+        s = Sim { ...s, heard_dark: s.heard_dark + s.heard[1] - before };
+      } else {
+        s = Sim { ...s, heard_late: s.heard_late + s.heard[1] - before };
+      }
+    }
     s = Sim { ...s, now: s.now + STEP_MS };
   }
   return s;
@@ -181,7 +222,7 @@ function epoch_of(n: node.Node, sending: boolean): i32 {
 }
 
 function test_two_phones_talk_through_the_relay(): test.TestOutcome {
-  let s = run(20000i64);
+  let s = run(Script { press: [5000i64], release: [15000i64], move_at: 10000i64, dark_from: -1i64, dark_to: -1i64 }, 20000i64);
   let a = s.nodes[0];
   let b = s.nodes[1];
   let rooms_ok = s.rooms.len() == 2 && s.rooms[0].code == s.rooms[1].code;
@@ -192,6 +233,24 @@ function test_two_phones_talk_through_the_relay(): test.TestOutcome {
   let got = rooms_ok.to_string() + " " + paired.to_string() + " " + (s.heard[1] >= 480).to_string() + " " + (s.heard[1] <= 500).to_string() + " " + rekeyed.to_string();
   if (got != "true true true true true") {
     return test.fail(got + ": heard " + s.heard[1].to_string() + ", codes " + a.link.sas + " " + b.link.sas);
+  }
+  return test.pass();
+}
+
+// Both phones lose the network from 8 s to 14 s while node 0 talks, and node
+// 1 comes back on a new address. Each side loses the other and starts a new
+// key exchange in the same room. The two phones know each other now, so they
+// connect with no user who confirms a code. A press before the new session is
+// up sends nothing, and a press after it is heard.
+function test_phones_reconnect_in_the_room(): test.TestOutcome {
+  let sc = Script { press: [4000i64, 13500i64, 20000i64], release: [13800i64, 24000i64], move_at: 11000i64, dark_from: 8000i64, dark_to: 14000i64 };
+  let s = run(sc, 26000i64);
+  let a = s.nodes[0];
+  let b = s.nodes[1];
+  let up = session.connected(a.sess) && session.connected(b.sess) && a.sess.peer_ready && b.sess.peer_ready;
+  let got = s.resumed.to_string() + " " + up.to_string() + " " + s.heard_dark.to_string() + " " + (s.heard_late >= 180).to_string();
+  if (got != "2 true 0 true") {
+    return test.fail(got + ": heard " + s.heard_late.to_string() + " late, notices " + a.notice + " / " + b.notice);
   }
   return test.pass();
 }
@@ -207,6 +266,7 @@ function test_a_stranger_reaches_nobody(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("walkie internet");
   r = r.it("two phones talk through the relay, and one moves", test_two_phones_talk_through_the_relay);
+  r = r.it("two phones reconnect in the room after an outage", test_phones_reconnect_in_the_room);
   r = r.it("a stranger reaches nobody", test_a_stranger_reaches_nobody);
   return r.finish();
 }
