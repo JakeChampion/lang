@@ -22,6 +22,7 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"through a generic call", ident + "function main(): i32 { let m = id(Map { }); let n: Map[string, i32] = m; return n.len(); }\n"},
 		{"insert through a generic call", ident + "function main(): i32 { let m = id(Map { }); m = m.insert(\"a\", 1); return m.len(); }\n"},
 		{"generic call as an argument", ident + "function size(m: Map[string, i64]): i32 { return m.len(); }\nfunction main(): i32 { return size(id(Map { })); }\n"},
+		{"generic call as a statement", ident + "function main(): i32 { id(Map { }); return 0; }\n"},
 	}
 	for _, c := range good {
 		if err := checkSource(t, c.src); err != nil {

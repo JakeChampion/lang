@@ -16031,11 +16031,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.errfCode(ent.Value.Pos(), "E045", "map value type %s, expected %s", vt, valueType)
 			}
 		}
-		n.KeyType = keyType
-		n.ValueType = valueType
 		if len(n.Entries) == 0 {
 			return ast.StructType{Name: "Map"}
 		}
+		n.KeyType = keyType
+		n.ValueType = valueType
 		return ast.StructType{Name: "Map", Args: []ast.Type{keyType, valueType}}
 	case *ast.FieldAccess:
 		if tid, ok := n.Target.(*ast.Ident); ok {
