@@ -103,6 +103,10 @@ jobs:
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_mcu_order_test.py
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_component_frames_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-component-frames.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_mcu_entropy_test.py
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-mcu-entropy.sh
         env:
@@ -405,6 +409,12 @@ jobs:
         with:
           name: image-jpeg-mcu-order
           path: fern-image/build/jpeg-mcu-order-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-component-frames-*.json') != ''
+        with:
+          name: image-jpeg-component-frames
+          path: fern-image/build/jpeg-component-frames-*.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && hashFiles('fern-image/build/jpeg-padded-blocks-*.json') != ''

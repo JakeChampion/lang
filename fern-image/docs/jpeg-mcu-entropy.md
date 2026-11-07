@@ -39,6 +39,7 @@ An independent bit-string reference checks complete output bytes.
 An offline libjpeg reader checks complete natural-order coefficients after a test-only frame wrapper.
 Native and Wasm workers must report positive, balanced heaps with zero live bytes.
 
-The image writer still needs frame serialization, sample reduction and public options.
+The [component frame writer](jpeg-component-frames.md) supplies complete baseline markers.
+The image writer still needs color assembly, sample reduction and public options.
 Complete format coverage and comparable native performance remain open.
 No speed or physical memory bound claim applies.

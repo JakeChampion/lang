@@ -1,5 +1,6 @@
 import "./header";
 import "./entropy_writer";
+import "./mcu_order";
 import "core/cmp";
 
 @derive(cmp.Debug, cmp.Eq)
@@ -10,6 +11,10 @@ pub enum ProducedError[E] { FrameEncode(FrameError), FrameSource(E) }
 pub struct Tables { quantization: u8[], dc: header.HuffmanTable, ac: header.HuffmanTable }
 
 pub struct Options { width: i32, height: i32, restart_interval: i32, max_output_bytes: i32 }
+
+pub struct Component { id: i32, horizontal: i32, vertical: i32, quantization: i32, dc: i32, ac: i32 }
+
+pub struct ComponentTables { quantization: header.QuantTable[], huffman: entropy_writer.ScanTables }
 
 struct Output { bytes: u8[], limit: i32 }
 
@@ -161,6 +166,177 @@ pub function encode_produced[S, E](source: S, tables: Tables, options: Options, 
   let remaining = options.max_output_bytes - output.bytes.len() - 2;
   let encoded = match (entropy_writer.encode_produced(source, count, tables.dc, tables.ac, options.restart_interval, remaining, cancelled, produce)) {
     Ok(v) => v, Err(entropy_writer.ProducerEncode(e)) => { return Err(FrameEncode(entropy_error(e))); },
+    Err(entropy_writer.ProducerSource(e)) => { return Err(FrameSource(e)); },
+  };
+  return match (produced_finish(output, encoded, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(FrameEncode(e)) };
+}
+
+function component_selectors(item: Component, tables: ComponentTables): Result[void, FrameError] {
+  if (item.id < 0 || item.id > 255) {
+    return Err(FrameError.Shape);
+  }
+  if (item.quantization < 0 || item.quantization >= tables.quantization.len()) {
+    return Err(FrameError.Table);
+  }
+  if (item.dc < 0 || item.dc >= tables.huffman.dc.len() || item.ac < 0 || item.ac >= tables.huffman.ac.len()) {
+    return Err(FrameError.Table);
+  }
+  return Ok(());
+}
+
+function component_factors(item: Component): Result[void, FrameError] {
+  if (item.horizontal < 1 || item.horizontal > 4 || item.vertical < 1 || item.vertical > 4) {
+    return Err(FrameError.Shape);
+  }
+  return Ok(());
+}
+
+function component_shapes(components: [Component], tables: ComponentTables): Result[void, FrameError] {
+  if (components.len() < 1 || components.len() > 4) {
+    return Err(FrameError.Shape);
+  }
+  let units = 0;
+  for i in 0..components.len() {
+    let item = components[i];
+    component_selectors(item, tables)?;
+    component_factors(item)?;
+    for j in 0..i {
+      if (components[j].id == item.id) {
+        return Err(FrameError.Shape);
+      }
+    }
+    units += item.horizontal * item.vertical;
+  }
+  if (components.len() > 1 && units > 10) {
+    return Err(FrameError.Shape);
+  }
+  return Ok(());
+}
+
+function component_quantizers(values: [u8]): Result[void, FrameError] {
+  if (values.len() != 64) {
+    return Err(FrameError.Shape);
+  }
+  for value in values {
+    if (value == 0) {
+      return Err(FrameError.Table);
+    }
+  }
+  return Ok(());
+}
+
+function component_table_shapes(tables: ComponentTables): Result[void, FrameError] {
+  if (tables.quantization.len() < 1 || tables.quantization.len() > 4
+    || tables.huffman.dc.len() < 1 || tables.huffman.dc.len() > 2
+    || tables.huffman.ac.len() < 1 || tables.huffman.ac.len() > 2) {
+    return Err(FrameError.Shape);
+  }
+  for table in tables.quantization {
+    component_quantizers(table.values)?;
+  }
+  return Ok(());
+}
+
+function component_huffman_shapes(tables: header.HuffmanTable[]): Result[void, FrameError] {
+  for table in tables {
+    if (table.counts.len() != 16 || table.symbols.len() > 256) {
+      return Err(FrameError.Shape);
+    }
+  }
+  return Ok(());
+}
+
+function component_admit(components: [Component], tables: ComponentTables, options: Options): Result[void, FrameError] {
+  block_count(options)?;
+  component_table_shapes(tables)?;
+  component_huffman_shapes(tables.huffman.dc)?;
+  component_huffman_shapes(tables.huffman.ac)?;
+  component_shapes(components, tables)?;
+  if (options.restart_interval < 0 || options.restart_interval > 65535 || options.max_output_bytes < 0) {
+    return Err(FrameError.Limit);
+  }
+  return Ok(());
+}
+
+function component_plan(components: [Component], options: Options): Result[(i32, entropy_writer.ScanComponent[]), FrameError] {
+  let sampling: mcu_order.Sampling[] = [];
+  let scan: entropy_writer.ScanComponent[] = [];
+  for item in components {
+    sampling = sampling.append(mcu_order.Sampling { horizontal: item.horizontal, vertical: item.vertical });
+    scan = scan.append(entropy_writer.ScanComponent { horizontal: item.horizontal, vertical: item.vertical, dc: item.dc, ac: item.ac });
+  }
+  let plan = match (mcu_order.inspect(options.width, options.height, sampling, 2147483647)) {
+    Ok(v) => v,
+    Err(mcu_order.Limit) => { return Err(FrameError.Limit); },
+    Err(_) => { return Err(FrameError.Shape); },
+  };
+  return Ok((plan.mcus, scan));
+}
+
+function component_frame(components: [Component], options: Options): u8[] {
+  let bytes: u8[] = [8, (options.height >> 8) as u8, options.height as u8, (options.width >> 8) as u8, options.width as u8, components.len() as u8];
+  for item in components {
+    bytes = bytes.append(item.id as u8).append((item.horizontal * 16 + item.vertical) as u8).append(item.quantization as u8);
+  }
+  return bytes;
+}
+
+function component_scan(components: [Component]): u8[] {
+  let bytes: u8[] = [components.len() as u8];
+  for item in components {
+    bytes = bytes.append(item.id as u8).append((item.dc * 16 + item.ac) as u8);
+  }
+  return bytes.append(0).append(63).append(0);
+}
+
+function component_huffman(output: Output, tables: header.HuffmanTable[], kind: i32, cancelled: () => boolean): Result[Output, FrameError] {
+  let result = output;
+  for i in 0..tables.len() {
+    result = segment(result, 196, huffman_payload(tables[i], (kind * 16 + i) as u8), cancelled)?;
+  }
+  return Ok(result);
+}
+
+function component_prefix(components: [Component], tables: ComponentTables, options: Options, cancelled: () => boolean): Result[Output, FrameError] {
+  let result = append(Output { bytes: [], limit: options.max_output_bytes }, [255u8, 216u8], cancelled)?;
+  for i in 0..tables.quantization.len() {
+    let values = tables.quantization[i].values;
+    let payload: u8[] = [i as u8];
+    for value in values {
+      payload = payload.append(value);
+    }
+    result = segment(result, 219, payload, cancelled)?;
+  }
+  result = segment(result, 192, component_frame(components, options), cancelled)?;
+  result = component_huffman(result, tables.huffman.dc, 0, cancelled)?;
+  result = component_huffman(result, tables.huffman.ac, 1, cancelled)?;
+  if (options.restart_interval > 0) {
+    result = segment(result, 221, [(options.restart_interval >> 8) as u8, options.restart_interval as u8], cancelled)?;
+  }
+  return segment(result, 218, component_scan(components), cancelled);
+}
+
+function component_start(components: [Component], tables: ComponentTables, options: Options, cancelled: () => boolean): Result[(i32, entropy_writer.ScanComponent[], Output), FrameError] {
+  component_admit(components, tables, options)?;
+  if (cancelled()) {
+    return Err(FrameError.Cancelled);
+  }
+  let (mcus, scan) = component_plan(components, options)?;
+  let output = component_prefix(components, tables, options, cancelled)?;
+  if (options.max_output_bytes - output.bytes.len() < 2) {
+    return Err(FrameError.Limit);
+  }
+  return Ok((mcus, scan, output));
+}
+
+// Explicit component metadata does not assign a color space or claim JFIF.
+pub function encode_components_produced[S, E](source: S, components: [Component], tables: ComponentTables, options: Options, cancelled: () => boolean, produce: (S, ([i32]) => Result[void, entropy_writer.EncodeError]) => Result[void, E]): Result[u8[], ProducedError[E]] {
+  let (mcus, scan, output) = match (component_start(components, tables, options, cancelled)) { Ok(v) => v, Err(e) => { return Err(FrameEncode(e)); } };
+  let remaining = options.max_output_bytes - output.bytes.len() - 2;
+  let config = entropy_writer.ScanOptions { mcus: mcus, restart_interval: options.restart_interval, max_output_bytes: remaining };
+  let encoded = match (entropy_writer.encode_mcus_produced[S, E](source, scan, tables.huffman, config, cancelled, produce)) {
+    Ok(v) => v,
+    Err(entropy_writer.ProducerEncode(e)) => { return Err(FrameEncode(entropy_error(e))); },
     Err(entropy_writer.ProducerSource(e)) => { return Err(FrameSource(e)); },
   };
   return match (produced_finish(output, encoded, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(FrameEncode(e)) };

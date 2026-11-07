@@ -32,9 +32,9 @@ It includes Huffman and arithmetic entropy methods, with precision rules for eac
 | Feature group | Current coverage | Remaining work |
 | --- | --- | --- |
 | Image input | Restricted baseline component and JFIF decode | Full process, precision, component and scan combinations |
-| Image output | Internal single-component frames from blocks or a borrowed plane | Color assembly, image options and other JPEG processes |
+| Image output | Internal baseline component frames from direct blocks, plus a one-component plane writer | Image color assembly, sample reduction, options and other JPEG processes |
 | Transform | Inverse DCT, forward DCT and explicit quantization | Qualify complete encode/decode paths for each applicable process |
-| Stream control | Restricted baseline checks, complete single-scan DCT MCU geometry and direct baseline component entropy output | Full scan scripts, frame assembly, other entropy methods and table forms |
+| Stream control | Restricted baseline checks, complete single-scan DCT MCU geometry and direct baseline component frame output | Full scan scripts, other entropy methods and table forms |
 | Image interpretation | Explicit forward and inverse sample kernels, separate restricted color/metadata modules | Integrate complete color, profile, orientation and metadata behavior |
 
 The first baseline writer does not complete JPEG support.
