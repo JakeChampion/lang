@@ -112,6 +112,14 @@ var Named = []NamedFamily{
 	{Name: "crc32", Doc: "crc32 with the source width in the suffix", Ops: []NamedOp{
 		{ATT: "crc32", Suffixed: true, ATTProbe: "crc32b %cl, %eax"},
 	}},
+	{Name: "port", Doc: "port I/O between the accumulator of the suffix's width and the port in %dx; packed as prefix*256 + op", FernFn: "x86_gas_port_op", Pack: pfxOp, Ops: []NamedOp{
+		{ATT: "inb", Op: 0xEC, ATTProbe: "inb %dx, %al"},
+		{ATT: "inw", Prefix: 0x66, Op: 0xED, ATTProbe: "inw %dx, %ax"},
+		{ATT: "inl", Op: 0xED, ATTProbe: "inl %dx, %eax"},
+		{ATT: "outb", Op: 0xEE, ATTProbe: "outb %al, %dx"},
+		{ATT: "outw", Prefix: 0x66, Op: 0xEF, ATTProbe: "outw %ax, %dx"},
+		{ATT: "outl", Op: 0xEF, ATTProbe: "outl %eax, %dx"},
+	}},
 
 	{Name: "movqd", Doc: "the GPR/xmm moves; direction from which operand is the xmm. AT&T's movq spelling is the mov family's, resolved there", Ops: []NamedOp{
 		{ATT: "", ATTProbe: "movq %rax, %xmm0"},

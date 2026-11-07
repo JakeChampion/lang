@@ -1303,8 +1303,18 @@ function privileged_pops(id: i32): i32 {
   return 4;
 }
 
+// A port access of `width` bits: in reads the port, out writes it. Only x86-64
+// has an I/O port space.
+pub function op_port_in(width: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: K_PORT_IN, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+pub function op_port_out(width: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: K_PORT_OUT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
 pub function is_device_kind(id: i32): boolean {
-  return id == K_MMIO_LOAD || id == K_MMIO_STORE || id == K_FENCE || is_privileged_kind(id);
+  return id == K_MMIO_LOAD || id == K_MMIO_STORE || id == K_FENCE || id == K_PORT_IN || id == K_PORT_OUT || is_privileged_kind(id);
 }
 
 function device_kind_name(id: i32): string {
@@ -1323,7 +1333,17 @@ function device_kind_name(id: i32): string {
   if (id == K_SMC) {
     return "smc";
   }
+  if (id == K_PORT_IN || id == K_PORT_OUT) {
+    return port_kind_name(id);
+  }
   return "mmio_store";
+}
+
+function port_kind_name(id: i32): string {
+  if (id == K_PORT_IN) {
+    return "port_in";
+  }
+  return "port_out";
 }
 
 pub function op_arr_push_shared_count(): Op {
@@ -2300,6 +2320,10 @@ pub const K_HVC: i32 = 416;
 
 pub const K_SMC: i32 = 417;
 
+pub const K_PORT_IN: i32 = 418;
+
+pub const K_PORT_OUT: i32 = 419;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2323,6 +2347,10 @@ pub function kind_id(name: string): i32 {
   let worker = kind_id_worker(name);
   if (worker > 0) {
     return worker;
+  }
+  let device = kind_id_device(name);
+  if (device > 0) {
+    return device;
   }
   if (n >= 8 && n <= 13 && (name[0] == b'd' || name[0] == b'o')) {
     let dir = kind_id_dir(name);
@@ -2444,10 +2472,6 @@ function kind_id_len2(name: string): i32 {
 
 function kind_id_len3(name: string): i32 {
   let c = name[0];
-  let privileged = kind_id_privileged(name);
-  if (privileged > 0) {
-    return privileged;
-  }
   if (c == b'a' && name == "add") {
     return 21;
   }
@@ -2487,7 +2511,14 @@ function kind_id_len3(name: string): i32 {
   return 0;
 }
 
-function kind_id_privileged(name: string): i32 {
+// The device ops whose names the length tables do not hold.
+function kind_id_device(name: string): i32 {
+  if (name == "port_in") {
+    return K_PORT_IN;
+  }
+  if (name == "port_out") {
+    return K_PORT_OUT;
+  }
   if (name == "wfi") {
     return K_WFI;
   }
@@ -5185,7 +5216,7 @@ function pops1_mem(t: i32): boolean {
     || t == 113
     || t == 120 || t == 122 || t == 123
     || t == 139 || t == 141 || t == 143 || t == 145
-    || t == 146 || t == 412;
+    || t == 146 || t == 412 || t == 418;
 }
 
 function pops1_io(t: i32): boolean {
@@ -5244,7 +5275,7 @@ function pops2_mem(t: i32): boolean {
     || t == 98 || t == 99 || t == 100 || t == 101
     || t == 105 || t == 108
     || pops2_kernel(t)
-    || t == 124 || t == 140 || t == 144 || t == 413;
+    || t == 124 || t == 140 || t == 144 || t == 413 || t == 419;
 }
 
 function pops2_io(t: i32): boolean {

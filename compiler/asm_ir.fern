@@ -8436,6 +8436,35 @@ function ssa_host_kind(op: string): boolean {
   return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "dev_");
 }
 
+// One port access, at the width after the colon. in zero-extends the value.
+function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
+  let sfx = "l";
+  let acc = "%eax";
+  if (w == 8) {
+    sfx = "b";
+    acc = "%al";
+  } else if (w == 16) {
+    sfx = "w";
+    acc = "%ax";
+  }
+  if (util.str_has_prefix(ins.str, "dev_port_in")) {
+    s = ssa_load(reg_of, ins.args[0], "%rdx", s);
+    s = s.write("    in" + sfx + " %dx, " + acc + "\n");
+    if (w == 8) {
+      s = s.write("    movzbl %al, %eax\n");
+    } else if (w == 16) {
+      s = s.write("    movzwl %ax, %eax\n");
+    }
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  }
+  s = ssa_push_operand(reg_of, ins.args[0], s);
+  s = ssa_push_operand(reg_of, ins.args[1], s);
+  s = ssa_pop_r(ssa_pop_r(s, "%rax"), "%rdx");
+  s = s.write("    out" + sfx + " " + acc + ", %dx\n    xorl %eax, %eax\n");
+  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
 // A privileged op. x86-64 has hlt for wfi, and no equivalent of hvc or smc.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str != "dev_wfi") {
@@ -8445,13 +8474,16 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
-// A device op: a fence, a privileged op, or one device register access at the
-// width after the colon. It is a host call to the allocator, so %rax and %rcx are
+// A device op: a fence, a privileged op, or one device register or port access
+// at the width after the colon. It is a host call to the allocator, so %rax and %rcx are
 // free here.
 function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (ins.str == "dev_fence") {
     s = s.write("    mfence\n    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  }
+  if (util.str_has_prefix(ins.str, "dev_port_")) {
+    return ssa_port(ins, reg_of, s);
   }
   if (!util.str_has_prefix(ins.str, "dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
