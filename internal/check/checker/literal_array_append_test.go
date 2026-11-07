@@ -5,14 +5,16 @@ import (
 	"testing"
 )
 
-// An integer-literal array local takes its element type from a typed
-// argument to append or with, as a literal takes the type of the other
-// operand of a binary operator (#14322).
+// A literal array local takes its element type from a typed argument to
+// append or with, as a literal takes the type of the other operand of a binary
+// operator (#14322, #14328).
 func TestLiteralArrayTakesTheElementTypeOfAppend(t *testing.T) {
 	good := []struct{ name, src string }{
 		{"append", "function main(): i32 { let z = [120, 156]; let b: u8 = 3; z = z.append(b); let n: u8 = z[0]; return n as i32; }\n"},
 		{"with", "function main(): i32 { let z = [1, 2]; let b: u8 = 3; z = z.with(0, b); let n: u8 = z[0]; return n as i32; }\n"},
 		{"append into a new local", "function main(): i32 { let z = [120, 156]; let b: u8 = 3; let w = z.append(b); let n: u8 = w[0]; return n as i32; }\n"},
+		{"float append", "function main(): i32 { let z = [1.5, 2.0]; let f: f32 = 3.0; let w = z.append(f); let m: f32 = w[0]; return m as i32; }\n"},
+		{"float with", "function main(): i32 { let z = [1.5, 2.0]; let f: f32 = 3.0; z = z.with(0, f); let m: f32 = z[0]; return m as i32; }\n"},
 	}
 	for _, c := range good {
 		if err := checkSource(t, c.src); err != nil {
