@@ -4504,10 +4504,13 @@ function wasm_text_const(o: ir.Op): string {
 
 // Wasm has no device memory, so an MMIO access is an ordinary access to
 // linear memory, and a fence has nothing to order. A store and a fence leave the
-// void placeholder.
+// void placeholder. No wasm environment grants a privileged op.
 function mmio_wat(o: ir.Op): string {
   if (o.kind_tag == ir.K_FENCE) {
     return "    i32.const 0\n";
+  }
+  if (ir.is_privileged_kind(o.kind_tag)) {
+    return "    unreachable\n";
   }
   if (o.kind_tag == ir.K_MMIO_LOAD) {
     if (o.width == 8) {

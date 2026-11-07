@@ -1284,8 +1284,27 @@ pub function op_fence(): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: K_FENCE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// A privileged op that only a kernel environment grants: wait for an
+// interrupt, or call the hypervisor or the secure monitor with four arguments
+// in the SMC calling convention.
+pub function op_privileged(kind: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+pub function is_privileged_kind(id: i32): boolean {
+  return id == K_WFI || id == K_HVC || id == K_SMC;
+}
+
+// wfi takes nothing. hvc and smc take the function and three arguments.
+function privileged_pops(id: i32): i32 {
+  if (id == K_WFI) {
+    return 0;
+  }
+  return 4;
+}
+
 pub function is_device_kind(id: i32): boolean {
-  return id == K_MMIO_LOAD || id == K_MMIO_STORE || id == K_FENCE;
+  return id == K_MMIO_LOAD || id == K_MMIO_STORE || id == K_FENCE || is_privileged_kind(id);
 }
 
 function device_kind_name(id: i32): string {
@@ -1294,6 +1313,15 @@ function device_kind_name(id: i32): string {
   }
   if (id == K_FENCE) {
     return "fence";
+  }
+  if (id == K_WFI) {
+    return "wfi";
+  }
+  if (id == K_HVC) {
+    return "hvc";
+  }
+  if (id == K_SMC) {
+    return "smc";
   }
   return "mmio_store";
 }
@@ -2266,6 +2294,12 @@ pub const K_MMIO_STORE: i32 = 413;
 
 pub const K_FENCE: i32 = 414;
 
+pub const K_WFI: i32 = 415;
+
+pub const K_HVC: i32 = 416;
+
+pub const K_SMC: i32 = 417;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2410,6 +2444,10 @@ function kind_id_len2(name: string): i32 {
 
 function kind_id_len3(name: string): i32 {
   let c = name[0];
+  let privileged = kind_id_privileged(name);
+  if (privileged > 0) {
+    return privileged;
+  }
   if (c == b'a' && name == "add") {
     return 21;
   }
@@ -2445,6 +2483,19 @@ function kind_id_len3(name: string): i32 {
   }
   if (c == b'x' && name == "xor") {
     return 30;
+  }
+  return 0;
+}
+
+function kind_id_privileged(name: string): i32 {
+  if (name == "wfi") {
+    return K_WFI;
+  }
+  if (name == "hvc") {
+    return K_HVC;
+  }
+  if (name == "smc") {
+    return K_SMC;
   }
   return 0;
 }
@@ -5333,6 +5384,9 @@ function kind_pops(t: i32): i32 {
   }
   if (t >= 420 && t <= 428) {
     return pops_dir(t);
+  }
+  if (is_privileged_kind(t)) {
+    return privileged_pops(t);
   }
   if (pops0(t)) {
     return 0;

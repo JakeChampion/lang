@@ -284,6 +284,16 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
+// Under -sanitize a raw free of a block that is in the quarantine aborts as a
+// double free. The poison word selects the candidates, and a walk of the
+// quarantine decides, so a live block that holds the poison value is freed.
+function san_raw_twice_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    cmpl $" + rc_poison() + ", (%rdi)\n    jne .Lrawfree_fresh\n");
+  s = s.write("    movq __fern_quar_head(%rip), %rcx\n.Lrawfree_qscan:\n    testq %rcx, %rcx\n    jz .Lrawfree_fresh\n");
+  s = s.write("    cmpq %rdi, %rcx\n    je .Lrawfree_double\n    movq 16(%rcx), %rcx\n    jmp .Lrawfree_qscan\n");
+  return s.write(".Lrawfree_fresh:\n");
+}
+
 // Runs `body` on each payload word of the block at %rdi, words 3 to %rsi - 1,
 // with the word's address in %r8 and the poison pattern in %rax.
 function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore.EmitState {
@@ -3341,6 +3351,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
   if (s.rc_free_debug) {
+    s = san_raw_twice_check(s);
     s = s.write(quarantine_rc("(%rdi)", s.rc_free_debug));
   }
   s = s.write("    movq %rsi, %rcx\n");
@@ -8422,18 +8433,31 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function ssa_host_kind(op: string): boolean {
-  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "mmio_");
+  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "dev_");
 }
 
-// One device register access, at the width after the colon. It is a host
-// call to the allocator, so %rax and %rcx are free here.
-function ssa_mmio(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  if (ins.str == "mmio_fence") {
+// A privileged op. x86-64 has hlt for wfi, and no equivalent of hvc or smc.
+function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str != "dev_wfi") {
+    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
+  }
+  s = s.write("    hlt\n    xorl %eax, %eax\n");
+  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// A device op: a fence, a privileged op, or one device register access at the
+// width after the colon. It is a host call to the allocator, so %rax and %rcx are
+// free here.
+function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "dev_fence") {
     s = s.write("    mfence\n    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
+  if (!util.str_has_prefix(ins.str, "dev_mmio_")) {
+    return ssa_privileged(ins, reg_of, s);
+  }
   let w = util.digits_to_i32(slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "");
-  if (util.str_has_prefix(ins.str, "mmio_load")) {
+  if (util.str_has_prefix(ins.str, "dev_mmio_load")) {
     s = ssa_load(reg_of, ins.args[0], "%rcx", s);
     let ld = "movq (%rcx), %rax";
     if (w == 8) {
@@ -8463,8 +8487,8 @@ function ssa_mmio(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  if (util.str_has_prefix(ins.str, "mmio_")) {
-    return ssa_mmio(ins, reg_of, s);
+  if (util.str_has_prefix(ins.str, "dev_")) {
+    return ssa_device(ins, reg_of, s);
   }
   if (util.str_has_prefix(ins.str, "syscall")) {
     let i = 0;

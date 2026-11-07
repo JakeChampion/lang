@@ -1,8 +1,6 @@
 package e2ecompiler
 
 import (
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -196,11 +194,7 @@ function main(): i32 { return 0; }`,
 }
 
 func TestSelfHostAssocTypesDifferential(t *testing.T) {
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/drivers/checker_codes_run.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
+	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 
 	for _, tc := range assocTypeCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,11 +203,12 @@ func TestSelfHostAssocTypesDifferential(t *testing.T) {
 				goMsgs = append(goMsgs, d.code+": "+d.msg)
 			}
 
-			cmd := exec.Command(interpBin, "-interp", driver)
-			cmd.Stdin = strings.NewReader(tc.src)
-			out, _ := cmd.Output()
+			out, err := checkerCodesOutput(checker, tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var shMsgs []string
-			for _, d := range driverDiags(string(out)) {
+			for _, d := range driverDiags(out) {
 				shMsgs = append(shMsgs, d.code+": "+d.msg)
 			}
 

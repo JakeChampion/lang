@@ -338,10 +338,18 @@ runs the driver under the interpreter instead when the test is not about the
 driver's machine code. CI carries the built drivers between runs
 (`.github/actions/selfhost-driver-cache`), keyed on the same inputs as the
 harness's key, so a CI job pays a build only for a driver no earlier run
-built. `STAGE0=<path>` substitutes a local compiler for the pin,
+built. The stdlib suites keep the Go interpreter's verdict on each suite in the same
+directory (`e2eharness.InterpVerdict`). The key is the oracle's Go sources, the
+stdlib, the suite's relative imports and the `FERN_*` environment, so a
+compiler-only change interprets no suite again. `STAGE0=<path>` substitutes a local compiler for the pin,
 as it does for `make bootstrap`, and it is how a compiler change is tested as
 the drivers' builder before the pin carries it. Every driver is held to what
 the pin can compile, like `fern.fern`.
+
+The self-host CLI for the tree builds some programs itself, such as the
+playground driver and the shipped `fern`. `e2eharness.CachedCLIBuild` keeps
+them in the same cache. Its key adds the CLI's bytes, the `-embed` tree and the
+`FERN_*` settings of the compile. CI does not carry these entries between jobs.
 
 **Measured 4-way, shard 0: 48 min (green).** So sharding pays only if you run
 ONE shard — four in sequence is ~3.2 h, worse than the unsharded run it

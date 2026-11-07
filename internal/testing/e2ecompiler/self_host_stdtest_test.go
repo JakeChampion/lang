@@ -47,9 +47,7 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				caseDir := t.TempDir()
-				ic := exec.Command(interpBin, "-interp", tc.src)
-				wantOut, _ := stdTestOutput(ic)
-				wantExit := ic.ProcessState.ExitCode()
+				wantOut, wantExit := e2eharness.InterpVerdict(t, interpBin, tc.src)
 				if wantFail := tc.name == "synthetic_fail"; (wantExit != 0) != wantFail {
 					t.Fatalf("interp exit = %d for %s\n%s", wantExit, tc.name, wantOut)
 				}
@@ -111,9 +109,7 @@ func runSelfHostStdTestArm64(t *testing.T, tls bool) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				caseDir := t.TempDir()
-				ic := exec.Command(interpBin, "-interp", tc.src)
-				wantOut, _ := stdTestOutput(ic)
-				wantExit := ic.ProcessState.ExitCode()
+				wantOut, wantExit := e2eharness.InterpVerdict(t, interpBin, tc.src)
 				if wantFail := tc.name == "synthetic_fail"; (wantExit != 0) != wantFail {
 					t.Fatalf("interp exit = %d for %s\n%s", wantExit, tc.name, wantOut)
 				}

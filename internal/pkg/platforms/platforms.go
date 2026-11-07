@@ -51,6 +51,8 @@ var capabilityProfiles = map[string]capabilityProfile{
 
 	"wasi-proxy": {"log", "now", "config", "random", "fetch", "pollable"},
 
+	"kernel": {"privileged"},
+
 	"none": nil,
 }
 
@@ -75,6 +77,8 @@ var environments = map[string]environment{
 	},
 
 	"freestanding": {profile: "none", entry: EntryExports},
+
+	"kernel": {profile: "kernel", entry: EntryReset},
 }
 
 var table = map[string]struct {
@@ -95,6 +99,11 @@ var table = map[string]struct {
 		description: "ARM64 Android — Linux ELF as a static position-independent " +
 			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
 			"Android's loader. Same syscalls / AAPCS64 as arm64-linux.",
+	},
+	"arm64-kernel": {
+		isa: "arm64", environment: "kernel",
+		description: "ARM64 kernel image — an ELF that the boot loader or the VMM loads at -ram BASE. " +
+			"The reset entry sets the stack, clears .bss and calls main. No host and no syscalls.",
 	},
 	"arm64-freestanding": {
 		isa: "arm64", environment: "freestanding",

@@ -27,8 +27,8 @@ func (f Family) ProbeFor(o ScalarOp) string {
 
 var Scalar = []Family{
 	{Name: "fixed", Doc: "no operands", Probe: "%s",
-		Ops: []ScalarOp{{Mnemonic: "ret"}, {Mnemonic: "nop"}, {Mnemonic: "yield"}, {Mnemonic: "paciasp"}, {Mnemonic: "autiasp"}, {Mnemonic: "xpaclri"}}},
-	{Name: "sys", Doc: "an imm16 exception class", Probe: "%s #1", Ops: []ScalarOp{{Mnemonic: "svc"}, {Mnemonic: "brk"}}},
+		Ops: []ScalarOp{{Mnemonic: "ret"}, {Mnemonic: "nop"}, {Mnemonic: "yield"}, {Mnemonic: "paciasp"}, {Mnemonic: "autiasp"}, {Mnemonic: "xpaclri"}, {Mnemonic: "wfe"}, {Mnemonic: "wfi"}}},
+	{Name: "sys", Doc: "an imm16 exception class", Probe: "%s #1", Ops: []ScalarOp{{Mnemonic: "svc"}, {Mnemonic: "hvc"}, {Mnemonic: "smc"}, {Mnemonic: "brk"}}},
 	{Name: "indirect", Doc: "branch to a register", Probe: "%s x5", Ops: []ScalarOp{{Mnemonic: "br"}, {Mnemonic: "blr"}}},
 	{Name: "branch", Doc: "a label", Probe: "%s l0\nl0:", Ops: []ScalarOp{{Mnemonic: "b"}, {Mnemonic: "bl"}}},
 	{Name: "cbranch", Doc: "compare a register against zero and branch", Probe: "%s x0, l0\nl0:",

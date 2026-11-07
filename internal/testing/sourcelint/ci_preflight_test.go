@@ -50,9 +50,9 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 	}
 	if suite.usesFile() != ciSuiteFile || suite.keys["name"] != "Full suite" ||
 		suite.keys["needs"] != "[changes]" || suite.keys["secrets"] != "inherit" ||
-		suite.keys["if"] != "" ||
+		suite.keys["if"] != "${{ contains(needs.changes.outputs.lanes, 'true') }}" ||
 		suite.with["lanes"] != "${{ needs.changes.outputs.lanes }}" {
-		t.Fatalf("full-suite caller must preserve lane selection, independent lint and secrets: %+v", suite)
+		t.Fatalf("full-suite caller must preserve lane selection, independent lint and secrets, and skip only when no lane is selected: %+v", suite)
 	}
 	// No label or event guard may reduce ordinary PRs to a smaller tier.
 	if strings.Contains(workflowSource(t, ciFile), "ci-full") {

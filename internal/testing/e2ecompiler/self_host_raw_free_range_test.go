@@ -186,3 +186,40 @@ func TestSelfHostHardenRawInterleavedDoubleFree(t *testing.T) {
 		}
 	}
 }
+
+// A live block whose first word holds the quarantine poison value. Its free
+// must not abort, because the block is not in the quarantine.
+const rawPoisonValuedFreeSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_i32(p, 2129525454);
+    __free(p, 64);
+    print("poison-valued block freed");
+    return 0;
+  }
+}
+`
+
+// Under -sanitize a raw free quarantines the block, and a second raw free of a
+// quarantined block aborts, with or without other frees between the two.
+func TestSelfHostSanitizeRawDoubleFree(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	_, qemu := arm64Tooling(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		for _, size := range []string{"64", "1048576"} {
+			t.Run(target+"/"+size, func(t *testing.T) {
+				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawInterleavedFreeSrc(size), "-sanitize")
+				want := "three frees of one class\n"
+				if code != 134 || stdout != want || !strings.Contains(stderr, "fern: release of memory that is already free\n") {
+					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
+				}
+			})
+		}
+		t.Run(target+"/poison-valued", func(t *testing.T) {
+			stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawPoisonValuedFreeSrc, "-sanitize")
+			if code != 0 || !strings.HasPrefix(stdout, "poison-valued block freed\n") {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 0 after the free", code, stdout, stderr)
+			}
+		})
+	}
+}

@@ -75,27 +75,32 @@ func TestSelfHostWarmStockDriver(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := fullSelfHostProject(t)
+	// The builds run in parallel subtests. The harness's build slots and
+	// memory budget limit how many run at the same time.
 	for _, driver := range strings.Split(list, ",") {
 		driver = strings.TrimSpace(driver)
 		if driver == "" {
 			continue
 		}
-		if driver == stage2Row {
-			if len(runner) != 0 {
-				t.Fatalf("%s runs the fern.fern driver as a compiler, which needs a native x86-64 host", driver)
+		t.Run(driver, func(t *testing.T) {
+			t.Parallel()
+			if driver == stage2Row {
+				if len(runner) != 0 {
+					t.Fatalf("%s runs the fern.fern driver as a compiler, which needs a native x86-64 host", driver)
+				}
+				stage1 := cachedDriverBin(t, gcc, dir, "fern.fern")
+				stage2 := filepath.Join(t.TempDir(), "fern_stage2")
+				if err := e2eharness.CompileWithSelfHost(t, stage1, e2eharness.TargetX86_64Linux, filepath.Join(dir, "fern.fern"), stage2, e2eharness.DriverBuildWeightMB("fern.fern")); err != nil {
+					t.Fatal(err)
+				}
+				recordDriverSize(t, driver, stage2)
+				return
 			}
-			stage1 := cachedDriverBin(t, gcc, dir, "fern.fern")
-			stage2 := filepath.Join(t.TempDir(), "fern_stage2")
-			if err := e2eharness.CompileWithSelfHost(t, stage1, e2eharness.TargetX86_64Linux, filepath.Join(dir, "fern.fern"), stage2, e2eharness.DriverBuildWeightMB("fern.fern")); err != nil {
-				t.Fatal(err)
+			bin := cachedDriverBin(t, gcc, dir, driver)
+			recordDriverSize(t, driver, bin)
+			if err := runDriverStdinExits(runner, bin, "function main(): i32 { return 0; }\n"); err != nil {
+				t.Fatalf("warmed driver %s did not run: %v", driver, err)
 			}
-			recordDriverSize(t, driver, stage2)
-			continue
-		}
-		bin := cachedDriverBin(t, gcc, dir, driver)
-		recordDriverSize(t, driver, bin)
-		if err := runDriverStdinExits(runner, bin, "function main(): i32 { return 0; }\n"); err != nil {
-			t.Fatalf("warmed driver %s did not run: %v", driver, err)
-		}
+		})
 	}
 }

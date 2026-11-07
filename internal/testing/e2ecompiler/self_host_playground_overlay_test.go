@@ -40,15 +40,7 @@ func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 
 func buildPlaygroundDriverForTarget(t *testing.T, stdlib, target string) string {
 	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "playground_run.fern")
-	bin := filepath.Join(dir, "playground_run")
-	cmd := exec.Command(buildFernCLIBin(t), "-target", target,
-		"-embed", stdlib, "-o", bin, filepath.Join(dir, "playground_run.fern"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the playground driver failed: %v\n%s", err, out)
-	}
-	return bin
+	return e2eharness.CachedCLIBuild(t, e2eharness.CLIBuild{Target: target, Dir: e2eharness.RepoPath("compiler"), Entry: "playground_run.fern", Embed: stdlib})
 }
 
 func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, string, int) {
@@ -346,18 +338,11 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 		}
 	}
 
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "playground_run.fern")
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
 	}
-	mod := filepath.Join(dir, "playground.wasm")
-	build := exec.Command(buildFernCLIBin(t), "-target", "wasm32-wasi", "-emit", "core-module",
-		"-embed", stdlib, "-o", mod, filepath.Join(dir, "playground_run.fern"))
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building the playground driver for wasm failed: %v\n%s", err, out)
-	}
+	mod := e2eharness.CachedCLIBuild(t, e2eharness.CLIBuild{Target: "wasm32-wasi", Dir: e2eharness.RepoPath("compiler"), Entry: "playground_run.fern", Embed: stdlib, Args: []string{"-emit", "core-module"}})
 
 	run := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-emit", "asm")
 	run.Dir = t.TempDir()

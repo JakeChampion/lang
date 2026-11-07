@@ -431,34 +431,75 @@ function can_hold_word(t: typeinfo.Type): boolean {
 }
 
 // Follow return values through known callees before the splice rounds.
+// A function is examined again only when one of its callees starts to return a word.
 function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): boolean[] {
+  let callers = word_callers(funcs, ix);
   let words = none_of(funcs.len());
-  let more = true;
-  while (more) {
-    more = false;
-    for i in 0..funcs.len() {
-      if (!words[i]) {
-        let read = read_word_values(funcs[i], funcs, ix, words, owners);
-        if (read.len() == 0) {
-          continue;
-        }
-        for b in funcs[i].graph.blocks {
-          let returned = b.term.kind_tag == 1 && b.term.value >= 0 && read[b.term.value];
-          for ins in b.insts {
-            if (ins.kind_tag == ssasem.call() && sempair.pair_set_slot(ins.str) >= 0 && reads_any(ins.args, read)) {
-              returned = true;
-            }
-          }
-          if (returned) {
-            words = words.with(i, true);
-            more = true;
-            break;
-          }
+  let queued: boolean[] = [];
+  let queue: i32[] = [];
+  for i in 0..funcs.len() {
+    queued = queued.append(true);
+    queue = queue.append(i);
+  }
+  let head = 0;
+  while (head < queue.len()) {
+    let i = queue[head];
+    head += 1;
+    queued = queued.with(i, false);
+    if (!words[i] && returns_word(funcs[i], funcs, ix, words, owners)) {
+      words = words.with(i, true);
+      for c in callers[i] {
+        if (!words[c] && !queued[c]) {
+          queued = queued.with(c, true);
+          queue = queue.append(c);
         }
       }
     }
   }
   return words;
+}
+
+function returns_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
+  let read = read_word_values(f, funcs, ix, words, owners);
+  if (read.len() == 0) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && read[b.term.value]) {
+      return true;
+    }
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && sempair.pair_set_slot(ins.str) >= 0 && reads_any(ins.args, read)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The callees whose result memory_read takes from words, inverted.
+function word_callers(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < funcs.len()) {
+    out = out.append([]);
+  }
+  for i in 0..funcs.len() {
+    for b in funcs[i].graph.blocks {
+      for ins in b.insts {
+        let at = called(ins, ix);
+        if (at < 0) {
+          at = closure_callee(funcs[i], ins, ix);
+        }
+        if (at >= 0) {
+          let l = out[at];
+          if (l.len() == 0 || l[l.len() - 1] != i) {
+            out = out.with(at, l.append(i));
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
@@ -1638,10 +1679,8 @@ function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
 
 function none_of(n: i32): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < n) {
+  for _ in 0..n {
     out = out.append(false);
-    i += 1;
   }
   return out;
 }

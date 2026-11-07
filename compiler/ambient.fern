@@ -68,7 +68,39 @@ function chain_of(mod: parser.Module, parent: i32[], at: i32): string[] {
   return out;
 }
 
-function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: util.NameIndex, own out: Violation[]): Violation[] {
+// The functions each function reaches. Every handler's search shares it.
+struct Reach { known: boolean[], edges: i32[][] }
+
+struct Found { out: Violation[], reach: Reach }
+
+function no_reach(n: i32): Reach {
+  let known: boolean[] = [];
+  let edges: i32[][] = [];
+  while (known.len() < n) {
+    known = known.append(false);
+    edges = edges.append([]);
+  }
+  return Reach { known: known, edges: edges };
+}
+
+function with_edges(mod: parser.Module, cur: i32, own r: Reach): Reach {
+  if (r.known[cur]) {
+    return r;
+  }
+  let fd = mod.funcs[cur];
+  let rs = treeshake.body_refs(fd);
+  let out: i32[] = [];
+  let fi = 0;
+  while (fi < mod.funcs.len()) {
+    if (!is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi]) && method_edge(fd, mod.funcs[fi])) {
+      out = out.append(fi);
+    }
+    fi += 1;
+  }
+  return Reach { known: r.known.with(cur, true), edges: r.edges.with(cur, out) };
+}
+
+function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: util.NameIndex, own out: Violation[], own reach: Reach): Found {
   let parent: i32[] = [];
   let pi = 0;
   while (pi < mod.funcs.len()) {
@@ -102,17 +134,15 @@ function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: ut
       }
       ci += 1;
     }
-    let rs = treeshake.body_refs(fd);
-    let fi = 0;
-    while (fi < mod.funcs.len()) {
-      if (parent[fi] == -2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi]) && method_edge(fd, mod.funcs[fi])) {
+    reach = with_edges(mod, cur, reach);
+    for fi in reach.edges[cur] {
+      if (parent[fi] == -2) {
         parent = parent.with(fi, cur);
         queue = queue.append(fi);
       }
-      fi += 1;
     }
   }
-  return out;
+  return Found { out: out, reach: reach };
 }
 
 // A method on a named type is reached only by a call whose receiver has
@@ -233,11 +263,14 @@ pub function enforce(mod: parser.Module): Violation[] {
   }
   let wanted = util.name_index(names);
   let out: Violation[] = [];
+  let reach = no_reach(mod.funcs.len());
   let hi = 0;
   while (hi < mod.funcs.len()) {
     let bag = bag_param(mod.funcs[hi]);
     if (bag.len() > 0 && mod.funcs[hi].body.len() > 0) {
-      let mine = by_capability(handler_violations(mod, hi, bag, wanted, []));
+      let found = handler_violations(mod, hi, bag, wanted, [], reach);
+      reach = found.reach;
+      let mine = by_capability(found.out);
       let vi = 0;
       while (vi < mine.len()) {
         out = out.append(mine[vi]);

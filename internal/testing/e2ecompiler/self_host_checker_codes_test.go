@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 )
 
 var codeRE = regexp.MustCompile(`E\d{3}`)
+var driverVerdictCodeRE = regexp.MustCompile(`^[A-Z][0-9]{3}$`)
 
 const methodBorrowPrelude = `struct Handle { fd: i32 }
 function (own h: Handle) close(): i32 { return h.fd; }
@@ -107,6 +109,39 @@ const (
 	// P is in no union or trait below; A is a member of U and implements T.
 	elemCheckedDecls = "struct P { x: i32 }\nstruct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nenum E { X, Y(i32) }\ntrait T { function t(self: Self): i32; }\nimpl T for A { function t(self: A): i32 { return 0; } }\n"
 )
+
+// hostDriverBin is a compiler driver built for the host, through the driver cache.
+func hostDriverBin(t *testing.T, driverFile string) string {
+	t.Helper()
+	host := e2eharness.HostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return e2eharness.CachedDriverBinFor(t, e2eharness.RepoPath("compiler"), driverFile, host)
+}
+
+// checkerCodesOutput is what a checker driver binary prints for src on its stdin.
+func checkerCodesOutput(bin, src string) (string, error) {
+	cmd := exec.Command(bin)
+	cmd.Stdin = strings.NewReader(src)
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), nil
+	}
+	stderr := ""
+	if exit, ok := err.(*exec.ExitError); ok {
+		stderr = string(exit.Stderr)
+		// Exit 1 is the checker's diagnostic verdict, not a transport failure.
+		if exit.ExitCode() == 1 {
+			for _, d := range driverDiags(string(out)) {
+				if driverVerdictCodeRE.MatchString(d.code) {
+					return string(out), nil
+				}
+			}
+		}
+	}
+	return string(out), fmt.Errorf("checker driver failed: %w\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
+}
 
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
 	return buildCheckerDriverBin(t, "drivers/checker_codes_run.fern", false)
@@ -698,6 +733,9 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"e047-value-if-literal-local-out-of-range", "function f(c: boolean): i32 { let x = if (c) { 300 } else { 2 }; let y: u8 = x; return y as i32; }\nfunction main(): i32 { return f(true); }\n", []string{"E047"}},
 		{"e047-value-if-literal-out-of-range", "function f(c: boolean): i32 { let x: u8 = if (c) { 300 } else { 2 }; return x as i32; }\nfunction main(): i32 { return f(true); }\n", []string{"E047"}},
 		{"e047-value-match-literal-out-of-range", "function f(k: i32): i32 { let x: u8 = match (k) { 0 => 300, _ => 2 }; return x as i32; }\nfunction main(): i32 { return f(0); }\n", []string{"E047"}},
+		{"literal-array-index-read-gives-the-element-type", "function main(): i32 { let z = [1, 2]; let m: u8 = z[0]; return m as i32; }\n", nil},
+		{"literal-array-index-argument-gives-the-element-type", "function g(b: u8): i32 { return b as i32; }\nfunction main(): i32 { let z = [1, 2]; return g(z[0]); }\n", nil},
+		{"e038-literal-array-append-after-an-index-read", "function main(): i32 { let z = [1, 2]; let m: u8 = z[0]; let n: i64 = 7; let w = z.append(n); return w.len() + (m as i32); }\n", []string{"E038"}},
 		{"literal-array-local-as-the-only-argument", "function keep(b: u8[]): u8[] { return b; }\nfunction main(): i32 { let bytes = [1, 2]; let k = keep(bytes); return k.len(); }\n", nil},
 		{"literal-array-argument-inside-a-returned-variant", "function keep(b: u8[]): u8[] { return b; }\nfunction wrap(): Option[u8[]] { let bytes = [1, 2]; return Some(keep(bytes)); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e038-literal-array-append-at-a-second-width", "function main(): i32 { let z = [1, 2]; let b: u8 = 3; let w = z.append(b); let q: i64 = 7; let v = z.append(q); return w.len() + v.len(); }\n", []string{"E038"}},

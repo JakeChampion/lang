@@ -18,14 +18,14 @@ func markers(t arm64tbl.VecTable) (begin, end string) {
 
 const lintLimit = 10
 
-func allowLongTable(b *strings.Builder, rows int) {
+func allowLongTable(b *strings.Builder, rows int, why string) {
 	if rows+1 > lintLimit {
-		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// Each table row has one match arm.\n")
+		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// " + why + "\n")
 	}
 }
 
 func lookup(b *strings.Builder, fn, ret string, rows []string) {
-	allowLongTable(b, len(rows))
+	allowLongTable(b, len(rows), "Each table row has one match arm.")
 	fmt.Fprintf(b, "function %s(mnem: string): %s {\n    match (mnem) {\n", fn, ret)
 	for _, r := range rows {
 		fmt.Fprintf(b, "        %s,\n", r)
@@ -86,8 +86,8 @@ func genFamily(b *strings.Builder) {
 const leafSpellings = 4
 
 func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling) {
-	fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", name)
 	if len(group) <= leafSpellings {
+		fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", name)
 		for _, s := range group {
 			fmt.Fprintf(b, "    if (mnem == %q) { return %s(); }\n", s.mnem, familyID(arm64tbl.Scalar[s.fam]))
 		}
@@ -104,7 +104,15 @@ func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling
 		byByte[c] = append(byByte[c], s)
 	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
-	fmt.Fprintf(b, "    let c: u8 = mnem[%d];\n", depth)
+	// Each byte has one branch, and a byte with one spelling adds a test.
+	decisions := len(order)
+	for _, c := range order {
+		if len(byByte[c]) == 1 {
+			decisions++
+		}
+	}
+	allowLongTable(b, decisions, "Each mnemonic of the table has one branch.")
+	fmt.Fprintf(b, "function %s(mnem: string): i32 {\n    let c: u8 = mnem[%d];\n", name, depth)
 	type step struct {
 		name  string
 		group []spelling

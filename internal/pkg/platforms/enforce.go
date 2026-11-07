@@ -210,6 +210,7 @@ var gatedBuiltins = map[string]string{
 	"__raw_scratch": "rawmem", "__raw_environ": "rawmem", "__raw_splice_pipe": "rawmem",
 	"__raw_cover": "rawmem", "__raw_task_state": "rawmem", "__raw_vdso": "rawmem",
 	"__raw_vg_request": "rawmem",
+	"__wfi":            "privileged", "__hvc": "privileged", "__smc": "privileged",
 }
 
 var coreBuiltins = map[string]bool{

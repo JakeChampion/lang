@@ -63,7 +63,14 @@ The release build keeps the head compare.
 The WebAssembly runtime makes the same two checks in `$__fern_raw_free`.
 The two interpreters keep a table of the raw blocks a program took, and a release is checked against that table.
 The `raw_free_outside_heap`, `raw_double_free` and `raw_double_free_large` rows of the abort report suite pin the cause line on every target and in both interpreters.
-Under `-sanitize` the raw free quarantines the block instead, and a second raw free quarantines it again without a report. The leak census then shows one more free than allocations. The detectors cover reference-counted misuse only ([SANITIZER-AUDIT.md](SANITIZER-AUDIT.md)).
+
+Under `-sanitize` the raw free quarantines the block instead.
+A second raw free of a block in the quarantine aborts with the double-free cause, with or without other frees between the two.
+The free compares the first word of the block with the quarantine's poison word, and on a match it walks the quarantine list.
+So a live block whose first word holds the poison value is still freed.
+A block that the quarantine has already evicted to a free list is not found.
+
+Before this change, a second raw free quarantined the block again without a report, and the leak census showed one more free than allocations.
 
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
 In the release build the next allocation of that class takes the freed box, and the one after it returns the forged address.
@@ -107,6 +114,7 @@ The encoding therefore did not hold against the raw floor.
 | A freed large block is a donor for the next request of its class | `TestSelfHostAllocReuseLargeDonor` |
 | A second raw free of the same block in a row aborts, small and large, on both backends | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free`, `raw_double_free_large`) |
 | Under `-harden` a second raw free after other frees of the class aborts, small and large, on both backends | `TestSelfHostHardenRawInterleavedDoubleFree` |
+| Under `-sanitize` a second raw free of a quarantined block aborts, small and large, on both backends, and a live block that holds the poison value frees | `TestSelfHostSanitizeRawDoubleFree` |
 | Under `-harden` a released block holds zeros and a taken block has no link word, small and large, on both backends | `TestSelfHostHardenScrubsReleasedBlocks` |
 | A freed block above one gigabyte is reused, on both backends | `TestSelfHostAllocReuseAboveOneGigabyte` |
 | A request whose bump wraps the address space aborts with the size cause, on both backends; the probe calls the allocator from patched assembly, because no checked entry passes such a size | `TestSelfHostAllocRefusesWrappedBump` |
@@ -118,7 +126,7 @@ The encoding therefore did not hold against the raw floor.
 | Gap | Consequence |
 |---|---|
 | Free list link inside the freed block | In the release build a raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address. `-harden` encodes the link and aborts on a bad one, and `-sanitize` quarantines freed blocks and detects the touch (SEC-023) |
-| A raw double free with another free of the same class between the two | In the release build `__free` compares the block with the head of its list alone, so a free of another block of the class between the two frees hides the second. `-harden` walks the first 64 blocks of the list, so only a second free with 64 or more frees of the class between them links the block twice (SEC-023) |
+| A raw double free with another free of the same class between the two | In the release build `__free` compares the block with the head of its list alone, so a free of another block of the class between the two frees hides the second. `-harden` walks the first 64 blocks of the list, so only a second free with 64 or more frees of the class between them links the block twice. `-sanitize` aborts while the block is in its quarantine (SEC-023) |
 | No zeroing on free in the release build | A secret stays in the arena until the block is reused and zero-filled. `-harden` zeroes each block before its push and clears the link word at the take. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |

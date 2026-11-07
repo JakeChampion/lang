@@ -566,20 +566,21 @@ function arm64_movreg_sized_word(rd: i32, rm: i32, w: boolean): i64 {
   return word;
 }
 
-function arm64_svc_word(imm16: i32): i64 {
-  return 0xd4000001 | (imm16 & 0xffff) as i64 << 5;
-}
-
 function arm64_ret_word(rn: i32): i64 {
   return 0xd65f0000 | (rn & 31) as i64 << 5;
 }
 
-function arm64_svc(buf: i32[], imm16: i32): i32[] {
-  return arm64_le32(buf, arm64_svc_word(imm16));
-}
-
-function arm64_brk(buf: i32[], imm16: i32): i32[] {
-  return arm64_le32(buf, 0xd4200000 | (imm16 & 0xffff) as i64 << 5);
+// An exception-generating instruction: svc, hvc, smc or brk.
+function arm64_exception(buf: i32[], mnem: string, imm16: i32): i32[] {
+  let base = 0xd4200000;
+  if (mnem == "svc") {
+    base = 0xd4000001;
+  } else if (mnem == "hvc") {
+    base = 0xd4000002;
+  } else if (mnem == "smc") {
+    base = 0xd4000003;
+  }
+  return arm64_le32(buf, base | (imm16 & 0xffff) as i64 << 5);
 }
 
 function arm64_ret(buf: i32[], rn: i32): i32[] {
@@ -1314,6 +1315,12 @@ pub function arm64_fixed_word(mnem: string): i64 {
   }
   if (mnem == "yield") {
     return 0xd503203f;
+  }
+  if (mnem == "wfe") {
+    return 0xd503205f;
+  }
+  if (mnem == "wfi") {
+    return 0xd503207f;
   }
   if (mnem == "paciasp") {
     return 0xd503233f;
@@ -3017,6 +3024,9 @@ function arm64_mrs_base(name: string): i64 {
   if (name == "dczid_el0") {
     return 0xd53b00e0;
   }
+  if (name == "mpidr_el1") {
+    return 0xd53800a0;
+  }
   return -1;
 }
 
@@ -3036,6 +3046,9 @@ function arm64_msr_base(name: string): i64 {
   }
   if (name == "fpsr") {
     return 0xd51b4420;
+  }
+  if (name == "cpacr_el1") {
+    return 0xd5181040;
   }
   return -1;
 }
@@ -4745,6 +4758,8 @@ function arm64_gas_family_len2(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len3(mnem: string): i32 {
   let c: u8 = mnem[0];
   if (c == b'a') {
@@ -4761,6 +4776,9 @@ function arm64_gas_family_len3(mnem: string): i32 {
   }
   if (c == b'e') {
     return arm64_gas_family_len3_e(mnem);
+  }
+  if (c == b'h' && mnem == "hvc") {
+    return arm64_fam_sys();
   }
   if (c == b'i') {
     return arm64_gas_family_len3_i(mnem);
@@ -4785,6 +4803,9 @@ function arm64_gas_family_len3(mnem: string): i32 {
   }
   if (c == b't') {
     return arm64_gas_family_len3_t(mnem);
+  }
+  if (c == b'w') {
+    return arm64_gas_family_len3_w(mnem);
   }
   if (c == b'x' && mnem == "xtn") {
     return arm64_fam_narrow();
@@ -4819,6 +4840,8 @@ function arm64_gas_family_len3_a_ad(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len3_b(mnem: string): i32 {
   let c: u8 = mnem[1];
   if (c == b'f' && mnem == "bfi") {
@@ -4920,6 +4943,8 @@ function arm64_gas_family_len3_l(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len3_l_ld(mnem: string): i32 {
   let c: u8 = mnem[2];
   if (c == b'1' && mnem == "ld1") {
@@ -4953,6 +4978,8 @@ function arm64_gas_family_len3_l_ls(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len3_m(mnem: string): i32 {
   let c: u8 = mnem[1];
   if (c == b'o' && mnem == "mov") {
@@ -5009,10 +5036,15 @@ function arm64_gas_family_len3_r(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len3_s(mnem: string): i32 {
   let c: u8 = mnem[1];
   if (c == b'b' && mnem == "sbc") {
     return arm64_fam_carry();
+  }
+  if (c == b'm' && mnem == "smc") {
+    return arm64_fam_sys();
   }
   if (c == b't') {
     return arm64_gas_family_len3_s_st(mnem);
@@ -5029,6 +5061,8 @@ function arm64_gas_family_len3_s(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len3_s_st(mnem: string): i32 {
   let c: u8 = mnem[2];
   if (c == b'1' && mnem == "st1") {
@@ -5068,6 +5102,18 @@ function arm64_gas_family_len3_t(mnem: string): i32 {
   return 0 - 1;
 }
 
+function arm64_gas_family_len3_w(mnem: string): i32 {
+  if (mnem == "wfe") {
+    return arm64_fam_fixed();
+  }
+  if (mnem == "wfi") {
+    return arm64_fam_fixed();
+  }
+  return 0 - 1;
+}
+
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len4(mnem: string): i32 {
   let c: u8 = mnem[0];
   if (c == b'a') {
@@ -5326,6 +5372,8 @@ function arm64_gas_family_len4_n(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len4_s(mnem: string): i32 {
   let c: u8 = mnem[1];
   if (c == b'b') {
@@ -5451,6 +5499,8 @@ function arm64_gas_family_len4_u_ux(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len5(mnem: string): i32 {
   let c: u8 = mnem[0];
   if (c == b'a' && mnem == "aesmc") {
@@ -5645,6 +5695,8 @@ function arm64_gas_family_len5_r(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len5_s(mnem: string): i32 {
   let c: u8 = mnem[1];
   if (c == b'b' && mnem == "sbfiz") {
@@ -5914,6 +5966,8 @@ function arm64_gas_family_len6_f_fr_fri_frin(mnem: string): i32 {
   return 0 - 1;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each mnemonic of the table has one branch.
 function arm64_gas_family_len6_f_fr_fri_frin_frint(mnem: string): i32 {
   let c: u8 = mnem[5];
   if (c == b'a' && mnem == "frinta") {
@@ -7365,11 +7419,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
     if (ops.len() < 1) {
       return a;
     }
-    if (mnem == "svc") {
-      arm64_push_arr(a.code, arm64_svc([], arm64_gas_imm(ops[0])));
-      return a;
-    }
-    arm64_push_arr(a.code, arm64_brk([], arm64_gas_imm(ops[0])));
+    arm64_push_arr(a.code, arm64_exception([], mnem, arm64_gas_imm(ops[0])));
     return a;
   }
   if (fam == arm64_fam_indirect()) {
@@ -9248,7 +9298,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("mov:vec") };
       }
     }
-    if (mnem == "yield" && ops.len() != 0) {
+    if ((mnem == "yield" || mnem == "wfe" || mnem == "wfi") && ops.len() != 0) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":operands") };
     }
     let lmem = arm64_gas_line_mem(ops);

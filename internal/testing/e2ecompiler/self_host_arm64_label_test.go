@@ -87,7 +87,7 @@ function main(): i32 {
     let a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_bl(a, "compute");                    // call compute (forward)
     arm64_push_arr(a.code, arm64_movz([], arm64_x16(), 1, 0, false));    // SYS_exit (Darwin)
-    arm64_push_arr(a.code, arm64_svc([], 128));                    // svc #0x80
+    arm64_push_arr(a.code, arm64_exception([], "svc", 128));                    // svc #0x80
     a = arm64_asm_label(a, "compute");
     arm64_push_arr(a.code, arm64_movz([], arm64_x0(), 0, 0, false));     // acc = 0
     arm64_push_arr(a.code, arm64_movz([], arm64_x1(), 7, 0, false));     // counter = 7

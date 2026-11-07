@@ -34,10 +34,11 @@ description: >
 inputs:
   qemu-package:
     description: >
-      Which qemu user-mode package to install. `qemu-user-static`
+      Which qemu package to install. `qemu-user-static`
       provides qemu-aarch64-static (and binfmt registration);
-      `qemu-user` provides qemu-aarch64. Lanes differ, so it is an
-      input rather than a guess.
+      `qemu-user` provides qemu-aarch64. `qemu-system-arm` provides
+      qemu-system-aarch64, which boots a kernel image. Lanes differ, so it
+      is an input rather than a guess.
     required: false
     default: qemu-user-static
   cross-gcc:
@@ -139,6 +140,7 @@ runs:
           case "$QEMU_PKG" in
             qemu-user) command -v qemu-aarch64 >/dev/null 2>&1 ;;
             qemu-user-static) command -v qemu-aarch64-static >/dev/null 2>&1 ;;
+            qemu-system-arm) command -v qemu-system-aarch64 >/dev/null 2>&1 ;;
             *) return 1 ;;
           esac
         }
