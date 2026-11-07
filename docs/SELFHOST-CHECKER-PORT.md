@@ -1368,8 +1368,8 @@ its generic P001. Every consumer already rejected a parser-side unknown, so the
 single check in the parser is what makes the interp, the checker and the
 backends agree.
 
-The gate is `TestSelfHostFrontEndNumericLiteralCodes`, which drives
-checker_codes_run under the native interpreter and compares against the Go
+The gate is `TestSelfHostFrontEndNumericLiteralCodes`, which runs
+checker_codes_run built for the host and compares against the Go
 FRONT end. The E-code differential cannot cover this class: its oracle is the Go
 CHECKER, which never runs for a program the Go parser rejects, so a front-end
 divergence reads there as agreement. That is how #6842 stayed hidden while

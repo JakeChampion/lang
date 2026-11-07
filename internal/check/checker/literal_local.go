@@ -257,6 +257,18 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *s
 	}
 }
 
+// settleLitArrayByIndex gives an integer-literal array local the element type
+// of a typed destination of one of its elements, such as `let m: u8 = z[0];`.
+func (c *checker) settleLitArrayByIndex(ix *ast.Index, hint ast.Type) {
+	id, ok := ix.Array.(*ast.Ident)
+	if !ok || c.litCompositeReads[id] == nil {
+		return
+	}
+	if h, ok := hint.(ast.NumberType); ok && !h.Polymorphic {
+		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: h})
+	}
+}
+
 func literalNominalArgs(t ast.Type) (string, []ast.Type) {
 	switch t := t.(type) {
 	case ast.StructType:

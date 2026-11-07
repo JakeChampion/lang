@@ -1,0 +1,13 @@
+function low(b: u8): i32 {
+  return b as i32;
+}
+
+function main(): i32 {
+  let bytes = [200, 55];
+  let first: u8 = bytes[0];
+  if (first as i32 + low(bytes[1]) != 255) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}

@@ -16391,6 +16391,9 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 	if id, ok := e.(*ast.Ident); ok {
 		c.settleLitCompositeLocal(id, hint)
 	}
+	if ix, ok := e.(*ast.Index); ok && !ix.IsString && !ix.IsSlice {
+		c.settleLitArrayByIndex(ix, hint)
+	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
 		if hn.Polymorphic {

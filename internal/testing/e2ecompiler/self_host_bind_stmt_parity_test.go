@@ -161,16 +161,12 @@ func astStmtForms(t *testing.T) []string {
 }
 
 func TestSelfHostBindStmtScopeParity(t *testing.T) {
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/drivers/bind_stmt_parity_run.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
+	driver := hostDriverBin(t, "drivers/bind_stmt_parity_run.fern")
 
 	covered := map[string]bool{}
 	for _, tc := range bindStmtParityCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(interpBin, "-interp", driver)
+			cmd := exec.Command(driver)
 			cmd.Stdin = strings.NewReader(tc.src)
 			var stderr strings.Builder
 			cmd.Stderr = &stderr

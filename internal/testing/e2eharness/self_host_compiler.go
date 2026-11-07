@@ -156,10 +156,23 @@ func publishToDiskCache(binPath, diskName string) {
 	if err != nil {
 		return
 	}
-	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, in, 0o755); err == nil {
-		_ = os.Rename(tmp, dst)
+	tmp, err := os.CreateTemp(d, diskName+".tmp-*")
+	if err != nil {
+		return
 	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o755); err != nil {
+		_ = tmp.Close()
+		return
+	}
+	if _, err := tmp.Write(in); err != nil {
+		_ = tmp.Close()
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		return
+	}
+	_ = os.Rename(tmp.Name(), dst)
 }
 
 func stdlibHash(t testing.TB) string {
