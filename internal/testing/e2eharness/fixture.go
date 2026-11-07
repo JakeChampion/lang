@@ -18,14 +18,8 @@ import (
 
 func RunFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
-	bin := BuildLangBinForInterp(t)
-	cmd := exec.Command(bin, "-interp", mainPath)
-	cmd.Stdin = strings.NewReader(stdin)
-	var so, se bytes.Buffer
-	cmd.Stdout = &so
-	cmd.Stderr = &se
-	_ = cmd.Run()
-	return so.String(), cmd.ProcessState.ExitCode()
+	out, exit := InterpInputVerdict(t, BuildLangBinForInterp(t), mainPath, stdin)
+	return string(out), exit
 }
 
 func LoadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
