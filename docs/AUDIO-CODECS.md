@@ -181,13 +181,15 @@ The CELT tests retain their separate libopus reference checks.
 The MP3 suite has 16 golden vectors from a pinned scalar minimp3 reference.
 They cover all nine sample rates, bit reservoir history, mixed blocks, intensity stereo, gapless output, stream-copy tags, and protected frames.
 An additional 8 kHz mixed-block vector compares every sample with FFmpeg.
-It verifies band boundaries independently of the scalar reference.
+It verifies scalefactor and Huffman region boundaries independently of the scalar reference.
 The tests also cover metadata, private bits, buffer reuse, malformed input, and reservoir warmup.
 The table generator tests verify the implicit zero padding of C array rows.
 
 `scripts/check-mp3-interop --iso` checks 90 generated files and 14 pinned conformance streams.
 All 90 files match scalar minimp3 float output bit for bit, including gapless output.
 Their FFmpeg comparison has a maximum absolute sample difference of 0.00000238.
+The script also checks 36 files with distinct Huffman tables across switched regions.
+They cover all nine sample rates and long, short, and mixed transitions against FFmpeg.
 
 The 14 conformance streams also match scalar minimp3 float output bit for bit.
 Integer conversion differs from the supplied ISO PCM by at most one integer step.

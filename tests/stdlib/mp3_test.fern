@@ -311,6 +311,6 @@ function main(): i32 {
   runner = runner.it("bit reservoir warmup after seek", priming);
   runner = runner.it("truncation, CRC, limits, and unsupported formats", rejects);
   runner = runner.it("mutated payloads remain bounded", payload_mutations);
-  runner = runner.it("8 kHz mixed-block scalefactor boundaries", mixed_8khz);
+  runner = runner.it("8 kHz mixed-block scalefactor and Huffman boundaries", mixed_8khz);
   return runner.finish();
 }

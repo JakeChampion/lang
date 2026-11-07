@@ -16,7 +16,7 @@ import "std/audio/mp3/header";
 import "std/audio/mp3/bits";
 import "std/audio/mp3/tables";
 
-pub struct Granule { part: i32, big: i32, gain: i32, compress: i32, block: i32, mixed: boolean, long_bands: i32, short_bands: i32, row: i32, table0: i32, table1: i32, table2: i32, region0: i32, region1: i32, sub0: i32, sub1: i32, sub2: i32, pre: boolean, scale: i32, count1: i32, scfsi: i32 }
+pub struct Granule { part: i32, big: i32, gain: i32, compress: i32, block: i32, mixed: boolean, long_bands: i32, short_bands: i32, row: i32, table0: i32, table1: i32, table2: i32, region0_end: i32, region1_end: i32, sub0: i32, sub1: i32, sub2: i32, pre: boolean, scale: i32, count1: i32, scfsi: i32 }
 
 pub struct Side { begin: i32, granules: Granule[] }
 
@@ -37,6 +37,16 @@ pub function band(g: Granule, i: i32): i32 {
   }
   let short_index = i - g.long_bands + 9;
   return if (short_index < 40) { tables.G_SCF_SHORT[g.row * 40 + short_index] } else { 0 };
+}
+
+function long_boundary(row: i32, count: i32): i32 {
+  let end = 0;
+  for i in 0..22 {
+    if (i < count) {
+      end += tables.G_SCF_LONG[row * 23 + i];
+    }
+  }
+  return end;
 }
 
 // Side information uses one bit cursor across version and block-type field variants.
@@ -95,15 +105,12 @@ pub function side_info(input: [u8], h: header.Header): Result[Side, pcm.AudioErr
       if (block == 0) {
         return Err(pcm.Header);
       }
-      r0 = 7;
-      r1 = 255;
       if (block == 2) {
         flags = flags.with(index % h.channels, 0);
         if (mixed) {
           longs = if (h.version == 1) { 8 } else { 6 };
           shorts = 30;
         } else {
-          r0 = 8;
           longs = 0;
           shorts = 39;
         }
@@ -133,8 +140,11 @@ pub function side_info(input: [u8], h: header.Header): Result[Side, pcm.AudioErr
       return Err(pcm.Header);
     }
     let row = h.rate_index - (if (h.rate_index != 0) { 1 } else { 0 });
+    // Switched Huffman regions have fixed spectral offsets, independent of scalefactor bands.
+    let end0 = if (switching == 0) { long_boundary(row, r0 + 1) } else if (block == 2) { if (h.sample_rate == 8000) { 72 } else { 36 } } else if (h.version == 1) { 36 } else { if (h.sample_rate == 8000) { 108 } else { 54 } };
+    let end1 = if (switching == 0) { long_boundary(row, r0 + r1 + 2) } else { 576 };
     let scfsi = if (index < h.channels) { 0 } else { flags[index % h.channels] };
-    output = output.append(Granule { part: part, big: big, gain: gain, compress: compress, block: block, mixed: mixed, long_bands: longs, short_bands: shorts, row: row, table0: t0, table1: t1, table2: t2, region0: r0, region1: r1, sub0: sub0, sub1: sub1, sub2: sub2, pre: pre, scale: scale, count1: count1, scfsi: scfsi });
+    output = output.append(Granule { part: part, big: big, gain: gain, compress: compress, block: block, mixed: mixed, long_bands: longs, short_bands: shorts, row: row, table0: t0, table1: t1, table2: t2, region0_end: end0, region1_end: end1, sub0: sub0, sub1: sub1, sub2: sub2, pre: pre, scale: scale, count1: count1, scfsi: scfsi });
   }
   if (b.bad || b.pos != b.limit) {
     return Err(pcm.Header);
@@ -275,7 +285,7 @@ pub function huffman(input: [u8], own b: bits.Bits, g: Granule, scale: [f32], en
       }
       band_end += n;
     }
-    let table = if (band_index <= g.region0) { g.table0 } else if (band_index <= g.region0 + g.region1 + 1) { g.table1 } else { g.table2 };
+    let table = if (at < g.region0_end) { g.table0 } else if (at < g.region1_end) { g.table1 } else { g.table2 };
     let start = tables.TABINDEX[table];
     let width = 5;
     let index = start + bits.peek(input, b.pos, width) as i32;

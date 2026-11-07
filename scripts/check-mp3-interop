@@ -65,6 +65,20 @@ with tempfile.TemporaryDirectory() as tmp:
     if count:
         print(f'{count} MP3 files match scalar minimp3 bit for bit, including gapless output')
         print(f'FFmpeg maximum absolute sample difference: {worst:.8f}')
+    if not args.iso_only:
+        switched_count = 0
+        for rate in [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000]:
+            for block, mixed in [(1, False), (2, False), (2, True), (3, False)]:
+                path = tmp / 'switched.mp3'
+                path.write_bytes(vectors.switched(rate, block, mixed))
+                subprocess.run([str(ours), str(path), str(tmp / 'ours.f32')], stdout=subprocess.DEVNULL, check=True)
+                actual = (tmp / 'ours.f32').read_bytes()
+                expected = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'f32le', 'pipe:1'], capture_output=True, check=True).stdout
+                assert len(actual) == len(expected), (rate, block, mixed, 'switched sample count')
+                error = max(abs(a - b) for a, b in zip(floats(actual), floats(expected)))
+                assert math.isfinite(error) and error < 0.000001, (rate, block, mixed, error)
+                switched_count += 1
+        print(f'{switched_count} switched-block files match independent FFmpeg PCM within 0.000001')
     if args.iso:
         manifest = json.loads((root / 'scripts/audio-reference/mp3-iso.json').read_text())
         assert manifest['revision'] == vectors.tables.REV

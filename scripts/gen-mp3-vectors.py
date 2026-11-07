@@ -138,23 +138,44 @@ def protected_silence():
     return header + crc.to_bytes(2, 'big') + side + bytes(417 - 38)
 
 
-def mixed8k():
+def switched(rate=8000, block=2, mixed=True):
+    version = 3 if rate >= 32000 else 2 if rate >= 16000 else 0
+    rates = {3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000]}[version]
+    region = (72 if rate == 8000 else 36) if block == 2 else (36 if version == 3 else 108 if rate == 8000 else 54)
     def field(value, width):
         return format(value, f'0{width}b')
-    def granule():
-        return ''.join(field(v, n) for v, n in [(45, 12), (43, 9), (180, 8), (0, 9), (1, 1), (2, 2), (1, 1), (33, 10), (0, 9), (0, 1), (0, 1)])
-    side = '0' * 10 + granule() + granule()
-    assert len(side) == 136
-    payload = '1' * 42 + '010' + '1' * 42 + '011'
-    data = int(payload.ljust(96, '0'), 2).to_bytes(12, 'big')
-    frame = bytes.fromhex('ffe31800') + int(side, 2).to_bytes(17, 'big') + data + bytes(39)
-    assert len(frame) == 72
-    return frame * 2
+    def granule(kind):
+        active = kind == block
+        fields = [(9 if active else 0, 12), (region // 2 + 7 if active else 0, 9),
+                  (180, 8), (0, 4 if version == 3 else 9), (1, 1), (kind, 2),
+                  (int(mixed and kind == 2), 1), (1, 10), (0, 9)]
+        if version == 3:
+            fields += [(0, 1)]
+        return ''.join(field(v, n) for v, n in fields + [(0, 1), (0, 1)])
+    count = 2 if version == 3 else 1
+    kinds = [2] * (count * 2) if block == 2 else [1, 2, 2, 3]
+    frames = []
+    for at in range(0, len(kinds), count):
+        side = '0' * (20 if version == 3 else 10)
+        payload = ''
+        for kind in kinds[at:at + count]:
+            side += granule(kind) * 2
+            if kind == block:
+                # Table zero consumes no bits. Table one codes six zero pairs, then +/- one.
+                payload += '1' * 6 + '010' + '1' * 6 + '011'
+        assert len(side) == (256 if version == 3 else 136)
+        data = int(payload.ljust((len(payload) + 7) // 8 * 8, '0') or '0', 2).to_bytes((len(payload) + 7) // 8, 'big')
+        header = bytes([255, 0xe3 | (version << 3), 0x10 | (rates.index(rate) << 2), 0])
+        size = (144000 * 32 if version == 3 else 72000 * 8) // rate
+        frame = header + int(side, 2).to_bytes(len(side) // 8, 'big') + data
+        assert len(frame) <= size
+        frames.append(frame.ljust(size, b'\0'))
+    return b''.join(frames)
 
 
 def main():
     cases = []
-    mixed = mixed8k()
+    mixed = switched()
     with tempfile.TemporaryDirectory() as temp:
         temp = Path(temp)
         ref = reference(temp)
