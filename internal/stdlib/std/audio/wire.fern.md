@@ -16,7 +16,7 @@ pub function be(input: [u8], at: i32, bytes: i32): u64 {
 pub function le(input: [u8], at: i32, bytes: i32): u64 {
   let value = 0u64;
   for i in 0..bytes {
-    value = value | input[at + i] as u64 << (i * 8) as u64;
+    value |= input[at + i] as u64 << (i * 8) as u64;
   }
   return value;
 }

@@ -170,7 +170,7 @@ function number(input: [u8], own b: Bits, variable: boolean): Result[(Bits, u64)
   let mask = 128u64;
   while ((first & mask) != 0u64 && bytes < 8) {
     bytes += 1;
-    mask = mask >> 1;
+    mask >>= 1;
   }
   if (bytes < 2 || bytes > 7 || !variable && bytes > 6) {
     return Err(pcm.Header);
@@ -389,7 +389,7 @@ function subframe(input: [u8], own b: Bits, count: i32, bits: i32): Result[(Bits
       for j in 0..order {
         prediction += coeff[j] * samples[i - j - 1];
       }
-      prediction = prediction >> shift as i64;
+      prediction >>= shift as i64;
       let Some(value) = prediction +? samples[i] else {
         return Err(pcm.Header);
       };
