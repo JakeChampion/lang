@@ -33,6 +33,9 @@ func checkServeH3Files(t *testing.T, target string, size int) {
 		config = "serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(60 as i64) }"
 	}
 	w := newServeH3WorldWithConfig(t, config)
+	if target == "interp" {
+		w.budget = interpH3Budget
+	}
 	data := make([]byte, size)
 	for i := range data {
 		data[i] = byte((17*i + 3) % 251)
@@ -129,7 +132,7 @@ func checkServeH3Files(t *testing.T, target string, size int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := runX86Bin(w.qemu, w.client, port, w.ca, "0", "0").CombinedOutput()
+	out, err := runX86Bin(w.qemu, w.client, port, w.ca, "0", "0", w.budget).CombinedOutput()
 	if err != nil {
 		t.Fatalf("file client: %v\n%s", err, out)
 	}
