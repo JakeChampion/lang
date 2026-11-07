@@ -108,6 +108,20 @@ func selfHostImportClosure(dir, fernName string) ([]string, error) {
 }
 
 func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
+	return importClosure(nil, dir, fernNames...)
+}
+
+// importClosureNotingMissing is the import closure of fernName, and the local
+// imports that name no file. A verdict depends on that absence too.
+func importClosureNotingMissing(dir, fernName string) (files, missing []string, err error) {
+	files, err = importClosure(&missing, dir, fernName)
+	return files, missing, err
+}
+
+// importClosure fails on a local import that names no file, unless missing
+// is not nil: then it records the import's .fern path there, and it takes a
+// file that does not lex to import nothing.
+func importClosure(missing *[]string, dir string, fernNames ...string) ([]string, error) {
 	seen := map[string]bool{}
 	var order []string
 	var visit func(path string) error
@@ -123,6 +137,10 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 		}
 		base := filepath.Dir(path)
 		imports, err := fernSourceImports(string(src))
+		if err != nil && missing != nil {
+			// A loader can read no imports from a file that does not lex.
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("self-host import closure: tokenize %s: %w", path, err)
 		}
@@ -137,6 +155,10 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 					if err := visit(cand + ".md"); err != nil {
 						return err
 					}
+					continue
+				}
+				if missing != nil {
+					*missing = append(*missing, cand)
 					continue
 				}
 				return fmt.Errorf("self-host import closure: %s imports %q but %s does not exist "+
