@@ -17,7 +17,7 @@ var modernFormCeilings = []struct {
 	ceiling int
 }{
 	{"coreutils", 233},
-	{"examples", 52},
+	{"examples", 51},
 	{"internal/stdlib", 392},
 }
 

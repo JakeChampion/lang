@@ -18,11 +18,8 @@ func TestSelfHostX86Encode(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
-	if err != nil {
-		t.Fatalf("read x86_native.fern: %v", err)
-	}
-	source := string(nat) + "\n" + x86EncodeSelfTestMain
+	nat := assemblerSource(t, "x86_native.fern")
+	source := nat + "\n" + x86EncodeSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -65,11 +62,8 @@ func TestSelfHostX86Labels(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
-	if err != nil {
-		t.Fatalf("read x86_native.fern: %v", err)
-	}
-	source := string(nat) + "\n" + x86LabelsSelfTestMain
+	nat := assemblerSource(t, "x86_native.fern")
+	source := nat + "\n" + x86LabelsSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -112,15 +106,12 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
-	if err != nil {
-		t.Fatalf("read x86_native.fern: %v", err)
-	}
+	nat := assemblerSource(t, "x86_native.fern")
 	elf, err := os.ReadFile("../../../compiler/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
+	source := nat + "\n" + string(elf) + toU8Src + driverMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
