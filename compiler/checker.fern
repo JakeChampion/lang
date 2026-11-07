@@ -2428,7 +2428,7 @@ function type_names_of(structs: StructTable, unions: UnionTable, unloaded: strin
   return TypeNames { structs: structs.heads, unions: unions.index, resources: structs.resources, spellings: structs.spellings, unloaded: util.name_index(unloaded) };
 }
 
-function (s: Scope) resolve_type(name: string): typeinfo.Type {
+pub function (s: Scope) resolve_type(name: string): typeinfo.Type {
   return type_from_name_subst(name, s.tparams, rigid_tparams(s.tparams), s.type_names());
 }
 
@@ -2872,7 +2872,7 @@ function (s: Scope) is_bound(name: string): boolean {
   return s.binding_index(name) >= 0;
 }
 
-function (s: Scope) lookup_assoc_sig(tyname: string, field: string): Option[FuncSig] {
+pub function (s: Scope) lookup_assoc_sig(tyname: string, field: string): Option[FuncSig] {
   for sig in s.sigs.sigs {
     if (sig.name == field && sig.receiver.len() > 0 && util.base_type_name(sig.receiver) == tyname) {
       return Some(sig);
@@ -2898,7 +2898,7 @@ function (s: Scope) sig_at(name: string): i32 {
   return first;
 }
 
-function (s: Scope) lookup_sig(name: string): Option[FuncSig] {
+pub function (s: Scope) lookup_sig(name: string): Option[FuncSig] {
   let i = s.sig_at(name);
   if (i >= 0) {
     return Some(s.sigs.sigs[i]);
@@ -4039,7 +4039,7 @@ function scalar_method_module(t: typeinfo.Type, method: string): string {
 
 // module_imported: `path` is in the program's import list. For a single module
 // that is its own imports; for a bundle it is the closure flatten.bundle keeps.
-function (s: Scope) module_imported(path: string): boolean {
+pub function (s: Scope) module_imported(path: string): boolean {
   return util.index_of_str(s.imports.paths, path) >= 0;
 }
 
@@ -4068,7 +4068,19 @@ function (s: Scope) method_scope_admits(m: MethodSig): boolean {
   return m.is_package && s.imports.same_package(s.fn_module, m.module);
 }
 
-function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
+// A struct's method resolves by its declaration's scope alone: a generic
+// body instantiated with a struct of another module calls its methods
+// without importing that module.
+function (s: Scope) scoped_method(name: string, recv_type: string): Option[MethodSig] {
+  if let Some(m) = s.lookup_method(name, recv_type) {
+    if (m.impl_trait.len() > 0 || s.method_scope_admits(m)) {
+      return Some(m);
+    }
+  }
+  return None;
+}
+
+pub function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
   if let Some(m) = s.lookup_method(name, recv_type) {
     if (s.method_visible(m)) {
       return Some(m);
@@ -14721,7 +14733,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
             out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
             out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
-            if let Some(msig) = s.lookup_method(mfa.field, sn.name) {
+            if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
               if (c.args.len() != msig.param_types.len()) {
                 out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
               } else {
@@ -14737,7 +14749,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               } else if let Some(fsig) = s.lookup_struct(sn.name) {
                 let fldi = field_index(fsig, mfa.field);
                 if (fldi < 0) {
-                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, fsig));
+                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
                 } else {
                   let fldt = field_access_result_type(mfa, sn, s);
                   let fld_is_fn = false;
