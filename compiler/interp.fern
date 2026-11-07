@@ -7456,7 +7456,7 @@ function call_mmio_builtin(name: string, args: Value[]): Value {
   if (name == "__fence") {
     return v_void();
   }
-  if (checker.privileged_intrinsic(name)) {
+  if (checker.privileged_intrinsic(name) || checker.port_intrinsic(name)) {
     return v_err(name + ": needs a kernel target");
   }
   let want = 1;

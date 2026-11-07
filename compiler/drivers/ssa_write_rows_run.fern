@@ -94,7 +94,7 @@ function returned_storage(): void {
   require(pooled.ok && pooled.constants[1] != "", 43);
   let pure_cached = ssaunits.SchemaView { ...ssaunits.no_view(), raw_known: true, raw_values: pure.raw[pure.inputs.find("make")] };
   require(ssaunits.plan(literal, [], pure_cached).constants[1] != "", 46);
-  require(!ssaunits.write_rows_agree(pure, writes, []), 44);
+  require(!(ssaunits.write_tables_agree(pure, writes) && ssaunits.written_rows_agree(pure, writes, [])), 44);
 }
 
 function main(): i32 {
@@ -110,13 +110,13 @@ function main(): i32 {
   let names: string[] = ["callee"];
   let first = ssaunits.WriteRows { ...ssaunits.no_writes(), rows: util.name_index(names), params: [[true, false]] };
   let second = ssaunits.WriteRows { ...ssaunits.no_writes(), rows: util.name_index(names), params: [[false, true]] };
-  require(!ssaunits.write_rows_agree(first, second, names), 20);
-  require(ssaunits.write_rows_agree(first, first, names), 21);
+  require(!(ssaunits.write_tables_agree(first, second) && ssaunits.written_rows_agree(first, second, names)), 20);
+  require(ssaunits.write_tables_agree(first, first) && ssaunits.written_rows_agree(first, first, names), 21);
   let unrelated: string[] = ["other"];
-  require(ssaunits.write_rows_agree(first, second, unrelated), 22);
+  require(ssaunits.write_tables_agree(first, second) && ssaunits.written_rows_agree(first, second, unrelated), 22);
   let cells: string[] = ["Cell[u8[]]"];
   let cell_demand = ssaunits.WriteRows { ...first, cells: util.name_index(cells) };
-  require(!ssaunits.write_rows_agree(first, cell_demand, unrelated), 23);
+  require(!(ssaunits.write_tables_agree(first, cell_demand) && ssaunits.written_rows_agree(first, cell_demand, unrelated)), 23);
   require(ssasem.raw_array_args("tcp_addr_into")[0] == 2, 30);
   require(ssasem.raw_array_args("ring_wait")[0] == 1, 31);
   let udp = ssasem.raw_array_args("udp_recvfrom");

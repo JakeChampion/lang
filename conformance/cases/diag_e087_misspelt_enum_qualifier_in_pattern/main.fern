@@ -1,0 +1,14 @@
+// A misspelt enum name in a pattern qualifier is refused. It must not
+// match the variant of the same bare name in the scrutinee's enum.
+enum Status { Ok, Bad }
+
+function code(s: Status): i32 {
+    match (s) {
+        Statuus.Ok => { return 1; },
+        _ => { return 2; },
+    }
+}
+
+function main(): i32 {
+    return code(Ok);
+}

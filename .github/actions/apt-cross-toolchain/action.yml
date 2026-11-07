@@ -36,9 +36,10 @@ inputs:
     description: >
       Which qemu package to install. `qemu-user-static`
       provides qemu-aarch64-static (and binfmt registration);
-      `qemu-user` provides qemu-aarch64. `qemu-system-arm` provides
-      qemu-system-aarch64, which boots a kernel image. Lanes differ, so it
-      is an input rather than a guess.
+      `qemu-user` provides qemu-aarch64. `qemu-system` installs
+      qemu-system-arm and qemu-system-x86, whose qemu-system-aarch64 and
+      qemu-system-x86_64 boot a kernel image. Lanes differ, so it is an
+      input rather than a guess.
     required: false
     default: qemu-user-static
   cross-gcc:
@@ -119,6 +120,9 @@ runs:
         }
 
         PACKAGES="$QEMU_PKG"
+        if [ "$QEMU_PKG" = "qemu-system" ]; then
+          PACKAGES="qemu-system-arm qemu-system-x86"
+        fi
         if [ "$WANT_GCC" = "true" ]; then
           PACKAGES="gcc-aarch64-linux-gnu $PACKAGES"
         fi
@@ -140,7 +144,7 @@ runs:
           case "$QEMU_PKG" in
             qemu-user) command -v qemu-aarch64 >/dev/null 2>&1 ;;
             qemu-user-static) command -v qemu-aarch64-static >/dev/null 2>&1 ;;
-            qemu-system-arm) command -v qemu-system-aarch64 >/dev/null 2>&1 ;;
+            qemu-system) command -v qemu-system-aarch64 >/dev/null 2>&1 && command -v qemu-system-x86_64 >/dev/null 2>&1 ;;
             *) return 1 ;;
           esac
         }
@@ -225,6 +229,6 @@ runs:
         fi
         case "$QEMU_PKG" in
           qemu-user-static) qemu-aarch64-static --version | head -1 ;;
-          qemu-system-arm) qemu-system-aarch64 --version | head -1 ;;
+          qemu-system) qemu-system-aarch64 --version | head -1 && qemu-system-x86_64 --version | head -1 ;;
           *) qemu-aarch64 --version | head -1 ;;
         esac

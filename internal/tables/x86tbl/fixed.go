@@ -27,6 +27,9 @@ var FixedOps = []FixedOp{
 	{Spellings: []string{"pushfq", "pushf"}, Bytes: []byte{0x9C}},
 	{Spellings: []string{"popfq", "popf"}, Bytes: []byte{0x9D}},
 	{Spellings: []string{"ud2"}, Bytes: []byte{0x0F, 0x0B}},
+	{Spellings: []string{"hlt"}, Bytes: []byte{0xF4}},
+	{Spellings: []string{"cli"}, Bytes: []byte{0xFA}},
+	{Spellings: []string{"sti"}, Bytes: []byte{0xFB}},
 
 	{Spellings: []string{"movsb"}, Bytes: []byte{0xA4}, Repeatable: true},
 	{Spellings: []string{"movsw"}, Bytes: []byte{0x66, 0xA5}, Repeatable: true},

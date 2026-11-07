@@ -84,7 +84,7 @@ costs a silent failure on the first target that lacks it.
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
 | `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption |
 | `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
-| `privileged` | `__wfi`, `__hvc`, `__smc` | the processor at the kernel's exception level, with firmware beneath it. Granted by the `kernel` profile alone |
+| `privileged` | `__wfi`, `__hvc`, `__smc`, `__port_in8` … `__port_out32` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
 | `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |
 
 ### Core
@@ -698,7 +698,7 @@ replaces it is `Descriptor.Entry`, an `EntryShape` on the environment (#6510):
 | --- | --- | --- |
 | `EntryProcess` | a kernel / dyld, with a populated process stack | `_start` (`_main` on Mach-O) + the argc/argv/envp capture |
 | `EntryExports` | nobody; the embedder calls exported symbols | neither |
-| `EntryReset` | a boot loader or a VMM, with no stack pointer | a reset `_start` that sets the stack, clears .bss, seeds the heap and calls `main` (`arm64-kernel`) |
+| `EntryReset` | a boot loader or a VMM, with no stack pointer | a reset `_start` that sets the stack, clears .bss, seeds the heap and calls `main` (`arm64-kernel`, `x86-64-kernel`) |
 
 Freestanding is `EntryExports`. The compiler reads the shape through
 `platforms.entry_shape`, and its backends through `asmcore.process_entry`.

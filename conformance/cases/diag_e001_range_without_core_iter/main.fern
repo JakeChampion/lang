@@ -1,0 +1,10 @@
+// A range outside a `for` header is a core/iter value, so its module must
+// be imported. The counted `for` header needs no import.
+function main(): i32 {
+  let total = 0;
+  for i in 0..3 {
+    total += i;
+  }
+  let r = 0..3;
+  return total;
+}

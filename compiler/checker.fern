@@ -1082,10 +1082,16 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   return ([], false);
 }
 
-// An intrinsic that reaches a device: an MMIO access, __fence, or a privileged
-// op. No pass removes, merges or moves one.
+// An intrinsic that reaches a device: an MMIO or port access, __fence, or a
+// privileged op. No pass removes, merges or moves one.
 pub function device_intrinsic(name: string): boolean {
-  return mmio_width(name) > 0 || name == "__fence" || privileged_intrinsic(name);
+  return mmio_width(name) > 0 || port_intrinsic(name) || name == "__fence" || privileged_intrinsic(name);
+}
+
+// A port access: __port_in8 to __port_in32 read a port, and __port_out8 to
+// __port_out32 write one. Only x86-64 has an I/O port space.
+pub function port_intrinsic(name: string): boolean {
+  return util.has_str(["__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32"], name);
 }
 
 // A privileged op that only a kernel environment grants. __hvc and __smc call
@@ -1116,7 +1122,7 @@ pub function mmio_width(name: string): i32 {
 }
 
 function mmio_result(name: string): typeinfo.Type {
-  if (util.str_has_prefix(name, "__mmio_store") || name == "__fence" || name == "__wfi") {
+  if (util.str_has_prefix(name, "__mmio_store") || util.str_has_prefix(name, "__port_out") || name == "__fence" || name == "__wfi") {
     return t_void();
   }
   if (mmio_width(name) == 64 || privileged_intrinsic(name)) {
@@ -1131,6 +1137,12 @@ function mmio_params(name: string): typeinfo.Type[] {
   }
   if (privileged_intrinsic(name)) {
     return [t_i64(), t_i64(), t_i64(), t_i64()];
+  }
+  if (util.str_has_prefix(name, "__port_out")) {
+    return [t_i32(), t_i32()];
+  }
+  if (util.str_has_prefix(name, "__port_in")) {
+    return [t_i32()];
   }
   let value = t_i32();
   if (mmio_width(name) == 64) {
@@ -1920,7 +1932,7 @@ function cast_pointer_shaped(t: typeinfo.Type, source: boolean): boolean {
   return false;
 }
 
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[], is_unsafe: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[], is_unsafe: boolean, is_pub: boolean }
 
 function sig_param_ref(sig: FuncSig, i: i32): parser.TypeRef {
   if (sig.refs.len() > 0) {
@@ -4157,6 +4169,10 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
   if (import_advice.len() > 0) {
     return base + import_advice;
   }
+  let free = s.free_function_advice(method, recv);
+  if (free.len() > 0) {
+    return base + free;
+  }
   let names = s.method_fix_candidates(ns, recv);
   let did = util.suggest(method, names);
   if (did.len() > 0) {
@@ -4223,7 +4239,7 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   if (!s.namespace_is_exact(ns)) {
-    return preregistered_methods(ns);
+    return s.array_method_candidates(recv);
   }
   let out = preregistered_methods(ns);
   for method in s.methods.methods {
@@ -4232,6 +4248,74 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   return out;
+}
+
+// The methods of modules this module sees whose array receiver can take
+// `recv`: the receiver is generic in its element, or names it exactly.
+function (s: Scope) array_method_candidates(recv: typeinfo.Type): string[] {
+  let out = preregistered_methods("Array");
+  let label = type_label(recv);
+  for method in s.methods.methods {
+    let rt = method.receiver_type;
+    if (array_receiver_matches(rt, false) && s.imports.sees(s.fn_module, method.module) && (rt == label || array_element_is_generic(rt) && s.element_meets_bounds(method, rt, recv))) {
+      out = push_str_unique_sorted(out, method.name);
+    }
+  }
+  return out;
+}
+
+// Whether the element of `recv` meets the bounds that `method` puts on the
+// type parameter of its receiver `rt`.
+function (s: Scope) element_meets_bounds(method: MethodSig, rt: string, recv: typeinfo.Type): boolean {
+  let tp = slice_unchecked(rt, 0, rt.len() - 2) + "";
+  let at = util.index_of_str(method.type_params, tp);
+  if (at < 0 || at >= method.type_bounds.len()) {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = recv {
+    for entry in parser.split_plus_bounds(method.type_bounds[at]) {
+      let base = util.base_type_name(entry);
+      if (!bound_import_unloaded(base, s.imports.paths, s.trait_reqs) && !type_implements(s, a.elem, base, method.module)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A receiver `T[]` is generic in its element. The parser spells a type
+// parameter that a receiver introduces with a leading digit, `0_T`.
+function array_element_is_generic(rt: string): boolean {
+  return rt.len() > 2 && rt[0] >= b'0' && rt[0] <= b'9';
+}
+
+// The advice for a method call that names a public free function of an
+// imported module, whose first parameter takes the receiver.
+function (s: Scope) free_function_advice(method: string, recv: typeinfo.Type): string {
+  for sg in s.imports.sights {
+    if (sg.module != s.fn_module) {
+      continue;
+    }
+    let i = 0;
+    while (i < sg.imports.len() && i < sg.direct.len()) {
+      if let Some(sig) = s.lookup_sig(sg.direct[i] + "__" + method) {
+        if (sig.is_pub && sig.receiver.len() == 0 && sig.param_types.len() > 0 && first_param_takes(sig.param_types[0], recv)) {
+          return free_function_note(method, sg.imports[i]);
+        }
+      }
+      i += 1;
+    }
+  }
+  return "";
+}
+
+function free_function_note(method: string, path: string): string {
+  return " — \"" + method + "\" is a function of module \"" + util.module_name(path) + "\", not a method: pass the value as its first argument";
+}
+
+function first_param_takes(param: typeinfo.Type, recv: typeinfo.Type): boolean {
+  let ns = method_namespace_of(recv);
+  return ns.len() > 0 && method_namespace_of(param) == ns;
 }
 
 function (s: Scope) unknown_method_advice(ns: string, method: string, recv: typeinfo.Type): string {
@@ -6569,8 +6653,10 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
   return index_result_type(check_expr(x.array, s), check_expr(x.index, s));
 }
 
+// The literal pre-pass gives an integer literal local a marker type until it
+// settles, and the marker is an integer index too.
 function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
-  if (!is_integer(it)) {
+  if (!is_integer(it) && lit_id(it) < 0) {
     return t_unknown("array index must be an integer");
   }
   match (at) {
@@ -7101,7 +7187,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       }
     }
     let rtn = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn), is_unsafe: fd.is_unsafe });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn), is_unsafe: fd.is_unsafe, is_pub: fd.is_pub || fd.is_package });
     i += 1;
   }
   return out;
@@ -10106,6 +10192,7 @@ pub function unsafe_intrinsics(): string[] {
     "__store_u8", "__store_i32", "__store_i64", "__store_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
     "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__hvc", "__smc",
+    "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__memcpy", "__memset", "__str_bytes", "__account_entry",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
@@ -17094,6 +17181,8 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                           }
                         } else if (cur.has_union(cqual)) {
                           out = out.append(dg_at("E029", "variant pattern qualifier \"" + shown_enum(cur, cqual) + "\" does not match scrutinee enum " + shown_enum(cur, mun.name), elem.line, elem.col));
+                        } else {
+                          out = out.append(dg_at("E087", "unknown module \"" + cqual + "\" in variant pattern", elem.line, elem.col));
                         }
                       } else {
                         if (!elem.has_guard) {
@@ -17540,6 +17629,9 @@ function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: type
 }
 
 function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
+  if (name == parser.RANGE_MODULE) {
+    return dg_at("E001", range_import_msg(), line, col);
+  }
   let d = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: util.show_type_vars(name).len() };
   if (name == "string_from_bytes") {
     return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)");
@@ -18030,6 +18122,7 @@ function registered_intrinsics(): string[] {
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc",
+    "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
@@ -26679,6 +26772,10 @@ function e060_e062_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[]
     out = e060_e062_stmts(fn.body, dyns, mod, out);
   }
   return out;
+}
+
+function range_import_msg(): string {
+  return "a range `a..b` outside a `for` header requires `import \"core/iter\";`";
 }
 
 function map_import_msg(): string {

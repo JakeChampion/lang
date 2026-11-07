@@ -7967,6 +7967,12 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__wfi", params: [], modes: [], result: t_void() },
     ssasem.Contract { name: "__hvc", params: [t_i64(), t_i64(), t_i64(), t_i64()], modes: [v, v, v, v], result: t_i64() },
     ssasem.Contract { name: "__smc", params: [t_i64(), t_i64(), t_i64(), t_i64()], modes: [v, v, v, v], result: t_i64() },
+    ssasem.Contract { name: "__port_in8", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__port_in16", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__port_in32", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__port_out8", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__port_out16", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__port_out32", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__ct_secret", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
     ssasem.Contract { name: "__ct_public", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
   ];

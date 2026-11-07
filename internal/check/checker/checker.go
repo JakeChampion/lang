@@ -2422,6 +2422,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
+	for _, bits := range []int{8, 16, 32} {
+		c.info.FuncSigs[fmt.Sprintf("__port_in%d", bits)] = &ast.FuncType{Params: []ast.Type{ast.NumberType{}}, Result: ast.NumberType{}}
+		c.info.FuncSigs[fmt.Sprintf("__port_out%d", bits)] = &ast.FuncType{Params: []ast.Type{ast.NumberType{}, ast.NumberType{}}, Result: ast.VoidType{}}
+	}
 
 	c.builtinFuncs = make(map[string]bool, len(c.info.FuncSigs))
 	for name := range c.info.FuncSigs {
@@ -2593,6 +2597,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		// module need not import that type's module.
 		if fn.MethodRecv == "" && !isScalarBuiltinMethod(fn.Name) {
 			c.funcSources[fn.Name] = fn.SourceModule
+			if fn.Public && fn.SourceModule != "" && len(fn.Params) > 0 {
+				if c.publicFreeFuncs == nil {
+					c.publicFreeFuncs = map[string][]publicFreeFunc{}
+				}
+				name := declaredName(fn)
+				c.publicFreeFuncs[name] = append(c.publicFreeFuncs[name], publicFreeFunc{module: fn.SourceModule, first: fn.Params[0].Type})
+			}
 		}
 		if len(fn.TypeParams) > 0 {
 			c.info.GenericFuncs[fn.Name] = fn
@@ -5738,11 +5749,14 @@ type checker struct {
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
-	numericTypes      map[ast.Expr]ast.Type
-	numericCasts      map[ast.Expr]*ast.CastExpr
-	noRCIdentTypes    map[*ast.Ident]ast.Type
-	callee            ast.Expr
-	funcSources       map[string]string
+	numericTypes   map[ast.Expr]ast.Type
+	numericCasts   map[ast.Expr]*ast.CastExpr
+	noRCIdentTypes map[*ast.Ident]ast.Type
+	callee         ast.Expr
+	funcSources    map[string]string
+	// publicFreeFuncs lists the public free functions under the name their
+	// module declares, so a method call can name a function of that name.
+	publicFreeFuncs   map[string][]publicFreeFunc
 	consts            map[string]*ast.ConstDecl
 	constTypes        map[string]ast.Type
 	constBusy         map[string]bool
@@ -8552,6 +8566,9 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		}
 		return fmt.Sprintf("%s — add `import %q`%s", msg, mod, note)
 	}
+	if note := c.freeFunctionNote(method, recv); note != "" {
+		return msg + note
+	}
 	names := c.methodsFor(typeName, recv)
 	if s := diag.Suggest(method, names); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
@@ -8783,6 +8800,48 @@ func argSubject(n *ast.Call, num int) string {
 		return fmt.Sprintf("argument %d", num)
 	}
 	return fmt.Sprintf("argument %d to %q", num, name)
+}
+
+type publicFreeFunc struct {
+	module string
+	first  ast.Type
+}
+
+// freeFunctionNote names a public free function of a module the current
+// module imports, when its first parameter takes the receiver.
+func (c *checker) freeFunctionNote(method string, recv ast.Type) string {
+	from := c.currentModule()
+	want := methodNamespace(recv)
+	if want == "" || c.info == nil {
+		return ""
+	}
+	for _, fn := range c.publicFreeFuncs[method] {
+		if c.info.DirectImports[from][fn.module] && methodNamespace(fn.first) == want {
+			return fmt.Sprintf(" — %q is a function of module %q, not a method: pass the value as its first argument", method, moduleBaseName(fn.module))
+		}
+	}
+	return ""
+}
+
+// moduleBaseName is the last segment of a module path, without its extension.
+func moduleBaseName(module string) string {
+	base := moduleFileLabel(module)
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	base = strings.TrimSuffix(base, ".md")
+	return strings.TrimSuffix(base, ".fern")
+}
+
+// methodNamespace is the receiver family of t: every array is one family.
+func methodNamespace(t ast.Type) string {
+	if _, ok := t.(ast.ArrayType); ok {
+		return "Array"
+	}
+	if name, ok := methodTypeName(t); ok {
+		return name
+	}
+	return ""
 }
 
 func (c *checker) moduleAlreadyImports(mod string) bool {
@@ -9239,6 +9298,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__hvc": true, "__smc": true,
+	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
@@ -14260,6 +14320,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(n.EnumName), n.Name)
 			return nil
 		}
+		if n.Name == ast.RangeModule {
+			c.errfCode(n.P, "E001", "a range `a..b` outside a `for` header requires `import \"core/iter\";`")
+			return nil
+		}
 		c.errIdent(n, s, "cannot find %q in this scope", n.Name)
 		return nil
 	case *ast.ArrayLit:
@@ -16031,6 +16095,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.errfCode(ent.Value.Pos(), "E045", "map value type %s, expected %s", vt, valueType)
 			}
 		}
+		if len(n.Entries) == 0 {
+			return ast.StructType{Name: "Map"}
+		}
 		n.KeyType = keyType
 		n.ValueType = valueType
 		return ast.StructType{Name: "Map", Args: []ast.Type{keyType, valueType}}
@@ -17259,7 +17326,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 	}
 	for i, tp := range fn.TypeParams {
 		want, ok := c.genericResultBinding(declared, hint, tp)
-		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) {
+		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) && !bareMap(call.TypeArgs[i]) {
 			continue
 		}
 		var bound []ast.Expr
@@ -17269,7 +17336,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 				break
 			}
 			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
-				if !unsettledNumericShape(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
+				if !unsettledNumericShape(call.Args[j]) && !emptyMapLit(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
@@ -17392,9 +17459,11 @@ func (c *checker) genericResultBinding(declared ast.Type, hint ast.Type, tp stri
 	if !ok || isPolymorphicNumeric(want) {
 		return nil, false
 	}
-	switch want.(type) {
+	switch w := want.(type) {
 	case ast.NumberType, ast.FloatType:
 		return want, true
+	case ast.StructType:
+		return want, w.Name == "Map" && len(w.Args) == 2 && !c.holdsOpenEnum(want)
 	}
 	return nil, false
 }

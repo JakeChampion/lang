@@ -338,16 +338,19 @@ runs the driver under the interpreter instead when the test is not about the
 driver's machine code. CI carries the built drivers between runs
 (`.github/actions/selfhost-driver-cache`), keyed on the same inputs as the
 harness's key, so a CI job pays a build only for a driver no earlier run
-built. The Go oracle's `-interp`, `-check` and `-check -target` verdicts are
-kept in the same directory (`e2eharness.InterpVerdict`, `CheckVerdict`,
-`CheckTargetVerdict`). The key is the flags, the oracle's Go sources, the
-stdlib, the program's path as given, its relative imports and the `FERN_*`
-environment. A relative import that names no file, and a file that does not
-lex, are part of the key too. A compiler-only change therefore runs the oracle
-on no program again. `STAGE0=<path>` substitutes a local compiler for the pin,
+built. `STAGE0=<path>` substitutes a local compiler for the pin,
 as it does for `make bootstrap`, and it is how a compiler change is tested as
 the drivers' builder before the pin carries it. Every driver is held to what
 the pin can compile, like `fern.fern`.
+
+The Go oracle's `-interp`, `-check` and `-check -target` verdicts are
+kept in the same directory (`e2eharness.InterpVerdict`, `CheckVerdict`,
+`CheckTargetVerdict`). `InProcessVerdict` keeps a verdict that a test computes
+with the oracle's code in its own process. The key is the flags, the oracle's Go sources, the
+stdlib, the program's path as given, its relative imports and the `FERN_*`
+environment. A relative import that names no file, and a file that does not
+lex, are part of the key too. A compiler-only change therefore runs the oracle
+on no program again.
 
 The self-host CLI for the tree builds some programs itself, such as the
 playground driver and the shipped `fern`. `e2eharness.CachedCLIBuild` keeps

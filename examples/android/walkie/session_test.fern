@@ -349,9 +349,10 @@ function test_start_keeps_the_codec(): test.TestOutcome {
   return test.assert_eq(codec, OTHER_CODEC);
 }
 
+// The peer that gets the bye ends the session. It does not reconnect.
 function test_leave_says_bye(): test.TestOutcome {
   let s = run(event(run(sim(20), 100), false, session.Leave), 100);
-  return test.assert_eq(state_of(s.b) + " " + state_of(s.a), "IDLE RECONNECTING");
+  return test.assert_eq(state_of(s.b) + " " + state_of(s.a), "IDLE IDLE");
 }
 
 // A long run of random presses and releases on both sides, with a random

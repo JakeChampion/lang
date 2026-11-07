@@ -79,17 +79,18 @@ function target_environment(name: string): string {
   if (name == "arm64-freestanding" || name == "x86-64-freestanding") {
     return "freestanding";
   }
-  if (name == "arm64-kernel") {
+  if (name == "arm64-kernel" || name == "x86-64-kernel") {
     return "kernel";
   }
   return "";
 }
 
-function target_isa(name: string): string {
-  if (name == "x86-64-linux" || name == "x86-64-android" || name == "x86-64-freestanding") {
+// The ISA half of a target name.
+pub function target_isa(name: string): string {
+  if (util.str_has_prefix(name, "x86-64-")) {
     return "x86-64";
   }
-  if (name == "wasm32-wasi" || name == "wasm32-wasi-http") {
+  if (util.str_has_prefix(name, "wasm32-")) {
     return "wasm32";
   }
   return "arm64";
@@ -98,7 +99,7 @@ function target_isa(name: string): string {
 pub function targets(): string[] {
   return [
     "arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-kernel", "arm64-linux",
-    "wasm32-wasi", "wasm32-wasi-http", "x86-64-android", "x86-64-freestanding", "x86-64-linux",
+    "wasm32-wasi", "wasm32-wasi-http", "x86-64-android", "x86-64-freestanding", "x86-64-kernel", "x86-64-linux",
   ];
 }
 
@@ -119,6 +120,9 @@ pub function description(name: string): string {
   }
   if (name == "arm64-kernel") {
     return "ARM64 kernel image — an ELF that the boot loader or the VMM loads at -ram BASE. The reset entry sets the stack, clears .bss and calls main. No host and no syscalls.";
+  }
+  if (name == "x86-64-kernel") {
+    return "x86-64 kernel image — an ELF with a PVH entry that the VMM loads at -ram BASE. The entry switches to long mode, sets the stack, clears .bss and calls main. No host and no syscalls.";
   }
   if (name == "x86-64-linux") {
     return "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).";
@@ -408,6 +412,12 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__wfi", capability: "privileged" },
     Gate { builtin: "__hvc", capability: "privileged" },
     Gate { builtin: "__smc", capability: "privileged" },
+    Gate { builtin: "__port_in8", capability: "privileged" },
+    Gate { builtin: "__port_in16", capability: "privileged" },
+    Gate { builtin: "__port_in32", capability: "privileged" },
+    Gate { builtin: "__port_out8", capability: "privileged" },
+    Gate { builtin: "__port_out16", capability: "privileged" },
+    Gate { builtin: "__port_out32", capability: "privileged" },
   ];
 }
 

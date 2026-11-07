@@ -2737,6 +2737,32 @@ function x86_gas_is_crc32(mnem: string): boolean {
   return mnem == "crc32";
 }
 
+function x86_gas_port_op(mnem: string): i32 {
+  match (mnem) {
+    "inb" => {
+      return 236;
+    },
+    "inw" => {
+      return 26349;
+    },
+    "inl" => {
+      return 237;
+    },
+    "outb" => {
+      return 238;
+    },
+    "outw" => {
+      return 26351;
+    },
+    "outl" => {
+      return 239;
+    },
+    _ => {
+      return 0 - 1;
+    }
+  }
+}
+
 function x86_gas_is_movqd(mnem: string): boolean {
   return mnem == "movd";
 }
@@ -3052,6 +3078,32 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     return x86_gas_bad(a, "movext " + src + ", " + dst);
   }
   x86_push_arr(a.code, x86_movext_reg([], op, w, d, sr));
+  return a;
+}
+
+// in and out move the accumulator of the suffix's width to or from the port in
+// %dx.
+function x86_gas_port(own a: X86Asm, mnem: string, l: GasLine): X86Asm {
+  let acc = "%eax";
+  let width = mnem[mnem.len() - 1];
+  if (width == b'b') {
+    acc = "%al";
+  } else if (width == b'w') {
+    acc = "%ax";
+  }
+  let want_src = acc;
+  let want_dst = "%dx";
+  if (x86_str_starts_with(mnem, "in")) {
+    want_src = "%dx";
+    want_dst = acc;
+  }
+  if (l.src != want_src || l.dst != want_dst) {
+    return x86_gas_bad(a, mnem + " " + l.rest);
+  }
+  if (l.ext > 255) {
+    buf_push_byte(a.code, l.ext >> 8);
+  }
+  buf_push_byte(a.code, l.ext & 255);
   return a;
 }
 
@@ -4095,6 +4147,15 @@ function x86_gas_fixed_op(mnem: string): i32 {
     },
     "ud2" => {
       return x86_pack2(15, 11);
+    },
+    "hlt" => {
+      return x86_pack1(244);
+    },
+    "cli" => {
+      return x86_pack1(250);
+    },
+    "sti" => {
+      return x86_pack1(251);
     },
     "movsb" => {
       return x86_pack1(164);
@@ -5502,6 +5563,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_SHIFTX) {
     return x86_gas_shiftx(a, mnem, l.ext, rest);
   }
+  if (k == GK_PORT) {
+    return x86_gas_port(a, mnem, l);
+  }
   if (k == GK_FIXED) {
     return x86_gas_emit_packed(a, l.ext);
   }
@@ -6482,6 +6546,9 @@ const GK_SHIFTX: i32 = 48;
 
 const GK_ENDBR: i32 = 49;
 
+// Port I/O; the extension holds x86_gas_port_op's prefix and opcode.
+const GK_PORT: i32 = 50;
+
 const GP_TEXT: i32 = 0;
 
 const GP_BYTES: i32 = 1;
@@ -6773,6 +6840,10 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let lsz = x86_gas_lea_size(mnem);
   if (lsz >= 0) {
     return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
+  }
+  let port = x86_gas_port_op(mnem);
+  if (port >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_PORT, b_ext: port };
   }
   let msz = x86_gas_mov_size(mnem);
   if (msz == 64) {

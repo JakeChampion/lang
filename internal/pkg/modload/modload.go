@@ -393,6 +393,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 		mod.imports[imp.LocalName] = child
 		mod.importPaths[imp.LocalName] = childPaths[i]
+		if imp.Path == ast.RangeModule {
+			mod.imports[ast.RangeModule] = child
+		}
 	}
 	for i, pu := range prog.PubUses {
 		mod.pubUses = append(mod.pubUses, pubUseEntry{childPath: pubUsePaths[i], names: pu.Names, pos: pu.P})

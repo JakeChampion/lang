@@ -1940,7 +1940,7 @@ function term_targets(t: ssa.STerm): i32[] {
   return [];
 }
 
-function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
+function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
   let g = f.graph;
   let b = g.blocks[bi];
   let call = b.insts[k];
@@ -1997,8 +1997,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
     j += 1;
   }
-  let values = util.append_all(f.values, callee.values);
-  let swap = result_swap(call, rets, ret_vals, values);
+  let swap = result_swap(call, rets, ret_vals, f.values, callee.values);
   let head: ssa.SInst[] = [];
   let tail: ssa.SInst[] = [];
   let kind = 8;
@@ -2042,7 +2041,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
   }
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
   let joined = with_tables(f, callee, vmap);
-  return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) };
+  return with_values(ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, dbg_vals: swapped_all(swap, joined.dbg_vals), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) }, callee.values);
 }
 
 function straight(f: ssasem.Func): boolean {
@@ -2051,7 +2050,7 @@ function straight(f: ssasem.Func): boolean {
 
 struct InPlace { f: ssasem.Func, from: i32, to: i32 }
 
-function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): InPlace {
+function splice_in_place(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): InPlace {
   let g = f.graph;
   let b = g.blocks[bi];
   let call = b.insts[k];
@@ -2084,8 +2083,7 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
   if (cb.term.value >= 0) {
     ret_vals = [vmap[cb.term.value]];
   }
-  let values = util.append_all(f.values, callee.values);
-  let swap = result_swap(call, [0], ret_vals, values);
+  let swap = result_swap(call, [0], ret_vals, f.values, callee.values);
   if (call.result >= 0 && ret_vals.len() > 0 && swap.len() == 0) {
     insts = insts.append(ssa.SInst { kind_tag: 7, result: call.result, args: ret_vals, imm: 0, str: "" });
   }
@@ -2096,14 +2094,14 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
   }
   let joined = with_tables(f, callee, vmap);
   let blocks = g.blocks.with(bi, ssa.SBlock { ...b, insts: insts });
-  let out = ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals }, values: values };
+  let out = with_values(ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals } }, callee.values);
   if (swap.len() == 0) {
     return InPlace { f: out, from: 0 - 1, to: 0 - 1 };
   }
   return InPlace { f: out, from: call.result, to: ret_vals[0] };
 }
 
-function renamed(f: ssasem.Func, swap: i32[]): ssasem.Func {
+function renamed(own f: ssasem.Func, swap: i32[]): ssasem.Func {
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals), source_positions: renamed_source(f.source_positions, swap) };
 }
 
@@ -2636,9 +2634,30 @@ function swapped(swap: i32[], v: i32): i32 {
   return x;
 }
 
-function result_swap(call: ssa.SInst, rets: i32[], ret_vals: i32[], values: typeinfo.Type[]): i32[] {
+// with_values is f with the values of a spliced callee after its own.
+function with_values(own f: ssasem.Func, more: typeinfo.Type[]): ssasem.Func {
+  return ssasem.Func { ...f, values: grown(f.values, more) };
+}
+
+// grown is into with more appended, in place when into is unique.
+function grown(own into: typeinfo.Type[], more: typeinfo.Type[]): typeinfo.Type[] {
+  for t in more {
+    into = into.append(t);
+  }
+  return into;
+}
+
+// The type of value v when the values of more follow those of first.
+function joined_type(first: typeinfo.Type[], more: typeinfo.Type[], v: i32): typeinfo.Type {
+  if (v < first.len()) {
+    return first[v];
+  }
+  return more[v - first.len()];
+}
+
+function result_swap(call: ssa.SInst, rets: i32[], ret_vals: i32[], first: typeinfo.Type[], more: typeinfo.Type[]): i32[] {
   let swap: i32[] = [];
-  if (call.result < 0 || rets.len() != 1 || ret_vals.len() != 1 || !semtypes.equal(values[call.result], values[ret_vals[0]])) {
+  if (call.result < 0 || rets.len() != 1 || ret_vals.len() != 1 || !semtypes.equal(joined_type(first, more, call.result), joined_type(first, more, ret_vals[0]))) {
     return swap;
   }
   while (swap.len() <= call.result) {

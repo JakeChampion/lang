@@ -6432,8 +6432,8 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   return raw_floor_site(r, ins);
 }
 
-// The IR op of a device intrinsic. An MMIO access has the width that ends its
-// name.
+// The IR op of a device intrinsic. An MMIO or port access has the width that
+// ends its name.
 function device_op(name: string): ir.Op {
   if (name == "__fence") {
     return ir.op_fence();
@@ -6441,16 +6441,22 @@ function device_op(name: string): ir.Op {
   if (privileged_kind(name) > 0) {
     return ir.op_privileged(privileged_kind(name));
   }
+  if (util.str_has_prefix(name, "__port_in")) {
+    return ir.op_port_in(util.digits_to_i32(slice_unchecked(name, 9, name.len()) + ""));
+  }
+  if (util.str_has_prefix(name, "__port_out")) {
+    return ir.op_port_out(util.digits_to_i32(slice_unchecked(name, 10, name.len()) + ""));
+  }
   if (util.str_has_prefix(name, "__mmio_load")) {
     return ir.op_mmio_load(util.digits_to_i32(slice_unchecked(name, 11, name.len()) + ""));
   }
   return ir.op_mmio_store(util.digits_to_i32(slice_unchecked(name, 12, name.len()) + ""));
 }
 
-// An intrinsic that lowers to a device op: an MMIO access, __fence, or a
-// privileged op.
+// An intrinsic that lowers to a device op: an MMIO or port access, __fence, or
+// a privileged op.
 function device_name(name: string): boolean {
-  return util.str_has_prefix(name, "__mmio_") || name == "__fence" || privileged_kind(name) > 0;
+  return util.str_has_prefix(name, "__mmio_") || util.str_has_prefix(name, "__port_") || name == "__fence" || privileged_kind(name) > 0;
 }
 
 // The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.

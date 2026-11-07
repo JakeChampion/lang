@@ -35,6 +35,7 @@ pub enum State {
   Listening,
   Requesting,
   Transmitting,
+  // The transport was lost after the session was up. The peer did not leave.
   Reconnecting,
   Failed,
 }
@@ -374,7 +375,7 @@ function received(s: Session, m: protocol.Message, now: i64): (Session, Action[]
       return (s, []);
     },
     protocol.Bye(_) => {
-      return lost(s, "the peer left");
+      return left(s);
     },
     protocol.Error(_) => {
       return end(s, Failed, "the peer reported an error");
@@ -500,7 +501,7 @@ function tick(s: Session, now: i64): (Session, Action[]) {
 // Hello goes again in place of each heartbeat.
 function wait_for_peer(s: Session, now: i64): (Session, Action[]) {
   if (now - s.last_heard >= CONFIRM_TIMEOUT_MS as i64) {
-    return lost(s, "the other phone did not confirm the code");
+    return end(s, Failed, "the other phone did not confirm the code");
   }
   if (now < s.next_heartbeat) {
     return (s, []);
@@ -553,14 +554,17 @@ function renew(s: Session, acts: Action[], now: i64): (Session, Action[]) {
   return (t, acts.append(Send(protocol.PttRequest(s.id, s.me, request, now))));
 }
 
+// The session is up, or its key exchange is.
+function started(s: Session): boolean {
+  if let Authenticating = s.state {
+    return true;
+  }
+  return connected(s);
+}
+
 function lost(s: Session, why: string): (Session, Action[]) {
-  if (!connected(s)) {
-    match (s.state) {
-      Authenticating => {},
-      _ => {
-        return (s, []);
-      }
-    }
+  if (!started(s)) {
+    return (s, []);
   }
   let acts: Action[] = [];
   if (transmitting(s)) {
@@ -568,6 +572,14 @@ function lost(s: Session, why: string): (Session, Action[]) {
   }
   let t = Session { ...s, state: Reconnecting, request: 0, owner: 0, owner_request: 0, receiving: false, lease_until: 0 as i64 };
   return (t, acts.append(Notice(why)));
+}
+
+// The peer said bye: the session ends, and it does not reconnect.
+function left(s: Session): (Session, Action[]) {
+  if (!started(s)) {
+    return (s, []);
+  }
+  return end(s, Idle, "the peer left");
 }
 
 function end(s: Session, state: State, why: string): (Session, Action[]) {

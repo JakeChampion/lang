@@ -3739,6 +3739,9 @@ function ssa_device(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = s.write("    dsb sy\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
+  if (util.str_has_prefix(ins.str, "dev_port_")) {
+    ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, util.index_of_sub(ins.str, ":")) + ""), "arm64");
+  }
   if (!util.str_has_prefix(ins.str, "dev_mmio_")) {
     return ssa_privileged(ins, reg_of, s);
   }

@@ -1267,7 +1267,15 @@ func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 		f.b.WriteString(fe.Var)
 	}
 	f.b.WriteString(" in ")
-	f.formatHeaderExpr(fe.Iter)
+	if call, ok := fe.Iter.(*ast.Call); ok && rangeDesugarOp(call) != "" {
+		// A range value keeps its parentheses: without them the header is
+		// the counted loop, a different program.
+		f.b.WriteByte('(')
+		f.formatHeaderExpr(fe.Iter)
+		f.b.WriteByte(')')
+	} else {
+		f.formatHeaderExpr(fe.Iter)
+	}
 	if fe.RangeHigh != nil {
 		if fe.RangeIncl {
 			f.b.WriteString("..=")
@@ -1669,6 +1677,7 @@ const (
 	precAssign  = 1
 	precPipe    = 2
 	precIfExpr  = 3
+	precRange   = 3
 	precOr      = 4
 	precAnd     = 5
 	precEq      = 6
@@ -1683,6 +1692,25 @@ const (
 	precUnary   = 15
 	precPrimary = 16
 )
+
+// rangeDesugarOp is the `..` or `..=` that a range desugar call came from,
+// or "" for any other call. Only the parser writes the path-qualified callee.
+func rangeDesugarOp(c *ast.Call) string {
+	fa, ok := c.Callee.(*ast.FieldAccess)
+	if !ok || len(c.Args) != 2 {
+		return ""
+	}
+	if id, ok := fa.Target.(*ast.Ident); !ok || id.Name != ast.RangeModule {
+		return ""
+	}
+	switch fa.Field {
+	case "range":
+		return ".."
+	case "range_incl":
+		return "..="
+	}
+	return ""
+}
 
 func isBitwiseOp(op string) bool { return op == "&" || op == "|" || op == "^" }
 
@@ -1896,6 +1924,19 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.Call:
+		if dots := rangeDesugarOp(x); dots != "" {
+			needsParens := parentPrec > precRange
+			if needsParens {
+				f.b.WriteByte('(')
+			}
+			f.formatExpr(x.Args[0], precRange+1)
+			f.b.WriteString(dots)
+			f.formatExpr(x.Args[1], precRange+1)
+			if needsParens {
+				f.b.WriteByte(')')
+			}
+			return
+		}
 		if x.IsPipe && len(x.Args) >= 1 {
 			needsParens := parentPrec > precPipe
 			if needsParens {
