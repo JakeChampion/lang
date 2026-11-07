@@ -39,6 +39,8 @@ func TestCrossToolchainRequiresRequestedEmulator(t *testing.T) {
 		{"compiler-missing", "qemu-user", "true", "aarch64-linux-gnu-as qemu-aarch64", false, false, false},
 		{"emulator-only", "qemu-user", "false", "qemu-aarch64", false, false, true},
 		{"static-only", "qemu-user-static", "false", "qemu-aarch64-static", false, false, true},
+		{"system-only", "qemu-system-arm", "false", "qemu-system-aarch64", false, false, true},
+		{"system-not-user", "qemu-system-arm", "false", "qemu-aarch64 qemu-aarch64-static", false, false, false},
 		{"nothing-installed", "qemu-user", "false", "", false, false, false},
 		{"unknown-package", "unknown", "false", "qemu-aarch64 qemu-aarch64-static", false, false, false},
 	} {
@@ -66,6 +68,43 @@ toolchain_present
 				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
 					t.Fatalf("predicate did not return an ordinary refusal: %v\n%s", err, out)
 				}
+			}
+		})
+	}
+}
+
+// The version check after installation must run the emulator that the
+// requested package installs: qemu-system-arm has no qemu-aarch64.
+func TestCrossToolchainReportsTheRequestedEmulator(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "actions", "apt-cross-toolchain", "action.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := regexp.MustCompile(`(?ms)^        case "\$QEMU_PKG" in\n.*?--version.*?^        esac`).Find(src)
+	if len(report) == 0 {
+		t.Fatal("emulator version check not found")
+	}
+	for pkg, want := range map[string]string{
+		"qemu-user":        "qemu-aarch64",
+		"qemu-user-static": "qemu-aarch64-static",
+		"qemu-system-arm":  "qemu-system-aarch64",
+	} {
+		t.Run(pkg, func(t *testing.T) {
+			script := `
+qemu-aarch64() { echo qemu-aarch64; }
+qemu-aarch64-static() { echo qemu-aarch64-static; }
+qemu-system-aarch64() { echo qemu-system-aarch64; }
+set -e
+` + string(report)
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = []string{"QEMU_PKG=" + pkg}
+			out, err := cmd.CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != want {
+				t.Fatalf("ran %q, want %q: %v", strings.TrimSpace(string(out)), want, err)
 			}
 		})
 	}
@@ -101,7 +140,10 @@ func TestCrossToolchainSharesInstallDeadline(t *testing.T) {
 				}
 			}
 			// Simulate elapsed seconds without network access or root privileges.
+			// An unset SECONDS loses its special property, so real time does
+			// not advance it.
 			mocks := `
+unset SECONDS
 SECONDS=0
 ready=0
 calls=0

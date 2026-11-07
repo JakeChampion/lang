@@ -223,8 +223,8 @@ runs:
         if [ "$WANT_GCC" = "true" ]; then
           aarch64-linux-gnu-gcc --version | head -1
         fi
-        if [ "$QEMU_PKG" = "qemu-user-static" ]; then
-          qemu-aarch64-static --version | head -1
-        else
-          qemu-aarch64 --version | head -1
-        fi
+        case "$QEMU_PKG" in
+          qemu-user-static) qemu-aarch64-static --version | head -1 ;;
+          qemu-system-arm) qemu-system-aarch64 --version | head -1 ;;
+          *) qemu-aarch64 --version | head -1 ;;
+        esac
