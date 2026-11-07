@@ -347,6 +347,16 @@ function test_forgotten_phone_shows_the_string(): test.TestOutcome {
   return test.assert_eq(shows_code(s.nodes[0]).to_string() + " " + shows_code(s.nodes[1]).to_string(), "true true");
 }
 
+// A talk with no held button stops by itself at its limit.
+function test_a_talk_from_the_notification_stops_by_itself(): test.TestOutcome {
+  let cues: Cue[] = [Cue { at: 3000i64, who: 0, what: CONFIRM }, Cue { at: 4000i64, who: 1, what: CONFIRM }];
+  let s = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 8000i64);
+  let a = node.press_for(s.nodes[0], 8000i64, 1000i64);
+  let during = session.transmitting(node.tick(a, 8500i64).sess);
+  let after = node.tick(a, 9000i64);
+  return test.assert_eq(during.to_string() + " " + session.transmitting(after.sess).to_string() + " " + after.notice, "true false the talk from the notification stopped after a minute");
+}
+
 function main(): i32 {
   let r = test.new("walkie nodes");
   r = r.it("two nodes talk on a clean network", test_clean_network);
@@ -361,5 +371,6 @@ function main(): i32 {
   r = r.it("a press before the peer confirms waits", test_press_before_the_peer_confirms);
   r = r.it("a peer that never confirms ends the session", test_peer_that_never_confirms);
   r = r.it("a spoofed handshake does not end the pairing", test_spoofed_handshake_does_not_end_pairing);
+  r = r.it("a talk from the notification stops by itself", test_a_talk_from_the_notification_stops_by_itself);
   return r.finish();
 }

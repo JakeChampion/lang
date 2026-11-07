@@ -2,11 +2,13 @@
 // shows its code, and the other phone joins with the code. Then the node runs
 // as on a LAN, but each of its datagrams goes to the relay with the MAC of
 // the token of the room, and the relay sends it to the other phone.
+import "std/clock";
 import "std/dns";
 import "std/net";
-import "std/time";
+import "std/rand";
 import "std/tls/client";
 import "std/tls/verify";
+import "std/utf8";
 import "./rooms";
 
 // `sent` counts the datagrams to the relay. Copies of a room share it.
@@ -34,62 +36,263 @@ pub function challenged(r: Room, data: [u8], n: i32): Option[u8[]] {
   return Some(a);
 }
 
-// The relay address of `host`. The app socket is IPv4, so an IPv4 address
-// comes first.
-pub function relay_of(host: string): Option[net.SocketAddr] {
-  let Ok(addrs) = dns.resolve(host) else {
-    return None;
-  };
+// The time that a request for a room has, from its start to the reply.
+pub const REQUEST_MS: i64 = 15000i64;
+
+// A request for a room, which the app steps from its event loop, so a slow
+// resolver or server does not stop the screen and the session. The request
+// resolves the host, connects over TCP, runs TLS, sends one line and reads
+// the reply. The relay is the same IPv4 address on the UDP port. `netd` is
+// the resolver socket of Android and `heard` its reply so far, `out` holds
+// the bytes for the server, and `got` holds the reply so far. Copies of a
+// request share its two sockets.
+pub struct Request {
+  host: string,
+  port: i32,
+  line: string,
+  code: string,
+  roots: verify.Roots,
+  until: i64,
+  netd: Cell[Option[Socket]],
+  heard: u8[],
+  addr: Option[net.IpAddr],
+  sock: Cell[Option[Socket]],
+  tls: Option[client.Session],
+  out: u8[],
+  asked: boolean,
+  got: u8[],
+}
+
+pub enum Progress {
+  Pending(Request),
+  // The reply, and the room that it gives.
+  Done(rooms.Reply, Option[Room]),
+}
+
+function first_v4(addrs: [net.IpAddr]): Option[net.IpAddr] {
   for a in addrs {
     if (a.is_v4()) {
-      return Some(net.socket_addr(a, rooms.PORT));
+      return Some(a);
     }
   }
   return None;
 }
 
-// Sends one request line to the server of `host` over TLS, and gives the reply.
-pub function ask(host: string, line: string): rooms.Reply {
-  let Some(roots) = verify.system_roots() else {
-    return rooms.Refused("this phone has no trusted certificates");
+// Asks the server `host` on `port` with `line`, at `now` in milliseconds.
+// `code` is the code of a room to join, or "". Android resolves a name
+// through netd with no wait. The other targets have no event loop to keep,
+// and they use the resolver that waits.
+pub function request(host: string, port: i32, line: string, code: string, roots: verify.Roots, now: i64): Request {
+  let r = Request { host: host, port: port, line: line, code: code, roots: roots, until: now + REQUEST_MS, netd: cell_new(None), heard: [], addr: None, sock: cell_new(None), tls: None, out: [], asked: false, got: [] };
+  if let Ok(ip) = net.ip_parse(host) {
+    return Request { ...r, addr: Some(ip) };
+  }
+  if (target_os() != "android") {
+    if let Ok(addrs) = dns.resolve(host) {
+      return Request { ...r, addr: first_v4(addrs) };
+    }
+    return r;
+  }
+  let Some(command) = dns.netd_request(host) else {
+    return r;
   };
-  match (client.connect(host, rooms.PORT, client.config(host, roots), time.duration_seconds(10 as i64))) {
-    Ok(c) => {
-      return exchange(c, line);
+  let Ok(sock) = net.connect_unix(dns.NETD_SOCKET) else {
+    return r;
+  };
+  let nb = net.set_nonblocking(sock, true);
+  match (net.write_rest(sock, command)) {
+    Ok(_) => {
+      r.netd.set(Some(sock));
+      return r;
+    },
+    Err(_) => {
+      let closed = net.close(sock);
+      return r;
+    }
+  }
+}
+
+function close_slot(slot: Cell[Option[Socket]]): void {
+  let held = slot.get();
+  slot.set(None);
+  if let Some(sock) = held {
+    let closed = net.close(sock);
+  }
+}
+
+// Closes the sockets of a request that the app does not need now.
+pub function cancel(r: Request): void {
+  close_slot(r.netd);
+  close_slot(r.sock);
+}
+
+function failed(r: Request, why: string): Progress {
+  cancel(r);
+  return Done(rooms.Refused(why), None);
+}
+
+function unknown(r: Request): Progress {
+  return failed(r, "cannot find the server " + r.host);
+}
+
+// The request after one step at `now`: it waits for nothing.
+pub function step(r: Request, now: i64): Progress {
+  if (now >= r.until) {
+    return failed(r, "the server did not reply");
+  }
+  if (r.addr.is_none()) {
+    return resolving(r);
+  }
+  if (r.sock.get().is_none()) {
+    return connecting(r);
+  }
+  if (r.tls.is_none()) {
+    return connected(r);
+  }
+  return talking(r);
+}
+
+function resolving(r: Request): Progress {
+  let Some(sock) = r.netd.get() else {
+    return unknown(r);
+  };
+  let got = net.read_up_to(sock, 4096);
+  if let Err(net.WouldBlock) = got {
+    return Pending(r);
+  }
+  let Ok(b) = got else {
+    return unknown(r);
+  };
+  let heard = r.heard.concat(b);
+  match (dns.netd_reply(heard)) {
+    dns.NetdMore => {
+      if (b.len() == 0) {
+        return unknown(r);
+      }
+      return Pending(Request { ...r, heard: heard });
+    },
+    dns.NetdDone(Ok(addrs)) => {
+      close_slot(r.netd);
+      let t = Request { ...r, heard: [], addr: first_v4(addrs) };
+      if (t.addr.is_none()) {
+        return failed(t, "the server has no IPv4 address");
+      }
+      return Pending(t);
+    },
+    dns.NetdDone(Err(_)) => {
+      return unknown(r);
+    }
+  }
+}
+
+function connecting(r: Request): Progress {
+  let Some(ip) = r.addr else {
+    return unknown(r);
+  };
+  match (net.connect_start(net.socket_addr(ip, r.port))) {
+    Ok(sock) => {
+      r.sock.set(Some(sock));
+      return Pending(r);
     },
     Err(e) => {
-      return rooms.Refused("cannot reach the server: " + e.message());
+      return failed(r, "cannot reach the server: " + e.message());
     }
   }
-  return rooms.Refused("cannot reach the server");
 }
 
-function exchange(c0: client.Connection, line: string): rooms.Reply {
-  let Ok(c) = c0.write((line + "\n").as_bytes()) else {
-    return rooms.Refused("the server closed the connection");
+// The TCP connection is up, or still opening: TLS starts when it is up.
+function connected(r: Request): Progress {
+  let Some(sock) = r.sock.get() else {
+    return failed(r, "cannot reach the server");
   };
-  let got: u8[] = [];
-  let conn = c;
-  for k in 0..16 {
-    match (conn.read(time.duration_seconds(10 as i64))) {
-      Ok(r) => {
-        got = got.concat(r.data);
-        conn = r.conn;
-        if (got.contains(10u8) || r.ended) {
-          let closed = conn.close();
-          return rooms.parse_reply(unsafe { string_from_bytes_unchecked(got) });
-        }
-      },
-      Err(e) => {
-        return rooms.Refused("the server did not reply: " + e.message());
-      }
+  let up = net.connect_result(sock);
+  if let Err(e) = up {
+    if (e.eq(net.InProgress)) {
+      return Pending(r);
     }
+    return failed(r, "cannot reach the server: " + e.message());
   }
-  let closed = conn.close();
-  return rooms.Refused("the server did not reply");
+  let config = client.config(r.host, r.roots);
+  let Ok(st) = client.start(config, rand.bytes(client.entropy(config)), clock.now()) else {
+    return failed(r, "cannot start TLS");
+  };
+  let Some(t) = flush(Request { ...r, tls: Some(st.session), out: st.output }) else {
+    return Done(rooms.Refused("the server closed the connection"), None);
+  };
+  return Pending(t);
 }
 
-// The room of a reply, with the relay of `host`.
+// The request after it writes what the connection takes now, or None when
+// the connection failed. Then the sockets are closed.
+function flush(r: Request): Option[Request] {
+  let Some(sock) = r.sock.get() else {
+    return Some(r);
+  };
+  if (r.out.len() == 0) {
+    return Some(r);
+  }
+  let sent = net.write_rest(sock, r.out);
+  if let Ok(rest) = sent {
+    return Some(Request { ...r, out: rest });
+  }
+  if let Err(net.WouldBlock) = sent {
+    return Some(r);
+  }
+  cancel(r);
+  return None;
+}
+
+// TLS is running: the line goes once the handshake is done, and the reply
+// ends at its newline or at the end of the connection.
+function talking(r: Request): Progress {
+  let t = r;
+  if let Some(tls) = t.tls {
+    if (tls.connected() && !t.asked) {
+      let Ok(w) = tls.write((t.line + "\n").as_bytes()) else {
+        return failed(t, "the server closed the connection");
+      };
+      t = Request { ...t, tls: Some(w.session), out: t.out.concat(w.output), asked: true };
+    }
+  }
+  let Some(u) = flush(t) else {
+    return Done(rooms.Refused("the server closed the connection"), None);
+  };
+  let Some(sock) = u.sock.get() else {
+    return failed(u, "the server closed the connection");
+  };
+  let Some(session) = u.tls else {
+    return failed(u, "the server closed the connection");
+  };
+  let input = net.read_up_to(sock, 4096);
+  if let Err(net.WouldBlock) = input {
+    return Pending(u);
+  }
+  let Ok(b) = input else {
+    return failed(u, "the server closed the connection");
+  };
+  if (b.len() == 0) {
+    return finished(u);
+  }
+  let Ok(st) = session.read(b, clock.now()) else {
+    return failed(u, "the server closed the connection");
+  };
+  let v = Request { ...u, tls: Some(st.session), out: u.out.concat(st.output), got: u.got.concat(st.data) };
+  if (!v.got.contains(10u8) && !st.closed) {
+    return Pending(v);
+  }
+  return finished(v);
+}
+
+function finished(r: Request): Progress {
+  cancel(r);
+  let reply = rooms.parse_reply(utf8.from_bytes_lossy(r.got));
+  let Some(ip) = r.addr else {
+    return Done(reply, None);
+  };
+  return Done(reply, room_of(reply, r.code, net.socket_addr(ip, r.port)));
+}
+
+// The room of a reply, with the relay `relay`.
 pub function room_of(reply: rooms.Reply, code: string, relay: net.SocketAddr): Option[Room] {
   match (reply) {
     rooms.Created(c, token) => {
