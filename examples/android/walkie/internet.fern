@@ -11,8 +11,9 @@ import "std/tls/verify";
 import "std/utf8";
 import "./rooms";
 
-// `sent` counts the datagrams to the relay. Copies of a room share it.
-pub struct Room { code: string, token: u8[], relay: net.SocketAddr, sent: Cell[i64] }
+// `sent` counts the datagrams to the relay. Copies of a room share it. The
+// phone that made the room leads it.
+pub struct Room { code: string, token: u8[], relay: net.SocketAddr, sent: Cell[i64], lead: boolean }
 
 function count(r: Room): i64 {
   let n = r.sent.get() + 1i64;
@@ -296,10 +297,10 @@ function finished(r: Request): Progress {
 pub function room_of(reply: rooms.Reply, code: string, relay: net.SocketAddr): Option[Room] {
   match (reply) {
     rooms.Created(c, token) => {
-      return Some(Room { code: c, token: token, relay: relay, sent: cell_new(0i64) });
+      return Some(Room { code: c, token: token, relay: relay, sent: cell_new(0i64), lead: true });
     },
     rooms.Joined(token) => {
-      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay, sent: cell_new(0i64) });
+      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay, sent: cell_new(0i64), lead: false });
     },
     rooms.Refused(_) => {}
   }

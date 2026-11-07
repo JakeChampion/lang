@@ -10,7 +10,7 @@ The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it.
 
-Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, and `std/android/p2p` uses Wi-Fi Direct. Each one decodes its `Posted` events. An app that uses neither does not carry their code.
+Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
 
 ## Contracts
 
@@ -141,7 +141,7 @@ function c_pthread_detach(thread: usize): i32;
 
 `Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 17 belong to `std/android/service` and `std/android/p2p`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 18 belong to `std/android/service`, `std/android/p2p` and `std/android/focus`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=

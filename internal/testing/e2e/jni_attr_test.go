@@ -93,6 +93,31 @@ pub function close(env: usize, thiz: usize): void {
 	}
 }
 
+// A nested interface is "Outer$Inner" in the head, as in a DEX descriptor.
+// The Java source writes it as "Outer.Inner".
+func TestJNIJavaClassHeadNestedInterface(t *testing.T) {
+	const src = `@jni("dev.fern.demo.Catch implements java.lang.Thread$UncaughtExceptionHandler", "void uncaughtException(java.lang.Thread, java.lang.Throwable)")
+pub function caught(env: usize, thiz: usize, thread: usize, e: usize): void {
+}
+`
+	java, out, err := jniBuild(t, src, "-shared")
+	if err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(java, "dev", "fern", "demo", "Catch.java"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "public class Catch implements java.lang.Thread.UncaughtExceptionHandler {") {
+		t.Errorf("Catch.java =\n%s\nwant the nested interface with a dot", got)
+	}
+	if javac, err := exec.LookPath("javac"); err == nil {
+		if o, err := exec.Command(javac, "-d", t.TempDir(), filepath.Join(java, "dev", "fern", "demo", "Catch.java")).CombinedOutput(); err != nil {
+			t.Errorf("javac: %v\n%s", err, o)
+		}
+	}
+}
+
 func TestJNIAttributeRefusals(t *testing.T) {
 	cases := []struct {
 		name, src string
@@ -102,6 +127,7 @@ func TestJNIAttributeRefusals(t *testing.T) {
 		{"width", `@jni("a.B", "static int f(int)") pub function f(env: usize, cls: usize, n: i64): i32 { return 0; }`, true, "parameter n is i64, but the Java int needs i32"},
 		{"two heads", "@jni(\"a.B implements java.lang.Runnable\", \"void run()\") pub function f(env: usize, o: usize): void { }\n@jni(\"a.B extends java.lang.Thread\", \"void go()\") pub function g(env: usize, o: usize): void { }", true, "class a.B is declared as implements java.lang.Runnable and as extends java.lang.Thread"},
 		{"bad head", `@jni("a.B implements", "void run()") pub function f(env: usize, o: usize): void { }`, true, "is not \"name [extends class] [implements interface, ...]\""},
+		{"nested own class", `@jni("a.B$C implements java.lang.Runnable", "void run()") pub function f(env: usize, o: usize): void { }`, true, "is not \"name [extends class] [implements interface, ...]\""},
 		{"char", `@jni("a.B", "static int f(char)") pub function f(env: usize, cls: usize, c: u8): i32 { return 0; }`, true, "parameter c is u8, but the Java char needs i32"},
 		{"result", `@jni("a.B", "static boolean f()") pub function f(env: usize, cls: usize): i32 { return 0; }`, true, "the result is i32, but the Java boolean needs u8"},
 		{"arity", `@jni("a.B", "static int f(int, int)") pub function f(env: usize, cls: usize, n: i32): i32 { return 0; }`, true, "so it needs 4 parameters (it has 3)"},

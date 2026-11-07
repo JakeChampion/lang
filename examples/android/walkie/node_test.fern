@@ -305,6 +305,25 @@ function test_peer_that_never_confirms(): test.TestOutcome {
   return test.assert_eq(s.lost[0], "the other phone did not confirm the code");
 }
 
+// A node that hears one beacon and then nothing more stops its key exchange
+// after PAIR_TIMEOUT_MS, so that it does not wait for the peer forever.
+function test_a_peer_that_goes_silent_while_pairing(): test.TestOutcome {
+  let beacon = lan.encode(lan.BEACON, 9i64, []);
+  let n = node.receive(node.new(5i64, seed(1), 0i64), beacon, beacon.len(), addr(1), 0i64);
+  let pairing = n.link.phase;
+  let t = n;
+  let now = 0i64;
+  while (now <= lan.PAIR_TIMEOUT_MS) {
+    now += 10i64;
+    t = node.tick(node.drained(t), now);
+  }
+  let started = match (pairing) {
+    lan.Pairing => true,
+    _ => false,
+  };
+  return test.assert_eq(started.to_string() + " " + node.reconnecting(t).to_string() + " " + node.ended(t).to_string(), "true true true");
+}
+
 // A third party on the network reads the node ID of a beacon and sends
 // handshake datagrams in its name: from its own address, and from the
 // address of the peer. The pairing goes on, and both phones show the code.
@@ -370,6 +389,7 @@ function main(): i32 {
   r = r.it("two nodes talk with 20% loss", test_twenty_percent_loss);
   r = r.it("a press before the peer confirms waits", test_press_before_the_peer_confirms);
   r = r.it("a peer that never confirms ends the session", test_peer_that_never_confirms);
+  r = r.it("a peer that goes silent while pairing ends the search", test_a_peer_that_goes_silent_while_pairing);
   r = r.it("a spoofed handshake does not end the pairing", test_spoofed_handshake_does_not_end_pairing);
   r = r.it("a talk from the notification stops by itself", test_a_talk_from_the_notification_stops_by_itself);
   return r.finish();

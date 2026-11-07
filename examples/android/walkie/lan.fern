@@ -32,6 +32,10 @@ const MAGIC: u8 = 247u8;
 // message that has no answer yet.
 pub const RESEND_MS: i64 = 500i64;
 
+// A key exchange that does not finish in this time stops, and the phone
+// searches again. The peer left, or it changed its ID.
+pub const PAIR_TIMEOUT_MS: i64 = 10000i64;
+
 pub struct Packet { kind: i32, from: i64, body: u8[] }
 
 pub function encode(kind: i32, from: i64, body: [u8]): u8[] {
@@ -84,15 +88,38 @@ pub struct Link {
   last_in: u8[],
   last_out: u8[],
   resend_at: i64,
+  pair_until: i64,
   sas: string,
 }
 
 pub function new(me: i64): Link {
-  return Link { me: me, peer: 0i64, phase: Searching, hs: None, keys: None, last_in: [], last_out: [], resend_at: 0i64, sas: "" };
+  return Link { me: me, peer: 0i64, phase: Searching, hs: None, keys: None, last_in: [], last_out: [], resend_at: 0i64, pair_until: 0i64, sas: "" };
 }
 
 pub function initiator(l: Link): boolean {
   return l.me < l.peer;
+}
+
+// The roles of a phone. Of two phones, the one with the lower ID is the
+// initiator and the floor controller. A phone that leads, such as the group
+// owner or the phone that made the room, takes an ID below the IDs of the
+// other roles. A phone that follows takes an ID above them.
+pub const ROLE_ANY: i32 = 0;
+
+pub const ROLE_LEAD: i32 = 1;
+
+pub const ROLE_FOLLOW: i32 = 2;
+
+// The ID of a phone with `role`, from a random value.
+pub function role_id(role: i32, random: i64): i64 {
+  let low = random & (1i64 << 61i64) - 1i64;
+  if (role == ROLE_LEAD) {
+    return low;
+  }
+  if (role == ROLE_FOLLOW) {
+    return low | 1i64 << 62i64;
+  }
+  return low | 1i64 << 61i64;
 }
 
 // What a packet means to the app.
@@ -136,7 +163,15 @@ pub function pair(l: Link, peer: i64, now: i64, own random_key: u8[], random_non
   if (first) {
     out = encode(HANDSHAKE, l.me, secure.first(h));
   }
-  return (Link { ...l, peer: peer, phase: Pairing, hs: Some(h), last_out: out, resend_at: now + RESEND_MS }, [out]);
+  return (Link { ...l, peer: peer, phase: Pairing, hs: Some(h), last_out: out, resend_at: now + RESEND_MS, pair_until: now + PAIR_TIMEOUT_MS }, [out]);
+}
+
+// The key exchange did not finish in PAIR_TIMEOUT_MS.
+pub function expired(l: Link, now: i64): boolean {
+  if let Pairing = l.phase {
+    return now >= l.pair_until;
+  }
+  return false;
 }
 
 // The last handshake message again, when the peer has not answered it.

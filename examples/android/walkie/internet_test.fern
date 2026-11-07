@@ -82,7 +82,8 @@ function seed(k: i32): u8[] {
   return out;
 }
 
-// A room that node 0 makes and node 1 joins.
+// A room that node 0 makes and node 1 joins. Node 0 has the higher random
+// value, so only its role makes it the floor controller.
 function start(): Sim {
   let made = rooms.answer(rooms.empty(random("secret")), "198.51.100.1", "CREATE", 0i64, random("a"));
   let code = "";
@@ -96,7 +97,9 @@ function start(): Sim {
       r0 = r0.append(r);
     }
   }
-  let nodes = [node.with_identity(node.new(5i64, seed(1), 0i64), id_seed(1), []), node.with_identity(node.new(9i64, seed(2), 0i64), id_seed(2), [])];
+  let maker = node.with_identity(node.new(1i64, seed(1), 0i64), id_seed(1), []);
+  let joiner = node.with_identity(node.new(2i64, seed(2), 0i64), id_seed(2), []);
+  let nodes = [node.in_room(maker, r0[0].lead, 9i64, 0i64), node.in_room(joiner, r0[1].lead, 5i64, 0i64)];
   return Sim { nodes: nodes, rooms: r0, table: joined.rooms, addrs: [addr(1, 47120), addr(2, 47120)], flights: [], now: 0i64, heard: [0, 0], heard_dark: 0, heard_late: 0, resumed: 0 };
 }
 
@@ -192,7 +195,8 @@ function run(sc: Script, end: i64): Sim {
       }
       n = node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice);
       if (node.reconnecting(n)) {
-        n = node.resume(n, 15i64 + 4i64 * (i as i64), seed(i + 3), s.now);
+        n = node.resume(n, 0i64, seed(i + 3), s.now);
+        n = node.in_room(n, s.rooms[i].lead, 15i64 + 4i64 * (i as i64), s.now);
         resumed += 1;
       }
       nodes = nodes.with(i, n);
@@ -231,7 +235,7 @@ function test_two_phones_talk_through_the_relay(): test.TestOutcome {
   let a = s.nodes[0];
   let b = s.nodes[1];
   let rooms_ok = s.rooms.len() == 2 && s.rooms[0].code == s.rooms[1].code;
-  let paired = a.link.sas.len() == 6 && a.link.sas == b.link.sas && session.connected(a.sess) && session.connected(b.sess);
+  let paired = a.link.sas.len() == 6 && a.link.sas == b.link.sas && session.connected(a.sess) && session.connected(b.sess) && a.sess.controller && !b.sess.controller;
   // 500 frames in 10 s: B moves at 10 s and must still hear the second half.
   // The transmission rekeys A's voice through the relay.
   let rekeyed = epoch_of(a, true) == 1 && epoch_of(b, false) == 1;
@@ -240,6 +244,13 @@ function test_two_phones_talk_through_the_relay(): test.TestOutcome {
     return test.fail(got + ": heard " + s.heard[1].to_string() + ", codes " + a.link.sas + " " + b.link.sas);
   }
   return test.pass();
+}
+
+// Both nodes of a room join it before they find each other.
+function test_nodes_join_the_room(): test.TestOutcome {
+  let s = start();
+  let leads = s.rooms[0].lead.to_string() + " " + s.rooms[1].lead.to_string();
+  return test.assert_eq(session.state_name(s.nodes[0].sess.state) + " " + session.state_name(s.nodes[1].sess.state) + " " + leads, "JOINING JOINING true false");
 }
 
 // Both phones lose the network from 8 s to 14 s while node 0 talks, and node
@@ -263,7 +274,7 @@ function test_phones_reconnect_in_the_room(): test.TestOutcome {
 // The relay sends nothing that a phone without a room token sends.
 function test_a_stranger_reaches_nobody(): test.TestOutcome {
   let s = start();
-  let stranger = internet.Room { code: "", token: random("z").take(rooms.TOKEN_LEN), relay: relay_addr(), sent: cell_new(0i64) };
+  let stranger = internet.Room { code: "", token: random("z").take(rooms.TOKEN_LEN), relay: relay_addr(), sent: cell_new(0i64), lead: false };
   let r = rooms.relay(s.table, addr(9, 5000), internet.wrap(stranger, [247u8, 1u8]), 19, 0i64);
   return test.assert_eq(r.out.is_some().to_string(), "false");
 }
@@ -272,6 +283,7 @@ function main(): i32 {
   let r = test.new("walkie internet");
   r = r.it("two phones talk through the relay, and one moves", test_two_phones_talk_through_the_relay);
   r = r.it("two phones reconnect in the room after an outage", test_phones_reconnect_in_the_room);
+  r = r.it("the nodes join the room", test_nodes_join_the_room);
   r = r.it("a stranger reaches nobody", test_a_stranger_reaches_nobody);
   return r.finish();
 }

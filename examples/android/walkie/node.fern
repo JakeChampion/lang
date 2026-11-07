@@ -172,6 +172,34 @@ pub function ended(n: Node): boolean {
   }
 }
 
+// The node with an ID for `role`, while it searches. The role decides which
+// phone is the floor controller of the next session.
+pub function with_role(n: Node, role: i32, random: i64): Node {
+  if let lan.Searching = n.link.phase {
+    return Node { ...n, link: lan.new(lan.role_id(role, random)) };
+  }
+  return n;
+}
+
+// The node in a room of the server, while it searches. The phone that made
+// the room leads, and the session joins the room.
+pub function in_room(n: Node, lead: boolean, random: i64, now: i64): Node {
+  let lan.Searching = n.link.phase else {
+    return n;
+  };
+  let role = lan.ROLE_FOLLOW;
+  if (lead) {
+    role = lan.ROLE_LEAD;
+  }
+  let (s1, _) = session.step(session.new(), session.Start(session.Internet), now);
+  return Node { ...with_role(n, role, random), sess: s1 };
+}
+
+// The control stream to the peer closed.
+pub function transport_lost(n: Node, now: i64): Node {
+  return act(n, session.TransportLost, now);
+}
+
 // The transport was lost, and the peer did not leave.
 pub function reconnecting(n: Node): boolean {
   if let session.Reconnecting = n.sess.state {
@@ -496,6 +524,10 @@ pub function tick(n: Node, now: i64): Node {
     out = out.append(Datagram { broadcast: true, data: b });
   }
   let (l2, again) = lan.resend(l1, now);
+  if (lan.expired(l2, now)) {
+    let t = log(Node { ...n, link: lan.close(l2), out: out }, "the key exchange did not finish");
+    return act(t, session.TransportLost, now);
+  }
   return limited(pinning(proving(rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now), now), now), now);
 }
 

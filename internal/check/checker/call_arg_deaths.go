@@ -27,19 +27,39 @@ type IdentOrder struct {
 	last map[string]int
 }
 
+// IdentOrderOf numbers the identifiers of body in source order. The else arm
+// of a let-else is the last arm of its match, but the source writes it first.
 func IdentOrderOf(body ast.Node) IdentOrder {
 	o := IdentOrder{Idx: map[*ast.Ident]int{}, last: map[string]int{}}
 	n := 0
-	ast.Walk(body, func(node ast.Node) bool {
-		if id, ok := node.(*ast.Ident); ok {
+	var visit func(node ast.Node) bool
+	visit = func(node ast.Node) bool {
+		switch x := node.(type) {
+		case *ast.Ident:
 			n++
-			o.Idx[id] = n
-			if n > o.last[id.Name] {
-				o.last[id.Name] = n
+			o.Idx[x] = n
+			if n > o.last[x.Name] {
+				o.last[x.Name] = n
 			}
+		case *ast.Match:
+			els := len(x.Arms) - 1
+			if els < 1 || !letElseDivergentArm(x, els) {
+				return true
+			}
+			ast.Walk(x.Tag, visit)
+			for _, a := range append([]*ast.MatchArm{x.Arms[els]}, x.Arms[:els]...) {
+				if a.Guard != nil {
+					ast.Walk(a.Guard, visit)
+				}
+				if a.Body != nil {
+					ast.Walk(a.Body, visit)
+				}
+			}
+			return false
 		}
 		return true
-	})
+	}
+	ast.Walk(body, visit)
 	return o
 }
 

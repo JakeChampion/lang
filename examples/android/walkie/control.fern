@@ -1,0 +1,194 @@
+// The control stream of a Wi-Fi Direct group: a TCP connection from the
+// group client to the group owner, on lan.PORT. The key exchange, the
+// control frames and the proofs of identity go over it. Each one has a
+// length of 2 bytes in front. The beacons and the voice stay on UDP.
+import "std/net";
+import "./lan";
+
+// The largest frame. The first message of the key exchange is the largest.
+pub const MAX_FRAME: i32 = 2048;
+
+// While `connected` is false, the connection is not up yet. `pending` holds
+// the bytes that the socket did not take, and `inbox` the bytes of a frame
+// that did not come in full. After a step, `frames` holds the frames that
+// came in full, and `lost` tells that the connection is lost.
+pub struct Stream { sock: Socket, peer: net.IpAddr, connected: boolean, pending: u8[], inbox: u8[], frames: u8[][], lost: boolean }
+
+// The datagram `data` of the LAN transport goes over the stream: a message
+// of the key exchange, a control frame or a proof of identity.
+pub function carries(data: [u8]): boolean {
+  if (data.len() < 2) {
+    return false;
+  }
+  let kind = data[1] as i32;
+  return kind == lan.HANDSHAKE || kind == lan.CONTROL || kind == lan.IDENTITY;
+}
+
+// `data` with its length in front.
+pub function frame(data: [u8]): u8[] {
+  let out: u8[] = [(data.len() >> 8 & 255) as u8, (data.len() & 255) as u8];
+  for b in data {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// The frames that came in full in `inbox`, and the bytes after them. A
+// length of 0 or above MAX_FRAME is not a frame of this stream: then `bad`
+// is true.
+pub function frames(inbox: [u8]): (u8[], u8[][], boolean) {
+  let out: u8[][] = [];
+  let at = 0;
+  while (inbox.len() - at >= 2) {
+    let n = inbox[at] as i32 << 8 | inbox[at + 1] as i32;
+    if (n == 0 || n > MAX_FRAME) {
+      return ([], out, true);
+    }
+    if (inbox.len() - at - 2 < n) {
+      break;
+    }
+    out = out.append(part(inbox, at + 2, at + 2 + n));
+    at += 2 + n;
+  }
+  return (part(inbox, at, inbox.len()), out, false);
+}
+
+// The bytes of `b` from `from` up to `to`.
+function part(b: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for k in from..to {
+    out = out.append(b[k]);
+  }
+  return out;
+}
+
+// The listening socket of the group owner.
+pub function listen(port: i32): Option[Socket] {
+  let Ok(s) = net.listen_with(port, net.listen_options()) else {
+    return None;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(s, true);
+  return Some(s);
+}
+
+// A client that connected to the owner, or None.
+pub function accept(listener: Socket): Option[Stream] {
+  let Ok(s) = net.accept(listener) else {
+    return None;
+  };
+  let Ok(peer) = net.peer_addr(s) else {
+    let closed = net.close(s);
+    return None;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(s, true);
+  return Some(Stream { sock: s, peer: peer.ip, connected: true, pending: [], inbox: [], frames: [], lost: false });
+}
+
+// A connection from the client to the owner at `owner`. It is up after a
+// later step.
+pub function dial(owner: net.IpAddr, port: i32): Option[Stream] {
+  let Ok(s) = net.connect_start(net.socket_addr(owner, port)) else {
+    return None;
+  };
+  return Some(Stream { sock: s, peer: owner, connected: false, pending: [], inbox: [], frames: [], lost: false });
+}
+
+// The stream with `data` to send as one frame.
+pub function send(own st: Stream, data: [u8]): Stream {
+  return Stream { ...st, pending: st.pending.concat(frame(data)) };
+}
+
+// Finishes the connection, sends what is pending, and reads what came.
+pub function step(own st: Stream): Stream {
+  let s = Stream { ...st, frames: [] };
+  if (!s.connected) {
+    match (net.connect_result(s.sock)) {
+      Ok(_) => {},
+      Err(e) => {
+        return Stream { ...s, lost: !e.eq(net.InProgress) };
+      }
+    }
+  }
+  let Ok(rest) = net.write_rest(s.sock, s.pending) else {
+    return Stream { ...s, lost: true };
+  };
+  return receive(Stream { ...s, connected: true, pending: rest });
+}
+
+function receive(own st: Stream): Stream {
+  let inbox = st.inbox;
+  for k in 0..16 {
+    match (net.read_up_to(st.sock, MAX_FRAME)) {
+      Ok(got) => {
+        if (got.len() == 0) {
+          return Stream { ...st, lost: true };
+        }
+        inbox = inbox.concat(got);
+      },
+      Err(e) => {
+        if (!e.eq(net.WouldBlock)) {
+          return Stream { ...st, lost: true };
+        }
+        break;
+      }
+    }
+  }
+  let (rest, out, bad) = frames(inbox);
+  return Stream { ...st, inbox: rest, frames: out, lost: bad };
+}
+
+// The step of a stream that may not be there.
+pub function step_option(own o: Option[Stream]): Option[Stream] {
+  match (o) {
+    Some(st) => {
+      return Some(step(st));
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// The stream with each of `data` to send, when it is there.
+pub function send_all(own o: Option[Stream], data: u8[][]): Option[Stream] {
+  match (o) {
+    Some(st) => {
+      let t = st;
+      for d in data {
+        t = send(t, d);
+      }
+      return Some(t);
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+pub function close(own st: Stream): void {
+  let closed = net.close(st.sock);
+}
+
+// Closes the stream when it is there, and gives None.
+pub function close_option(own o: Option[Stream]): Option[Stream] {
+  match (o) {
+    Some(st) => {
+      close(st);
+    },
+    None => {}
+  }
+  return None;
+}
+
+// Closes the listening socket when it is there, and gives None.
+pub function close_listener(own o: Option[Socket]): Option[Socket] {
+  match (o) {
+    Some(l) => {
+      let closed = net.close(l);
+    },
+    None => {}
+  }
+  return None;
+}

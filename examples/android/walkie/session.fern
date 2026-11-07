@@ -565,8 +565,13 @@ function started(s: Session): boolean {
   return connected(s);
 }
 
+// The transport went down, also during the key exchange.
 function lost(s: Session, why: string): (Session, Action[]) {
-  if (!started(s)) {
+  let pairing = match (s.state) {
+    Connecting => true,
+    _ => false,
+  };
+  if (!pairing && !started(s)) {
     return (s, []);
   }
   let acts: Action[] = [];
