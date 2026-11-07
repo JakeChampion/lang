@@ -1,0 +1,301 @@
+import "std/result";
+import "std/array";
+import "std/f64";
+import "std/string";
+import "std/i32";
+import "../transform";
+import "../codec";
+import "../encoder";
+import "../analysis";
+import "../bitstream";
+import "../audio";
+
+function require(ok: boolean, message: string): void {
+  if (!ok) {
+    eprint("FAIL: " + message);
+    exit(1);
+  }
+}
+
+function near(a: f64, b: f64, tolerance: f64): boolean {
+  return (a - b).abs() <= tolerance;
+}
+
+function nybbles(codes: [i32]): u8[] {
+  let out: u8[] = [];
+  let i = 0;
+  while (i < codes.len()) {
+    let value = codes[i];
+    if (i + 1 < codes.len()) {
+      value |= codes[i + 1] << 4;
+    }
+    out = out.append(value as u8);
+    i += 2;
+  }
+  return out;
+}
+
+function get(codes: [i32], n: i32): codec.Coefficients {
+  let result = codec.coefficients(codec.reader(nybbles(codes), 0, 1234567u32), n);
+  match (result) {
+    Ok(v) => {
+      return v;
+    },
+    Err(e) => {
+      eprint(e);
+      exit(1);
+    }
+  }
+}
+
+function transform_tests(): void {
+  for n in [16, 32, 256] {
+    let x = transform.zeros(n);
+    for i in 0..n {
+      x = x.with(i, (i as f64 * 0.23).sin() + 0.3 * (i as f64 * 0.71).cos());
+    }
+    let y = transform.dct4(x);
+    for k in 0..n {
+      let expected = 0.0;
+      for j in 0..n {
+        expected += x[j] * (3.141592653589793 / (n as f64) * (j as f64 + 0.5) * (k as f64 + 0.5)).cos();
+      }
+      require(near(y[k], expected, 0.000000001), "DCT-IV direct definition");
+    }
+    let back = transform.dct4(y);
+    for j in 0..n {
+      require(near(back[j] * 2.0 / (n as f64), x[j], 0.000000001), "DCT-IV involution");
+    }
+  }
+  let previous = transform.zeros(256);
+  let enc_lap = transform.zeros(128);
+  let dec_lap = transform.zeros(128);
+  for b in 0..5 {
+    let x = transform.zeros(256);
+    for j in 0..256 {
+      x = x.with(j, ((b * 256 + j) as f64 * 0.12).sin());
+    }
+    let f = transform.forward(x, enc_lap);
+    enc_lap = f.lap;
+    let overlap = 256;
+    if (b == 0) {
+      overlap = 0;
+    }
+    let d = transform.inverse(f.coefs, dec_lap, overlap);
+    dec_lap = d.lap;
+    for j in 0..256 {
+      require(near(d.samples[j], previous[j], 0.000000001), "MDCT overlap reconstruction");
+    }
+    previous = x;
+  }
+}
+
+function window_cache_tests(): void {
+  let n = 128;
+  let p = transform.plan(n);
+  let coefs = transform.zeros(n);
+  let lap = transform.zeros(n / 2);
+  for i in 0..n {
+    coefs = coefs.with(i, (i as f64 * 0.19).sin() * 0.1);
+  }
+  for i in 0..n / 2 {
+    lap = lap.with(i, (i as f64 * 0.31).cos() * 0.1);
+  }
+  let temp = transform.dct4(coefs);
+  for overlap in [0, 1, 2, 4, 8, 16, 32, 64, 128] {
+    let working = lap.take(n / 2);
+    let result = transform.inverse_planned(coefs, working, overlap, p);
+    let flat = (n - overlap) / 2;
+    for i in 0..n / 2 {
+      let a = lap[n / 2 - 1 - i];
+      let b = temp[n / 2 + i];
+      let low = a;
+      let high = b;
+      if (i >= flat) {
+        let angle = 3.141592653589793 * (i as f64 - flat as f64 + 0.5) / ((2 * overlap) as f64);
+        low = angle.cos() * a - angle.sin() * b;
+        high = angle.sin() * a + angle.cos() * b;
+      }
+      require(near(result.samples[i], low, 0.0000000001) && near(result.samples[n - 1 - i], high, 0.0000000001), "cached window includes single-sample overlap");
+    }
+  }
+}
+
+function syntax_tests(): void {
+  let v = get([0, 2, 14, 7, 9, 15, 14, 15], 16);
+  require(v.values[0] == 0.125 && v.values[1] == -0.125 && v.values[2] == 1.53125 && v.values[3] == -1.53125, "signed squares");
+  require(v.values[15] == 0.0, "zero tail");
+  require(get([14, 15], 16).reader.pos == 2, "silent subblock");
+  require(get([0, 0, 15], 16).reader.pos == 3, "short zero run");
+  require(get([0, 1, 0, 0], 33).reader.pos == 4, "long zero run");
+  let q = get([14, 12, 2, 15, 14, 15], 16);
+  require(q.values[0] == 4.0 / 2147483648.0, "extended precision quantizer");
+  let noise = get([0, 8, 0, 0, 0], 16);
+  for x in noise.values {
+    require(x.abs() == 0.0078125, "noise fill amplitude");
+  }
+  let tail = get([0, 15, 15, 3, 2, 1], 16);
+  require(tail.values[0].abs() == 0.03125, "noise tail amplitude");
+  require(tail.values[15].abs() < tail.values[0].abs(), "noise tail decay");
+  require(codec.coefficients(codec.reader(nybbles([0, 1, 15, 15]), 0, 1u32), 16).is_err(), "reject oversized run");
+  require(codec.coefficients(codec.reader(nybbles([15]), 0, 1u32), 16).is_err(), "reject initial noise tail");
+  require(codec.coefficients(codec.reader(nybbles([14, 13]), 0, 1u32), 16).is_err(), "reject reserved quantizer");
+  require(codec.coefficients(codec.reader([], 0, 1u32), 16).is_err(), "reject truncation");
+  require(codec.decoder(128, 1).is_err() && codec.decoder(512, 0).is_err() && codec.decoder(300, 1).is_err(), "validate config");
+}
+
+function containers(): void {
+  for channels in [1, 2, 3] {
+    let samples = transform.zeros(777 * channels);
+    for i in 0..samples.len() {
+      samples = samples.with(i, 0.2 * (i as f64 * 0.17).sin());
+    }
+    let input = audio.Audio { rate: 44100, channels: channels, samples: samples };
+    for bits in [8, 16, 24, 32] {
+      let Ok(wav) = audio.write_wav(input, bits) else {
+        require(false, "write WAV");
+        return;
+      };
+      let Ok(back) = audio.read_wav(wav) else {
+        require(false, "read WAV");
+        return;
+      };
+      require(back.channels == channels && back.rate == 44100 && back.samples.len() == samples.len(), "WAV metadata");
+      let tolerance = 1.0 / ((1 << bits - 1) as f64) + 0.0000001;
+      for i in 0..samples.len() {
+        require(near(back.samples[i], samples[i], tolerance), "WAV samples");
+      }
+    }
+    let Ok(encoded) = audio.encode(input, 100, 256) else {
+      require(false, "encode ULC2");
+      return;
+    };
+    let Ok(decoded) = audio.decode(encoded) else {
+      require(false, "decode ULC2");
+      return;
+    };
+    require(decoded.samples.len() == 1536 * channels, "ULC2 frame count");
+    let mse = 0.0;
+    for i in 0..samples.len() {
+      let d = decoded.samples[512 * channels + i] - samples[i];
+      mse += d * d;
+    }
+    require(mse / (samples.len() as f64) < 0.0004, "roundtrip with two block delay");
+    for length in [0, 1, 23, encoded.len() - 1] {
+      require(audio.decode(encoded.take(length)).is_err(), "reject truncated container");
+    }
+  }
+  let silent = audio.Audio { rate: 8000, channels: 1, samples: transform.zeros(256) };
+  let Ok(encoded_silence) = audio.encode(silent, 100, 256) else {
+    require(false, "encode silence");
+    return;
+  };
+  require(encoded_silence.len() == 30, "silent subblocks use the two-nybble stop code");
+  let Ok(wav) = audio.write_wav(silent, 8) else {
+    require(false, "write chunk fixture");
+    return;
+  };
+  // Insert an odd-length unknown chunk with padding before the fmt chunk.
+  let padded = wav.take(12).concat([74u8, 85u8, 78u8, 75u8, 1u8, 0u8, 0u8, 0u8, 99u8, 0u8]).concat(wav.drop(12));
+  let size = padded.len() - 8;
+  for i in 0..4 {
+    padded = padded.with(4 + i, (size >> 8 * i) as u8);
+  }
+  let Ok(with_chunk) = audio.read_wav(padded) else {
+    require(false, "parse padded unknown WAV chunk");
+    return;
+  };
+  require(with_chunk.samples.len() == 256, "skip WAV metadata chunks");
+  require(audio.read_wav(wav.with(32, 0u8)).is_err(), "reject invalid WAV block alignment");
+  require(audio.read_wav(wav.with(40, 255u8)).is_err(), "reject truncated WAV data chunk");
+  let bad_float = audio.Audio { ...silent, samples: [f64_from_bits(9221120237041090560)] };
+  require(audio.write_wav(bad_float, 32).is_err(), "reject nonfinite float sample");
+  require(audio.read_wav([]).is_err(), "reject bad WAV");
+}
+
+function encoder_features(): void {
+  let order = analysis.ranks([1.0, -2.0, 8.0, 0.0]);
+  require(order[2] == 0 && order[0] == 1 && order[3] == 2 && order[1] == 3, "priority radix order");
+  for n in [256, 2048] {
+    let Ok(initial) = encoder.create(n, 2, 44100, encoder.Cbr(96.0)) else {
+      require(false, "create CBR encoder");
+      return;
+    };
+    let state = initial;
+    let Ok(decoder0) = codec.decoder(n, 2) else {
+      require(false, "create feature decoder");
+      return;
+    };
+    let dec = decoder0;
+    let switched = false;
+    let nonzero = false;
+    for b in 0..8 {
+      let samples = transform.zeros(2 * n);
+      if (b == 2 || b == 5) {
+        for i in 0..n / 8 {
+          samples = samples.with(2 * i, 0.5 * (i as f64 * 0.71).sin());
+          samples = samples.with(2 * i + 1, 0.3 * (i as f64 * 1.13).cos());
+        }
+      }
+      let Ok(prepared) = encoder.prepare(state, samples) else {
+        require(false, "prepare transient frame");
+        return;
+      };
+      let measured = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, prepared.nonzero, true);
+      let written = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, prepared.nonzero, false);
+      require(measured.bits == written.bits && written.bytes.len() * 8 == written.bits, "count-only pass matches actual bytes");
+      let Ok(encoded) = encoder.encode_prepared(prepared) else {
+        require(false, "encode CBR transient");
+        return;
+      };
+      require(encoded.bits as f64 <= (n as f64 * 96000.0 / 44100.0).floor(), "strict per-block CBR budget");
+      require(encoded.complexity >= 0.0 && encoded.complexity <= 1.0, "bounded block complexity");
+      if (encoded.control != 0x10) {
+        switched = true;
+      }
+      if (encoded.complexity > 0.0) {
+        nonzero = true;
+      }
+      state = encoded.state;
+      let Ok(decoded) = codec.decode_block(dec, encoded.bytes, 0) else {
+        require(false, "decode transient output");
+        return;
+      };
+      dec = decoded.state;
+      require(decoded.next_byte == encoded.bytes.len(), "complete transient bitstream");
+    }
+    require(switched && nonzero, "automatic transient detection and overlap scaling");
+  }
+  let source = audio.Audio { rate: 44100, channels: 1, samples: transform.zeros(1024) };
+  let Ok(average) = audio.analyze(source, 256) else {
+    require(false, "analyze silence");
+    return;
+  };
+  require(average == 0.0, "silent average complexity");
+  let Ok(encoded) = audio.encode_mode(source, encoder.Abr(32.0, 1.0), 256) else {
+    require(false, "ABR silence overhead");
+    return;
+  };
+  require(audio.decode(encoded).is_ok(), "ABR silence decodes");
+  require(encoder.create(256, 1, 44100, encoder.Cbr(0.0)).is_err(), "reject zero CBR rate");
+  require(encoder.create(256, 1, 44100, encoder.Abr(64.0, 0.0)).is_err(), "reject zero ABR complexity");
+  require(encoder.create(256, 1, 0, encoder.Vbr(75.0)).is_err(), "reject zero sample rate");
+  require(audio.encode_mode(source, encoder.Cbr(0.001), 256).is_err(), "reject impossible CBR budget");
+}
+
+pub function run_tests(): i32 {
+  window_cache_tests();
+  transform_tests();
+  print("ok - transform definition and lapping");
+  syntax_tests();
+  print("ok - coefficient syntax and validation");
+  encoder_features();
+  print("ok - transient encoder, rate control, and count-only passes");
+  containers();
+  print("ok - WAV and ULC2 roundtrips");
+  return 0;
+}
+
+function main(): i32 {
+  return run_tests();
+}

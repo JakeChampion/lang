@@ -1,0 +1,141 @@
+// Transient detector from ulc-codec, with one block of lookahead.
+import "std/array";
+import "std/f64";
+import "./transform";
+
+const PATTERNS: i32[] = [0x0, 0x8, 0x19, 0x91, 0x12a, 0x1a2, 0x2a1, 0xa21, 0x123b, 0x12b3, 0x13b2, 0x1b32, 0x23b1, 0x2b31, 0x3b21, 0xb321];
+
+pub function pattern(control: i32): i32 {
+  return PATTERNS[control >> 4];
+}
+
+pub struct Detector { hp: f64, bp: f64, mask: f64, segments: f64[], control: i32 }
+
+pub function detector(): Detector {
+  return Detector { hp: 0.0, bp: 0.0, mask: 0.0, segments: transform.zeros(8), control: 0x10 };
+}
+
+pub function detect(own state: Detector, old: [f64], next: [f64], n: i32, channels: i32, rate: i32): Detector {
+  let energy_hp = transform.zeros(n);
+  let energy_bp = transform.zeros(n);
+  for ch in 0..channels {
+    let base = ch * n;
+    let b = old[base + n / 2 - 1];
+    let c = old[base + n / 2];
+    for i in 0..n {
+      let a = b;
+      b = c;
+      if (i < n / 2 - 1) {
+        c = old[base + n / 2 + i + 1];
+      } else {
+        c = next[base + i - (n / 2 - 1)];
+      }
+      let hp = -a + 2.0 * b - c;
+      let bp = -a + c;
+      energy_hp = energy_hp.with(i, energy_hp[i] + hp * hp);
+      energy_bp = energy_bp.with(i, energy_bp[i] + bp * bp);
+    }
+  }
+  let hp = state.hp;
+  let bp = state.bp;
+  let hp_rate = 1.0 - (-115.12925464970229 / (rate as f64)).exp();
+  let bp_rate = 1.0 - (-345.38776394910684 / (rate as f64)).exp();
+  for i in 0..n {
+    hp += (energy_hp[i].sqrt() - hp) * hp_rate;
+    bp += (energy_bp[i].sqrt() - bp) * bp_rate;
+    energy_hp = energy_hp.with(i, hp);
+    energy_bp = energy_bp.with(i, bp);
+  }
+  let pre_hp = hp;
+  let pre_bp = bp;
+  let pre_hp_rate = 1.0 - (-230.25850929940458 / (rate as f64)).exp();
+  let i = n - 1;
+  while (i >= 0) {
+    let dh = energy_hp[i] - pre_hp;
+    let db = energy_bp[i] - pre_bp;
+    pre_hp += dh * pre_hp_rate;
+    pre_bp += db * bp_rate;
+    energy_hp = energy_hp.with(i, dh * dh * pre_bp * pre_bp + db * db * pre_hp * pre_hp);
+    i -= 1;
+  }
+  let sums = state.segments.concat(transform.zeros(8));
+  let mask = state.mask;
+  let mask_rate = 1.0 - (-0.01726938819745534 * (n as f64) / (rate as f64)).exp();
+  let bin = n / 8;
+  for segment in 0..8 {
+    let sum = 0.0;
+    for j in 0..bin {
+      mask += (energy_hp[segment * bin + j] - mask) * mask_rate;
+      sum += mask;
+    }
+    sums = sums.with(8 + segment, sum);
+  }
+  let log_sub = 0;
+  let size = n / 8;
+  while (size > 1) {
+    log_sub += 1;
+    size >>= 1;
+  }
+  let segments = 8;
+  let width = 1;
+  if (log_sub < 6) {
+    width = 1 << 6 - log_sub;
+    segments /= width;
+    log_sub = 6;
+  }
+  let ratio = 0.0;
+  let decimation = 1;
+  while (true) {
+    log_sub += 1;
+    let maximum = -1000.0;
+    let position = 0;
+    for segment in 0..segments {
+      let left = 0.0;
+      let right = 0.0;
+      let at = 8 + segment * width;
+      for j in 0..width {
+        left += sums[at - width + j];
+        right += sums[at + j];
+      }
+      let l = -100.0;
+      let r = -100.0;
+      if (left > 0.0) {
+        l = (left / ((width * bin) as f64)).log();
+      }
+      if (right > 0.0) {
+        r = (right / ((width * bin) as f64)).log();
+      }
+      let change = (r - l).abs();
+      if (change > maximum) {
+        maximum = change;
+        position = segment;
+      }
+    }
+    if (maximum - ratio < 0.6931471805599453) {
+      break;
+    }
+    decimation = segments + position;
+    ratio = maximum;
+    if (segments > 1 && ratio < 0.6931471805599453) {
+      segments /= 2;
+      width *= 2;
+    } else {
+      break;
+    }
+  }
+  let control = 0x10;
+  if (ratio >= 0.34657359027997265) {
+    let overlap = (ratio * 1.4426950408889634).round() as i32;
+    if (overlap > 7) {
+      overlap = 7;
+    }
+    if (log_sub - overlap < 6) {
+      overlap = log_sub - 6;
+    }
+    control = overlap + 16 * decimation;
+    if (decimation != 1) {
+      control += 8;
+    }
+  }
+  return Detector { hp: hp, bp: bp, mask: mask, segments: sums.drop(8), control: control };
+}
