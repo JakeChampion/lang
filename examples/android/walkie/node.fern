@@ -474,7 +474,7 @@ function send_pin(n: Node, now: i64): Node {
   if (n.peer_identity.len() > 0) {
     flags = protocol.HAVE_PEER;
     if (n.peer_has_mine) {
-      flags = flags | protocol.DONE;
+      flags |= protocol.DONE;
     }
   }
   return send_frame(Node { ...n, pin_at: now + lan.RESEND_MS }, lan.CONTROL, protocol.encode(protocol.Identity(public, signature, flags)));
