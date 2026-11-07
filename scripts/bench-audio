@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Measure whole-file QOA decode against the pinned C reference."""
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import shutil
+import statistics
+import subprocess
+import tempfile
+import time
+import urllib.request
+import wave
+
+root = Path(__file__).resolve().parent.parent
+os.chdir(root)
+spec = importlib.util.spec_from_file_location('fixtures', root / 'scripts/gen-audio-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+compiler = shutil.which(compiler) or compiler
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+with tempfile.TemporaryDirectory() as temp:
+    temp = Path(temp)
+    header = urllib.request.urlopen(f'https://raw.githubusercontent.com/phoboslab/qoa/{fixtures.QOA_REV}/qoa.h').read()
+    assert hashlib.sha256(header).hexdigest() == fixtures.QOA_SHA
+    (temp / 'qoa.h').write_bytes(header)
+    for source, output in [('qoa.c', 'encode'), ('qoa_bench.c', 'reference')]:
+        shutil.copy(root / 'scripts/audio-reference' / source, temp / source)
+        subprocess.run(['cc', '-O3', '-fwrapv', '-o', str(temp / output), str(temp / source)], check=True)
+    subprocess.run([compiler, '-target', target, '-o', str(temp / 'fern'), 'bench/audio/qoa_decode.fern', 'internal/stdlib'], check=True)
+    samples = fixtures.sample_signal(10004, 2)
+    with wave.open(str(temp / 'input.wav'), 'wb') as output:
+        output.setnchannels(2)
+        output.setsampwidth(2)
+        output.setframerate(48000)
+        output.writeframes(b''.join(s.to_bytes(2, 'little', signed=True) for s in samples))
+    subprocess.run([str(temp / 'encode'), str(temp / 'input.wav'), str(temp / 'input.qoa')], check=True)
+    timings = {'fern': [], 'reference': []}
+    checksums = set()
+    for trial in range(5):
+        for name in (['fern', 'reference'] if trial % 2 == 0 else ['reference', 'fern']):
+            start = time.perf_counter()
+            result = subprocess.check_output([str(temp / name), str(temp / 'input.qoa')], text=True)
+            timings[name].append(time.perf_counter() - start)
+            checksums.add(result.strip())
+    assert len(checksums) == 1
+    medians = {name: statistics.median(values) for name, values in timings.items()}
+    print(json.dumps({'machine': platform.platform(), 'compiler_sha256': hashlib.sha256(Path(compiler).read_bytes()).hexdigest(), 'compiler': subprocess.check_output([compiler, '-version'], text=True).strip(),
+                      'qoa_reference': fixtures.QOA_REV, 'iterations': 1000, 'frames_per_file': 10004, 'channels': 2,
+                      'seconds': timings, 'median_seconds': medians, 'fern_over_c': medians['fern'] / medians['reference'],
+                      'output_storage': {'fern': 'i32', 'reference': 'int16'}}, indent=2))

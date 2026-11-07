@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Compare Fern Opus packets with the system libopus decoder."""
+import ctypes
+import ctypes.util
+import math
+import os
+from pathlib import Path
+import struct
+import subprocess
+
+root = Path(__file__).resolve().parent.parent
+os.chdir(root)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+output = root / 'build/audio/opus-reference'
+output.parent.mkdir(parents=True, exist_ok=True)
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+subprocess.run([compiler, '-target', target, '-o', str(output), 'scripts/audio-reference/opus.fern', 'internal/stdlib'], check=True)
+path = ctypes.util.find_library('opus')
+if not path:
+    raise SystemExit('libopus is required')
+lib = ctypes.CDLL(path)
+lib.opus_get_version_string.restype = ctypes.c_char_p
+lib.opus_decoder_create.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+lib.opus_decoder_create.restype = ctypes.c_void_p
+lib.opus_decode_float.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+lib.opus_decoder_destroy.argtypes = [ctypes.c_void_p]
+lines = subprocess.check_output([str(output)], text=True).splitlines()
+assert len(lines) == 24
+maximum = 0.0
+maximum_rms = 0.0
+for i, line in enumerate(lines):
+    cc, count, packet, pcm = line.split()
+    cc, count = int(cc), int(count)
+    packet = bytes.fromhex(packet)
+    ours = struct.unpack('<' + 'f' * (count * cc), bytes.fromhex(pcm))
+    if i % 3 == 0:
+        error = ctypes.c_int()
+        decoder = lib.opus_decoder_create(48000, cc, ctypes.byref(error))
+        assert decoder and error.value == 0
+    samples = (ctypes.c_float * (count * cc))()
+    assert lib.opus_decode_float(decoder, packet, len(packet), samples, count, 0) == count
+    differences = [abs(a - b) for a, b in zip(samples, ours)]
+    assert all(math.isfinite(d) for d in differences)
+    error = max(differences)
+    rms = math.sqrt(sum(d * d for d in differences) / len(differences))
+    assert error <= 0.0001 and rms <= 0.00003, (i, error, rms)
+    maximum = max(maximum, error)
+    maximum_rms = max(maximum_rms, rms)
+    if i % 3 == 2:
+        lib.opus_decoder_destroy(decoder)
+print(f'24 Opus packets interoperate with {lib.opus_get_version_string().decode()}')
+print(f'maximum sample difference: {maximum:.8f}, maximum RMS difference: {maximum_rms:.8f}')
