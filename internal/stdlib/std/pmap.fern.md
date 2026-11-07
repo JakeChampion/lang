@@ -86,7 +86,7 @@ pub function new[K, V](): PMap[K, V] {
 }
 
 pub function from[K: cmp.Hash + cmp.Eq, V](pairs: (K, V)[]): PMap[K, V] {
-  let m: PMap[K, V] = new();
+  let m = new();
   for p in pairs {
     m = m.insert(p.0, p.1);
   }
@@ -755,7 +755,7 @@ pub function (m: PMap[K, V]) map_values[W](f: (V) => W): PMap[K, W] {
 }
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) filter(pred: (K, V) => boolean): PMap[K, V] {
-  let out: PMap[K, V] = new();
+  let out = new();
   let ks = m.keys();
   let vs = m.values();
   let i = 0;
@@ -811,7 +811,7 @@ pub function (m: PMap[K, V]) entries(): (K, V)[] {
 }
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) intersection(other: PMap[K, V]): PMap[K, V] {
-  let out: PMap[K, V] = new();
+  let out = new();
   let ks = m.keys();
   let vs = m.values();
   let i = 0;

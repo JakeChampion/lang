@@ -70,7 +70,7 @@ pub function new[T](): OrdSet[T] {
 }
 
 pub function of[T: cmp.Ord](xs: T[]): OrdSet[T] {
-  let s: OrdSet[T] = new();
+  let s = new();
   let i = 0;
   while (i < xs.len()) {
     s = s.insert(xs[i]);
