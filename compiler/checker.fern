@@ -4068,6 +4068,18 @@ function (s: Scope) method_scope_admits(m: MethodSig): boolean {
   return m.is_package && s.imports.same_package(s.fn_module, m.module);
 }
 
+// A struct's method resolves by its declaration's scope alone: a generic
+// body instantiated with a struct of another module calls its methods
+// without importing that module.
+function (s: Scope) scoped_method(name: string, recv_type: string): Option[MethodSig] {
+  if let Some(m) = s.lookup_method(name, recv_type) {
+    if (m.impl_trait.len() > 0 || s.method_scope_admits(m)) {
+      return Some(m);
+    }
+  }
+  return None;
+}
+
 pub function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
   if let Some(m) = s.lookup_method(name, recv_type) {
     if (s.method_visible(m)) {
@@ -14707,7 +14719,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
             out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
             out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
-            if let Some(msig) = s.visible_method(mfa.field, sn.name) {
+            if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
               if (c.args.len() != msig.param_types.len()) {
                 out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
               } else {
