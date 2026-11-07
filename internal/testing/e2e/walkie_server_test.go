@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"math/big"
@@ -131,8 +134,52 @@ func tokenOf(t *testing.T, line string) []byte {
 	return b
 }
 
-func relayed(token []byte, body string) []byte {
-	return append(append([]byte{248}, token...), body...)
+// memberID is the ID of the member with token, as rooms.member_id gives it.
+func memberID(token []byte) []byte {
+	h := sha256.Sum256(append([]byte("walkie relay id"), token...))
+	return h[:8]
+}
+
+// sealed is kind, the ID of the member, the counter and body, with the MAC
+// that the token keys, as rooms.wrap and rooms.answer_challenge make it.
+func sealed(kind byte, token []byte, counter uint64, body []byte) []byte {
+	out := append([]byte{kind}, memberID(token)...)
+	out = binary.BigEndian.AppendUint64(out, counter)
+	out = append(out, body...)
+	m := hmac.New(sha256.New, token)
+	m.Write(out)
+	return append(out, m.Sum(nil)[:16]...)
+}
+
+// member is one phone of a room on the relay, with its counter.
+type member struct {
+	token   []byte
+	counter uint64
+}
+
+func (m *member) datagram(body string) []byte {
+	m.counter++
+	return sealed(248, m.token, m.counter, []byte(body))
+}
+
+// arrive sends a datagram of m from c and answers the challenge of the
+// relay, so the relay sends the datagrams of the room to c.
+func arrive(t *testing.T, c *net.UDPConn, relay *net.UDPAddr, m *member) {
+	t.Helper()
+	for k := 0; k < 20; k++ {
+		if _, err := c.WriteToUDP(m.datagram("hello"), relay); err != nil {
+			t.Fatal(err)
+		}
+		got := receive(c, 250*time.Millisecond)
+		if len(got) == 25 && got[0] == 249 && got[1:9] == string(memberID(m.token)) {
+			m.counter++
+			if _, err := c.WriteToUDP(sealed(250, m.token, m.counter, []byte(got[9:])), relay); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatal("the relay sent no challenge")
 }
 
 // receive gives the next datagram on c, or "" when none comes in time.
@@ -148,10 +195,10 @@ func receive(c *net.UDPConn, wait time.Duration) string {
 
 // send writes one datagram to the relay, again until the peer has it: the
 // first datagram of a member can arrive before the relay knows the peer.
-func sendUntil(t *testing.T, from *net.UDPConn, relay *net.UDPAddr, data []byte, to *net.UDPConn, want string) {
+func sendUntil(t *testing.T, from *net.UDPConn, relay *net.UDPAddr, m *member, to *net.UDPConn, want string) {
 	t.Helper()
 	for k := 0; k < 20; k++ {
-		if _, err := from.WriteToUDP(data, relay); err != nil {
+		if _, err := from.WriteToUDP(m.datagram(want), relay); err != nil {
 			t.Fatal(err)
 		}
 		if got := receive(to, 250*time.Millisecond); got == want {
@@ -218,7 +265,7 @@ func TestWalkieRelayServer(t *testing.T) {
 
 	created := ask(t, addr, pool, "CREATE")
 	words := strings.Fields(created)
-	if len(words) != 3 || words[0] != "ROOM" || len(words[1]) != 6 {
+	if len(words) != 3 || words[0] != "ROOM" || len(words[1]) != 8 {
 		t.Fatalf("CREATE: %q", created)
 	}
 	joined := ask(t, addr, pool, "JOIN "+strings.ToLower(words[1]))
@@ -231,22 +278,37 @@ func TestWalkieRelayServer(t *testing.T) {
 	if bad := ask(t, addr, pool, "HELLO"); bad != "ERROR unknown request" {
 		t.Fatalf("HELLO: %q", bad)
 	}
-	ta, tb := tokenOf(t, created), tokenOf(t, joined)
+	ma, mb := &member{token: tokenOf(t, created)}, &member{token: tokenOf(t, joined)}
 
 	relay := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 	a, b := udpConn(t), udpConn(t)
-	if _, err := a.WriteToUDP(relayed(ta, "a is here"), relay); err != nil {
+	arrive(t, a, relay, ma)
+	arrive(t, b, relay, mb)
+	sendUntil(t, b, relay, mb, a, "from b")
+	sendUntil(t, a, relay, ma, b, "from a")
+
+	// A copy of a datagram of b from another address moves nothing.
+	copied := udpConn(t)
+	dup := mb.datagram("copied")
+	if _, err := b.WriteToUDP(dup, relay); err != nil {
 		t.Fatal(err)
 	}
-	sendUntil(t, b, relay, relayed(tb, "from b"), a, "from b")
-	sendUntil(t, a, relay, relayed(ta, "from a"), b, "from a")
+	if got := receive(a, 300*time.Millisecond); got != "copied" {
+		t.Fatalf("the relay did not deliver the datagram of b: %q", got)
+	}
+	copied.WriteToUDP(dup, relay)
+	if got := receive(copied, 300*time.Millisecond); got != "" {
+		t.Fatalf("the relay answered a copied datagram: %q", got)
+	}
+	sendUntil(t, a, relay, ma, b, "still to b")
 
 	moved := udpConn(t)
-	sendUntil(t, moved, relay, relayed(ta, "a moved"), b, "a moved")
-	sendUntil(t, b, relay, relayed(tb, "to the new address"), moved, "to the new address")
+	arrive(t, moved, relay, ma)
+	sendUntil(t, moved, relay, ma, b, "a moved")
+	sendUntil(t, b, relay, mb, moved, "to the new address")
 
 	stranger := udpConn(t)
-	stranger.WriteToUDP(relayed(make([]byte, 16), "not a member"), relay)
+	stranger.WriteToUDP(sealed(248, make([]byte, 16), 1, []byte("not a member")), relay)
 	if got := receive(b, 300*time.Millisecond); got != "" {
 		t.Fatalf("the relay sent a datagram with an unknown token: %q", got)
 	}
