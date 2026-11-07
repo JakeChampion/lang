@@ -1,0 +1,25 @@
+function carry(own x: i64[]): i64 {
+  let c = 0;
+  let j = 0;
+  while (j < x.len()) {
+    x = x.with(j, x[j] + c);
+    c = x[j] >> 8;
+    j += 1;
+  }
+  return c;
+}
+
+function main(): i32 {
+  let x: i64[] = [5000000000, 7];
+  let i = 0;
+  let big = 0;
+  big = x[i];
+  if (big + x[i] != 10000000000) {
+    return 1;
+  }
+  if (carry([5000000000, 0]) != 76293) {
+    return 2;
+  }
+  print("ok");
+  return 0;
+}
