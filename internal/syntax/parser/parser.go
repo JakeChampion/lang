@@ -4646,7 +4646,7 @@ func (p *parser) parseRange() (ast.Expr, error) {
 		}
 		return &ast.Call{
 			P:      tok.Pos,
-			Callee: &ast.FieldAccess{P: tok.Pos, Target: &ast.Ident{P: tok.Pos, Name: "iter"}, Field: fn, FieldPos: tok.Pos},
+			Callee: &ast.FieldAccess{P: tok.Pos, Target: &ast.Ident{P: tok.Pos, Name: ast.RangeModule}, Field: fn, FieldPos: tok.Pos},
 			Args:   []ast.Expr{left, right},
 		}, nil
 	}

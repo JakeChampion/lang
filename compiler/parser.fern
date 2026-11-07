@@ -4603,6 +4603,10 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
   }
 }
 
+// A range names its module by import path, which no identifier can spell,
+// so a local or a module called `iter` cannot capture it.
+pub const RANGE_MODULE: string = "core/iter";
+
 function parse_range(p: Par): (ast.Expr, Par) {
   let (left_expr, left_p) = parse_binary(p, 1);
   p = left_p;
@@ -4617,7 +4621,7 @@ function parse_range(p: Par): (ast.Expr, Par) {
     }
     let (right_expr, right_p) = parse_binary(p, 1);
     p = right_p;
-    let callee = e_field_access_at(e_ident_at("iter", rline, rcol), fn, rline, rcol);
+    let callee = e_field_access_at(e_ident_at(RANGE_MODULE, rline, rcol), fn, rline, rcol);
     let args: ast.Expr[] = [left_expr, right_expr];
     return (e_call(callee, args), p);
   }

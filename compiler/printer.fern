@@ -73,6 +73,29 @@ function prec_assign(): i32 {
   return 1;
 }
 
+function prec_range(): i32 {
+  return 3;
+}
+
+// The `..` or `..=` that a range desugar call came from, or "" for any
+// other call. Only the parser writes the path-qualified callee.
+function range_desugar_op(c: ast.ExprCall): string {
+  if (c.args.len() != 2) {
+    return "";
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if let ast.ExprIdent(id) = fa.obj {
+      if (id.name == parser.RANGE_MODULE && fa.field == "range") {
+        return "..";
+      }
+      if (id.name == parser.RANGE_MODULE && fa.field == "range_incl") {
+        return "..=";
+      }
+    }
+  }
+  return "";
+}
+
 function prec_cast(): i32 {
   return 14;
 }
@@ -934,6 +957,15 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       return print_unary_c(u, parent_prec, depth, f);
     },
     ast.ExprCall(c) => {
+      let dots = range_desugar_op(c);
+      if (dots.len() > 0) {
+        let (rl, rf) = print_expr_c(c.args[0], prec_range() + 1, depth, f);
+        let (rr, rf2) = print_expr_c(c.args[1], prec_range() + 1, depth, rf);
+        if (parent_prec > prec_range()) {
+          return ("(" + rl + dots + rr + ")", rf2);
+        }
+        return (rl + dots + rr, rf2);
+      }
       let (blk, bf) = print_block_expr(c, parent_prec, depth, f);
       if (blk.len() > 0) {
         return (blk, bf);
@@ -2556,6 +2588,11 @@ function print_for_iter(e: ast.Expr, depth: i32): string {
             }
           },
           _ => {}
+        }
+        // A range value keeps its parentheses: without them the header is
+        // the counted loop, a different program.
+        if (range_desugar_op(c).len() > 0) {
+          return "(" + print_header_expr(e, depth) + ")";
         }
       }
     },

@@ -14260,6 +14260,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(n.EnumName), n.Name)
 			return nil
 		}
+		if n.Name == ast.RangeModule {
+			c.errfCode(n.P, "E001", "a range `a..b` outside a `for` header requires `import \"core/iter\";`")
+			return nil
+		}
 		c.errIdent(n, s, "cannot find %q in this scope", n.Name)
 		return nil
 	case *ast.ArrayLit:

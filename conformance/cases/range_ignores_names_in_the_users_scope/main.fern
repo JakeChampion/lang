@@ -1,0 +1,23 @@
+// A range is a core/iter Range whatever the importer calls the module,
+// and a local or a type named `iter` cannot capture it.
+import "core/iter" as it;
+import "std/i32";
+
+struct Iter { k: i32 }
+
+function (t: Iter) range(a: i32, b: i32): i32 { return 42; }
+
+function main(): i32 {
+  let iter = Iter { k: 0 };
+  let total = 0;
+  for x in (0..4) {
+    total += x;
+  }
+  let r = 1..=3;
+  for y in r {
+    total += y;
+  }
+  print(total.to_string());
+  print(it.sum(10..13).to_string());
+  return iter.k;
+}
