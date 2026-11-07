@@ -101,7 +101,7 @@ qemu-system-aarch64() { echo qemu-system-aarch64; }
 set -e
 ` + string(report)
 			cmd := exec.Command(bash, "-c", script)
-			cmd.Env = []string{"QEMU_PKG=" + pkg}
+			cmd.Env = []string{"QEMU_PKG=" + pkg, "PATH=" + os.Getenv("PATH")}
 			out, err := cmd.CombinedOutput()
 			if err != nil || strings.TrimSpace(string(out)) != want {
 				t.Fatalf("ran %q, want %q: %v", strings.TrimSpace(string(out)), want, err)
