@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: the two interpreters keep a heap value as a value, not at an
+  address, so a cast between an integer and a heap value has nothing to
+  reinterpret there. The case runs on every compiled backend, where the
+  cast reads and forges a real address. The interpreters still check the
+  program, so E095 is pinned on them by diag_e095_pointer_cast_outside_unsafe.
