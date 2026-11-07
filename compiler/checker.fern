@@ -12737,40 +12737,14 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
   return out;
 }
 
-// block_results is the value of each path through the body of a value block.
-function block_results(body: ast.Stmt[], own acc: ast.Expr[]): ast.Expr[] {
-  if (body.len() == 0) {
-    return acc;
-  }
-  match (body[body.len() - 1]) {
-    ast.StmtReturn(r) => {
-      return acc.append(r.value);
-    },
-    ast.StmtIf(f) => {
-      return block_results(f.else_body, block_results(f.then_body, acc));
-    },
-    ast.StmtMatch(m) => {
-      for arm in m.arms {
-        acc = block_results(arm.body, acc);
-      }
-      return acc;
-    },
-    _ => {
-      return acc;
-    }
-  }
-}
-
 function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
-  if let ast.ExprCall(vc) = e {
-    if let ast.ExprLambda(vb) = vc.callee {
-      if (parser.is_value_block(vc)) {
-        for r in block_results(vb.body, []) {
-          out = util.append_diags(out, int_dest_range_diags(r, want));
-        }
-        return out;
+  if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c)) {
+      for value in mx_body_result_exprs(parser.vb_body(c)) {
+        out = util.append_diags(out, int_dest_range_diags(value, want));
       }
+      return out;
     }
   }
   if let ast.ExprUnary(tu) = e {
@@ -31398,6 +31372,81 @@ function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
   return (false, ids);
 }
 
+// The literal ids of a `let` or assignment value. A value `if`, `match` or
+// block seeds when each arm that yields gives a literal tree. The walk of its
+// arms is kept only when it seeds.
+function lit_seed(e: ast.Expr, s: Scope, st: LitInfer): (boolean, i32[], LitInfer) {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lm) = c.callee {
+      let branches = lm.body.len() == 1 && (lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR);
+      if (c.args.len() > 0 || lm.params.len() > 0 || !branches && lm.origin != parser.ORIGIN_BLOCK) {
+        return (false, [], st);
+      }
+      let (n, ids, out) = lit_arms(lm.body, lambda_body_scope(lm, s), [], st);
+      if (n > 0) {
+        return (true, ids, out);
+      }
+      return (false, [], st);
+    }
+  }
+  let (seed, ids) = lit_tree(e, s, []);
+  return (seed, ids, st);
+}
+
+// The literal arms of a branch body: 0 when it leaves, -1 when an arm yields
+// something else.
+function lit_arms(body: ast.Stmt[], s: Scope, ids: i32[], st: LitInfer): (i32, i32[], LitInfer) {
+  if (!mx_branch_yields(body)) {
+    return (0, ids, lit_stmts(body, s, st));
+  }
+  let cur = s;
+  let out = st;
+  let last = body.len() - 1;
+  for i in 0..last {
+    let (ns, nst) = lit_stmt(body[i], cur, out);
+    cur = ns;
+    out = nst;
+  }
+  match (body[last]) {
+    ast.StmtReturn(r) => {
+      let (seed, rids, rst) = lit_seed(r.value, cur, out);
+      if (seed) {
+        return (1, util.append_all(ids, rids), rst);
+      }
+      return (0 - 1, ids, out);
+    },
+    ast.StmtIf(f) => {
+      let (a, aids, tst) = lit_arms(f.then_body, cur, ids, lit_expr(f.cond, cur, out));
+      let (b, bids, bst) = lit_arms(f.else_body, cur, aids, tst);
+      return (unsettled_arm_sum(a, b), bids, bst);
+    },
+    ast.StmtMatch(m) => {
+      return lit_match_arms(m, cur, ids, out);
+    },
+    _ => {}
+  }
+  let (ls, lst) = lit_stmt(body[last], cur, out);
+  return (0, ids, lst);
+}
+
+function lit_match_arms(m: ast.StmtMatch, s: Scope, ids: i32[], st: LitInfer): (i32, i32[], LitInfer) {
+  let whole = check_expr(m.scrutinee, s);
+  let out = lit_arg(m.scrutinee, s, st);
+  let n = 0;
+  let kids = ids;
+  for arm in m.arms {
+    let asc = annotate_arm_scope(arm, s, whole);
+    if (arm.has_guard) {
+      out = lit_expr(arm.guard, asc, out);
+    }
+    let (k, nids, nst) = lit_arms(arm.body, asc, kids, out);
+    n = unsettled_arm_sum(n, k);
+    kids = nids;
+    out = nst;
+  }
+  return (n, kids, out);
+}
+
 function lit_find(st: LitInfer, k: i32): i32 {
   let r = k;
   while (st.parent[r] != r) {
@@ -31942,40 +31991,6 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     i += 1;
   }
   return out;
-}
-
-// lit_value_local gives a literal class to a local whose value block yields a
-// literal tree on each path, such as `let x = if (c) { 6 } else { 2 };`, so
-// its first use gives its type. It is -1 for any other initializer.
-function lit_value_local(v: ast.StmtVar, c: ast.ExprCall, s: Scope, st: LitInfer): (i32, LitInfer) {
-  if (!parser.is_value_block(c)) {
-    return (-1, st);
-  }
-  let ast.ExprLambda(vb) = c.callee else {
-    return (-1, st);
-  };
-  let (seed, ids) = lit_body_seed(vb.body, s, []);
-  if (!seed) {
-    return (-1, st);
-  }
-  let k = st.parent.len();
-  return (k, lit_link(lit_new(st, lit_var_key(v)), ids.append(k)));
-}
-
-function lit_body_seed(body: ast.Stmt[], s: Scope, ids: i32[]): (boolean, i32[]) {
-  if (body.len() == 0) {
-    return (false, ids);
-  }
-  let last = body[body.len() - 1];
-  if let ast.StmtReturn(r) = last {
-    return lit_tree(r.value, s, ids);
-  }
-  if let ast.StmtIf(f) = last {
-    let (a, aids) = lit_body_seed(f.then_body, s, ids);
-    let (b, bids) = lit_body_seed(f.else_body, s, aids);
-    return (a && b, bids);
-  }
-  return (false, ids);
 }
 
 function lit_value_block(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
@@ -32579,16 +32594,12 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       if (v.type_name.len() > 0) {
         return (bind_stmt(stmt, s), lit_demand(v.init, var_declared_type(v, s), s, st));
       }
-      let (seed, ids) = lit_tree(v.init, s, []);
+      let (seed, ids, sst) = lit_seed(v.init, s, st);
       if (!seed) {
         if let ast.ExprCall(call) = v.init {
           let (enum_type, enum_state) = lit_enum_local(call, s, st);
           if (!is_unknown(enum_type)) {
             return (s.bind(v.name, enum_type), enum_state);
-          }
-          let (vk, vst) = lit_value_local(v, call, s, st);
-          if (vk >= 0) {
-            return (s.bind(v.name, lit_marker(vk)), vst);
           }
         }
         if let ast.ExprArray(ea) = v.init {
@@ -32624,17 +32635,17 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
         }
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
-      let k = st.parent.len();
-      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(st, lit_var_key(v)), ids.append(k)));
+      let k = sst.parent.len();
+      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_key(v)), ids.append(k)));
     },
     ast.StmtAssign(a) => {
       let tk = lit_id(s.lookup(a.target));
       if (tk < 0) {
         return (s, lit_demand(a.value, s.lookup(a.target), s, st));
       }
-      let (seed2, ids2) = lit_tree(a.value, s, []);
+      let (seed2, ids2, ast2) = lit_seed(a.value, s, st);
       if (seed2) {
-        return (s, lit_link(st, ids2.append(tk)));
+        return (s, lit_link(ast2, ids2.append(tk)));
       }
       let walked = lit_expr(a.value, s, st);
       return (s, lit_fix(walked, [tk], check_expr(a.value, s)));
@@ -33169,7 +33180,7 @@ function lit_holds_int_literal(e: ast.Expr): boolean {
     return lit_holds_any(sl.field_values);
   }
   if let ast.ExprCall(c) = e {
-    return lit_holds_any(c.args);
+    return lit_holds_any(c.args) || unsettled_value_block(c, [], 0, []);
   }
   return false;
 }
@@ -33211,7 +33222,7 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       if (v.type_name.len() > 0 || name_has_comma(v.name)) {
         return false;
       }
-      return lit_holds_int_literal(v.init) || names_unit_variant(v.init) || value_block_literal(v.init);
+      return lit_holds_int_literal(v.init) || names_unit_variant(v.init);
     },
     ast.StmtFor(fr) => {
       if (!for_iter_is_range(fr.iter)) {
@@ -33238,32 +33249,6 @@ function variant_shaped(name: string): boolean {
     }
   }
   return at < name.len() && name[at] >= b'A' && name[at] <= b'Z';
-}
-
-// value_block_literal is true for a value block that yields an integer
-// literal on some path, such as `if (c) { 6 } else { n }`.
-function value_block_literal(e: ast.Expr): boolean {
-  let ast.ExprCall(c) = e else {
-    return false;
-  };
-  let ast.ExprLambda(vb) = c.callee else {
-    return false;
-  };
-  return parser.is_value_block(c) && body_yields_literal(vb.body);
-}
-
-function body_yields_literal(body: ast.Stmt[]): boolean {
-  if (body.len() == 0) {
-    return false;
-  }
-  let last = body[body.len() - 1];
-  if let ast.StmtReturn(r) = last {
-    return int_literal_tree(r.value);
-  }
-  if let ast.StmtIf(f) = last {
-    return body_yields_literal(f.then_body) || body_yields_literal(f.else_body);
-  }
-  return false;
 }
 
 function names_unit_variant(e: ast.Expr): boolean {
