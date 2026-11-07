@@ -1259,10 +1259,8 @@ TestSelfHostFmtLintPaths 4
 TestSelfHostFmtLiterate 3
 TestSelfHostFmtNativeParityX86_64 24
 TestSelfHostFmtRefusesParseErrors 3
-TestSelfHostFmtWriteAndDiffViaInterp 452
 TestSelfHostFmtWriteDiagnosticMarkers 4
 TestSelfHostFmtWriteRefusesMalformedAttribute 145
-TestSelfHostFmtWrittenFormViaInterp 167
 TestSelfHostFnArgInCondIRWasm 3
 TestSelfHostFnArgInCondIRX86_64 5
 TestSelfHostFnArgInMatchIR 2
