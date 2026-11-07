@@ -2593,6 +2593,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		// module need not import that type's module.
 		if fn.MethodRecv == "" && !isScalarBuiltinMethod(fn.Name) {
 			c.funcSources[fn.Name] = fn.SourceModule
+			if fn.Public && fn.SourceModule != "" && len(fn.Params) > 0 {
+				if c.publicFreeFuncs == nil {
+					c.publicFreeFuncs = map[string][]publicFreeFunc{}
+				}
+				name := declaredName(fn)
+				c.publicFreeFuncs[name] = append(c.publicFreeFuncs[name], publicFreeFunc{module: fn.SourceModule, first: fn.Params[0].Type})
+			}
 		}
 		if len(fn.TypeParams) > 0 {
 			c.info.GenericFuncs[fn.Name] = fn
@@ -5738,11 +5745,14 @@ type checker struct {
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
-	numericTypes      map[ast.Expr]ast.Type
-	numericCasts      map[ast.Expr]*ast.CastExpr
-	noRCIdentTypes    map[*ast.Ident]ast.Type
-	callee            ast.Expr
-	funcSources       map[string]string
+	numericTypes   map[ast.Expr]ast.Type
+	numericCasts   map[ast.Expr]*ast.CastExpr
+	noRCIdentTypes map[*ast.Ident]ast.Type
+	callee         ast.Expr
+	funcSources    map[string]string
+	// publicFreeFuncs lists the public free functions under the name their
+	// module declares, so a method call can name a function of that name.
+	publicFreeFuncs   map[string][]publicFreeFunc
 	consts            map[string]*ast.ConstDecl
 	constTypes        map[string]ast.Type
 	constBusy         map[string]bool
@@ -8552,6 +8562,9 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		}
 		return fmt.Sprintf("%s — add `import %q`%s", msg, mod, note)
 	}
+	if note := c.freeFunctionNote(method, recv); note != "" {
+		return msg + note
+	}
 	names := c.methodsFor(typeName, recv)
 	if s := diag.Suggest(method, names); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
@@ -8783,6 +8796,48 @@ func argSubject(n *ast.Call, num int) string {
 		return fmt.Sprintf("argument %d", num)
 	}
 	return fmt.Sprintf("argument %d to %q", num, name)
+}
+
+type publicFreeFunc struct {
+	module string
+	first  ast.Type
+}
+
+// freeFunctionNote names a public free function of a module the current
+// module imports, when its first parameter takes the receiver.
+func (c *checker) freeFunctionNote(method string, recv ast.Type) string {
+	from := c.currentModule()
+	want := methodNamespace(recv)
+	if want == "" || c.info == nil {
+		return ""
+	}
+	for _, fn := range c.publicFreeFuncs[method] {
+		if c.info.DirectImports[from][fn.module] && methodNamespace(fn.first) == want {
+			return fmt.Sprintf(" — %q is a function of module %q, not a method: pass the value as its first argument", method, moduleBaseName(fn.module))
+		}
+	}
+	return ""
+}
+
+// moduleBaseName is the last segment of a module path, without its extension.
+func moduleBaseName(module string) string {
+	base := moduleFileLabel(module)
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	base = strings.TrimSuffix(base, ".md")
+	return strings.TrimSuffix(base, ".fern")
+}
+
+// methodNamespace is the receiver family of t: every array is one family.
+func methodNamespace(t ast.Type) string {
+	if _, ok := t.(ast.ArrayType); ok {
+		return "Array"
+	}
+	if name, ok := methodTypeName(t); ok {
+		return name
+	}
+	return ""
 }
 
 func (c *checker) moduleAlreadyImports(mod string) bool {

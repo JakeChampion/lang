@@ -1,0 +1,13 @@
+import "core/cmp";
+
+pub function (xs: T[]) twice(): T[] {
+    return xs;
+}
+
+pub function (xs: i32[]) total(): i32 {
+    return 0;
+}
+
+pub function (xs: (T: cmp.Ord)[]) top(): i32 {
+    return 0;
+}

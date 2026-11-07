@@ -1,0 +1,8 @@
+// A method call that names a public free function of an imported module
+// says so, and says how to call it.
+import "./lib";
+
+function main(): i32 {
+    let xs = [1, 2];
+    return xs.shout();
+}

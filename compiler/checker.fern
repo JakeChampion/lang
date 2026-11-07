@@ -1920,7 +1920,7 @@ function cast_pointer_shaped(t: typeinfo.Type, source: boolean): boolean {
   return false;
 }
 
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[], is_unsafe: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[], is_unsafe: boolean, is_pub: boolean }
 
 function sig_param_ref(sig: FuncSig, i: i32): parser.TypeRef {
   if (sig.refs.len() > 0) {
@@ -4157,6 +4157,10 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
   if (import_advice.len() > 0) {
     return base + import_advice;
   }
+  let free = s.free_function_advice(method, recv);
+  if (free.len() > 0) {
+    return base + free;
+  }
   let names = s.method_fix_candidates(ns, recv);
   let did = util.suggest(method, names);
   if (did.len() > 0) {
@@ -4223,7 +4227,7 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   if (!s.namespace_is_exact(ns)) {
-    return preregistered_methods(ns);
+    return s.array_method_candidates(recv);
   }
   let out = preregistered_methods(ns);
   for method in s.methods.methods {
@@ -4232,6 +4236,74 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   return out;
+}
+
+// The methods of modules this module sees whose array receiver can take
+// `recv`: the receiver is generic in its element, or names it exactly.
+function (s: Scope) array_method_candidates(recv: typeinfo.Type): string[] {
+  let out = preregistered_methods("Array");
+  let label = type_label(recv);
+  for method in s.methods.methods {
+    let rt = method.receiver_type;
+    if (array_receiver_matches(rt, false) && s.imports.sees(s.fn_module, method.module) && (rt == label || array_element_is_generic(rt) && s.element_meets_bounds(method, rt, recv))) {
+      out = push_str_unique_sorted(out, method.name);
+    }
+  }
+  return out;
+}
+
+// Whether the element of `recv` meets the bounds that `method` puts on the
+// type parameter of its receiver `rt`.
+function (s: Scope) element_meets_bounds(method: MethodSig, rt: string, recv: typeinfo.Type): boolean {
+  let tp = slice_unchecked(rt, 0, rt.len() - 2) + "";
+  let at = util.index_of_str(method.type_params, tp);
+  if (at < 0 || at >= method.type_bounds.len()) {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = recv {
+    for entry in parser.split_plus_bounds(method.type_bounds[at]) {
+      let base = util.base_type_name(entry);
+      if (!bound_import_unloaded(base, s.imports.paths, s.trait_reqs) && !type_implements(s, a.elem, base, method.module)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A receiver `T[]` is generic in its element. The parser spells a type
+// parameter that a receiver introduces with a leading digit, `0_T`.
+function array_element_is_generic(rt: string): boolean {
+  return rt.len() > 2 && rt[0] >= b'0' && rt[0] <= b'9';
+}
+
+// The advice for a method call that names a public free function of an
+// imported module, whose first parameter takes the receiver.
+function (s: Scope) free_function_advice(method: string, recv: typeinfo.Type): string {
+  for sg in s.imports.sights {
+    if (sg.module != s.fn_module) {
+      continue;
+    }
+    let i = 0;
+    while (i < sg.imports.len() && i < sg.direct.len()) {
+      if let Some(sig) = s.lookup_sig(sg.direct[i] + "__" + method) {
+        if (sig.is_pub && sig.receiver.len() == 0 && sig.param_types.len() > 0 && first_param_takes(sig.param_types[0], recv)) {
+          return free_function_note(method, sg.imports[i]);
+        }
+      }
+      i += 1;
+    }
+  }
+  return "";
+}
+
+function free_function_note(method: string, path: string): string {
+  return " — \"" + method + "\" is a function of module \"" + util.module_name(path) + "\", not a method: pass the value as its first argument";
+}
+
+function first_param_takes(param: typeinfo.Type, recv: typeinfo.Type): boolean {
+  let ns = method_namespace_of(recv);
+  return ns.len() > 0 && method_namespace_of(param) == ns;
 }
 
 function (s: Scope) unknown_method_advice(ns: string, method: string, recv: typeinfo.Type): string {
@@ -7101,7 +7173,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       }
     }
     let rtn = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn), is_unsafe: fd.is_unsafe });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn), is_unsafe: fd.is_unsafe, is_pub: fd.is_pub || fd.is_package });
     i += 1;
   }
   return out;
