@@ -773,7 +773,11 @@ function package_owner(ov: Overlay, path: string): string {
 }
 
 pub function bundle(ov: Overlay, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, stdlib: string): parser.Module {
-  let root = graph_stdlib_dir(ov, dirname(entry_path), stdlib);
+  // An overlay stdlib has stdlib:// idents and no directory on the disk.
+  let root = "";
+  if (!overlay_gives_stdlib(ov)) {
+    root = graph_stdlib_dir(ov, dirname(entry_path), stdlib);
+  }
   let packages: string[] = [visibility.package_root(flatten.module_ident(entry_path), root, package_owner(ov, entry_path))];
   for lm in loaded {
     packages = packages.append(visibility.package_root(lm.ident, root, package_owner(ov, lm.ident)));

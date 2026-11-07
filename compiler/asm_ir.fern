@@ -8,6 +8,7 @@ import "./rtmodule";
 import "./x86_native";
 import "./checker";
 import "./util";
+import "./sysreg";
 import "./ir";
 import "./irtables";
 import "./irverifygate";
@@ -8465,9 +8466,38 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
+// A system-register op. A control register moves through %rax. A model-specific
+// register goes through rdmsr or wrmsr, with the index in %ecx and the value in
+// %edx:%eax.
+function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
+  let read = util.str_has_prefix(ins.str, "dev_sysreg_read");
+  let cr = sysreg.x86_control(name);
+  let msr = sysreg.x86_msr(name);
+  if (cr < 0 && msr < 0i64) {
+    ircore.sysreg_refuse(name, "x86-64");
+  }
+  if (!read) {
+    s = ssa_load(reg_of, ins.args[0], "%rax", s);
+  }
+  if (cr >= 0 && read) {
+    s = s.write("    movq %cr" + util.i32_to_string(cr) + ", %rax\n");
+  } else if (cr >= 0) {
+    s = s.write("    movq %rax, %cr" + util.i32_to_string(cr) + "\n    xorl %eax, %eax\n");
+  } else if (read) {
+    s = s.write("    movl $" + util.i64_to_string(msr) + ", %ecx\n    rdmsr\n    shlq $32, %rdx\n    orq %rdx, %rax\n");
+  } else {
+    s = s.write("    movq %rax, %rdx\n    shrq $32, %rdx\n    movl $" + util.i64_to_string(msr) + ", %ecx\n    wrmsr\n    xorl %eax, %eax\n");
+  }
+  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
 // A privileged op. x86-64 has hlt for wfi, and no equivalent of hvc or smc.
 // boot_info reads the %ebx that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (util.str_has_prefix(ins.str, "dev_sysreg_")) {
+    return ssa_sysreg(ins, reg_of, s);
+  }
   if (ins.str == "dev_boot_info") {
     s = s.write("    movq __fern_boot_info(%rip), %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));

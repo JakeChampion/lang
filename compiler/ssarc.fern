@@ -17,6 +17,7 @@ import "./semarrayreport";
 import "./sempair";
 import "./semscalarreturn";
 import "./rtbytecopy";
+import "./sysreg";
 
 function empty(why: string): irtables.LowerState {
   return irtables.LowerState {
@@ -382,19 +383,8 @@ function supplies(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, 
   return r;
 }
 
-function definition(f: ssasem.Func, v: i32): ssa.SInst {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.result == v) {
-        return ins;
-      }
-    }
-  }
-  return f.graph.blocks[0].insts[0];
-}
-
 function steal(own r: irtables.LowerState, f: ssasem.Func, v: i32, unique: i32): irtables.LowerState {
-  let get = definition(f, v);
+  let get = defining(f, v);
   r = reserve(r, unique + 1);
   r = emit(r, ir.op_load_local(get.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -412,7 +402,7 @@ function tested_take(own r: irtables.LowerState, f: ssasem.Func, v: i32, token: 
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("ne", 0, false));
   r = emit(r, ir.op_if(0));
-  r = cleared_slot(r, f, definition(f, v));
+  r = cleared_slot(r, f, defining(f, v));
   r = emit(r, ir.op_else());
   r = helper(r, v, "__fern_rc_inc");
   return emit(r, ir.op_end());
@@ -1300,7 +1290,7 @@ function null_slots(own r: irtables.LowerState, box: i32, slots: boolean[]): irt
 }
 
 function donor_fields(f: ssasem.Func, taken: i32, donor: i32): semrecords.Field[] {
-  let get = definition(f, taken);
+  let get = defining(f, taken);
   if (get.kind_tag == ssasem.record_get()) {
     return record_fields(f.values[donor], f);
   }
@@ -4732,7 +4722,7 @@ function map_reason(f: ssasem.Func, modes: i32[], step: ssaunits.Step, links: i3
 }
 
 function map_element_reason(f: ssasem.Func, value: i32, pure: util.NameIndex): i32 {
-  let fn = definition(f, value);
+  let fn = defining(f, value);
   if (fn.result != value || fn.kind_tag != ssasem.closure_new()) {
     return semarrayreport.storage_element_fn_unresolved();
   }
@@ -4876,7 +4866,7 @@ function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {
 }
 
 function consumed_param(f: ssasem.Func, modes: i32[], v: i32): boolean {
-  let d = definition(f, v);
+  let d = defining(f, v);
   return d.result == v && d.kind_tag == 6 && d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssaunits.counted_mode();
 }
 
@@ -5038,7 +5028,7 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
   for operand in ins.args {
     r = emit(r, ir.op_load_local(operand));
   }
-  let callee = definition(f, ins.args[0]);
+  let callee = defining(f, ins.args[0]);
   if (callee.result == ins.args[0] && callee.kind_tag == ssasem.closure_new()) {
     return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
   }
@@ -5220,6 +5210,9 @@ function call_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   if (typeinfo.lane_builtin_width(ins.str) > 0) {
     return lane_site(r, f, ins);
   }
+  if (sysreg.intrinsic(ins.str)) {
+    return sysreg_site(r, f, ins);
+  }
   if (util.index_of_str(f.shadows, ins.str) >= 0) {
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
   }
@@ -5228,55 +5221,70 @@ function call_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     return lent.r;
   }
   r = lent.r;
-  if (ins.str == "print") {
-    r = emit(r, ir.op_print_str());
-    r = emit(r, ir.op_drop());
-    r = emit(r, ir.op_const_str("\n"));
-    return emit(r, ir.op_print_str());
+  let ops = call_ops(ins.str);
+  if (ops.len() == 0) {
+    return builtin_site(r, ins);
   }
-  if (ins.str == "eprint") {
-    return emit(r, ir.op_eprint_str());
+  for op in ops {
+    r = emit(r, op);
   }
-  if (ins.str == "__memchr") {
-    return emit(r, ir.op_memchr());
+  return r;
+}
+
+// The ops of a call that lowers to a fixed sequence, or none.
+// fern-lint: allow cyclomatic-complexity
+// Each name has one match arm.
+function call_ops(name: string): ir.Op[] {
+  match (name) {
+    "print" => {
+      return [ir.op_print_str(), ir.op_drop(), ir.op_const_str("\n"), ir.op_print_str()];
+    },
+    "eprint" => {
+      return [ir.op_eprint_str()];
+    },
+    "write" => {
+      return [ir.op_print_str()];
+    },
+    "exit" => {
+      return [ir.op_exit()];
+    },
+    "__memchr" => {
+      return [ir.op_memchr()];
+    },
+    "__count_byte_bytes" => {
+      return [ir.packed(ir.op_count_byte_bytes())];
+    },
+    "__count_below_u64" => {
+      return [ir.op_count_below_u64()];
+    },
+    "__sum_bytes_array" => {
+      return [ir.op_call_direct(ssabytes.sum_name(), 1)];
+    },
+    "__bsd_sum_bytes" => {
+      return [ir.op_call_direct(ssabytes.bsd_name(), 2)];
+    },
+    "__memchr_bytes" => {
+      return [ir.packed(ir.op_memchr_bytes())];
+    },
+    "__rmemchr_bytes" => {
+      return [ir.packed(ir.op_rmemchr_bytes())];
+    },
+    "string_from_bytes_unchecked" => {
+      return [ir.packed(ir.op_str_from_bytes())];
+    },
+    "string_from_bytes_range_unchecked" => {
+      return [ir.packed(ir.op_str_from_bytes_range())];
+    },
+    "f64_bits" => {
+      return [ir.op_f64_bits()];
+    },
+    "f64_from_bits" => {
+      return [ir.op_f64_from_bits()];
+    },
+    _ => {
+      return [];
+    }
   }
-  if (ins.str == "__count_byte_bytes") {
-    return emit(r, ir.packed(ir.op_count_byte_bytes()));
-  }
-  if (ins.str == "__count_below_u64") {
-    return emit(r, ir.op_count_below_u64());
-  }
-  if (ins.str == "__sum_bytes_array") {
-    return emit(r, ir.op_call_direct(ssabytes.sum_name(), 1));
-  }
-  if (ins.str == "__bsd_sum_bytes") {
-    return emit(r, ir.op_call_direct(ssabytes.bsd_name(), 2));
-  }
-  if (ins.str == "__memchr_bytes") {
-    return emit(r, ir.packed(ir.op_memchr_bytes()));
-  }
-  if (ins.str == "__rmemchr_bytes") {
-    return emit(r, ir.packed(ir.op_rmemchr_bytes()));
-  }
-  if (ins.str == "write") {
-    return emit(r, ir.op_print_str());
-  }
-  if (ins.str == "exit") {
-    return emit(r, ir.op_exit());
-  }
-  if (ins.str == "string_from_bytes_unchecked") {
-    return emit(r, ir.packed(ir.op_str_from_bytes()));
-  }
-  if (ins.str == "string_from_bytes_range_unchecked") {
-    return emit(r, ir.packed(ir.op_str_from_bytes_range()));
-  }
-  if (ins.str == "f64_bits") {
-    return emit(r, ir.op_f64_bits());
-  }
-  if (ins.str == "f64_from_bits") {
-    return emit(r, ir.op_f64_from_bits());
-  }
-  return builtin_site(r, ins);
 }
 
 function paired_op(name: string): boolean {
@@ -6185,6 +6193,20 @@ function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
   return Lowered { found: false, r: r };
 }
 
+// A system-register op. The register name is a string literal, so the op takes
+// it from the definition of the argument and drops the pushed arguments.
+function sysreg_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
+  let name = defining(f, ins.args[0]).str;
+  for a in ins.args {
+    r = emit(r, ir.op_drop());
+  }
+  if (ins.str == "__sysreg_read") {
+    return emit(r, ir.op_sysreg(ir.K_SYSREG_READ, name));
+  }
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  return emit(r, ir.op_sysreg(ir.K_SYSREG_WRITE, name));
+}
+
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
@@ -6194,7 +6216,7 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   }
   if (verb == "lane") {
     r = emit(r, ir.op_drop());
-    return emit(r, ir.op_lane_at("vextract", w, definition(f, ins.args[1]).imm));
+    return emit(r, ir.op_lane_at("vextract", w, defining(f, ins.args[1]).imm));
   }
   for a in ins.args {
     r = emit(r, ir.op_drop());

@@ -1,0 +1,26 @@
+import "../../compiler/lexer";
+import "std/string";
+import "std/i64";
+
+function main(): i32 {
+  let src = "42i64 3.5f32 65u8 'é' b'\\n' 1_000u32 0o755 0x10;\n".repeat(256);
+  let before = __heap_alloc_count();
+  let bytes = __heap_bump_bytes();
+  let sum = 0i64;
+  for _ in 0..100 {
+    let tokens = lexer.tokenize(src);
+    sum += tokens.len() as i64;
+    match (tokens[0]) {
+      lexer.TokNumber(t) => {
+        sum += t.text.len() as i64;
+      },
+      _ => {
+        return 1;
+      }
+    }
+  }
+  print((__heap_alloc_count() - before).to_string());
+  print((__heap_bump_bytes() - bytes).to_string());
+  print(sum.to_string());
+  return (sum % 97i64) as i32;
+}

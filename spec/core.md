@@ -525,6 +525,8 @@ is the number of slots it leaves.
 | `send_root` | 497 | 1 | 1 |
 | `writer_set_times` | 498 | 6 | 1 |
 | `boot_info` | 499 | 0 | 1 |
+| `sysreg_read` | 500 | 0 | 1 |
+| `sysreg_write` | 501 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

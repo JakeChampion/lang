@@ -1695,7 +1695,7 @@ function (p: Par) peek_number_text(): string {
 
 function (p: Par) peek_const_arg(): string {
   if let lexer.TokNumber(x) = p.peek() {
-    if (x.is_float || x.suffix.len() > 0) {
+    if (x.is_float() || x.suffix().len() > 0) {
       return "";
     }
     if (p.verbatim && x.raw.len() > 0) {
@@ -2614,10 +2614,10 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       let nline = p.peek_line();
       let ncol = p.peek_col();
       p = p.advance();
-      if (!p.verbatim && x.is_float && util.f64_lit_out_of_range(x.text)) {
+      if (!p.verbatim && x.is_float() && util.f64_lit_out_of_range(x.text)) {
         return parse_postfix(p, e_unknown_at(util.f64_range_kind(x.text), nline, ncol));
       }
-      return parse_postfix(p, e_spelled_at(x.text, x.suffix, x.raw, x.is_float, nline, ncol));
+      return parse_postfix(p, e_spelled_at(x.text, x.suffix(), x.raw, x.is_float(), nline, ncol));
     },
     lexer.TokString(x) => {
       let sline = p.peek_line();
