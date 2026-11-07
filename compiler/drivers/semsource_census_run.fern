@@ -210,14 +210,15 @@ function main(): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
       let entry = parser.parse_module(lexer.tokenize(src));
-      let g = modloader.load_graph(embedded_stdlib(), entry_path, entry, "");
+      let ov = embedded_stdlib();
+      let g = modloader.load_graph(ov, entry_path, entry, "");
       entry = g.entry;
       let loaded = g.loaded;
       let missing = g.missing;
       if (modloader.report_unresolved(missing, "semsource_census_run")) {
         return 2;
       }
-      let merged = modloader.bundle(entry_path, entry, loaded, "arm64-linux", "");
+      let merged = modloader.bundle(ov, entry_path, entry, loaded, "arm64-linux", "");
       merged = modloader.merge_builtins(dir, merged);
       let desc = platforms.for_target("arm64-linux");
       merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
