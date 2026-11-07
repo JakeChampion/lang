@@ -236,6 +236,7 @@ which ones.
 
 | Doc | Status | What it is |
 | --- | --- | --- |
+| `AUDIO-CODECS.md` | [reference] | WAVE, FLAC, QOA, and Opus CELT APIs, format limits, and validation. |
 | `ARRAY-SHAPES.md` | [policy] | Normative rules for std/ndarray: a counted handle with shape, strides and offset, views, shape mismatch, and when a view materializes. |
 | `CURSOR-IDIOM.md` | [policy] | The immutable read-and-advance cursor idiom for stdlib parsers and readers. |
 | `AUDIO-CODECS.md` | [reference] | Native audio codec APIs, supported formats, validation, and performance measurements. |

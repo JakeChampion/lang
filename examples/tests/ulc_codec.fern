@@ -1,0 +1,5 @@
+import "../ulc/tests/unit";
+
+function main(): i32 {
+  return unit.run_tests();
+}
