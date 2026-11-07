@@ -9412,14 +9412,18 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       continue;
     }
     let page_off = arm64_gas_has_page_off(rest);
-    if (mnem == "ldr" && page_off) {
+    if ((mnem == "ldr" || mnem == "str") && page_off) {
       let sym = arm64_gas_page_load_symbol(ops);
       if (sym.len() == 0) {
-        p = Arm64GasProg { ...p, unknown: p.unknown.append("ldr:page-offset operands") };
+        p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":page-offset operands") };
         continue;
       }
       let lm = arm64_gas_mem_at(ops, 1, lmem);
-      arm64_push_arr(a.code, arm64_ldr([], arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])));
+      if (mnem == "str") {
+        arm64_push_arr(a.code, arm64_str([], arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])));
+      } else {
+        arm64_push_arr(a.code, arm64_ldr([], arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])));
+      }
       pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(sym);
       pf_kinds = pf_kinds.append(arm64_ldr_page_kind(ops[0]));
