@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -170,6 +171,7 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 	for _, c := range []struct{ name, ram, mem string }{
 		{"low", kernelRAM, "128M"},
 		{"above 4G", "0x200000000,64M", "8G"},
+		{"partial end page", "0x40210000," + strconv.FormatUint(kernelSize-65536-15, 10), "128M"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "kernel.elf")
@@ -240,13 +242,113 @@ func TestSelfHostKernelPrivilegedOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, word := range map[string][]byte{
-		"wfi":    {0x7f, 0x20, 0x03, 0xd5},
-		"hvc #0": {0x02, 0x00, 0x00, 0xd4},
-		"smc #0": {0x03, 0x00, 0x00, 0xd4},
+		"wfi":           {0x7f, 0x20, 0x03, 0xd5},
+		"hvc #0":        {0x02, 0x00, 0x00, 0xd4},
+		"smc #0":        {0x03, 0x00, 0x00, 0xd4},
+		"mrs sctlr_el1": {0x09, 0x10, 0x38, 0xd5},
+		"msr sctlr_el1": {0x09, 0x10, 0x18, 0xd5},
+		"msr mair_el1":  {0x09, 0xa2, 0x18, 0xd5},
+		"msr tcr_el1":   {0x49, 0x20, 0x18, 0xd5},
+		"msr ttbr0_el1": {0x09, 0x20, 0x18, 0xd5},
+		"tlbi vmalle1":  {0x1f, 0x87, 0x08, 0xd5},
 	} {
 		if !bytes.Contains(image, word) {
 			t.Errorf("the image has no %s (% x)", name, word)
 		}
+	}
+}
+
+// Walk every generated leaf. The expected attributes come from the physical
+// RAM interval, independently of the emitter's choice of blocks or pages.
+func TestSelfHostKernelMemoryAttributes(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		ram        string
+		base, size uint64
+	}{
+		{kernelRAM, kernelBase, kernelSize},
+		{"0x200000000,64M", 0x200000000, 64 << 20},
+		{"0x3fff0000,4295098369", 0x3fff0000, 4295098369},
+		{"0xffffc00000,4M", (1 << 40) - (4 << 20), 4 << 20},
+		{"0,1024G", 0, 1 << 40},
+	} {
+		t.Run(c.ram, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "kernel.s")
+			if msg, err := cli.compileCmd("arm64-kernel", path, src, "-ram", c.ram, "-emit", "asm").CombinedOutput(); err != nil {
+				t.Fatalf("emit: %v\n%s", err, msg)
+			}
+			asm, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tables := make(map[string][]string)
+			name := ""
+			for _, line := range strings.Split(string(asm), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "__fern_reset_table_") && strings.HasSuffix(line, ":") {
+					name = strings.TrimSuffix(line, ":")
+					tables[name] = nil
+				} else if strings.HasPrefix(line, ".quad ") && name != "" {
+					tables[name] = append(tables[name], strings.TrimPrefix(line, ".quad "))
+				} else if strings.HasSuffix(line, ":") {
+					name = ""
+				}
+			}
+			if len(tables) < 3 || len(tables) > 7 {
+				t.Fatalf("%d tables, want 3 to 7", len(tables))
+			}
+			end := (c.base + c.size + 4095) &^ uint64(4095)
+			var walk func(string, int, uint64, uint64)
+			walk = func(name string, level int, address, span uint64) {
+				entries, ok := tables[name]
+				if !ok || len(entries) != 512 {
+					t.Fatalf("table %s: %d entries, exists %v", name, len(entries), ok)
+				}
+				delete(tables, name)
+				for i, entry := range entries {
+					start := address + uint64(i)*span
+					if strings.HasPrefix(entry, "__fern_reset_table_") {
+						child, ok := strings.CutSuffix(entry, " + 3")
+						if !ok || level >= 3 || start >= 1<<40 {
+							t.Fatalf("invalid child %q at %#x level %d", entry, start, level)
+						}
+						walk(child, level+1, start, span/512)
+						continue
+					}
+					got, err := strconv.ParseUint(entry, 10, 64)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := uint64(0)
+					if start < 1<<40 {
+						if level == 0 {
+							t.Fatal("L0 block")
+						}
+						flags := uint64(1<<54 | 1<<53 | 1<<10 | 1)
+						if start >= c.base && start+span <= end {
+							flags = 1<<54 | 1<<10 | 3<<8 | 1<<2 | 1
+						} else if start < end && start+span > c.base {
+							t.Fatalf("leaf crosses RAM boundary at %#x", start)
+						}
+						if level == 3 {
+							flags |= 2
+						}
+						want = start | flags
+					}
+					if got != want {
+						t.Fatalf("level %d at %#x: descriptor %#x, want %#x", level, start, got, want)
+					}
+				}
+			}
+			walk("__fern_reset_table_0_0", 0, 0, 1<<39)
+			if len(tables) != 0 {
+				t.Fatalf("%d unreachable tables", len(tables))
+			}
+		})
 	}
 }
 
@@ -299,6 +401,12 @@ func TestSelfHostKernelRamFlag(t *testing.T) {
 		{"unaligned base", "arm64-kernel", "0x40001000,128M", "-ram takes BASE,SIZE"},
 		{"small size", "arm64-kernel", "0x40000000,1M", "-ram takes BASE,SIZE"},
 		{"above 1T", "arm64-kernel", "0xff00000000,8G", "-ram takes BASE,SIZE"},
+		{"wrapped end", "arm64-kernel", "8589934591G,2G", "-ram takes BASE,SIZE"},
+		{"wrapped size", "arm64-kernel", "0x40000000,17179869185G", "-ram takes BASE,SIZE"},
+		{"empty base", "arm64-kernel", ",64M", "-ram takes BASE,SIZE"},
+		{"empty size", "arm64-kernel", "0x40000000,", "-ram takes BASE,SIZE"},
+		{"empty hex", "arm64-kernel", "0x,64M", "-ram takes BASE,SIZE"},
+		{"suffix only", "arm64-kernel", "G,64M", "-ram takes BASE,SIZE"},
 		{"hosted target", "arm64-linux", "0x40000000,128M", "-ram is only for a kernel target"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -309,6 +417,22 @@ func TestSelfHostKernelRamFlag(t *testing.T) {
 			msg, err := cli.compileCmd(c.target, filepath.Join(t.TempDir(), "out"), src, extra...).CombinedOutput()
 			if err == nil || !strings.Contains(string(msg), c.want) {
 				t.Errorf("err %v, output %q; want a refusal with %q", err, msg, c.want)
+			}
+		})
+	}
+}
+
+func TestSelfHostKernelRamLimit(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, ram := range []string{"0,4M", "0x40000000,128M", "1048576K,134217728", "0xffffc00000,4M"} {
+		t.Run(ram, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "kernel.s")
+			if msg, err := cli.compileCmd("arm64-kernel", out, src, "-ram", ram, "-emit", "asm").CombinedOutput(); err != nil {
+				t.Fatalf("valid RAM layout: %v\n%s", err, msg)
 			}
 		})
 	}
@@ -342,6 +466,9 @@ func checkKernelImage(t *testing.T, cli *selfHostCLI, src, ram string, base, siz
 	}
 	text, entryInText := false, false
 	for _, p := range loads {
+		if p.Flags&elf.PF_W != 0 && (p.Vaddr%4096 != 0 || p.Off%4096 != 0) {
+			t.Errorf("kernel data at %#x (file %#x) is not page-aligned", p.Vaddr, p.Off)
+		}
 		if p.Vaddr < base || p.Vaddr+p.Memsz > base+size-(1<<20) {
 			t.Errorf("segment %#x+%#x is outside the RAM below the stack", p.Vaddr, p.Memsz)
 		}

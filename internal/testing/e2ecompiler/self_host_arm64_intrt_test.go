@@ -84,6 +84,16 @@ function main(): i32 {
     // an unknown sysreg is recorded, not mis-encoded.
     let o: Arm64GasProg = arm64_gas_program("mrs x0, ttbr0_el1\n");
     if (o.unknown.len() != 1) { return 16; }
+    let translation = arm64_gas_program("mrs x9, sctlr_el1\nmsr sctlr_el1, x9\nmsr mair_el1, x9\nmsr tcr_el1, x9\nmsr ttbr0_el1, x9\ntlbi vmalle1\n");
+    if (translation.unknown.len() != 0) { return 17; }
+    let expected = [9, 16, 56, 213, 9, 16, 24, 213, 9, 162, 24, 213, 73, 32, 24, 213, 9, 32, 24, 213, 31, 135, 8, 213];
+    if (translation.asm.text.len() != expected.len()) { return 18; }
+    for i in 0..expected.len() {
+      if (translation.asm.text[i] as i32 != expected[i]) { return 19; }
+    }
+    for bad in ["tlbi vmalle1, x0\n", "tlbi unknown\n", "msr mair_el1, w9\n", "msr unknown, x9\n"] {
+      if (arm64_gas_program(bad).unknown.len() != 1) { return 20; }
+    }
     return 0;
 }
 `
