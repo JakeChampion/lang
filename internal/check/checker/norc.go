@@ -2,6 +2,7 @@ package checker
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
@@ -15,7 +16,7 @@ var noRCIntrinsics = map[string]bool{
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__fence": true, "__wfi": true, "__hvc": true, "__smc": true, "__boot_info": true, "__sysreg_read": true, "__sysreg_write": true,
-	"__cache_clean": true, "__cache_flush": true, "__tlb_flush": true, "__tlb_flush_all": true,
+	"__cache_clean": true, "__cache_flush": true, "__tlb_flush": true, "__tlb_flush_all": true, "__breakpoint": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
 	"__popcount32": true, "__popcount64": true,
@@ -32,9 +33,23 @@ func noRCScalar(t ast.Type) bool {
 	return t != nil && noRCScalars[t.String()]
 }
 
-// interruptSlots are the slots of the arm64 vector table that a handler can
-// take. compiler/norc.fern's interrupt_slots() holds the same set.
-var interruptSlots = map[string]bool{"sync": true, "irq": true, "fiq": true, "serror": true}
+// interruptSlots are the named slots that a handler can take: the arm64 vector
+// table and the x86-64 exceptions. A number from 32 to 255 names an x86-64
+// external interrupt. compiler/norc.fern's arm64_slots() and x86_vector() hold
+// the same sets.
+var interruptSlots = map[string]bool{
+	"sync": true, "irq": true, "fiq": true, "serror": true,
+	"de": true, "db": true, "nmi": true, "bp": true, "of": true, "br": true, "ud": true, "nm": true, "df": true,
+	"ts": true, "np": true, "ss": true, "gp": true, "pf": true, "mf": true, "ac": true, "mc": true, "xm": true, "ve": true, "cp": true,
+}
+
+func interruptSlot(slot string) bool {
+	if interruptSlots[slot] {
+		return true
+	}
+	n, err := strconv.Atoi(slot)
+	return err == nil && n >= 32 && n <= 255 && strconv.Itoa(n) == slot
+}
 
 // checkInterruptFunctions reports E103: a handler takes no parameters and
 // returns void, names a slot, and takes a slot that no other handler takes.
@@ -45,8 +60,8 @@ func (c *checker) checkInterruptFunctions(prog *ast.Program) {
 			continue
 		}
 		what := fmt.Sprintf("`@interrupt` function %q", fn.Name)
-		if !interruptSlots[fn.Interrupt] {
-			c.errfCode(fn.P, "E103", "%s names the slot %q, but the slots are \"sync\", \"irq\", \"fiq\" and \"serror\"", what, fn.Interrupt)
+		if !interruptSlot(fn.Interrupt) {
+			c.errfCode(fn.P, "E103", "%s names the slot %q, which is no slot of an arm64 vector table or an x86-64 IDT", what, fn.Interrupt)
 		} else if seen[fn.Interrupt] {
 			c.errfCode(fn.P, "E103", "%s takes the slot %q, which another handler already takes", what, fn.Interrupt)
 		}

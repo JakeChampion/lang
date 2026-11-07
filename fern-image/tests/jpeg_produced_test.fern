@@ -1,0 +1,387 @@
+import "../packages/codecs/jpeg/entropy_writer" as writer;
+import "../packages/codecs/jpeg/frame_writer" as frame;
+import "../packages/codecs/jpeg/header";
+import "../packages/codecs/jpeg/plane_writer" as plane;
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "../packages/codecs/jpeg/plane_coefficients";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function quantizers(): u8[] {
+  let q: u8[] = [];
+  for i in 0..64 {
+    q = q.append((i + 1) as u8);
+  }
+  return q;
+}
+
+function values(count: i32): i32[] {
+  let output: i32[] = [];
+  for i in 0..count * 64 {
+    output = output.append(if (i % 64 == 0) { i / 64 * 37 % 2048 - 1024 } else if (i % 7 == 0) { i % 63 - 31 } else { 0 });
+  }
+  return output;
+}
+
+function produced(input: [i32], restart: i32, limit: i32, cancelled: () => boolean): Result[u8[], writer.ProducerError[writer.EncodeError]] {
+  return writer.encode_produced(
+    input, input.len() / 64, table(false), table(true), restart, limit, cancelled,
+    (source: [i32], emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, writer.EncodeError] => {
+      for i in 0..source.len() / 64 {
+        emit(source[i * 64:i * 64 + 64])?;
+      }
+      return Ok(());
+    },
+  );
+}
+
+function equal(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parity(): test.TestOutcome {
+  for count in [1, 2, 3, 17, 33] {
+    let input = values(count);
+    for restart in [0, 1, 2, 7, 65535] {
+      let Ok(old) = writer.encode_blocks(input, table(false), table(true), restart, 65536, never) else {
+        return test.fail("array entropy baseline");
+      };
+      let Ok(output) = produced(input, restart, 65536, never) else {
+        return test.fail("produced entropy output");
+      };
+      if (!equal(old, output)) {
+        return test.fail("complete produced entropy bytes");
+      }
+      if (!match (produced(input, restart, output.len() - 1, never)) { Err(writer.ProducerEncode(writer.Limit)) => true, _ => false }) {
+        return test.fail("produced byte limit below exact output");
+      }
+      if (!match (produced(input, restart, output.len(), never)) { Ok(v) => equal(v, output), _ => false }) {
+        return test.fail("produced exact byte limit");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function counts(): test.TestOutcome {
+  let input = values(1);
+  for declared in [1, 2, 3] {
+    let result = writer.encode_produced(
+      (), declared, table(false), table(true), 1, 8192, never,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        for i in 0..2 {
+          let ignored = emit(input);
+        }
+        return Ok(());
+      },
+    );
+    if (!match (result) { Ok(_) => declared == 2, Err(writer.ProducerEncode(writer.Shape)) => declared != 2, _ => false }) {
+      return test.fail("exact producer block count");
+    }
+  }
+  for length in [0, 1, 63, 65] {
+    let bad = values(2);
+    let result = writer.encode_produced(
+      (), 1, table(false), table(true), 0, 8192, never,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        let ignored = emit(bad[:length]);
+        let ignored_again = emit(input);
+        return Ok(());
+      },
+    );
+    if (!match (result) { Err(writer.ProducerEncode(writer.Shape)) => true, _ => false }) {
+      return test.fail("ignored shape failure poisons producer");
+    }
+  }
+  return test.pass();
+}
+
+function failures(): test.TestOutcome {
+  let input = values(1);
+  for limit in [0, 1, 8192] {
+    let result = writer.encode_produced(
+      (), 1, table(false), table(true), 0, limit, never,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        let ignored = emit(input);
+        return Err("producer failure");
+      },
+    );
+    if (!match (result) { Err(writer.ProducerEncode(writer.Limit)) => limit < 8192, Err(writer.ProducerSource(e)) => limit == 8192 && e == "producer failure", _ => false }) {
+      return test.fail("first codec error precedes producer error");
+    }
+  }
+  let bad = input.with(63, 1024);
+  let result = writer.encode_produced(
+    (), 1, table(false), table(true), 0, 8192, never,
+    (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+      let ignored = emit(bad);
+      let ignored_again = emit(input);
+      return Ok(());
+    },
+  );
+  return test.assert_true(match (result) { Err(writer.ProducerEncode(writer.Coefficient)) => true, _ => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let input = values(3);
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  if let Err(_) = produced(input, 1, 8192, count) {
+    return test.fail("producer cancellation baseline");
+  }
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (produced(input, 1, 8192, cancel)) { Err(writer.ProducerEncode(writer.Cancelled)) => true, _ => false }) {
+      return test.fail("every producer cancellation checkpoint");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for count in [-1, 0] {
+    let result = writer.encode_produced(
+      (), count, table(false), table(true), 0, 8192, cancel,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        calls.set(calls.get() + 1);
+        return Ok(());
+      },
+    );
+    if (!match (result) { Err(writer.ProducerEncode(writer.Shape)) => true, _ => false }) {
+      return test.fail("producer count before callbacks");
+    }
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function lifetime(): test.TestOutcome {
+  let input = values(1);
+  let result = writer.encode_produced(
+    (), 1, table(false), table(true), 0, 8192, never,
+    (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, ([i32]) => Result[void, writer.EncodeError]] => {
+      let ignored = emit(input);
+      return Err(emit);
+    },
+  );
+  let Err(writer.ProducerSource(late)) = result else {
+    return test.fail("consumer retained as producer error");
+  };
+  if (!match (late(input)) { Err(writer.Shape) => true, _ => false }) {
+    return test.fail("consumer closes after producer return");
+  }
+  let Ok(output) = produced(input, 0, 8192, never) else {
+    return test.fail("fresh producer state after closed call");
+  };
+  let Ok(wanted) = writer.encode_blocks(input, table(false), table(true), 0, 8192, never) else {
+    return test.fail("closed consumer baseline");
+  };
+  return test.assert_true(equal(output, wanted));
+}
+
+function ignored_cancel(): test.TestOutcome {
+  let input = values(1);
+  let stopped = cell_new(false);
+  let cancel = (): boolean => stopped.get();
+  let result = writer.encode_produced(
+    (), 1, table(false), table(true), 0, 8192, cancel,
+    (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+      stopped.set(true);
+      let ignored = emit(input);
+      stopped.set(false);
+      let ignored_again = emit(input);
+      return Ok(());
+    },
+  );
+  return test.assert_true(match (result) { Err(writer.ProducerEncode(writer.Cancelled)) => true, _ => false });
+}
+
+function produced_frame(input: [i32], tables: frame.Tables, options: frame.Options, cancelled: () => boolean): Result[u8[], frame.ProducedError[writer.EncodeError]] {
+  return frame.encode_produced(
+    input, tables, options, cancelled,
+    (source: [i32], emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, writer.EncodeError] => {
+      for i in 0..source.len() / 64 {
+        emit(source[i * 64:i * 64 + 64])?;
+      }
+      return Ok(());
+    },
+  );
+}
+
+function frames(): test.TestOutcome {
+  let tables = frame.Tables { quantization: quantizers(), dc: table(false), ac: table(true) };
+  for size in [(1, 1), (8, 8), (9, 17), (257, 1)] {
+    let (width, height) = size;
+    let input = values((width + 7) / 8 * ((height + 7) / 8));
+    for restart in [0, 1, 2, 7, 65535] {
+      let options = frame.Options { width: width, height: height, restart_interval: restart, max_output_bytes: 65536 };
+      let Ok(wanted) = frame.encode_blocks(input, tables, options, never) else {
+        return test.fail("array frame baseline");
+      };
+      let Ok(output) = produced_frame(input, tables, options, never) else {
+        return test.fail("produced frame output");
+      };
+      if (!equal(output, wanted)) {
+        return test.fail("complete produced frame bytes");
+      }
+      let exact = frame.Options { ...options, max_output_bytes: output.len() };
+      if (!match (produced_frame(input, tables, exact, never)) { Ok(v) => equal(v, wanted), _ => false }) {
+        return test.fail("exact produced frame limit");
+      }
+      if (!match (produced_frame(input, tables, frame.Options { ...exact, max_output_bytes: output.len() - 1 }, never)) { Err(frame.FrameEncode(frame.Limit)) => true, _ => false }) {
+        return test.fail("produced frame limit below exact bytes");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function planes(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let input: u8[] = [99];
+  for y in 0..9 {
+    for x in 0..12 {
+      input = input.append(if (x < 9) { (x * 37 + y * 17 + 11) as u8 } else { 77 });
+    }
+  }
+  input = input.append(88);
+  let retained = cell_new(input);
+  let tables = frame.Tables { quantization: quantizers(), dc: table(false), ac: table(true) };
+  for edge in [blocks.Replicate, blocks.Constant(0), blocks.Constant(128), blocks.Constant(255)] {
+    let initial: i32[] = [];
+    let Ok(collected) = plane_coefficients.fold_blocks(
+      input[1:106], layout, tables.quantization, edge, 4, never, initial,
+      (state: i32[], block: plane_coefficients.QuantizedBlock): Result[i32[], string] => {
+        for value in block.values {
+          state = state.append(value);
+        }
+        return Ok(state);
+      },
+    ) else {
+      return test.fail("plane coefficient baseline");
+    };
+    for restart in [0, 1, 2, 7] {
+      let config = plane.Options { restart_interval: restart, max_blocks: 4, max_output_bytes: 65536 };
+      let Ok(output) = plane.encode(input[1:106], layout, edge, tables, config, never) else {
+        return test.fail("direct plane encode");
+      };
+      let wanted_config = frame.Options { width: 9, height: 9, restart_interval: restart, max_output_bytes: 65536 };
+      let Ok(wanted) = frame.encode_blocks(collected.value, tables, wanted_config, never) else {
+        return test.fail("plane frame baseline");
+      };
+      if (!equal(output, wanted)) {
+        return test.fail("plane output matches complete coefficients");
+      }
+      let shared = cell_new(output);
+      let changed = output.with(0, 0);
+      if (changed[0] != 0 || shared.get()[0] != 255) {
+        return test.fail("plane output aliases");
+      }
+      let exact = plane.Options { ...config, max_output_bytes: output.len() };
+      if (!match (plane.encode(input[1:106], layout, edge, tables, exact, never)) { Ok(v) => equal(v, wanted), _ => false }) {
+        return test.fail("exact direct plane byte limit");
+      }
+      if (!match (plane.encode(input[1:106], layout, edge, tables, plane.Options { ...exact, max_output_bytes: output.len() - 1 }, never)) { Err(plane.PlaneFrame(frame.Limit)) => true, _ => false }) {
+        return test.fail("direct plane limit below exact bytes");
+      }
+    }
+  }
+  for i in 0..input.len() {
+    if (input[i] != retained.get()[i]) {
+      return test.fail("direct plane input aliases");
+    }
+  }
+  return test.pass();
+}
+
+function plane_controls(): test.TestOutcome {
+  let input: u8[] = [17];
+  let layout = blocks.PlaneLayout { width: 1, height: 1, stride: 2147483647 };
+  let tables = frame.Tables { quantization: quantizers(), dc: table(false), ac: table(true) };
+  let options = plane.Options { restart_interval: 1, max_blocks: 1, max_output_bytes: 8192 };
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  if let Err(_) = plane.encode(input, layout, blocks.Constant(255), tables, options, count) {
+    return test.fail("plane cancellation baseline");
+  }
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (plane.encode(input, layout, blocks.Constant(255), tables, options, cancel)) {
+      Err(plane.PlaneFrame(frame.Cancelled)) => true,
+      Err(plane.PlanePrepare(plane_coefficients.Cancelled)) => true,
+      _ => false,
+    }) {
+      return test.fail("every direct plane cancellation checkpoint");
+    }
+  }
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  if (!match (plane.encode([], layout, blocks.Replicate, tables, options, cancel)) { Err(plane.PlanePrepare(plane_coefficients.Block(blocks.Storage))) => true, _ => false }) {
+    return test.fail("plane storage precedes callbacks");
+  }
+  if (!match (plane.encode(input, layout, blocks.Replicate, tables, plane.Options { ...options, max_blocks: 0 }, cancel)) { Err(plane.PlanePrepare(plane_coefficients.Limit)) => true, _ => false }) {
+    return test.fail("plane block limit precedes callbacks");
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG block producers");
+  suite = suite.it("exact entropy bytes, restart cycles and limits", parity);
+  suite = suite.it("missing, extra and malformed blocks poison the call", counts);
+  suite = suite.it("codec and producer errors retain their priority", failures);
+  suite = suite.it("every producer cancellation checkpoint", cancellation);
+  suite = suite.it("invalid admission precedes callbacks", admission);
+  suite = suite.it("consumer lifetime and fresh call state", lifetime);
+  suite = suite.it("ignored cancellation remains the first failure", ignored_cancel);
+  suite = suite.it("complete produced frames and exact limits", frames);
+  suite = suite.it("borrowed component planes produce exact frames", planes);
+  suite = suite.it("every plane cancellation checkpoint and admission", plane_controls);
+  return suite.finish();
+}

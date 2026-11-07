@@ -145,12 +145,14 @@ class WorkerEvidenceTests(unittest.TestCase):
             with mock.patch.object(qualification, "Docker", return_value=docker), \
                  mock.patch.object(qualification, "run_worker", side_effect=run), \
                  mock.patch.object(qualification.subprocess, "check_output", return_value="fixture\n"), \
+                 mock.patch.object(qualification.platform, "platform", return_value="fixture-host"), \
                  mock.patch.object(qualification.shutil, "which", return_value=str(binary)), \
                  mock.patch.object(qualification.sys, "argv", ["qualify", str(binary), str(binary), str(output)]):
                 with self.assertRaises(qualification.WorkerFailure):
                     qualification.main()
             record = json.loads(output.read_text())
         self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["host"], "fixture-host")
         self.assertEqual([s["mode"] for s in record["samples"]], ["valid", "oom"])
         self.assertEqual(record["samples"][1], sample)
         self.assertTrue(record["sources_unchanged"])

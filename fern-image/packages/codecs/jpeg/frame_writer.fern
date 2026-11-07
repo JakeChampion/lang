@@ -5,6 +5,8 @@ import "core/cmp";
 @derive(cmp.Debug, cmp.Eq)
 pub enum FrameError { Shape, Dimensions, Table, Limit, Cancelled, Entropy(entropy_writer.EncodeError) }
 
+pub enum ProducedError[E] { FrameEncode(FrameError), FrameSource(E) }
+
 pub struct Tables { quantization: u8[], dc: header.HuffmanTable, ac: header.HuffmanTable }
 
 pub struct Options { width: i32, height: i32, restart_interval: i32, max_output_bytes: i32 }
@@ -57,13 +59,18 @@ function admit_tables(tables: Tables): Result[void, FrameError] {
   return Ok(());
 }
 
-function admit(coefficients: [i32], tables: Tables, options: Options): Result[void, FrameError] {
+function block_count(options: Options): Result[i32, FrameError] {
   if (options.width < 1 || options.width > 65535 || options.height < 1 || options.height > 65535) {
     return Err(FrameError.Dimensions);
   }
   let columns = (options.width as i64 + 7i64) / 8i64;
   let rows = (options.height as i64 + 7i64) / 8i64;
-  if (coefficients.len() as i64 != columns * rows * 64i64) {
+  return Ok((columns * rows) as i32);
+}
+
+function admit(coefficients: [i32], tables: Tables, options: Options): Result[void, FrameError] {
+  let count = block_count(options)?;
+  if (coefficients.len() as i64 != count as i64 * 64i64) {
     return Err(FrameError.Shape);
   }
   admit_tables(tables)?;
@@ -122,4 +129,39 @@ pub function encode_blocks(coefficients: [i32], tables: Tables, options: Options
     return Err(FrameError.Cancelled);
   }
   return Ok(output.bytes);
+}
+
+function produced_prefix(tables: Tables, options: Options, cancelled: () => boolean): Result[(i32, Output), FrameError] {
+  let count = block_count(options)?;
+  admit_tables(tables)?;
+  if (options.restart_interval < 0 || options.restart_interval > 65535 || options.max_output_bytes < 0) {
+    return Err(FrameError.Limit);
+  }
+  if (cancelled()) {
+    return Err(FrameError.Cancelled);
+  }
+  let output = prefix(tables, options, cancelled)?;
+  if (options.max_output_bytes - output.bytes.len() < 2) {
+    return Err(FrameError.Limit);
+  }
+  return Ok((count, output));
+}
+
+function produced_finish(output: Output, encoded: [u8], cancelled: () => boolean): Result[u8[], FrameError] {
+  let result = append(output, encoded, cancelled)?;
+  result = append(result, [255u8, 217u8], cancelled)?;
+  if (cancelled()) {
+    return Err(FrameError.Cancelled);
+  }
+  return Ok(result.bytes);
+}
+
+pub function encode_produced[S, E](source: S, tables: Tables, options: Options, cancelled: () => boolean, produce: (S, ([i32]) => Result[void, entropy_writer.EncodeError]) => Result[void, E]): Result[u8[], ProducedError[E]] {
+  let (count, output) = match (produced_prefix(tables, options, cancelled)) { Ok(v) => v, Err(e) => { return Err(FrameEncode(e)); } };
+  let remaining = options.max_output_bytes - output.bytes.len() - 2;
+  let encoded = match (entropy_writer.encode_produced(source, count, tables.dc, tables.ac, options.restart_interval, remaining, cancelled, produce)) {
+    Ok(v) => v, Err(entropy_writer.ProducerEncode(e)) => { return Err(FrameEncode(entropy_error(e))); },
+    Err(entropy_writer.ProducerSource(e)) => { return Err(FrameSource(e)); },
+  };
+  return match (produced_finish(output, encoded, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(FrameEncode(e)) };
 }

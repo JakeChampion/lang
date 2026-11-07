@@ -9,6 +9,7 @@ import "./x86_native";
 import "./checker";
 import "./util";
 import "./sysreg";
+import "./norc";
 import "./ir";
 import "./irtables";
 import "./irverifygate";
@@ -8509,8 +8510,7 @@ function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
-// A privileged op. x86-64 has hlt for wfi, and no equivalent of hvc or smc.
-// boot_info reads the %ebx that the reset entry saved.
+// A privileged op. boot_info reads the %ebx that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (util.str_has_prefix(ins.str, "dev_sysreg_")) {
     return ssa_sysreg(ins, reg_of, s);
@@ -8522,11 +8522,23 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
     s = s.write("    movq __fern_boot_info(%rip), %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
-  if (ins.str != "dev_wfi") {
+  let fixed = x86_no_operand_op(ins.str);
+  if (fixed == "") {
     ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
   }
-  s = s.write("    hlt\n    xorl %eax, %eax\n");
+  s = s.write("    " + fixed + "\n    xorl %eax, %eax\n");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// wfi is hlt and breakpoint is int3. x86-64 has no equivalent of hvc or smc.
+function x86_no_operand_op(op: string): string {
+  if (op == "dev_wfi") {
+    return "hlt";
+  }
+  if (op == "dev_breakpoint") {
+    return "int3";
+  }
+  return "";
 }
 
 // A device op: a fence, a privileged op, or one device register or port access
@@ -12245,8 +12257,77 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq __fern_bss_start(%rip), %rdi\n    leaq __fern_bss_end(%rip), %rcx\n    subq %rdi, %rcx\n    xorl %eax, %eax\n    rep stosb\n");
   s = s.write("    leaq __fern_bss_end(%rip), %rdi\n    addq $15, %rdi\n    andq $-16, %rdi\n");
   s = s.write("    movabsq $" + util.i64_to_string(reset_tables(s)) + ", %rsi\n    subq %rdi, %rsi\n    call __fern_heap_init\n");
+  s = emit_idt_load(s);
   s = s.write("    xorl %ebp, %ebp\n    pushq %rbp\n    movq %rsp, %rbp\n    call __fn_main\n");
-  return s.write(".Lreset_park:\n    cli\n    hlt\n    jmp .Lreset_park\n");
+  s = s.write(".Lreset_park:\n    cli\n    hlt\n    jmp .Lreset_park\n");
+  return emit_idt_vectors(s);
+}
+
+// The IDT has 256 interrupt gates in .bss. Each one starts at the park stub,
+// and then each handler's gate goes to its trampoline.
+function emit_idt_load(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.interrupts.len() == 0) {
+    return s;
+  }
+  s = s.write("    .section .bss\n    .p2align 4\n__fern_idt:\n    .skip 4096\n    .text\n");
+  s = s.write("    leaq __fern_idt(%rip), %rdi\n    movl $256, %ecx\n.Lidt_fill:\n    leaq .Lvector_park(%rip), %rax\n    call __fern_idt_gate\n    addq $16, %rdi\n    decl %ecx\n    jnz .Lidt_fill\n");
+  for entry in s.interrupts {
+    let parts = util.split_char(entry, b' ');
+    let at = util.i32_to_string(16 * norc.x86_vector(parts[0]));
+    s = s.write("    leaq __fern_idt(%rip), %rdi\n    addq $" + at + ", %rdi\n    leaq __fern_vector_" + parts[0] + "(%rip), %rax\n    call __fern_idt_gate\n");
+  }
+  return s.write("    subq $16, %rsp\n    movl $4095, (%rsp)\n    leaq __fern_idt(%rip), %rax\n    movq %rax, 2(%rsp)\n    lidt (%rsp)\n    addq $16, %rsp\n");
+}
+
+// __fern_idt_gate writes the interrupt gate at %rdi to the code at %rax: the
+// 64-bit code segment 8, present, DPL 0, type 0xe.
+function emit_idt_vectors(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.interrupts.len() == 0) {
+    return s;
+  }
+  s = s.write("__fern_idt_gate:\n    movl %eax, %edx\n    andl $65535, %edx\n    orl $524288, %edx\n    movl %edx, (%rdi)\n");
+  s = s.write("    movl %eax, %edx\n    andl $-65536, %edx\n    orl $36352, %edx\n    movl %edx, 4(%rdi)\n");
+  s = s.write("    movq %rax, %rdx\n    shrq $32, %rdx\n    movl %edx, 8(%rdi)\n    movl $0, 12(%rdi)\n    ret\n");
+  s = s.write(".Lvector_park:\n    cli\n    hlt\n    jmp .Lvector_park\n");
+  for entry in s.interrupts {
+    let parts = util.split_char(entry, b' ');
+    s = emit_idt_trampoline(s, parts[0], parts[1], norc.x86_error_code(norc.x86_vector(parts[0])));
+  }
+  return s;
+}
+
+// The trampoline saves the registers that a call can change: the nine
+// caller-saved general registers and ymm0 to ymm15. The frame keeps %rsp
+// 16-byte aligned at the call. It drops the error code that the CPU pushed for
+// some exceptions, and returns with iretq.
+function emit_idt_trampoline(s: asmcore.EmitState, slot: string, handler: string, error_code: boolean): asmcore.EmitState {
+  let gprs = ["rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11"];
+  let frame = "512";
+  if (error_code) {
+    frame = "520";
+  }
+  s = s.write("__fern_vector_" + slot + ":\n");
+  for r in gprs {
+    s = s.write("    pushq %" + r + "\n");
+  }
+  s = s.write("    subq $" + frame + ", %rsp\n");
+  for i in 0..16 {
+    s = s.write("    vmovdqu %ymm" + util.i32_to_string(i) + ", " + util.i32_to_string(32 * i) + "(%rsp)\n");
+  }
+  s = s.write("    cld\n    call " + handler + "\n");
+  for i in 0..16 {
+    s = s.write("    vmovdqu " + util.i32_to_string(32 * i) + "(%rsp), %ymm" + util.i32_to_string(i) + "\n");
+  }
+  s = s.write("    addq $" + frame + ", %rsp\n");
+  let k = gprs.len() - 1;
+  while (k >= 0) {
+    s = s.write("    popq %" + gprs[k] + "\n");
+    k -= 1;
+  }
+  if (error_code) {
+    s = s.write("    addq $8, %rsp\n");
+  }
+  return s.write("    iretq\n");
 }
 
 function le32_bytes(b: i32[], v: i32): i32[] {

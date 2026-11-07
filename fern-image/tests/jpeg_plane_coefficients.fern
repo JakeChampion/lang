@@ -1,6 +1,7 @@
 import "../packages/codecs/jpeg/plane_coefficients" as plane;
 import "../packages/codecs/jpeg/component_blocks" as blocks;
 import "../packages/codecs/jpeg/frame_writer";
+import "../packages/codecs/jpeg/plane_writer";
 import "../packages/codecs/jpeg/header";
 import "std/binary";
 import "std/hex";
@@ -55,6 +56,9 @@ function emit(path: string): i32 {
     q = q.append(value);
   }
   let edge = if (data[16] == 0) { blocks.Replicate } else { blocks.Constant(data[17]) };
+  let tables = frame_writer.Tables { quantization: q, dc: table(false), ac: table(true) };
+  let config = plane_writer.Options { restart_interval: 2, max_blocks: fields[3], max_output_bytes: 1048576 };
+  let direct = plane_writer.encode(data[20 + size:], layout, edge, tables, config, never);
   let initial: i32[] = [];
   let folded = plane.fold_blocks(
     data[20 + size:], layout, q, edge, fields[3], never, initial,
@@ -67,17 +71,30 @@ function emit(path: string): i32 {
   );
   match (folded) {
     Err(plane.Prepare(e)) => {
+      if (!match (direct) { Err(plane_writer.PlanePrepare(other)) => e == other, _ => false }) {
+        return 6;
+      }
       print(path + " error " + name(e));
     },
     Err(plane.Consumer(_)) => {
       return 4;
     },
     Ok(done) => {
-      let tables = frame_writer.Tables { quantization: q, dc: table(false), ac: table(true) };
       let options = frame_writer.Options { width: layout.width, height: layout.height, restart_interval: 2, max_output_bytes: 1048576 };
-      let Ok(encoded) = frame_writer.encode_blocks(done.value, tables, options, never) else {
+      let Ok(wanted) = frame_writer.encode_blocks(done.value, tables, options, never) else {
         return 5;
       };
+      let Ok(encoded) = direct else {
+        return 6;
+      };
+      if (encoded.len() != wanted.len()) {
+        return 6;
+      }
+      for i in 0..encoded.len() {
+        if (encoded[i] != wanted[i]) {
+          return 6;
+        }
+      }
       let text = path + " ok";
       for value in done.value {
         text = text + " " + value.to_string();

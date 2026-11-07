@@ -2808,6 +2808,9 @@ function x86_gas_memext_op(mnem: string): i32 {
     "invlpg" => {
       return 1793;
     },
+    "lidt" => {
+      return 769;
+    },
     _ => {
       return 0 - 1;
     }
@@ -4222,6 +4225,9 @@ function x86_gas_fixed_op(mnem: string): i32 {
     },
     "wrmsr" => {
       return x86_pack2(15, 48);
+    },
+    "iretq" => {
+      return x86_pack2(72, 207);
     },
     "movsb" => {
       return x86_pack1(164);
