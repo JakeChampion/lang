@@ -82,6 +82,8 @@ function test_man_in_the_middle_shows_different_strings(): test.TestOutcome {
   return test.assert_eq((a.sas == b.sas).to_string(), "false");
 }
 
+// A reveal that does not match the commitment is ignored, so a third party
+// cannot end the exchange with one. The right reveal still finishes it.
 function test_reveal_must_match_commitment(): test.TestOutcome {
   let a = party(true, "alice");
   let (b1, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
@@ -89,9 +91,11 @@ function test_reveal_must_match_commitment(): test.TestOutcome {
   let other_commit = secure.first(other);
   let (other1, reveal) = secure.receive(other, key_msg);
   let (b2, none) = secure.receive(b1, reveal);
-  secure.close_handshake(a);
+  let (a1, right) = secure.receive(a, key_msg);
+  let (b3, _) = secure.receive(b2, right);
+  let same = sas_of(a1) == sas_of(b3);
   secure.close_handshake(other1);
-  return test.assert_eq(b2.failed.to_string() + " " + b2.done.to_string(), "true false");
+  return test.assert_eq(b2.failed.to_string() + " " + b2.done.to_string() + " " + none.len().to_string() + " " + b3.done.to_string() + " " + same.to_string(), "false false 0 true true");
 }
 
 // The string of a finished handshake, or "" when it gives no keys.
@@ -161,7 +165,7 @@ function test_kem_secrets_are_erased(): test.TestOutcome {
   let sb = sas_of(b);
   let c = party(false, "carol");
   let old = c;
-  let (failed, _) = secure.receive(c, [16 as u8]);
+  secure.close_handshake(c);
   return test.assert_eq(ka.kem.get().len().to_string() + " " + kb.kem.get().len().to_string() + " " + old.kem.get().len().to_string() + " " + (sa == sb).to_string(), "0 0 0 true");
 }
 
@@ -234,10 +238,15 @@ function test_third_party_cannot_read_or_inject(): test.TestOutcome {
   return test.assert_eq(voiced(read) + " " + voiced(injected), "refused refused");
 }
 
-function test_wrong_order_handshake_fails(): test.TestOutcome {
+// A message out of order is ignored, and the exchange goes on.
+function test_wrong_order_handshake_is_ignored(): test.TestOutcome {
+  let a = party(true, "alice");
   let b = party(false, "bob");
   let (b1, reply) = secure.receive(b, [18 as u8]);
-  return test.assert_eq(b1.failed.to_string() + " " + reply.len().to_string(), "true 0");
+  let (b2, key_msg) = secure.receive(b1, secure.first(a));
+  secure.close_handshake(a);
+  secure.close_handshake(b2);
+  return test.assert_eq(b1.failed.to_string() + " " + reply.len().to_string() + " " + (key_msg.len() > 0).to_string(), "false 0 true");
 }
 
 function test_close_consumes_the_channel(): test.TestOutcome {
@@ -303,13 +312,6 @@ function test_ephemeral_key_is_used_once(): test.TestOutcome {
   }
   secure.close_handshake(b);
   return test.assert_eq(first.to_string() + " " + second.to_string(), "true false");
-}
-
-function test_failed_handshake_clears_aliases(): test.TestOutcome {
-  let b = party(false, "bob");
-  let old = b;
-  let (failed, _) = secure.receive(b, [18 as u8]);
-  return test.assert_eq(failed.failed.to_string() + " " + old.private.get().len().to_string(), "true 0");
 }
 
 function test_cancelled_handshake_clears_aliases(): test.TestOutcome {
@@ -553,10 +555,10 @@ function test_initiator_must_commit_before_a_key_reply(): test.TestOutcome {
   let a = party(true, "alice");
   let other = party(true, "other");
   let (b, key_msg) = secure.receive(party(false, "bob"), secure.first(other));
-  let (failed, _) = secure.receive(a, key_msg);
+  let (early, reply) = secure.receive(a, key_msg);
   secure.close_handshake(other);
   secure.close_handshake(b);
-  return test.assert_eq(failed.failed.to_string() + " " + failed.private.get().len().to_string(), "true 0");
+  return test.assert_eq(early.failed.to_string() + " " + early.done.to_string() + " " + reply.len().to_string(), "false false 0");
 }
 
 function test_handshake_aliases_cannot_reuse_a_key_reply(): test.TestOutcome {
@@ -564,7 +566,8 @@ function test_handshake_aliases_cannot_reuse_a_key_reply(): test.TestOutcome {
   let old = a;
   let (b, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
   let (ready, _) = secure.receive(a, key_msg);
-  let (failed, _) = secure.receive(old, key_msg);
+  let (again, reply) = secure.receive(old, key_msg);
+  let twice = secure.keys(again).is_some();
   let derived = false;
   match (secure.keys(ready)) {
     Some(k) => {
@@ -574,7 +577,23 @@ function test_handshake_aliases_cannot_reuse_a_key_reply(): test.TestOutcome {
     None => {}
   }
   secure.close_handshake(b);
-  return test.assert_eq(failed.failed.to_string() + " " + derived.to_string(), "true false");
+  return test.assert_eq(reply.len().to_string() + " " + twice.to_string() + " " + derived.to_string(), "0 false true");
+}
+
+// A commitment with a key that ML-KEM refuses is ignored, and the real
+// commitment that follows still gets a reply.
+function test_bad_encapsulation_key_is_ignored(): test.TestOutcome {
+  let a = party(true, "alice");
+  let real = secure.first(a);
+  let bad: u8[] = [real[0]];
+  for k in 1..real.len() {
+    bad = bad.append(255 as u8);
+  }
+  let (b1, none) = secure.receive(party(false, "bob"), bad);
+  let (b2, reply) = secure.receive(b1, real);
+  secure.close_handshake(a);
+  secure.close_handshake(b2);
+  return test.assert_eq(b1.failed.to_string() + " " + none.len().to_string() + " " + (reply.len() > 0).to_string(), "false 0 true");
 }
 
 function main(): i32 {
@@ -598,19 +617,19 @@ function main(): i32 {
   r = r.it("voice frames open once inside the window", test_voice_window);
   r = r.it("a frame of one channel does not open on the other", test_channels_are_separate);
   r = r.it("a third party cannot read or inject", test_third_party_cannot_read_or_inject);
-  r = r.it("a handshake message out of order fails", test_wrong_order_handshake_fails);
+  r = r.it("a handshake message out of order is ignored", test_wrong_order_handshake_is_ignored);
+  r = r.it("a commitment with a bad ML-KEM key is ignored", test_bad_encapsulation_key_is_ignored);
   r = r.it("close takes the channel and its keys", test_close_consumes_the_channel);
   r = r.it("sender aliases share the sequence", test_sender_aliases_share_the_sequence);
   r = r.it("receiver aliases cannot replay a frame", test_receiver_aliases_cannot_replay_a_frame);
   r = r.it("close invalidates channel aliases", test_close_invalidates_channel_aliases);
   r = r.it("the ephemeral key is used once", test_ephemeral_key_is_used_once);
-  r = r.it("a failed handshake clears aliases", test_failed_handshake_clears_aliases);
   r = r.it("a cancelled handshake clears aliases", test_cancelled_handshake_clears_aliases);
   r = r.it("an invalid nonce keeps no private key", test_invalid_nonce_does_not_keep_a_private_key);
   r = r.it("a key bundle creates one channel", test_key_bundle_creates_one_channel);
   r = r.it("a rejected key bundle clears aliases", test_rejected_key_bundle_clears_aliases);
   r = r.it("sequence boundaries leave the replay window intact", test_sequence_boundaries_do_not_change_the_window);
-  r = r.it("the initiator commits before a key reply", test_initiator_must_commit_before_a_key_reply);
+  r = r.it("a key reply before the commitment is ignored", test_initiator_must_commit_before_a_key_reply);
   r = r.it("handshake aliases cannot reuse a key reply", test_handshake_aliases_cannot_reuse_a_key_reply);
   return r.finish();
 }

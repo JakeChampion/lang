@@ -186,8 +186,12 @@ function to_peer(n: Node, data: u8[][]): Node {
   return Node { ...n, out: out };
 }
 
-// The datagram in the first `len` bytes of `data`, from `from`.
+// The datagram in the first `len` bytes of `data`, from `from`. After the
+// node finds its peer, it takes datagrams only from the peer's address.
 pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i64): Node {
+  if (!searching(n) && !from.eq(n.peer_addr)) {
+    return n;
+  }
   match (lan.decode(data, len)) {
     Some(p) => {
       return packet(n, p, from, now);
@@ -195,6 +199,13 @@ pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i
     None => {}
   }
   return n;
+}
+
+function searching(n: Node): boolean {
+  if let lan.Searching = n.link.phase {
+    return true;
+  }
+  return false;
 }
 
 function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {

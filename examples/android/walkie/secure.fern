@@ -193,10 +193,16 @@ pub function first(h: Handshake): u8[] {
 }
 
 // The handshake after message `m`, and the reply to send, which is empty
-// when there is none. `done` is set when the keys are ready.
+// when there is none. `done` is set when the keys are ready. A message that
+// this phase cannot use leaves the handshake as it was: it can come from a
+// third party that sends in the name of the peer. Only a closed handshake
+// fails.
 pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
-  if (h.done || h.failed || m.len() == 0 || h.private.get().len() != 32) {
+  if (h.failed || h.private.get().len() != 32) {
     return refused(h);
+  }
+  if (h.done || m.len() == 0) {
+    return (h, []);
   }
   let t = m[0] as i32;
   if (!h.initiator && t == M_COMMIT && m.len() == 33 + EK_LEN && h.phase.get() == FRESH) {
@@ -209,25 +215,24 @@ pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
     let key = part(m, 1, 32);
     let nonce = part(m, 33, 16);
     if (commitment(key, nonce) != h.commit) {
-      return refused(h);
+      return (h, []);
     }
     h.phase.set(READY);
     return (Handshake { ...h, peer_key: key, peer_nonce: nonce, done: true }, []);
   }
-  return refused(h);
+  return (h, []);
 }
 
 // The responder's reply to the commitment: its X25519 key, its nonce, and a
-// ciphertext for the initiator's encapsulation key.
+// ciphertext for the initiator's encapsulation key. A key that ML-KEM
+// refuses leaves the handshake as it was.
 function encapsulate(h: Handshake, commit: u8[], ek: u8[]): (Handshake, u8[]) {
   let m = h.kem.get();
-  h.kem.set([]);
-  let result = mlkem768.encaps_derand(ek, m);
-  crypto.erase(m);
-  let Ok(e) = result else {
-    return refused(h);
+  let Ok(e) = mlkem768.encaps_derand(ek, m) else {
+    return (h, []);
   };
   h.kem.set(e.shared_secret);
+  crypto.erase(m);
   h.phase.set(COMMITTED);
   let reply = cat(cat(cat([M_KEY as u8], h.public), h.nonce), e.ciphertext);
   return (Handshake { ...h, commit: commit, ek: ek, ct: e.ciphertext }, reply);
@@ -237,13 +242,11 @@ function encapsulate(h: Handshake, commit: u8[], ek: u8[]): (Handshake, u8[]) {
 // responder's ciphertext.
 function decapsulate(h: Handshake, key: u8[], nonce: u8[], ct: u8[]): (Handshake, u8[]) {
   let dk = h.kem.get();
-  h.kem.set([]);
-  let result = mlkem768.decaps(dk, ct);
-  crypto.erase(dk);
-  let Ok(shared) = result else {
-    return refused(h);
+  let Ok(shared) = mlkem768.decaps(dk, ct) else {
+    return (h, []);
   };
   h.kem.set(shared);
+  crypto.erase(dk);
   let reveal = cat(cat([M_REVEAL as u8], h.public), h.nonce);
   h.phase.set(READY);
   return (Handshake { ...h, peer_key: key, peer_nonce: nonce, ct: ct, done: true }, reveal);

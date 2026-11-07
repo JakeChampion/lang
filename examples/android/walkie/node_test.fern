@@ -305,6 +305,25 @@ function test_peer_that_never_confirms(): test.TestOutcome {
   return test.assert_eq(s.lost[0], "the other phone did not confirm the code");
 }
 
+// A third party on the network reads the node ID of a beacon and sends
+// handshake datagrams in its name: from its own address, and from the
+// address of the peer. The pairing goes on, and both phones show the code.
+function test_spoofed_handshake_does_not_end_pairing(): test.TestOutcome {
+  let a = node.tick(node.new(5i64, seed(1), 0i64), 0i64);
+  let b = node.new(9i64, seed(2), 0i64);
+  for d in a.out {
+    b = node.receive(b, d.data, d.data.len(), addr(0), 10i64);
+  }
+  a = node.drained(a);
+  let forged = lan.encode(lan.HANDSHAKE, 5i64, [16u8]);
+  let elsewhere = net.socket_addr(net.V4([10u8, 0u8, 0u8, 66u8]), 47120);
+  b = node.receive(b, forged, forged.len(), elsewhere, 20i64);
+  b = node.receive(b, forged, forged.len(), addr(0), 30i64);
+  let after = node.status(b);
+  let s = run_nodes([a, b], Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, [], 3000i64);
+  return test.assert_eq(after + " / " + shows_code(s.nodes[0]).to_string() + " " + shows_code(s.nodes[1]).to_string(), "found a phone: making keys / true true");
+}
+
 function main(): i32 {
   let r = test.new("walkie nodes");
   r = r.it("two nodes talk on a clean network", test_clean_network);
@@ -315,5 +334,6 @@ function main(): i32 {
   r = r.it("two nodes talk with 20% loss", test_twenty_percent_loss);
   r = r.it("a press before the peer confirms waits", test_press_before_the_peer_confirms);
   r = r.it("a peer that never confirms ends the session", test_peer_that_never_confirms);
+  r = r.it("a spoofed handshake does not end the pairing", test_spoofed_handshake_does_not_end_pairing);
   return r.finish();
 }
