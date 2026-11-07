@@ -2422,6 +2422,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	i64T := ast.NumberType{Width: 64, Signed: true}
 	c.info.FuncSigs["__sysreg_read"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: i64T}
 	c.info.FuncSigs["__sysreg_write"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}, i64T}, Result: ast.VoidType{}}
+	for _, name := range []string{"__cache_clean", "__cache_flush", "__tlb_flush"} {
+		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: ast.VoidType{}}
+	}
+	c.info.FuncSigs["__tlb_flush_all"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
@@ -9349,6 +9353,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
+	"__cache_clean": true, "__cache_flush": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,

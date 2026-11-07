@@ -2800,6 +2800,20 @@ function x86_gas_port_op(mnem: string): i32 {
   }
 }
 
+function x86_gas_memext_op(mnem: string): i32 {
+  match (mnem) {
+    "clflush" => {
+      return 1966;
+    },
+    "invlpg" => {
+      return 1793;
+    },
+    _ => {
+      return 0 - 1;
+    }
+  }
+}
+
 function x86_gas_is_movqd(mnem: string): boolean {
   return mnem == "movd";
 }
@@ -3142,6 +3156,15 @@ function x86_gas_port(own a: X86Asm, mnem: string, l: GasLine): X86Asm {
   }
   buf_push_byte(a.code, l.ext & 255);
   return a;
+}
+
+// 0F, the opcode, and the memory operand with the extension in the ModRM reg field.
+function x86_gas_memext(own a: X86Asm, mnem: string, l: GasLine): X86Asm {
+  let m = x86_gas_parse_mem(l.rest);
+  if (!x86_gas_has_paren(l.rest) || !x86_gas_mem_ok(m)) {
+    return x86_gas_bad(a, mnem + " " + l.rest);
+  }
+  return x86_gas_mem_op(a, 32, true, l.ext % 256, l.ext / 256, m, false, 0);
 }
 
 function x86_gas_bad(own a: X86Asm, what: string): X86Asm {
@@ -5609,6 +5632,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_PORT) {
     return x86_gas_port(a, mnem, l);
   }
+  if (k == GK_MEMEXT) {
+    return x86_gas_memext(a, mnem, l);
+  }
   if (k == GK_FIXED) {
     return x86_gas_emit_packed(a, l.ext);
   }
@@ -6592,6 +6618,9 @@ const GK_ENDBR: i32 = 49;
 // Port I/O; the extension holds x86_gas_port_op's prefix and opcode.
 const GK_PORT: i32 = 50;
 
+// clflush and invlpg; the extension holds x86_gas_memext_op's ModRM extension and opcode.
+const GK_MEMEXT: i32 = 51;
+
 const GP_TEXT: i32 = 0;
 
 const GP_BYTES: i32 = 1;
@@ -6803,6 +6832,26 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
   return v;
 }
 
+// The rep and lock prefixes, port I/O, and clflush and invlpg.
+function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdict] {
+  let rpfx = x86_gas_rep_pfx(mnem);
+  if (rpfx >= 0) {
+    return Some(MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx });
+  }
+  if (x86_gas_is_lock(mnem)) {
+    return Some(MnemVerdict { ...v, a_kind: GK_LOCK });
+  }
+  let port = x86_gas_port_op(mnem);
+  if (port >= 0) {
+    return Some(MnemVerdict { ...v, b_kind: GK_PORT, b_ext: port });
+  }
+  let memext = x86_gas_memext_op(mnem);
+  if (memext >= 0) {
+    return Some(MnemVerdict { ...v, a_kind: GK_MEMEXT, a_ext: memext });
+  }
+  return None;
+}
+
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
   if (x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
@@ -6812,12 +6861,8 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (bmi.a_kind != GK_NONE) {
     return bmi;
   }
-  let rpfx = x86_gas_rep_pfx(mnem);
-  if (rpfx >= 0) {
-    return MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx };
-  }
-  if (x86_gas_is_lock(mnem)) {
-    return MnemVerdict { ...v, a_kind: GK_LOCK };
+  if let Some(sys) = x86_gas_system_verdict(v, mnem) {
+    return sys;
   }
   if (x86_str_starts_with(mnem, "set")) {
     let scc = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
@@ -6883,10 +6928,6 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let lsz = x86_gas_lea_size(mnem);
   if (lsz >= 0) {
     return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
-  }
-  let port = x86_gas_port_op(mnem);
-  if (port >= 0) {
-    return MnemVerdict { ...v, b_kind: GK_PORT, b_ext: port };
   }
   let msz = x86_gas_mov_size(mnem);
   if (msz == 64) {

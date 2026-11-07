@@ -1098,9 +1098,11 @@ pub function port_intrinsic(name: string): boolean {
 // A privileged op that only a kernel environment grants. __hvc and __smc call
 // the hypervisor and the secure monitor in the SMC calling convention.
 // __boot_info gives the address that the loader passed to the reset entry.
-// __sysreg_read and __sysreg_write access a system register.
+// __sysreg_read and __sysreg_write access a system register. The cache ops act
+// on the line that holds an address, and the TLB ops drop the translation of an
+// address or of every address.
 pub function privileged_intrinsic(name: string): boolean {
-  return name == "__wfi" || name == "__hvc" || name == "__smc" || name == "__boot_info" || sysreg.intrinsic(name);
+  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all"], name) || sysreg.intrinsic(name);
 }
 
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
@@ -1129,8 +1131,22 @@ pub function mmio_width(name: string): i32 {
 struct DeviceSig { params: typeinfo.Type[], result: typeinfo.Type }
 
 function device_sig(name: string): DeviceSig {
+  if (name == "__fence") {
+    return DeviceSig { params: [], result: t_void() };
+  }
+  if (privileged_intrinsic(name)) {
+    return privileged_sig(name);
+  }
+  if (port_intrinsic(name)) {
+    return port_sig(name);
+  }
+  return mmio_sig(name);
+}
+
+// A cache or TLB op of one address takes the address.
+function privileged_sig(name: string): DeviceSig {
   let w = t_i64();
-  if (name == "__fence" || name == "__wfi") {
+  if (name == "__wfi" || name == "__tlb_flush_all") {
     return DeviceSig { params: [], result: t_void() };
   }
   if (name == "__boot_info") {
@@ -1142,13 +1158,10 @@ function device_sig(name: string): DeviceSig {
   if (name == "__sysreg_write") {
     return DeviceSig { params: [t_string(), w], result: t_void() };
   }
-  if (privileged_intrinsic(name)) {
+  if (name == "__hvc" || name == "__smc") {
     return DeviceSig { params: [w, w, w, w], result: w };
   }
-  if (port_intrinsic(name)) {
-    return port_sig(name);
-  }
-  return mmio_sig(name);
+  return DeviceSig { params: [t_usize()], result: t_void() };
 }
 
 function port_sig(name: string): DeviceSig {
@@ -10290,7 +10303,7 @@ pub function unsafe_intrinsics(): string[] {
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
     "__store_u8", "__store_i32", "__store_i64", "__store_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
-    "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write",
+    "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__memcpy", "__memset", "__str_bytes", "__account_entry",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
@@ -18254,7 +18267,7 @@ function registered_intrinsics(): string[] {
     "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write",
+    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",

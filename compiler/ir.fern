@@ -1291,20 +1291,22 @@ pub function op_privileged(kind: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// The privileged kinds are 415 to 417 and 499 to 505.
 pub function is_privileged_kind(id: i32): boolean {
-  return id == K_WFI || id == K_HVC || id == K_SMC || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_SYSREG_WRITE;
+  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_TLB_FLUSH_ALL;
 }
 
-// wfi, boot_info and sysreg_read take nothing. sysreg_write takes the value.
-// hvc and smc take the function and three arguments.
+// hvc and smc take the function and three arguments. wfi, boot_info,
+// sysreg_read and tlb_flush_all take nothing. The others take one operand: the
+// value of sysreg_write, or the address of a cache or TLB op.
 function privileged_pops(id: i32): i32 {
-  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ) {
+  if (id == K_HVC || id == K_SMC) {
+    return 4;
+  }
+  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_TLB_FLUSH_ALL) {
     return 0;
   }
-  if (id == K_SYSREG_WRITE) {
-    return 1;
-  }
-  return 4;
+  return 1;
 }
 
 // A read or a write of the system register `name`. The name is part of the op,
@@ -1361,6 +1363,22 @@ function access_kind_name(id: i32): string {
   }
   if (id == K_SYSREG_WRITE) {
     return "sysreg_write";
+  }
+  return maintenance_kind_name(id);
+}
+
+function maintenance_kind_name(id: i32): string {
+  if (id == K_CACHE_CLEAN) {
+    return "cache_clean";
+  }
+  if (id == K_CACHE_FLUSH) {
+    return "cache_flush";
+  }
+  if (id == K_TLB_FLUSH) {
+    return "tlb_flush";
+  }
+  if (id == K_TLB_FLUSH_ALL) {
+    return "tlb_flush_all";
   }
   return "mmio_store";
 }
@@ -2349,6 +2367,14 @@ pub const K_SYSREG_READ: i32 = 500;
 
 pub const K_SYSREG_WRITE: i32 = 501;
 
+pub const K_CACHE_CLEAN: i32 = 502;
+
+pub const K_CACHE_FLUSH: i32 = 503;
+
+pub const K_TLB_FLUSH: i32 = 504;
+
+pub const K_TLB_FLUSH_ALL: i32 = 505;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2565,6 +2591,22 @@ function kind_id_sysreg(name: string): i32 {
   }
   if (name == "sysreg_write") {
     return K_SYSREG_WRITE;
+  }
+  return kind_id_maintenance(name);
+}
+
+function kind_id_maintenance(name: string): i32 {
+  if (name == "cache_clean") {
+    return K_CACHE_CLEAN;
+  }
+  if (name == "cache_flush") {
+    return K_CACHE_FLUSH;
+  }
+  if (name == "tlb_flush") {
+    return K_TLB_FLUSH;
+  }
+  if (name == "tlb_flush_all") {
+    return K_TLB_FLUSH_ALL;
   }
   return 0;
 }

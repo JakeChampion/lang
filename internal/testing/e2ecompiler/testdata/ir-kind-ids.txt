@@ -448,3 +448,7 @@ writer_set_times=498
 boot_info=499
 sysreg_read=500
 sysreg_write=501
+cache_clean=502
+cache_flush=503
+tlb_flush=504
+tlb_flush_all=505
