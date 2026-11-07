@@ -1,0 +1,202 @@
+import "../packages/codecs/qoi/qoi";
+import "../packages/pixels/pixels";
+import "std/test";
+
+function active(): boolean {
+  return false;
+}
+
+function equal(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function stream(width: u8, channels: u8, color: u8, body: [u8]): u8[] {
+  let out: u8[] = [113, 111, 105, 102, 0, 0, 0, width, 0, 0, 0, 1, channels, color];
+  for b in body {
+    out = out.append(b);
+  }
+  for _ in 0..7 {
+    out = out.append(0);
+  }
+  return out.append(1);
+}
+
+function decoded(data: [u8], expected: [u8]): boolean {
+  let Ok(value) = qoi.decode(data, qoi.default_limits(), active) else {
+    return false;
+  };
+  return equal(value.image.data, expected);
+}
+
+function opcodes(): test.TestOutcome {
+  let body: u8[] = [254, 10, 20, 30, 118, 165, 122, 255, 200, 100, 50, 128, 9, 193];
+  let expected: u8[] = [
+    10, 20, 30, 255, 11, 19, 30, 255, 15, 24, 37, 255,
+    200, 100, 50, 128, 10, 20, 30, 255, 10, 20, 30, 255, 10, 20, 30, 255,
+  ];
+  return test.assert_true(decoded(stream(7, 4, 0, body), expected));
+}
+
+function initial(): test.TestOutcome {
+  let index = decoded(stream(1, 4, 0, [0 as u8]), [0 as u8, 0 as u8, 0 as u8, 0 as u8]);
+  let run = decoded(stream(1, 4, 0, [192 as u8]), [0 as u8, 0 as u8, 0 as u8, 255 as u8]);
+  let wrap = decoded(
+    stream(2, 4, 0, [254 as u8, 255 as u8, 255 as u8, 255 as u8, 127 as u8]),
+    [255 as u8, 255 as u8, 255 as u8, 255 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8],
+  );
+  return test.assert_true(index && run && wrap);
+}
+
+function metadata(): test.TestOutcome {
+  let Ok(a) = qoi.decode(stream(1, 3, 0, [192 as u8]), qoi.default_limits(), active) else {
+    return test.fail("RGB metadata");
+  };
+  let Ok(b) = qoi.decode(stream(1, 4, 1, [0 as u8]), qoi.default_limits(), active) else {
+    return test.fail("linear metadata");
+  };
+  return test.assert_true(pixels.channels(a.image.layout.format) == 3 && a.image.layout.stride == 3
+    && a.color_space == qoi.Srgb && b.color_space == qoi.Linear && b.image.layout.stride == 4);
+}
+
+function roundtrip(channels: i32, count: i32, color: qoi.ColorSpace): boolean {
+  let format = if (channels == 3) { pixels.RGB8 } else { pixels.RGBA8 };
+  let Ok(image) = pixels.create(count, 2, count * channels + 3, format, pixels.default_limits()) else {
+    return false;
+  };
+  let expected: u8[] = [];
+  for y in 0..2 {
+    for x in 0..count {
+      let base = if (x % 5 == 0) { 0 } else { x * 31 + y * 17 };
+      for c in 0..channels {
+        let b = (base + c * 47 & 255) as u8;
+        image = pixels.Image { ...image, data: image.data.with(y * image.layout.stride + x * channels + c, b) };
+        expected = expected.append(b);
+      }
+    }
+  }
+  let original = image.data;
+  let Ok(encoded) = qoi.encode(image, color, 20000, active) else {
+    return false;
+  };
+  let Ok(value) = qoi.decode(encoded, qoi.default_limits(), active) else {
+    return false;
+  };
+  return equal(value.image.data, expected) && value.color_space == color && equal(image.data, original);
+}
+
+function roundtrips(): test.TestOutcome {
+  for channels in 3..5 {
+    for count in 1..130 {
+      if (!roundtrip(channels, count, qoi.Srgb) || !roundtrip(channels, count, qoi.Linear)) {
+        return test.fail("pixel round trip");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function runs(): test.TestOutcome {
+  for count in 1..130 {
+    let Ok(image) = pixels.create(count, 1, count * 3, pixels.RGB8, pixels.default_limits()) else {
+      return test.fail("run source");
+    };
+    let Ok(encoded) = qoi.encode(image, qoi.Srgb, 1000, active) else {
+      return test.fail("run encode");
+    };
+    if (encoded.len() != 22 + (count + 61) / 62 || !decoded(encoded, image.data)) {
+      return test.fail("run boundary");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function rejects(data: [u8], want: qoi.QoiError): boolean {
+  return match (qoi.decode(data, qoi.default_limits(), active)) { Err(e) => e == want, Ok(_) => false };
+}
+
+function headers(): test.TestOutcome {
+  let valid = stream(1, 3, 0, [192 as u8]);
+  return test.assert_true(rejects(valid.with(0, 0), qoi.Signature)
+    && rejects(valid.with(12, 2), qoi.Header) && rejects(valid.with(13, 2), qoi.Header)
+    && rejects(valid.with(7, 0), qoi.Dimensions) && rejects(valid.with(4, 128), qoi.Dimensions));
+}
+
+function malformed(): test.TestOutcome {
+  let valid = stream(1, 4, 0, [192 as u8]);
+  return test.assert_true(rejects(stream(1, 4, 0, [193 as u8]), qoi.Pixels)
+    && rejects(stream(1, 4, 0, [254 as u8, 1 as u8]), qoi.Truncated)
+    && rejects(stream(1, 4, 0, [128 as u8]), qoi.Truncated)
+    && rejects(stream(1, 4, 0, [192 as u8, 192 as u8]), qoi.Trailing)
+    && rejects(valid.with(valid.len() - 1, 0), qoi.EndMarker));
+}
+
+function prefixes(): test.TestOutcome {
+  let data = stream(2, 4, 0, [255 as u8, 11 as u8, 22 as u8, 33 as u8, 44 as u8, 192 as u8]);
+  for i in 0..data.len() {
+    if let Ok(_) = qoi.decode(data[:i], qoi.default_limits(), active) {
+      return test.fail("truncated prefix");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function budgets(): test.TestOutcome {
+  let data = stream(2, 4, 0, [193 as u8]);
+  let limits = qoi.default_limits();
+  let input = match (qoi.decode(data, qoi.Limits { ...limits, max_input_bytes: data.len() - 1 }, active)) { Err(qoi.Limit) => true, _ => false };
+  let pixel_budget = match (qoi.decode(data, qoi.Limits { ...limits, pixels: pixels.Limits { max_pixels: 1, max_bytes: 100 } }, active)) { Err(qoi.Limit) => true, _ => false };
+  let bytes = match (qoi.decode(data, qoi.Limits { ...limits, pixels: pixels.Limits { max_pixels: 2, max_bytes: 7 } }, active)) { Err(qoi.Limit) => true, _ => false };
+  let Ok(image) = pixels.create(1, 1, 3, pixels.RGB8, pixels.default_limits()) else {
+    return test.fail("budget source");
+  };
+  let exact = match (qoi.encode(image, qoi.Srgb, 23, active)) { Ok(b) => b.len() == 23, _ => false };
+  let short = match (qoi.encode(image, qoi.Srgb, 22, active)) { Err(qoi.Limit) => true, _ => false };
+  return test.assert_true(input && pixel_budget && bytes && exact && short);
+}
+
+function cancellation(): test.TestOutcome {
+  let data = stream(1, 4, 0, [192 as u8]);
+  let cancelled = match (qoi.decode(data, qoi.default_limits(), (): boolean => true)) { Err(qoi.Cancelled) => true, _ => false };
+  let count = cell_new(0);
+  let late = match (qoi.decode(data, qoi.default_limits(), (): boolean => {
+    count.set(count.get() + 1);
+    return count.get() > 2;
+  })) { Err(qoi.Cancelled) => true, _ => false };
+  let Ok(image) = pixels.create(1, 1, 3, pixels.RGB8, pixels.default_limits()) else {
+    return test.fail("cancellation source");
+  };
+  let encoded = match (qoi.encode(image, qoi.Srgb, 1000, (): boolean => true)) { Err(qoi.Cancelled) => true, _ => false };
+  return test.assert_true(cancelled && late && encoded);
+}
+
+function storage(): test.TestOutcome {
+  let Ok(image) = pixels.create(1, 1, 3, pixels.RGB8, pixels.default_limits()) else {
+    return test.fail("storage source");
+  };
+  let bad = pixels.Image { ...image, data: [] };
+  return test.assert_true(match (qoi.encode(bad, qoi.Srgb, 1000, active)) { Err(qoi.Storage) => true, _ => false });
+}
+
+function main(): i32 {
+  let r = test.new("QOI RGB8/RGBA8");
+  r = r.it("independent opcode vector", opcodes);
+  r = r.it("initial index, previous pixel and modular differences", initial);
+  r = r.it("channel and color-space declarations", metadata);
+  r = r.it("padded RGB/RGBA round trips and caller aliases", roundtrips);
+  r = r.it("run lengths through two maximum chunks", runs);
+  r = r.it("invalid headers and unsigned dimensions", headers);
+  r = r.it("malformed tokens, runs and termination", malformed);
+  r = r.it("every truncated prefix fails", prefixes);
+  r = r.it("input, pixel, output and exact encoded budgets", budgets);
+  r = r.it("early and late cancellation", cancellation);
+  r = r.it("forged public pixel storage", storage);
+  return r.finish();
+}

@@ -11779,7 +11779,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if unannotated {
 			c.beginLitNestedLocal(n, s)
+		}
+		// A recheck retains inferred Type fields, including unresolved maps.
+		if !n.WasAnnotated {
 			c.beginOpenEnumLocal(n, s)
+		}
+		if unannotated {
 			c.beginOpenGenericCall(n)
 		}
 	case *ast.Destructure:

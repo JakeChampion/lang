@@ -1,0 +1,323 @@
+import "../../pixels/pixels";
+import "core/cmp";
+
+@derive(cmp.Eq, cmp.Debug)
+pub enum QoiError { Signature, Truncated, Header, Dimensions, Limit, Storage, Pixels, EndMarker, Trailing, Cancelled }
+
+@derive(cmp.Eq, cmp.Debug)
+pub enum ColorSpace { Srgb, Linear }
+
+pub struct Limits { pixels: pixels.Limits, max_input_bytes: i32 }
+
+pub struct Header { layout: pixels.Layout, color_space: ColorSpace }
+
+pub struct Decoded { image: pixels.Image, color_space: ColorSpace }
+
+struct Cursor { at: i32, pixel: pixels.Pixel, index: u32[] }
+
+struct Chunk { cursor: Cursor, count: i32 }
+
+struct Encoder { bytes: u8[], previous: pixels.Pixel, index: u32[], run: i32 }
+
+pub function default_limits(): Limits {
+  return Limits { pixels: pixels.default_limits(), max_input_bytes: 16777216 };
+}
+
+function be32(input: [u8], at: i32): u32 {
+  return input[at] as u32 << 24 | input[at + 1] as u32 << 16 | input[at + 2] as u32 << 8 | input[at + 3] as u32;
+}
+
+function checked_layout(width: u32, height: u32, channels: i32, limits: pixels.Limits): Result[pixels.Layout, QoiError] {
+  if (width == 0 || height == 0 || width > 2147483647u32 || height > 2147483647u32) {
+    return Err(QoiError.Dimensions);
+  }
+  let Some(stride) = width as i32 *? channels else {
+    return Err(QoiError.Dimensions);
+  };
+  let format = if (channels == 3) { pixels.RGB8 } else { pixels.RGBA8 };
+  return match (pixels.checked_layout(width as i32, height as i32, stride, format, limits)) {
+    Ok(layout) => Ok(layout), Err(pixels.Limit) => Err(QoiError.Limit), Err(_) => Err(QoiError.Dimensions),
+  };
+}
+
+function signature(input: [u8]): boolean {
+  return input[0] == b'q' && input[1] == b'o' && input[2] == b'i' && input[3] == b'f';
+}
+
+// Inspect the header only. Decode validates the complete pixel stream.
+pub function inspect(input: [u8], limits: Limits): Result[Header, QoiError] {
+  if (limits.max_input_bytes <= 0 || input.len() > limits.max_input_bytes) {
+    return Err(QoiError.Limit);
+  }
+  if (input.len() < 14) {
+    return Err(QoiError.Truncated);
+  }
+  if (!signature(input)) {
+    return Err(QoiError.Signature);
+  }
+  let channels = input[12] as i32;
+  if (channels != 3 && channels != 4 || input[13] > 1) {
+    return Err(QoiError.Header);
+  }
+  let layout = checked_layout(be32(input, 4), be32(input, 8), channels, limits.pixels)?;
+  let color_space = if (input[13] == 0) { Srgb } else { Linear };
+  return Ok(Header { layout: layout, color_space: color_space });
+}
+
+function pack(p: pixels.Pixel): u32 {
+  return p.r as u32 << 24 | p.g as u32 << 16 | p.b as u32 << 8 | p.a as u32;
+}
+
+function unpack(p: u32): pixels.Pixel {
+  return pixels.Pixel { r: (p >> 24) as u8, g: (p >> 16) as u8, b: (p >> 8) as u8, a: p as u8 };
+}
+
+function hash(p: pixels.Pixel): i32 {
+  return (p.r as i32 * 3 + p.g as i32 * 5 + p.b as i32 * 7 + p.a as i32 * 11) % 64;
+}
+
+function empty_index(): u32[] {
+  let out: u32[] = [];
+  for _ in 0..64 {
+    out = out.append(0u32);
+  }
+  return out;
+}
+
+function initial_pixel(): pixels.Pixel {
+  return pixels.Pixel { r: 0, g: 0, b: 0, a: 255 };
+}
+
+function end_at(input: [u8]): Result[i32, QoiError] {
+  if (input.len() < 22) {
+    return Err(QoiError.Truncated);
+  }
+  let at = input.len() - 8;
+  for i in 0..7 {
+    if (input[at + i] != 0) {
+      return Err(QoiError.EndMarker);
+    }
+  }
+  if (input[at + 7] != 1) {
+    return Err(QoiError.EndMarker);
+  }
+  return Ok(at);
+}
+
+function difference(p: pixels.Pixel, dr: i32, dg: i32, db: i32): pixels.Pixel {
+  return pixels.Pixel { r: (p.r as i32 + dr) as u8, g: (p.g as i32 + dg) as u8, b: (p.b as i32 + db) as u8, a: p.a };
+}
+
+function literal(input: [u8], end: i32, tag: u8, own cursor: Cursor): Result[Cursor, QoiError] {
+  let n = if (tag == 254) { 3 } else { 4 };
+  if (end - cursor.at < n) {
+    return Err(QoiError.Truncated);
+  }
+  let at = cursor.at;
+  let alpha = if (n == 4) { input[at + 3] } else { cursor.pixel.a };
+  let p = pixels.Pixel { r: input[at], g: input[at + 1], b: input[at + 2], a: alpha };
+  return Ok(Cursor { ...cursor, at: at + n, pixel: p });
+}
+
+function next(input: [u8], end: i32, own cursor: Cursor): Result[Chunk, QoiError] {
+  if (cursor.at >= end) {
+    return Err(QoiError.Truncated);
+  }
+  let tag = input[cursor.at];
+  cursor = Cursor { ...cursor, at: cursor.at + 1 };
+  if (tag >= 254) {
+    return Ok(Chunk { cursor: literal(input, end, tag, cursor)?, count: 1 });
+  }
+  let kind = tag as i32 & 192;
+  if (kind == 192) {
+    return Ok(Chunk { cursor: cursor, count: (tag as i32 & 63) + 1 });
+  }
+  let p = cursor.pixel;
+  if (kind == 0) {
+    p = unpack(cursor.index[tag as i32]);
+  }
+  if (kind == 64) {
+    p = difference(p, (tag as i32 >> 4 & 3) - 2, (tag as i32 >> 2 & 3) - 2, (tag as i32 & 3) - 2);
+  }
+  if (kind == 128) {
+    if (cursor.at >= end) {
+      return Err(QoiError.Truncated);
+    }
+    let second = input[cursor.at] as i32;
+    let green = (tag as i32 & 63) - 32;
+    p = difference(p, green + (second >> 4) - 8, green, green + (second & 15) - 8);
+    cursor = Cursor { ...cursor, at: cursor.at + 1 };
+  }
+  return Ok(Chunk { cursor: Cursor { ...cursor, pixel: p }, count: 1 });
+}
+
+function store(own bytes: u8[], at: i32, n: i32, p: pixels.Pixel): u8[] {
+  bytes = bytes.with(at, p.r).with(at + 1, p.g).with(at + 2, p.b);
+  if (n == 4) {
+    bytes = bytes.with(at + 3, p.a);
+  }
+  return bytes;
+}
+
+pub function decode(input: [u8], limits: Limits, cancelled: () => boolean): Result[Decoded, QoiError] {
+  if (cancelled()) {
+    return Err(QoiError.Cancelled);
+  }
+  let header = inspect(input, limits)?;
+  let end = end_at(input)?;
+  let image = decode_pixels(input, header.layout, end, cancelled)?;
+  return Ok(Decoded { image: image, color_space: header.color_space });
+}
+
+function decode_pixels(input: [u8], layout: pixels.Layout, end: i32, cancelled: () => boolean): Result[pixels.Image, QoiError] {
+  let bytes = __alloc_u8(layout.bytes);
+  let n = pixels.channels(layout.format);
+  let total = layout.bytes / n;
+  let cursor = Cursor { at: 14, pixel: initial_pixel(), index: empty_index() };
+  let done = 0;
+  while (done < total) {
+    if (cancelled()) {
+      return Err(QoiError.Cancelled);
+    }
+    let chunk = next(input, end, cursor)?;
+    cursor = chunk.cursor;
+    if (chunk.count > total - done) {
+      return Err(QoiError.Pixels);
+    }
+    cursor = Cursor { ...cursor, index: cursor.index.with(hash(cursor.pixel), pack(cursor.pixel)) };
+    for _ in 0..chunk.count {
+      bytes = store(bytes, done * n, n, cursor.pixel);
+      done += 1;
+    }
+  }
+  if (cursor.at != end) {
+    return Err(QoiError.Trailing);
+  }
+  if (cancelled()) {
+    return Err(QoiError.Cancelled);
+  }
+  return Ok(pixels.Image { layout: layout, data: bytes });
+}
+
+function emit(own bytes: u8[], token: [u8], limit: i32): Result[u8[], QoiError] {
+  if (bytes.len() > limit - 8 - token.len()) {
+    return Err(QoiError.Limit);
+  }
+  for b in token {
+    bytes = bytes.append(b);
+  }
+  return Ok(bytes);
+}
+
+function flush(own state: Encoder, limit: i32): Result[Encoder, QoiError] {
+  if (state.run == 0) {
+    return Ok(state);
+  }
+  return Ok(Encoder { ...state, bytes: emit(state.bytes, [(192 | state.run - 1) as u8], limit)?, run: 0 });
+}
+
+function delta(a: u8, b: u8): i32 {
+  return (a as i32 - b as i32 + 128 & 255) - 128;
+}
+
+function in_range(n: i32, low: i32, high: i32): boolean {
+  return n >= low && n <= high;
+}
+
+function rgb_token(own bytes: u8[], p: pixels.Pixel, previous: pixels.Pixel, limit: i32): Result[u8[], QoiError] {
+  let dr = delta(p.r, previous.r);
+  let dg = delta(p.g, previous.g);
+  let db = delta(p.b, previous.b);
+  if (in_range(dr, -2, 1) && in_range(dg, -2, 1) && in_range(db, -2, 1)) {
+    return emit(bytes, [(64 | dr + 2 << 4 | dg + 2 << 2 | db + 2) as u8], limit);
+  }
+  let rg = dr - dg;
+  let bg = db - dg;
+  if (in_range(dg, -32, 31) && in_range(rg, -8, 7) && in_range(bg, -8, 7)) {
+    return emit(bytes, [(128 | dg + 32) as u8, (rg + 8 << 4 | bg + 8) as u8], limit);
+  }
+  return emit(bytes, [254 as u8, p.r, p.g, p.b], limit);
+}
+
+function encode_pixel(own state: Encoder, p: pixels.Pixel, limit: i32): Result[Encoder, QoiError] {
+  if (pack(p) == pack(state.previous)) {
+    state = Encoder { ...state, run: state.run + 1 };
+    if (state.run == 62) {
+      return flush(state, limit);
+    }
+    return Ok(state);
+  }
+  state = flush(state, limit)?;
+  let slot = hash(p);
+  let seen = state.index[slot];
+  let bytes = state.bytes;
+  if (seen == pack(p)) {
+    bytes = emit(bytes, [slot as u8], limit)?;
+  } else if (p.a != state.previous.a) {
+    bytes = emit(bytes, [255 as u8, p.r, p.g, p.b, p.a], limit)?;
+  } else {
+    bytes = rgb_token(bytes, p, state.previous, limit)?;
+  }
+  return Ok(Encoder { ...state, bytes: bytes, previous: p, index: state.index.with(slot, pack(p)) });
+}
+
+function source_layout(image: pixels.Image): Result[pixels.Layout, QoiError] {
+  let l = image.layout;
+  let limits = pixels.default_limits();
+  let checked = match (pixels.checked_layout(l.width, l.height, l.stride, l.format, limits)) {
+    Ok(value) => value, Err(_) => { return Err(QoiError.Storage); },
+  };
+  if (checked.bytes != l.bytes || image.data.len() != l.bytes) {
+    return Err(QoiError.Storage);
+  }
+  return Ok(checked);
+}
+
+function header_bytes(layout: pixels.Layout, color_space: ColorSpace): u8[] {
+  let w = layout.width as u32;
+  let h = layout.height as u32;
+  let c: u8 = match (color_space) { Srgb => 0, Linear => 1 };
+  return [
+    b'q', b'o', b'i', b'f', (w >> 24) as u8, (w >> 16) as u8, (w >> 8) as u8, w as u8,
+    (h >> 24) as u8, (h >> 16) as u8, (h >> 8) as u8, h as u8, pixels.channels(layout.format) as u8, c,
+  ];
+}
+
+pub function encode(image: pixels.Image, color_space: ColorSpace, max_bytes: i32, cancelled: () => boolean): Result[u8[], QoiError] {
+  if (cancelled()) {
+    return Err(QoiError.Cancelled);
+  }
+  if (max_bytes < 22) {
+    return Err(QoiError.Limit);
+  }
+  let l = source_layout(image)?;
+  let state = Encoder { bytes: header_bytes(l, color_space), previous: initial_pixel(), index: empty_index(), run: 0 };
+  state = encode_rows(state, image, max_bytes, cancelled)?;
+  state = flush(state, max_bytes)?;
+  let bytes = state.bytes;
+  for _ in 0..7 {
+    bytes = bytes.append(0);
+  }
+  bytes = bytes.append(1);
+  if (cancelled()) {
+    return Err(QoiError.Cancelled);
+  }
+  return Ok(bytes);
+}
+
+function encode_rows(own state: Encoder, image: pixels.Image, max_bytes: i32, cancelled: () => boolean): Result[Encoder, QoiError] {
+  let l = image.layout;
+  let n = pixels.channels(l.format);
+  for y in 0..l.height {
+    for x in 0..l.width {
+      if (cancelled()) {
+        return Err(QoiError.Cancelled);
+      }
+      let at = y * l.stride + x * n;
+      let alpha: u8 = if (n == 4) { image.data[at + 3] } else { 255 };
+      let p = pixels.Pixel { r: image.data[at], g: image.data[at + 1], b: image.data[at + 2], a: alpha };
+      state = encode_pixel(state, p, max_bytes)?;
+    }
+  }
+  return Ok(state);
+}
