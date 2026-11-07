@@ -58,6 +58,12 @@ server. The app shows the room buttons when its build names a server (see
 3. The phones find each other through the relay of the server. The code
    check and the talk button work as on a Wi-Fi network.
 
+When the connection is lost in a room, the phone stays in the room. It
+makes new keys with the other phone, and it sends no voice until the new
+session is secure. Two phones that know each other show no code again.
+While the phone waits in the room, the talk button shows TAP TO LEAVE ROOM.
+Tap it to leave the room.
+
 While the phone searches, the MODE button at the top right opens the
 settings. They choose the way to find the other phone:
 
@@ -282,11 +288,20 @@ because the phones seal it with the keys of their own exchange. A relay that
 changes the datagrams of the key exchange gives the two phones different
 codes. The users then see that the codes are not the same.
 
+A change of network can take more than 5 seconds. Then each phone loses the
+other and starts a new key exchange in the same room. A bye from the peer
+ends the session, and so does a code with no confirmation. Then the phone
+does not search again.
+
 `internet.fern` is the side of the app. It asks the server for a room over
 TLS. It puts the token in front of each datagram to the relay. In a room, the
 app takes a datagram only from the relay. So a phone on the same network
 cannot take the place of the peer. `internet_test.fern` runs two nodes in one
 room through the relay table, and one node moves to a new address.
+
+In a second test, both nodes lose the network for 6 seconds. They make new keys
+in the room, and no user confirms a code. The voice starts again only after
+a new press.
 
 The nightly build writes `server_host.fern` from the `WALKIE_SERVER`
 repository variable. Set the variable to the DNS name of the server, and the

@@ -742,12 +742,13 @@ function verify_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean)
   return s;
 }
 
-// The talk button: hold to talk, or tap to search again after the end.
+// The talk button: hold to talk, tap to search again after the end, or tap
+// to leave a room while the phone waits in it.
 function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
   let now: i64 = now_ms();
   let down: boolean = action == 0;
   if (down && screen.in_circle(screen.talk_button(w, h), x, y)) {
-    if (node.ended(s.node)) {
+    if (node.ended(s.node) || waiting_in_room(s)) {
       return restart(s);
     }
     return App { ...s, pressed: true, node: node.press(s.node, now) };
@@ -777,6 +778,21 @@ function sync_notice(s: App): App {
   return App { ...s, noticed: s.pressed };
 }
 
+function waiting_in_room(s: App): boolean {
+  if let lan.Searching = s.node.link.phase {
+    return s.room.is_some();
+  }
+  return false;
+}
+
+// The words of the talk button.
+function talk_label(s: App, now: i64): string {
+  if (waiting_in_room(s)) {
+    return "TAP TO LEAVE ROOM";
+  }
+  return node.button(s.node, now);
+}
+
 function restart(own s: App): App {
   node.close(s.node);
   return App { ...s, node: fresh_node("", s.id_seed, s.pins), pressed: false, drawn: "", room: None, entering: None };
@@ -787,7 +803,17 @@ function pump(s: App, now: i64): App {
   let t: App = receive_all(s, now);
   t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   t = speak(sync_mic(t, now));
-  return sync_notice(save_pins(flush(t)));
+  return sync_notice(save_pins(rejoin(flush(t), now)));
+}
+
+// In a room, a lost transport starts a new key exchange through the relay,
+// as when the network of a phone changes. Leaving the room needs a tap.
+function rejoin(own s: App, now: i64): App {
+  if (s.room.is_none() || !node.reconnecting(s.node)) {
+    return s;
+  }
+  log.info("walkie: reconnecting in the room");
+  return App { ...s, node: node.resume(s.node, node_id(), rand.bytes(node.SEED_BYTES), now), pressed: false, drawn: "" };
 }
 
 function receive_all(s: App, now: i64): App {
@@ -995,7 +1021,7 @@ function searching_text(s: App): string {
 
 function draw(s: App): App {
   let n: node.Node = s.node;
-  let label: string = node.button(n, now_ms());
+  let label: string = talk_label(s, now_ms());
   let key: string = status_text(s) + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s) + "|" + room_key(s) + "|" + mode_label(s) + s.menu.to_string() + "|" + server_label(s) + "|" + s.host_edit.unwrap_or("^");
   if (s.window == 0 as usize || key == s.drawn) {
     return s;

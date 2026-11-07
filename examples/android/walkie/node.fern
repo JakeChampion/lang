@@ -145,6 +145,26 @@ pub function ended(n: Node): boolean {
   }
 }
 
+// The transport was lost, and the peer did not leave.
+pub function reconnecting(n: Node): boolean {
+  if let session.Reconnecting = n.sess.state {
+    return true;
+  }
+  return false;
+}
+
+// A new node with ID `me` for a new key exchange with the same peer, after
+// the transport was lost. It keeps this phone's identity and the phones that
+// it knows, so two phones that know each other compare no string again. It
+// sends no voice until the new session is up.
+pub function resume(own n: Node, me: i64, own seed: u8[], now: i64): Node {
+  let identity = n.identity;
+  let pins = n.pins;
+  let notice = "reconnecting: " + n.notice;
+  close(n);
+  return Node { ...new(me, seed, now), identity: identity, pins: pins, notice: notice };
+}
+
 // The `len` bytes of `b` from index `at`.
 function part(b: [u8], at: i32, len: i32): u8[] {
   let out: u8[] = [];
