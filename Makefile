@@ -148,6 +148,7 @@ ci-selftest:
 	python3 scripts/gen-large-push-wide-machine-reference.py --check
 	python3 scripts/gen-large-free-wide-classes.py --check
 	python3 -m unittest discover -s scripts -p test_large_free_wide_classes.py
+	python3 -B -m unittest discover -s scripts -p test_native_pair_bench.py
 	python3 -m unittest discover -s scripts -p test_large_push_wide_machine.py
 
 # Report the live state of the native-convergence freeze preconditions,
