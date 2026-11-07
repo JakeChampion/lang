@@ -765,8 +765,18 @@ pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
   return refs;
 }
 
+// main and each `@interrupt` handler, which the vector table calls.
+pub function entry_roots(mod: parser.Module): string[] {
+  let roots = ["main"];
+  for m in parser.marked(mod, "interrupt") {
+    roots = roots.append(m.func_name);
+  }
+  return roots;
+}
+
 pub function treeshake(mod: parser.Module): parser.Module {
-  return treeshake_roots(mod, ["main"]);
+  let roots = entry_roots(mod);
+  return treeshake_roots(mod, roots);
 }
 
 pub function treeshake_roots(mod: parser.Module, own roots: string[]): parser.Module {

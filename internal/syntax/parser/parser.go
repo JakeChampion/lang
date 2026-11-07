@@ -334,6 +334,7 @@ func (p *parser) parseProgram() *ast.Program {
 		attrName := ""
 		provides := ""
 		noRC := false
+		interrupt := ""
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -357,6 +358,7 @@ func (p *parser) parseProgram() *ast.Program {
 			attrName = attr.name
 			provides = attr.provides
 			noRC = attr.noRC
+			interrupt = attr.interrupt
 		}
 		isPub := false
 		isPackage := false
@@ -628,7 +630,8 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.Async = isAsync
 			fn.InlineHint = inlineHint
 			fn.Provides = provides
-			fn.NoRC = noRC
+			fn.NoRC = noRC || interrupt != ""
+			fn.Interrupt = interrupt
 			if importIface != "" {
 				if fn.Body != nil {
 					attr := "@import"
@@ -1139,6 +1142,7 @@ type declAttr struct {
 	inlineHint  ast.InlineHint
 	provides    string
 	noRC        bool
+	interrupt   string
 }
 
 func (p *parser) parseAttribute() (declAttr, error) {
@@ -1208,8 +1212,14 @@ func (p *parser) parseAttribute() (declAttr, error) {
 			return declAttr{}, err
 		}
 		return declAttr{name: attr, provides: capability}, nil
+	case "interrupt":
+		slot, err := p.parseStringArg()
+		if err != nil {
+			return declAttr{}, err
+		}
+		return declAttr{name: attr, interrupt: slot}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
@@ -1243,8 +1253,8 @@ func attrMisplaced(name string) string {
 		return "@callback only applies to a function declaration"
 	case "provide":
 		return "@provide only applies to a function declaration"
-	case "norc":
-		return "@norc only applies to a function declaration"
+	case "norc", "interrupt":
+		return "@" + name + " only applies to a function declaration"
 	}
 	return "@inline / @noinline only applies to a function declaration"
 }

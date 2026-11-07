@@ -8,6 +8,7 @@ import "./arm64_native";
 import "./checker";
 import "./util";
 import "./sysreg";
+import "./norc";
 import "./ir";
 import "./irtables";
 import "./irverifygate";
@@ -6981,6 +6982,9 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x10, __fern_boot_info\n    str x0, [x10, :lo12:__fern_boot_info]\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
   s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
+  if (s.interrupts.len() > 0) {
+    s = s.write("    adrp x9, __fern_vectors\n    add x9, x9, :lo12:__fern_vectors\n    msr vbar_el1, x9\n    isb\n");
+  }
   s = s.write("    adrp x0, __fern_bss_start\n    add x0, x0, :lo12:__fern_bss_start\n");
   s = s.write("    adrp x1, __fern_bss_end\n    add x1, x1, :lo12:__fern_bss_end\n");
   s = s.write(".Lreset_clear:\n    cmp x0, x1\n    b.hs .Lreset_cleared\n    str xzr, [x0], #8\n    b .Lreset_clear\n.Lreset_cleared:\n");
@@ -6988,7 +6992,60 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x0, x1, #15\n    and x0, x0, #-16\n");
   s = s.write(mov_imm64("x1", top - reset_stack_bytes()) + "    sub x1, x1, x0\n    bl __fern_heap_init\n");
   s = s.write("    bl __fn_main\n.Lreset_park:\n    wfe\n    b .Lreset_park\n");
+  return emit_vectors(s);
+}
+
+// The VBAR_EL1 table has 16 slots of 128 bytes. Slots 4 to 7 take an exception
+// at the current level with SP_ELx, and go to the trampoline of their handler.
+// Every other slot parks the core.
+function emit_vectors(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.interrupts.len() == 0) {
+    return s;
+  }
+  s = s.write("    .p2align 11\n__fern_vectors:\n");
+  for i in 0..16 {
+    s = s.write("    .p2align 7\n    b " + vector_target(s.interrupts, i) + "\n");
+  }
+  s = s.write(".Lvector_park:\n    wfe\n    b .Lvector_park\n");
+  for entry in s.interrupts {
+    let parts = util.split_char(entry, b' ');
+    s = emit_vector_trampoline(s, parts[0], parts[1]);
+  }
   return s;
+}
+
+function vector_target(interrupts: string[], slot: i32): string {
+  for entry in interrupts {
+    let parts = util.split_char(entry, b' ');
+    if (4 + util.index_of_str(norc.interrupt_slots(), parts[0]) == slot) {
+      return "__fern_vector_" + parts[0];
+    }
+  }
+  return ".Lvector_park";
+}
+
+// The trampoline saves the registers that a call can change: x0 to x18, x29,
+// x30, FPSR, and q0 to q7 and q16 to q31. Then it calls the handler, restores
+// them and returns with eret.
+function emit_vector_trampoline(s: asmcore.EmitState, slot: string, handler: string): asmcore.EmitState {
+  s = s.write("__fern_vector_" + slot + ":\n    sub sp, sp, #576\n");
+  s = s.write(vector_pairs("stp") + "    str x30, [sp, #160]\n    mrs x9, fpsr\n    str x9, [sp, #168]\n");
+  s = s.write("    bl " + handler + "\n");
+  s = s.write("    ldr x9, [sp, #168]\n    msr fpsr, x9\n    ldr x30, [sp, #160]\n" + vector_pairs("ldp"));
+  return s.write("    add sp, sp, #576\n    eret\n");
+}
+
+function vector_pairs(op: string): string {
+  let out = "";
+  for i in 0..9 {
+    out = out + "    " + op + " x" + util.i32_to_string(2 * i) + ", x" + util.i32_to_string(2 * i + 1) + ", [sp, #" + util.i32_to_string(16 * i) + "]\n";
+  }
+  out = out + "    " + op + " x18, x29, [sp, #144]\n";
+  let q = [0, 2, 4, 6, 16, 18, 20, 22, 24, 26, 28, 30];
+  for k in 0..q.len() {
+    out = out + "    " + op + " q" + util.i32_to_string(q[k]) + ", q" + util.i32_to_string(q[k] + 1) + ", [sp, #" + util.i32_to_string(176 + 32 * k) + "]\n";
+  }
+  return out;
 }
 
 function reset_table_name(level: i32, address: i64): string {

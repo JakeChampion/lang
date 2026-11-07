@@ -1963,6 +1963,8 @@ type FuncDecl struct {
 	Provides string
 	// NoRC is @norc: the function allocates nothing and does no RC operation.
 	NoRC bool
+	// Interrupt is the vector slot that @interrupt("irq") names. It implies NoRC.
+	Interrupt string
 	// @jni(JNIClass, JNIDecl): the Java class and the Java declaration of
 	// the JNI method that this function implements.
 	JNIClass                 string

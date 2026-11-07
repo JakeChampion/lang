@@ -1,13 +1,77 @@
 import "./ast";
 import "./parser";
 import "./util";
+import "./sysreg";
 
 // A `@norc` function allocates nothing and does no RC operation, so it can run
 // before the heap exists, in the top half of an interrupt handler, or on DMA
 // memory. Every value in it is a scalar, and it calls only `@norc` functions
 // and the raw memory intrinsics. The checker reports each breach as E102.
+// `@interrupt` implies `@norc`, and E103 reports a handler of the wrong shape.
 
-struct Ctx { fname: string, module: string, callable: string[] }
+struct Ctx { attr: string, fname: string, module: string, callable: string[] }
+
+// The marks that the `@norc` rule checks: each `@norc` and `@interrupt`.
+pub function marks(mod: parser.Module): parser.FuncMark[] {
+  let out: parser.FuncMark[] = [];
+  for m in mod.marks {
+    if (m.attr == "norc" || m.attr == "interrupt") {
+      out = out.append(m);
+    }
+  }
+  return out;
+}
+
+// The exception slots of the arm64 vector table that a handler can take, for
+// the current exception level with SP_ELx.
+pub function interrupt_slots(): string[] {
+  return ["sync", "irq", "fiq", "serror"];
+}
+
+function handler_text(m: parser.FuncMark): string {
+  return "`@interrupt` function \"" + util.mangled_name(m.func_name) + "\" ";
+}
+
+// E103: a handler takes no parameters and returns void, and each slot has at
+// most one handler.
+pub function interrupt_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let seen: string[] = [];
+  for m in parser.marked(mod, "interrupt") {
+    let module = util.mangled_module(m.func_name);
+    let what = handler_text(m);
+    if (!util.has_str(interrupt_slots(), m.arg)) {
+      out = out.append(util.violation_diag("E103", what + "names the slot \"" + m.arg + "\", but the slots are \"sync\", \"irq\", \"fiq\" and \"serror\"", module, m.line, m.col));
+    } else if (util.has_str(seen, m.arg)) {
+      out = out.append(util.violation_diag("E103", what + "takes the slot \"" + m.arg + "\", which another handler already takes", module, m.line, m.col));
+    }
+    seen = seen.append(m.arg);
+    out = util.append_diags(out, interrupt_shape(mod, m, what, module));
+  }
+  return out;
+}
+
+// E103: only arm64-kernel has a vector table.
+pub function interrupt_target_diags(mod: parser.Module, target: string): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (target == "arm64-kernel") {
+    return out;
+  }
+  for m in parser.marked(mod, "interrupt") {
+    out = out.append(util.violation_diag("E103", handler_text(m) + "needs a vector table, and only -target arm64-kernel has one", util.mangled_module(m.func_name), m.line, m.col));
+  }
+  return out;
+}
+
+function interrupt_shape(mod: parser.Module, m: parser.FuncMark, what: string, module: string): util.Diag[] {
+  let out: util.Diag[] = [];
+  for fd in mod.funcs {
+    if (fd.name == m.func_name && (fd.params.len() > 0 || fd.ret_type != "void")) {
+      out = out.append(util.violation_diag("E103", what + "must take no parameters and return void", module, m.line, m.col));
+    }
+  }
+  return out;
+}
 
 pub function scalar(ty: string): boolean {
   return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "f32", "f64", "boolean", "char"], ty);
@@ -26,18 +90,18 @@ pub function intrinsics(): string[] {
 // `mod` is annotated, so each identifier and call carries its type.
 pub function diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
-  let marks = parser.marked(mod, "norc");
-  if (marks.len() == 0) {
+  let rule = marks(mod);
+  if (rule.len() == 0) {
     return out;
   }
   let callable = intrinsics();
-  for m in marks {
+  for m in rule {
     callable = callable.append(m.func_name);
   }
-  for m in marks {
+  for m in rule {
     for fd in mod.funcs {
       if (fd.name == m.func_name) {
-        out = check_function(fd, Ctx { fname: util.mangled_name(fd.name), module: util.mangled_module(fd.name), callable: callable }, m, out);
+        out = check_function(fd, Ctx { attr: m.attr, fname: util.mangled_name(fd.name), module: util.mangled_module(fd.name), callable: callable }, m, out);
       }
     }
   }
@@ -45,7 +109,7 @@ pub function diags(mod: parser.Module): util.Diag[] {
 }
 
 function bad(cx: Ctx, what: string, line: i32, col: i32, own out: util.Diag[]): util.Diag[] {
-  return out.append(util.violation_diag("E102", "`@norc` function \"" + cx.fname + "\" " + what, cx.module, line, col));
+  return out.append(util.violation_diag("E102", "`@" + cx.attr + "` function \"" + cx.fname + "\" " + what, cx.module, line, col));
 }
 
 function check_function(fd: parser.FuncDecl, cx: Ctx, m: parser.FuncMark, own out: util.Diag[]): util.Diag[] {
@@ -175,10 +239,21 @@ function check_call(c: ast.ExprCall, cx: Ctx, own out: util.Diag[]): util.Diag[]
       return bad(cx, "may not call a method or a function value", c.line, c.col, out);
     }
   }
-  for a in c.args {
-    out = check_expr(a, cx, out);
+  for i in register_args(c)..c.args.len() {
+    out = check_expr(c.args[i], cx, out);
   }
   return out;
+}
+
+// The register of a system-register intrinsic is a literal that the
+// instruction encodes, so it is no heap value.
+function register_args(c: ast.ExprCall): i32 {
+  if let ast.ExprIdent(id) = c.callee {
+    if (sysreg.intrinsic(id.name)) {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 function form(e: ast.Expr): string {
