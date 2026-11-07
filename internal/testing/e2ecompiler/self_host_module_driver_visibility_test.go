@@ -74,3 +74,57 @@ function main(): i32 {
 		})
 	}
 }
+
+func TestSelfHostModuleDriversMethodVisibility(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("module drivers run natively")
+	}
+	build := t.TempDir()
+	copySelfHostDriver(t, build, "drivers/checker_modload_run.fern")
+	checker := buildSelfHostBin(t, gcc, build, "drivers/checker_modload_run.fern", "checker")
+	const owner = "[package]\nname = \"app\"\n"
+	const lib = `pub(package) function (n: i32) helper(): i32 { return n; }
+function (n: i32) private(): i32 { return n; }
+`
+	for _, tc := range []struct {
+		name, method, refused string
+		manifest, nested      bool
+	}{
+		{name: "package_manifest", method: "helper", manifest: true},
+		{name: "package_nested_manifest", method: "helper", manifest: true, nested: true, refused: `"helper" is declared without ` + "`pub`"},
+		{name: "package_directory_fallback", method: "helper", refused: `"helper" is declared without ` + "`pub`"},
+		{name: "private_same_package", method: "private", manifest: true, refused: `"private" is declared without ` + "`pub`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name, source string) {
+				path := filepath.Join(dir, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.manifest {
+				write("fern.toml", owner)
+			}
+			if tc.nested {
+				write("sub/fern.toml", owner)
+			}
+			write("sub/x.fern", lib)
+			write("main.fern", "import \"./sub/x\";\nfunction main(): i32 { return 42."+tc.method+"(); }\n")
+			out, err := exec.Command(checker, filepath.Join(dir, "main.fern")).CombinedOutput()
+			if tc.refused == "" {
+				if err != nil || len(out) != 0 {
+					t.Fatalf("checker: %v\n%s", err, out)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(string(out), tc.refused) {
+				t.Fatalf("checker must refuse with %q: %v\n%s", tc.refused, err, out)
+			}
+		})
+	}
+}

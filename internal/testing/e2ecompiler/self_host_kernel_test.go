@@ -89,6 +89,7 @@ function main(): i32 {
     i += 1;
   }
   print("hello from fern, total " + xs.len().to_string());
+  print("boot info " + (__boot_info() as i64).to_string());
   match (fdt.parse(board.device_tree())) {
     Ok(t) => {
       let line = describe(t);
@@ -189,7 +190,8 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 			if err != nil {
 				t.Fatalf("qemu: %v; console:\n%s", err, console)
 			}
-			for _, want := range []string{"hello from fern, total 10\n", "uart 150994944 psci hvc\n"} {
+			// qemu-virt passes no boot argument in x0 to an ELF image.
+			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "uart 150994944 psci hvc\n"} {
 				if !strings.Contains(string(console), want) {
 					t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 				}
@@ -200,8 +202,9 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 
 const privilegedSrc = `function main(): i32 {
   __wfi();
+  let boot = __boot_info() as i64;
   unsafe {
-    let a = __hvc(0x84000000i64, 1i64, 2i64, 3i64);
+    let a = __hvc(0x84000000i64, boot, 2i64, 3i64);
     let b = __smc(0x84000000i64, a, 0i64, 0i64);
     return b as i32;
   }
@@ -226,7 +229,10 @@ func TestSelfHostKernelPrivilegedOps(t *testing.T) {
 	}
 	text := string(asm)
 	last := 0
-	for _, want := range []string{"    wfi\n", "    ldr x3, [sp], #16\n", "    ldr x0, [sp], #16\n    hvc #0\n", "    ldr x0, [sp], #16\n    smc #0\n"} {
+	if !strings.Contains(text, "    cbnz x9, .Lreset_park\n    adrp x10, __fern_boot_info\n    str x0, [x10, :lo12:__fern_boot_info]\n") {
+		t.Error("the boot core's reset entry does not save x0 for __boot_info")
+	}
+	for _, want := range []string{"    wfi\n", "    ldr x0, [x0, :lo12:__fern_boot_info]\n", "    ldr x3, [sp], #16\n", "    ldr x0, [sp], #16\n    hvc #0\n", "    ldr x0, [sp], #16\n    smc #0\n"} {
 		i := strings.Index(text[last:], want)
 		if i < 0 {
 			t.Fatalf("no %q after offset %d in:\n%s", want, last, text)
@@ -371,7 +377,7 @@ func TestSelfHostKernelPrivilegedOpsNeedAKernel(t *testing.T) {
 	} {
 		target := c.target
 		msg, err := cli.compileCmd(target, filepath.Join(dir, "out-"+target), src, c.extra...).CombinedOutput()
-		for _, op := range []string{"__wfi", "__hvc", "__smc"} {
+		for _, op := range []string{"__wfi", "__hvc", "__smc", "__boot_info"} {
 			if err == nil || !strings.Contains(string(msg), "E066") || !strings.Contains(string(msg), op) {
 				t.Errorf("%s: err %v; want E066 naming %s in:\n%s", target, err, op, msg)
 			}

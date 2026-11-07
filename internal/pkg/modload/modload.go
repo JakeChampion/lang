@@ -898,6 +898,16 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 				ed.VisibleFrom = privateViewers
 			}
 		}
+		for _, fn := range mod.prog.Funcs {
+			if fn.Receiver == nil || fn.ImplTrait != "" || fn.Public {
+				continue
+			}
+			if fn.PackageScoped {
+				fn.VisibleFrom = packageViewers
+			} else {
+				fn.VisibleFrom = privateViewers
+			}
+		}
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)

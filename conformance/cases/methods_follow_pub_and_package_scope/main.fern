@@ -1,0 +1,11 @@
+// A `pub` method is visible to every importer, a `pub(package)` one to the
+// modules of its package, and one without `pub` only to its own module,
+// which can call it from its public methods.
+import "./lib";
+import "std/i32";
+
+function main(): i32 {
+    print(4.everyone().to_string());
+    print(4.sibling().to_string());
+    return 0;
+}

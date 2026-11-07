@@ -58,6 +58,7 @@ var stdModuleReach = map[string]string{
 	"std/ndarray":       "",
 	"std/num":           "",
 	"std/option":        "",
+	"std/pvh":           "",
 	"std/ordmap":        "",
 	"std/ordset":        "",
 	"std/number_parse":  "",

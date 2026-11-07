@@ -1,0 +1,1 @@
+no method "whisper" on i32 — "whisper" is declared without `pub` in module "lib", so only that module can call it
