@@ -122,6 +122,9 @@ function wave_pcm(): test.TestOutcome {
       let Ok(bytes) = wav.encode(samples, format, pcm.default_limits()) else {
         return test.fail("WAVE encode");
       };
+      if (cc == 8 && (wire.le(bytes, 20, 2) != 65534u64 || wire.le(bytes, 40, 4) != 1599u64)) {
+        return test.fail("WAVE multichannel layout");
+      }
       let Ok(decoded) = wav.decode(bytes, pcm.default_limits()) else {
         return test.fail("WAVE decode");
       };
@@ -259,6 +262,12 @@ function wave_extensible(): test.TestOutcome {
     Err(pcm.Header) => {},
     _ => {
       return test.fail("channel mask");
+    }
+  }
+  match (wav.decode(bytes.with(50, 6), pcm.default_limits())) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("custom channel layout");
     }
   }
   return test.assert_true(true);

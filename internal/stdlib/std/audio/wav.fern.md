@@ -6,7 +6,8 @@ Eight-bit WAVE samples are unsigned on disk. The API converts them to signed PCM
 `inspect` validates chunk bounds and format fields without sample allocation.
 `decode_range` reads a frame range. `decode` reads the complete data chunk.
 
-The encoder writes canonical PCM WAVE. Float, compressed WAVE, RIFX, and RF64 return `Unsupported`.
+The encoder writes PCM WAVE with standard channel masks for multichannel audio.
+Custom channel masks return `Unsupported`. Float, compressed WAVE, RIFX, and RF64 return `Unsupported`.
 
 ```fern
 <<*>>=
@@ -16,12 +17,17 @@ import "std/audio/wire";
 
 pub struct Header { format: pcm.Format, frames: i32, data_offset: i32, data_bytes: i32 }
 
+const CHANNEL_MASK: u64[] = [0u64, 4u64, 3u64, 7u64, 51u64, 55u64, 63u64, 1807u64, 1599u64];
+
 function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.AudioError] {
   if (size < 16) {
     return Err(pcm.Header);
   }
   let kind = wire.le(input, at, 2) as i32;
   let channels = wire.le(input, at + 2, 2) as i32;
+  if (channels < 1 || channels > 8) {
+    return Err(pcm.Header);
+  }
   let rate = wire.le(input, at + 4, 4);
   let byte_rate = wire.le(input, at + 8, 4);
   let align = wire.le(input, at + 12, 2) as i32;
@@ -51,6 +57,9 @@ function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.A
       }
       if (count != channels) {
         return Err(pcm.Header);
+      }
+      if (mask != CHANNEL_MASK[channels]) {
+        return Err(pcm.Unsupported);
       }
     }
   } else if (kind != 1) {
@@ -168,21 +177,28 @@ pub function encode(samples: [i32], format: pcm.Format, limits: pcm.Limits): Res
     return Err(pcm.Unsupported);
   }
   let size = samples.len() as i64 * ((bits / 8) as i64);
-  let total = 44i64 + size + size % 2i64;
+  let extensible = format.channels > 2;
+  let total = (if (extensible) { 68i64 } else { 44i64 }) + size + size % 2i64;
   if (limits.max_input_bytes < 0 || total > limits.max_input_bytes as i64 || total > 2147483647i64) {
     return Err(pcm.Limit);
   }
   let out: u8[] = [82, 73, 70, 70];
   out = wire.put_le(out, (total - 8i64) as u64, 4);
   out = out.concat([87 as u8, 65 as u8, 86 as u8, 69 as u8, 102 as u8, 109 as u8, 116 as u8, 32 as u8]);
-  out = wire.put_le(out, 16u64, 4);
-  out = wire.put_le(out, 1u64, 2);
+  out = wire.put_le(out, if (extensible) { 40u64 } else { 16u64 }, 4);
+  out = wire.put_le(out, if (extensible) { 65534u64 } else { 1u64 }, 2);
   out = wire.put_le(out, format.channels as u64, 2);
   out = wire.put_le(out, format.sample_rate as u64, 4);
   let stride = format.channels * (bits / 8);
   out = wire.put_le(out, format.sample_rate as u64 * (stride as u64), 4);
   out = wire.put_le(out, stride as u64, 2);
   out = wire.put_le(out, bits as u64, 2);
+  if (extensible) {
+    out = wire.put_le(out, 22u64, 2);
+    out = wire.put_le(out, bits as u64, 2);
+    out = wire.put_le(out, CHANNEL_MASK[format.channels], 4);
+    out = out.concat([1 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 16 as u8, 0 as u8, 128 as u8, 0 as u8, 0 as u8, 170 as u8, 0 as u8, 56 as u8, 155 as u8, 113 as u8]);
+  }
   out = out.concat([100 as u8, 97 as u8, 116 as u8, 97 as u8]);
   out = wire.put_le(out, size as u64, 4);
   for s in samples {

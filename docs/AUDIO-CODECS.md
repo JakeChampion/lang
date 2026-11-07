@@ -7,7 +7,7 @@ The Opus packet API reuses the Fern CELT implementation.
 
 | Format | Decode | Encode | Current scope |
 | --- | --- | --- | --- |
-| WAVE | Yes | Yes | Integer PCM, 8/16/24/32 bits, one through eight channels. Decode also accepts extensible PCM with matching valid and container depths. |
+| WAVE | Yes | Yes | Integer PCM, 8/16/24/32 bits, one through eight channels. Extensible PCM uses standard channel masks and matching valid and container depths. |
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | Opus | Partial | Partial | Standard CELT-only packets. The encoder uses 48 kHz fullband mono or stereo. The decoder accepts all CELT bandwidths and Opus output rates. |
@@ -35,6 +35,7 @@ function convert(input: [u8]): Result[u8[], pcm.AudioError] {
 
 `examples/audio-convert.fern` converts WAVE, native FLAC, or QOA input to WAVE or QOA output.
 QOA output requires 16-bit input. The example does not discard precision to meet that requirement.
+The example does not preserve container tags or custom channel layout metadata.
 The convenience example uses the default allocation limits. It does not implement a complete player.
 
 ```sh
