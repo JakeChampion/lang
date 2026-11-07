@@ -50,8 +50,8 @@ function crc(input: [u8], wide: boolean): i32 {
   return c;
 }
 
-// STREAMINFO validation and metadata traversal enforce the native FLAC grammar.
 // fern-lint: allow cyclomatic-complexity
+// One check per field of the stream header and its metadata blocks.
 pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (input.len() < 8) {
@@ -161,8 +161,8 @@ function unary(input: [u8], own b: Bits, max: u64): (Bits, u64) {
   return (b, 0u64);
 }
 
-// The variable-length frame number grammar checks continuation and overlong encodings.
 // fern-lint: allow cyclomatic-complexity
+// One arm per length of the UTF-8 coded frame number.
 function number(input: [u8], own b: Bits, variable: boolean): Result[(Bits, u64), pcm.AudioError] {
   let (next, first) = read(input, b, 8);
   b = next;
@@ -200,8 +200,8 @@ function number(input: [u8], own b: Bits, variable: boolean): Result[(Bits, u64)
   return Ok((b, value));
 }
 
-// Frame headers contain conditional block-size and sample-rate fields before the CRC.
 // fern-lint: allow cyclomatic-complexity
+// One check per field of the frame header, in the order of the specification.
 function header(input: [u8], at: i32, stream: Header, limits: pcm.Limits): Result[FrameHeader, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (!pcm.valid(stream.format) || stream.format.bits_per_sample < 4 || stream.max_block < 1 || stream.max_block > 65535 || at < 0 || at > input.len()) {
@@ -267,8 +267,8 @@ function fits(value: i64, bits: i32): boolean {
   return value >= -bound && value < bound;
 }
 
-// Rice partitions share the bit cursor and predictor-dependent output range.
 // fern-lint: allow cyclomatic-complexity
+// One branch per partition form: escaped and Rice coded.
 function residuals(input: [u8], own b: Bits, own samples: i64[], order: i32): Result[(Bits, i64[]), pcm.AudioError] {
   let (b1, method) = read(input, b, 2);
   let (b2, partition) = read(input, b1, 4);
@@ -317,8 +317,8 @@ function residuals(input: [u8], own b: Bits, own samples: i64[], order: i32): Re
   return Ok((b, samples));
 }
 
-// Subframe reconstruction keeps wasted bits, predictor history, and residuals together.
 // fern-lint: allow cyclomatic-complexity
+// One arm per subframe type and predictor order.
 function subframe(input: [u8], own b: Bits, count: i32, bits: i32): Result[(Bits, i64[]), pcm.AudioError] {
   let (b1, tag) = read(input, b, 8);
   b = b1;
@@ -422,8 +422,8 @@ function subframe(input: [u8], own b: Bits, count: i32, bits: i32): Result[(Bits
   return Ok((b, samples));
 }
 
-// Frame traversal couples channel reconstruction, alignment, and the frame CRC.
 // fern-lint: allow cyclomatic-complexity
+// One arm per channel assignment, and one check per sample.
 pub function decode_frame_into(input: [u8], at: i32, stream: Header, own output: i32[], limits: pcm.Limits): Result[Frame, pcm.AudioError] {
   let h = header(input, at, stream, limits)?;
   let cc = stream.format.channels;
@@ -480,8 +480,8 @@ pub function decode_frame(input: [u8], at: i32, stream: Header, limits: pcm.Limi
   return decode_frame_into(input, at, stream, pcm.zeros(h.frames * stream.format.channels), limits);
 }
 
-// Stream traversal checks sequence, cumulative limits, total samples, and the digest.
 // fern-lint: allow cyclomatic-complexity
+// One check per frame number, block size and limit in the frame loop.
 pub function decode(input: [u8], limits: pcm.Limits): Result[pcm.Block, pcm.AudioError] {
   let stream = inspect(input, limits)?;
   let cc = stream.format.channels;
