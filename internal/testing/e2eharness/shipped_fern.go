@@ -20,7 +20,6 @@ func ShippedFern(t testing.TB) string {
 	if host == "" {
 		t.Skip("no self-host target runs natively on this host")
 	}
-	compiler := SelfHostCLI(t)
 	shippedFernOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "fern-shipped-")
 		if err != nil {
@@ -32,15 +31,7 @@ func ShippedFern(t testing.TB) string {
 			shippedFernErr = "fern-embed-stage: " + err.Error() + "\n" + string(out)
 			return
 		}
-		bin := filepath.Join(dir, "fern")
-		cmd := exec.Command(compiler, "-target", host, "-embed", stage, "-o", bin,
-			RepoPath("compiler", "fern_main.fern"), SelfHostStdlibRoot(t))
-		cmd.Env = ChildEnv()
-		if out, err := cmd.CombinedOutput(); err != nil {
-			shippedFernErr = "build fern_main.fern: " + err.Error() + "\n" + string(out)
-			return
-		}
-		shippedFernPath = bin
+		shippedFernPath = CachedCLIBuild(t, CLIBuild{Target: host, Dir: RepoPath("compiler"), Entry: "fern_main.fern", Embed: stage})
 	})
 	if shippedFernErr != "" {
 		t.Fatal(shippedFernErr)

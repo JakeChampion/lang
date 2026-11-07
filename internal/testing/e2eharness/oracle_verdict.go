@@ -21,31 +21,50 @@ import (
 
 const fernModulePath = "github.com/jakechampion/lang"
 
-// InterpVerdict runs `interpBin -interp src` and returns its stdout and exit
-// status. FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the Go
-// interpreter's source and embedded files, the suite's relative import closure,
-// and the FERN_* environment. It excludes the compiler package's embedded
-// self-host sources, which -interp does not read.
+// InterpVerdict runs `oracle -interp src` and returns its stdout and exit
+// status, through the verdict cache of oracleVerdict.
+func InterpVerdict(t testing.TB, oracle, src string) ([]byte, int) {
+	t.Helper()
+	return oracleVerdict(t, oracle, "-interp", src, false)
+}
+
+// CheckVerdict runs `oracle -check src` and returns its combined stdout and
+// stderr and its exit status, through the verdict cache of oracleVerdict.
+func CheckVerdict(t testing.TB, oracle, src string) ([]byte, int) {
+	t.Helper()
+	return oracleVerdict(t, oracle, "-check", src, true)
+}
+
+// oracleVerdict runs the Go oracle with one mode flag on src.
+// FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the oracle's Go
+// source and embedded files, the source's relative import closure, and the
+// FERN_* environment. It excludes the compiler package's embedded self-host
+// sources, which -interp and -check do not read.
 // FERN_BIN suites also run an external executable. Run them
 // without the verdict cache because that executable can change at the same path.
-func InterpVerdict(t testing.TB, interpBin, src string) ([]byte, int) {
+func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byte, int) {
 	t.Helper()
 	var key string
 	if os.Getenv("FERN_BIN") == "" {
 		var err error
-		key, err = interpVerdictKey(src)
+		key, err = oracleVerdictKey(flag, combined, src)
 		if err != nil {
-			t.Fatalf("interpreter verdict key for %s: %v", src, err)
+			t.Fatalf("oracle verdict key for %s %s: %v", flag, src, err)
 		}
-		if out, exit, ok := readInterpVerdict(key); ok {
+		if out, exit, ok := readOracleVerdict(key); ok {
 			return out, exit
 		}
 	}
 	var out []byte
 	exit := 0
 	err := WithBuildMemoryMB(1024, func() error {
+		cmd := exec.Command(oracle, flag, src)
 		var runErr error
-		out, runErr = exec.Command(interpBin, "-interp", src).Output()
+		if combined {
+			out, runErr = cmd.CombinedOutput()
+		} else {
+			out, runErr = cmd.Output()
+		}
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			exit = ee.ExitCode()
@@ -54,16 +73,16 @@ func InterpVerdict(t testing.TB, interpBin, src string) ([]byte, int) {
 		return runErr
 	})
 	if err != nil {
-		t.Fatalf("interpreter on %s: %v", src, err)
+		t.Fatalf("oracle %s on %s: %v", flag, src, err)
 	}
 	if key != "" {
-		writeInterpVerdict(key, out, exit)
+		writeOracleVerdict(key, out, exit)
 	}
 	return out, exit
 }
 
-func interpVerdictKey(src string) (string, error) {
-	oracle, err := interpOracleKey()
+func oracleVerdictKey(flag string, combined bool, src string) (string, error) {
+	oracle, err := oracleSourcesKey()
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +96,7 @@ func interpVerdictKey(src string) (string, error) {
 	}
 	sort.Strings(closure)
 	h := sha256.New()
-	fmt.Fprintf(h, "interp-verdict-v1\x00%s\x00%s\x00", oracle, abs)
+	fmt.Fprintf(h, "oracle-verdict-v1\x00%s\x00%t\x00%s\x00%s\x00", flag, combined, oracle, abs)
 	for _, p := range closure {
 		if err := hashFile(h, p, p); err != nil {
 			return "", err
@@ -94,11 +113,11 @@ func interpVerdictKey(src string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// interpOracleKey hashes the files of every package in this module that
+// oracleSourcesKey hashes the files of every package in this module that
 // cmd/fern links, so a change to the parser, checker, interpreter or stdlib
 // changes it. The compiler package is left out: it only embeds the self-host
-// sources that `-target` runs, which `-interp` never reads.
-var interpOracleKey = sync.OnceValues(func() (string, error) {
+// sources that `-target` runs, which `-interp` and `-check` never read.
+var oracleSourcesKey = sync.OnceValues(func() (string, error) {
 	tmpl := `{{if .Module}}{{if eq .Module.Path "` + fernModulePath + `"}}{{.ImportPath}}` + "\t" +
 		`{{.Dir}}` + "\t" + `{{join .GoFiles ","}}` + "\t" + `{{join .EmbedFiles ","}}{{end}}{{end}}`
 	cmd := exec.Command("go", "list", "-deps", "-f", tmpl, fernModulePath+"/cmd/fern")
@@ -153,9 +172,9 @@ func hashFile(h interface{ Write([]byte) (int, error) }, path, name string) erro
 	return nil
 }
 
-func readInterpVerdict(key string) ([]byte, int, bool) {
+func readOracleVerdict(key string) ([]byte, int, bool) {
 	for _, dir := range diskCacheReadDirs() {
-		path := filepath.Join(dir, key+".interp")
+		path := filepath.Join(dir, key+".verdict")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -175,12 +194,12 @@ func readInterpVerdict(key string) ([]byte, int, bool) {
 	return nil, 0, false
 }
 
-func writeInterpVerdict(key string, out []byte, exit int) {
+func writeOracleVerdict(key string, out []byte, exit int) {
 	dir := diskCacheWriteDir()
 	if dir == "" {
 		return
 	}
-	tmp, err := os.CreateTemp(dir, key+".interp.tmp*")
+	tmp, err := os.CreateTemp(dir, key+".verdict.tmp*")
 	if err != nil {
 		return
 	}
@@ -190,7 +209,7 @@ func writeInterpVerdict(key string, out []byte, exit int) {
 		os.Remove(tmp.Name())
 		return
 	}
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, key+".interp")); err != nil {
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, key+".verdict")); err != nil {
 		os.Remove(tmp.Name())
 	}
 }

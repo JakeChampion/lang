@@ -10,19 +10,16 @@ import (
 
 	goparser "github.com/jakechampion/lang/internal/syntax/parser"
 	goprinter "github.com/jakechampion/lang/internal/syntax/printer"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/fern.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
+func TestSelfHostFmtWrittenForm(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
 	dir := t.TempDir()
 
 	selfHostFmtWrite := func(t *testing.T, paths []string) map[string]string {
 		t.Helper()
-		cmd := exec.Command(interpBin, append([]string{"-interp", driver, "--", "-fmt", "-w"}, paths...)...)
+		cmd := exec.Command(cli, append([]string{"-fmt", "-w"}, paths...)...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
@@ -109,12 +106,8 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 	}
 }
 
-func TestSelfHostFmtWriteAndDiffViaInterp(t *testing.T) {
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/fern.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
+func TestSelfHostFmtWriteAndDiff(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
 
 	const unformatted = `function add(a: i32,b: i32): i32 {
 return a+b;
@@ -136,7 +129,7 @@ function main(): i32 {
 
 	run := func(t *testing.T, args ...string) (string, int) {
 		t.Helper()
-		cmd := exec.Command(interpBin, append([]string{"-interp", driver, "--"}, args...)...)
+		cmd := exec.Command(cli, args...)
 		out, _ := cmd.Output()
 		return string(out), cmd.ProcessState.ExitCode()
 	}

@@ -1,0 +1,32 @@
+name: Oracle verdict cache
+description: >
+  Restore the Go oracle's verdicts (e2eharness.InterpVerdict and
+  CheckVerdict) into the directory that FERN_SELFHOST_BUILD_CACHE names, and
+  save them when the job ends. Each verdict file is named by the hash of its
+  inputs, so any earlier directory is safe to restore. Run it after
+  selfhost-driver-cache, which sets that directory. Verdicts that no run has
+  read for a week are dropped after the restore.
+inputs:
+  slot:
+    description: >
+      The job's own part of the cache key, such as its matrix leg or shard.
+      A job restores its own slot first and any other slot after that.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Restore the oracle verdicts, and save them when the job ends
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/selfhost-unicache/*.verdict
+        key: oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-${{ github.sha }}
+        restore-keys: |
+          oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-
+          oracle-verdicts-v1-${{ runner.os }}-
+    - name: Drop oracle verdicts no run has read for a week
+      shell: bash
+      run: |
+        dir="$RUNNER_TEMP/selfhost-unicache"
+        stale=$(find "$dir" -maxdepth 1 -name '*.verdict' -mtime +7 -print -delete | wc -l)
+        kept=$(find "$dir" -maxdepth 1 -name '*.verdict' | wc -l)
+        echo "oracle verdict cache: $kept verdict(s) restored, $stale stale one(s) dropped"

@@ -1,27 +1,13 @@
 package checker
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// A float-literal array local takes its width from its first typed use: an
-// argument, a typed read of an element, or an append (#14328, #14340).
-func TestFloatArrayLocalTakesTheWidthOfItsFirstUse(t *testing.T) {
-	good := []struct{ name, src string }{
-		{"append", "function main(): i32 { let z = [1.5, 2.0]; let f: f32 = 3.0; let w = z.append(f); let m: f32 = w[0]; return m as i32; }\n"},
-		{"index read", "function main(): i32 { let z = [1.5, 2.0]; let m: f32 = z[0]; return m as i32; }\n"},
-		{"argument", "function g(a: f32[]): i32 { return a.len(); }\nfunction main(): i32 { let z = [1.5, 2.0]; return g(z); }\n"},
-	}
-	for _, c := range good {
-		if err := checkSource(t, c.src); err != nil {
-			t.Errorf("%s: %v", c.name, err)
-		}
-	}
-	src := "function main(): i32 { let z = [1.5, 2.0]; let m: f32 = z[0]; let n: f64 = 7.0; let w = z.append(n); return w.len() + (m as i32); }\n"
-	err := checkSource(t, src)
-	if err == nil || !strings.Contains(err.Error(), `argument 1 to "append": expected f32, got f64`) {
-		t.Errorf("an append at another width after the read: want E038, got %v", err)
+// A float-literal array local takes its width from an argument at a typed
+// array parameter, and a nested one keeps the width of its first use.
+func TestFloatArrayLocalTakesTheWidthOfAnArrayArgument(t *testing.T) {
+	src := "function g(a: f32[]): i32 { return a.len(); }\nfunction main(): i32 { let z = [1.5, 2.0]; let n = g(z); let f: f64 = 3.0; let w = z.append(f); return n + w.len(); }\n"
+	if got := errCodes(checkSource(t, src)); got != "E038" {
+		t.Fatalf("an append at another width after the argument: want E038, got %q", got)
 	}
 }
 

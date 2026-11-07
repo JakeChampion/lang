@@ -1,0 +1,29 @@
+function half(x: f32): f32 {
+  return x / 2.0;
+}
+
+function low(b: u8): i32 {
+  return b as i32;
+}
+
+function main(): i32 {
+  let z = [1.5, 2.0];
+  let f: f32 = 4.0;
+  let w = z.append(f);
+  if (half(w[2]) != 2.0 || w.len() != 3) {
+    return 1;
+  }
+  let r = [0.25, 0.5];
+  let m: f32 = r[1];
+  if (m + r[0] != 0.75) {
+    return 2;
+  }
+  let t = (7, 2.5);
+  let y: u8 = t.0;
+  let g: f32 = t.1;
+  if (low(y) + low(t.0) != 14 || half(g) != 1.25) {
+    return 3;
+  }
+  print("ok");
+  return 0;
+}
