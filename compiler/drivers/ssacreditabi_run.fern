@@ -297,7 +297,7 @@ function origin_wrapper_contract(contracts: ssasem.Contract[], c: ssasem.Contrac
 
 function origin_schema_controls(sub: ircore.Sub): void {
   for r in sub.physical_records.list {
-    origin_caller_expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: semrecords.name_of(r.ty), symbol: "checked_selected_drop" }] }, "select_parent", "unsupported origin caller types or finalizers");
+    origin_caller_expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: semrecords.name_of(r.ty), symbol: "checked_selected_drop", writes: true }] }, "select_parent", "unsupported origin caller types or finalizers");
   }
   for boundary in [0, 1, 2, 3] {
     let changed: semrecords.Record[] = [];

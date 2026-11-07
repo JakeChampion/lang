@@ -151,7 +151,7 @@ function schema_controls(sub: ircore.Sub): void {
     let fields = r.fields.with(0, semrecords.Field { ...r.fields[0], ty: r.ty });
     expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(semrecords.Record { ...r, fields: fields })) }, "handoff", "replace", field_error);
     let finalized = if (child) { "unsupported producer child or finalizer" } else { if (name == "Parent") { "unsupported incoming parent type or finalizer" } else { "unsupported incoming wrapper types or finalizers" } };
-    expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: name, symbol: "selected_finalizer" }] }, "handoff", "replace", finalized);
+    expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: name, symbol: "selected_finalizer", writes: true }] }, "handoff", "replace", finalized);
     if (!child) {
       expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(semrecords.Record { ...r, fields: [r.fields[0]] })) }, "handoff", "replace", effect);
     }

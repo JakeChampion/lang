@@ -108,7 +108,7 @@ function metadata_controls(sub: ircore.Sub): void {
       check(ircore.Sub { ...sub, physical_contracts: rows }, "handoff", "missing or ambiguous origin callee ABI");
     }
   }
-  check(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "finalize" }] }, "handoff", "unsupported incoming parent type or finalizer");
+  check(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "finalize", writes: true }] }, "handoff", "unsupported incoming parent type or finalizer");
   for r in sub.physical_records.list {
     if (semrecords.name_of(r.ty) == "Other") {
       check(ircore.Sub { ...sub, physical_records: semrecords.records_of(sub.physical_records.list.append(r)) }, "handoff", "missing or ambiguous incoming parent or result schema");

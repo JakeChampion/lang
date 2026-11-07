@@ -173,7 +173,7 @@ function record_producer(row: ssaprepare.Emitted, record: semrecords.Record): vo
   let correct = physicalbody.Selected { ...own_selection, origin: physicalbody.Origin { ...own_selection.origin, producer: 1 } };
   check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: correct } }, true);
   if let typeinfo.TypeStruct(s) = record.ty {
-    check(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: s.name, symbol: "destroy" }] }), true);
+    check(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: s.name, symbol: "destroy", writes: true }] }), true);
     if (s.args.len() > 0) {
       let wrong = semrecords.Record { ...record, ty: typeinfo.TypeStruct { ...s, args: [] } };
       check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([wrong]) }), false);

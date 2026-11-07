@@ -57,7 +57,7 @@ function controls(pair: ssaprepare.Emitted[], arch: string): void {
     }
     let m = selected.metadata(row);
     check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, false);
-    check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, false);
+    check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf", writes: true }] })), arch, false);
     check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(util.append_all(m.records.list, m.records.list)) })), arch, false);
     let s = row.body.selected;
     let origin = physicalbody.Origin { ...s.origin, producer: s.producers.len() };

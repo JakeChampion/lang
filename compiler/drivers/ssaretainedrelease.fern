@@ -46,7 +46,7 @@ function schema(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: strin
   let rest = without(rows, row.label_name);
   let m = selected.metadata(row);
   check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, parent, false);
-  check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, parent, false);
+  check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf", writes: true }] })), arch, parent, false);
   let records = m.records.list;
   for r in m.records.list {
     if (semrecords.name_of(r.ty) == "Parent") {

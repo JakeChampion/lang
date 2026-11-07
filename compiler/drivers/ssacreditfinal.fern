@@ -124,7 +124,7 @@ function metadata_controls(sub: ircore.Sub, fs: ssa.SFunc[], calls: string[]): v
       }
     }
   }
-  check(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "finalize" }] }, fs, calls, false);
+  check(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "finalize", writes: true }] }, fs, calls, false);
 }
 
 function controls(sub: ircore.Sub, fs: ssa.SFunc[], sparse_ids: boolean): void {

@@ -114,7 +114,7 @@ function schemas(rows: ssaprepare.Emitted[], architecture: string): void {
       }
       check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(recs) })), architecture, false);
       check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(duplicate) })), architecture, false);
-      check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "finalize" }] })), architecture, false);
+      check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "finalize", writes: true }] })), architecture, false);
     }
   }
 }
