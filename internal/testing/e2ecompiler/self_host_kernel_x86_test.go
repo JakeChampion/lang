@@ -135,6 +135,47 @@ func TestSelfHostKernelX86ImageLayout(t *testing.T) {
 	}
 }
 
+// PVH does not supply a stack. The entry must set ESP inside its own RAM
+// before a call or push can write through the loader's unspecified ESP.
+func TestSelfHostKernelX86StackBeforeCalls(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := writeKernelX86Program(t)
+	for _, c := range []struct {
+		ram string
+		top uint32
+	}{
+		{kernelX86RAM, kernelX86Base + kernelX86Size},
+		{"0x400000,64M", 0x400000 + 64<<20},
+	} {
+		t.Run(c.ram, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "kernel.elf")
+			if msg, err := cli.compileCmd("x86-64-kernel", out, src, "-ram", c.ram).CombinedOutput(); err != nil {
+				t.Fatalf("build: %v\n%s", err, msg)
+			}
+			f, err := elf.Open(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			for _, p := range f.Progs {
+				if p.Type != elf.PT_LOAD || f.Entry < p.Vaddr || f.Entry+6 > p.Vaddr+p.Filesz {
+					continue
+				}
+				var entry [6]byte
+				if _, err := p.ReadAt(entry[:], int64(f.Entry-p.Vaddr)); err != nil {
+					t.Fatal(err)
+				}
+				// In 32-bit mode, FA is cli and BC imm32 sets ESP.
+				if entry[0] != 0xfa || entry[1] != 0xbc || binary.LittleEndian.Uint32(entry[2:]) != c.top {
+					t.Fatalf("entry % x uses an unspecified stack; want cli then mov $%#x, %%esp", entry, c.top)
+				}
+				return
+			}
+			t.Fatal("entry is outside the file-backed load segments")
+		})
+	}
+}
+
 // The image boots on qemu microvm through its PVH note, prints through COM1,
 // and exits through isa-debug-exit. The reset code enables AVX, so the CPU
 // model needs it.
