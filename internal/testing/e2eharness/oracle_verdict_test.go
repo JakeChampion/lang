@@ -286,3 +286,40 @@ func TestInProcessSourceVerdictKeysModeAndSource(t *testing.T) {
 	InProcessSourceVerdict(t, "check", first, run)
 	expect(5, "no cache directory")
 }
+
+func TestInterpInputVerdictKeysTheInput(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	work := t.TempDir()
+	calls := filepath.Join(work, "calls")
+	fake := filepath.Join(work, "fake-oracle")
+	script := "#!/bin/sh\necho run >> " + calls + "\necho \"args $1\"\ncat\nexit 3\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(work, "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() int {
+		data, _ := os.ReadFile(calls)
+		return strings.Count(string(data), "run")
+	}
+	out, exit := InterpInputVerdict(t, fake, src, "first\n")
+	if exit != 3 || string(out) != "args -interp\nfirst\n" {
+		t.Fatalf("verdict = %q exit %d, want the flag, the input and exit 3", out, exit)
+	}
+	out, exit = InterpInputVerdict(t, fake, src, "first\n")
+	if got := runs(); got != 1 || exit != 3 || string(out) != "args -interp\nfirst\n" {
+		t.Fatalf("the same input ran the oracle %d times and gave %q exit %d, want 1 run and the kept verdict", got, out, exit)
+	}
+	InterpInputVerdict(t, fake, src, "second\n")
+	if got := runs(); got != 2 {
+		t.Fatalf("a new input ran the oracle %d times, want 2", got)
+	}
+	InterpInputVerdict(t, fake, src, "")
+	InterpVerdict(t, fake, src)
+	if got := runs(); got != 3 {
+		t.Fatalf("an empty input and no input ran the oracle %d times, want 3: they are the same verdict", got)
+	}
+}
