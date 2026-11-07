@@ -2,7 +2,6 @@ package e2ecompiler
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -389,11 +388,7 @@ function main(): i32 { return 0; }`,
 var hintTextDivergences = map[string]string{}
 
 func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/drivers/checker_codes_run.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
+	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 
 	for _, tc := range hintTextCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,10 +403,11 @@ func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
 				}
 			}
 
-			cmd := exec.Command(interpBin, "-interp", driver)
-			cmd.Stdin = strings.NewReader(tc.src)
-			out, _ := cmd.Output()
-			shMsgs := byCode(driverDiags(string(out)))[tc.code]
+			out, err := checkerCodesOutput(checker, tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			shMsgs := byCode(driverDiags(out))[tc.code]
 
 			key := tc.name + "/" + tc.code
 			reason, listed := hintTextDivergences[key]
