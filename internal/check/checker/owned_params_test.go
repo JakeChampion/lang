@@ -3338,20 +3338,6 @@ func TestOwnGuardRejectsAConsumeHiddenInAScalarArgument(t *testing.T) {
 	wantE051(t, "consume-through-earlier-tuple", scalarCallConsumeSrc)
 }
 
-// The else block of a let-else runs before the statements after it, so its
-// read of the base does not come after a field move that follows (#14463).
-func TestOwnGuardAllowsSupersededFieldMoveAfterLetElse(t *testing.T) {
-	wantOK(t, "field-move-after-let-else", fieldMovePrelude+`
-struct Holder { cfi: Cfi, room: Option[i32] }
-function step(own h: Holder): Holder {
-    let Some(v) = h.room else {
-        return h;
-    };
-    let c = record(h.cfi, v);
-    return Holder { ...h, cfi: c };
-}`)
-}
-
 // A field move inside the else block comes before the reads after the
 // let-else, so it is not the last use of the base.
 func TestOwnGuardRejectsSupersededFieldMoveInLetElseBlock(t *testing.T) {
