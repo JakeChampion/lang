@@ -14,6 +14,7 @@ import "std/hex";
 import "std/log";
 import "std/net";
 import "std/rand";
+import "std/tls/verify";
 import "./internet";
 import "./lan";
 import "./modes";
@@ -62,8 +63,10 @@ struct App {
   p2p: Option[p2p.Manager],
   peers: p2p.Peer[],
   group_broadcast: Option[net.IpAddr],
-  // The room of the internet mode, and the code that the user types.
+  // The room of the internet mode, the request for one, and the code that
+  // the user types.
   room: Option[internet.Room],
+  asking: Option[internet.Request],
   entering: Option[string],
   // The private directory of the app, the private directory that no backup
   // copies, this phone's identity seed, and the identities of the phones
@@ -292,7 +295,7 @@ function app_main(ctx: usize): usize {
   let n: node.Node = fresh_node(notice, id_seed, pins);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, toggled: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, toggled: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, room: None, asking: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -304,6 +307,9 @@ function shut(own s: App): void {
   s.spk.stop();
   s.spk.close();
   node.close(s.node);
+  if let Some(q) = s.asking {
+    internet.cancel(q);
+  }
   if let Some(sock) = s.sock {
     let closed: Result[void, net.NetError] = net.close(sock);
   }
@@ -587,7 +593,7 @@ function overlay_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean
 // The room buttons show while the phone searches, with no room yet, when the
 // mode uses rooms.
 function room_buttons(s: App): boolean {
-  return modes.uses_rooms(s.mode, server_of(s)) && s.room.is_none() && s.entering.is_none();
+  return modes.uses_rooms(s.mode, server_of(s)) && s.room.is_none() && s.asking.is_none() && s.entering.is_none();
 }
 
 // The settings button shows while the phone searches, before a room.
@@ -737,22 +743,43 @@ function keypad_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean,
   return App { ...s, entering: Some(screen.typed(code, k)), drawn: "" };
 }
 
-// Asks the server for a room with `line`, and keeps the room it gives.
+// Asks the server for a room with `line`. The pump steps the request, and
+// keeps the room that it gives.
 function enter_room(own s: App, line: string, code: string): App {
   let host: string = server_of(s);
-  let Some(relay) = internet.relay_of(host) else {
-    return App { ...s, node: node.noticed(s.node, "cannot find the server " + host), drawn: "" };
+  let Some(roots) = verify.system_roots() else {
+    return App { ...s, node: node.noticed(s.node, "no room: this phone has no trusted certificates"), drawn: "" };
   };
-  let reply: rooms.Reply = internet.ask(host, line);
-  if let Some(r) = internet.room_of(reply, code, relay) {
-    log.info("walkie: in a room on " + relay.to_string());
-    return App { ...s, room: Some(r), node: node.noticed(s.node, "room " + r.code + ": the other phone joins with this code"), drawn: "" };
+  let q: internet.Request = internet.request(host, rooms.PORT, line, code, roots, now_ms());
+  return App { ...s, asking: Some(q), node: node.noticed(s.node, "asking the server " + host), drawn: "" };
+}
+
+// One step of the request for a room, which waits for nothing.
+function ask(s: App, now: i64): App {
+  let Some(q) = s.asking else {
+    return s;
+  };
+  return asked(App { ...s, asking: None }, internet.step(q, now));
+}
+
+// The app after a step of its request: the request again, or the room.
+function asked(t: App, p: internet.Progress): App {
+  match (p) {
+    internet.Pending(next) => {
+      return App { ...t, asking: Some(next) };
+    },
+    internet.Done(reply, room) => {
+      if let Some(r) = room {
+        log.info("walkie: in a room on " + r.relay.to_string());
+        return App { ...t, room: Some(r), node: node.noticed(t.node, "room " + r.code + ": the other phone joins with this code"), drawn: "" };
+      }
+      let why = "the server refused";
+      if let rooms.Refused(text) = reply {
+        why = text;
+      }
+      return App { ...t, node: node.noticed(t.node, "no room: " + why), drawn: "" };
+    }
   }
-  let why = "the server refused";
-  if let rooms.Refused(text) = reply {
-    why = text;
-  }
-  return App { ...s, node: node.noticed(s.node, "no room: " + why), drawn: "" };
 }
 
 // SAME or DIFFERENT, while the users compare the strings.
@@ -829,7 +856,7 @@ function restart(own s: App): App {
 
 // The network, the timers and the microphone, after each event.
 function pump(s: App, now: i64): App {
-  let t: App = receive_all(s, now);
+  let t: App = ask(receive_all(s, now), now);
   t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   if (t.toggled && t.node.talk_until == 0i64) {
     t = App { ...t, pressed: false, toggled: false };

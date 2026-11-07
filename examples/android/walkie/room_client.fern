@@ -1,0 +1,44 @@
+// Asks a room server for a room from a shell, with the request of the app:
+//
+//   room_client HOST PORT ROOTS.pem LINE
+//
+// It prints the reply line. ROOTS.pem holds the certificates to trust.
+import "std/i32";
+import "std/result";
+import "std/tls/verify";
+import "./internet";
+import "./rooms";
+
+function now_ms(): i64 {
+  return monotonic_ns() / 1000000i64;
+}
+
+pub function main(): i32 {
+  let argv = args();
+  if (argv.len() != 5) {
+    eprint("usage: room_client HOST PORT ROOTS.pem LINE\n");
+    return 2;
+  }
+  let Ok(roots) = verify.roots_from_file(argv[3]) else {
+    eprint("room_client: cannot read " + argv[3] + "\n");
+    return 1;
+  };
+  let port = i32.parse_i32(argv[2]).unwrap_or(rooms.PORT);
+  let q = internet.request(argv[1], port, argv[4], "", roots, now_ms());
+  while (true) {
+    match (internet.step(q, now_ms())) {
+      internet.Pending(next) => {
+        q = next;
+        sleep_ms(5i64);
+      },
+      internet.Done(reply, room) => {
+        print(rooms.reply_line(reply).trim_end());
+        if let Some(r) = room {
+          print("relay " + r.relay.to_string());
+        }
+        return 0;
+      }
+    }
+  }
+  return 1;
+}

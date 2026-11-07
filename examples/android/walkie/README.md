@@ -325,7 +325,16 @@ ends the session, and so does a code with no confirmation. Then the phone
 does not search again.
 
 `internet.fern` is the side of the app. It asks the server for a room over
-TLS. It puts each datagram to the relay in a frame with the MAC, and it
+TLS. The app steps the request from its event loop, so a slow resolver or
+server does not stop the screen or the session. The request has 15 seconds.
+`room_client.fern` makes the same request from a shell:
+
+```sh
+fern -o room_client examples/android/walkie/room_client.fern
+./room_client rooms.example.com 47130 roots.pem CREATE
+```
+
+The app puts each datagram to the relay in a frame with the MAC, and it
 answers each challenge of the relay. In a room, the app takes a datagram only
 from the relay. So a phone on the same network
 cannot take the place of the peer. `internet_test.fern` runs two nodes in one
