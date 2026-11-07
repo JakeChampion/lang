@@ -1045,7 +1045,7 @@ pub function new[K, V](): OrdMap[K, V] {
 }
 
 pub function from[K: cmp.Ord, V](pairs: (K, V)[]): OrdMap[K, V] {
-  let m: OrdMap[K, V] = new();
+  let m = new();
   for p in pairs {
     m = m.insert(p.0, p.1);
   }

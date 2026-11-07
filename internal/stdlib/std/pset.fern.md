@@ -74,7 +74,7 @@ pub function new[T](): PSet[T] {
 }
 
 pub function of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
-  let s: PSet[T] = new();
+  let s = new();
   let i = 0;
   while (i < xs.len()) {
     s = s.insert(xs[i]);
@@ -139,7 +139,7 @@ function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
 ```fern
 <<6 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T]>>=
 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T] {
-  let out: PSet[T] = new();
+  let out = new();
   let xs = s.to_array();
   let i = 0;
   while (i < xs.len()) {
@@ -207,7 +207,7 @@ impl[T: cmp.Display] cmp.Display for PSet[T] {
 }
 
 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) filter(pred: (T) => boolean): PSet[T] {
-  let out: PSet[T] = new();
+  let out = new();
   let xs = s.to_array();
   let i = 0;
   while (i < xs.len()) {

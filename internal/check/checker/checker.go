@@ -7776,6 +7776,13 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	if _, ok := b.(ast.NeverType); ok {
 		return a
 	}
+	// An empty map literal is the open Map, and a typed map gives it its types.
+	if bareMap(a) && typedMap(b) {
+		return b
+	}
+	if bareMap(b) && typedMap(a) {
+		return a
+	}
 	if an, aok := a.(ast.NumberType); aok && an.Polymorphic {
 		switch b.(type) {
 		case ast.NumberType, ast.FloatType:
