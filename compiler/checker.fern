@@ -21556,6 +21556,31 @@ function ow_count_field_reads(e: ast.Expr, target: string, field: string): i32 {
   return astwalk.fold_expr(e, 0, tally);
 }
 
+struct OwFieldMove { target: string, field: string, ofuncs: OwnFuncs, found: boolean }
+
+// A call in e, outside a lambda, takes target.field as an own argument. The
+// call can be at any depth of e.
+function ow_moves_field(e: ast.Expr, target: string, field: string, ofuncs: OwnFuncs): boolean {
+  return astwalk.fold_expr_pruned(e, OwFieldMove { target: target, field: field, ofuncs: ofuncs, found: false }, ow_field_move_call, astwalk.not_lambda).found;
+}
+
+function ow_field_move_call(e: ast.Expr, own m: OwFieldMove): OwFieldMove {
+  if (m.found) {
+    return m;
+  }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(cid) = c.callee {
+      let flags = ow_func_flags(m.ofuncs, cid.name);
+      for j in 0..c.args.len() {
+        if (j < flags.len() && flags[j] && ow_is_field_read(c.args[j], m.target, m.field)) {
+          return OwFieldMove { ...m, found: true };
+        }
+      }
+    }
+  }
+  return m;
+}
+
 function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): string[] {
   let out: string[] = [];
   match (value) {
@@ -21566,32 +21591,11 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
       if (ow_count_ident(value, target) - ow_count_field_reads(value, target, "") != 1) {
         return out;
       }
-      let i = 0;
-      while (i < sl.field_values.len() && i < sl.field_names.len()) {
+      for i in 0..sl.field_values.len() {
         let fname = sl.field_names[i];
-        match (sl.field_values[i]) {
-          ast.ExprCall(c) => {
-            match (c.callee) {
-              ast.ExprIdent(cid) => {
-                if (ow_is_own_func(ctx.ofuncs, cid.name) && ow_count_field_reads(value, target, fname) == 1) {
-                  let flags = ow_func_flags(ctx.ofuncs, cid.name);
-                  let j = 0;
-                  while (j < c.args.len() && j < flags.len()) {
-                    if (flags[j] && ow_is_field_read(c.args[j], target, fname)) {
-                      out = out.append(target + "." + fname);
-                      j = flags.len();
-                    } else {
-                      j += 1;
-                    }
-                  }
-                }
-              },
-              _ => {}
-            }
-          },
-          _ => {}
+        if (ow_count_field_reads(value, target, fname) == 1 && ow_moves_field(sl.field_values[i], target, fname, ctx.ofuncs)) {
+          out = out.append(target + "." + fname);
         }
-        i += 1;
       }
       return out;
     },

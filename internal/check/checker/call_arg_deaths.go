@@ -1366,22 +1366,25 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 		return
 	}
 	for _, f := range sl.Fields {
-		c, ok := f.Value.(*ast.Call)
-		if !ok {
-			continue
-		}
-		if _, named := c.Callee.(*ast.Ident); !named {
-			continue
-		}
-		direct := 0
-		for _, a := range c.Args {
-			if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == f.Name {
-				if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
-					direct++
+		var c *ast.Call
+		callsOutsideLambdas(f.Value, func(call *ast.Call) bool {
+			if _, named := call.Callee.(*ast.Ident); !named {
+				return false
+			}
+			direct := 0
+			for _, a := range call.Args {
+				if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == f.Name {
+					if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+						direct++
+					}
 				}
 			}
-		}
-		if direct != 1 {
+			if direct == 1 {
+				c = call
+			}
+			return c != nil
+		})
+		if c == nil {
 			continue
 		}
 		total := 0

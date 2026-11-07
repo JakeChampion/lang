@@ -1,0 +1,35 @@
+// A literal that replaces a field of an own parameter moves the field into an
+// own parameter of a call that is an argument of another call (#14357).
+struct Res { v: i32[] }
+
+struct Box { r: Res, n: i32 }
+
+@noinline
+function grow(own r: Res, k: i32): Res {
+  return Res { v: r.v.append(k) };
+}
+
+@noinline
+function twice(own r: Res): Res {
+  return Res { v: r.v.append(r.v.len()) };
+}
+
+@noinline
+function step(own b: Box, k: i32): Box {
+  return Box { ...b, r: twice(grow(b.r, k)) };
+}
+
+@noinline
+function again(own b: Box, k: i32): Box {
+  b = Box { ...b, n: b.n + 1, r: twice(grow(b.r, k)) };
+  return b;
+}
+
+function main(): i32 {
+  let b: Box = step(Box { r: Res { v: [1, 2] }, n: 0 }, 7);
+  let c: Box = again(b, 8);
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return c.r.v.len() * 10 + c.n;
+}

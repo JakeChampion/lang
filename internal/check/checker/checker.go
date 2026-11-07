@@ -10383,27 +10383,38 @@ func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[s
 		return nil
 	}
 	return SupersededFieldMoves(sl, target, func(field string, value ast.Expr) *ast.FieldAccess {
-		call, ok := value.(*ast.Call)
-		if !ok || call.Method != nil {
-			return nil
-		}
-		cid, ok := call.Callee.(*ast.Ident)
-		if !ok {
-			return nil
-		}
-		flags, isOwn := ownFuncs[cid.Name]
-		if !isOwn {
-			return nil
-		}
-		for i, a := range call.Args {
-			if i >= len(flags) || !flags[i] {
-				continue
+		var found *ast.FieldAccess
+		callsOutsideLambdas(value, func(call *ast.Call) bool {
+			cid, ok := call.Callee.(*ast.Ident)
+			if !ok || call.Method != nil {
+				return false
 			}
-			if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == field {
-				return fa
+			flags := ownFuncs[cid.Name]
+			for i, a := range call.Args {
+				if fa, ok := a.(*ast.FieldAccess); ok && i < len(flags) && flags[i] && fa.Field == field {
+					found = fa
+					return true
+				}
 			}
+			return false
+		})
+		return found
+	})
+}
+
+// callsOutsideLambdas calls visit on each call in e that no lambda holds,
+// until visit returns true. A superseded field can move into a call at any
+// depth of the field's value.
+func callsOutsideLambdas(e ast.Expr, visit func(*ast.Call) bool) {
+	done := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if _, ok := n.(*ast.Lambda); ok || done {
+			return false
 		}
-		return nil
+		if c, ok := n.(*ast.Call); ok {
+			done = visit(c)
+		}
+		return !done
 	})
 }
 
