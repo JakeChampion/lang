@@ -1,0 +1,92 @@
+// A NativeActivity app for the emulator check of std/android/audio focus.
+// Two listeners are two clients of the focus. At the first Resume, client A
+// asks for the focus, and then client B takes it. A then loses the focus.
+// When B gives it back, A gains it again. The app logs each step and
+// finishes.
+import "std/android";
+import "std/android/focus";
+import "std/log";
+
+const CLASS: string = "dev.fern.focustest.Listener";
+
+struct App { ctx: usize, a: Option[focus.Focus], b: Option[focus.Focus], started: boolean }
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+@jni("dev.fern.focustest.Listener implements android.media.AudioManager$OnAudioFocusChangeListener", "void onAudioFocusChange(int)")
+pub function focus_changed(env: usize, thiz: usize, change: i32): void {
+  focus.changed(env, thiz, change);
+}
+
+function app_main(ctx: usize): usize {
+  let first = App { ctx: ctx, a: None, b: None, started: false };
+  let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => -1);
+  return 0 as usize;
+}
+
+function step(s: App, e: android.Event): App {
+  if let Some(c) = focus.event(e) {
+    return changed(s, c);
+  }
+  match (e) {
+    android.Resume => {
+      if (s.started) {
+        return s;
+      }
+      return start(App { ...s, started: true });
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+function start(s: App): App {
+  let Some(a) = focus.new(s.ctx, CLASS) else {
+    log.warn("focustest: no audio manager");
+    android.finish(s.ctx);
+    return s;
+  };
+  let Some(b) = focus.new(s.ctx, CLASS) else {
+    log.warn("focustest: no audio manager");
+    android.finish(s.ctx);
+    return s;
+  };
+  log.warn("focustest: a granted " + focus.request(s.ctx, a).to_string());
+  log.warn("focustest: b granted " + focus.request(s.ctx, b).to_string());
+  return App { ...s, a: Some(a), b: Some(b) };
+}
+
+function changed(s: App, c: focus.Change): App {
+  match (c) {
+    focus.Loss => {
+      log.warn("focustest: a lost the focus");
+      if let Some(b) = s.b {
+        focus.release(s.ctx, b);
+      }
+    },
+    focus.Gain => {
+      log.warn("focustest: a gained the focus again");
+      finish(s);
+    },
+    focus.Duck => {
+      log.warn("focustest: a ducks");
+    }
+  }
+  return s;
+}
+
+function finish(s: App): void {
+  if let Some(a) = s.a {
+    focus.close(s.ctx, a);
+  }
+  if let Some(b) = s.b {
+    focus.close(s.ctx, b);
+  }
+  android.finish(s.ctx);
+}

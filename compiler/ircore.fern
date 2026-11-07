@@ -819,13 +819,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
   let k = 0;
   while (k < names.len()) {
     let fd = mod.funcs[at[k]];
-    let exported = false;
-    for x in mod.exports {
-      if (x.func_name == fd.name) {
-        exported = true;
-      }
-    }
-    dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !exported);
+    dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !parser.named_outside(mod, fd.name));
     k += 1;
   }
   let reg = irtables.sig_reg_of(names);

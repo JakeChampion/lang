@@ -59,6 +59,8 @@ pub struct Node {
   pinning: boolean,
   peer_has_mine: boolean,
   pin_at: i64,
+  // The end of a transmission with no held button, or 0.
+  talk_until: i64,
   // The outputs since the app last took them.
   out: Datagram[],
   heard: i32[][],
@@ -74,7 +76,7 @@ pub const RANDOM_BYTES: i32 = 64;
 // A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
   let (s1, _) = session.step(session.new(), session.Start(session.Offline), now);
-  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, random: cell_new([]), rekey_due: false, offer: None, offer_at: 0i64, accepted: 0, accepted_key: [], identity: None, pins: [], ident: [], ident_at: 0i64, peer_identity: [], confirmed: false, pinning: false, peer_has_mine: false, pin_at: 0i64, out: [], heard: [], logs: [] };
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, random: cell_new([]), rekey_due: false, offer: None, offer_at: 0i64, accepted: 0, accepted_key: [], identity: None, pins: [], ident: [], ident_at: 0i64, peer_identity: [], confirmed: false, pinning: false, peer_has_mine: false, pin_at: 0i64, talk_until: 0i64, out: [], heard: [], logs: [] };
 }
 
 // The node with this phone's identity, from a 32-byte seed, and the
@@ -168,6 +170,34 @@ pub function ended(n: Node): boolean {
       return false;
     }
   }
+}
+
+// The node with an ID for `role`, while it searches. The role decides which
+// phone is the floor controller of the next session.
+pub function with_role(n: Node, role: i32, random: i64): Node {
+  if let lan.Searching = n.link.phase {
+    return Node { ...n, link: lan.new(lan.role_id(role, random)) };
+  }
+  return n;
+}
+
+// The node in a room of the server, while it searches. The phone that made
+// the room leads, and the session joins the room.
+pub function in_room(n: Node, lead: boolean, random: i64, now: i64): Node {
+  let lan.Searching = n.link.phase else {
+    return n;
+  };
+  let role = lan.ROLE_FOLLOW;
+  if (lead) {
+    role = lan.ROLE_LEAD;
+  }
+  let (s1, _) = session.step(session.new(), session.Start(session.Internet), now);
+  return Node { ...with_role(n, role, random), sess: s1 };
+}
+
+// The control stream to the peer closed.
+pub function transport_lost(n: Node, now: i64): Node {
+  return act(n, session.TransportLost, now);
 }
 
 // The transport was lost, and the peer did not leave.
@@ -494,7 +524,11 @@ pub function tick(n: Node, now: i64): Node {
     out = out.append(Datagram { broadcast: true, data: b });
   }
   let (l2, again) = lan.resend(l1, now);
-  return pinning(proving(rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now), now), now);
+  if (lan.expired(l2, now)) {
+    let t = log(Node { ...n, link: lan.close(l2), out: out }, "the key exchange did not finish");
+    return act(t, session.TransportLost, now);
+  }
+  return limited(pinning(proving(rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now), now), now), now);
 }
 
 // The node with `random`, fresh random bytes for the rekeys, in place of the
@@ -609,7 +643,21 @@ pub function press(n: Node, now: i64): Node {
 }
 
 pub function release(n: Node, now: i64): Node {
-  return act(n, session.PttUp, now);
+  return act(Node { ...n, talk_until: 0i64 }, session.PttUp, now);
+}
+
+// A press with no held button, such as from the notification: the node
+// releases the floor by itself after `ms` milliseconds.
+pub function press_for(n: Node, now: i64, ms: i64): Node {
+  return Node { ...press(n, now), talk_until: now + ms };
+}
+
+function limited(n: Node, now: i64): Node {
+  if (n.talk_until == 0i64 || now < n.talk_until) {
+    return n;
+  }
+  let t = release(n, now);
+  return log(Node { ...t, notice: "the talk from the notification stopped after a minute" }, "the talk from the notification stopped after a minute");
 }
 
 // The user says that both phones show the same string.

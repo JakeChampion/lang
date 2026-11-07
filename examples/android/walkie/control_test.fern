@@ -1,0 +1,95 @@
+// The control stream: the frames, and a TCP connection on the loopback
+// address in both directions.
+import "std/net";
+import "std/test";
+import "./control";
+import "./lan";
+
+function test_frames_come_in_full(): test.TestOutcome {
+  let a = control.frame([1u8, 2u8, 3u8]);
+  let b = control.frame([9u8]);
+  let both = a.concat(b);
+  let (rest1, first, bad1) = control.frames(both[0:4]);
+  let (rest2, all, bad2) = control.frames(rest1.concat(both[4:both.len()]));
+  let got = first.len().to_string() + " " + all.len().to_string() + " " + all[0].len().to_string() + " " + all[1][0].to_string() + " " + rest2.len().to_string() + " " + bad1.to_string() + bad2.to_string();
+  return test.assert_eq(got, "0 2 3 9 0 falsefalse");
+}
+
+function test_a_bad_length_is_refused(): test.TestOutcome {
+  let (_, _, empty) = control.frames([0u8, 0u8]);
+  let (_, _, long) = control.frames([255u8, 255u8, 1u8]);
+  return test.assert_eq(empty.to_string() + " " + long.to_string(), "true true");
+}
+
+// The key exchange, the control frames and the proofs go over the stream,
+// and the beacons and the voice do not.
+function test_the_stream_carries_control(): test.TestOutcome {
+  let out = "";
+  for kind in [lan.BEACON, lan.HANDSHAKE, lan.CONTROL, lan.VOICE, lan.IDENTITY] {
+    out = out + control.carries(lan.encode(kind, 5i64, [])).to_string() + " ";
+  }
+  return test.assert_eq(out, "false true true false true ");
+}
+
+// The owner that accepts the connection, in a second at most.
+function accepted(listener: Socket): Option[control.Stream] {
+  for k in 0..200 {
+    if let Some(o) = control.accept(listener) {
+      return Some(o);
+    }
+    sleep_ms(5i64);
+  }
+  return None;
+}
+
+// The client dials the owner, each side sends a frame, and each side reads
+// the frame of the other. When the client closes, the owner sees the loss.
+function test_a_connection_on_loopback(): test.TestOutcome {
+  let Some(listener) = control.listen(0) else {
+    return test.fail("cannot listen");
+  };
+  let Ok(port) = net.local_port(listener) else {
+    return test.fail("no port");
+  };
+  let Some(c0) = control.dial(net.ipv4_loopback(), port) else {
+    return test.fail("cannot dial");
+  };
+  let Some(o0) = accepted(listener) else {
+    return test.fail("no connection");
+  };
+  let client = control.send(c0, [7u8, 7u8]);
+  let owner = control.send(o0, [8u8]);
+  let heard_owner = 0;
+  let heard_client = 0;
+  for k in 0..200 {
+    client = control.step(client);
+    heard_client += client.frames.len();
+    owner = control.step(owner);
+    heard_owner += owner.frames.len();
+    if (heard_owner > 0 && heard_client > 0) {
+      break;
+    }
+    sleep_ms(5i64);
+  }
+  control.close(client);
+  for k in 0..200 {
+    owner = control.step(owner);
+    if (owner.lost) {
+      break;
+    }
+    sleep_ms(5i64);
+  }
+  let lost = owner.lost;
+  control.close(owner);
+  let closed = net.close(listener);
+  return test.assert_eq(heard_owner.to_string() + " " + heard_client.to_string() + " " + lost.to_string(), "1 1 true");
+}
+
+function main(): i32 {
+  let r = test.new("walkie control stream");
+  r = r.it("frames come in full", test_frames_come_in_full);
+  r = r.it("a bad length is refused", test_a_bad_length_is_refused);
+  r = r.it("the stream carries the control frames", test_the_stream_carries_control);
+  r = r.it("a connection on loopback", test_a_connection_on_loopback);
+  return r.finish();
+}

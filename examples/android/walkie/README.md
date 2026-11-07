@@ -95,9 +95,15 @@ the connection, and the phone still hears the other phone, also with the
 screen off. A wake lock and a Wi-Fi lock keep the CPU and the radio awake
 while the service runs. DISCONNECT in the notification ends the session.
 
-To talk while the app is in the background, tap TALK in the notification. The
-phone talks until you tap STOP TALKING. The talk button of the app also stops
-it.
+The phone holds the audio focus while it talks. A call takes the focus, and
+so does another app that records or plays. Then the transmission stops, and
+the phone shows why. During a call the phone cannot talk. A short sound of
+another app, such as a notification, does not stop the transmission.
+
+To talk while the app is in the background, tap TALK in the notification. On
+Android 12 and later, TALK works only when the phone is unlocked. The phone
+talks until you tap STOP TALKING, for one minute at most. The talk button of
+the app also stops it.
 
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
@@ -110,6 +116,8 @@ Only one app gets the microphone, so this test does not check the sound.
 A network that isolates its clients, such as many guest and public
 networks, blocks the beacons. A phone hotspot works: connect the other phone
 to it. Logs go to logcat with the tag `fern`.
+
+`CHECKLIST.md` lists the checks to do on two phones.
 
 The app is in layers. Each layer has its own tests on the host.
 
@@ -133,6 +141,19 @@ with the freezer of cached apps off. It taps MATCH in each copy, holds the
 talk button of each, presses BACK in one copy, and reads the result in
 logcat.
 
+## `control.fern`
+
+The control stream of a Wi-Fi Direct group. When the group forms, the group
+owner listens on TCP port 47120, and the other phone connects to it. The key
+exchange, the control frames and the proofs of identity then go over this
+connection. Each one has a length of 2 bytes in front. The beacons and the
+voice stay on UDP, because a late voice frame has no use.
+
+When the connection closes, the phone loses its peer at once. It does not
+wait 5 seconds for the heartbeats. The other phone connects again each
+second while it has no connection. `control_test.fern` tests the frames, and
+a connection on the loopback address.
+
 ## `protocol.fern`
 
 The control messages of the protocol, and their byte form.
@@ -150,7 +171,9 @@ The look of the screen: a black background, white and grey type, and red only
 for what is live. Titles, button labels and the code use the dot font of
 `../matrix.fern`, 5 by 7 round dots for each character. The palette, the
 pills, the cards and the rings of dots are in `../look.fern`. The stopwatch
-app uses the same font and the same look. The round talk button is a ring
+app uses the same font and the same look.
+
+The round talk button is a ring
 of dots. It fills red while the phone talks, and white while it
 listens. A dot beside the status has the colour of the state. The code to
 compare shows in two groups of three digits, over a MATCH pill and a NO MATCH
@@ -324,7 +347,16 @@ ends the session, and so does a code with no confirmation. Then the phone
 does not search again.
 
 `internet.fern` is the side of the app. It asks the server for a room over
-TLS. It puts each datagram to the relay in a frame with the MAC, and it
+TLS. The app steps the request from its event loop, so a slow resolver or
+server does not stop the screen or the session. The request has 15 seconds.
+`room_client.fern` makes the same request from a shell:
+
+```sh
+fern -o room_client examples/android/walkie/room_client.fern
+./room_client rooms.example.com 47130 roots.pem CREATE
+```
+
+The app puts each datagram to the relay in a frame with the MAC, and it
 answers each challenge of the relay. In a room, the app takes a datagram only
 from the relay. So a phone on the same network
 cannot take the place of the peer. `internet_test.fern` runs two nodes in one
@@ -347,14 +379,22 @@ while the server runs, and new clients get the new certificate.
 
 ## The floor
 
-One peer is the floor controller: the Wi-Fi Direct group owner, or the first
-peer in a room. The controller decides each floor request in the order it
-arrives, and the first valid request wins. A grant has a lease of 3 seconds,
-and the speaker renews it each half second while the button is held. So a
-crashed speaker cannot keep the floor.
+One peer is the floor controller: the Wi-Fi Direct group owner, or the phone
+that made the room. Elsewhere, it is a random one of the two. Of two phones,
+the one with the lower ID is the controller. The group owner and the phone
+that made the room take an ID below the IDs of the other phones. A phone that
+joined a room or a group takes an ID above them.
+
+The controller decides each floor request in the order it arrives, and the
+first valid request wins. A grant has a lease of 3 seconds, and the speaker
+renews it each half second while the button is held. So a crashed speaker
+cannot keep the floor.
 
 Each message can be lost, so each one is sent again or ends by itself:
 
+- A key exchange that does not finish in 10 seconds stops. On a Wi-Fi
+  network the phone then shows TAP TO SEARCH AGAIN. In a room it starts
+  again by itself.
 - A side sends its Hello every half second until the peer sends a message.
   The peer then confirmed the code too. A side that waits a minute for that
   ends the session.

@@ -18,15 +18,6 @@ function unchanged(bodies: irtables.LowerResult[], extra: irtables.LowerResult[]
   return MappedResult { result: Result { bodies: bodies, extra: extra }, extra_indices: indices };
 }
 
-function exported(mod: parser.Module, name: string): boolean {
-  for x in mod.exports {
-    if (x.func_name == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function mentions(r: irtables.LowerResult, name: string): boolean {
   for op in r.ops {
     if (util.contains(op.str, name)) {
@@ -49,7 +40,7 @@ function referenced(all: irtables.LowerResult[], at: i32): boolean {
 
 function ordinary_candidate(mod: parser.Module, r: irtables.LowerResult): boolean {
   return r.ok && !r.superseded && util.str_has_prefix(r.name, "ndarray__")
-    && !util.contains(r.name, ".") && !exported(mod, r.name);
+    && !util.contains(r.name, ".") && !parser.named_outside(mod, r.name);
 }
 
 function adapter_index(mod: parser.Module, bodies: irtables.LowerResult[]): i32 {

@@ -10,7 +10,7 @@ The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it.
 
-Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, and `std/android/p2p` uses Wi-Fi Direct. Each one decodes its `Posted` events. An app that uses neither does not carry their code.
+Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
 
 ## Contracts
 
@@ -141,7 +141,7 @@ function c_pthread_detach(thread: usize): i32;
 
 `Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 17 belong to `std/android/service` and `std/android/p2p`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 18 belong to `std/android/service`, `std/android/p2p` and `std/android/focus`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
@@ -288,6 +288,53 @@ function on_input_created_entry(): usize;
 @callback("on_input_destroyed")
 function on_input_destroyed_entry(): usize;
 
+// The system property that names the live ANativeActivity of the process.
+// A component that can outlive the activity, such as a service, reads it,
+// so it does not reach an activity that Android freed.
+const LIVE: string = "dev.fern.android.activity";
+
+// Sets the property LIVE to `value`, or clears it when `value` is "".
+function set_live(e: usize, value: string): void {
+  let class: usize = jni.find_class(e, "java/lang/System");
+  let key: usize = jni.new_string(e, LIVE);
+  if (value.len() == 0) {
+    let args: usize = jni.jvalues([key]);
+    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "clearProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
+    jni.free_buffer(args);
+  } else {
+    let args: usize = jni.jvalues([key, jni.new_string(e, value)]);
+    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"), args);
+    jni.free_buffer(args);
+  }
+  let cleared: usize = jni.exception_clear(e);
+}
+
+// The ANativeActivity that runs now, or 0 when there is none: before its
+// start, or after its Destroy. Android starts and destroys an activity on the
+// UI thread, so call it there, as a service does in onStartCommand.
+pub function live_activity(e: usize): usize {
+  let class: usize = jni.find_class(e, "java/lang/System");
+  let args: usize = jni.jvalues([jni.new_string(e, LIVE)]);
+  let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
+  jni.free_buffer(args);
+  let text: string = jni.string_of(e, got);
+  let v: usize = 0 as usize;
+  for c in text.as_bytes() {
+    if (c < 48u8 || c > 57u8) {
+      return 0 as usize;
+    }
+    v = v * (10 as usize) + (c - 48u8) as usize;
+  }
+  return v;
+}
+
+// The JNIEnv of the UI thread, which ANativeActivity holds.
+function ui_env(activity: usize): usize {
+  unsafe {
+    return __load_ptr(activity + 16 as usize);
+  }
+}
+
 // Sets the callbacks of `activity` and starts the loop thread at
 // `thread_main`, a C function of one usize argument, such as an @callback
 // entry. The loop thread gets the context, which it gives to `run`. Call it
@@ -321,6 +368,7 @@ pub function start(activity: usize, thread_main: usize): void {
       let ignored: i32 = c_pthread_detach(__load_ptr(ctx + 24 as usize));
     }
   }
+  set_live(ui_env(activity), (activity as u64).to_string());
 }
 
 // Sends the message `kind` with `arg` to the loop thread of the
@@ -363,6 +411,9 @@ function on_stop(activity: usize): void {
 }
 
 function on_destroy(activity: usize): void {
+  if (live_activity(ui_env(activity)) == activity) {
+    set_live(ui_env(activity), "");
+  }
   send(activity, DESTROY, 0 as usize);
 }
 
@@ -583,13 +634,6 @@ pub function env(ctx: usize): usize {
 pub function activity_object(ctx: usize): usize {
   unsafe {
     return __load_ptr(__load_ptr(ctx + 16 as usize) + 24 as usize);
-  }
-}
-
-// The ANativeActivity of the app, for `send` from another thread.
-pub function activity(ctx: usize): usize {
-  unsafe {
-    return __load_ptr(ctx + 16 as usize);
   }
 }
 

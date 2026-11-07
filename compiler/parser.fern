@@ -217,6 +217,22 @@ pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi:
 // the capability as `arg`, or `@norc`.
 pub struct FuncMark { attr: string, arg: string, func_name: string, line: i32, col: i32 }
 
+// Whether code outside the program names the function: an export, or an
+// `@interrupt` handler, which the vector table calls.
+pub function named_outside(mod: Module, name: string): boolean {
+  for x in mod.exports {
+    if (x.func_name == name) {
+      return true;
+    }
+  }
+  for m in mod.marks {
+    if (m.attr == "interrupt" && m.func_name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function marked(mod: Module, attr: string): FuncMark[] {
   let out: FuncMark[] = [];
   for m in mod.marks {
@@ -23974,13 +23990,13 @@ function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (util.has_str(["import", "export", "jni", "callback"], name)) {
     return parse_binding_args(name, p);
   }
-  if (name == "provide") {
-    return parse_string_arg("provide", "", p);
+  if (name == "provide" || name == "interrupt") {
+    return parse_string_arg(name, "", p);
   }
   if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline" || name == "norc") {
     return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
   }
-  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @norc, @must_consume, @try, @inline, and @noinline are supported)")], p);
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @provide, @norc, @interrupt, @must_consume, @try, @inline, and @noinline are supported)")], p);
 }
 
 function parse_binding_args(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
@@ -24111,8 +24127,8 @@ function attr_misplaced(name: string): string {
   if (name == "provide") {
     return "@provide only applies to a function declaration";
   }
-  if (name == "norc") {
-    return "@norc only applies to a function declaration";
+  if (name == "norc" || name == "interrupt") {
+    return "@" + name + " only applies to a function declaration";
   }
   return "@inline / @noinline only applies to a function declaration";
 }
@@ -26034,7 +26050,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
       exports = with_attr_export(exports, attr, fr_func);
-      if (attr.name == "provide" || attr.name == "norc") {
+      if (attr.name == "provide" || attr.name == "norc" || attr.name == "interrupt") {
         marks = marks.append(FuncMark { attr: attr.name, arg: attr.wit, func_name: fr_func.name, line: fr_func.line, col: fr_func.col });
       }
       let fr_out = fr_pub;

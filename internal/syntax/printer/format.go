@@ -848,7 +848,12 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.Provides)
 		f.b.WriteString("\")\n")
 	}
-	if fn.NoRC {
+	if fn.Interrupt != "" {
+		f.indent(depth)
+		f.b.WriteString("@interrupt(\"")
+		f.b.WriteString(fn.Interrupt)
+		f.b.WriteString("\")\n")
+	} else if fn.NoRC {
 		f.indent(depth)
 		f.b.WriteString("@norc\n")
 	}

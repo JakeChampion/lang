@@ -32,6 +32,31 @@ func noRCScalar(t ast.Type) bool {
 	return t != nil && noRCScalars[t.String()]
 }
 
+// interruptSlots are the slots of the arm64 vector table that a handler can
+// take. compiler/norc.fern's interrupt_slots() holds the same set.
+var interruptSlots = map[string]bool{"sync": true, "irq": true, "fiq": true, "serror": true}
+
+// checkInterruptFunctions reports E103: a handler takes no parameters and
+// returns void, names a slot, and takes a slot that no other handler takes.
+func (c *checker) checkInterruptFunctions(prog *ast.Program) {
+	seen := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Interrupt == "" {
+			continue
+		}
+		what := fmt.Sprintf("`@interrupt` function %q", fn.Name)
+		if !interruptSlots[fn.Interrupt] {
+			c.errfCode(fn.P, "E103", "%s names the slot %q, but the slots are \"sync\", \"irq\", \"fiq\" and \"serror\"", what, fn.Interrupt)
+		} else if seen[fn.Interrupt] {
+			c.errfCode(fn.P, "E103", "%s takes the slot %q, which another handler already takes", what, fn.Interrupt)
+		}
+		seen[fn.Interrupt] = true
+		if _, void := fn.ReturnType.(ast.VoidType); len(fn.Params) > 0 || (fn.ReturnType != nil && !void) {
+			c.errfCode(fn.P, "E103", "%s must take no parameters and return void", what)
+		}
+	}
+}
+
 // checkNoRCFunctions reports E102 in each @norc function: a value that is not
 // a scalar, or a call to a function that is not @norc. Such a function
 // allocates nothing and does no RC operation.
@@ -58,8 +83,12 @@ func (c *checker) checkNoRCFunctions(prog *ast.Program) {
 }
 
 func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
+	attr := "norc"
+	if fn.Interrupt != "" {
+		attr = "interrupt"
+	}
 	bad := func(p ast.Position, format string, args ...any) {
-		c.errfCode(p, "E102", "`@norc` function %q %s", fn.Name, fmt.Sprintf(format, args...))
+		c.errfCode(p, "E102", "`@%s` function %q %s", attr, fn.Name, fmt.Sprintf(format, args...))
 	}
 	if fn.Receiver != nil || fn.MethodRecv != "" || len(fn.TypeParams) > 0 {
 		bad(fn.P, "must be a plain function, not a method or a generic function")
@@ -112,7 +141,11 @@ func (c *checker) checkNoRC(fn *ast.FuncDecl, callable map[string]bool) {
 				if !callable[id.Name] {
 					bad(x.P, "may call only `@norc` functions and the raw memory intrinsics, not %q", id.Name)
 				}
-				for _, arg := range x.Args {
+				for i, arg := range x.Args {
+					// The register of a system-register intrinsic is a literal that the instruction encodes.
+					if i == 0 && (id.Name == "__sysreg_read" || id.Name == "__sysreg_write") {
+						continue
+					}
 					ast.Walk(arg, visit)
 				}
 				return false

@@ -488,6 +488,34 @@ func TestApkJniClasses(t *testing.T) {
 	}
 }
 
+// A @jni class can implement a nested interface: classes.dex names it with
+// its "$" form, as Android declares it.
+func TestApkNestedInterface(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "focustest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.focustest", "-apk-min-sdk", "28",
+		e2eharness.RepoPath("tests/android/focus", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	classes := readZipEntry(t, zr, "classes.dex")
+	checkDex(t, classes)
+	for _, s := range []string{"Ldev/fern/focustest/Listener;", "Landroid/media/AudioManager$OnAudioFocusChangeListener;", "onAudioFocusChange"} {
+		if !bytes.Contains(classes, []byte(s)) {
+			t.Errorf("classes.dex has no string %q", s)
+		}
+	}
+}
+
 // A @jni class that extends Service is a service in the manifest. It is not
 // exported, and its foreground service types are those of the
 // FOREGROUND_SERVICE_<TYPE> permissions: MICROPHONE and CONNECTED_DEVICE

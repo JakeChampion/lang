@@ -308,8 +308,28 @@ With only scalars, no value has a box, so nothing allocates and no RC operation
 occurs. The rule does not use `fip`. A `fip` function can drop an `own` value
 and can rebuild a struct in a reused box, and both touch the allocator. The
 attribute changes no code. `compiler/norc.fern` and
-`internal/check/checker/norc.go` hold the rule. `interrupt` and `naked` follow
-when a kernel environment can test them (#14254).
+`internal/check/checker/norc.go` hold the rule.
+
+**`@interrupt("slot")` exists on `arm64-kernel` (#14253).** It marks an exception
+handler, and it implies `@norc`.
+
+- The slot is `"sync"`, `"irq"`, `"fiq"` or `"serror"`, for the current level
+  with SP_ELx. E103 refuses an unknown slot, a slot that two handlers take, a
+  handler with a parameter or a result, and a target other than
+  `arm64-kernel`.
+- The image has a 2 KiB vector table, and the reset entry writes its address to
+  `VBAR_EL1`. Each slot with a handler branches to a trampoline, and every other
+  slot parks the core.
+- The trampoline saves x0 to x18, x29, x30, FPSR, and q0 to q7 and q16 to q31,
+  so a handler can use floating point. It calls the handler, restores the
+  registers and returns with `eret`. The handler reads the cause from
+  `esr_el1`, and it can step over the instruction with `elr_el1`.
+- A handler is a root of the tree shake and of the lowering, as an export is.
+  `parser.named_outside` is the one test for both.
+- The qemu boot test reads an EL2 register from EL1. The read is undefined, so
+  the sync handler runs, records the exception class and steps over the read.
+
+x86-64 (an IDT and `iretq`) and `naked` come next.
 
 ### 4. Memory layout
 

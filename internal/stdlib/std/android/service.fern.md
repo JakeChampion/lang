@@ -6,7 +6,9 @@ This module runs a foreground service for a NativeActivity app of `std/android`,
 
 A foreground service keeps the process of the app at a high priority while its window is not on the screen. Its notification stays in the status bar. The app declares a @jni class that extends `android.app.Service`, with a native `onBind` that returns null and a native `onStartCommand` that calls `command`. `fern -apk` then declares the service, with the types of the FOREGROUND_SERVICE_TYPE permissions of the app.
 
-`start` gives the service the `ANativeActivity` in an extra of the intent. The stop action of the notification sends the intent back to the service with that extra. `command` then sends a message to the loop thread, and the loop gives it to the app as a `Posted` event. `event` gives `Stopped` or `Action` for that event.
+From API level 31, a notice can require an unlocked phone for the action of the app. Then a person who holds a locked phone cannot use the action.
+
+A button of the notification sends an intent to the service. `command` then sends a message to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. After the Destroy of the activity, no message goes. `event` gives `Stopped` or `Action` for that event.
 
 The module needs API level 26, for the notification channel. From API level 29, `startForeground` takes the types of the manifest.
 
@@ -74,10 +76,9 @@ pub function event(e: android.Event): Option[Event] {
 <<the service>>=
 // The notification of a foreground service: the channel ID and its name,
 // the title and the text, the label of the action of the app or "" for no
-// action, and the label of the stop action.
-pub struct Notice { channel: string, channel_name: string, title: string, text: string, action: string, stop: string }
-
-const SERVICE_EXTRA: string = "dev.fern.android.activity";
+// action, and the label of the stop action. When `unlock` is set, the
+// action of the app needs an unlocked phone, from API level 31.
+pub struct Notice { channel: string, channel_name: string, title: string, text: string, action: string, stop: string, unlock: boolean }
 
 const STOP_ACTION: string = "dev.fern.android.STOP";
 
@@ -92,16 +93,12 @@ const ICON: usize = 17301668;
 
 const STOP_ICON: usize = 17301560;
 
-// A new intent from `context` to `class`, with the activity in its extra.
-function service_intent(e: usize, context: usize, class: usize, activity: usize): usize {
+// A new intent from `context` to `class`.
+function service_intent(e: usize, context: usize, class: usize): usize {
   let intent_class: usize = jni.find_class(e, "android/content/Intent");
   let args: usize = jni.jvalues([context, class]);
   let intent: usize = jni.new_object_a(e, intent_class, jni.get_method_id(e, intent_class, "<init>", "(Landroid/content/Context;Ljava/lang/Class;)V"), args);
   jni.free_buffer(args);
-  let put: usize = jni.get_method_id(e, intent_class, "putExtra", "(Ljava/lang/String;J)Landroid/content/Intent;");
-  let extra: usize = jni.jvalues([jni.new_string(e, SERVICE_EXTRA), activity]);
-  let same: usize = jni.call_object_method_a(e, intent, put, extra);
-  jni.free_buffer(extra);
   return intent;
 }
 
@@ -111,8 +108,7 @@ function service_intent(e: usize, context: usize, class: usize, activity: usize)
 pub function start(ctx: usize, class: string): boolean {
   let e: usize = android.env(ctx);
   let obj: usize = android.activity_object(ctx);
-  let activity: usize = android.activity(ctx);
-  let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class), activity);
+  let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class));
   let start: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "startForegroundService", "(Landroid/content/Intent;)Landroid/content/ComponentName;");
   let args: usize = jni.jvalues([intent]);
   let started: usize = jni.call_object_method_a(e, obj, start, args);
@@ -129,7 +125,7 @@ pub function start(ctx: usize, class: string): boolean {
 pub function stop(ctx: usize, class: string): void {
   let e: usize = android.env(ctx);
   let obj: usize = android.activity_object(ctx);
-  let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class), 0 as usize);
+  let intent: usize = service_intent(e, obj, jni.load_class(e, obj, class));
   let stop: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "stopService", "(Landroid/content/Intent;)Z");
   let args: usize = jni.jvalues([intent]);
   let stopped: i32 = jni.call_boolean_method_a(e, obj, stop, args);
@@ -141,18 +137,9 @@ pub function stop(ctx: usize, class: string): void {
 pub function update(ctx: usize, class: string, n: Notice): void {
   let e: usize = android.env(ctx);
   let obj: usize = android.activity_object(ctx);
-  let activity: usize = android.activity(ctx);
-  let notification: usize = notification_of(e, obj, jni.load_class(e, obj, class), activity, n);
+  let notification: usize = notification_of(e, obj, jni.load_class(e, obj, class), n);
   let manager: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "notification")]);
   let posted: boolean = jni.call_void(e, manager, "notify", "(ILandroid/app/Notification;)V", [1 as usize, notification]);
-}
-
-function intent_activity(e: usize, intent: usize): usize {
-  let get: usize = jni.get_method_id(e, jni.get_object_class(e, intent), "getLongExtra", "(Ljava/lang/String;J)J");
-  let args: usize = jni.jvalues([jni.new_string(e, SERVICE_EXTRA), 0 as usize]);
-  let activity: usize = jni.call_long_method_a(e, intent, get, args);
-  jni.free_buffer(args);
-  return activity;
 }
 
 // The onStartCommand of the app's service: `env`, `service` and `intent`
@@ -165,7 +152,7 @@ pub function command(e: usize, service: usize, intent: usize, n: Notice): i32 {
     stop_self(e, service);
     return NOT_STICKY;
   }
-  let activity: usize = intent_activity(e, intent);
+  let activity: usize = android.live_activity(e);
   let action: string = android.intent_action(e, intent);
   if (action == STOP_ACTION) {
     stop_self(e, service);
@@ -180,7 +167,7 @@ pub function command(e: usize, service: usize, intent: usize, n: Notice): i32 {
     }
     return NOT_STICKY;
   }
-  let notification: usize = notification_of(e, service, jni.get_object_class(e, service), activity, n);
+  let notification: usize = notification_of(e, service, jni.get_object_class(e, service), n);
   start_foreground(e, service, notification);
   return NOT_STICKY;
 }
@@ -276,8 +263,8 @@ function build_step(e: usize, builder: usize, name: string, sig: string, values:
 
 // The intent that a button of the notification sends to the service `class`
 // with the action `action`.
-function action_intent(e: usize, context: usize, class: usize, activity: usize, action: string): usize {
-  let intent: usize = service_intent(e, context, class, activity);
+function action_intent(e: usize, context: usize, class: usize, action: string): usize {
+  let intent: usize = service_intent(e, context, class);
   let set: usize = jni.get_method_id(e, jni.get_object_class(e, intent), "setAction", "(Ljava/lang/String;)Landroid/content/Intent;");
   let args: usize = jni.jvalues([jni.new_string(e, action)]);
   let same: usize = jni.call_object_method_a(e, intent, set, args);
@@ -291,11 +278,23 @@ function action_intent(e: usize, context: usize, class: usize, activity: usize, 
   return pending;
 }
 
-// The ongoing notification of `n`, with its stop action. FLAG_IMMUTABLE |
-// FLAG_UPDATE_CURRENT is 201326592.
+// A button of a notification that runs `pending` only on an unlocked phone.
+// It needs API level 31.
+function unlocked_action(e: usize, icon: usize, label: string, pending: usize): usize {
+  let class: usize = jni.find_class(e, "android/app/Notification$Action$Builder");
+  let args: usize = jni.jvalues([icon, jni.new_string(e, label), pending]);
+  let builder: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)V"), args);
+  jni.free_buffer(args);
+  build_step(e, builder, "setAuthenticationRequired", "(Z)Landroid/app/Notification$Action$Builder;", [1 as usize]);
+  let none: usize = jni.jvalue_alloc(0);
+  let action: usize = jni.call_object_method_a(e, builder, jni.get_method_id(e, class, "build", "()Landroid/app/Notification$Action;"), none);
+  jni.free_buffer(none);
+  return action;
+}
+
 // The notification `n` of the service `class`, built in `context`: the
-// service, or the activity.
-function notification_of(e: usize, context: usize, class: usize, activity: usize, n: Notice): usize {
+// service, or the activity. It is ongoing, with its stop action.
+function notification_of(e: usize, context: usize, class: usize, n: Notice): usize {
   make_channel(e, context, n);
   let builder_class: usize = jni.find_class(e, "android/app/Notification$Builder");
   let args: usize = jni.jvalues([context, jni.new_string(e, n.channel)]);
@@ -306,10 +305,12 @@ function notification_of(e: usize, context: usize, class: usize, activity: usize
   build_step(e, builder, "setContentText", "(Ljava/lang/CharSequence;" + ret, [jni.new_string(e, n.text)]);
   build_step(e, builder, "setSmallIcon", "(I" + ret, [ICON]);
   build_step(e, builder, "setOngoing", "(Z" + ret, [1 as usize]);
-  if (n.action.len() > 0) {
-    build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret, [ICON, jni.new_string(e, n.action), action_intent(e, context, class, activity, APP_ACTION)]);
+  if (n.action.len() > 0 && n.unlock && sdk_int(e) >= 31) {
+    build_step(e, builder, "addAction", "(Landroid/app/Notification$Action;" + ret, [unlocked_action(e, ICON, n.action, action_intent(e, context, class, APP_ACTION))]);
+  } else if (n.action.len() > 0) {
+    build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret, [ICON, jni.new_string(e, n.action), action_intent(e, context, class, APP_ACTION)]);
   }
-  build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret, [STOP_ICON, jni.new_string(e, n.stop), action_intent(e, context, class, activity, STOP_ACTION)]);
+  build_step(e, builder, "addAction", "(ILjava/lang/CharSequence;Landroid/app/PendingIntent;" + ret, [STOP_ICON, jni.new_string(e, n.stop), action_intent(e, context, class, STOP_ACTION)]);
   let none: usize = jni.jvalue_alloc(0);
   let notification: usize = jni.call_object_method_a(e, builder, jni.get_method_id(e, builder_class, "build", "()Landroid/app/Notification;"), none);
   jni.free_buffer(none);
