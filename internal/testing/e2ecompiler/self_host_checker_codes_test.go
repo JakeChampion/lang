@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 )
 
 var codeRE = regexp.MustCompile(`E\d{3}`)
+var driverVerdictCodeRE = regexp.MustCompile(`^[A-Z][0-9]{3}$`)
 
 const methodBorrowPrelude = `struct Handle { fd: i32 }
 function (own h: Handle) close(): i32 { return h.fd; }
@@ -107,6 +109,39 @@ const (
 	// P is in no union or trait below; A is a member of U and implements T.
 	elemCheckedDecls = "struct P { x: i32 }\nstruct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nenum E { X, Y(i32) }\ntrait T { function t(self: Self): i32; }\nimpl T for A { function t(self: A): i32 { return 0; } }\n"
 )
+
+// hostDriverBin is a compiler driver built for the host, through the driver cache.
+func hostDriverBin(t *testing.T, driverFile string) string {
+	t.Helper()
+	host := e2eharness.HostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return e2eharness.CachedDriverBinFor(t, e2eharness.RepoPath("compiler"), driverFile, host)
+}
+
+// checkerCodesOutput is what a checker driver binary prints for src on its stdin.
+func checkerCodesOutput(bin, src string) (string, error) {
+	cmd := exec.Command(bin)
+	cmd.Stdin = strings.NewReader(src)
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), nil
+	}
+	stderr := ""
+	if exit, ok := err.(*exec.ExitError); ok {
+		stderr = string(exit.Stderr)
+		// Exit 1 is the checker's diagnostic verdict, not a transport failure.
+		if exit.ExitCode() == 1 {
+			for _, d := range driverDiags(string(out)) {
+				if driverVerdictCodeRE.MatchString(d.code) {
+					return string(out), nil
+				}
+			}
+		}
+	}
+	return string(out), fmt.Errorf("checker driver failed: %w\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
+}
 
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
 	return buildCheckerDriverBin(t, "drivers/checker_codes_run.fern", false)

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/lexer"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 type cacheEntry[T any] struct {
@@ -116,7 +117,7 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 		}
 		seen[path] = true
 		order = append(order, path)
-		src, err := os.ReadFile(path)
+		src, err := literate.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("self-host import closure: read %s: %w", path, err)
 		}
@@ -132,6 +133,12 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 			imp := strings.TrimPrefix(imported, "./")
 			cand := filepath.Join(base, imp+".fern")
 			if _, statErr := os.Stat(cand); statErr != nil {
+				if _, docErr := os.Stat(cand + ".md"); docErr == nil {
+					if err := visit(cand + ".md"); err != nil {
+						return err
+					}
+					continue
+				}
 				return fmt.Errorf("self-host import closure: %s imports %q but %s does not exist "+
 					"(the driver's project dir is missing a source; it would be silently "+
 					"omitted from the build-cache key)", path, imported, cand)
@@ -278,22 +285,10 @@ func CachedLink(t testing.TB, gcc, asm string) string {
 				}
 			}
 		}
-		diskBin := ""
-		if d := diskCacheWriteDir(); d != "" {
-			diskBin = filepath.Join(d, diskKey+".bin")
-		}
 		if err := linkSelfHostAsm(gcc, base, key, asm, binPath); err != nil {
 			return "", err
 		}
-		if diskBin != "" {
-			_ = os.MkdirAll(filepath.Dir(diskBin), 0o755)
-			if in, rerr := os.ReadFile(binPath); rerr == nil {
-				tmp := diskBin + ".tmp"
-				if werr := os.WriteFile(tmp, in, 0o755); werr == nil {
-					_ = os.Rename(tmp, diskBin)
-				}
-			}
-		}
+		publishToDiskCache(binPath, diskKey+".bin")
 		return binPath, nil
 	})
 	if err != nil {

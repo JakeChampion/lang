@@ -270,19 +270,9 @@ jobs:
         with:
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
-      # The Go interpreter's verdict on each suite (e2eharness.InterpVerdict).
-      # A verdict file is named by the hash of its inputs, so any earlier
-      # directory is safe to restore. Each leg saves its own copy per commit.
-      - name: Restore the interpreter verdicts, and save them when the job ends
-        uses: actions/cache@v6
+      - uses: ./.github/actions/oracle-verdict-cache
         with:
-          path: ${{ runner.temp }}/selfhost-unicache/*.interp
-          key: interp-verdicts-v1-${{ runner.os }}-${{ matrix.leg }}-${{ github.sha }}
-          restore-keys: |
-            interp-verdicts-v1-${{ runner.os }}-${{ matrix.leg }}-
-            interp-verdicts-v1-${{ runner.os }}-
-      - name: Drop interpreter verdicts no run has read for a week
-        run: find "$RUNNER_TEMP/selfhost-unicache" -maxdepth 1 -name '*.interp' -mtime +7 -delete
+          slot: stdtest-${{ matrix.leg }}
       - name: aarch64 cross-gcc + qemu
         if: startsWith(matrix.leg, 'arm64')
         uses: ./.github/actions/apt-cross-toolchain
@@ -388,6 +378,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: checker-stdlib-${{ matrix.host }}
       - uses: ./.github/actions/build-e2e-binaries
       - name: compare every stdlib test with the Go checker
         run: |
@@ -557,6 +550,9 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
         with:
           save: ${{ matrix.host == 'aarch64' && matrix.shard == 0 && 'true' || 'false' }}
+      - uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: shard-${{ matrix.host }}-${{ matrix.shard }}
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain

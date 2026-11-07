@@ -1,3 +1,5 @@
+# 2026-11-07: drivers/checker_codes_run.fern joins the table, so driver-sizes warms it for the
+# shards. Measured locally with the pin on main at 1de5de6d.
 # 2026-11-06: drivers/runtime_run.fern and drivers/interp_run.fern join the table, so driver-sizes
 # warms them for the shards. Measured locally with the pin on main at 2959e517.
 # 2026-11-06: PR #14320 at 49f0b046. CI run 42231713106, driver-sizes-x86_64.
@@ -605,4 +607,5 @@ drivers/wasm_run.fern 9219200
 drivers/wasm_runio_run.fern 9197104
 drivers/asm_pathprobe_run.fern 5756560
 drivers/checker_modload_run.fern 3717520
+drivers/checker_codes_run.fern 3478064
 drivers/interp_run.fern 2697248
