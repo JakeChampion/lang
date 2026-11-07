@@ -30,6 +30,7 @@
 # Measured 2026-10-04: 569 fixtures, 567 clean.
 a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
+a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
 a_handler_fans_out_on_its_scheduler                  2

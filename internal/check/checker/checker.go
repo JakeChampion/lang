@@ -16385,6 +16385,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.fixLitLocal(ll, hn, fa.P)
 			}
 		}
+		c.settleLitTupleByField(fa, hint)
 		c.settleGenericCallByHint(fa, hint)
 		return
 	}
