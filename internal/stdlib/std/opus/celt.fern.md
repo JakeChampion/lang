@@ -1065,6 +1065,8 @@ function age(own mem: f32[], channels: i32, n: i32): f32[] {
 struct Shapes { d: range.Decoder, st: Decoder, h: Header, x: f32[], y: f32[] }
 
 // The frame up to its band shapes and energies.
+// fern-lint: allow cyclomatic-complexity
+// One step per stage of the reference band decoder.
 function shapes(own st: Decoder, own d0: range.Decoder, len: i32, f: Frame, lm: i32): Shapes {
   let c = f.stream_channels;
   let nb = modes.BANDS;

@@ -1,0 +1,325 @@
+// WAV and ULC2 containers; codec functions themselves need no filesystem access.
+import "std/array";
+import "std/f64";
+import "./codec";
+import "./encoder";
+import "./transform";
+
+pub struct Audio { rate: i32, channels: i32, samples: f64[] }
+
+function le(data: [u8], at: i32, count: i32): u32 {
+  let value = 0u32;
+  for i in 0..count {
+    value |= data[at + i] as u32 << (8 * i) as u32;
+  }
+  return value;
+}
+
+function put(own out: u8[], value: u32, count: i32): u8[] {
+  for i in 0..count {
+    out = out.append((value >> (8 * i) as u32 & 255u32) as u8);
+  }
+  return out;
+}
+
+@inline
+function put32(own out: u8[], value: u32): u8[] {
+  return out.append(value as u8).append((value >> 8u32) as u8).append((value >> 16u32) as u8).append((value >> 24u32) as u8);
+}
+
+@inline
+function put16(own out: u8[], value: u32): u8[] {
+  return out.append(value as u8).append((value >> 8u32) as u8);
+}
+
+function tag(data: [u8], at: i32, a: i32, b: i32, c: i32, d: i32): boolean {
+  return data[at] as i32 == a && data[at + 1] as i32 == b && data[at + 2] as i32 == c && data[at + 3] as i32 == d;
+}
+
+pub function read_wav(data: [u8]): Result[Audio, string] {
+  if (data.len() < 12) {
+    return Err("truncated WAV header");
+  }
+  if (!tag(data, 0, 82, 73, 70, 70) || !tag(data, 8, 87, 65, 86, 69)) {
+    return Err("expected a RIFF/WAVE file");
+  }
+  let riff_size = le(data, 4, 4) as u64 + 8u64;
+  if (riff_size > data.len() as u64 || riff_size < 12u64) {
+    return Err("invalid RIFF size");
+  }
+  let end = riff_size as i32;
+  let at = 12;
+  let format = 0;
+  let channels = 0;
+  let rate = 0;
+  let bits = 0;
+  let align = 0;
+  let start = -1;
+  let length = 0;
+  while (at <= end - 8) {
+    let raw_size = le(data, at + 4, 4);
+    if (raw_size as u64 > (end - at - 8) as u64) {
+      return Err("truncated WAV chunk");
+    }
+    let size = raw_size as i32;
+    let body = at + 8;
+    if (tag(data, at, 102, 109, 116, 32)) {
+      if (size < 16) {
+        return Err("short WAV fmt chunk");
+      }
+      format = le(data, body, 2) as i32;
+      channels = le(data, body + 2, 2) as i32;
+      let raw_rate = le(data, body + 4, 4);
+      if (raw_rate > 2147483647u32) {
+        return Err("WAV sample rate is too large");
+      }
+      rate = raw_rate as i32;
+      align = le(data, body + 12, 2) as i32;
+      bits = le(data, body + 14, 2) as i32;
+    } else if (tag(data, at, 100, 97, 116, 97) && start == -1) {
+      start = body;
+      length = size;
+    }
+    let padded = size + (size & 1);
+    if (padded > end - body) {
+      return Err("missing WAV chunk padding");
+    }
+    at = body + padded;
+  }
+  if (at != end || start == -1 || channels < 1 || channels > 255 || rate < 1) {
+    return Err("missing or invalid WAV metadata");
+  }
+  if (!(format == 1 && (bits == 8 || bits == 16 || bits == 24 || bits == 32) || format == 3 && bits == 32)) {
+    return Err("supported WAV input: PCM8, PCM16, PCM24, PCM32, or FLOAT32");
+  }
+  let bytes = bits / 8;
+  if (align != channels * bytes || length % align != 0) {
+    return Err("invalid WAV sample alignment");
+  }
+  let samples: f64[] = [];
+  let cursor = start;
+  while (cursor < start + length) {
+    let value = 0.0;
+    let raw = data[cursor] as u32;
+    if (bytes >= 2) {
+      raw |= data[cursor + 1] as u32 << 8u32;
+    }
+    if (bytes >= 3) {
+      raw |= data[cursor + 2] as u32 << 16u32;
+    }
+    if (bytes == 4) {
+      raw |= data[cursor + 3] as u32 << 24u32;
+    }
+    if (format == 3) {
+      value = f32_from_bits(raw as i32) as f64;
+    } else if (bits == 8) {
+      value = (raw as i32 - 128) as f64 / 128.0;
+    } else {
+      let signed = raw as i32;
+      if (bits < 32 && (signed & 1 << bits - 1) != 0) {
+        signed -= 1 << bits;
+      }
+      value = signed as f64 / ((1u64 << (bits - 1) as u64) as f64);
+    }
+    if (!value.is_finite() || value.abs() > 1.0) {
+      return Err("WAV samples must be finite and in [-1, 1]");
+    }
+    samples = samples.append(value);
+    cursor += bytes;
+  }
+  return Ok(Audio { rate: rate, channels: channels, samples: samples });
+}
+
+// Output format codes are the number of PCM bits, or 32 for IEEE float.
+pub function write_wav(audio: Audio, bits: i32): Result[u8[], string] {
+  if (audio.rate < 1 || audio.channels < 1 || audio.channels > 255 || audio.samples.len() % audio.channels != 0) {
+    return Err("invalid audio metadata");
+  }
+  if (bits != 8 && bits != 16 && bits != 24 && bits != 32) {
+    return Err("invalid WAV output format");
+  }
+  let bytes = bits / 8;
+  let size64 = audio.samples.len() as u64 * (bytes as u64);
+  let avg = audio.rate as u64 * (audio.channels as u64) * (bytes as u64);
+  if (size64 > 1073741760u64 || avg > 4294967295u64) {
+    return Err("WAV output is too large");
+  }
+  let size = size64 as i32;
+  let out: u8[] = [82u8, 73u8, 70u8, 70u8];
+  out = put(out, (36 + size + (size & 1)) as u32, 4);
+  out = out.concat([87u8, 65u8, 86u8, 69u8, 102u8, 109u8, 116u8, 32u8]);
+  out = put(out, 16u32, 4);
+  let format = 1u32;
+  if (bits == 32) {
+    format = 3u32;
+  }
+  out = put(out, format, 2);
+  out = put(out, audio.channels as u32, 2);
+  out = put(out, audio.rate as u32, 4);
+  out = put(out, avg as u32, 4);
+  out = put(out, (audio.channels * bytes) as u32, 2);
+  out = put(out, bits as u32, 2);
+  out = out.concat([100u8, 97u8, 116u8, 97u8]);
+  out = put(out, size as u32, 4);
+  for sample in audio.samples {
+    if (!sample.is_finite()) {
+      return Err("nonfinite output sample");
+    }
+    if (bits == 32) {
+      out = put32(out, f32_bits(sample as f32) as u32);
+    } else {
+      let x = sample;
+      if (x > 1.0) {
+        x = 1.0;
+      }
+      if (x < -1.0) {
+        x = -1.0;
+      }
+      let scale = 1 << bits - 1;
+      let q = (x * (scale as f64)).round() as i32;
+      if (q >= scale) {
+        q = scale - 1;
+      }
+      if (bits == 8) {
+        q += 128;
+      }
+      if (bytes == 1) {
+        out = out.append(q as u8);
+      } else if (bytes == 2) {
+        out = put16(out, q as u32);
+      } else {
+        out = put16(out, q as u32);
+        out = out.append((q as u32 >> 16u32) as u8);
+      }
+    }
+  }
+  if ((size & 1) != 0) {
+    out = out.append(0u8);
+  }
+  return Ok(out);
+}
+
+pub struct Header { block_size: i32, max_block_bytes: i32, blocks: i32, rate: i32, channels: i32, kbps: i32, offset: i32 }
+
+pub function header(data: [u8]): Result[Header, string] {
+  if (data.len() < 24 || data.len() > 1073741823) {
+    return Err("truncated or oversized ULC2 file");
+  }
+  if (!tag(data, 0, 85, 76, 67, 50)) {
+    return Err("expected a ULC2 file");
+  }
+  let block_size = le(data, 4, 2) as i32;
+  let channels = le(data, 16, 2) as i32;
+  let raw_blocks = le(data, 8, 4);
+  let raw_rate = le(data, 12, 4);
+  let raw_offset = le(data, 20, 4);
+  if (!codec.valid_config(block_size, channels) || raw_blocks > 2147483647u32 || raw_rate < 1u32 || raw_rate > 2147483647u32 || raw_offset < 24u32 || raw_offset > data.len() as u32) {
+    return Err("invalid ULC2 header");
+  }
+  // Even a silent block needs a window code and two nybbles per channel.
+  let min_bytes = (1 + 2 * channels + 1) / 2;
+  if (raw_blocks as u64 * (min_bytes as u64) > (data.len() - raw_offset as i32) as u64) {
+    return Err("ULC2 block count exceeds available data");
+  }
+  return Ok(Header { block_size: block_size, max_block_bytes: le(data, 6, 2) as i32, blocks: raw_blocks as i32, rate: raw_rate as i32, channels: channels, kbps: le(data, 18, 2) as i32, offset: raw_offset as i32 });
+}
+
+pub function decode(data: u8[]): Result[Audio, string] {
+  let h = header(data)?;
+  let count = h.blocks as u64 * (h.block_size as u64) * (h.channels as u64);
+  if (count > 134217728u64) {
+    return Err("decoded audio exceeds the in-memory limit (134217728 samples)");
+  }
+  let state = codec.decoder(h.block_size, h.channels)?;
+  let out: f64[] = [];
+  let offset = h.offset;
+  for i in 0..h.blocks {
+    let block = codec.decode_block(state, data, offset)?;
+    if (h.max_block_bytes != 0 && block.next_byte - offset > h.max_block_bytes) {
+      return Err("block exceeds ULC2 maximum block size");
+    }
+    state = block.state;
+    offset = block.next_byte;
+    out = out.concat(block.samples);
+  }
+  return Ok(Audio { rate: h.rate, channels: h.channels, samples: out });
+}
+
+function sample_block(audio: Audio, block: i32, block_size: i32): f64[] {
+  let input = transform.zeros(block_size * audio.channels);
+  let start = block as i64 * (block_size as i64) * (audio.channels as i64);
+  for i in 0..input.len() {
+    if (start + i as i64 < audio.samples.len() as i64) {
+      input = input.with(i, audio.samples[(start + i as i64) as i32]);
+    }
+  }
+  return input;
+}
+
+pub function analyze(audio: Audio, block_size: i32): Result[f64, string] {
+  let state = encoder.create(block_size, audio.channels, audio.rate, encoder.Vbr(100.0))?;
+  if (audio.samples.len() % audio.channels != 0 || audio.samples.len() > 134217728) {
+    return Err("invalid audio sample count");
+  }
+  let frames = audio.samples.len() / audio.channels;
+  let blocks = frames / block_size + 2;
+  if (frames % block_size != 0) {
+    blocks += 1;
+  }
+  let sum = 0.0;
+  for b in 0..blocks {
+    let prepared = encoder.prepare(state, sample_block(audio, b, block_size))?;
+    state = prepared.state;
+    sum += prepared.complexity;
+  }
+  return Ok(sum / (blocks as f64));
+}
+
+pub function encode(audio: Audio, quality: i32, block_size: i32): Result[u8[], string] {
+  if (quality < 1 || quality > 100) {
+    return Err("quality must be 1..100");
+  }
+  return encode_mode(audio, encoder.Vbr(quality as f64), block_size);
+}
+
+pub function encode_mode(audio: Audio, mode: encoder.Mode, block_size: i32): Result[u8[], string] {
+  let state = encoder.create(block_size, audio.channels, audio.rate, mode)?;
+  if (audio.samples.len() % audio.channels != 0 || audio.samples.len() > 134217728) {
+    return Err("invalid audio sample count");
+  }
+  let frames = audio.samples.len() / audio.channels;
+  let blocks = frames / block_size + 2;
+  if (frames % block_size != 0) {
+    blocks += 1;
+  }
+  let stream: u8[] = [];
+  let max_bytes = 0;
+  for b in 0..blocks {
+    let block = encoder.encode_block(state, sample_block(audio, b, block_size))?;
+    state = block.state;
+    if (block.bytes.len() > max_bytes) {
+      max_bytes = block.bytes.len();
+    }
+    if (stream.len() > 1073741799 - block.bytes.len()) {
+      return Err("encoded file exceeds the in-memory limit");
+    }
+    stream = stream.concat(block.bytes);
+  }
+  let kbps = stream.len() as f64 * 8.0 * (audio.rate as f64) / (blocks as f64 * (block_size as f64) * 1000.0);
+  let nominal = 65535;
+  if (kbps < 65535.0) {
+    nominal = kbps as i32;
+  }
+  if (max_bytes > 65535) {
+    max_bytes = 0;
+  }
+  let out: u8[] = [85u8, 76u8, 67u8, 50u8];
+  out = put(out, block_size as u32, 2);
+  out = put(out, max_bytes as u32, 2);
+  out = put(out, blocks as u32, 4);
+  out = put(out, audio.rate as u32, 4);
+  out = put(out, audio.channels as u32, 2);
+  out = put(out, nominal as u32, 2);
+  out = put(out, 24u32, 4);
+  return Ok(out.concat(stream));
+}
