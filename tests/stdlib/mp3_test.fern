@@ -103,7 +103,7 @@ function metadata(): test.TestOutcome {
       return test.fail("ID3 bounds");
     }
   }
-  for index in [9, 10] {
+  for index in [9, 10, 14] {
     let v2 = mp3_vectors.cases()[index];
     let Ok(data) = hex.decode(v2.bytes) else {
       return test.fail("gapless fixture");
@@ -113,6 +113,9 @@ function metadata(): test.TestOutcome {
     };
     if (track.skip_frames < 529 || track.padding_frames < 0 || track.declared_frames == 0u32 || track.data_offset == 0) {
       return test.fail("gapless boundaries");
+    }
+    if (index == 14 && (track.skip_frames != 529 || track.padding_frames != 0)) {
+      return test.fail("zero-padding metadata");
     }
     let Ok(gapless) = mp3.decode(data, pcm.default_limits()) else {
       return test.fail("gapless decode");

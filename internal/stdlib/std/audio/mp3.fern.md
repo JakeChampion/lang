@@ -22,6 +22,8 @@ The frame API requires a complete frame at a known byte offset. It does not scan
 The decoder skips ID3v2.2 through ID3v2.4, ID3v1, and bounded trailing APE tags.
 It does not expose tag contents or build a seek index.
 
+`inspect_track` reports padding after decoder-delay adjustment, with a minimum of zero.
+
 `decode` validates the frame chain and raw sample budget before output allocation.
 `decode_raw` checks cumulative limits as it decodes each frame.
 The raw budget includes codec delay and padding. This bounds work even when metadata declares a short result.
@@ -360,10 +362,8 @@ function gapless_fields(input: [u8], cursor: i32, end: i32): Result[(i32, i32), 
     }
     let delay = input[cursor + 21] as i32 << 4 | input[cursor + 22] as i32 >> 4;
     let pad = (input[cursor + 22] as i32 & 15) << 8 | input[cursor + 23] as i32;
-    if (pad < DECODER_DELAY) {
-      return Err(pcm.Header);
-    }
-    return Ok((delay + DECODER_DELAY, pad - DECODER_DELAY));
+    let padding = if (pad > DECODER_DELAY) { pad - DECODER_DELAY } else { 0 };
+    return Ok((delay + DECODER_DELAY, padding));
   }
   return Ok((0, 0));
 }

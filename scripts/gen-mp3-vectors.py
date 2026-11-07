@@ -110,6 +110,18 @@ def pcm_of(temp, ref, data, gapless=False):
     return (temp / 'reference.f32').read_bytes()
 
 
+def remuxed(temp, data):
+    (temp / 'raw.mp3').write_bytes(data)
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'mp3', '-i', str(temp / 'raw.mp3'),
+                    '-c:a', 'copy', '-map_metadata', '-1', '-write_xing', '1', '-fflags', '+bitexact',
+                    str(temp / 'remux.mp3')], check=True)
+    data = (temp / 'remux.mp3').read_bytes()
+    data = data[frame_offsets(data)[0][0]:]
+    tag = data.find(b'Lavf', 0, frame_offsets(data)[0][1])
+    assert tag >= 0 and data[tag + 21:tag + 24] == bytes(3), 'zero delay and padding extension'
+    return data
+
+
 def crc16(data):
     c = 65535
     for byte in data:
@@ -160,6 +172,8 @@ def main():
             data = data[:end]
             rate, cc = offsets[0][2:]
             cases.append((name, data, rate, cc, False, pcm_of(temp, ref, data)))
+        data = remuxed(temp, encoded(temp, 48000, 2))
+        cases.append(('remux-zero-padding', data, 48000, 2, True, pcm_of(temp, ref, data, True)))
         data = protected_silence() * 2
         cases.append(('protected-silence', data, 44100, 2, False, pcm_of(temp, ref, data)))
         # ISO PCM checks cover the intensity-stereo cases. FFmpeg checks the other cases.

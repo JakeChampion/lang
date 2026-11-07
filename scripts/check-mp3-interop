@@ -41,10 +41,12 @@ with tempfile.TemporaryDirectory() as tmp:
     for rate in ([] if args.iso_only else [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000]):
         for cc in [1, 2]:
             values = vectors.signal(rate, cc, int(rate * 0.22))
-            for mode in ['low', 'high', 'vbr', 'gapless']:
+            for mode in ['low', 'high', 'vbr', 'gapless', 'remux']:
                 bitrate = ('16k' if rate < 16000 else '32k') if mode == 'low' else ('64k' if rate < 32000 else '320k')
-                gapless = mode == 'gapless'
-                data = vectors.encoded(tmp, rate, cc, values=values, bitrate=bitrate, vbr=mode in ['vbr', 'gapless'], gapless=gapless)
+                gapless = mode in ['gapless', 'remux']
+                data = vectors.encoded(tmp, rate, cc, values=values, bitrate=bitrate, vbr=mode in ['vbr', 'gapless'], gapless=mode == 'gapless')
+                if mode == 'remux':
+                    data = vectors.remuxed(tmp, data)
                 path = tmp / 'case.mp3'
                 path.write_bytes(data)
                 reference = vectors.pcm_of(tmp, ref, data, gapless)

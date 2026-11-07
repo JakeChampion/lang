@@ -98,6 +98,8 @@ It rejects Layer I, Layer II, and free-format bitrate headers.
 `inspect_track` exposes those boundaries. It skips ID3v2.2 through ID3v2.4, ID3v1, and bounded trailing APE tags.
 The module does not expose tag contents or build a seek index.
 
+Zero-padding stream-copy tags are valid. Adjusted padding has a minimum of zero.
+
 The whole-file APIs require a constant output format.
 `decode` validates the frame chain and raw sample budget before output allocation.
 `decode_raw` checks cumulative limits at each frame boundary.
@@ -176,15 +178,15 @@ The largest RMS difference was 0.00001836.
 This comparison uses a tolerance. It is not a claim of bit-exact output or complete Opus conformance.
 The CELT tests retain their separate libopus reference checks.
 
-The MP3 suite has 15 golden vectors from a pinned scalar minimp3 reference.
-They cover all nine sample rates, bit reservoir history, mixed blocks, intensity stereo, gapless output, and protected frames.
+The MP3 suite has 16 golden vectors from a pinned scalar minimp3 reference.
+They cover all nine sample rates, bit reservoir history, mixed blocks, intensity stereo, gapless output, stream-copy tags, and protected frames.
 An additional 8 kHz mixed-block vector compares every sample with FFmpeg.
 It verifies band boundaries independently of the scalar reference.
 The tests also cover metadata, private bits, buffer reuse, malformed input, and reservoir warmup.
 The table generator tests verify the implicit zero padding of C array rows.
 
-`scripts/check-mp3-interop --iso` checks 72 generated files and 14 pinned conformance streams.
-All 72 files match scalar minimp3 float output bit for bit, including gapless output.
+`scripts/check-mp3-interop --iso` checks 90 generated files and 14 pinned conformance streams.
+All 90 files match scalar minimp3 float output bit for bit, including gapless output.
 Their FFmpeg comparison has a maximum absolute sample difference of 0.00000238.
 
 The 14 conformance streams also match scalar minimp3 float output bit for bit.
