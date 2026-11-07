@@ -7742,6 +7742,13 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 	if _, ok := b.(ast.NeverType); ok {
 		return a
 	}
+	// An empty map literal is the open Map, and a typed map gives it its types.
+	if bareMap(a) && typedMap(b) {
+		return b
+	}
+	if bareMap(b) && typedMap(a) {
+		return a
+	}
 	if an, aok := a.(ast.NumberType); aok && an.Polymorphic {
 		switch b.(type) {
 		case ast.NumberType, ast.FloatType:
@@ -7770,12 +7777,6 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 		if merged, ok := mergeEnumInference(ae, be); ok {
 			return merged
 		}
-	}
-	if bareMap(a) && isMapType(b) {
-		return b
-	}
-	if bareMap(b) && isMapType(a) {
-		return a
 	}
 	if as, aok := a.(ast.StructType); aok {
 		if bs, bok := b.(ast.StructType); bok && as.Name == bs.Name && len(as.Args) == len(bs.Args) && len(as.Args) > 0 {

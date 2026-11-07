@@ -23,12 +23,12 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"insert through a generic call", ident + "function main(): i32 { let m = id(Map { }); m = m.insert(\"a\", 1); return m.len(); }\n"},
 		{"generic call as an argument", ident + "function size(m: Map[string, i64]): i32 { return m.len(); }\nfunction main(): i32 { return size(id(Map { })); }\n"},
 		{"generic call as a statement", ident + "function main(): i32 { id(Map { }); return 0; }\n"},
+		{"if arm beside a typed map", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = if (true) { Map { } } else { Map { 1: 2 } }; return m.len(); }\n"},
+		{"else arm beside a typed map", "import \"core/map\";\nfunction main(): i32 { let n = if (false) { Map { 3: 4 } } else { Map { } }; let k: Map[i32, i32] = n; return k.len(); }\n"},
+		{"match arm beside a typed map", "import \"core/map\";\nfunction main(): i32 { let b = true; let m = match (b) { true => Map { }, _ => Map { 1: 2 } }; return m.len(); }\n"},
+		{"array element beside a typed map", "import \"core/map\";\nfunction main(): i32 { let ms = [Map { }, Map { 1: 2 }]; return ms[0].len(); }\n"},
 		{"empty first if arm", "import \"core/map\";\nfunction main(): i32 { let m = if (false) { Map { } } else { Map { 1: 2 } }; return m.len(); }\n"},
-		{"empty last if arm", "import \"core/map\";\nfunction main(): i32 { let m = if (false) { Map { 1: 2 } } else { Map { } }; return m.len(); }\n"},
-		{"empty if arm under an annotation", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = if (false) { Map { } } else { Map { 1: 2 } }; return m.len(); }\n"},
 		{"empty if arm in a return", "import \"core/map\";\nfunction f(b: boolean): Map[string, i32] { return if (b) { Map { } } else { Map { \"a\": 1 } }; }\nfunction main(): i32 { return f(true).len(); }\n"},
-		{"empty first match arm", "import \"core/map\";\nfunction main(): i32 { let k = 3; let m = match (k) { 1 => Map { }, _ => Map { 1: 2 } }; return m.len(); }\n"},
-		{"empty first array element", "import \"core/map\";\nfunction main(): i32 { let xs = [Map { }, Map { 1: 2 }]; return xs[0].len(); }\n"},
 	}
 	for _, c := range good {
 		if err := checkSource(t, c.src); err != nil {

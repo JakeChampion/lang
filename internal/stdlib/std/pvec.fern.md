@@ -90,7 +90,7 @@ pub function new[T](): PVec[T] {
 }
 
 pub function from_array[T](xs: T[]): PVec[T] {
-  let v: PVec[T] = new();
+  let v = new();
   let i = 0;
   while (i < xs.len()) {
     v = v.append(xs[i]);
@@ -566,7 +566,7 @@ pub function (v: PVec[T]) map[U](f: (T) => U): PVec[U] {
 }
 
 pub function (v: PVec[T]) filter(pred: (T) => boolean): PVec[T] {
-  let out: PVec[T] = new();
+  let out = new();
   let xs = v.to_array();
   let i = 0;
   while (i < xs.len()) {
@@ -590,7 +590,7 @@ pub function (v: PVec[T]) concat(other: PVec[T]): PVec[T] {
 }
 
 pub function (v: PVec[T]) slice(lo: i32, hi: i32): PVec[T] {
-  let out: PVec[T] = new();
+  let out = new();
   let i = lo;
   if (i < 0) {
     i = 0;
