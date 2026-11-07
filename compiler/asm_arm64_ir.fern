@@ -3757,6 +3757,15 @@ function arm64_maintenance_text(op: string): string {
   return "    dc civac, x9\n";
 }
 
+// brk takes the sync exception with the class 0x3c, and elr_el1 holds its
+// address.
+function arm64_no_operand_op(op: string): string {
+  if (op == "dev_breakpoint") {
+    return "    brk #0\n";
+  }
+  return "    wfi\n";
+}
+
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
 // convention. boot_info reads the x0 that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -3766,8 +3775,8 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   if (ircore.maintenance_op(ins.str)) {
     return ssa_maintenance(ins, reg_of, s);
   }
-  if (ins.str == "dev_wfi") {
-    s = s.write("    wfi\n    mov x0, #0\n");
+  if (ins.str == "dev_wfi" || ins.str == "dev_breakpoint") {
+    s = s.write(arm64_no_operand_op(ins.str) + "    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   if (ins.str == "dev_boot_info") {
@@ -7017,7 +7026,7 @@ function emit_vectors(s: asmcore.EmitState): asmcore.EmitState {
 function vector_target(interrupts: string[], slot: i32): string {
   for entry in interrupts {
     let parts = util.split_char(entry, b' ');
-    if (4 + util.index_of_str(norc.interrupt_slots(), parts[0]) == slot) {
+    if (4 + util.index_of_str(norc.arm64_slots(), parts[0]) == slot) {
       return "__fern_vector_" + parts[0];
     }
   }

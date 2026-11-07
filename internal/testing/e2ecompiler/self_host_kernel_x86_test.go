@@ -102,6 +102,22 @@ function registers(): string {
   }
 }
 
+// int3 is a trap, so the handler returns to the instruction after it.
+@interrupt("bp")
+function on_bp(): void {
+  unsafe {
+    __sysreg_write("kernel_gs_base", 103i64);
+  }
+}
+
+function trap(): string {
+  unsafe {
+    __sysreg_write("kernel_gs_base", 0i64);
+    __breakpoint();
+    return "trap " + __sysreg_read("kernel_gs_base").to_string();
+  }
+}
+
 // Each cache and TLB op on a heap word, which keeps its value.
 function maintenance(): string {
   unsafe {
@@ -126,6 +142,7 @@ function main(): i32 {
   print(describe());
   print(registers());
   print(maintenance());
+  print(trap());
   board.exit_qemu(16);
   return 0;
 }
@@ -278,7 +295,7 @@ func TestSelfHostKernelX86BootsOnQemu(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 33 {
 		t.Fatalf("qemu: %v, want exit status 33 from isa-debug-exit; console:\n%s", err, console)
 	}
-	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n", "efer.lma 1 cr0.pg 1 kernel_gs_base 42\n", "maintenance 7\n"} {
+	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n", "efer.lma 1 cr0.pg 1 kernel_gs_base 42\n", "maintenance 7\n", "trap 103\n"} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 		}

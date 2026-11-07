@@ -419,6 +419,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__cache_flush", capability: "privileged" },
     Gate { builtin: "__tlb_flush", capability: "privileged" },
     Gate { builtin: "__tlb_flush_all", capability: "privileged" },
+    Gate { builtin: "__breakpoint", capability: "privileged" },
     Gate { builtin: "__port_in8", capability: "privileged" },
     Gate { builtin: "__port_in16", capability: "privileged" },
     Gate { builtin: "__port_in32", capability: "privileged" },

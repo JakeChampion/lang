@@ -2426,6 +2426,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__tlb_flush_all"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
+	c.info.FuncSigs["__breakpoint"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}

@@ -32,6 +32,7 @@ var FixedOps = []FixedOp{
 	{Spellings: []string{"sti"}, Bytes: []byte{0xFB}},
 	{Spellings: []string{"rdmsr"}, Bytes: []byte{0x0F, 0x32}},
 	{Spellings: []string{"wrmsr"}, Bytes: []byte{0x0F, 0x30}},
+	{Spellings: []string{"iretq"}, Bytes: []byte{0x48, 0xCF}},
 
 	{Spellings: []string{"movsb"}, Bytes: []byte{0xA4}, Repeatable: true},
 	{Spellings: []string{"movsw"}, Bytes: []byte{0x66, 0xA5}, Repeatable: true},

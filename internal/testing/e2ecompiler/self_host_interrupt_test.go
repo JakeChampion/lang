@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -77,7 +78,7 @@ func TestSelfHostInterruptRules(t *testing.T) {
 	for name, c := range map[string]struct {
 		src, code, msg string
 	}{
-		"unknown slot":  {"@interrupt(\"nmi\")\nfunction h(): void {}" + main, "E103", "names the slot \"nmi\""},
+		"unknown slot":  {"@interrupt(\"nmi2\")\nfunction h(): void {}" + main, "E103", "slot \"nmi2\""},
 		"slot twice":    {"@interrupt(\"irq\")\nfunction a(): void {}\n@interrupt(\"irq\")\nfunction b(): void {}" + main, "E103", "which another handler already takes"},
 		"a parameter":   {"@interrupt(\"irq\")\nfunction h(n: i32): void {}" + main, "E103", "must take no parameters and return void"},
 		"a result":      {"@interrupt(\"irq\")\nfunction h(): i32 {\n  return 1;\n}" + main, "E103", "must take no parameters and return void"},
@@ -100,7 +101,7 @@ func TestSelfHostInterruptRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg, err := cli.compileCmd("arm64-linux", filepath.Join(dir, "hosted"), src).CombinedOutput()
-	if err == nil || !strings.Contains(string(msg), "E103") || !strings.Contains(string(msg), "only -target arm64-kernel has one") {
+	if err == nil || !strings.Contains(string(msg), "E103") || !strings.Contains(string(msg), "only -target arm64-kernel and -target x86-64-kernel have one") {
 		t.Errorf("arm64-linux: err %v; want E103 in:\n%s", err, msg)
 	}
 }
@@ -126,4 +127,122 @@ func TestSelfHostArm64TextAlignment(t *testing.T) {
 	if refused := refusalsFor(t, bin, runner, ".text\n_start:\n    nop\n    .p2align 4\n    nop\n"); len(refused) == 0 {
 		t.Error(".p2align 4 in .text without a known origin: the assembler accepts it")
 	}
+}
+
+const interruptX86Src = `@interrupt("bp")
+function on_bp(): void {
+  unsafe {
+    __sysreg_write("kernel_gs_base", 1i64);
+  }
+}
+
+@interrupt("gp")
+function on_gp(): void {
+  unsafe {
+    __sysreg_write("kernel_gs_base", 2i64);
+  }
+}
+
+@interrupt("32")
+function on_timer(): void {
+}
+
+function main(): i32 {
+  unsafe {
+    __breakpoint();
+  }
+  return 0;
+}
+`
+
+func TestSelfHostInterruptIDT(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	text := emitKernelAsm(t, cli, "x86-64-kernel", kernelX86RAM, interruptX86Src)
+	wantInOrder(t, "x86-64-kernel", text, []string{
+		"    .section .bss\n    .p2align 4\n__fern_idt:\n    .skip 4096\n",
+		".Lidt_fill:\n    leaq .Lvector_park(%rip), %rax\n    call __fern_idt_gate\n",
+		"    addq $48, %rdi\n    leaq __fern_vector_bp(%rip), %rax\n",
+		"    addq $208, %rdi\n    leaq __fern_vector_gp(%rip), %rax\n",
+		"    addq $512, %rdi\n    leaq __fern_vector_32(%rip), %rax\n",
+		"    lidt (%rsp)\n",
+		"    call __fn_main\n",
+	})
+	wantInOrder(t, "x86-64-kernel", text, []string{
+		"__fern_idt_gate:\n    movl %eax, %edx\n    andl $65535, %edx\n    orl $524288, %edx\n",
+		"    orl $36352, %edx\n",
+		"__fern_vector_bp:\n    pushq %rax\n",
+		"    subq $512, %rsp\n    vmovdqu %ymm0, 0(%rsp)\n",
+		"    cld\n    call __fn_on_bp\n",
+		"    addq $512, %rsp\n",
+		"    popq %rax\n    iretq\n",
+		"__fern_vector_gp:\n",
+		"    subq $520, %rsp\n",
+		"    popq %rax\n    addq $8, %rsp\n    iretq\n",
+	})
+	if !strings.Contains(text, "    int3\n") {
+		t.Error("__breakpoint does not emit int3")
+	}
+	if strings.Contains(emitKernelAsm(t, cli, "x86-64-kernel", kernelX86RAM, "function main(): i32 {\n  return 0;\n}\n"), "lidt") {
+		t.Error("a kernel without a handler loads an IDT")
+	}
+	if !strings.Contains(emitKernelAsm(t, cli, "arm64-kernel", kernelRAM, "function main(): i32 {\n  unsafe {\n    __breakpoint();\n  }\n  return 0;\n}\n"), "    brk #0\n") {
+		t.Error("__breakpoint does not emit brk #0 on arm64")
+	}
+}
+
+// The CPU pushes an interrupt frame onto the current stack, so kernel code must
+// keep no data below %rsp: x86-64 kernel code has no red zone.
+func TestSelfHostKernelX86UsesNoRedZone(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	asmPath := filepath.Join(t.TempDir(), "kernel.s")
+	if msg, err := cli.compileCmd("x86-64-kernel", asmPath, writeKernelX86Program(t), "-ram", kernelX86RAM, "-emit", "asm").CombinedOutput(); err != nil {
+		t.Fatalf("emit: %v\n%s", err, msg)
+	}
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(asm)
+	below := regexp.MustCompile(`[^0-9a-z_]-[0-9]+\(%rsp\)`)
+	if m := below.FindString(text); m != "" {
+		t.Errorf("x86-64-kernel code addresses memory below %%rsp: %q", m)
+	}
+}
+
+func TestSelfHostInterruptSlotOfTheTarget(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	for _, c := range []struct{ target, ram, slot string }{
+		{"x86-64-kernel", kernelX86RAM, "irq"},
+		{"arm64-kernel", kernelRAM, "bp"},
+		{"x86-64-kernel", kernelX86RAM, "31"},
+	} {
+		src := filepath.Join(dir, c.slot+".fern")
+		prog := "@interrupt(\"" + c.slot + "\")\nfunction h(): void {}\n\nfunction main(): i32 {\n  return 0;\n}\n"
+		if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		msg, err := cli.compileCmd(c.target, filepath.Join(dir, "out.elf"), src, "-ram", c.ram).CombinedOutput()
+		if err == nil || !strings.Contains(string(msg), "E103") {
+			t.Errorf("%s with slot %q: err %v; want E103 in:\n%s", c.target, c.slot, err, msg)
+		}
+	}
+	for _, target := range []string{"arm64-linux", "x86-64-linux"} {
+		src := filepath.Join(dir, "bp.fern")
+		if err := os.WriteFile(src, []byte("function main(): i32 {\n  unsafe {\n    __breakpoint();\n  }\n  return 0;\n}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		msg, err := cli.compileCmd(target, filepath.Join(dir, "bp-"+target), src).CombinedOutput()
+		if err == nil || !strings.Contains(string(msg), "E066") || !strings.Contains(string(msg), "__breakpoint") {
+			t.Errorf("%s: err %v; want E066 naming __breakpoint in:\n%s", target, err, msg)
+		}
+	}
+}
+
+func TestSelfHostInterruptX86FormsMatchGas(t *testing.T) {
+	compareFormCases(t, []string{
+		"vmovdqu %ymm0, 0(%rsp)", "vmovdqu %ymm15, 480(%rsp)", "vmovdqu 480(%rsp), %ymm15", "vmovdqu 256(%rsp), %ymm8",
+		"pushq %r11", "popq %r8", "decl %ecx", "andl $-65536, %edx", "orl $36352, %edx", "orl $524288, %edx",
+		"movl %edx, 8(%rdi)", "movl $0, 12(%rdi)", "movl $4095, (%rsp)", "movq %rax, 2(%rsp)", "shrq $32, %rdx",
+	})
 }
