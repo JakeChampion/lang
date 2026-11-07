@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-func TestInterpVerdictCachesByInputs(t *testing.T) {
+func TestOracleVerdictCachesByInputs(t *testing.T) {
 	t.Setenv("FERN_BIN", "")
 	work := t.TempDir()
 	calls := filepath.Join(work, "calls")
-	fake := filepath.Join(work, "fake-interp")
-	script := "#!/bin/sh\necho run >> " + calls + "\necho \"verdict for $2\"\nexit 3\n"
+	fake := filepath.Join(work, "fake-oracle")
+	script := "#!/bin/sh\necho run >> " + calls + "\necho \"verdict for $2\"\necho \"note from $1\" >&2\nexit 3\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +51,21 @@ func TestInterpVerdictCachesByInputs(t *testing.T) {
 	t.Setenv("FERN_INTERP_VERDICT_PROBE", "on")
 	check(3)
 
+	out, exit := CheckVerdict(t, fake, src)
+	if exit != 3 || !strings.Contains(string(out), "verdict for "+src) || !strings.Contains(string(out), "note from -check") {
+		t.Fatalf("check verdict = %q exit %d, want stdout and stderr together and exit 3", out, exit)
+	}
+	if got := runs(); got != 4 {
+		t.Fatalf("-check shared the -interp verdict: %d runs, want 4", got)
+	}
+	CheckVerdict(t, fake, src)
+	if got := runs(); got != 4 {
+		t.Fatalf("a second -check ran the oracle again: %d runs, want 4", got)
+	}
+
 	t.Setenv("FERN_SELFHOST_BUILD_CACHE", "")
-	check(4)
 	check(5)
+	check(6)
 }
 
 func TestInterpVerdictRunsExternalFernAgain(t *testing.T) {
