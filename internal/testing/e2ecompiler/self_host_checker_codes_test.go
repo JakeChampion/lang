@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -107,6 +108,24 @@ const (
 	// P is in no union or trait below; A is a member of U and implements T.
 	elemCheckedDecls = "struct P { x: i32 }\nstruct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nenum E { X, Y(i32) }\ntrait T { function t(self: Self): i32; }\nimpl T for A { function t(self: A): i32 { return 0; } }\n"
 )
+
+// hostCheckerCodesBin is checker_codes_run.fern built for the host, through the driver cache.
+func hostCheckerCodesBin(t *testing.T) string {
+	t.Helper()
+	host := e2eharness.HostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return e2eharness.CachedDriverBinFor(t, e2eharness.RepoPath("compiler"), "drivers/checker_codes_run.fern", host)
+}
+
+// checkerCodesOutput is what the checker_codes_run binary prints for src on its stdin.
+func checkerCodesOutput(bin, src string) string {
+	cmd := exec.Command(bin)
+	cmd.Stdin = strings.NewReader(src)
+	out, _ := cmd.Output()
+	return string(out)
+}
 
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
 	return buildCheckerDriverBin(t, "drivers/checker_codes_run.fern", false)

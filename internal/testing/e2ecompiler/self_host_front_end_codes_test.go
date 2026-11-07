@@ -1,10 +1,7 @@
 package e2ecompiler
 
 import (
-	"os/exec"
-	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/diag"
@@ -56,17 +53,11 @@ type frontEndCodeCase struct {
 
 func runFrontEndCodeCases(t *testing.T, cases []frontEndCodeCase) {
 	t.Helper()
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/drivers/checker_codes_run.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
+	checker := hostCheckerCodesBin(t)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(interpBin, "-interp", driver)
-			cmd.Stdin = strings.NewReader(tc.src)
-			out, _ := cmd.Output()
-			got := driverCodes(string(out))
+			out := checkerCodesOutput(checker, tc.src)
+			got := driverCodes(out)
 
 			if !equalStrings(got, uniqueSortedCodes(tc.want)) {
 				t.Errorf("self-host front-end codes = %v, want %v (src %s)", got, tc.want, tc.src)
