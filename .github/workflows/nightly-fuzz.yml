@@ -420,6 +420,12 @@ jobs:
           # env because the target skips without it, and x86-64 only: the
           # driver is emitted as x86-64 asm and takes host paths as argv.
           - { runner: ubuntu-24.04,     host: x86_64,  slug: selfhost, pkg: ./internal/testing/e2e,       target: FuzzSelfHostFrontEnd,         wasmtime: "false", selfhost: "1" }
+          # The SEC-040 input boundaries. fuzz-diff.yml runs each for 30 s
+          # from the seeds on every PR. The drivers run natively, so x86-64 only.
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: manifest, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostManifest,       wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: irverify, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostIRVerify,       wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-x86,  pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostX86Assembler,   wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-arm64, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArm64Assembler, wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45

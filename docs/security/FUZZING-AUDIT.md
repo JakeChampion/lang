@@ -56,7 +56,8 @@ A hang names the budget, and a budget breach names the resident size.
 
 `fuzz-diff.yml` runs the four targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The nightly workflow does not yet run these targets for a long budget against a cached corpus.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the four targets on the x86-64 runner for 20 minutes.
+Each target starts from a cached corpus that grows from night to night.
 
 ## Limits
 
