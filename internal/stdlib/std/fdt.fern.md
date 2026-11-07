@@ -12,6 +12,8 @@ A node finds its devices by `compatible` with `find_compatible`, or by name with
 
 `parse` refuses a blob that does not start with the magic `0xd00dfeed`, a version below 16, and a structure that runs past the end of the blob or does not close each node. The error gives the byte offset of the problem. The functions that read a value give None for a property that is not there or that is too short.
 
+Offsets and lengths must stay within the declared total size. Tokens and property values stay within the structure block. Property names stay within the strings block. A string value ends within its property, including its NUL byte. Readers give None for invalid node or region indexes.
+
 ## Executable example
 
 ```fern test name=std-fdt-example
@@ -126,8 +128,11 @@ function word(b: [u8], at: i32): Result[i64, FdtError] {
 }
 
 // The index of the NUL byte that ends the string at `at`.
-function nul(b: [u8], at: i32): Result[i32, FdtError] {
-  for i in at..b.len() {
+function nul(b: [u8], at: i32, end: i32): Result[i32, FdtError] {
+  if (at < 0 || end > b.len() || at > end) {
+    return Err(FdtError { offset: at, reason: "a string is outside its block" });
+  }
+  for i in at..end {
     if (b[i] == 0 as u8) {
       return Ok(i);
     }
@@ -146,8 +151,16 @@ function text(b: [u8], start: i32, end: i32): Result[string, FdtError] {
   return Ok(s);
 }
 
-function align4(n: i32): i32 {
-  return (n + 3) / 4 * 4;
+function fits(start: i32, len: i32, end: i32): boolean {
+  return start >= 0 && len >= 0 && start <= end && len <= end - start;
+}
+
+function align4(n: i32, end: i32): Result[i32, FdtError] {
+  let padding = (4 - n % 4) % 4;
+  if (!fits(n, padding, end)) {
+    return Err(FdtError { offset: n, reason: "the block ends inside padding" });
+  }
+  return Ok(n + padding);
 }
 ```
 
@@ -161,33 +174,99 @@ const MAGIC: i64 = 3490578157;
 
 struct Walk { at: i32, open: i32, nodes: Node[], done: boolean }
 
-// Reads the blob that starts at byte 0 of `blob`.
-pub function parse(blob: u8[]): Result[Tree, FdtError] {
+struct Limits { structure: i32, structure_end: i32, strings: i32, strings_end: i32 }
+
+function header_end(total: i64, bytes: i32, version: i64): Result[i64, FdtError] {
+  let header = 36i64;
+  if (version >= 17i64) {
+    header = 40i64;
+  }
+  if (total < header || total > bytes as i64) {
+    return Err(FdtError { offset: 4, reason: "the total size is outside the blob" });
+  }
+  return Ok(header);
+}
+
+function block_fits(start: i64, len: i64, total: i64, header: i64): boolean {
+  return start >= header && start <= total && len <= total - start;
+}
+
+function structure_end(b: [u8], version: i64, start: i64, strings: i64, total: i64): Result[i64, FdtError] {
+  let end = total;
+  if (version >= 17i64) {
+    let len = word(b, 36)?;
+    if (len > total - start) {
+      return Err(FdtError { offset: 36, reason: "the structure block runs past the end of the blob" });
+    }
+    end = start + len;
+  } else if (strings >= start) {
+    end = strings;
+  }
+  return Ok(end);
+}
+
+function limits(b: [u8], version: i64): Result[Limits, FdtError] {
+  let total = word(b, 4)?;
+  let start = word(b, 8)?;
+  let strings = word(b, 12)?;
+  let strings_len = word(b, 32)?;
+  let header = header_end(total, b.len(), version)?;
+  if (!block_fits(start, 0i64, total, header) || start % 4i64 != 0i64) {
+    return Err(FdtError { offset: 8, reason: "the structure block is outside the blob or unaligned" });
+  }
+  if (!block_fits(strings, strings_len, total, header)) {
+    return Err(FdtError { offset: 12, reason: "the strings block is outside the blob" });
+  }
+  let end = structure_end(b, version, start, strings, total)?;
+  if (strings_len > 0i64 && start < strings + strings_len && strings < end) {
+    return Err(FdtError { offset: 12, reason: "the structure and strings blocks overlap" });
+  }
+  return Ok(Limits { structure: start as i32, structure_end: end as i32, strings: strings as i32, strings_end: (strings + strings_len) as i32 });
+}
+
+function version(blob: [u8]): Result[i64, FdtError] {
   if (word(blob, 0)? != MAGIC) {
     return Err(FdtError { offset: 0, reason: "no device-tree magic" });
   }
-  if (word(blob, 20)? < 16) {
+  let version = word(blob, 20)?;
+  if (version < 16) {
     return Err(FdtError { offset: 20, reason: "the version is below 16" });
   }
-  let strings = word(blob, 12)? as i32;
-  let w = Walk { at: word(blob, 8)? as i32, open: -1, nodes: [], done: false };
+  let compatible = word(blob, 24)?;
+  if (compatible > 17i64 || compatible > version) {
+    return Err(FdtError { offset: 24, reason: "the version is not compatible" });
+  }
+  return Ok(version);
+}
+
+// Reads the blob that starts at byte 0 of `blob`.
+pub function parse(blob: u8[]): Result[Tree, FdtError] {
+  let version = version(blob)?;
+  let bounds = limits(blob, version)?;
+  let w = Walk { at: bounds.structure, open: -1, nodes: [], done: false };
   while (!w.done) {
-    w = step(blob, strings, w)?;
+    w = step(blob, bounds, w)?;
   }
   if (w.open >= 0) {
     return Err(FdtError { offset: w.at, reason: "a node is not closed" });
   }
+  if (w.nodes.len() == 0 || version >= 17i64 && w.at != bounds.structure_end) {
+    return Err(FdtError { offset: w.at, reason: "the structure must end after one root node" });
+  }
   return Ok(Tree { blob: blob, nodes: w.nodes });
 }
 
-function step(b: [u8], strings: i32, w: Walk): Result[Walk, FdtError] {
+function step(b: [u8], bounds: Limits, w: Walk): Result[Walk, FdtError] {
+  if (!fits(w.at, 4, bounds.structure_end)) {
+    return Err(FdtError { offset: w.at, reason: "the structure block ends inside a token" });
+  }
   let token = word(b, w.at)?;
   let at = w.at + 4;
   if (token == 1) {
-    return begin_node(b, Walk { ...w, at: at });
+    return begin_node(b, bounds, Walk { ...w, at: at });
   }
   if (token == 3) {
-    return property(b, strings, Walk { ...w, at: at });
+    return property(b, bounds, Walk { ...w, at: at });
   }
   if (token == 2 && w.open >= 0) {
     return Ok(Walk { ...w, at: at, open: w.nodes[w.open].parent });
@@ -201,33 +280,51 @@ function step(b: [u8], strings: i32, w: Walk): Result[Walk, FdtError] {
   return Err(FdtError { offset: w.at, reason: "an unknown token" });
 }
 
-function begin_node(b: [u8], w: Walk): Result[Walk, FdtError] {
-  let end = nul(b, w.at)?;
+function begin_node(b: [u8], bounds: Limits, w: Walk): Result[Walk, FdtError] {
+  if (w.open < 0 && w.nodes.len() > 0) {
+    return Err(FdtError { offset: w.at, reason: "the tree has more than one root node" });
+  }
+  let end = nul(b, w.at, bounds.structure_end)?;
   let node = Node { name: text(b, w.at, end)?, parent: w.open, address_cells: 2, size_cells: 1, properties: [] };
   let nodes = w.nodes.append(node);
-  return Ok(Walk { ...w, at: align4(end + 1), open: nodes.len() - 1, nodes: nodes });
+  return Ok(Walk { ...w, at: align4(end + 1, bounds.structure_end)?, open: nodes.len() - 1, nodes: nodes });
 }
 
-function property(b: [u8], strings: i32, w: Walk): Result[Walk, FdtError] {
+function property_name(b: [u8], bounds: Limits, offset: i64, at: i32): Result[string, FdtError] {
+  if (offset >= (bounds.strings_end - bounds.strings) as i64) {
+    return Err(FdtError { offset: at, reason: "a property name is outside the strings block" });
+  }
+  let start = bounds.strings + offset as i32;
+  return text(b, start, nul(b, start, bounds.strings_end)?);
+}
+
+function with_property(b: [u8], n: Node, p: Property): Result[Node, FdtError] {
+  n = Node { ...n, properties: n.properties.append(p) };
+  if (p.name == "#address-cells" && p.len == 4) {
+    n = Node { ...n, address_cells: word(b, p.start)? as i32 };
+  }
+  if (p.name == "#size-cells" && p.len == 4) {
+    n = Node { ...n, size_cells: word(b, p.start)? as i32 };
+  }
+  return Ok(n);
+}
+
+function property(b: [u8], bounds: Limits, w: Walk): Result[Walk, FdtError] {
   if (w.open < 0) {
     return Err(FdtError { offset: w.at, reason: "a property is outside a node" });
   }
-  let len = word(b, w.at)? as i32;
-  let name_at = strings + word(b, w.at + 4)? as i32;
+  if (!fits(w.at, 8, bounds.structure_end)) {
+    return Err(FdtError { offset: w.at, reason: "the structure block ends inside a property" });
+  }
+  let len = word(b, w.at)?;
+  let name_offset = word(b, w.at + 4)?;
   let start = w.at + 8;
-  if (len < 0 || start + len > b.len()) {
+  if (len > (bounds.structure_end - start) as i64) {
     return Err(FdtError { offset: w.at, reason: "a property runs past the end of the blob" });
   }
-  let name = text(b, name_at, nul(b, name_at)?)?;
-  let n = w.nodes[w.open];
-  n = Node { ...n, properties: n.properties.append(Property { name: name, start: start, len: len }) };
-  if (name == "#address-cells" && len == 4) {
-    n = Node { ...n, address_cells: word(b, start)? as i32 };
-  }
-  if (name == "#size-cells" && len == 4) {
-    n = Node { ...n, size_cells: word(b, start)? as i32 };
-  }
-  return Ok(Walk { ...w, at: align4(start + len), nodes: w.nodes.with(w.open, n) });
+  let name = property_name(b, bounds, name_offset, w.at + 4)?;
+  let n = with_property(b, w.nodes[w.open], Property { name: name, start: start, len: len as i32 })?;
+  return Ok(Walk { ...w, at: align4(start + len as i32, bounds.structure_end)?, nodes: w.nodes.with(w.open, n) });
 }
 ```
 
@@ -259,8 +356,14 @@ pub function (t: Tree) find_name(name: string): Option[i32] {
 }
 
 pub function (t: Tree) property(node: i32, name: string): Option[Property] {
+  if (node < 0 || node >= t.nodes.len()) {
+    return None;
+  }
   for p in t.nodes[node].properties {
     if (p.name == name) {
+      if (!fits(p.start, p.len, t.blob.len())) {
+        return None;
+      }
       return Some(p);
     }
   }
@@ -282,7 +385,7 @@ pub function (t: Tree) property_strings(node: i32, name: string): string[] {
   };
   let at = p.start;
   while (at < p.start + p.len) {
-    let Ok(end) = nul(t.blob, at) else {
+    let Ok(end) = nul(t.blob, at, p.start + p.len) else {
       return out;
     };
     let Ok(s) = text(t.blob, at, end) else {
@@ -307,12 +410,12 @@ pub function (t: Tree) property_u32(node: i32, name: string): Option[u32] {
   let Some(p) = t.property(node, name) else {
     return None;
   };
-  let Ok(v) = binary.read_u32_be(t.blob, p.start) else {
-    return None;
-  };
   if (p.len < 4) {
     return None;
   }
+  let Ok(v) = binary.read_u32_be(t.blob, p.start) else {
+    return None;
+  };
   return Some(v);
 }
 
@@ -322,16 +425,23 @@ pub function (t: Tree) reg(node: i32, index: i32): Option[Region] {
     return None;
   };
   let parent = t.nodes[node].parent;
+  if (parent < -1 || parent >= t.nodes.len()) {
+    return None;
+  }
   let ac = 2;
   let sc = 1;
   if (parent >= 0) {
     ac = t.nodes[parent].address_cells;
     sc = t.nodes[parent].size_cells;
   }
-  let at = p.start + index * (ac + sc) * 4;
-  if (index < 0 || at + (ac + sc) * 4 > p.start + p.len) {
+  if (ac < 0 || ac > 2 || sc < 0 || sc > 2) {
     return None;
   }
+  let width = (ac + sc) * 4;
+  if (width == 0 || index < 0 || p.len < width || index > (p.len - width) / width) {
+    return None;
+  }
+  let at = p.start + index * width;
   let Some(address) = t.cells(at, ac) else {
     return None;
   };
@@ -343,7 +453,7 @@ pub function (t: Tree) reg(node: i32, index: i32): Option[Region] {
 
 // The value of `count` big-endian words at `at`, at most two of them.
 function (t: Tree) cells(at: i32, count: i32): Option[u64] {
-  if (count > 2) {
+  if (count < 0 || count > 2) {
     return None;
   }
   let v: u64 = 0 as u64;
