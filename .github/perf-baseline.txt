@@ -1,3 +1,5 @@
+# 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
+# ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 # 2026-11-06: SEC-021. Matched primary compilers compare this change with main a0e50a15.
 # Each static limit adds at most the measured native increase to its previous value.
 # Preserve previous limits for unrelated growth. All tolerances and the warning policy stay fixed.
@@ -595,3 +597,7 @@ aarch64/perceus_rbtree_ck.text	3218
 aarch64/perceus_rbtree_ck.ir	56271318
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
+x86_64/video_qtrle.text 5167
+x86_64/video_qtrle.ir 1876434265
+aarch64/video_qtrle.text 5628
+aarch64/video_qtrle.ir 1680157959
