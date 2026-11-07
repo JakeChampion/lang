@@ -2,13 +2,16 @@
 
 This module connects the existing CELT codec to standard Opus packet framing.
 It encodes fullband CELT packets at 48 kHz with one or two channels and frames of 2.5, 5, 10, or 20 ms.
+
 The decoder accepts CELT-only packets at every Opus bandwidth and all five Opus output sample rates.
 It accepts every packet frame-count code, including multiple frames and padding.
+
 Samples are interleaved `f32` values. The encoder requires finite values between -1 and 1.
 Decoder output can exceed that interval. Apply clipping at the device conversion boundary.
 
 This is partial Opus support. SILK, hybrid, Ogg containers, pre-skip, output gain, and end trimming are outside this module.
 SILK and hybrid packets return `Unsupported`. Do not use this module as a decoder for arbitrary `.opus` files.
+
 The encoder has a 120-sample lookahead at 48 kHz. A container must account for that delay and final padding.
 After a decode error, reset the decoder before the next packet.
 

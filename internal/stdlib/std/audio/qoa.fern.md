@@ -2,13 +2,16 @@
 
 QOA is the audio counterpart of QOI. It uses lossy, fixed-rate compression with a four-tap predictor.
 This module supports one through eight channels, 16-bit PCM, and static QOA files.
+
 The encoder follows the reference scalefactor search, error score, and predictor update.
 Each frame contains at most 5120 samples per channel. Frame state permits independent decode and seek.
 
 `decode_frame` accepts a frame at a byte offset. It does not require the file header.
 `decode_frame_into` consumes a reusable output buffer. Only the first `frames * format.channels` entries contain output.
+
 The caller must discard the result on error. No decoder state changes before a complete frame passes validation.
 `encode_frame` consumes encoder state. `encode` and `decode` provide bounded whole-file convenience functions.
+
 Static files require full frames before the final frame and consistent channel counts and sample rates.
 Streaming headers with an unknown total sample count return `Unsupported` from `inspect`.
 

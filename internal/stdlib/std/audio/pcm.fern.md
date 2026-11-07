@@ -2,6 +2,7 @@
 
 Samples use interleaved, signed, right-aligned `i32` values at the declared bit depth.
 A frame contains one sample per channel. Limits count samples across all channels.
+
 The modules perform no file, device, or network I/O.
 
 ```fern

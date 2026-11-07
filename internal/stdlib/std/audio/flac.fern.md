@@ -2,14 +2,18 @@
 
 The decoder reads native FLAC streams with integer PCM at 4 through 32 bits and up to eight channels.
 It supports constant, verbatim, fixed predictor, and LPC subframes, Rice and Rice2 residuals, wasted bits, and all stereo assignments.
+
 It checks the header CRC-8, frame CRC-16, zero alignment bits, sample ranges, and frame sequence.
 `decode` also checks the STREAMINFO MD5 when the stream supplies one.
+
 Ogg FLAC and FLAC encoding are outside this module.
 
 `inspect` reads STREAMINFO and skips bounded metadata without sample allocation.
 `decode_frame` reads one frame at a byte offset. The result supplies the next offset and frame or sample number.
+
 `decode_frame_into` consumes a reusable output buffer. Only the first `frames * format.channels` entries contain output.
 Frame decode checks frame checksums, but cannot check the MD5 of the complete stream.
+
 `decode` checks the total sample count when STREAMINFO declares one.
 Limits apply before sample allocation. They also bound streams with an unknown sample count.
 

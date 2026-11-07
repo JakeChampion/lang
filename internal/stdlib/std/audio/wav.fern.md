@@ -2,8 +2,10 @@
 
 The decoder supports integer PCM at 8, 16, 24, and 32 bits, including WAVE_FORMAT_EXTENSIBLE PCM.
 Eight-bit WAVE samples are unsigned on disk. The API converts them to signed PCM.
+
 `inspect` validates chunk bounds and format fields without sample allocation.
 `decode_range` reads a frame range. `decode` reads the complete data chunk.
+
 The encoder writes canonical PCM WAVE. Float, compressed WAVE, RIFX, and RF64 return `Unsupported`.
 
 ```fern
