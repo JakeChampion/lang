@@ -219,6 +219,79 @@ function test_refuses_a_bad_structure(): test.TestOutcome {
   );
 }
 
+function with_word(b: u8[], at: i32, value: i64): u8[] {
+  let bytes = word([], value);
+  for i in 0..4 {
+    b = b.with(at + i, bytes[i]);
+  }
+  return b;
+}
+
+function test_refuses_outside_header_ranges(): test.TestOutcome {
+  let b = blob(machine(), 17);
+  let rejected = refusal(with_word(b, 4, 4294967295)) != "accepted"
+    && refusal(with_word(b, 8, 4294967295)) != "accepted"
+    && refusal(with_word(b, 12, 4294967295)) != "accepted"
+    && refusal(with_word(b, 12, 40)) != "accepted"
+    && refusal(with_word(b, 32, 4294967295)) != "accepted"
+    && refusal(with_word(b, 36, 4294967295)) != "accepted"
+    && refusal(with_word(b, 24, 18)) != "accepted";
+  return test.assert_eq(rejected, true);
+}
+
+function test_refuses_reads_outside_blocks(): test.TestOutcome {
+  let b = blob(end(prop(begin(Builder { structs: [], strings: [] }, ""), "x", [])), 17);
+  let rejected = refusal(with_word(b, 56, 2147483648)) != "accepted"
+    && refusal(with_word(b, 52, 2147483647)) != "accepted"
+    && refusal(with_word(b, 32, 1)) != "accepted"
+    && refusal(with_word(b, 36, 16)) != "accepted"
+    && refusal(with_word(b, 36, 4)) != "accepted";
+  return test.assert_eq(rejected, true);
+}
+
+function test_requires_one_root(): test.TestOutcome {
+  let empty = refusal(blob(Builder { structs: [], strings: [] }, 17));
+  let two = end(begin(end(begin(Builder { structs: [], strings: [] }, "")), "second"));
+  return test.assert_eq(empty != "accepted" && refusal(blob(two, 17)) != "accepted", true);
+}
+
+function test_version16_header(): test.TestOutcome {
+  let original = blob(end(begin(Builder { structs: [], strings: [] }, "")), 16);
+  let b: u8[] = [];
+  for i in 0..original.len() {
+    if (i < 36 || i >= 40) {
+      b = b.append(original[i]);
+    }
+  }
+  b = with_word(b, 4, b.len() as i64);
+  b = with_word(b, 8, 36);
+  b = with_word(b, 12, b.len() as i64);
+  let Ok(t) = fdt.parse(b) else {
+    return test.assert_eq("version 16", "accepted");
+  };
+  let Ok(full) = fdt.parse(blob(machine(), 16)) else {
+    return test.assert_eq("version 16 properties", "accepted");
+  };
+  return test.assert_eq(t.nodes.len() == 1 && full.nodes.len() == 6, true);
+}
+
+function test_readers_stay_inside_the_value(): test.TestOutcome {
+  let b = blob(end(prop(begin(Builder { structs: [], strings: [] }, ""), "method", [104 as u8, 118 as u8, 99 as u8])), 17);
+  let Ok(t) = fdt.parse(b) else {
+    return test.assert_eq("string value", "parsed");
+  };
+  let good = tree();
+  let memory = good.find_name("memory").unwrap_or(-1);
+  let safe = t.property_string(0, "method").is_none()
+    && good.property_u32(-1, "reg").is_none()
+    && good.property_string(2147483647, "method").is_none()
+    && good.reg(memory, 268435456).is_none()
+    && good.reg(memory, -1).is_none();
+  let root = good.nodes[0];
+  let invalid = fdt.Tree { ...good, nodes: good.nodes.with(0, fdt.Node { ...root, address_cells: -1 }) };
+  return test.assert_eq(safe && invalid.reg(memory, 0).is_none(), true);
+}
+
 function display[T: cmp.Display](value: T): string {
   return value.to_string();
 }
@@ -243,5 +316,10 @@ function main(): i32 {
   r = r.it("parse refuses a bad header", test_refuses_a_bad_header);
   r = r.it("parse refuses a bad structure", test_refuses_a_bad_structure);
   r = r.it("errors support Display and Error", test_error_traits);
+  r = r.it("parse bounds the header ranges", test_refuses_outside_header_ranges);
+  r = r.it("parse keeps each read inside its block", test_refuses_reads_outside_blocks);
+  r = r.it("parse requires one root", test_requires_one_root);
+  r = r.it("parse accepts a 36-byte version 16 header", test_version16_header);
+  r = r.it("readers reject invalid ranges and indexes", test_readers_stay_inside_the_value);
   return r.finish();
 }
