@@ -19,6 +19,8 @@ pub struct Header { format: pcm.Format, frames: i32, data_offset: i32, data_byte
 
 const CHANNEL_MASK: u64[] = [0u64, 4u64, 3u64, 7u64, 51u64, 55u64, 63u64, 1807u64, 1599u64];
 
+// PCM format validation checks dependent container fields and extensible layout fields.
+// fern-lint: allow cyclomatic-complexity
 function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.AudioError] {
   if (size < 16) {
     return Err(pcm.Header);
@@ -79,6 +81,8 @@ function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.A
   return Ok(format);
 }
 
+// RIFF traversal checks chunk order, byte counts, alignment, and the declared format.
+// fern-lint: allow cyclomatic-complexity
 pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (input.len() < 12) {
@@ -170,6 +174,8 @@ pub function decode(input: [u8], limits: pcm.Limits): Result[pcm.Block, pcm.Audi
   return decode_range(input, 0, header.frames, limits);
 }
 
+// WAVE emission checks the dependent PCM sizes before writing either header layout.
+// fern-lint: allow cyclomatic-complexity
 pub function encode(samples: [i32], format: pcm.Format, limits: pcm.Limits): Result[u8[], pcm.AudioError] {
   let _ = pcm.validate(samples, format, limits)?;
   let bits = format.bits_per_sample;
