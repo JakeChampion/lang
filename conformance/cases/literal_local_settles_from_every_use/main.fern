@@ -1,0 +1,42 @@
+// An unannotated integer local takes its width from all of its uses in the
+// function, in any order. A method call or an f-string on the local does
+// not fix the width. The local is i32 only when no use asks for another.
+import "std/i32";
+import "std/i64";
+
+function widened_by_a_later_binding(): i64 {
+    let big = 2000000000;
+    let x = big + big;
+    print(f"{x}");
+    let later: i64 = big;
+    return later;
+}
+
+function method_result_follows_the_receiver(): void {
+    let a = 0 - 2000000000;
+    let d = a.abs() + a.abs();
+    let m = a.max(3) - a;
+    let later: i64 = a;
+    print(f"{d} {m} {later}");
+}
+
+function method_argument_keeps_its_own_width(): void {
+    let a = 3;
+    let p = a.pow(30);
+    let later: i64 = a;
+    print(f"{p} {later}");
+}
+
+function default_when_no_use_asks(): void {
+    let a = 2000000000;
+    let x = a + a;
+    print(f"{x}");
+}
+
+function main(): i32 {
+    widened_by_a_later_binding();
+    method_result_follows_the_receiver();
+    method_argument_keeps_its_own_width();
+    default_when_no_use_asks();
+    return 0;
+}

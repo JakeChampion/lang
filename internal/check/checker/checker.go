@@ -5793,21 +5793,24 @@ type checker struct {
 	publicFreeFuncs map[string][]publicFreeFunc
 	// methodViewers holds the modules that may call each method declared
 	// without `pub`.
-	methodViewers     map[string]map[string]bool
-	consts            map[string]*ast.ConstDecl
-	constTypes        map[string]ast.Type
-	constBusy         map[string]bool
-	traitNames        map[string]bool
-	info              *Info
-	errors            []error
-	intrinsicSigs     map[*ast.FuncType]IntrinsicKind
-	seenDiags         map[diagKey]bool
-	seededParams      map[string]bool
-	wideLits          []wideLit
-	wideSeen          map[*ast.NumberLit]bool
-	negatedLits       map[*ast.NumberLit]bool
-	litLocals         []*litLocal
-	litLocalOf        map[*ast.Var]*litLocal
+	methodViewers map[string]map[string]bool
+	consts        map[string]*ast.ConstDecl
+	constTypes    map[string]ast.Type
+	constBusy     map[string]bool
+	traitNames    map[string]bool
+	info          *Info
+	errors        []error
+	intrinsicSigs map[*ast.FuncType]IntrinsicKind
+	seenDiags     map[diagKey]bool
+	seededParams  map[string]bool
+	wideLits      []wideLit
+	wideSeen      map[*ast.NumberLit]bool
+	negatedLits   map[*ast.NumberLit]bool
+	litLocals     []*litLocal
+	litLocalOf    map[*ast.Var]*litLocal
+	// litRecvCalls maps a method call on an open literal receiver to the
+	// numeric arguments that wait for the method of the settled width.
+	litRecvCalls      map[*ast.Call][]int
 	litIdents         map[*ast.Ident]*litLocal
 	litCompositeOf    map[*ast.Var][]*litLocal
 	litNestedOf       map[*ast.Var][]*litLocal
@@ -14866,6 +14869,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		var recvFA *ast.FieldAccess
 		var recvType ast.Type
 		var recvIsArg0 bool
+		var openRecv *litLocal
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			c.settleOpenMapByCall(n, fa, s)
 			c.settleOpenCallByMethod(n, fa, s)
@@ -14963,6 +14967,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
 					recvIsArg0 = true
+					openRecv = c.deferLitReceiver(n, fa.Target, tt, prefer)
 					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
 						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
 						n.TypeArgs, recvTypeArgs = st.Args, true
@@ -14980,6 +14985,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					n.Callee = &ast.Ident{P: fa.P, Name: builtin}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
 					recvIsArg0 = true
+					openRecv = c.deferLitReceiver(n, fa.Target, tt, prefer)
 				}
 			}
 		}
@@ -15205,7 +15211,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						}
 					}
 				}
-				if !(sub != nil && containsParamType(expected)) {
+				recvWidth := openRecv != nil && (i == 0 || isPolymorphicNumeric(at))
+				if recvWidth && i > 0 {
+					c.litRecvCalls[n] = append(c.litRecvCalls[n], i)
+				}
+				if !(sub != nil && containsParamType(expected)) && !recvWidth {
 					c.settleNumeric(n.Args[i], expected)
 					at = c.postSettleType(n.Args[i], at)
 				}
@@ -15227,6 +15237,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					} else if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						c.errArgMismatch(n, i, recvIsArg0, substituteType(expected, sub), at)
 					}
+				} else if recvWidth {
 				} else if !c.argOK(&n.Args[i], expected, at, own) {
 					c.errArgMismatch(n, i, recvIsArg0, expected, at)
 				}
@@ -15320,6 +15331,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.info.IntrinsicCalls = make(map[*ast.Call]IntrinsicCall)
 			}
 			c.info.IntrinsicCalls[n] = IntrinsicCall{Kind: intrinsic, Signature: ft}
+		}
+		if openRecv != nil && len(ft.Params) > 0 && ast.Equal(ft.Result, ft.Params[0]) {
+			return recvType
 		}
 		return ft.Result
 	case *ast.Binary:
@@ -16775,6 +16789,9 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 			c.settleInt(x.Tail, hn)
 		}
 	case *ast.Call:
+		if _, open := c.litRecvCalls[x]; open {
+			c.settleInt(x.Args[0], hn)
+		}
 		c.settleGenericCallByHint(x, hn)
 	case *ast.FieldAccess:
 		if ll := c.litFields[x]; ll != nil {
