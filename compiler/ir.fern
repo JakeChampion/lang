@@ -4306,86 +4306,92 @@ function kind_name_2(id: i32): string {
   return "invalid";
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each kind has one match arm.
 function kind_name_3(id: i32): string {
-  if (id == 122) {
-    return "opt_tag";
+  match (id) {
+    122 => {
+      return "opt_tag";
+    },
+    123 => {
+      return "opt_payload";
+    },
+    124 => {
+      return "opt_set_payload";
+    },
+    138 => {
+      return "struct_make";
+    },
+    139 => {
+      return "struct_get";
+    },
+    140 => {
+      return "struct_set";
+    },
+    141 => {
+      return "struct_set_shape";
+    },
+    142 => {
+      return "tuple_make";
+    },
+    143 => {
+      return "tuple_get";
+    },
+    144 => {
+      return "tuple_set";
+    },
+    145 => {
+      return "variant_is";
+    },
+    146 => {
+      return "dyn_box";
+    },
+    147 => {
+      return "dyn_dispatch";
+    },
+    148 => {
+      return "wasm_timer_pollable";
+    },
+    149 => {
+      return "call_direct";
+    },
+    150 => {
+      return "call_indirect";
+    },
+    151 => {
+      return "call_closure_direct";
+    },
+    152 => {
+      return "block";
+    },
+    153 => {
+      return "loop";
+    },
+    154 => {
+      return "if";
+    },
+    155 => {
+      return "else";
+    },
+    156 => {
+      return "end";
+    },
+    157 => {
+      return "br";
+    },
+    158 => {
+      return "brif";
+    },
+    159 => {
+      return "drop";
+    },
+    160 => {
+      return "return";
+    },
+    _ => {
+      return "invalid";
+    }
   }
-  if (id == 123) {
-    return "opt_payload";
-  }
-  if (id == 124) {
-    return "opt_set_payload";
-  }
-  if (id == 138) {
-    return "struct_make";
-  }
-  if (id == 139) {
-    return "struct_get";
-  }
-  if (id == 140) {
-    return "struct_set";
-  }
-  if (id == 141) {
-    return "struct_set_shape";
-  }
-  if (id == 142) {
-    return "tuple_make";
-  }
-  if (id == 143) {
-    return "tuple_get";
-  }
-  if (id == 144) {
-    return "tuple_set";
-  }
-  if (id == 145) {
-    return "variant_is";
-  }
-  if (id == 146) {
-    return "dyn_box";
-  }
-  if (id == 147) {
-    return "dyn_dispatch";
-  }
-  if (id == 148) {
-    return "wasm_timer_pollable";
-  }
-  if (id == 149) {
-    return "call_direct";
-  }
-  if (id == 150) {
-    return "call_indirect";
-  }
-  if (id == 151) {
-    return "call_closure_direct";
-  }
-  if (id == 152) {
-    return "block";
-  }
-  if (id == 153) {
-    return "loop";
-  }
-  if (id == 154) {
-    return "if";
-  }
-  if (id == 155) {
-    return "else";
-  }
-  if (id == 156) {
-    return "end";
-  }
-  if (id == 157) {
-    return "br";
-  }
-  if (id == 158) {
-    return "brif";
-  }
-  if (id == 159) {
-    return "drop";
-  }
-  if (id == 160) {
-    return "return";
-  }
-  return "invalid";
 }
 
 // The names past 160, in two halves so each stays readable.
