@@ -494,7 +494,6 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"is_http_idempotent_method": "std/string",
 		"is_http_safe_method":       "std/string",
 		"is_int":                    "std/string",
-		"is_ipv4":                   "std/string",
 		"is_json_like":              "std/string",
 		"is_kebab_case":             "std/string",
 		"is_letters":                "std/unicode",
