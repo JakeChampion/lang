@@ -1,0 +1,103 @@
+import "../packages/codecs/jpeg/plane_coefficients" as plane;
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "../packages/codecs/jpeg/frame_writer";
+import "../packages/codecs/jpeg/header";
+import "std/binary";
+import "std/hex";
+
+function never(): boolean {
+  return false;
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function name(error: plane.PrepareError): string {
+  return match (error) {
+    plane.Block(blocks.Layout) => "Layout", plane.Block(blocks.Storage) => "Storage",
+    plane.Quantization(_) => "Quantizer", plane.Limit => "Limit", plane.Cancelled => "Cancelled",
+    _ => "Unexpected",
+  };
+}
+
+function emit(path: string): i32 {
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (data.len() < 20 || data[16] > 1) {
+    return 3;
+  }
+  let fields: i32[] = [];
+  for i in 0..4 {
+    let Ok(value) = binary.read_u32_be(data, i * 4) else {
+      return 3;
+    };
+    fields = fields.append(value as i32);
+  }
+  let size = data[18] as i32 * 256 + data[19] as i32;
+  if (size > data.len() - 20) {
+    return 3;
+  }
+  let layout = blocks.PlaneLayout { width: fields[0], height: fields[1], stride: fields[2] };
+  let q: u8[] = [];
+  for value in data[20:20 + size] {
+    q = q.append(value);
+  }
+  let edge = if (data[16] == 0) { blocks.Replicate } else { blocks.Constant(data[17]) };
+  let initial: i32[] = [];
+  let folded = plane.fold_blocks(
+    data[20 + size:], layout, q, edge, fields[3], never, initial,
+    (state: i32[], block: plane.QuantizedBlock): Result[i32[], string] => {
+      for value in block.values {
+        state = state.append(value);
+      }
+      return Ok(state);
+    },
+  );
+  match (folded) {
+    Err(plane.Prepare(e)) => {
+      print(path + " error " + name(e));
+    },
+    Err(plane.Consumer(_)) => {
+      return 4;
+    },
+    Ok(done) => {
+      let tables = frame_writer.Tables { quantization: q, dc: table(false), ac: table(true) };
+      let options = frame_writer.Options { width: layout.width, height: layout.height, restart_interval: 2, max_output_bytes: 1048576 };
+      let Ok(encoded) = frame_writer.encode_blocks(done.value, tables, options, never) else {
+        return 5;
+      };
+      let text = path + " ok";
+      for value in done.value {
+        text = text + " " + value.to_string();
+      }
+      print(text + " " + hex.encode(encoded));
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

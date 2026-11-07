@@ -1,0 +1,168 @@
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function input(layout: blocks.PlaneLayout): u8[] {
+  let bytes: u8[] = [];
+  for y in 0..layout.height {
+    for x in 0..layout.stride {
+      bytes = bytes.append(if (x < layout.width) { (x * 37 + y * 17 + 11) as u8 } else { 221 });
+    }
+  }
+  return bytes;
+}
+
+function goldens(): test.TestOutcome {
+  for width in [1, 7, 8, 9, 17] {
+    for height in [1, 7, 8, 9, 17] {
+      for extra in [0, 3] {
+        let layout = blocks.PlaneLayout { width: width, height: height, stride: width + extra };
+        let bytes = input(layout);
+        for by in 0..(height + 7) / 8 {
+          for bx in 0..(width + 7) / 8 {
+            for fill in [-1, 0, 128, 255] {
+              let edge = if (fill < 0) { blocks.Replicate } else { blocks.Constant(fill as u8) };
+              let Ok(result) = blocks.block(bytes, layout, bx, by, edge, never) else {
+                return test.fail("component block extraction");
+              };
+              if (result.len() != 64) {
+                return test.fail("complete component block");
+              }
+              for y in 0..8 {
+                for x in 0..8 {
+                  let sx = bx * 8 + x;
+                  let sy = by * 8 + y;
+                  let outside = sx >= width || sy >= height;
+                  let cx = if (sx >= width) { width - 1 } else { sx };
+                  let cy = if (sy >= height) { height - 1 } else { sy };
+                  let wanted = if (outside && fill >= 0) { fill as u8 } else { (cx * 37 + cy * 17 + 11) as u8 };
+                  if (result[y * 8 + x] != wanted) {
+                    return test.fail("component edge samples");
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for layout in [
+    blocks.PlaneLayout { width: 0, height: 1, stride: 1 }, blocks.PlaneLayout { width: 1, height: 0, stride: 1 },
+    blocks.PlaneLayout { width: -1, height: 1, stride: 1 }, blocks.PlaneLayout { width: 1, height: -1, stride: 1 },
+    blocks.PlaneLayout { width: 2, height: 1, stride: 1 }, blocks.PlaneLayout { width: 1, height: 1, stride: -1 },
+  ] {
+    if (!match (blocks.block([], layout, 0, 0, blocks.Replicate, cancel)) { Err(blocks.Layout) => true, _ => false }) {
+      return test.fail("component layout before callbacks");
+    }
+  }
+  for layout in [
+    blocks.PlaneLayout { width: 1, height: 1, stride: 1 },
+    blocks.PlaneLayout { width: 2147483647, height: 2147483647, stride: 2147483647 },
+    blocks.PlaneLayout { width: 1, height: 2147483647, stride: 2147483647 },
+  ] {
+    if (!match (blocks.block([], layout, 0, 0, blocks.Replicate, cancel)) { Err(blocks.Storage) => true, _ => false }) {
+      return test.fail("component wide storage admission");
+    }
+  }
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  for position in [(-1, 0), (0, -1), (2, 0), (0, 2), (2147483647, 2147483647)] {
+    let (x, y) = position;
+    if (!match (blocks.block(input(layout), layout, x, y, blocks.Replicate, cancel)) { Err(blocks.Bounds) => true, _ => false }) {
+      return test.fail("component block bounds before callbacks");
+    }
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function footprint(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = input(layout);
+  let extent = (layout.height - 1) * layout.stride + layout.width;
+  let Ok(full) = blocks.block(bytes, layout, 1, 1, blocks.Replicate, never) else {
+    return test.fail("full component storage");
+  };
+  let Ok(minimal) = blocks.block(bytes[:extent], layout, 1, 1, blocks.Replicate, never) else {
+    return test.fail("minimal component storage");
+  };
+  for i in 0..64 {
+    if (full[i] != minimal[i]) {
+      return test.fail("final padding must not affect samples");
+    }
+  }
+  if (!match (blocks.block(bytes[:extent - 1], layout, 1, 1, blocks.Replicate, never)) { Err(blocks.Storage) => true, _ => false }) {
+    return test.fail("short component storage");
+  }
+  let unusual = blocks.PlaneLayout { width: 1, height: 1, stride: 2147483647 };
+  return test.assert_true(match (blocks.block([17u8], unusual, 0, 0, blocks.Replicate, never)) { Ok(v) => v[63] == 17, _ => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = input(layout);
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  if let Err(_) = blocks.block(bytes, layout, 1, 1, blocks.Replicate, count) {
+    return test.fail("component cancellation baseline");
+  }
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (blocks.block(bytes, layout, 1, 1, blocks.Replicate, cancel)) { Err(blocks.Cancelled) => true, _ => false }) {
+      return test.fail("every component cancellation checkpoint");
+    }
+  }
+  return test.pass();
+}
+
+function aliases(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = input(layout);
+  let wrapped: u8[] = [7];
+  for value in bytes {
+    wrapped = wrapped.append(value);
+  }
+  wrapped = wrapped.append(13);
+  let shared = cell_new(wrapped);
+  let Ok(result) = blocks.block(wrapped[1:wrapped.len() - 1], layout, 1, 1, blocks.Replicate, never) else {
+    return test.fail("borrowed component window");
+  };
+  let changed = result.with(0, 99);
+  if (changed[0] != 99 || result[0] != (8 * 37 + 8 * 17 + 11) as u8 || shared.get()[0] != 7 || shared.get()[wrapped.len() - 1] != 13) {
+    return test.fail("component result aliases");
+  }
+  for i in 0..bytes.len() {
+    if (wrapped[i + 1] != bytes[i] || shared.get()[i + 1] != bytes[i]) {
+      return test.fail("component input aliases");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG component blocks");
+  suite = suite.it("partial blocks retain explicit edge samples", goldens);
+  suite = suite.it("layouts, storage and block bounds precede callbacks", malformed);
+  suite = suite.it("minimal footprint excludes final row padding", footprint);
+  suite = suite.it("every component cancellation checkpoint", cancellation);
+  suite = suite.it("borrowed windows and output aliases", aliases);
+  return suite.finish();
+}

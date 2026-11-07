@@ -1,0 +1,52 @@
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "std/binary";
+import "std/hex";
+
+function never(): boolean {
+  return false;
+}
+
+function name(error: blocks.BlockError): string {
+  return match (error) { blocks.Layout => "Layout", blocks.Storage => "Storage", blocks.Bounds => "Bounds", blocks.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (data.len() < 22 || data[20] > 1) {
+    return 3;
+  }
+  let fields: i32[] = [];
+  for i in 0..5 {
+    let Ok(value) = binary.read_u32_be(data, i * 4) else {
+      return 3;
+    };
+    fields = fields.append(value as i32);
+  }
+  let layout = blocks.PlaneLayout { width: fields[0], height: fields[1], stride: fields[2] };
+  let edge = if (data[20] == 0) { blocks.Replicate } else { blocks.Constant(data[21]) };
+  match (blocks.block(data[22:], layout, fields[3], fields[4], edge, never)) {
+    Ok(output) => {
+      print(path + " ok " + hex.encode(output));
+    },
+    Err(error) => {
+      print(path + " error " + name(error));
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
