@@ -69,28 +69,42 @@ func oracleVerdict(t testing.TB, oracle string, flags []string, src string, comb
 // has no directory for a relative import.
 func CheckSourceVerdict(t testing.TB, oracle, source string) ([]byte, int) {
 	t.Helper()
-	imports, err := fernSourceImports(source)
-	if err != nil {
-		t.Fatalf("CheckSourceVerdict: tokenize the source: %v", err)
-	}
-	for _, imp := range imports {
-		if !isExternalFernImport(imp) {
-			t.Fatalf("CheckSourceVerdict: the source imports %q, a relative module", imp)
-		}
-	}
-	var key string
-	if os.Getenv("FERN_BIN") == "" {
-		oracleKey, err := oracleSourcesKey()
-		if err != nil {
-			t.Fatalf("oracle verdict key for -check -: %v", err)
-		}
-		h := sha256.New()
-		fmt.Fprintf(h, "oracle-stdin-verdict-v1\x00%s\x00%d\x00%s\x00env\x00%s\x00", oracleKey, len(source), source, fernEnvKey())
-		key = hex.EncodeToString(h.Sum(nil))
-	}
+	key := sourceVerdictKey(t, "-check -", source)
 	cmd := exec.Command(oracle, "-check", "-")
 	cmd.Stdin = strings.NewReader(source)
 	return cachedOracleRun(t, key, cmd, true)
+}
+
+// InProcessSourceVerdict is InProcessVerdict for a program given as text.
+// Like CheckSourceVerdict, it refuses a source with a relative import.
+func InProcessSourceVerdict(t testing.TB, mode, source string, run func() ([]byte, int)) ([]byte, int) {
+	t.Helper()
+	return keptVerdict(sourceVerdictKey(t, "in-process\x00"+mode, source), run)
+}
+
+// sourceVerdictKey is the key of what the oracle does with source, or empty
+// when FERN_BIN names another oracle.
+func sourceVerdictKey(t testing.TB, what, source string) string {
+	t.Helper()
+	imports, err := fernSourceImports(source)
+	if err != nil {
+		t.Fatalf("tokenize the source of a verdict: %v", err)
+	}
+	for _, imp := range imports {
+		if !isExternalFernImport(imp) {
+			t.Fatalf("the source of a verdict imports %q, a relative module", imp)
+		}
+	}
+	if os.Getenv("FERN_BIN") != "" {
+		return ""
+	}
+	oracleKey, err := oracleSourcesKey()
+	if err != nil {
+		t.Fatalf("oracle verdict key for %s: %v", what, err)
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "oracle-source-verdict-v2\x00%s\x00%s\x00%d\x00%s\x00env\x00%s\x00", what, oracleKey, len(source), source, fernEnvKey())
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // InProcessVerdict returns the verdict that run computes for src, through the
@@ -106,6 +120,14 @@ func InProcessVerdict(t testing.TB, mode, src string, run func() ([]byte, int)) 
 		if err != nil {
 			t.Fatalf("oracle verdict key for %s %s: %v", mode, src, err)
 		}
+	}
+	return keptVerdict(key, run)
+}
+
+// keptVerdict returns the verdict under key, or the one that run computes,
+// which it then keeps under key. An empty key calls run without the cache.
+func keptVerdict(key string, run func() ([]byte, int)) ([]byte, int) {
+	if key != "" {
 		if out, exit, ok := readOracleVerdict(key); ok {
 			return out, exit
 		}

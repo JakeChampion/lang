@@ -252,3 +252,37 @@ func TestInterpVerdictRunsExternalFernAgain(t *testing.T) {
 		}
 	}
 }
+
+func TestInProcessSourceVerdictKeysModeAndSource(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	runs := 0
+	run := func() ([]byte, int) {
+		runs++
+		return []byte("refused"), 1
+	}
+	expect := func(want int, what string) {
+		t.Helper()
+		if runs != want {
+			t.Fatalf("%s: run was called %d times, want %d", what, runs, want)
+		}
+	}
+	first := "import \"std/test\";\nfunction main(): i32 { return 0; }\n"
+	out, exit := InProcessSourceVerdict(t, "check", first, run)
+	if exit != 1 || string(out) != "refused" {
+		t.Fatalf("verdict = %q exit %d, want run's output and exit 1", out, exit)
+	}
+	out, exit = InProcessSourceVerdict(t, "check", first, run)
+	expect(1, "the same mode and source")
+	if exit != 1 || string(out) != "refused" {
+		t.Fatalf("cached verdict = %q exit %d, want run's output and exit 1", out, exit)
+	}
+	InProcessSourceVerdict(t, "lint", first, run)
+	expect(2, "a second mode")
+	InProcessSourceVerdict(t, "check", "import \"std/fs\";\nfunction main(): i32 { return 0; }\n", run)
+	expect(3, "a changed source")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", "")
+	InProcessSourceVerdict(t, "check", first, run)
+	InProcessSourceVerdict(t, "check", first, run)
+	expect(5, "no cache directory")
+}
