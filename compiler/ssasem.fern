@@ -3888,26 +3888,34 @@ function writer_graph(rows: Finalizer[], funcs: Func[], ok: boolean[], ix: util.
   for r in rows {
     w = with_member(w, ix.find(r.symbol));
   }
-  let mi = 0;
-  while (mi < w.members.len()) {
-    let i = w.members[mi];
-    let own = writes_cell_itself(funcs, ok, ix, i);
-    let next: i32[] = [];
-    let drops: i32[] = [];
-    if (!own) {
-      next = called_rows(funcs[i], ix);
-      drops = held_finalizers(funcs[i], rows);
+  let done = 0;
+  while (done < w.members.len()) {
+    let upto = w.members.len();
+    for mi in done..upto {
+      let at = w.members[mi];
+      w = with_edges(w, funcs, ok, ix, rows, at);
     }
-    for c in next {
-      w = with_member(w, c);
-    }
-    for r in drops {
-      w = with_member(w, ix.find(rows[r].symbol));
-    }
-    w = Writers { ...w, callees: w.callees.append(next), held: w.held.append(drops), writes: w.writes.append(own) };
-    mi += 1;
+    done = upto;
   }
   return w;
+}
+
+// with_edges adds the edges of row i, and each row they reach, to w.
+function with_edges(own w: Writers, funcs: Func[], ok: boolean[], ix: util.NameIndex, rows: Finalizer[], i: i32): Writers {
+  let own_write = writes_cell_itself(funcs, ok, ix, i);
+  let next: i32[] = [];
+  let drops: i32[] = [];
+  if (!own_write) {
+    next = called_rows(funcs[i], ix);
+    drops = held_finalizers(funcs[i], rows);
+  }
+  for c in next {
+    w = with_member(w, c);
+  }
+  for r in drops {
+    w = with_member(w, ix.find(rows[r].symbol));
+  }
+  return Writers { ...w, callees: w.callees.append(next), held: w.held.append(drops), writes: w.writes.append(own_write) };
 }
 
 function settled_writers(own w: Writers, rows: Finalizer[], ix: util.NameIndex): Writers {
