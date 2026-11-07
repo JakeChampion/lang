@@ -346,7 +346,8 @@ the pin can compile, like `fern.fern`.
 The Go oracle's `-interp`, `-check` and `-check -target` verdicts are
 kept in the same directory (`e2eharness.InterpVerdict`, `CheckVerdict`,
 `CheckTargetVerdict`). `InProcessVerdict` keeps a verdict that a test computes
-with the oracle's code in its own process. The key is the flags, the oracle's Go sources, the
+with the oracle's code in its own process. `InProcessSourceVerdict` does the
+same for a program that the test gives as text. The key is the flags, the oracle's Go sources, the
 stdlib, the program's path as given, its relative imports and the `FERN_*`
 environment. A relative import that names no file, and a file that does not
 lex, are part of the key too. A compiler-only change therefore runs the oracle
