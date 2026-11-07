@@ -1,3 +1,7 @@
+# 2026-11-06: PR #14352. Local scripts/profile-costs runs of this change and of main 075aa763, from checkouts
+# at paths of one length. Under -sanitize a raw free checks the quarantine for a second free. Six diagnostic
+# images on each target add the measured increase: 32 bytes and 9 lines on x86-64, 48 bytes and 13 lines on arm64.
+# Other rows and all tolerances stay fixed.
 # 2026-11-06: SEC-025. Matched main1abb and PR #14327 compilers use the same frozen inputs.
 # Hardened .bytes and .emit limits add only the measured scrub cost. Safe, minimal and diagnostic outputs
 # are byte-identical. Keep the original diagnostic limits. Three hardened x86-64 .ir limits retain the
@@ -71,8 +75,8 @@
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-27: first measurement, from scripts/profile-costs on the follow-on branch of #13677 at the profile-costs commit.
 # Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
-profile/arm64-linux/array_append.diagnostic.bytes	13752
-profile/arm64-linux/array_append.diagnostic.emit	1803
+profile/arm64-linux/array_append.diagnostic.bytes	13800
+profile/arm64-linux/array_append.diagnostic.emit	1816
 profile/arm64-linux/array_append.hardened.bytes	8600
 profile/arm64-linux/array_append.hardened.emit	1896
 profile/arm64-linux/array_append.minimal.bytes	6072
@@ -87,8 +91,8 @@ profile/arm64-linux/call_overhead.minimal.bytes	2216
 profile/arm64-linux/call_overhead.minimal.emit	378
 profile/arm64-linux/call_overhead.safe.bytes	2456
 profile/arm64-linux/call_overhead.safe.emit	439
-profile/arm64-linux/closure_call.diagnostic.bytes	13696
-profile/arm64-linux/closure_call.diagnostic.emit	1677
+profile/arm64-linux/closure_call.diagnostic.bytes	13744
+profile/arm64-linux/closure_call.diagnostic.emit	1690
 profile/arm64-linux/closure_call.hardened.bytes	7736
 profile/arm64-linux/closure_call.hardened.emit	1672
 profile/arm64-linux/closure_call.minimal.bytes	5320
@@ -96,16 +100,16 @@ profile/arm64-linux/closure_call.minimal.emit	1118
 profile/arm64-linux/closure_call.safe.bytes	5624
 profile/arm64-linux/closure_call.safe.emit	1199
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-profile/arm64-linux/deflate_decode.diagnostic.bytes	118120
-profile/arm64-linux/deflate_decode.diagnostic.emit	13857
+profile/arm64-linux/deflate_decode.diagnostic.bytes	118168
+profile/arm64-linux/deflate_decode.diagnostic.emit	13870
 profile/arm64-linux/deflate_decode.hardened.bytes	64920
 profile/arm64-linux/deflate_decode.hardened.emit	15177
 profile/arm64-linux/deflate_decode.minimal.bytes	53048
 profile/arm64-linux/deflate_decode.minimal.emit	12103
 profile/arm64-linux/deflate_decode.safe.bytes	58712
 profile/arm64-linux/deflate_decode.safe.emit	13560
-profile/arm64-linux/enum_match.diagnostic.bytes	12944
-profile/arm64-linux/enum_match.diagnostic.emit	1646
+profile/arm64-linux/enum_match.diagnostic.bytes	12992
+profile/arm64-linux/enum_match.diagnostic.emit	1659
 profile/arm64-linux/enum_match.hardened.bytes	7528
 profile/arm64-linux/enum_match.hardened.emit	1618
 profile/arm64-linux/enum_match.minimal.bytes	5192
@@ -113,8 +117,8 @@ profile/arm64-linux/enum_match.minimal.emit	1083
 profile/arm64-linux/enum_match.safe.bytes	5496
 profile/arm64-linux/enum_match.safe.emit	1163
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	124872
-profile/arm64-linux/http_hello.diagnostic.emit	15983
+profile/arm64-linux/http_hello.diagnostic.bytes	124920
+profile/arm64-linux/http_hello.diagnostic.emit	15996
 profile/arm64-linux/http_hello.hardened.bytes	79256
 profile/arm64-linux/http_hello.hardened.emit	17668
 profile/arm64-linux/http_hello.minimal.bytes	60344
@@ -129,8 +133,8 @@ profile/arm64-linux/int_loop.minimal.bytes	1992
 profile/arm64-linux/int_loop.minimal.emit	320
 profile/arm64-linux/int_loop.safe.bytes	2216
 profile/arm64-linux/int_loop.safe.emit	381
-profile/arm64-linux/map_string.diagnostic.bytes	139456
-profile/arm64-linux/map_string.diagnostic.emit	10799
+profile/arm64-linux/map_string.diagnostic.bytes	139504
+profile/arm64-linux/map_string.diagnostic.emit	10812
 profile/arm64-linux/map_string.hardened.bytes	50200
 profile/arm64-linux/map_string.hardened.emit	11426
 profile/arm64-linux/map_string.minimal.bytes	40968
@@ -145,8 +149,8 @@ profile/arm64-linux/startup.minimal.bytes	1912
 profile/arm64-linux/startup.minimal.emit	303
 profile/arm64-linux/startup.safe.bytes	2136
 profile/arm64-linux/startup.safe.emit	364
-profile/x86-64-linux/array_append.diagnostic.bytes	11048
-profile/x86-64-linux/array_append.diagnostic.emit	1430
+profile/x86-64-linux/array_append.diagnostic.bytes	11080
+profile/x86-64-linux/array_append.diagnostic.emit	1439
 profile/x86-64-linux/array_append.diagnostic.ir	68240505
 profile/x86-64-linux/array_append.hardened.bytes	6928
 profile/x86-64-linux/array_append.hardened.emit	1560
@@ -169,8 +173,8 @@ profile/x86-64-linux/call_overhead.minimal.ir	8250814
 profile/x86-64-linux/call_overhead.safe.bytes	2144
 profile/x86-64-linux/call_overhead.safe.emit	343
 profile/x86-64-linux/call_overhead.safe.ir	8250814
-profile/x86-64-linux/closure_call.diagnostic.bytes	11192
-profile/x86-64-linux/closure_call.diagnostic.emit	1330
+profile/x86-64-linux/closure_call.diagnostic.bytes	11224
+profile/x86-64-linux/closure_call.diagnostic.emit	1339
 profile/x86-64-linux/closure_call.diagnostic.ir	42030322
 profile/x86-64-linux/closure_call.hardened.bytes	6112
 profile/x86-64-linux/closure_call.hardened.emit	1331
@@ -181,9 +185,9 @@ profile/x86-64-linux/closure_call.minimal.ir	41148167
 profile/x86-64-linux/closure_call.safe.bytes	4608
 profile/x86-64-linux/closure_call.safe.emit	959
 profile/x86-64-linux/closure_call.safe.ir	41178167
-profile/x86-64-linux/deflate_decode.diagnostic.bytes	109488
+profile/x86-64-linux/deflate_decode.diagnostic.bytes	109520
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
-profile/x86-64-linux/deflate_decode.diagnostic.emit	12734
+profile/x86-64-linux/deflate_decode.diagnostic.emit	12743
 profile/x86-64-linux/deflate_decode.diagnostic.ir	47046218
 profile/x86-64-linux/deflate_decode.hardened.bytes	55872
 profile/x86-64-linux/deflate_decode.hardened.emit	13293
@@ -194,8 +198,8 @@ profile/x86-64-linux/deflate_decode.minimal.ir	41284729
 profile/x86-64-linux/deflate_decode.safe.bytes	51376
 profile/x86-64-linux/deflate_decode.safe.emit	12766
 profile/x86-64-linux/deflate_decode.safe.ir	33826804
-profile/x86-64-linux/enum_match.diagnostic.bytes	10456
-profile/x86-64-linux/enum_match.diagnostic.emit	1309
+profile/x86-64-linux/enum_match.diagnostic.bytes	10488
+profile/x86-64-linux/enum_match.diagnostic.emit	1318
 profile/x86-64-linux/enum_match.diagnostic.ir	29250209
 profile/x86-64-linux/enum_match.hardened.bytes	5968
 profile/x86-64-linux/enum_match.hardened.emit	1293
@@ -206,8 +210,8 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4496
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	114904
-profile/x86-64-linux/http_hello.diagnostic.emit	14794
+profile/x86-64-linux/http_hello.diagnostic.bytes	114936
+profile/x86-64-linux/http_hello.diagnostic.emit	14803
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	39724679
 profile/x86-64-linux/http_hello.hardened.bytes	69456
@@ -231,8 +235,8 @@ profile/x86-64-linux/int_loop.minimal.ir	12000077
 profile/x86-64-linux/int_loop.safe.bytes	1984
 profile/x86-64-linux/int_loop.safe.emit	288
 profile/x86-64-linux/int_loop.safe.ir	12000077
-profile/x86-64-linux/map_string.diagnostic.bytes	133696
-profile/x86-64-linux/map_string.diagnostic.emit	10871
+profile/x86-64-linux/map_string.diagnostic.bytes	133728
+profile/x86-64-linux/map_string.diagnostic.emit	10880
 profile/x86-64-linux/map_string.diagnostic.ir	59644087
 profile/x86-64-linux/map_string.hardened.bytes	42288
 profile/x86-64-linux/map_string.hardened.emit	10021
