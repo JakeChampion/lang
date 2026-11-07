@@ -340,3 +340,19 @@ func TestPaths(t *testing.T) { RepoPath("internal", "value", "testdata", "case.j
 		t.Fatal("joined resource path was lost")
 	}
 }
+
+func TestFuzzOnlyPackagesRetainSeedTests(t *testing.T) {
+	_, root := fixture(t)
+	write(t, root, "internal/fuzzonly/seed_test.go", `package fuzzonly
+import "testing"
+func FuzzDecode(f *testing.F) { consume("fern-image/packages/qoi/qoi.fern") }`)
+	g, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"internal/fuzzonly/seed_test.go", "fern-image/packages/qoi/qoi.fern"} {
+		if !slices.Contains(g.Select([]string{file}).UnitPackages, "./internal/fuzzonly") {
+			t.Fatalf("fuzz seed package lost input %s", file)
+		}
+	}
+}

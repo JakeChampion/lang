@@ -155,10 +155,16 @@ func (g *Graph) Select(changes []string) Plan {
 	sourceChanges := g.sourceChanges(changes)
 	hits := g.affectedDeclarations(sourceChanges)
 	for name, pkg := range g.packages {
-		if !unitPackage(name) || len(pkg.tests) == 0 {
+		if !unitPackage(name) || !slices.ContainsFunc(pkg.files, func(file string) bool { return strings.HasSuffix(file, "_test.go") }) {
 			continue
 		}
-		if compiler || name == "internal/testing/sourcelint" || g.inputHit(g.packageFiles(name, true, map[string]bool{}), changes) || len(g.affectedTests(name, sourceChanges, hits)) > 0 {
+		entryHit := len(g.affectedTests(name, sourceChanges, hits)) > 0
+		for decl := range pkg.decls {
+			if (strings.HasPrefix(decl, "Fuzz") || strings.HasPrefix(decl, "Example")) && hits[name+"."+decl] {
+				entryHit = true
+			}
+		}
+		if compiler || name == "internal/testing/sourcelint" || g.inputHit(g.packageFiles(name, true, map[string]bool{}), changes) || entryHit {
 			p.UnitPackages = append(p.UnitPackages, "./"+name)
 		}
 	}
