@@ -1274,8 +1274,11 @@ impl mem.Drop for Watched {
 
 function main(): i32 {
   let counter: i64[] = __alloc_i64(1);
-  let p: usize = (counter as usize) + 8;
-  unsafe { __store_i64(p, 0i64); }
+  let p: usize = 0 as usize;
+  unsafe {
+    p = (counter as usize) + 8;
+    __store_i64(p, 0i64);
+  }
   let xs: u8[] = [7u8, 8u8];
   let before: i64 = bench.alloc_count();
   for i in 0..50 {

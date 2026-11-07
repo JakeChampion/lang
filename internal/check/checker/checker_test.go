@@ -7620,10 +7620,36 @@ func TestPointerReinterpretFromI32Rejected(t *testing.T) {
 	mustCode(`function f(k: i32): i32[] { return k as i32[]; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`struct P { x: i32 } function f(k: i32): P { return k as P; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`function f(k: u32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
-	mustOK(`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`)
-	mustOK(`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`)
+	mustOK(`function f(k: usize): string { unsafe { return k as string; } } function main(): i32 { return 0; }`)
+	mustOK(`function f(k: usize): i32[] { unsafe { return k as i32[]; } } function main(): i32 { return 0; }`)
 	mustOK(`function main(): i32 { let a: i32 = 5; let b: usize = a as usize; return b as i32; }`)
-	mustOK(`function main(): i32 { let s: string = "x"; return s as i32; }`)
+	mustOK(`function main(): i32 { let s: string = "x"; unsafe { return s as i32; } }`)
+}
+
+// A cast between an integer and a heap value reads or forges an address, so
+// it needs an unsafe block in each direction.
+func TestPointerCastOutsideUnsafeRejected(t *testing.T) {
+	for _, src := range []string{
+		`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`,
+		`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`,
+		`struct P { x: i32 } function f(k: usize): P { return k as P; } function main(): i32 { return 0; }`,
+		`function main(): i32 { let s: string = "x"; return s as i32; }`,
+		`function main(): i32 { let xs: i32[] = [1]; let p: usize = xs as usize; return 0; }`,
+		`function main(): i32 { let s: string = "x"; unsafe { let q: usize = s as usize; } let p: usize = s as usize; return 0; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil || !hasCode(err, "E095") {
+			t.Errorf("%q: want E095, got %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`struct P { x: i32 } function f(k: usize): P { unsafe { return k as P; } } function main(): i32 { return 0; }`,
+		`function main(): i32 { let s: string = "x"; let n: i32 = 0; unsafe { let f: () => usize = (): usize => s as usize; if (f() == 0 as usize) { n = 1; } } return n; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
 }
 
 func TestFloatDefaultWidth(t *testing.T) {

@@ -151,7 +151,7 @@ function main(): i32 { let a: i32 = 1; let b: i32 = 2; return g(a +? b); }
 function main(): i32 { let a: i32 = 1; let b: i32 = 2; let c = a +? b; let r: i32 = g(c); match (c) { Some(v) => { return r + v; }, None => { return r; } } }
 `, 1},
 	{"cast-to-string-into-own", `function g(own s: string): i32 { return s.len(); }
-function main(): i32 { let k: usize = 3; return g(k as string); }
+function main(): i32 { let k: usize = 3; unsafe { return g(k as string); } }
 `, 1},
 	{"borrowed-string-into-own", `function g(own y: string): string { return y; }
 function f(x: string): string { return g(x); }

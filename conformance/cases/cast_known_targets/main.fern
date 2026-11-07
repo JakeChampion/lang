@@ -1,7 +1,9 @@
 import "./types";
 
 function accept_pointer(address: usize): void {
-  let item = address as types.Item;
+  unsafe {
+    let item = address as types.Item;
+  }
 }
 
 function main(): i32 {

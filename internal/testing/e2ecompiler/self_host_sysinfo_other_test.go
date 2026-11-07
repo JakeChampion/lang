@@ -12,3 +12,9 @@ func selfHostUtsname(t *testing.T) [5]string {
 	t.Skipf("the utsname probe reads uname(2); %s is not it", runtime.GOOS)
 	return [5]string{}
 }
+
+func selfHostCPUCount(t *testing.T) int {
+	t.Helper()
+	t.Skipf("the CPU count probe reads sched_getaffinity(2); %s is not it", runtime.GOOS)
+	return 0
+}
