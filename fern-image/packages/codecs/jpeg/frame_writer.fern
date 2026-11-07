@@ -1,0 +1,125 @@
+import "./header";
+import "./entropy_writer";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum FrameError { Shape, Dimensions, Table, Limit, Cancelled, Entropy(entropy_writer.EncodeError) }
+
+pub struct Tables { quantization: u8[], dc: header.HuffmanTable, ac: header.HuffmanTable }
+
+pub struct Options { width: i32, height: i32, restart_interval: i32, max_output_bytes: i32 }
+
+struct Output { bytes: u8[], limit: i32 }
+
+function append(output: Output, bytes: [u8], cancelled: () => boolean): Result[Output, FrameError] {
+  if (bytes.len() > output.limit - output.bytes.len()) {
+    return Err(FrameError.Limit);
+  }
+  let result = output.bytes;
+  for i in 0..bytes.len() {
+    if (i % 64 == 0 && cancelled()) {
+      return Err(FrameError.Cancelled);
+    }
+    result = result.append(bytes[i]);
+  }
+  return Ok(Output { ...output, bytes: result });
+}
+
+function segment(output: Output, kind: u8, payload: [u8], cancelled: () => boolean): Result[Output, FrameError] {
+  let length = payload.len() + 2;
+  let prefix: u8[] = [255, kind, (length >> 8) as u8, length as u8];
+  let result = append(output, prefix, cancelled)?;
+  return append(result, payload, cancelled);
+}
+
+function huffman_payload(table: header.HuffmanTable, kind: u8): u8[] {
+  let bytes: u8[] = [kind];
+  for count in table.counts {
+    bytes = bytes.append(count);
+  }
+  for symbol in table.symbols {
+    bytes = bytes.append(symbol);
+  }
+  return bytes;
+}
+
+function admit_tables(tables: Tables): Result[void, FrameError] {
+  if (tables.quantization.len() != 64
+    || tables.dc.counts.len() != 16 || tables.ac.counts.len() != 16
+    || tables.dc.symbols.len() > 256 || tables.ac.symbols.len() > 256) {
+    return Err(FrameError.Shape);
+  }
+  for value in tables.quantization {
+    if (value == 0) {
+      return Err(FrameError.Table);
+    }
+  }
+  return Ok(());
+}
+
+function admit(coefficients: [i32], tables: Tables, options: Options): Result[void, FrameError] {
+  if (options.width < 1 || options.width > 65535 || options.height < 1 || options.height > 65535) {
+    return Err(FrameError.Dimensions);
+  }
+  let columns = (options.width as i64 + 7i64) / 8i64;
+  let rows = (options.height as i64 + 7i64) / 8i64;
+  if (coefficients.len() as i64 != columns * rows * 64i64) {
+    return Err(FrameError.Shape);
+  }
+  admit_tables(tables)?;
+  if (options.restart_interval < 0 || options.restart_interval > 65535 || options.max_output_bytes < 0) {
+    return Err(FrameError.Limit);
+  }
+  return Ok(());
+}
+
+function entropy_error(error: entropy_writer.EncodeError): FrameError {
+  return match (error) { entropy_writer.Cancelled => FrameError.Cancelled, entropy_writer.Limit => FrameError.Limit, _ => FrameError.Entropy(error) };
+}
+
+function prefix(tables: Tables, options: Options, cancelled: () => boolean): Result[Output, FrameError] {
+  let result = append(Output { bytes: [], limit: options.max_output_bytes }, [255u8, 216u8], cancelled)?;
+  let jfif: u8[] = [74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0];
+  result = segment(result, 224, jfif, cancelled)?;
+  let quantization: u8[] = [0];
+  for value in tables.quantization {
+    quantization = quantization.append(value);
+  }
+  result = segment(result, 219, quantization, cancelled)?;
+  let frame: u8[] = [
+    8, (options.height >> 8) as u8, options.height as u8,
+    (options.width >> 8) as u8, options.width as u8, 1, 1, 17, 0,
+  ];
+  result = segment(result, 192, frame, cancelled)?;
+  result = segment(result, 196, huffman_payload(tables.dc, 0), cancelled)?;
+  result = segment(result, 196, huffman_payload(tables.ac, 16), cancelled)?;
+  if (options.restart_interval > 0) {
+    let interval: u8[] = [(options.restart_interval >> 8) as u8, options.restart_interval as u8];
+    result = segment(result, 221, interval, cancelled)?;
+  }
+  let scan: u8[] = [1, 1, 0, 0, 63, 0];
+  return segment(result, 218, scan, cancelled);
+}
+
+// Serialize one-component baseline frames from complete natural-order blocks.
+pub function encode_blocks(coefficients: [i32], tables: Tables, options: Options, cancelled: () => boolean): Result[u8[], FrameError] {
+  admit(coefficients, tables, options)?;
+  if (cancelled()) {
+    return Err(FrameError.Cancelled);
+  }
+  let output = prefix(tables, options, cancelled)?;
+  let remaining = options.max_output_bytes - output.bytes.len();
+  if (remaining < 2) {
+    return Err(FrameError.Limit);
+  }
+  let encoded = match (entropy_writer.encode_blocks(coefficients, tables.dc, tables.ac, options.restart_interval, remaining - 2, cancelled)) {
+    Ok(v) => v,
+    Err(e) => { return Err(entropy_error(e)); },
+  };
+  output = append(output, encoded, cancelled)?;
+  output = append(output, [255u8, 217u8], cancelled)?;
+  if (cancelled()) {
+    return Err(FrameError.Cancelled);
+  }
+  return Ok(output.bytes);
+}

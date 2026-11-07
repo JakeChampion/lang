@@ -1,0 +1,87 @@
+import "./transform_basis";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum DctError { Shape, Cancelled }
+
+function uniform(samples: [u8]): boolean {
+  for i in 1..64 {
+    if (samples[i] != samples[0]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function constant_block(sample: u8, cancelled: () => boolean): Result[f64[], DctError] {
+  let output: f64[] = [];
+  for i in 0..64 {
+    if (i % 8 == 0 && cancelled()) {
+      return Err(DctError.Cancelled);
+    }
+    output = output.append(if (i == 0) { ((sample as i32 - 128) * 8) as f64 } else { 0.0 });
+  }
+  if (cancelled()) {
+    return Err(DctError.Cancelled);
+  }
+  return Ok(output);
+}
+
+function horizontal(samples: [u8], cancelled: () => boolean): Result[f64[], DctError] {
+  let rows: f64[] = [];
+  for y in 0..8 {
+    if (cancelled()) {
+      return Err(DctError.Cancelled);
+    }
+    for u in 0..8 {
+      let sum = 0.0;
+      for x in 0..8 {
+        sum += (samples[y * 8 + x] as i32 - 128) as f64 * transform_basis.BASIS[x * 8 + u];
+      }
+      rows = rows.append(sum);
+    }
+  }
+  return Ok(rows);
+}
+
+function vertical(rows: [f64], cancelled: () => boolean): Result[f64[], DctError] {
+  let output: f64[] = [];
+  for v in 0..8 {
+    if (cancelled()) {
+      return Err(DctError.Cancelled);
+    }
+    for u in 0..8 {
+      let sum = 0.0;
+      for y in 0..8 {
+        sum += rows[y * 8 + u] * transform_basis.BASIS[y * 8 + v];
+      }
+      output = output.append(sum);
+    }
+  }
+  return Ok(output);
+}
+
+// T.81 A.3.1 and A.3.3: eight-bit level shift and natural-order coefficients.
+pub function forward(samples: [u8], cancelled: () => boolean): Result[f64[], DctError] {
+  if (samples.len() != 64) {
+    return Err(DctError.Shape);
+  }
+  if (cancelled()) {
+    return Err(DctError.Cancelled);
+  }
+  if (uniform(samples)) {
+    return constant_block(samples[0], cancelled);
+  }
+  let rows = horizontal(samples, cancelled)?;
+  let output = vertical(rows, cancelled)?;
+  // The DC coefficient is an exact rational with denominator eight.
+  let sum = 0;
+  for sample in samples {
+    sum += sample as i32 - 128;
+  }
+  output = output.with(0, sum as f64 / 8.0);
+  if (cancelled()) {
+    return Err(DctError.Cancelled);
+  }
+  return Ok(output);
+}

@@ -1,0 +1,236 @@
+import "../packages/codecs/jpeg/quantization";
+import "../packages/codecs/jpeg/dct";
+import "../packages/codecs/jpeg/idct";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function coefficients(value: f64): f64[] {
+  let output: f64[] = [];
+  for i in 0..64 {
+    output = output.append(value);
+  }
+  return output;
+}
+
+function quantizers(value: u8): u8[] {
+  let output: u8[] = [];
+  for i in 0..64 {
+    output = output.append(value);
+  }
+  return output;
+}
+
+function rounded(): test.TestOutcome {
+  for step in 1..256 {
+    for pair in [(0.0, 0), (0.5, 1), (-0.5, -1), (2.5, 3), (-2.5, -3), (3.25, 3), (-3.25, -3)] {
+      let Ok(result) = quantization.quantize(coefficients(pair.0 * (step as f64)), quantizers(step as u8), never) else {
+        return test.fail("finite quantization");
+      };
+      for value in result {
+        if (value != pair.1) {
+          return test.fail("nearest quotient and signed ties");
+        }
+      }
+    }
+  }
+  for pair in [
+    (f64_from_bits(0x3fdfffffffffffff), 0), (f64_from_bits(0x3fe0000000000000), 1),
+    (f64_from_bits(0x3fe0000000000001), 1), (-f64_from_bits(0x3fdfffffffffffff), 0),
+    (-f64_from_bits(0x3fe0000000000000), -1), (-f64_from_bits(0x3fe0000000000001), -1),
+  ] {
+    let Ok(result) = quantization.quantize(coefficients(pair.0), quantizers(1), never) else {
+      return test.fail("representable tie neighbors");
+    };
+    for value in result {
+      if (value != pair.1) {
+        return test.fail("adjacent binary64 tie boundaries");
+      }
+    }
+  }
+  return test.pass();
+}
+
+// Enumerate image diagonals independently of the codec's permutation table.
+function natural_index(wire: i32): i32 {
+  let index = 0;
+  for diagonal in 0..15 {
+    let low = if (diagonal < 8) { 0 } else { diagonal - 7 };
+    let high = if (diagonal < 8) { diagonal } else { 7 };
+    for offset in 0..high - low + 1 {
+      let y = if (diagonal % 2 == 0) { high - offset } else { low + offset };
+      if (index == wire) {
+        return y * 8 + diagonal - y;
+      }
+      index += 1;
+    }
+  }
+  return -1;
+}
+
+function ordering(): test.TestOutcome {
+  let source = coefficients(0.0);
+  let table: u8[] = [];
+  for wire in 0..64 {
+    let natural = natural_index(wire);
+    if (natural < 0) {
+      return test.fail("reference diagonal");
+    }
+    table = table.append((wire + 1) as u8);
+    source = source.with(natural, (natural - 32) as f64 * ((wire + 1) as f64));
+  }
+  let Ok(result) = quantization.quantize(source, table, never) else {
+    return test.fail("transmitted quantizer order");
+  };
+  for i in 0..64 {
+    if (result[i] != i - 32) {
+      return test.fail("natural coefficient order");
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let c = coefficients(0.0);
+  let q = quantizers(1);
+  for length in [0, 1, 63, 65] {
+    let bad: f64[] = [];
+    let bad_q: u8[] = [];
+    for i in 0..length {
+      bad = bad.append(0.0);
+      bad_q = bad_q.append(1);
+    }
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return true;
+    };
+    if (!match (quantization.quantize(bad, q, cancel)) { Err(quantization.Shape) => true, _ => false }) {
+      return test.fail("coefficient shape");
+    }
+    if (!match (quantization.quantize(c, bad_q, cancel)) { Err(quantization.Shape) => true, _ => false }) {
+      return test.fail("quantizer shape");
+    }
+    if (calls.get() != 0) {
+      return test.fail("shape before callbacks");
+    }
+  }
+  for i in 0..64 {
+    if (!match (quantization.quantize(c, q.with(i, 0), never)) { Err(quantization.Quantizer) => true, _ => false }) {
+      return test.fail("zero quantizer");
+    }
+    for value in [f64_from_bits(0x7ff8000000000000), f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000)] {
+      if (!match (quantization.quantize(c.with(i, value), q, never)) { Err(quantization.NonFinite) => true, _ => false }) {
+        return test.fail("nonfinite coefficient");
+      }
+    }
+  }
+  for value in [32767.5, -32768.5, f64_from_bits(0x7fefffffffffffff), -f64_from_bits(0x7fefffffffffffff)] {
+    if (!match (quantization.quantize(coefficients(value), q, never)) { Err(quantization.Coefficient) => true, _ => false }) {
+      return test.fail("coefficient domain");
+    }
+  }
+  for pair in [(32767.499999999996, 32767), (-32768.49999999999, -32768), (32767.0, 32767), (-32768.0, -32768)] {
+    let Ok(result) = quantization.quantize(coefficients(pair.0), q, never) else {
+      return test.fail("domain boundary");
+    };
+    if (result[63] != pair.1) {
+      return test.fail("rounded domain boundary");
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let c = coefficients(2.5);
+  let q = quantizers(1);
+  let retained_c = c;
+  let retained_q = q;
+  let padded_c: f64[] = [99.0];
+  let padded_q: u8[] = [77];
+  for value in c {
+    padded_c = padded_c.append(value);
+  }
+  for value in q {
+    padded_q = padded_q.append(value);
+  }
+  padded_c = padded_c.append(99.0);
+  padded_q = padded_q.append(77);
+  let Ok(result) = quantization.quantize(padded_c[1:65], padded_q[1:65], never) else {
+    return test.fail("borrowed windows");
+  };
+  let saved = result;
+  c = c.with(0, 9.0);
+  q = q.with(0, 3);
+  result = result.with(0, 42);
+  let Ok(fresh) = quantization.quantize(retained_c, retained_q, never) else {
+    return test.fail("fresh call");
+  };
+  for i in 0..64 {
+    if (saved[i] != 3 || fresh[i] != 3 || retained_c[i] != 2.5 || retained_q[i] != 1) {
+      return test.fail("retained state");
+    }
+  }
+  return test.assert_true(c[0] == 9.0 && q[0] == 3 && result[0] == 42 && padded_c[1] == 2.5 && padded_q[1] == 1);
+}
+
+function cancellation(): test.TestOutcome {
+  let c = coefficients(3.25);
+  let q = quantizers(1);
+  let polls = cell_new(0);
+  let counter = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  if let Err(_) = quantization.quantize(c, q, counter) {
+    return test.fail("poll count");
+  }
+  if (polls.get() <= 1) {
+    return test.fail("cooperative checkpoints");
+  }
+  for stop in 1..polls.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (quantization.quantize(c, q, cancel)) { Err(quantization.Cancelled) => true, _ => false }) {
+      return test.fail("every cancellation checkpoint");
+    }
+  }
+  return test.pass();
+}
+
+function uniform_roundtrip(): test.TestOutcome {
+  for byte in 0..256 {
+    let source = quantizers(byte as u8);
+    let Ok(transformed) = dct.forward(source, never) else {
+      return test.fail("forward transform");
+    };
+    let Ok(quantized) = quantization.quantize(transformed, quantizers(1), never) else {
+      return test.fail("quantization");
+    };
+    let Ok(restored) = idct.reconstruct(quantized, quantizers(1), never) else {
+      return test.fail("inverse transform");
+    };
+    for value in restored {
+      if (value != byte as u8) {
+        return test.fail("uniform unit-quantizer round trip");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG coefficient quantization");
+  suite = suite.it("all quantizers preserve nearest values and signed ties", rounded);
+  suite = suite.it("wire quantizers map to natural coefficients", ordering);
+  suite = suite.it("shape, nonfinite and coefficient boundaries", malformed);
+  suite = suite.it("borrowed windows and retained values", ownership);
+  suite = suite.it("every cancellation checkpoint", cancellation);
+  suite = suite.it("all uniform bytes round trip through both transforms", uniform_roundtrip);
+  return suite.finish();
+}

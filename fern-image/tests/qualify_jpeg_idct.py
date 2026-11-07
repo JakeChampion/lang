@@ -129,11 +129,12 @@ def main():
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--wasmtime", type=Path)
     target.add_argument("--qemu", type=Path)
+    target.add_argument("--native-target", choices=["arm64-darwin", "x86-64-linux", "arm64-linux"])
     options = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     paths = source_paths(root, options)
     runner = []
-    runtime = "native x86-64"
+    runtime = "native " + (options.native_target or "x86-64")
     if options.wasmtime:
         paths["wasmtime"] = options.wasmtime.resolve()
         runner = [str(paths["wasmtime"]), "run", "--dir=."]
