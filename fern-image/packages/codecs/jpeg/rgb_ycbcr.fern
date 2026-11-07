@@ -1,0 +1,62 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum ConvertError { Shape, Limit, Cancelled }
+
+@derive(cmp.Debug, cmp.Eq)
+pub struct Samples { y: u8, cb: u8, cr: u8 }
+
+function channel(value: i64): u8 {
+  if (value <= 0) {
+    return 0;
+  }
+  if (value >= 2550000) {
+    return 255;
+  }
+  return ((value + 5000) / 10000) as u8;
+}
+
+// JFIF 1.02 page 3 decimal equations, evaluated in exact ten-thousandths.
+pub function convert(r: u8, g: u8, b: u8): Samples {
+  let red = r as i64;
+  let green = g as i64;
+  let blue = b as i64;
+  return Samples {
+    y: channel(2990i64 * red + 5870i64 * green + 1140i64 * blue),
+    cb: channel(1280000i64 - 1687i64 * red - 3313i64 * green + 5000i64 * blue),
+    cr: channel(1280000i64 + 5000i64 * red - 4187i64 * green - 813i64 * blue),
+  };
+}
+
+function admit(rgb: [u8], max_output_bytes: i32): Result[void, ConvertError] {
+  if (rgb.len() <= 0 || rgb.len() % 3 != 0) {
+    return Err(ConvertError.Shape);
+  }
+  if (max_output_bytes <= 0 || rgb.len() > max_output_bytes || rgb.len() > 67108864) {
+    return Err(ConvertError.Limit);
+  }
+  return Ok(());
+}
+
+// Input and output use explicit packed RGB and Y, Cb, Cr order respectively.
+pub function convert_row(rgb: [u8], max_output_bytes: i32, cancelled: () => boolean): Result[u8[], ConvertError] {
+  admit(rgb, max_output_bytes)?;
+  if (cancelled()) {
+    return Err(ConvertError.Cancelled);
+  }
+  let output = __alloc_u8(rgb.len());
+  if (cancelled()) {
+    return Err(ConvertError.Cancelled);
+  }
+  for x in 0..rgb.len() / 3 {
+    if (x % 64 == 0 && cancelled()) {
+      return Err(ConvertError.Cancelled);
+    }
+    let sample = convert(rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+    output = output.with(x * 3, sample.y).with(x * 3 + 1, sample.cb).with(x * 3 + 2, sample.cr);
+  }
+  if (cancelled()) {
+    return Err(ConvertError.Cancelled);
+  }
+  return Ok(output);
+}
