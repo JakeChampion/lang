@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// bindInferredDriver binds the locals of one function in sequence and counts
-// the appends that copy a shared array. Each bind is the last use of the old
-// scope, so no bind may copy the scope's arrays, for an annotated or an
-// unannotated local.
+// bindInferredDriver binds the locals of one function in sequence, and
+// annotates the function, and counts the appends that copy a shared array.
+// Each bind is the last use of the old scope, so no bind may copy the scope's
+// arrays, for an annotated or an unannotated local.
 const bindInferredDriver = `import "./checker"; import "./parser"; import "./lexer"; import "./util";
 
 function lets(n: i32, annotated: boolean): string {
@@ -31,9 +31,18 @@ function crossings(src: string): i32 {
   return __arr_push_shared_count() - before;
 }
 
+function annotate_copies(src: string): i32 {
+  let mod = parser.parse_module(lexer.tokenize(src));
+  let before = __arr_push_shared_count();
+  let out = checker.annotate_module(mod);
+  return __arr_push_shared_count() - before + out.funcs.len() * 0;
+}
+
 function main(): i32 {
-  print("annotated " + util.i32_to_string(crossings(lets(64, true))));
-  print("inferred " + util.i32_to_string(crossings(lets(64, false))));
+  print("bind annotated " + util.i32_to_string(crossings(lets(64, true))));
+  print("bind inferred " + util.i32_to_string(crossings(lets(64, false))));
+  print("annotate annotated " + util.i32_to_string(annotate_copies(lets(64, true))));
+  print("annotate inferred " + util.i32_to_string(annotate_copies(lets(64, false))));
   return 0;
 }
 `
@@ -50,7 +59,7 @@ func TestSelfHostBindInferredGrowsInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bind driver: %v\n%s", err, got)
 	}
-	if want := "annotated 0\ninferred 0\n"; string(got) != want {
+	if want := "bind annotated 0\nbind inferred 0\nannotate annotated 0\nannotate inferred 0\n"; string(got) != want {
 		t.Fatalf("copies while binding 64 locals:\n%s\nwant:\n%s", got, want)
 	}
 }

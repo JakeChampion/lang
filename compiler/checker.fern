@@ -6947,18 +6947,30 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
         return bind_destructure_names(s, v);
       }
-      if (v.type_name.len() > 0) {
-        return s.bind(v.name, var_declared_type(v, s));
-      }
-      let inferred = check_expr(v.init, rec_local_scope(v, s));
-      if (bare_map(inferred)) {
-        return s.bind(v.name, t_unknown("map without types"));
-      }
-      return s.bind_inferred(v, inferred);
+      return bind_var(v, s, var_bind_type(v, s));
     },
     _ => {}
   }
   return s;
+}
+
+// var_bind_type is the type that bind_stmt gives the local of v.
+function var_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
+  if (v.type_name.len() > 0) {
+    return var_declared_type(v, s);
+  }
+  let inferred = check_expr(v.init, rec_local_scope(v, s));
+  if (bare_map(inferred)) {
+    return t_unknown("map without types");
+  }
+  return inferred;
+}
+
+function bind_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): Scope {
+  if (v.type_name.len() > 0) {
+    return s.bind(v.name, t);
+  }
+  return s.bind_inferred(v, t);
 }
 
 // bare_map is a map type whose key or value type no expression gave, as the
@@ -29201,11 +29213,25 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let cur = s;
   for stmt in body {
-    let next = bind_stmt(stmt, cur);
-    out = out.append(annotate_stmt(stmt, cur, next));
+    let (annotated, next) = annotate_bound(stmt, cur);
+    out = out.append(annotated);
     cur = next;
   }
   return out;
+}
+
+// annotate_bound annotates stmt in s and binds what it declares. A plain local
+// is annotated before the bind, so that the bind is the last use of s.
+function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
+  if let ast.StmtVar(v) = stmt {
+    if (!name_has_comma(v.name) && !parser.is_destr_marker(v.type_name)) {
+      let t = var_bind_type(v, s);
+      let annotated = annotate_var(v, s, t);
+      return (annotated, bind_var(v, s, t));
+    }
+  }
+  let next = bind_stmt(stmt, s);
+  return (annotate_stmt(stmt, s, next), next);
 }
 
 struct ForBinding { scope: Scope, valid: boolean }
@@ -29321,26 +29347,31 @@ function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
   return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
 }
 
+// annotate_var annotates v in s, where t is the type that the local gets.
+function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
+  let init = v.init;
+  if let ast.ExprLambda(lm) = v.init {
+    init = annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown(""));
+  } else {
+    init = annotate_expr(v.init, s);
+  }
+  if (v.type_name.len() > 0) {
+    init = settle_at(init, t);
+  }
+  let callable = decltypes.fn_param_from_type(v.name, t);
+  if (callable.type_name == "fn") {
+    return ast.StmtVar {
+      ...v, type_name: "fn", init: init,
+      fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types,
+    };
+  }
+  return ast.StmtVar { ...v, init: init };
+}
+
 function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      let init = v.init;
-      if let ast.ExprLambda(lm) = v.init {
-        init = annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown(""));
-      } else {
-        init = annotate_expr(v.init, s);
-      }
-      if (v.type_name.len() > 0) {
-        init = settle_at(init, after.lookup(v.name));
-      }
-      let callable = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
-      if (callable.type_name == "fn") {
-        return ast.StmtVar {
-          ...v, type_name: "fn", init: init,
-          fn_ret: callable.fn_ret, fn_param_types: callable.fn_param_types,
-        };
-      }
-      return ast.StmtVar { ...v, init: init };
+      return annotate_var(v, s, after.lookup(v.name));
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type), line: r.line, col: r.col };
