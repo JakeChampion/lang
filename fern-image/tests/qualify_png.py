@@ -18,6 +18,9 @@ from pathlib import Path
 
 import PIL
 from PIL import Image, features
+from fixtures.generate_png_packed import vector as packed_vector
+from fixtures.generate_png_indexed import vector as indexed_vector
+from fixtures.generate_png_transparency import vector as transparency_vector
 
 
 SEED = 0xF3A123
@@ -49,8 +52,23 @@ def assemble(parts):
 def reference(data):
     with Image.open(io.BytesIO(data)) as image:
         image.load()
-        if image.mode not in ["RGB", "RGBA"]:
+        if image.mode not in ["1", "L", "LA", "P", "RGB", "RGBA"]:
             raise ValueError("reference mode is outside the supported surface")
+        if "transparency" in image.info and image.mode in ["1", "L", "RGB"]:
+            depth = data[24]
+            stored = next(payload for kind, payload in chunks(data) if kind == b"tRNS")
+            key = struct.unpack(">" + "H" * (len(stored) // 2), stored)
+            if image.mode == "RGB":
+                image.info["transparency"] = tuple(value & 255 for value in key)
+            else:
+                key = key[0] & ((1 << depth) - 1)
+                # Pillow expands packed gray samples but keeps the unscaled key.
+                image.info["transparency"] = key * 255 // ((1 << depth) - 1)
+            image = image.convert("RGBA")
+        if image.mode in ["1", "L", "LA"]:
+            image = image.convert("RGBA" if image.mode == "LA" else "RGB")
+        elif image.mode == "P":
+            image = image.convert("RGBA" if "transparency" in image.info else "RGB")
         return image.size, image.mode, image.tobytes()
 
 
@@ -64,7 +82,106 @@ def corpus():
         cases.append({"name": name, "data": data, "expected": expected})
 
     dimensions = [(1, 1), (1, 31), (31, 1), (2, 3), (3, 2), (7, 9), (16, 17), (31, 29)]
-    for mode in ["RGB", "RGBA"]:
+    for depth, color in [(1, 0), (2, 0), (4, 0), (8, 0), (8, 2)]:
+        maximum = (1 << depth) - 1
+        for width in [1, 7, 8, 9, 17, 129, 257]:
+            for key in sorted({0, maximum // 2, maximum}):
+                for padding in [0, 1]:
+                    for high in [False, True]:
+                        data, raw, normalized = transparency_vector(depth, color, width, key, padding, high)
+                        expected = ((width, 5), "RGBA", raw)
+                        if reference(data) != expected or reference(normalized) != expected:
+                            raise ValueError("sample transparency reference differs")
+                        add(f"sample-key-{color}-{depth}-{width}-{key}-pad{padding}-high{high}", data, expected)
+        data, _, _ = transparency_vector(depth, color, 17, maximum // 2)
+        header, trns, idat, iend = chunks(data)
+        for length in range(9):
+            if length != len(trns[1]):
+                add(f"sample-key-{color}-{depth}-length-{length}", assemble([header, (b"tRNS", bytes(length)), idat, iend]))
+        for label, altered in {
+            "duplicate": [header, trns, trns, idat, iend],
+            "after-data": [header, idat, trns, iend],
+            "before-header": [trns, header, idat, iend],
+            "palette-after-key": [header, trns, (b"PLTE", bytes([19, 27, 43])), idat, iend],
+        }.items():
+            add(f"sample-key-{color}-{depth}-{label}", assemble(altered))
+        for label, stream in [("short", zlib.decompress(idat[1])[:-1]), ("long", zlib.decompress(idat[1]) + b"\0")]:
+            add(f"sample-key-{color}-{depth}-{label}", assemble([header, trns, (b"IDAT", zlib.compress(stream)), iend]))
+        bad_filter = bytearray(zlib.decompress(idat[1]))
+        bad_filter[4 * (len(bad_filter) // 5)] = 5
+        for checksum in [False, True]:
+            compressed = bytearray(zlib.compress(bad_filter))
+            if checksum:
+                compressed[-1] ^= 1
+            add(f"sample-key-{color}-{depth}-late-filter-checksum{checksum}", assemble([header, trns, (b"IDAT", compressed), iend]))
+        if color == 2:
+            add("sample-key-suggested-palette", assemble([header, (b"PLTE", bytes([19, 27, 43])), trns, idat, iend]), reference(data))
+    for width, depth, color in [(8193, 8, 2), (8193, 8, 0), (8193, 4, 0)]:
+        data, raw, _ = transparency_vector(depth, color, width, 0, high=True)
+        add(f"sample-key-boundary-{color}-{depth}", data, ((width, 5), "RGBA", raw))
+    for depth in [1, 2, 4, 8]:
+        for width in [1, 7, 8, 9, 17, 129, 257]:
+            for padding in [0, 1]:
+                for alpha_count in [-1, 0, 1, 1 << depth]:
+                    data, raw, channels = indexed_vector(depth, width, padding, alpha_count)
+                    expected = ((width, 5), "RGBA" if channels == 4 else "RGB", raw)
+                    if reference(data) != expected:
+                        raise ValueError("indexed reference differs")
+                    add(f"indexed-{depth}-{width}-pad{padding}-alpha{alpha_count}", data, expected)
+        data, raw, channels = indexed_vector(depth, 17, 1, 0, entries=1)
+        add(f"indexed-{depth}-single-opaque-entry", data, ((17, 5), "RGBA", raw))
+        bad_index, _, _ = indexed_vector(depth, 17, 1, 1, entries=1, bad_index=True)
+        add(f"indexed-{depth}-late-bad-index", bad_index)
+        bad_parts = chunks(bad_index)
+        corrupt = bytearray(bad_parts[-2][1])
+        corrupt[-1] ^= 1
+        add(f"indexed-{depth}-checksum-before-bad-index", assemble([*bad_parts[:-2], (b"IDAT", corrupt), bad_parts[-1]]))
+        data, _, _ = indexed_vector(depth, 17, 1, 1)
+        parts = chunks(data)
+        ihdr, plte, trns, idat, iend = parts
+        invalid_chunks = {
+            "missing-palette": [ihdr, trns, idat, iend],
+            "missing-palette-opaque": [ihdr, idat, iend],
+            "duplicate-palette": [ihdr, plte, plte, trns, idat, iend],
+            "palette-after-alpha": [ihdr, plte, trns, plte, idat, iend],
+            "palette-after-data": [ihdr, plte, idat, plte, iend],
+            "alpha-before-palette": [ihdr, trns, plte, idat, iend],
+            "alpha-after-data": [ihdr, plte, idat, trns, iend],
+            "duplicate-alpha": [ihdr, plte, trns, trns, idat, iend],
+            "excess-alpha": [ihdr, plte, (b"tRNS", bytes((1 << depth) + 1)), idat, iend],
+        }
+        for size in [0, 1, 2, 4, 769, 771]:
+            invalid_chunks[f"palette-length-{size}"] = [ihdr, (b"PLTE", bytes(size)), idat, iend]
+        if depth != 8:
+            invalid_chunks["palette-exceeds-depth"] = [ihdr, (b"PLTE", bytes(3 * ((1 << depth) + 1))), idat, iend]
+        for label, altered in invalid_chunks.items():
+            add(f"indexed-{depth}-{label}", assemble(altered))
+    for width, height in [(8193, 5)]:
+        data, raw, channels = indexed_vector(8, width, 1, 1, height=height)
+        add(f"indexed-chunk-boundary-{width}x{height}", data, ((width, height), "RGBA", raw))
+    for depth in [1, 2, 4]:
+        for width in [1, 7, 8, 9, 17, 33, 129]:
+            for padding in [0, 1]:
+                data, raw = packed_vector(depth, width, padding)
+                expected = ((width, 5), "RGB", raw)
+                if reference(data) != expected:
+                    raise ValueError("packed grayscale reference differs")
+                add(f"packed-gray-{depth}-{width}-padding{padding}", data, expected)
+        data, _ = packed_vector(depth, 17, 1)
+        parts = chunks(data)
+        for bad_depth in [0, 3, 16]:
+            altered = bytearray(parts[0][1])
+            altered[8] = bad_depth
+            add(f"packed-gray-{depth}-invalid-depth-{bad_depth}", assemble([(b"IHDR", altered), *parts[1:]]))
+        altered = bytearray(parts[0][1])
+        altered[9] = 4
+        add(f"packed-gray-{depth}-invalid-alpha", assemble([(b"IHDR", altered), *parts[1:]]))
+        raw_rows = zlib.decompress(parts[1][1])
+        bad_filter = bytearray(raw_rows)
+        bad_filter[4 * (len(raw_rows) // 5)] = 5
+        for label, filtered in [("late-filter", bad_filter), ("short", raw_rows[:-1]), ("long", raw_rows + b"\0")]:
+            add(f"packed-gray-{depth}-{label}", assemble([parts[0], (b"IDAT", zlib.compress(filtered)), parts[-1]]))
+    for mode in ["RGB", "RGBA", "L", "LA"]:
         for width, height in dimensions:
             for pattern in ["gradient", "noise"]:
                 count = width * height * len(mode)
@@ -75,13 +192,14 @@ def corpus():
                     output = io.BytesIO()
                     image.save(output, format="PNG", compress_level=level)
                     data = output.getvalue()
-                    expected = ((width, height), mode, raw)
+                    expanded = image.convert("RGB" if mode == "L" else "RGBA") if mode in ["L", "LA"] else image
+                    expected = ((width, height), expanded.mode, expanded.tobytes())
                     if reference(data) != expected:
                         raise ValueError("reference encoder changed the source pixels")
                     add(f"pillow-{mode}-{width}x{height}-{pattern}-level{level}", data, expected)
 
     # Each forced filter stream also passes the independent reference decoder.
-    for mode in ["RGB", "RGBA"]:
+    for mode in ["RGB", "RGBA", "L", "LA"]:
         width, height, bpp = 17, 9, len(mode)
         raw = bytes(rng.randrange(256) for _ in range(width * height * bpp))
         for filter_id in range(5):
@@ -99,10 +217,13 @@ def corpus():
                     paeth = [a, b, c][distances.index(min(distances))]
                     prediction = [0, a, b, (a + b) // 2, paeth][filter_id]
                     filtered.append((raw[at] - prediction) % 256)
-            parts = [(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2 if bpp == 3 else 6, 0, 0, 0)),
+            parts = [(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, {"L": 0, "LA": 4, "RGB": 2, "RGBA": 6}[mode], 0, 0, 0)),
                      (b"IDAT", zlib.compress(filtered)), (b"IEND", b"")]
             data = assemble(parts)
-            expected = ((width, height), mode, raw)
+            expanded = Image.frombytes(mode, (width, height), raw)
+            if mode in ["L", "LA"]:
+                expanded = expanded.convert("RGB" if mode == "L" else "RGBA")
+            expected = ((width, height), expanded.mode, expanded.tobytes())
             if reference(data) != expected:
                 raise ValueError("forced filter fixture disagrees with Pillow")
             add(f"filter-{mode}-{filter_id}", data, expected)
@@ -111,14 +232,15 @@ def corpus():
     parts = chunks(base["data"])
     compressed = b"".join(data for kind, data in parts if kind == b"IDAT")
     header = parts[0]
+    add("suggested-palette-RGBA", assemble([header, (b"PLTE", bytes([19, 27, 43])), *parts[1:]]), base["expected"])
     for step in [1, 7, 31]:
         split = [(b"IDAT", b"")] + [(b"IDAT", compressed[i:i + step]) for i in range(0, len(compressed), step)]
         add(f"split-idat-{step}", assemble([header, *split, (b"IDAT", b""), (b"IEND", b"")]), base["expected"])
 
-    for mode in ["L", "LA", "P", "I;16"]:
+    for mode in ["P", "I;16"]:
         output = io.BytesIO()
         Image.new(mode, (3, 2)).save(output, format="PNG")
-        add("unsupported-" + mode, output.getvalue())
+        add(("pillow-" if mode == "P" else "unsupported-") + mode, output.getvalue(), reference(output.getvalue()) if mode == "P" else None)
     ihdr = header[1]
     for position, value in [(8, 16), (9, 3), (10, 1), (11, 1), (12, 1)]:
         altered = bytearray(ihdr)
@@ -188,7 +310,11 @@ def main():
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--wasmtime", type=Path)
     target.add_argument("--qemu", type=Path)
+    target.add_argument("--native-target", choices=["x86-64-linux", "arm64-darwin"])
+    parser.add_argument("--max-cases", type=int)
     options = parser.parse_args()
+    if options.max_cases is not None and options.max_cases <= 0:
+        parser.error("--max-cases must be positive")
     root = Path(__file__).resolve().parents[1]
     binary, compiler = options.binary.resolve(), options.compiler.resolve()
     paths = {"binary": binary, "compiler": compiler, "collector": Path(__file__),
@@ -196,6 +322,9 @@ def main():
     if getattr(zlib, "__file__", None):
         paths["python_zlib"] = Path(zlib.__file__)
     paths["fern-image/tests/png_corpus.fern"] = root / "tests/png_corpus.fern"
+    paths["fern-image/tests/fixtures/generate_png_packed.py"] = root / "tests/fixtures/generate_png_packed.py"
+    paths["fern-image/tests/fixtures/generate_png_indexed.py"] = root / "tests/fixtures/generate_png_indexed.py"
+    paths["fern-image/tests/fixtures/generate_png_transparency.py"] = root / "tests/fixtures/generate_png_transparency.py"
     paths["fern-image/tests/requirements-reference.txt"] = root / "tests/requirements-reference.txt"
     paths["fern-image/scripts/test-png-corpus.sh"] = root / "scripts/test-png-corpus.sh"
     for directory in [root / "packages", root.parent / "internal/stdlib", Path(PIL.__file__).parent]:
@@ -208,7 +337,8 @@ def main():
             if path.is_file():
                 paths["reference/" + directory.name + "/" + str(path.relative_to(directory))] = path
     runner = []
-    runtime = "native x86-64"
+    native_target = options.native_target or "x86-64-linux"
+    runtime = "native " + native_target
     if options.wasmtime:
         wasmtime = options.wasmtime.resolve()
         paths["wasmtime"] = wasmtime
@@ -221,6 +351,8 @@ def main():
         runtime = subprocess.check_output([str(qemu), "--version"], text=True).splitlines()[0]
     hashes = {name: sha(path.read_bytes()) for name, path in paths.items()}
     cases = corpus()
+    if options.max_cases is not None:
+        cases = cases[:options.max_cases]
     samples = []
     batch_records = []
     with workspace(options.output, cases) as directory:
@@ -296,7 +428,8 @@ def main():
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
         "compiler_version": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
         "host": platform.platform(), "host_machine": platform.machine(), "runtime": runtime, "seed": SEED,
-        "compiler_flags": ["-target", "wasm32-wasi" if options.wasmtime else "arm64-linux" if options.qemu else "x86-64-linux", "-sanitize"],
+        "compiler_flags": ["-target", "wasm32-wasi" if options.wasmtime else "arm64-linux" if options.qemu else native_target, "-sanitize"],
+        "max_cases": options.max_cases,
         "warmup_processes": 0, "cache_policy": "No page-cache flush or cold/warm performance comparison.",
         "row_checks": {"accepted": "Full rows and a middle selection match independent reference bytes.",
                        "rejected": "Eager, row, and graph provider APIs return the same codec error class.",

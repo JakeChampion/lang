@@ -3732,11 +3732,38 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
+// A cache or TLB op. A TLB op orders the table writes before it with dsb ishst,
+// and waits for the invalidation on every core of the inner-shareable domain.
+// tlbi vaae1is takes the page number, for every ASID.
+function ssa_maintenance(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "dev_tlb_flush_all") {
+    s = s.write("    dsb ishst\n    tlbi vmalle1is\n    dsb ish\n    isb\n");
+  } else {
+    s = ssa_load(reg_of, ins.args[0], "x9", s);
+    s = s.write(arm64_maintenance_text(ins.str));
+  }
+  s = s.write("    mov x0, #0\n");
+  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
+function arm64_maintenance_text(op: string): string {
+  if (op == "dev_tlb_flush") {
+    return "    dsb ishst\n    lsr x9, x9, #12\n    tlbi vaae1is, x9\n    dsb ish\n    isb\n";
+  }
+  if (op == "dev_cache_clean") {
+    return "    dc cvac, x9\n";
+  }
+  return "    dc civac, x9\n";
+}
+
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
 // convention. boot_info reads the x0 that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (util.str_has_prefix(ins.str, "dev_sysreg_")) {
     return ssa_sysreg(ins, reg_of, s);
+  }
+  if (ircore.maintenance_op(ins.str)) {
+    return ssa_maintenance(ins, reg_of, s);
   }
   if (ins.str == "dev_wfi") {
     s = s.write("    wfi\n    mov x0, #0\n");

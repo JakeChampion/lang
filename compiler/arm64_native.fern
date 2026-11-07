@@ -3004,6 +3004,49 @@ function arm64_ldrsh(buf: i32[], rt: i32, rn: i32, off: i32, w: boolean): i32[] 
   return arm64_le32(buf, base | (off / 2 & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
 }
 
+// A cache or TLB maintenance op of the SYS space. `reg` says whether it takes
+// an address register. An op without one has 31 in the Rt field.
+struct Arm64SysOp { name: string, word: i64, reg: boolean }
+
+function arm64_sys_ops(): Arm64SysOp[] {
+  return [
+    Arm64SysOp { name: "dc cvac", word: 0xd50b7a20, reg: true },
+    Arm64SysOp { name: "dc cvau", word: 0xd50b7b20, reg: true },
+    Arm64SysOp { name: "dc civac", word: 0xd50b7e20, reg: true },
+    Arm64SysOp { name: "ic ivau", word: 0xd50b7520, reg: true },
+    Arm64SysOp { name: "ic iallu", word: 0xd508751f, reg: false },
+    Arm64SysOp { name: "tlbi vmalle1", word: 0xd508871f, reg: false },
+    Arm64SysOp { name: "tlbi vmalle1is", word: 0xd508831f, reg: false },
+    Arm64SysOp { name: "tlbi vaae1", word: 0xd5088760, reg: true },
+    Arm64SysOp { name: "tlbi vaae1is", word: 0xd5088360, reg: true },
+  ];
+}
+
+function arm64_is_sys_mnem(mnem: string): boolean {
+  return mnem == "tlbi" || mnem == "dc" || mnem == "ic";
+}
+
+// The word of `mnem op` or `mnem op, xN`, or -1.
+function arm64_sys_word(mnem: string, ops: string[]): i64 {
+  if (ops.len() == 0 || ops.len() > 2) {
+    return -1;
+  }
+  let name = mnem + " " + arm64_gas_trim(ops[0]);
+  for o in arm64_sys_ops() {
+    if (o.name == name && o.reg == (ops.len() == 2)) {
+      if (!o.reg) {
+        return o.word;
+      }
+      let rt = arm64_gas_reg(ops[1]);
+      if (rt < 0 || arm64_gas_is_w(ops[1])) {
+        return -1;
+      }
+      return o.word | rt as i64;
+    }
+  }
+  return -1;
+}
+
 function arm64_mrs_base(name: string): i64 {
   let enc = sysreg.arm64_encoding(name, sysreg.READ);
   if (enc < 0) {
@@ -9435,11 +9478,12 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       }
       continue;
     }
-    if (mnem == "tlbi") {
-      if (ops.len() == 1 && arm64_gas_trim(ops[0]) == "vmalle1") {
-        arm64_push_word(a.code, 0xd508871f);
+    if (arm64_is_sys_mnem(mnem)) {
+      let sys = arm64_sys_word(mnem, ops);
+      if (sys >= 0) {
+        arm64_push_word(a.code, sys);
       } else {
-        p = Arm64GasProg { ...p, unknown: p.unknown.append("tlbi:" + rest) };
+        p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + rest) };
       }
       continue;
     }

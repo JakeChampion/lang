@@ -322,7 +322,7 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
     }
     a += 1;
   }
-  return test.assert_true(!utf8.is_valid(slice_unchecked(s, 0, 2).to_owned()));
+  return test.assert_true(match (s[0:2]) { Some(_) => false, None => true });
 }
 
 function __lossy_len(b: u8[]): i32 {

@@ -2198,6 +2198,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.BlockExpr:
+		if x.Unsafe {
+			f.b.WriteString("unsafe ")
+		}
 		f.formatValueBody(x.P.Line, x.Stmts, x.Tail)
 	}
 }

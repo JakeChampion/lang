@@ -2,7 +2,7 @@ from pathlib import Path
 import zlib,struct
 sig=b'\x89PNG\r\n\x1a\n'
 def chunk(t,b):return struct.pack('>I',len(b))+t+b+struct.pack('>I',zlib.crc32(t+b))
-def image(raw,channels,filter=0,mode=None,suffix=b''):
+def image(raw,channels,filter=0,mode=None,suffix=b'',depth=8):
  w,h=2,2
  rows=[raw[i*2*channels:(i+1)*2*channels] for i in range(2)]
  out=b''
@@ -16,10 +16,10 @@ def image(raw,channels,filter=0,mode=None,suffix=b''):
    predictor=[0,a,b,(a+b)//2,a if da<=db and da<=dc else b if db<=dc else c][min(filter,4)]
    line.append((x-predictor)&255)
   out+=bytes([filter])+bytes(line)
- hdr=struct.pack('>IIBBBBB',w,h,8,mode if mode is not None else 2 if channels==3 else 6,0,0,0)
+ hdr=struct.pack('>IIBBBBB',w,h,depth,mode if mode is not None else 2 if channels==3 else 6,0,0,0)
  return sig+chunk(b'IHDR',hdr)+chunk(b'IDAT',zlib.compress(out)+suffix)+chunk(b'IEND',b'')
 rgb=bytes([255,0,17,11,200,0,2,3,4,250,128,99]);rgba=bytes([255,0,17,0,11,200,0,128,2,3,4,255,250,128,99,17])
-fixtures={**{'rgb'+str(f):image(rgb,3,f) for f in range(5)},**{'rgba'+str(f):image(rgba,4,f) for f in range(5)},'unsupported':image(rgb,3,mode=3),'bad_filter':image(rgb,3,filter=5),'compressed_trailing':image(rgb,3,suffix=b'X')}
+fixtures={**{'rgb'+str(f):image(rgb,3,f) for f in range(5)},**{'rgba'+str(f):image(rgba,4,f) for f in range(5)},'unsupported':image(rgb,3,depth=16),'bad_filter':image(rgb,3,filter=5),'compressed_trailing':image(rgb,3,suffix=b'X')}
 base=fixtures['rgb0']
 for name,kind in [('transparency',b'tRNS'),('profile',b'iCCP'),('animation',b'acTL'),('critical',b'ABCD')]:
  fixtures[name]=base[:33]+chunk(kind,b'')+base[33:]

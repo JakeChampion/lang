@@ -32,7 +32,9 @@ function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
 }
 
 function check_trim_strips_spaces(input: u8[]): test.TestOutcome {
-  let s = string_from_bytes_unchecked(input);
+  let Ok(s) = utf8.from_bytes(input) else {
+    return test.pass();
+  };
   let trimmed: str = s.trim();
   if (trimmed.len() == 0) {
     return test.pass();

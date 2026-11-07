@@ -66,11 +66,12 @@ A required optional mitigation must fail explicitly when the platform cannot sup
 
 ## Unsafe surface
 
-The syntax uses an `unsafe` function modifier and an `unsafe` block.
-The parsers reserve these markers for the bootstrap transition.
+The syntax uses an `unsafe` function modifier, an `unsafe` block statement,
+and an `unsafe { …; e }` value block. The value block is an expression: its
+statements and its value sit inside the unsafe block.
 See [the bootstrap syntax scope](security/UNSAFE-BOOTSTRAP.md).
-Both checkers enforce the obligation of an `unsafe function` as `E095`.
-The raw builtins do not carry the obligation yet.
+Both checkers enforce the obligation of an `unsafe function` and of each raw
+builtin as `E095`.
 See [the raw builtin inventory](security/UNSAFE-INVENTORY.md).
 
 An unsafe function declares caller obligations.

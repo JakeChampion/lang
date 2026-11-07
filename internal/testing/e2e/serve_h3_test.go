@@ -22,8 +22,13 @@ import (
 func TestServeH3Interp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	w := newServeH3WorldWithConfig(t, "serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(60 as i64) }")
+	w.budget = interpH3Budget
 	w.drive(t, exec.Command(bin, "-interp", w.src), 20000, 4)
 }
+
+// The interpreted server's TLS handshake can take longer than the default
+// 30-second QUIC idle timeout on a loaded runner, before its first packet.
+const interpH3Budget = "180"
 
 func TestServeH3X86_64(t *testing.T) {
 	w := newServeH3World(t)
@@ -37,6 +42,8 @@ func TestServeH3X86_64(t *testing.T) {
 type serveH3World struct {
 	dir, src, ca, client, fern, qemu string
 	pool                             *x509.CertPool
+	// budget is the client's time limit and QUIC idle timeout, in seconds.
+	budget string
 }
 
 func newServeH3World(t *testing.T) *serveH3World {
@@ -45,7 +52,7 @@ func newServeH3World(t *testing.T) *serveH3World {
 
 func newServeH3WorldWithConfig(t *testing.T, config string) *serveH3World {
 	t.Helper()
-	w := &serveH3World{dir: t.TempDir(), fern: buildFernCLI(t), qemu: x86QemuOrEmpty(t)}
+	w := &serveH3World{dir: t.TempDir(), fern: buildFernCLI(t), qemu: x86QemuOrEmpty(t), budget: "60"}
 	ca := newTestCA(t, mustKey(t, "p384"), "Fern Serve H3 CA")
 	w.pool = x509.NewCertPool()
 	w.pool.AddCert(ca.cert)
@@ -158,6 +165,7 @@ const serveH3ClientSource = `import "std/time";
 import "std/i32";
 import "std/net";
 import "std/quic/conn";
+import "std/quic/params";
 import "std/http/h3";
 import "std/http/h3q";
 import "std/tls/verify";
@@ -235,6 +243,24 @@ function asked(c: h3q.Conn, a: Asked): (h3q.Conn, Asked) {
   return (cur, Asked { ...next, sent: true });
 }
 
+
+// stalled says why the client stopped before every answer came.
+function stalled(c: h3q.Conn, got: i32, want: i32, ms: i64): string {
+  let q: conn.Conn = c.quic();
+  let state: string = "handshake";
+  if (q.connected()) {
+    state = "connected";
+  }
+  let why: string = "the connection is open";
+  if let Some(cl) = q.closed_with() {
+    let side: string = "local";
+    if (cl.remote) {
+      side = "remote";
+    }
+    why = side + " close code=" + cl.code.to_string() + " frame=" + cl.frame_type.to_string() + " reason=" + cl.reason;
+  }
+  return "client: " + got.to_string() + " of " + want.to_string() + " answers after " + ms.to_string() + " ms, " + state + ", " + why;
+}
 function main(): i32 {
   let argv: string[] = args();
   let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
@@ -243,7 +269,16 @@ function main(): i32 {
   let Ok(roots) = verify.roots_from_file(argv[2]) else {
     return 2;
   };
-  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
+  let budget: i64 = 60i64;
+  if (argv.len() > 5) {
+    let Ok(b) = i32.parse_i32(argv[5]) else {
+      return 2;
+    };
+    budget = b as i64;
+  }
+  let base: conn.Config = conn.config([]);
+  let idle: conn.Config = conn.Config { ...base, params: params.Params { ...base.params, max_idle_timeout: budget * 1000i64 } };
+  let cfg: conn.Config = h3q.transport(idle.client_side("localhost", roots));
   let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
@@ -262,7 +297,7 @@ function main(): i32 {
   let c: h3q.Conn = h3q.client(q, h3.config()).with_max_body(4194304 as i64);
   let buf: u8[] = __alloc_u8(65536);
   let started: Instant = now();
-  while (a.got < reqs.len() && !c.done() && clock.elapsed(started).cmp(time.duration_seconds(60)) < 0) {
+  while (a.got < reqs.len() && !c.done() && clock.elapsed(started).cmp(time.duration_seconds(budget)) < 0) {
     let c2: h3q.Conn = c.transmit(now());
     let out: u8[][] = c2.datagrams();
     c2 = c2.sent();
@@ -294,6 +329,9 @@ function main(): i32 {
   }
   for line in a.answers {
     print(line);
+  }
+  if (a.got < reqs.len()) {
+    eprint(stalled(c, a.got, reqs.len(), clock.elapsed(started).as_millis()));
   }
   let closed: h3q.Conn = c.close(now()).transmit(now());
   let out: u8[][] = closed.datagrams();
@@ -339,7 +377,7 @@ func (w *serveH3World) drive(t *testing.T, cmd *exec.Cmd, upload, chunks int) {
 	if got, want := resp.Header.Get("Alt-Svc"), `h3=":`+port+`"; ma=86400`; got != want {
 		t.Errorf("Alt-Svc = %q, want %q", got, want)
 	}
-	out, err := runX86Bin(w.qemu, w.client, port, w.ca, strconv.Itoa(upload), strconv.Itoa(chunks)).CombinedOutput()
+	out, err := runX86Bin(w.qemu, w.client, port, w.ca, strconv.Itoa(upload), strconv.Itoa(chunks), w.budget).CombinedOutput()
 	if err != nil {
 		t.Fatalf("h3 client: %v\n%s", err, out)
 	}

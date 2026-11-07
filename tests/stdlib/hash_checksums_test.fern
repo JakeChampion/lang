@@ -67,8 +67,8 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
   return test.assert_eq(c.finish(), cksum.of(msg));
 }
 
-function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
-  let msg = string_from_bytes_unchecked(__pseudo());
+function test_cksum_byte_chunks_match_the_table(): test.TestOutcome {
+  let msg = __pseudo();
   let cuts: i32[] = [1, 15, 16, 17, 31, 47, 63, 64, 65, 113, 191, 1009];
   let c = cksum.new();
   let at = 0;
@@ -78,7 +78,7 @@ function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
     if (at + take > 10003) {
       take = 10003 - at;
     }
-    c = c.update(slice_unchecked(msg, at, at + take).as_bytes());
+    c = c.update(msg[at:at + take]);
     at += take;
     k += 1;
   }
@@ -87,9 +87,9 @@ function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
   }
   let viabytes = cksum.new().update(__pseudo());
   if (c.finish() != viabytes.finish()) {
-    return test.fail("chunked string vs table");
+    return test.fail("chunked bytes vs table");
   }
-  return test.assert_eq(c.finish(), cksum.of(msg.as_bytes()));
+  return test.assert_eq(c.finish(), cksum.of(msg));
 }
 
 function test_bsd_sum(): test.TestOutcome {
@@ -222,7 +222,7 @@ function main(): i32 {
   r = r.it("cksum vectors", test_cksum_vectors);
   r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
   r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);
-  r = r.it("cksum string chunks match the table", test_cksum_string_chunks_match_the_table);
+  r = r.it("cksum byte chunks match the table", test_cksum_byte_chunks_match_the_table);
   r = r.it("bsd sum", test_bsd_sum);
   r = r.it("sysv sum", test_sysv_sum);
   r = r.it("sysv sum string updates", test_sysv_sum_string_updates);

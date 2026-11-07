@@ -1,0 +1,263 @@
+import "../packages/codecs/png/png";
+import "../packages/codecs/png/transparency";
+import "../packages/pixels/pixels";
+import "../packages/codecs/png/provider";
+import "../packages/pipeline/pipeline";
+import "./fixtures/png_transparency" as fixtures;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function open(input: [u8], incremental: boolean): Result[png.RowDecoder, png.DecoderError] {
+  return if (incremental) { png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never) } else { png.open_rows(input, pixels.default_limits(), png.default_row_limits(), never) };
+}
+
+function goldens(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let Ok(image) = png.decode(fixture.encoded, pixels.default_limits()) else {
+      return test.fail("sample transparency decode");
+    };
+    if (image.layout.width != fixture.width || image.layout.height != 5 || pixels.channels(image.layout.format) != 4
+      || !same(image.data, fixture.expected)) {
+      return test.fail("sample transparency pixels");
+    }
+    let Ok(encoded) = png.encode(image, 65536) else {
+      return test.fail("expanded encode");
+    };
+    let Ok(roundtrip) = png.decode(encoded, pixels.default_limits()) else {
+      return test.fail("expanded decode");
+    };
+    if (!same(roundtrip.data, fixture.expected)) {
+      return test.fail("sample transparency round trip");
+    }
+  }
+  return test.pass();
+}
+
+function rows(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    for incremental in [false, true] {
+      let Ok(decoder) = open(fixture.encoded, incremental) else {
+        return test.fail("sample transparency row open");
+      };
+      let stride = fixture.width * 4;
+      for y in 0..5 {
+        let Ok(row) = decoder.read(y, never) else {
+          return test.fail("sample transparency row read");
+        };
+        if (!same(row.data, fixture.expected[y * stride:(y + 1) * stride])) {
+          return test.fail("sample transparency row pixels");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let exact = pixels.Limits { max_pixels: fixture.width * 5, max_bytes: fixture.width * 20 };
+    if let Err(_) = png.decode(fixture.encoded, exact) {
+      return test.fail("sample transparency exact output limit");
+    }
+    if (!match (png.decode(fixture.encoded, pixels.Limits { ...exact, max_bytes: exact.max_bytes - 1 })) { Err(png.PngError.Limit) => true, _ => false }) {
+      return test.fail("sample transparency expanded limit");
+    }
+    for incremental in [false, true] {
+      let inspected = if (incremental) { png.inspect_incremental_rows(fixture.encoded, exact, png.default_row_limits()) } else { png.inspect_rows(fixture.encoded, exact, png.default_row_limits()) };
+      let Ok(plan) = inspected else {
+        return test.fail("sample transparency plan");
+      };
+      let channels = if (fixture.color_type == 0) { 1 } else { 3 };
+      let wire = (fixture.width * channels * fixture.depth + 7) / 8;
+      let scratch = if (2 * wire + fixture.width * 4 > fixture.width * 8) { 2 * wire + fixture.width * 4 } else { fixture.width * 8 };
+      let output = fixture.width as i64 * 20i64;
+      let expected_work = if (incremental) { fixture.encoded.len() as i64 + 5i64 * (wire as i64 + 1i64) + 5i64 * (2i64 * (wire as i64) + 1i64) + output } else { 5i64 + 5i64 * (wire as i64) + output };
+      if (plan.filtered_bytes != 5 * (wire + 1) || plan.row_work != expected_work) {
+        return test.fail("sample transparency work");
+      }
+      if (!incremental && (plan.row_scratch_bytes != scratch as i64 || plan.payload_bytes != 2i64 * (fixture.encoded.len() as i64) + plan.filtered_bytes as i64 + scratch as i64)) {
+        return test.fail("sample transparency storage");
+      }
+      let admitted = png.RowLimits { max_payload_bytes: plan.payload_bytes, max_row_work: plan.row_work };
+      let opened = if (incremental) { png.open_incremental_rows(fixture.encoded, exact, admitted, never) } else { png.open_rows(fixture.encoded, exact, admitted, never) };
+      if let Err(_) = opened {
+        return test.fail("sample transparency exact row limits");
+      }
+      for work in [false, true] {
+        let below = png.RowLimits { max_payload_bytes: admitted.max_payload_bytes - (if (work) { 0i64 } else { 1i64 }), max_row_work: admitted.max_row_work - (if (work) { 1i64 } else { 0i64 }) };
+        let rejected = if (incremental) { png.open_incremental_rows(fixture.encoded, exact, below, never) } else { png.open_rows(fixture.encoded, exact, below, never) };
+        if (!match (rejected) { Err(png.DecoderBudget) => true, _ => false }) {
+          return test.fail("sample transparency short row limit");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function aliases(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  let wrapped: u8[] = [7];
+  for byte in fixture.encoded {
+    wrapped = wrapped.append(byte);
+  }
+  wrapped = wrapped.append(9);
+  for incremental in [false, true] {
+    let Ok(decoder) = open(wrapped[1:wrapped.len() - 1], incremental) else {
+      return test.fail("sample transparency borrowed input");
+    };
+    let Ok(first) = decoder.read(0, never) else {
+      return test.fail("sample transparency first row");
+    };
+    let retained = first.data;
+    let Ok(changed) = pixels.write_pixel(first, 0, 0, pixels.Pixel { r: 13, g: 27, b: 41, a: 255 }) else {
+      return test.fail("sample transparency row update");
+    };
+    let Ok(last) = decoder.read(4, never) else {
+      return test.fail("sample transparency final row");
+    };
+    let Ok(repeated) = decoder.read(4, never) else {
+      return test.fail("sample transparency repeated row");
+    };
+    let stride = fixture.width * 4;
+    if (changed.data[0] != 13 || !same(retained, fixture.expected[:stride]) || !same(last.data, fixture.expected[4 * stride:])
+      || !same(last.data, repeated.data) || !same(wrapped[1:wrapped.len() - 1], fixture.encoded)) {
+      return test.fail("sample transparency aliases");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for index in [fixtures.count() - 2, fixtures.count() - 1] {
+    let fixture = fixtures.get(index);
+    for incremental in [false, true] {
+      let Ok(baseline) = open(fixture.encoded, incremental) else {
+        return test.fail("sample transparency cancellation baseline");
+      };
+      let polls = cell_new(0);
+      let counter = (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      };
+      if let Err(_) = baseline.read(4, counter) {
+        return test.fail("sample transparency poll count");
+      }
+      for stop in 1..polls.get() + 1 {
+        let Ok(decoder) = open(fixture.encoded, incremental) else {
+          return test.fail("sample transparency cancellation session");
+        };
+        let calls = cell_new(0);
+        let cancel = (): boolean => {
+          calls.set(calls.get() + 1);
+          return calls.get() == stop;
+        };
+        if (!match (decoder.read(4, cancel)) { Err(png.DecoderCancelled) => true, _ => false }) {
+          return test.fail("sample transparency cancellation poll");
+        }
+        if (incremental && !match (decoder.read(4, never)) { Err(png.DecoderCancelled) => true, _ => false }) {
+          return test.fail("sample transparency terminal cancellation");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function providers(): test.TestOutcome {
+  for index in 0..fixtures.count() {
+    let fixture = fixtures.get(index);
+    for incremental in [false, true] {
+      let source = if (incremental) { provider.incremental_source(fixture.encoded, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) } else { provider.source(fixture.encoded, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) };
+      let Ok(graph) = source else {
+        return test.fail("sample transparency provider");
+      };
+      let Ok(cache) = pipeline.required_cache(graph, pipeline.default_limits()) else {
+        return test.fail("sample transparency provider cache");
+      };
+      let Ok(result) = pipeline.fold_rows(graph, 0, 5, pipeline.default_limits(), cache, never, 0, (y: i32, row: pixels.Image): Result[i32, string] => {
+        let stride = fixture.width * 4;
+        if (!same(row.data, fixture.expected[y * stride:(y + 1) * stride])) {
+          return Err("provider sample transparency pixels");
+        }
+        return Ok(y + 1);
+      }) else {
+        return test.fail("sample transparency provider rows");
+      };
+      if (result.value != 5) {
+        return test.fail("complete provider rows");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("PNG sample transparency");
+  suite = suite.it("sample keys before expansion and all filters", goldens);
+  suite = suite.it("sample transparency sequential and incremental rows", rows);
+  suite = suite.it("expanded sample transparency budgets", limits);
+  suite = suite.it("sample transparency input and row aliases", aliases);
+  suite = suite.it("every sample transparency row cancellation poll", cancellation);
+  suite = suite.it("sample transparency graph providers", providers);
+  suite = suite.it("invalid sample keys reject before callbacks", malformed);
+  suite = suite.it("key parser rejects invalid public shapes", key_shapes);
+  return suite.finish();
+}
+
+function key_shapes(): test.TestOutcome {
+  for color in [-1, 0, 1, 2, 3, 4, 6, 7] {
+    for depth in [-1, 0, 1, 2, 3, 4, 7, 8, 16, 31, 32] {
+      for size in 0..9 {
+        let bytes = __alloc_u8(size);
+        let admitted = color == 0 && size == 2 && (depth == 1 || depth == 2 || depth == 4 || depth == 8)
+          || color == 2 && size == 6 && depth == 8;
+        let actual = match (transparency.parse(bytes, color, depth)) { Some(_) => true, None => false };
+        if (actual != admitted) {
+          return test.fail("key shape admission");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  for index in 0..fixtures.invalid_count() {
+    let (data, kind) = fixtures.invalid(index);
+    let expected = match (kind) { 1 => png.Length, 2 => png.Order, 3 => png.Unsupported, 4 => png.Compressed, _ => png.Scanline };
+    if (!match (png.decode(data, pixels.default_limits())) { Err(e) => e == expected, _ => false }) {
+      return test.fail("sample transparency eager error class");
+    }
+    for incremental in [false, true] {
+      let calls = cell_new(0);
+      let consume = (value: i32, _row: pixels.Image): Result[i32, string] => {
+        calls.set(calls.get() + 1);
+        return Ok(value + 1);
+      };
+      let result = if (incremental) { png.fold_incremental_rows(data, 0, 1, pixels.default_limits(), png.default_row_limits(), never, 0, consume) } else { png.fold_rows(data, 0, 1, pixels.default_limits(), png.default_row_limits(), never, 0, consume) };
+      if (!match (result) { Err(png.RowCodec(e)) => e == expected, _ => false } || calls.get() != 0) {
+        return test.fail("sample transparency error before consumer");
+      }
+    }
+  }
+  return test.pass();
+}

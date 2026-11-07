@@ -1,0 +1,46 @@
+import "./palette";
+import "./filters";
+
+pub struct ValidationState { position: i32, row: i32, filter: i32, previous: u8[], current: u8[] }
+
+pub function initial(): ValidationState {
+  return ValidationState { position: 0, row: 0, filter: 0, previous: [], current: [] };
+}
+
+function unfiltered(state: ValidationState, value: u8): ValidationState {
+  let x = state.position - 1;
+  let left = if (x > 0) { state.current[x - 1] as i32 } else { 0 };
+  let above = if (state.row > 0) { state.previous[x] as i32 } else { 0 };
+  let upper_left = if (state.row > 0 && x > 0) { state.previous[x - 1] as i32 } else { 0 };
+  let sample = (value as i32 + filters.predict(state.filter, left, above, upper_left)) as u8;
+  return ValidationState { ...state, position: state.position + 1, current: state.current.with(x, sample) };
+}
+
+function byte(state: ValidationState, value: u8, width: i32, stride: i32, table: palette.IndexedPalette, cancelled: () => boolean): Result[ValidationState, palette.PaletteError] {
+  let next = state;
+  if (state.position == 0) {
+    if (value > 4) {
+      return Err(palette.Shape);
+    }
+    next = ValidationState { ...state, position: 1, filter: value as i32, current: __alloc_u8(stride) };
+  } else {
+    next = unfiltered(state, value);
+    if (next.position == stride + 1) {
+      palette.validate_row(next.current, width, table, cancelled)?;
+      next = ValidationState { ...next, row: next.row + 1, position: 0, previous: next.current, current: [] };
+    }
+  }
+  return Ok(next);
+}
+
+// The caller supplies a checked indexed layout and state from this module.
+pub function chunk(state: ValidationState, bytes: [u8], width: i32, stride: i32, table: palette.IndexedPalette, cancelled: () => boolean): Result[ValidationState, palette.PaletteError] {
+  let next = state;
+  for i in 0..bytes.len() {
+    if (i % 256 == 0 && cancelled()) {
+      return Err(palette.Cancelled);
+    }
+    next = byte(next, bytes[i], width, stride, table, cancelled)?;
+  }
+  return Ok(next);
+}

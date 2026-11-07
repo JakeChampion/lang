@@ -527,6 +527,10 @@ is the number of slots it leaves.
 | `boot_info` | 499 | 0 | 1 |
 | `sysreg_read` | 500 | 0 | 1 |
 | `sysreg_write` | 501 | 1 | 1 |
+| `cache_clean` | 502 | 1 | 1 |
+| `cache_flush` | 503 | 1 | 1 |
+| `tlb_flush` | 504 | 1 | 1 |
+| `tlb_flush_all` | 505 | 0 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

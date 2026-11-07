@@ -386,7 +386,11 @@ NoStructCast = NoStructPostfix { 'as' [ '?' ] Type } ;
 NoStructPostfix
             = NoStructPrimary { PostfixOp } ;
 
-Primary     = MapLit | StructLit | NoStructPrimary ;
+# `unsafe { …; e }` is a value block that accepts unsafe obligations. It
+# comes before StructLit, which would read `unsafe {` as a struct literal.
+Primary     = MapLit | UnsafeValueBlock | StructLit | NoStructPrimary ;
+UnsafeValueBlock
+            = 'unsafe' ValueBlock ;
 NoStructPrimary
             = NUMBER
             | FLOAT

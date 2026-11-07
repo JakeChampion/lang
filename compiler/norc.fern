@@ -19,7 +19,7 @@ pub function intrinsics(): string[] {
   return [
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr", "__store_u8", "__store_i32", "__store_i64", "__store_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
-    "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32", "__clz32", "__clz64", "__ctz32", "__ctz64", "__popcount32", "__popcount64",
+    "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32", "__clz32", "__clz64", "__ctz32", "__ctz64", "__popcount32", "__popcount64",
   ];
 }
 

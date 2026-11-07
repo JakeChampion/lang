@@ -102,6 +102,19 @@ function registers(): string {
   }
 }
 
+// Each cache and TLB op on a heap word, which keeps its value.
+function maintenance(): string {
+  unsafe {
+    let p = __alloc(64);
+    __store_i64(p, 7i64);
+    __cache_clean(p);
+    __cache_flush(p);
+    __tlb_flush(p);
+    __tlb_flush_all();
+    return "maintenance " + __load_i64(p).to_string();
+  }
+}
+
 function main(): i32 {
   let xs: i32[] = [];
   let i = 0;
@@ -112,6 +125,7 @@ function main(): i32 {
   print("hello from fern on x86-64, total " + xs.len().to_string());
   print(describe());
   print(registers());
+  print(maintenance());
   board.exit_qemu(16);
   return 0;
 }
@@ -264,7 +278,7 @@ func TestSelfHostKernelX86BootsOnQemu(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 33 {
 		t.Fatalf("qemu: %v, want exit status 33 from isa-debug-exit; console:\n%s", err, console)
 	}
-	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n", "efer.lma 1 cr0.pg 1 kernel_gs_base 42\n"} {
+	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n", "efer.lma 1 cr0.pg 1 kernel_gs_base 42\n", "maintenance 7\n"} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 		}

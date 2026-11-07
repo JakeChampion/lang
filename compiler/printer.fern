@@ -331,6 +331,10 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
       if (lm.origin != parser.ORIGIN_BLOCK || lm.body.len() == 0) {
         return ("", f);
       }
+      if let Some(inner) = unsafe_value_body(lm.body) {
+        let (text, nf) = print_value_block(inner, tail_expr(inner[inner.len() - 1]), true, depth, f);
+        return ("unsafe " + text, nf);
+      }
       let last = lm.body[lm.body.len() - 1];
       if (print_return_only([last], depth).len() == 0) {
         return ("", f);
@@ -345,6 +349,20 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
     }
   }
   return ("", f);
+}
+
+// The statements of an `unsafe { …; e }` value block: the parser wraps them,
+// value included, in one unsafe block.
+function unsafe_value_body(body: ast.Stmt[]): Option[ast.Stmt[]] {
+  if (body.len() != 1) {
+    return None;
+  }
+  if let ast.StmtIf(f) = body[0] {
+    if (f.origin == "unsafe" && f.then_body.len() > 0 && print_return_only([f.then_body[f.then_body.len() - 1]], 0).len() > 0) {
+      return Some(f.then_body);
+    }
+  }
+  return None;
 }
 
 function tail_expr(st: ast.Stmt): ast.Expr {
