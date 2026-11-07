@@ -55,8 +55,9 @@ On x86-64 the instructions that Valgrind counts grow by these amounts. Valgrind 
 
 ## Erasure
 
-`std/crypto` gains `erase(own bytes: u8[]): void`.
-It takes the owned array and writes zero into every element with `with`, which stores in place when no other reference shares the array.
+`std/crypto` gains `erase[T: ops.Zero](own xs: T[]): void`.
+It takes an owned array of any element type that has a zero, such as `u8[]`, `u32[]`, `i64[]` or `f64[]`.
+It writes `T.zero()` into every element with `with`, which stores in place when no other reference shares the array.
 The block therefore holds zeros when it returns to the allocator.
 The checker accepts an owned argument only at its last use, so a program cannot read the array after the call.
 
@@ -88,9 +89,9 @@ The 1 GiB stack reservation, the signal stack, the kernel's own buffers, and mem
 
 - `TestSelfHostHardenScrubsReleasedBlocks` compiles one program for x86-64-linux and arm64-linux, in the release build and under `-harden`. It releases a 48-byte secret and a 600000-byte secret and reads each one back through raw allocations of its size. It reads the first word of a block that it frees and takes back.
 It reads a block that the bump hands out again after `__heap_release_to`. The release build must read each secret, the link and the rewound bytes back, and the hardened build must read zero in each case. On the compiler before the change, every hardened case read the bytes back.
-- `TestSelfHostEraseZeroesStorage` compiles one program for x86-64-linux and arm64-linux. The control run must read at least 48 secret bytes back, and the erase run must read 0. Both targets pass, the arm64 one under QEMU.
+- `TestSelfHostEraseZeroesStorage` compiles one program for x86-64-linux and arm64-linux. It releases a 48-byte `u8[]` secret and a six-word `u64[]` secret. Each control run must read at least 48 secret bytes back, and each erase run must read 0. Both targets pass, the arm64 one under QEMU.
 - `TestSelfHostHeapLimit` keeps 256 one-megabyte arrays live. Under `-heap-limit 64M` the program must exit 125 with the cause after its 32nd array and before its 64th, on both targets. Without the flag every array fits. Seven refusals cover `0`, `512K`, `32G`, a 20-digit size, `64MB`, a bare `M`, and `wasm32-wasi`. Five accepted sizes cover both ends of the range in bytes and with suffixes.
-- The `std/crypto` suite calls `erase` on a digest, on an empty array, and on a literal. It passes natively on x86-64, on arm64 under QEMU, and under the Go oracle.
+- The `std/crypto` suite calls `erase` on a digest, on an empty array, on a literal, and on `u32[]`, `i64[]`, `u64[]` and `f64[]` arrays. It passes natively on x86-64, on arm64 under QEMU, on wasm32-wasi, under the self-host interpreter, and under the Go oracle.
 
 ```sh
 go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|TestSelfHostHardenScrubsReleasedBlocks|TestSelfHostHeapLimit' -count=1 -timeout 0
@@ -98,7 +99,7 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 
 ## Remaining limits
 
-- `erase` exists for `u8[]` alone. A secret held in another element type, in a string, or in a struct field has no erasure call.
+- `erase` takes an array of an element type with a zero. A secret held in a string, in a struct field, or in an array of records has no erasure call.
 - A quota per allocation site, per package, or per request is not defined. The arena quota is one number per executable.
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
 - The Go oracle and the self-host interpreter run `erase` on their own heaps and ignore `-heap-limit`, which is a compile flag of the native backends.

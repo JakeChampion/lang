@@ -308,6 +308,17 @@ function test_erase_accepts_owned_bytes(): test.TestOutcome {
   return test.pass();
 }
 
+function test_erase_accepts_owned_words(): test.TestOutcome {
+  let words: u32[] = [1u32, 2u32, 3u32];
+  crypto.erase(words);
+  let limbs: i64[] = [-1i64, 9i64];
+  crypto.erase(limbs);
+  let lanes: u64[] = [];
+  crypto.erase(lanes);
+  crypto.erase([0.5, 1.5]);
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/crypto");
   r = r.it("sha256 empty", test_sha256_empty);
@@ -338,6 +349,7 @@ function main(): i32 {
   r = r.it("shake256 0xa3 x 200", test_shake256_a3);
   r = r.it("shake streaming", test_shake_streaming);
   r = r.it("erase accepts owned bytes", test_erase_accepts_owned_bytes);
+  r = r.it("erase accepts owned words", test_erase_accepts_owned_words);
   return r.finish();
 }
 

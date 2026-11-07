@@ -24,7 +24,7 @@ No module defines a cipher, a hash or a signature scheme of its own.
 
 The random source is `random_bytes`, which reads the kernel's entropy service and never returns a short result ([ENTROPY.md](ENTROPY.md)).
 `std/rand` provides a seeded PCG32 generator, which its document describes as a reproducible sequence, not an entropy source.
-`crypto.erase` zeroes an owned byte array's storage before the release.
+`crypto.erase` zeroes the storage of an owned array of bytes or of numeric words before the release.
 
 ## Wycheproof
 
