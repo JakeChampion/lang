@@ -570,8 +570,8 @@ import "std/string";
 function main(): i32 {
     print(hex.encode("AB".bytes()));
     print(base64.encode("Hello".bytes()));
-    print(string_from_bytes_unchecked(__codec_bytes(base64.decode("TWFu"))));
-    print(string_from_bytes_unchecked(__codec_bytes(hex.decode("4142"))));
+    print(unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("TWFu"))) });
+    print(unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode("4142"))) });
     return 0;
 }
 // Decode a valid fixture. Report a malformed fixture before ending the test.

@@ -4836,7 +4836,9 @@ pub function scan_set_tables(members: string): string {
   for c in scan_set_shape(members).bytes {
     out = out.append(c as u8);
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub function escape_for_ascii(s: string): string {
@@ -4872,7 +4874,9 @@ pub function escape_for_ascii(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub function has_main(mod: parser.Module): boolean {

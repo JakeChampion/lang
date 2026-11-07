@@ -54,7 +54,7 @@ function test_json_escaping_whitespace(): test.TestOutcome {
 
 function test_json_escaping_control(): test.TestOutcome {
   let raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];
-  let msg = string_from_bytes_unchecked(raw);
+  let msg = unsafe { string_from_bytes_unchecked(raw) };
   let lg = log.new_json(log.TRACE);
   let line = lg.info_().render(msg);
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"A\\u0001B\\u001f\"}\n");

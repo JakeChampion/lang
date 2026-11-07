@@ -118,7 +118,7 @@ pub function key_label(k: i32): string {
     return "DEL";
   }
   let letters: [u8] = rooms.ALPHABET.as_bytes();
-  return string_from_bytes_unchecked([letters[k]]);
+  return unsafe { string_from_bytes_unchecked([letters[k]]) };
 }
 
 // The code after a press of key `k`: a letter adds itself up to the length of
@@ -206,7 +206,7 @@ pub function host_key_label(k: i32): string {
   if (k == HOST_DELETE_KEY) {
     return "DEL";
   }
-  return string_from_bytes_unchecked([HOST_CHARS.as_bytes()[k]]);
+  return unsafe { string_from_bytes_unchecked([HOST_CHARS.as_bytes()[k]]) };
 }
 
 // The longest name of a server, as DNS allows.

@@ -442,7 +442,7 @@ function cbaud_mask(): i64 {
 function one_char(c: i32): string {
   let b: u8[] = [];
   b = b.append(c as u8);
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function hex_lower(v: i64): string {

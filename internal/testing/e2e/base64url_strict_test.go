@@ -9,7 +9,7 @@ import "std/string";
 function opt(o: Result[u8[], codec.DecodeError], fb: string): string {
     // The fixtures here are ASCII; a real ingest path would use
     // std/utf8.from_bytes instead of the unchecked read.
-    match (o) { Ok(v) => { return string_from_bytes_unchecked(v); }, Err(_) => { return fb; } }
+    match (o) { Ok(v) => { return unsafe { string_from_bytes_unchecked(v) }; }, Err(_) => { return fb; } }
 }
 function isnone(o: Result[u8[], codec.DecodeError]): boolean {
     match (o) { Ok(v) => { return false; }, Err(_) => { return true; } }

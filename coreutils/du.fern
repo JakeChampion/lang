@@ -879,7 +879,7 @@ pub function main(): i32 {
     match (r.0) {
       Some(m) => {
         if (m.id == opt_null()) {
-          c = Conf { ...c, terminator: string_from_bytes_unchecked([0 as u8]) };
+          c = Conf { ...c, terminator: unsafe { string_from_bytes_unchecked([0 as u8]) } };
         } else if (m.id == opt_all()) {
           c = Conf { ...c, all: true };
         } else if (m.id == opt_apparent()) {

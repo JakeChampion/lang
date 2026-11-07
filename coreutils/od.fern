@@ -392,7 +392,7 @@ function byte_error(prefix: string, c: i32, suffix: string): void {
 function byte_str(c: i32): string {
   let b: u8[] = [];
   b = b.append(c as u8);
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function count_arg(value: string, opt: string): u64 {
@@ -750,7 +750,7 @@ function tables_new(): Tables {
     names = right_aligned(names, i * 4, char_name(i));
     i += 1;
   }
-  return Tables { hex: string_from_bytes_unchecked(hex), oct: string_from_bytes_unchecked(oct), dec: string_from_bytes_unchecked(dec), blanks: " ".repeat(blank_run()), chars: string_from_bytes_unchecked(chars), names: string_from_bytes_unchecked(names) };
+  return Tables { hex: unsafe { string_from_bytes_unchecked(hex) }, oct: unsafe { string_from_bytes_unchecked(oct) }, dec: unsafe { string_from_bytes_unchecked(dec) }, blanks: " ".repeat(blank_run()), chars: unsafe { string_from_bytes_unchecked(chars) }, names: unsafe { string_from_bytes_unchecked(names) } };
 }
 
 function right_aligned(own table: u8[], at: i32, text: string): u8[] {
@@ -806,7 +806,7 @@ function char_text(c: i32): string {
   d = d.append((48 + (c >> 6)) as u8);
   d = d.append((48 + (c >> 3 & 7)) as u8);
   d = d.append((48 + (c & 7)) as u8);
-  return string_from_bytes_unchecked(d);
+  return unsafe { string_from_bytes_unchecked(d) };
 }
 
 function char_name(c: i32): string {

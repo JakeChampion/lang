@@ -137,14 +137,14 @@ func TestX86_64Memchr(t *testing.T) {
 func fernQuote(s string) string {
 	var b strings.Builder
 	if !utf8.ValidString(s) {
-		b.WriteString("string_from_bytes_unchecked([")
+		b.WriteString("unsafe { string_from_bytes_unchecked([")
 		for i := 0; i < len(s); i++ {
 			if i > 0 {
 				b.WriteString(", ")
 			}
 			fmt.Fprintf(&b, "%d as u8", s[i])
 		}
-		b.WriteString("])")
+		b.WriteString("]) }")
 		return b.String()
 	}
 	b.WriteByte('"')

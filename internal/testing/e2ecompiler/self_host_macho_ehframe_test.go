@@ -43,7 +43,7 @@ function main(): i32 {
     let pa2: Arm64Asm = p.asm;
     let none: i32[] = [];
     let bin: i32[] = macho_executable(pa2.text, eh, p.data, "fern", macho_entry_off(pa2), p.bss_size, none);
-    write(string_from_bytes_unchecked(to_u8(bin)));
+    write(unsafe { string_from_bytes_unchecked(to_u8(bin)) });
     return 0;
 }
 `
@@ -70,7 +70,7 @@ function main(): i32 {
     let pa2: Arm64Asm = p.asm;
     let none: i32[] = [];
     let bin: i32[] = macho_executable(pa2.text, none, p.data, "fern", macho_entry_off(pa2), p.bss_size, none);
-    write(string_from_bytes_unchecked(to_u8(bin)));
+    write(unsafe { string_from_bytes_unchecked(to_u8(bin)) });
     return 0;
 }
 `

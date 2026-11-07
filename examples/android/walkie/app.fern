@@ -224,7 +224,7 @@ function load_server(dir: string): string {
   let Ok(b) = read_file_bytes(dir + "/server") else {
     return "";
   };
-  let name: string = string_from_bytes_unchecked(b);
+  let name: string = unsafe { string_from_bytes_unchecked(b) };
   if (!modes.valid_host(name)) {
     return "";
   }

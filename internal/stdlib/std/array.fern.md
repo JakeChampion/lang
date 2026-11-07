@@ -385,7 +385,9 @@ pub function (arr: string[]) join_with_last(sep: string, last_sep: string): stri
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (arr: i32[]) sum_abs(): i32 {

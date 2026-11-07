@@ -108,18 +108,26 @@ pub(package) function from_codepoint(ch: char): string {
   }
   if (c < 128) {
     let one: u8[] = [c as u8];
-    return string_from_bytes_unchecked(one);
+    unsafe {
+      return string_from_bytes_unchecked(one);
+    }
   }
   if (c < 2048) {
     let two: u8[] = [(192 + (c >> 6)) as u8, (128 + (c & 63)) as u8];
-    return string_from_bytes_unchecked(two);
+    unsafe {
+      return string_from_bytes_unchecked(two);
+    }
   }
   if (c < 65536) {
     let three: u8[] = [(224 + (c >> 12)) as u8, (128 + (c >> 6 & 63)) as u8, (128 + (c & 63)) as u8];
-    return string_from_bytes_unchecked(three);
+    unsafe {
+      return string_from_bytes_unchecked(three);
+    }
   }
   let four: u8[] = [(240 + (c >> 18)) as u8, (128 + (c >> 12 & 63)) as u8, (128 + (c >> 6 & 63)) as u8, (128 + (c & 63)) as u8];
-  return string_from_bytes_unchecked(four);
+  unsafe {
+    return string_from_bytes_unchecked(four);
+  }
 }
 
 // Encode scalars into one buffer whose size is known before writing.
@@ -140,7 +148,9 @@ pub(package) function from_codepoints(cps: char[]): string {
     pos += encoded_len(c);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 // Maximal-subpart decoding shared by byte-safe text operations and UTF-8.

@@ -11,7 +11,7 @@ function field(input: u8[], at: i32, size: i32): string {
   for i in 0..size {
     bytes = bytes.append(input[at + i]);
   }
-  return string_from_bytes_unchecked(bytes);
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 pub function decode(input: u8[], at: i32, key_bytes: i32, value_bytes: i32): Request {
@@ -30,7 +30,7 @@ pub function increment(current: string, delta: string): string {
     bytes = bytes.with(i, (sum & 255) as u8);
     carry = sum >> 8;
   }
-  return string_from_bytes_unchecked(bytes);
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 pub function emit(own output: u8[], status: i32, value: string): u8[] {

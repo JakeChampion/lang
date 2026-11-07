@@ -190,7 +190,7 @@ function summary(method: string, resp: HttpResponse): string {
   if (body.len() > 64 || method == "HEAD" || resp.status == 204 || resp.status == 304) {
     out = out + body.len().to_string() + " bytes";
   } else {
-    out = out + string_from_bytes_unchecked(body);
+    out = out + unsafe { string_from_bytes_unchecked(body) };
   }
   if (method == "HEAD") {
     out = out + " content-length=" + resp.headers.get("content-length").unwrap_or("-");

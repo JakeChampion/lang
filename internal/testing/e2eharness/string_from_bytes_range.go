@@ -9,7 +9,7 @@ const StringFromBytesRangeProgram = `function copied(b: u8[], from: i32, end: i3
     let out: u8[] = __alloc_u8(end - from);
     let i: i32 = 0;
     while (from + i < end) { out = out.with(i, b[from + i]); i = i + 1; }
-    return string_from_bytes_unchecked(out);
+    return unsafe { string_from_bytes_unchecked(out) };
 }
 function main(): i32 {
     let b: u8[] = __alloc_u8(40);
@@ -19,7 +19,7 @@ function main(): i32 {
     while (from <= b.len()) {
         let end: i32 = from;
         while (end <= b.len()) {
-            let s: string = string_from_bytes_range_unchecked(b, from, end);
+            let s: string = unsafe { string_from_bytes_range_unchecked(b, from, end) };
             if (s.len() != end - from) { return 1; }
             if (s != copied(b, from, end)) { return 2; }
             end = end + 1;
@@ -27,12 +27,12 @@ function main(): i32 {
         from = from + 1;
     }
     let raw: u8[] = [0u8, 255u8, 128u8, 10u8];
-    let odd: string = string_from_bytes_range_unchecked(raw, 1, 3);
-    if (odd.len() != 2 || odd != string_from_bytes_unchecked([255u8, 128u8])) { return 3; }
-    let kept: string = string_from_bytes_range_unchecked(b, 2, 30);
+    let odd: string = unsafe { string_from_bytes_range_unchecked(raw, 1, 3) };
+    if (odd.len() != 2 || odd != unsafe { string_from_bytes_unchecked([255u8, 128u8]) }) { return 3; }
+    let kept: string = unsafe { string_from_bytes_range_unchecked(b, 2, 30) };
     b = b.with(5, 33 as u8);
     if (kept != "CDEFGHIJKLMNOPQRSTUVWXYZ[\\]^") { return 4; }
-    if (string_from_bytes_range_unchecked(b, 5, 6) != "!") { return 5; }
+    if (unsafe { string_from_bytes_range_unchecked(b, 5, 6) } != "!") { return 5; }
     return 0;
 }`
 
@@ -45,7 +45,7 @@ var StringFromBytesRangeTraps = []struct{ Name, From, End string }{
 func StringFromBytesRangeTrapProgram(from, end string) string {
 	return `function main(): i32 {
     let b: u8[] = [97u8, 98u8, 99u8, 100u8, 101u8, 102u8];
-    let s: string = string_from_bytes_range_unchecked(b, ` + from + `, ` + end + `);
+    let s: string = unsafe { string_from_bytes_range_unchecked(b, ` + from + `, ` + end + `) };
     print(s);
     return 0;
 }`

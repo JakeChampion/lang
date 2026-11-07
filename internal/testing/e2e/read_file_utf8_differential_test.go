@@ -16,7 +16,7 @@ import "std/utf8" as utf8;
 // 1 when read_file accepts the bytes as text, 0 when it reports
 // InvalidUtf8, 2 on any other error.
 function accepted(bytes: u8[]): i32 {
-    let s: string = string_from_bytes_unchecked(bytes);
+    let s: string = unsafe { string_from_bytes_unchecked(bytes) };
     let wrote: i32 = match (write_file("probe.bin", s)) { Ok(_) => 1, Err(_) => 0 };
     if (wrote == 0) { return fail(2); }
     return match (read_file("probe.bin")) {
@@ -27,7 +27,7 @@ function accepted(bytes: u8[]): i32 {
 
 function agree(bytes: u8[]): boolean {
     let want: i32 = 0;
-    if (utf8.is_valid(string_from_bytes_unchecked(bytes))) { want = 1; }
+    if (utf8.is_valid(unsafe { string_from_bytes_unchecked(bytes) })) { want = 1; }
     return accepted(bytes) == want;
 }
 

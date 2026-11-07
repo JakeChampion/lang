@@ -465,7 +465,7 @@ function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] 
       if (at > room) {
         return Err(PartHeadersTooLarge(cur.limits.header_bytes));
       }
-      let text = string_from_bytes_unchecked(array.slice(cur.carry, 0, at));
+      let text = unsafe { string_from_bytes_unchecked(array.slice(cur.carry, 0, at)) };
       return Ok((text, Reader { ...cur, carry: array.slice(cur.carry, at + 2, cur.carry.len()) }));
     }
     if (cur.carry.len() > room + 1) {
@@ -525,7 +525,7 @@ function __param(value: string, name: string): string {
   let i = __param_end(bs, 0) + 1;
   while (i < bs.len()) {
     let end = __param_end(bs, i);
-    let p = string_from_bytes_unchecked(array.slice(bs, i, end)).trim();
+    let p = unsafe { string_from_bytes_unchecked(array.slice(bs, i, end)) }.trim();
     if let Some(eq) = p.index_of("=") {
       if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
         return __unquote(p.slice_snap(eq + 1, p.len()).trim());
@@ -571,7 +571,7 @@ function __unquote(v: string): string {
     out = out.append(bs[i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function __need(r: Reader, n: i32): Result[Reader, MultipartError] {

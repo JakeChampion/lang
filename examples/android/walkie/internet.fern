@@ -77,7 +77,7 @@ function exchange(c0: client.Connection, line: string): rooms.Reply {
         conn = r.conn;
         if (got.contains(10u8) || r.ended) {
           let closed = conn.close();
-          return rooms.parse_reply(string_from_bytes_unchecked(got));
+          return rooms.parse_reply(unsafe { string_from_bytes_unchecked(got) });
         }
       },
       Err(e) => {

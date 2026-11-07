@@ -22,7 +22,7 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 		t.Fatalf("read watbin.fern: %v", err)
 	}
 	const prog = `
-function mk(c: i32): string { return string_from_bytes_unchecked([c as u8]); }
+function mk(c: i32): string { return unsafe { string_from_bytes_unchecked([c as u8]) }; }
 function streq(a: string, b: string): boolean { return a == b; }
 function main(): i32 {
     let a: string = mk(120);

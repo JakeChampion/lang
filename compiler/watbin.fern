@@ -2729,7 +2729,9 @@ pub function lowered_name(name: string): string {
     bytes = bytes.append(name[i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(bytes);
+  unsafe {
+    return string_from_bytes_unchecked(bytes);
+  }
 }
 
 function suffix_memory_canon(o: i32[], k: i32, inst: i32, name: string, typeop: i32, n_cfunc: i32, realloc_f: i32): (i32[], i32) {

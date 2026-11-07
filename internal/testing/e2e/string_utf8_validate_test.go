@@ -21,16 +21,16 @@ function valid_ref(s: string): boolean {
 }
 
 function bytes1(a: i32): string {
-    return string_from_bytes_unchecked([a as u8]);
+    return unsafe { string_from_bytes_unchecked([a as u8]) };
 }
 function bytes2(a: i32, b: i32): string {
-    return string_from_bytes_unchecked([a as u8, b as u8]);
+    return unsafe { string_from_bytes_unchecked([a as u8, b as u8]) };
 }
 function bytes3(a: i32, b: i32, c: i32): string {
-    return string_from_bytes_unchecked([a as u8, b as u8, c as u8]);
+    return unsafe { string_from_bytes_unchecked([a as u8, b as u8, c as u8]) };
 }
 function bytes4(a: i32, b: i32, c: i32, d: i32): string {
-    return string_from_bytes_unchecked([a as u8, b as u8, c as u8, d as u8]);
+    return unsafe { string_from_bytes_unchecked([a as u8, b as u8, c as u8, d as u8]) };
 }
 
 function check(s: string, code: i32): i32 {
@@ -90,8 +90,8 @@ function main(): i32 {
     // Mixed-width text, and the empty string.
     if (check("", 24) != 0) { return 24; }
     if (check("hello, world", 25) != 0) { return 25; }
-    let mixed: string = string_from_bytes_unchecked([65 as u8, 195 as u8, 169 as u8,
-        226 as u8, 130 as u8, 172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8]);
+    let mixed: string = unsafe { string_from_bytes_unchecked([65 as u8, 195 as u8, 169 as u8,
+        226 as u8, 130 as u8, 172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8]) };
     if (check(mixed, 26) != 0) { return 26; }
     if (!utf8.is_valid(mixed)) { return 27; }
 
@@ -106,7 +106,7 @@ function main(): i32 {
             if (j == k) { b = b.append(255 as u8); } else { b = b.append(mixed[j] as u8); }
             j = j + 1;
         }
-        let broken: string = string_from_bytes_unchecked(b);
+        let broken: string = unsafe { string_from_bytes_unchecked(b) };
         if (check(broken, 28) != 0) { return 28; }
         if (utf8.is_valid(broken)) { return 29; }
         k = k + 1;
@@ -139,7 +139,7 @@ function main(): i32 {
             withcp = withcp.append(195 as u8);
             withcp = withcp.append(169 as u8);
             while (q < run) { withcp = withcp.append(pre[q]); q = q + 1; }
-            let good: string = string_from_bytes_unchecked(withcp);
+            let good: string = unsafe { string_from_bytes_unchecked(withcp) };
             if (check(good, 30) != 0) { return 30; }
             if (!utf8.is_valid(good)) { return 31; }
 
@@ -153,7 +153,7 @@ function main(): i32 {
                 if (r2 == at + 1) { bad = bad.append(97 as u8); } else { bad = bad.append(withcp[r2]); }
                 r2 = r2 + 1;
             }
-            let broke: string = string_from_bytes_unchecked(bad);
+            let broke: string = unsafe { string_from_bytes_unchecked(bad) };
             if (check(broke, 32) != 0) { return 32; }
             if (utf8.is_valid(broke)) { return 33; }
             at = at + 1;

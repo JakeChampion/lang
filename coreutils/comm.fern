@@ -211,7 +211,7 @@ pub function main(): i32 {
           delim_specified = true;
           let sep = m.value;
           if (sep.len() == 0) {
-            sep = string_from_bytes_unchecked([0 as u8]);
+            sep = unsafe { string_from_bytes_unchecked([0 as u8]) };
           }
           cfg = Cfg { ...cfg, sep: sep };
         }

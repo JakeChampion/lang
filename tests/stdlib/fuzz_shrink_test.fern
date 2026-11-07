@@ -16,7 +16,7 @@ function check_reverse_idempotent(input: u8[]): test.TestOutcome {
 }
 
 function check_to_lower_no_upper(input: u8[]): test.TestOutcome {
-  let s = string_from_bytes_unchecked(input);
+  let s = unsafe { string_from_bytes_unchecked(input) };
   let lowered = s.to_lower();
   let i = 0;
   while (i < lowered.len()) {

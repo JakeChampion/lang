@@ -187,7 +187,7 @@ function event_text(ev: h3q.Event): string {
       if let Some(d) = resp.headers.get("date") {
         trailer = trailer + " date=" + d;
       }
-      return "response " + id.to_string() + " " + resp.status.to_string() + " " + string_from_bytes_unchecked(resp.body_bytes()) + trailer;
+      return "response " + id.to_string() + " " + resp.status.to_string() + " " + unsafe { string_from_bytes_unchecked(resp.body_bytes()) } + trailer;
     },
     h3q.StreamDropped(id, code) => {
       return "failed " + id.to_string() + " " + code.to_string();
@@ -399,7 +399,7 @@ function test_shutdown_inflight(): test.TestOutcome {
   if (e.requests.len() != 1) {
     return test.assert_eq(e.requests.len().to_string(), "1");
   }
-  let body = string_from_bytes_unchecked(e.requests[0].body.data);
+  let body = unsafe { string_from_bytes_unchecked(e.requests[0].body.data) };
   e = settled(answered(e, 0, text(200, "finished")), 8);
   return test.assert_eq(body + " | " + e.log, "abc | server request 0 POST /partial 3b host=tls.example; client response 0 200 finished; ");
 }

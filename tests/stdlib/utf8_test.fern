@@ -7,7 +7,7 @@ function mixed(): string {
     65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
     172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8,
   ];
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function decode_cp(s: string, i: i32): i32 {
@@ -37,17 +37,17 @@ function test_decode_ascii(): test.TestOutcome {
 }
 
 function test_decode_two_byte(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([195 as u8, 169 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([195 as u8, 169 as u8]) };
   return test.assert_true(decode_cp(s, 0) == 233 && decode_len(s, 0) == 2);
 }
 
 function test_decode_three_byte(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]) };
   return test.assert_true(decode_cp(s, 0) == 8364 && decode_len(s, 0) == 3);
 }
 
 function test_decode_four_byte(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]) };
   return test.assert_true(decode_cp(s, 0) == 128512 && decode_len(s, 0) == 4);
 }
 
@@ -56,22 +56,22 @@ function test_decode_at_offset(): test.TestOutcome {
 }
 
 function test_decode_stray_continuation(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([128 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([128 as u8]) };
   return test.assert_eq(decode_cp(s, 0), -1);
 }
 
 function test_decode_truncated(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([226 as u8, 130 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([226 as u8, 130 as u8]) };
   return test.assert_eq(decode_cp(s, 0), -1);
 }
 
 function test_decode_overlong(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([192 as u8, 128 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([192 as u8, 128 as u8]) };
   return test.assert_eq(decode_cp(s, 0), -1);
 }
 
 function test_decode_surrogate(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]) };
   return test.assert_eq(decode_cp(s, 0), -1);
 }
 
@@ -126,7 +126,7 @@ function test_codepoints_array(): test.TestOutcome {
 }
 
 function test_is_valid(): test.TestOutcome {
-  let bad = string_from_bytes_unchecked([65 as u8, 128 as u8]);
+  let bad = unsafe { string_from_bytes_unchecked([65 as u8, 128 as u8]) };
   return test.assert_true(utf8.is_valid(mixed()) && !utf8.is_valid(bad));
 }
 
@@ -135,15 +135,15 @@ function test_encode_all_roundtrip(): test.TestOutcome {
 }
 
 function e_acute(): string {
-  return string_from_bytes_unchecked([195 as u8, 169 as u8]);
+  return unsafe { string_from_bytes_unchecked([195 as u8, 169 as u8]) };
 }
 
 function euro(): string {
-  return string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]);
+  return unsafe { string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]) };
 }
 
 function emoji(): string {
-  return string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]);
+  return unsafe { string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]) };
 }
 
 function cp_or(s: string, i: i32): i32 {
@@ -326,7 +326,7 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
 }
 
 function __lossy_len(b: u8[]): i32 {
-  let s = string_from_bytes_unchecked(b);
+  let s = unsafe { string_from_bytes_unchecked(b) };
   let a = s.codepoint_count();
   if (s.chars().len() != a) {
     return -1;
@@ -373,7 +373,7 @@ function test_lossy_valid_neighbours(): test.TestOutcome {
 }
 
 function test_lossy_indexing(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([97 as u8, 241 as u8, 128 as u8, 98 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([97 as u8, 241 as u8, 128 as u8, 98 as u8]) };
   let fffd = utf8.encode(65533 as char);
   match (utf8.char_at(s, 1)) {
     Some(c) => {

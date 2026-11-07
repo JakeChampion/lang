@@ -407,7 +407,7 @@ function __i32_str(n: i32): string {
   }
   let out = "";
   while (v > 0) {
-    out = string_from_bytes_unchecked([(48 as i64 + v % 10) as u8]) + out;
+    out = unsafe { string_from_bytes_unchecked([(48 as i64 + v % 10) as u8]) } + out;
     v /= 10;
   }
   if (neg) {

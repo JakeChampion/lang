@@ -152,7 +152,7 @@ function exchange(s: client.Session, server: handshake.Server): Result[string, t
   let sr = srv(server.read(cw.output))?;
   let sw = srv(sr.server.write("pong".bytes()))?;
   let cr = rd(cw.session, sw.output)?;
-  return Ok(string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data));
+  return Ok(unsafe { string_from_bytes_unchecked(sr.data) } + " " + unsafe { string_from_bytes_unchecked(cr.data) });
 }
 
 function exchanged(s: client.Session, server: handshake.Server): string {

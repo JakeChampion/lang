@@ -69,7 +69,7 @@ function quote_cell(cell: string): string {
     i += 1;
   }
   buf = buf.append(34);
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function to_csv(t: Table): string {
@@ -127,11 +127,11 @@ function from_csv(text: string): Parsed {
         in_quotes = true;
         any = true;
       } else if (c == 44) {
-        row = row.append(string_from_bytes_unchecked(buf));
+        row = row.append(unsafe { string_from_bytes_unchecked(buf) });
         buf = [];
         any = true;
       } else if (c == 10) {
-        row = row.append(string_from_bytes_unchecked(buf));
+        row = row.append(unsafe { string_from_bytes_unchecked(buf) });
         buf = [];
         rows = rows.append(row);
         row = [];
@@ -151,7 +151,7 @@ function from_csv(text: string): Parsed {
     return fail_parse("unterminated quoted field");
   }
   if (any || buf.len() > 0 || row.len() > 0) {
-    row = row.append(string_from_bytes_unchecked(buf));
+    row = row.append(unsafe { string_from_bytes_unchecked(buf) });
     rows = rows.append(row);
   }
   return Parsed { ok: true, table: Table { rows: rows }, err: "" };
@@ -182,7 +182,7 @@ function json_escape(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function to_json(t: Table): string {
@@ -227,7 +227,7 @@ function json_string_at(s: string, at: i32): JsonRead {
   while (i < s.len()) {
     let c = s[i];
     if (c == 34) {
-      let one: string[] = [string_from_bytes_unchecked(buf), (i + 1).to_string()];
+      let one: string[] = [unsafe { string_from_bytes_unchecked(buf) }, (i + 1).to_string()];
       return JsonRead { ok: true, values: one, err: "" };
     }
     if (c == 92) {

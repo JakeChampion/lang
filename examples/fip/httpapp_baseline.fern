@@ -493,7 +493,7 @@ function main(): i32 {
 
   for w in 0..batch {
     wire = build_request(wire, w as i64);
-    match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
+    match (http.parse_request(unsafe { string_from_bytes_unchecked(wire.take(wire_len_of(wire))) })) {
       Ok(req) => {
         let d = route(counters, req);
         counters = update(counters, d);
@@ -515,7 +515,7 @@ function main(): i32 {
     for k in 0..batch {
       let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
-      let resp = match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) { Ok(req) => { let d = route(counters, req); counters = update(counters, d); t = tally(t, d); http.serialize_response(render(d, req, t, counters.len())) }, Err(_) => { t = tally(t, decision(400)); http.serialize_response(http.bad_request("bad request")) } };
+      let resp = match (http.parse_request(unsafe { string_from_bytes_unchecked(wire.take(wire_len_of(wire))) })) { Ok(req) => { let d = route(counters, req); counters = update(counters, d); t = tally(t, d); http.serialize_response(render(d, req, t, counters.len())) }, Err(_) => { t = tally(t, decision(400)); http.serialize_response(http.bad_request("bad request")) } };
       for b in resp {
         digest = mix(digest, b as i32);
       }

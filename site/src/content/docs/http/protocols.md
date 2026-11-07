@@ -165,6 +165,7 @@ import "std/http/grpc";
 import "std/protobuf";
 import "std/serve";
 import "std/platform";
+import "std/utf8";
 
 function init(): serve.Config {
     return serve.config().with_h2();
@@ -189,7 +190,7 @@ function say_hello(body: u8[]): HttpResponse {
     };
     let name: string = "stranger";
     if let Some(b) = protobuf.bytes(fields, 1) {
-        name = string_from_bytes_unchecked(b);
+        name = utf8.from_bytes_lossy(b);
     }
     let reply: u8[] = protobuf.string_field(1, "Hello, " + name);
     return grpc.response([reply], grpc.OK, "");

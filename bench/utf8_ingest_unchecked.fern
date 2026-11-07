@@ -16,7 +16,7 @@ function main(): i32 {
   let acc = 0;
   let round = 0;
   while (round < 200) {
-    match (Some(string_from_bytes_unchecked(b))) {
+    match (Some(unsafe { string_from_bytes_unchecked(b) })) {
       Some(s) => {
         match (json.parse(s)) {
           Ok(_) => {

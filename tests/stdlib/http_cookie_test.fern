@@ -166,7 +166,7 @@ function test_jar_prefixes(): test.TestOutcome {
 
 function test_jar_malformed(): test.TestOutcome {
   let j = cookie.jar();
-  let got = set(j, "http://example.com/", "", T0) + "|" + set(j, "http://example.com/", "=", T0) + "|" + set(j, "http://example.com/", "a=1" + string_from_bytes_unchecked([1 as u8]), T0) + "|" + set(j, "http://example.com/", "x".repeat(4097), T0) + "|" + set(j, "not a url", "a=1", T0) + "|" + set(j, "http://example.com/", "bare", T0) + "|" + set(j, "http://example.com/", " b = 2 ; Path=/p; Domain=", T0) + "|" + set(j, "http://example.com/", "long=1; Path=/" + "x".repeat(1024), T0);
+  let got = set(j, "http://example.com/", "", T0) + "|" + set(j, "http://example.com/", "=", T0) + "|" + set(j, "http://example.com/", "a=1" + unsafe { string_from_bytes_unchecked([1 as u8]) }, T0) + "|" + set(j, "http://example.com/", "x".repeat(4097), T0) + "|" + set(j, "not a url", "a=1", T0) + "|" + set(j, "http://example.com/", "bare", T0) + "|" + set(j, "http://example.com/", " b = 2 ; Path=/p; Domain=", T0) + "|" + set(j, "http://example.com/", "long=1; Path=/" + "x".repeat(1024), T0);
   return test.assert_eq(got + "#" + header(j, "http://example.com/p/q", T0), "not a cookie|not a cookie|not a cookie|not a cookie|not a cookie|@example.com/ h|b@example.com/p h|long@example.com/ h#b=2; bare; long=1");
 }
 

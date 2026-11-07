@@ -18,7 +18,7 @@ function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartErr
           r = r2;
         } else {
           let (content, r2) = r1.content()?;
-          out += f"{part.name} = {string_from_bytes_unchecked(content)}\n";
+          out += f"{part.name} = {unsafe { string_from_bytes_unchecked(content) }}\n";
           r = r2;
         }
       },

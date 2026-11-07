@@ -133,7 +133,7 @@ function lower_ascii(s: string): string {
     out = out.append(b as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function upper_ascii(s: string): string {
@@ -147,7 +147,7 @@ function upper_ascii(s: string): string {
     out = out.append(b as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function abs64(v: i64): i64 {
@@ -178,7 +178,7 @@ function digits_of(v: i64, mask: i32): string {
     i -= 1;
     rev = rev.append(out[i]);
   }
-  return string_from_bytes_unchecked(rev);
+  return unsafe { string_from_bytes_unchecked(rev) };
 }
 
 function number(h: usize, digits: string, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): void {

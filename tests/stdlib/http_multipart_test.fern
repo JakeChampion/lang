@@ -161,7 +161,7 @@ function pieces_result(req: HttpRequest): Result[string, multipart.MultipartErro
       let done = false;
       while (!done) {
         let piece: (u8[], boolean, multipart.Reader) = r.read(2)?;
-        first += string_from_bytes_unchecked(piece.0);
+        first += unsafe { string_from_bytes_unchecked(piece.0) };
         done = piece.1;
         r = piece.2;
         reads += 1;
@@ -175,10 +175,10 @@ function pieces_result(req: HttpRequest): Result[string, multipart.MultipartErro
   match (r.next()?) {
     NextPart(part, r1) => {
       let piece: (u8[], boolean, multipart.Reader) = r1.read(4)?;
-      second = string_from_bytes_unchecked(piece.0);
+      second = unsafe { string_from_bytes_unchecked(piece.0) };
       r = piece.2;
       let rest: (u8[], multipart.Reader) = r.content()?;
-      second += string_from_bytes_unchecked(rest.0);
+      second += unsafe { string_from_bytes_unchecked(rest.0) };
       r = rest.1;
     },
     NoMoreParts => {
@@ -200,7 +200,7 @@ function pieces_result(req: HttpRequest): Result[string, multipart.MultipartErro
   match (r.next()?) {
     NextPart(part, r1) => {
       let got: (u8[], multipart.Reader) = r1.content()?;
-      fourth = string_from_bytes_unchecked(got.0);
+      fourth = unsafe { string_from_bytes_unchecked(got.0) };
       r = got.1;
     },
     NoMoreParts => {
@@ -282,7 +282,7 @@ function test_builder_output(): test.TestOutcome {
   let want = "--B\r\nContent-Disposition: form-data; name=\"q%22x\"\r\n\r\n1\r\n--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--B--\r\n";
   let random = multipart.builder();
   let distinct = random.boundary != multipart.builder().boundary && random.boundary.len() == 32;
-  return test.assert_eq(string_from_bytes_unchecked(b.bytes()) + "|" + b.content_type() + "|" + distinct.to_string(), want + "|multipart/form-data; boundary=B|true");
+  return test.assert_eq(unsafe { string_from_bytes_unchecked(b.bytes()) } + "|" + b.content_type() + "|" + distinct.to_string(), want + "|multipart/form-data; boundary=B|true");
 }
 
 function main(): i32 {

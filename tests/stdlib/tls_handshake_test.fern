@@ -419,7 +419,7 @@ function exchange(p: Pair): string {
             Ok(sw) => {
               match (cw.client.read(sw.output)) {
                 Ok(cr) => {
-                  return string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data);
+                  return unsafe { string_from_bytes_unchecked(sr.data) } + " " + unsafe { string_from_bytes_unchecked(cr.data) };
                 },
                 Err(e) => {
                   return e.message();

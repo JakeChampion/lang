@@ -150,7 +150,7 @@ function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
 function __cli_short_name_at(cluster: string, j: i32): string {
   let b = cluster[j] as i32;
   if (b < 128) {
-    return string_from_bytes_unchecked([cluster[j]]);
+    return unsafe { string_from_bytes_unchecked([cluster[j]]) };
   }
   match (utf8.decode_at(cluster, j)) {
     Some(pair) => {

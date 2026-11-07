@@ -22,7 +22,7 @@ function __thousand_a(): string {
     b = b.with(i, 97 as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function test_cksum_vectors(): test.TestOutcome {
@@ -161,7 +161,7 @@ function __chunk(msg: u8[], from: i32, n: i32): string {
     b = b.with(k, msg[from + k]);
     k += 1;
   }
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function test_sysv_sum_string_updates(): test.TestOutcome {

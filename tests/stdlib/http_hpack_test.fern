@@ -187,7 +187,7 @@ function test_round_trip(): test.TestOutcome {
     all = all.append(i as u8);
     i += 1;
   }
-  let value = string_from_bytes_unchecked(all);
+  let value = unsafe { string_from_bytes_unchecked(all) };
   let e = hpack.encoder(4096);
   let enc = e.encode([hpack.field("x-all", value), hpack.sensitive("authorization", "Bearer 0123456789")]);
   match (hpack.decoder(4096, 65536).decode(enc.bytes)) {

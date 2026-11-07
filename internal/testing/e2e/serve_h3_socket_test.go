@@ -154,7 +154,7 @@ function main(): i32 {
       match (e) {
         h3q.Responded(_, resp) => {
           if (resp.status != 200) { return 3; }
-          let text: string = string_from_bytes_unchecked(resp.body_bytes());
+          let text: string = unsafe { string_from_bytes_unchecked(resp.body_bytes()) };
           if (got == 0) { first = text; } else { if (text != first) { return 4; } }
           got = got + 1;
         },

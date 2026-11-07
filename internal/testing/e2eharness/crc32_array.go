@@ -147,7 +147,7 @@ function main(): i32 {
         let off: i32 = n % 7 + 1;
         let cut: i32 = n / 3;
         let wide: u8[] = shifted(n, off);
-        let text: string = string_from_bytes_unchecked(wide) + "";
+        let text: string = unsafe { string_from_bytes_unchecked(wide) } + "";
         for seed in seeds {
             if (index % 100 == 0) { expected = expected_batch(index / 100); }
             let want: i32 = expected[index % 100];

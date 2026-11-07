@@ -32,7 +32,9 @@ function name_from(s: string, from: i32): string {
     bytes = bytes.append(s[i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(bytes);
+  unsafe {
+    return string_from_bytes_unchecked(bytes);
+  }
 }
 
 function surface_resource(w: WorldWired, inst: i32, res: string): (WorldWired, i32) {

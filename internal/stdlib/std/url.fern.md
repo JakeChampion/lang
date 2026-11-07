@@ -149,7 +149,9 @@ pub function encode(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function decode(s: string): string {
@@ -273,7 +275,9 @@ pub function form_encode(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 
@@ -410,7 +414,9 @@ function __port_text(port: i32): string {
   let digits = "";
   let n = port;
   while (n > 0) {
-    digits = string_from_bytes_unchecked([(48 + n % 10) as u8]) + digits;
+    unsafe {
+      digits = string_from_bytes_unchecked([(48 + n % 10) as u8]) + digits;
+    }
     n /= 10;
   }
   return digits;
@@ -874,6 +880,8 @@ pub function query_encode(pairs: (string, string)[]): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```

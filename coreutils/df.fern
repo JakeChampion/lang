@@ -421,7 +421,7 @@ function spaces(n: i32): string {
     bs = bs.append(32 as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function grand_total(rows: Row[]): Row {

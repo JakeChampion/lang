@@ -20,7 +20,7 @@ func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 		{"read", "function main(): i32 { let count = 1; return kount; }\n", []string{"replace `kount` with `count`"}},
 		{"call", "function helper(n: i32): i32 { return n; }\nfunction main(): i32 { return halper(1); }\n", []string{"replace `halper` with `helper`"}},
 		{"assign", "function main(): i32 {\n  let count: i32 = 1;\n  kount = 2;\n  return count;\n}\n", []string{"replace `kount` with `count`"}},
-		{"retired", "function main(): i32 { return string_from_bytes([]).len(); }\n", []string{"replace `string_from_bytes` with `string_from_bytes_unchecked` (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)"}},
+		{"retired", "function main(): i32 { return string_from_bytes([]).len(); }\n", []string{"replace `string_from_bytes` with `string_from_bytes_unchecked` inside an unsafe block (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)"}},
 		{"literal-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, yy: 2 };\n  return p.x;\n}\n", []string{"replace `yy` with `y`"}},
 		{"member", "struct Point { x: i32, y: i32 }\nfunction (p: Point) push(n: i32): i32 { return p.x + n; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.puzh(2) + p.yy;\n}\n", []string{"replace `puzh` with `push`", "replace `yy` with `y`"}},
 		{"pattern-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1, y: 2 };\n  match (p) {\n    P { x, yy } => { return x; }\n  }\n}\n", []string{"replace `yy` with `y`"}},

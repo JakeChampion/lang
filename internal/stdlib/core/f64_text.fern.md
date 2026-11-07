@@ -131,7 +131,9 @@ function __float_int_part(n: f64): string {
     pos -= 1;
     n = q;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 // Shortest round-trip float formatting via DRAGONBOX (Junekey Jeon's

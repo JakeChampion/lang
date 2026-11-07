@@ -130,7 +130,7 @@ function field_at(bs: u8[], off: i32, width: i32): string {
     out = out.append(bs[off + i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function entry_at(bs: u8[], off: i32): Entry {

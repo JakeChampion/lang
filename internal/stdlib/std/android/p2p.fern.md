@@ -263,7 +263,7 @@ function taken_text(buf: usize): string {
     }
     __free(buf, 4 + n);
   }
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function digit_of(s: string): i32 {

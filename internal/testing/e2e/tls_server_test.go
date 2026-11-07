@@ -169,7 +169,7 @@ function echo(c: server.Connection): string {
   let head: string = "[" + c.session.server_name() + "] [" + c.session.alpn() + "]";
   match (c.read(time.duration_seconds(10 as i64))) {
     Ok(got) => {
-      let line: string = string_from_bytes_unchecked(got.data).trim();
+      let line: string = unsafe { string_from_bytes_unchecked(got.data) }.trim();
       match (got.conn.write(("echo " + line + "\n").bytes())) {
         Ok(sent) => {
           match (sent.read(time.duration_seconds(10 as i64))) {

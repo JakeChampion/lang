@@ -2470,7 +2470,9 @@ function __tunnel[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Res
   if (__head_end(got) != got.len()) {
     return Err(Protocol("the proxy sent bytes after its answer to CONNECT"));
   }
-  return __tunnel_status(string_from_bytes_unchecked(got));
+  unsafe {
+    return __tunnel_status(string_from_bytes_unchecked(got));
+  }
 }
 
 function __io(r: Result[net.Recv, net.NetError]): Result[net.Recv, FetchError] {

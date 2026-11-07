@@ -1,0 +1,17 @@
+// A string is always well-formed UTF-8, and the unchecked constructors do
+// not validate their bytes. So only an unsafe block accepts the caller's
+// promise. Safe code validates with std/utf8.from_bytes.
+import "std/utf8";
+
+function checked(b: u8[]): string {
+    let Ok(s) = utf8.from_bytes(b) else { return ""; };
+    return s;
+}
+
+function main(): i32 {
+    let b: u8[] = [104u8, 105u8];
+    let whole: string = string_from_bytes_unchecked(b);
+    let part: string = string_from_bytes_range_unchecked(b, 0, 1);
+    let kept: string = unsafe { string_from_bytes_unchecked(b) };
+    return whole.len() + part.len() + kept.len() + checked(b).len();
+}

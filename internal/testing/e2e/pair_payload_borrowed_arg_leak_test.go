@@ -8,7 +8,7 @@ function bytes_string(buf: u8[], from: i32, end: i32): string {
     let out: u8[] = __alloc_u8(end - from);
     let i: i32 = 0;
     while (from + i < end) { out = out.with(i, buf[from + i]); i = i + 1; }
-    return string_from_bytes_unchecked(out);
+    return unsafe { string_from_bytes_unchecked(out) };
 }
 function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
     let i: i32 = from;
@@ -71,7 +71,7 @@ func pairPayloadSinkSrc(decl, body, tail string) string {
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
     let b: u8[] = __alloc_u8(8);
-    return Some(string_from_bytes_unchecked(b));
+    return Some(unsafe { string_from_bytes_unchecked(b) });
 }
 function main(): i32 {
     ` + decl + `

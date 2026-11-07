@@ -102,7 +102,9 @@ pub function encode(bs: [u8]): string {
     buf = buf.with(i * 2 + 1, __hex_lower_char(b & 15) as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function encode_upper(bs: [u8]): string {
@@ -118,7 +120,9 @@ pub function encode_upper(bs: [u8]): string {
     buf = buf.with(i * 2 + 1, __hex_upper_char(b & 15) as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function decode(input: string): Result[u8[], codec.DecodeError] {

@@ -520,7 +520,7 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
       return (false, gnu.error_out(out, gnu.quotef(name) + ": " + digest.sum_error_text(sum)));
     }
     if (c.raw) {
-      return (true, gnu.put(out, string_from_bytes_unchecked(sum.bin)));
+      return (true, gnu.put(out, unsafe { string_from_bytes_unchecked(sum.bin) }));
     }
     return (true, gnu.put(out, digest.sum_line(a, c.s, digest_text(c, sum.bin), name)));
   }
@@ -529,7 +529,7 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
     return (false, gnu.error_out(out, gnu.quotef(name) + ": " + plain_error_text(p)));
   }
   if (c.raw) {
-    return (true, gnu.put(out, string_from_bytes_unchecked(p.raw)));
+    return (true, gnu.put(out, unsafe { string_from_bytes_unchecked(p.raw) }));
   }
   return (true, gnu.put(out, plain_line(c, p.fields, name, named)));
 }

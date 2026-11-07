@@ -13,8 +13,8 @@ function main(): i32 {
     if (b32.encode("foob".bytes()) != "MZXW6YQ=") { return 4; }
     if (b32.encode("fooba".bytes()) != "MZXW6YTB") { return 5; }
     if (b32.encode("foobar".bytes()) != "MZXW6YTBOI======") { return 6; }
-    if (string_from_bytes_unchecked(__codec_bytes(b32.decode("MZXW6YTBOI======"))) != "foobar") { return 7; }
-    if (string_from_bytes_unchecked(__codec_bytes(b32.decode(""))) != "" || b32.encode("".bytes()) != "") { return 8; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(b32.decode("MZXW6YTBOI======"))) } != "foobar") { return 7; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(b32.decode(""))) } != "" || b32.encode("".bytes()) != "") { return 8; }
     // Arbitrary bytes (incl. 0x00 / 0xFF) stay u8[] end to end (#5730);
     // compare through the encoded text, since u8[] has no structural ==.
     let raw: u8[] = [0 as u8, 255 as u8, 128 as u8, 1 as u8, 254 as u8];

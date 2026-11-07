@@ -157,7 +157,7 @@ function sample_text(k: i32): string {
     [244 as u8, 143 as u8, 191 as u8, 191 as u8],
     [255 as u8, 65 as u8, 226 as u8, 130 as u8],
   ];
-  return string_from_bytes_unchecked(samples[k]);
+  return unsafe { string_from_bytes_unchecked(samples[k]) };
 }
 
 @jni("dev.fern.strtest.Strings", "static String sample(int)")

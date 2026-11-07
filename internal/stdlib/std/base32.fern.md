@@ -100,7 +100,7 @@ pub function encode(bs: [u8]): string {
   while (out.len() % 8 != 0) {
     out = out.append(61 as u8);
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 pub function decode(input: string): Result[u8[], codec.DecodeError] {

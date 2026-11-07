@@ -240,7 +240,7 @@ function __percent(message: string): string {
     if (c == 37 || c < 32 || c > 126) {
       out = out + "%" + __hex_byte(c);
     } else {
-      out += string_from_bytes_unchecked([b]);
+      out += unsafe { string_from_bytes_unchecked([b]) };
     }
   }
   return out;
@@ -248,7 +248,7 @@ function __percent(message: string): string {
 
 function __hex_byte(c: i32): string {
   let digits = "0123456789ABCDEF";
-  return string_from_bytes_unchecked([digits[c >> 4 & 15], digits[c & 15]]);
+  return unsafe { string_from_bytes_unchecked([digits[c >> 4 & 15], digits[c & 15]]) };
 }
 ```
 

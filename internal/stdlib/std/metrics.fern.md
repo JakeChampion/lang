@@ -712,7 +712,7 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
       return e.end_scrape(drv, at);
     }
   }
-  let head = e.heads[at] + string_from_bytes_unchecked(got);
+  let head = e.heads[at] + unsafe { string_from_bytes_unchecked(got) };
   if (got.len() > 0 && !head.contains("\r\n\r\n") && head.len() < 8192) {
     return Exporter { ...e, heads: e.heads.with(at, head) };
   }

@@ -52,7 +52,7 @@ import "std/i32";
 <<2 function __esc(): string>>=
 function __esc(): string {
   let b: u8[] = [27 as u8];
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 ```
 
@@ -224,6 +224,6 @@ pub function strip(s: string): string {
       i += 1;
     }
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 ```

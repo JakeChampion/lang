@@ -134,7 +134,7 @@ pub function join(arr: string[]): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 ```
 
@@ -200,7 +200,7 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
         i += 1;
       }
     } else if (c == 44) {
-      record = record.append(string_from_bytes_unchecked(field));
+      record = record.append(unsafe { string_from_bytes_unchecked(field) });
       field = [];
       closed = false;
       seen = true;
@@ -209,7 +209,7 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
       if (single) {
         return Err(ParseError { offset: i, kind: ParseErrorKind.UnexpectedRecordTerminator });
       }
-      record = record.append(string_from_bytes_unchecked(field));
+      record = record.append(unsafe { string_from_bytes_unchecked(field) });
       field = [];
       rows = rows.append(record);
       record = [];
@@ -239,7 +239,7 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
     return Err(ParseError { offset: n, kind: ParseErrorKind.UnclosedQuote });
   }
   if (single || seen || record.len() > 0) {
-    record = record.append(string_from_bytes_unchecked(field));
+    record = record.append(unsafe { string_from_bytes_unchecked(field) });
     rows = rows.append(record);
   }
   return Ok(rows);

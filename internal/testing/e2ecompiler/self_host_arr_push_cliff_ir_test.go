@@ -78,7 +78,7 @@ function churn(k: i32): i32 {
     while (j < k) {
         let b: u8[] = __alloc_u8(262152);
         b = b.with(0, 255 as u8);
-        let s: string = string_from_bytes_unchecked(b);
+        let s: string = unsafe { string_from_bytes_unchecked(b) };
         total = total + s.len() % 3;
         j = j + 1;
     }

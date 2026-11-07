@@ -20,12 +20,12 @@ import "std/string";
 
 function round(s: string): i32 {
     let bs: u8[] = s.bytes();
-    let t: string = string_from_bytes_unchecked(bs);
+    let t: string = unsafe { string_from_bytes_unchecked(bs) };
     return t.len();
 }
 
 function round_temp(s: string): i32 {
-    return string_from_bytes_unchecked(s.bytes()).len();
+    return unsafe { string_from_bytes_unchecked(s.bytes()) }.len();
 }
 
 function rounds(s: string, n: i32): i32 {

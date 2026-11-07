@@ -48,9 +48,9 @@ func TestSelfHostFerndocDescription(t *testing.T) {
 	src.WriteString("import \"./docsummary\";\n")
 	for i, input := range cases {
 		fmt.Fprintf(&src, "@noinline\nfunction case_%d(): i32 {\n", i)
-		fmt.Fprintf(&src, "let input: string = string_from_bytes_unchecked(%s);\n", etlByteLiteral([]byte(input)))
-		fmt.Fprintf(&src, "let summary: string = string_from_bytes_unchecked(%s);\n", etlByteLiteral([]byte(docSummaryReference(input))))
-		fmt.Fprintf(&src, "let quoted: string = string_from_bytes_unchecked(%s);\n", etlByteLiteral([]byte(strconv.Quote(input))))
+		fmt.Fprintf(&src, "let input: string = unsafe { string_from_bytes_unchecked(%s) };\n", etlByteLiteral([]byte(input)))
+		fmt.Fprintf(&src, "let summary: string = unsafe { string_from_bytes_unchecked(%s) };\n", etlByteLiteral([]byte(docSummaryReference(input))))
+		fmt.Fprintf(&src, "let quoted: string = unsafe { string_from_bytes_unchecked(%s) };\n", etlByteLiteral([]byte(strconv.Quote(input))))
 		src.WriteString("if (docsummary.summary(input) != summary) { return 1; }\nif (docsummary.quote(input) != quoted) { return 2; }\nreturn 0;\n}\n")
 	}
 	src.WriteString("function main(): i32 {\n")
