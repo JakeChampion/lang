@@ -86,6 +86,14 @@ function body(stmts: ast.Stmt[], s: Scope): (ast.Stmt[], Scope) {
   let out: ast.Stmt[] = [];
   let cur = s;
   for st in stmts {
+    // A local is bound here rather than through the walker, so that cur is
+    // at its last use and the bind grows its arrays in place.
+    if let ast.StmtVar(v) = st {
+      let (local, tail) = var_at(v, cur);
+      out = out.append(local);
+      cur = tail;
+      continue;
+    }
     let (next, tail, handled) = astwalk.map_stmt_where(st, cur, stmt_at, expr_at, astwalk.every_expr);
     out = out.append(next);
     cur = tail;
@@ -171,19 +179,24 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
   return p;
 }
 
+function var_at(v: ast.StmtVar, s: Scope): (ast.Stmt, Scope) {
+  let before = s;
+  let recursive = ast.var_binds_itself(v);
+  if (recursive) {
+    before = bind_names(before, v.name, v.line, v.col);
+  }
+  let (init, tail) = expr(v.init, before);
+  if (!recursive) {
+    tail = bind_names(tail, v.name, v.line, v.col);
+  }
+  return (ast.StmtVar { ...v, name: names(tail, v.name), init: init }, tail);
+}
+
 function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
   match (st) {
     ast.StmtVar(v) => {
-      let before = s;
-      let recursive = ast.var_binds_itself(v);
-      if (recursive) {
-        before = bind_names(before, v.name, v.line, v.col);
-      }
-      let (init, tail) = expr(v.init, before);
-      if (!recursive) {
-        tail = bind_names(tail, v.name, v.line, v.col);
-      }
-      return (ast.StmtVar { ...v, name: names(tail, v.name), init: init }, tail, true);
+      let (local, tail) = var_at(v, s);
+      return (local, tail, true);
     },
     ast.StmtAssign(a) => {
       let (value, tail) = expr(a.value, s);

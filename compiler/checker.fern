@@ -26881,7 +26881,7 @@ function calls_a_generic(stmts: ast.Stmt[], s: Scope): boolean {
   return hit;
 }
 
-function inst_stmts(stmts: ast.Stmt[], s: Scope, gens: parser.FuncDecl[], depth: i32, acc: Inst[]): Inst[] {
+function inst_stmts(stmts: ast.Stmt[], s: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
   let out = acc;
   let cur = s;
   for st in stmts {
@@ -26991,7 +26991,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
   return clones;
 }
 
-function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, acc: Inst[]): Inst[] {
+function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
   if (!calls_a_generic(fd.body, msc)) {
     return acc;
   }
