@@ -17,6 +17,8 @@ var selfHostOnlyPaths = []string{
 	"internal/testing/e2ecompiler/**",
 }
 
+var imageIndependentPathsIgnore = append(append([]string{}, docOnlyPathsIgnore...), "fern-image/**")
+
 const dropSelfHostAction = "./.github/actions/drop-selfhost-sources"
 
 const alwaysRunOnPR = "lint"
@@ -32,12 +34,14 @@ func TestPRLanesShareOneDocOnlyFilter(t *testing.T) {
 			t.Errorf("%s: %q has no path filter: a doc-only PR would launch it. Give it the "+
 				"shared paths-ignore block or a `paths` allowlist.", ciFile, lane)
 		case strings.Join(f.PathsIgnore, " ") == strings.Join(docOnlyPathsIgnore, " "):
+		case strings.Join(f.PathsIgnore, " ") == strings.Join(imageIndependentPathsIgnore, " "):
 		case strings.Join(f.PathsIgnore, " ") == strings.Join(append(append([]string{}, docOnlyPathsIgnore...), selfHostOnlyPaths...), " "):
+			checkDropsSelfHostSources(t, lane)
+		case strings.Join(f.PathsIgnore, " ") == strings.Join(append(append([]string{}, imageIndependentPathsIgnore...), selfHostOnlyPaths...), " "):
 			checkDropsSelfHostSources(t, lane)
 		default:
 			t.Errorf("%s: %q's paths-ignore is %v, not %v, optionally followed by %v — "+
-				"the doc-only part must be identical across lanes, or a doc-only PR fires "+
-				"some of them and not others",
+				"the doc-only part must be identical across lanes. Independent lanes can also exclude fern-image/**",
 				ciFile, lane, f.PathsIgnore, docOnlyPathsIgnore, selfHostOnlyPaths)
 		}
 	}

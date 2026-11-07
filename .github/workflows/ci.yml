@@ -48,6 +48,7 @@ jobs:
     timeout-minutes: 40
     outputs:
       lanes: ${{ steps.filter.outputs.lanes }}
+      image-only: ${{ steps.filter.outputs.image-only }}
     steps:
       - id: filter
         uses: actions/github-script@v9
@@ -82,20 +83,23 @@ jobs:
           #
           # internal/testing/sourcelint reads this table (TestPRLanesShareOneDocOnlyFilter,
           # TestWorkflowPathFiltersHaveNoDeadEntries, ...).
+          # Independent lanes also exclude fern-image. The unit lane retains
+          # repository checks. The self-host lane runs its image consumers
+          # through the image-only input instead of its compiler regression jobs.
           LANES: |
             {
               "test-units":            { "paths-ignore": ["docs/**", "*.md"] },
-              "test-coreutils":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-arm64":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-wasm":         { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md"] },
+              "test-coreutils":        { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "test-e2e-arm64":        { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "test-e2e-wasm":         { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
               "test-e2e-selfhost":     { "paths-ignore": ["docs/**", "*.md"] },
-              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "compiler/**", "internal/testing/e2ecompiler/**"] },
-              "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md"] },
-              "examples":              { "paths-ignore": ["docs/**", "*.md"] },
-              "perf":                  { "paths-ignore": ["docs/**", "*.md"] },
+              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "fern-image/**", "compiler/**", "internal/testing/e2ecompiler/**"] },
+              "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "examples":              { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
+              "perf":                  { "paths-ignore": ["docs/**", "*.md", "fern-image/**"] },
               "bootstrap": { "paths": [
                 "bootstrap/**",
                 "compiler/**",
@@ -214,6 +218,7 @@ jobs:
             }
         with:
           script: |
+            core.setOutput("image-only", false);
             // Without a parsable table the lane names are unknown, so this one
             // failure cannot run everything: it fails loudly, and every filtered
             // lane skips until the table is fixed. laneTable in
@@ -288,6 +293,9 @@ jobs:
               };
               const paths = files === null ? [] : files.flatMap((f) =>
                 f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
+              const imageOnly = files !== null &&
+                paths.some((p) => selects(["fern-image/**"], p)) &&
+                paths.every((p) => selects(["fern-image/**", "docs/**", "*.md"], p));
               const runsOn = (filter, ps) => {
                 let ok = true;
                 if (filter.paths) ok = ps.some((p) => selects(filter.paths, p));
@@ -459,6 +467,7 @@ jobs:
               }
               for (const l of unchanged) out[l] = false;
               core.setOutput("lanes", JSON.stringify(out));
+              core.setOutput("image-only", imageOnly);
 
               const on = Object.keys(out).filter((l) => out[l]);
               const off = Object.keys(out).filter((l) => !out[l]);
@@ -496,6 +505,7 @@ jobs:
               // an API shape change must skip no lane, and a failed job here
               // would skip all of them (a `needs` on a failed job never runs).
               // Only a table that does not parse, above, is loud instead.
+              core.setOutput("image-only", false);
               core.setOutput("lanes", JSON.stringify(everything));
               core.warning(`every lane runs: the filter failed (${e.message})`);
             }
@@ -514,6 +524,7 @@ jobs:
     uses: ./.github/workflows/ci-suite.yml
     with:
       lanes: ${{ needs.changes.outputs.lanes }}
+      image-only: ${{ needs.changes.outputs.image-only == 'true' }}
     secrets: inherit
     permissions:
       contents: write

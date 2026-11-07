@@ -21,6 +21,11 @@ on:
         description: Exact changed-lane map computed by ci.yml
         required: true
         type: string
+      image-only:
+        description: Limit self-host tests to image consumers for an image-only PR
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -101,6 +106,8 @@ jobs:
     name: Test e2e self-host
     if: fromJSON(inputs.lanes)['test-e2e-selfhost']
     uses: ./.github/workflows/test-e2e-selfhost.yml
+    with:
+      image-only: ${{ inputs.image-only }}
     secrets: inherit
 
   test-fernsmith:

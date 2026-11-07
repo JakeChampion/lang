@@ -38,6 +38,33 @@ own group and an uncancellable run ahead of every open PR (#8124), which
 `TestGateLanesRunOnMain` (`internal/testing/sourcelint/pr_workflow_filters_test.go`)
 rejects.
 
+## Image component selection
+
+An image-only PR changes files under `fern-image/`. It can also change root Markdown files or files under `docs/`.
+The selector checks both paths of a rename. Any other path retains the full self-host suite.
+An unknown path also retains that suite. An unavailable or truncated file list selects every lane.
+
+The image-only selection runs these checks:
+
+- `Lint` and `Test units` retain the repository checks.
+- `Fern image` compiles and tests the image library for native Linux and Wasm.
+- `Showcase` runs when the change reaches `fern-image/packages/`.
+- `Test e2e self-host` runs its `image-consumers` job instead of its compiler regression jobs.
+
+The consumer job checks the JPEG header fixture with the Go oracle.
+It also checks the grammar against repository sources and tests the showcase HTTP server and Gather concurrency.
+The showcase server imports the image library through its benchmark module.
+These tests retain their usual jobs for changes outside the image component.
+
+The ten independent lanes exclude `fern-image/**` in the central lane table.
+The self-host workflow receives a separate `image-only` input, which defaults to `false`.
+Main, merge queue batches, and manual runs retain the full self-host scope, subject to the reuse of successful lanes.
+Compiler, runtime, stdlib, and bootstrap changes still select the image suite.
+
+`scripts/ci-changes-selftest.mjs` checks component selection, mixed changes, renames, and broad validation after selector failures.
+`TestImageOnlyScopeReachesSelfHostLane` checks the workflow inputs and job conditions.
+`TestImageConsumerSelectionCoversImageReaders` checks the consumer selectors and direct image references in compiler tests.
+
 ## The merge queue
 
 `ci.yml` also triggers on `merge_group`: a run on the batch GitHub is about

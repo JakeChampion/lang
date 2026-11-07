@@ -108,7 +108,7 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
     },
   };
   await run(github, context, core);
-  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed, listings, infos, notices };
+  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, imageOnly: outputs["image-only"], warnings, failed, listings, infos, notices };
 }
 
 let failures = 0;
@@ -147,6 +147,39 @@ check("paths-ignore one source", await runs({ "paths-ignore": ["docs/**", "*.md"
 check("rename old name counts", await runs({ paths: ["docs/**"] }, [{ filename: "web/n.js", previous_filename: "docs/o.md" }]), true);
 // The real table.
 const all = (r) => Object.values(r.lanes).every(Boolean);
+const selectedLanes = (r) => Object.keys(r.lanes).filter((l) => r.lanes[l]);
+for (const image of ["fern-image/packages/codecs/new/new.fern", "fern-image/tests/jpeg_header_test.fern", "fern-image/scripts/test.sh", "fern-image/docs/png.md"]) {
+  const imageResult = await decide({ files: [image, "docs/x.md", "README.md"] });
+  const expected = ["test-units", "test-e2e-selfhost", "fern-image"];
+  if (image.startsWith("fern-image/packages/")) expected.push("showcase");
+  check(`image component: ${image}`, [selectedLanes(imageResult), imageResult.imageOnly], [expected, true]);
+}
+for (const source of ["compiler/checker.fern", "compiler/runtime/x86_64/runtime.fern", "internal/stdlib/std/deflate.fern", "bootstrap/stage0.lock"]) {
+  const mixed = await decide({ files: ["fern-image/packages/codecs/new/new.fern", source] });
+  check(`image plus compiler input: ${source}`, [mixed.imageOnly, mixed.lanes["test-e2e-selfhost"], mixed.lanes["test-e2e-x86_64"], mixed.lanes["fern-image"]], [false, true, true, true]);
+  const compilerOnly = await decide({ files: [source] });
+  check(`compiler input reaches image: ${source}`, [compilerOnly.imageOnly, compilerOnly.lanes["fern-image"]], [false, true]);
+}
+for (const source of ["new-component/source.fern", ".github/workflows/test-e2e-selfhost.yml", "scripts/ci-changes-selftest.mjs", "mise.toml", "go.mod"]) {
+  const mixed = await decide({ files: ["fern-image/tests/jpeg_header_test.fern", source] });
+  check(`image plus other input: ${source}`, [mixed.imageOnly, mixed.lanes["test-e2e-selfhost"], mixed.lanes["test-e2e-x86_64"]], [false, true, true]);
+}
+for (const [from, to] of [
+  ["compiler/checker.fern", "fern-image/packages/checker.fern"],
+  ["fern-image/packages/codec.fern", "compiler/codec.fern"],
+]) {
+  const renamed = await decide({ files: [{ filename: to, previous_filename: from }] });
+  check(`component rename: ${from} -> ${to}`, [renamed.imageOnly, renamed.lanes["test-e2e-x86_64"], renamed.lanes["fern-image"]], [false, true, true]);
+}
+for (const files of [[], ["docs/x.md"], ["README.md"]]) {
+  check(`non-image diff has full scope: ${JSON.stringify(files)}`, (await decide({ files })).imageOnly, false);
+}
+check("untrusted image diff has full scope", (await decide({ files: ["fern-image/tests/jpeg_header_test.fern"], throwOn: true })).imageOnly, false);
+check("truncated image diff has full scope", (await decide({ files: Array(3000).fill("fern-image/tests/jpeg_header_test.fern") })).imageOnly, false);
+for (const event of ["push", "merge_group", "workflow_dispatch"]) {
+  const full = await decide({ event, files: ["fern-image/packages/codecs/new/new.fern"] });
+  check(`${event} retains full scope`, [all(full), full.imageOnly], [true, false]);
+}
 let r = await decide({ files: ["editors/vscode/x.ts"] });
 check("real: editor change", [r.lanes["vscode-extension"], r.lanes.macos, r.lanes["test-units"]], [true, false, true]);
 r = await decide({ files: ["docs/x.md", "CLAUDE.md"] });

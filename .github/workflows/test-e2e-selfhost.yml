@@ -69,6 +69,12 @@ name: Test e2e self-host
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
+    inputs:
+      image-only:
+        description: Run image consumers instead of the compiler regression suite
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
 
 # ISOLATED WHOLE-COMPILER DRIVER TESTS — the `^TestSelfHost*` tests that build
@@ -106,6 +112,27 @@ permissions:
   contents: read
 
 jobs:
+  image-consumers:
+    if: inputs.image-only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: image-consumers
+      - name: Check the grammar against repository sources
+        env:
+          FERN_SELFHOST_FIXTURES: "1"
+        run: gotestsum --format standard-verbose -- ./internal/testing/e2e/ -run '^TestGrammarDerivesSelfHostParsedSources$' -count=1 -timeout 20m
+      - name: Check the image fixture and showcase consumers
+        run: gotestsum --format standard-verbose -- ./internal/testing/e2ecompiler/ -run '^(TestSelfHostShowcaseHTTP|TestSelfHostGatherConcurrency|TestSelfHostJpegHeaderUnitPayloadOracle)$' -count=1 -timeout 20m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
   # WHOLE-COMPILER (fern.fern) BUILD + ITS ISOLATED TESTS. Builds the single
   # largest driver once, then runs the ISOLATED_DRIVER_TESTS that consume it in
   # four isolated worker processes, all reading the just-built driver from the
@@ -119,6 +146,7 @@ jobs:
   # belongs in QUARANTINED_TESTS, by name and with its issue, where it is
   # visible.
   cli:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: cli-driver-tests-x86_64
     runs-on: ubuntu-24.04
@@ -216,6 +244,7 @@ jobs:
   # is a real change in the sources, the stdlib, the pin or the current
   # compiler's codegen.
   driver-sizes:
+    if: ${{ !inputs.image-only }}
     name: driver-sizes-x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -257,6 +286,7 @@ jobs:
   # weight could place one without crowding its worker (#6667); run 39091470716
   # timed out two workers that each held one of them.
   selfhost-stdtest:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: selfhost-stdtest-${{ matrix.leg }}
     runs-on: ubuntu-24.04
@@ -343,6 +373,7 @@ jobs:
   # the full-system emulators, so FERN_REQUIRE_QEMU_SYSTEM makes a missing one
   # a failure.
   kernel-boot:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: kernel-boot
     runs-on: ubuntu-24.04
@@ -385,6 +416,7 @@ jobs:
   # The checker corpus has parallel subtests. A shard worker limits it to one
   # CPU, which exceeded 28 minutes on ARM64 in run 40325134038.
   checker-stdlib:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: checker-stdlib-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
@@ -421,6 +453,7 @@ jobs:
   # Keep all 512 seeds and their mutations, partitioned by the shared I/N
   # selector. Each half retains the original test timeout and all assertions.
   checker-mutants:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: checker-mutants-x86_64-${{ matrix.shard }}
     runs-on: ubuntu-24.04
@@ -446,6 +479,7 @@ jobs:
   # legs are two to four minutes of work each. They share one job, so the
   # lane pays one setup and holds one slot of the runner pool for the three.
   diff-selfhost:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: diff-selfhost-${{ matrix.target }}
     runs-on: ubuntu-24.04
@@ -504,6 +538,7 @@ jobs:
   # The rows of a leg's testdata/selfhost-<target>-known-divergences.txt are
   # the only cases it permits to fail.
   fixtures:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     name: fixtures-selfhost-${{ matrix.leg }}
     runs-on: ubuntu-24.04
@@ -543,6 +578,7 @@ jobs:
   # driver-sizes built, and runs its LPT slice of the union list in four
   # isolated worker processes.
   test:
+    if: ${{ !inputs.image-only }}
     needs: [driver-sizes]
     strategy:
       fail-fast: false
@@ -675,7 +711,7 @@ jobs:
   # silently missing result. The weight audit rides along, advisory.
   verify:
     needs: test
-    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    if: ${{ !cancelled() && !inputs.image-only && needs.test.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
