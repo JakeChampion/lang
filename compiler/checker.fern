@@ -31031,6 +31031,41 @@ function lit_marked(t: typeinfo.Type): boolean {
 // known type writes that type on the local.
 const LIT_OPEN_MARK: string = "open enum local #";
 
+// open_call_type is the type of a generic call that leaves a type parameter
+// unbound, such as `ordmap.new()`, with each unbound parameter open. It is
+// false when the call binds each parameter.
+function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
+  let none = t_unknown("not an open call");
+  let ast.ExprCall(c) = e else {
+    return (none, false);
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return (none, false);
+  };
+  if (c.type_args.len() > 0 || s.defines(id.name)) {
+    return (none, false);
+  }
+  let Some(sig) = s.lookup_sig(id.name) else {
+    return (none, false);
+  };
+  if (sig.all_type_params.len() == 0 || c.args.len() != sig.param_types.len() || sig.ret_type_name.len() == 0) {
+    return (none, false);
+  }
+  let (bn, bt) = call_type_bindings(sig, c, s);
+  let open = false;
+  for tp in sig.all_type_params {
+    if (util.index_of_str(bn, tp) < 0) {
+      bn = bn.append(tp);
+      bt = bt.append(t_unknown("unbound " + tp));
+      open = true;
+    }
+  }
+  if (!open) {
+    return (none, false);
+  }
+  return (type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names()), true);
+}
+
 function lit_open_marker(k: i32): typeinfo.Type {
   return t_unknown(LIT_OPEN_MARK + util.i32_to_string(k));
 }
@@ -31141,6 +31176,9 @@ function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo
 // that `want` has at the same place. It is false when the shapes differ or
 // `want` does not know the arguments.
 function fill_open_enum(have: typeinfo.Type, want: typeinfo.Type): (typeinfo.Type, boolean) {
+  if (unbound_enum_argument(have)) {
+    return (want, known_type(want));
+  }
   match (have) {
     typeinfo.TypeUnion(h) => {
       return fill_open_union(h, want);
@@ -31981,9 +32019,9 @@ function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
   return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s) || lit_marked_read(arg, s);
 }
 
-// lit_open_receiver gives an open map local the key and value types that a
-// call of insert or get_or passes to it, as a map literal takes them from its
-// entries.
+// lit_open_receiver gives an open local the type arguments that a method call
+// on it binds. An open map takes the key and value types that a call of
+// insert or get_or passes to it, as a map literal takes them from its entries.
 function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   let ast.ExprFieldAccess(fa) = c.callee else {
     return st;
@@ -31992,10 +32030,58 @@ function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     return st;
   };
   let k = lit_open_id(s.lookup(id.name));
-  if (k < 0 || !bare_map(st.otypes[k]) || c.args.len() != 2 || fa.field != "insert" && fa.field != "get_or") {
+  if (k < 0) {
     return st;
   }
-  return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], s)), settled_literal(check_expr(c.args[1], s))));
+  let ts = lit_typed_scope(s, st);
+  match (st.otypes[k]) {
+    typeinfo.TypeStruct(h) => {
+      return lit_open_fill(st, k, typeinfo.TypeStruct { name: h.name, args: lit_method_receiver(c, fa.field, h.name, h.args, ts) });
+    },
+    typeinfo.TypeUnion(h) => {
+      return lit_open_fill(st, k, typeinfo.TypeUnion { name: h.name, args: lit_method_receiver(c, fa.field, h.name, h.args, ts) });
+    },
+    _ => {}
+  }
+  if (!bare_map(st.otypes[k]) || c.args.len() != 2 || fa.field != "insert" && fa.field != "get_or") {
+    return st;
+  }
+  return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], ts)), settled_literal(check_expr(c.args[1], ts))));
+}
+
+// lit_method_receiver is the receiver type arguments that the arguments of a
+// method call bind, such as `[i32, string]` for `m.insert(1, "one")` with
+// `insert(k: K, v: V)` on `OrdMap[K, V]`. An argument that the call does not
+// bind stays as it is in `have`.
+function lit_method_receiver(c: ast.ExprCall, method: string, name: string, have: typeinfo.Type[], s: Scope): typeinfo.Type[] {
+  let Some(msig) = s.lookup_method(method, name) else {
+    return have;
+  };
+  let rref = parser.parse_type_ref(msig.receiver_type);
+  if (c.args.len() != msig.param_type_names.len() || rref.args.len() != have.len()) {
+    return have;
+  }
+  let tps: string[] = [];
+  for ar in rref.args {
+    tps = tps.append(ar.base);
+  }
+  let bn: string[] = [];
+  let bt: typeinfo.Type[] = [];
+  for i in 0..c.args.len() {
+    let (n2, t2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), settled_literal(check_expr(c.args[i], s)), tps, s.type_names(), bn, bt);
+    bn = n2;
+    bt = t2;
+  }
+  let args: typeinfo.Type[] = [];
+  for i in 0..have.len() {
+    let at = util.index_of_str(bn, tps[i]);
+    if (unbound_enum_argument(have[i]) && at >= 0) {
+      args = args.append(bt[at]);
+    } else {
+      args = args.append(have[i]);
+    }
+  }
+  return args;
 }
 
 // lit_array_receiver gives a literal array local the element type of a typed
@@ -32701,7 +32787,11 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           }
         }
         let open_type = check_expr(v.init, s);
-        if (holds_open_enum(open_type, s)) {
+        let (call_type, open_call) = open_call_type(v.init, s);
+        if (open_call) {
+          open_type = call_type;
+        }
+        if (open_call || holds_open_enum(open_type, s)) {
           let ost = lit_expr(v.init, s, st);
           let k = ost.okeys.len();
           return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
@@ -33202,10 +33292,23 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
 struct LitScan { found: boolean, generics: string[] }
 
 function lit_scan_stmt(st: ast.Stmt, own sc: LitScan): LitScan {
-  if (sc.found || !lit_candidate_at(st)) {
+  if (sc.found || !lit_candidate_at(st) && !open_call_candidate(st, sc.generics)) {
     return sc;
   }
   return LitScan { ...sc, found: true };
+}
+
+function open_call_candidate(st: ast.Stmt, generics: string[]): boolean {
+  let ast.StmtVar(v) = st else {
+    return false;
+  };
+  let ast.ExprCall(c) = v.init else {
+    return false;
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return false;
+  };
+  return v.type_name.len() == 0 && !name_has_comma(v.name) && c.type_args.len() == 0 && util.has_str(generics, id.name);
 }
 
 function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
