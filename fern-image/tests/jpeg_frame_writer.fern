@@ -16,6 +16,44 @@ function name(error: entropy_writer.EncodeError): string {
   };
 }
 
+function produced(values: [i32], tables: frame_writer.Tables, options: frame_writer.Options): Result[u8[], frame_writer.FrameError] {
+  let result = frame_writer.encode_produced(
+    values, tables, options, never,
+    (source: [i32], consume: ([i32]) => Result[void, entropy_writer.EncodeError]): Result[void, entropy_writer.EncodeError] => {
+      for i in 0..source.len() / 64 {
+        consume(source[i * 64:i * 64 + 64])?;
+      }
+      return Ok(());
+    },
+  );
+  return match (result) {
+    Ok(v) => Ok(v), Err(frame_writer.FrameEncode(e)) => Err(e),
+    Err(frame_writer.FrameSource(e)) => Err(frame_writer.Entropy(e)),
+  };
+}
+
+function equal(left: Result[u8[], frame_writer.FrameError], right: Result[u8[], frame_writer.FrameError]): boolean {
+  match (left) {
+    Err(a) => {
+      return match (right) { Err(b) => a == b, _ => false };
+    },
+    Ok(a) => {
+      let Ok(b) = right else {
+        return false;
+      };
+      if (a.len() != b.len()) {
+        return false;
+      }
+      for i in 0..a.len() {
+        if (a[i] != b[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+}
+
 function emit_case(path: string): i32 {
   let Ok(data) = read_file_bytes(path) else {
     return 2;
@@ -64,7 +102,14 @@ function emit_case(path: string): i32 {
     values = values.append(value as i32);
     at += 4;
   }
-  match (frame_writer.encode_blocks(values, frame_writer.Tables { quantization: quantizers, dc: tables[0], ac: tables[1] }, frame_writer.Options { width: width, height: height, restart_interval: restart, max_output_bytes: limit }, never)) {
+  let table_data = frame_writer.Tables { quantization: quantizers, dc: tables[0], ac: tables[1] };
+  let options = frame_writer.Options { width: width, height: height, restart_interval: restart, max_output_bytes: limit };
+  let legacy = frame_writer.encode_blocks(values, table_data, options, never);
+  let result = produced(values, table_data, options);
+  if (!equal(legacy, result)) {
+    return 6;
+  }
+  match (result) {
     Ok(output) => {
       print(path + " ok " + hex.encode(output));
     },

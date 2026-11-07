@@ -5,9 +5,15 @@ import "core/cmp";
 @derive(cmp.Debug, cmp.Eq)
 pub enum EncodeError { Shape, Table, MissingSymbol, Coefficient, Limit, Cancelled }
 
+pub enum ProducerError[E] { ProducerEncode(EncodeError), ProducerSource(E) }
+
 struct Codes { bits: i32[], sizes: i32[] }
 
 struct BitOutput { bytes: u8[], pending: i32, used: i32, limit: i32 }
+
+struct ProducedState { output: BitOutput, previous: i32, count: i32, marker: i32 }
+
+struct ProducerSlot { state: Option[ProducedState], failure: Option[EncodeError], open: boolean }
 
 function insert_codes(result: Codes, table: header.HuffmanTable, offset: i32, code: i32, count: i32, size: i32, ac: boolean): Result[Codes, EncodeError] {
   let output = result;
@@ -223,4 +229,119 @@ pub function encode_blocks(coefficients: [i32], dc: header.HuffmanTable, ac: hea
     return Err(EncodeError.Cancelled);
   }
   return Ok(writer.bytes);
+}
+
+function poison(slot: Cell[ProducerSlot], error: EncodeError): EncodeError {
+  let current = slot.get();
+  if let Some(first) = current.failure {
+    return first;
+  }
+  slot.set(ProducerSlot { ...current, failure: Some(error) });
+  return error;
+}
+
+function take(slot: Cell[ProducerSlot], length: i32, count: i32): Result[ProducedState, EncodeError] {
+  let current = slot.get();
+  if (!current.open) {
+    return Err(EncodeError.Shape);
+  }
+  if let Some(error) = current.failure {
+    return Err(error);
+  }
+  let Some(state) = current.state else {
+    return Err(poison(slot, EncodeError.Shape));
+  };
+  if (length != 64 || state.count >= count) {
+    return Err(poison(slot, EncodeError.Shape));
+  }
+  // Remove the output from the cell before append operations or callbacks.
+  slot.set(ProducerSlot { state: None, failure: None, open: true });
+  return Ok(state);
+}
+
+function produced_block(state: ProducedState, values: [i32], dc: Codes, ac: Codes, interval: i32, cancelled: () => boolean): Result[ProducedState, EncodeError] {
+  if (cancelled()) {
+    return Err(EncodeError.Cancelled);
+  }
+  let output = state.output;
+  let previous = state.previous;
+  let marker = state.marker;
+  if (interval > 0 && state.count > 0 && state.count % interval == 0) {
+    output = restart(output, marker, cancelled)?;
+    previous = 0;
+    marker = (marker + 1) % 8;
+  }
+  output = block(output, values, previous, dc, ac, cancelled)?;
+  return Ok(ProducedState { output: output, previous: values[0], count: state.count + 1, marker: marker });
+}
+
+function restore(slot: Cell[ProducerSlot], result: Result[ProducedState, EncodeError]): Result[void, EncodeError] {
+  if let Some(error) = slot.get().failure {
+    return Err(error);
+  }
+  match (result) {
+    Ok(state) => {
+      slot.set(ProducerSlot { state: Some(state), failure: None, open: true });
+    },
+    Err(error) => {
+      return Err(poison(slot, error));
+    }
+  }
+  return Ok(());
+}
+
+function accept(slot: Cell[ProducerSlot], values: [i32], count: i32, dc: Codes, ac: Codes, interval: i32, cancelled: () => boolean): Result[void, EncodeError] {
+  let state = take(slot, values.len(), count)?;
+  return restore(slot, produced_block(state, values, dc, ac, interval, cancelled));
+}
+
+function close(slot: Cell[ProducerSlot]): Result[ProducedState, EncodeError] {
+  let current = slot.get();
+  slot.set(ProducerSlot { state: None, failure: current.failure, open: false });
+  if let Some(error) = current.failure {
+    return Err(error);
+  }
+  return match (current.state) { Some(state) => Ok(state), None => Err(EncodeError.Shape) };
+}
+
+function admit_producer(count: i32, dc: header.HuffmanTable, ac: header.HuffmanTable, interval: i32, limit: i32): Result[void, EncodeError] {
+  if (count <= 0) {
+    return Err(EncodeError.Shape);
+  }
+  check_table_shape(dc)?;
+  check_table_shape(ac)?;
+  if (interval < 0 || interval > 65535 || limit < 0) {
+    return Err(EncodeError.Limit);
+  }
+  return Ok(());
+}
+
+function produced_state(count: i32, dc: header.HuffmanTable, ac: header.HuffmanTable, interval: i32, limit: i32, cancelled: () => boolean): Result[(Codes, Codes, ProducedState), EncodeError] {
+  admit_producer(count, dc, ac, interval, limit)?;
+  if (cancelled()) {
+    return Err(EncodeError.Cancelled);
+  }
+  let dc_codes = codes(dc, false, cancelled)?;
+  let ac_codes = codes(ac, true, cancelled)?;
+  let output = BitOutput { bytes: [], pending: 0, used: 0, limit: limit };
+  return Ok((dc_codes, ac_codes, ProducedState { output: output, previous: 0, count: 0, marker: 0 }));
+}
+
+// The producer supplies exactly count complete blocks through a synchronous consumer.
+pub function encode_produced[S, E](source: S, count: i32, dc: header.HuffmanTable, ac: header.HuffmanTable, interval: i32, limit: i32, cancelled: () => boolean, produce: (S, ([i32]) => Result[void, EncodeError]) => Result[void, E]): Result[u8[], ProducerError[E]] {
+  let (dc_codes, ac_codes, initial) = match (produced_state(count, dc, ac, interval, limit, cancelled)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };
+  let slot = cell_new(ProducerSlot { state: Some(initial), failure: None, open: true });
+  let result = produce(source, (values: [i32]): Result[void, EncodeError] => accept(slot, values, count, dc_codes, ac_codes, interval, cancelled));
+  let state = match (close(slot)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };
+  if let Err(error) = result {
+    return Err(ProducerSource(error));
+  }
+  if (state.count != count) {
+    return Err(ProducerEncode(EncodeError.Shape));
+  }
+  let output = match (align(state.output, cancelled)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };
+  if (cancelled()) {
+    return Err(ProducerEncode(EncodeError.Cancelled));
+  }
+  return Ok(output.bytes);
 }

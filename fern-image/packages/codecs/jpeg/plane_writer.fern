@@ -1,0 +1,42 @@
+import "./plane_coefficients" as plane;
+import "./component_blocks" as blocks;
+import "./entropy_writer" as entropy;
+import "./frame_writer" as frame;
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum WriteError { PlanePrepare(plane.PrepareError), PlaneFrame(frame.FrameError) }
+
+pub struct Options { restart_interval: i32, max_blocks: i32, max_output_bytes: i32 }
+
+function entropy_error(error: entropy.EncodeError): frame.FrameError {
+  return match (error) { entropy.Cancelled => frame.Cancelled, entropy.Limit => frame.Limit, _ => frame.Entropy(error) };
+}
+
+function write_error(error: frame.ProducedError[WriteError]): WriteError {
+  return match (error) { frame.FrameEncode(e) => PlaneFrame(e), frame.FrameSource(e) => e };
+}
+
+pub function encode(input: [u8], layout: blocks.PlaneLayout, edge: blocks.Edge, tables: frame.Tables, options: Options, cancelled: () => boolean): Result[u8[], WriteError] {
+  if let Err(e) = plane.inspect(input, layout, tables.quantization, options.max_blocks) {
+    return Err(PlanePrepare(e));
+  }
+  let config = frame.Options { width: layout.width, height: layout.height, restart_interval: options.restart_interval, max_output_bytes: options.max_output_bytes };
+  let result = frame.encode_produced(
+    input, tables, config, cancelled,
+    (source: [u8], emit: ([i32]) => Result[void, entropy.EncodeError]): Result[void, WriteError] => {
+      let folded = plane.fold_blocks(
+        source, layout, tables.quantization, edge, options.max_blocks, cancelled, 0,
+        (state: i32, block: plane.QuantizedBlock): Result[i32, entropy.EncodeError] => {
+          emit(block.values)?;
+          return Ok(state + 1);
+        },
+      );
+      return match (folded) {
+        Ok(_) => Ok(()), Err(plane.Prepare(e)) => Err(PlanePrepare(e)),
+        Err(plane.Consumer(e)) => Err(PlaneFrame(entropy_error(e))),
+      };
+    },
+  );
+  return match (result) { Ok(v) => Ok(v), Err(e) => Err(write_error(e)) };
+}
