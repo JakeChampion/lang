@@ -188,7 +188,7 @@ function run(sc: Script, end: i64): Sim {
       n = node.voice(node.tick(node.fresh(n, entropy(i, s.now)), s.now), voice);
       if (node.reconnecting(n)) {
         n = node.resume(n, 15i64 + 4i64 * (i as i64), seed(i + 3), s.now);
-        resumed = resumed + 1;
+        resumed += 1;
       }
       nodes = nodes.with(i, n);
     }
