@@ -416,7 +416,7 @@ function test_retry(): test.TestOutcome {
           opened = e.message();
         }
       }
-      return test.assert_eq(hex.encode(again.dcid) + " " + string_from_bytes_unchecked(again.token) + " " + opened, "0102030405060708 fern-token pn 2");
+      return test.assert_eq(hex.encode(again.dcid) + " " + unsafe { string_from_bytes_unchecked(again.token) } + " " + opened, "0102030405060708 fern-token pn 2");
     },
     Err(e) => {
       return test.fail(e);

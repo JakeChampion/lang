@@ -213,7 +213,7 @@ function test_parse_string_decode_paths(): test.TestOutcome {
   if (__reencode("\"x\\u00e9y\\ud83d\\ude00z\"") != "\"xéy😀z\"") {
     return test.fail("astral/bmp decode: " + __reencode("\"x\\u00e9y\\ud83d\\ude00z\""));
   }
-  let fffd = string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]);
+  let fffd = unsafe { string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]) };
   let lone = __reencode("\"a\\ud83db\"");
   if (lone != "\"a" + fffd + "b\"") {
     return test.fail("lone surrogate decode: " + lone);
@@ -520,7 +520,7 @@ function test_escape_named(): test.TestOutcome {
 }
 
 function test_escape_control_bytes(): test.TestOutcome {
-  let s = string_from_bytes_unchecked([1 as u8, 31 as u8]);
+  let s = unsafe { string_from_bytes_unchecked([1 as u8, 31 as u8]) };
   return test.assert_eq(json.escape(s), "\\u0001\\u001f");
 }
 

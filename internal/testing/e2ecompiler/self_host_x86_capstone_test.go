@@ -137,7 +137,7 @@ function main(): i32 {
             let ev: i64 = elf_eh_frame_vaddr_x86(a.text.len(), hdr_len) as i64;
             let eh: i32[] = x86_eh_frame(a, tv, ev);
             let hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
-            write(string_from_bytes_unchecked(elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, entry)));
+            write(unsafe { string_from_bytes_unchecked(elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, entry)) });
             return 0;
         }
     }

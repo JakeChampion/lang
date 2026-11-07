@@ -13,7 +13,7 @@ function main(): i32 {
     if (hex.encode_upper("ÿ".bytes()) != "C3BF") { return 4; }
     if (hex.encode("ÿ".bytes()) != "c3bf") { return 5; }
     if (hex.encode_upper("".bytes()) != "") { return 6; }
-    if (string_from_bytes_unchecked(__codec_bytes(hex.decode(hex.encode_upper("hello".bytes())))) != "hello") { return 7; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode(hex.encode_upper("hello".bytes())))) } != "hello") { return 7; }
     return 42;
 }
 

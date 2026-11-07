@@ -352,7 +352,7 @@ function main(): i32 {
         Ok(sock) => {
             tcp_send_bytes(sock, [104u8, 105u8]);
             let got: u8[] = recv(sock, 16);
-            print(string_from_bytes_unchecked(got));
+            print(unsafe { string_from_bytes_unchecked(got) });
             tcp_close(sock);
             return 0;
         },

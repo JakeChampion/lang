@@ -413,7 +413,7 @@ The line ends at the first newline after the magic. The magic is built from byte
 ```fern
 <<14 pub function build_line(image: [u8]): Option[string]>>=
 pub function build_line(image: [u8]): Option[string] {
-  let magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  let magic = unsafe { string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]) };
   let i = 0;
   while (i + magic.len() <= image.len()) {
     let j = 0;

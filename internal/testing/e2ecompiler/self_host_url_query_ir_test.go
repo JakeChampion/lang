@@ -19,7 +19,7 @@ function url_decode(s: string): string {
         if (b == 37 && i + 2 < n) {
             let h1: i32 = url_hex_val(s[i+1] as i32);
             let h2: i32 = url_hex_val(s[i+2] as i32);
-            if (h1 >= 0 && h2 >= 0) { let by: u8[] = [((h1 << 4) | h2) as u8]; emit = string_from_bytes_unchecked(by); consumed = 3; }
+            if (h1 >= 0 && h2 >= 0) { let by: u8[] = [((h1 << 4) | h2) as u8]; emit = unsafe { string_from_bytes_unchecked(by) }; consumed = 3; }
         }
         out = out + emit;
         i = i + consumed;

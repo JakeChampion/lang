@@ -35,7 +35,7 @@ function test_fields(): test.TestOutcome {
       let text = "";
       match (protobuf.bytes(fields, 2)) {
         Some(bs) => {
-          text = string_from_bytes_unchecked(bs);
+          text = unsafe { string_from_bytes_unchecked(bs) };
         },
         None => {}
       }
@@ -65,7 +65,7 @@ function test_fields(): test.TestOutcome {
           fixed = f.wire.to_string() + ":" + f.word.to_string();
         }
       }
-      return test.assert_eq(hex.encode(protobuf.string_field(2, "testing")) + " " + text + " " + size + " " + reps.len().to_string() + string_from_bytes_unchecked(reps[1]) + " " + fixed, "120774657374696e67 testing 27182 2bc 5:4");
+      return test.assert_eq(hex.encode(protobuf.string_field(2, "testing")) + " " + text + " " + size + " " + reps.len().to_string() + unsafe { string_from_bytes_unchecked(reps[1]) } + " " + fixed, "120774657374696e67 testing 27182 2bc 5:4");
     },
     Err(e) => {
       return test.fail(e.to_string());

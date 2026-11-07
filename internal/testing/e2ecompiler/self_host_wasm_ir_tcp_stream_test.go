@@ -125,6 +125,6 @@ const wasmRecvHelper = `function recv(c: Socket, max: i32): string {
     let out: u8[] = [];
     let i: i32 = 0;
     while (i < n) { out = out.append(buf[i]); i = i + 1; }
-    return string_from_bytes_unchecked(out);
+    return unsafe { string_from_bytes_unchecked(out) };
 }
 `

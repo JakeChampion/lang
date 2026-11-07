@@ -1401,7 +1401,9 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
         buf = buf.with(i, b as u8);
         i += 1;
     }
-    return string_from_bytes_unchecked(buf);
+    unsafe {
+        return string_from_bytes_unchecked(buf);
+    }
 }
 
 // _full_case_append appends the full case mapping of ` + "`cp`" + ` to the scalar buffer.
@@ -1621,7 +1623,9 @@ pub function (s: string) swap_case(): string {
             buf = buf.with(k, b as u8);
             k += 1;
         }
-        return string_from_bytes_unchecked(buf);
+        unsafe {
+            return string_from_bytes_unchecked(buf);
+        }
     }
     let out: char[] = [];
     let len = s.len();
@@ -2063,7 +2067,10 @@ pub function reverse_graphemes(s: string): string {
         buf_push_bytes_range(h, bytes, start, ends[i]);
         i -= 1;
     }
-    let result = string_from_bytes_unchecked(buf_take_bytes(h));
+    let result = "";
+    unsafe {
+        result = string_from_bytes_unchecked(buf_take_bytes(h));
+    }
     buf_free(h);
     return result;
 }

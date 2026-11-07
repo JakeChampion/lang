@@ -912,10 +912,12 @@ So the constructor splits, on the Rust `from_utf8` /
 
 The old name is retired outright rather than kept as an alias, so
 reaching for `string_from_bytes` is a compile error carrying a
-migration hint at both replacements. That retirement is the actual
-deliverable: naming is the only enforcement mechanism Fern has here
-(there are no `unsafe` blocks), so leaving the hazard under the
-attractive name would make this decision decorative.
+migration hint at both replacements. The caller's guarantee is now an
+unsafe obligation as well: both checkers refuse
+`string_from_bytes_unchecked` and `string_from_bytes_range_unchecked`
+outside an `unsafe` block (`E095`), and `unsafe { …; e }` gives a call
+site its value. Safe code reaches a `string` from bytes only through
+`std/utf8.from_bytes`.
 
 #### What slice 2 does *not* do
 

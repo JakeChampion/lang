@@ -1,0 +1,278 @@
+import "../packages/codecs/jpeg/plane_coefficients" as plane;
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "../packages/codecs/jpeg/frame_writer";
+import "../packages/codecs/jpeg/header";
+import "../packages/codecs/jpeg/grayscale";
+import "../packages/codecs/jpeg/quantization";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function quantizers(): u8[] {
+  let values: u8[] = [];
+  for i in 0..64 {
+    values = values.append(1);
+  }
+  return values;
+}
+
+function samples(layout: blocks.PlaneLayout, value: u8): u8[] {
+  let bytes: u8[] = [];
+  for y in 0..layout.height {
+    for x in 0..layout.stride {
+      bytes = bytes.append(if (x < layout.width) { value } else { 77 });
+    }
+  }
+  return bytes;
+}
+
+function collect(input: [u8], layout: blocks.PlaneLayout, q: [u8], max_blocks: i32, cancelled: () => boolean): Result[plane.Fold[i32[]], plane.FoldError[string]] {
+  let initial: i32[] = [];
+  return plane.fold_blocks(
+    input, layout, q, blocks.Replicate, max_blocks, cancelled, initial,
+    (state: i32[], block: plane.QuantizedBlock): Result[i32[], string] => {
+      for value in block.values {
+        state = state.append(value);
+      }
+      return Ok(state);
+    },
+  );
+}
+
+function uniform(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 17, stride: 12 };
+  let q = quantizers();
+  for value in 0..256 {
+    let Ok(folded) = collect(samples(layout, value as u8), layout, q, 6, never) else {
+      return test.fail("uniform plane coefficients");
+    };
+    if (folded.plan.columns != 2 || folded.plan.rows != 3 || folded.plan.blocks != 6 || folded.value.len() != 384) {
+      return test.fail("complete component plan");
+    }
+    for i in 0..384 {
+      let wanted = if (i % 64 == 0) { (value - 128) * 8 } else { 0 };
+      if (folded.value[i] != wanted) {
+        return test.fail("exact uniform coefficients");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function raster(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 17, height: 9, stride: 20 };
+  let bytes: u8[] = [];
+  for y in 0..layout.height {
+    for x in 0..layout.stride {
+      bytes = bytes.append(if (x < layout.width) { (x / 8 + y / 8 * 3 + 120) as u8 } else { 77 });
+    }
+  }
+  let result = plane.fold_blocks(
+    bytes[:177], layout, quantizers(), blocks.Replicate, 6, never, 0,
+    (index: i32, block: plane.QuantizedBlock): Result[i32, string] => {
+      if (block.x != index % 3 || block.y != index / 3 || block.values.len() != 64 || block.values[0] != (index - 8) * 8) {
+        return Err("plane raster coordinates or DC");
+      }
+      for i in 1..64 {
+        if (block.values[i] != 0) {
+          return Err("plane raster AC");
+        }
+      }
+      return Ok(index + 1);
+    },
+  );
+  return test.assert_true(match (result) { Ok(v) => v.value == 6, _ => false });
+}
+
+function admission(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = samples(layout, 128);
+  let q = quantizers();
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for limit in [-1, 0, 3] {
+    if (!match (collect(bytes, layout, q, limit, cancel)) { Err(plane.Prepare(plane.Limit)) => true, _ => false }) {
+      return test.fail("complete plane block limit before callbacks");
+    }
+  }
+  let short: u8[] = [];
+  for i in 0..63 {
+    short = short.append(1);
+  }
+  for bad in [short, q.with(63, 0)] {
+    let result = collect(bytes, layout, bad, 4, cancel);
+    if (!match (result) {
+      Err(plane.Prepare(plane.Quantization(quantization.Shape))) => bad.len() == 63,
+      Err(plane.Prepare(plane.Quantization(quantization.Quantizer))) => bad.len() == 64,
+      _ => false,
+    }) {
+      return test.fail("all quantizers precede callbacks");
+    }
+  }
+  if (!match (collect(bytes[:104], layout, q, 4, cancel)) { Err(plane.Prepare(plane.Block(blocks.Storage))) => true, _ => false }) {
+    return test.fail("plane storage before callbacks");
+  }
+  let invalid = blocks.PlaneLayout { width: 0, height: 1, stride: 1 };
+  if (!match (collect([], invalid, q, 4, cancel)) { Err(plane.Prepare(plane.Block(blocks.Layout))) => true, _ => false }) {
+    return test.fail("plane layout before callbacks");
+  }
+  let wide = blocks.PlaneLayout { width: 2147483647, height: 2147483647, stride: 2147483647 };
+  if (!match (plane.inspect([], wide, q, 2147483647)) { Err(plane.Block(blocks.Storage)) => true, _ => false }) {
+    return test.fail("wide plane admission");
+  }
+  if (calls.get() != 0) {
+    return test.fail("invalid plane callback count");
+  }
+  return test.assert_true(match (collect(bytes, layout, q, 4, never)) { Ok(v) => v.plan.blocks == 4, _ => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = samples(layout, 17);
+  let q = quantizers();
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  if let Err(_) = collect(bytes, layout, q, 4, count) {
+    return test.fail("plane cancellation baseline");
+  }
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (collect(bytes, layout, q, 4, cancel)) { Err(plane.Prepare(plane.Cancelled)) => true, _ => false }) {
+      return test.fail("every plane cancellation checkpoint");
+    }
+  }
+  let visits = cell_new(0);
+  let stopped = (): boolean => visits.get() == 4;
+  let result = plane.fold_blocks(
+    bytes, layout, q, blocks.Replicate, 4, stopped, 0,
+    (state: i32, block: plane.QuantizedBlock): Result[i32, string] => {
+      visits.set(visits.get() + 1);
+      return Ok(state + block.values.len());
+    },
+  );
+  return test.assert_true(visits.get() == 4 && match (result) { Err(plane.Prepare(plane.Cancelled)) => true, _ => false });
+}
+
+function ownership(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 17, height: 9, stride: 20 };
+  let original = samples(layout, 17);
+  let bytes: u8[] = [99];
+  for value in original {
+    bytes = bytes.append(value);
+  }
+  bytes = bytes.append(88);
+  let retained = cell_new(bytes);
+  let q = quantizers();
+  let retained_q = cell_new(q);
+  let visits = cell_new(0);
+  let saved = cell_new(quantizers());
+  let initial: i32[] = [];
+  let saved_block = cell_new(initial);
+  let result = plane.fold_blocks(
+    bytes[1:bytes.len() - 1], layout, q[:], blocks.Replicate, 6, never, initial,
+    (state: i32[], block: plane.QuantizedBlock): Result[i32[], string] => {
+      visits.set(visits.get() + 1);
+      if (visits.get() == 3) {
+        return Err("original consumer error");
+      }
+      if (visits.get() == 1) {
+        saved_block.set(block.values);
+      }
+      let changed_block = block.values.with(0, 999);
+      if (changed_block[0] != 999 || saved_block.get()[0] != -888) {
+        return Err("retained consumer block changed");
+      }
+      let marker = saved.get().with(0, block.x as u8);
+      saved.set(marker);
+      for value in block.values {
+        state = state.append(value);
+      }
+      return Ok(state);
+    },
+  );
+  if (visits.get() != 3 || !match (result) { Err(plane.Consumer(e)) => e == "original consumer error", _ => false }) {
+    return test.fail("consumer error stops the plane");
+  }
+  let Ok(folded) = collect(bytes[1:bytes.len() - 1], layout, q[:], 6, never) else {
+    return test.fail("borrowed plane windows");
+  };
+  let shared = cell_new(folded.value);
+  let changed = folded.value.with(0, 777);
+  if (changed[0] != 777 || shared.get()[0] != -888 || initial.len() != 0 || saved.get()[0] != 1) {
+    return test.fail("retained output aliases and consumer state");
+  }
+  for i in 0..bytes.len() {
+    if (bytes[i] != retained.get()[i]) {
+      return test.fail("plane sample aliases");
+    }
+  }
+  for i in 0..64 {
+    if (q[i] != retained_q.get()[i] || q[i] != 1) {
+      return test.fail("plane quantizer aliases");
+    }
+  }
+  return test.pass();
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function frames(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 17, stride: 12 };
+  let q = quantizers();
+  let tables = frame_writer.Tables { quantization: q, dc: table(false), ac: table(true) };
+  for value in [0, 17, 128, 255] {
+    let Ok(folded) = collect(samples(layout, value as u8), layout, q, 6, never) else {
+      return test.fail("frame plane coefficients");
+    };
+    for restart in [0, 1, 2, 7] {
+      let options = frame_writer.Options { width: 9, height: 17, restart_interval: restart, max_output_bytes: 8192 };
+      let Ok(encoded) = frame_writer.encode_blocks(folded.value, tables, options, never) else {
+        return test.fail("component plane frame");
+      };
+      let Ok(decoded) = grayscale.decode(encoded, grayscale.default_limits(), never) else {
+        return test.fail("component plane frame decode");
+      };
+      for byte in decoded.data {
+        if (byte != value as u8) {
+          return test.fail("uniform plane pixels after JPEG decode");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG plane coefficients");
+  suite = suite.it("every uniform byte retains exact coefficients", uniform);
+  suite = suite.it("strided partial planes retain raster order", raster);
+  suite = suite.it("complete admission precedes callbacks", admission);
+  suite = suite.it("every cancellation checkpoint and final callback", cancellation);
+  suite = suite.it("consumer errors and borrowed aliases", ownership);
+  suite = suite.it("component planes produce decodable baseline frames", frames);
+  return suite.finish();
+}

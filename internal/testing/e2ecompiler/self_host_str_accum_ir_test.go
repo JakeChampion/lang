@@ -22,7 +22,7 @@ var strAccumIRCases = []struct {
 		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } return s.len(); }`,
 		6},
 	{"accum-churn-safe",
-		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = string_from_bytes_unchecked([65 as u8]); } i = i + 1; } return 0; }`,
+		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = unsafe { string_from_bytes_unchecked([65 as u8]) }; } i = i + 1; } return 0; }`,
 		0},
 	{"accum-unannotated",
 		`function main(): i32 { let s = ""; let i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,

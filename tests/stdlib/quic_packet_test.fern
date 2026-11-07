@@ -98,7 +98,7 @@ function test_retry(): test.TestOutcome {
   let got = hex.encode(r) + " " + packet.retry_valid(r, dcid()).to_string() + " " + packet.retry_valid(r, __codec_bytes(hex.decode("8394c8f03e515709"))).to_string();
   match (packet.parse(r, 0, 8)) {
     Ok(h) => {
-      got = got + " | " + string_from_bytes_unchecked(h.token) + " " + hex.encode(h.tag) + " " + hex.encode(h.scid);
+      got = got + " | " + unsafe { string_from_bytes_unchecked(h.token) } + " " + hex.encode(h.tag) + " " + hex.encode(h.scid);
     },
     Err(e) => {
       got = got + " | " + e.message();

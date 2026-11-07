@@ -7,7 +7,7 @@ function walked(body: string, limits: http.HttpLimits): string {
   let wire = HEAD + body;
   match (http.parse_request_framed_from(wire.bytes(), 0, limits, http.framed_none())) {
     http.Complete(f) => {
-      return "ok:" + string_from_bytes_unchecked(f.request.body_bytes()) + "|" + fields(f.request.trailers) + "|rest=" + (wire.len() - f.len).to_string();
+      return "ok:" + unsafe { string_from_bytes_unchecked(f.request.body_bytes()) } + "|" + fields(f.request.trailers) + "|rest=" + (wire.len() - f.len).to_string();
     },
     http.Incomplete => {
       return "incomplete";
@@ -38,7 +38,7 @@ function decoded(body: string, piece: i32, limits: http.HttpLimits): string {
         data = data.concat(got);
       },
       http.ChunkEnd(got, trailers, rest) => {
-        return "ok:" + string_from_bytes_unchecked(data.concat(got)) + "|" + fields(trailers) + "|rest=" + (rest.len() + bytes.len() - end).to_string();
+        return "ok:" + unsafe { string_from_bytes_unchecked(data.concat(got)) } + "|" + fields(trailers) + "|rest=" + (rest.len() + bytes.len() - end).to_string();
       },
       http.ChunkRefused(status) => {
         return "refused:" + status.to_string();
@@ -151,7 +151,7 @@ function test_a_body_cut_short_is_incomplete(): test.TestOutcome {
 function test_data_is_answered_before_its_crlf(): test.TestOutcome {
   match (http.chunk_decoder(limits()).feed("5\r\nhel".bytes())) {
     http.ChunkData(next, got) => {
-      return test.assert_eq(string_from_bytes_unchecked(got), "hel");
+      return test.assert_eq(unsafe { string_from_bytes_unchecked(got) }, "hel");
     },
     http.ChunkEnd(got, trailers, rest) => {
       return test.fail("ended");

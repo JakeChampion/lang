@@ -971,7 +971,9 @@ impl Debug for string {
       }
       i += 1;
     }
-    return "\"" + string_from_bytes_unchecked(out) + "\"";
+    unsafe {
+      return "\"" + string_from_bytes_unchecked(out) + "\"";
+    }
   }
 }
 ```

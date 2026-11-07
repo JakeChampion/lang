@@ -1,7 +1,7 @@
 import "std/i32";
 
 function text(b: u8[], n: i32): string {
-  return string_from_bytes_unchecked(b.take(n));
+  return unsafe { string_from_bytes_unchecked(b.take(n)) };
 }
 
 function main(): i32 {

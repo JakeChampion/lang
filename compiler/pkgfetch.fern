@@ -220,7 +220,9 @@ function c_string(t: u8[], at: i32, n: i32): string {
   while (end < at + n && t[end] != 0) {
     end += 1;
   }
-  return string_from_bytes_unchecked(bytes(t, at, end));
+  unsafe {
+    return string_from_bytes_unchecked(bytes(t, at, end));
+  }
 }
 
 function bytes(t: u8[], from: i32, to: i32): u8[] {
@@ -259,7 +261,10 @@ function pax_path(t: u8[], at: i32, size: i32): string {
     if (len <= 0 || i + len > at + size) {
       return "";
     }
-    let rec = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
+    let rec = "";
+    unsafe {
+      rec = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
+    }
     if (util.str_has_prefix(rec, "path=")) {
       return slice_unchecked(rec, 5, rec.len()) + "";
     }

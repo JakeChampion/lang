@@ -99,6 +99,12 @@ jobs:
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-frame-writer.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-component-blocks.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-plane-coefficients.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_grayscale_test.py
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-grayscale.sh
         env:

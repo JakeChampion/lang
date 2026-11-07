@@ -594,7 +594,9 @@ function type_name(b: [u8], idx: i32): string {
   }
   let out = "";
   for k in at + len..at + len + n {
-    out += string_from_bytes_unchecked([b[k]]);
+    unsafe {
+      out += string_from_bytes_unchecked([b[k]]);
+    }
   }
   return out;
 }

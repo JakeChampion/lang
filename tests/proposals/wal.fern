@@ -305,7 +305,7 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
     },
     Ok(d) => {
       let path = d + "/log.bin";
-      match (write_file(path, string_from_bytes_unchecked(log))) {
+      match (write_file(path, unsafe { string_from_bytes_unchecked(log) })) {
         Err(e) => {
           let _x = remove_dir_all(d);
           return test.fail("could not write the log");
@@ -331,7 +331,7 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
       let cut = log.len() - 2;
       let _t: Result[void, IoError] = write_file(
         path,
-        string_from_bytes_unchecked(take_bytes(log, cut)),
+        unsafe { string_from_bytes_unchecked(take_bytes(log, cut)) },
       );
       let torn = replay([]);
       match (read_file_bytes(path)) {

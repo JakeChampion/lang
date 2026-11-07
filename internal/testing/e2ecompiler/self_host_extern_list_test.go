@@ -33,7 +33,7 @@ function main(): i32 {
     // Pre-allocate on the heap so the bump cursor is at an odd offset; the
     // wrapper's return area must still be aligned (regression guard for the
     // canonical "pointer not aligned" trap).
-    let pad: string = string_from_bytes_unchecked([65 as u8]);
+    let pad: string = unsafe { string_from_bytes_unchecked([65 as u8]) };
     let s: string = rand_bytes(16 as u64);
     if (pad.len() == 1 && s.len() == 16) { write("` + want + `"); } else { write("len-bad"); }
     return 0;
@@ -104,7 +104,7 @@ func TestSelfHostExternU8ArrayResultRunsUnderWasmtime(t *testing.T) {
 	prog := `@import("wasi:random/random@0.2.0", "get-random-bytes")
 function rand_bytes(n: u64): u8[];
 function main(): i32 {
-    let pad: string = string_from_bytes_unchecked([65 as u8]);
+    let pad: string = unsafe { string_from_bytes_unchecked([65 as u8]) };
     let a: u8[] = rand_bytes(16 as u64);
     if (pad.len() == 1 && a.len() == 16) { write("` + want + `"); } else { write("arr-bad"); }
     return 0;

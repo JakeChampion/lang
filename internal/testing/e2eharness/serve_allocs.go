@@ -296,7 +296,7 @@ function get(k0: Cli, path: string): (Cli, string) {
       match (e) {
         h3q.Responded(rid, resp) => {
           if (rid == id) {
-            return (k, string_from_bytes_unchecked(resp.body_bytes()));
+            return (k, unsafe { string_from_bytes_unchecked(resp.body_bytes()) });
           }
         },
         _ => {}

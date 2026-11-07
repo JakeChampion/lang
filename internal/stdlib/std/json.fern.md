@@ -517,7 +517,9 @@ pub function escape(s: string): string {
       from = stop + 1;
     }
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 
@@ -594,7 +596,9 @@ pub function encode(v: JsonValue): string {
         i += 1;
       }
       buf = buf.append(93 as u8);
-      return string_from_bytes_unchecked(buf);
+      unsafe {
+        return string_from_bytes_unchecked(buf);
+      }
     },
     JObject(o) => {
       buf = buf.append(123 as u8);
@@ -623,7 +627,9 @@ pub function encode(v: JsonValue): string {
         mi += 1;
       }
       buf = buf.append(125 as u8);
-      return string_from_bytes_unchecked(buf);
+      unsafe {
+        return string_from_bytes_unchecked(buf);
+      }
     }
   }
 }
@@ -640,7 +646,9 @@ function __json_spaces(n: i32): string {
     b = b.append(32 as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(b);
+  unsafe {
+    return string_from_bytes_unchecked(b);
+  }
 }
 
 function __json_append_str(buf: u8[], s: string): u8[] {
@@ -692,7 +700,9 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
       buf = buf.append(93 as u8);
-      return string_from_bytes_unchecked(buf);
+      unsafe {
+        return string_from_bytes_unchecked(buf);
+      }
     },
     JObject(o) => {
       if (o.len() == 0) {
@@ -719,7 +729,9 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
       buf = buf.append(125 as u8);
-      return string_from_bytes_unchecked(buf);
+      unsafe {
+        return string_from_bytes_unchecked(buf);
+      }
     }
   }
 }
@@ -948,7 +960,9 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
     }
     if (b == 34) {
       at.set(i + 1);
-      return string_from_bytes_unchecked(out);
+      unsafe {
+        return string_from_bytes_unchecked(out);
+      }
     }
     if (b == 92) {
       i += 1;
@@ -1285,7 +1299,9 @@ function __json_message(s: string, off: i32): string {
     return "unexpected control byte in input";
   }
   if (b < 128) {
-    return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
+    unsafe {
+      return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
+    }
   }
   return "unexpected byte '\\x" + b.to_hex().pad_start(2, '0') + "'";
 }
@@ -2029,7 +2045,9 @@ function __json_ptr_unescape(tok: string): string {
       i += 1;
     }
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function __json_ptr_index(tok: string): i32 {
@@ -2199,7 +2217,9 @@ pub function (xs: (T: Json)[]) to_json(): string {
     i += 1;
   }
   out = out.append(93 as u8);
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 ```
 

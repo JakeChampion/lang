@@ -20946,7 +20946,9 @@ pub function stream_elem(t: string): string {
     bytes = bytes.append(t[i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(bytes);
+  unsafe {
+    return string_from_bytes_unchecked(bytes);
+  }
 }
 
 pub function fill_default_args_module(mod: Module): Module {

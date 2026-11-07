@@ -75,6 +75,7 @@ import "std/http";
 import "std/serve";
 import "std/http/multipart";
 import "std/platform";
+import "std/utf8";
 
 function init(): serve.Config {
     return serve.Config { ...serve.config(), stream_bodies: true };
@@ -101,7 +102,7 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
                     r = cur;
                 } else {
                     let got: (u8[], multipart.Reader) = rest.content()?;
-                    out = out + part.name + " = " + string_from_bytes_unchecked(got.0) + "\n";
+                    out = out + part.name + " = " + utf8.from_bytes_lossy(got.0) + "\n";
                     r = got.1;
                 }
             },

@@ -6876,7 +6876,9 @@ function crc32_ieee_table_bytes(): string {
   for w in t {
     out = out.append((w & 255) as u8).append((w >> 8 & 255) as u8).append((w >> 16 & 255) as u8).append((w >> 24) as u8);
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function crc32_ieee_lookup(table: i32, k: i32, word: string, shift: i32): string {
@@ -9361,7 +9363,9 @@ function packed_byte_data(packed: string): string {
     out = out.with(i * 3 + 2, hex[value & 15]);
     i += 1;
   }
-  return le32_escape(-1) + le32_escape(16 + padded) + le32_escape(bs.len()) + le32_escape(bs.len()) + string_from_bytes_unchecked(out);
+  unsafe {
+    return le32_escape(-1) + le32_escape(16 + padded) + le32_escape(bs.len()) + le32_escape(bs.len()) + string_from_bytes_unchecked(out);
+  }
 }
 
 function const_agg_field(sv: string[], cv: string[], word: string): i32 {
@@ -12179,7 +12183,9 @@ pub function list_elem(t: string): string {
     bytes = bytes.append(t[i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(bytes);
+  unsafe {
+    return string_from_bytes_unchecked(bytes);
+  }
 }
 
 pub function async_lift_valtype(t: string): i32 {

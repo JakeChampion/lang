@@ -123,6 +123,6 @@ const arm64MachOBitOpsDriverMain = "\n" +
 	"    let a: Arm64Asm = arm64_gas_assemble(asm);\n" +
 	"    let none: i32[] = [];\n" +
 	"    let bin: i32[] = macho_executable(a.text, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
-	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
+	"    write(unsafe { string_from_bytes_unchecked(to_u8(bin)) });\n" +
 	"    return 0;\n" +
 	"}\n"

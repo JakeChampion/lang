@@ -328,7 +328,7 @@ function test_pre_shared_key(): test.TestOutcome {
   }
   match (message.pre_shared_key(e.data)) {
     Ok(o) => {
-      if (o.identities.len() != 2 || o.binders.len() != 2 || string_from_bytes_unchecked(o.identities[1].identity) != "ticket-2" || o.identities[0].obfuscated_age != 0x01020304 as u32 || hex.encode(o.binders[0]) != hex.encode(offer.binders[0])) {
+      if (o.identities.len() != 2 || o.binders.len() != 2 || unsafe { string_from_bytes_unchecked(o.identities[1].identity) } != "ticket-2" || o.identities[0].obfuscated_age != 0x01020304 as u32 || hex.encode(o.binders[0]) != hex.encode(offer.binders[0])) {
         return test.fail("offer read");
       }
     },

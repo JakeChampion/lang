@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
 // The self-host checker and this checker must refuse the same raw builtins
@@ -44,9 +46,17 @@ func TestUnsafeIntrinsicsMatchSelfHost(t *testing.T) {
 		t.Fatalf("the unsafe builtin sets differ\nonly in internal/check/checker: %s\nonly in %s: %s",
 			strings.Join(onlyGo, ", "), path, strings.Join(onlySelfHost, ", "))
 	}
+	prog, err := parser.Parse(`function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse probe: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check probe: %v", err)
+	}
 	for name := range UnsafeIntrinsics {
-		if !strings.HasPrefix(name, "__") {
-			t.Errorf("%q is not a builtin name", name)
+		if _, ok := info.FuncSigs[name]; !ok {
+			t.Errorf("%q is not a builtin the checker knows", name)
 		}
 	}
 }

@@ -95,7 +95,7 @@ function event_text(e: h3.Event): string {
       return "headers " + id.to_string() + " " + fields_text(fs);
     },
     h3.DataReceived(id, data) => {
-      return "data " + id.to_string() + " " + string_from_bytes_unchecked(data);
+      return "data " + id.to_string() + " " + unsafe { string_from_bytes_unchecked(data) };
     },
     h3.TrailersReceived(id, fs) => {
       return "trailers " + id.to_string() + " " + fields_text(fs);

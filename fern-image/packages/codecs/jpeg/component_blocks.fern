@@ -1,0 +1,65 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum BlockError { Layout, Storage, Bounds, Cancelled }
+
+pub enum Edge { Replicate, Constant(u8) }
+
+pub struct PlaneLayout { width: i32, height: i32, stride: i32 }
+
+pub function validate(bytes: [u8], layout: PlaneLayout): Result[void, BlockError] {
+  if (layout.width <= 0 || layout.height <= 0 || layout.stride < layout.width) {
+    return Err(BlockError.Layout);
+  }
+  let extent = (layout.height as i64 - 1i64) * (layout.stride as i64) + layout.width as i64;
+  if (extent > bytes.len() as i64) {
+    return Err(BlockError.Storage);
+  }
+  return Ok(());
+}
+
+function admit(bytes: [u8], layout: PlaneLayout, block_x: i32, block_y: i32): Result[void, BlockError] {
+  validate(bytes, layout)?;
+  if (block_x < 0 || block_y < 0 || block_x > (layout.width - 1) / 8 || block_y > (layout.height - 1) / 8) {
+    return Err(BlockError.Bounds);
+  }
+  return Ok(());
+}
+
+function sample(bytes: [u8], layout: PlaneLayout, x: i32, y: i32, edge: Edge): u8 {
+  let sx = x;
+  let sy = y;
+  if (x >= layout.width || y >= layout.height) {
+    match (edge) {
+      Constant(value) => {
+        return value;
+      },
+      Replicate => {
+        sx = if (x >= layout.width) { layout.width - 1 } else { x };
+        sy = if (y >= layout.height) { layout.height - 1 } else { y };
+      }
+    }
+  }
+  let at = sy as i64 * (layout.stride as i64) + sx as i64;
+  return bytes[at as i32];
+}
+
+pub function block(bytes: [u8], layout: PlaneLayout, block_x: i32, block_y: i32, edge: Edge, cancelled: () => boolean): Result[u8[], BlockError] {
+  admit(bytes, layout, block_x, block_y)?;
+  if (cancelled()) {
+    return Err(BlockError.Cancelled);
+  }
+  let output = __alloc_u8(64);
+  for y in 0..8 {
+    if (cancelled()) {
+      return Err(BlockError.Cancelled);
+    }
+    for x in 0..8 {
+      output = output.with(y * 8 + x, sample(bytes, layout, block_x * 8 + x, block_y * 8 + y, edge));
+    }
+  }
+  if (cancelled()) {
+    return Err(BlockError.Cancelled);
+  }
+  return Ok(output);
+}

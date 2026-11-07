@@ -539,11 +539,15 @@ function __string(st: Decoder, block: u8[]): Decoder {
     if (n > room) {
       return __failed(st, TooLarge(st.max_list));
     }
-    return Decoder { ...st, text: string_from_bytes_range_unchecked(block, from, from + n), at: from + n };
+    unsafe {
+      return Decoder { ...st, text: string_from_bytes_range_unchecked(block, from, from + n), at: from + n };
+    }
   }
   match (huffman.decode(block[from:from + n], room)) {
     Ok(out) => {
-      return Decoder { ...st, text: string_from_bytes_unchecked(out), at: from + n };
+      unsafe {
+        return Decoder { ...st, text: string_from_bytes_unchecked(out), at: from + n };
+      }
     },
     Err(huffman.ExceedsRoom) => {
       return __failed(st, TooLarge(st.max_list));

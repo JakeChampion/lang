@@ -104,8 +104,8 @@ func MakeOSBytesFixture(t *testing.T, handles bool, malformed bool) OSTextFixtur
 		t.Fatal("OS text fixture has no success return")
 	}
 	var extra strings.Builder
-	extra.WriteString(`match (read_link_bytes("valid-link")) { Ok(b) => { if (string_from_bytes_unchecked(b) != "é-文件") { return 200; } }, Err(_) => { return 201; } }
-match (read_dir_bytes("valid")) { Ok(names) => { if (names.len() != 3) { return 202; } let found: boolean = false; for n in names { if (string_from_bytes_unchecked(n) == "é-文件") { found = true; } } if (!found) { return 203; } }, Err(_) => { return 204; } }
+	extra.WriteString(`match (read_link_bytes("valid-link")) { Ok(b) => { if (unsafe { string_from_bytes_unchecked(b) } != "é-文件") { return 200; } }, Err(_) => { return 201; } }
+match (read_dir_bytes("valid")) { Ok(names) => { if (names.len() != 3) { return 202; } let found: boolean = false; for n in names { if (unsafe { string_from_bytes_unchecked(n) } == "é-文件") { found = true; } } if (!found) { return 203; } }, Err(_) => { return 204; } }
 match (read_link_bytes("absent")) { Err(NotFound(_)) => {}, _ => { return 205; } }
 match (read_dir_bytes("absent")) { Err(NotFound(_)) => {}, _ => { return 206; } }
 `)

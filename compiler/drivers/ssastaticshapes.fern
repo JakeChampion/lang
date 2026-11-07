@@ -63,7 +63,9 @@ function spelling(): void {
   let n = 32;
   while (n < 127) {
     if (n != 34 && n != 92) {
-      printable += string_from_bytes_unchecked([n as u8]);
+      unsafe {
+        printable += string_from_bytes_unchecked([n as u8]);
+      }
     }
     n += 1;
   }
@@ -71,7 +73,9 @@ function spelling(): void {
   for arg in ["\"\\0\"", "\"\\00\"", "\"\\400\"", "\"\\777\"", "\"\\078\"", "\"\\x41\"", "\"\\u0041\"", "\"\\a\"", "\"\\b\"", "\"\\f\"", "\"\\v\"", "\"\\q\"", "\"\\'\"", "\"x\" \"y\"", "\"x\",\"y\"", "\"x\"#tail", "\"x\";ret", "\"unterminated", "plain", "\"é\""] {
     refuse(fixture(".S0: .ascii " + arg), ".S0", "unsupported spelling " + arg);
   }
-  refuse(fixture(".S0: .ascii \"" + string_from_bytes_unchecked([127 as u8]) + "\""), ".S0", "DEL byte");
+  unsafe {
+    refuse(fixture(".S0: .ascii \"" + string_from_bytes_unchecked([127 as u8]) + "\""), ".S0", "DEL byte");
+  }
 }
 
 function definitions(): void {

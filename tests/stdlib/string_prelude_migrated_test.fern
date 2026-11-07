@@ -42,7 +42,7 @@ function test_to_lower_hello(): test.TestOutcome {
 
 function test_string_from_bytes_roundtrip(): test.TestOutcome {
   let s = "Hello";
-  let rt = string_from_bytes_unchecked(s.bytes());
+  let rt = unsafe { string_from_bytes_unchecked(s.bytes()) };
   return test.assert_eq(rt, "Hello");
 }
 
@@ -77,7 +77,7 @@ function main(): i32 {
     test_to_lower_hello,
   );
   r = r.it(
-    "string_from_bytes_unchecked(s.bytes()) round-trips",
+    "unsafe { string_from_bytes_unchecked(s.bytes()) } round-trips",
     test_string_from_bytes_roundtrip,
   );
   return r.finish();

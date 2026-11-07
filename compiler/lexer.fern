@@ -845,7 +845,9 @@ function dec_str(v: i32): string {
   let out = "";
   let i = rev.len() - 1;
   while (i >= 0) {
-    out += string_from_bytes_unchecked([rev[i]]);
+    unsafe {
+      out += string_from_bytes_unchecked([rev[i]]);
+    }
     i -= 1;
   }
   return out;
@@ -894,9 +896,13 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
 
 function rune_of_byte(b: i32): string {
   if (b < 128) {
-    return string_from_bytes_unchecked([b as u8]);
+    unsafe {
+      return string_from_bytes_unchecked([b as u8]);
+    }
   }
-  return string_from_bytes_unchecked([(192 | b >> 6) as u8, (128 | b & 63) as u8]);
+  unsafe {
+    return string_from_bytes_unchecked([(192 | b >> 6) as u8, (128 | b & 63) as u8]);
+  }
 }
 
 function quoted(s: string): string {
@@ -906,10 +912,14 @@ function quoted(s: string): string {
 function quote_char(src: string, i: i32, n: i32): string {
   let b = src[i] as i32;
   if (b == 39 || b == 92) {
-    return "'\\" + string_from_bytes_unchecked([b as u8]) + "'";
+    unsafe {
+      return "'\\" + string_from_bytes_unchecked([b as u8]) + "'";
+    }
   }
   if (b >= 32 && b < 127) {
-    return "'" + string_from_bytes_unchecked([b as u8]) + "'";
+    unsafe {
+      return "'" + string_from_bytes_unchecked([b as u8]) + "'";
+    }
   }
   if (b < 128) {
     return "'" + control_escape(b) + "'";
@@ -944,7 +954,10 @@ function bad_char_message(src: string, i: i32, n: i32): string {
 }
 
 pub function decode_source(bytes: u8[]): Result[string, TokError] {
-  let src = string_from_bytes_unchecked(bytes);
+  let src = "";
+  unsafe {
+    src = string_from_bytes_unchecked(bytes);
+  }
   if (utf8.is_valid(src)) {
     return Ok(src);
   }
@@ -1073,15 +1086,23 @@ function upper_hex(v: i32): string {
 
 function utf8_encode(v: i32): string {
   if (v < 128) {
-    return string_from_bytes_unchecked([v as u8]);
+    unsafe {
+      return string_from_bytes_unchecked([v as u8]);
+    }
   }
   if (v < 2048) {
-    return string_from_bytes_unchecked([(192 | v >> 6) as u8, (128 | v & 63) as u8]);
+    unsafe {
+      return string_from_bytes_unchecked([(192 | v >> 6) as u8, (128 | v & 63) as u8]);
+    }
   }
   if (v < 65536) {
-    return string_from_bytes_unchecked([(224 | v >> 12) as u8, (128 | v >> 6 & 63) as u8, (128 | v & 63) as u8]);
+    unsafe {
+      return string_from_bytes_unchecked([(224 | v >> 12) as u8, (128 | v >> 6 & 63) as u8, (128 | v & 63) as u8]);
+    }
   }
-  return string_from_bytes_unchecked([(240 | v >> 18) as u8, (128 | v >> 12 & 63) as u8, (128 | v >> 6 & 63) as u8, (128 | v & 63) as u8]);
+  unsafe {
+    return string_from_bytes_unchecked([(240 | v >> 18) as u8, (128 | v >> 12 & 63) as u8, (128 | v >> 6 & 63) as u8, (128 | v & 63) as u8]);
+  }
 }
 
 function closing_quote_ahead(l: Lex): boolean {
@@ -1905,7 +1926,11 @@ function test_unknown_char(): i32 {
   if (!lex_error_is("\x01", "unexpected character '\\x01'", "P001")) {
     return 1907;
   }
-  if (!lex_error_is(string_from_bytes_unchecked([97 as u8, 32 as u8, 255 as u8]), "invalid UTF-8 byte 0xFF", "P001")) {
+  let invalid = "";
+  unsafe {
+    invalid = string_from_bytes_unchecked([97 as u8, 32 as u8, 255 as u8]);
+  }
+  if (!lex_error_is(invalid, "invalid UTF-8 byte 0xFF", "P001")) {
     return 1908;
   }
   if (!lex_error_is("é", "identifiers must be ASCII; found 'é'", "P001")) {
@@ -1971,11 +1996,17 @@ function test_string_escapes(): i32 {
   if (!string_is("\"\\0\\'\\\"\\\\\"", "\x00'\"\\")) {
     return 1931;
   }
-  let top = string_from_bytes_unchecked([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
+  let top = "";
+  unsafe {
+    top = string_from_bytes_unchecked([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
+  }
   if (!string_is("\"\\u{41}\\u{e9}\\u{20AC}\\u{1F600}\\u{10FFFF}\"", "Aé€😀" + top)) {
     return 1932;
   }
-  let edges = string_from_bytes_unchecked([237 as u8, 159 as u8, 191 as u8, 238 as u8, 128 as u8, 128 as u8]);
+  let edges = "";
+  unsafe {
+    edges = string_from_bytes_unchecked([237 as u8, 159 as u8, 191 as u8, 238 as u8, 128 as u8, 128 as u8]);
+  }
   if (!string_is("\"\\u{D7FF}\\u{E000}\"", edges)) {
     return 1933;
   }

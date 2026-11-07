@@ -83,7 +83,7 @@ function main(): i32 {
     code = arm64_exception(code, "svc", 128);                        // svc #0x80
     let none: i32[] = [];
     let bin: i32[] = macho_executable(to_u8(code), none, none, "fern", 0, 0, none);
-    write(string_from_bytes_unchecked(to_u8(bin)));
+    write(unsafe { string_from_bytes_unchecked(to_u8(bin)) });
     return 0;
 }
 `

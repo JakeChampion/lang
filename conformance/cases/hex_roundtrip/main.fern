@@ -5,7 +5,7 @@ import "std/string";
 
 function main(): i32 {
   let s: string = "Hi there";
-  if (string_from_bytes_unchecked(__codec_bytes(hex.decode(hex.encode(s.bytes())))) == s) {
+  if (unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode(hex.encode(s.bytes())))) } == s) {
     return 42;
   }
   return 1;

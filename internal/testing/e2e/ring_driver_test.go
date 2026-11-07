@@ -184,7 +184,7 @@ function text(buf: u8[], n: i32): string {
   if (n <= 0) {
     return n.to_string();
   }
-  return string_from_bytes_unchecked(buf.take(n));
+  return unsafe { string_from_bytes_unchecked(buf.take(n)) };
 }
 
 function pattern(seed: i32, n: i32): u8[] {

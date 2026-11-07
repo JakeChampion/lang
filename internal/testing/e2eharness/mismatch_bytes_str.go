@@ -41,7 +41,7 @@ function check(a: u8[], ao: i32, b: string, bo: i32, n: i32): boolean {
     return scan(a, ao, b, bo, n) == slow(a, ao, b, bo, n);
 }
 function text(a: u8[]): string {
-    return string_from_bytes_range_unchecked(a, 0, a.len());
+    return unsafe { string_from_bytes_range_unchecked(a, 0, a.len()) };
 }
 function main(): i32 {
     let all: u8[] = __alloc_u8(256);

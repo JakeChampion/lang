@@ -187,7 +187,7 @@ function test_large_delta_and_non_bmp(): test.TestOutcome {
 
 function test_invalid_utf8_replaced(): test.TestOutcome {
   let bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
-  return test.assert_eq(string_from_bytes_unchecked(bad).to_lower(), "a�b");
+  return test.assert_eq(unsafe { string_from_bytes_unchecked(bad) }.to_lower(), "a�b");
 }
 
 function main(): i32 {

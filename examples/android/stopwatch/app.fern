@@ -23,7 +23,7 @@ function mono_ms(): i64 {
 
 function read_text(path: string): string {
   if let Ok(b) = read_file_bytes(path) {
-    return string_from_bytes_unchecked(b);
+    return unsafe { string_from_bytes_unchecked(b) };
   }
   return "";
 }

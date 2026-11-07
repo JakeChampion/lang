@@ -297,7 +297,7 @@ function exchange(p: Pair): Result[string, string] {
   let sr = srd(p.server, cw.output)?;
   let sw = swrite(sr.session, "pong")?;
   let cr = crd(cw.session, sw.output)?;
-  return Ok(string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data));
+  return Ok(unsafe { string_from_bytes_unchecked(sr.data) } + " " + unsafe { string_from_bytes_unchecked(cr.data) });
 }
 
 function cwrite(s: client.Session, text: string): Result[client.Step, string] {
@@ -497,7 +497,7 @@ function records_across(p: Pair): Result[string, string] {
   let cut = a.output.len() + b.output.len() + 4;
   let first = srd(p.server, __first(all, cut))?;
   let second = srd(first.session, __bytes_range(all, cut, all.len()))?;
-  return Ok(string_from_bytes_unchecked(first.data) + "|" + string_from_bytes_unchecked(second.data));
+  return Ok(unsafe { string_from_bytes_unchecked(first.data) } + "|" + unsafe { string_from_bytes_unchecked(second.data) });
 }
 
 function close_both(p: Pair): Result[string, string] {
@@ -1003,7 +1003,7 @@ function offloaded(p: Pair): Result[string, string] {
     return Err("the server's receive key does not follow the client's answer");
   }
   let sc = sclose(sa.session)?;
-  return Ok("keys meet / " + bytes_text(sw.output) + " / " + string_from_bytes_unchecked(cr.data) + " / rekeyed both ends / " + bytes_text(sc.output) + " / " + refused);
+  return Ok("keys meet / " + bytes_text(sw.output) + " / " + unsafe { string_from_bytes_unchecked(cr.data) } + " / rekeyed both ends / " + bytes_text(sc.output) + " / " + refused);
 }
 
 function __first(b: u8[], n: i32): u8[] {

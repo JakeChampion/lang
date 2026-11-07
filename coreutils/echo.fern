@@ -183,6 +183,6 @@ pub function main(): i32 {
   if (!stopped && newline) {
     out = out.append(10 as u8);
   }
-  gnu.write_out(string_from_bytes_unchecked(out));
+  gnu.write_out(unsafe { string_from_bytes_unchecked(out) });
   return 0;
 }

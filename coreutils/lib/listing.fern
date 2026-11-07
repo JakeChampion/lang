@@ -456,7 +456,7 @@ function spaces(n: i32): string {
     bs = bs.append(32 as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function pad_left(s: string, w: i32): string {
@@ -479,7 +479,7 @@ function indent(from: i32, to: i32, size: i32): string {
       f += 1;
     }
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function digits_u64(n: u64): i32 {
@@ -710,7 +710,7 @@ function unescape(s: string, start: i32, end: i32): string {
       i += 1;
     }
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function hex_value(c: i32): i32 {
@@ -1148,7 +1148,7 @@ function qmark(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function quoted_name(c: Cfg, name: string): string {
@@ -1180,7 +1180,7 @@ function newline_qmark(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function quoted_header(c: Cfg, name: string): string {
@@ -1335,7 +1335,7 @@ function uri_encode(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function hex_digit_byte(v: i32): u8 {

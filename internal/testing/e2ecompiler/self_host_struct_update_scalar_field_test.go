@@ -16,7 +16,7 @@ var selfHostStructUpdateScalarFieldCases = []struct {
 		"function absorb(own h: St, bs: [u8]): St {\n    let n: i32 = bs.len();\n    return St { ...h, buf_len: n, total: h.total + (n as u64) };\n}\n" +
 		"function (h: St) update(chunk: string): St { h = absorb(h, chunk.as_bytes()); return h; }\n" +
 		"function main(): i32 {\n    let b: u8[] = __alloc_u8(1000);\n    let i: i32 = 0;\n    while (i < 1000) { b = b.with(i, ((i * 7) & 255) as u8); i = i + 1; }\n" +
-		"    let chunk: string = string_from_bytes_unchecked(b);\n    let h: St = St { a: 1, buf: __alloc_u8(64), buf_len: 0, total: 0 as u64 };\n" +
+		"    let chunk: string = unsafe { string_from_bytes_unchecked(b) };\n    let h: St = St { a: 1, buf: __alloc_u8(64), buf_len: 0, total: 0 as u64 };\n" +
 		"    let k: i32 = 0;\n    while (k < 100) { h = h.update(chunk); k = k + 1; }\n" +
 		"    return ((h.total / (1000 as u64)) as i32) + h.buf_len / 100 + __rc_underflow_count() * 100;\n}"},
 	{"own-rebind-field-move-u64", "struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }\n" +
@@ -25,7 +25,7 @@ var selfHostStructUpdateScalarFieldCases = []struct {
 		"    h = St { ...h, buf: cp(h.buf, bl, bs, 0, take), buf_len: (bl + take) % 64, total: h.total + (n as u64) };\n    return h;\n}\n" +
 		"function (h: St) update(chunk: string): St { h = absorb(h, chunk.as_bytes()); return h; }\n" +
 		"function main(): i32 {\n    let b: u8[] = __alloc_u8(1000);\n    let i: i32 = 0;\n    while (i < 1000) { b = b.with(i, ((i * 7) & 255) as u8); i = i + 1; }\n" +
-		"    let chunk: string = string_from_bytes_unchecked(b);\n    let h: St = St { a: 1, buf: __alloc_u8(64), buf_len: 0, total: 0 as u64 };\n" +
+		"    let chunk: string = unsafe { string_from_bytes_unchecked(b) };\n    let h: St = St { a: 1, buf: __alloc_u8(64), buf_len: 0, total: 0 as u64 };\n" +
 		"    let k: i32 = 0;\n    while (k < 100) { h = h.update(chunk); k = k + 1; }\n" +
 		"    return ((h.total / (1000 as u64)) as i32) - 90 + (h.buf[3] as i32) % 7 + h.buf_len / 8 + __rc_underflow_count() * 100;\n}"},
 }

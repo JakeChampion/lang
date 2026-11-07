@@ -232,7 +232,9 @@ function chunk_anchor(name: string): string {
     }
     i += 1;
   }
-  return "chunk-" + string_from_bytes_unchecked(buf);
+  unsafe {
+    return "chunk-" + string_from_bytes_unchecked(buf);
+  }
 }
 
 function is_alphanumeric(c: u8): boolean {

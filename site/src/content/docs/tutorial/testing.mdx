@@ -199,9 +199,10 @@ text converts at its own edge.
 import "std/test";
 import "std/fuzz";
 import "std/string";
+import "std/utf8";
 
 function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
-    let s: string = string_from_bytes_unchecked(input);
+    let Ok(s) = utf8.from_bytes(input) else { return test.pass(); };
     if (s.to_upper().to_upper() == s.to_upper()) { return test.pass(); }
     return test.fail("to_upper is not idempotent");
 }

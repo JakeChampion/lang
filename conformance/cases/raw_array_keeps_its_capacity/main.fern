@@ -1,0 +1,42 @@
+// An array from __alloc_u8 keeps the capacity it was given through append,
+// with, truncate, concat and __bytes_into, so a later __arr_set_len can grow
+// it into that room. Each engine reports the same lengths.
+import "std/array";
+
+function room(n: i32): u8[] {
+  unsafe {
+    let out = __alloc_u8(n);
+    __arr_set_len(out, 0);
+    return out;
+  }
+}
+
+function grow(own out: u8[], n: i32): u8[] {
+  unsafe {
+    __arr_set_len(out, out.len() + n);
+    return out;
+  }
+}
+
+function copied(own out: u8[], from: u8[]): u8[] {
+  unsafe {
+    let at = out.len();
+    __arr_set_len(out, at + from.len());
+    return __bytes_into(out, at, from, 0, from.len());
+  }
+}
+
+function main(): i32 {
+  let a = room(64).append(1 as u8);
+  print(grow(a, 8).len());
+  let b = room(64).append(1 as u8).append(2 as u8).with(0, 9 as u8);
+  print(grow(b, 8).len());
+  let c = room(64).append(1 as u8).append(2 as u8).truncate(1);
+  print(grow(c, 8).len());
+  let d = room(64).concat([1 as u8, 2 as u8, 3 as u8]);
+  print(grow(d, 8).len());
+  let e = copied(room(64), [4 as u8, 5 as u8]);
+  print(e[1]);
+  print(grow(e, 8).len());
+  return 0;
+}

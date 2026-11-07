@@ -1519,7 +1519,9 @@ function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
       out = out.append(db[j]);
       j += 1;
     }
-    dig = string_from_bytes_unchecked(out);
+    unsafe {
+      dig = string_from_bytes_unchecked(out);
+    }
   }
 
   return Ok(DecimalParts { digits: dig, exponent: k, negative: neg });

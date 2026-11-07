@@ -537,7 +537,9 @@ function __bmp(b: [u8], e: Element): Result[string, DerError] {
     out = __utf8(out, c);
     i += 2;
   }
-  return Ok(string_from_bytes_unchecked(out));
+  unsafe {
+    return Ok(string_from_bytes_unchecked(out));
+  }
 }
 
 function __utf8(own out: u8[], c: i32): u8[] {

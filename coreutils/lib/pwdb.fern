@@ -8,7 +8,7 @@ pub struct Group { gid: i64, name: string }
 function slurp(path: string): string {
   match (read_file_bytes(path)) {
     Ok(bs) => {
-      return string_from_bytes_unchecked(bs);
+      return unsafe { string_from_bytes_unchecked(bs) };
     },
     Err(_) => {
       return "";

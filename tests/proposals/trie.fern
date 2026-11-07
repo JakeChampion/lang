@@ -152,7 +152,7 @@ function collect(t: Trie, at: i32, prefix: string, out_in: string[]): string[] {
 
 function byte_str(b: i32): string {
   let buf: u8[] = [b as u8];
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function keys(t: Trie): string[] {

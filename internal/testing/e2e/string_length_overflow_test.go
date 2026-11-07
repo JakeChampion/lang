@@ -76,7 +76,7 @@ func assertLenOverflowAbort(t *testing.T, backend, out string, code int, wantMsg
 const concatPastCeilingSrc = `function main(): i32 {
 	let n: i32 = 1073741840;
 	let bs: u8[] = __alloc_u8(n);
-	let a: string = string_from_bytes_unchecked(bs);
+	let a: string = unsafe { string_from_bytes_unchecked(bs) };
 	let b: string = a + a;
 	return b.len();
 }`

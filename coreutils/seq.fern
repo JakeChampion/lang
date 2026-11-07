@@ -327,7 +327,7 @@ function literal(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function format_die(f: string, what: string): void {
@@ -363,7 +363,7 @@ function is_float_conv(b: i32): boolean {
 }
 
 function one_byte(b: i32): string {
-  return string_from_bytes_unchecked([b as u8]);
+  return unsafe { string_from_bytes_unchecked([b as u8]) };
 }
 
 function read_number(s: string, i: i32): (i64, i32) {
@@ -388,7 +388,7 @@ function put_bytes(own o: io_buffered.BufWriter, buf: u8[], n: i32): io_buffered
   if (n == 0) {
     return o;
   }
-  return gnu.put(o, slice_unchecked(string_from_bytes_unchecked(buf), 0, n));
+  return gnu.put(o, slice_unchecked(unsafe { string_from_bytes_unchecked(buf) }, 0, n));
 }
 
 function reserve(b: Block, k: i32): Block {
@@ -656,7 +656,7 @@ function emit_fixed(h: usize, mag: u8[], neg: boolean, prec: i32, width: i32): v
   let digits = fixed_digits(mag.len(), prec, w);
   let zeros = digits - mag.len();
   let head = digits - prec;
-  let s = string_from_bytes_unchecked(mag);
+  let s = unsafe { string_from_bytes_unchecked(mag) };
   if (zeros >= head) {
     push_zeros(h, head);
   } else {
@@ -833,7 +833,7 @@ function blocks(own o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: 
     }
     let t = template(prefix, r, step, prec, sep, rec);
     while (true) {
-      w = gnu.put(w, string_from_bytes_unchecked(t));
+      w = gnu.put(w, unsafe { string_from_bytes_unchecked(t) });
       prefix = inc_fixed(prefix);
       let i = p - 1;
       while (i >= 0 && prefix[i] as i32 == 48) {

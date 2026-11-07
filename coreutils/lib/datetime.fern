@@ -627,7 +627,7 @@ function strip_periods(w: string): (string, boolean) {
     }
     i += 1;
   }
-  return (string_from_bytes_unchecked(out), found);
+  return (unsafe { string_from_bytes_unchecked(out) }, found);
 }
 
 function lookup_word(w: string, lt: LocalTable): (Tok, string) {

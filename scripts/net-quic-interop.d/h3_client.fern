@@ -17,6 +17,7 @@ import "std/time";
 import "std/option";
 import "std/i64";
 import "std/string";
+import "std/utf8";
 import "std/rand";
 
 function now(): Instant {
@@ -78,7 +79,7 @@ function request(method: string, path: string, body: u8[]): HttpRequest {
 struct Fetches { todo: HttpRequest[], owed: i32, answered: i32, closing: boolean }
 
 function shown(resp: HttpResponse): string {
-  let out = f"{resp.status} {string_from_bytes_unchecked(resp.body_bytes())} |";
+  let out = f"{resp.status} {utf8.from_bytes_lossy(resp.body_bytes())} |";
   for i in 0..resp.trailers.names.len() {
     out += f" {resp.trailers.names[i]}={resp.trailers.values[i]}";
   }

@@ -46,7 +46,7 @@ function channels(a: secure.Handshake, b: secure.Handshake): (secure.Channel, se
 function voiced(o: Option[(i64, u8[])]): string {
   match (o) {
     Some((seq, b)) => {
-      return "ok:" + string_from_bytes_unchecked(b) + "@" + seq.to_string();
+      return "ok:" + unsafe { string_from_bytes_unchecked(b) } + "@" + seq.to_string();
     },
     None => {
       return "refused";
@@ -57,7 +57,7 @@ function voiced(o: Option[(i64, u8[])]): string {
 function opened(o: Option[u8[]]): string {
   match (o) {
     Some(b) => {
-      return "ok:" + string_from_bytes_unchecked(b);
+      return "ok:" + unsafe { string_from_bytes_unchecked(b) };
     },
     None => {
       return "refused";

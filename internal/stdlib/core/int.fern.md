@@ -136,7 +136,9 @@ pub(package) function int_to_string(n: i32): string {
   if (neg) {
     buf = buf.with(0, 45 as u8);
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub(package) function __int_to_string_u64(mag: i64, neg: i32): string {
@@ -176,7 +178,9 @@ pub(package) function __int_to_string_u64(mag: i64, neg: i32): string {
   if (neg != 0) {
     buf = buf.with(0, 45 as u8);
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub(package) function __radix_digit(c: i32): i32 {
@@ -241,7 +245,9 @@ pub(package) function _format_integer(magnitude: u64, negative: boolean, base: i
     buf = buf.with(i + sign_bytes, digits[count - 1 - i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub(package) function _group_integer(text: string, separator: string): string {
@@ -279,7 +285,9 @@ pub(package) function _group_integer(text: string, separator: string): string {
     pos += 1;
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub(package) function _magnitude(n: i64): u64 {
@@ -313,6 +321,8 @@ pub(package) function _pad_integer(text: string, width: i32): string {
     i += 1;
     j += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```

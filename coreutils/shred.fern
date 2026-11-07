@@ -121,7 +121,7 @@ function pattern_name(p: i32): string {
     bs = bs.append(hex_digit(p / pow16(shift) % 16));
     shift -= 4;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function pow16(shift: i32): i32 {
@@ -439,7 +439,7 @@ function index_name(idx: i32[], chars: string): string {
     cand = cand.append(chars[idx[k]]);
     k += 1;
   }
-  return string_from_bytes_unchecked(cand);
+  return unsafe { string_from_bytes_unchecked(cand) };
 }
 
 function step_index(idx: i32[], base: i32): i32[] {

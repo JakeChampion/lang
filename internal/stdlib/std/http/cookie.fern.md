@@ -318,7 +318,9 @@ function __is_tchar(b: i32): boolean {
   if (b < 33 || b > 126) {
     return false;
   }
-  return !"\"(),/:;<=>?@[\\]{}".contains(string_from_bytes_unchecked([b as u8]));
+  unsafe {
+    return !"\"(),/:;<=>?@[\\]{}".contains(string_from_bytes_unchecked([b as u8]));
+  }
 }
 
 function __is_cookie_value(v: string): boolean {
@@ -1058,7 +1060,9 @@ function __request_path(u: Url): string {
 }
 
 function __sep(): string {
-  return string_from_bytes_unchecked([1 as u8]);
+  unsafe {
+    return string_from_bytes_unchecked([1 as u8]);
+  }
 }
 
 function __joined(all: Cookie[]): string {
@@ -1113,9 +1117,13 @@ function __i64_string(n: i64): string {
 
 function __i64_digits(n: i64): string {
   if (n < 10 as i64) {
-    return string_from_bytes_unchecked([(48 as i64 + n) as u8]);
+    unsafe {
+      return string_from_bytes_unchecked([(48 as i64 + n) as u8]);
+    }
   }
-  return __i64_digits(n / (10 as i64)) + string_from_bytes_unchecked([(48 as i64 + n - n / (10 as i64) * (10 as i64)) as u8]);
+  unsafe {
+    return __i64_digits(n / (10 as i64)) + string_from_bytes_unchecked([(48 as i64 + n - n / (10 as i64) * (10 as i64)) as u8]);
+  }
 }
 
 function __i64_of(s: string): i64 {

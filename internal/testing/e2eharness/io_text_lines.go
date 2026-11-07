@@ -129,6 +129,7 @@ func checkIOTextLines(t *testing.T, command func() *exec.Cmd, census bool, chunk
 	}
 	for i, input := range valid {
 		t.Run(fmt.Sprintf("valid/%d", i), func(t *testing.T) {
+			t.Parallel()
 			checkIOTextLineResult(t, command(), input, false, census, mode, term)
 		})
 	}
@@ -136,6 +137,7 @@ func checkIOTextLines(t *testing.T, command func() *exec.Cmd, census bool, chunk
 		for _, prefix := range []string{"", "ok\n𐐀"} {
 			input := append([]byte(prefix), bad...)
 			t.Run(fmt.Sprintf("invalid/%d/%d", i, len(prefix)), func(t *testing.T) {
+				t.Parallel()
 				checkIOTextLineResult(t, command(), input, true, census, mode, term)
 			})
 		}

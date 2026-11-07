@@ -233,7 +233,7 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
   }
   let end = from + n as i32;
   if (!coded) {
-    return Ok((string_from_bytes_unchecked(__bytes_range(buf, from, end)), end));
+    return Ok((unsafe { string_from_bytes_unchecked(__bytes_range(buf, from, end)) }, end));
   }
   let cap = 2147483647;
   if (room < cap as i64) {
@@ -241,7 +241,7 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
   }
   match (huffman.decode(buf[from:end], cap)) {
     Ok(bytes) => {
-      return Ok((string_from_bytes_unchecked(bytes), end));
+      return Ok((unsafe { string_from_bytes_unchecked(bytes) }, end));
     },
     Err(huffman.ExceedsRoom) => {
       return Err(TOO_LONG);

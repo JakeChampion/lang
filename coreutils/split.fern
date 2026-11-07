@@ -373,7 +373,7 @@ function suffix_name(x: Suffix): string {
     bs = bs.append(x.alpha[x.idx[i]]);
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function suffix_next(x: Suffix): Suffix {
@@ -600,7 +600,7 @@ function temp_name(root: string): string {
     bs = bs.append(letters[v % letters.len()]);
     i += 1;
   }
-  return root + "/cutmp" + string_from_bytes_unchecked(bs);
+  return root + "/cutmp" + unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function spool(s: Src, first: u8[]): (Src, i64) {

@@ -331,7 +331,7 @@ function put_field(bs: u8[], s: string, width: i32): u8[] {
 }
 
 function write_utmp_fixture(): boolean {
-  match (write_file(utmp_fixture_path(), string_from_bytes_unchecked(utmp_fixture_bytes()))) {
+  match (write_file(utmp_fixture_path(), unsafe { string_from_bytes_unchecked(utmp_fixture_bytes()) })) {
     Ok(_) => {
       return true;
     },
@@ -384,7 +384,7 @@ function test_utmp_partial_and_missing(): test.TestOutcome {
     short = short.append(bs[i]);
     i += 1;
   }
-  match (write_file(utmp_fixture_path(), string_from_bytes_unchecked(short))) {
+  match (write_file(utmp_fixture_path(), unsafe { string_from_bytes_unchecked(short) })) {
     Ok(_) => {},
     Err(_) => {
       return test.fail("the short fixture could not be written");

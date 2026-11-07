@@ -74,7 +74,7 @@ function fmt_limit(): i64 {
 function byte_str(c: i32): string {
   let b: u8[] = [];
   b = b.append(c as u8);
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function is_conv(c: i32): boolean {
@@ -108,7 +108,7 @@ function bad_conv(c: i32): void {
   d = d.append((48 + c / 64) as u8);
   d = d.append((48 + c / 8 % 8) as u8);
   d = d.append((48 + c % 8) as u8);
-  gnu.error("invalid conversion specifier in suffix: \\" + string_from_bytes_unchecked(d));
+  gnu.error("invalid conversion specifier in suffix: \\" + unsafe { string_from_bytes_unchecked(d) });
   exit(1);
 }
 
@@ -233,7 +233,7 @@ function pad(b: i32, n: i32): string {
     out = out.append(b as u8);
     k += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function fmt_apply(f: Fmt, n: i32): string {

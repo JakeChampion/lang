@@ -1232,7 +1232,7 @@ function test_header_value_must_be_utf8(): test.TestOutcome {
   if (header_of(accented, "x-name") != "José") {
     return test.fail("UTF-8 value: " + header_of(accented, "x-name"));
   }
-  let broken = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + string_from_bytes_unchecked([74 as u8, 255 as u8]) + "\r\n\r\n";
+  let broken = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + unsafe { string_from_bytes_unchecked([74 as u8, 255 as u8]) } + "\r\n\r\n";
   if (!refused(broken)) {
     return test.fail("an ill-formed value was accepted");
   }

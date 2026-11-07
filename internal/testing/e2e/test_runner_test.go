@@ -346,7 +346,7 @@ import "std/test";
 import "std/string";
 
 function detect_bad(input: u8[]): test.TestOutcome {
-    if (string_from_bytes_unchecked(input).contains("BAD")) { return test.fail("forbidden pattern"); }
+    if (unsafe { string_from_bytes_unchecked(input) }.contains("BAD")) { return test.fail("forbidden pattern"); }
     return test.pass();
 }
 
@@ -442,7 +442,7 @@ import "std/test";
 import "std/string";
 
 function detect_bad(input: u8[]): test.TestOutcome {
-    if (string_from_bytes_unchecked(input).contains("BAD")) { return test.fail("forbidden"); }
+    if (unsafe { string_from_bytes_unchecked(input) }.contains("BAD")) { return test.fail("forbidden"); }
     return test.pass();
 }
 

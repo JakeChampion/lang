@@ -32,7 +32,7 @@ function lcg_next(state: i32): i32 {
 
 function alphabet(): string[] {
     return ["a", "Z", "0", " ", "%", "/", "?", "&", "=", "+", "~", "-", "_", ".",
-            string_from_bytes_unchecked([0 as u8]), "é", "ß", "中", "€", "𝄞"];
+            unsafe { string_from_bytes_unchecked([0 as u8]) }, "é", "ß", "中", "€", "𝄞"];
 }
 
 function gen_bytes(seed: i32, n: i32): u8[] {
@@ -98,7 +98,7 @@ function main(): i32 {
         state = lcg_next(state);
         let n: i32 = state % 48;
         let raw: u8[] = gen_bytes(state, n);
-        let s: string = string_from_bytes_unchecked(raw);
+        let s: string = unsafe { string_from_bytes_unchecked(raw) };
 
         if (!same_bytes(url.decode_bytes(url.encode(s)), raw)) {
             print("url byte roundtrip FAILED at byte trial " + trial.to_string());

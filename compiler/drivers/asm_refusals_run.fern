@@ -13,7 +13,9 @@ function main(): i32 {
   let src = "";
   match (read_file_bytes(av[2])) {
     Ok(b) => {
-      src = string_from_bytes_unchecked(b);
+      unsafe {
+        src = string_from_bytes_unchecked(b);
+      }
     },
     Err(_) => {
       eprint("asm_refusals_run: cannot read " + av[2]);

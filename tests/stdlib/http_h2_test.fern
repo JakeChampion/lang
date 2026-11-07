@@ -94,7 +94,7 @@ function fields_text(fs: hpack.Field[]): string {
 function describe(c: Client, f: frame.Frame): Shown {
   match (f) {
     frame.Data(d) => {
-      return Shown { client: c, text: "DATA " + d.stream.to_string() + flag(d.end_stream, "END_STREAM") + " " + string_from_bytes_unchecked(d.data) };
+      return Shown { client: c, text: "DATA " + d.stream.to_string() + flag(d.end_stream, "END_STREAM") + " " + unsafe { string_from_bytes_unchecked(d.data) } };
     },
     frame.Headers(h) => {
       match (c.dec.decode(h.block)) {
@@ -123,7 +123,7 @@ function describe(c: Client, f: frame.Frame): Shown {
       return Shown { client: c, text: "PING" + flag(ack, "ACK") + " " + hex.encode(bytes) };
     },
     frame.GoAway(g) => {
-      return Shown { client: c, text: "GOAWAY last " + g.last_stream.to_string() + " " + g.code.to_string() + " " + string_from_bytes_unchecked(g.debug) };
+      return Shown { client: c, text: "GOAWAY last " + g.last_stream.to_string() + " " + g.code.to_string() + " " + unsafe { string_from_bytes_unchecked(g.debug) } };
     },
     frame.WindowUpdate(stream, increment) => {
       return Shown { client: c, text: "WINDOW_UPDATE " + stream.to_string() + " +" + increment.to_string() };
@@ -140,13 +140,13 @@ function events_text(events: h2.Event[]): string {
   for e in events {
     match (e) {
       h2.Request(stream, req) => {
-        out = out + "request " + stream.to_string() + " " + req.method + " " + req.path + " host=" + header_or(req.headers, "host") + " body=" + string_from_bytes_unchecked(req.body_bytes()) + " trailer=" + header_or(req.trailers, "checksum") + "\n";
+        out = out + "request " + stream.to_string() + " " + req.method + " " + req.path + " host=" + header_or(req.headers, "host") + " body=" + unsafe { string_from_bytes_unchecked(req.body_bytes()) } + " trailer=" + header_or(req.trailers, "checksum") + "\n";
       },
       h2.Streamed(stream, req) => {
         out = out + "streamed " + stream.to_string() + " " + req.method + " " + req.path + " host=" + header_or(req.headers, "host") + "\n";
       },
       h2.StreamData(stream, bytes) => {
-        out = out + "data " + stream.to_string() + " " + string_from_bytes_unchecked(bytes) + "\n";
+        out = out + "data " + stream.to_string() + " " + unsafe { string_from_bytes_unchecked(bytes) } + "\n";
       },
       h2.StreamEnd(stream, trailers) => {
         out = out + "end " + stream.to_string() + " trailer=" + header_or(trailers, "checksum") + "\n";
@@ -161,7 +161,7 @@ function events_text(events: h2.Event[]): string {
         out = out + "closed " + code.to_string() + " " + reason + "\n";
       },
       h2.Answered(stream, resp) => {
-        out = out + "answered " + stream.to_string() + " " + resp.status.to_string() + " content-type=" + header_or(resp.headers, "content-type") + " body=" + string_from_bytes_unchecked(resp.body_bytes()) + " trailer=" + header_or(resp.trailers, "checksum") + "\n";
+        out = out + "answered " + stream.to_string() + " " + resp.status.to_string() + " content-type=" + header_or(resp.headers, "content-type") + " body=" + unsafe { string_from_bytes_unchecked(resp.body_bytes()) } + " trailer=" + header_or(resp.trailers, "checksum") + "\n";
       }
     }
   }
@@ -298,21 +298,21 @@ function test_flow_control(): test.TestOutcome {
   let (cl2, b3) = request(s.client, 3, get("/big"), true);
   let (cl3, b5) = request(cl2, 5, get("/small"), true);
   let two = rest.conn.read(frame.encode(frame.Settings(false, [frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: 65535 }])).concat(b3).concat(b5));
-  let first = two.conn.respond(3, http.ok(string_from_bytes_unchecked(big)));
+  let first = two.conn.respond(3, http.ok(unsafe { string_from_bytes_unchecked(big) }));
   let second = first.conn.respond(5, http.ok("tail"));
   let freed = second.conn.read(frame.encode(frame.WindowUpdate(0, 10)));
   let freed_more = freed.conn.read(frame.encode(frame.WindowUpdate(0, 100)));
   let s2 = shown(cl3, two.output.concat(first.output).concat(second.output).concat(freed.output).concat(freed_more.output));
   got = got + s2.text + "open " + freed_more.conn.streams_open().to_string();
-  let zeros = string_from_bytes_unchecked(__alloc_u8(16384));
-  return test.assert_eq(got, "SETTINGS ACK\nHEADERS 1 END_HEADERS :status=200 content-length=11\nDATA 1 hell\nDATA 1 o w\nDATA 1 END_STREAM orld\nopen 0\nSETTINGS ACK\nHEADERS 3 END_HEADERS :status=200 content-length=65535\nDATA 3 " + zeros + "\nDATA 3 " + zeros + "\nDATA 3 " + zeros + "\nDATA 3 " + string_from_bytes_unchecked(__alloc_u8(16372)) + "\nHEADERS 5 END_HEADERS :status=200 content-length=4\nDATA 3 " + string_from_bytes_unchecked(__alloc_u8(10)) + "\nDATA 3 END_STREAM " + string_from_bytes_unchecked(__alloc_u8(1)) + "\nDATA 5 END_STREAM tail\nopen 0");
+  let zeros = unsafe { string_from_bytes_unchecked(__alloc_u8(16384)) };
+  return test.assert_eq(got, "SETTINGS ACK\nHEADERS 1 END_HEADERS :status=200 content-length=11\nDATA 1 hell\nDATA 1 o w\nDATA 1 END_STREAM orld\nopen 0\nSETTINGS ACK\nHEADERS 3 END_HEADERS :status=200 content-length=65535\nDATA 3 " + zeros + "\nDATA 3 " + zeros + "\nDATA 3 " + zeros + "\nDATA 3 " + unsafe { string_from_bytes_unchecked(__alloc_u8(16372)) } + "\nHEADERS 5 END_HEADERS :status=200 content-length=4\nDATA 3 " + unsafe { string_from_bytes_unchecked(__alloc_u8(10)) } + "\nDATA 3 END_STREAM " + unsafe { string_from_bytes_unchecked(__alloc_u8(1)) } + "\nDATA 5 END_STREAM tail\nopen 0");
 }
 
 function test_continuation_out(): test.TestOutcome {
   let o = opened(h2.config());
   let (cl, bytes) = request(o.client, 1, get("/"), true);
   let step = o.conn.read(bytes);
-  let long = string_from_bytes_unchecked(__alloc_u8(20000).with(0, 97 as u8));
+  let long = unsafe { string_from_bytes_unchecked(__alloc_u8(20000).with(0, 97 as u8)) };
   let answered = step.conn.respond(1, http.ok("").with_header("x-long", long));
   let count = 0;
   let at = 0;
@@ -441,7 +441,7 @@ function test_malformed(): test.TestOutcome {
 
 function test_field_rules(): test.TestOutcome {
   let names: string[] = ["accept", "x-trace-id", "Accept", "x trace", "", "a:b", "te"];
-  let values: string[] = ["a\tb", "", "gzip, deflate", "a\nb", string_from_bytes_unchecked([97u8, 127u8]), "a b"];
+  let values: string[] = ["a\tb", "", "gzip, deflate", "a\nb", unsafe { string_from_bytes_unchecked([97u8, 127u8]) }, "a b"];
   let got = "";
   for n in names {
     got += __bool(http.field_name_lower_ok(n)).to_string();

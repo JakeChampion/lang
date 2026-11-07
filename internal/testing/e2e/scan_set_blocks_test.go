@@ -45,7 +45,7 @@ function main(): i32 {
     let pos: i32 = 0;
     while (pos < 72) {
       let t: u8[] = bs.with(pos, b as u8);
-      let s: string = string_from_bytes_unchecked(t);
+      let s: string = unsafe { string_from_bytes_unchecked(t) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, S) * (b + 1);
@@ -265,7 +265,7 @@ function probe_range(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, RANGE) * (b + 1);
@@ -293,7 +293,7 @@ function probe_not_range(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, NOT_RANGE) * (b + 1);
@@ -321,7 +321,7 @@ function probe_list(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, LIST) * (b + 1);
@@ -349,7 +349,7 @@ function probe_not_list(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, NOT_LIST) * (b + 1);
@@ -377,7 +377,7 @@ function probe_list_high(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, LIST_HIGH) * (b + 1);
@@ -405,7 +405,7 @@ function probe_range_plus(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, RANGE_PLUS) * (b + 1);
@@ -433,7 +433,7 @@ function probe_not_range_plus(plain: u8): i32 {
     }
     let pos: i32 = 0;
     while (pos < 72) {
-      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let s: string = unsafe { string_from_bytes_unchecked(bs.with(pos, b as u8)) };
       let from: i32 = 0;
       while (from < 72) {
         total = total + __scan_set(s, from, NOT_RANGE_PLUS) * (b + 1);

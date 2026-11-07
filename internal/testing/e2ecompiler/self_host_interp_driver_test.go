@@ -29,7 +29,7 @@ var interpProgs = []struct {
 	{"raw-filesystem-byte-results", `function main(): i32 {
   let Ok(root) = temp_dir("fern-byte-results") else { return 1; };
   defer { remove_dir_all(root); }
-  let raw = string_from_bytes_unchecked([255u8, 254u8]);
+  let raw = unsafe { string_from_bytes_unchecked([255u8, 254u8]) };
   let Ok(_) = write_file(root + "/" + raw, "x") else { return 2; };
   match (read_dir(root)) { Err(InvalidUtf8(_)) => {}, _ => { return 3; } }
   match (read_dir_bytes(root)) {

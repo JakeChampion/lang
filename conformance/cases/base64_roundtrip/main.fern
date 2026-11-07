@@ -5,7 +5,7 @@ import "std/string";
 
 function main(): i32 {
   let s: string = "Fern!";
-  if (string_from_bytes_unchecked(__codec_bytes(base64.decode(base64.encode(s.bytes())))) == s) {
+  if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode(base64.encode(s.bytes())))) } == s) {
     return 42;
   }
   return 1;

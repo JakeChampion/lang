@@ -83,19 +83,19 @@ function main(): i32 {
 }
 function main(): i32 {
     if (!widths("", []) || !widths("aé界😀", [1, 2, 3, 4])) { return 1; }
-    if (!widths(string_from_bytes_unchecked([0 as u8, 128 as u8, 192 as u8, 193 as u8, 245 as u8, 255 as u8]), [1, 1, 1, 1, 1, 1])) { return 2; }
-    if (!widths(string_from_bytes_unchecked([194 as u8, 128 as u8, 223 as u8, 191 as u8]), [2, 2])) { return 3; }
-    if (!widths(string_from_bytes_unchecked([224 as u8, 160 as u8, 128 as u8, 237 as u8, 159 as u8, 191 as u8]), [3, 3])) { return 4; }
-    if (!widths(string_from_bytes_unchecked([240 as u8, 144 as u8, 128 as u8, 128 as u8, 244 as u8, 143 as u8, 191 as u8, 191 as u8]), [4, 4])) { return 5; }
-    if (!widths(string_from_bytes_unchecked([224 as u8, 159 as u8, 128 as u8]), [1, 1, 1])) { return 6; }
-    if (!widths(string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]), [1, 1, 1])) { return 7; }
-    if (!widths(string_from_bytes_unchecked([240 as u8, 143 as u8, 128 as u8, 128 as u8]), [1, 1, 1, 1])) { return 8; }
-    if (!widths(string_from_bytes_unchecked([244 as u8, 144 as u8, 128 as u8, 128 as u8]), [1, 1, 1, 1])) { return 9; }
-    if (!widths(string_from_bytes_unchecked([194 as u8]), [1])) { return 10; }
-    if (!widths(string_from_bytes_unchecked([225 as u8, 128 as u8]), [2])) { return 11; }
-    if (!widths(string_from_bytes_unchecked([241 as u8, 128 as u8, 128 as u8]), [3])) { return 12; }
-    if (!widths(string_from_bytes_unchecked([225 as u8, 128 as u8, 32 as u8]), [2, 1])) { return 13; }
-    if (!widths(string_from_bytes_unchecked([241 as u8, 128 as u8, 32 as u8]), [2, 1])) { return 14; }
+    if (!widths(unsafe { string_from_bytes_unchecked([0 as u8, 128 as u8, 192 as u8, 193 as u8, 245 as u8, 255 as u8]) }, [1, 1, 1, 1, 1, 1])) { return 2; }
+    if (!widths(unsafe { string_from_bytes_unchecked([194 as u8, 128 as u8, 223 as u8, 191 as u8]) }, [2, 2])) { return 3; }
+    if (!widths(unsafe { string_from_bytes_unchecked([224 as u8, 160 as u8, 128 as u8, 237 as u8, 159 as u8, 191 as u8]) }, [3, 3])) { return 4; }
+    if (!widths(unsafe { string_from_bytes_unchecked([240 as u8, 144 as u8, 128 as u8, 128 as u8, 244 as u8, 143 as u8, 191 as u8, 191 as u8]) }, [4, 4])) { return 5; }
+    if (!widths(unsafe { string_from_bytes_unchecked([224 as u8, 159 as u8, 128 as u8]) }, [1, 1, 1])) { return 6; }
+    if (!widths(unsafe { string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]) }, [1, 1, 1])) { return 7; }
+    if (!widths(unsafe { string_from_bytes_unchecked([240 as u8, 143 as u8, 128 as u8, 128 as u8]) }, [1, 1, 1, 1])) { return 8; }
+    if (!widths(unsafe { string_from_bytes_unchecked([244 as u8, 144 as u8, 128 as u8, 128 as u8]) }, [1, 1, 1, 1])) { return 9; }
+    if (!widths(unsafe { string_from_bytes_unchecked([194 as u8]) }, [1])) { return 10; }
+    if (!widths(unsafe { string_from_bytes_unchecked([225 as u8, 128 as u8]) }, [2])) { return 11; }
+    if (!widths(unsafe { string_from_bytes_unchecked([241 as u8, 128 as u8, 128 as u8]) }, [3])) { return 12; }
+    if (!widths(unsafe { string_from_bytes_unchecked([225 as u8, 128 as u8, 32 as u8]) }, [2, 1])) { return 13; }
+    if (!widths(unsafe { string_from_bytes_unchecked([241 as u8, 128 as u8, 32 as u8]) }, [2, 1])) { return 14; }
     return 0;
 }`,
 			want: 0,
@@ -435,9 +435,9 @@ func wasmRuntimeStringSetScansProgram() string {
 	src := e2eharness.ByteSetScansSource(false)
 	src = strings.Replace(src, "fip function scan(", "function scan(", 1)
 	src = strings.Replace(src, "fip function runs(", "function runs(", 1)
-	src = strings.Replace(src, "return __scan_set_bytes(bytes, from, set);", "return __scan_set(string_from_bytes_unchecked(bytes), from, set);", 1)
-	src = strings.Replace(src, "return __count_runs_bytes(bytes, inside, set);", "return __count_runs(string_from_bytes_unchecked(bytes), inside, set);", 1)
-	probe := `let text = string_from_bytes_unchecked(all);
+	src = strings.Replace(src, "return __scan_set_bytes(bytes, from, set);", "return __scan_set(unsafe { string_from_bytes_unchecked(bytes) }, from, set);", 1)
+	src = strings.Replace(src, "return __count_runs_bytes(bytes, inside, set);", "return __count_runs(unsafe { string_from_bytes_unchecked(bytes) }, inside, set);", 1)
+	probe := `let text = unsafe { string_from_bytes_unchecked(all) };
     let before = __heap_alloc_count();
     let repeat = 0;
     while (repeat < 1000) {
@@ -509,9 +509,9 @@ return 0;
 }`)
 	program := src.String()
 	if !array {
-		program = strings.Replace(program, "__sum_bytes_array(a)", "__sum_bytes(string_from_bytes_unchecked(a))", 1)
-		program = strings.Replace(program, "__bsd_sum_bytes(a, seed)", "__bsd_sum(string_from_bytes_unchecked(a), seed)", 1)
-		program = strings.Replace(program, "let before =", "let text = string_from_bytes_unchecked(all); let before =", 1)
+		program = strings.Replace(program, "__sum_bytes_array(a)", "__sum_bytes(unsafe { string_from_bytes_unchecked(a) })", 1)
+		program = strings.Replace(program, "__bsd_sum_bytes(a, seed)", "__bsd_sum(unsafe { string_from_bytes_unchecked(a) }, seed)", 1)
+		program = strings.Replace(program, "let before =", "let text = unsafe { string_from_bytes_unchecked(all) }; let before =", 1)
 		program = strings.Replace(program, "sum(all) != 32640 || bsd(all, 65536) != bsd(all, 0)", "__sum_bytes(text) != 32640 || __bsd_sum(text, 65536) != __bsd_sum(text, 0)", 1)
 		program = strings.Replace(program, "let before =", "let view: str = slice_unchecked(text, 1, 255); if (__sum_bytes(view) != __sum_bytes(text) - 183) { return 8; } let before =", 1)
 	}
