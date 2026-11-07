@@ -1,0 +1,144 @@
+import "core/cmp";
+import "core/error";
+import "std/binary";
+import "std/pvh";
+import "std/test";
+
+// A start info of `version` with each field set to a distinct value.
+function start_info(version: i64): u8[] {
+  let b = binary.append_u32_le([], 0x336ec578 as u32);
+  b = binary.append_u32_le(b, version as u32);
+  b = binary.append_u32_le(b, 7 as u32);
+  b = binary.append_u32_le(b, 2 as u32);
+  b = binary.append_u64_le(b, 0x1000 as u64);
+  b = binary.append_u64_le(b, 0x2000 as u64);
+  b = binary.append_u64_le(b, 0xf0000 as u64);
+  if (version >= 1) {
+    b = binary.append_u64_le(b, 0x123456789 as u64);
+    b = binary.append_u32_le(b, 3 as u32);
+    b = binary.append_u32_le(b, 0 as u32);
+  }
+  return b;
+}
+
+function entry(own b: u8[], address: i64, size: i64, kind: i64): u8[] {
+  b = binary.append_u64_le(b, address as u64);
+  b = binary.append_u64_le(b, size as u64);
+  b = binary.append_u32_le(b, kind as u32);
+  return binary.append_u32_le(b, 0 as u32);
+}
+
+function test_version1(): test.TestOutcome {
+  let Ok(info) = pvh.parse(start_info(1)) else {
+    return test.fail("parse refused a version 1 start info");
+  };
+  let fields = info.version == 1 as u32 && info.flags == 7 as u32 && info.modules == 2 as u32
+    && info.modlist_address == 0x1000 as u64 && info.cmdline_address == 0x2000 as u64
+    && info.rsdp_address == 0xf0000 as u64 && info.memmap_address == 0x123456789 as u64
+    && info.memmap_entries == 3 as u32;
+  return test.assert_eq(fields, true);
+}
+
+function test_version0_has_no_memmap(): test.TestOutcome {
+  let Ok(info) = pvh.parse(start_info(0)) else {
+    return test.fail("parse refused a version 0 start info");
+  };
+  return test.assert_eq(info.cmdline_address == 0x2000 as u64 && info.memmap_address == 0 as u64 && info.memmap_entries == 0 as u32, true);
+}
+
+function test_later_version_reads_version1_fields(): test.TestOutcome {
+  let b = start_info(2);
+  b = binary.append_u64_le(b, 99 as u64);
+  let Ok(info) = pvh.parse(b) else {
+    return test.fail("parse refused a version 2 start info");
+  };
+  return test.assert_eq(info.version == 2 as u32 && info.memmap_entries == 3 as u32, true);
+}
+
+function refusal(b: u8[]): string {
+  match (pvh.parse(b)) {
+    Ok(_) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_refusals(): test.TestOutcome {
+  let bad = start_info(1).with(0, 0 as u8);
+  let short0 = start_info(0);
+  let r = refusal(bad) + "; " + refusal(short0.take(36)) + "; " + refusal(start_info(1).take(51));
+  return test.assert_eq(r, "PVH start info: the magic is not 0x336ec578 at byte 0; PVH start info: the bytes end inside a field at byte 32; PVH start info: the bytes end inside a field at byte 48");
+}
+
+function test_memmap(): test.TestOutcome {
+  let b = entry(entry(entry([], 0, 0x9fc00, 1), 0x9fc00, 0x400, 2), 0x100000, 0x7f00000, 1);
+  let Ok(regions) = pvh.parse_memmap(b, 3 as u32) else {
+    return test.fail("parse_memmap refused three entries");
+  };
+  let ok = regions.len() == 3 && regions[0].is_ram() && !regions[1].is_ram() && regions[1].kind == 2 as u32
+    && regions[2].address == 0x100000 as u64 && regions[2].size == 0x7f00000 as u64;
+  return test.assert_eq(ok, true);
+}
+
+function test_memmap_refuses_short_bytes(): test.TestOutcome {
+  let b = entry([], 0, 0x9fc00, 1);
+  match (pvh.parse_memmap(b, 2 as u32)) {
+    Ok(_) => {
+      return test.fail("parse_memmap read past the bytes");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "PVH start info: the bytes end before the last entry at byte 24");
+    }
+  }
+}
+
+function test_memmap_refuses_a_huge_count(): test.TestOutcome {
+  return test.assert_eq(pvh.parse_memmap([], 4294967295 as u32).is_err(), true);
+}
+
+function line(b: u8[]): string {
+  match (pvh.command_line(b)) {
+    Ok(s) => {
+      return s;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_command_line(): test.TestOutcome {
+  let text = [102 as u8, 101 as u8, 114 as u8, 110 as u8, 0 as u8, 120 as u8];
+  let r = line(text) + "; " + line([0 as u8]) + "; " + line([102 as u8, 101 as u8]) + "; " + line([255 as u8, 0 as u8]);
+  return test.assert_eq(r, "fern; ; PVH start info: the command line has no NUL at byte 2; PVH start info: the command line is not UTF-8 at byte 0");
+}
+
+function display[T: cmp.Display](value: T): string {
+  return value.to_string();
+}
+
+function error_message(value: dyn error.Error): string {
+  return value.message();
+}
+
+function test_error_traits(): test.TestOutcome {
+  let problem = pvh.PvhError { offset: 4, reason: "bad" };
+  return test.assert_eq(display(problem) + "; " + error_message(problem), "PVH start info: bad at byte 4; PVH start info: bad at byte 4");
+}
+
+function main(): i32 {
+  let r = test.new("std/pvh");
+  r = r.it("parse reads each field of version 1", test_version1);
+  r = r.it("version 0 has no memory map", test_version0_has_no_memmap);
+  r = r.it("a later version reads the version 1 fields", test_later_version_reads_version1_fields);
+  r = r.it("parse refuses a bad magic and short bytes", test_refusals);
+  r = r.it("parse_memmap reads each entry", test_memmap);
+  r = r.it("parse_memmap refuses bytes that end early", test_memmap_refuses_short_bytes);
+  r = r.it("parse_memmap refuses a count past the bytes", test_memmap_refuses_a_huge_count);
+  r = r.it("command_line reads the text before the NUL", test_command_line);
+  r = r.it("errors support Display and Error", test_error_traits);
+  return r.finish();
+}
