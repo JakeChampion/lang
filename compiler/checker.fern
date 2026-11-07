@@ -2382,8 +2382,11 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
 }
 
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
+  // Read s before the bind, so that the bind is the last use of s and grows
+  // its arrays in place.
+  let unsettled = is_integer(t) && unsettled_tree(v.init, s.lit_locals);
   let b = s.bind(v.name, t);
-  if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
+  if (unsettled) {
     return Scope { ...b, lit_locals: b.lit_locals.append(v.name) };
   }
   return b;
