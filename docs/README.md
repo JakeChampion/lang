@@ -138,6 +138,7 @@ which ones.
 | `IR-CLOSURES-PLAN.md` | [record] | Lowering closures and lambdas through the self-host IR; shipped, and the AST fallback is deleted. |
 | `IR-SELFCOMPILE-OOM-FINDINGS.md` | [record] | The 2026-06 investigation into the self-compile running out of memory; fixes tracked in #4394. |
 | `ITERATOR-BOUNDED-IR-PLAN.md` | [record] | Iterator-bounded generic reducers (core/iter sum, count, to_array, product) on the self-host IR path; done. |
+| `PARSER-PERFORMANCE.md` | [record] | Measurements from 2026-11-07 of the smaller token layout and the vector string scans in both front ends. |
 | `PERFORMANCE-AUDIT-2026-08.md` | [record] | The self-host compiler's compile-time gap against the Go compiler and its causes; the gap fell from 6.3x to 3.1x (#6888). |
 | `RC-PERCEUS-SELF-HOST-IR-REBUILD.md` | [record] | Rebuilding the self-host compiler around a native-shaped stack IR; finished. |
 | `RC-PERCEUS-SELF-HOST-IR.md` | [record] | An early 2026-06 note on whether a native-shaped IR would help the self-host Perceus port; superseded. |
