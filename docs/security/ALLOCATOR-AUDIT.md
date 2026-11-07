@@ -70,6 +70,11 @@ The free compares the first word of the block with the quarantine's poison word,
 So a live block whose first word holds the poison value is still freed.
 A block that the quarantine has already evicted to a free list is not found.
 
+A block of one or two words has no room for the quarantine's three words, so the free keeps it out of every list.
+A second free of such a block is not found, and the block is not used again.
+`__fern_box_free` releases small typed boxes through the same path.
+The poison in the count word of such a box reports a later use, so the free cannot give the block to its free list.
+
 Before this change, a second raw free quarantined the block again without a report, and the leak census showed one more free than allocations.
 
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
