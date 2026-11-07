@@ -7,6 +7,8 @@ The modules perform no file, device, or network I/O.
 
 ```fern
 <<*>>=
+// Integer PCM audio formats, sample limits, and shared codec errors.
+
 import "core/cmp";
 import "core/error";
 
