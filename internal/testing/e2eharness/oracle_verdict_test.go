@@ -155,6 +155,35 @@ func TestOracleVerdictKeysASourceThatDoesNotLex(t *testing.T) {
 	}
 }
 
+func TestCheckSourceVerdictKeysTheSource(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	work := t.TempDir()
+	calls := filepath.Join(work, "calls")
+	fake := filepath.Join(work, "fake-oracle")
+	script := "#!/bin/sh\necho run >> " + calls + "\necho \"args $1 $2\"\ncat\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() int {
+		data, _ := os.ReadFile(calls)
+		return strings.Count(string(data), "run")
+	}
+	first := "import \"std/test\";\nfunction main(): i32 { return 0; }\n"
+	out, exit := CheckSourceVerdict(t, fake, first)
+	if exit != 1 || string(out) != "args -check -\n"+first {
+		t.Fatalf("verdict = %q exit %d, want the flags, the source on stdin and exit 1", out, exit)
+	}
+	CheckSourceVerdict(t, fake, first)
+	if got := runs(); got != 1 {
+		t.Fatalf("the same source ran the oracle %d times, want 1", got)
+	}
+	CheckSourceVerdict(t, fake, "import \"std/fs\";\nfunction main(): i32 { return 0; }\n")
+	if got := runs(); got != 2 {
+		t.Fatalf("a new source ran the oracle %d times, want 2", got)
+	}
+}
+
 func TestInterpVerdictRunsExternalFernAgain(t *testing.T) {
 	work := t.TempDir()
 	fern := filepath.Join(work, "fern")
