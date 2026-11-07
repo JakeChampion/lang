@@ -441,7 +441,7 @@ function subnet_broadcast(owner: string): Option[net.IpAddr] {
 }
 
 function grouped(own s: App, g: p2p.Group): App {
-  let t: App = App { ...s, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
+  let t = App { ...s, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
   if (!g.formed) {
     log.info("walkie: no Wi-Fi Direct group");
     return App { ...t, group_broadcast: None, group_role: lan.ROLE_ANY, node: node.with_role(t.node, lan.ROLE_ANY, node_id()), drawn: "" };
