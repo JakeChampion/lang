@@ -19,10 +19,10 @@ function main(): i32 {
 
 func TestSelfHostArm64BssValueList(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	source := arm64NativeSrc(t) + arm64BssValueListProgram
+	source := writeAssemblerProgram(t, writeSelfHostAsmProject(t), "arm64_native.fern", arm64BssValueListProgram)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			if stderr, code := cli.exitOf(t, source, target); code != 0 {
+			if stderr, code := cli.exitOfFile(t, source, target, nil); code != 0 {
 				t.Fatalf("exit = %d\n%s", code, stderr)
 			}
 		})
