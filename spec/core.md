@@ -441,6 +441,9 @@ is the number of slots it leaves.
 | `mmio_load` | 412 | 1 | 1 |
 | `mmio_store` | 413 | 2 | 1 |
 | `fence` | 414 | 0 | 1 |
+| `wfi` | 415 | 0 | 1 |
+| `hvc` | 416 | 4 | 1 |
+| `smc` | 417 | 4 | 1 |
 | `open_dir` | 420 | 1 | 1 |
 | `dir_open` | 421 | 2 | 1 |
 | `dir_entries` | 422 | 1 | 1 |
