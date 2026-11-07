@@ -61,5 +61,6 @@ Memcheck must report five small programs that branch or index on a secret, which
 - The constant-time gate observes one execution under memcheck. It does not prove the absence of a data-dependent timing in the processor's own instructions, such as a variable-latency multiply.
 - RSA is verification only. There is no RSA signing and no RSA encryption.
 - `crypto.erase` wipes an owned array the caller passes. A secret held in a struct field or a copy the compiler made is not wiped.
+- The primitives do not erase their own intermediate values, such as an expanded secret scalar or an AES key schedule. In the release build those values stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
 - The Wycheproof suites cover the five primitives above. RSA, ML-KEM-768, the hashes and the key derivation functions check their standards' vectors and the listed negative cases alone.
 - TLS trusts the root store it is given. Revocation checking is not implemented.
