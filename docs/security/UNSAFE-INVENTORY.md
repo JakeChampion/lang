@@ -16,10 +16,12 @@ The types come from `checker.intrinsic_params`, `checker.intrinsic_result`, and 
 | Bounded intrinsics (group C below) | Every source | `is_resolvable_callee` admits them. The operations carry a typed value and a length. |
 | `unsafe function` declarations | Every source | `E095` refuses a call outside an `unsafe` block, a function value, and an unsafe implementation of a safe trait method. |
 | Unsafe built-in methods (below) | Every source, inside an `unsafe` block | `E095` refuses a call outside an `unsafe` block. |
+| An `as` cast between an integer and a heap value | Every source, inside an `unsafe` block | Both checkers refuse the cast outside an `unsafe` block as `E095`, in each direction. A string, an array, a view and a struct are heap values. |
 
 The set is `unsafe_intrinsics` in `compiler/checker.fern` and `UnsafeIntrinsics` in `internal/check/checker`.
 `TestUnsafeIntrinsicsMatchSelfHost` pins the two equal.
 The probe `__alloc(16)`, `__store_i32(p, 7)`, `__load_i32(p)` and `__free(p, 16)` in an ordinary `main` is `conformance/cases/diag_e095_raw_builtin_outside_unsafe`, and the same calls inside a block are the control `unsafe_block_accepts_raw_builtins`.
+The casts `s as usize` and `p as Big` in an ordinary `main` are `conformance/cases/diag_e095_pointer_cast_outside_unsafe`, and the same casts inside a block are the control `unsafe_block_accepts_pointer_casts`.
 
 The standard library carries the blocks in `core/map`, `std/jni`, `std/async`, `std/string`, `std/brotli`, `std/deflate`, `std/zstd`, `std/net`, `std/serve` and `std/sim`.
 The HTTP and QUIC modules, the TLS record layer and the AEAD modules carry them too.
