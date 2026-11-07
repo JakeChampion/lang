@@ -28,7 +28,17 @@ pub enum Message {
   // offer, and the listener sends the accept.
   KeyOffer(i32, u8[]),
   KeyAccept(i32, u8[]),
+  // After the users confirm the string: the Ed25519 public key of the
+  // sender's identity, a signature for the exchange, and the flags
+  // HAVE_PEER and DONE.
+  Identity(u8[], u8[], i32),
 }
+
+// The flags of Identity: the sender has the identity of the receiver, and
+// the sender also knows that the receiver has its identity.
+pub const HAVE_PEER: i32 = 1;
+
+pub const DONE: i32 = 2;
 
 // Reason codes of Bye and Error.
 pub const REASON_LEAVE: i32 = 1;
@@ -60,6 +70,8 @@ const T_ERROR: i32 = 8;
 const T_KEY_OFFER: i32 = 9;
 
 const T_KEY_ACCEPT: i32 = 10;
+
+const T_IDENTITY: i32 = 11;
 
 // The length of an X25519 public key.
 pub const KEY_LEN: i32 = 32;
@@ -111,6 +123,16 @@ pub function encode(m: Message): u8[] {
     },
     KeyAccept(epoch, public) => {
       return key_message(T_KEY_ACCEPT, epoch, public);
+    },
+    Identity(public, signature, flags) => {
+      let out: u8[] = put8([], T_IDENTITY);
+      for b in public {
+        out = out.append(b);
+      }
+      for b in signature {
+        out = out.append(b);
+      }
+      return put8(out, flags);
     }
   }
 }
@@ -137,6 +159,15 @@ function decode_key(b: [u8]): Option[Message] {
     return Some(KeyOffer(epoch, public));
   }
   return Some(KeyAccept(epoch, public));
+}
+
+// The `n` bytes of `b` from index `at`.
+function span(b: [u8], at: i32, n: i32): u8[] {
+  let out: u8[] = [];
+  for k in at..at + n {
+    out = out.append(b[k]);
+  }
+  return out;
 }
 
 // A cursor over the bytes of a message. A read past the end sets `bad`.
@@ -166,6 +197,12 @@ pub function decode(b: u8[]): Option[Message] {
   let t = b[0] as i32;
   if (t == T_KEY_OFFER || t == T_KEY_ACCEPT) {
     return decode_key(b);
+  }
+  if (t == T_IDENTITY) {
+    if (b.len() != 1 + KEY_LEN + 64 + 1 || b[b.len() - 1] > 3u8) {
+      return None;
+    }
+    return Some(Identity(span(b, 1, KEY_LEN), span(b, 1 + KEY_LEN, 64), b[b.len() - 1] as i32));
   }
   let r = Cursor { b: b, at: 1, bad: false };
   let m = Bye(0);

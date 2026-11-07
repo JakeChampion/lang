@@ -65,9 +65,11 @@ struct App {
   // The room of the internet mode, and the code that the user types.
   room: Option[internet.Room],
   entering: Option[string],
-  // The private directory of the app, this phone's identity seed, and the
-  // identities of the phones that a user confirmed, as the files hold them.
+  // The private directory of the app, the private directory that no backup
+  // copies, this phone's identity seed, and the identities of the phones
+  // that a user confirmed, as the files hold them.
   dir: string,
+  keys: string,
   id_seed: u8[],
   pins: u8[][],
   // The way to find the other phone, and whether the settings screen shows.
@@ -156,6 +158,20 @@ function fresh_node(notice: string, id_seed: [u8], pins: u8[][], role: i32): nod
   return node.Node { ...n, notice: notice };
 }
 
+// The file `name` of `old`, moved into `keys` when `keys` has none. An older
+// build kept the identity and the known phones where the backups copy them.
+function move_key_file(keys: string, old: string, name: string): void {
+  if (keys.len() == 0 || old.len() == 0 || read_file_bytes(keys + "/" + name).is_ok()) {
+    return;
+  }
+  let Ok(b) = read_file_bytes(old + "/" + name) else {
+    return;
+  };
+  if (write_file_bytes(keys + "/" + name, b).is_ok()) {
+    let removed = remove_file(old + "/" + name);
+  }
+}
+
 // This phone's identity seed in `dir`, which the first start makes. With no
 // directory the identity lasts until the app stops.
 function identity_seed(dir: string): u8[] {
@@ -239,7 +255,7 @@ function save_mode(dir: string, m: modes.Mode): void {
 
 // The file of known phones again, when the node learned a phone.
 function save_pins(s: App): App {
-  if (s.node.pins.len() == s.pins.len() || s.dir.len() == 0) {
+  if (s.node.pins.len() == s.pins.len() || s.keys.len() == 0) {
     return s;
   }
   let all: u8[] = [];
@@ -248,7 +264,7 @@ function save_pins(s: App): App {
       all = all.append(x);
     }
   }
-  let written = write_file_bytes(s.dir + "/peers", all);
+  let written = write_file_bytes(s.keys + "/peers", all);
   log.info("walkie: known phones " + s.node.pins.len().to_string());
   return App { ...s, pins: s.node.pins };
 }
@@ -266,14 +282,17 @@ function app_main(ctx: usize): usize {
   }
   android.keep_screen_on(ctx, true);
   let dir: string = android.data_dir(ctx);
-  let id_seed: u8[] = identity_seed(dir);
-  let pins: u8[][] = load_pins(dir);
+  let keys: string = android.no_backup_dir(ctx);
+  move_key_file(keys, dir, "identity");
+  move_key_file(keys, dir, "peers");
+  let id_seed: u8[] = identity_seed(keys);
+  let pins: u8[][] = load_pins(keys);
   let mode: modes.Mode = load_mode(dir);
   let server: string = load_server(dir);
   let n: node.Node = fresh_node(notice, id_seed, pins, lan.ROLE_ANY);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, room: None, entering: None, dir: dir, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, room: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -585,13 +604,17 @@ function mode_button_shows(s: App): boolean {
 }
 
 // A row of the settings screen chooses its mode, the card of the server opens
-// its keyboard, and BACK closes the screen.
+// its keyboard, FORGET forgets the known phones, and BACK closes the screen.
 function menu_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean): App {
   if (!down) {
     return s;
   }
   if (screen.contains(screen.back_button(w, h), x, y)) {
     return App { ...s, menu: false, drawn: "" };
+  }
+  if (screen.contains(screen.forget_button(w, h), x, y)) {
+    log.info("walkie: forget the known phones");
+    return App { ...s, node: node.noticed(node.forget(s.node), "this phone knows no other phone now"), drawn: "" };
   }
   if (screen.contains(screen.server_row(w, h), x, y)) {
     return App { ...s, host_edit: Some(s.server), drawn: "" };
@@ -727,7 +750,7 @@ function enter_room(own s: App, line: string, code: string): App {
   };
   let reply: rooms.Reply = internet.ask(host, line);
   if let Some(r) = internet.room_of(reply, code, relay) {
-    log.info("walkie: room " + r.code + " on " + relay.to_string());
+    log.info("walkie: in a room on " + relay.to_string());
     let n: node.Node = node.in_room(node.noticed(s.node, "room " + r.code + ": the other phone joins with this code"), r.lead, node_id(), now_ms());
     return App { ...s, room: Some(r), node: n, drawn: "" };
   }
@@ -840,9 +863,16 @@ function receive_all(s: App, now: i64): App {
   for k in 0..64 {
     match (net.recv_from(sock, buf)) {
       Ok((len, from)) => {
-        if (modes.accepts(s.mode, s.room, s.group_broadcast, from)) {
-          n = node.receive(n, buf, len, from, now);
+        if (!modes.accepts(s.mode, s.room, s.group_broadcast, from)) {
+          continue;
         }
+        if let Some(r) = s.room {
+          if let Some(answer) = internet.challenged(r, buf, len) {
+            let sent: Result[i32, net.NetError] = net.send_to(sock, answer, r.relay);
+            continue;
+          }
+        }
+        n = node.receive(n, buf, len, from, now);
       },
       Err(_) => {
         return App { ...s, node: n };
@@ -960,7 +990,7 @@ function view(s: App, label: string): ui.View {
   for p in s.peers {
     peers = peers.append(ui.Peer { name: p.name, invited: p.status == 1 });
   }
-  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering, mode_label: mode_label(s), menu: menu_of(s), available: available_modes(s), server: server_label(s), editing: s.host_edit };
+  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering, mode_label: mode_label(s), menu: menu_of(s), available: available_modes(s), server: server_label(s), editing: s.host_edit, known: s.node.pins.len() > 0 };
 }
 
 function mode_label(s: App): string {
@@ -1003,7 +1033,7 @@ function status_text(s: App): string {
     return "type the host name of the room server, or clear it to use the server of the app";
   }
   if (s.menu) {
-    return "how does this phone find the other phone?";
+    return "this is " + node.label(node.identity_key(s.node)) + ": how does it find the other phone?";
   }
   if let lan.Searching = s.node.link.phase {
     return searching_text(s);

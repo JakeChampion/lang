@@ -1,0 +1,27 @@
+import "../packages/codecs/jpeg/dct";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let Ok(data) = read_file_bytes(paths[i]) else {
+      return 2;
+    };
+    let Ok(coefficients) = dct.forward(data, never) else {
+      return 3;
+    };
+    let line = paths[i];
+    for value in coefficients {
+      line += f" {value}";
+    }
+    print(line);
+  }
+  return 0;
+}

@@ -27,7 +27,7 @@ function free_frame(own f: draw.Frame): void {
 }
 
 function base(label: string): ui.View {
-  return ui.View { title: "WALKIE", status: "connected", notice: "", label: label, code: "", searching: false, peers: [], room_buttons: false, typing: None, mode_label: "", menu: None, available: [true, true, true, true], server: "rooms.example.com", editing: None };
+  return ui.View { title: "WALKIE", status: "connected", notice: "", label: label, code: "", searching: false, peers: [], room_buttons: false, typing: None, mode_label: "", menu: None, available: [true, true, true, true], server: "rooms.example.com", editing: None, known: false };
 }
 
 // Draws `v`, writes it as `name`.png when WALKIE_UI_PNG is set, and gives
@@ -119,16 +119,19 @@ function test_search_has_the_mode_button(): test.TestOutcome {
 }
 
 // The settings screen shows a card for each mode with the chosen one in a
-// white outline and a red dot, the card of the server, and BACK.
+// white outline and a red dot, the card of the server, BACK, and FORGET in
+// red while the phone knows other phones.
 function test_settings_screen(): test.TestOutcome {
   let chosen: screen.Rect = screen.mode_row(W, H, 2);
   let other: screen.Rect = screen.mode_row(W, H, 0);
   let server: screen.Rect = screen.server_row(W, H);
   let back: screen.Rect = screen.back_button(W, H);
-  let v: ui.View = ui.View { ...base("SEARCHING"), title: "SETTINGS", status: "how does this phone find the other phone?", menu: Some(2), available: [true, true, true, false] };
-  let points: i32[][] = [[chosen.x + chosen.w / 2, chosen.y + 1], [other.x + other.w / 2, other.y + 1], [back.x + back.w / 2, back.y + 1], [chosen.x + chosen.w * 85 / 100, chosen.y + chosen.h / 4], [chosen.x + chosen.w - chosen.h / 4, chosen.y + chosen.h / 2], [server.x + server.w / 2, server.y + 1]];
+  let forget: screen.Rect = screen.forget_button(W, H);
+  let v: ui.View = ui.View { ...base("SEARCHING"), title: "SETTINGS", status: "how does this phone find the other phone?", menu: Some(2), available: [true, true, true, false], known: true };
+  let points: i32[][] = [[chosen.x + chosen.w / 2, chosen.y + 1], [other.x + other.w / 2, other.y + 1], [back.x + back.w / 2, back.y + 1], [chosen.x + chosen.w * 85 / 100, chosen.y + chosen.h / 4], [chosen.x + chosen.w - chosen.h / 4, chosen.y + chosen.h / 2], [server.x + server.w / 2, server.y + 1], [forget.x + forget.w / 2, forget.y + 1]];
   let c: i32[] = colours("settings", v, points);
-  return test.assert_eq(same(c[0], look.ink()) + " " + same(c[1], look.surface()) + " " + same(c[2], look.muted()) + " " + same(c[3], look.surface()) + " " + same(c[4], look.red()) + " " + same(c[5], look.surface()), "true true true true true true");
+  let none: i32[] = colours("settings-none", ui.View { ...v, known: false }, [[forget.x + forget.w / 2, forget.y + 1]]);
+  return test.assert_eq(same(c[0], look.ink()) + " " + same(c[1], look.surface()) + " " + same(c[2], look.muted()) + " " + same(c[3], look.surface()) + " " + same(c[4], look.red()) + " " + same(c[5], look.surface()) + " " + same(c[6], look.red()) + " " + same(none[0], look.muted()), "true true true true true true true true");
 }
 
 // The keyboard of the server has the field in a white outline, the button of

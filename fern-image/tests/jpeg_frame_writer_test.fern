@@ -1,0 +1,185 @@
+import "../packages/codecs/jpeg/frame_writer";
+import "../packages/codecs/jpeg/header";
+import "../packages/codecs/jpeg/entropy";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function tables(): frame_writer.Tables {
+  let quantizers: u8[] = [];
+  for i in 0..64 {
+    quantizers = quantizers.append((i + 1) as u8);
+  }
+  return frame_writer.Tables { quantization: quantizers, dc: table(false), ac: table(true) };
+}
+
+function options(width: i32, height: i32, restart: i32): frame_writer.Options {
+  return frame_writer.Options { width: width, height: height, restart_interval: restart, max_output_bytes: 65536 };
+}
+
+function coefficients(width: i32, height: i32): i32[] {
+  let count = (width + 7) / 8 * ((height + 7) / 8) * 64;
+  let values: i32[] = [];
+  for i in 0..count {
+    values = values.append(if (i % 64 == 0) { i / 64 * 3 - 20 } else if (i % 7 == 0) { i % 33 - 16 } else { 0 });
+  }
+  return values;
+}
+
+function roundtrip(): test.TestOutcome {
+  for size in [(1, 1), (8, 8), (9, 9), (17, 25), (257, 1)] {
+    let (width, height) = size;
+    let original = coefficients(width, height);
+    for restart in [0, 1, 2, 7, 65535] {
+      let Ok(encoded) = frame_writer.encode_blocks(original, tables(), options(width, height, restart), never) else {
+        return test.fail("baseline frame encode");
+      };
+      let Ok(h) = header.parse(encoded, header.default_limits(), never) else {
+        return test.fail("baseline frame header");
+      };
+      let Some(quantizers) = h.quantization[0] else {
+        return test.fail("baseline quantizers");
+      };
+      if (h.output_layout.width != width || h.output_layout.height != height || h.components.len() != 1
+        || h.restart_interval != restart || encoded[encoded.len() - 2] != 255 || encoded[encoded.len() - 1] != 217) {
+        return test.fail("baseline frame fields");
+      }
+      for i in 0..64 {
+        if (quantizers.values[i] != i + 1) {
+          return test.fail("transmitted quantizers");
+        }
+      }
+      let result = entropy.fold_blocks(encoded, entropy.default_limits(), never, 0, (at: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+        for i in 0..64 {
+          if (block.values[i] != original[at * 64 + i]) {
+            return Err("coefficient mismatch");
+          }
+        }
+        return Ok(at + 1);
+      });
+      if (!match (result) { Ok(v) => v.value * 64 == original.len(), _ => false }) {
+        return test.fail("baseline frame coefficients");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let values = coefficients(17, 25);
+  let config = options(17, 25, 1);
+  let Ok(encoded) = frame_writer.encode_blocks(values, tables(), config, never) else {
+    return test.fail("byte limit baseline");
+  };
+  for limit in [0, 1, 20, encoded.len() - 1, encoded.len()] {
+    let result = frame_writer.encode_blocks(values, tables(), frame_writer.Options { ...config, max_output_bytes: limit }, never);
+    if (!match (result) { Ok(v) => limit == encoded.len() && v.len() == limit, Err(frame_writer.Limit) => limit < encoded.len(), _ => false }) {
+      return test.fail("exact frame byte limit");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let values = coefficients(17, 25);
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  if let Err(_) = frame_writer.encode_blocks(values, tables(), options(17, 25, 1), count) {
+    return test.fail("frame cancellation baseline");
+  }
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (frame_writer.encode_blocks(values, tables(), options(17, 25, 1), cancel)) { Err(frame_writer.Cancelled) => true, _ => false }) {
+      return test.fail("every frame cancellation checkpoint");
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let values = coefficients(8, 8);
+  for size in [(0, 1), (1, 0), (-1, 8), (65536, 1), (1, 65536)] {
+    let (width, height) = size;
+    if (!match (frame_writer.encode_blocks(values, tables(), options(width, height, 0), never)) { Err(frame_writer.Dimensions) => true, _ => false }) {
+      return test.fail("frame dimensions");
+    }
+  }
+  if (!match (frame_writer.encode_blocks(values, tables(), options(9, 9, 0), never)) { Err(frame_writer.Shape) => true, _ => false }) {
+    return test.fail("padded block shape");
+  }
+  let valid = tables();
+  let bad = frame_writer.Tables { ...valid, quantization: valid.quantization.with(63, 0) };
+  if (!match (frame_writer.encode_blocks(values, bad, options(8, 8, 0), never)) { Err(frame_writer.Table) => true, _ => false }) {
+    return test.fail("zero quantizer");
+  }
+  for restart in [-1, 65536] {
+    if (!match (frame_writer.encode_blocks(values, valid, options(8, 8, restart), never)) { Err(frame_writer.Limit) => true, _ => false }) {
+      return test.fail("frame restart range");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG baseline frame writer");
+  suite = suite.it("odd dimensions and restarts retain coefficients", roundtrip);
+  suite = suite.it("complete frame output obeys exact limits", limits);
+  suite = suite.it("every frame cancellation checkpoint", cancellation);
+  suite = suite.it("malformed frame inputs reject", malformed);
+  suite = suite.it("borrowed blocks and shared tables retain aliases", aliases);
+  return suite.finish();
+}
+
+function aliases(): test.TestOutcome {
+  let values = coefficients(8, 8);
+  let wrapped: i32[] = [99];
+  for value in values {
+    wrapped = wrapped.append(value);
+  }
+  wrapped = wrapped.append(77);
+  let original = tables();
+  let shared = cell_new(original);
+  let Ok(encoded) = frame_writer.encode_blocks(wrapped[1:wrapped.len() - 1], original, options(8, 8, 0), never) else {
+    return test.fail("borrowed frame blocks");
+  };
+  let Ok(repeated) = frame_writer.encode_blocks(values, shared.get(), options(8, 8, 0), never) else {
+    return test.fail("shared frame tables");
+  };
+  if (encoded.len() != repeated.len() || wrapped[0] != 99 || wrapped[wrapped.len() - 1] != 77) {
+    return test.fail("frame alias shape");
+  }
+  for i in 0..encoded.len() {
+    if (encoded[i] != repeated[i]) {
+      return test.fail("frame output aliases");
+    }
+  }
+  for i in 0..64 {
+    if (wrapped[i + 1] != values[i] || shared.get().quantization[i] != i + 1) {
+      return test.fail("frame input aliases");
+    }
+  }
+  return test.pass();
+}

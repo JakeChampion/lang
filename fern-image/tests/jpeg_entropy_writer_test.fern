@@ -1,0 +1,256 @@
+import "../packages/codecs/jpeg/entropy_writer";
+import "../packages/codecs/jpeg/entropy";
+import "../packages/codecs/jpeg/header";
+import "./fixtures/jpeg_entropy";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function zeros(count: i32): i32[] {
+  let output: i32[] = [];
+  for i in 0..count {
+    output = output.append(0);
+  }
+  return output;
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == (if (ac) { 7 } else { 3 })) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function encode(values: [i32], restart: i32, limit: i32): Result[u8[], entropy_writer.EncodeError] {
+  return entropy_writer.encode_blocks(values, table(false), table(true), restart, limit, never);
+}
+
+function golden(): test.TestOutcome {
+  let cases = [jpeg_entropy.predictor(), jpeg_entropy.restart_cycle(), jpeg_entropy.last_coefficient()];
+  for source in cases {
+    let Ok(h) = header.parse(source, header.default_limits(), never) else {
+      return test.fail("fixture header");
+    };
+    let Some(dc) = h.huffman[0] else {
+      return test.fail("fixture DC table");
+    };
+    let Some(ac) = h.huffman[2] else {
+      return test.fail("fixture AC table");
+    };
+    let collected = entropy.fold_blocks(source, entropy.default_limits(), never, zeros(0), (state: i32[], block: entropy.CoefficientBlock): Result[i32[], string] => {
+      let result = state;
+      for value in block.values {
+        result = result.append(value);
+      }
+      return Ok(result);
+    });
+    let Ok(blocks) = collected else {
+      return test.fail("fixture coefficients");
+    };
+    let Ok(encoded) = entropy_writer.encode_blocks(blocks.value, dc, ac, h.restart_interval, source.len(), never) else {
+      return test.fail("encode reference");
+    };
+    let wanted = source[h.entropy_offset:source.len() - 2];
+    if (encoded.len() != wanted.len()) {
+      return test.fail("golden byte count");
+    }
+    for i in 0..encoded.len() {
+      if (encoded[i] != wanted[i]) {
+        return test.fail("golden entropy bytes");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function shape_and_options(): test.TestOutcome {
+  let dc = table(false);
+  let ac = table(true);
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for length in [0, 1, 63, 65, 127] {
+    if (!match (entropy_writer.encode_blocks(zeros(length), dc, ac, 0, 100, cancel)) { Err(entropy_writer.Shape) => true, _ => false }) {
+      return test.fail("complete blocks before callback");
+    }
+  }
+  for count in [0, 15, 17] {
+    let counts: u8[] = [];
+    for i in 0..count {
+      counts = counts.append(0);
+    }
+    let bad = header.HuffmanTable { counts: counts, symbols: [0] };
+    if (!match (entropy_writer.encode_blocks(zeros(64), bad, ac, 0, 100, cancel)) { Err(entropy_writer.Shape) => true, _ => false }) {
+      return test.fail("DC shape");
+    }
+    if (!match (entropy_writer.encode_blocks(zeros(64), dc, bad, 0, 100, cancel)) { Err(entropy_writer.Shape) => true, _ => false }) {
+      return test.fail("AC shape");
+    }
+  }
+  for restart in [-1, 65536] {
+    if (!match (entropy_writer.encode_blocks(zeros(64), dc, ac, restart, 100, cancel)) { Err(entropy_writer.Limit) => true, _ => false }) {
+      return test.fail("restart domain");
+    }
+  }
+  if (!match (entropy_writer.encode_blocks(zeros(64), dc, ac, 0, -1, cancel)) { Err(entropy_writer.Limit) => true, _ => false }) {
+    return test.fail("negative byte limit");
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function malformed_tables(): test.TestOutcome {
+  let dc = table(false);
+  let ac = table(true);
+  let invalid = [
+    header.HuffmanTable { counts: dc.counts, symbols: [] },
+    header.HuffmanTable { counts: dc.counts.with(3, 11), symbols: dc.symbols },
+    header.HuffmanTable { counts: dc.counts.with(3, 13), symbols: dc.symbols },
+    header.HuffmanTable { counts: dc.counts.with(3, 16), symbols: dc.symbols },
+    header.HuffmanTable { counts: dc.counts, symbols: dc.symbols.with(0, 1) },
+    header.HuffmanTable { counts: dc.counts, symbols: dc.symbols.with(0, 12) },
+    header.HuffmanTable { counts: dc.counts.with(0, 2), symbols: dc.symbols },
+  ];
+  for bad in invalid {
+    if (!match (entropy_writer.encode_blocks(zeros(64), bad, ac, 0, 100, never)) { Err(entropy_writer.Table) => true, _ => false }) {
+      return test.fail("DC table rejection");
+    }
+  }
+  for value in [11, 16, 176, 241] {
+    let bad = header.HuffmanTable { counts: ac.counts, symbols: ac.symbols.with(0, value as u8) };
+    if (!match (entropy_writer.encode_blocks(zeros(64), dc, bad, 0, 100, never)) { Err(entropy_writer.Table) => true, _ => false }) {
+      return test.fail("AC symbol rejection");
+    }
+  }
+  let missing = header.HuffmanTable { counts: dc.counts, symbols: dc.symbols.with(0, 11).with(11, 0) };
+  let nonzero = zeros(64).with(0, 1);
+  let only_zero = header.HuffmanTable { counts: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], symbols: [0] };
+  if (!match (entropy_writer.encode_blocks(nonzero, only_zero, ac, 0, 100, never)) { Err(entropy_writer.MissingSymbol) => true, _ => false }) {
+    return test.fail("missing DC category");
+  }
+  let Ok(_) = entropy_writer.encode_blocks(zeros(64), missing, ac, 0, 100, never) else {
+    return test.fail("symbol order is not numeric order");
+  };
+  return test.pass();
+}
+
+function coefficient_domains(): test.TestOutcome {
+  for value in [-2147483648, -1025, 1024, 2147483647] {
+    if (!match (encode(zeros(64).with(0, value), 0, 1000)) { Err(entropy_writer.Coefficient) => true, _ => false }) {
+      return test.fail("DC precision");
+    }
+  }
+  for index in 1..64 {
+    for value in [-2147483648, -1024, 1024, 2147483647] {
+      if (!match (encode(zeros(64).with(index, value), 0, 1000)) { Err(entropy_writer.Coefficient) => true, _ => false }) {
+        return test.fail("AC category bound");
+      }
+    }
+    for value in [-1023, -1, 1, 1023] {
+      let Ok(_) = encode(zeros(64).with(index, value), 0, 1000) else {
+        return test.fail("legal AC boundary or zero run");
+      };
+    }
+  }
+  for pair in [(-1024, 1023), (1023, -1024)] {
+    let values = zeros(128).with(0, pair.0).with(64, pair.1);
+    let Ok(_) = encode(values, 0, 1000) else {
+      return test.fail("eleven-bit DC difference");
+    };
+  }
+  return test.pass();
+}
+
+function limits_and_ownership(): test.TestOutcome {
+  let values = zeros(64).with(0, 1023).with(1, 1023).with(63, -1023);
+  let retained = values;
+  let padded: i32[] = [9999];
+  for value in values {
+    padded = padded.append(value);
+  }
+  padded = padded.append(9999);
+  let Ok(output) = encode(padded[1:65], 0, 1000) else {
+    return test.fail("borrowed input");
+  };
+  let saved = output;
+  let stuffed = false;
+  for i in 0..output.len() - 1 {
+    if (output[i] == 255 && output[i + 1] == 0) {
+      stuffed = true;
+    }
+  }
+  if (!stuffed) {
+    return test.fail("byte stuffing coverage");
+  }
+  let Ok(exact) = encode(values, 0, output.len()) else {
+    return test.fail("exact output limit");
+  };
+  for limit in 0..output.len() {
+    if (!match (encode(values, 0, limit)) { Err(entropy_writer.Limit) => true, _ => false }) {
+      return test.fail("short output limit");
+    }
+  }
+  values = values.with(0, -1);
+  output = output.with(0, 255);
+  let Ok(fresh) = encode(retained, 0, 1000) else {
+    return test.fail("fresh state");
+  };
+  for i in 0..saved.len() {
+    if (saved[i] != fresh[i] || saved[i] != exact[i]) {
+      return test.fail("result aliases");
+    }
+  }
+  return test.assert_true(retained[0] == 1023 && padded[1] == 1023 && values[0] == -1 && output[0] == 255);
+}
+
+function cancellation(): test.TestOutcome {
+  let values = zeros(64 * 10);
+  for i in 0..10 {
+    values = values.with(i * 64, if (i % 2 == 0) { -1024 } else { 1023 });
+  }
+  let dc = table(false);
+  let ac = table(true);
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  let Ok(_) = entropy_writer.encode_blocks(values, dc, ac, 1, 10000, count) else {
+    return test.fail("count cancellation polls");
+  };
+  for at in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == at;
+    };
+    if (!match (entropy_writer.encode_blocks(values, dc, ac, 1, 10000, cancel)) { Err(entropy_writer.Cancelled) => true, _ => false }) {
+      return test.fail("every cancellation checkpoint");
+    }
+    if (calls.get() != at) {
+      return test.fail("stop after cancellation");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG entropy writer");
+  suite = suite.it("independent fixture bytes and restart cycle", golden);
+  suite = suite.it("shape and options before callbacks", shape_and_options);
+  suite = suite.it("canonical table validation", malformed_tables);
+  suite = suite.it("coefficient domains and zero runs", coefficient_domains);
+  suite = suite.it("exact limits and caller aliases", limits_and_ownership);
+  suite = suite.it("every cancellation checkpoint", cancellation);
+  return suite.finish();
+}

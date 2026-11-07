@@ -386,6 +386,9 @@ function received(s: Session, m: protocol.Message, now: i64): (Session, Action[]
     },
     protocol.KeyAccept(_, _) => {
       return (s, []);
+    },
+    protocol.Identity(_, _, _) => {
+      return (s, []);
     }
   }
 }

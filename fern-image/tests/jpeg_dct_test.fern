@@ -1,0 +1,166 @@
+import "../packages/codecs/jpeg/dct";
+import "std/f64";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function block(value: u8): u8[] {
+  let bytes: u8[] = [];
+  for i in 0..64 {
+    bytes = bytes.append(value);
+  }
+  return bytes;
+}
+
+function close(a: f64, b: f64): boolean {
+  return (a - b).abs() <= 0.000001;
+}
+
+function constant_blocks(): test.TestOutcome {
+  for value in 0..256 {
+    let Ok(coefficients) = dct.forward(block(value as u8), never) else {
+      return test.fail("uniform transform");
+    };
+    if (coefficients.len() != 64 || coefficients[0] != ((value - 128) * 8) as f64) {
+      return test.fail("exact DC");
+    }
+    for i in 1..64 {
+      if (coefficients[i] != 0.0) {
+        return test.fail("uniform AC");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function direction(): test.TestOutcome {
+  let horizontal: u8[] = [];
+  let vertical: u8[] = [];
+  for y in 0..8 {
+    for x in 0..8 {
+      horizontal = horizontal.append((x * 31) as u8);
+      vertical = vertical.append((y * 31) as u8);
+    }
+  }
+  let Ok(a) = dct.forward(horizontal, never) else {
+    return test.fail("horizontal transform");
+  };
+  let Ok(b) = dct.forward(vertical, never) else {
+    return test.fail("vertical transform");
+  };
+  if (a[0] != -156.0 || b[0] != -156.0 || a[1] >= 0.0 || b[8] >= 0.0) {
+    return test.fail("level shift and frequency orientation");
+  }
+  for v in 0..8 {
+    for u in 0..8 {
+      if (!close(a[v * 8 + u], b[u * 8 + v]) || v > 0 && !close(a[v * 8 + u], 0.0)) {
+        return test.fail("natural coefficient order");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function impulses(): test.TestOutcome {
+  for position in 0..64 {
+    let Ok(positive) = dct.forward(block(128).with(position, 129), never) else {
+      return test.fail("positive impulse");
+    };
+    let Ok(negative) = dct.forward(block(128).with(position, 127), never) else {
+      return test.fail("negative impulse");
+    };
+    if (positive[0] != 0.125 || negative[0] != -0.125) {
+      return test.fail("exact impulse DC");
+    }
+    for i in 0..64 {
+      if (!positive[i].is_finite() || !close(positive[i], -negative[i])) {
+        return test.fail("signed transform symmetry");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid_shape(): test.TestOutcome {
+  for length in [0, 1, 63, 65] {
+    let bytes: u8[] = [];
+    for i in 0..length {
+      bytes = bytes.append(128);
+    }
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return true;
+    };
+    let rejected = match (dct.forward(bytes, cancel)) { Err(dct.DctError.Shape) => true, _ => false };
+    if (!rejected || calls.get() != 0) {
+      return test.fail("shape before work");
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let source = block(128).with(13, 3).with(55, 254);
+  let retained = source;
+  let padded: u8[] = [17];
+  for byte in source {
+    padded = padded.append(byte);
+  }
+  padded = padded.append(19);
+  let Ok(a) = dct.forward(padded[1:65], never) else {
+    return test.fail("borrowed view");
+  };
+  let saved = a;
+  source = source.with(13, 200);
+  a = a.with(0, 99.0);
+  let Ok(b) = dct.forward(retained, never) else {
+    return test.fail("fresh transform");
+  };
+  for i in 0..64 {
+    if (saved[i] != b[i] || padded[i + 1] != retained[i]) {
+      return test.fail("input and output snapshots");
+    }
+  }
+  return test.assert_true(source[13] == 200 && retained[13] == 3 && a[0] == 99.0 && saved[0] != 99.0);
+}
+
+function cancellation(): test.TestOutcome {
+  for source in [block(17), block(128).with(11, 255)] {
+    let polls = cell_new(0);
+    let counter = (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    };
+    if let Err(_) = dct.forward(source, counter) {
+      return test.fail("poll count");
+    }
+    if (polls.get() <= 1) {
+      return test.fail("transform checkpoints");
+    }
+    for stop in 1..polls.get() + 1 {
+      let calls = cell_new(0);
+      let cancel = (): boolean => {
+        calls.set(calls.get() + 1);
+        return calls.get() == stop;
+      };
+      if (!match (dct.forward(source, cancel)) { Err(dct.DctError.Cancelled) => true, _ => false }) {
+        return test.fail("every cancellation checkpoint");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG forward transform");
+  suite = suite.it("all uniform byte blocks have exact coefficients", constant_blocks);
+  suite = suite.it("level shift and horizontal/vertical natural order", direction);
+  suite = suite.it("all signed sample impulses", impulses);
+  suite = suite.it("invalid shapes precede cancellation and reads", invalid_shape);
+  suite = suite.it("borrowed windows and owned results preserve aliases", ownership);
+  suite = suite.it("every checkpoint cancels both transform paths", cancellation);
+  return suite.finish();
+}

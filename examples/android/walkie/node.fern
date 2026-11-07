@@ -43,16 +43,22 @@ pub struct Node {
   accepted: i32,
   accepted_key: u8[],
   // This phone's identity, and the identities of the phones that a user
-  // confirmed before. While the users compare the string, this side sends
-  // `proof` again at `proof_at`, and `peer_identity` is the identity in the
-  // peer's proof, which knows this phone when `peer_knows` is set.
+  // confirmed before. Until the peer confirms, this side sends the frames
+  // of `ident` again at `ident_at`: the tag of its identity, and its proof
+  // once it knows the peer. `peer_identity` is the identity that the peer
+  // proved, or that it sent after the users confirmed the string.
   identity: Option[ed25519.PrivateKey],
   pins: u8[][],
-  proof: u8[],
-  proof_knows: boolean,
-  proof_at: i64,
+  ident: u8[][],
+  ident_at: i64,
   peer_identity: u8[],
-  peer_knows: boolean,
+  // The user confirmed the string of this session. Then the two phones send
+  // their identities on the channel, at `pin_at`, until each one knows that
+  // the other has its identity.
+  confirmed: boolean,
+  pinning: boolean,
+  peer_has_mine: boolean,
+  pin_at: i64,
   // The outputs since the app last took them.
   out: Datagram[],
   heard: i32[][],
@@ -68,7 +74,7 @@ pub const RANDOM_BYTES: i32 = 64;
 // A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
   let (s1, _) = session.step(session.new(), session.Start(session.Offline), now);
-  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, random: cell_new([]), rekey_due: false, offer: None, offer_at: 0i64, accepted: 0, accepted_key: [], identity: None, pins: [], proof: [], proof_knows: false, proof_at: 0i64, peer_identity: [], peer_knows: false, out: [], heard: [], logs: [] };
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, random: cell_new([]), rekey_due: false, offer: None, offer_at: 0i64, accepted: 0, accepted_key: [], identity: None, pins: [], ident: [], ident_at: 0i64, peer_identity: [], confirmed: false, pinning: false, peer_has_mine: false, pin_at: 0i64, out: [], heard: [], logs: [] };
 }
 
 // The node with this phone's identity, from a 32-byte seed, and the
@@ -89,6 +95,25 @@ pub function identity_key(n: Node): u8[] {
     return k.public_point();
   }
   return [];
+}
+
+// The short name of the phone with the identity `public`, which the screen
+// shows: "phone" and four digits.
+pub function label(public: [u8]): string {
+  if (public.len() == 0) {
+    return "";
+  }
+  let h = crypto.sha256(public);
+  let v = ((h[0] as i32 << 8 | h[1] as i32) % 10000).to_string();
+  while (v.len() < 4) {
+    v = "0" + v;
+  }
+  return "phone " + v;
+}
+
+// The node with no known phones.
+pub function forget(n: Node): Node {
+  return Node { ...n, pins: [] };
 }
 
 function knows(n: Node, identity: u8[]): boolean {
@@ -209,8 +234,12 @@ function to_peer(n: Node, data: u8[][]): Node {
   return Node { ...n, out: out };
 }
 
-// The datagram in the first `len` bytes of `data`, from `from`.
+// The datagram in the first `len` bytes of `data`, from `from`. After the
+// node finds its peer, it takes datagrams only from the peer's address.
 pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i64): Node {
+  if (!searching(n) && !from.eq(n.peer_addr)) {
+    return n;
+  }
   match (lan.decode(data, len)) {
     Some(p) => {
       return packet(n, p, from, now);
@@ -218,6 +247,13 @@ pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i
     None => {}
   }
   return n;
+}
+
+function searching(n: Node): boolean {
+  if let lan.Searching = n.link.phase {
+    return true;
+  }
+  return false;
 }
 
 function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
@@ -237,7 +273,7 @@ function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
         id = t.link.me;
       }
       let u = act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
-      return proved(u, false, now);
+      return announced(u, now);
     },
     lan.Failed => {
       return act(log(t, "the key exchange failed"), session.AuthFailed, now);
@@ -267,6 +303,9 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
               },
               Some(protocol.KeyAccept(epoch, public)) => {
                 return accepted(t, epoch, public);
+              },
+              Some(protocol.Identity(public, signature, flags)) => {
+                return pinned(t, public, signature, flags, now);
               },
               Some(m) => {
                 return act(t, session.Received(m), now);
@@ -357,54 +396,116 @@ function send_frame(n: Node, kind: i32, plain: u8[]): Node {
   return n;
 }
 
-// This side's proof of identity, which says whether it knows the peer, to
-// the peer now and again at each RESEND_MS while the users compare.
-function proved(n: Node, knows_peer: boolean, now: i64): Node {
+// The tag of this side's identity, to the peer now and again at each
+// RESEND_MS until the peer confirms.
+function announced(n: Node, now: i64): Node {
   let Some(id) = n.identity else {
     return n;
   };
   let Some(k) = n.link.keys else {
     return n;
   };
-  let proof = secure.prove(k, id, knows_peer);
-  let t = Node { ...n, proof: proof, proof_knows: knows_peer, proof_at: now + lan.RESEND_MS };
-  return to_peer(t, [lan.encode(lan.IDENTITY, n.link.me, proof)]);
+  let frame = lan.encode(lan.IDENTITY, n.link.me, secure.announce(k, id));
+  return to_peer(Node { ...n, ident: [frame], ident_at: now + lan.RESEND_MS }, [frame]);
 }
 
 function proving(n: Node, now: i64): Node {
+  let shows = false;
   match (n.link.phase) {
-    lan.Verifying => {},
-    _ => {
-      return n;
-    }
+    lan.Verifying => {
+      shows = true;
+    },
+    lan.Ready => {
+      shows = !n.sess.peer_ready;
+    },
+    _ => {}
   }
-  if (n.proof.len() == 0 || now < n.proof_at) {
+  if (!shows || n.ident.len() == 0 || now < n.ident_at) {
     return n;
   }
-  return to_peer(Node { ...n, proof_at: now + lan.RESEND_MS }, [lan.encode(lan.IDENTITY, n.link.me, n.proof)]);
+  return to_peer(Node { ...n, ident_at: now + lan.RESEND_MS }, n.ident);
 }
 
-// The peer's proof of identity. When this phone knows the peer, its next
-// proof says so. When the peer also knows this phone, the two phones met
-// before and a user confirmed the string then: they need no new check.
+// An identity frame of the peer. A tag of a known phone gets this side's
+// proof. A proof of a known phone means that the peer knows this phone too,
+// because it sent the proof: the two met before and a user confirmed the
+// string then, so they need no new check.
 function identified(n: Node, body: u8[], now: i64): Node {
   let Some(k) = n.link.keys else {
     return n;
   };
+  if let Some(_) = secure.recognize(k, body, n.pins) {
+    let Some(id) = n.identity else {
+      return n;
+    };
+    if (n.ident.len() != 1) {
+      return n;
+    }
+    let frame = lan.encode(lan.IDENTITY, n.link.me, secure.prove(k, id));
+    return to_peer(Node { ...n, ident: n.ident.append(frame) }, [frame]);
+  }
   let Some(p) = secure.check_proof(k, body) else {
     return n;
   };
-  let t = Node { ...n, peer_identity: p.identity, peer_knows: p.knows };
-  if (!knows(t, p.identity)) {
-    return t;
+  if (!knows(n, p)) {
+    return n;
   }
-  if (!t.proof_knows) {
-    t = proved(t, true, now);
+  let t = Node { ...n, peer_identity: p };
+  return accept(log(t, "the other phone is known: no string to compare"), now);
+}
+
+// This side's identity on the channel, with its flags, to the peer.
+function send_pin(n: Node, now: i64): Node {
+  let Some(id) = n.identity else {
+    return n;
+  };
+  let Some(c) = n.chan else {
+    return n;
+  };
+  let (public, signature) = secure.pin_message(c, id);
+  let flags = 0;
+  if (n.peer_identity.len() > 0) {
+    flags = protocol.HAVE_PEER;
+    if (n.peer_has_mine) {
+      flags = flags | protocol.DONE;
+    }
   }
-  if (!p.knows) {
-    return t;
+  return send_frame(Node { ...n, pin_at: now + lan.RESEND_MS }, lan.CONTROL, protocol.encode(protocol.Identity(public, signature, flags)));
+}
+
+function pins_done(n: Node): boolean {
+  return n.peer_identity.len() > 0 && n.peer_has_mine;
+}
+
+// The identity again at each RESEND_MS, until each phone has the other's.
+function pinning(n: Node, now: i64): Node {
+  if (!n.pinning || pins_done(n) || now < n.pin_at || !session.connected(n.sess)) {
+    return n;
   }
-  return confirm(log(t, "the other phone is known: no string to compare"), now);
+  return send_pin(n, now);
+}
+
+// The peer's identity on the channel. After a user confirmed the string of
+// this session, this phone keeps it. A peer that does not know yet that
+// this side has its identity gets an answer at once.
+function pinned(n: Node, public: u8[], signature: u8[], flags: i32, now: i64): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  if (n.identity.is_none() || !secure.check_pin(c, public, signature)) {
+    return n;
+  }
+  if (n.peer_identity.len() > 0 && n.peer_identity != public) {
+    return n;
+  }
+  let t = Node { ...n, peer_identity: public, pinning: true, peer_has_mine: n.peer_has_mine || (flags & protocol.HAVE_PEER) != 0 };
+  if (t.confirmed && !knows(t, public)) {
+    t = log(Node { ...t, pins: t.pins.append(public) }, "this phone now knows the other phone as " + label(public));
+  }
+  if ((flags & protocol.DONE) == 0) {
+    return send_pin(t, now);
+  }
+  return t;
 }
 
 // The beacons, the handshake resends, the session timers and the rekey at
@@ -420,7 +521,7 @@ pub function tick(n: Node, now: i64): Node {
     let t = log(Node { ...n, link: lan.close(l2), out: out }, "the key exchange did not finish");
     return act(t, session.TransportLost, now);
   }
-  return proving(rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now), now);
+  return pinning(proving(rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now), now), now);
 }
 
 // The node with `random`, fresh random bytes for the rekeys, in place of the
@@ -546,12 +647,14 @@ pub function confirm(n: Node, now: i64): Node {
       return n;
     }
   }
+  let t = log(Node { ...n, confirmed: true, pinning: n.identity.is_some() }, "the string is confirmed");
+  return accept(t, now);
+}
+
+// The channel of the session, after the user or a proof of a known phone.
+function accept(n: Node, now: i64): Node {
   let (l, chan) = lan.confirm(n.link);
-  let t = log(Node { ...n, link: l, chan: chan, proof: [] }, "the string is confirmed");
-  if (t.peer_identity.len() > 0 && !knows(t, t.peer_identity)) {
-    t = log(Node { ...t, pins: t.pins.append(t.peer_identity) }, "this phone now knows the other phone");
-  }
-  return act(t, session.Authenticated, now);
+  return act(Node { ...n, link: l, chan: chan }, session.Authenticated, now);
 }
 
 // The user says that the strings differ.
@@ -593,6 +696,9 @@ pub function status(n: Node): string {
     lan.Ready => {
       if (session.connected(n.sess) && !n.sess.peer_ready) {
         return "waiting for the other phone to confirm";
+      }
+      if (n.peer_identity.len() > 0) {
+        return "connected to " + label(n.peer_identity);
       }
       return "connected";
     }

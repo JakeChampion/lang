@@ -39,6 +39,8 @@ pub struct View {
   // while the keyboard for it shows.
   server: string,
   editing: Option[string],
+  // True when this phone knows other phones, so that FORGET has work.
+  known: boolean,
 }
 
 // The colour of the state that the talk button shows: red while it talks or
@@ -82,7 +84,7 @@ pub function render(f: draw.Frame, v: View): void {
     return;
   }
   if let Some(chosen) = v.menu {
-    settings(f, chosen, v.available, v.server, sc);
+    settings(f, chosen, v.available, v.server, v.known, sc);
     return;
   }
   if let Some(typed) = v.typing {
@@ -223,8 +225,9 @@ function key_cap(f: draw.Frame, key: screen.Rect, label: string, removes: boolea
 }
 
 // The settings screen: a card for each mode with what it does, the chosen
-// mode outlined in white with a red dot, the room server, and BACK.
-function settings(f: draw.Frame, chosen: i32, available: [boolean], server: string, sc: i32): void {
+// mode outlined in white with a red dot, the room server, BACK, and FORGET,
+// red while this phone knows other phones.
+function settings(f: draw.Frame, chosen: i32, available: [boolean], server: string, known: boolean, sc: i32): void {
   let list: modes.Mode[] = modes.all();
   let help_scale: i32 = small_scale(sc);
   let width: i32 = screen.mode_row(f.width, f.height, 0).w * 9 / 10;
@@ -244,6 +247,11 @@ function settings(f: draw.Frame, chosen: i32, available: [boolean], server: stri
   }
   server_card(f, server, help_scale);
   look.outlined(f, screen.back_button(f.width, f.height), "BACK", look.muted());
+  let forget: i32 = look.muted();
+  if (known) {
+    forget = look.red();
+  }
+  look.outlined(f, screen.forget_button(f.width, f.height), "FORGET PHONES", forget);
 }
 
 const NO_SERVER: string = "needs a server";

@@ -1,13 +1,11 @@
 package e2ecompiler
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"os/exec"
 	"strings"
 	"testing"
-
 	"time"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -16,17 +14,6 @@ import (
 func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	dir := t.TempDir()
-
-	freePort := func(t *testing.T) int {
-		t.Helper()
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("reserve port: %v", err)
-		}
-		p := ln.Addr().(*net.TCPAddr).Port
-		ln.Close()
-		return p
-	}
 
 	compile := func(t *testing.T, name, src string, wantSyms []string) string {
 		t.Helper()
@@ -37,11 +24,7 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	serveAndDial := func(t *testing.T, compPath, send string) (string, string) {
 		t.Helper()
 		cmd := exec.Command(wasmtime, "run", "-S", "inherit-network", compPath)
-		var stdout bytes.Buffer
-		cmd.Stdout = &stdout
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start guest: %v", err)
-		}
+		port, stdout := startListening(t, cmd)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 
@@ -49,7 +32,7 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		var dialErr error
 		deadline := time.Now().Add(20 * time.Second)
 		for time.Now().Before(deadline) {
-			c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%s", portOf(t, compPath)), 500*time.Millisecond)
+			c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
 			if err != nil {
 				dialErr = err
 				time.Sleep(200 * time.Millisecond)
@@ -75,21 +58,20 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		select {
 		case err := <-done:
 			if err != nil {
-				t.Fatalf("guest exited with error: %v\nstdout:\n%s", err, stdout.String())
+				t.Fatalf("guest exited with error: %v\nstdout:\n%s", err, stdout())
 			}
 		case <-time.After(20 * time.Second):
 			cmd.Process.Kill()
-			t.Fatalf("guest did not exit; stdout:\n%s", stdout.String())
+			t.Fatalf("guest did not exit; stdout:\n%s", stdout())
 		}
-		return strings.TrimSpace(stdout.String()), reply
+		return strings.TrimSpace(stdout()), reply
 	}
 
 	t.Run("listen_accept_echo", func(t *testing.T) {
-		port := freePort(t)
-		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
-    let l: Socket = tcp_listen(%d);
+		src := wasmRecvHelper + `function main(): i32 {
+    let l: Socket = tcp_listen(0);
     if (l.fd < 0) { write("listen-failed\n"); return 1; }
-    write("listening\n");
+    write("listening "); print_int(tcp_local_port(l)); write("\n");
     let c: Socket = tcp_accept(l);
     if (c.fd < 0) { write("accept-failed\n"); return 1; }
     let r: string = recv(c, 64);
@@ -99,12 +81,11 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     tcp_close(c);
     tcp_close(l);
     return 0;
-}`, port)
+}`
 		comp := compile(t, "tcp_server", src,
 			[]string{"call $__fern_tcp_listen", "call $__fern_tcp_accept"})
-		rememberPort(comp, port)
 		out, reply := serveAndDial(t, comp, "ping")
-		if want := "listening\nrecv=ping sent=4"; out != want {
+		if want := "recv=ping sent=4"; out != want {
 			t.Errorf("guest stdout = %q, want %q", out, want)
 		}
 		if reply != "pong" {
@@ -135,11 +116,10 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	})
 
 	t.Run("pollable_feeds_wasm_poll", func(t *testing.T) {
-		port := freePort(t)
-		src := fmt.Sprintf(`function main(): i32 {
-    let l: Socket = tcp_listen(%d);
+		src := `function main(): i32 {
+    let l: Socket = tcp_listen(0);
     if (l.fd < 0) { write("listen-failed\n"); return 1; }
-    write("listening\n");
+    write("listening "); print_int(tcp_local_port(l)); write("\n");
     let c: Socket = tcp_accept(l);
     if (c.fd < 0) { write("accept-failed\n"); return 1; }
     let p: i32 = tcp_pollable(c.fd);
@@ -153,26 +133,12 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     tcp_close(c);
     tcp_close(l);
     return 0;
-}`, port)
+}`
 		comp := compile(t, "tcp_pollable", src,
 			[]string{"call $__fern_tcp_pollable", "call $__fern_wasm_poll"})
-		rememberPort(comp, port)
 		out, _ := serveAndDial(t, comp, "data")
-		if want := "listening\npolled=0 recv=data"; out != want {
+		if want := "polled=0 recv=data"; out != want {
 			t.Errorf("guest stdout = %q, want %q", out, want)
 		}
 	})
-}
-
-var compPorts = map[string]int{}
-
-func rememberPort(compPath string, port int) { compPorts[compPath] = port }
-
-func portOf(t *testing.T, compPath string) string {
-	t.Helper()
-	p, ok := compPorts[compPath]
-	if !ok {
-		t.Fatalf("no port recorded for %s", compPath)
-	}
-	return fmt.Sprintf("%d", p)
 }

@@ -192,6 +192,10 @@ function exchange(l: Link, body: u8[], h: secure.Handshake, now: i64): Step {
   if (h1.failed) {
     return Step { link: Link { ...l, phase: Closed, hs: None }, out: [], heard: Failed };
   }
+  if (reply.len() == 0 && !h1.done) {
+    // The handshake did not use the message.
+    return Step { link: Link { ...l, hs: Some(h1) }, out: [], heard: Nothing };
+  }
   let out: u8[][] = [];
   let last = l.last_out;
   if (reply.len() > 0) {

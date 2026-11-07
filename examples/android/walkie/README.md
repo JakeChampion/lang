@@ -78,6 +78,9 @@ Below the modes, the SERVER card shows the room server. Tap it to type the
 host name or the IPv4 address of your own server, and tap SAVE. CLR and SAVE
 select the server of the build again.
 
+FORGET PHONES at the bottom right clears the list of known phones. The
+phones then compare the string again at the next meeting.
+
 PHONE KEYBOARD opens the keyboard of the phone, and ENTER on it saves. A keyboard
 that sends words and not keys, as in some swipe modes, types nothing: use the
 keys on the screen then. The server must serve the room port of
@@ -217,21 +220,32 @@ A party that took the keys and only listens loses them at the next
 transmission. The control keys stay the same for the session. Thus a party
 that took them and changes the traffic can still take part in a rekey.
 
-Each phone keeps an Ed25519 identity key. After the exchange, each phone
-signs the transcript of the exchange with its identity key and sends the
-signature in a sealed control frame. The frame also tells whether the phone
-knows the identity of the other phone. When the users tap MATCH, each phone
-adds the identity of the other phone to its list of known phones.
+Each phone keeps an Ed25519 identity key. While the users compare the
+string, each phone sends a tag in a sealed frame: the hash of its public
+key and a value of this exchange. Only a phone that knows the key can
+match the tag, and the tag changes with each exchange.
 
-When two phones meet again and each one knows the other, they connect with
-no string to compare. A phone that knows the other phone requires a valid
-signature from it. When only one phone knows the other, both show the
-string. So a party in the middle must have the identity key of a phone to
-skip the comparison.
+A phone that matches the tag of a known phone sends its proof: its public
+key and a signature of the exchange. So a stranger does not learn the
+identity key of a phone. It cannot follow the phone from one network to
+the next.
+
+When two phones meet again and each one knows the other, each one gets the
+proof of the other. Then they connect with no string to compare. When only
+one phone knows the other, both show the string. So a party in the middle
+must have the identity key of a phone to skip the comparison. The status
+line names the known phone, for example "connected to phone 4821". The
+settings screen shows the name of this phone.
+
+After the users tap MATCH, the two phones send their identity keys on the
+control channel, each one signed for the exchange. Each phone then adds
+the other phone to its list of known phones. FORGET PHONES on the settings
+screen clears the list, so each phone shows the string again.
 
 The app keeps the seed of the identity key and the list of known phones in
-its private storage, not in the Android Keystore. So a party that can read
-the files of the app can copy the identity of the phone.
+a private directory. Android does not copy that directory to a backup or to
+a new device. The two files are not in the Android Keystore. So a party that can read the
+private files of the app can copy the identity of the phone.
 
 Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. Both go over datagrams, so a frame can be lost
@@ -276,16 +290,32 @@ A client sends one request line, and the server sends one reply line:
   token in hex.
 - When the server refuses a request, the reply is `ERROR` and the reason.
 
-A code has 6 characters. It has no 0, O, 1, I or L, so a user can read it to
+A code has 8 characters. It has no 0, O, 1, I or L, so a user can read it to
 the other user. A room with one member closes after 10 minutes. A room with
-two members closes after 2 minutes with no datagram. Each address can send 10
-requests in a minute, so it is slow to guess a code. A room has two members
+two members closes after 2 minutes with no datagram. A room has two members
 at most.
 
-A phone sends each datagram of the LAN transport to the relay, after the byte
-248 and its token. The relay sends the datagram to the other member of the
-room. The relay gets the address of each member from the token, so a phone
-that changes network keeps its room. The relay cannot read the voice,
+The limits count each host once: an IPv4 address, or an IPv6 network of
+prefix length 64. Each host can send 10 requests in a minute, so it is slow
+to guess a code. Each host can hold 4 open rooms and 4 open connections, so
+a few hosts cannot fill the server.
+
+The token stays secret: it goes only over TLS. A phone sends each datagram
+of the LAN transport to the relay in a frame: the byte 248, the ID of the
+member, a counter, the datagram and a MAC. The token keys the MAC, and the
+ID is a hash of the token. The relay sends the datagram to the other member
+of the room.
+
+A valid frame from a new address does not move the member. The relay sends
+the byte 249, the ID and a cookie to that address. The phone sends the byte
+250, the ID, its counter, the cookie and a MAC back. Then the relay sends
+the datagrams of the room to that address.
+
+The cookie is good only at the address that it went to. So a phone that changes network keeps its room. A
+party that copies a frame, or sends from a false address, cannot turn the
+traffic of the room to itself or to another host.
+
+The relay cannot read the voice,
 because the phones seal it with the keys of their own exchange. A relay that
 changes the datagrams of the key exchange gives the two phones different
 codes. The users then see that the codes are not the same.
@@ -296,8 +326,9 @@ ends the session, and so does a code with no confirmation. Then the phone
 does not search again.
 
 `internet.fern` is the side of the app. It asks the server for a room over
-TLS. It puts the token in front of each datagram to the relay. In a room, the
-app takes a datagram only from the relay. So a phone on the same network
+TLS. It puts each datagram to the relay in a frame with the MAC, and it
+answers each challenge of the relay. In a room, the app takes a datagram only
+from the relay. So a phone on the same network
 cannot take the place of the peer. `internet_test.fern` runs two nodes in one
 room through the relay table, and one node moves to a new address.
 
