@@ -44,5 +44,7 @@ Run Linux correctness checks and the full image suites before publication.
 ## Remaining scope
 
 This checkpoint does not implement a complete color JPEG encoder.
-Public JPEG options, alpha behavior and shared precision decisions remain open.
+Public JPEG options and alpha behavior remain open.
+The user selected explicit integer and floating-point formats in the shared pixel model.
+Retain the existing RGB8/RGBA8 APIs as that model expands.
 Full PNG, JPEG and JPEG XL support and comparable performance remain active requirements.

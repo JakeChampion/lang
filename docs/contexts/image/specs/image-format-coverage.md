@@ -63,6 +63,8 @@ Their local evidence remains separate from full GitHub CI qualification.
 ## Shared contracts and performance
 
 The current RGB8/RGBA8 pixel model cannot express every required sample, metadata and frame form.
+The user selected explicit integer and floating-point formats in the shared pixel model.
+Retain the existing RGB8/RGBA8 APIs.
 Specify precision, frames and metadata contracts before new public interfaces.
 Preserve existing callers while these interfaces develop.
 
