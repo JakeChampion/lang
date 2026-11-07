@@ -55,7 +55,7 @@ func TestSelfHostUrlX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm, cerr := runX86_64Bin(runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-no-treeshake").Output()
 			if cerr != nil {
-				t.Fatalf("loader compile: %v", cerr)
+				t.Fatalf("loader compile: %v: %s", cerr, exitStderr(cerr))
 			}
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
@@ -87,7 +87,7 @@ func TestSelfHostUrlArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm, cerr := runX86_64Bin(x86runner, driverBin, urlEntry(t, tc.main), stdlibRoot, "-no-treeshake", "-target", "arm64-linux").Output()
 			if cerr != nil {
-				t.Fatalf("loader compile: %v", cerr)
+				t.Fatalf("loader compile: %v: %s", cerr, exitStderr(cerr))
 			}
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")

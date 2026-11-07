@@ -796,7 +796,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__str_bytes") {
     return t_usize();
   }
-  if (device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name)) {
     return device_sig(name).result;
   }
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
@@ -972,7 +972,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") {
     return ([t_usize()], true);
   }
-  if (device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name)) {
     return (device_sig(name).params, true);
   }
   if (name == "__store_u8") {
@@ -1083,49 +1083,6 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   return ([], false);
 }
 
-// An intrinsic that reaches a device: an MMIO or port access, __fence, or a
-// privileged op. No pass removes, merges or moves one.
-pub function device_intrinsic(name: string): boolean {
-  return mmio_width(name) > 0 || port_intrinsic(name) || name == "__fence" || privileged_intrinsic(name);
-}
-
-// A port access: __port_in8 to __port_in32 read a port, and __port_out8 to
-// __port_out32 write one. Only x86-64 has an I/O port space.
-pub function port_intrinsic(name: string): boolean {
-  return util.has_str(["__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32"], name);
-}
-
-// A privileged op that only a kernel environment grants. __hvc and __smc call
-// the hypervisor and the secure monitor in the SMC calling convention.
-// __boot_info gives the address that the loader passed to the reset entry.
-// __sysreg_read and __sysreg_write access a system register. The cache ops act
-// on the line that holds an address, and the TLB ops drop the translation of an
-// address or of every address.
-pub function privileged_intrinsic(name: string): boolean {
-  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all"], name) || sysreg.intrinsic(name);
-}
-
-// The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
-// other name.
-pub function mmio_width(name: string): i32 {
-  if (!util.str_has_prefix(name, "__mmio_")) {
-    return 0;
-  }
-  if (name == "__mmio_load8" || name == "__mmio_store8") {
-    return 8;
-  }
-  if (name == "__mmio_load16" || name == "__mmio_store16") {
-    return 16;
-  }
-  if (name == "__mmio_load32" || name == "__mmio_store32") {
-    return 32;
-  }
-  if (name == "__mmio_load64" || name == "__mmio_store64") {
-    return 64;
-  }
-  return 0;
-}
-
 // The signature of a device intrinsic. An MMIO access takes its value type from
 // its width.
 struct DeviceSig { params: typeinfo.Type[], result: typeinfo.Type }
@@ -1134,10 +1091,10 @@ function device_sig(name: string): DeviceSig {
   if (name == "__fence") {
     return DeviceSig { params: [], result: t_void() };
   }
-  if (privileged_intrinsic(name)) {
+  if (builtinsigs.privileged_intrinsic(name)) {
     return privileged_sig(name);
   }
-  if (port_intrinsic(name)) {
+  if (builtinsigs.port_intrinsic(name)) {
     return port_sig(name);
   }
   return mmio_sig(name);
@@ -1173,7 +1130,7 @@ function port_sig(name: string): DeviceSig {
 
 function mmio_sig(name: string): DeviceSig {
   let value = t_i32();
-  if (mmio_width(name) == 64) {
+  if (builtinsigs.mmio_width(name) == 64) {
     value = t_i64();
   }
   if (util.str_has_prefix(name, "__mmio_store")) {
