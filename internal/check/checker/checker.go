@@ -96,6 +96,8 @@ type Info struct {
 	// recheckOpenLocals: a map local settled after a use that the check
 	// passed over, so checkTarget checks the program again.
 	recheckOpenLocals bool
+	// openAtEnd holds the open locals that no use gave a type.
+	openAtEnd []*ast.Var
 }
 
 func (c *checker) tryEnumWithOk(t ast.EnumType, ok ast.Type) (ast.EnumType, bool) {
@@ -537,6 +539,11 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	expandVecImpls(prog)
 	info, err := checkImpl(ctx, prog, target)
 	if info != nil && info.recheckOpenLocals {
+		// The first check wrote each inferred type into its `let`. An open
+		// local is unannotated again, so the second check infers it the same way.
+		for _, v := range info.openAtEnd {
+			v.Type = nil
+		}
 		info, err = checkImpl(ctx, prog, target)
 	}
 	if info != nil {

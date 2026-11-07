@@ -40,6 +40,7 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 		{"no use", "import \"core/map\";\nfunction main(): i32 { let m = map_new(8); return 0; }\n"},
 		{"no use through a generic call", ident + "function main(): i32 { let m = id(Map { }); return 0; }\n"},
 		{"no arm gives the types", "import \"core/map\";\nfunction main(): i32 { let m = if (true) { Map { } } else { Map { } }; return m.len(); }\n"},
+		{"no use, beside a map that a later insert gives the types", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; let g = Map { }; let n = g.len(); g = g.insert(\"k\", 1); return n; }\n"},
 	}
 	for _, c := range bad {
 		err := checkSource(t, c.src)
