@@ -99,6 +99,8 @@ function read_lms(input: [u8], at: i32): Lms {
   };
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per field of the frame header.
 function frame_header(input: [u8], at: i32, limits: pcm.Limits): Result[FrameHeader, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (at < 0 || at > input.len()) {
@@ -185,6 +187,8 @@ pub function decode_frame(input: [u8], at: i32, limits: pcm.Limits): Result[Fram
   return decode_frame_into(input, at, pcm.zeros(h.frames * h.format.channels), limits);
 }
 
+// fern-lint: allow cyclomatic-complexity
+// The frame chain is checked before the output allocation and again as it decodes.
 pub function decode(input: [u8], limits: pcm.Limits): Result[pcm.Block, pcm.AudioError] {
   let h = inspect(input, limits)?;
   if (h.frames > 2147483647u32) {
