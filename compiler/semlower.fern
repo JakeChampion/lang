@@ -223,9 +223,10 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
   let writes = ssaunits.write_rows(keys, funcs);
   let views = ssarc.schema_views(keys, funcs, writes);
   let plans: ssaunits.Plan[] = [];
+  let tables_agree = ssaunits.write_tables_agree(prev.writes, writes);
   i = 0;
   while (i < funcs.len()) {
-    plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i]));
+    plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i], tables_agree));
     i += 1;
   }
   let fresh = ssaunits.fresh_rows(keys, funcs, plans);
@@ -261,8 +262,8 @@ function held_plan(p: semsource.Produced, view: ssaunits.SchemaView, forced: boo
   }
 }
 
-function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
-  if (plan_reusable(prev, changed, i) && ssaunits.write_rows_agree(prev.writes, view.writes, ssaunits.grow_callees(p.func))) {
+function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced, view: ssaunits.SchemaView, tables_agree: boolean): ssaunits.Plan {
+  if (plan_reusable(prev, changed, i) && tables_agree && ssaunits.written_rows_agree(prev.writes, view.writes, ssaunits.grow_callees(p.func))) {
     return prev.plans[i];
   }
   return produced_plan(p, view);
@@ -270,12 +271,13 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 
 function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned, prev: Rows, changed: boolean[]): boolean[] {
   let out: boolean[] = [];
+  let tables_agree = ssaunits.write_tables_agree(prev.writes, inferred.r.writes);
   let i = 0;
   while (i < inferred.r.plans.len()) {
     let p = produced_at(built, mod, i);
     let callees = ssaunits.grow_callees(p.func);
     out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, callees) || !ssaunits.fresh_rows_agree(prev.fresh, inferred.r.fresh, callees)
-      || !ssaunits.write_rows_agree(prev.writes, inferred.r.writes, callees));
+      || !tables_agree || !ssaunits.written_rows_agree(prev.writes, inferred.r.writes, callees));
     i += 1;
   }
   return out;
