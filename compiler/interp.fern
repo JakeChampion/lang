@@ -6236,8 +6236,9 @@ function array_with(heap: interpheap.Heap, own av: VArr, args: Value[]): Value {
     return index_abort(aborts.arr_oob(), util.i32_to_string(wi), arr_len(av));
   }
   let elem = av.elem;
+  let reserve = interpheap.get(av.store).words;
   let items = arr_take_els(av);
-  return v_arr_of(heap, items.with(wi, args[1]), elem);
+  return arr_reserved(heap, reserve, items.with(wi, args[1]), elem);
 }
 
 function array_truncate(heap: interpheap.Heap, own av: VArr, args: Value[]): Value {
@@ -6246,6 +6247,7 @@ function array_truncate(heap: interpheap.Heap, own av: VArr, args: Value[]): Val
   }
   let n = vint_bits(args[0]);
   let elem = av.elem;
+  let reserve = interpheap.get(av.store).words;
   let items = arr_take_els(av);
   let keep = n;
   if (keep > items.len()) {
@@ -6255,10 +6257,31 @@ function array_truncate(heap: interpheap.Heap, own av: VArr, args: Value[]): Val
   for i in 0..keep {
     kept = kept.append(items[i]);
   }
-  return v_arr_of(heap, kept, elem);
+  return arr_reserved(heap, reserve, kept, elem);
 }
 
-// .len, .with, .truncate and .append on an array; None for any other method.
+// A copy of a raw-backed array keeps its reserved slots, as the compiled
+// array keeps its capacity, so a later __arr_set_len can reach them.
+function arr_reserved(heap: interpheap.Heap, reserve: i64[], items: Value[], elem: string): Value {
+  let cap = reserve.len() - 1;
+  if (cap <= items.len()) {
+    return v_arr_of(heap, items, elem);
+  }
+  let words: i64[] = [items.len() as i64];
+  for x in items {
+    if (!is_int_like(x)) {
+      return v_arr_of(heap, items, elem);
+    }
+    words = words.append(vint_as_i64(x));
+  }
+  for i in items.len()..cap {
+    words = words.append(reserve[1 + i]);
+  }
+  return VArr { items: items, elem: elem, view: false, store: interpheap.allocate(heap, "", words, []), offset: 0 };
+}
+
+// .len, .with, .truncate, .append and a reserved .concat on an array; None for
+// any other method.
 function array_method(heap: interpheap.Heap, own av: VArr, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
     if (args.len() != 0) {
@@ -6266,19 +6289,40 @@ function array_method(heap: interpheap.Heap, own av: VArr, name: string, args: V
     }
     return Some(v_int(arr_len(av)));
   }
-  if (name == "with" && !av.view) {
+  if (av.view) {
+    return None;
+  }
+  if (name == "with") {
     return Some(array_with(heap, av, args));
   }
-  if (name == "truncate" && !av.view) {
+  if (name == "truncate") {
     return Some(array_truncate(heap, av, args));
   }
-  if (name == "append" && !av.view) {
+  if (name == "append") {
     if (args.len() != 1) {
       return Some(v_err("array.append: need 1 arg"));
     }
     let elem = av.elem;
+    let reserve = interpheap.get(av.store).words;
     let items = arr_take_els(av);
-    return Some(v_arr_of(heap, items.append(args[0]), elem));
+    return Some(arr_reserved(heap, reserve, items.append(args[0]), elem));
+  }
+  if (name == "concat") {
+    return reserved_concat(heap, av, args);
+  }
+  return None;
+}
+
+// The compiled concat method extends its receiver in place, so a raw-backed
+// receiver keeps its reserved slots. Any other receiver takes the declared
+// method.
+function reserved_concat(heap: interpheap.Heap, av: VArr, args: Value[]): Option[Value] {
+  let reserve = interpheap.get(av.store).words;
+  if (reserve.len() == 0 || args.len() != 1) {
+    return None;
+  }
+  if let VArr(b) = args[0] {
+    return Some(arr_reserved(heap, reserve, util.append_all(arr_els(av), arr_els(b)), av.elem));
   }
   return None;
 }
@@ -6610,6 +6654,19 @@ function byte_value(heap: interpheap.Heap, b: u8[]): Value {
   return v_arr(heap, out);
 }
 
+// A builtin that writes into its destination returns the destination, so a
+// raw-backed one keeps its reserved slots.
+function written_bytes(heap: interpheap.Heap, dest: Value, b: u8[]): Value {
+  if let VArr(a) = dest {
+    let out: Value[] = [];
+    for x in b {
+      out = out.append(v_int(x as i32));
+    }
+    return arr_reserved(heap, interpheap.get(a.store).words, out, a.elem);
+  }
+  return byte_value(heap, b);
+}
+
 function call_bytes_into(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 5) {
     return v_err("__bytes_into: expected 5 arguments");
@@ -6627,7 +6684,7 @@ function call_bytes_into(heap: interpheap.Heap, args: Value[]): Value {
     out = out.with(at + i, bs[1][from + i]);
     i += 1;
   }
-  return byte_value(heap, out);
+  return written_bytes(heap, args[0], out);
 }
 
 function call_bytes_range(heap: interpheap.Heap, args: Value[]): Value {
@@ -6668,6 +6725,13 @@ function sub_bytes(b: u8[], from: i32, n: i32): u8[] {
 }
 
 // The in-place pair over a copy of the buffer argument, as the compiled kernels leave it.
+// The key schedule, the hash key and the nonce have their sizes, and the
+// additional data and the sealed range with its tag are inside the buffer.
+function gcm_into_fits(bs: u8[][], aad_at: i64, aad_n: i64, at: i64, n: i64): boolean {
+  let size = bs[3].len() as i64;
+  return bs[0].len() >= 176 && bs[1].len() >= 16 && bs[2].len() == 12 && aad_at >= 0 && aad_n >= 0 && at >= 0 && n >= 0 && at + n + 16 <= size && aad_at + aad_n <= size;
+}
+
 function call_aes_gcm_into(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (args.len() != 9) {
     return v_err(name + ": expected rk, h, iv, seq, buf, aad_at, aad_n, at and n");
@@ -6682,8 +6746,7 @@ function call_aes_gcm_into(heap: interpheap.Heap, name: string, args: Value[]): 
   let at = vint_as_i64(args[7]);
   let n = vint_as_i64(args[8]);
   let buf = bs[3];
-  let size = buf.len() as i64;
-  if (bs[0].len() < 176 || bs[1].len() < 16 || bs[2].len() != 12 || aad_at < 0 || aad_n < 0 || at < 0 || n < 0 || at + n + 16 > size || aad_at + aad_n > size) {
+  if (!gcm_into_fits(bs, aad_at, aad_n, at, n)) {
     return v_err(name + ": range out of bounds");
   }
   let nonce = bs[2];
@@ -6710,7 +6773,7 @@ function call_aes_gcm_into(heap: interpheap.Heap, name: string, args: Value[]): 
   } else {
     buf = buf.with(d + m, 1 as u8);
   }
-  return byte_value(heap, buf);
+  return written_bytes(heap, args[4], buf);
 }
 
 function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value {
@@ -7000,30 +7063,13 @@ function call_mismatch_bytes(args: Value[]): Value {
   }
   if let VArr(a) = args[0] {
     if let VArr(b) = args[2] {
-      let ao = vint_bits(args[1]);
-      let bo = vint_bits(args[3]);
-      let n = vint_bits(args[4]);
-      if (ao < 0) {
-        ao = 0;
+      let ao = clamp_offset(vint_bits(args[1]), arr_len(a));
+      let bo = clamp_offset(vint_bits(args[3]), arr_len(b));
+      let room = arr_len(a) - ao;
+      if (arr_len(b) - bo < room) {
+        room = arr_len(b) - bo;
       }
-      if (ao > arr_len(a)) {
-        ao = arr_len(a);
-      }
-      if (bo < 0) {
-        bo = 0;
-      }
-      if (bo > arr_len(b)) {
-        bo = arr_len(b);
-      }
-      if (n > arr_len(a) - ao) {
-        n = arr_len(a) - ao;
-      }
-      if (n > arr_len(b) - bo) {
-        n = arr_len(b) - bo;
-      }
-      if (n < 0) {
-        n = 0;
-      }
+      let n = clamp_offset(vint_bits(args[4]), room);
       let i = 0;
       while (i < n) {
         if (vint_bits(arr_at(a, ao + i)) != vint_bits(arr_at(b, bo + i))) {

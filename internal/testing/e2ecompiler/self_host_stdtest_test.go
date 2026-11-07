@@ -85,6 +85,67 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 	})
 }
 
+// The suites that take more than a minute under the self-host interpreter. The
+// interp leg leaves them out so that it fits one job.
+var interpSlowStdTests = map[string]bool{
+	"brotli": true, "deflate": true, "ed25519": true, "http_compress": true,
+	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
+	"mitigations": true, "mlkem768": true, "montgomery": true, "opus_band_analysis": true,
+	"opus_bands": true, "opus_celt": true, "opus_celt_encoder": true,
+	"opus_celt_frame": true, "opus_celt_prefilter": true, "opus_energy": true,
+	"opus_mdct": true, "opus_packet": true, "opus_pitch_doubling": true, "opus_pvq": true,
+	"opus_rate": true, "opus_vq": true, "ordmap": true, "p256": true, "parse_limits": true,
+	"pmap": true, "publicsuffix": true, "pvec": true, "quic_conn": true, "rsa": true,
+	"tls_client": true, "tls_handshake": true, "tls_keyshare": true, "tls_mozilla": true,
+	"tls_roots": true, "tls_server": true, "tls_verify": true, "wycheproof_ed25519": true,
+	"wycheproof_x25519": true, "x25519": true, "zstd": true,
+}
+
+// The self-host interpreter runs each std/test program and must print the same
+// TAP stream and exit with the same code as the Go oracle's interpreter.
+func TestSelfHostStdTestInterp(t *testing.T) {
+	interpBin := buildLangBinForInterp(t)
+	cli := e2eharness.SelfHostCLI(t)
+	stdlibRoot, err := filepath.Abs("../../stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	known := map[string]bool{}
+	for _, tc := range append(selfHostStdTestCases(t, false), selfHostStdTestCases(t, true)...) {
+		known[tc.name] = true
+	}
+	for name := range interpSlowStdTests {
+		if !known[name] {
+			t.Errorf("interpSlowStdTests names %q, which is not a std/test case", name)
+		}
+	}
+	for _, tc := range selfHostStdTestCases(t, false) {
+		if interpSlowStdTests[tc.name] {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			wantOut, wantExit := e2eharness.InterpVerdict(t, interpBin, tc.src)
+			cmd := exec.Command(cli, "-interp", tc.src, stdlibRoot)
+			gotOut, _ := stdTestOutput(cmd)
+			if cmd.ProcessState == nil {
+				t.Fatalf("the self-host interpreter did not start")
+			}
+			if gotExit := cmd.ProcessState.ExitCode(); gotExit != wantExit {
+				t.Errorf("exit code: self-host interp %d, oracle interp %d\n%s", gotExit, wantExit, gotOut)
+			}
+			gotStr, wantStr := string(gotOut), string(wantOut)
+			if tc.stripPrefix != "" {
+				gotStr = stripLinesWithPrefix(gotStr, tc.stripPrefix)
+				wantStr = stripLinesWithPrefix(wantStr, tc.stripPrefix)
+			}
+			if gotStr != wantStr {
+				t.Errorf("TAP output mismatch:\n--- self-host interp ---\n%s\n--- oracle interp ---\n%s", gotStr, wantStr)
+			}
+		})
+	}
+}
+
 func TestSelfHostStdTestE2EArm64(t *testing.T) { runSelfHostStdTestArm64(t, false) }
 
 func TestSelfHostStdTestE2EArm64TLS(t *testing.T) { runSelfHostStdTestArm64(t, true) }
