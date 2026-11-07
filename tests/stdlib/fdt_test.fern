@@ -1,0 +1,247 @@
+import "core/cmp";
+import "core/error";
+import "std/binary";
+import "std/fdt";
+import "std/option";
+import "std/test";
+
+// A blob under construction: the structure block and the strings block.
+struct Builder { structs: u8[], strings: u8[] }
+
+function word(own b: u8[], v: i64): u8[] {
+  return binary.append_u32_be(b, v as u32);
+}
+
+function padded(own b: u8[], bytes: u8[]): u8[] {
+  for x in bytes {
+    b = b.append(x);
+  }
+  while (b.len() % 4 != 0) {
+    b = b.append(0 as u8);
+  }
+  return b;
+}
+
+function cstr(s: string): u8[] {
+  let b: u8[] = [];
+  for x in s.bytes() {
+    b = b.append(x);
+  }
+  return b.append(0 as u8);
+}
+
+function begin(own b: Builder, name: string): Builder {
+  let s = b.structs;
+  return Builder { structs: padded(word(s, 1), cstr(name)), strings: b.strings };
+}
+
+function end(own b: Builder): Builder {
+  return Builder { ...b, structs: word(b.structs, 2) };
+}
+
+function token(own b: Builder, t: i64): Builder {
+  return Builder { ...b, structs: word(b.structs, t) };
+}
+
+function prop(own b: Builder, name: string, value: u8[]): Builder {
+  let s = word(word(word(b.structs, 3), value.len() as i64), b.strings.len() as i64);
+  let strings = b.strings;
+  for x in cstr(name) {
+    strings = strings.append(x);
+  }
+  return Builder { structs: padded(s, value), strings: strings };
+}
+
+function cells(vs: i64[]): u8[] {
+  let b: u8[] = [];
+  for v in vs {
+    b = word(b, v);
+  }
+  return b;
+}
+
+function strings(ss: string[]): u8[] {
+  let b: u8[] = [];
+  for s in ss {
+    for x in cstr(s) {
+      b = b.append(x);
+    }
+  }
+  return b;
+}
+
+function blob(b: Builder, version: i64): u8[] {
+  let s = b.structs;
+  let structs = word(s, 9);
+  let out = word([], 3490578157);
+  out = word(out, (40 + structs.len() + b.strings.len()) as i64);
+  out = word(out, 40);
+  out = word(out, (40 + structs.len()) as i64);
+  out = word(out, 40);
+  out = word(out, version);
+  out = word(out, 16);
+  out = word(out, 0);
+  out = word(out, b.strings.len() as i64);
+  out = word(out, structs.len() as i64);
+  for x in structs {
+    out = out.append(x);
+  }
+  for x in b.strings {
+    out = out.append(x);
+  }
+  return out;
+}
+
+// A small machine: two-cell addresses at the root, a UART, a PSCI node, and a
+// bus with one-cell addresses and sizes.
+function machine(): Builder {
+  let b = begin(Builder { structs: [], strings: [] }, "");
+  b = prop(b, "#address-cells", cells([2]));
+  b = prop(b, "#size-cells", cells([2]));
+  b = begin(b, "memory@40000000");
+  b = prop(b, "reg", cells([0, 0x40000000, 0, 0x8000000]));
+  b = end(b);
+  b = token(b, 4);
+  b = begin(b, "pl011@9000000");
+  b = prop(b, "compatible", strings(["arm,pl011", "arm,primecell"]));
+  b = prop(b, "reg", cells([0, 0x9000000, 0, 0x1000]));
+  b = end(b);
+  b = begin(b, "psci");
+  b = prop(b, "compatible", strings(["arm,psci-1.0"]));
+  b = prop(b, "method", strings(["hvc"]));
+  b = prop(b, "cpu_off", cells([0x84000002]));
+  b = end(b);
+  b = begin(b, "bus@1000");
+  b = prop(b, "#address-cells", cells([1]));
+  b = prop(b, "#size-cells", cells([1]));
+  b = begin(b, "timer@2000");
+  b = prop(b, "reg", cells([0x2000, 0x100, 0x3000, 0x200]));
+  b = end(b);
+  b = end(b);
+  return end(b);
+}
+
+function tree(): fdt.Tree {
+  match (fdt.parse(blob(machine(), 17))) {
+    Ok(t) => {
+      return t;
+    },
+    Err(_) => {
+      return fdt.Tree { blob: [], nodes: [] };
+    }
+  }
+}
+
+function region(t: fdt.Tree, node: Option[i32], index: i32): string {
+  let Some(n) = node else {
+    return "no node";
+  };
+  let Some(r) = t.reg(n, index) else {
+    return "no reg";
+  };
+  return r.address.to_string() + "+" + r.size.to_string();
+}
+
+function test_nodes_and_parents(): test.TestOutcome {
+  let t = tree();
+  let names = "";
+  for n in t.nodes {
+    names = names + n.name + ":" + n.parent.to_string() + " ";
+  }
+  return test.assert_eq(names, ":-1 memory@40000000:0 pl011@9000000:0 psci:0 bus@1000:0 timer@2000:4 ");
+}
+
+function test_find_compatible(): test.TestOutcome {
+  let t = tree();
+  let first = t.find_compatible("arm,pl011").unwrap_or(-1);
+  let second = t.find_compatible("arm,primecell").unwrap_or(-1);
+  let none = t.find_compatible("ns16550a").is_none();
+  return test.assert_eq(first.to_string() + " " + second.to_string() + " " + none.to_string(), "2 2 true");
+}
+
+function test_find_name(): test.TestOutcome {
+  let t = tree();
+  let unit = t.find_name("memory").unwrap_or(-1);
+  let exact = t.find_name("psci").unwrap_or(-1);
+  let prefix = t.find_name("mem").is_none();
+  return test.assert_eq(unit.to_string() + " " + exact.to_string() + " " + prefix.to_string(), "1 3 true");
+}
+
+function test_reg_two_cells(): test.TestOutcome {
+  let t = tree();
+  return test.assert_eq(region(t, t.find_name("memory"), 0) + " " + region(t, t.find_compatible("arm,pl011"), 0), "1073741824+134217728 150994944+4096");
+}
+
+function test_reg_one_cell_from_the_parent(): test.TestOutcome {
+  let t = tree();
+  let timer = t.find_name("timer");
+  return test.assert_eq(region(t, timer, 0) + " " + region(t, timer, 1) + " " + region(t, timer, 2), "8192+256 12288+512 no reg");
+}
+
+function test_strings_and_words(): test.TestOutcome {
+  let t = tree();
+  let p = t.find_name("psci").unwrap_or(-1);
+  let method = t.property_string(p, "method").unwrap_or("?");
+  let off = t.property_u32(p, "cpu_off").unwrap_or(0 as u32) as i64;
+  let missing = t.property_string(p, "status").is_none() && t.property_u32(p, "method").is_some();
+  return test.assert_eq(method + " " + off.to_string() + " " + missing.to_string(), "hvc 2214592514 true");
+}
+
+function refusal(b: u8[]): string {
+  match (fdt.parse(b)) {
+    Ok(_) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_refuses_a_bad_header(): test.TestOutcome {
+  let good = blob(machine(), 17);
+  let magic = refusal(good.with(0, 0 as u8));
+  let version = refusal(blob(machine(), 15));
+  let short = refusal([0xd0 as u8, 0x0d as u8]);
+  return test.assert_eq(
+    magic + "; " + version + "; " + short,
+    "device tree: no device-tree magic at byte 0; device tree: the version is below 16 at byte 20; device tree: the blob ends inside a field at byte 0",
+  );
+}
+
+function test_refuses_a_bad_structure(): test.TestOutcome {
+  let open = refusal(blob(begin(Builder { structs: [], strings: [] }, ""), 17));
+  let outside = refusal(blob(prop(Builder { structs: [], strings: [] }, "x", []), 17));
+  let unknown = refusal(blob(token(Builder { structs: [], strings: [] }, 7), 17));
+  return test.assert_eq(
+    open + "; " + outside + "; " + unknown,
+    "device tree: a node is not closed at byte 52; device tree: a property is outside a node at byte 44; device tree: an unknown token at byte 40",
+  );
+}
+
+function display[T: cmp.Display](value: T): string {
+  return value.to_string();
+}
+
+function error_message(value: dyn error.Error): string {
+  return value.message();
+}
+
+function test_error_traits(): test.TestOutcome {
+  let problem = fdt.FdtError { offset: 7, reason: "invalid token" };
+  return test.assert_eq(display(problem) + "; " + error_message(problem), "device tree: invalid token at byte 7; device tree: invalid token at byte 7");
+}
+
+function main(): i32 {
+  let r = test.new("std/fdt");
+  r = r.it("each node has its name and the index of its parent", test_nodes_and_parents);
+  r = r.it("find_compatible reads each string of the list", test_find_compatible);
+  r = r.it("find_name matches with or without a unit address", test_find_name);
+  r = r.it("reg reads two-cell pairs", test_reg_two_cells);
+  r = r.it("reg takes the cell counts from the parent", test_reg_one_cell_from_the_parent);
+  r = r.it("property_string and property_u32 read a value or give None", test_strings_and_words);
+  r = r.it("parse refuses a bad header", test_refuses_a_bad_header);
+  r = r.it("parse refuses a bad structure", test_refuses_a_bad_structure);
+  r = r.it("errors support Display and Error", test_error_traits);
+  return r.finish();
+}

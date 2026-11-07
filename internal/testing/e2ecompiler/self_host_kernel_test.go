@@ -14,9 +14,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The board is qemu-virt: its UART is a PL011, and its PSCI firmware takes a
-// call through hvc.
+// The board is qemu-virt. Its UART is a PL011, and the firmware puts the
+// device tree at the start of the RAM. PSCI takes a call through hvc or smc,
+// as the device tree says.
 const kernelBoardSrc = `const UART: usize = 0x09000000;
+
+const DEVICE_TREE: usize = 0x40000000;
 
 @provide("log")
 pub function uart_write(data: usize, len: i32): void {
@@ -29,16 +32,53 @@ pub function uart_write(data: usize, len: i32): void {
   }
 }
 
+// A copy of the device tree, with the length that its header gives.
+pub function device_tree(): u8[] {
+  let out: u8[] = [];
+  unsafe {
+    let size = 0;
+    for k in 4..8 {
+      size = size << 8 | __load_u8(DEVICE_TREE + k as usize);
+    }
+    for k in 0..size {
+      out = out.append(__load_u8(DEVICE_TREE + k as usize) as u8);
+    }
+  }
+  return out;
+}
+
 // PSCI SYSTEM_OFF.
 @norc
-pub function power_off(): void {
+pub function power_off_hvc(): void {
   unsafe {
     __hvc(0x84000008i64, 0i64, 0i64, 0i64);
+  }
+}
+
+@norc
+pub function power_off_smc(): void {
+  unsafe {
+    __smc(0x84000008i64, 0i64, 0i64, 0i64);
   }
 }
 `
 
 const kernelMainSrc = `import "./board";
+import "std/fdt";
+import "std/option";
+
+function describe(t: fdt.Tree): string {
+  let Some(uart) = t.find_compatible("arm,pl011") else {
+    return "no uart";
+  };
+  let Some(r) = t.reg(uart, 0) else {
+    return "no uart reg";
+  };
+  let Some(psci) = t.find_name("psci") else {
+    return "no psci";
+  };
+  return "uart " + r.address.to_string() + " psci " + t.property_string(psci, "method").unwrap_or("none");
+}
 
 function main(): i32 {
   let xs: i32[] = [];
@@ -48,7 +88,19 @@ function main(): i32 {
     i += 1;
   }
   print("hello from fern, total " + xs.len().to_string());
-  board.power_off();
+  match (fdt.parse(board.device_tree())) {
+    Ok(t) => {
+      let line = describe(t);
+      print(line);
+      if (line.ends_with(" smc")) {
+        board.power_off_smc();
+      }
+    },
+    Err(e) => {
+      print(e.message());
+    }
+  }
+  board.power_off_hvc();
   return 0;
 }
 `
@@ -78,45 +130,17 @@ func writeKernelProgram(t *testing.T) string {
 func TestSelfHostKernelImageLayout(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeKernelProgram(t)
-	out := filepath.Join(t.TempDir(), "kernel.elf")
-	if msg, err := cli.compileCmd("arm64-kernel", out, src, "-ram", kernelRAM).CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, msg)
-	}
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	if f.Type != elf.ET_EXEC || f.Machine != elf.EM_AARCH64 {
-		t.Fatalf("type %v machine %v, want ET_EXEC EM_AARCH64", f.Type, f.Machine)
-	}
-	var loads []*elf.Prog
-	for _, p := range f.Progs {
-		if p.Type == elf.PT_LOAD {
-			loads = append(loads, p)
-		}
-	}
-	if len(loads) < 2 {
-		t.Fatalf("%d PT_LOAD segments, want text and data", len(loads))
-	}
-	if loads[0].Vaddr != kernelBase {
-		t.Errorf("the first segment loads at %#x, want the -ram base %#x", loads[0].Vaddr, kernelBase)
-	}
-	text, entryInText := false, false
-	for _, p := range loads {
-		if p.Vaddr < kernelBase || p.Vaddr+p.Memsz > kernelBase+kernelSize-(1<<20) {
-			t.Errorf("segment %#x+%#x is outside the RAM below the stack", p.Vaddr, p.Memsz)
-		}
-		if p.Flags&elf.PF_X != 0 && p.Flags&elf.PF_W != 0 {
-			t.Errorf("segment %#x is writable and executable", p.Vaddr)
-		}
-		if p.Flags&elf.PF_X != 0 {
-			text = true
-			entryInText = entryInText || f.Entry >= p.Vaddr && f.Entry < p.Vaddr+p.Filesz
-		}
-	}
-	if !text || !entryInText {
-		t.Errorf("entry %#x is not in an executable segment", f.Entry)
+	// Firecracker puts the RAM at 0x80000000, above the 32-bit signed range.
+	for _, c := range []struct {
+		ram        string
+		base, size uint64
+	}{
+		{kernelRAM, kernelBase, kernelSize},
+		{"0x80000000,128M", 0x80000000, 128 << 20},
+	} {
+		t.Run(c.ram, func(t *testing.T) {
+			checkKernelImage(t, cli, src, c.ram, c.base, c.size)
+		})
 	}
 	asmPath := filepath.Join(t.TempDir(), "kernel.s")
 	if msg, err := cli.compileCmd("arm64-kernel", asmPath, src, "-ram", kernelRAM, "-emit", "asm").CombinedOutput(); err != nil {
@@ -134,28 +158,41 @@ func TestSelfHostKernelImageLayout(t *testing.T) {
 	}
 }
 
-// The image boots on qemu-virt, prints through the board's UART, and stops the
-// VM through PSCI. qemu exits 0 when the guest powers off.
+// The image boots on qemu-virt and prints through the board's UART. It finds
+// the UART and the PSCI conduit in the device tree, and stops the VM through
+// PSCI. qemu exits 0 when the guest powers off.
 func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 	qemu := e2eharness.QemuSystemArm64(t)
 	cli := buildSelfHostCLI(t)
-	out := filepath.Join(t.TempDir(), "kernel.elf")
-	if msg, err := cli.compileCmd("arm64-kernel", out, writeKernelProgram(t), "-ram", kernelRAM).CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, msg)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, qemu, "-M", "virt", "-cpu", "cortex-a76", "-m", "128M",
-		"-nographic", "-monitor", "none", "-nic", "none", "-kernel", out)
-	console, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatalf("the VM did not power off in 60s; console:\n%s", console)
-	}
-	if err != nil {
-		t.Fatalf("qemu: %v; console:\n%s", err, console)
-	}
-	if !strings.Contains(string(console), "hello from fern, total 10\n") {
-		t.Errorf("console:\n%s\nwant the line %q", console, "hello from fern, total 10")
+	src := writeKernelProgram(t)
+	// The second layout puts the image above 4 GiB, so each address in the
+	// image needs 64 bits.
+	for _, c := range []struct{ name, ram, mem string }{
+		{"low", kernelRAM, "128M"},
+		{"above 4G", "0x200000000,64M", "8G"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "kernel.elf")
+			if msg, err := cli.compileCmd("arm64-kernel", out, src, "-ram", c.ram).CombinedOutput(); err != nil {
+				t.Fatalf("build: %v\n%s", err, msg)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, qemu, "-M", "virt", "-cpu", "cortex-a76", "-m", c.mem,
+				"-nographic", "-monitor", "none", "-nic", "none", "-kernel", out)
+			console, err := cmd.CombinedOutput()
+			if ctx.Err() != nil {
+				t.Fatalf("the VM did not power off in 60s; console:\n%s", console)
+			}
+			if err != nil {
+				t.Fatalf("qemu: %v; console:\n%s", err, console)
+			}
+			for _, want := range []string{"hello from fern, total 10\n", "uart 150994944 psci hvc\n"} {
+				if !strings.Contains(string(console), want) {
+					t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
+				}
+			}
+		})
 	}
 }
 
@@ -261,7 +298,7 @@ func TestSelfHostKernelRamFlag(t *testing.T) {
 		{"missing", "arm64-kernel", "", "needs -ram BASE,SIZE"},
 		{"unaligned base", "arm64-kernel", "0x40001000,128M", "-ram takes BASE,SIZE"},
 		{"small size", "arm64-kernel", "0x40000000,1M", "-ram takes BASE,SIZE"},
-		{"above 2G", "arm64-kernel", "0x80000000,128M", "-ram takes BASE,SIZE"},
+		{"above 1T", "arm64-kernel", "0xff00000000,8G", "-ram takes BASE,SIZE"},
 		{"hosted target", "arm64-linux", "0x40000000,128M", "-ram is only for a kernel target"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -274,5 +311,49 @@ func TestSelfHostKernelRamFlag(t *testing.T) {
 				t.Errorf("err %v, output %q; want a refusal with %q", err, msg, c.want)
 			}
 		})
+	}
+}
+
+func checkKernelImage(t *testing.T, cli *selfHostCLI, src, ram string, base, size uint64) {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "kernel.elf")
+	if msg, err := cli.compileCmd("arm64-kernel", out, src, "-ram", ram).CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, msg)
+	}
+	f, err := elf.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if f.Type != elf.ET_EXEC || f.Machine != elf.EM_AARCH64 {
+		t.Fatalf("type %v machine %v, want ET_EXEC EM_AARCH64", f.Type, f.Machine)
+	}
+	var loads []*elf.Prog
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_LOAD {
+			loads = append(loads, p)
+		}
+	}
+	if len(loads) < 2 {
+		t.Fatalf("%d PT_LOAD segments, want text and data", len(loads))
+	}
+	if loads[0].Vaddr != base {
+		t.Errorf("the first segment loads at %#x, want the -ram base %#x", loads[0].Vaddr, base)
+	}
+	text, entryInText := false, false
+	for _, p := range loads {
+		if p.Vaddr < base || p.Vaddr+p.Memsz > base+size-(1<<20) {
+			t.Errorf("segment %#x+%#x is outside the RAM below the stack", p.Vaddr, p.Memsz)
+		}
+		if p.Flags&elf.PF_X != 0 && p.Flags&elf.PF_W != 0 {
+			t.Errorf("segment %#x is writable and executable", p.Vaddr)
+		}
+		if p.Flags&elf.PF_X != 0 {
+			text = true
+			entryInText = entryInText || f.Entry >= p.Vaddr && f.Entry < p.Vaddr+p.Filesz
+		}
+	}
+	if !text || !entryInText {
+		t.Errorf("entry %#x is not in an executable segment", f.Entry)
 	}
 }

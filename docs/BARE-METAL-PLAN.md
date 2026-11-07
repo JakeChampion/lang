@@ -305,17 +305,18 @@ ELF `ET_EXEC` image:
   (`CPACR_EL1`).
 - Then it clears `.bss` and gives the heap the RAM between the image and the
   1 MiB stack. It calls `main`, and after `main` it waits with `wfe`.
-- The image keeps 32-bit addresses, so the end of the RAM must be at or below
-  2 GiB. That covers qemu-virt, where the RAM starts at `0x40000000`. Firecracker
-  puts the RAM at `0x80000000`, so it needs 64-bit addresses in `compiler/elf.fern`.
+- The image has 64-bit addresses, and the end of the RAM must be at or below
+  1 TiB, the 40-bit physical address space. That covers qemu-virt, where the
+  RAM starts at `0x40000000`, and Firecracker, where it starts at `0x80000000`.
 - qemu-virt puts the device tree at the start of its RAM for an image that is
   not a Linux kernel. So `-ram 0x40200000,126M` keeps the first 2 MiB for it.
 
 `internal/testing/e2ecompiler/self_host_kernel_test.go` reads the program
 headers and the entry point. `TestSelfHostKernelBootsOnQemu` boots the image on
-`qemu-system-aarch64 -M virt`. The image prints through a PL011 provider and
-stops the VM with PSCI `SYSTEM_OFF`. The `kernel-boot-arm64` job of the
-self-host lane runs it.
+`qemu-system-aarch64 -M virt`. The image prints through a PL011 provider. It
+copies the device tree from the start of the RAM, and `std/fdt` finds the UART
+and the PSCI conduit in it. Then the image stops the VM with PSCI
+`SYSTEM_OFF`. The `kernel-boot-arm64` job of the self-host lane runs it.
 
 ### 5. Atomics
 
@@ -471,7 +472,8 @@ check time, in the same mechanism that enforces the OS boundary today.
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
   Fern already ships, which emit ELF rather than shelling out to one.
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
-  once volatile and memory layout exist; no new language surface.
+  once volatile and memory layout exist; no new language surface. `std/fdt`
+  reads a device tree (#14260).
 
 ### Milestones, each producing something that runs
 
@@ -524,8 +526,8 @@ environment over the FernOS syscalls can come later, as an improvement.
 6. **First slice done: memory layout and the reset entry** (#14254), as
    `arm64-kernel` (section 4).
 7. **Started: milestone 1 on qemu-virt** (#14260). The image boots, prints and
-   stops the VM in CI. The device-tree parser in Fern and the x86-64 microVM
-   remain. **Started: the effect intrinsics** (#14252), with `__fence`,
+   stops the VM in CI. `std/fdt` reads the device tree. The x86-64 microVM
+   remains. **Started: the effect intrinsics** (#14252), with `__fence`,
    `__wfi`, `__hvc` and `__smc` (section 2).
    Then: `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
