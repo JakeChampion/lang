@@ -268,7 +268,7 @@ function elf_push_zeros(b: usize, n: i32): void {
 // Code, data, the dynamic tables, PT_DYNAMIC, the unwind header or its
 // padding, PT_GNU_STACK, PT_GNU_RELRO and the optional PT_GNU_PROPERTY.
 function elf_so_phnum(note: boolean): i32 {
-  return 7 + elf_property_phs(note);
+  return 7 + elf_note_phs(note);
 }
 
 pub function elf_text_off_so(note: boolean): i32 {
@@ -489,7 +489,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_le32(buf, 1685382481);
   buf = elf_le32(buf, 6);
   buf = elf_pad_to(buf, buf.len() + 48);
-  buf = elf_property_ph(buf, note, 0, elf_align8(unwind_end));
+  buf = elf_note_ph(buf, elf_bti(note), 0i64, elf_align8(unwind_end));
 
   buf = elf_cat(elf_pad_to(buf, text_off), text);
   if (has_unwind) {
@@ -607,10 +607,40 @@ pub function elf_data_vaddr_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32, 
 }
 
 function elf_code_end(end: i32, note: boolean): i32 {
-  if (note) {
-    return elf_align8(end) + elf_bti_note().len();
+  return elf_note_end(end, elf_bti(note));
+}
+
+// A note that the image writer puts after the code, with its own program
+// header of type p_type. The alignment also pads the fields of the note. No
+// bytes means no note.
+pub struct ElfNote { p_type: i32, align: i32, bytes: i32[] }
+
+pub function elf_no_note(): ElfNote {
+  return ElfNote { p_type: 0, align: 0, bytes: [] };
+}
+
+// The GNU property note that marks an arm64 image as BTI-compatible.
+pub function elf_bti(on: boolean): ElfNote {
+  if (!on) {
+    return elf_no_note();
   }
-  return end;
+  return ElfNote { p_type: 1685382483, align: 8, bytes: elf_bti_note() };
+}
+
+// The Xen PVH note: a VMM enters the image at `entry` in 32-bit protected mode.
+pub function elf_pvh_note(entry: i32): ElfNote {
+  let b = elf_le32([], 4);
+  b = elf_le32(b, 4);
+  b = elf_le32(b, 18);
+  b = b.append(88).append(101).append(110).append(0);
+  return ElfNote { p_type: 4, align: 4, bytes: elf_le32(b, entry) };
+}
+
+function elf_note_end(end: i32, note: ElfNote): i32 {
+  if (note.bytes.len() == 0) {
+    return end;
+  }
+  return elf_align8(end) + note.bytes.len();
 }
 
 pub function elf_bti_note(): i32[] {
@@ -631,12 +661,12 @@ pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32,
 // `relro` is the length of the read-only-after-start region that leads the
 // data segment. `PT_GNU_RELRO` covers it, and the startup protects it.
 pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr() as i64, 2, true, note, true, elf_page_align(), relro, 16);
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr() as i64, 2, true, elf_bti(note), true, elf_page_align(), relro, 16);
 }
 
 // The same layout as a position-independent executable: ET_DYN at base 0, which the kernel loads at a random base.
 pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0i64, 3, true, note, true, elf_page_align(), relro, 16);
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0i64, 3, true, elf_bti(note), true, elf_page_align(), relro, 16);
 }
 
 pub function elf_text_vaddr_pie_wx(note: boolean): i32 {
@@ -697,15 +727,15 @@ pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i
 }
 
 pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0i64, 3, true, false, true, elf_x86_page_align(), relro, 16);
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0i64, 3, true, elf_no_note(), true, elf_x86_page_align(), relro, 16);
 }
 
 pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr() as i64, 2, true, false, true, elf_x86_page_align(), relro, 16);
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr() as i64, 2, true, elf_no_note(), true, elf_x86_page_align(), relro, 16);
 }
 
-function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i64, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32, relro: i32, data_alignment: i32): u8[] {
-  let nph = elf_image_phnum(unwind_ph, note, nx_stack);
+function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i64, e_type: i32, unwind_ph: boolean, note: ElfNote, nx_stack: boolean, page_align: i32, relro: i32, data_alignment: i32): u8[] {
+  let nph = elf_image_phnum(unwind_ph, note.bytes.len() > 0, nx_stack);
   let headers = elf_align16(elf_eh_size() + nph * elf_ph_size());
   let has_unwind = hdr.len() > 0 && eh.len() > 0;
   let hdr_off = 0;
@@ -716,7 +746,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   }
   let unwind_end = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());
   let note_off = elf_align8(unwind_end);
-  let text_end = elf_code_end(unwind_end, note);
+  let text_end = elf_note_end(unwind_end, note);
   let data_off = (text_end + data_alignment - 1) / data_alignment * data_alignment;
   let code_sz = text_end as i64;
   let hole = 0;
@@ -833,7 +863,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
     }
   }
 
-  buf = elf_property_ph(buf, note, base, note_off);
+  buf = elf_note_ph(buf, note, base, note_off);
   buf = elf_stack_ph(buf, nx_stack);
 
   let img = buf_new(data_off + data.len() - hole);
@@ -900,7 +930,7 @@ pub function elf_relro_page(): i32 {
 // Code, constant and writable load slots, the RELRO header, and the optional
 // unwind, property and stack headers. PIE leaves the constant load slot null.
 function elf_image_phnum(unwind: boolean, note: boolean, stack: boolean): i32 {
-  let n = 4 + elf_property_phs(note);
+  let n = 4 + elf_note_phs(note);
   if (unwind) {
     n += 1;
   }
@@ -924,17 +954,17 @@ function elf_stack_ph(own buf: i32[], enabled: boolean): i32[] {
   return elf_le64(buf, 16i64);
 }
 
-function elf_property_phs(note: boolean): i32 {
+function elf_note_phs(note: boolean): i32 {
   if (note) {
     return 1;
   }
   return 0;
 }
 
-function elf_push_note(img: usize, note: boolean, off: i32): void {
-  if (note) {
+function elf_push_note(img: usize, note: ElfNote, off: i32): void {
+  if (note.bytes.len() > 0) {
     elf_push_zeros(img, off - buf_len(img));
-    elf_push_ints(img, elf_bti_note());
+    elf_push_ints(img, note.bytes);
   }
 }
 
@@ -945,19 +975,19 @@ function elf_so_note(own buf: i32[], note: boolean, off: i32): i32[] {
   return elf_cat(elf_pad_to(buf, off), elf_bti_note());
 }
 
-function elf_property_ph(own buf: i32[], note: boolean, base: i64, off: i32): i32[] {
-  if (!note) {
+function elf_note_ph(own buf: i32[], note: ElfNote, base: i64, off: i32): i32[] {
+  if (note.bytes.len() == 0) {
     return buf;
   }
-  let len = elf_bti_note().len() as i64;
-  buf = elf_le32(buf, 1685382483);
+  let len = note.bytes.len() as i64;
+  buf = elf_le32(buf, note.p_type);
   buf = elf_le32(buf, 4);
   buf = elf_le64(buf, off as i64);
   buf = elf_le64(buf, base + off as i64);
   buf = elf_le64(buf, base + off as i64);
   buf = elf_le64(buf, len);
   buf = elf_le64(buf, len);
-  return elf_le64(buf, 8 as i64);
+  return elf_le64(buf, note.align as i64);
 }
 
 pub function elf_text_vaddr_pie(): i32 {
@@ -976,11 +1006,29 @@ pub function elf_data_vaddr_kernel(text_len: i32): i32 {
 
 // A kernel image that a boot loader or a VMM loads at the fixed RAM base.
 pub function elf_image_kernel(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32, base: i64): u8[] {
-  return elf_image_executable(text, [], [], data, machine, entry_off, bss, base, 2, false, false, true, elf_page_align(), relro, 4096);
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, base, 2, false, elf_no_note(), true, elf_page_align(), relro, 4096);
+}
+
+// The text offset of a PVH kernel image, which has one note header more.
+pub function elf_text_off_pvh(): i32 {
+  return elf_align16(elf_eh_size() + elf_image_phnum(false, true, true) * elf_ph_size());
+}
+
+// The data offset of a PVH kernel image: the page after the text and the note.
+pub function elf_data_vaddr_pvh(text_len: i32): i32 {
+  let end = elf_align8(elf_text_off_pvh() + text_len) + elf_pvh_note(0).bytes.len();
+  return elf_data_vaddr_after((end + 4095) / 4096 * 4096, elf_x86_page_align());
+}
+
+// An x86-64 kernel image that a VMM loads at the fixed RAM base and enters
+// through its PVH note at the 32-bit entry `entry_off`.
+pub function elf_image_kernel_pvh(text: u8[], data: i32[], entry_off: i32, bss: i32, relro: i32, base: i64): u8[] {
+  let note = elf_pvh_note((base + (elf_text_off_pvh() + entry_off) as i64) as i32);
+  return elf_image_executable(text, [], [], data, elf_em_x86_64(), entry_off, bss, base, 2, false, note, true, elf_x86_page_align(), relro, 4096);
 }
 
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32): u8[] {
-  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, false, true, elf_page_align(), relro, 16);
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, elf_no_note(), true, elf_page_align(), relro, 16);
 }
 
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {

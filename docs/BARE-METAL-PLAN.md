@@ -214,11 +214,14 @@ each one with E066:
   x0 to x3 and return x0. A board stops the VM with PSCI `SYSTEM_OFF` through
   one of them. They need an `unsafe` block, because a call such as PSCI
   `CPU_ON` starts a core at an address.
+- `__port_in8`, `__port_in16` and `__port_in32` read an x86 I/O port, and
+  `__port_out8`, `__port_out16` and `__port_out32` write one. An x86-64 board
+  reaches its serial port and the qemu exit device through them. They need an
+  `unsafe` block. arm64 has no port space, so its emitter refuses them.
 
 They take the host-call path of the MMIO ops, so no pass removes or moves them.
-x86-64 has no kernel target yet, so its emitter refuses `__hvc` and `__smc` and
-writes `hlt` for `__wfi`. System registers and cache and TLB maintenance come
-next.
+x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`. System
+registers and cache and TLB maintenance come next.
 
 Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops like
 these, rather than opening a general `asm` block. The floor's ~14 ops work because each is a *portable
@@ -320,7 +323,32 @@ headers and the entry point. `TestSelfHostKernelBootsOnQemu` boots the image on
 `qemu-system-aarch64 -M virt`. The image prints through a PL011 provider. It
 copies the device tree from the start of the RAM, and `std/fdt` finds the UART
 and the PSCI conduit in it. Then the image stops the VM with PSCI
-`SYSTEM_OFF`. The `kernel-boot-arm64` job of the self-host lane runs it.
+`SYSTEM_OFF`. The `kernel-boot` job of the self-host lane runs it.
+
+**The second slice (#14260): `-target x86-64-kernel`.** The image has the same
+environment and the same `-ram` flag. A VMM loads it at BASE and enters it
+through the Xen PVH note (`PT_NOTE`, type 18) in 32-bit protected mode with
+paging off. qemu `-M microvm` and Firecracker both boot an image this way, with
+no boot loader.
+
+- The 32-bit reset code is bytes that the compiler writes, because the
+  assembler encodes only 64-bit code. Its addresses are fixed at compile time,
+  so it needs no relocation.
+- It identity-maps the first 4 GiB with 2 MiB pages. The page tables and the
+  GDT take seven pages below the 1 MiB stack, outside the heap.
+- It enables SSE, AVX and XSAVE, because the x86-64-v3 baseline uses AVX2. Then
+  it enables long mode and returns far to the 64-bit code. A VM must give the
+  guest a CPU with AVX2, for example `-cpu max` on qemu.
+- The 64-bit code sets the stack, clears `.bss`, gives the heap the RAM up to
+  the tables, and calls `main`. After `main` it halts.
+- The PVH entry and the linker take 32-bit addresses, so the end of the RAM
+  must be at or below 2 GiB.
+
+`internal/testing/e2ecompiler/self_host_kernel_x86_test.go` checks the program
+headers and the note. `TestSelfHostKernelX86BootsOnQemu` boots the image on
+`qemu-system-x86_64 -M microvm`. The image prints through COM1 with
+`__port_out8` and exits through qemu's `isa-debug-exit` device. The
+`kernel-boot` job runs it too.
 
 ### 5. Atomics
 
@@ -529,10 +557,11 @@ environment over the FernOS syscalls can come later, as an improvement.
    `interrupt` and `naked` attributes wait for a kernel environment.
 6. **First slice done: memory layout and the reset entry** (#14254), as
    `arm64-kernel` (section 4).
-7. **Started: milestone 1 on qemu-virt** (#14260). The image boots, prints and
-   stops the VM in CI. `std/fdt` reads the device tree. The x86-64 microVM
-   remains. **Started: the effect intrinsics** (#14252), with `__fence`,
-   `__wfi`, `__hvc` and `__smc` (section 2).
+7. **Started: milestone 1** (#14260). An arm64 image on qemu-virt and an
+   x86-64 image on qemu microvm boot, print and stop the VM in CI. `std/fdt`
+   reads the device tree. The x86-64 boot parameters (the PVH start info) and
+   Firecracker remain. **Started: the effect intrinsics** (#14252), with
+   `__fence`, `__wfi`, `__hvc`, `__smc` and the port ops (section 2).
    Then: `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
 8. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a

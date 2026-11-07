@@ -444,6 +444,8 @@ is the number of slots it leaves.
 | `wfi` | 415 | 0 | 1 |
 | `hvc` | 416 | 4 | 1 |
 | `smc` | 417 | 4 | 1 |
+| `port_in` | 418 | 1 | 1 |
+| `port_out` | 419 | 2 | 1 |
 | `open_dir` | 420 | 1 | 1 |
 | `dir_open` | 421 | 2 | 1 |
 | `dir_entries` | 422 | 1 | 1 |

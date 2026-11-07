@@ -105,6 +105,11 @@ var table = map[string]struct {
 		description: "ARM64 kernel image — an ELF that the boot loader or the VMM loads at -ram BASE. " +
 			"The reset entry sets the stack, clears .bss and calls main. No host and no syscalls.",
 	},
+	"x86-64-kernel": {
+		isa: "x86-64", environment: "kernel",
+		description: "x86-64 kernel image — an ELF with a PVH entry that the VMM loads at -ram BASE. " +
+			"The entry switches to long mode, sets the stack, clears .bss and calls main. No host and no syscalls.",
+	},
 	"arm64-freestanding": {
 		isa: "arm64", environment: "freestanding",
 		description: "ARM64 with no host — no kernel, no syscalls, no process. " +

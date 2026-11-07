@@ -39,8 +39,10 @@ func TestCrossToolchainRequiresRequestedEmulator(t *testing.T) {
 		{"compiler-missing", "qemu-user", "true", "aarch64-linux-gnu-as qemu-aarch64", false, false, false},
 		{"emulator-only", "qemu-user", "false", "qemu-aarch64", false, false, true},
 		{"static-only", "qemu-user-static", "false", "qemu-aarch64-static", false, false, true},
-		{"system-only", "qemu-system-arm", "false", "qemu-system-aarch64", false, false, true},
-		{"system-not-user", "qemu-system-arm", "false", "qemu-aarch64 qemu-aarch64-static", false, false, false},
+		{"system-only", "qemu-system", "false", "qemu-system-aarch64 qemu-system-x86_64", false, false, true},
+		{"system-without-x86", "qemu-system", "false", "qemu-system-aarch64", false, false, false},
+		{"system-without-arm", "qemu-system", "false", "qemu-system-x86_64", false, false, false},
+		{"system-not-user", "qemu-system", "false", "qemu-aarch64 qemu-aarch64-static", false, false, false},
 		{"nothing-installed", "qemu-user", "false", "", false, false, false},
 		{"unknown-package", "unknown", "false", "qemu-aarch64 qemu-aarch64-static", false, false, false},
 	} {
@@ -74,7 +76,7 @@ toolchain_present
 }
 
 // The version check after installation must run the emulator that the
-// requested package installs: qemu-system-arm has no qemu-aarch64.
+// requested package installs: qemu-system has no qemu-aarch64.
 func TestCrossToolchainReportsTheRequestedEmulator(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -91,13 +93,14 @@ func TestCrossToolchainReportsTheRequestedEmulator(t *testing.T) {
 	for pkg, want := range map[string]string{
 		"qemu-user":        "qemu-aarch64",
 		"qemu-user-static": "qemu-aarch64-static",
-		"qemu-system-arm":  "qemu-system-aarch64",
+		"qemu-system":      "qemu-system-aarch64\nqemu-system-x86_64",
 	} {
 		t.Run(pkg, func(t *testing.T) {
 			script := `
 qemu-aarch64() { echo qemu-aarch64; }
 qemu-aarch64-static() { echo qemu-aarch64-static; }
 qemu-system-aarch64() { echo qemu-system-aarch64; }
+qemu-system-x86_64() { echo qemu-system-x86_64; }
 set -e
 ` + string(report)
 			cmd := exec.Command(bash, "-c", script)

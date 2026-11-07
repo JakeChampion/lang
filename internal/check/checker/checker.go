@@ -2422,6 +2422,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
+	for _, bits := range []int{8, 16, 32} {
+		c.info.FuncSigs[fmt.Sprintf("__port_in%d", bits)] = &ast.FuncType{Params: []ast.Type{ast.NumberType{}}, Result: ast.NumberType{}}
+		c.info.FuncSigs[fmt.Sprintf("__port_out%d", bits)] = &ast.FuncType{Params: []ast.Type{ast.NumberType{}, ast.NumberType{}}, Result: ast.VoidType{}}
+	}
 
 	c.builtinFuncs = make(map[string]bool, len(c.info.FuncSigs))
 	for name := range c.info.FuncSigs {
@@ -9239,6 +9243,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__hvc": true, "__smc": true,
+	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,

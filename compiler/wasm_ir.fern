@@ -4509,7 +4509,7 @@ function mmio_wat(o: ir.Op): string {
   if (o.kind_tag == ir.K_FENCE) {
     return "    i32.const 0\n";
   }
-  if (ir.is_privileged_kind(o.kind_tag)) {
+  if (ir.is_privileged_kind(o.kind_tag) || o.kind_tag == ir.K_PORT_IN || o.kind_tag == ir.K_PORT_OUT) {
     return "    unreachable\n";
   }
   if (o.kind_tag == ir.K_MMIO_LOAD) {
