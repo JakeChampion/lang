@@ -13,7 +13,11 @@ import (
 // read borrows the cell's content. written and called put a write or a call
 // between the read and its use, so each keeps an owned copy. local reads a
 // cell whose last use is the read, so the cell must stay alive until the
-// payload is read.
+// payload is read. finalized, finalized_array, indirect_finalized and
+// nested_finalized hold a value whose finalizer can write the cell, directly,
+// through a call or through a drop, so each read keeps an owned copy.
+// quiet_finalized holds a value whose finalizer writes no cell, so its read
+// borrows.
 const cellBorrowProgram = `import "core/mem";
 
 struct Err { msg: string, code: i32 }
@@ -22,6 +26,26 @@ struct Clear { state: Cell[Option[Err]] }
 
 impl mem.Drop for Clear {
     @noinline function drop(self: Self): void { self.state.set(None); }
+}
+
+struct Counted { n: i32 }
+
+@noinline function tally(n: i32): i32 { return n * 2; }
+
+impl mem.Drop for Counted {
+    @noinline function drop(self: Self): void { let k = tally(self.n); }
+}
+
+struct Indirect { state: Cell[Option[Err]] }
+
+impl mem.Drop for Indirect {
+    @noinline function drop(self: Self): void { let k = clear(self.state); }
+}
+
+struct Nested { state: Cell[Option[Err]] }
+
+impl mem.Drop for Nested {
+    @noinline function drop(self: Self): void { let inner = Clear { state: self.state }; }
 }
 
 @noinline function quiet(c: Cell[Option[Err]]): i32 {
@@ -76,6 +100,27 @@ impl mem.Drop for Clear {
     return 0 - 1;
 }
 
+@noinline function quiet_finalized(c: Cell[Option[Err]]): i32 {
+    let old = c.get();
+    let guard = Counted { n: 1 };
+    if let Some(e) = old { return e.code + e.msg.len(); }
+    return 0 - 1;
+}
+
+@noinline function indirect_finalized(c: Cell[Option[Err]]): i32 {
+    let old = c.get();
+    let guard = Indirect { state: c };
+    if let Some(e) = old { return e.code + e.msg.len(); }
+    return 0 - 1;
+}
+
+@noinline function nested_finalized(c: Cell[Option[Err]]): i32 {
+    let old = c.get();
+    let guard = Nested { state: c };
+    if let Some(e) = old { return e.code + e.msg.len(); }
+    return 0 - 1;
+}
+
 function main(): i32 {
     let c: Cell[Option[Err]] = cell_new(Some(Err { msg: "boom", code: 7 }));
     if (quiet(c) != 7) {
@@ -99,6 +144,18 @@ function main(): i32 {
     let guards = [Clear { state: c }];
     if (finalized_array(c, guards) != 23 || quiet(c) != 0 - 1) {
         return 7;
+    }
+    c.set(Some(Err { msg: "kept", code: 13 }));
+    if (quiet_finalized(c) != 17 || quiet(c) != 13) {
+        return 8;
+    }
+    c.set(Some(Err { msg: "via", code: 19 }));
+    if (indirect_finalized(c) != 22 || quiet(c) != 0 - 1) {
+        return 9;
+    }
+    c.set(Some(Err { msg: "deep", code: 23 }));
+    if (nested_finalized(c) != 27 || quiet(c) != 0 - 1) {
+        return 10;
     }
     if (__rc_underflow_count() != 0) {
         return 5;
@@ -154,10 +211,17 @@ func TestSelfHostCellReadBorrows(t *testing.T) {
 			t.Errorf("%s reads its cell before a write or a call replaces the content, so the read must own a copy:\n%s", name, dump)
 		}
 	}
-	for _, name := range []string{"finalized", "finalized_array"} {
+	for _, name := range []string{"finalized", "finalized_array", "indirect_finalized", "nested_finalized", "quiet_finalized"} {
 		dump := certifierDumpOf(t, h, src, name)
 		read := regexp.MustCompile(`(?m)^\s*(v[0-9]+) = arr_at 1 rc `).FindStringSubmatch(dump)
-		if len(read) != 2 || !strings.Contains(dump, "call __fern_rc_inc "+read[1]+"\n") {
+		if len(read) != 2 {
+			t.Fatalf("%s has no cell read:\n%s", name, dump)
+		}
+		retained := strings.Contains(dump, "call __fern_rc_inc "+read[1]+"\n")
+		if name == "quiet_finalized" && retained {
+			t.Errorf("%s retains its cell read, but no finalizer it can run writes a cell:\n%s", name, dump)
+		}
+		if name != "quiet_finalized" && !retained {
 			t.Errorf("%s must retain its cell snapshot across an implicit finalizer:\n%s", name, dump)
 		}
 	}
@@ -172,7 +236,7 @@ func TestSelfHostCellReadBorrows(t *testing.T) {
 		}
 		_ = run.Run()
 		if got := run.ProcessState.ExitCode(); got != 42 {
-			t.Errorf("%s: exit %d, want 42 (1: quiet, 2: written, 3: called, 4: local, 5: a count went below zero)", tg.target, got)
+			t.Errorf("%s: exit %d, want 42 (1: quiet, 2: written, 3: called, 4: local, 5: a count went below zero, 6-10: a finalizer case)", tg.target, got)
 		}
 	}
 }
