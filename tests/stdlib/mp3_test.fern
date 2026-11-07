@@ -1,0 +1,313 @@
+import "std/audio/mp3";
+import "std/audio/mp3/spectral";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/hash/crc32";
+import "std/hex";
+import "std/array";
+import "std/test";
+import "mp3_vectors";
+
+function sum(samples: [f32]): u32 {
+  let bytes: u8[] = [];
+  for sample in samples {
+    bytes = wire.put_le(bytes, f32_bits(sample) as u64, 4);
+  }
+  return crc32.new().update(bytes).finish();
+}
+
+function goldens(): test.TestOutcome {
+  for v in mp3_vectors.cases() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture");
+    };
+    let result = if (v.gapless) { mp3.decode(bytes, pcm.default_limits()) } else { mp3.decode_raw(bytes, pcm.default_limits()) };
+    let Ok(decoded) = result else {
+      return test.fail("decode " + v.name);
+    };
+    if (decoded.sample_rate != v.rate || decoded.channels != v.channels || decoded.samples.len() != v.samples || sum(decoded.samples) != v.crc) {
+      return test.fail("reference PCM " + v.name);
+    }
+  }
+  return test.assert_true(true);
+}
+
+function streaming(): test.TestOutcome {
+  let vectors = mp3_vectors.cases();
+  for index in [0, 7, 11] {
+    let v = vectors[index];
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture");
+    };
+    let state = mp3.decoder();
+    let buffer = spectral.zeros(2305).with(2304, 123.0f32);
+    let output: f32[] = [];
+    let at = 0;
+    while (at < bytes.len()) {
+      let (next, result) = state.decode_frame_into(bytes, at, buffer, pcm.default_limits());
+      state = next;
+      let Ok(frame) = result else {
+        return test.fail("stream frame");
+      };
+      if (frame.needs_history || frame.frames == 0 || frame.samples[2304] != 123.0f32 || state.reservoir.len() > 511) {
+        return test.fail("stream state or tail");
+      }
+      let mp3.Frame { samples, frames, channels, bytes_read, sample_rate: _, needs_history: _ } = frame;
+      for i in 0..frames * channels {
+        output = output.append(samples[i]);
+      }
+      buffer = samples;
+      at += bytes_read;
+    }
+    if (output.len() != v.samples || sum(output) != v.crc) {
+      return test.fail("stream output " + v.name);
+    }
+  }
+  return test.assert_true(true);
+}
+
+function metadata(): test.TestOutcome {
+  let v = mp3_vectors.cases()[0];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("fixture");
+  };
+  let Ok(id3) = hex.decode("4944330400100000000361626333444904001000000003") else {
+    return test.fail("ID3 fixture");
+  };
+  let Ok(ape) = hex.decode("4150455441474558d00700002000000000000000000000000000000000000000") else {
+    return test.fail("APE fixture");
+  };
+  let tag: u8[] = [84, 65, 71];
+  for _ in 0..125 {
+    tag = tag.append(0);
+  }
+  for data in [id3.concat(bytes), bytes.concat(tag), bytes.concat(ape).concat(tag)] {
+    let Ok(decoded) = mp3.decode_raw(data, pcm.default_limits()) else {
+      return test.fail("metadata skip");
+    };
+    if (sum(decoded.samples) != v.crc) {
+      return test.fail("metadata PCM");
+    }
+  }
+  let bad = id3.with(13, 0).concat(bytes);
+  match (mp3.decode_raw(bad, pcm.default_limits())) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("invalid ID3 footer");
+    }
+  }
+  let oversized = id3.with(6, 127).concat(bytes);
+  match (mp3.decode_raw(oversized, pcm.default_limits())) {
+    Err(pcm.Truncated) => {},
+    _ => {
+      return test.fail("ID3 bounds");
+    }
+  }
+  for index in [9, 10] {
+    let v2 = mp3_vectors.cases()[index];
+    let Ok(data) = hex.decode(v2.bytes) else {
+      return test.fail("gapless fixture");
+    };
+    let Ok(track) = mp3.inspect_track(data, pcm.default_limits()) else {
+      return test.fail("gapless metadata");
+    };
+    if (track.skip_frames < 529 || track.padding_frames < 0 || track.declared_frames == 0u32 || track.data_offset == 0) {
+      return test.fail("gapless boundaries");
+    }
+    let Ok(gapless) = mp3.decode(data, pcm.default_limits()) else {
+      return test.fail("gapless decode");
+    };
+    let Ok(raw) = mp3.decode_raw(data[track.data_offset:], pcm.default_limits()) else {
+      return test.fail("raw audio frames");
+    };
+    let begin = track.skip_frames * track.channels;
+    let end = raw.samples.len() - track.padding_frames * track.channels;
+    if (sum(raw.samples[begin:end]) != sum(gapless.samples)) {
+      return test.fail("gapless PCM bounds");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function private_bits(): test.TestOutcome {
+  let v = mp3_vectors.cases()[7];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("fixture");
+  };
+  let at = 0;
+  while (at < bytes.len()) {
+    let Ok(h) = mp3.inspect(bytes, at, pcm.default_limits()) else {
+      return test.fail("header");
+    };
+    if (h.version != 1 || h.channels != 2 || h.crc) {
+      return test.fail("private bit fixture");
+    }
+    bytes = bytes.with(at + 5, bytes[at + 5] | 112u8);
+    at += h.bytes;
+  }
+  let Ok(decoded) = mp3.decode_raw(bytes, pcm.default_limits()) else {
+    return test.fail("private bits");
+  };
+  return test.assert_true(sum(decoded.samples) == v.crc);
+}
+
+function priming(): test.TestOutcome {
+  let v = mp3_vectors.cases()[11];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("fixture");
+  };
+  let Ok(h) = mp3.inspect(bytes, 0, pcm.default_limits()) else {
+    return test.fail("header");
+  };
+  let at = h.bytes;
+  let (state, result) = mp3.decoder().decode_frame(bytes, at, pcm.default_limits());
+  let Ok(frame) = result else {
+    return test.fail("priming frame");
+  };
+  if (!frame.needs_history || frame.frames != 0 || state.reservoir.len() == 0) {
+    return test.fail("missing bit reservoir");
+  }
+  at += frame.bytes_read;
+  let ready = false;
+  while (at < bytes.len()) {
+    let (next, value) = state.decode_frame(bytes, at, pcm.default_limits());
+    state = next;
+    let Ok(f) = value else {
+      return test.fail("reservoir refill");
+    };
+    if (!f.needs_history) {
+      ready = true;
+      break;
+    }
+    at += f.bytes_read;
+  }
+  return test.assert_true(ready);
+}
+
+function rejects(): test.TestOutcome {
+  let all = mp3_vectors.cases();
+  let Ok(bytes) = hex.decode(all[all.len() - 1].bytes) else {
+    return test.fail("CRC fixture");
+  };
+  let Ok(h) = mp3.inspect(bytes, 0, pcm.default_limits()) else {
+    return test.fail("header");
+  };
+  for count in 0..h.bytes {
+    let (_, result) = mp3.decoder().decode_frame(bytes[:count], 0, pcm.default_limits());
+    match (result) {
+      Err(_) => {},
+      _ => {
+        return test.fail("truncated frame");
+      }
+    }
+  }
+  let (_, crc) = mp3.decoder().decode_frame(bytes.with(4, bytes[4] ^ 1u8), 0, pcm.default_limits());
+  match (crc) {
+    Err(pcm.Checksum) => {},
+    _ => {
+      return test.fail("CRC check");
+    }
+  }
+  let (_, buffer) = mp3.decoder().decode_frame_into(bytes, 0, [], pcm.default_limits());
+  match (buffer) {
+    Err(pcm.Buffer) => {},
+    _ => {
+      return test.fail("buffer limit");
+    }
+  }
+  let (_, limit) = mp3.decoder().decode_frame(bytes, 0, pcm.Limits { max_input_bytes: 1000, max_samples: 1 });
+  match (limit) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("sample limit");
+    }
+  }
+  match (mp3.inspect(bytes.with(2, bytes[2] & 15u8), 0, pcm.default_limits())) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("free-format scope");
+    }
+  }
+  match (mp3.inspect(bytes.with(1, bytes[1] & 249u8 | 4u8), 0, pcm.default_limits())) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("Layer II scope");
+    }
+  }
+  match (mp3.decode(bytes, pcm.Limits { max_input_bytes: -1, max_samples: -1 })) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("negative limits");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function payload_mutations(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[7].bytes) else {
+    return test.fail("fixture");
+  };
+  let Ok(h) = mp3.inspect(bytes, 0, pcm.default_limits()) else {
+    return test.fail("header");
+  };
+  let seed = 725u32;
+  for _ in 0..64 {
+    seed = seed * 1664525u32 + 1013904223u32;
+    let at = 4 + (seed >> 8) as i32 % (h.bytes - 4);
+    let changed = bytes.with(at, bytes[at] ^ 1u8 << (seed & 7u32) as u8);
+    let (state, result) = mp3.decoder().decode_frame(changed, 0, pcm.default_limits());
+    match (result) {
+      Err(_) => {
+        if (state.reservoir.len() != 0) {
+          return test.fail("error reset");
+        }
+      },
+      Ok(frame) => {
+        if (frame.frames > 1152 || frame.samples.len() > 2304 || state.reservoir.len() > 511) {
+          return test.fail("mutation bounds");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function mixed_8khz(): test.TestOutcome {
+  let v = mp3_vectors.mixed8k();
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("mixed fixture");
+  };
+  let Ok(expected) = hex.decode(v.pcm) else {
+    return test.fail("mixed PCM fixture");
+  };
+  let Ok(audio) = mp3.decode_raw(bytes, pcm.default_limits()) else {
+    return test.fail("8 kHz mixed blocks");
+  };
+  if (audio.sample_rate != 8000 || audio.channels != 2 || audio.samples.len() * 4 != expected.len()) {
+    return test.fail("8 kHz format");
+  }
+  for i in 0..audio.samples.len() {
+    let reference = f32_from_bits(wire.le(expected, i * 4, 4) as i32);
+    let error = audio.samples[i] - reference;
+    if (error < 0.0f32) {
+      error = -error;
+    }
+    if (error > 0.000001f32) {
+      return test.fail("8 kHz mixed PCM");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let runner = test.new("MP3 Layer III");
+  runner = runner.it("independent PCM reference vectors", goldens);
+  runner = runner.it("stream state and reusable buffers", streaming);
+  runner = runner.it("ID3, APE, and gapless metadata", metadata);
+  runner = runner.it("MPEG-1 private bits do not change PCM", private_bits);
+  runner = runner.it("bit reservoir warmup after seek", priming);
+  runner = runner.it("truncation, CRC, limits, and unsupported formats", rejects);
+  runner = runner.it("mutated payloads remain bounded", payload_mutations);
+  runner = runner.it("8 kHz mixed-block scalefactor boundaries", mixed_8khz);
+  return runner.finish();
+}

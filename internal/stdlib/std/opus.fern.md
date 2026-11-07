@@ -17,6 +17,7 @@ After a decode error, reset the decoder before the next packet.
 
 ```fern
 <<*>>=
+// Stateful CELT-only Opus packets with normalized float PCM.
 import "std/audio/pcm";
 import "std/opus/packet";
 import "std/opus/celt";

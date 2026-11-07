@@ -11,6 +11,7 @@ Custom channel masks return `Unsupported`. Float, compressed WAVE, RIFX, and RF6
 
 ```fern
 <<*>>=
+// Read and write integer PCM WAVE files.
 import "std/audio/pcm";
 import "std/array";
 import "std/audio/wire";

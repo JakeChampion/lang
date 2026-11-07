@@ -1,0 +1,25 @@
+import "std/audio/mp3";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/io";
+
+function main(): i32 {
+  let a = args();
+  if (a.len() < 3) {
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(a[1]) else {
+    return 1;
+  };
+  let result = if (a.len() > 3) { mp3.decode(input, pcm.default_limits()) } else { mp3.decode_raw(input, pcm.default_limits()) };
+  let data = match (result) { Ok(v) => v, Err(e) => { print(e.message()); return 2; } };
+  let bytes: u8[] = [];
+  for v in data.samples {
+    bytes = wire.put_le(bytes, f32_bits(v) as u64, 4);
+  }
+  let Ok(_) = write_file_bytes(a[2], bytes) else {
+    return 1;
+  };
+  print(data.sample_rate.to_string() + " " + data.channels.to_string() + " " + data.samples.len().to_string());
+  return 0;
+}
