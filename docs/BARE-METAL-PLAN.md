@@ -301,13 +301,12 @@ ELF `ET_EXEC` image:
 - The text segment starts at BASE and is not writable. The data segment follows
   it and is not executable.
 - The loader enters EL1 with the MMU and data cache off. The reset `_start`
-  parks the other cores, aligns the stack below BASE + SIZE, and enables the FP and SIMD unit
+  parks the other cores, sets the stack at BASE + SIZE, and enables the FP and SIMD unit
   (`CPACR_EL1`).
 - Then it clears `.bss` and enables a 40-bit identity map with 4 KiB tables.
   The configured RAM uses Normal non-cacheable memory. Other addresses use
   Device-nGnRnE memory with execute-never, so board MMIO keeps Device attributes.
-  The last RAM page extends to the page boundary. The heap and stack stay
-  inside the exact configured byte range. Table storage stays outside the heap.
+  Table storage stays outside the heap.
 - It gives the heap the RAM between the image and the
   1 MiB stack. It calls `main`, and after `main` it waits with `wfe`.
 - The image has 64-bit addresses, and the end of the RAM must be at or below

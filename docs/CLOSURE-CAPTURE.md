@@ -35,12 +35,12 @@ or a reference.
 ```
 function make_counter(): () => i32 {
     let n: i32 = 0;
-    return function (): i32 { n = n + 1; return n; };   // OK — shared cell
+    return (): i32 => { n = n + 1; return n; };   // OK — shared cell
 }
 
 function main(): i32 {
     let n: i32 = 1;
-    let f = function (): i32 { return n; };
+    let f = (): i32 => { return n; };
     n = 99;
     return f();          // 99 — one cell, so the outer write is visible
 }
@@ -59,17 +59,15 @@ outer variable (capture copies the *pointer*, not the pointee). So:
 
 - reading the reference, or mutating *through* it where the type allows,
   observes the same heap value the outer scope sees, but
-- **reassigning the captured name inside the closure is `E049`** — it
-  would not take effect in the enclosing scope (the outer variable still
-  points at the old value), and it closes one reference-cycle vector: a
-  closure whose environment holds a pointer could be made to point back
-  at a value that points at the closure, reconstructing a cycle that the
-  reference-counting runtime cannot collect.
+- **reassigning the captured name inside the closure is `E049`**. The
+  rule closes one reference-cycle vector: a closure whose environment
+  holds a pointer could be made to point back at a value that points at
+  the closure. The reference-counting runtime cannot collect that cycle.
 
 ```
 function f(): i32 {
     let s: string = "hi";
-    let g = function (): i32 { s = "bye"; return 0; };   // E049
+    let g = (): i32 => { s = "bye"; return 0; };   // E049
     return g();
 }
 ```

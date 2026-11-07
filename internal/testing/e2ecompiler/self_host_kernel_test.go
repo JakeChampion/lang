@@ -171,7 +171,7 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 	for _, c := range []struct{ name, ram, mem string }{
 		{"low", kernelRAM, "128M"},
 		{"above 4G", "0x200000000,64M", "8G"},
-		{"partial end page", "0x40210000," + strconv.FormatUint(kernelSize-65536-15, 10), "128M"},
+		{"page boundaries", "0x40210000," + strconv.FormatUint(kernelSize-65536-4096, 10), "128M"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "kernel.elf")
@@ -272,7 +272,7 @@ func TestSelfHostKernelMemoryAttributes(t *testing.T) {
 	}{
 		{kernelRAM, kernelBase, kernelSize},
 		{"0x200000000,64M", 0x200000000, 64 << 20},
-		{"0x3fff0000,4295098369", 0x3fff0000, 4295098369},
+		{"0x3fff0000,4295098368", 0x3fff0000, 4295098368},
 		{"0xffffc00000,4M", (1 << 40) - (4 << 20), 4 << 20},
 		{"0,1024G", 0, 1 << 40},
 	} {
@@ -301,7 +301,7 @@ func TestSelfHostKernelMemoryAttributes(t *testing.T) {
 			if len(tables) < 3 || len(tables) > 7 {
 				t.Fatalf("%d tables, want 3 to 7", len(tables))
 			}
-			end := (c.base + c.size + 4095) &^ uint64(4095)
+			end := c.base + c.size
 			var walk func(string, int, uint64, uint64)
 			walk = func(name string, level int, address, span uint64) {
 				entries, ok := tables[name]
@@ -399,6 +399,7 @@ func TestSelfHostKernelRamFlag(t *testing.T) {
 	}{
 		{"missing", "arm64-kernel", "", "needs -ram BASE,SIZE"},
 		{"unaligned base", "arm64-kernel", "0x40001000,128M", "-ram takes BASE,SIZE"},
+		{"unaligned size", "arm64-kernel", "0x40000000,67112959", "-ram takes BASE,SIZE"},
 		{"small size", "arm64-kernel", "0x40000000,1M", "-ram takes BASE,SIZE"},
 		{"above 1T", "arm64-kernel", "0xff00000000,8G", "-ram takes BASE,SIZE"},
 		{"wrapped end", "arm64-kernel", "8589934591G,2G", "-ram takes BASE,SIZE"},

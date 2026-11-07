@@ -26,16 +26,17 @@ function main(): i32 {
 }`}
 />
 
-A program sees only what it imports, methods included: `import "std/i32";`
-is what gives an `i32` its `.to_string()`. Leave it out and the checker
-says so (`no method "to_string" on i32 — add import "std/i32"`).
+`print`, `Option`, `Result` and `.to_string()` on a number are built in.
+Most other methods come from a library module: `import "std/i32";` gives
+an `i32` its `.to_string_radix(16)`. Leave the import out and the checker
+says so (`no method "to_string_radix" on i32 — add import "std/i32"`).
 
 ## Numbers have sizes
 
 There's no untyped `int`. The integer types are `i32`, `i64`
 (signed) and `u8`, `u32`, `u64` (unsigned), plus `usize` for
-native pointer-width counts. Two floats: `f32` and `f64` — `float` is
-an alias for `f64`. Mixing widths needs an explicit cast.
+native pointer-width counts. Two floats: `f32` and `f64`. There is no
+`float` type. Mixing widths needs an explicit cast.
 
 ```fern
 let a: i32 = 7;

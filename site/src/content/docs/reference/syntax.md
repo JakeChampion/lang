@@ -97,7 +97,7 @@ except where noted.
 | ---------- | ------------------------------- | ------------- |
 | 1 (highest)| `(...)` `f(...)` `a[i]` `a[i:j]` `a.f` `e?` | left  |
 | 2          | `e as T` `e as? T`              | left          |
-| 3          | `!` `-` (unary)                 | right         |
+| 3          | `!` `-` `~` (unary)             | right         |
 | 4          | `*` `/` `%` `*\|` `*?` `/?` `%?` | left         |
 | 5          | `+` `-` `+\|` `-\|` `+?` `-?`   | left          |
 | 6          | `<<` `>>` `<<\|` `<<?` `>>?`     | left          |
@@ -297,14 +297,12 @@ function render(width: i32): string {
 
 ## String literals
 
-Double-quoted. The escapes are `\n` `\t` `\r` `\0` `\\` `\"` and `\xNN`
-(one byte); each produces exactly one byte, and an embedded NUL counts
-toward `len()`. A character literal also takes `\'` and `\u{…}`. An `f`
+Double-quoted. The escapes are `\n` `\t` `\r` `\0` `\\` `\"` `\'`, `\xNN`
+up to `\x7F`, and `\u{…}`, which names one Unicode scalar value and
+appends its UTF-8 bytes. An embedded NUL counts toward `len()`. An `f`
 prefix introduces an f-string with `{expr}` interpolation:
 
 ```fern
-import "std/string";
-
 function main(): i32 {
     let name: string = "world";
     print(f"hello, {name}");
@@ -313,10 +311,8 @@ function main(): i32 {
 ```
 
 `{{` and `}}` escape literal braces inside an f-string. Each hole
-becomes `(expr).to_string()`, so the `to_string` for that type has to be
-in scope: `import "std/string"` for a string, `"std/i32"` for an `i32`,
-`"std/f64"` for a float, and so on. Without it the checker names the
-module to import.
+becomes `(expr).to_string()`. A string, a number and a `boolean` need no
+import. A user type needs a `to_string` method in scope.
 
 ## Attributes
 

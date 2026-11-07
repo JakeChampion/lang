@@ -61,6 +61,7 @@ which ones.
 | `EFFECT-ROWS-BRIEF.md` | [record] | The effect-rows prototype (#5320): the `uses` clause was built, measured and dropped; `fern -effects` shipped. |
 | `GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md` | [record] | A Go-checker inference gap for generic variants with function payloads, its cause and fix. |
 | `IMMUTABILITY-MIGRATION-PLAN.md` | [record] | The move to immutable data (E048, E049, E055, E056, E057, struct update, `Cell[T]`); shipped and enforced. |
+| `LANGUAGE-REVIEW-2026-11.md` | [record] | A November 2026 review of whether the language, the CLI and the stdlib make sense as one whole; nine defects and six design decisions, each with an issue. |
 | `LANGUAGE-REVIEW-2026-07.md` | [record] | A July 2026 critical review of the language, stdlib, implementations and ecosystem, before the native compiler's retirement. |
 | `NICHE-BORROWS-PLAN.md` | [record] | The execution plan for the niche-language shortlist; its items shipped, were evaluated, or were folded into goal 2. |
 | `P5-PLAN.md` | [record] | WIT resource handle types (`own R` / `borrow R`) with automatic `[resource-drop]`; shipped in the self-host compiler. |
