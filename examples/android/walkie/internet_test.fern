@@ -84,7 +84,7 @@ function seed(k: i32): u8[] {
 
 // A room that node 0 makes and node 1 joins.
 function start(): Sim {
-  let made = rooms.answer(rooms.empty(), "198.51.100.1", "CREATE", 0i64, random("a"));
+  let made = rooms.answer(rooms.empty(random("secret")), "198.51.100.1", "CREATE", 0i64, random("a"));
   let code = "";
   if let rooms.Created(c, _) = made.reply {
     code = c;
@@ -123,7 +123,12 @@ function deliver(s0: Sim): Sim {
         later = later.append(Flight { at: s.now + STEP_MS, to: owner_of(s, fw.to), from: relay_addr(), data: fw.data });
       }
     } else if (f.to >= 0) {
-      s = Sim { ...s, nodes: s.nodes.with(f.to, node.receive(s.nodes[f.to], f.data, f.data.len(), f.from, s.now)) };
+      // A phone answers a challenge of the relay at once, as the app does.
+      if let Some(answer) = internet.challenged(s.rooms[f.to], f.data, f.data.len()) {
+        later = later.append(Flight { at: s.now + STEP_MS, to: -1, from: s.addrs[f.to], data: answer });
+      } else {
+        s = Sim { ...s, nodes: s.nodes.with(f.to, node.receive(s.nodes[f.to], f.data, f.data.len(), f.from, s.now)) };
+      }
     }
   }
   return Sim { ...s, flights: left.concat(later) };
@@ -258,7 +263,7 @@ function test_phones_reconnect_in_the_room(): test.TestOutcome {
 // The relay sends nothing that a phone without a room token sends.
 function test_a_stranger_reaches_nobody(): test.TestOutcome {
   let s = start();
-  let stranger = internet.Room { code: "", token: random("z").take(rooms.TOKEN_LEN), relay: relay_addr() };
+  let stranger = internet.Room { code: "", token: random("z").take(rooms.TOKEN_LEN), relay: relay_addr(), sent: cell_new(0i64) };
   let r = rooms.relay(s.table, addr(9, 5000), internet.wrap(stranger, [247u8, 1u8]), 19, 0i64);
   return test.assert_eq(r.out.is_some().to_string(), "false");
 }

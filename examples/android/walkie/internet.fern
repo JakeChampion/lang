@@ -1,7 +1,7 @@
 // The internet mode of the app. One phone makes a room on the server and
 // shows its code, and the other phone joins with the code. Then the node runs
-// as on a LAN, but each of its datagrams goes to the relay with the token of
-// the room, and the relay sends it to the other phone.
+// as on a LAN, but each of its datagrams goes to the relay with the MAC of
+// the token of the room, and the relay sends it to the other phone.
 import "std/dns";
 import "std/net";
 import "std/time";
@@ -9,11 +9,29 @@ import "std/tls/client";
 import "std/tls/verify";
 import "./rooms";
 
-pub struct Room { code: string, token: u8[], relay: net.SocketAddr }
+// `sent` counts the datagrams to the relay. Copies of a room share it.
+pub struct Room { code: string, token: u8[], relay: net.SocketAddr, sent: Cell[i64] }
+
+function count(r: Room): i64 {
+  let n = r.sent.get() + 1i64;
+  r.sent.set(n);
+  return n;
+}
 
 // The datagram that goes to the relay for one datagram of the node.
 pub function wrap(r: Room, data: [u8]): u8[] {
-  return rooms.wrap(r.token, data);
+  return rooms.wrap(r.token, count(r), data);
+}
+
+// The answer to a challenge of the relay in the first `n` bytes of `data`,
+// or None when the datagram is not a challenge for this room.
+pub function challenged(r: Room, data: [u8], n: i32): Option[u8[]] {
+  let next = r.sent.get() + 1i64;
+  let Some(a) = rooms.answer_challenge(r.token, next, data, n) else {
+    return None;
+  };
+  r.sent.set(next);
+  return Some(a);
 }
 
 // The relay address of `host`. The app socket is IPv4, so an IPv4 address
@@ -75,10 +93,10 @@ function exchange(c0: client.Connection, line: string): rooms.Reply {
 pub function room_of(reply: rooms.Reply, code: string, relay: net.SocketAddr): Option[Room] {
   match (reply) {
     rooms.Created(c, token) => {
-      return Some(Room { code: c, token: token, relay: relay });
+      return Some(Room { code: c, token: token, relay: relay, sent: cell_new(0i64) });
     },
     rooms.Joined(token) => {
-      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay });
+      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay, sent: cell_new(0i64) });
     },
     rooms.Refused(_) => {}
   }

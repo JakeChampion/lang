@@ -288,16 +288,32 @@ A client sends one request line, and the server sends one reply line:
   token in hex.
 - When the server refuses a request, the reply is `ERROR` and the reason.
 
-A code has 6 characters. It has no 0, O, 1, I or L, so a user can read it to
+A code has 8 characters. It has no 0, O, 1, I or L, so a user can read it to
 the other user. A room with one member closes after 10 minutes. A room with
-two members closes after 2 minutes with no datagram. Each address can send 10
-requests in a minute, so it is slow to guess a code. A room has two members
+two members closes after 2 minutes with no datagram. A room has two members
 at most.
 
-A phone sends each datagram of the LAN transport to the relay, after the byte
-248 and its token. The relay sends the datagram to the other member of the
-room. The relay gets the address of each member from the token, so a phone
-that changes network keeps its room. The relay cannot read the voice,
+The limits count each host once: an IPv4 address, or an IPv6 network of
+prefix length 64. Each host can send 10 requests in a minute, so it is slow
+to guess a code. Each host can hold 4 open rooms and 4 open connections, so
+a few hosts cannot fill the server.
+
+The token stays secret: it goes only over TLS. A phone sends each datagram
+of the LAN transport to the relay in a frame: the byte 248, the ID of the
+member, a counter, the datagram and a MAC. The token keys the MAC, and the
+ID is a hash of the token. The relay sends the datagram to the other member
+of the room.
+
+A valid frame from a new address does not move the member. The relay sends
+the byte 249, the ID and a cookie to that address. The phone sends the byte
+250, the ID, its counter, the cookie and a MAC back. Then the relay sends
+the datagrams of the room to that address.
+
+The cookie is good only at the address that it went to. So a phone that changes network keeps its room. A
+party that copies a frame, or sends from a false address, cannot turn the
+traffic of the room to itself or to another host.
+
+The relay cannot read the voice,
 because the phones seal it with the keys of their own exchange. A relay that
 changes the datagrams of the key exchange gives the two phones different
 codes. The users then see that the codes are not the same.
@@ -308,8 +324,9 @@ ends the session, and so does a code with no confirmation. Then the phone
 does not search again.
 
 `internet.fern` is the side of the app. It asks the server for a room over
-TLS. It puts the token in front of each datagram to the relay. In a room, the
-app takes a datagram only from the relay. So a phone on the same network
+TLS. It puts each datagram to the relay in a frame with the MAC, and it
+answers each challenge of the relay. In a room, the app takes a datagram only
+from the relay. So a phone on the same network
 cannot take the place of the peer. `internet_test.fern` runs two nodes in one
 room through the relay table, and one node moves to a new address.
 

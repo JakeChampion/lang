@@ -18,8 +18,11 @@ import "std/tls/pem";
 import "std/tls/server";
 import "./rooms";
 
-// The most clients at one time, and the time that each one has.
+// The most clients at one time, the most from one host, and the time that
+// each one has.
 const MAX_CLIENTS: i32 = 256;
+
+const CLIENTS_PER_HOST: i32 = 4;
 
 const CLIENT_MS: i64 = 10000i64;
 
@@ -143,27 +146,37 @@ function open_server(cert_path: string, key_path: string, files: Pem, id: identi
   };
   let a = net.set_nonblocking(listener, true);
   let b = net.set_nonblocking(udp, true);
-  return Some(Server { listener: listener, udp: udp, config: config_of(id), cert_path: cert_path, key_path: key_path, cert_text: files.cert, key_text: files.key, rooms: rooms.empty(), clients: [] });
+  return Some(Server { listener: listener, udp: udp, config: config_of(id), cert_path: cert_path, key_path: key_path, cert_text: files.cert, key_text: files.key, rooms: rooms.empty(rand.bytes(32)), clients: [] });
 }
 
-// The address without its port, so the rate limit counts a host once.
+// The host of the client for the limits: its IPv4 address or its IPv6 /64.
 function host_of(sock: Socket): string {
   match (net.peer_addr(sock)) {
     Ok(a) => {
-      return a.ip.to_canonical().to_string();
+      return rooms.host_key(a.ip);
     },
     Err(_) => {}
   }
   return "unknown";
 }
 
+function clients_of(s: Server, ip: string): i32 {
+  let n = 0;
+  for c in s.clients {
+    if (c.ip == ip) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function new_client(s: Server, own sock: Socket, now: i64): Option[Client] {
-  if (s.clients.len() >= MAX_CLIENTS) {
+  let ip = host_of(sock);
+  if (s.clients.len() >= MAX_CLIENTS || clients_of(s, ip) >= CLIENTS_PER_HOST) {
     let full = net.close(sock);
     return None;
   }
   let nb = net.set_nonblocking(sock, true);
-  let ip = host_of(sock);
   match (server.start(s.config, rand.bytes(server.entropy(s.config)))) {
     Ok(step) => {
       return Some(Client { sock: sock, ip: ip, tls: step.session, line: [], out: step.output, until: now + CLIENT_MS, answered: false, closing: false });

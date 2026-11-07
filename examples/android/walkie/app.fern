@@ -851,9 +851,16 @@ function receive_all(s: App, now: i64): App {
   for k in 0..64 {
     match (net.recv_from(sock, buf)) {
       Ok((len, from)) => {
-        if (modes.accepts(s.mode, s.room, s.group_broadcast, from)) {
-          n = node.receive(n, buf, len, from, now);
+        if (!modes.accepts(s.mode, s.room, s.group_broadcast, from)) {
+          continue;
         }
+        if let Some(r) = s.room {
+          if let Some(answer) = internet.challenged(r, buf, len) {
+            let sent: Result[i32, net.NetError] = net.send_to(sock, answer, r.relay);
+            continue;
+          }
+        }
+        n = node.receive(n, buf, len, from, now);
       },
       Err(_) => {
         return App { ...s, node: n };
