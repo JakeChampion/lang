@@ -46,6 +46,9 @@ wasmtime build/wasm-jpeg_plane_coefficients_test.wasm
 "$FERN" -check tests/jpeg_padded_blocks_test.fern
 "$FERN" -check tests/jpeg_mcu_entropy_test.fern
 "$FERN" -check tests/jpeg_component_frames_test.fern
+"$FERN" -check tests/jpeg_component_planes_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_planes_test.wasm tests/jpeg_component_planes_test.fern
+wasmtime build/wasm-jpeg_component_planes_test.wasm
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_frames_test.wasm tests/jpeg_component_frames_test.fern
 wasmtime build/wasm-jpeg_component_frames_test.wasm
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_mcu_entropy_test.wasm tests/jpeg_mcu_entropy_test.fern

@@ -45,6 +45,9 @@ mkdir -p build
 "$FERN" -check tests/jpeg_padded_blocks_test.fern
 "$FERN" -check tests/jpeg_mcu_entropy_test.fern
 "$FERN" -check tests/jpeg_component_frames_test.fern
+"$FERN" -check tests/jpeg_component_planes_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_planes_test tests/jpeg_component_planes_test.fern
+./build/jpeg_component_planes_test
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_frames_test tests/jpeg_component_frames_test.fern
 ./build/jpeg_component_frames_test
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_mcu_entropy_test tests/jpeg_mcu_entropy_test.fern

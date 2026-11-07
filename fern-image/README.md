@@ -31,6 +31,7 @@ The [forward sample converter](docs/jpeg-rgb-ycbcr.md) prepares explicit full-ra
 The [MCU order fold](docs/jpeg-mcu-order.md) describes component block positions and complete dummy blocks for a future color writer.
 The [MCU entropy producer](docs/jpeg-mcu-entropy.md) emits explicit baseline component scans with separate DC predictors and complete-MCU restart intervals.
 The [component frame writer](docs/jpeg-component-frames.md) adds complete baseline markers with explicit component and table metadata.
+The [component-plane connector](docs/jpeg-component-planes.md) writes those frames directly from explicit sample planes without a complete coefficient image.
 The [shared sample word primitive](docs/sample-bytes.md) preserves exact raw words with explicit byte order.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
