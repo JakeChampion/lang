@@ -1,17 +1,22 @@
 package e2ecompiler
 
 import (
-	"fmt"
+	"bufio"
+	"bytes"
 	"io"
 	"net"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
 const tcpServerProgram = `function main(): i32 {
-    let fd: Socket = tcp_listen(%d);
+    let fd: Socket = tcp_listen(0);
     if (fd.fd < 0) { return 91; }
+    write("listening "); print_int(tcp_local_port(fd)); write("\n");
     let c: Socket = tcp_accept(fd);
     if (c.fd < 0) { return 92; }
     let req: u8[] = __alloc_u8(4096);
@@ -23,6 +28,9 @@ const tcpServerProgram = `function main(): i32 {
     return 42;
 }`
 
+// freeTCPPort gives a port that is free now. Give it to a program when the
+// program starts, not when it compiles, so that no other process can bind
+// the port in the time between.
 func freeTCPPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -33,6 +41,53 @@ func freeTCPPort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
+// startListening starts cmd, a server that listens on port 0 and prints
+// "listening N" as its first line, and gives N. stdout gives the rest of
+// what cmd writes to stdout, after cmd closes it.
+func startListening(t *testing.T, cmd *exec.Cmd) (port int, stdout func() string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout = w
+	err = cmd.Start()
+	w.Close()
+	if err != nil {
+		r.Close()
+		t.Fatalf("start server: %v", err)
+	}
+	br := bufio.NewReader(r)
+	first := make(chan string, 1)
+	go func() {
+		line, _ := br.ReadString('\n')
+		first <- line
+	}()
+	var line string
+	select {
+	case line = <-first:
+	case <-time.After(60 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("the server printed no port within 60s")
+	}
+	var rest bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&rest, br)
+		r.Close()
+		close(done)
+	}()
+	port, err = strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(line), "listening "))
+	if err != nil || !strings.HasPrefix(line, "listening ") {
+		_ = cmd.Process.Kill()
+		t.Fatalf("the server's first line is %q, want \"listening N\"", line)
+	}
+	return port, func() string {
+		<-done
+		return rest.String()
+	}
+}
+
 func TestSelfHostTcpServerArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -40,25 +95,21 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	port := freeTCPPort(t)
-	serverSrc := fmt.Sprintf(tcpServerProgram, port)
-	serverAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(serverSrc), "-target", "arm64-linux")
+	serverAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(withPrintInt(tcpServerProgram)), "-target", "arm64-linux")
 	if len(serverAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the tcp server")
 	}
 	serverBin := buildBin(t, arm64gcc, dir, "tcpserver", string(serverAsm))
 
 	cmd := runArm64Bin(qemu, serverBin)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start server: %v", err)
-	}
+	port, _ := startListening(t, cmd)
 	var forceKilled bool
 	wd := time.AfterFunc(30*time.Second, func() {
 		forceKilled = true
 		_ = cmd.Process.Kill()
 	})
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr := "127.0.0.1:" + strconv.Itoa(port)
 	var conn net.Conn
 	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
 		c, derr := net.DialTimeout("tcp", addr, time.Second)

@@ -357,10 +357,26 @@ func ListenInherited(t *testing.T) *InheritedListener {
 // Start hands the listener to cmd as LISTEN_FDS=1 and starts it.
 func (ln *InheritedListener) Start(t *testing.T, cmd *exec.Cmd) (addr, stderrPath string) {
 	t.Helper()
-	defer ln.file.Close()
+	defer ln.Close()
+	ln.Hand(cmd)
+	stderrPath = StartServerProcess(t, cmd)
+	return ln.Addr(), stderrPath
+}
+
+// Hand gives the listener to cmd as LISTEN_FDS=1, for a caller that starts
+// cmd itself. Close the listener once cmd has started.
+func (ln *InheritedListener) Hand(cmd *exec.Cmd) {
+	cmd.ExtraFiles = append(cmd.ExtraFiles, ln.file)
 	cmd.Env = append(cmd.Environ(), "LISTEN_FDS=1")
-	stderrPath = StartServerProcess(t, cmd, ln.file)
-	return fmt.Sprintf("127.0.0.1:%d", ln.Port), stderrPath
+}
+
+// Close closes this process's copy of the listener.
+func (ln *InheritedListener) Close() {
+	ln.file.Close()
+}
+
+func (ln *InheritedListener) Addr() string {
+	return fmt.Sprintf("127.0.0.1:%d", ln.Port)
 }
 
 func ReservedPort(t *testing.T) int {

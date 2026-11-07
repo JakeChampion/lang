@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const httpHandlerSrc = `import "std/http";
@@ -97,12 +99,11 @@ function main(): i32 {
 	})
 
 	t.Run("raw-socket-serve", func(t *testing.T) {
-		port := freeTCPPort(t)
-
-		src := fmt.Sprintf(`import "std/http";
+		src := `import "std/http";
 function main(): i32 {
-    let fd: Socket = tcp_listen(%d);
+    let fd: Socket = tcp_listen(0);
     if (fd.fd < 0) { return 91; }
+    print("listening " + tcp_local_port(fd).to_string());
     let c: Socket = tcp_accept(fd);
     if (c.fd < 0) { return 92; }
     let req: u8[] = __alloc_u8(4096);
@@ -113,7 +114,7 @@ function main(): i32 {
     if (n < 0) { return 94; }
     return 42;
 }
-`, port)
+`
 		asm, progDir := compileSourceModload(t, runner, driverBin, src)
 		if !strings.Contains(asm, ".Lssa_") {
 			t.Fatal("raw-socket program did not route through the IR path")
@@ -121,9 +122,7 @@ function main(): i32 {
 		bin := buildBin(t, gcc, progDir, "raw_socket", asm)
 
 		cmd := binCmd(runner, bin)
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start server: %v", err)
-		}
+		port, _ := startListening(t, cmd)
 		defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
 
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
@@ -154,37 +153,36 @@ function main(): i32 {
 }
 
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("return serve.exit_code(serve.run(%d, serve.config(), handle));", port)
-	})
+	ln := e2eharness.ListenInherited(t)
+	checkSelfHostHttpHandlerServes(t, "return serve.exit_code(serve.run(0, serve.config(), handle));", ln, ln.Port)
 }
 
+// The server binds the port itself, so the options reach its listener. The
+// reserved port shares the port with it through SO_REUSEPORT.
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
-	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.exit_code(serve.run(%d, opts, handle));", port)
-	})
+	port := e2eharness.ReservedPort(t)
+	checkSelfHostHttpHandlerServes(t, fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.exit_code(serve.run(%d, opts, handle));", port), nil, port)
 }
 
-func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
+func checkSelfHostHttpHandlerServes(t *testing.T, mainBody string, ln *e2eharness.InheritedListener, port int) {
 	t.Helper()
 	gcc, runner, driverBin := buildModloadDriverX86(t)
-	port := freeTCPPort(t)
-	asm, progDir := compileSourceModload(t, runner, driverBin, httpServeSrc(entry(port)))
+	asm, progDir := compileSourceModload(t, runner, driverBin, httpServeSrc(mainBody))
 	if !strings.Contains(asm, ".Lssa_") {
 		t.Fatal("handler program did not route through the IR path")
 	}
-	checkServes(t, binCmd(runner, buildBin(t, gcc, progDir, "http_serve", asm)), port)
+	checkServes(t, binCmd(runner, buildBin(t, gcc, progDir, "http_serve", asm)), ln, port)
 }
 
 func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
-	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(httpServeSrc(fmt.Sprintf("return serve.exit_code(serve.run(%d, serve.config(), handle));", port))), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(httpServeSrc("return serve.exit_code(serve.run(0, serve.config(), handle));")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	checkServes(t, runArm64Bin(qemu, cli.arm64Binary(t, src)), port)
+	ln := e2eharness.ListenInherited(t)
+	checkServes(t, runArm64Bin(qemu, cli.arm64Binary(t, src)), ln, ln.Port)
 }
 
 func httpServeSrc(mainBody string) string {
@@ -202,8 +200,14 @@ function main(): i32 {
 `, mainBody)
 }
 
-func checkServes(t *testing.T, cmd *exec.Cmd, port int) {
+// checkServes starts cmd and reads two responses from port. A non-nil ln is
+// the listener that cmd inherits on that port.
+func checkServes(t *testing.T, cmd *exec.Cmd, ln *e2eharness.InheritedListener, port int) {
 	t.Helper()
+	if ln != nil {
+		ln.Hand(cmd)
+		defer ln.Close()
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
