@@ -1,0 +1,310 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "./fixtures/png_grayscale" as fixtures;
+import "std/test";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function inputs(channels: i32): u8[][] {
+  return if (channels == 1) {
+    [fixtures.gray1_0(), fixtures.gray1_1(), fixtures.gray1_2(), fixtures.gray1_3(), fixtures.gray1_4()]
+  } else {
+    [fixtures.gray2_0(), fixtures.gray2_1(), fixtures.gray2_2(), fixtures.gray2_3(), fixtures.gray2_4()]
+  };
+}
+
+function expected(channels: i32): u8[] {
+  let gray: u8[] = [0, 255, 17, 200, 3, 128, 12, 254, 1];
+  let alpha: u8[] = [255, 0, 128, 17, 255, 0, 254, 1, 200];
+  let bytes: u8[] = [];
+  for i in 0..gray.len() {
+    bytes = bytes.append(gray[i]).append(gray[i]).append(gray[i]);
+    if (channels == 2) {
+      bytes = bytes.append(alpha[i]);
+    }
+  }
+  return bytes;
+}
+
+function open(data: [u8], incremental: boolean): Result[png.RowDecoder, png.DecoderError] {
+  return if (incremental) { png.open_incremental_rows(data, pixels.default_limits(), png.default_row_limits(), never_cancel) } else { png.open_rows(data, pixels.default_limits(), png.default_row_limits(), never_cancel) };
+}
+
+function goldens(): test.TestOutcome {
+  for channels in [1, 2] {
+    for data in inputs(channels) {
+      let Ok(image) = png.decode(data, pixels.default_limits()) else {
+        return test.fail("grayscale decode");
+      };
+      let output_channels = channels + 2;
+      if (image.layout.width != 3 || image.layout.height != 3 || image.layout.stride != 3 * output_channels
+        || pixels.channels(image.layout.format) != output_channels || !same(image.data, expected(channels))) {
+        return test.fail("grayscale golden");
+      }
+      let Ok(encoded) = png.encode(image, 4096) else {
+        return test.fail("expanded encode");
+      };
+      let Ok(decoded) = png.decode(encoded, pixels.default_limits()) else {
+        return test.fail("expanded round trip");
+      };
+      if (!same(decoded.data, expected(channels))) {
+        return test.fail("round trip pixels");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function rows(): test.TestOutcome {
+  for channels in [1, 2] {
+    for data in inputs(channels) {
+      for incremental in [false, true] {
+        let Ok(decoder) = open(data, incremental) else {
+          return test.fail("row open");
+        };
+        let bytes = expected(channels);
+        let stride = 3 * (channels + 2);
+        for y in 0..3 {
+          let Ok(row) = decoder.read(y, never_cancel) else {
+            return test.fail("row read");
+          };
+          if (row.layout.height != 1 || row.layout.stride != stride || row.layout.bytes != stride
+            || !same(row.data, bytes[y * stride:(y + 1) * stride])) {
+            return test.fail("row golden");
+          }
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function aliases(): test.TestOutcome {
+  for channels in [1, 2] {
+    for incremental in [false, true] {
+      let data = inputs(channels)[4];
+      let wrapped: u8[] = [7];
+      for byte in data {
+        wrapped = wrapped.append(byte);
+      }
+      wrapped = wrapped.append(9);
+      let Ok(decoder) = open(wrapped[1:wrapped.len() - 1], incremental) else {
+        return test.fail("borrowed window");
+      };
+      let Ok(first) = decoder.read(0, never_cancel) else {
+        return test.fail("first row");
+      };
+      let retained = first.data;
+      let Ok(changed) = pixels.write_pixel(first, 0, 0, pixels.Pixel { r: 99, g: 88, b: 77, a: if (channels == 1) { 255 } else { 66 } }) else {
+        return test.fail("row mutation");
+      };
+      let Ok(last) = decoder.read(2, never_cancel) else {
+        return test.fail("prefix rows");
+      };
+      let Ok(repeated) = decoder.read(2, never_cancel) else {
+        return test.fail("repeat row");
+      };
+      let bytes = expected(channels);
+      let stride = 3 * (channels + 2);
+      let old = match (decoder.read(0, never_cancel)) { Err(png.DecoderAccess) => true, _ => false };
+      if (!old || !same(retained, bytes[:stride]) || changed.data[0] != 99
+        || !same(last.data, bytes[2 * stride:]) || !same(repeated.data, last.data) || !same(wrapped[1:wrapped.len() - 1], data)) {
+        return test.fail("row ownership");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function admission(): test.TestOutcome {
+  for channels in [1, 2] {
+    let data = inputs(channels)[0];
+    let bytes = 9 * (channels + 2);
+    let image_limits = pixels.Limits { max_pixels: 9, max_bytes: bytes };
+    if let Err(_) = png.decode(data, image_limits) {
+      return test.fail("exact output admission");
+    }
+    let limited = pixels.Limits { ...image_limits, max_bytes: bytes - 1 };
+    if (!match (png.decode(data, limited)) { Err(png.PngError.Limit) => true, _ => false }) {
+      return test.fail("expanded output limit");
+    }
+    for incremental in [false, true] {
+      let inspected = if (incremental) { png.inspect_incremental_rows(data, image_limits, png.default_row_limits()) } else { png.inspect_rows(data, image_limits, png.default_row_limits()) };
+      let Ok(plan) = inspected else {
+        return test.fail("inspect");
+      };
+      let wire = 3 * channels;
+      let filtered = 3 * (wire + 1);
+      let row_bytes = 2i64 * ((3 * (channels + 2)) as i64);
+      let scratch = row_bytes + (if (incremental) { filtered as i64 + 1i64 } else { 0i64 });
+      let payload = if (incremental) { 3i64 * (data.len() as i64) + filtered as i64 + 16384i64 + scratch } else { 2i64 * (data.len() as i64) + filtered as i64 + scratch };
+      let work = if (incremental) { data.len() as i64 + filtered as i64 + 3i64 * ((2 * wire + 1) as i64) + bytes as i64 } else { 3i64 + 3i64 * (wire as i64) + bytes as i64 };
+      if (plan.filtered_bytes != filtered || plan.row_scratch_bytes != scratch || plan.payload_bytes != payload || plan.row_work != work) {
+        return test.fail("encoded and expanded charges");
+      }
+      for delta in [0, 1, 2] {
+        let limits = png.RowLimits { max_payload_bytes: payload - (if (delta == 1) { 1i64 } else { 0i64 }), max_row_work: work - (if (delta == 2) { 1i64 } else { 0i64 }) };
+        let result = if (incremental) { png.open_incremental_rows(data, image_limits, limits, never_cancel) } else { png.open_rows(data, image_limits, limits, never_cancel) };
+        let good = match (result) { Ok(_) => delta == 0, Err(png.DecoderBudget) => delta != 0, _ => false };
+        if (!good) {
+          return test.fail("exact row budget boundary");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function malformed(): test.TestOutcome {
+  for channels in [1, 2] {
+    let bad = if (channels == 1) { fixtures.bad_final_1() } else { fixtures.bad_final_2() };
+    if (!match (png.decode(bad, pixels.default_limits())) { Err(png.PngError.Scanline) => true, _ => false }) {
+      return test.fail("bad encoded filter");
+    }
+    let calls = cell_new(0);
+    let consume = (value: i32, _row: pixels.Image): Result[i32, string] => {
+      calls.set(calls.get() + 1);
+      return Ok(value + 1);
+    };
+    for incremental in [false, true] {
+      let result = if (incremental) { png.fold_incremental_rows(bad, 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume) } else { png.fold_rows(bad, 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume) };
+      if (!match (result) { Err(png.RowCodec(png.PngError.Scanline)) => true, _ => false }) {
+        return test.fail("final filter before callback");
+      }
+    }
+    if (calls.get() != 0) {
+      return test.fail("malformed callback");
+    }
+    let data = inputs(channels)[4];
+    for n in 0..data.len() {
+      if let Ok(_) = png.decode(data[:n], pixels.default_limits()) {
+        return test.fail("truncated grayscale");
+      }
+    }
+    let unsupported = if (channels == 1) { [fixtures.depth_1(), fixtures.interlace_1()] } else { [fixtures.depth_2(), fixtures.interlace_2(), fixtures.transparency_2()] };
+    for input in unsupported {
+      if (!match (png.decode(input, pixels.default_limits())) { Err(png.PngError.Unsupported) => true, _ => false }) {
+        return test.fail("unsupported mode");
+      }
+    }
+    if (channels == 1) {
+      let Ok(image) = png.decode(fixtures.transparency_1(), pixels.default_limits()) else {
+        return test.fail("grayscale transparency support");
+      };
+      let gray: u8[] = [0, 255, 17, 200, 3, 128, 12, 254, 1];
+      if (image.data.len() != 36 || pixels.channels(image.layout.format) != 4) {
+        return test.fail("grayscale transparency shape");
+      }
+      for i in 0..gray.len() {
+        if (image.data[i * 4] != gray[i] || image.data[i * 4 + 1] != gray[i] || image.data[i * 4 + 2] != gray[i]
+          || image.data[i * 4 + 3] != (if (gray[i] == 0) { 0 } else { 255 })) {
+          return test.fail("grayscale transparency exact samples");
+        }
+      }
+    }
+    let trailing = if (channels == 1) { fixtures.trailing_1() } else { fixtures.trailing_2() };
+    for incremental in [false, true] {
+      if (!match (open(trailing, incremental)) { Err(png.DecoderCodec(png.PngError.Compressed)) => true, _ => false }) {
+        return test.fail("exact compressed consumption");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function wide_rows(): test.TestOutcome {
+  for channels in [1, 2] {
+    let data = if (channels == 1) { fixtures.wide_1() } else { fixtures.wide_2() };
+    let Ok(image) = png.decode(data, pixels.default_limits()) else {
+      return test.fail("wide grayscale");
+    };
+    let stride = 17000 * (channels + 2);
+    for incremental in [false, true] {
+      let Ok(decoder) = open(data, incremental) else {
+        return test.fail("wide session");
+      };
+      for y in 0..5 {
+        let Ok(row) = decoder.read(y, never_cancel) else {
+          return test.fail("wide row");
+        };
+        if (!same(row.data, image.data[y * stride:(y + 1) * stride])) {
+          return test.fail("wide byte agreement");
+        }
+        for x in 0..17000 {
+          let at = x * (channels + 2);
+          let wire = x * channels;
+          let gray = ((wire * 37 + y * 11 + wire / 251) % 256) as u8;
+          if (row.data[at] != gray || row.data[at + 1] != gray || row.data[at + 2] != gray) {
+            return test.fail("wide gray samples");
+          }
+          if (channels == 2 && row.data[at + 3] != (((wire + 1) * 37 + y * 11 + (wire + 1) / 251) % 256) as u8) {
+            return test.fail("wide alpha samples");
+          }
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function cancellation(): test.TestOutcome {
+  for channels in [1, 2] {
+    for incremental in [false, true] {
+      let data = inputs(channels)[4];
+      let Ok(baseline) = open(data, incremental) else {
+        return test.fail("cancel baseline");
+      };
+      let polls = cell_new(0);
+      let counter = (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      };
+      if let Err(_) = baseline.read(2, counter) {
+        return test.fail("count polls");
+      }
+      for stop in 1..polls.get() + 1 {
+        let Ok(decoder) = open(data, incremental) else {
+          return test.fail("cancel session");
+        };
+        let current = cell_new(0);
+        let cancel = (): boolean => {
+          current.set(current.get() + 1);
+          return current.get() == stop;
+        };
+        if (!match (decoder.read(2, cancel)) { Err(png.DecoderCancelled) => true, _ => false }) {
+          return test.fail("cancel each poll");
+        }
+        if (incremental && !match (decoder.read(2, never_cancel)) { Err(png.DecoderCancelled) => true, _ => false }) {
+          return test.fail("terminal cancellation");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let suite = test.new("PNG grayscale");
+  suite = suite.it("all filters preserve gray and alpha samples", goldens);
+  suite = suite.it("eager and incremental rows expand after filters", rows);
+  suite = suite.it("borrowed input and retained rows preserve aliases", aliases);
+  suite = suite.it("budgets charge expanded output and encoded dependencies", admission);
+  suite = suite.it("malformed rows reject before callbacks", malformed);
+  suite = suite.it("wide gray rows cross history and chunk boundaries", wide_rows);
+  suite = suite.it("cancellation at every row poll", cancellation);
+  return suite.finish();
+}

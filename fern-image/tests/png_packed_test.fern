@@ -1,0 +1,168 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "./fixtures/png_packed" as fixtures;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function goldens(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let Ok(image) = png.decode(fixture.encoded, pixels.default_limits()) else {
+      return test.fail("packed decode");
+    };
+    if (image.layout.width != fixture.width || image.layout.height != 5 || pixels.channels(image.layout.format) != 3
+      || !same(image.data, fixture.expected)) {
+      return test.fail("packed pixels");
+    }
+    let Ok(encoded) = png.encode(image, 65536) else {
+      return test.fail("expanded encode");
+    };
+    let Ok(roundtrip) = png.decode(encoded, pixels.default_limits()) else {
+      return test.fail("expanded decode");
+    };
+    if (!same(roundtrip.data, fixture.expected)) {
+      return test.fail("packed round trip");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function rows(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    for incremental in [false, true] {
+      let opened = if (incremental) { png.open_incremental_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), never) } else { png.open_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), never) };
+      let Ok(decoder) = opened else {
+        return test.fail("packed row open");
+      };
+      let stride = fixture.width * 3;
+      for y in 0..5 {
+        let Ok(row) = decoder.read(y, never) else {
+          return test.fail("packed row read");
+        };
+        if (!same(row.data, fixture.expected[y * stride:(y + 1) * stride])) {
+          return test.fail("packed row pixels");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function limits(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let exact = pixels.Limits { max_pixels: fixture.width * 5, max_bytes: fixture.width * 15 };
+    if let Err(_) = png.decode(fixture.encoded, exact) {
+      return test.fail("packed exact output limit");
+    }
+    let limited = pixels.Limits { ...exact, max_bytes: exact.max_bytes - 1 };
+    if (!match (png.decode(fixture.encoded, limited)) { Err(png.PngError.Limit) => true, _ => false }) {
+      return test.fail("packed expanded limit");
+    }
+    let Ok(plan) = png.inspect_rows(fixture.encoded, exact, png.default_row_limits()) else {
+      return test.fail("packed inspect");
+    };
+    let wire = (fixture.width * fixture.depth + 7) / 8;
+    if (plan.filtered_bytes != 5 * (wire + 1)) {
+      return test.fail("packed filtered budget");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function open(input: [u8], incremental: boolean): Result[png.RowDecoder, png.DecoderError] {
+  return if (incremental) { png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never) } else { png.open_rows(input, pixels.default_limits(), png.default_row_limits(), never) };
+}
+
+function aliases(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  let wrapped: u8[] = [7];
+  for byte in fixture.encoded {
+    wrapped = wrapped.append(byte);
+  }
+  wrapped = wrapped.append(9);
+  for incremental in [false, true] {
+    let Ok(decoder) = open(wrapped[1:wrapped.len() - 1], incremental) else {
+      return test.fail("packed borrowed input");
+    };
+    let Ok(first) = decoder.read(0, never) else {
+      return test.fail("packed first row");
+    };
+    let retained = first.data;
+    let Ok(changed) = pixels.write_pixel(first, 0, 0, pixels.Pixel { r: 13, g: 27, b: 41, a: 255 }) else {
+      return test.fail("packed retained row update");
+    };
+    let Ok(last) = decoder.read(4, never) else {
+      return test.fail("packed final row");
+    };
+    let Ok(repeated) = decoder.read(4, never) else {
+      return test.fail("packed repeated row");
+    };
+    let stride = fixture.width * 3;
+    if (changed.data[0] != 13 || !same(retained, fixture.expected[:stride]) || !same(last.data, fixture.expected[4 * stride:])
+      || !same(last.data, repeated.data) || !same(wrapped[1:wrapped.len() - 1], fixture.encoded)) {
+      return test.fail("packed aliases");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function cancellation(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  for incremental in [false, true] {
+    let Ok(baseline) = open(fixture.encoded, incremental) else {
+      return test.fail("packed cancellation baseline");
+    };
+    let polls = cell_new(0);
+    let counter = (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    };
+    if let Err(_) = baseline.read(4, counter) {
+      return test.fail("packed poll count");
+    }
+    for stop in 1..polls.get() + 1 {
+      let Ok(decoder) = open(fixture.encoded, incremental) else {
+        return test.fail("packed cancellation session");
+      };
+      let count = cell_new(0);
+      let cancel = (): boolean => {
+        count.set(count.get() + 1);
+        return count.get() == stop;
+      };
+      if (!match (decoder.read(4, cancel)) { Err(png.DecoderCancelled) => true, _ => false }) {
+        return test.fail("packed cancellation poll");
+      }
+      if (incremental && !match (decoder.read(4, never)) { Err(png.DecoderCancelled) => true, _ => false }) {
+        return test.fail("packed terminal cancellation");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let suite = test.new("PNG packed grayscale");
+  suite = suite.it("packed grayscale samples, filters and padding", goldens);
+  suite = suite.it("packed sequential and incremental rows", rows);
+  suite = suite.it("packed and expanded admission", limits);
+  suite = suite.it("packed input and row aliases", aliases);
+  suite = suite.it("cancellation at every packed row poll", cancellation);
+  return suite.finish();
+}

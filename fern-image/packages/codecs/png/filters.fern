@@ -1,0 +1,21 @@
+function absolute(n: i32): i32 {
+  return if (n < 0) { -n } else { n };
+}
+
+function paeth(a: i32, b: i32, c: i32): i32 {
+  let p = a + b - c;
+  let da = absolute(p - a);
+  let db = absolute(p - b);
+  let dc = absolute(p - c);
+  if (da <= db && da <= dc) {
+    return a;
+  }
+  if (db <= dc) {
+    return b;
+  }
+  return c;
+}
+
+pub function predict(filter: i32, left: i32, above: i32, upper_left: i32): i32 {
+  return match (filter) { 1 => left, 2 => above, 3 => (left + above) / 2, 4 => paeth(left, above, upper_left), _ => 0 };
+}

@@ -7,7 +7,11 @@ The color module provides sRGB transfer functions, grayscale, channel operations
 
 The resize module provides scalar nearest-neighbor and bilinear filters.
 A pure Fern [QOI codec](docs/qoi.md) reads and writes RGB8/RGBA8 with explicit color-space metadata and resource limits.
-A restricted native PNG codec decodes and encodes noninterlaced RGB8/RGBA8.
+A restricted native PNG codec decodes noninterlaced grayscale at one, two, four or eight bits per sample.
+It also decodes eight-bit grayscale with alpha, RGB and RGBA.
+Indexed PNG input supports one, two, four and eight-bit indices, with PLTE and indexed tRNS.
+Grayscale and RGB tRNS select transparent samples in RGBA8 output.
+Its encoder writes RGB8/RGBA8.
 Its [sequential row interface](docs/png-rows.md) emits selected rows after a complete filtered-frame decode.
 The [PNG provider adapter](docs/png-providers.md) connects fresh decoder sessions to graph rows and cropped tiles.
 The [resumable DEFLATE reader](docs/deflate-reader.md) provides bounded output chunks.
@@ -26,7 +30,7 @@ HTTP and CDN services remain unimplemented.
 
 | Format | Read | Write |
 |---|---|---|
-| PNG | Noninterlaced RGB8/RGBA8 | RGB8/RGBA8 |
+| PNG | Noninterlaced grayscale1/2/4/8 and RGB8 with optional tRNS, indexed1/2/4/8 with optional alpha, grayscale-alpha8, RGBA8 | RGB8/RGBA8 |
 | JPEG | Restricted baseline grayscale and JFIF RGB | Planned |
 | JPEG XL | Planned | Planned |
 | QOI | RGB8/RGBA8 | RGB8/RGBA8 |
@@ -104,7 +108,8 @@ See [resize semantics](docs/resize.md) for coordinate and alpha rules.
 
 The [native compression audit](docs/compression-audit.md) verifies prerequisites for PNG.
 See [PNG compatibility](docs/png.md) before use.
-The separate [PNG corpus](docs/png-qualification.md) compares 964 generated cases with an offline Pillow reference.
+The separate [PNG corpus](docs/png-qualification.md) compares generated cases with an offline Pillow reference.
+The current corpus includes grayscale and grayscale-alpha input.
 PNG requires the static-append compiler fix in PR #13208.
 
 The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.

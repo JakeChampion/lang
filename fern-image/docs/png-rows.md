@@ -3,7 +3,9 @@
 Issue #13341 belongs to row milestone #13215 and PNG milestone #13214.
 The restricted PNG module provides `fold_rows` for sequential row consumption.
 It uses the same chunk checks, strict zlib decode, and filter predictor as the eager decoder.
-The supported PNG formats and metadata restrictions remain unchanged.
+The decoder accepts the grayscale, indexed, RGB and RGBA modes in the PNG decode contract.
+Grayscale and RGB tRNS select RGBA8 output with exact sample-key comparisons.
+Metadata restrictions remain unchanged.
 
 ## Access and ownership
 
@@ -40,8 +42,16 @@ The plan charges these logical payload bytes:
 
 The input allowance covers compressed-byte preparation.
 The row allowance covers the previous row and the current row.
+For grayscale, it conservatively covers the greater of two expanded rows and two encoded rows plus one expanded row.
+The filtered frame uses the encoded row width.
 The API checks the input allowance before chunk preparation.
 It checks the complete plan before decompression and row reconstruction.
+
+Indexed plans also charge four retained bytes per palette entry.
+Before any callback, indexed validation reconstructs every encoded row and checks every pixel index.
+Its extra work charge is image height times the sum of encoded row bytes and image width.
+The row allowance already covers both encoded rows for this validation.
+Nonindexed plans retain their previous charges and limits.
 
 The plan charges this row work:
 
@@ -52,6 +62,8 @@ image height + (first row + row count) * row stride
 The first term counts validation of every filter byte.
 The second term counts reconstruction of the required prefix bytes.
 Neither term measures CRC work, decompression work, callback work, or elapsed CPU time.
+For grayscale, prefix reconstruction uses the encoded row width.
+The plan also charges one expanded row width for each selected row.
 
 The charges exclude allocator capacity slack, metadata, caller aliases, and callback state or retained rows.
 They do not establish a physical scratch limit, peak allocation limit, RSS bound, or aggregate process bound.

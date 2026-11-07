@@ -1,0 +1,20 @@
+pub enum Key { Opaque, Gray(i32), Rgb(u8, u8, u8) }
+
+pub function parse(bytes: [u8], color_type: i32, depth: i32): Option[Key] {
+  if (color_type == 0 && bytes.len() == 2 && (depth == 1 || depth == 2 || depth == 4 || depth == 8)) {
+    let maximum = (1 << depth) - 1;
+    return Some(Gray((bytes[0] as i32 << 8 | bytes[1] as i32) & maximum));
+  }
+  if (color_type == 2 && depth == 8 && bytes.len() == 6) {
+    return Some(Rgb(bytes[1], bytes[3], bytes[5]));
+  }
+  return None;
+}
+
+pub function gray_alpha(key: Key, sample: i32, explicit: u8): u8 {
+  return match (key) { Gray(value) => if (sample == value) { 0 } else { 255 }, _ => explicit };
+}
+
+pub function rgb_alpha(key: Key, red: u8, green: u8, blue: u8): u8 {
+  return match (key) { Rgb(r, g, b) => if (red == r && green == g && blue == b) { 0 } else { 255 }, _ => 255 };
+}
