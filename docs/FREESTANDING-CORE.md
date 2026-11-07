@@ -812,11 +812,14 @@ test independently runs the core-safe modules through `Enforce` against `freesta
 so the partition means what the compiler enforces rather than only agreeing with it by
 construction.
 
-Today: **59 of 87 modules are core-safe.** Two results worth knowing:
+Today: **58 of 89 modules are core-safe.** The table classifies only the top-level
+modules. Nested modules such as `http/*` and `crypto/*` are not in it (#14400). Two results
+worth knowing:
 
-- **`std/test` reaches `env`, `fs`, `log` and `now`.** So a freestanding target cannot run
-  the in-language test runner, and its output sink is only one of four things in the way.
-  Worth knowing before treating "core-safe" and "testable in-language" as the same set.
+- **`std/test` reaches 13 host capabilities**, `tcp`, `reactor` and `ktls` among them. It
+  imports `std/http` for its HTTP assertions, and `std/http` imports `std/platform`
+  (#14402). So a freestanding target cannot run the in-language test runner.
+  Do not treat "core-safe" and "testable in-language" as the same set.
 - **`std/jni` is hosted on `cabi` alone.** It touches no OS surface at all; what it
   needs is a calling convention to hand a JNIEnv method pointer to.
 

@@ -86,10 +86,12 @@ function main(): i32 {
 }
 ```
 
-There is no prelude: a program sees only what it imports, and that
-includes methods. `import "std/string";` is what gives every `string`
-its `.trim()` and `.split()`, and `import "std/i32";` gives an `i32` its
-`.to_string()`. Methods are called without the module prefix.
+Library functions and methods come from imports. `import "std/string";` is
+what gives every `string` its `.trim()` and `.split()`, and
+`import "std/i32";` gives an `i32` its `.to_string_radix(16)`. Methods are
+called without the module prefix. A small builtin set needs no import:
+`print`, `Option`, `Result`, `.len()`, `.to_string()` on a number, and the
+host functions such as `read_file` (#14400).
 
 The full list is under [Standard library →](../../stdlib/).
 

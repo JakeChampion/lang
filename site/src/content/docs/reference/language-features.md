@@ -512,8 +512,10 @@ enclosing function's bindings the same way.
 Each `.fern` file is a module. `import "./geo";` loads `geo.fern` from
 the importing file's directory, and its names are then written
 `geo.name`; `import "./geo" as g;` picks a different qualifier. Standard
-library modules import the same way (`import "std/string";`). A program
-sees only what it imports — there is no prelude.
+library modules import the same way (`import "std/string";`). Library
+names come only from imports. The builtin functions and types (`print`,
+`Option`, `Result`, `read_file`, `HttpRequest`, …) are always in scope,
+and their names are reserved (#14400).
 
 A top-level declaration is private to its module unless marked:
 

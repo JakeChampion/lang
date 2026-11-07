@@ -13,9 +13,9 @@ covers conventions across modules.
 
 ## Importing a module
 
-A program sees only what it imports. Modules live under two prefixes:
+Library names come only from imports. Modules live under two prefixes:
 `std/` for the library proper and `core/` for the foundations it is
-built on (iterators, comparison traits, maps, big integers). Calls into
+built on (iterators, comparison traits, maps, the error trait). Calls into
 a module are qualified by its last path segment, or by the name given
 with `as`; methods a module adds to a type, such as the string methods
 in `std/string`, are called on the value.
