@@ -4894,6 +4894,13 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
+  if ((b.op == "==" || b.op == "!=") && compares_by_eq(lv, env.funcs)) {
+    let eq = call_method(env.heap, lv, "eq", [rv], env.funcs, env.aliases, env.type_decls);
+    if (is_err(eq) || b.op == "==") {
+      return eq;
+    }
+    return eval_unary("!", eq);
+  }
   if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") && orders_by_cmp(lv)) {
     let c = call_method(env.heap, lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
     if (is_err(c)) {
@@ -4902,6 +4909,25 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
     return eval_binary(b.op, c, v_int(0));
   }
   return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
+// compares_by_eq says whether `==` on v calls an `eq` method of its type, as
+// the compiler lowers it for a struct, an enum or a tuple.
+function compares_by_eq(v: Value, funcs: parser.FuncDecl[]): boolean {
+  match (v) {
+    VStruct(_) => {},
+    VTuple(_) => {},
+    _ => {
+      return false;
+    }
+  }
+  let owner = dispatch_type_name(v);
+  for fd in funcs {
+    if (fd.name == "eq" && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == owner) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // orders_by_cmp says whether an order on v calls its `cmp` method.

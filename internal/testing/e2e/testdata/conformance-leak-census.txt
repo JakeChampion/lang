@@ -302,6 +302,7 @@ enum_reuse_churn                                     0
 enum_shares_a_struct_name                            0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
+eq_operator_calls_a_user_eq_method                   0
 eq_struct_enum                                       0
 erased_typevar_ret                                   0
 escape_sequences                                     0

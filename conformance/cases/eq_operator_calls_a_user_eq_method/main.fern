@@ -1,0 +1,59 @@
+import "core/cmp";
+
+struct V { x: i32, tag: string }
+
+function (a: V) eq(b: V): boolean {
+  return a.x == b.x;
+}
+
+@derive(cmp.Eq)
+struct P { x: i32, tag: string }
+
+enum Shade { Light(i32), Dark(i32) }
+
+function (a: Shade) eq(b: Shade): boolean {
+  match (a) {
+    Light(n) => {
+      match (b) {
+        Light(m) => {
+          return n % 10 == m % 10;
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    Dark(_) => {
+      if let Dark(_) = b {
+        return true;
+      }
+      return false;
+    }
+  }
+}
+
+struct Box[T] { v: T, note: string }
+
+function (a: Box[T]) eq(b: Box[T]): boolean {
+  return a.note.len() == b.note.len();
+}
+
+function main(): i32 {
+  let a = V { x: 1, tag: "a" };
+  let b = V { x: 1, tag: "b" };
+  let c = V { x: 2, tag: "a" };
+  print(f"{a == b} {a != b} {a == c} {a != c}");
+  let p = P { x: 1, tag: "a" };
+  let q = P { x: 1, tag: "b" };
+  print(f"{p == q} {p != q} {p == P { x: 1, tag: "a" }}");
+  let l1: Shade = Light(3);
+  let l2: Shade = Light(13);
+  let d1: Shade = Dark(1);
+  let d2: Shade = Dark(2);
+  print(f"{l1 == l2} {l1 != l2} {d1 == d2} {l1 == d1}");
+  let x = Box { v: 1, note: "ab" };
+  let y = Box { v: 2, note: "cd" };
+  print(f"{x == y} {x != y}");
+  print(f"{1 == 1} {"a" == "b"}");
+  return 0;
+}
