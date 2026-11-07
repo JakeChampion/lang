@@ -61,7 +61,7 @@ function fixture(row: i32): ssasem.Func {
   let names: string[] = [];
   if (row == 4) { debug = [1]; names = ["out"]; }
   let finalizers: ssasem.Finalizer[] = [];
-  if (row == 5) { finalizers = [ssasem.Finalizer { receiver: "Option", symbol: "Option.drop" }]; }
+  if (row == 5) { finalizers = [ssasem.Finalizer { receiver: "Option", symbol: "Option.drop", writes: true }]; }
   return ssasem.Func { schema_checked: false, source_positions: ssasem.no_source(),  graph: ssa.SFunc { name: "option", nparams: params.len(), nvals: values.len(), entry: 0, takes_env: false, blocks: blocks },
     values: values, params: params, result: result, records: semrecords.no_records(), enums: enums,
     calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: finalizers,

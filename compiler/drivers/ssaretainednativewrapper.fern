@@ -103,7 +103,7 @@ function boundary(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: str
   if (row.label_name != "require") {
     let m = selected.metadata(row);
     check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, false);
-    check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, false);
+    check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf", writes: true }] })), arch, false);
   }
   if (row.label_name == "__sem_release_Parent") {
     check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, rc_free_debug: true } }), arch, false);

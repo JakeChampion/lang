@@ -81,7 +81,7 @@ function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void 
   require(selected.finalizers.len() == 0, 122);
   let missing = ircore.Sub { ...sub, physical_contracts: [] };
   let records = ircore.Sub { ...sub, physical_records: semrecords.no_records() };
-  let finalizer = ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "selected_drop" }] };
+  let finalizer = ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "selected_drop", writes: true }] };
   for bad in [missing, records, finalizer] {
     require(!abi.check_wrapper_final(bad, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok, 123);
   }

@@ -76,7 +76,7 @@ function schemas(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
   for records in record_sets {
     check(metadata(output, row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: records } }), false, "stale schema name index");
   }
-  check(metadata(output, row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "drop" }] }), false, "finalizer");
+  check(metadata(output, row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "drop", writes: true }] }), false, "finalizer");
   let swapped = semrecords.Record { ...r, fields: [r.fields[1], r.fields[0]] };
   let bound = check(metadata(output, row, physicalbody.Metadata { ...m, records: semrecords.records_of([swapped]) }), true, "ordered selected schema data");
   require(bound.fields[0] == "right" && bound.fields[1] == "left", "schema order retained");
