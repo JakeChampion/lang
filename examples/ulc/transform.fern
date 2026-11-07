@@ -1,0 +1,127 @@
+// Pure Fern radix-2 FFT and unnormalised DCT-IV.
+import "std/array";
+import "std/f64";
+
+const PI: f64 = 3.141592653589793;
+
+pub function zeros(n: i32): f64[] {
+  let a: f64[] = [];
+  for i in 0..n {
+    a = a.append(0.0);
+  }
+  return a;
+}
+
+// DCT-IV(x)[k] = sum_j x[j] cos(pi/N (j+1/2)(k+1/2)).
+// A 2N-point complex FFT with pre/post rotations avoids a quadratic transform.
+pub function dct4(input: [f64]): f64[] {
+  let n = input.len();
+  let size = 2 * n;
+  let re = zeros(size);
+  let im = zeros(size);
+  for j in 0..n {
+    let angle = -PI * (j as f64) / (size as f64);
+    re = re.with(j, input[j] * angle.cos());
+    im = im.with(j, input[j] * angle.sin());
+  }
+  let j = 0;
+  for i in 1..size {
+    let bit = size >> 1;
+    while ((j & bit) != 0) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+    if (i < j) {
+      let t = re[i];
+      re = re.with(i, re[j]);
+      re = re.with(j, t);
+      let u = im[i];
+      im = im.with(i, im[j]);
+      im = im.with(j, u);
+    }
+  }
+  let width = 2;
+  while (width <= size) {
+    let angle = -2.0 * PI / (width as f64);
+    let wr = angle.cos();
+    let wi = angle.sin();
+    let base = 0;
+    while (base < size) {
+      let cr = 1.0;
+      let ci = 0.0;
+      for k in 0..width / 2 {
+        let a = base + k;
+        let b = a + width / 2;
+        let vr = re[b] * cr - im[b] * ci;
+        let vi = re[b] * ci + im[b] * cr;
+        let ur = re[a];
+        let ui = im[a];
+        re = re.with(a, ur + vr);
+        im = im.with(a, ui + vi);
+        re = re.with(b, ur - vr);
+        im = im.with(b, ui - vi);
+        let old = cr;
+        cr = cr * wr - ci * wi;
+        ci = old * wi + ci * wr;
+      }
+      base += width;
+    }
+    width *= 2;
+  }
+  let out = zeros(n);
+  for k in 0..n {
+    let angle = -PI * (k as f64 + 0.5) / (size as f64);
+    out = out.with(k, re[k] * angle.cos() - im[k] * angle.sin());
+  }
+  return out;
+}
+
+pub struct Inverse { samples: f64[], lap: f64[] }
+
+// The lapping layout follows libfourier's Fourier_IMDCT_Template.
+pub function inverse(coefs: [f64], own lap: f64[], overlap: i32): Inverse {
+  let n = coefs.len();
+  let temp = dct4(coefs);
+  let out = zeros(n);
+  let flat = (n - overlap) / 2;
+  for i in 0..n / 2 {
+    let a = lap[n / 2 - 1 - i];
+    let b = temp[n / 2 + i];
+    if (i < flat) {
+      out = out.with(i, a);
+      out = out.with(n - 1 - i, b);
+    } else {
+      let angle = PI * ((i - flat) as f64) / ((2 * overlap) as f64) + PI / ((4 * overlap) as f64);
+      let c = angle.cos();
+      let s = angle.sin();
+      out = out.with(i, c * a - s * b);
+      out = out.with(n - 1 - i, s * a + c * b);
+    }
+  }
+  for i in 0..n / 2 {
+    lap = lap.with(i, temp[i]);
+  }
+  return Inverse { samples: out, lap: lap };
+}
+
+pub struct Forward { coefs: f64[], lap: f64[] }
+
+// Long-window MDCT. Its normalisation belongs in the encoder.
+pub function forward(samples: [f64], own lap: f64[]): Forward {
+  let n = samples.len();
+  let folded = zeros(n);
+  for i in 0..n / 2 {
+    let angle = PI * (i as f64 + 0.5) / ((2 * n) as f64);
+    let c = angle.cos();
+    let s = angle.sin();
+    folded = folded.with(n / 2 - 1 - i, c * samples[i] + s * samples[n - 1 - i]);
+    folded = folded.with(n / 2 + i, lap[i]);
+    lap = lap.with(i, -s * samples[i] + c * samples[n - 1 - i]);
+  }
+  let coefs = dct4(folded);
+  for i in 0..n {
+    coefs = coefs.with(i, coefs[i] * (2.0 / (n as f64)));
+  }
+  return Forward { coefs: coefs, lap: lap };
+}

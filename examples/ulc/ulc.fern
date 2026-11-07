@@ -1,0 +1,76 @@
+import "std/number_parse";
+import "std/string";
+import "std/i32";
+import "std/io";
+import "std/result";
+import "./audio";
+
+function usage(): i32 {
+  print("ULC2 codec in Fern\nUsage:\n  ulc encode INPUT.wav OUTPUT.ulc [QUALITY=75] [BLOCKSIZE=2048]\n  ulc decode INPUT.ulc OUTPUT.wav [PCM8|PCM16|PCM24|FLOAT32]\n  ulc info INPUT.ulc");
+  return 1;
+}
+
+function run(argv: string[]): Result[i32, string] {
+  if (argv.len() < 3) {
+    return Ok(usage());
+  }
+  let command = argv[1];
+  if (command != "encode" && command != "decode" && command != "info") {
+    return Ok(usage());
+  }
+  if (command != "info" && argv.len() < 4) {
+    return Ok(usage());
+  }
+  if (command == "info" && argv.len() != 3 || command == "decode" && argv.len() > 5 || argv.len() > 6) {
+    return Ok(usage());
+  }
+  let input = read_file_bytes(argv[2]).map_err((e: IoError): string => e.message())?;
+  if (command == "info") {
+    let h = audio.header(input)?;
+    print("ULC2: " + h.rate.to_string() + " Hz, " + h.channels.to_string() + " channels, block size " + h.block_size.to_string() + ", " + h.blocks.to_string() + " blocks");
+    return Ok(0);
+  }
+  let output: u8[] = [];
+  if (command == "decode") {
+    let bits = 16;
+    if (argv.len() == 5) {
+      let format = argv[4];
+      if (format == "PCM8") {
+        bits = 8;
+      } else if (format == "PCM16") {
+        bits = 16;
+      } else if (format == "PCM24") {
+        bits = 24;
+      } else if (format == "FLOAT32") {
+        bits = 32;
+      } else {
+        return Err("unknown output format: " + format);
+      }
+    }
+    output = audio.write_wav(audio.decode(input)?, bits)?;
+  } else {
+    let quality = 75;
+    let size = 2048;
+    if (argv.len() >= 5) {
+      quality = i32.parse_i32(argv[4]).map_err((e: number_parse.ParseNumberError): string => e.message())?;
+    }
+    if (argv.len() >= 6) {
+      size = i32.parse_i32(argv[5]).map_err((e: number_parse.ParseNumberError): string => e.message())?;
+    }
+    output = audio.encode(audio.read_wav(input)?, quality, size)?;
+  }
+  write_file_bytes(argv[3], output).map_err((e: IoError): string => e.message())?;
+  return Ok(0);
+}
+
+function main(): i32 {
+  match (run(args())) {
+    Ok(code) => {
+      return code;
+    },
+    Err(message) => {
+      eprint("ulc: " + message);
+      return 1;
+    }
+  }
+}
