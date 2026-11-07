@@ -606,7 +606,9 @@ pub function sdk_version(ctx: usize): i32 {
 }
 
 // The directory of the private files of the app, or "" when the activity
-// gives none. Other apps cannot read the files in it.
+// gives none. Other apps cannot read the files in it. Android copies it to
+// the backups of the user and to a new device: keep secrets in
+// `no_backup_dir`.
 pub function data_dir(ctx: usize): string {
   let bytes: u8[] = [];
   unsafe {
@@ -621,6 +623,23 @@ pub function data_dir(ctx: usize): string {
     }
   }
   return utf8.from_bytes_lossy(bytes);
+}
+
+// The directory of the private files of the app that Android does not copy
+// to a backup or to a new device, or "" when there is none. Keep keys here.
+// Call it on the loop thread.
+pub function no_backup_dir(ctx: usize): string {
+  let e: usize = env(ctx);
+  let dir: usize = jni.call_object(e, activity_object(ctx), "getNoBackupFilesDir", "()Ljava/io/File;", []);
+  if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    return "";
+  }
+  let path: usize = jni.call_object(e, dir, "getAbsolutePath", "()Ljava/lang/String;", []);
+  let out: string = jni.string_of(e, path);
+  let a: usize = jni.delete_local_ref(e, path);
+  let b: usize = jni.delete_local_ref(e, dir);
+  return out;
 }
 
 // The app has permission `name`, such as "android.permission.RECORD_AUDIO".
