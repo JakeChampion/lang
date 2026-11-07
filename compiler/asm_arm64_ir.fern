@@ -6917,7 +6917,7 @@ function reset_stack_bytes(): i64 {
 
 // The loader enters EL1 with the MMU and data cache off.
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
-  let top = s.ram_base + s.ram_size & -16i64;
+  let top = s.ram_base + s.ram_size;
   s = s.write("_start:\n    mrs x9, mpidr_el1\n    and x9, x9, #255\n    cbnz x9, .Lreset_park\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
   s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
@@ -6938,7 +6938,7 @@ function reset_table_name(level: i32, address: i64): string {
 // Only the two RAM boundaries need finer tables. L0 plus two L1 tables and
 // at most two tables at each lower level occupy at most seven pages.
 function emit_reset_table(s: asmcore.EmitState, level: i32, address: i64, span: i64): asmcore.EmitState {
-  let ram_end = s.ram_base + s.ram_size + 4095i64 & -4096i64;
+  let ram_end = s.ram_base + s.ram_size;
   s = s.write("    .p2align 12\n" + reset_table_name(level, address) + ":\n");
   for i in 0..512 {
     let start = address + i as i64 * span;
