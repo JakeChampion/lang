@@ -81,6 +81,14 @@ function describe(t: fdt.Tree): string {
   return "uart " + r.address.to_string() + " psci " + t.property_string(psci, "method").unwrap_or("none");
 }
 
+// The exception level, and a value that a write to tpidr_el1 gives back.
+function registers(): string {
+  unsafe {
+    __sysreg_write("tpidr_el1", 42i64);
+    return "el " + (__sysreg_read("currentel") >> 2i64).to_string() + " tpidr_el1 " + __sysreg_read("tpidr_el1").to_string();
+  }
+}
+
 function main(): i32 {
   let xs: i32[] = [];
   let i = 0;
@@ -90,6 +98,7 @@ function main(): i32 {
   }
   print("hello from fern, total " + xs.len().to_string());
   print("boot info " + (__boot_info() as i64).to_string());
+  print(registers());
   match (fdt.parse(board.device_tree())) {
     Ok(t) => {
       let line = describe(t);
@@ -191,7 +200,7 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 				t.Fatalf("qemu: %v; console:\n%s", err, console)
 			}
 			// qemu-virt passes no boot argument in x0 to an ELF image.
-			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "uart 150994944 psci hvc\n"} {
+			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "el 1 tpidr_el1 42\n", "uart 150994944 psci hvc\n"} {
 				if !strings.Contains(string(console), want) {
 					t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 				}

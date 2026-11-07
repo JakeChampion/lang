@@ -91,6 +91,17 @@ function describe(): string {
   return "pvh version " + info.version.to_string() + " cmdline " + line + " ram " + covers(regions, 0x200000 as u64, 0x7f00000 as u64).to_string();
 }
 
+// Whether EFER says that long mode is active, and a value that a write to
+// KERNEL_GS_BASE gives back.
+function registers(): string {
+  unsafe {
+    __sysreg_write("kernel_gs_base", 42i64);
+    let lma = (__sysreg_read("efer") >> 10i64) & 1i64;
+    let paging = (__sysreg_read("cr0") >> 31i64) & 1i64;
+    return "efer.lma " + lma.to_string() + " cr0.pg " + paging.to_string() + " kernel_gs_base " + __sysreg_read("kernel_gs_base").to_string();
+  }
+}
+
 function main(): i32 {
   let xs: i32[] = [];
   let i = 0;
@@ -100,6 +111,7 @@ function main(): i32 {
   }
   print("hello from fern on x86-64, total " + xs.len().to_string());
   print(describe());
+  print(registers());
   board.exit_qemu(16);
   return 0;
 }
@@ -252,7 +264,7 @@ func TestSelfHostKernelX86BootsOnQemu(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 33 {
 		t.Fatalf("qemu: %v, want exit status 33 from isa-debug-exit; console:\n%s", err, console)
 	}
-	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n"} {
+	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1 cmdline fern=pvh ram true\n", "efer.lma 1 cr0.pg 1 kernel_gs_base 42\n"} {
 		if !strings.Contains(string(console), want) {
 			t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 		}

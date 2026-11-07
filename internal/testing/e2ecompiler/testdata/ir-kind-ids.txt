@@ -446,3 +446,5 @@ worker_unmap=496
 send_root=497
 writer_set_times=498
 boot_info=499
+sysreg_read=500
+sysreg_write=501

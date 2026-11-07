@@ -1292,16 +1292,25 @@ pub function op_privileged(kind: i32): Op {
 }
 
 pub function is_privileged_kind(id: i32): boolean {
-  return id == K_WFI || id == K_HVC || id == K_SMC || id == K_BOOT_INFO;
+  return id == K_WFI || id == K_HVC || id == K_SMC || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_SYSREG_WRITE;
 }
 
-// wfi and boot_info take nothing. hvc and smc take the function and three
-// arguments.
+// wfi, boot_info and sysreg_read take nothing. sysreg_write takes the value.
+// hvc and smc take the function and three arguments.
 function privileged_pops(id: i32): i32 {
-  if (id == K_WFI || id == K_BOOT_INFO) {
+  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ) {
     return 0;
   }
+  if (id == K_SYSREG_WRITE) {
+    return 1;
+  }
   return 4;
+}
+
+// A read or a write of the system register `name`. The name is part of the op,
+// because an instruction encodes the register.
+pub function op_sysreg(kind: i32, name: string): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 // A port access of `width` bits: in reads the port, out writes it. Only x86-64
@@ -1337,17 +1346,23 @@ function device_kind_name(id: i32): string {
   if (id == K_BOOT_INFO) {
     return "boot_info";
   }
-  if (id == K_PORT_IN || id == K_PORT_OUT) {
-    return port_kind_name(id);
-  }
-  return "mmio_store";
+  return access_kind_name(id);
 }
 
-function port_kind_name(id: i32): string {
+function access_kind_name(id: i32): string {
   if (id == K_PORT_IN) {
     return "port_in";
   }
-  return "port_out";
+  if (id == K_PORT_OUT) {
+    return "port_out";
+  }
+  if (id == K_SYSREG_READ) {
+    return "sysreg_read";
+  }
+  if (id == K_SYSREG_WRITE) {
+    return "sysreg_write";
+  }
+  return "mmio_store";
 }
 
 pub function op_arr_push_shared_count(): Op {
@@ -2330,6 +2345,10 @@ pub const K_PORT_OUT: i32 = 419;
 
 pub const K_BOOT_INFO: i32 = 499;
 
+pub const K_SYSREG_READ: i32 = 500;
+
+pub const K_SYSREG_WRITE: i32 = 501;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2536,6 +2555,16 @@ function kind_id_device(name: string): i32 {
   }
   if (name == "boot_info") {
     return K_BOOT_INFO;
+  }
+  return kind_id_sysreg(name);
+}
+
+function kind_id_sysreg(name: string): i32 {
+  if (name == "sysreg_read") {
+    return K_SYSREG_READ;
+  }
+  if (name == "sysreg_write") {
+    return K_SYSREG_WRITE;
   }
   return 0;
 }
