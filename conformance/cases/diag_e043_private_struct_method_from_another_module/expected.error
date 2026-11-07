@@ -1,0 +1,1 @@
+struct lib.Box has no field or method "secret" — "secret" is declared without `pub` in module "lib", so only that module can call it

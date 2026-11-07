@@ -1,0 +1,46 @@
+import "std/binary";
+import "std/test";
+
+function test_u32_byte_orders(): test.TestOutcome {
+  let be = binary.append_u32_be([], 0x01020304 as u32);
+  let le = binary.append_u32_le([], 0x01020304 as u32);
+  let Ok(a) = binary.read_u32_be(be, 0) else {
+    return test.fail("read_u32_be refused four bytes");
+  };
+  let Ok(b) = binary.read_u32_le(le, 0) else {
+    return test.fail("read_u32_le refused four bytes");
+  };
+  let order = be[0] == 1 as u8 && be[3] == 4 as u8 && le[0] == 4 as u8 && le[3] == 1 as u8;
+  return test.assert_eq(order && a == 0x01020304 as u32 && b == a, true);
+}
+
+function test_u64_byte_orders(): test.TestOutcome {
+  let v = 0x0102030405060708 as u64;
+  let be = binary.append_u64_be([], v);
+  let le = binary.append_u64_le([], v);
+  let Ok(a) = binary.read_u64_be(be, 0) else {
+    return test.fail("read_u64_be refused eight bytes");
+  };
+  let Ok(b) = binary.read_u64_le(le, 0) else {
+    return test.fail("read_u64_le refused eight bytes");
+  };
+  return test.assert_eq(be[0] == 1 as u8 && le[0] == 8 as u8 && le[7] == 1 as u8 && a == v && b == v, true);
+}
+
+function test_le_reads_stay_in_bounds(): test.TestOutcome {
+  let b = binary.append_u32_le(binary.append_u32_le([], 1 as u32), 2 as u32);
+  let Ok(second) = binary.read_u32_le(b, 4) else {
+    return test.fail("read_u32_le refused the last field");
+  };
+  let refused = binary.read_u32_le(b, 5).is_err() && binary.read_u32_le(b, -1).is_err()
+    && binary.read_u64_le(b, 1).is_err() && binary.read_u64_le([], 0).is_err();
+  return test.assert_eq(second == 2 as u32 && refused, true);
+}
+
+function main(): i32 {
+  let r = test.new("std/binary");
+  r = r.it("u32 fields round-trip in both byte orders", test_u32_byte_orders);
+  r = r.it("u64 fields round-trip in both byte orders", test_u64_byte_orders);
+  r = r.it("little-endian reads stay inside the bytes", test_le_reads_stay_in_bounds);
+  return r.finish();
+}

@@ -173,3 +173,54 @@ func TestPublicVariantTakesPrecedenceOverPrivateVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPubPackageMethodsFollowTheNearestManifest(t *testing.T) {
+	const owner = "[package]\nname = \"app\"\n"
+	const lib = `pub(package) function (n: i32) helper(): i32 { return n; }
+function (n: i32) private(): i32 { return n; }`
+	cases := []struct {
+		name    string
+		files   map[string]string
+		refused string
+	}{
+		{"subdirectory", map[string]string{
+			"fern.toml":  owner,
+			"sub/x.fern": lib,
+			"main.fern":  `import "./sub/x"; function main(): i32 { return 42.helper(); }`,
+		}, ""},
+		{"nested-manifest-with-the-same-name", map[string]string{
+			"fern.toml":     owner,
+			"sub/fern.toml": owner,
+			"sub/x.fern":    lib,
+			"main.fern":     `import "./sub/x"; function main(): i32 { return 42.helper(); }`,
+		}, `"helper" is declared without ` + "`pub`"},
+		{"fallback-stays-a-directory", map[string]string{
+			"sub/x.fern": lib,
+			"main.fern":  `import "./sub/x"; function main(): i32 { return 42.helper(); }`,
+		}, `"helper" is declared without ` + "`pub`"},
+		{"private-in-the-same-package", map[string]string{
+			"fern.toml":  owner,
+			"sub/x.fern": lib,
+			"main.fern":  `import "./sub/x"; function main(): i32 { return 42.private(); }`,
+		}, `"private" is declared without ` + "`pub`"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeFiles(t, tc.files)
+			prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = checker.Check(prog)
+			if tc.refused == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refused) {
+				t.Fatalf("got %v, want an error containing %q", err, tc.refused)
+			}
+		})
+	}
+}

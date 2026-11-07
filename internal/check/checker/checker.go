@@ -2418,6 +2418,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__fence"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	c.info.FuncSigs["__wfi"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
+	c.info.FuncSigs["__boot_info"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
 	i64T := ast.NumberType{Width: 64, Signed: true}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
@@ -2563,6 +2564,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
+			c.recordMethodViewers(fn, mangled)
 		} else if fn.MethodRecv != "" {
 			// A method hoisted by an earlier check keeps its receiver as its
 			// first parameter.
@@ -2570,6 +2572,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				c.consumingTypes[fn.MethodRecv] = true
 			}
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
+			c.recordMethodViewers(fn, fn.Name)
 		}
 		// A method's receiver is its first parameter once hoisted, as a second
 		// check of the same program sees it.
@@ -3131,6 +3134,31 @@ func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string 
 		}
 	}
 	return prefix + typeName + "_" + name
+}
+
+// privateMethodModule is the module of a method of that name on typeName
+// whose missing `pub` hides it from the current module.
+func (c *checker) privateMethodModule(typeName, method string) (string, bool) {
+	if c.current == nil {
+		return "", false
+	}
+	from := c.current.BodyModule()
+	for _, im := range c.info.InherentMethods[typeName+"."+method] {
+		if viewers, ok := c.methodViewers[im.Mangled]; ok && !viewers[from] {
+			return im.Module, true
+		}
+	}
+	return "", false
+}
+
+func (c *checker) recordMethodViewers(fn *ast.FuncDecl, mangled string) {
+	if fn.VisibleFrom == nil {
+		return
+	}
+	if c.methodViewers == nil {
+		c.methodViewers = map[string]map[string]bool{}
+	}
+	c.methodViewers[mangled] = fn.VisibleFrom
 }
 
 func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule string, pos ast.Position) {
@@ -5668,7 +5696,11 @@ func (c *checker) methodVisibleHere(mangled string) bool {
 	if c.current == nil {
 		return true
 	}
-	return c.moduleSees(c.current.BodyModule(), c.info.MethodSources[mangled])
+	from := c.current.BodyModule()
+	if viewers, ok := c.methodViewers[mangled]; ok && !viewers[from] {
+		return false
+	}
+	return c.moduleSees(from, c.info.MethodSources[mangled])
 }
 
 func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
@@ -5756,7 +5788,10 @@ type checker struct {
 	funcSources    map[string]string
 	// publicFreeFuncs lists the public free functions under the name their
 	// module declares, so a method call can name a function of that name.
-	publicFreeFuncs   map[string][]publicFreeFunc
+	publicFreeFuncs map[string][]publicFreeFunc
+	// methodViewers holds the modules that may call each method declared
+	// without `pub`.
+	methodViewers     map[string]map[string]bool
 	consts            map[string]*ast.ConstDecl
 	constTypes        map[string]ast.Type
 	constBusy         map[string]bool
@@ -8555,6 +8590,9 @@ func (c *checker) stdlibReceiverMatches(typeName, method string, recv ast.Type) 
 
 func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
 	msg := fmt.Sprintf("no method %q on %s", method, recv)
+	if module, ok := c.privateMethodModule(typeName, method); ok {
+		return fmt.Sprintf("%s — %q is declared without `pub` in module %q, so only that module can call it", msg, method, moduleBaseName(module))
+	}
 	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
 		if typeName == "Map" && (method == "has" || method == "without") {
 			return fmt.Sprintf("%s — it was renamed; use %q", msg, repl)
@@ -9134,7 +9172,11 @@ func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, 
 		c.errfCode(pos, "E043", "%s", c.unknownMethodMessage(structName, field, ast.StructType{Name: structName}))
 		return
 	}
-	e := c.report(c.currentModule(), pos, "E043", fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field))
+	msg := fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field)
+	if module, ok := c.privateMethodModule(structName, field); ok {
+		msg += fmt.Sprintf(" — %q is declared without `pub` in module %q, so only that module can call it", field, moduleBaseName(module))
+	}
+	e := c.report(c.currentModule(), pos, "E043", msg)
 	if e == nil {
 		return
 	}
@@ -9359,6 +9401,13 @@ func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
 		name = n.SourceCallee
 	}
 	c.errfCode(n.P, "E095", "unsafe function %q is called outside an unsafe block", name)
+}
+
+// A cast between an integer and a heap value reads or forges an address.
+func (c *checker) checkPointerCast(n *ast.CastExpr, inner ast.Type) {
+	if c.unsafeDepth == 0 {
+		c.errfCode(n.P, "E095", "the cast from %s to %s reinterprets a pointer outside an unsafe block", inner, n.Target)
+	}
 }
 
 func (c *checker) checkUnsafeTraitCall(n *ast.Call, field string, unsafe bool) {
@@ -14177,6 +14226,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if nt, ok := n.Target.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
 			switch inner.(type) {
 			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				c.checkPointerCast(n, inner)
 				return n.Target
 			}
 		}
@@ -14185,6 +14235,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			case ast.ArrayType, ast.StringType, ast.StructType:
 				if nt.NormalWidth() == 32 && !nt.IsPointerWidth() {
 					c.errfCode(n.P, "E069", "reinterpreting a 32-bit `%s` value as the pointer-shaped type `%s` via `as` truncates the address: the high 32 bits were lost when the value became `%s`, so this recovers a corrupt pointer once the heap exceeds 4 GiB — carry pointer-shaped values in a `usize` local/param instead", inner, n.Target, inner)
+				} else {
+					c.checkPointerCast(n, inner)
 				}
 				return n.Target
 			}
@@ -16200,8 +16252,8 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	prefix := st.Name + "."
 	var methodNames []string
-	for key := range c.info.Methods {
-		if strings.HasPrefix(key, prefix) {
+	for key, mangled := range c.info.Methods {
+		if strings.HasPrefix(key, prefix) && c.methodVisibleHere(mangled) {
 			methodNames = append(methodNames, key[len(prefix):])
 		}
 	}

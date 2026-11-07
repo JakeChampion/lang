@@ -1,0 +1,7 @@
+// A method declared without `pub` is private to its module, the same rule
+// a free function follows. A `pub` method of the same module stays callable.
+import "./lib";
+
+function main(): i32 {
+    return 3.shout() + 3.whisper();
+}

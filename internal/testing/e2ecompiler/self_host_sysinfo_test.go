@@ -29,10 +29,30 @@ func selfHostSysinfoSource(t *testing.T, machine string) string {
         Ok(wd) => { if (wd != %q) { return 8; } },
         Err(e) => { return 10; }
     }
-    if (cpu_count() != %d) { return 9; }
+    let marks: string = "";
+    let i: i32 = 0;
+    while (i < cpu_count()) {
+        marks = marks + "x";
+        i = i + 1;
+    }
+    print(marks);
     return 0;
 }
-`, u[0], u[1], u[2], u[3], machine, wd, runtime.NumCPU())
+`, u[0], u[1], u[2], u[3], machine, wd)
+}
+
+// checkSysinfoCPUCount compares the probe's cpu_count, one mark per CPU, with
+// the affinity mask read after the run, so a change to the mask while the
+// test process runs does not read as a wrong count.
+func checkSysinfoCPUCount(t *testing.T, out []byte) {
+	t.Helper()
+	got := strings.TrimSpace(string(out))
+	if strings.Trim(got, "x") != "" {
+		t.Fatalf("the probe printed %q, want only marks", got)
+	}
+	if want := selfHostCPUCount(t); len(got) != want {
+		t.Errorf("cpu_count() answered %d, want %d from sched_getaffinity (runtime.NumCPU at process start: %d)", len(got), want, runtime.NumCPU())
+	}
 }
 
 func TestSelfHostSysinfoIR(t *testing.T) {
@@ -61,8 +81,9 @@ func TestSelfHostSysinfoIR(t *testing.T) {
 	run.Dir = mustGetwd(t)
 	out, _ := run.Output()
 	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("sysinfo probe exited %d (the code names the field); stdout %q", code, strings.TrimSpace(string(out)))
+		t.Fatalf("sysinfo probe exited %d (the code names the field); stdout %q", code, strings.TrimSpace(string(out)))
 	}
+	checkSysinfoCPUCount(t, out)
 }
 
 func TestSelfHostSysinfoIRArm64(t *testing.T) {
@@ -93,8 +114,9 @@ func TestSelfHostSysinfoIRArm64(t *testing.T) {
 		t.Fatal("arm64 sysinfo program did not exit normally")
 	}
 	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("arm64 sysinfo probe exited %d (the code names the field); stdout %q", code, strings.TrimSpace(string(out)))
+		t.Fatalf("arm64 sysinfo probe exited %d (the code names the field); stdout %q", code, strings.TrimSpace(string(out)))
 	}
+	checkSysinfoCPUCount(t, out)
 }
 
 func mustGetwd(t *testing.T) string {

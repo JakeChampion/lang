@@ -1096,8 +1096,9 @@ pub function port_intrinsic(name: string): boolean {
 
 // A privileged op that only a kernel environment grants. __hvc and __smc call
 // the hypervisor and the secure monitor in the SMC calling convention.
+// __boot_info gives the address that the loader passed to the reset entry.
 pub function privileged_intrinsic(name: string): boolean {
-  return name == "__wfi" || name == "__hvc" || name == "__smc";
+  return name == "__wfi" || name == "__hvc" || name == "__smc" || name == "__boot_info";
 }
 
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
@@ -1125,6 +1126,9 @@ function mmio_result(name: string): typeinfo.Type {
   if (util.str_has_prefix(name, "__mmio_store") || util.str_has_prefix(name, "__port_out") || name == "__fence" || name == "__wfi") {
     return t_void();
   }
+  if (name == "__boot_info") {
+    return t_usize();
+  }
   if (mmio_width(name) == 64 || privileged_intrinsic(name)) {
     return t_i64();
   }
@@ -1132,7 +1136,7 @@ function mmio_result(name: string): typeinfo.Type {
 }
 
 function mmio_params(name: string): typeinfo.Type[] {
-  if (name == "__fence" || name == "__wfi") {
+  if (name == "__fence" || name == "__wfi" || name == "__boot_info") {
     return [];
   }
   if (privileged_intrinsic(name)) {
@@ -1961,7 +1965,7 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
 
 pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], const_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string, must_consume: boolean }
 
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean, is_pub: boolean, is_package: boolean }
 
 pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], const_params: string[], instance: string, visible_from: string[], must_consume: boolean }
 
@@ -1986,6 +1990,7 @@ pub struct Scope {
   tparams: string[],
   tbounds: string[],
   lit_locals: string[],
+  in_unsafe: boolean,
 }
 
 pub struct ViewMemo { names: util.NameIndex, holds: boolean[] }
@@ -2369,13 +2374,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs = struct_table(ss, [], [], no_spellings());
   let unions = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -2424,7 +2429,7 @@ function type_names_of(structs: StructTable, unions: UnionTable, unloaded: strin
   return TypeNames { structs: structs.heads, unions: unions.index, resources: structs.resources, spellings: structs.spellings, unloaded: util.name_index(unloaded) };
 }
 
-function (s: Scope) resolve_type(name: string): typeinfo.Type {
+pub function (s: Scope) resolve_type(name: string): typeinfo.Type {
   return type_from_name_subst(name, s.tparams, rigid_tparams(s.tparams), s.type_names());
 }
 
@@ -2868,7 +2873,7 @@ function (s: Scope) is_bound(name: string): boolean {
   return s.binding_index(name) >= 0;
 }
 
-function (s: Scope) lookup_assoc_sig(tyname: string, field: string): Option[FuncSig] {
+pub function (s: Scope) lookup_assoc_sig(tyname: string, field: string): Option[FuncSig] {
   for sig in s.sigs.sigs {
     if (sig.name == field && sig.receiver.len() > 0 && util.base_type_name(sig.receiver) == tyname) {
       return Some(sig);
@@ -2894,7 +2899,7 @@ function (s: Scope) sig_at(name: string): i32 {
   return first;
 }
 
-function (s: Scope) lookup_sig(name: string): Option[FuncSig] {
+pub function (s: Scope) lookup_sig(name: string): Option[FuncSig] {
   let i = s.sig_at(name);
   if (i >= 0) {
     return Some(s.sigs.sigs[i]);
@@ -4035,7 +4040,7 @@ function scalar_method_module(t: typeinfo.Type, method: string): string {
 
 // module_imported: `path` is in the program's import list. For a single module
 // that is its own imports; for a bundle it is the closure flatten.bundle keeps.
-function (s: Scope) module_imported(path: string): boolean {
+pub function (s: Scope) module_imported(path: string): boolean {
   return util.index_of_str(s.imports.paths, path) >= 0;
 }
 
@@ -4049,10 +4054,34 @@ function (s: Scope) imports_directly(path: string): boolean {
 }
 
 function (s: Scope) method_visible(m: MethodSig): boolean {
-  return m.impl_trait.len() > 0 || s.imports.sees(s.fn_module, m.module);
+  if (m.impl_trait.len() > 0) {
+    return true;
+  }
+  return s.imports.sees(s.fn_module, m.module) && s.method_scope_admits(m);
 }
 
-function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
+// A method declared without `pub` is visible only in its own module, and a
+// `pub(package)` one only in modules of the same package.
+function (s: Scope) method_scope_admits(m: MethodSig): boolean {
+  if (m.module == s.fn_module || m.is_pub) {
+    return true;
+  }
+  return m.is_package && s.imports.same_package(s.fn_module, m.module);
+}
+
+// A struct's method resolves by its declaration's scope alone: a generic
+// body instantiated with a struct of another module calls its methods
+// without importing that module.
+function (s: Scope) scoped_method(name: string, recv_type: string): Option[MethodSig] {
+  if let Some(m) = s.lookup_method(name, recv_type) {
+    if (m.impl_trait.len() > 0 || s.method_scope_admits(m)) {
+      return Some(m);
+    }
+  }
+  return None;
+}
+
+pub function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
   if let Some(m) = s.lookup_method(name, recv_type) {
     if (s.method_visible(m)) {
       return Some(m);
@@ -4146,6 +4175,10 @@ function (s: Scope) stdlib_receiver_matches(ns: string, method: string, recv: ty
 
 function (s: Scope) unknown_method_message(ns: string, method: string, label: string, recv: typeinfo.Type): string {
   let base = "no method \"" + method + "\" on " + label;
+  let hidden = s.private_method_note(ns, method);
+  if (hidden.len() > 0) {
+    return base + hidden;
+  }
   let repl = retired_collection_spelling(ns, method);
   let view = false;
   if let typeinfo.TypeArray(a) = recv {
@@ -4287,6 +4320,35 @@ function (s: Scope) element_meets_bounds(method: MethodSig, rt: string, recv: ty
 // parameter that a receiver introduces with a leading digit, `0_T`.
 function array_element_is_generic(rt: string): boolean {
   return rt.len() > 2 && rt[0] >= b'0' && rt[0] <= b'9';
+}
+
+// The note for a method of this name that its missing `pub` hides here.
+function (s: Scope) private_method_note(ns: string, method: string): string {
+  for m in s.methods.methods {
+    let on_ns = m.receiver_type == ns || ns == "Array" && array_receiver_matches(m.receiver_type, false);
+    if (m.name == method && on_ns && m.impl_trait.len() == 0 && s.imports.sees(s.fn_module, m.module) && !s.method_scope_admits(m)) {
+      return " — \"" + method + "\" is declared without `pub` in module \"" + s.module_label(m.module) + "\", so only that module can call it";
+    }
+  }
+  return "";
+}
+
+// The base name of the module with mangle prefix `prefix`, as the current
+// module imports it.
+function (s: Scope) module_label(prefix: string): string {
+  for sg in s.imports.sights {
+    if (sg.module != s.fn_module) {
+      continue;
+    }
+    let i = 0;
+    while (i < sg.direct.len() && i < sg.imports.len()) {
+      if (sg.direct[i] == prefix) {
+        return util.module_name(sg.imports[i]);
+      }
+      i += 1;
+    }
+  }
+  return prefix;
 }
 
 // The advice for a method call that names a public free function of an
@@ -6593,6 +6655,14 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first_expr = joined.e;
       continue;
     }
+    if (bare_map(first) && !bare_map(et)) {
+      if let typeinfo.TypeMap(_) = et {
+        first = et;
+        first_lit = 0;
+        first_expr = a.elements[i];
+        continue;
+      }
+    }
     let scalar = scalar_numeric_join(first, et);
     if (!is_unknown(scalar) && !int_literal_tree(first_expr) && !int_literal_tree(a.elements[i])) {
       first = scalar;
@@ -7456,7 +7526,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
       }
       let rtn = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd), is_unsafe: fd.is_unsafe });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd), is_unsafe: fd.is_unsafe, is_pub: fd.is_pub, is_package: fd.is_package });
     }
   }
   return out;
@@ -10859,6 +10929,12 @@ function mx_arm_join(a: VbStore, b: VbStore): VbStore {
   }
   if let typeinfo.TypeMap(am) = a.t {
     if let typeinfo.TypeMap(bm) = b.t {
+      if (bare_map(a.t)) {
+        return b;
+      }
+      if (bare_map(b.t)) {
+        return a;
+      }
       let v = mx_arm_join(mx_map_value_store(a.e, am.value), mx_map_value_store(b.e, bm.value));
       return VbStore { t: t_map(am.key, v.t), e: mx_joined_literal(v, a.e) };
     }
@@ -13690,7 +13766,7 @@ function trait_bound_method(s: Scope, bound: string, self: string, field: string
         i += 1;
       }
       let rt = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(m.ret_type, m.ret_fn_ret, m.ret_fn_param_types), self), req.type_params, args);
-      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m), is_unsafe: m.is_unsafe });
+      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m), is_unsafe: m.is_unsafe, is_pub: true, is_package: false });
     }
   }
   for parent in req.supertraits {
@@ -14658,7 +14734,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
             out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
             out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
-            if let Some(msig) = s.lookup_method(mfa.field, sn.name) {
+            if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
               if (c.args.len() != msig.param_types.len()) {
                 out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
               } else {
@@ -14674,7 +14750,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               } else if let Some(fsig) = s.lookup_struct(sn.name) {
                 let fldi = field_index(fsig, mfa.field);
                 if (fldi < 0) {
-                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, fsig));
+                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
                 } else {
                   let fldt = field_access_result_type(mfa, sn, s);
                   let fld_is_fn = false;
@@ -15099,13 +15175,7 @@ function cast_target_diags(target: string, u: ast.ExprUnary, s: Scope): util.Dia
 function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
   let none: util.Diag[] = [];
   if (is_primitive_type(tgt) && is_primitive_type(cot)) {
-    if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
-      return [e069_cast(u, cot, tgt)];
-    }
-    if (!as_cast_allowed(cot, tgt)) {
-      return [e033_cast(u, cot, tgt)];
-    }
-    return none;
+    return primitive_cast_diags(u, tgt, cot, s);
   }
   let unresolved = unresolved_cast_diags(u, tgt, cot, s);
   if (unresolved.len() > 0) {
@@ -15114,16 +15184,41 @@ function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s:
   if (type_contains_unknown(tgt) || type_contains_unknown(cot)) {
     return none;
   }
-  if (cast_pointer_int(cot) && cast_pointer_shaped(tgt, false)) {
-    if (!is_usize(cot)) {
+  if (heap_pointer_cast(cot, tgt)) {
+    if (cast_pointer_int(cot) && !is_usize(cot)) {
       return [e069_cast(u, cot, tgt)];
     }
-    return none;
+    return pointer_cast_diags(u, cot, tgt, s);
   }
-  if (!(cast_pointer_int(tgt) && cast_pointer_shaped(cot, true)) && !coercible(cot, tgt, s)) {
+  if (!coercible(cot, tgt, s)) {
     return [e033_cast(u, cot, tgt)];
   }
   return none;
+}
+
+function primitive_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
+  if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
+    return [e069_cast(u, cot, tgt)];
+  }
+  if (!as_cast_allowed(cot, tgt)) {
+    return [e033_cast(u, cot, tgt)];
+  }
+  if (type_eq(tgt, t_string()) && cast_pointer_int(cot) || type_eq(cot, t_string()) && cast_pointer_int(tgt)) {
+    return pointer_cast_diags(u, cot, tgt, s);
+  }
+  return [];
+}
+
+function heap_pointer_cast(cot: typeinfo.Type, tgt: typeinfo.Type): boolean {
+  return cast_pointer_int(cot) && cast_pointer_shaped(tgt, false) || cast_pointer_int(tgt) && cast_pointer_shaped(cot, true);
+}
+
+// A cast between an integer and a heap value reads or forges an address.
+function pointer_cast_diags(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type, s: Scope): util.Diag[] {
+  if (s.in_unsafe || s.sigs.raw_allowed) {
+    return [];
+  }
+  return [dg_at("E095", "the cast from " + type_label(cot) + " to " + type_label(tgt) + " reinterprets a pointer outside an unsafe block", u.line, u.col)];
 }
 
 function unresolved_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
@@ -17044,6 +17139,14 @@ function scalar_pattern_diags(m: ast.StmtMatch, mst: typeinfo.Type, cur: Scope):
   return out;
 }
 
+// The then body of an unsafe block is an unsafe context.
+function then_scope(f: ast.StmtIf, s: Scope): Scope {
+  if (f.origin == "unsafe") {
+    return Scope { ...s, in_unsafe: true };
+  }
+  return s;
+}
+
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur = bind_mutual_siblings(stmts, s);
@@ -17089,7 +17192,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           out = util.append_diags(out, literal_match_diags(f, cur));
         } else {
           out = util.append_diags(out, call_diags(f.cond, cur));
-          out = util.append_diags(out, stmts_call_diags(f.then_body, cur));
+          out = util.append_diags(out, stmts_call_diags(f.then_body, then_scope(f, cur)));
           out = util.append_diags(out, stmts_call_diags(f.else_body, cur));
         }
       },
@@ -18121,7 +18224,7 @@ function registered_intrinsics(): string[] {
     "__bytes_into", "__bytes_owned", "__bytes_range", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
-    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc",
+    "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
@@ -28699,6 +28802,20 @@ function unloaded_qualifiers(mod: parser.Module): string[] {
   return out;
 }
 
+function (im: Imports) package_of(module: string): string {
+  for sg in im.sights {
+    if (sg.module == module) {
+      return sg.package;
+    }
+  }
+  return "";
+}
+
+function (im: Imports) same_package(a: string, b: string): boolean {
+  let pa = im.package_of(a);
+  return pa.len() > 0 && pa == im.package_of(b);
+}
+
 function (im: Imports) sees(from: string, decl: string): boolean {
   if (from == decl) {
     return true;
@@ -29869,6 +29986,16 @@ function vb_join(a: VbStore, b: VbStore): VbStore {
           return VbStore { t: t, e: none };
         }
         return VbStore { t: t, e: a.e };
+      }
+    }
+  }
+  if let typeinfo.TypeMap(_) = a.t {
+    if let typeinfo.TypeMap(_) = b.t {
+      if (bare_map(a.t)) {
+        return b;
+      }
+      if (bare_map(b.t)) {
+        return a;
       }
     }
   }

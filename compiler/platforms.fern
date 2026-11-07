@@ -412,6 +412,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__wfi", capability: "privileged" },
     Gate { builtin: "__hvc", capability: "privileged" },
     Gate { builtin: "__smc", capability: "privileged" },
+    Gate { builtin: "__boot_info", capability: "privileged" },
     Gate { builtin: "__port_in8", capability: "privileged" },
     Gate { builtin: "__port_in16", capability: "privileged" },
     Gate { builtin: "__port_in32", capability: "privileged" },

@@ -4,7 +4,7 @@ This module provides message digests, key derivation, and authentication codes.
 
 ## Model
 
-Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest. `erase` consumes an owned byte array and zeroes its storage when that reference was the last one.
+Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest. `erase` consumes an owned array of any element type with a zero, such as `u8[]`, `u32[]` or `i64[]`, and zeroes its storage when that reference was the last one.
 
 ## Contracts
 
@@ -71,7 +71,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<21 pub function shake128_new(): Shake>>
 
-<<22 pub function erase(own bytes: u8[]): void>>
+<<22 pub function erase[T: ops.Zero](own xs: T[]): void>>
 ```
 
 ### `module introduction`
@@ -79,6 +79,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides message digests, key derivation, and authentication codes.
+import "core/ops";
 ```
 
 ### `2 function __zero_u8(n: i32): u8[]`
@@ -3967,17 +3968,17 @@ pub function shake256(data: [u8], out_len: i32): u8[] {
 }
 ```
 
-### `22 pub function erase(own bytes: u8[]): void`
+### `22 pub function erase[T: ops.Zero](own xs: T[]): void`
 
-`with` writes in place when no other reference shares the array, so the block holds zeros when it returns to the allocator. A reference that another value still shares keeps its bytes for that value, and only this one ends. No compiler pass removes a store to an array, and `TestSelfHostEraseZeroesStorage` reads the released block back through a raw allocation to pin that.
+`with` writes the element type's zero in place when no other reference shares the array, so the block holds zeros when it returns to the allocator. A reference that another value still shares keeps its bytes for that value, and only this one ends. No compiler pass removes a store to an array, and `TestSelfHostEraseZeroesStorage` reads the released block back through a raw allocation to pin that.
 
 ```fern
-<<22 pub function erase(own bytes: u8[]): void>>=
-pub function erase(own bytes: u8[]): void {
-  let n = bytes.len();
+<<22 pub function erase[T: ops.Zero](own xs: T[]): void>>=
+pub function erase[T: ops.Zero](own xs: T[]): void {
+  let n = xs.len();
   let i = 0;
   while (i < n) {
-    bytes = bytes.with(i, 0 as u8);
+    xs = xs.with(i, T.zero());
     i += 1;
   }
 }

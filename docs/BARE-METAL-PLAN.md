@@ -218,6 +218,11 @@ each one with E066:
   `__port_out8`, `__port_out16` and `__port_out32` write one. An x86-64 board
   reaches its serial port and the qemu exit device through them. They need an
   `unsafe` block. arm64 has no port space, so its emitter refuses them.
+- `__boot_info()` gives the boot argument that the loader put in a register for
+  the reset entry, as a `usize`. On `arm64-kernel` it is x0. The Linux boot
+  protocol puts the address of the device tree there. qemu-virt gives 0 to an ELF
+  image. On `x86-64-kernel` it is `%ebx`, the address of the PVH start info,
+  which `std/pvh` reads.
 
 They take the host-call path of the MMIO ops, so no pass removes or moves them.
 x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`. System
@@ -304,7 +309,8 @@ ELF `ET_EXEC` image:
 - The text segment starts at BASE and is not writable. The data segment follows
   it and is not executable.
 - The loader enters EL1 with the MMU and data cache off. The reset `_start`
-  parks the other cores, sets the stack at BASE + SIZE, and enables the FP and SIMD unit
+  parks the other cores, saves x0 for `__boot_info`, sets the stack at
+  BASE + SIZE, and enables the FP and SIMD unit
   (`CPACR_EL1`).
 - Then it clears `.bss` and enables a 40-bit identity map with 4 KiB tables.
   The configured RAM uses Normal non-cacheable memory. Other addresses use
@@ -339,15 +345,18 @@ no boot loader.
 - It enables SSE, AVX and XSAVE, because the x86-64-v3 baseline uses AVX2. Then
   it enables long mode and returns far to the 64-bit code. A VM must give the
   guest a CPU with AVX2, for example `-cpu max` on qemu.
-- The 64-bit code sets the stack, clears `.bss`, gives the heap the RAM up to
-  the tables, and calls `main`. After `main` it halts.
+- The 64-bit code saves `%ebx` for `__boot_info`, sets the stack, clears
+  `.bss`, gives the heap the RAM up to the tables, and calls `main`. After `main`
+  it halts.
 - The PVH entry and the linker take 32-bit addresses, so the end of the RAM
   must be at or below 2 GiB.
 
 `internal/testing/e2ecompiler/self_host_kernel_x86_test.go` checks the program
 headers and the note. `TestSelfHostKernelX86BootsOnQemu` boots the image on
 `qemu-system-x86_64 -M microvm`. The image prints through COM1 with
-`__port_out8` and exits through qemu's `isa-debug-exit` device. The
+`__port_out8` and exits through qemu's `isa-debug-exit` device. It reads the
+PVH start info with `std/pvh`, prints the command line, and finds its RAM in the
+memory map. The
 `kernel-boot` job runs it too.
 
 ### 5. Atomics
@@ -505,7 +514,7 @@ check time, in the same mechanism that enforces the OS boundary today.
   Fern already ships, which emit ELF rather than shelling out to one.
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
   once volatile and memory layout exist; no new language surface. `std/fdt`
-  reads a device tree (#14260).
+  reads a device tree and `std/pvh` reads the PVH start info (#14260).
 
 ### Milestones, each producing something that runs
 
@@ -559,9 +568,10 @@ environment over the FernOS syscalls can come later, as an improvement.
    `arm64-kernel` (section 4).
 7. **Started: milestone 1** (#14260). An arm64 image on qemu-virt and an
    x86-64 image on qemu microvm boot, print and stop the VM in CI. `std/fdt`
-   reads the device tree. The x86-64 boot parameters (the PVH start info) and
-   Firecracker remain. **Started: the effect intrinsics** (#14252), with
-   `__fence`, `__wfi`, `__hvc`, `__smc` and the port ops (section 2).
+   reads the device tree, and `std/pvh` reads the PVH start info through
+   `__boot_info`. Firecracker remains. **Started: the effect intrinsics** (#14252), with
+   `__fence`, `__wfi`, `__hvc`, `__smc`, `__boot_info` and the port ops
+   (section 2).
    Then: `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
 8. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
