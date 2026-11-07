@@ -1439,7 +1439,8 @@ function written_params(f: ssasem.Func, defs: ssa.SInst[], reached: i32[]): bool
   return out;
 }
 
-pub function write_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): boolean {
+// The cells and results of two write tables agree. It holds for every function at once.
+pub function write_tables_agree(a: WriteRows, b: WriteRows): boolean {
   if (a.cells.names.len() != b.cells.names.len()) {
     return false;
   }
@@ -1456,6 +1457,10 @@ pub function write_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): bo
       return false;
     }
   }
+  return true;
+}
+
+pub function written_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): boolean {
   for callee in callees {
     let left = written_row(a, callee);
     let right = written_row(b, callee);
