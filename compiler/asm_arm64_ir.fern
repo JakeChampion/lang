@@ -6746,8 +6746,8 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
-  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
-  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n.Lfern_stack_kept:\n");
+  s = s.write("    tbnz x0, #63, .Lfern_stack_map_failed\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
+  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n");
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   if (darwin) {
     s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n");
@@ -6868,11 +6868,9 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   } else {
     s = s.write("    .section .bss\n    .align 8\n__fern_sig_sp: .quad 0, 0\n    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n.Lmsg_illegal_instruction:\n    .ascii \"" + ill + "\\n\"\n.Lmsg_bus_error:\n    .ascii \"" + bus + "\\n\"\n    .text\n");
   }
-  // A fault inside the guard of the runtime's own stack is an overflow. On
-  // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
-  // of the stack pointer counts as one.
-  let guard = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    cbz x14, .Lfern_segv_near_sp\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.lo .Lfern_segv_overflow\n    b .Lfern_segv_other\n.Lfern_segv_near_sp:\n";
-  s = s.write("__fern_segv:\n" + landing_pad(s) + dispatch + addr + guard + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n.Lfern_segv_overflow:\n" + frame);
+  // A fault inside the guard of the runtime's own stack is an overflow.
+  let guard = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.hs .Lfern_segv_other\n";
+  s = s.write("__fern_segv:\n" + landing_pad(s) + dispatch + addr + guard + ".Lfern_segv_overflow:\n" + frame);
   s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n" + ctx + "    adrp x9, __fern_bt_floor\n    add x9, x9, :lo12:__fern_bt_floor\n    str x10, [x9]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp = "xzr";
   if (darwin) {
@@ -6900,6 +6898,7 @@ function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("relro_protect")) {
     s = emit_startup_failure(s, ".Lfern_relro_failed", aborts.relro());
   }
+  s = emit_startup_failure(s, ".Lfern_stack_map_failed", aborts.stack_map());
   s = emit_startup_failure(s, ".Lfern_stack_guard_failed", aborts.stack_guard());
   s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
   s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());
