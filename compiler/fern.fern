@@ -858,6 +858,23 @@ function x86_relro_slots(own a: x86_native.X86Asm, tv: i32, dv: i32, runtime: bo
   return x86_native.X86Asm { ...a, rodata: data };
 }
 
+// A PVH kernel image: the fixed layout at `base`, which a VMM enters at the
+// 32-bit _start.
+function x86_kernel_image(asm: string, words: u8[], base: i64): string {
+  let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
+  let tv = base + elf.elf_text_off_pvh() as i64;
+  let dv = base + elf.elf_data_vaddr_pvh(a.text.len()) as i64;
+  let gap = elf.elf_executable_relro_gap(a.relro_pad, elf.elf_x86_page_align());
+  a = x86_native.x86_relro_gap(a, gap);
+  a = x86_native.x86_link(a, tv as i32, dv as i32);
+  if (a.unknown.len() > 0) {
+    eprint("fern: -target x86-64-kernel: in-process assembler could not encode: " + a.unknown[0]);
+    return "";
+  }
+  let eoff = x86_native.x86_label_off(a, "_start");
+  return string_from_bytes_unchecked(elf.elf_image_kernel_pvh(a.text, a.rodata, eoff, a.bss_size, a.relro_pad, base));
+}
+
 function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
@@ -2372,11 +2389,29 @@ function ram_layout(text: string, target: string): (i64, i64, boolean) {
     base = ram_number(parts[0]);
     size = ram_number(parts[1]);
   }
-  if (base < 0i64 || base > 1099511627776i64 || size < 4194304i64 || base % 65536i64 != 0i64 || size % 4096i64 != 0i64 || size > 1099511627776i64 - base) {
-    eprint("fern: -ram takes BASE,SIZE: a BASE that is a multiple of 64K, a SIZE of at least 4M that is a multiple of 4K, and an end at or below 1T (got \"" + text + "\")");
+  let limit = ram_limit(target);
+  if (base < 0i64 || base > limit || size < 4194304i64 || base % 65536i64 != 0i64 || size % 4096i64 != 0i64 || size > limit - base) {
+    eprint("fern: -ram takes BASE,SIZE: a BASE that is a multiple of 64K, a SIZE of at least 4M that is a multiple of 4K, and an end at or below " + ram_limit_text(target) + " (got \"" + text + "\")");
     return (0i64, 0i64, false);
   }
   return (base, size, true);
+}
+
+// The end of the RAM a kernel image can use. An arm64 image has the 40-bit
+// physical address space. An x86-64 image starts in 32-bit protected mode, and
+// its linker keeps 32-bit addresses.
+function ram_limit(target: string): i64 {
+  if (platforms.target_isa(target) == "x86-64") {
+    return 2147483648i64;
+  }
+  return 1099511627776i64;
+}
+
+function ram_limit_text(target: string): string {
+  if (platforms.target_isa(target) == "x86-64") {
+    return "2G";
+  }
+  return "1T";
 }
 
 // A decimal or 0x hex number with an optional K, M or G suffix, or -1.
@@ -2521,7 +2556,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
-      cli_flag("-ram", "BASE,SIZE", "arm64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
+      cli_flag("-ram", "BASE,SIZE", "arm64-kernel and x86-64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
       cli_flag("-quarantine", "SIZE", "with -sanitize: the byte budget of released blocks held before reuse, 1M to 16G with a K, M or G suffix, or 0 for no bound (default 64M)"),
       cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
@@ -7105,6 +7140,18 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
     if (!emit_text) {
       out_asm = arm64_kernel_image(out_asm, words_of(recs), ram_base);
+      if (out_asm.len() == 0) {
+        return 2;
+      }
+    }
+  } else if (target == "x86-64-kernel") {
+    let recs = word_buf(emit_text);
+    out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
+    if (out_asm.len() == 0) {
+      return 2;
+    }
+    if (!emit_text) {
+      out_asm = x86_kernel_image(out_asm, words_of(recs), ram_base);
       if (out_asm.len() == 0) {
         return 2;
       }

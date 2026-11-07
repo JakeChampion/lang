@@ -163,7 +163,7 @@ func TestSelfHostKernelImageLayout(t *testing.T) {
 // the UART and the PSCI conduit in the device tree, and stops the VM through
 // PSCI. qemu exits 0 when the guest powers off.
 func TestSelfHostKernelBootsOnQemu(t *testing.T) {
-	qemu := e2eharness.QemuSystemArm64(t)
+	qemu := e2eharness.QemuSystem(t, "qemu-system-aarch64")
 	cli := buildSelfHostCLI(t)
 	src := writeKernelProgram(t)
 	// The second layout puts the image above 4 GiB, so each address in the

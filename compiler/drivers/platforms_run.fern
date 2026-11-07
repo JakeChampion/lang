@@ -40,6 +40,12 @@ function main(): i32 {
   if (platforms.for_target("vax-11").known) {
     return 4;
   }
+  for t in platforms.targets() {
+    if (!util.str_has_prefix(t, platforms.for_target(t).isa + "-")) {
+      eprint(t + ": the descriptor names the ISA " + platforms.for_target(t).isa);
+      return 4;
+    }
+  }
   if (platforms.forbidden_gates("vax-11", []).len() != 0) {
     return 5;
   }

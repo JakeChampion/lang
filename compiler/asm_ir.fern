@@ -11852,7 +11852,13 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   if (is_entry && asmcore.process_entry(s)) {
     s = s.write("    .globl _start\n");
   }
+  if (is_entry && asmcore.reset_entry(s)) {
+    s = s.write("    .globl _start\n    .section .bss\n__fern_bss_start:\n");
+  }
   s = s.write("    .text\n");
+  if (is_entry && asmcore.reset_entry(s)) {
+    s = emit_reset_start(s);
+  }
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
   }
@@ -11888,6 +11894,9 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     if (asmcore.sandbox_on()) {
       s = emit_seccomp_install(s);
     }
+  }
+  if (is_entry && asmcore.reset_entry(s)) {
+    s = s.write("    .section .data\n    .p2align 4\n    .section .bss\n    .p2align 4\n__fern_bss_end:\n    .text\n");
   }
   irverifygate.close_memo(s.memo);
   let leak = asmcore.hostless_syscall_refusal(s);
@@ -12152,6 +12161,96 @@ function emit_startup_failure(own s: asmcore.EmitState, label: string, msg: stri
   s = s.syscall(1);
   s = s.write("    movl $134, %edi\n    movl $231, %eax\n");
   return s.syscall(231);
+}
+
+function reset_stack_bytes(): i64 {
+  return 1048576i64;
+}
+
+// The page tables and the GDT of the reset entry: a PML4, a PDPT, four page
+// directories and a GDT page, below the stack.
+function reset_tables(s: asmcore.EmitState): i64 {
+  return s.ram_base + s.ram_size - reset_stack_bytes() - 7i64 * 4096i64 & -4096i64;
+}
+
+// A VMM enters _start through the PVH note in 32-bit protected mode with
+// paging off. The 32-bit code identity-maps 4 GiB with 2 MiB pages, enables
+// SSE, AVX and long mode, and returns far to __fern_start64.
+function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
+  let blob = reset_trampoline(reset_tables(s) as i32);
+  s = s.write("_start:\n");
+  let i = 0;
+  while (i < blob.len()) {
+    let w = blob[i] | blob[i + 1] << 8 | blob[i + 2] << 16 | blob[i + 3] << 24;
+    s = s.write("    .long " + util.i32_to_string(w) + "\n");
+    i += 4;
+  }
+  let top = s.ram_base + s.ram_size & -16i64;
+  s = s.write("__fern_start64:\n    movabsq $" + util.i64_to_string(top) + ", %rax\n    movq %rax, %rsp\n");
+  s = s.write("    leaq __fern_bss_start(%rip), %rdi\n    leaq __fern_bss_end(%rip), %rcx\n    subq %rdi, %rcx\n    xorl %eax, %eax\n    rep stosb\n");
+  s = s.write("    leaq __fern_bss_end(%rip), %rdi\n    addq $15, %rdi\n    andq $-16, %rdi\n");
+  s = s.write("    movabsq $" + util.i64_to_string(reset_tables(s)) + ", %rsi\n    subq %rdi, %rsi\n    call __fern_heap_init\n");
+  s = s.write("    xorl %ebp, %ebp\n    pushq %rbp\n    movq %rsp, %rbp\n    call __fn_main\n");
+  return s.write(".Lreset_park:\n    cli\n    hlt\n    jmp .Lreset_park\n");
+}
+
+function le32_bytes(b: i32[], v: i32): i32[] {
+  return b.append(v & 255).append(v >> 8 & 255).append(v >> 16 & 255).append(v >> 24 & 255);
+}
+
+// movl $value, address
+function movl_abs(b: i32[], address: i32, value: i32): i32[] {
+  return le32_bytes(le32_bytes(b.append(199).append(5), address), value);
+}
+
+// The 32-bit code of the reset entry, padded with nop to whole words. Its
+// tables start at `t`, and the 64-bit code follows it.
+function reset_trampoline(t: i32): i32[] {
+  // cli; call 1f; 1: pop %ebp. %ebp holds the address of byte 6.
+  let b: i32[] = [250, 232, 0, 0, 0, 0, 93];
+  // Zero the seven pages: mov $t, %edi; xor %eax, %eax; mov $7168, %ecx; cld; rep stosl.
+  b = le32_bytes(b.append(191), t).append(49).append(192);
+  b = le32_bytes(b.append(185), 7168).append(252).append(243).append(171);
+  b = movl_abs(b, t, t + 4096 + 3);
+  for i in 0..4 {
+    b = movl_abs(b, t + 4096 + i * 8, t + 8192 + i * 4096 + 3);
+  }
+  // Each PD entry maps 2 MiB: mov $t+8192, %edi; mov $0x83, %eax; mov $2048, %ecx;
+  // 1: mov %eax, (%edi); add $0x200000, %eax; add $8, %edi; loop 1b.
+  b = le32_bytes(b.append(191), t + 8192);
+  b = le32_bytes(b.append(184), 131);
+  b = le32_bytes(b.append(185), 2048);
+  b = le32_bytes(b.append(137).append(7).append(5), 2097152).append(131).append(199).append(8).append(226).append(244);
+  // The GDT: a 64-bit code segment at 8 and a data segment at 16, and its
+  // pointer at gdt + 48.
+  let gdt = t + 24576;
+  b = movl_abs(movl_abs(b, gdt + 8, 65535), gdt + 12, 11508224);
+  b = movl_abs(movl_abs(b, gdt + 16, 65535), gdt + 20, 13603328);
+  b = le32_bytes(b.append(102).append(199).append(5), gdt + 48).append(23).append(0);
+  b = movl_abs(b, gdt + 50, gdt);
+  b = le32_bytes(b.append(15).append(1).append(21), gdt + 48);
+  // mov $16, %eax; mov %eax to %ds, %es, %ss.
+  b = le32_bytes(b.append(184), 16).append(142).append(216).append(142).append(192).append(142).append(208);
+  // CR4: PAE, OSFXSR, OSXMMEXCPT, OSXSAVE. Then XCR0 = x87 | SSE | AVX.
+  b = le32_bytes(b.append(15).append(32).append(224).append(13), 263712).append(15).append(34).append(224);
+  b = le32_bytes(b.append(49).append(201).append(184), 7).append(49).append(210).append(15).append(1).append(209);
+  // CR3 = PML4; EFER.LME; CR0 = PG | MP | PE with EM clear.
+  b = le32_bytes(b.append(184), t).append(15).append(34).append(216);
+  b = le32_bytes(b.append(185), -1073741696).append(15).append(50);
+  b = le32_bytes(b.append(13), 256).append(15).append(48);
+  b = b.append(15).append(32).append(192).append(131).append(224).append(251);
+  b = le32_bytes(b.append(13), -2147483645).append(15).append(34).append(192);
+  // lea start64-6(%ebp), %eax; push $8; push %eax; lret.
+  let lea_at = b.len();
+  b = le32_bytes(b.append(141).append(133), 0).append(106).append(8).append(80).append(203);
+  while (b.len() % 4 != 0) {
+    b = b.append(144);
+  }
+  let disp = b.len() - 6;
+  for k in 0..4 {
+    b = b.with(lea_at + 2 + k, disp >> k * 8 & 255);
+  }
+  return b;
 }
 
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {

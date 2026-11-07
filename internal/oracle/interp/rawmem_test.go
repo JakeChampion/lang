@@ -148,6 +148,12 @@ function call_firmware(): i64 {
   }
 }
 
+function read_port(): i32 {
+  unsafe {
+    return __port_in8(0x3fd);
+  }
+}
+
 function main(): i32 {
   return 0;
 }
@@ -225,6 +231,7 @@ func TestRawMemoryRefusesABrokenObligation(t *testing.T) {
 		{"overlapping_copy", "overlap"},
 		{"wait_for_interrupt", "__wfi: needs a kernel target"},
 		{"call_firmware", "__smc: needs a kernel target"},
+		{"read_port", "__port_in8: needs a kernel target"},
 	} {
 		_, err := i.CallByName(c.fn, nil)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
