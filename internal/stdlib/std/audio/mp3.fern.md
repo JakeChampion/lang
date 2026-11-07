@@ -70,7 +70,7 @@ pub function inspect(input: [u8], at: i32, limits: pcm.Limits): Result[header.He
 
 function crc16(input: [u8], own crc: i32): i32 {
   for b in input {
-    crc = crc ^ b as i32 << 8;
+    crc ^= b as i32 << 8;
     for _ in 0..8 {
       crc = (crc << 1 ^ (if ((crc & 32768) != 0) { 32773 } else { 0 })) & 65535;
     }

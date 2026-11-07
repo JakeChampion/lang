@@ -253,7 +253,7 @@ function pow43(own x: i32): f32 {
   let mult = 256.0f32;
   if (x < 1024) {
     mult = 16.0f32;
-    x = x << 3;
+    x <<= 3;
   }
   let sign = 2 * x & 64;
   let frac = ((x & 63) - sign) as f32 / (((x & ~63) + sign) as f32);
@@ -311,7 +311,7 @@ pub function huffman(input: [u8], own b: bits.Bits, g: Granule, scale: [f32], en
       let sample = if (sign != 0) { -pow43(value) } else { pow43(value) };
       output = output.with(base + at, gain * sample);
       at += 1;
-      leaf = leaf >> 4;
+      leaf >>= 4;
     }
     if (b.bad || b.pos > end) {
       return Err(pcm.Header);

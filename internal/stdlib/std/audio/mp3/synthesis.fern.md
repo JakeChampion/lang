@@ -228,29 +228,29 @@ function butterfly8x4(own t: f32[], at: i32): f32[] {
   let x6 = __f32x4_load(t, at + 24);
   let x7 = __f32x4_load(t, at + 28);
   let xt = x0 - x7;
-  x0 = x0 + x7;
+  x0 += x7;
   x7 = x1 - x6;
-  x1 = x1 + x6;
+  x1 += x6;
   x6 = x2 - x5;
-  x2 = x2 + x5;
+  x2 += x5;
   x5 = x3 - x4;
-  x3 = x3 + x4;
+  x3 += x4;
   x4 = x0 - x3;
-  x0 = x0 + x3;
+  x0 += x3;
   x3 = x1 - x2;
-  x1 = x1 + x2;
+  x1 += x2;
   let inv_sqrt2 = __f32x4_splat(0.70710677f32);
   t = __f32x4_with(t, at, x0 + x1);
   t = __f32x4_with(t, at + 16, (x0 - x1) * inv_sqrt2);
-  x5 = x5 + x6;
+  x5 += x6;
   x6 = (x6 + x7) * inv_sqrt2;
-  x7 = x7 + xt;
+  x7 += xt;
   x3 = (x3 + x4) * inv_sqrt2;
-  x5 = x5 - x7 * __f32x4_splat(0.198912367f32);
-  x7 = x7 + x5 * __f32x4_splat(0.382683432f32);
-  x5 = x5 - x7 * __f32x4_splat(0.198912367f32);
+  x5 -= x7 * __f32x4_splat(0.198912367f32);
+  x7 += x5 * __f32x4_splat(0.382683432f32);
+  x5 -= x7 * __f32x4_splat(0.198912367f32);
   x0 = xt - x6;
-  xt = xt + x6;
+  xt += x6;
   t = __f32x4_with(t, at + 4, (xt + x7) * __f32x4_splat(0.50979561f32));
   t = __f32x4_with(t, at + 8, (x4 + x3) * __f32x4_splat(0.54119611f32));
   t = __f32x4_with(t, at + 12, (x0 - x5) * __f32x4_splat(0.60134488f32));
@@ -291,8 +291,8 @@ function dct32x4(own samples: f32[], base: i32): f32[] {
       let y3 = b;
       if (i < 7) {
         let c = __f32x4_load(t, (24 + i + 1) * 4);
-        y1 = y1 + c;
-        y2 = y2 + __f32x4_load(t, (8 + i + 1) * 4);
+        y1 += c;
+        y2 += __f32x4_load(t, (8 + i + 1) * 4);
         y3 = __f32x4_load(t, (16 + i + 1) * 4) + b + c;
       }
       samples = __f32x4_with(samples, at, y0);
@@ -357,8 +357,8 @@ function synth(samples: [f32], base: i32, channels: i32, own lines: f32[], offse
         a = av;
         b = bv;
       } else {
-        a = a + av;
-        b = b + bv;
+        a += av;
+        b += bv;
       }
     }
     output = output.with(out_at + (15 - i) * channels, __f32x4_lane(a, 0) / 32768.0f32);

@@ -11,7 +11,8 @@ It does not add dither. Non-finite samples return `Sample`.
 
 ```fern
 <<*>>=
-// Shared audio formats, sample limits, and PCM conversion.
+// Integer PCM audio formats, sample limits, and shared codec errors.
+
 import "core/cmp";
 import "core/error";
 import "std/f64";
