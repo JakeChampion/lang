@@ -386,10 +386,11 @@ jobs:
       # `!cancelled()` on the four steps below: the corpus is gated by the
       # darwin-ratchet job, and these check native arm64-darwin EXECUTION.
       # Without it a red step above skips them, so the one Darwin machine in
-      # CI reports nothing about the other half of the target. The self-host
-      # step runs on shard 0 and the rest on shard 1, to balance the two.
+      # CI reports nothing about the other half of the target. This step and
+      # the self-host step run on shard 0 and the rest on shard 1, to balance
+      # the two.
       - name: go test (arm64-darwin native execution)
-        if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
+        if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
         # The TestArm64Darwin* tests detect runtime.GOOS=="darwin"
         # && GOARCH=="arm64" and run the arm64-darwin binaries the
         # self-host compiler emits, asserting exit codes. The other
