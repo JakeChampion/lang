@@ -71,12 +71,18 @@ pub function plan(n: i32): Plan {
   return Plan { n: n, reversal: reversal, pre_cos: pre_cos, pre_sin: pre_sin, post_cos: post_cos, post_sin: post_sin, fft_cos: fft_cos, fft_sin: fft_sin, window_cos: window_cos, window_sin: window_sin };
 }
 
+pub struct Scratch { re: f64[], im: f64[], transformed: f64[], samples: f64[] }
+
+pub function scratch(n: i32): Scratch {
+  return Scratch { re: zeros(n / 2), im: zeros(n / 2), transformed: zeros(n), samples: zeros(n) };
+}
+
 // Pair even coefficients with reversed odd coefficients for an N/2-point FFT.
-pub function dct4_planned(input: [f64], p: Plan): f64[] {
+pub function dct4_reuse(input: [f64], p: Plan, own work: Scratch): Scratch {
   let n = p.n;
   let half = n / 2;
-  let re = zeros(half);
-  let im = zeros(half);
+  let re = work.re;
+  let im = work.im;
   for j in 0..half {
     let a = input[2 * j];
     let b = input[n - 1 - 2 * j];
@@ -122,14 +128,19 @@ pub function dct4_planned(input: [f64], p: Plan): f64[] {
     }
     width *= 2;
   }
-  let out = zeros(n);
+  let out = work.transformed;
   for j in 0..half {
     let c = p.post_cos[j];
     let s = p.post_sin[j];
     out = out.with(2 * j, re[j] * c - im[j] * s);
     out = out.with(n - 1 - 2 * j, re[j] * s + im[j] * c);
   }
-  return out;
+  return Scratch { ...work, re: re, im: im, transformed: out };
+}
+
+pub function dct4_planned(input: [f64], p: Plan): f64[] {
+  let work = Scratch { re: zeros(p.n / 2), im: zeros(p.n / 2), transformed: zeros(p.n), samples: [] };
+  return dct4_reuse(input, p, work).transformed;
 }
 
 pub function dct4(input: [f64]): f64[] {
@@ -138,8 +149,10 @@ pub function dct4(input: [f64]): f64[] {
 
 pub struct Inverse { samples: f64[], lap: f64[] }
 
+pub struct ReusedInverse { lap: f64[], work: Scratch }
+
 // The lapping layout follows libfourier's Fourier_IMDCT_Template.
-pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan): Inverse {
+pub function inverse_reuse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch): ReusedInverse {
   let n = coefs.len();
   let silent = true;
   for value in coefs {
@@ -148,11 +161,16 @@ pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan
       break;
     }
   }
-  let temp = zeros(n);
   if (!silent) {
-    temp = dct4_planned(coefs, p);
+    work = dct4_reuse(coefs, p, work);
   }
-  let out = zeros(n);
+  let temp = work.transformed;
+  if (silent) {
+    for i in 0..n {
+      temp = temp.with(i, 0.0);
+    }
+  }
+  let out = work.samples;
   let flat = (n - overlap) / 2;
   for i in 0..n / 2 {
     let a = lap[n / 2 - 1 - i];
@@ -170,7 +188,12 @@ pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan
   for i in 0..n / 2 {
     lap = lap.with(i, temp[i]);
   }
-  return Inverse { samples: out, lap: lap };
+  return ReusedInverse { lap: lap, work: Scratch { ...work, transformed: temp, samples: out } };
+}
+
+pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan): Inverse {
+  let result = inverse_reuse(coefs, lap, overlap, p, scratch(p.n));
+  return Inverse { samples: result.work.samples, lap: result.lap };
 }
 
 pub function inverse(coefs: [f64], own lap: f64[], overlap: i32): Inverse {

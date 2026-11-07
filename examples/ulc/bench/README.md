@@ -25,14 +25,14 @@ This comparison uses that faster build.
 
 | Input | Operation | C seconds | Fern seconds | C/Fern speed ratio |
 | --- | --- | ---: | ---: | ---: | ---: |
-| silence | encode | 0.0794 | 0.0531 | 1.495 |
-| silence | decode | 0.0121 | 0.0315 | 0.384 |
-| tone | encode | 0.1657 | 0.1720 | 0.963 |
-| tone | decode | 0.0198 | 0.0526 | 0.377 |
-| noise | encode | 0.1657 | 0.1704 | 0.973 |
-| noise | decode | 0.0179 | 0.0469 | 0.381 |
-| transients | encode | 0.1579 | 0.1629 | 0.969 |
-| transients | decode | 0.0166 | 0.0501 | 0.331 |
+| silence | encode | 0.0719 | 0.0482 | 1.492 |
+| silence | decode | 0.0128 | 0.0311 | 0.411 |
+| tone | encode | 0.1563 | 0.1663 | 0.940 |
+| tone | decode | 0.0186 | 0.0524 | 0.355 |
+| noise | encode | 0.1677 | 0.1782 | 0.941 |
+| noise | decode | 0.0171 | 0.0465 | 0.369 |
+| transients | encode | 0.1614 | 0.1682 | 0.960 |
+| transients | decode | 0.0187 | 0.0501 | 0.373 |
 
 A ratio above 1 means that Fern is faster.
 Fern encodes silence faster in this run.
@@ -76,6 +76,8 @@ Use a clean reference build when you change compiler flags.
 - Coefficient priorities use a stable radix sort.
 - CBR and ABR measure search candidates without allocation of output bitstreams.
 - Decoder noise fill keeps its cursor and random seed in local values.
+- Decoder transforms reuse FFT and sample buffers across blocks.
+- Size-only rate searches skip coefficient quantization when its width is fixed.
 - WAV conversion uses fixed-width operations for common sample formats.
 
 The unit and reference tests cover each optimized codec path.

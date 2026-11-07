@@ -182,7 +182,7 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
   return Ok(Coefficients { reader: BitReader { ...r, seed: seed, pos: pos }, values: out });
 }
 
-pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32, plans: transform.Plan[] }
+pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32, plans: transform.Plan[], work: transform.Scratch }
 
 pub struct Block { state: Decoder, samples: f64[], next_byte: i32 }
 
@@ -194,7 +194,7 @@ pub function decoder(block_size: i32, channels: i32): Result[Decoder, string] {
   for shift in 0..4 {
     plans = plans.append(transform.plan(block_size >> shift));
   }
-  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32, plans: plans });
+  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32, plans: plans, work: transform.scratch(block_size) });
 }
 
 // Blocks in the file container start on byte boundaries. Output is interleaved.
@@ -205,7 +205,8 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
   if (offset < 0 || offset >= data.len() || data.len() > 1073741823) {
     return Err("missing block data");
   }
-  let r = read(reader(data, offset, state.seed));
+  let Decoder { block_size: n, channels, last_size: previous_size, lap: all_lap, seed, plans, work } = state;
+  let r = read(reader(data, offset, seed));
   let control = r.value;
   let pattern_index = 1;
   if ((control & 8) != 0) {
@@ -215,16 +216,14 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       return Err("reserved window pattern");
     }
   }
-  let n = state.block_size;
-  let output = transform.zeros(n * state.channels);
-  let all_lap = state.lap;
-  let last = state.last_size;
-  for channel in 0..state.channels {
+  let output = transform.zeros(n * channels);
+  let last = previous_size;
+  for channel in 0..channels {
     let lap = transform.zeros(n / 2);
     for i in 0..n / 2 {
       lap = lap.with(i, all_lap[channel * n / 2 + i]);
     }
-    last = state.last_size;
+    last = previous_size;
     let pattern = windows.pattern(pattern_index << 4 | control & 15);
     let at = 0;
     while (pattern != 0) {
@@ -239,11 +238,12 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         overlap = last;
       }
       last = subsize;
-      let inv = transform.inverse_planned(decoded.values, lap, overlap, state.plans[pattern & 7]);
+      let inv = transform.inverse_reuse(decoded.values, lap, overlap, plans[pattern & 7], work);
+      work = inv.work;
       lap = inv.lap;
       if (subsize == n) {
         for i in 0..n {
-          output = output.with(i * state.channels + channel, inv.samples[i]);
+          output = output.with(i * channels + channel, work.samples[i]);
         }
       } else {
         let available = (n - subsize) / 2;
@@ -253,7 +253,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         if (subsize <= available) {
           for i in 0..subsize {
             src -= 1;
-            output = output.with((at + i) * state.channels + channel, lap[src]);
+            output = output.with((at + i) * channels + channel, lap[src]);
           }
           for i in subsize..available {
             dst -= 1;
@@ -262,20 +262,20 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
           }
           for i in 0..subsize {
             dst -= 1;
-            lap = lap.with(dst, inv.samples[i]);
+            lap = lap.with(dst, work.samples[i]);
           }
         } else {
           for i in 0..available {
             src -= 1;
-            output = output.with((at + i) * state.channels + channel, lap[src]);
+            output = output.with((at + i) * channels + channel, lap[src]);
           }
           for i in available..subsize {
-            output = output.with((at + i) * state.channels + channel, inv.samples[j]);
+            output = output.with((at + i) * channels + channel, work.samples[j]);
             j += 1;
           }
           for i in 0..available {
             dst -= 1;
-            lap = lap.with(dst, inv.samples[j]);
+            lap = lap.with(dst, work.samples[j]);
             j += 1;
           }
         }
@@ -288,9 +288,9 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
     }
   }
   let ch = 1;
-  while (ch < state.channels) {
+  while (ch < channels) {
     for i in 0..n {
-      let at = i * state.channels + ch;
+      let at = i * channels + ch;
       let a = output[at - 1];
       let b = output[at];
       output = output.with(at - 1, a + b);
@@ -299,5 +299,5 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
     ch += 2;
   }
   let next = (r.pos + 1) / 2;
-  return Ok(Block { state: Decoder { ...state, last_size: last, lap: all_lap, seed: r.seed }, samples: output, next_byte: next });
+  return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, lap: all_lap, seed: r.seed, plans: plans, work: work }, samples: output, next_byte: next });
 }

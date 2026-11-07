@@ -5,22 +5,24 @@ import "std/i32";
 import "./analysis";
 import "./windows";
 
-pub struct BitWriter { bytes: u8[], count: i32, low: i32, measure: boolean }
+pub struct BitWriter { bytes: u8[], count: Cell[i32], low: i32, measure: boolean }
 
 function writer(measure: boolean): BitWriter {
-  return BitWriter { bytes: [], count: 0, low: 0, measure: measure };
+  return BitWriter { bytes: [], count: cell_new(0), low: 0, measure: measure };
 }
 
 function put(own w: BitWriter, code: i32): BitWriter {
-  let value = code & 15;
+  let count = w.count.get();
+  w.count.set(count + 1);
   if (w.measure) {
-    return BitWriter { ...w, count: w.count + 1 };
+    return w;
   }
-  if ((w.count & 1) == 0) {
-    return BitWriter { ...w, count: w.count + 1, low: value };
+  let value = code & 15;
+  if ((count & 1) == 0) {
+    return BitWriter { ...w, low: value };
   }
   let byte = (w.low | value << 4) as u8;
-  return BitWriter { ...w, count: w.count + 1, bytes: w.bytes.append(byte) };
+  return BitWriter { ...w, bytes: w.bytes.append(byte) };
 }
 
 function quantizer(own w: BitWriter, q: i32, lead: boolean): BitWriter {
@@ -123,7 +125,11 @@ function zone(own w: BitWriter, coefs: [f64], noise: [f64], ranks: [i32], begin:
       next += count;
       run -= count;
     }
-    w = put(w, quantize(coefs[current], quant));
+    if (w.measure) {
+      w = put(w, 2);
+    } else {
+      w = put(w, quantize(coefs[current], quant));
+    }
     next += 1;
     current += 1;
   }
@@ -226,8 +232,9 @@ pub function pass(coefs: [f64], noise: [f64], ranks: [i32], block_size: i32, cha
     }
   }
   let bytes = w.bytes;
-  if (!measure && (w.count & 1) != 0) {
+  let count = w.count.get();
+  if (!measure && (count & 1) != 0) {
     bytes = bytes.append(w.low as u8);
   }
-  return Encoded { bytes: bytes, bits: (w.count + 1) / 2 * 8 };
+  return Encoded { bytes: bytes, bits: (count + 1) / 2 * 8 };
 }
