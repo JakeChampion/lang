@@ -6911,12 +6911,10 @@ function with_finalizers(all: Produced[], rows: ssasem.Finalizer[]): Produced[] 
   if (rows.len() == 0) {
     return all;
   }
-  let i = 0;
-  while (i < all.len()) {
+  for i in 0..all.len() {
     if (all[i].func.finalizers.len() > 0) {
       all = all.with(i, Produced { ...all[i], func: ssasem.Func { ...all[i].func, finalizers: rows } });
     }
-    i += 1;
   }
   return all;
 }
