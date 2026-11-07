@@ -1,0 +1,41 @@
+import "../../compiler/lexer";
+import "../../compiler/parser";
+import "std/i64";
+
+function main(): i32 {
+  let a = args();
+  if (a.len() < 3) {
+    return 1;
+  }
+  let sources: string[] = [];
+  for i in 2..a.len() {
+    match (read_file(a[i])) {
+      Ok(src) => {
+        sources = sources.append(src);
+      },
+      Err(_) => {
+        return 2;
+      }
+    }
+  }
+  let before = __heap_alloc_count();
+  let bytes = __heap_bump_bytes();
+  let sum = 0i64;
+  for _ in 0..5 {
+    for src in sources {
+      let tokens = lexer.tokenize(src);
+      if (lexer.has_error(tokens)) {
+        return 3;
+      }
+      sum += tokens.len() as i64;
+      if (a[1] == "parse") {
+        let mod = parser.parse_module(tokens);
+        sum += mod.funcs.len() as i64;
+      }
+    }
+  }
+  print((__heap_alloc_count() - before).to_string());
+  print((__heap_bump_bytes() - bytes).to_string());
+  print(sum.to_string());
+  return (sum % 97i64) as i32;
+}
