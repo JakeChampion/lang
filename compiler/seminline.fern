@@ -1679,10 +1679,8 @@ function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
 
 function none_of(n: i32): boolean[] {
   let out: boolean[] = [];
-  let i = 0;
-  while (i < n) {
+  for _ in 0..n {
     out = out.append(false);
-    i += 1;
   }
   return out;
 }
