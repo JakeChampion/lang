@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+FERN=${FERN:-fern}
+mode=${1:-native}
+runner=()
+case "$mode" in
+  native) target=x86-64-linux; runner=(--native-target x86-64-linux) ;;
+  wasm) target=wasm32-wasi; runner=(--wasmtime "$(command -v wasmtime)") ;;
+  arm64) target=arm64-linux; runner=(--qemu "$(command -v "${QEMU_AARCH64:-qemu-aarch64}")") ;;
+  *) echo "usage: test-jpeg-dct.sh native|wasm|arm64" >&2; exit 1 ;;
+esac
+mkdir -p build
+"$FERN" -check tests/jpeg_dct.fern
+"$FERN" -target "$target" -sanitize -o "build/jpeg-dct-$mode" tests/jpeg_dct.fern
+uv run --no-project python tests/qualify_jpeg_dct.py "build/jpeg-dct-$mode" "$(command -v "$FERN")" \
+  "build/jpeg-dct-$mode.json" "${runner[@]}"

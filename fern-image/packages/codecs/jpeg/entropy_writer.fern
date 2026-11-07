@@ -1,0 +1,226 @@
+import "./header";
+import "./coefficient_order";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum EncodeError { Shape, Table, MissingSymbol, Coefficient, Limit, Cancelled }
+
+struct Codes { bits: i32[], sizes: i32[] }
+
+struct BitOutput { bytes: u8[], pending: i32, used: i32, limit: i32 }
+
+function insert_codes(result: Codes, table: header.HuffmanTable, offset: i32, code: i32, count: i32, size: i32, ac: boolean): Result[Codes, EncodeError] {
+  let output = result;
+  for j in 0..count {
+    let value = table.symbols[offset + j] as i32;
+    if (!legal_symbol(value, ac) || output.sizes[value] != 0) {
+      return Err(EncodeError.Table);
+    }
+    output = Codes { bits: output.bits.with(value, code + j), sizes: output.sizes.with(value, size) };
+  }
+  return Ok(output);
+}
+
+function legal_symbol(value: i32, ac: boolean): boolean {
+  if (!ac) {
+    return value <= 11;
+  }
+  let size = value & 15;
+  return size >= 1 && size <= 10 || value == 0 || value == 240;
+}
+
+function codes(table: header.HuffmanTable, ac: boolean, cancelled: () => boolean): Result[Codes, EncodeError] {
+  let bits: i32[] = [];
+  let sizes: i32[] = [];
+  for i in 0..256 {
+    bits = bits.append(0);
+    sizes = sizes.append(0);
+  }
+  let offset = 0;
+  let code = 0;
+  let result = Codes { bits: bits, sizes: sizes };
+  for i in 0..16 {
+    if (cancelled()) {
+      return Err(EncodeError.Cancelled);
+    }
+    let count = table.counts[i] as i32;
+    // The last available code is all ones and remains reserved.
+    if (code + count >= 1 << i + 1 || count > table.symbols.len() - offset) {
+      return Err(EncodeError.Table);
+    }
+    result = insert_codes(result, table, offset, code, count, i + 1, ac)?;
+    offset += count;
+    code = (code + count) * 2;
+  }
+  if (offset == 0 || offset != table.symbols.len()) {
+    return Err(EncodeError.Table);
+  }
+  return Ok(result);
+}
+
+function raw_byte(writer: BitOutput, value: u8): Result[BitOutput, EncodeError] {
+  if (writer.bytes.len() >= writer.limit) {
+    return Err(EncodeError.Limit);
+  }
+  return Ok(BitOutput { ...writer, bytes: writer.bytes.append(value) });
+}
+
+function put(writer: BitOutput, value: i32, size: i32, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let w = writer;
+  for i in 0..size {
+    let used = w.used + 1;
+    let pending = w.pending * 2 + (value >> size - i - 1 & 1);
+    w = BitOutput { ...w, pending: pending, used: used };
+    if (used == 8) {
+      if (cancelled()) {
+        return Err(EncodeError.Cancelled);
+      }
+      w = raw_byte(w, pending as u8)?;
+      if (pending == 255) {
+        w = raw_byte(w, 0)?;
+      }
+      w = BitOutput { ...w, pending: 0, used: 0 };
+    }
+  }
+  return Ok(w);
+}
+
+function symbol(writer: BitOutput, table: Codes, value: i32, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let size = table.sizes[value];
+  if (size == 0) {
+    return Err(EncodeError.MissingSymbol);
+  }
+  return put(writer, table.bits[value], size, cancelled);
+}
+
+function category(value: i32): i32 {
+  let magnitude = if (value < 0) { -value } else { value };
+  let size = 0;
+  while (magnitude > 0) {
+    size += 1;
+    magnitude >>= 1;
+  }
+  return size;
+}
+
+function amplitude(writer: BitOutput, value: i32, size: i32, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let bits = if (value < 0) { value + (1 << size) - 1 } else { value };
+  return put(writer, bits, size, cancelled);
+}
+
+function check_block(values: [i32], cancelled: () => boolean): Result[void, EncodeError] {
+  if (values[0] < -1024 || values[0] > 1023) {
+    return Err(EncodeError.Coefficient);
+  }
+  for k in 1..64 {
+    if (k % 8 == 0 && cancelled()) {
+      return Err(EncodeError.Cancelled);
+    }
+    let value = values[coefficient_order.ZIGZAG[k]];
+    if (value < -1023 || value > 1023) {
+      return Err(EncodeError.Coefficient);
+    }
+  }
+  return Ok(());
+}
+
+function nonzero_ac(writer: BitOutput, table: Codes, run: i32, value: i32, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let w = writer;
+  let remaining = run;
+  while (remaining >= 16) {
+    w = symbol(w, table, 240, cancelled)?;
+    remaining -= 16;
+  }
+  let size = category(value);
+  w = symbol(w, table, remaining * 16 + size, cancelled)?;
+  return amplitude(w, value, size, cancelled);
+}
+
+function block(writer: BitOutput, values: [i32], previous: i32, dc: Codes, ac: Codes, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  check_block(values, cancelled)?;
+  let delta = values[0] - previous;
+  let size = category(delta);
+  let w = symbol(writer, dc, size, cancelled)?;
+  w = amplitude(w, delta, size, cancelled)?;
+  let run = 0;
+  for k in 1..64 {
+    let value = values[coefficient_order.ZIGZAG[k]];
+    if (value == 0) {
+      run += 1;
+    } else {
+      w = nonzero_ac(w, ac, run, value, cancelled)?;
+      run = 0;
+    }
+  }
+  if (run > 0) {
+    w = symbol(w, ac, 0, cancelled)?;
+  }
+  return Ok(w);
+}
+
+function align(writer: BitOutput, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let size = (8 - writer.used) % 8;
+  return put(writer, (1 << size) - 1, size, cancelled);
+}
+
+function check_table_shape(table: header.HuffmanTable): Result[void, EncodeError] {
+  if (table.counts.len() != 16 || table.symbols.len() > 256) {
+    return Err(EncodeError.Shape);
+  }
+  return Ok(());
+}
+
+function restart(writer: BitOutput, marker: i32, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let output = align(writer, cancelled)?;
+  output = raw_byte(output, 255)?;
+  return raw_byte(output, (208 + marker) as u8);
+}
+
+function write_blocks(coefficients: [i32], dc: Codes, ac: Codes, interval: i32, initial: BitOutput, cancelled: () => boolean): Result[BitOutput, EncodeError] {
+  let writer = initial;
+  let previous = 0;
+  let marker = 0;
+  let blocks = coefficients.len() / 64;
+  for i in 0..blocks {
+    if (cancelled()) {
+      return Err(EncodeError.Cancelled);
+    }
+    let start = i * 64;
+    writer = block(writer, coefficients[start:start + 64], previous, dc, ac, cancelled)?;
+    previous = coefficients[start];
+    if (interval > 0 && (i + 1) % interval == 0 && i + 1 < blocks) {
+      writer = restart(writer, marker, cancelled)?;
+      marker = (marker + 1) % 8;
+      previous = 0;
+    }
+  }
+  return align(writer, cancelled);
+}
+
+function admit(length: i32, dc: header.HuffmanTable, ac: header.HuffmanTable, interval: i32, limit: i32): Result[void, EncodeError] {
+  if (length == 0 || length % 64 != 0) {
+    return Err(EncodeError.Shape);
+  }
+  check_table_shape(dc)?;
+  check_table_shape(ac)?;
+  if (interval < 0 || interval > 65535 || limit < 0) {
+    return Err(EncodeError.Limit);
+  }
+  return Ok(());
+}
+
+// Encode one component's complete natural-order blocks, without frame or EOI.
+pub function encode_blocks(coefficients: [i32], dc: header.HuffmanTable, ac: header.HuffmanTable, restart_interval: i32, max_output_bytes: i32, cancelled: () => boolean): Result[u8[], EncodeError] {
+  admit(coefficients.len(), dc, ac, restart_interval, max_output_bytes)?;
+  if (cancelled()) {
+    return Err(EncodeError.Cancelled);
+  }
+  let dc_codes = codes(dc, false, cancelled)?;
+  let ac_codes = codes(ac, true, cancelled)?;
+  let initial = BitOutput { bytes: [], pending: 0, used: 0, limit: max_output_bytes };
+  let writer = write_blocks(coefficients, dc_codes, ac_codes, restart_interval, initial, cancelled)?;
+  if (cancelled()) {
+    return Err(EncodeError.Cancelled);
+  }
+  return Ok(writer.bytes);
+}

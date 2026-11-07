@@ -2,7 +2,6 @@ package e2ecompiler
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -55,12 +54,13 @@ func TestSelfHostServeAllocsPerRequestArm64(t *testing.T) {
 func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
-	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(port, e2eharness.ServeAllocsRoundsEmulated)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSourceOnEnvPort(e2eharness.ServeAllocsRoundsEmulated)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	run := exec.Command(wasmtime, "run", "-S", "inherit-network", cli.wasmComponent(t, src, "FERN_STRICT_IR=1"))
+	component := cli.wasmComponent(t, src, "FERN_STRICT_IR=1")
+	port := freeTCPPort(t)
+	run := exec.Command(wasmtime, "run", "-S", "inherit-network", "--env", "PORT="+strconv.Itoa(port), component)
 	var out bytes.Buffer
 	run.Stdout, run.Stderr = &out, &out
 	if err := run.Start(); err != nil {
@@ -73,7 +73,7 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 			t.Logf("server output:\n%s", out.String())
 		}
 	})
-	e2eharness.CheckServeAllocs(t, fmt.Sprintf("127.0.0.1:%d", port), 0, e2eharness.ServeAllocsRoundsEmulated)
+	e2eharness.CheckServeAllocs(t, "127.0.0.1:"+strconv.Itoa(port), 0, e2eharness.ServeAllocsRoundsEmulated)
 }
 
 const ServeAllocsH2Ceiling = 21
@@ -176,7 +176,7 @@ func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1"))
-	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String())
+	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String(), "no_proxy=")
 	addr, _ := e2eharness.StartInheritedServer(t, cmd)
 	e2eharness.CheckServeFetchAllocs(t, addr, ServeFetchAllocsCeiling, e2eharness.ServeAllocsRoundsEmulated)
 }

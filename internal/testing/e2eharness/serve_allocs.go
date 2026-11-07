@@ -23,14 +23,35 @@ const serveAllocsH2Drift = 8
 const serveAllocsSlackPerSecond = 40
 
 func ServeAllocsServerSource(port, rounds int) string {
-	return serveAllocsSource(port, rounds, "serve.config()")
+	return serveAllocsSource(strconv.Itoa(port), rounds, "serve.config()")
+}
+
+// ServeAllocsServerSourceOnEnvPort is the server of ServeAllocsServerSource.
+// It reads its port from PORT when it starts, so a test can choose the port
+// after the compile.
+func ServeAllocsServerSourceOnEnvPort(rounds int) string {
+	return serveAllocsSource("env_port()", rounds, "serve.config()") + `function env_port(): i32 {
+    let p: i32 = 0;
+    match (env("PORT")) {
+        Some(s) => {
+            let i: i32 = 0;
+            while (i < s.len()) {
+                p = p * 10 + (s[i] as i32 - 48);
+                i = i + 1;
+            }
+        },
+        None => {}
+    }
+    return p;
+}
+`
 }
 
 func ServeAllocsH2ServerSource(port, rounds int) string {
-	return serveAllocsSource(port, rounds, "serve.config().with_h2()")
+	return serveAllocsSource(strconv.Itoa(port), rounds, "serve.config().with_h2()")
 }
 
-func serveAllocsSource(port, rounds int, config string) string {
+func serveAllocsSource(port string, rounds int, config string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -41,7 +62,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.exit_code(serve.run(%d, serve.Config { ...%s, keep_alive_requests: %d }, handle));
+    return serve.exit_code(serve.run(%s, serve.Config { ...%s, keep_alive_requests: %d }, handle));
 }
 `, port, config, serveAllocsWarm+rounds+8)
 }

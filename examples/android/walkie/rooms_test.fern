@@ -61,8 +61,31 @@ function sent_to(r: rooms.Relayed): string {
   return "nothing";
 }
 
-function test_a_code_has_six_letters_of_the_alphabet(): test.TestOutcome {
-  let a = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+function table(): rooms.Rooms {
+  return rooms.empty(random("secret"));
+}
+
+// The table after the member with `token` sends from `at` and answers the
+// challenge of the relay there, with the counters `counter` and one more.
+function arrive(r: rooms.Rooms, token: u8[], at: net.SocketAddr, counter: i64, now: i64): rooms.Rooms {
+  let hello = rooms.wrap(token, counter, [247u8]);
+  let c = rooms.relay(r, at, hello, hello.len(), now);
+  let Some(f) = c.out else {
+    return c.rooms;
+  };
+  let Some(answer) = rooms.answer_challenge(token, counter + 1i64, f.data, f.data.len()) else {
+    return c.rooms;
+  };
+  return rooms.relay(c.rooms, at, answer, answer.len(), now).rooms;
+}
+
+function send(r: rooms.Rooms, token: u8[], at: net.SocketAddr, counter: i64, now: i64): rooms.Relayed {
+  let d = rooms.wrap(token, counter, [247u8, 1u8, 2u8, 3u8]);
+  return rooms.relay(r, at, d, d.len(), now);
+}
+
+function test_a_code_has_eight_letters_of_the_alphabet(): test.TestOutcome {
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
   let code = code_of(a);
   let bad = 0;
   for c in code.as_bytes() {
@@ -70,83 +93,149 @@ function test_a_code_has_six_letters_of_the_alphabet(): test.TestOutcome {
       bad += 1;
     }
   }
-  return test.assert_eq(reply_name(a.reply) + " " + bad.to_string(), "created 6 16 0");
+  return test.assert_eq(reply_name(a.reply) + " " + bad.to_string(), "created 8 16 0");
 }
 
 function test_two_phones_join_and_a_third_is_refused(): test.TestOutcome {
-  let a = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
   let b = rooms.join(a.rooms, "192.0.2.2", code_of(a).to_lower(), 10i64, random("b"));
   let c = rooms.join(b.rooms, "192.0.2.3", code_of(a), 20i64, random("c"));
-  let d = rooms.join(c.rooms, "192.0.2.3", "ZZZZZZ", 30i64, random("d"));
+  let d = rooms.join(c.rooms, "192.0.2.3", "ZZZZZZZZ", 30i64, random("d"));
   return test.assert_eq(reply_name(b.reply) + ", " + reply_name(c.reply) + ", " + reply_name(d.reply), "joined 16, refused the room is full, refused no room has this code");
 }
 
 function test_an_address_has_ten_requests_a_minute(): test.TestOutcome {
-  let r = rooms.empty();
+  let r = table();
   let last = "";
   for k in 0..rooms.RATE_MAX + 1 {
-    let a = rooms.join(r, "192.0.2.9", "AAAAAA", k as i64, random(k.to_string()));
+    let a = rooms.join(r, "192.0.2.9", "AAAAAAAA", k as i64, random(k.to_string()));
     r = a.rooms;
     last = reply_name(a.reply);
   }
   let other = rooms.create(r, "192.0.2.8", 20i64, random("x"));
   let later = rooms.create(other.rooms, "192.0.2.9", rooms.RATE_MS + 11i64, random("y"));
-  return test.assert_eq(last + ", " + reply_name(other.reply) + ", " + reply_name(later.reply), "refused too many requests, created 6 16, created 6 16");
+  return test.assert_eq(last + ", " + reply_name(other.reply) + ", " + reply_name(later.reply), "refused too many requests, created 8 16, created 8 16");
+}
+
+// The addresses of one IPv6 /64 are one host for the limits.
+function test_an_ipv6_network_is_one_host(): test.TestOutcome {
+  let one = net.V6([32u8, 1u8, 13u8, 184u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8]);
+  let two = net.V6([32u8, 1u8, 13u8, 184u8, 0u8, 0u8, 0u8, 1u8, 255u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 2u8]);
+  let next = net.V6([32u8, 1u8, 13u8, 184u8, 0u8, 0u8, 0u8, 2u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8]);
+  let same = rooms.host_key(one) == rooms.host_key(two);
+  let other = rooms.host_key(one) != rooms.host_key(next);
+  return test.assert_eq(same.to_string() + " " + other.to_string() + " " + rooms.host_key(net.ipv4(192, 0, 2, 7)), "true true 192.0.2.7");
+}
+
+// A host holds a few rooms at most, so a few hosts cannot fill the server.
+function test_a_host_has_few_rooms(): test.TestOutcome {
+  let r = table();
+  let last = "";
+  for k in 0..rooms.ROOMS_PER_HOST + 1 {
+    let a = rooms.create(r, "192.0.2.9", k as i64, random("room " + k.to_string()));
+    r = a.rooms;
+    last = reply_name(a.reply);
+  }
+  let other = rooms.create(r, "192.0.2.8", 20i64, random("x"));
+  return test.assert_eq(last + ", " + reply_name(other.reply), "refused this network has too many rooms, created 8 16");
 }
 
 function test_rooms_close_when_nobody_joins_or_nobody_talks(): test.TestOutcome {
-  let a = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
   let alone = rooms.expire(a.rooms, rooms.OPEN_MS).rooms.len();
   let b = rooms.join(a.rooms, "192.0.2.2", code_of(a), 1000i64, random("b"));
-  let p = rooms.relay(b.rooms, addr(1, 5000), rooms.wrap(token_of(a), [1u8]), 18, rooms.IDLE_MS);
+  let p = send(b.rooms, token_of(a), addr(1, 5000), 1i64, rooms.IDLE_MS);
   let busy = rooms.expire(p.rooms, rooms.IDLE_MS + rooms.IDLE_MS - 1i64).rooms.len();
   let quiet = rooms.expire(p.rooms, rooms.IDLE_MS + rooms.IDLE_MS).rooms.len();
   return test.assert_eq(alone.to_string() + " " + busy.to_string() + " " + quiet.to_string(), "0 1 0");
 }
 
-// The relay learns each address from the token, and it follows a phone that
-// changes network.
+// The relay learns the address of each member after a challenge there, and
+// it follows a phone that changes network in the same way.
 function test_the_relay_sends_to_the_other_member(): test.TestOutcome {
-  let a = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
   let b = rooms.join(a.rooms, "192.0.2.2", code_of(a), 10i64, random("b"));
   let ta = token_of(a);
   let tb = token_of(b);
-  let packet: u8[] = [247u8, 1u8, 2u8, 3u8];
-  let s1 = rooms.relay(b.rooms, addr(1, 5000), rooms.wrap(ta, packet), 21, 20i64);
-  let s2 = rooms.relay(s1.rooms, addr(2, 6000), rooms.wrap(tb, packet), 21, 30i64);
-  let s3 = rooms.relay(s2.rooms, addr(7, 7000), rooms.wrap(ta, packet), 21, 40i64);
-  let s4 = rooms.relay(s3.rooms, addr(2, 6000), rooms.wrap(tb, packet), 21, 50i64);
-  let stranger = rooms.relay(s4.rooms, addr(9, 9000), rooms.wrap(random("z"), packet), 21, 60i64);
-  return test.assert_eq(sent_to(s1) + ", " + sent_to(s2) + ", " + sent_to(s3) + ", " + sent_to(s4) + ", " + sent_to(stranger), "nothing, 192.0.2.1:5000 4, 192.0.2.2:6000 4, 192.0.2.7:7000 4, nothing");
+  let first = send(b.rooms, ta, addr(1, 5000), 1i64, 20i64);
+  let r = arrive(arrive(b.rooms, ta, addr(1, 5000), 2i64, 20i64), tb, addr(2, 6000), 1i64, 30i64);
+  let s1 = send(r, tb, addr(2, 6000), 3i64, 40i64);
+  let r2 = arrive(s1.rooms, ta, addr(7, 7000), 4i64, 50i64);
+  let s2 = send(r2, tb, addr(2, 6000), 4i64, 60i64);
+  let stranger = send(s2.rooms, random("z").take(rooms.TOKEN_LEN), addr(9, 9000), 1i64, 70i64);
+  return test.assert_eq(sent_to(first) + ", " + sent_to(s1) + ", " + sent_to(s2) + ", " + sent_to(stranger), "192.0.2.1:5000 25, 192.0.2.1:5000 4, 192.0.2.7:7000 4, nothing");
 }
 
-function test_short_or_foreign_datagrams_are_dropped(): test.TestOutcome {
-  let a = rooms.create(rooms.empty(), "192.0.2.1", 0i64, random("a"));
-  let wrapped = rooms.wrap(token_of(a), []);
+// A party that copies a datagram of a member and sends it from its own
+// address gets nothing, and the member keeps its place.
+function test_a_copied_datagram_does_not_move_a_member(): test.TestOutcome {
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
+  let b = rooms.join(a.rooms, "192.0.2.2", code_of(a), 10i64, random("b"));
+  let ta = token_of(a);
+  let tb = token_of(b);
+  let r = arrive(arrive(b.rooms, ta, addr(1, 5000), 1i64, 20i64), tb, addr(2, 6000), 1i64, 30i64);
+  let seen = rooms.wrap(tb, 3i64, [247u8, 9u8]);
+  let s1 = rooms.relay(r, addr(2, 6000), seen, seen.len(), 40i64);
+  let copied = rooms.relay(s1.rooms, addr(66, 6666), seen, seen.len(), 50i64);
+  let s2 = send(copied.rooms, ta, addr(1, 5000), 3i64, 60i64);
+  return test.assert_eq(sent_to(copied) + ", " + sent_to(s2), "nothing, 192.0.2.2:6000 4");
+}
+
+// The cookie of a challenge is good only at the address that it went to,
+// so a member cannot move with a false source address.
+function test_a_challenge_is_bound_to_its_address(): test.TestOutcome {
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
+  let b = rooms.join(a.rooms, "192.0.2.2", code_of(a), 10i64, random("b"));
+  let ta = token_of(a);
+  let tb = token_of(b);
+  let r = arrive(b.rooms, tb, addr(2, 6000), 1i64, 20i64);
+  let hello = rooms.wrap(ta, 1i64, [247u8]);
+  let c = rooms.relay(r, addr(8, 8000), hello, hello.len(), 30i64);
+  let Some(f) = c.out else {
+    return test.fail("no challenge");
+  };
+  let Some(answer) = rooms.answer_challenge(ta, 2i64, f.data, f.data.len()) else {
+    return test.fail("no answer");
+  };
+  let elsewhere = rooms.relay(c.rooms, addr(1, 5000), answer, answer.len(), 40i64);
+  let s = send(elsewhere.rooms, tb, addr(2, 6000), 2i64, 50i64);
+  return test.assert_eq(f.to.to_string() + ", " + sent_to(s), "192.0.2.8:8000, nothing");
+}
+
+function test_short_foreign_or_forged_datagrams_are_dropped(): test.TestOutcome {
+  let a = rooms.create(table(), "192.0.2.1", 0i64, random("a"));
+  let wrapped = rooms.wrap(token_of(a), 1i64, []);
   let short = rooms.relay(a.rooms, addr(1, 5000), wrapped, wrapped.len(), 10i64);
   let foreign = rooms.relay(a.rooms, addr(1, 5000), [247u8, 1u8, 2u8], 3, 10i64);
-  return test.assert_eq(sent_to(short) + " " + sent_to(foreign), "nothing nothing");
+  let good = rooms.wrap(token_of(a), 1i64, [247u8, 1u8]);
+  let forged = good.with(good.len() - 1, good[good.len() - 1] ^ 1u8);
+  let bad_mac = rooms.relay(a.rooms, addr(1, 5000), forged, forged.len(), 10i64);
+  return test.assert_eq(sent_to(short) + " " + sent_to(foreign) + " " + sent_to(bad_mac), "nothing nothing nothing");
 }
 
 function test_the_lines_round_trip(): test.TestOutcome {
-  let a = rooms.answer(rooms.empty(), "192.0.2.1", "CREATE\n", 0i64, random("a"));
+  let a = rooms.answer(table(), "192.0.2.1", "CREATE\n", 0i64, random("a"));
   let room_line = rooms.reply_line(a.reply);
   let b = rooms.answer(a.rooms, "192.0.2.2", "JOIN " + code_of(a) + "\r\n", 10i64, random("b"));
   let bad = rooms.answer(b.rooms, "192.0.2.3", "JOIN AB", 20i64, random("c"));
   let parsed = reply_name(rooms.parse_reply(room_line)) + ", " + reply_name(rooms.parse_reply(rooms.reply_line(b.reply)));
   let errors = reply_name(rooms.parse_reply(rooms.reply_line(bad.reply))) + ", " + reply_name(rooms.parse_reply("HELLO"));
   let same = rooms.reply_line(rooms.parse_reply(room_line)) == room_line;
-  return test.assert_eq(parsed + ", " + errors + ", " + same.to_string(), "created 6 16, joined 16, refused unknown request, refused the server sent an unknown reply, true");
+  return test.assert_eq(parsed + ", " + errors + ", " + same.to_string(), "created 8 16, joined 16, refused unknown request, refused the server sent an unknown reply, true");
 }
 
 function main(): i32 {
   let t = test.new("walkie rooms");
-  t = t.it("a code has six letters of the alphabet", test_a_code_has_six_letters_of_the_alphabet);
+  t = t.it("a code has eight letters of the alphabet", test_a_code_has_eight_letters_of_the_alphabet);
   t = t.it("two phones join and a third is refused", test_two_phones_join_and_a_third_is_refused);
   t = t.it("an address has ten requests a minute", test_an_address_has_ten_requests_a_minute);
+  t = t.it("an IPv6 network is one host", test_an_ipv6_network_is_one_host);
+  t = t.it("a host has few rooms", test_a_host_has_few_rooms);
   t = t.it("rooms close when nobody joins or nobody talks", test_rooms_close_when_nobody_joins_or_nobody_talks);
   t = t.it("the relay sends to the other member", test_the_relay_sends_to_the_other_member);
-  t = t.it("short or foreign datagrams are dropped", test_short_or_foreign_datagrams_are_dropped);
+  t = t.it("a copied datagram does not move a member", test_a_copied_datagram_does_not_move_a_member);
+  t = t.it("a challenge is bound to its address", test_a_challenge_is_bound_to_its_address);
+  t = t.it("short, foreign or forged datagrams are dropped", test_short_foreign_or_forged_datagrams_are_dropped);
   t = t.it("the lines round trip", test_the_lines_round_trip);
   return t.finish();
 }

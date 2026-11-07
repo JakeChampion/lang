@@ -305,15 +305,61 @@ function test_peer_that_never_confirms(): test.TestOutcome {
   return test.assert_eq(s.lost[0], "the other phone did not confirm the code");
 }
 
+// A third party on the network reads the node ID of a beacon and sends
+// handshake datagrams in its name: from its own address, and from the
+// address of the peer. The pairing goes on, and both phones show the code.
+function test_spoofed_handshake_does_not_end_pairing(): test.TestOutcome {
+  let a = node.tick(node.new(5i64, seed(1), 0i64), 0i64);
+  let b = node.new(9i64, seed(2), 0i64);
+  for d in a.out {
+    b = node.receive(b, d.data, d.data.len(), addr(0), 10i64);
+  }
+  a = node.drained(a);
+  let forged = lan.encode(lan.HANDSHAKE, 5i64, [16u8]);
+  let elsewhere = net.socket_addr(net.V4([10u8, 0u8, 0u8, 66u8]), 47120);
+  b = node.receive(b, forged, forged.len(), elsewhere, 20i64);
+  b = node.receive(b, forged, forged.len(), addr(0), 30i64);
+  let after = node.status(b);
+  let s = run_nodes([a, b], Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, [], 3000i64);
+  return test.assert_eq(after + " / " + shows_code(s.nodes[0]).to_string() + " " + shows_code(s.nodes[1]).to_string(), "found a phone: making keys / true true");
+}
+
+// A phone that knows two phones connects with no code to the one that is
+// there. Its status names that phone, so its user can see which one it is.
+function test_known_phone_shows_its_name(): test.TestOutcome {
+  let start = [node.with_identity(node.new(5i64, seed(1), 0i64), id_seed(1), [key_of(2), key_of(3)]), node.with_identity(node.new(9i64, seed(2), 0i64), id_seed(3), [key_of(1)])];
+  let s = run_nodes(start, Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, [], 5000i64);
+  let a = s.nodes[0];
+  return test.assert_eq(node.status(a) + " " + (node.label(key_of(3)) != node.label(key_of(2))).to_string(), "connected to " + node.label(key_of(3)) + " true");
+}
+
+// A stranger with no key of this phone gets its tag and nothing more: no
+// proof, so it does not learn the identity of this phone.
+function test_stranger_gets_no_proof(): test.TestOutcome {
+  let s = run_nodes(phones([key_of(2)], []), Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, [], 5000i64);
+  return test.assert_eq(s.nodes[0].ident.len().to_string() + " " + s.nodes[1].ident.len().to_string() + " " + s.nodes[1].peer_identity.len().to_string(), "2 1 0");
+}
+
+// A phone that forgets its known phones shows the string again.
+function test_forgotten_phone_shows_the_string(): test.TestOutcome {
+  let p = phones([key_of(2)], [key_of(1)]);
+  let s = run_nodes([node.forget(p[0]), p[1]], Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, [], 5000i64);
+  return test.assert_eq(shows_code(s.nodes[0]).to_string() + " " + shows_code(s.nodes[1]).to_string(), "true true");
+}
+
 function main(): i32 {
   let r = test.new("walkie nodes");
   r = r.it("two nodes talk on a clean network", test_clean_network);
   r = r.it("two phones that know each other need no string", test_known_phones_need_no_string);
   r = r.it("two new phones learn each other after the string", test_new_phones_learn_each_other);
   r = r.it("one known side still shows the string", test_one_known_side_shows_the_string);
+  r = r.it("a known phone shows its name", test_known_phone_shows_its_name);
+  r = r.it("a stranger gets no proof of identity", test_stranger_gets_no_proof);
+  r = r.it("a forgotten phone shows the string again", test_forgotten_phone_shows_the_string);
   r = r.it("two nodes talk with 5% loss and reordering", test_five_percent_loss_and_reordering);
   r = r.it("two nodes talk with 20% loss", test_twenty_percent_loss);
   r = r.it("a press before the peer confirms waits", test_press_before_the_peer_confirms);
   r = r.it("a peer that never confirms ends the session", test_peer_that_never_confirms);
+  r = r.it("a spoofed handshake does not end the pairing", test_spoofed_handshake_does_not_end_pairing);
   return r.finish();
 }

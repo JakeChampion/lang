@@ -20,6 +20,10 @@ The opt-in [incremental PNG interface](docs/incremental-png.md) validates the co
 The [JPEG header parser](docs/jpeg-headers.md) checks a restricted baseline header profile and returns owned tables.
 The separate [JPEG coefficient fold](docs/jpeg-coefficients.md) validates a complete restricted baseline entropy scan and emits quantized blocks.
 Neither interface decodes JPEG pixels.
+The [forward block transform](docs/jpeg-dct.md) prepares natural-order coefficients for a future pure Fern JPEG writer.
+The [coefficient quantizer](docs/jpeg-quantization.md) applies explicit nearest-integer rules and preserves the decoder's quantizer order.
+The [internal entropy writer](docs/jpeg-entropy-writer.md) emits baseline coefficient scans with explicit tables, restart markers and exact byte limits.
+The [internal frame writer](docs/jpeg-frame-writer.md) serializes complete one-component baseline files from explicit quantized blocks and tables.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.

@@ -159,9 +159,14 @@ pub function mode_at(w: i32, h: i32, x: f32, y: f32): i32 {
   return -1;
 }
 
-// The button that closes the settings screen, in the row of the room buttons.
+// The button that closes the settings screen, and the button that forgets
+// the known phones, in the row of the room buttons.
 pub function back_button(w: i32, h: i32): look.Rect {
-  return look.Rect { x: w / 10, y: h * 885 / 1000, w: w * 8 / 10, h: h * 6 / 100 };
+  return room_button(w, h);
+}
+
+pub function forget_button(w: i32, h: i32): look.Rect {
+  return join_button(w, h);
 }
 
 // The card of the settings screen that shows the room server, below the

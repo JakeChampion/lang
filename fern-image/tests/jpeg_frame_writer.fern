@@ -1,0 +1,90 @@
+import "../packages/codecs/jpeg/entropy_writer";
+import "../packages/codecs/jpeg/frame_writer";
+import "../packages/codecs/jpeg/header";
+import "std/binary";
+import "std/hex";
+
+function never(): boolean {
+  return false;
+}
+
+function name(error: entropy_writer.EncodeError): string {
+  return match (error) {
+    entropy_writer.Shape => "Shape", entropy_writer.Table => "Table",
+    entropy_writer.MissingSymbol => "MissingSymbol", entropy_writer.Coefficient => "Coefficient",
+    entropy_writer.Limit => "Limit", entropy_writer.Cancelled => "Cancelled",
+  };
+}
+
+function emit_case(path: string): i32 {
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (data.len() < 116) {
+    return 3;
+  }
+  let width = match (binary.read_u32_be(data, 0)) { Ok(v) => v as i32, Err(_) => { return 3; } };
+  let height = match (binary.read_u32_be(data, 4)) { Ok(v) => v as i32, Err(_) => { return 3; } };
+  let restart = match (binary.read_u32_be(data, 8)) { Ok(v) => v as i32, Err(_) => { return 3; } };
+  let limit = match (binary.read_u32_be(data, 12)) { Ok(v) => v as i32, Err(_) => { return 3; } };
+  let quantizers: u8[] = [];
+  for i in 16..80 {
+    quantizers = quantizers.append(data[i]);
+  }
+  let tables: header.HuffmanTable[] = [];
+  let at = 80;
+  for table_index in 0..2 {
+    if (data.len() - at < 18) {
+      return 3;
+    }
+    let counts: u8[] = [];
+    for i in 0..16 {
+      counts = counts.append(data[at + i]);
+    }
+    let count = data[at + 16] as i32 * 256 + data[at + 17] as i32;
+    at += 18;
+    if (count > data.len() - at) {
+      return 3;
+    }
+    let symbols: u8[] = [];
+    for i in 0..count {
+      symbols = symbols.append(data[at + i]);
+    }
+    at += count;
+    tables = tables.append(header.HuffmanTable { counts: counts, symbols: symbols });
+  }
+  if ((data.len() - at) % 4 != 0) {
+    return 3;
+  }
+  let values: i32[] = [];
+  while (at < data.len()) {
+    let Ok(value) = binary.read_u32_be(data, at) else {
+      return 3;
+    };
+    values = values.append(value as i32);
+    at += 4;
+  }
+  match (frame_writer.encode_blocks(values, frame_writer.Tables { quantization: quantizers, dc: tables[0], ac: tables[1] }, frame_writer.Options { width: width, height: height, restart_interval: restart, max_output_bytes: limit }, never)) {
+    Ok(output) => {
+      print(path + " ok " + hex.encode(output));
+    },
+    Err(error) => {
+      print(path + " error " + match (error) { frame_writer.Entropy(e) => name(e), _ => "Frame" });
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit_case(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

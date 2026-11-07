@@ -233,8 +233,10 @@ Keep the annotation in these cases:
 - The literal must have a width that is not the default: `let n: i64 = 0;`.
   A suffix is also correct: `let n = 0i64;`.
 - The local must stay `i32` and a later use can widen it. An integer
-  literal settles from its uses: after `let b = 0;`, the shift `v >> b` with
-  an `i64` value makes `b` an `i64`.
+  literal settles from all of its uses in the function, in any order: after
+  `let b = 0;`, the shift `v >> b` with an `i64` value makes `b` an `i64`.
+  A method call or an f-string on the local does not fix its width. The
+  local is `i32` only when no use asks for another width.
 - The local holds a member struct of a `type A | B` union, and the code uses
   it as the union: `let e: ast.Expr = ast.ExprIdent { ... };`. Without the
   annotation, the local has the struct type, and a later assignment of

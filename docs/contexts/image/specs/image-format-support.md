@@ -6,8 +6,8 @@
 
 ## Problem
 
-The engine accepts a restricted set of PNG and JPEG files.
-It has no QOI or JPEG XL codec.
+The engine accepts a restricted set of PNG and JPEG files and complete QOI pixel streams.
+It has no public JPEG image encoder or JPEG XL codec.
 Programs need reliable image input and output with clear compatibility and resource limits.
 
 ## Intended behavior
