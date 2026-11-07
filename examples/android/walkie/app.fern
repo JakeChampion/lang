@@ -597,13 +597,17 @@ function mode_button_shows(s: App): boolean {
 }
 
 // A row of the settings screen chooses its mode, the card of the server opens
-// its keyboard, and BACK closes the screen.
+// its keyboard, FORGET forgets the known phones, and BACK closes the screen.
 function menu_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean): App {
   if (!down) {
     return s;
   }
   if (screen.contains(screen.back_button(w, h), x, y)) {
     return App { ...s, menu: false, drawn: "" };
+  }
+  if (screen.contains(screen.forget_button(w, h), x, y)) {
+    log.info("walkie: forget the known phones");
+    return App { ...s, node: node.noticed(node.forget(s.node), "this phone knows no other phone now"), drawn: "" };
   }
   if (screen.contains(screen.server_row(w, h), x, y)) {
     return App { ...s, host_edit: Some(s.server), drawn: "" };
@@ -739,7 +743,7 @@ function enter_room(own s: App, line: string, code: string): App {
   };
   let reply: rooms.Reply = internet.ask(host, line);
   if let Some(r) = internet.room_of(reply, code, relay) {
-    log.info("walkie: room " + r.code + " on " + relay.to_string());
+    log.info("walkie: in a room on " + relay.to_string());
     return App { ...s, room: Some(r), node: node.noticed(s.node, "room " + r.code + ": the other phone joins with this code"), drawn: "" };
   }
   let why = "the server refused";
@@ -967,7 +971,7 @@ function view(s: App, label: string): ui.View {
   for p in s.peers {
     peers = peers.append(ui.Peer { name: p.name, invited: p.status == 1 });
   }
-  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering, mode_label: mode_label(s), menu: menu_of(s), available: available_modes(s), server: server_label(s), editing: s.host_edit };
+  return ui.View { title: title(s), status: status_text(s), notice: n.notice, label: label, code: code, searching: searching, peers: peers, room_buttons: room_buttons(s), typing: s.entering, mode_label: mode_label(s), menu: menu_of(s), available: available_modes(s), server: server_label(s), editing: s.host_edit, known: s.node.pins.len() > 0 };
 }
 
 function mode_label(s: App): string {
@@ -1010,7 +1014,7 @@ function status_text(s: App): string {
     return "type the host name of the room server, or clear it to use the server of the app";
   }
   if (s.menu) {
-    return "how does this phone find the other phone?";
+    return "this is " + node.label(node.identity_key(s.node)) + ": how does it find the other phone?";
   }
   if let lan.Searching = s.node.link.phase {
     return searching_text(s);

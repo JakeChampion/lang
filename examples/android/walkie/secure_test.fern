@@ -511,14 +511,15 @@ function bundles(a: string, b: string): Option[(secure.Keys, secure.Keys)] {
   return Some((ka, kb));
 }
 
-function proof_text(p: Option[secure.Proof], want: u8[]): string {
+function shown(p: Option[u8[]], want: u8[]): string {
   if let Some(x) = p {
-    return (x.identity == want).to_string() + "/" + x.knows.to_string();
+    return (x == want).to_string();
   }
   return "refused";
 }
 
-// A proof of identity opens on the other side, with the key and the flag.
+// A proof of identity opens on the other side, with the key, and not on
+// the side that sent it.
 function test_identity_proof_opens(): test.TestOutcome {
   let Some((ka, kb)) = bundles("alice", "bob") else {
     return test.fail("no keys");
@@ -526,14 +527,13 @@ function test_identity_proof_opens(): test.TestOutcome {
   let Some(ida) = id_key("alice") else {
     return test.fail("no identity");
   };
-  let unknown = secure.check_proof(kb, secure.prove(ka, ida, false));
-  let known = secure.check_proof(kb, secure.prove(ka, ida, true));
-  let back = secure.check_proof(ka, secure.prove(ka, ida, false));
-  return test.assert_eq(proof_text(unknown, ida.public_point()) + " " + proof_text(known, ida.public_point()) + " " + proof_text(back, ida.public_point()), "true/false true/true refused");
+  let there = secure.check_proof(kb, secure.prove(ka, ida));
+  let back = secure.check_proof(ka, secure.prove(ka, ida));
+  return test.assert_eq(shown(there, ida.public_point()) + " " + shown(back, ida.public_point()), "true refused");
 }
 
 // A proof is good for its exchange alone: a party in the middle cannot pass
-// it on to another exchange, and a changed byte or flag does not open.
+// it on to another exchange, and a changed byte or kind does not open.
 function test_identity_proof_is_bound_to_its_exchange(): test.TestOutcome {
   let Some((ka, kb)) = bundles("alice", "bob") else {
     return test.fail("no keys");
@@ -544,11 +544,61 @@ function test_identity_proof_is_bound_to_its_exchange(): test.TestOutcome {
   let Some(ida) = id_key("alice") else {
     return test.fail("no identity");
   };
-  let proof = secure.prove(ka, ida, false);
+  let proof = secure.prove(ka, ida);
   let moved = secure.check_proof(kc, proof);
   let changed = secure.check_proof(kb, proof.with(20, proof[20] ^ 1 as u8));
-  let flag = secure.check_proof(kb, proof.with(0, 1 as u8));
-  return test.assert_eq(proof_text(moved, ida.public_point()) + " " + proof_text(changed, ida.public_point()) + " " + proof_text(flag, ida.public_point()), "refused refused refused");
+  let kind = secure.check_proof(kb, proof.with(0, secure.TAG));
+  return test.assert_eq(shown(moved, ida.public_point()) + " " + shown(changed, ida.public_point()) + " " + shown(kind, ida.public_point()), "refused refused refused");
+}
+
+// A tag names the identity only to a phone that knows the key. It does not
+// carry the key, and it does not open in another exchange.
+function test_identity_tag_needs_the_key(): test.TestOutcome {
+  let Some((ka, kb)) = bundles("alice", "bob") else {
+    return test.fail("no keys");
+  };
+  let Some((km, kc)) = bundles("mallory", "carol") else {
+    return test.fail("no keys");
+  };
+  let Some(ida) = id_key("alice") else {
+    return test.fail("no identity");
+  };
+  let Some(idb) = id_key("bob") else {
+    return test.fail("no identity");
+  };
+  let tag = secure.announce(ka, ida);
+  let known = secure.recognize(kb, tag, [idb.public_point(), ida.public_point()]);
+  let strange = secure.recognize(kb, tag, [idb.public_point()]);
+  let moved = secure.recognize(kc, tag, [ida.public_point()]);
+  let not_proof = secure.check_proof(kb, tag);
+  return test.assert_eq(shown(known, ida.public_point()) + " " + shown(strange, ida.public_point()) + " " + shown(moved, ida.public_point()) + " " + shown(not_proof, ida.public_point()), "true refused refused refused");
+}
+
+// The identity on the channel is signed for the exchange of the channel.
+function test_pin_message_is_bound_to_its_channel(): test.TestOutcome {
+  let Some((ka, kb)) = bundles("alice", "bob") else {
+    return test.fail("no keys");
+  };
+  let Some((km, kc)) = bundles("mallory", "carol") else {
+    return test.fail("no keys");
+  };
+  let Some(ida) = id_key("alice") else {
+    return test.fail("no identity");
+  };
+  let Some(idm) = id_key("mallory") else {
+    return test.fail("no identity");
+  };
+  let ca = secure.channel(ka);
+  let cb = secure.channel(kb);
+  let cc = secure.channel(kc);
+  let (public, signature) = secure.pin_message(ca, ida);
+  let (_, other) = secure.pin_message(ca, idm);
+  let got = secure.check_pin(cb, public, signature).to_string() + " " + secure.check_pin(cc, public, signature).to_string() + " " + secure.check_pin(cb, public, other).to_string();
+  secure.close(ca);
+  secure.close(cb);
+  secure.close(cc);
+  secure.close_keys(km);
+  return test.assert_eq(got, "true false false");
 }
 
 function test_initiator_must_commit_before_a_key_reply(): test.TestOutcome {
@@ -612,6 +662,8 @@ function main(): i32 {
   r = r.it("the two directions rekey on their own", test_directions_rekey_on_their_own);
   r = r.it("a proof of identity opens on the other side", test_identity_proof_opens);
   r = r.it("a proof of identity is bound to its exchange", test_identity_proof_is_bound_to_its_exchange);
+  r = r.it("a tag names the identity only to a phone that knows it", test_identity_tag_needs_the_key);
+  r = r.it("the identity on the channel is bound to the channel", test_pin_message_is_bound_to_its_channel);
   r = r.it("a changed frame is refused", test_changed_frame_is_refused);
   r = r.it("a control frame opens once, in any order", test_control_replay_is_refused_and_order_is_free);
   r = r.it("voice frames open once inside the window", test_voice_window);

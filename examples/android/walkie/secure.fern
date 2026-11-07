@@ -76,10 +76,6 @@ pub struct Handshake { initiator: boolean, private: Cell[u8[]], kem: Cell[u8[]],
 // keys seal them, one in each direction.
 pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string, binding: u8[], send_id: Cell[u8[]], recv_id: Cell[u8[]] }
 
-// A proof of identity that opened: the Ed25519 public key of the peer, and
-// whether the peer knows this side.
-pub struct Proof { identity: u8[], knows: boolean }
-
 // One direction of one channel: its key and its sequence state. For a voice
 // receiver, `high` is the highest number seen and `seen` marks the numbers
 // below it in the window. `epoch` counts the rekeys, `chain` makes the key of
@@ -91,7 +87,8 @@ struct Way { key: u8[], next: i64, high: i64, seen: boolean[], epoch: i32, old: 
 pub struct Offer { epoch: i32, private: Cell[u8[]], public: u8[] }
 
 // Copies share sequence state and keys. Use a channel from one event loop.
-pub struct Channel { send_ctl: Cell[Way], recv_ctl: Cell[Way], send_voice: Cell[Way], recv_voice: Cell[Way], sas: string }
+// `binding` names the exchange of the channel for the identity messages.
+pub struct Channel { send_ctl: Cell[Way], recv_ctl: Cell[Way], send_voice: Cell[Way], recv_voice: Cell[Way], sas: string, binding: u8[] }
 
 function cat(a: u8[], b: [u8]): u8[] {
   for x in b {
@@ -343,7 +340,7 @@ pub function channel(k: Keys): Channel {
   let recv_ctl = take_key(k.recv_ctl);
   let send_voice = take_key(k.send_voice);
   let recv_voice = take_key(k.recv_voice);
-  return Channel { send_ctl: cell_new(way(send_ctl)), recv_ctl: cell_new(way(recv_ctl)), send_voice: cell_new(way(send_voice)), recv_voice: cell_new(way(recv_voice)), sas: k.sas };
+  return Channel { send_ctl: cell_new(way(send_ctl)), recv_ctl: cell_new(way(recv_ctl)), send_voice: cell_new(way(send_voice)), recv_voice: cell_new(way(recv_voice)), sas: k.sas, binding: k.binding };
 }
 
 // Clear a rejected key bundle, for example after a failed string comparison.
@@ -511,7 +508,7 @@ function accept(w: Way, seq: i64): Option[Way] {
 
 // Close clears the shared slots before erasure, so old channel copies close too.
 pub function close(own c: Channel): void {
-  let Channel { send_ctl: sc, recv_ctl: rc, send_voice: sv, recv_voice: rv, sas: _ } = c;
+  let Channel { send_ctl: sc, recv_ctl: rc, send_voice: sv, recv_voice: rv, sas: _, binding: _ } = c;
   close_way(sc);
   close_way(rc);
   close_way(sv);
@@ -531,61 +528,115 @@ function erase_way(own w: Way): void {
   crypto.erase(chain);
 }
 
-// A proof of identity is a flag byte and then, sealed with the id key of the
-// direction, the Ed25519 public key, the flag again and a signature of the
-// binding and both. Each value of the flag has its own nonce.
-const PROOF_PLAIN: i32 = 33 + 64;
+// An identity frame is a kind byte and then, sealed with the id key of the
+// direction, its body. Each kind has its own nonce. A TAG body is the hash
+// of the binding and the Ed25519 public key of this side: only a phone that
+// knows the key can match it, and it changes with each exchange. A PROOF
+// body is the public key and a signature of the binding and the key. A phone
+// sends its proof only to a peer whose tag it matched, so a stranger does
+// not learn the key.
+pub const TAG: u8 = 0u8;
 
-function proof_nonce(knows: u8): u8[] {
-  let out: u8[] = [knows];
+pub const PROOF: u8 = 1u8;
+
+function identity_nonce(kind: u8): u8[] {
+  let out: u8[] = [kind];
   for k in 0..11 {
     out = out.append(0 as u8);
   }
   return out;
 }
 
-// The proof of identity of this side for the peer of `k`: the public key
-// of `identity`, and whether this side knows the peer. Only the peer opens
-// it, and it is good for this exchange alone.
-pub function prove(k: Keys, identity: ed25519.PrivateKey, knows: boolean): u8[] {
-  let flag = 0 as u8;
-  if (knows) {
-    flag = 1 as u8;
-  }
-  let plain = cat(identity.public_point(), [flag]);
-  let signed = cat(plain, identity.sign(cat(cat(text("walkie identity"), k.binding), plain)));
+function identity_tag(binding: [u8], public: [u8]): u8[] {
+  return crypto.sha256(cat(cat(text("walkie identity tag"), binding), public));
+}
+
+function seal_identity(k: Keys, kind: u8, body: [u8]): u8[] {
   let Ok(key) = chacha20poly1305.key(k.send_id.get()) else {
     return [];
   };
-  let Ok(sealed) = key.seal(proof_nonce(flag), signed, cat(text("walkie identity"), [flag])) else {
+  let Ok(sealed) = key.seal(identity_nonce(kind), body, cat(text("walkie identity"), [kind])) else {
     return [];
   };
-  return cat([flag], sealed);
+  return cat([kind], sealed);
 }
 
-// The identity of the peer in its proof, when the proof opens and its
-// signature is good for this exchange.
-pub function check_proof(k: Keys, frame: [u8]): Option[Proof] {
-  if (frame.len() != 1 + PROOF_PLAIN + 16 || frame[0] > 1 as u8) {
+// The kind and the body of an identity frame from the peer of `k`.
+function open_identity(k: Keys, frame: [u8]): Option[(u8, u8[])] {
+  if (frame.len() < 1 + 16 || frame[0] > PROOF) {
     return None;
   }
   let Ok(key) = chacha20poly1305.key(k.recv_id.get()) else {
     return None;
   };
-  let Ok(signed) = key.open(proof_nonce(frame[0]), frame[1:frame.len()], cat(text("walkie identity"), [frame[0]])) else {
+  let Ok(body) = key.open(identity_nonce(frame[0]), frame[1:frame.len()], cat(text("walkie identity"), [frame[0]])) else {
     return None;
   };
-  if (signed[32] != frame[0]) {
-    return None;
-  }
-  let plain = part(signed, 0, 33);
-  let Ok(public) = ed25519.public_key(part(signed, 0, 32)) else {
+  return Some((frame[0], body));
+}
+
+// The tag of this side's identity for the peer of `k`.
+pub function announce(k: Keys, identity: ed25519.PrivateKey): u8[] {
+  return seal_identity(k, TAG, identity_tag(k.binding, identity.public_point()));
+}
+
+// The phone of `pins` that the tag in `frame` names, when there is one.
+pub function recognize(k: Keys, frame: [u8], pins: [u8[]]): Option[u8[]] {
+  let Some((kind, body)) = open_identity(k, frame) else {
     return None;
   };
-  if (!public.verify(cat(cat(text("walkie identity"), k.binding), plain), part(signed, 33, 64))) {
+  if (kind != TAG || body.len() != 32) {
     return None;
   }
-  return Some(Proof { identity: part(signed, 0, 32), knows: frame[0] == 1 as u8 });
+  for p in pins {
+    if (identity_tag(k.binding, p) == body) {
+      return Some(p);
+    }
+  }
+  return None;
+}
+
+// The proof of this side's identity for the peer of `k`. It is good for
+// this exchange alone.
+pub function prove(k: Keys, identity: ed25519.PrivateKey): u8[] {
+  let public = identity.public_point();
+  let signed = cat(public, identity.sign(cat(cat(text("walkie identity"), k.binding), public)));
+  return seal_identity(k, PROOF, signed);
+}
+
+// The identity of the peer in its proof, when the proof opens and its
+// signature is good for this exchange.
+pub function check_proof(k: Keys, frame: [u8]): Option[u8[]] {
+  let Some((kind, body)) = open_identity(k, frame) else {
+    return None;
+  };
+  if (kind != PROOF || body.len() != 96) {
+    return None;
+  }
+  let identity = part(body, 0, 32);
+  let Ok(public) = ed25519.public_key(identity) else {
+    return None;
+  };
+  if (!public.verify(cat(cat(text("walkie identity"), k.binding), identity), part(body, 32, 64))) {
+    return None;
+  }
+  return Some(identity);
+}
+
+// The public key of this side's identity and a signature for the exchange
+// of `c`. After the users confirm the string, each phone sends them on the
+// control channel, and the other phone keeps the key.
+pub function pin_message(c: Channel, identity: ed25519.PrivateKey): (u8[], u8[]) {
+  let public = identity.public_point();
+  return (public, identity.sign(cat(cat(text("walkie pin"), c.binding), public)));
+}
+
+// True when `signature` is good for `public` and the exchange of `c`.
+pub function check_pin(c: Channel, public: [u8], signature: [u8]): boolean {
+  let Ok(key) = ed25519.public_key(public) else {
+    return false;
+  };
+  return signature.len() == 64 && key.verify(cat(cat(text("walkie pin"), c.binding), public), signature);
 }
 
 // The epoch of the key that this side sends voice with, and of the key that

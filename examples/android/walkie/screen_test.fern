@@ -142,8 +142,8 @@ function test_wrap(): test.TestOutcome {
 }
 
 // The settings button sits above the status and the peer list, and the
-// rows of the settings screen fit above BACK. Each row is the row at its
-// middle.
+// rows of the settings screen fit above BACK and FORGET. Each row is the
+// row at its middle.
 function test_settings_fit(): test.TestOutcome {
   for size in [[1080, 2400], [720, 1280], [320, 480]] {
     let w: i32 = size[0];
@@ -154,9 +154,13 @@ function test_settings_fit(): test.TestOutcome {
       return test.fail("the mode button is off the screen or on another button" + at);
     }
     let back: screen.Rect = screen.back_button(w, h);
+    let forget: screen.Rect = screen.forget_button(w, h);
+    if (!inside(back, w, h) || !inside(forget, w, h) || overlap(back, forget) || overlap(forget, screen.server_row(w, h))) {
+      return test.fail("BACK and FORGET do not fit" + at);
+    }
     for k in 0..screen.MODE_ROWS {
       let row: screen.Rect = screen.mode_row(w, h, k);
-      if (!inside(row, w, h) || overlap(row, back) || k > 0 && overlap(row, screen.mode_row(w, h, k - 1))) {
+      if (!inside(row, w, h) || overlap(row, back) || overlap(row, forget) || k > 0 && overlap(row, screen.mode_row(w, h, k - 1))) {
         return test.fail("mode row " + k.to_string() + " does not fit" + at);
       }
       if (screen.mode_at(w, h, (row.x + row.w / 2) as f32, (row.y + row.h / 2) as f32) != k) {
