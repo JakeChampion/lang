@@ -8,6 +8,7 @@
 // the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/audio";
+import "std/android/focus";
 import "std/android/p2p";
 import "std/android/service";
 import "std/hex";
@@ -33,6 +34,8 @@ const SERVICE: string = "dev.fern.walkie.Talk";
 
 // The receiver of the Wi-Fi Direct broadcasts.
 const RECEIVER: string = "dev.fern.walkie.Direct";
+
+const FOCUS: string = "dev.fern.walkie.Focus";
 
 // Wi-Fi Direct discovery needs NEARBY_WIFI_DEVICES from API level 33, and
 // the fine location before that.
@@ -62,6 +65,8 @@ struct App {
   group_broadcast: Option[net.IpAddr],
   // The role of this phone in its Wi-Fi Direct group: the owner leads.
   group_role: i32,
+  // The audio focus, which the phone holds while it talks.
+  audio_focus: Option[focus.Focus],
   // The room of the internet mode, and the code that the user types.
   room: Option[internet.Room],
   entering: Option[string],
@@ -88,6 +93,11 @@ struct App {
 @jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
 pub function direct_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
   p2p.received(env, thiz, intent);
+}
+
+@jni("dev.fern.walkie.Focus implements android.media.AudioManager$OnAudioFocusChangeListener", "void onAudioFocusChange(int)")
+pub function focus_change(env: usize, thiz: usize, change: i32): void {
+  focus.changed(env, thiz, change);
 }
 
 @jni("dev.fern.walkie.Talk extends android.app.Service", "android.os.IBinder onBind(android.content.Intent)")
@@ -292,7 +302,7 @@ function app_main(ctx: usize): usize {
   let n: node.Node = fresh_node(notice, id_seed, pins, lan.ROLE_ANY);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, room: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, audio_focus: focus.new(ctx, FOCUS), room: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -373,7 +383,7 @@ function service_event(own s: App, e: android.Event): App {
 // The Wi-Fi Direct events.
 function direct_event(own s: App, e: android.Event): App {
   let Some(ev) = p2p.event(e) else {
-    return s;
+    return focus_event(s, e);
   };
   match (ev) {
     p2p.Enabled(on) => {
@@ -524,7 +534,40 @@ function destroyed(own s: App): App {
   if let Some(a) = s.awake {
     service.release_awake(s.ctx, a);
   }
-  return App { ...s, serving: false, p2p: None, awake: None };
+  if let Some(f) = s.audio_focus {
+    focus.close(s.ctx, f);
+  }
+  return App { ...s, serving: false, p2p: None, awake: None, audio_focus: None };
+}
+
+// A call or another app took the audio focus: the transmission stops. A
+// short sound of another app does not stop it.
+function focus_event(own s: App, e: android.Event): App {
+  let Some(change) = focus.event(e) else {
+    return s;
+  };
+  log.info("walkie: audio focus " + focus_name(change));
+  if let focus.Loss = change {
+    if (s.capturing) {
+      return App { ...s, node: node.mic_lost(s.node, "a call or another app took the audio", now_ms()) };
+    }
+  }
+  return s;
+}
+
+function focus_name(c: focus.Change): string {
+  match (c) {
+    focus.Gain => {
+      return "gained";
+    },
+    focus.Loss => {
+      return "lost";
+    },
+    focus.Duck => {
+      return "ducked";
+    }
+  }
+  return "";
 }
 
 // Leaves the session and closes the app.
@@ -889,21 +932,34 @@ function sync_mic(s: App, now: i64): App {
   }
   if (!s.node.capture) {
     s.mic.stop();
+    release_focus(s);
     return App { ...s, capturing: false };
   }
   if (!android.has_permission(s.ctx, MIC)) {
     android.request_permissions(s.ctx, [MIC]);
     return App { ...s, node: node.mic_lost(s.node, "allow the microphone, then press again", now) };
   }
+  if let Some(f) = s.audio_focus {
+    if (!focus.request(s.ctx, f)) {
+      return App { ...s, node: node.mic_lost(s.node, "a call or another app has the audio", now) };
+    }
+  }
   let mic: audio.Stream = s.mic;
   if (mic.ptr == 0 as usize) {
     mic = audio.capture(voice.RATE);
   }
   if (!mic.start()) {
+    release_focus(s);
     return App { ...s, mic: mic, node: node.mic_lost(s.node, "the microphone did not start", now) };
   }
   log.info("walkie: microphone rate " + mic.rate.to_string());
   return App { ...s, mic: mic, capturing: true, up: pcm.resampler(mic.rate, voice.RATE) };
+}
+
+function release_focus(s: App): void {
+  if let Some(f) = s.audio_focus {
+    focus.release(s.ctx, f);
+  }
 }
 
 // The microphone samples since the last step.

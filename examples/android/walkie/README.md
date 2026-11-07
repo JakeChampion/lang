@@ -95,6 +95,11 @@ the connection, and the phone still hears the other phone, also with the
 screen off. A wake lock and a Wi-Fi lock keep the CPU and the radio awake
 while the service runs. DISCONNECT in the notification ends the session.
 
+The phone holds the audio focus while it talks. A call takes the focus, and
+so does another app that records or plays. Then the transmission stops, and
+the phone shows why. During a call the phone cannot talk. A short sound of
+another app, such as a notification, does not stop the transmission.
+
 To talk while the app is in the background, tap TALK in the notification. The
 phone talks until you tap STOP TALKING. The talk button of the app also stops
 it.

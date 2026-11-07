@@ -91,6 +91,9 @@ to mobile data, so that the phones are on different networks.
   of phone 1, also with the screen off.
 - [ ] **Talk from the notification.** On phone 2 in the background, tap TALK
   in the notification. Phone 1 hears phone 2 until you tap STOP TALKING.
+- [ ] **Call.** While phone 1 talks, call phone 1 from a third phone. Phone 1
+  stops TALKING and shows `a call or another app took the audio`. During
+  the call, a press on phone 1 shows `a call or another app has the audio`.
 - [ ] **Disconnect.** Tap DISCONNECT in the notification. The session ends
   on both phones.
 - [ ] **Third phone (G).** Open the app on a third phone near a connected

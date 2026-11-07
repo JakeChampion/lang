@@ -1280,12 +1280,12 @@ function java_class_head(text: string): JavaClassHead {
     superclass = slice_unchecked(rest, ext + 9, rest.len()).trim();
     rest = slice_unchecked(rest, 0, ext).trim();
   }
-  for n in interfaces.append(rest).append(superclass) {
-    if (n.len() > 0 && !jni_name_ok(n)) {
+  for n in interfaces.append(superclass) {
+    if (n.len() > 0 && !jni_type_name_ok(n)) {
       return bad;
     }
   }
-  if (rest.len() == 0) {
+  if (!jni_name_ok(rest)) {
     return bad;
   }
   return JavaClassHead { ok: true, name: rest, superclass: superclass, interfaces: interfaces };
@@ -1295,10 +1295,11 @@ function has_head(jm: JniMethod): boolean {
   return jm.superclass.len() > 0 || jm.interfaces.len() > 0;
 }
 
+// The head as Java source writes it: a nested type has "." in place of "$".
 function head_text(jm: JniMethod): string {
   let out = "";
   if (jm.superclass.len() > 0) {
-    out = " extends " + jm.superclass;
+    out = " extends " + jm.superclass.replace("$", ".");
   }
   for k in 0..jm.interfaces.len() {
     if (k == 0) {
@@ -1306,7 +1307,7 @@ function head_text(jm: JniMethod): string {
     } else {
       out += ", ";
     }
-    out += jm.interfaces[k];
+    out += jm.interfaces[k].replace("$", ".");
   }
   return out;
 }
@@ -1360,6 +1361,12 @@ function jni_extend(t: string, e: string): string {
 
 function jni_name_char(c: u8): boolean {
   return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.';
+}
+
+// A superclass or an interface can be a nested type, such as
+// "android.media.AudioManager$OnAudioFocusChangeListener".
+function jni_type_name_ok(s: string): boolean {
+  return s.len() > 0 && jni_name_ok(s.replace("$", "_"));
 }
 
 function jni_name_ok(s: string): boolean {
