@@ -57,6 +57,7 @@ var stdModuleReach = map[string]string{
 	"std/net":           "now,pollable,reactor,tcp,unix,uring",
 	"std/ndarray":       "",
 	"std/num":           "",
+	"std/opus":          "",
 	"std/option":        "",
 	"std/pvh":           "",
 	"std/ordmap":        "",
