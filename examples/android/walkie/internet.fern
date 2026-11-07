@@ -9,7 +9,8 @@ import "std/tls/client";
 import "std/tls/verify";
 import "./rooms";
 
-pub struct Room { code: string, token: u8[], relay: net.SocketAddr }
+// The phone that made the room leads it.
+pub struct Room { code: string, token: u8[], relay: net.SocketAddr, lead: boolean }
 
 // The datagram that goes to the relay for one datagram of the node.
 pub function wrap(r: Room, data: [u8]): u8[] {
@@ -75,10 +76,10 @@ function exchange(c0: client.Connection, line: string): rooms.Reply {
 pub function room_of(reply: rooms.Reply, code: string, relay: net.SocketAddr): Option[Room] {
   match (reply) {
     rooms.Created(c, token) => {
-      return Some(Room { code: c, token: token, relay: relay });
+      return Some(Room { code: c, token: token, relay: relay, lead: true });
     },
     rooms.Joined(token) => {
-      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay });
+      return Some(Room { code: code.to_ascii_upper(), token: token, relay: relay, lead: false });
     },
     rooms.Refused(_) => {}
   }

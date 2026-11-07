@@ -153,6 +153,29 @@ function test_rejected_string_closes(): test.TestOutcome {
   return test.assert_eq(chan.is_some().to_string(), "false");
 }
 
+// The phone that leads has the lowest ID and the phone that follows the
+// highest, whatever the random values. Two phones of one role compare their
+// random values.
+function test_roles_order_the_ids(): test.TestOutcome {
+  let big = 9223372036854775807i64;
+  let lead = lan.role_id(lan.ROLE_LEAD, big);
+  let any_low = lan.role_id(lan.ROLE_ANY, 0i64);
+  let any_high = lan.role_id(lan.ROLE_ANY, big);
+  let follow = lan.role_id(lan.ROLE_FOLLOW, 0i64);
+  let ordered = 0i64 <= lead && lead < any_low && any_low < any_high && any_high < follow;
+  let random = lan.role_id(lan.ROLE_ANY, 5i64) < lan.role_id(lan.ROLE_ANY, 9i64);
+  return test.assert_eq(ordered.to_string() + " " + random.to_string(), "true true");
+}
+
+// A key exchange with no answer expires after PAIR_TIMEOUT_MS.
+function test_a_pairing_with_no_answer_expires(): test.TestOutcome {
+  let (a, _) = lan.pair(lan.new(5i64), 9i64, 0i64, bytes("a key", 32), bytes("a nonce", 16), bytes("a kem", secure.KEM_RANDOM));
+  let before = lan.expired(a, lan.PAIR_TIMEOUT_MS - 1i64);
+  let after = lan.expired(a, lan.PAIR_TIMEOUT_MS);
+  let searching = lan.expired(lan.new(5i64), lan.PAIR_TIMEOUT_MS);
+  return test.assert_eq(before.to_string() + " " + after.to_string() + " " + searching.to_string(), "false true false");
+}
+
 function main(): i32 {
   let r = test.new("walkie lan");
   r = r.it("a packet round-trips", test_packet_round_trip);
@@ -162,5 +185,7 @@ function main(): i32 {
   r = r.it("lost messages are sent again", test_lost_messages_are_sent_again);
   r = r.it("frames pass after confirmation", test_frames_after_confirmation);
   r = r.it("a rejected string closes the link", test_rejected_string_closes);
+  r = r.it("roles order the IDs", test_roles_order_the_ids);
+  r = r.it("a pairing with no answer expires", test_a_pairing_with_no_answer_expires);
   return r.finish();
 }

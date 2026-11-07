@@ -33,7 +33,7 @@ function test_each_mode_takes_only_its_own_network(): test.TestOutcome {
   let lan: net.SocketAddr = from(10u8, 0u8, 0u8, 7u8);
   let peer: net.SocketAddr = from(192u8, 168u8, 49u8, 1u8);
   let relay: net.SocketAddr = net.socket_addr(v4(203u8, 0u8, 113u8, 5u8), 47130);
-  let room: Option[internet.Room] = Some(internet.Room { code: "K7Q2MX", token: [1u8], relay: relay });
+  let room: Option[internet.Room] = Some(internet.Room { code: "K7Q2MX", token: [1u8], relay: relay, lead: true });
   let got: boolean[] = [
     modes.accepts(modes.Automatic, None, g, lan),
     modes.accepts(modes.SameWifi, None, g, lan),

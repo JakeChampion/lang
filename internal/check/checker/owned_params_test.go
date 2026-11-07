@@ -1320,6 +1320,33 @@ function step(own a: Asm, v: i32): Asm {
 }`)
 }
 
+// The else block of a let-else comes before the move in the source, so its
+// read of the base is not a later read of the field.
+func TestOwnGuardAllowsSupersededFieldMoveAfterLetElse(t *testing.T) {
+	wantOK(t, "field-move-after-let-else", fieldMovePrelude+`
+function step(own a: Asm, o: Option[i32]): Asm {
+    let Some(v) = o else {
+        return a;
+    };
+    let c: Cfi = record(a.cfi, v);
+    return Asm { ...a, cfi: c };
+}`)
+}
+
+// A read of the field after the move still keeps the field from moving, with
+// a let-else before it.
+func TestOwnGuardRejectsFieldReadAfterMoveAfterLetElse(t *testing.T) {
+	wantE051(t, "field-read-after-let-else-move", fieldMovePrelude+`
+function step(own a: Asm, o: Option[i32]): Asm {
+    let Some(v) = o else {
+        return a;
+    };
+    let c: Cfi = record(a.cfi, v);
+    let n: i32 = a.cfi.n;
+    return Asm { ...a, cfi: c };
+}`)
+}
+
 // The base stays owned by the walk, so a read of the moved field after the
 // literal is a use after move (#14111).
 func TestOwnGuardRejectsReadAfterSupersededFieldMoveOnLet(t *testing.T) {

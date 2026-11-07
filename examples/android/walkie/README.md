@@ -108,6 +108,8 @@ A network that isolates its clients, such as many guest and public
 networks, blocks the beacons. A phone hotspot works: connect the other phone
 to it. Logs go to logcat with the tag `fern`.
 
+`CHECKLIST.md` lists the checks to do on two phones.
+
 The app is in layers. Each layer has its own tests on the host.
 
 ## `app.fern` and `node.fern`
@@ -316,14 +318,22 @@ while the server runs, and new clients get the new certificate.
 
 ## The floor
 
-One peer is the floor controller: the Wi-Fi Direct group owner, or the first
-peer in a room. The controller decides each floor request in the order it
-arrives, and the first valid request wins. A grant has a lease of 3 seconds,
-and the speaker renews it each half second while the button is held. So a
-crashed speaker cannot keep the floor.
+One peer is the floor controller: the Wi-Fi Direct group owner, or the phone
+that made the room. Elsewhere, it is a random one of the two. Of two phones,
+the one with the lower ID is the controller. The group owner and the phone
+that made the room take an ID below the IDs of the other phones. A phone that
+joined a room or a group takes an ID above them.
+
+The controller decides each floor request in the order it arrives, and the
+first valid request wins. A grant has a lease of 3 seconds, and the speaker
+renews it each half second while the button is held. So a crashed speaker
+cannot keep the floor.
 
 Each message can be lost, so each one is sent again or ends by itself:
 
+- A key exchange that does not finish in 10 seconds stops. On a Wi-Fi
+  network the phone then shows TAP TO SEARCH AGAIN. In a room it starts
+  again by itself.
 - A side sends its Hello every half second until the peer sends a message.
   The peer then confirmed the code too. A side that waits a minute for that
   ends the session.
