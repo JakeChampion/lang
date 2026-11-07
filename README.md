@@ -122,6 +122,9 @@ register-allocating SSA emitter is the default and only emitter on every native
 target. `-backend flat` is refused there. Per-backend support and known gaps:
 `docs/BACKEND-PARITY.md`.
 
+The [ULC2 audio codec example](examples/ulc/README.md) includes a pure Fern
+decoder, a compatible encoder, and WAV tools.
+
 ## More than a compiler
 
 - **Packages.** A `fern.toml` manifest declares `path`, hash-addressed `url`,

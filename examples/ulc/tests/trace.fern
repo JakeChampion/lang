@@ -1,0 +1,61 @@
+import "std/array";
+import "std/binary";
+import "std/io";
+import "std/result";
+import "../encoder";
+import "../transform";
+
+function run(): Result[i32, string] {
+  let argv = args();
+  if (argv.len() != 3) {
+    return Err("expected raw input and trace output");
+  }
+  let data = read_file_bytes(argv[1]).map_err((e: IoError): string => e.message())?;
+  if (data.len() < 16) {
+    return Err("short trace header");
+  }
+  let n = binary.read_u32_le(data, 0).unwrap_or(0u32) as i32;
+  let channels = binary.read_u32_le(data, 4).unwrap_or(0u32) as i32;
+  let rate = binary.read_u32_le(data, 8).unwrap_or(0u32) as i32;
+  let blocks = binary.read_u32_le(data, 12).unwrap_or(0u32) as i32;
+  let state = encoder.create(n, channels, rate, encoder.Vbr(100.0))?;
+  if (blocks < 0 || blocks as i64 * (n as i64) * (channels as i64) * 4 + 16 != data.len() as i64) {
+    return Err("invalid trace input length");
+  }
+  let out: u8[] = [];
+  let at = 16;
+  for b in 0..blocks {
+    let samples = transform.zeros(n * channels);
+    for i in 0..samples.len() {
+      let bits = binary.read_u32_le(data, at).unwrap_or(0u32);
+      samples = samples.with(i, f32_from_bits(bits as i32) as f64);
+      at += 4;
+    }
+    let p = encoder.prepare(state, samples)?;
+    state = p.state;
+    out = binary.append_u32_le(out, p.control as u32);
+    out = binary.append_u32_le(out, state.control as u32);
+    out = binary.append_u32_le(out, p.nonzero as u32);
+    out = binary.append_u32_le(out, f32_bits(p.complexity as f32) as u32);
+    for x in p.coefs {
+      out = binary.append_u32_le(out, f32_bits(x as f32) as u32);
+    }
+    for x in p.noise {
+      out = binary.append_u32_le(out, f32_bits(x as f32) as u32);
+    }
+  }
+  write_file_bytes(argv[2], out).map_err((e: IoError): string => e.message())?;
+  return Ok(0);
+}
+
+function main(): i32 {
+  match (run()) {
+    Ok(code) => {
+      return code;
+    },
+    Err(e) => {
+      eprint(e);
+      return 1;
+    }
+  }
+}

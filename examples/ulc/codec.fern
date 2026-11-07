@@ -1,0 +1,303 @@
+// ULC2 bitstream implementation. Based on Aikku93/ulc-codec (Unlicense).
+import "std/array";
+import "std/f64";
+import "std/i32";
+import "./transform";
+import "./windows";
+
+pub function valid_config(block_size: i32, channels: i32): boolean {
+  return channels >= 1 && channels <= 255 && block_size >= 256 && block_size <= 32768 && (block_size & block_size - 1) == 0;
+}
+
+pub struct BitReader { data: u8[], pos: i32, seed: u32, value: i32, error: boolean }
+
+pub function reader(data: u8[], byte_offset: i32, seed: u32): BitReader {
+  return BitReader { data: data, pos: byte_offset * 2, seed: seed, value: 0, error: false };
+}
+
+function read(own r: BitReader): BitReader {
+  if (r.error || r.pos < 0 || r.pos / 2 >= r.data.len()) {
+    return BitReader { ...r, error: true, value: 0 };
+  }
+  let v = r.data[r.pos / 2] as i32 >> (r.pos & 1) * 4 & 15;
+  return BitReader { ...r, pos: r.pos + 1, value: v };
+}
+
+@inline
+function nybble(data: [u8], pos: i32): i32 {
+  if (pos < 0 || pos / 2 >= data.len()) {
+    return -1;
+  }
+  return data[pos / 2] as i32 >> (pos & 1) * 4 & 15;
+}
+
+struct Quantizer { pos: i32, value: i32 }
+
+function quantizer(data: [u8], pos0: i32): Quantizer {
+  let pos = pos0;
+  let q = nybble(data, pos);
+  pos += 1;
+  if (q < 0) {
+    return Quantizer { pos: pos, value: -3 };
+  }
+  if (q == 15) {
+    return Quantizer { pos: pos, value: -2 };
+  }
+  if (q == 14) {
+    let extended = nybble(data, pos);
+    pos += 1;
+    if (extended < 0 || extended == 13 || extended == 14) {
+      return Quantizer { pos: pos, value: -3 };
+    }
+    if (extended == 15) {
+      return Quantizer { pos: pos, value: -1 };
+    }
+    q += extended;
+  }
+  return Quantizer { pos: pos, value: q };
+}
+
+function scale(q: i32): f64 {
+  return 1.0 / ((1u64 << (5 + q) as u64) as f64);
+}
+
+function random(seed: u32): u32 {
+  let value = seed;
+  value ^= value << 13u32;
+  value ^= value >> 17u32;
+  value ^= value << 5u32;
+  return value;
+}
+
+pub struct Coefficients { reader: BitReader, values: f64[] }
+
+pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, string] {
+  if (size < 16 || size > 32768 || r.error) {
+    return Err("invalid subblock size or reader state");
+  }
+  let data = r.data;
+  let initial = quantizer(data, r.pos);
+  let pos = initial.pos;
+  let out = transform.zeros(size);
+  if (initial.value < -1) {
+    return Err("invalid initial quantizer or truncated block");
+  }
+  if (initial.value == -1) {
+    return Ok(Coefficients { reader: BitReader { ...r, pos: pos }, values: out });
+  }
+  let seed = r.seed;
+  let quant = scale(initial.value);
+  let n = 0;
+  while (n < size) {
+    let code = nybble(data, pos);
+    pos += 1;
+    if (code < 0) {
+      return Err("truncated coefficient command");
+    }
+    if (code != 0 && code != 1 && code != 8 && code != 15) {
+      let v = code;
+      if (v >= 8) {
+        v -= 16;
+      }
+      let square = v * v;
+      if (v < 0) {
+        square = -square;
+      }
+      out = out.with(n, square as f64 * quant);
+      n += 1;
+    } else if (code == 0 || code == 1 || code == 8) {
+      let hi = nybble(data, pos);
+      pos += 1;
+      if (hi < 0) {
+        return Err("truncated coefficient run");
+      }
+      let count = hi + 1;
+      let level = 0.0;
+      if (code == 1 || code == 8) {
+        let lo = nybble(data, pos);
+        pos += 1;
+        if (lo < 0) {
+          return Err("truncated coefficient run");
+        }
+        count = (hi << 4 | lo) + 33;
+        if (code == 8) {
+          let extra = nybble(data, pos);
+          pos += 1;
+          if (extra < 0) {
+            return Err("truncated noise run");
+          }
+          count = ((hi << 4 | lo) << 1 | extra & 1) + 16;
+          let v = (extra >> 1) + 1;
+          level = v as f64 * (v as f64) * quant * 0.25;
+        }
+      }
+      if (count > size - n) {
+        return Err("coefficient run exceeds subblock");
+      }
+      if (code == 8) {
+        for i in 0..count {
+          seed = random(seed);
+          if ((seed & 2147483648u32) != 0u32) {
+            level = -level;
+          }
+          out = out.with(n, level);
+          n += 1;
+        }
+      } else {
+        n += count;
+      }
+    } else {
+      let next_quant = quantizer(data, pos);
+      pos = next_quant.pos;
+      if (next_quant.value == -3) {
+        return Err("invalid quantizer or truncated block");
+      }
+      if (next_quant.value >= 0) {
+        quant = scale(next_quant.value);
+      } else if (next_quant.value == -1) {
+        n = size;
+      } else {
+        let v = nybble(data, pos);
+        let hi = nybble(data, pos + 1);
+        let lo = nybble(data, pos + 2);
+        pos += 3;
+        if (v < 0 || hi < 0 || lo < 0) {
+          return Err("truncated noise tail");
+        }
+        let decay_code = hi << 4 | lo;
+        let level = ((v + 1) as f64 * ((v + 1) as f64) * quant / 16.0) as f32;
+        let decay = (1.0 - decay_code as f64 * (decay_code as f64) / 524288.0) as f32;
+        while (n < size) {
+          seed = random(seed);
+          if ((seed & 2147483648u32) != 0u32) {
+            level = -level;
+          }
+          out = out.with(n, level as f64);
+          level *= decay;
+          n += 1;
+        }
+      }
+    }
+  }
+  return Ok(Coefficients { reader: BitReader { ...r, seed: seed, pos: pos }, values: out });
+}
+
+pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32, plans: transform.Plan[], work: transform.Scratch }
+
+pub struct Block { state: Decoder, samples: f64[], next_byte: i32 }
+
+pub function decoder(block_size: i32, channels: i32): Result[Decoder, string] {
+  if (!valid_config(block_size, channels)) {
+    return Err("block size must be a power of two from 256 to 32768; channels must be 1..255");
+  }
+  let plans: transform.Plan[] = [];
+  for shift in 0..4 {
+    plans = plans.append(transform.plan(block_size >> shift));
+  }
+  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32, plans: plans, work: transform.scratch(block_size) });
+}
+
+// Blocks in the file container start on byte boundaries. Output is interleaved.
+pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
+  if (!valid_config(state.block_size, state.channels) || state.lap.len() != state.channels * state.block_size / 2 || state.last_size < 0 || state.last_size > state.block_size) {
+    return Err("invalid decoder state");
+  }
+  if (offset < 0 || offset >= data.len() || data.len() > 1073741823) {
+    return Err("missing block data");
+  }
+  let Decoder { block_size: n, channels, last_size: previous_size, lap: all_lap, seed, plans, work } = state;
+  let r = read(reader(data, offset, seed));
+  let control = r.value;
+  let pattern_index = 1;
+  if ((control & 8) != 0) {
+    r = read(r);
+    pattern_index = r.value;
+    if (pattern_index < 2) {
+      return Err("reserved window pattern");
+    }
+  }
+  let output = transform.zeros(n * channels);
+  let last = previous_size;
+  for channel in 0..channels {
+    let lap = transform.zeros(n / 2);
+    for i in 0..n / 2 {
+      lap = lap.with(i, all_lap[channel * n / 2 + i]);
+    }
+    last = previous_size;
+    let pattern = windows.pattern(pattern_index << 4 | control & 15);
+    let at = 0;
+    while (pattern != 0) {
+      let subsize = n >> (pattern & 7);
+      let decoded = coefficients(r, subsize)?;
+      r = decoded.reader;
+      let overlap = subsize;
+      if ((pattern & 8) != 0) {
+        overlap >>= control & 7;
+      }
+      if (overlap > last) {
+        overlap = last;
+      }
+      last = subsize;
+      let inv = transform.inverse_reuse(decoded.values, lap, overlap, plans[pattern & 7], work);
+      work = inv.work;
+      lap = inv.lap;
+      if (subsize == n) {
+        for i in 0..n {
+          output = output.with(i * channels + channel, work.samples[i]);
+        }
+      } else {
+        let available = (n - subsize) / 2;
+        let dst = n / 2;
+        let src = n / 2;
+        let j = 0;
+        if (subsize <= available) {
+          for i in 0..subsize {
+            src -= 1;
+            output = output.with((at + i) * channels + channel, lap[src]);
+          }
+          for i in subsize..available {
+            dst -= 1;
+            src -= 1;
+            lap = lap.with(dst, lap[src]);
+          }
+          for i in 0..subsize {
+            dst -= 1;
+            lap = lap.with(dst, work.samples[i]);
+          }
+        } else {
+          for i in 0..available {
+            src -= 1;
+            output = output.with((at + i) * channels + channel, lap[src]);
+          }
+          for i in available..subsize {
+            output = output.with((at + i) * channels + channel, work.samples[j]);
+            j += 1;
+          }
+          for i in 0..available {
+            dst -= 1;
+            lap = lap.with(dst, work.samples[j]);
+            j += 1;
+          }
+        }
+      }
+      at += subsize;
+      pattern >>= 4;
+    }
+    for i in 0..n / 2 {
+      all_lap = all_lap.with(channel * n / 2 + i, lap[i]);
+    }
+  }
+  let ch = 1;
+  while (ch < channels) {
+    for i in 0..n {
+      let at = i * channels + ch;
+      let a = output[at - 1];
+      let b = output[at];
+      output = output.with(at - 1, a + b);
+      output = output.with(at, a - b);
+    }
+    ch += 2;
+  }
+  let next = (r.pos + 1) / 2;
+  return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, lap: all_lap, seed: r.seed, plans: plans, work: work }, samples: output, next_byte: next });
+}

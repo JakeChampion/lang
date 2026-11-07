@@ -1,0 +1,285 @@
+// Complete ULC encoder with transient windows, masking, and noise substitution.
+import "std/array";
+import "std/f64";
+import "./transform";
+import "./analysis";
+import "./windows";
+import "./bitstream";
+
+pub enum Mode { Vbr(f64), Cbr(f64), Abr(f64, f64) }
+
+pub struct Encoder { block_size: i32, channels: i32, rate: i32, mode: Mode, pending: f64[], lap: f64[], detector: windows.Detector, control: i32, plans: transform.Plan[], profiles: analysis.Profile[] }
+
+pub struct Prepared { state: Encoder, coefs: f64[], noise: f64[], ranks: i32[], complexity: f64, nonzero: i32, control: i32 }
+
+pub struct Block { state: Encoder, bytes: u8[], bits: i32, complexity: f64, control: i32 }
+
+pub function create(block_size: i32, channels: i32, rate: i32, mode: Mode): Result[Encoder, string] {
+  if (channels < 1 || channels > 255 || block_size < 256 || block_size > 32768 || (block_size & block_size - 1) != 0 || rate < 1) {
+    return Err("invalid encoder configuration");
+  }
+  match (mode) {
+    Vbr(quality) => {
+      if (!quality.is_finite() || quality <= 0.0 || quality > 100.0) {
+        return Err("quality must be in (0, 100]");
+      }
+    },
+    Cbr(kbps) => {
+      if (!kbps.is_finite() || kbps <= 0.0) {
+        return Err("bitrate must be finite and positive");
+      }
+    },
+    Abr(kbps, complexity) => {
+      if (!kbps.is_finite() || kbps <= 0.0 || !complexity.is_finite() || complexity <= 0.0 || complexity > 1.0) {
+        return Err("ABR requires a positive bitrate and average complexity in (0, 1]");
+      }
+    }
+  }
+  let plans: transform.Plan[] = [];
+  let profiles: analysis.Profile[] = [];
+  for shift in 0..4 {
+    plans = plans.append(transform.plan(block_size >> shift));
+    profiles = profiles.append(analysis.profile(block_size >> shift, rate));
+  }
+  return Ok(Encoder { block_size: block_size, channels: channels, rate: rate, mode: mode, pending: transform.zeros(block_size * channels), lap: transform.zeros(block_size * channels), detector: windows.detector(), control: 0x10, plans: plans, profiles: profiles });
+}
+
+pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, string] {
+  let n = state.block_size;
+  let channels = state.channels;
+  if (samples.len() != n * channels) {
+    return Err("incorrect encoder sample count");
+  }
+  for x in samples {
+    if (!x.is_finite() || x.abs() > 1.0) {
+      return Err("samples must be finite and in [-1, 1]");
+    }
+  }
+  let next = transform.zeros(n * channels);
+  for ch in 0..channels {
+    for i in 0..n {
+      let value = samples[i * channels + ch];
+      if ((ch & 1) == 0 && ch + 1 < channels) {
+        value = 0.5 * (value + samples[i * channels + ch + 1]);
+      } else if ((ch & 1) != 0) {
+        value = 0.5 * (samples[i * channels + ch - 1] - value);
+      }
+      next = next.with(ch * n + i, value);
+    }
+  }
+  let control = state.control;
+  let detector = windows.detect(state.detector, state.pending, next, n, channels, state.rate);
+  let silent = true;
+  for value in state.pending {
+    if (value != 0.0) {
+      silent = false;
+      break;
+    }
+  }
+  if (silent) {
+    for value in state.lap {
+      if (value != 0.0) {
+        silent = false;
+        break;
+      }
+    }
+  }
+  if (silent) {
+    let ranks = analysis.ints(n * channels);
+    for i in 0..ranks.len() {
+      ranks = ranks.with(i, ranks.len() - 1 - i);
+    }
+    return Ok(Prepared { state: Encoder { ...state, pending: next, detector: detector, control: detector.control }, coefs: transform.zeros(n * channels), noise: transform.zeros(n * channels), ranks: ranks, complexity: 0.0, nonzero: 0, control: control });
+  }
+  let next_pattern = windows.pattern(detector.control);
+  let next_overlap = n >> (next_pattern & 7);
+  if ((next_pattern & 8) != 0) {
+    next_overlap >>= detector.control & 7;
+  }
+  let coefs = transform.zeros(n * channels);
+  let noise = transform.zeros(n * channels);
+  let keys = transform.zeros(n * channels);
+  let power_all = transform.zeros(n / 2);
+  let all_lap = state.lap;
+  let sum_square = 0.0;
+  let sum_abs = 0.0;
+  let nonzero = 0;
+  for ch in 0..channels {
+    let lap = transform.zeros(n);
+    for i in 0..n {
+      lap = lap.with(i, all_lap[ch * n + i]);
+    }
+    let pattern = windows.pattern(control);
+    let at = 0;
+    while (pattern != 0) {
+      let shift = pattern & 7;
+      let size = n >> shift;
+      pattern >>= 4;
+      let overlap = next_overlap;
+      if (pattern != 0) {
+        overlap = n >> (pattern & 7);
+        if ((pattern & 8) != 0) {
+          overlap >>= control & 7;
+        }
+      }
+      if (overlap > size) {
+        overlap = size;
+      }
+      let available = (n - size) / 2;
+      let source = (n + size) / 2;
+      let dest = source;
+      let input = transform.zeros(size);
+      let read = at;
+      if (available < size) {
+        for i in 0..available {
+          input = input.with(i, lap[source]);
+          source += 1;
+        }
+        for i in available..size {
+          input = input.with(i, state.pending[ch * n + read]);
+          read += 1;
+        }
+        for i in 0..available {
+          lap = lap.with(dest, state.pending[ch * n + read]);
+          dest += 1;
+          read += 1;
+        }
+      } else {
+        for i in 0..size {
+          input = input.with(i, lap[source]);
+          source += 1;
+        }
+        for i in size..available {
+          lap = lap.with(dest, lap[source]);
+          dest += 1;
+          source += 1;
+        }
+        for i in 0..size {
+          lap = lap.with(dest, state.pending[ch * n + read]);
+          dest += 1;
+          read += 1;
+        }
+      }
+      let dual = transform.forward_dual(input, lap, (n - size) / 2, overlap, state.plans[shift]);
+      lap = dual.lap;
+      let power = transform.zeros(size / 2);
+      for i in 0..size {
+        let re = dual.mdct[i];
+        let im = dual.mdst[i];
+        let energy = re * re + im * im;
+        let absolute = re.abs();
+        let index = ch * n + at + i;
+        coefs = coefs.with(index, re);
+        let key = -1.0e100;
+        if (absolute >= 0.00000000023283064365386963) {
+          key = analysis.fast_log(re * re);
+          nonzero += 1;
+        }
+        keys = keys.with(index, key);
+        power = power.with(i / 2, power[i / 2] + energy);
+        power_all = power_all.with((at + i) / 2, power_all[(at + i) / 2] + energy);
+        sum_square += re * re;
+        sum_abs += absolute;
+      }
+      let spectrum = analysis.spectrum(power, state.profiles[shift], true);
+      for i in 0..size {
+        noise = noise.with(ch * n + at + i, spectrum[i]);
+      }
+      at += size;
+    }
+    for i in 0..n {
+      all_lap = all_lap.with(ch * n + i, lap[i]);
+    }
+  }
+  let mask = transform.zeros(n / 2);
+  let pattern = windows.pattern(control);
+  let at = 0;
+  while (pattern != 0) {
+    let shift = pattern & 7;
+    let size = n >> shift;
+    let power = array.slice(power_all, at / 2, (at + size) / 2);
+    let spectrum = analysis.spectrum(power, state.profiles[shift], false);
+    for i in 0..size / 2 {
+      mask = mask.with(at / 2 + i, spectrum[i]);
+    }
+    at += size;
+    pattern >>= 4;
+  }
+  for ch in 0..channels {
+    for i in 0..n {
+      let index = ch * n + i;
+      keys = keys.with(index, 2.0 * keys[index] + mask[i / 2] - 1.3862943611198906 * ((ch & 1) as f64));
+    }
+  }
+  let complexity = 0.0;
+  if (sum_square > 0.0) {
+    complexity = (sum_abs * sum_abs / sum_square).log() / (n as f64).log();
+    if (complexity < 0.0) {
+      complexity = 0.0;
+    }
+    if (complexity > 1.0) {
+      complexity = 1.0;
+    }
+  }
+  let ranks = analysis.ranks(keys);
+  return Ok(Prepared { state: Encoder { ...state, pending: next, lap: all_lap, detector: detector, control: detector.control }, coefs: coefs, noise: noise, ranks: ranks, complexity: complexity, nonzero: nonzero, control: control });
+}
+
+function emit(p: Prepared, keep: i32, measure: boolean): bitstream.Encoded {
+  return bitstream.pass(p.coefs, p.noise, p.ranks, p.state.block_size, p.state.channels, p.control, keep, measure);
+}
+
+pub function encode_prepared(own p: Prepared): Result[Block, string] {
+  let keep = p.nonzero;
+  let target = -1.0;
+  let allow_overhead = false;
+  match (p.state.mode) {
+    Vbr(quality) => {
+      let target_complexity = 15.154262241479264 * (100.0 / quality).log();
+      if (target_complexity > 0.0) {
+        let wanted = (p.state.block_size * p.state.channels) as f64 * p.complexity / target_complexity;
+        if (wanted < keep as f64) {
+          keep = wanted as i32;
+        }
+      }
+    },
+    Cbr(kbps) => {
+      target = kbps;
+    },
+    Abr(kbps, average) => {
+      target = kbps * p.complexity / average;
+      allow_overhead = true;
+    }
+  }
+  if (target >= 0.0) {
+    let budget = (p.state.block_size as f64 * target * 1000.0 / (p.state.rate as f64)).floor();
+    let minimum = emit(p, 0, true).bits;
+    if (budget < minimum as f64) {
+      // Silence still needs a header and one stop command per subblock.
+      if (allow_overhead) {
+        keep = 0;
+      } else {
+        return Err("bitrate budget is too small for the block header and stop commands");
+      }
+    } else {
+      let low = 0;
+      let high = keep;
+      while (low < high) {
+        let middle = low + (high - low + 1) / 2;
+        let bits = emit(p, middle, true).bits;
+        if (bits as f64 <= budget) {
+          low = middle;
+        } else {
+          high = middle - 1;
+        }
+      }
+      keep = low;
+    }
+  }
+  let encoded = emit(p, keep, false);
+  return Ok(Block { state: p.state, bytes: encoded.bytes, bits: encoded.bits, complexity: p.complexity, control: p.control });
+}
+
+pub function encode_block(own state: Encoder, samples: [f64]): Result[Block, string] {
+  return encode_prepared(prepare(state, samples)?);
+}
