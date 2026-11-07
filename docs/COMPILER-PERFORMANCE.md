@@ -67,8 +67,9 @@ It retains the proof rules and computes fresh results for each extracted graph.
 1. Remove repeated graph analysis and allocation in ownership certification.
    Reuse results only while the graph remains unchanged.
    Evaluate compact bitsets and worklists for repeated dataflow propagation.
-2. Reduce repeated type substitution and generic expansion in semantic lowering.
-   Evaluate canonical type IDs and memoization with complete keys.
+2. Reduce repeated semantic planning and function analysis in `semlower.produced_rows`.
+   Measure schema views, ownership-mode inference, and selective re-lowering before changes.
+   Evaluate canonical type IDs where type lookups dominate.
 3. Reduce temporary arrays, boxed tuples, and repeated AST traversal across compiler passes.
    Prefer a compiler or runtime improvement when every program can benefit.
 4. Evaluate compact token, AST, and IR storage with real source corpora.
