@@ -22,6 +22,16 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
+  let n = unsafe { 3 };
+  let text = unsafe { string_from_bytes_unchecked(bytes) };
+  let total = unsafe {
+    let k = text.len();
+    k + n
+  };
+  return text;
+}
+`},
 	{"range-expressions", `import "core/iter" as it;
 
 function f(n: i32): i32 {

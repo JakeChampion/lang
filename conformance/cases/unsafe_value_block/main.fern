@@ -1,0 +1,45 @@
+// `unsafe { …; e }` is a value block whose statements and value accept
+// the obligations of the unsafe calls inside it. At the end of a branch it
+// is the branch value when it ends in a value, and a statement otherwise.
+import "std/i32";
+
+enum Word { Empty, Bytes(u8[]) }
+
+function text_of(bytes: u8[]): string {
+    return unsafe { string_from_bytes_unchecked(bytes) };
+}
+
+function returned(w: Word): string {
+    match (w) {
+        Empty => { return "-"; },
+        Bytes(bytes) => {
+            unsafe {
+                return string_from_bytes_unchecked(bytes);
+            }
+        },
+    }
+}
+
+function valued(w: Word): string {
+    return match (w) {
+        Empty => "-",
+        Bytes(bytes) => {
+            let n = bytes.len();
+            unsafe { string_from_bytes_unchecked(bytes.take(n)) }
+        },
+    };
+}
+
+function main(): i32 {
+    let greeting = text_of([104u8, 105u8]);
+    let total = unsafe {
+        let n = greeting.len();
+        n * 10
+    };
+    print(greeting);
+    print(total.to_string());
+    print(returned(Bytes([111u8, 107u8])));
+    print(valued(Bytes([121u8, 101u8, 115u8])));
+    print(valued(Empty));
+    return 0;
+}

@@ -15837,6 +15837,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return paramSig(n.Params, n.ReturnType)
 	case *ast.BlockExpr:
+		if n.Unsafe {
+			c.unsafeDepth++
+			defer func() { c.unsafeDepth-- }()
+		}
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
 		want := c.expectedType
