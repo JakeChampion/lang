@@ -17094,6 +17094,8 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                           }
                         } else if (cur.has_union(cqual)) {
                           out = out.append(dg_at("E029", "variant pattern qualifier \"" + shown_enum(cur, cqual) + "\" does not match scrutinee enum " + shown_enum(cur, mun.name), elem.line, elem.col));
+                        } else {
+                          out = out.append(dg_at("E087", "unknown module \"" + cqual + "\" in variant pattern", elem.line, elem.col));
                         }
                       } else {
                         if (!elem.has_guard) {
@@ -17540,6 +17542,9 @@ function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: type
 }
 
 function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
+  if (name == parser.RANGE_MODULE) {
+    return dg_at("E001", range_import_msg(), line, col);
+  }
   let d = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: util.show_type_vars(name).len() };
   if (name == "string_from_bytes") {
     return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)");
@@ -26679,6 +26684,10 @@ function e060_e062_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[]
     out = e060_e062_stmts(fn.body, dyns, mod, out);
   }
   return out;
+}
+
+function range_import_msg(): string {
+  return "a range `a..b` outside a `for` header requires `import \"core/iter\";`";
 }
 
 function map_import_msg(): string {

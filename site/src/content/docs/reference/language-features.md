@@ -25,7 +25,9 @@ for name in trees {
 ```
 
 Ranges are `start..end` (exclusive) or `start..=end` (inclusive), and in a
-foreach head they compile to a counted loop with no iterator allocated:
+foreach head they compile to a counted loop with no iterator allocated.
+Anywhere else a range is a `core/iter` `Range` value, so the module must
+import `core/iter`, under any name:
 
 ```fern
 for i in 0..xs.len() { total = total + xs[i]; }

@@ -2162,6 +2162,10 @@ type ConstDecl struct {
 	FoldErr string
 }
 
+// RangeModule qualifies the call that a range `a..b` desugars to. It is an
+// import path, which no identifier can spell, so no user name captures it.
+const RangeModule = "core/iter"
+
 type Import struct {
 	P         Position
 	Path      string

@@ -786,36 +786,6 @@ pub function (s: string) is_valid_identifier(): boolean {
   return true;
 }
 
-pub function (s: string) is_ipv4(): boolean {
-  let parts = s.split(".");
-  if (parts.len() != 4) {
-    return false;
-  }
-  let i = 0;
-  while (i < 4) {
-    let p = parts[i];
-    let plen = p.len();
-    if (plen == 0 || plen > 3) {
-      return false;
-    }
-    let v = 0;
-    let j = 0;
-    while (j < plen) {
-      let b = p[j];
-      if (!b.is_ascii_digit()) {
-        return false;
-      }
-      v = v * 10 + (b as i32 - 48);
-      j += 1;
-    }
-    if (v < 0 || v > 255) {
-      return false;
-    }
-    i += 1;
-  }
-  return true;
-}
-
 pub function (s: string) is_email_like(): boolean {
   match (s.split_once("@")) {
     Some(p) => {

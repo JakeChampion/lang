@@ -22,6 +22,20 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"range-expressions", `import "core/iter" as it;
+
+function f(n: i32): i32 {
+  let r = 0..n;
+  let s = 1 + 2..=n * 4;
+  let t = it.range(0, 3);
+  let total = 0;
+  for x in (0..n) {
+    total += x;
+  }
+  total += it.sum(0..=n);
+  return total;
+}
+`},
 	{"nested-qualified-unit-variants", `enum A { Foo(i32), Bar }
 
 function f(r: Result[i32, A], k: i32): i32 {

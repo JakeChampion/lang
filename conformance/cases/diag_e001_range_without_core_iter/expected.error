@@ -1,0 +1,1 @@
+a range `a..b` outside a `for` header requires `import "core/iter";`

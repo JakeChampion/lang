@@ -6184,16 +6184,18 @@ function main(): i32 {
 func TestArm64StdlibBundle24(t *testing.T) {
 	src := `
 import "std/http";
+import "std/net";
 function main(): i32 {
     // is_ipv4
-    if (!"127.0.0.1".is_ipv4()) { return 1; }
-    if (!"0.0.0.0".is_ipv4()) { return 2; }
-    if (!"255.255.255.255".is_ipv4()) { return 3; }
-    if ("256.0.0.0".is_ipv4()) { return 4; }
-    if ("1.2.3".is_ipv4()) { return 5; }
-    if ("1.2.3.4.5".is_ipv4()) { return 6; }
-    if ("abc.def.ghi.jkl".is_ipv4()) { return 7; }
-    if ("".is_ipv4()) { return 8; }
+    if (!net.is_ipv4("127.0.0.1")) { return 1; }
+    if (!net.is_ipv4("0.0.0.0")) { return 2; }
+    if (!net.is_ipv4("255.255.255.255")) { return 3; }
+    if (net.is_ipv4("256.0.0.0")) { return 4; }
+    if (net.is_ipv4("1.2.3")) { return 5; }
+    if (net.is_ipv4("1.2.3.4.5")) { return 6; }
+    if (net.is_ipv4("abc.def.ghi.jkl")) { return 7; }
+    if (net.is_ipv4("")) { return 8; }
+    if (net.is_ipv4("01.2.3.4")) { return 9; }
 
     // is_email_like
     if (!"a@b.c".is_email_like()) { return 10; }
