@@ -202,12 +202,26 @@ it completes before any access after it starts. It is `dsb sy` on arm64 and
 every privilege level, so it needs no `unsafe` block. A driver uses it, for
 example, between the writes to a DMA ring and the MMIO write that rings the
 doorbell. It takes the host-call path of the MMIO ops, so no pass removes it or
-moves an access across it. The privileged ops wait for an environment that grants
-them (#14254).
+moves an access across it.
 
-Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops —
-`__raw_barrier`, `__raw_wfi`, `__raw_csr_read`/`_write` — rather than opening a
-general `asm` block. The floor's ~14 ops work because each is a *portable
+The first privileged ops exist too (#14252). Only the `kernel` environment
+grants them, through the `privileged` capability, so a hosted target refuses
+each one with E066:
+
+- `__wfi()` waits for an interrupt. It is `wfi` on arm64.
+- `__hvc(fid, a1, a2, a3)` and `__smc(fid, a1, a2, a3)` call the hypervisor and
+  the secure monitor in the SMC calling convention. They put the arguments in
+  x0 to x3 and return x0. A board stops the VM with PSCI `SYSTEM_OFF` through
+  one of them. They need an `unsafe` block, because a call such as PSCI
+  `CPU_ON` starts a core at an address.
+
+They take the host-call path of the MMIO ops, so no pass removes or moves them.
+x86-64 has no kernel target yet, so its emitter refuses `__hvc` and `__smc` and
+writes `hlt` for `__wfi`. System registers and cache and TLB maintenance come
+next.
+
+Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops like
+these, rather than opening a general `asm` block. The floor's ~14 ops work because each is a *portable
 concept* with a per-target emitter; that property is what a general asm block
 gives up.
 
@@ -250,8 +264,8 @@ as E102. The rule is simple, so a reader can apply it too:
 
 - Each parameter, the result and each annotated local is a scalar.
 - A call names another `@norc` function or a raw memory intrinsic: the
-  `__load_*` and `__store_*` floor, the `__mmio_*` accesses, `__fence` and the
-  bit counts.
+  `__load_*` and `__store_*` floor, the `__mmio_*` accesses, `__fence`, the
+  privileged ops and the bit counts.
 - A string, an array, a struct, a closure, a method, a field access, an index,
   `for` and `match` are refused.
 
@@ -277,6 +291,31 @@ a `-T` link flag. Its `GOOS=custom` proposal moves the layout into a `mem`
 package. Fern can do the same from the start: the descriptor holds the ISA rules,
 and the board package (section 6) holds the addresses. A new board is then a new
 package, not a compiler change.
+
+**The first slice (#14254): `-target arm64-kernel`.** The target's environment
+is `kernel`, with the `EntryReset` shape and only the `privileged` capability
+(section 2). A board module supplies `log`. `-ram BASE,SIZE` gives the RAM that the loader puts the image
+in. It is a flag until a board module can supply it. The compiler writes an
+ELF `ET_EXEC` image:
+
+- The text segment starts at BASE and is not writable. The data segment follows
+  it and is not executable.
+- The reset `_start` runs on the boot core with the MMU off. It parks the other
+  cores, sets the stack at BASE + SIZE, and enables the FP and SIMD unit
+  (`CPACR_EL1`).
+- Then it clears `.bss` and gives the heap the RAM between the image and the
+  1 MiB stack. It calls `main`, and after `main` it waits with `wfe`.
+- The image keeps 32-bit addresses, so the end of the RAM must be at or below
+  2 GiB. That covers qemu-virt, where the RAM starts at `0x40000000`. Firecracker
+  puts the RAM at `0x80000000`, so it needs 64-bit addresses in `compiler/elf.fern`.
+- qemu-virt puts the device tree at the start of its RAM for an image that is
+  not a Linux kernel. So `-ram 0x40200000,126M` keeps the first 2 MiB for it.
+
+`internal/testing/e2ecompiler/self_host_kernel_test.go` reads the program
+headers and the entry point. `TestSelfHostKernelBootsOnQemu` boots the image on
+`qemu-system-aarch64 -M virt`. The image prints through a PL011 provider and
+stops the VM with PSCI `SYSTEM_OFF`. The `kernel-boot-arm64` job of the
+self-host lane runs it.
 
 ### 5. Atomics
 
@@ -482,10 +521,15 @@ environment over the FernOS syscalls can come later, as an improvement.
    `@provide("log")` function (section 6).
 5. **Done: the no-RC property** (#14253), as `@norc` (section 3). The
    `interrupt` and `naked` attributes wait for a kernel environment.
-6. Then: memory layout and the reset entry (#14254) → effect intrinsics
-   (#14252) → `interrupt` and `naked` (#14253) →
+6. **First slice done: memory layout and the reset entry** (#14254), as
+   `arm64-kernel` (section 4).
+7. **Started: milestone 1 on qemu-virt** (#14260). The image boots, prints and
+   stops the VM in CI. The device-tree parser in Fern and the x86-64 microVM
+   remain. **Started: the effect intrinsics** (#14252), with `__fence`,
+   `__wfi`, `__hvc` and `__smc` (section 2).
+   Then: `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-7. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+8. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 

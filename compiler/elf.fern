@@ -968,6 +968,12 @@ pub function elf_data_vaddr_pie(text_len: i32): i32 {
   return elf_data_vaddr_after(elf_text_vaddr_pie() + text_len, elf_page_align());
 }
 
+// The same layout at a fixed `base`: a kernel image that a boot loader or a VMM
+// loads where the RAM is.
+pub function elf_image_kernel(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32, base: i32): u8[] {
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, base, 2, false, false, true, elf_page_align(), relro);
+}
+
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32): u8[] {
   return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0, 3, false, false, true, elf_page_align(), relro);
 }

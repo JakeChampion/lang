@@ -132,3 +132,17 @@ func finishArm64Run(t *testing.T, cmd *exec.Cmd, out []byte) (string, int) {
 	}
 	return string(out), cmd.ProcessState.ExitCode()
 }
+
+// QemuSystemArm64 returns the path of qemu-system-aarch64, the full-system
+// emulator that boots an arm64-kernel image.
+func QemuSystemArm64(t *testing.T) string {
+	t.Helper()
+	p, err := exec.LookPath("qemu-system-aarch64")
+	if err != nil {
+		if envflag.On("FERN_REQUIRE_QEMU_SYSTEM") {
+			t.Fatal("no qemu-system-aarch64 on PATH and FERN_REQUIRE_QEMU_SYSTEM=1: this lane installs it and is the only one running this test, so a skip here covers nothing")
+		}
+		t.Skip("no qemu-system-aarch64 on PATH")
+	}
+	return p
+}

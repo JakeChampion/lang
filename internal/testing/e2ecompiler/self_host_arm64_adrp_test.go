@@ -70,7 +70,7 @@ function main(): i32 {
     code = arm64_adrp(code, arm64_x1(), 0);            // adrp x1, answer@PAGE (placeholder)
     code = arm64_ldr(code, arm64_x0(), arm64_x1(), 0, false); // ldr x0, [x1, answer@PAGEOFF] (placeholder)
     code = arm64_movz(code, arm64_x16(), 1, 0, false);        // SYS_exit (Darwin)
-    code = arm64_svc(code, 128);                        // svc #0x80
+    code = arm64_exception(code, "svc", 128);                        // svc #0x80
     let data: i32[] = [42, 0, 0, 0, 0, 0, 0, 0];       // answer: .quad 42
 
     let tlen: i32 = code.len();

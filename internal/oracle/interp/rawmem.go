@@ -237,6 +237,11 @@ func registerRawMemory(i *Interp) {
 		}
 		return Void{}, nil
 	}}
+	for _, name := range []string{"__wfi", "__hvc", "__smc"} {
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
+			return nil, fmt.Errorf("%s: needs a kernel target", name)
+		}}
+	}
 	i.Builtins["__ptr_width"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if _, err := rawArgs("__ptr_width", args, 0); err != nil {
 			return nil, err

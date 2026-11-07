@@ -7456,6 +7456,9 @@ function call_mmio_builtin(name: string, args: Value[]): Value {
   if (name == "__fence") {
     return v_void();
   }
+  if (checker.privileged_intrinsic(name)) {
+    return v_err(name + ": needs a kernel target");
+  }
   let want = 1;
   if (util.str_has_prefix(name, "__mmio_store")) {
     want = 2;

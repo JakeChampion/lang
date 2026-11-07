@@ -40,6 +40,7 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `__store_u8(p, v)`, `__store_i32(p, v)`, `__store_i64(p, v)`, `__store_ptr(p, v)` | `usize, value -> void` | `p` must point at writable memory that no live value aliases. |
 | `__mmio_load8(p)`, `__mmio_load16(p)`, `__mmio_load32(p)`, `__mmio_load64(p)` | `usize -> i32 or i64` | `p` must be a device register or memory of the loaded width, aligned to that width. No pass removes, merges or moves the load. |
 | `__mmio_store8(p, v)`, `__mmio_store16(p, v)`, `__mmio_store32(p, v)`, `__mmio_store64(p, v)` | `usize, i32 or i64 -> void` | `p` must be a writable device register or memory of the stored width, aligned to that width. No pass removes, merges or moves the store. |
+| `__hvc(fid, a1, a2, a3)`, `__smc(fid, a1, a2, a3)` | `i64, i64, i64, i64 -> i64` | The firmware must implement the function `fid` in the SMC calling convention, and the arguments must meet its contract. A call such as PSCI `CPU_ON` starts a core at an address, so that address must hold code. Only a kernel target grants these ops (E066). |
 | `__memcpy(d, s, n)`, `__memset(d, v, n)` | `usize, usize or i32, i32 -> void` | Both ranges must be valid for `n` bytes and must not overlap. |
 | `__str_bytes(s, p)` | `string, usize -> usize` | `p` must have room for the string's bytes. |
 | `__account_entry(k, p)` | `i32, usize -> usize` | `p` must be an allocator block header. |

@@ -316,7 +316,7 @@ func TestEnforceLogAndClockUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
-			if platforms.ForTarget(target).Environment == "freestanding" {
+			if env := platforms.ForTarget(target).Environment; env == "freestanding" || env == "kernel" {
 				continue
 			}
 			t.Run(name+"/"+target, func(t *testing.T) {
@@ -417,7 +417,7 @@ func TestEnforceRandomUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
-			if platforms.ForTarget(target).Environment == "freestanding" {
+			if env := platforms.ForTarget(target).Environment; env == "freestanding" || env == "kernel" {
 				continue
 			}
 			t.Run(name+"/"+target, func(t *testing.T) {
