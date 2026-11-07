@@ -56,7 +56,10 @@ func runFrontEndCodeCases(t *testing.T, cases []frontEndCodeCase) {
 	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := checkerCodesOutput(checker, tc.src)
+			out, err := checkerCodesOutput(checker, tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
 			got := driverCodes(out)
 
 			if !equalStrings(got, uniqueSortedCodes(tc.want)) {

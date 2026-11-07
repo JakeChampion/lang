@@ -403,7 +403,10 @@ func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
 				}
 			}
 
-			out := checkerCodesOutput(checker, tc.src)
+			out, err := checkerCodesOutput(checker, tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
 			shMsgs := byCode(driverDiags(out))[tc.code]
 
 			key := tc.name + "/" + tc.code

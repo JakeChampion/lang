@@ -20,6 +20,7 @@ import (
 )
 
 var codeRE = regexp.MustCompile(`E\d{3}`)
+var driverVerdictCodeRE = regexp.MustCompile(`^[A-Z][0-9]{3}$`)
 
 const methodBorrowPrelude = `struct Handle { fd: i32 }
 function (own h: Handle) close(): i32 { return h.fd; }
@@ -120,11 +121,26 @@ func hostDriverBin(t *testing.T, driverFile string) string {
 }
 
 // checkerCodesOutput is what a checker driver binary prints for src on its stdin.
-func checkerCodesOutput(bin, src string) string {
+func checkerCodesOutput(bin, src string) (string, error) {
 	cmd := exec.Command(bin)
 	cmd.Stdin = strings.NewReader(src)
-	out, _ := cmd.Output()
-	return string(out)
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), nil
+	}
+	stderr := ""
+	if exit, ok := err.(*exec.ExitError); ok {
+		stderr = string(exit.Stderr)
+		// Exit 1 is the checker's diagnostic verdict, not a transport failure.
+		if exit.ExitCode() == 1 {
+			for _, d := range driverDiags(string(out)) {
+				if driverVerdictCodeRE.MatchString(d.code) {
+					return string(out), nil
+				}
+			}
+		}
+	}
+	return string(out), fmt.Errorf("checker driver failed: %w\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
 }
 
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {

@@ -142,7 +142,10 @@ func TestSelfHostAssocConstsDifferential(t *testing.T) {
 				goMsgs = append(goMsgs, d.code+": "+d.msg)
 			}
 
-			out := checkerCodesOutput(checker, tc.src)
+			out, err := checkerCodesOutput(checker, tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var shMsgs []string
 			for _, d := range driverDiags(out) {
 				shMsgs = append(shMsgs, d.code+": "+d.msg)
