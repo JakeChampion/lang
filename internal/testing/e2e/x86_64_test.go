@@ -1334,9 +1334,11 @@ function main(): i32 {
 }`, 42},
 		{"string ptr round-trip through usize", `function main(): i32 {
     let s: string = "hello, " + "world";
-    let ptr: usize = s as usize;
-    let s2: string = ptr as string;
-    return s2.len();
+    unsafe {
+        let ptr: usize = s as usize;
+        let s2: string = ptr as string;
+        return s2.len();
+    }
 }`, 12},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)

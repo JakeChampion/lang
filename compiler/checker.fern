@@ -1986,6 +1986,7 @@ pub struct Scope {
   tparams: string[],
   tbounds: string[],
   lit_locals: string[],
+  in_unsafe: boolean,
 }
 
 pub struct ViewMemo { names: util.NameIndex, holds: boolean[] }
@@ -2369,13 +2370,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs = struct_table(ss, [], [], no_spellings());
   let unions = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -15099,13 +15100,7 @@ function cast_target_diags(target: string, u: ast.ExprUnary, s: Scope): util.Dia
 function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
   let none: util.Diag[] = [];
   if (is_primitive_type(tgt) && is_primitive_type(cot)) {
-    if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
-      return [e069_cast(u, cot, tgt)];
-    }
-    if (!as_cast_allowed(cot, tgt)) {
-      return [e033_cast(u, cot, tgt)];
-    }
-    return none;
+    return primitive_cast_diags(u, tgt, cot, s);
   }
   let unresolved = unresolved_cast_diags(u, tgt, cot, s);
   if (unresolved.len() > 0) {
@@ -15114,16 +15109,41 @@ function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s:
   if (type_contains_unknown(tgt) || type_contains_unknown(cot)) {
     return none;
   }
-  if (cast_pointer_int(cot) && cast_pointer_shaped(tgt, false)) {
-    if (!is_usize(cot)) {
+  if (heap_pointer_cast(cot, tgt)) {
+    if (cast_pointer_int(cot) && !is_usize(cot)) {
       return [e069_cast(u, cot, tgt)];
     }
-    return none;
+    return pointer_cast_diags(u, cot, tgt, s);
   }
-  if (!(cast_pointer_int(tgt) && cast_pointer_shaped(cot, true)) && !coercible(cot, tgt, s)) {
+  if (!coercible(cot, tgt, s)) {
     return [e033_cast(u, cot, tgt)];
   }
   return none;
+}
+
+function primitive_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
+  if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
+    return [e069_cast(u, cot, tgt)];
+  }
+  if (!as_cast_allowed(cot, tgt)) {
+    return [e033_cast(u, cot, tgt)];
+  }
+  if (type_eq(tgt, t_string()) && cast_pointer_int(cot) || type_eq(cot, t_string()) && cast_pointer_int(tgt)) {
+    return pointer_cast_diags(u, cot, tgt, s);
+  }
+  return [];
+}
+
+function heap_pointer_cast(cot: typeinfo.Type, tgt: typeinfo.Type): boolean {
+  return cast_pointer_int(cot) && cast_pointer_shaped(tgt, false) || cast_pointer_int(tgt) && cast_pointer_shaped(cot, true);
+}
+
+// A cast between an integer and a heap value reads or forges an address.
+function pointer_cast_diags(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type, s: Scope): util.Diag[] {
+  if (s.in_unsafe || s.sigs.raw_allowed) {
+    return [];
+  }
+  return [dg_at("E095", "the cast from " + type_label(cot) + " to " + type_label(tgt) + " reinterprets a pointer outside an unsafe block", u.line, u.col)];
 }
 
 function unresolved_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
@@ -17044,6 +17064,14 @@ function scalar_pattern_diags(m: ast.StmtMatch, mst: typeinfo.Type, cur: Scope):
   return out;
 }
 
+// The then body of an unsafe block is an unsafe context.
+function then_scope(f: ast.StmtIf, s: Scope): Scope {
+  if (f.origin == "unsafe") {
+    return Scope { ...s, in_unsafe: true };
+  }
+  return s;
+}
+
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur = bind_mutual_siblings(stmts, s);
@@ -17089,7 +17117,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           out = util.append_diags(out, literal_match_diags(f, cur));
         } else {
           out = util.append_diags(out, call_diags(f.cond, cur));
-          out = util.append_diags(out, stmts_call_diags(f.then_body, cur));
+          out = util.append_diags(out, stmts_call_diags(f.then_body, then_scope(f, cur)));
           out = util.append_diags(out, stmts_call_diags(f.else_body, cur));
         }
       },

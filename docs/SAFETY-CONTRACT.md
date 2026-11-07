@@ -139,6 +139,8 @@ The final change must reject unmarked raw operations and preserve ordinary arith
 5. Done: both checkers refuse a raw builtin outside an unsafe block as `E095`.
    The set is `unsafe_intrinsics` in `compiler/checker.fern` and `UnsafeIntrinsics` in the Go checker, pinned equal by `TestUnsafeIntrinsicsMatchSelfHost`.
    The normative cases are `diag_e095_raw_builtin_outside_unsafe` and the control `unsafe_block_accepts_raw_builtins`.
+   Both checkers also refuse an `as` cast between an integer and a heap value outside an unsafe block as `E095`.
+   The normative cases are `diag_e095_pointer_cast_outside_unsafe` and the control `unsafe_block_accepts_pointer_casts`.
 
 6. Publish a safe-code guarantee only after the enforcement and runtime audits
    establish the required invariants. Until then, report the remaining gaps.

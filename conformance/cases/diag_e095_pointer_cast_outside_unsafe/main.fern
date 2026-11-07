@@ -1,0 +1,13 @@
+// A cast between an integer and a heap value reads or forges an address, so
+// only an unsafe block accepts it. The same casts outside a block are refused
+// in either direction.
+
+struct Big { a: i64, b: i64, c: i64 }
+
+function main(): i32 {
+    let s: string = "hi";
+    let p: usize = s as usize;
+    let b: Big = p as Big;
+    print(b.a);
+    return 0;
+}

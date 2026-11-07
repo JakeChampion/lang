@@ -1,0 +1,27 @@
+// spec: SC-02
+// A cast between an integer and a heap value is accepted inside an unsafe
+// block, in a function body and in a closure. The interpreter has no
+// addresses, so the case runs on the compiled backends only.
+
+function round_trip(s: string): string {
+    let back: string = "";
+    unsafe {
+        let p: usize = s as usize;
+        back = p as string;
+    }
+    return back;
+}
+
+function main(): i32 {
+    let s: string = "hi";
+    let same: () => boolean = (): boolean => {
+        let n: boolean = false;
+        unsafe {
+            n = (s as usize) == (round_trip(s) as usize);
+        }
+        return n;
+    };
+    print(round_trip(s));
+    print(same());
+    return 0;
+}
