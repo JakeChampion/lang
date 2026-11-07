@@ -6569,8 +6569,10 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
   return index_result_type(check_expr(x.array, s), check_expr(x.index, s));
 }
 
+// The literal pre-pass gives an integer literal local a marker type until it
+// settles, and the marker is an integer index too.
 function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
-  if (!is_integer(it)) {
+  if (!is_integer(it) && lit_id(it) < 0) {
     return t_unknown("array index must be an integer");
   }
   match (at) {
