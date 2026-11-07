@@ -1,0 +1,1 @@
+no method "shout" on i32[] — "shout" is a function of module "lib", not a method: pass the value as its first argument
