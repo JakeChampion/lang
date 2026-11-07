@@ -57,7 +57,7 @@ function __tbl_pad(s: string, width: i32): string {
     out = out.append(32 as u8);
     p += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function __tbl_widths(rows: string[][]): i32[] {
@@ -143,7 +143,7 @@ pub function render_with_header(headers: string[], rows: string[][]): string {
       dashes = dashes.append(45 as u8);
       d += 1;
     }
-    rule = rule.append(string_from_bytes_unchecked(dashes));
+    rule = rule.append(unsafe { string_from_bytes_unchecked(dashes) });
     c += 1;
   }
   lines = lines.append(__tbl_row(rule, widths));

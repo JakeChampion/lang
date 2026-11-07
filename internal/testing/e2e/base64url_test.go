@@ -9,15 +9,15 @@ import "std/string";
 function main(): i32 {
     let enc: string = b64.encode_url("Hello, World!".bytes());
     if (enc.contains("+") || enc.contains("/") || enc.contains("=")) { return 1; }
-    if (string_from_bytes_unchecked(__codec_bytes(b64.decode_url(enc))) != "Hello, World!") { return 2; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(b64.decode_url(enc))) } != "Hello, World!") { return 2; }
     // 0xFFFFFF is not valid UTF-8 — since #5730 it stays u8[] on both
     // sides and never has to pose as a string.
     let s2: u8[] = [255 as u8, 255 as u8, 255 as u8];
     if (b64.encode_url(s2) != "____") { return 3; }
     if (b64.encode_url(__codec_bytes(b64.decode_url("____"))) != "____") { return 4; }
     if (b64.encode_url("Hi".bytes()) != "SGk") { return 5; }
-    if (string_from_bytes_unchecked(__codec_bytes(b64.decode_url("SGk"))) != "Hi" || string_from_bytes_unchecked(__codec_bytes(b64.decode_url("SGk="))) != "Hi") { return 6; }
-    if (b64.encode_url("".bytes()) != "" || string_from_bytes_unchecked(__codec_bytes(b64.decode_url(""))) != "") { return 7; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(b64.decode_url("SGk"))) } != "Hi" || unsafe { string_from_bytes_unchecked(__codec_bytes(b64.decode_url("SGk="))) } != "Hi") { return 6; }
+    if (b64.encode_url("".bytes()) != "" || unsafe { string_from_bytes_unchecked(__codec_bytes(b64.decode_url(""))) } != "") { return 7; }
     return 42;
 }
 

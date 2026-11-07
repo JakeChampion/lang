@@ -40,7 +40,7 @@ function words_of(text: string): string[] {
       i += 1;
     }
     if (buf.len() > 0) {
-      out = out.append(string_from_bytes_unchecked(buf));
+      out = out.append(unsafe { string_from_bytes_unchecked(buf) });
     }
   }
   return out;

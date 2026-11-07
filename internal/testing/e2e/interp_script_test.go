@@ -165,7 +165,7 @@ function main(): i32 {
     if (ab[0] != 72) { return 5; }
     if (s.to_upper() != "HELLO") { return 6; }
     if (s.to_lower() != "hello") { return 7; }
-    let rt: string = string_from_bytes_unchecked(s.bytes());
+    let rt: string = unsafe { string_from_bytes_unchecked(s.bytes()) };
     if (rt != "Hello") { return 8; }
     print(rt);
     print(s.to_upper());

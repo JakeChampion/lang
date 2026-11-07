@@ -89,7 +89,7 @@ function test_a_code_has_eight_letters_of_the_alphabet(): test.TestOutcome {
   let code = code_of(a);
   let bad = 0;
   for c in code.as_bytes() {
-    if (!"ABCDEFGHJKMNPQRSTUVWXYZ23456789".contains(string_from_bytes_unchecked([c]))) {
+    if (!"ABCDEFGHJKMNPQRSTUVWXYZ23456789".contains(unsafe { string_from_bytes_unchecked([c]) })) {
       bad += 1;
     }
   }

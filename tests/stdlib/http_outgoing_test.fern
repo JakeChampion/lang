@@ -15,7 +15,7 @@ function test_request_gives_its_outgoing(): test.TestOutcome {
   let base = http.request("POST", "/up?x=1").with_header("Host", "example.test").with_header("Content-Length", "3");
   let req = HttpRequest { ...base, body: stream.from_bytes("abc".bytes()) };
   let o = req.outgoing("https");
-  let got = o.method + " " + o.scheme + " " + o.authority + " " + o.target + " " + string_from_bytes_unchecked(o.body) + " " + o.headers.get("content-length").unwrap_or("-");
+  let got = o.method + " " + o.scheme + " " + o.authority + " " + o.target + " " + unsafe { string_from_bytes_unchecked(o.body) } + " " + o.headers.get("content-length").unwrap_or("-");
   return test.assert_eq(got, "POST https example.test /up?x=1 abc 3");
 }
 

@@ -135,7 +135,9 @@ function ascii_lower(s: string): string {
     buf = buf.append(c);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 function fence_info(line: string): string {

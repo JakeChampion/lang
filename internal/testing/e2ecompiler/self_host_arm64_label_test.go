@@ -99,7 +99,7 @@ function main(): i32 {
     a = arm64_asm_resolve(a);
     let none: i32[] = [];
     let bin: i32[] = macho_executable(a.text, none, none, "fern", macho_entry_off(a), 0, none);
-    write(string_from_bytes_unchecked(to_u8(bin)));
+    write(unsafe { string_from_bytes_unchecked(to_u8(bin)) });
     return 0;
 }
 `

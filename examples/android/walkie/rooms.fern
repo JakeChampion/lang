@@ -193,7 +193,7 @@ function code_of(random: [u8]): string {
     out = out.append(letters[(v % n) as i32]);
     v /= n;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function member(token: u8[]): Member {

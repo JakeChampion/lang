@@ -1096,7 +1096,7 @@ function netd_answer(r: dns.NetdReply): string {
 function test_netd_request(): test.TestOutcome {
   let line = "";
   if let Some(b) = dns.netd_request("example.com") {
-    line = string_from_bytes_unchecked(b.take(b.len() - 1)) + " NUL " + (b[b.len() - 1] == 0u8).to_string();
+    line = unsafe { string_from_bytes_unchecked(b.take(b.len() - 1)) } + " NUL " + (b[b.len() - 1] == 0u8).to_string();
   }
   let refused = dns.netd_request("a b").is_some().to_string() + " " + dns.netd_request("").is_some().to_string() + " " + dns.netd_request("a\nb").is_some().to_string();
   return test.assert_eq(line + ", " + refused, "getaddrinfo example.com ^ 1024 0 1 0 0 NUL true, false false false");

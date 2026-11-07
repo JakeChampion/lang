@@ -69,7 +69,7 @@ function __de_slice(s: string, a: i32, b: i32): string {
     out = out.append(s[i] as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function __de_trim(s: string): string {
@@ -112,7 +112,7 @@ function __de_unescape(s: string): string {
       i += 1;
     }
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 ```
 

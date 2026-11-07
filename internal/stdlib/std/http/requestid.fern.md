@@ -107,6 +107,6 @@ pub function fresh(random: () => i32): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 ```

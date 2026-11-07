@@ -331,7 +331,7 @@ struct P { name: string } function go(): i32 { let s = "ab"; let p = P { name: s
 struct P { name: string } function go(): i32 { let s = "AB"; let p = P { name: s.to_ascii_lower() }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		{"strdrop-repeat-field-detector", `import "std/string";
 struct P { name: string } function go(): i32 { let s = "ab"; let p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 6) { return 99; } return __rc_underflow_count(); }`, 0},
-		{"strdrop-string-from-bytes-field-detector", `struct P { name: string } function go(): i32 { let b: u8[] = [104, 105]; let p = P { name: string_from_bytes_unchecked(b) }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"strdrop-string-from-bytes-field-detector", `struct P { name: string } function go(): i32 { let b: u8[] = [104, 105]; let p = P { name: unsafe { string_from_bytes_unchecked(b) } }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		{"strdrop-trim-field-excluded-detector", `import "std/string";
 struct P { name: string } function go(): i32 { let s = "  ab  "; let p = P { name: s.trim() }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		{"strdrop-replace-field-excluded-detector", `import "std/string";

@@ -334,7 +334,7 @@ function char_text(b: i32): string {
   }
   let bs: u8[] = [];
   bs = bs.append(b as u8);
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function print_login(c: Ctx, e: utmp.Entry): string {

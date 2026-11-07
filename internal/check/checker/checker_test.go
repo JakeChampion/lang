@@ -5469,7 +5469,7 @@ function main(): i32 { return total([1.5, 2.5]); }`,
 		{"i32 variable into u8[]", `function f(b: i32): i32 { let xs: u8[] = [b]; return xs.len(); }
 function main(): i32 { return f(300); }`,
 			"expected u8[], got i32[]"},
-		{"i32 variable into a u8[] argument", `function g(b: i32): i32 { return string_from_bytes_unchecked([b]).len(); }
+		{"i32 variable into a u8[] argument", `function g(b: i32): i32 { return unsafe { string_from_bytes_unchecked([b]) }.len(); }
 function main(): i32 { return g(65); }`,
 			"expected u8[], got i32[]"},
 	}

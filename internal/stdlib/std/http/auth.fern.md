@@ -206,6 +206,6 @@ function __quoted(s: string): string {
     }
     out = out.append(b);
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 ```

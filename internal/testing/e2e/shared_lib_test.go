@@ -1064,9 +1064,9 @@ function check(env: usize, cls: usize): i32 {
     if (("HELLO").to_lower() == "hello") { ok = ok + 1; }
     if (("hello").to_upper() == "HELLO") { ok = ok + 2; }
     if (base64.encode("Man".bytes()) == "TWFu") { ok = ok + 4; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("TWFu"))) == "Man") { ok = ok + 8; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("TWFu"))) } == "Man") { ok = ok + 8; }
     if (hex.encode("AB".bytes()) == "4142") { ok = ok + 16; }
-    if (string_from_bytes_unchecked(__codec_bytes(hex.decode("4142"))) == "AB") { ok = ok + 32; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode("4142"))) } == "AB") { ok = ok + 32; }
     return ok;
 }
 function main(): i32 { return 0; }

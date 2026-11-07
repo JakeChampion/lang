@@ -162,7 +162,7 @@ function interop_get(url: string): fetch.Request {
 function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
   match (r) {
     Ok(resp) => {
-      print(label + ": " + resp.status.to_string() + " " + string_from_bytes_unchecked(resp.body_bytes()));
+      print(label + ": " + resp.status.to_string() + " " + unsafe { string_from_bytes_unchecked(resp.body_bytes()) });
     },
     Err(e) => {
       print(label + ": error " + e.message());
@@ -190,7 +190,7 @@ function socket(roots: verify.Roots): string {
           match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
-              let line: string = sent.session.alpn() + " " + string_from_bytes_unchecked(got.data).trim();
+              let line: string = sent.session.alpn() + " " + unsafe { string_from_bytes_unchecked(got.data) }.trim();
               return line + " / " + resumed_line(first, got.conn.tickets);
             },
             Err(e) => {
@@ -256,7 +256,7 @@ function echoed(cfg: client.Config): string {
           match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
-              return string_from_bytes_unchecked(got.data).trim();
+              return unsafe { string_from_bytes_unchecked(got.data) }.trim();
             },
             Err(e) => {
               return "recv " + e.message();
@@ -291,7 +291,7 @@ function resumed_line(cfg: client.Config, tickets: client.Ticket[]): string {
           match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
-              return mode + " " + string_from_bytes_unchecked(got.data).trim();
+              return mode + " " + unsafe { string_from_bytes_unchecked(got.data) }.trim();
             },
             Err(e) => {
               return "recv " + e.message();

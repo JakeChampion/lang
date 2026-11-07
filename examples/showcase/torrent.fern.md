@@ -184,7 +184,7 @@ function json_text(b: u8[]): string {
       out = out.append(c);
     }
   }
-  return string_from_bytes_unchecked(out.append(b'"'));
+  return unsafe { string_from_bytes_unchecked(out.append(b'"')) };
 }
 
 @export("fern:showcase/torrent", "describe")

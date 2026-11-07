@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 const stringFromBytesLocalSrc = `function conv(b: u8[]): Option[string] {
-    let s: string = string_from_bytes_unchecked(b);
+    let s: string = unsafe { string_from_bytes_unchecked(b) };
     if (s.len() > 10) { return Some(s); }
     return None;
 }

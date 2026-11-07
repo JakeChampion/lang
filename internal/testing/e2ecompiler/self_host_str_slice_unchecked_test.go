@@ -10,7 +10,7 @@ const strSliceUncheckedSelfHostProg = `import "std/string";
 // h(104) é(195,169) l l o — 6 bytes, 5 code points.
 function mk(): string {
     let b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
-    return string_from_bytes_unchecked(b);
+    return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function main(): i32 {

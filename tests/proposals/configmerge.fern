@@ -164,7 +164,7 @@ function env_to_key(name: string): MappedKey {
     }
     i += 1;
   }
-  return MappedKey { ok: true, key: string_from_bytes_unchecked(buf) };
+  return MappedKey { ok: true, key: unsafe { string_from_bytes_unchecked(buf) } };
 }
 
 function key_to_env(k: string): MappedKey {
@@ -186,7 +186,7 @@ function key_to_env(k: string): MappedKey {
     }
     i += 1;
   }
-  return MappedKey { ok: true, key: string_from_bytes_unchecked(buf) };
+  return MappedKey { ok: true, key: unsafe { string_from_bytes_unchecked(buf) } };
 }
 
 function env_layer(vars: string[]): Layer {

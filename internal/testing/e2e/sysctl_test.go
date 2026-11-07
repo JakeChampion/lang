@@ -21,7 +21,7 @@ const sysctlSource = `function main(): i32 {
                 text = text.append(bs[n]);
                 n = n + 1;
             }
-            print(string_from_bytes_unchecked(text));
+            print(unsafe { string_from_bytes_unchecked(text) });
         },
         Err(_) => { return 2; }
     }

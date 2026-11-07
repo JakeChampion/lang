@@ -36,7 +36,7 @@ function main(): i32 {
     }
   }
   let (chunk, b3) = b2.read_n(2);
-  print(string_from_bytes_unchecked(chunk));
+  print(unsafe { string_from_bytes_unchecked(chunk) });
   print(b3.remaining().to_string());
   let (rest, b4) = b3.read_all_string();
   match (rest) {

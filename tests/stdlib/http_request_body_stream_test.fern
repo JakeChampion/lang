@@ -121,7 +121,7 @@ function test_read_line_walks_the_body(): test.TestOutcome {
 
 function test_read_n_takes_a_prefix(): test.TestOutcome {
   let (head, rest) = parsed("hello world").body_stream().read_n(5);
-  return test.assert_eq(string_from_bytes_unchecked(head), "hello");
+  return test.assert_eq(unsafe { string_from_bytes_unchecked(head) }, "hello");
 }
 
 function test_read_n_leaves_the_remainder(): test.TestOutcome {
@@ -160,7 +160,7 @@ function test_bodyless_request_reads_empty(): test.TestOutcome {
 }
 
 function test_ill_formed_line_is_refused(): test.TestOutcome {
-  let raw = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
+  let raw = unsafe { string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]) };
   let req = parsed(raw);
   let (line, rest) = req.body_stream().read_line();
   match (line) {
@@ -225,7 +225,7 @@ function test_sourced_read_line_spans_chunks(): test.TestOutcome {
 function test_sourced_read_n_spans_chunks(): test.TestOutcome {
   let (head, rest) = stream.from_source(scripted(["ab", "cd", "e"])).read_n(3);
   let (tail, done) = rest.read_all_string();
-  return test.assert_eq(string_from_bytes_unchecked(head) + "|" + option_text(tail.ok()), "abc|de");
+  return test.assert_eq(unsafe { string_from_bytes_unchecked(head) } + "|" + option_text(tail.ok()), "abc|de");
 }
 
 function counted(chunks: string[], pulls: Cell[i32]): BodySource {
@@ -247,7 +247,7 @@ function test_sourced_read_n_pulls_only_what_it_owes(): test.TestOutcome {
   let after_first = pulls.get();
   let (more, rest2) = rest.read_n(1);
   let after_second = pulls.get();
-  return test.assert_eq(string_from_bytes_unchecked(head) + "|" + after_first.to_string() + "|" + string_from_bytes_unchecked(more) + "|" + after_second.to_string(), "ab|1|c|2");
+  return test.assert_eq(unsafe { string_from_bytes_unchecked(head) } + "|" + after_first.to_string() + "|" + unsafe { string_from_bytes_unchecked(more) } + "|" + after_second.to_string(), "ab|1|c|2");
 }
 
 function option_text(o: Option[string]): string {
@@ -347,7 +347,7 @@ function test_sourced_stream_reports_each_fault(): test.TestOutcome {
     let s = stream.from_source(faulting(["par", "tial"], f));
     let before = fault_text(s.fault());
     let (all, rest) = s.read_all();
-    got = got + before + "|" + string_from_bytes_unchecked(all) + "|" + fault_text(rest.fault()) + "\n";
+    got = got + before + "|" + unsafe { string_from_bytes_unchecked(all) } + "|" + fault_text(rest.fault()) + "\n";
     want = want + "<none>|partial|" + f.message() + "\n";
   }
   return test.assert_eq(got, want);
@@ -379,7 +379,7 @@ function test_read_some_answers_each_chunk(): test.TestOutcome {
   let (first, s1) = s.read_some();
   let (second, s2) = s1.read_some();
   let (third, s3) = s2.read_some();
-  return test.assert_eq(string_from_bytes_unchecked(first) + "|" + string_from_bytes_unchecked(second) + "|" + string_from_bytes_unchecked(third) + "|" + served.get().to_string(), "ab|cde||3");
+  return test.assert_eq(unsafe { string_from_bytes_unchecked(first) } + "|" + unsafe { string_from_bytes_unchecked(second) } + "|" + unsafe { string_from_bytes_unchecked(third) } + "|" + served.get().to_string(), "ab|cde||3");
 }
 
 function main(): i32 {

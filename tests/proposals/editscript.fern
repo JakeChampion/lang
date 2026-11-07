@@ -6,7 +6,7 @@ struct Edit { op: string, from: string, to: string }
 
 function char_at(s: string, i: i32): string {
   let buf: u8[] = [s[i]];
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function min3(a: i32, b: i32, c: i32): i32 {

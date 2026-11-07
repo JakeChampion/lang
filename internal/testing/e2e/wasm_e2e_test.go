@@ -1646,14 +1646,14 @@ function main(): i32 {
     // Mutating the bytes shouldn't affect the source string.
     bs = bs.with(0, 72); // 'H'
     if (s != "hello") { return 7; }
-    let s2: string = string_from_bytes_unchecked(bs);
+    let s2: string = unsafe { string_from_bytes_unchecked(bs) };
     if (s2 != "Hello") { return 8; }
     if (s2.len() != 5) { return 9; }
     // Empty string round-trip.
     let es: string = "";
     let ebs: u8[] = es.bytes();
     if (ebs.len() != 0) { return 10; }
-    if (string_from_bytes_unchecked(ebs) != "") { return 11; }
+    if (unsafe { string_from_bytes_unchecked(ebs) } != "") { return 11; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2331,14 +2331,14 @@ function main(): i32 {
     if (base64.encode("fooba".bytes()) != "Zm9vYmE=") { return 6; }
     if (base64.encode("foobar".bytes()) != "Zm9vYmFy") { return 7; }
     if (base64.encode("hello world".bytes()) != "aGVsbG8gd29ybGQ=") { return 8; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode(""))) != "") { return 9; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zg=="))) != "f") { return 10; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm8="))) != "fo") { return 11; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9v"))) != "foo") { return 12; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYg=="))) != "foob") { return 13; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYmE="))) != "fooba") { return 14; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYmFy"))) != "foobar") { return 15; }
-    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("aGVsbG8gd29ybGQ="))) != "hello world") { return 16; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode(""))) } != "") { return 9; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("Zg=="))) } != "f") { return 10; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm8="))) } != "fo") { return 11; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9v"))) } != "foo") { return 12; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYg=="))) } != "foob") { return 13; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYmE="))) } != "fooba") { return 14; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYmFy"))) } != "foobar") { return 15; }
+    if (unsafe { string_from_bytes_unchecked(__codec_bytes(base64.decode("aGVsbG8gd29ybGQ="))) } != "hello world") { return 16; }
     return 0;
 }
 // Decode a valid fixture. Report a malformed fixture before ending the test.
@@ -4022,7 +4022,7 @@ func TestWASMEmptyU8Sentinel(t *testing.T) {
 func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 	src := `function main(): i32 {
 		let bs: u8[] = __alloc_u8(0);
-		let s: string = string_from_bytes_unchecked(bs);
+		let s: string = unsafe { string_from_bytes_unchecked(bs) };
 		return s.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -5222,14 +5222,14 @@ function main(): i32 {
 
 		// "hi" -> "6869"
 		if (hex.encode("hi".bytes()) != "6869") { return 3; }
-		if (string_from_bytes_unchecked(__codec_bytes(hex.decode("6869"))) != "hi") { return 4; }
+		if (unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode("6869"))) } != "hi") { return 4; }
 
 		// every nibble: byte 0xab -> "ab"
 		if (hex.encode("hello world".bytes()) != "68656c6c6f20776f726c64") { return 5; }
-		if (string_from_bytes_unchecked(__codec_bytes(hex.decode("68656c6c6f20776f726c64"))) != "hello world") { return 6; }
+		if (unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode("68656c6c6f20776f726c64"))) } != "hello world") { return 6; }
 
 		// uppercase hex digits decode the same
-		if (string_from_bytes_unchecked(__codec_bytes(hex.decode("48454C4C4F"))) != "HELLO") { return 7; }
+		if (unsafe { string_from_bytes_unchecked(__codec_bytes(hex.decode("48454C4C4F"))) } != "HELLO") { return 7; }
 
 		// Odd lengths and invalid bytes reject the complete input.
 		// The error offset points to the end of an incomplete pair.

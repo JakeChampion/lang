@@ -679,7 +679,7 @@ function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
   if (q != 0) {
     bs = bs.append(q as u8);
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function c_needs_quotes(s: string, q: i32, extra: string): boolean {
@@ -841,7 +841,7 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
   if (open) {
     bs = bs.append(39 as u8);
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 pub function env_entry(entry: string, style: i32): string {

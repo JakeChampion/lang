@@ -5428,7 +5428,7 @@ function __supervisor_snapshot(sup: __Supervisor, i: i32): __Supervisor {
   if (got.len() == 0) {
     return sup;
   }
-  let framed: (string[], string) = metrics.frames(sup.partial[i] + string_from_bytes_unchecked(got));
+  let framed: (string[], string) = metrics.frames(sup.partial[i] + unsafe { string_from_bytes_unchecked(got) });
   sup = __Supervisor { ...sup, partial: sup.partial.with(i, framed.1) };
   if (framed.0.len() > 0) {
     sup = __Supervisor { ...sup, snaps: sup.snaps.with(i, framed.0[framed.0.len() - 1]) };

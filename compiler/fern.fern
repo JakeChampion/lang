@@ -732,7 +732,9 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     bin = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden, p.relro_pad);
   }
   if (!emit_syms) {
-    return string_from_bytes_unchecked(bin);
+    unsafe {
+      return string_from_bytes_unchecked(bin);
+    }
   }
   let aend = arm64_native.arm64_code_len(p);
   let nosec: i32[] = [];
@@ -746,7 +748,9 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     arm64_native.arm64_debug_frame(p, tv),
     arm64_var_ranges(p, tv, dv),
   );
-  return string_from_bytes_unchecked(util.to_u8(wide));
+  unsafe {
+    return string_from_bytes_unchecked(util.to_u8(wide));
+  }
 }
 
 function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: string, dir: string): i32[][] {
@@ -793,7 +797,9 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   if (eoff < 0) {
     eoff = 0;
   }
-  return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad));
+  unsafe {
+    return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad));
+  }
 }
 
 // A kernel image: the position-independent layout at `base`, as an ET_EXEC that
@@ -812,7 +818,9 @@ function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
     return arm64_refusals("arm64-kernel", "linker", p.unknown);
   }
   let eoff = arm64_native.arm64_asm_label_off(p.asm, "_start");
-  return string_from_bytes_unchecked(elf.elf_image_kernel(p.asm.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, base));
+  unsafe {
+    return string_from_bytes_unchecked(elf.elf_image_kernel(p.asm.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, base));
+  }
 }
 
 // The startup reads the address and the page-rounded length of the read-only
@@ -872,7 +880,9 @@ function x86_kernel_image(asm: string, words: u8[], base: i64): string {
     return "";
   }
   let eoff = x86_native.x86_label_off(a, "_start");
-  return string_from_bytes_unchecked(elf.elf_image_kernel_pvh(a.text, a.rodata, eoff, a.bss_size, a.relro_pad, base));
+  unsafe {
+    return string_from_bytes_unchecked(elf.elf_image_kernel_pvh(a.text, a.rodata, eoff, a.bss_size, a.relro_pad, base));
+  }
 }
 
 function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean): string {
@@ -927,7 +937,9 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   }
   util.arr_push_cliff_report("x86:image", 0);
   if (!emit_syms) {
-    return string_from_bytes_unchecked(bin);
+    unsafe {
+      return string_from_bytes_unchecked(bin);
+    }
   }
   let end = x86_native.x86_code_len(a);
   let wide: i32[] = elf.elf_append_debug(
@@ -940,7 +952,9 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     x86_native.x86_debug_frame(a, tv),
     x86_var_ranges(a, tv as i32),
   );
-  return string_from_bytes_unchecked(util.to_u8(wide));
+  unsafe {
+    return string_from_bytes_unchecked(util.to_u8(wide));
+  }
 }
 
 function reserve_bytes(own data: i32[], n: i32): i32[] {
@@ -1383,7 +1397,9 @@ function jni_mangle(s: string): string {
     } else if (c == b'_') {
       out += "_1";
     } else {
-      out += string_from_bytes_unchecked([c]);
+      unsafe {
+        out += string_from_bytes_unchecked([c]);
+      }
     }
   }
   return out;
@@ -2027,7 +2043,9 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
   }
   let init_at = arm64_native.arm64_symbol_addr(p, "__fern_init_array", tv as i64, dv as i64) as i32;
   let so = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, note, init_at);
-  return string_from_bytes_unchecked(util.to_u8(so));
+  unsafe {
+    return string_from_bytes_unchecked(util.to_u8(so));
+  }
 }
 
 function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module): string {
@@ -2080,7 +2098,9 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     init_at = data_at + init_at - base;
   }
   let so = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, false, init_at);
-  return string_from_bytes_unchecked(util.to_u8(so));
+  unsafe {
+    return string_from_bytes_unchecked(util.to_u8(so));
+  }
 }
 
 function le64_at(b: i32[], off: i32): i64 {
@@ -2766,7 +2786,9 @@ function run_manifest(path: string): i32 {
       print(manifest_field(field));
       field = "";
     } else {
-      field += string_from_bytes_unchecked([line[i]]);
+      unsafe {
+        field += string_from_bytes_unchecked([line[i]]);
+      }
     }
     i += 1;
   }
@@ -2780,7 +2802,10 @@ function run_manifest(path: string): i32 {
 // bytes so that this compiler's own literal pool never holds it, and a
 // candidate must end in a newline within 512 bytes.
 function image_manifest_line(image: u8[]): string {
-  let magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  let magic = "";
+  unsafe {
+    magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  }
   let from = 0;
   while (true) {
     let at = find_bytes_from(image, magic, from);
@@ -2799,7 +2824,10 @@ function image_manifest_line(image: u8[]): string {
         bytes = bytes.append(image[k]);
         k += 1;
       }
-      let line = string_from_bytes_unchecked(bytes);
+      let line = "";
+      unsafe {
+        line = string_from_bytes_unchecked(bytes);
+      }
       if (find_bytes(bytes, " profile=") >= 0 && find_bytes(bytes, " heap_limit=") >= 0) {
         return line;
       }
@@ -7224,13 +7252,17 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         dsym_offs = pa2.lab_offs;
         dwarf = darwin_dwarf(prog, tv, dv, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()));
       }
-      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, arm64_native.arm64_code_len(prog), deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
+      unsafe {
+        out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, arm64_native.arm64_code_len(prog), deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
+      }
       util.arr_push_cliff_report("darwin:image", 0);
     }
   } else if (target == "wasm32-wasi" && emit_text) {
     out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
   } else if (target == "wasm32-wasi" && emit == "core-module") {
-    out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches)));
+    unsafe {
+      out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches)));
+    }
   } else if (target == "wasm32-wasi") {
     let comp = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
@@ -7239,7 +7271,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       }
       return 2;
     }
-    out_asm = string_from_bytes_unchecked(util.to_u8(comp.bytes));
+    unsafe {
+      out_asm = string_from_bytes_unchecked(util.to_u8(comp.bytes));
+    }
   } else if (target == "wasm32-wasi-http" && emit_text) {
     out_asm = emitforms.wasm_http_core(full, sub);
   } else if (target == "wasm32-wasi-http" && emit == "core-module") {
@@ -7247,7 +7281,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (hwat.len() == 0) {
       return 2;
     }
-    out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches)));
+    unsafe {
+      out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches)));
+    }
   } else if (target == "wasm32-wasi-http") {
     let hc = emitforms.wasm_http_component(full, sub);
     if (hc.bytes.len() == 0) {
@@ -7256,7 +7292,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       }
       return 2;
     }
-    out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+    unsafe {
+      out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+    }
   } else if (target == "x86-64-freestanding") {
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
     if (out_asm.len() == 0) {

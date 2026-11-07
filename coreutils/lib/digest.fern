@@ -381,7 +381,7 @@ function lower_hex(s: string): string {
     bs = bs.append(b as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 pub function needs_escape(name: string): boolean {
@@ -415,7 +415,7 @@ pub function escape_name(name: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(bs);
+  return unsafe { string_from_bytes_unchecked(bs) };
 }
 
 function unescape(name: u8[]): (boolean, u8[]) {

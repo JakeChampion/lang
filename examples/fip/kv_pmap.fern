@@ -129,7 +129,7 @@ function incremented(current: string, delta: i64): string {
   for k in 0..8 {
     bytes = bytes.with(k, byte_of(next, k));
   }
-  return string_from_bytes_unchecked(bytes);
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 function put(own entries: pmap.PMap[string, string], req: Request): pmap.PMap[string, string] {
@@ -266,7 +266,7 @@ function key_string(idx: i64): string {
   for j in 0..key_size() {
     bytes = bytes.with(j, key_byte(idx, j));
   }
-  return string_from_bytes_unchecked(bytes);
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 function value_string(v: i64): string {
@@ -274,7 +274,7 @@ function value_string(v: i64): string {
   for j in 0..value_size() {
     bytes = bytes.with(j, value_byte(v, j));
   }
-  return string_from_bytes_unchecked(bytes);
+  return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
 function gen_batch(seed: i64, universe: i64, mix: i32): Request[] {

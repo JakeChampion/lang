@@ -689,7 +689,7 @@ function decimal_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: bo
       kept = kept.append(digits[j]);
       j += 1;
     }
-    ds = string_from_bytes_unchecked(kept);
+    ds = unsafe { string_from_bytes_unchecked(kept) };
   }
   let lr: (LD, boolean) = f.from_decimal(ds, k, neg);
   return Parse { v: lr.0, erange: lr.1, end: i };
@@ -1334,7 +1334,7 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
     i += 1;
   }
   if (!up) {
-    return (string_from_bytes_unchecked(kept), false);
+    return (unsafe { string_from_bytes_unchecked(kept) }, false);
   }
   i = n - 1;
   while (i >= 0) {
@@ -1343,10 +1343,10 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
       i -= 1;
     } else {
       kept = kept.with(i, (kept[i] as i32 + 1) as u8);
-      return (string_from_bytes_unchecked(kept), false);
+      return (unsafe { string_from_bytes_unchecked(kept) }, false);
     }
   }
-  return ("1" + string_from_bytes_unchecked(kept), true);
+  return ("1" + unsafe { string_from_bytes_unchecked(kept) }, true);
 }
 
 function has_nonzero(d: string, from: i32): boolean {
@@ -1458,7 +1458,7 @@ function exp_suffix(x: i32, upper: boolean): string {
     ax /= 10;
     i -= 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
@@ -1542,7 +1542,7 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
       mant = mant.with(1, 46 as u8);
     }
     mant = copy_digits(mant, 1 + point, digits, 1, end);
-    return body(string_from_bytes_unchecked(mant), zeros, exp_suffix(x, upper));
+    return body(unsafe { string_from_bytes_unchecked(mant) }, zeros, exp_suffix(x, upper));
   }
   let dp = x + 1;
   let whole = dp;
@@ -1598,7 +1598,7 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
     lead -= 1;
   }
   head = copy_digits(head, at, digits, from, end);
-  return body(string_from_bytes_unchecked(head), zeros, "");
+  return body(unsafe { string_from_bytes_unchecked(head) }, zeros, "");
 }
 
 function nonzero_end(s: string, from: i32): i32 {
@@ -1734,7 +1734,7 @@ function fixed_u64(q: u64, prec: i32, neg: boolean): string {
     rest /= 10 as u64;
     i -= 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 pub function (f: Format) to_g(v: LD): string {
@@ -1815,12 +1815,12 @@ pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): Body {
       keep -= 1;
     }
   }
-  let digits = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
+  let digits = slice_unchecked(unsafe { string_from_bytes_unchecked(frac) }, 0, keep) + "";
   let zeros = 0 as i64;
   if (prec > nd as i64) {
     zeros = prec - nd as i64;
   }
-  let head = string_from_bytes_unchecked([hex_char(lead) as u8]);
+  let head = unsafe { string_from_bytes_unchecked([hex_char(lead) as u8]) };
   if (digits.len() > 0 || zeros > 0 as i64 || alt) {
     head = head + "." + digits;
   }

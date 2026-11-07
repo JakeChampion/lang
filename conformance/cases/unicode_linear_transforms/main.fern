@@ -40,7 +40,7 @@ function main(): i32 {
   if (unicode.reverse_graphemes(reversed) != clusters) {
     return 8;
   }
-  let bad: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 65 as u8, 255 as u8]);
+  let bad: string = unsafe { string_from_bytes_unchecked([240 as u8, 159 as u8, 65 as u8, 255 as u8]) };
   if (bad.to_lower() != "��a�") {
     return 9;
   }

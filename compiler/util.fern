@@ -42,7 +42,9 @@ pub function i64_to_string(n: i64): string {
   if (neg) {
     buf = buf.with(0, 45 as u8);
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function digest_start(): i64 {

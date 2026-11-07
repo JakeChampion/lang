@@ -47,7 +47,7 @@ function main(): i32 {
 		{"payload-passed-to-a-copying-method", 30, `struct S { data: u8[] }
 struct R { path: string, body: S }
 function mkr(n: i32): Option[R] { return Some(R { path: "abc", body: S { data: __alloc_u8(n) } }); }
-function (r: R) body_string(): string { return string_from_bytes_unchecked(r.body.data); }
+function (r: R) body_string(): string { return unsafe { string_from_bytes_unchecked(r.body.data) }; }
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;

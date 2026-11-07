@@ -74,7 +74,7 @@ function help_text(): string {
 }
 
 function chr(b: i32): string {
-  return string_from_bytes_unchecked([b as u8]);
+  return unsafe { string_from_bytes_unchecked([b as u8]) };
 }
 
 function is_octal(c: i32): boolean {

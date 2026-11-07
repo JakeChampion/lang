@@ -93,7 +93,7 @@ function main(): i32 {
   if (utf8.encode('😀') != "😀") {
     return 26;
   }
-  let invalid: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 65 as u8, 255 as u8]);
+  let invalid: string = unsafe { string_from_bytes_unchecked([240 as u8, 159 as u8, 65 as u8, 255 as u8]) };
   if (invalid.codepoint_count() != 3) {
     return 27;
   }

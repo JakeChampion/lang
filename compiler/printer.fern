@@ -54,7 +54,9 @@ function escape_lit_body(s: string, fstring: boolean): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function quote_string(s: string): string {

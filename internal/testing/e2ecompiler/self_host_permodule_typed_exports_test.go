@@ -27,7 +27,7 @@ function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); 
     if (words.len() > 2) {
         head = bytes[1:3];
     }
-    let text: string = string_from_bytes_unchecked(bytes);
+    let text: string = unsafe { string_from_bytes_unchecked(bytes) };
     let seen: Map[string, i32] = map_new(4);
     let t: i32 = 0;
     for w in words {

@@ -29,10 +29,10 @@ function main(): i32 {
 }`},
 	{"split_empty_sep_ill_formed", `import "std/string";
 function main(): i32 {
-    let trunc: string = string_from_bytes_unchecked([0xF1 as u8, 0x80 as u8, 0x62 as u8]);
-    let short: string = string_from_bytes_unchecked([0xE2 as u8, 0x82 as u8]);
-    let overlong: string = string_from_bytes_unchecked([0xC0 as u8, 0xAF as u8]);
-    let surrogate: string = string_from_bytes_unchecked([0xED as u8, 0xA0 as u8, 0x80 as u8]);
+    let trunc: string = unsafe { string_from_bytes_unchecked([0xF1 as u8, 0x80 as u8, 0x62 as u8]) };
+    let short: string = unsafe { string_from_bytes_unchecked([0xE2 as u8, 0x82 as u8]) };
+    let overlong: string = unsafe { string_from_bytes_unchecked([0xC0 as u8, 0xAF as u8]) };
+    let surrogate: string = unsafe { string_from_bytes_unchecked([0xED as u8, 0xA0 as u8, 0x80 as u8]) };
     return trunc.split("").len() * 27 + short.split("").len() * 9
         + overlong.split("").len() * 3 + surrogate.split("").len();
 }`},
@@ -58,13 +58,13 @@ function main(): i32 {
 }`},
 	{"trim_vertical_tab_and_form_feed", `import "std/string";
 function main(): i32 {
-    let s: string = string_from_bytes_unchecked([32 as u8, 9 as u8, 11 as u8, 12 as u8,
-        104 as u8, 105 as u8, 13 as u8, 10 as u8, 32 as u8]);
+    let s: string = unsafe { string_from_bytes_unchecked([32 as u8, 9 as u8, 11 as u8, 12 as u8,
+        104 as u8, 105 as u8, 13 as u8, 10 as u8, 32 as u8]) };
     return s.trim().len() + 40;
 }`},
 	{"trim_all_whitespace", `import "std/string";
 function main(): i32 {
-    let s: string = string_from_bytes_unchecked([11 as u8, 12 as u8]);
+    let s: string = unsafe { string_from_bytes_unchecked([11 as u8, 12 as u8]) };
     return s.trim().len() + 40;
 }`},
 	{"ascii_case_fold_leaves_non_ascii", `import "std/string";

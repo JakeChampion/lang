@@ -4797,7 +4797,7 @@ function tokenize(src: string): Token[] {
                 if (src[i] == 92 && i + 1 < n) {
                     let bs: u8[] = __alloc_u8(1);
                     bs = bs.with(0, escape_byte(src[i + 1] as i32) as u8);
-                    s = s + string_from_bytes_unchecked(bs);
+                    s = s + unsafe { string_from_bytes_unchecked(bs) };
                     i = i + 2;
                 } else {
                     s = s + slice_unchecked(src, i, i + 1);
@@ -5252,7 +5252,7 @@ function tokenize(src: string): Token[] {
                     let resolved: i32 = unescape(src[i + 1] as i32);
                     let buf: u8[] = __alloc_u8(1);
                     buf = buf.with(0, resolved as u8);
-                    out = out + string_from_bytes_unchecked(buf);
+                    out = out + unsafe { string_from_bytes_unchecked(buf) };
                     i = i + 2;
                 } else {
                     out = out + slice_unchecked(src, i, i + 1);
@@ -8301,7 +8301,7 @@ func TestArm64RandomBytes(t *testing.T) {
 	out, code := compileAndRunArm64(t, `import "std/rand";
 function main(): i32 {
     let s: u8[] = rand.bytes(16);
-    write(string_from_bytes_unchecked(s));
+    write(unsafe { string_from_bytes_unchecked(s) });
     return s.len();
 }`)
 	if code != 16 {

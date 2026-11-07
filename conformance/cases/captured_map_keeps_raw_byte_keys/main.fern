@@ -6,7 +6,7 @@ function main(): i32 {
   let bytes = __alloc_u8(2);
   bytes = bytes.with(0, 200 as u8);
   bytes = bytes.with(1, 201 as u8);
-  let k = string_from_bytes_unchecked(bytes);
+  let k = unsafe { string_from_bytes_unchecked(bytes) };
   let entries: Map[string, string] = Map { };
   entries = entries.insert(k, "v");
   print(f"before={entries.contains(k)}");

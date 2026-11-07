@@ -194,7 +194,7 @@ function __sv_slice(s: string, start: i32, end: i32): string {
     b = b.append(s[i] as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function __sv_str_cmp(a: string, b: string): i32 {

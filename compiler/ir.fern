@@ -1955,7 +1955,9 @@ function hex_text(text: string): string {
   for c in text {
     out = out.append(hex_digit(c as i32 >> 4)).append(hex_digit(c as i32 & 15));
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function hex_digit(d: i32): u8 {
@@ -1981,7 +1983,9 @@ pub function const_str_text(packed: string): string {
     out = out.append((hex_value(hex[i]) * 16 + hex_value(hex[i + 1])) as u8);
     i += 2;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function hex_value(c: u8): i32 {

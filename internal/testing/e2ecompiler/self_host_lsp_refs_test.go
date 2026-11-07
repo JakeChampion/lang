@@ -424,7 +424,7 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 		{"kount.fern", fix(0, 45, 50, "count", "replace `kount` with `count`"), "return count;"},
 		{"call.fern", fix(1, 30, 36, "helper", "replace `halper` with `helper`"), "return helper(1);"},
 		{"assign.fern", fix(2, 2, 7, "count", "replace `kount` with `count`"), "  count = 2;"},
-		{"retired.fern", fix(0, 30, 47, "string_from_bytes_unchecked", "replace `string_from_bytes` with `string_from_bytes_unchecked` (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)"), "return string_from_bytes_unchecked([])"},
+		{"retired.fern", fix(0, 30, 47, "string_from_bytes_unchecked", "replace `string_from_bytes` with `string_from_bytes_unchecked` inside an unsafe block (or `std/utf8.from_bytes`, which validates and returns `Result[string, Utf8Error]`)"), "return string_from_bytes_unchecked([])"},
 		{"literal.fern", fix(2, 31, 33, "y", "replace `yy` with `y`"), "Point { x: 1, y: 2 }"},
 		{"member.fern", fix(4, 11, 15, "push", "replace `puzh` with `push`"), "return p.push(2)"},
 		{"member.fern", fix(4, 23, 25, "y", "replace `yy` with `y`"), "+ p.y;"},

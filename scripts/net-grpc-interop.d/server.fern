@@ -15,6 +15,7 @@ import "std/http/grpc";
 import "std/platform";
 import "std/protobuf";
 import "std/serve";
+import "std/utf8";
 import "std/tls/identity";
 import "std/tls/server";
 import "core/int";
@@ -49,7 +50,7 @@ function echo_status(fields: protobuf.Field[]): Option[(i32, string)] {
     return None;
   };
   let code = match (protobuf.varint(inner, 1)) { Some(c) => c as i32, None => 0 };
-  let message = match (protobuf.bytes(inner, 2)) { Some(m) => string_from_bytes_unchecked(m), None => "" };
+  let message = match (protobuf.bytes(inner, 2)) { Some(m) => utf8.from_bytes_lossy(m), None => "" };
   return Some((code, message));
 }
 

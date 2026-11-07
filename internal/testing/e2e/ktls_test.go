@@ -318,7 +318,7 @@ function serve_conn(first: server.Connection): string {
     match (c.read(time.duration_seconds(20 as i64))) {
       Ok(got) => {
         c = got.conn;
-        held = held + string_from_bytes_unchecked(got.data);
+        held = held + unsafe { string_from_bytes_unchecked(got.data) };
         while (true) {
           let Some(nl) = held.index_of("\n") else {
             break;
@@ -442,8 +442,8 @@ function talk(first: client.Connection): Result[string, string] {
   }
   let echo: (client.Connection, u8[]) = await_bytes(c, 11)?;
   c = echo.0;
-  if (string_from_bytes_unchecked(echo.1) != "echo hello\n") {
-    return Err("echo " + string_from_bytes_unchecked(echo.1));
+  if (unsafe { string_from_bytes_unchecked(echo.1) } != "echo hello\n") {
+    return Err("echo " + unsafe { string_from_bytes_unchecked(echo.1) });
   }
   match (c.write("big 100000\n".bytes())) {
     Ok(s) => {

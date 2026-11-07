@@ -20,6 +20,7 @@ import "std/result";
 import "std/fetch";
 import "std/http";
 import "std/string";
+import "std/utf8";
 import "std/time";
 import "std/clock";
 import "std/tls";
@@ -71,7 +72,7 @@ function identity_from(cert_path: string, key_path: string): Result[identity.Ide
 }
 
 function answered(raw: u8[]): string {
-  let text = string_from_bytes_unchecked(raw);
+  let text = utf8.from_bytes_lossy(raw);
   if (!text.starts_with("HTTP/1.")) {
     return "no response";
   }

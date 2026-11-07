@@ -4651,7 +4651,7 @@ function main(): i32 {
     let cs: string[] = "héllo".split("");
     let ls: string[] = "x\r\ny\n".lines();
     let bs: u8[] = "AZ".bytes();
-    print(string_from_bytes_unchecked(bs));
+    print(unsafe { string_from_bytes_unchecked(bs) });
     let lt: i32 = 0;
     if ("abc" < "abd") { lt = 1; }
     return parts.len() * 10 + cs.len() + ls.len() * 100 + lt * 1000;

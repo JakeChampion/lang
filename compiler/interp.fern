@@ -1643,7 +1643,10 @@ function encoded_value(v: Value): EncodedValue {
     return EncodedValue { ok: false, text: "", edges: [] };
   }
   // Raw bytes: a string value may hold bytes that are not UTF-8.
-  let text = string_from_bytes_unchecked(buf_take_bytes(h));
+  let text = "";
+  unsafe {
+    text = string_from_bytes_unchecked(buf_take_bytes(h));
+  }
   buf_free(h);
   return EncodedValue { ok: true, text: text, edges: edges };
 }
@@ -7742,7 +7745,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
           raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
           ri += 1;
         }
-        return v_string(string_from_bytes_unchecked(raw));
+        unsafe {
+          return v_string(string_from_bytes_unchecked(raw));
+        }
       },
       _ => {
         return v_err("string_from_bytes_unchecked: arg must be an array");
@@ -7766,7 +7771,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
           raw = raw.append((vint_bits(arr_at(a, ri)) & 255) as u8);
           ri += 1;
         }
-        return v_string(string_from_bytes_unchecked(raw));
+        unsafe {
+          return v_string(string_from_bytes_unchecked(raw));
+        }
       },
       _ => {
         return v_err("string_from_bytes_range_unchecked: arg must be an array");

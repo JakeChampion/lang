@@ -81,7 +81,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 		},
 		{
 			"string_from_bytes_unchecked",
-			`function main(): i32 { let b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
+			`function main(): i32 { let b: u8[] = [104 as u8, 105 as u8]; return unsafe { string_from_bytes_unchecked(b) }.len(); }`,
 			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lsfb_loop"},
 		},

@@ -2237,7 +2237,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	}
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `import "std/rand";
-function main(): i32 { let id: u8[] = rand.bytes(8); match (write_file("id.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
+function main(): i32 { let id: u8[] = rand.bytes(8); match (write_file("id.bin", unsafe { string_from_bytes_unchecked(id) })) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -2358,7 +2358,7 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	}
 
 	t.Run("gen-and-persist", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { let id: u8[] = random_bytes(16); match (write_file("token.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { let id: u8[] = random_bytes(16); match (write_file("token.bin", unsafe { string_from_bytes_unchecked(id) })) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
 		if string(out) != "16" {
 			t.Errorf("gen-and-persist: stdout = %q, want %q", string(out), "16")

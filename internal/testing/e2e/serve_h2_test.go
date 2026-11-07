@@ -90,7 +90,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
       Some(port) => {
         match (plat.http(fetch.get("https://8.8.8.8:" + port + "/hold"))) {
           Ok(resp) => {
-            return http.ok("up " + resp.status.to_string() + " " + string_from_bytes_unchecked(resp.body_bytes()));
+            return http.ok("up " + resp.status.to_string() + " " + unsafe { string_from_bytes_unchecked(resp.body_bytes()) });
           },
           Err(e) => {
             return http.ok("up err " + e.message());

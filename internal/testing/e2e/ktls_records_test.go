@@ -118,7 +118,7 @@ function suite(name: string, s: keyschedule.CipherSuite, ln: Socket): string {
   }
   match (out.open(only_record(raw))) {
     Ok(o) => {
-      opened = string_from_bytes_unchecked(o.content);
+      opened = unsafe { string_from_bytes_unchecked(o.content) };
     },
     Err(e) => {
       return name + " open " + e.message();
@@ -157,7 +157,7 @@ function suite(name: string, s: keyschedule.CipherSuite, ln: Socket): string {
   for b in buf[0:n & 16777215] {
     kept = kept.append(b);
   }
-  let got: string = string_from_bytes_unchecked(kept);
+  let got: string = unsafe { string_from_bytes_unchecked(kept) };
   let m: i32 = tcp_ktls(a, 5, 0, buf);
   tcp_close(c);
   tcp_close(a);

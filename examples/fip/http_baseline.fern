@@ -22,7 +22,7 @@ function route(req: HttpRequest): HttpResponse {
 }
 
 function serve(wire: u8[], wire_len: i32): string {
-  let Ok(req) = http.parse_request(string_from_bytes_unchecked(wire.take(wire_len))) else {
+  let Ok(req) = http.parse_request(unsafe { string_from_bytes_unchecked(wire.take(wire_len)) }) else {
     return http.serialize_response(http.bad_request("bad request"));
   };
   return http.serialize_response(route(req));

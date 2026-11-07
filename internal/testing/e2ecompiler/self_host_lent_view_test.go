@@ -93,7 +93,7 @@ import "std/i64";
 }
 
 @noinline function text(d: [u8]): string {
-  return string_from_bytes_unchecked(__bytes_owned(d));
+  return unsafe { string_from_bytes_unchecked(__bytes_owned(d)) };
 }
 
 @noinline function expanded(k: [u8]): i32 {

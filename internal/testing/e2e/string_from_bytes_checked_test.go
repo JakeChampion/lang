@@ -55,7 +55,7 @@ function main(): i32 {
         while (q < 256) {
             let pair: u8[] = [p as u8, q as u8];
             let accepted: boolean = !rejects(pair);
-            let valid: boolean = utf8.is_valid(string_from_bytes_unchecked(pair));
+            let valid: boolean = utf8.is_valid(unsafe { string_from_bytes_unchecked(pair) });
             if (accepted != valid) { return 16; }
             q = q + 1;
         }

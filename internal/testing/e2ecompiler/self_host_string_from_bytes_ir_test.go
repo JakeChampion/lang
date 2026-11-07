@@ -14,7 +14,7 @@ function hexenc(s: string): string {
         buf = buf.with(i * 2 + 1, hex_lc(b & 15) as u8);
         i = i + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    return unsafe { string_from_bytes_unchecked(buf) };
 }
 `
 
@@ -22,8 +22,8 @@ var stringFromBytesIRCases = []struct {
 	name string
 	main string
 }{
-	{"direct-len", `function main(): i32 { let b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return string_from_bytes_unchecked(b).len(); }`},
-	{"direct-byte", `function main(): i32 { let b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return string_from_bytes_unchecked(b)[0] as i32; }`},
+	{"direct-len", `function main(): i32 { let b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return unsafe { string_from_bytes_unchecked(b) }.len(); }`},
+	{"direct-byte", `function main(): i32 { let b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return unsafe { string_from_bytes_unchecked(b) }[0] as i32; }`},
 	{"hex-digit0", stringFromBytesPrelude + `function main(): i32 { return hexenc("A")[0] as i32; }`},
 	{"hex-digit1", stringFromBytesPrelude + `function main(): i32 { return hexenc("z")[1] as i32; }`},
 	{"hex-len", stringFromBytesPrelude + `function main(): i32 { return hexenc("hello").len(); }`},

@@ -154,7 +154,7 @@ function octal3(b: i32): string {
   d = d.append((48 + b / 64) as u8);
   d = d.append((48 + b / 8 % 8) as u8);
   d = d.append((48 + b % 8) as u8);
-  return string_from_bytes_unchecked(d);
+  return unsafe { string_from_bytes_unchecked(d) };
 }
 
 function control_letter(b: i32): i32 {
@@ -266,7 +266,7 @@ function shell_quote(s: string): string {
     i += 1;
   }
   out = out.append(39 as u8);
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function print_esc(own p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolean) {
@@ -380,7 +380,7 @@ function hex_padded(v: i64, width: i32, upper: boolean): string {
     out = out.append(digits[i]);
     i -= 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function print_b(own p: Pf, s: string): (Pf, boolean) {
@@ -664,7 +664,7 @@ function radix_digits(v: u64, base: u64, upper: boolean): string {
     out = out.with(i, digits[digits.len() - 1 - i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 function top_bit(): u64 {

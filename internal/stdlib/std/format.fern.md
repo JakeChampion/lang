@@ -120,7 +120,7 @@ pub function format(fmt: string, args: string[]): string {
       i += 1;
     }
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }
 
 pub function values[T: cmp.Display](fmt: string, args: T[]): string {
@@ -328,14 +328,14 @@ function __round_to_places(s: string, places: i32): string {
     head = head.append(digits[j]);
     j += 1;
   }
-  let out = sign + string_from_bytes_unchecked(head);
+  let out = sign + unsafe { string_from_bytes_unchecked(head) };
   if (places > 0) {
     let tail: u8[] = [];
     while (j < digits.len()) {
       tail = tail.append(digits[j]);
       j += 1;
     }
-    out = out + "." + string_from_bytes_unchecked(tail);
+    out = out + "." + unsafe { string_from_bytes_unchecked(tail) };
   }
   return out;
 }
@@ -387,7 +387,7 @@ function __repeat_char(s: string, count: i32): string {
     }
     k += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 ```
 

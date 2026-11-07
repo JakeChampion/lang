@@ -25,7 +25,7 @@ function marks(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes_unchecked(bs);
+    return unsafe { string_from_bytes_unchecked(bs) };
 }
 function main(): i32 {
     let t: string = marks("ab\ncd\n");
@@ -39,7 +39,7 @@ function tail(s: string): string {
         bs = bs.append(s[i]);
         i = i + 1;
     }
-    return string_from_bytes_range_unchecked(bs, 1, bs.len());
+    return unsafe { string_from_bytes_range_unchecked(bs, 1, bs.len()) };
 }
 function main(): i32 {
     let t: string = tail("xyz");

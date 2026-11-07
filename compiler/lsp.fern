@@ -15,7 +15,9 @@ function fill(inp: Input): (Input, boolean) {
       if (chunk.len() == 0) {
         return (inp, false);
       }
-      return (Input { r: inp.r, pending: inp.pending + string_from_bytes_unchecked(chunk) }, true);
+      unsafe {
+        return (Input { r: inp.r, pending: inp.pending + string_from_bytes_unchecked(chunk) }, true);
+      }
     },
     Err(_) => {
       return (inp, false);
@@ -86,7 +88,9 @@ function lower_ascii(s: string): string {
     out = out.append(b as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub struct Message { method: string, id: string, params: json.JsonValue }
@@ -565,7 +569,9 @@ pub function file_uri(path: string): string {
     }
     i += 1;
   }
-  return "file://" + string_from_bytes_unchecked(out);
+  unsafe {
+    return "file://" + string_from_bytes_unchecked(out);
+  }
 }
 
 function uri_unreserved(b: i32): boolean {
@@ -592,7 +598,9 @@ function percent_decode(s: string): string {
     out = out.append((hi * 16 + lo) as u8);
     i += 3;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function hex_digit(b: i32): i32 {

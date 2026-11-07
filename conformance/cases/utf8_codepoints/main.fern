@@ -63,17 +63,17 @@ function main(): i32 {
     return 1;
   }
 
-  let bad: char[] = string_from_bytes_unchecked([255 as u8, 66 as u8]).chars();
+  let bad: char[] = unsafe { string_from_bytes_unchecked([255 as u8, 66 as u8]) }.chars();
   if (bad.len() != 2 || bad[0] as i32 != 65533 || bad[1] as i32 != 66) {
     print("bad-lead FAILED");
     return 1;
   }
-  let trunc: char[] = string_from_bytes_unchecked([226 as u8]).chars();
+  let trunc: char[] = unsafe { string_from_bytes_unchecked([226 as u8]) }.chars();
   if (trunc.len() != 1 || trunc[0] as i32 != 65533) {
     print("truncated FAILED");
     return 1;
   }
-  let stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).chars();
+  let stray: char[] = unsafe { string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]) }.chars();
   if (stray.len() != 3 || stray[0] as i32 != 65 || stray[1] as i32 != 65533 || stray[2] as i32 != 66) {
     print("stray-cont FAILED");
     return 1;

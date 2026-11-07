@@ -4,7 +4,7 @@ import "std/codec";
 import "std/string";
 
 function text(b: u8[]): string {
-  return string_from_bytes_unchecked(b);
+  return unsafe { string_from_bytes_unchecked(b) };
 }
 
 function test_encode_vectors(): test.TestOutcome {

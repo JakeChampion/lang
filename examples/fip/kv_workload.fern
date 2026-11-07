@@ -114,7 +114,7 @@ pub function build(c: Config): Tape {
     for j in 0..c.key_bytes {
       key = key.append(input[n * c.batch * stride(c) + 1 + j]);
     }
-    probes = probes.append(string_from_bytes_unchecked(key));
+    probes = probes.append(unsafe { string_from_bytes_unchecked(key) });
   }
   let count = universe(c);
   if (count > c.capacity) {
@@ -155,5 +155,5 @@ pub function hex(bytes: u8[], at: i32, count: i32): string {
     out = out.append(digits[b >> 4]);
     out = out.append(digits[b & 15]);
   }
-  return string_from_bytes_unchecked(out);
+  return unsafe { string_from_bytes_unchecked(out) };
 }

@@ -70,7 +70,7 @@ function upload(req: HttpRequest): Result[HttpResponse, multipart.MultipartError
           r = got.1;
         } else {
           let got: (u8[], multipart.Reader) = r1.content()?;
-          out = out + part.name + "=" + string_from_bytes_unchecked(got.0) + ";";
+          out = out + part.name + "=" + unsafe { string_from_bytes_unchecked(got.0) } + ";";
           r = got.1;
         }
       },

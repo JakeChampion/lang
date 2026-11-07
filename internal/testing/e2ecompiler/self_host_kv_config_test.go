@@ -125,7 +125,7 @@ function matches(db: subject.Db, expected: u8[], output: u8[]): boolean {
   let i:i32=0;while(i<output.len()){if(db.output[i]!=output[i]){return false;}i=i+1;}
   let at:i32=0;while(at<expected.len()){
     let bytes:u8[]=[];i=0;while(i<db.key_bytes){bytes=bytes.append(expected[at+i]);i=i+1;}
-    let key:string=string_from_bytes_unchecked(bytes);
+    let key:string=unsafe { string_from_bytes_unchecked(bytes) };
     let value:string=db.entries.get_or(key,"");if(value.len()!=db.value_bytes){return false;}
     i=0;while(i<db.value_bytes){if(value[i]!=expected[at+db.key_bytes+i]){return false;}i=i+1;}
     at=at+width;

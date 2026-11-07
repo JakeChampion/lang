@@ -484,7 +484,7 @@ function bail(code: i32): i32 {
     if (code > 0) { write("bail"); exit(code); }
     return code;
 }
-function bytes_text(bs: u8[]): string { return string_from_bytes_unchecked(bs); }
+function bytes_text(bs: u8[]): string { return unsafe { string_from_bytes_unchecked(bs) }; }
 function bit_round(x: f64): f64 { return f64_from_bits(f64_bits(x)); }
 
 // A for-loop element is a checker BINDING inside the loop body, so an
@@ -588,8 +588,8 @@ function fn_element_array(n: i32): i32 { let fs: ((i32) => i32)[] = [twice_it]; 
 // type instead of collapsing to unknown. The byte array such a call is handed
 // carries the element its parameter declares.
 struct Frag { text: string, n: i32 }
-function frag_of(bs: u8[], n: i32): Frag { return Frag { text: string_from_bytes_unchecked(bs), n: n }; }
-function byte_text(b: u8): i32 { return string_from_bytes_unchecked([b]).len(); }
+function frag_of(bs: u8[], n: i32): Frag { return Frag { text: unsafe { string_from_bytes_unchecked(bs) }, n: n }; }
+function byte_text(b: u8): i32 { return unsafe { string_from_bytes_unchecked([b]) }.len(); }
 function rounded(x: f64, n: i32): i32 { return n + wide_low(f64_bits(x)); }
 function wide_low(n: i64): i32 { return (n & 255i64) as i32; }
 
@@ -2608,7 +2608,7 @@ function bail(code: i32): i32 {
     if (code > 0) { write("bail"); exit(code); }
     return code;
 }
-function bytes_text(bs: u8[]): string { return string_from_bytes_unchecked(bs); }
+function bytes_text(bs: u8[]): string { return unsafe { string_from_bytes_unchecked(bs) }; }
 function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
 // A for-loop element is a checker binding inside the loop body, so a record
 // or variant literal over the element has a type instead of collapsing to the

@@ -50,14 +50,14 @@ function main(): i32 {
         if (__str_hash(s, 1) != ref(s, 1)) { return 2; }
         if (__str_hash(s, 0 - 1) != ref(s, 0 - 1)) { return 3; }
         if (__str_hash(s, 208357) != ref(s, 208357)) { return 4; }
-        s = s + string_from_bytes_unchecked([((n * 37 + 11) % 128) as u8]);
+        s = s + unsafe { string_from_bytes_unchecked([((n * 37 + 11) % 128) as u8]) };
         n = n + 1;
     }
     let high: string = "";
     let k: i32 = 0;
-    while (k < 300) { high = high + string_from_bytes_unchecked([255 as u8, 128 as u8]); k = k + 1; }
+    while (k < 300) { high = high + unsafe { string_from_bytes_unchecked([255 as u8, 128 as u8]) }; k = k + 1; }
     if (__str_hash(high, 4660) != ref(high, 4660)) { return 5; }
-    let bytes: string = string_from_bytes_unchecked([200 as u8, 201 as u8, 202 as u8, 203 as u8, 204 as u8, 205 as u8, 206 as u8, 207 as u8, 208 as u8, 209 as u8, 210 as u8, 211 as u8, 212 as u8, 213 as u8, 214 as u8, 215 as u8, 216 as u8, 217 as u8, 218 as u8, 219 as u8, 220 as u8, 221 as u8, 222 as u8, 223 as u8, 224 as u8, 225 as u8, 226 as u8, 227 as u8, 228 as u8, 229 as u8, 230 as u8, 231 as u8, 232 as u8, 233 as u8, 234 as u8, 235 as u8, 236 as u8, 237 as u8, 238 as u8, 239 as u8, 240 as u8, 241 as u8, 242 as u8, 243 as u8, 244 as u8, 245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8, 250 as u8, 251 as u8, 252 as u8, 253 as u8, 254 as u8, 255 as u8]);
+    let bytes: string = unsafe { string_from_bytes_unchecked([200 as u8, 201 as u8, 202 as u8, 203 as u8, 204 as u8, 205 as u8, 206 as u8, 207 as u8, 208 as u8, 209 as u8, 210 as u8, 211 as u8, 212 as u8, 213 as u8, 214 as u8, 215 as u8, 216 as u8, 217 as u8, 218 as u8, 219 as u8, 220 as u8, 221 as u8, 222 as u8, 223 as u8, 224 as u8, 225 as u8, 226 as u8, 227 as u8, 228 as u8, 229 as u8, 230 as u8, 231 as u8, 232 as u8, 233 as u8, 234 as u8, 235 as u8, 236 as u8, 237 as u8, 238 as u8, 239 as u8, 240 as u8, 241 as u8, 242 as u8, 243 as u8, 244 as u8, 245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8, 250 as u8, 251 as u8, 252 as u8, 253 as u8, 254 as u8, 255 as u8]) };
     if (__str_hash("", 0) != 1339080641) { return 10; }
     if (__str_hash("a", 0) != 694301555) { return 11; }
     if (__str_hash("abcdefgh", 0) != 939000468) { return 12; }

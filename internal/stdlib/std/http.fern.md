@@ -709,7 +709,9 @@ function __line_end(buf: u8[], from: i32, end: i32): i32 {
 }
 
 function __bytes_string(buf: u8[], from: i32, end: i32): string {
-  return string_from_bytes_range_unchecked(buf, from, end);
+  unsafe {
+    return string_from_bytes_range_unchecked(buf, from, end);
+  }
 }
 
 function __shared_string(buf: u8[], from: i32, end: i32, prev: string): string {

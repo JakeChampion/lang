@@ -242,7 +242,7 @@ function text_of(line: [u8], n: i32): Option[string] {
     }
     out = out.append(b);
   }
-  return Some(string_from_bytes_unchecked(out));
+  return Some(unsafe { string_from_bytes_unchecked(out) });
 }
 
 struct Served { rooms: rooms.Rooms, client: Client }

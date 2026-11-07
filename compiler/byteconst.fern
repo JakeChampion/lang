@@ -39,7 +39,9 @@ pub function words(bs: u8[]): string {
     at += 1;
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub function valid(text: string, count: i32): boolean {
@@ -108,7 +110,9 @@ pub function spaced_words(text: string): string {
       at += 1;
     }
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub function values(text: string): u8[] {

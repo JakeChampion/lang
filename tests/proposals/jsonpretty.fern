@@ -70,7 +70,7 @@ function parse_string(text: string, at: i32): StrR {
   while (i < text.len()) {
     let c = text[i];
     if (c == 34) {
-      return StrR { ok: true, s: string_from_bytes_unchecked(buf), at: i + 1, err: "" };
+      return StrR { ok: true, s: unsafe { string_from_bytes_unchecked(buf) }, at: i + 1, err: "" };
     }
     if (c == 92) {
       if (i + 1 >= text.len()) {
@@ -347,7 +347,7 @@ function escape(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function sorted_positions(keys: string[]): i32[] {

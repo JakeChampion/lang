@@ -31,7 +31,7 @@ func TestSelfHostBytesX86_64(t *testing.T) {
 				"    let e: string = " + tc.mod + ".encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
 				"    let Ok(d) = " + tc.mod + ".decode(e) else { return 1; };\n" +
-				"    write(string_from_bytes_unchecked(d));\n" +
+				"    write(unsafe { string_from_bytes_unchecked(d) });\n" +
 				"    return 0;\n" +
 				"}\n"
 			asm, progDir := compileSourceModload(t, runner, driverBin, mainSrc)
@@ -71,7 +71,7 @@ func TestSelfHostBytesArm64(t *testing.T) {
 				"    let e: string = " + tc.mod + ".encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
 				"    let Ok(d) = " + tc.mod + ".decode(e) else { return 1; };\n" +
-				"    write(string_from_bytes_unchecked(d));\n" +
+				"    write(unsafe { string_from_bytes_unchecked(d) });\n" +
 				"    return 0;\n" +
 				"}\n"
 			asm, progDir := compileSourceModload(t, x86runner, driverBin, mainSrc, "-target", "arm64-linux")

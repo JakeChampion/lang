@@ -263,7 +263,9 @@ function kebab(id: string): string {
   if (word_start) {
     return "";
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 function kebab_char(c: u8, word_start: boolean): boolean {

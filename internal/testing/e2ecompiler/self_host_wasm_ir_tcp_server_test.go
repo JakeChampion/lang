@@ -128,7 +128,7 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     write("polled="); print_int(i);
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8];
     let n: i32 = tcp_recv_into(c, buf);
-    write(" recv="); if (n == 4) { write(string_from_bytes_unchecked(buf)); } write("\n");
+    write(" recv="); if (n == 4) { write(unsafe { string_from_bytes_unchecked(buf) }); } write("\n");
     wasm_pollable_drop(p);
     tcp_close(c);
     tcp_close(l);

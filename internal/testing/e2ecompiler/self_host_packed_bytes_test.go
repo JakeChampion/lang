@@ -35,7 +35,7 @@ function main(): i32 {
     print("slice " + sl.len().to_string() + " " + total(sl).to_string());
     let s: string = "hello, world";
     let b: u8[] = s.bytes();
-    print("bytes " + b.len().to_string() + " " + total(b).to_string() + " " + string_from_bytes_unchecked(b));
+    print("bytes " + b.len().to_string() + " " + total(b).to_string() + " " + unsafe { string_from_bytes_unchecked(b) });
     print("as_bytes " + total(s.as_bytes()).to_string());
     let z: u8[] = __alloc_u8(13);
     z = z.with(12, 9 as u8);

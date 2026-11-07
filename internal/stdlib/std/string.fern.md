@@ -445,7 +445,9 @@ pub function (s: string) to_ascii_capitalize(): string {
   }
   let buf = __alloc_u8(1);
   buf = buf.with(0, first as u8);
-  return string_from_bytes_unchecked(buf) + slice_unchecked(s, 1, n);
+  unsafe {
+    return string_from_bytes_unchecked(buf) + slice_unchecked(s, 1, n);
+  }
 }
 
 pub function (s: string) whitespace_word_count(): i32 {
@@ -526,7 +528,9 @@ pub function (s: string) escape_html(): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) strip_quotes(): Option[string] {
@@ -631,7 +635,9 @@ pub function (s: string) escape_c(): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) escape_shell(): string {
@@ -680,7 +686,9 @@ function __case_separator(s: string, sep_byte: i32): string {
     pos += 1;
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 ### `12 pub function (s: string) camel_case(): string`
@@ -738,7 +746,9 @@ function __case_join(s: string, upper_first: boolean): string {
       i += 1;
     }
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 ### `14 pub function (s: string) slugify(): string`
@@ -764,7 +774,9 @@ pub function (s: string) slugify(): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub function (s: string) is_valid_identifier(): boolean {
@@ -1125,7 +1137,9 @@ pub function (s: string) without_chars(set: string): string {
     out = out.with(k, buf[k]);
     k += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 
 pub function (s: string) contains_only(set: string): boolean {
@@ -1220,7 +1234,9 @@ pub function (s: string) to_ascii_title_case(): string {
     prev_space = b == 32;
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 ### `21 pub function (s: string) lines_non_empty(): string[]`
@@ -1378,7 +1394,9 @@ pub function (s: string) indent(prefix: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) dedent(): string {
@@ -1616,7 +1634,9 @@ function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
     buf = buf.with(i, b as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 ### `26 pub function (s: string) to_ascii_lower(): string`
@@ -1645,7 +1665,9 @@ pub function (s: string) to_ascii_swap_case(): string {
     buf = buf.with(i, b as u8);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) split(sep: string): string[] {
@@ -2069,7 +2091,9 @@ pub function (s: string) pad_start(n: i32, ch: char): string {
     buf = buf.with(fl + j, s[j] as u8);
     j += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) pad_end(n: i32, ch: char): string {
@@ -2091,7 +2115,9 @@ pub function (s: string) pad_end(n: i32, ch: char): string {
     buf = buf.with(sl + i, fill[i]);
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) zfill(width: i32): string {
@@ -2121,7 +2147,9 @@ pub function (s: string) zfill(width: i32): string {
     pos += 1;
     j += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) split_once(sep: string): Option[(string, string)] {
@@ -2279,7 +2307,9 @@ pub function (s: string) center(width: i32, ch: char): string {
   }
   let lpad = total / 2;
   let rpad = total - lpad;
-  return string_from_bytes_unchecked(__fill_bytes(utf8_scalar.from_codepoint(ch), lpad)) + s + string_from_bytes_unchecked(__fill_bytes(utf8_scalar.from_codepoint(ch), rpad));
+  unsafe {
+    return string_from_bytes_unchecked(__fill_bytes(utf8_scalar.from_codepoint(ch), lpad)) + s + string_from_bytes_unchecked(__fill_bytes(utf8_scalar.from_codepoint(ch), rpad));
+  }
 }
 
 pub function (s: string) reverse_words(): string {
@@ -2451,7 +2481,9 @@ pub function (s: string) replace_n(old: string, new: string, limit: i32): string
     pos += 1;
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) remove_all(needle: string): string {
@@ -2551,7 +2583,9 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
     }
     k += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 
 pub function (s: string) replace(old: string, new: string): string {

@@ -241,7 +241,10 @@ pub function (e: Utf8Error) to_string(): string {
 }
 
 pub function from_bytes(b: [u8]): Result[string, Utf8Error] {
-  let s = string_from_bytes_unchecked(__bytes_owned(b));
+  let s = "";
+  unsafe {
+    s = string_from_bytes_unchecked(__bytes_owned(b));
+  }
   let valid = __valid_prefix(s);
   if (valid == s.len()) {
     return Ok(s);
@@ -250,7 +253,10 @@ pub function from_bytes(b: [u8]): Result[string, Utf8Error] {
 }
 
 pub function from_bytes_lossy(b: [u8]): string {
-  let s = string_from_bytes_unchecked(__bytes_owned(b));
+  let s = "";
+  unsafe {
+    s = string_from_bytes_unchecked(__bytes_owned(b));
+  }
   if (is_valid(s)) {
     return s;
   }

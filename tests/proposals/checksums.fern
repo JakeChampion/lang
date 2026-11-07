@@ -237,7 +237,7 @@ function replace_at(s: string, at: i32, c: u8): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function swap_at(s: string, at: i32): string {
@@ -253,7 +253,7 @@ function swap_at(s: string, at: i32): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(buf);
+  return unsafe { string_from_bytes_unchecked(buf) };
 }
 
 function test_the_known_good_numbers_are_accepted(): test.TestOutcome {

@@ -1,0 +1,2 @@
+raw builtin "string_from_bytes_unchecked" is called outside an unsafe block
+raw builtin "string_from_bytes_range_unchecked" is called outside an unsafe block

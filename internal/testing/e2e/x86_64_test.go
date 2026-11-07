@@ -583,7 +583,7 @@ func TestX86_64RandomBytes(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `import "std/rand";
 function main(): i32 {
     let s: u8[] = rand.bytes(16);
-    write(string_from_bytes_unchecked(s));
+    write(unsafe { string_from_bytes_unchecked(s) });
     return s.len();
 }`)
 	if code != 16 {

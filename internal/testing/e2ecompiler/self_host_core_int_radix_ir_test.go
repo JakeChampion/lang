@@ -34,7 +34,7 @@ function int_to_string_radix(n: i32, base: i32): string {
     if (neg) { buf = buf.with(0, 45 as u8); bi = 1; }
     let j: i32 = k - 1;
     while (j >= 0) { buf = buf.with(bi, digits[j]); bi = bi + 1; j = j - 1; }
-    return string_from_bytes_unchecked(buf);
+    return unsafe { string_from_bytes_unchecked(buf) };
 }
 function parse_int_radix(s: string, base: i32): Option[i32] {
     if (base < 2 || base > 36) { return None; }

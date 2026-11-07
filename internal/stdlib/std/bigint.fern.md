@@ -807,7 +807,9 @@ pub function (a: BigInt) to_string(): string {
     }
     k += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 ```
 

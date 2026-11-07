@@ -141,7 +141,9 @@ pub function encode(bs: [u8]): string {
     buf = buf.with(j + 2, __b64_alphabet((b1 & 15) << 2) as u8);
     buf = buf.with(j + 3, 61 as u8);
   }
-  return string_from_bytes_unchecked(buf);
+  unsafe {
+    return string_from_bytes_unchecked(buf);
+  }
 }
 ```
 
@@ -163,7 +165,9 @@ function __b64_std_to_url(s: string): string {
     }
     i += 1;
   }
-  return string_from_bytes_unchecked(out);
+  unsafe {
+    return string_from_bytes_unchecked(out);
+  }
 }
 ```
 
