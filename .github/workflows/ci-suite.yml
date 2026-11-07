@@ -21,11 +21,11 @@ on:
         description: Exact changed-lane map computed by ci.yml
         required: true
         type: string
-      image-only:
-        description: Limit self-host tests to image consumers for an image-only PR
+      selection:
+        description: Dependency plan for packages and consumer tests
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: '{"full":true}'
 
 permissions:
   contents: read
@@ -64,6 +64,11 @@ jobs:
     name: Test units
     if: fromJSON(inputs.lanes)['test-units']
     uses: ./.github/workflows/test-units.yml
+    with:
+      repository-only: ${{ fromJSON(inputs.selection).unitRepositoryOnly == true }}
+      packages: ${{ toJSON(fromJSON(inputs.selection).unitPackages || fromJSON('[]')) }}
+      groups: ${{ toJSON(fromJSON(inputs.selection).unitGroups || fromJSON('["heavy","rest"]')) }}
+      hosts: ${{ fromJSON(inputs.selection).unitHosts || 'x86_64 aarch64' }}
     secrets: inherit
 
   test-coreutils:
@@ -106,8 +111,6 @@ jobs:
     name: Test e2e self-host
     if: fromJSON(inputs.lanes)['test-e2e-selfhost']
     uses: ./.github/workflows/test-e2e-selfhost.yml
-    with:
-      image-only: ${{ inputs.image-only }}
     secrets: inherit
 
   test-fernsmith:
@@ -153,6 +156,9 @@ jobs:
     name: macOS arm64
     if: fromJSON(inputs.lanes)['macos']
     uses: ./.github/workflows/macos.yml
+    with:
+      groups: ${{ toJSON(fromJSON(inputs.selection).macosGroups || fromJSON('["profile","coreutils","native","fixtures","examples"]')) }}
+      selection: ${{ inputs.selection }}
     secrets: inherit
 
   docs-build:
@@ -189,6 +195,14 @@ jobs:
     name: Fern image
     if: fromJSON(inputs.lanes)['fern-image']
     uses: ./.github/workflows/fern-image.yml
+    secrets: inherit
+
+  test-affected:
+    name: Test affected consumers
+    if: fromJSON(inputs.lanes)['test-affected']
+    uses: ./.github/workflows/test-affected.yml
+    with:
+      selection: ${{ inputs.selection }}
     secrets: inherit
 
   # One reaper per lane, so the run is cancelled the moment ANY lane concludes
@@ -413,6 +427,17 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: Fern image
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-affected:
+    needs: [test-affected]
+    if: ${{ !cancelled() && needs.test-affected.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test affected consumers
     permissions:
       actions: write
       contents: read

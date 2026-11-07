@@ -8,16 +8,15 @@ compiler bugs shipped past three heavyweight green gates in a row.
 This document is about *which* lanes carry signal for *which* kind of
 change, and — more usefully — which ones look authoritative and are not.
 
-`.github/workflows/ci.yml` is the one workflow a pull request or a push to
-main launches, every lane is a `workflow_call` it calls, and its lane table is
-the single path filter both events read (`TestGateLanesRunOnMain`,
-`internal/testing/sourcelint`).
+`.github/workflows/ci.yml` is the shared CI entry point.
+Each suite lane uses `workflow_call`.
+The registry and planner select its dependencies for pull requests and main.
 
 Every pull request runs `Lint`, the `changes` job that picks the lanes, and
-the full suite through `ci-suite.yml`. No `ci-full` label is required.
-The existing path filters still skip lanes unrelated to the change. A change
-that reaches no lane, such as a docs-only change, skips the suite and does
-not wait for a suite queue slot. `CI verdict` accepts that skip.
+the selected suite through `ci-suite.yml`. No `ci-full` label is required.
+The dependency planner skips lanes unrelated to the change.
+A docs-only change retains repository checks without compiler regression jobs.
+An empty selection skips the suite. `CI verdict` accepts that skip.
 `Preflight` remains available through a manual workflow dispatch for diagnosis;
 it does not replace the full suite on pull requests.
 
@@ -38,32 +37,82 @@ own group and an uncancellable run ahead of every open PR (#8124), which
 `TestGateLanesRunOnMain` (`internal/testing/sourcelint/pr_workflow_filters_test.go`)
 rejects.
 
-## Image component selection
+## Dependency selection
 
-An image-only PR changes files under `fern-image/`. It can also change root Markdown files or files under `docs/`.
-The selector checks both paths of a rename. Any other path retains the full self-host suite.
-An unknown path also retains that suite. An unavailable or truncated file list selects every lane.
+`.github/ci/targets.json` declares component inputs and the workflows that consume them.
+`cmd/ci-plan` builds the dependency graph from this registry and the checkout.
+The selector returns a lane map and a structured test selection.
+Each workflow receives its applicable part of that selection.
 
-The image-only selection runs these checks:
+The graph includes these dependencies:
 
-- `Lint` and `Test units` retain the repository checks.
-- `Fern image` compiles and tests the image library for native Linux and Wasm.
-- `Showcase` runs when the change reaches `fern-image/packages/`.
-- `Test e2e self-host` runs its `image-consumers` job instead of its compiler regression jobs.
+- Go production imports and test imports. A test-file change does not propagate through production imports.
+- Package resources and deleted files. A new package without a known dependency selects broad validation.
+- Fern imports, relative modules, re-exports, and literate modules.
+- Test references through helper functions and shared declarations.
+- Workflow scripts and composite actions.
+- Explicit inputs for dynamic reads, such as the grammar check over repository sources.
 
-The consumer job checks the JPEG header fixture with the Go oracle.
-It also checks the grammar against repository sources and tests the showcase HTTP server and Gather concurrency.
-The showcase server imports the image library through its benchmark module.
-These tests retain their usual jobs for changes outside the image component.
+The unit lane runs affected packages and their reverse dependencies.
+The printer group runs only when the selection includes the printer package.
+Repository checks remain enabled for each PR.
+A documentation-only selection runs these checks on x86-64 without a compiler build.
+These packages use Go and repository tools without the wasm or cross-compilation toolchains.
 
-The ten independent lanes exclude `fern-image/**` in the central lane table.
-The self-host workflow receives a separate `image-only` input, which defaults to `false`.
-Main, merge queue batches, and manual runs retain the full self-host scope, subject to the reuse of successful lanes.
-Compiler, runtime, stdlib, and bootstrap changes still select the image suite.
+The consumer lane runs exact test names on both Linux hosts.
+It checks each name against the source and filters host-specific test files with the Go test list.
+The Darwin workflow receives separate profiler, coreutils, native, fixture, and example groups.
+Its native steps use the affected Darwin test names.
+Tests with special environments or larger budgets retain their dedicated workflows.
 
-`scripts/ci-changes-selftest.mjs` checks component selection, mixed changes, renames, and broad validation after selector failures.
-`TestImageOnlyScopeReachesSelfHostLane` checks the workflow inputs and job conditions.
-`TestImageConsumerSelectionCoversImageReaders` checks the consumer selectors and direct image references in compiler tests.
+Lint always checks CI configuration, test names, and Go format.
+The selection controls Go analysis, Fern format, compiler source checks, and generated-source checks.
+An application change checks the format of its changed Fern files.
+A compiler change checks the format of the complete source tree.
+Selective test commands disable the Go test cache because child processes read external source files.
+
+Compiler, runtime, stdlib, and bootstrap changes retain broad downstream validation.
+Shared CI or build inputs select the complete suite.
+Unknown paths, incomplete diffs, and planner failures also select the complete suite.
+The selector includes both paths of each rename.
+A malformed registry fails `CI verdict`.
+
+Main retains successful-lane reuse and compares each lane against its last successful input tree.
+Unit-package and Darwin scopes use that same comparison.
+This comparison includes source changes that queued main runs did not validate.
+Merge queue batches and manual runs request the complete suite.
+The daily `CI audit` also requests the complete suite at 03:17 UTC.
+The audit does not use PR path selection or main result reuse.
+
+### Inspect and maintain the graph
+
+Inspect a change with this command:
+
+```sh
+printf '%s\n' '["coreutils/cat.fern"]' | go run ./cmd/ci-plan
+```
+
+Use `go run ./cmd/ci-plan -full` to inspect the complete selection.
+The JSON output lists components, lanes, unit packages, consumer tests, and Darwin groups.
+
+Add each new workflow target to the registry.
+Declare its Go packages, component dependencies, direct inputs, and Fern program roots.
+Use `depends` for component dependencies.
+Declare unbounded or computed test inputs under `opaqueTests`.
+The planner rejects unknown fields, dependency cycles, and opaque declarations that name a missing test.
+An undeclared source root selects broad validation.
+
+### Compiler artifact cache
+
+The shared setup caches complete `bin/fern` and `bin/fern-selfhost` artifacts.
+The key includes the host, compiler sources, runtime, stdlib, diagnostic explanations, bootstrap sources, build scripts, Makefile, and toolchain lock.
+The Makefile stages both binaries only after the shipped compiler build succeeds.
+An exact restore installs them after checkout, so Make can reuse their timestamps.
+The compiler retains the commit identifier from its original build.
+Release and bootstrap verification disable this cache and build fresh binaries.
+
+`go test ./internal/ciplan ./internal/testing/sourcelint` checks the graph and workflow contracts.
+`make ci-selftest actionlint testnames` checks selector failures, main reuse, consumer execution, and workflow syntax.
 
 ## The merge queue
 

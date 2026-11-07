@@ -1,14 +1,10 @@
 #!/usr/bin/env node
-// Runs the changes and verdict scripts from .github/workflows/ci.yml against
-// API stubs and job results, so the JS copy of GitHub's filter grammar and the
-// job's fail-open rules are pinned the way TestGlobMatchesFollowsGitHubGrammar
-// pins the Go copy. The lint lane runs it (`make ci-selftest`); it needs only
-// node, which the runner image has.
-//
-// The script and the lane table are read out of the workflow textually: the
-// `script: |` and `LANES: |` blocks of the step whose id is `filter`.
+// Exercise the workflow selector and verdict with API stubs and the real planner.
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execFileSync, spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const ci = fs.readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8").split("\n");
@@ -32,9 +28,30 @@ function block(after, key) {
 }
 
 const script = block("- id: filter", "script");
-const table = block("- id: filter", "LANES");
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "fern-ci-plan-"));
+const binary = path.join(temporary, "ci-plan");
+execFileSync("go", ["build", "-o", binary, "./cmd/ci-plan"], { cwd: root, stdio: "inherit" });
+const table = execFileSync(binary, ["-table"], { cwd: root, encoding: "utf8" }).trim();
+const server = spawn(binary, ["-serve"], { cwd: root, stdio: ["pipe", "pipe", "inherit"] });
+const pending = [];
+createInterface({ input: server.stdout }).on("line", (line) => pending.shift()?.resolve(JSON.parse(line)));
+server.on("exit", (code) => {
+  for (const request of pending.splice(0)) request.reject(new Error(`planner exited ${code}`));
+});
+const planCache = new Map();
+async function plan(paths) {
+  const key = JSON.stringify(paths);
+  if (!planCache.has(key)) {
+    planCache.set(key, new Promise((resolve, reject) => {
+      pending.push({ resolve, reject });
+      server.stdin.write(`${key}\n`);
+    }));
+  }
+  return planCache.get(key);
+}
+process.on("exit", () => { server.kill(); fs.rmSync(temporary, { recursive: true, force: true }); });
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const run = new AsyncFunction("github", "context", "core", script);
+const run = new AsyncFunction("github", "context", "core", "require", script);
 
 const suiteYml = fs.readFileSync(path.join(root, ".github/workflows/ci-suite.yml"), "utf8");
 const ciYml = ci.join("\n");
@@ -46,6 +63,7 @@ const ciYml = ci.join("\n");
 // their jobs. `proofThrows` makes the first of those calls fail.
 async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table, proof = null, proofThrows = false, waitMinutes = 30 } = {}) {
   process.env.LANES = typeof lanes === "string" ? lanes : JSON.stringify(lanes);
+  process.env.CI_PLANNER = binary;
   // A poll is a millisecond here; `proof.poll` is the status each successive
   // poll of the in-flight run reports.
   process.env.CI_CHANGES_POLL_MS = "1";
@@ -107,8 +125,22 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
       return map ? map({ data: { status: "ahead", files: list } }) : list;
     },
   };
-  await run(github, context, core);
-  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, imageOnly: outputs["image-only"], warnings, failed, listings, infos, notices };
+  const plans = new Map();
+  {
+    const flatten = (files) => files.flatMap((file) => typeof file === "string" ? [file] : file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]);
+    let changed = [];
+    try { changed = flatten(files); } catch {}
+    for (const paths of [null, changed, ...Object.values(p.compare || {}).map((compare) => flatten(compare.files || []))]) {
+      plans.set(JSON.stringify(paths), await plan(paths));
+    }
+  }
+  const require = () => ({ execFileSync: (_binary, args, options) => {
+    const key = args.includes("-full") ? "null" : options.input;
+    if (!plans.has(key)) throw new Error(`unexpected planner request ${key}`);
+    return JSON.stringify(plans.get(key));
+  } });
+  await run(github, context, core, require);
+  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, selection: outputs.selection ? JSON.parse(outputs.selection) : null, warnings, failed, listings, infos, notices };
 }
 
 let failures = 0;
@@ -119,77 +151,46 @@ const check = (what, got, want) => {
   failures++;
   console.error(`FAIL ${what}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 };
-// Which lanes run for `files`, under a one-lane table with `filter`.
-const runs = async (filter, files) => (await decide({ files, lanes: { L: filter } })).lanes.L;
-
-// GitHub's grammar: `?` is zero or one of the character before it, `+` one
-// or more; `*` stops at `/`, `**` does not; `[…]` is a class; a quantifier
-// with nothing before it, and an unclosed class, are literal.
-check("x? zero", await runs({ paths: ["src/x?.txt"] }, ["src/.txt"]), true);
-check("x? one", await runs({ paths: ["src/x?.txt"] }, ["src/x.txt"]), true);
-check("x? two", await runs({ paths: ["src/x?.txt"] }, ["src/xx.txt"]), false);
-check("a+ two", await runs({ paths: ["a+b.txt"] }, ["aab.txt"]), true);
-check("a+ none", await runs({ paths: ["a+b.txt"] }, ["b.txt"]), false);
-check("class quantified", await runs({ paths: ["[ab]+.go"] }, ["abba.go"]), true);
-check("class miss", await runs({ paths: ["[ab]x.go"] }, ["cx.go"]), false);
-check("leading ? literal", await runs({ paths: ["?x"] }, ["?x"]), true);
-check("leading + literal", await runs({ paths: ["+x"] }, ["+x"]), true);
-check("unclosed class literal", await runs({ paths: ["[a"] }, ["[a"]), true);
-check("*.md root", await runs({ paths: ["*.md"] }, ["README.md"]), true);
-check("*.md not nested", await runs({ paths: ["*.md"] }, ["docs/a.md"]), false);
-check("docs/** deep", await runs({ paths: ["docs/**"] }, ["docs/a/b.md"]), true);
-check("dot literal", await runs({ paths: ["a.b"] }, ["axb"]), false);
-// Filter semantics: negation order, paths-ignore, renames.
-check("negation excludes", await runs({ paths: ["lib/**", "!lib/vendor/**"] }, ["lib/vendor/z.go"]), false);
-check("negation scoped", await runs({ paths: ["lib/**", "!lib/vendor/**"] }, ["lib/z.go"]), true);
-check("paths-ignore all docs", await runs({ "paths-ignore": ["docs/**", "*.md"] }, ["docs/a.md", "README.md"]), false);
-check("paths-ignore one source", await runs({ "paths-ignore": ["docs/**", "*.md"] }, ["README.md", "internal/x.go"]), true);
-check("rename old name counts", await runs({ paths: ["docs/**"] }, [{ filename: "web/n.js", previous_filename: "docs/o.md" }]), true);
 // The real table.
-const all = (r) => Object.values(r.lanes).every(Boolean);
+const all = (r) => Object.entries(r.lanes).every(([lane, selected]) => lane === "test-affected" || selected);
 const selectedLanes = (r) => Object.keys(r.lanes).filter((l) => r.lanes[l]);
-for (const image of ["fern-image/packages/codecs/new/new.fern", "fern-image/tests/jpeg_header_test.fern", "fern-image/scripts/test.sh", "fern-image/docs/png.md"]) {
-  const imageResult = await decide({ files: [image, "docs/x.md", "README.md"] });
-  const expected = ["test-units", "test-e2e-selfhost", "fern-image"];
-  if (image.startsWith("fern-image/packages/")) expected.push("showcase");
-  check(`image component: ${image}`, [selectedLanes(imageResult), imageResult.imageOnly], [expected, true]);
-}
-for (const source of ["compiler/checker.fern", "compiler/runtime/x86_64/runtime.fern", "internal/stdlib/std/deflate.fern", "bootstrap/stage0.lock"]) {
-  const mixed = await decide({ files: ["fern-image/packages/codecs/new/new.fern", source] });
-  check(`image plus compiler input: ${source}`, [mixed.imageOnly, mixed.lanes["test-e2e-selfhost"], mixed.lanes["test-e2e-x86_64"], mixed.lanes["fern-image"]], [false, true, true, true]);
-  const compilerOnly = await decide({ files: [source] });
-  check(`compiler input reaches image: ${source}`, [compilerOnly.imageOnly, compilerOnly.lanes["fern-image"]], [false, true]);
-}
-for (const source of ["new-component/source.fern", ".github/workflows/test-e2e-selfhost.yml", "scripts/ci-changes-selftest.mjs", "mise.toml", "go.mod"]) {
-  const mixed = await decide({ files: ["fern-image/tests/jpeg_header_test.fern", source] });
-  check(`image plus other input: ${source}`, [mixed.imageOnly, mixed.lanes["test-e2e-selfhost"], mixed.lanes["test-e2e-x86_64"]], [false, true, true]);
-}
-for (const [from, to] of [
-  ["compiler/checker.fern", "fern-image/packages/checker.fern"],
-  ["fern-image/packages/codec.fern", "compiler/codec.fern"],
+for (const [input, expected, excluded] of [
+  ["coreutils/cat.fern", ["test-coreutils", "test-affected", "test-units"], ["fern-image", "test-e2e-selfhost", "fuzz-diff"]],
+  ["fern-image/packages/codecs/qoi/qoi.fern", ["fern-image", "test-affected", "test-units"], ["test-coreutils", "test-e2e-selfhost", "fuzz-diff"]],
+  ["site/src/styles/global.css", ["docs-build", "showcase", "test-units"], ["test-coreutils", "test-e2e-selfhost", "fuzz-diff"]],
+  ["editors/vscode/package.json", ["vscode-extension", "test-units"], ["test-coreutils", "test-e2e-selfhost", "fuzz-diff"]],
 ]) {
-  const renamed = await decide({ files: [{ filename: to, previous_filename: from }] });
-  check(`component rename: ${from} -> ${to}`, [renamed.imageOnly, renamed.lanes["test-e2e-x86_64"], renamed.lanes["fern-image"]], [false, true, true]);
+  const result = await decide({ files: [input] });
+  check(`component ${input}: required lanes`, expected.every((lane) => result.lanes[lane]), true);
+  check(`component ${input}: independent lanes`, excluded.some((lane) => result.lanes[lane]), false);
+  check(`component ${input}: selective plan`, result.selection.full, false);
 }
-for (const files of [[], ["docs/x.md"], ["README.md"]]) {
-  check(`non-image diff has full scope: ${JSON.stringify(files)}`, (await decide({ files })).imageOnly, false);
-}
-check("untrusted image diff has full scope", (await decide({ files: ["fern-image/tests/jpeg_header_test.fern"], throwOn: true })).imageOnly, false);
-check("truncated image diff has full scope", (await decide({ files: Array(3000).fill("fern-image/tests/jpeg_header_test.fern") })).imageOnly, false);
 for (const event of ["push", "merge_group", "workflow_dispatch"]) {
-  const full = await decide({ event, files: ["fern-image/packages/codecs/new/new.fern"] });
-  check(`${event} retains full scope`, [all(full), full.imageOnly], [true, false]);
+  const full = await decide({ event, files: ["fern-image/packages/codecs/qoi/qoi.fern"] });
+  check(`${event} retains full scope`, [all(full), full.selection.full], [true, true]);
 }
+for (const source of ["compiler/checker.fern", "internal/stdlib/std/deflate.fern", "bootstrap/stage0.lock"]) {
+  const result = await decide({ files: ["coreutils/cat.fern", source] });
+  check(`shared compiler input ${source}`, [result.lanes["test-e2e-selfhost"], result.lanes["fern-image"], result.selection.lint.compiler], [true, true, true]);
+}
+const renamed = await decide({ files: [{ filename: "docs/old.fern", previous_filename: "compiler/checker.fern" }] });
+check("a renamed compiler input retains coverage", renamed.lanes["test-e2e-selfhost"], true);
+const unknown = await decide({ files: ["unregistered/source.fern"] });
+check("an unknown component runs broad checks", [all(unknown), unknown.selection.full], [true, true]);
 let r = await decide({ files: ["editors/vscode/x.ts"] });
 check("real: editor change", [r.lanes["vscode-extension"], r.lanes.macos, r.lanes["test-units"]], [true, false, true]);
 r = await decide({ files: ["docs/x.md", "CLAUDE.md"] });
-check("real: doc-only PR runs no filtered lane", Object.values(r.lanes).some(Boolean), false);
+check("real: doc-only PR runs repository checks", selectedLanes(r), ["test-units"]);
 r = await decide({ files: [".github/workflows/ci.yml"] });
 check("real: ci.yml edit runs every lane", all(r), true);
 r = await decide({ files: [".github/workflows/ci-suite.yml"] });
 check("real: ci-suite.yml edit runs every lane", all(r), true);
 r = await decide({ files: [".github/workflows/ci-main.yml"] });
 check("real: ci-main.yml edit runs every lane", all(r), true);
+r = await decide({ files: ["internal/syntax/lexer/lexer_test.go"] });
+check("unit test files do not launch compiler regression lanes", [r.lanes["test-units"], r.lanes["test-e2e-selfhost"], r.lanes["test-e2e-x86_64"]], [true, false, false]);
+r = await decide({ files: ["fern-image/packages/codecs/jpeg/header.fern"] });
+check("JPEG retains its compiler consumer", r.selection.tests["internal/testing/e2ecompiler"]?.includes("TestSelfHostJpegHeaderUnitPayloadOracle"), true);
 // A skipped code push followed by a docs-only push must still validate code.
 // Even a successful, empty compare response must not suppress main lanes.
 for (const files of [["docs/x.md"], ["editors/vscode/x.ts"], []]) {
@@ -274,7 +275,7 @@ const mainProof = ({ runs = [{ id: 50, head_sha: "m1" }], jobs = { 50: mainJobs(
 const cmp = (files, status = "ahead") => ({ status, files: files.map((f) => ({ filename: f })) });
 const running = (r) => Object.keys(r.lanes).filter((l) => r.lanes[l]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"]) } }) });
-check("main: docs-only since the last pass runs only perf", running(r), ["perf"]);
+check("main: docs-only since the last pass runs repository checks and perf", running(r), ["perf", "test-units"]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["compiler/lexer.fern"]) } }) });
 check("main: a self-host-only change skips the lanes that cannot see it",
   [r.lanes["test-fernsmith"], r.lanes.examples, r.lanes["test-e2e-x86_64"], r.lanes["test-e2e-differential"], r.lanes["fuzz-diff"], r.lanes["test-units"], r.lanes["test-e2e-selfhost"], r.lanes.bootstrap, r.lanes.macos],
@@ -299,7 +300,7 @@ r = await decide({ event: "push", proof: mainProof({
   runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
   jobs: { 51: [...mainJobs(laneKeys.filter((l) => l !== "test-units"), "cancelled"), ...mainJobs(["test-units"])], 50: mainJobs(laneKeys) },
   compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/check/checker/x.go"]) } }) });
-check("main: a lane a later push cancelled is diffed from where it last passed", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"]], [false, true]);
+check("main: a lane a later push cancelled is diffed from where it last passed", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"]], [true, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"], "diverged") } }) });
 check("main: a base that is not an ancestor proves nothing", all(r), true);
 check("main: the log says why an unusable compare runs its lanes", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): compare is diverged with 1 file(s), so they run")), true);
@@ -316,8 +317,8 @@ check("main: an API error proves nothing", [all(r), r.warnings.some((w) => w.inc
 // Fail-open, and the one loud exception.
 check("listing failure runs everything", all(await decide({ throwOn: true })), true);
 check("dispatch runs everything", all(await decide({ event: "workflow_dispatch" })), true);
-r = await decide({ files: [{ get filename() { throw new Error("shape"); } }], lanes: { L: { paths: ["a"] } } });
-check("error inside the filter fails open", [r.lanes.L, r.warnings.some((w) => w.includes("filter failed"))], [true, true]);
+r = await decide({ files: [{ get filename() { throw new Error("shape"); } }] });
+check("error inside the filter fails open", [all(r), r.selection.full, r.warnings.some((w) => w.includes("filter failed"))], [true, true, true]);
 r = await decide({ files: ["x"], lanes: "{ not json" });
 check("unparsable table fails loudly", [r.lanes, r.failed.some((m) => m.includes("not valid JSON"))], [null, true]);
 
@@ -341,8 +342,8 @@ async function accepted({ changes = "success", lint = "success", suite = "succes
 check("verdict: selected suite succeeds", await accepted(), true);
 check("verdict: no lane selected and suite skipped", await accepted({ suite: "skipped", lanes: { units: false } }), true);
 check("verdict: no lane selected and suite succeeds", await accepted({ lanes: { units: false } }), true);
-const docLanes = (await decide({ files: ["docs/x.md"] })).lanes;
-check("verdict: actual doc-only selection skips the suite", await accepted({ suite: "skipped", lanes: docLanes }), true);
+const docLanes = Object.fromEntries(Object.keys(JSON.parse(table)).map((lane) => [lane, false]));
+check("verdict: an empty selection skips the suite", await accepted({ suite: "skipped", lanes: docLanes }), true);
 check("verdict: a selected lane cannot skip", await accepted({ suite: "skipped" }), false);
 for (const result of ["failure", "cancelled", "skipped", ""]) {
   for (const suite of ["success", "skipped"]) {
@@ -361,6 +362,7 @@ for (const lanes of ["{", "null", "[]", "{}", '{"units":"false"}', '{"units":0}'
   }
 }
 
+server.stdin.end();
 if (failures) {
   console.error(`ci-changes-selftest: ${failures} failure(s)`);
   process.exit(1);
