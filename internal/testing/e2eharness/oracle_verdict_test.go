@@ -184,6 +184,48 @@ func TestCheckSourceVerdictKeysTheSource(t *testing.T) {
 	}
 }
 
+func TestInProcessVerdictKeysModeAndSource(t *testing.T) {
+	t.Setenv("FERN_BIN", "")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", t.TempDir())
+	src := filepath.Join(t.TempDir(), "main.fern")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := 0
+	run := func() ([]byte, int) {
+		runs++
+		return []byte("refused"), 1
+	}
+	expect := func(want int, what string) {
+		t.Helper()
+		if runs != want {
+			t.Fatalf("%s: run was called %d times, want %d", what, runs, want)
+		}
+	}
+	write("function main(): i32 { return 0; }\n")
+	out, exit := InProcessVerdict(t, "check", src, run)
+	if exit != 1 || string(out) != "refused" {
+		t.Fatalf("verdict = %q exit %d, want run's output and exit 1", out, exit)
+	}
+	out, exit = InProcessVerdict(t, "check", src, run)
+	expect(1, "the same mode and source")
+	if exit != 1 || string(out) != "refused" {
+		t.Fatalf("cached verdict = %q exit %d, want run's output and exit 1", out, exit)
+	}
+	InProcessVerdict(t, "lint", src, run)
+	expect(2, "a second mode")
+	write("function main(): i32 { return 1; }\n")
+	InProcessVerdict(t, "check", src, run)
+	expect(3, "a changed source")
+	t.Setenv("FERN_SELFHOST_BUILD_CACHE", "")
+	InProcessVerdict(t, "check", src, run)
+	InProcessVerdict(t, "check", src, run)
+	expect(5, "no cache directory")
+}
+
 func TestInterpVerdictRunsExternalFernAgain(t *testing.T) {
 	work := t.TempDir()
 	fern := filepath.Join(work, "fern")

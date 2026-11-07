@@ -143,6 +143,16 @@ jobs:
           done
           [ "$fail" -eq 0 ] || exit 1
           qemu-aarch64 --version | head -1
+      # TestEveryExampleChecks reads the Go checker's verdict on each corpus
+      # program through the verdict cache, so a compiler-only change does not
+      # check every example again. The cmd/fern tests that build the self-host
+      # CLI read it from the driver cache.
+      - if: matrix.group == 'rest'
+        uses: ./.github/actions/selfhost-driver-cache
+      - if: matrix.group == 'rest'
+        uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: units-${{ matrix.host }}
       - name: go test (units, ${{ matrix.group }} packages)
         # internal/testing/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
