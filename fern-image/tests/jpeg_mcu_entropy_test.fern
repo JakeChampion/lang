@@ -1,0 +1,278 @@
+import "../packages/codecs/jpeg/entropy_writer" as writer;
+import "../packages/codecs/jpeg/header";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function tables(): writer.ScanTables {
+  return writer.ScanTables { dc: [table(false)], ac: [table(true)] };
+}
+
+function component(h: i32, v: i32): writer.ScanComponent {
+  return writer.ScanComponent { horizontal: h, vertical: v, dc: 0, ac: 0 };
+}
+
+function options(mcus: i32, interval: i32, limit: i32): writer.ScanOptions {
+  return writer.ScanOptions { mcus: mcus, restart_interval: interval, max_output_bytes: limit };
+}
+
+function values(count: i32): i32[] {
+  let result: i32[] = [];
+  for i in 0..count * 64 {
+    result = result.append(if (i % 64 == 0) { i / 64 % 3 + 1 } else { 0 });
+  }
+  return result;
+}
+
+function produced(input: [i32], components: [writer.ScanComponent], config: writer.ScanOptions, cancelled: () => boolean): Result[u8[], writer.ProducerError[writer.EncodeError]] {
+  return writer.encode_mcus_produced(
+    input, components, tables(), config, cancelled,
+    (source: [i32], emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, writer.EncodeError] => {
+      for i in 0..source.len() / 64 {
+        emit(source[i * 64:i * 64 + 64])?;
+      }
+      return Ok(());
+    },
+  );
+}
+
+function equal(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function single(): test.TestOutcome {
+  for count in [1, 3, 17] {
+    let input = values(count);
+    for interval in [0, 1, 2, 7] {
+      let Ok(old) = writer.encode_blocks(input, table(false), table(true), interval, 8192, never) else {
+        return test.fail("single component baseline");
+      };
+      let Ok(result) = produced(input, [component(4, 4)], options(count, interval, 8192), never) else {
+        return test.fail("single component MCU producer");
+      };
+      if (!equal(old, result)) {
+        return test.fail("single component byte parity");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function predictors_and_restarts(): test.TestOutcome {
+  let components = [component(1, 1), component(1, 1), component(1, 1)];
+  let golden: u8[] = [1, 128, 1, 64, 0, 88, 7];
+  let Ok(one) = produced(values(3), components, options(1, 0, 8192), never) else {
+    return test.fail("independent component predictors");
+  };
+  if (!equal(one, golden)) {
+    return test.fail("literal component DC categories");
+  }
+  let Ok(result) = produced(values(57), components, options(19, 1, 8192), never) else {
+    return test.fail("MCU restart output");
+  };
+  let wanted: u8[] = [];
+  for i in 0..19 {
+    if (i > 0) {
+      wanted = wanted.append(255).append((208 + (i - 1) % 8) as u8);
+    }
+    for byte in golden {
+      wanted = wanted.append(byte);
+    }
+  }
+  if (!equal(result, wanted)) {
+    return test.fail("all predictors reset at complete MCU boundaries");
+  }
+  if (!match (produced(values(57), components, options(19, 1, result.len()), never)) { Ok(v) => equal(v, wanted), _ => false }
+    || !match (produced(values(57), components, options(19, 1, result.len() - 1), never)) { Err(writer.ProducerEncode(writer.Limit)) => true, _ => false }) {
+    return test.fail("exact MCU byte limit");
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for components in [
+    [], [component(0, 1)], [component(1, 5)], [component(4, 2), component(3, 1)],
+    [component(1, 1), component(1, 1), component(1, 1), component(1, 1), component(1, 1)],
+  ] {
+    if (!match (produced([], components, options(1, 0, 1), cancel)) { Err(writer.ProducerEncode(writer.Shape)) => true, _ => false }) {
+      return test.fail("MCU shape before callbacks");
+    }
+  }
+  for config in [options(1, -1, 1), options(1, 65536, 1), options(1, 0, -1), options(2147483647, 0, 1)] {
+    if (!match (produced([], [component(1, 1), component(1, 1)], config, cancel)) { Err(writer.ProducerEncode(writer.Limit)) => true, _ => false }) {
+      return test.fail("MCU limits before callbacks");
+    }
+  }
+  let bad = writer.ScanComponent { horizontal: 1, vertical: 1, dc: 1, ac: 0 };
+  if (!match (produced([], [bad], options(1, 0, 1), cancel)) { Err(writer.ProducerEncode(writer.Table)) => true, _ => false }) {
+    return test.fail("explicit table selector admission");
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function counts_and_failures(): test.TestOutcome {
+  let input = values(1);
+  for supplied in [0, 1, 2, 3, 4] {
+    let result = writer.encode_mcus_produced(
+      (), [component(1, 1), component(1, 1), component(1, 1)], tables(), options(1, 0, 8192), never,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        for i in 0..supplied {
+          let ignored = emit(input);
+        }
+        return Ok(());
+      },
+    );
+    if (!match (result) { Ok(_) => supplied == 3, Err(writer.ProducerEncode(writer.Shape)) => supplied != 3, _ => false }) {
+      return test.fail("exact complete MCU block count");
+    }
+  }
+  for size in [0, 1, 63, 65] {
+    let bad = values(2);
+    let result = writer.encode_mcus_produced(
+      (), [component(1, 1)], tables(), options(1, 0, 8192), never,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        let ignored = emit(bad[:size]);
+        let ignored_again = emit(input);
+        return Err("source");
+      },
+    );
+    if (!match (result) { Err(writer.ProducerEncode(writer.Shape)) => true, _ => false }) {
+      return test.fail("first shape failure poisons the MCU producer");
+    }
+  }
+  for limit in [0, 8192] {
+    let result = writer.encode_mcus_produced(
+      (), [component(1, 1)], tables(), options(1, 0, limit), never,
+      (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+        let ignored = emit(input);
+        return Err("source");
+      },
+    );
+    if (!match (result) { Err(writer.ProducerEncode(writer.Limit)) => limit == 0, Err(writer.ProducerSource(e)) => limit > 0 && e == "source", _ => false }) {
+      return test.fail("codec errors precede source errors");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let input = values(12);
+  let components = [component(2, 2), component(1, 1), component(1, 1)];
+  let config = options(2, 1, 8192);
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  if let Err(_) = produced(input, components, config, count) {
+    return test.fail("MCU cancellation baseline");
+  }
+  for stop in 1..total.get() + 1 {
+    let polls = cell_new(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    };
+    if (!match (produced(input, components, config, cancel)) { Err(writer.ProducerEncode(writer.Cancelled)) => true, _ => false }) {
+      return test.fail("every MCU cancellation checkpoint");
+    }
+  }
+  return test.pass();
+}
+
+function lifetime(): test.TestOutcome {
+  let input = values(1);
+  let result = writer.encode_mcus_produced(
+    (), [component(1, 1)], tables(), options(1, 0, 8192), never,
+    (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, ([i32]) => Result[void, writer.EncodeError]] => {
+      let ignored = emit(input);
+      return Err(emit);
+    },
+  );
+  let Err(writer.ProducerSource(late)) = result else {
+    return test.fail("MCU consumer retained as a source error");
+  };
+  if (!match (late(input)) { Err(writer.Shape) => true, _ => false }) {
+    return test.fail("MCU consumer closes before escape");
+  }
+  return test.assert_true(match (produced(input, [component(1, 1)], options(1, 0, 8192), never)) { Ok(_) => true, _ => false });
+}
+
+function aliases(): test.TestOutcome {
+  let input = values(3);
+  let shared = cell_new(input);
+  let components = [component(1, 1), component(1, 1), component(1, 1)];
+  let Ok(output) = produced(input, components, options(1, 0, 8192), never) else {
+    return test.fail("MCU alias baseline");
+  };
+  let changed = output.with(0, 99);
+  if (changed[0] != 99 || output[0] != 1) {
+    return test.fail("MCU output alias independence");
+  }
+  for i in 0..input.len() {
+    let wanted = if (i % 64 == 0) { i / 64 % 3 + 1 } else { 0 };
+    if (input[i] != wanted || shared.get()[i] != wanted) {
+      return test.fail("MCU coefficient aliases remain unchanged");
+    }
+  }
+  return test.pass();
+}
+
+function ignored_cancel(): test.TestOutcome {
+  let input = values(1);
+  let stopped = cell_new(false);
+  let cancel = (): boolean => stopped.get();
+  let result = writer.encode_mcus_produced(
+    (), [component(1, 1)], tables(), options(1, 0, 8192), cancel,
+    (context: void, emit: ([i32]) => Result[void, writer.EncodeError]): Result[void, string] => {
+      stopped.set(true);
+      let ignored = emit(input);
+      stopped.set(false);
+      let ignored_again = emit(input);
+      return Ok(());
+    },
+  );
+  return test.assert_true(match (result) { Err(writer.ProducerEncode(writer.Cancelled)) => true, _ => false });
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG MCU entropy");
+  suite = suite.it("single-component MCU bytes retain exact parity", single);
+  suite = suite.it("component predictors and complete-MCU restart markers", predictors_and_restarts);
+  suite = suite.it("shape, selectors and limits precede callbacks", admission);
+  suite = suite.it("exact counts and ignored failures retain the first error", counts_and_failures);
+  suite = suite.it("every MCU cancellation checkpoint", cancellation);
+  suite = suite.it("escaped consumers close and fresh calls remain independent", lifetime);
+  suite = suite.it("coefficient and output aliases remain independent", aliases);
+  suite = suite.it("ignored cancellation retains the first failure", ignored_cancel);
+  return suite.finish();
+}

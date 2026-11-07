@@ -102,6 +102,18 @@ jobs:
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-component-blocks.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_mcu_order_test.py
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_mcu_entropy_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-mcu-entropy.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_padded_blocks_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-padded-blocks.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: bash ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-mcu-order.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-plane-coefficients.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -387,6 +399,24 @@ jobs:
         with:
           name: image-jpeg-quantization
           path: fern-image/build/jpeg-quantization-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-mcu-order-*.json') != ''
+        with:
+          name: image-jpeg-mcu-order
+          path: fern-image/build/jpeg-mcu-order-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-padded-blocks-*.json') != ''
+        with:
+          name: image-jpeg-padded-blocks
+          path: fern-image/build/jpeg-padded-blocks-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-mcu-entropy-*.json') != ''
+        with:
+          name: image-jpeg-mcu-entropy
+          path: fern-image/build/jpeg-mcu-entropy-*.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && hashFiles('fern-image/build/icc-inverse-*.json') != ''
