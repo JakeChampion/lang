@@ -278,6 +278,25 @@ func TestWalkieRelayServer(t *testing.T) {
 	if bad := ask(t, addr, pool, "HELLO"); bad != "ERROR unknown request" {
 		t.Fatalf("HELLO: %q", bad)
 	}
+
+	// The request of the app, which steps with no wait, gets a room too, and
+	// it refuses a server whose certificate it does not trust.
+	client := filepath.Join(dir, "room_client")
+	buildClient := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-o", client,
+		e2eharness.RepoPath(walkieApp, "room_client.fern"), e2eharness.SelfHostStdlibRoot(t))
+	buildClient.Env = e2eharness.ChildEnv()
+	if out, err := buildClient.CombinedOutput(); err != nil {
+		t.Fatalf("build room_client.fern: %v\n%s", err, out)
+	}
+	out, err := exec.Command(client, "127.0.0.1", strconv.Itoa(port), certPath, "CREATE").CombinedOutput()
+	if err != nil || !strings.HasPrefix(string(out), "ROOM ") || !strings.Contains(string(out), "relay 127.0.0.1:"+strconv.Itoa(port)) {
+		t.Fatalf("room_client CREATE: %v\n%s", err, out)
+	}
+	otherCertPath, _, _ := writeTestIdentity(t, t.TempDir())
+	out, err = exec.Command(client, "127.0.0.1", strconv.Itoa(port), otherCertPath, "CREATE").CombinedOutput()
+	if err != nil || !strings.HasPrefix(string(out), "ERROR ") {
+		t.Fatalf("room_client trusted a certificate that it did not know: %v\n%s", err, out)
+	}
 	ma, mb := &member{token: tokenOf(t, created)}, &member{token: tokenOf(t, joined)}
 
 	relay := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}

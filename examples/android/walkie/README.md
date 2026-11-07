@@ -100,9 +100,10 @@ so does another app that records or plays. Then the transmission stops, and
 the phone shows why. During a call the phone cannot talk. A short sound of
 another app, such as a notification, does not stop the transmission.
 
-To talk while the app is in the background, tap TALK in the notification. The
-phone talks until you tap STOP TALKING. The talk button of the app also stops
-it.
+To talk while the app is in the background, tap TALK in the notification. On
+Android 12 and later, TALK works only when the phone is unlocked. The phone
+talks until you tap STOP TALKING, for one minute at most. The talk button of
+the app also stops it.
 
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second
@@ -170,7 +171,9 @@ The look of the screen: a black background, white and grey type, and red only
 for what is live. Titles, button labels and the code use the dot font of
 `../matrix.fern`, 5 by 7 round dots for each character. The palette, the
 pills, the cards and the rings of dots are in `../look.fern`. The stopwatch
-app uses the same font and the same look. The round talk button is a ring
+app uses the same font and the same look.
+
+The round talk button is a ring
 of dots. It fills red while the phone talks, and white while it
 listens. A dot beside the status has the colour of the state. The code to
 compare shows in two groups of three digits, over a MATCH pill and a NO MATCH
@@ -344,7 +347,16 @@ ends the session, and so does a code with no confirmation. Then the phone
 does not search again.
 
 `internet.fern` is the side of the app. It asks the server for a room over
-TLS. It puts each datagram to the relay in a frame with the MAC, and it
+TLS. The app steps the request from its event loop, so a slow resolver or
+server does not stop the screen or the session. The request has 15 seconds.
+`room_client.fern` makes the same request from a shell:
+
+```sh
+fern -o room_client examples/android/walkie/room_client.fern
+./room_client rooms.example.com 47130 roots.pem CREATE
+```
+
+The app puts each datagram to the relay in a frame with the MAC, and it
 answers each challenge of the relay. In a room, the app takes a datagram only
 from the relay. So a phone on the same network
 cannot take the place of the peer. `internet_test.fern` runs two nodes in one

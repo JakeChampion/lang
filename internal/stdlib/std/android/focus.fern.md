@@ -6,7 +6,7 @@ This module asks Android for the audio focus, for a NativeActivity app of `std/a
 
 Android gives the audio focus to one client at a time. A call takes it, and so does an app that starts to play or record. The app declares a @jni class that implements `android.media.AudioManager$OnAudioFocusChangeListener`, with a native `onAudioFocusChange` that calls `changed`.
 
-`new` makes one listener of that class, and a focus request for speech in a voice call. It stores the `ANativeActivity` in the static field `fern` of the class. Then `changed` sends each change to the loop thread, and the loop gives it to the app as a `Posted` event. `event` decodes it.
+`new` makes one listener of that class, and a focus request for speech in a voice call. `changed` sends each change to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. `event` decodes it.
 
 `request` asks for the focus until `release`. A request is transient: the client that had the focus gets it back after the release. Each listener is a client of its own, also in one app.
 
@@ -123,9 +123,7 @@ pub function new(ctx: usize, class: string): Option[Focus] {
   if (manager == 0 as usize) {
     return None;
   }
-  let listener_class: usize = jni.load_class(e, obj, class);
-  let stored: usize = jni.set_static_long_field(e, listener_class, jni.get_static_field_id(e, listener_class, "fern", "J"), android.activity(ctx));
-  let listener: usize = new_object(e, listener_class, "()V", []);
+  let listener: usize = new_object(e, jni.load_class(e, obj, class), "()V", []);
   let b: usize = new_object(e, jni.find_class(e, BUILDER), "(I)V", [GAIN_TRANSIENT as usize]);
   let with_attrs: usize = jni.call_object(e, b, "setAudioAttributes", "(Landroid/media/AudioAttributes;)L" + BUILDER + ";", [attributes(e)]);
   let with_listener: usize = jni.call_object(e, b, "setOnAudioFocusChangeListener", "(" + LISTENER_SIG + ")L" + BUILDER + ";", [listener]);
@@ -163,10 +161,10 @@ pub function close(ctx: usize, f: Focus): void {
 }
 
 // The onAudioFocusChange of the app's listener: `env`, `listener` and
-// `change` are its arguments. It sends the change to the loop thread.
+// `change` are its arguments. It runs on the UI thread, and sends the change
+// to the loop thread.
 pub function changed(e: usize, listener: usize, change: i32): void {
-  let class: usize = jni.get_object_class(e, listener);
-  let activity: usize = jni.get_static_long_field(e, class, jni.get_static_field_id(e, class, "fern", "J"));
+  let activity: usize = android.live_activity(e);
   if (activity == 0 as usize) {
     return;
   }

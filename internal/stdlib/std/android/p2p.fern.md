@@ -6,7 +6,7 @@ This module connects two phones with Wi-Fi Direct, for a NativeActivity app of `
 
 Wi-Fi Direct connects two phones with no access point: one phone becomes the group owner, and the other connects to it. `WifiP2pManager` reports the state, the peers and the group through broadcasts. The app declares a @jni class that extends `android.content.BroadcastReceiver`, with a native `onReceive` that calls `received`.
 
-`start` registers the receiver, and stores the `ANativeActivity` in the static field `fern` of the class. Then `received` can send the broadcasts to the loop thread, and the loop gives them to the app as `Posted` events. `event` decodes them.
+`start` registers the receiver. `received` sends the broadcasts to the loop thread of the live activity, which `android.live_activity` names. The loop gives them to the app as `Posted` events. `event` decodes them.
 
 Discovery needs `NEARBY_WIFI_DEVICES` from API level 33, and `ACCESS_FINE_LOCATION` before that. The commands report no result: the broadcasts that follow give the state. `connect` makes Android ask the user of the other phone to accept the invitation.
 
@@ -122,8 +122,6 @@ pub function start(ctx: usize, class: string): Option[Manager] {
     return None;
   }
   let receiver_class: usize = jni.load_class(e, obj, class);
-  let activity: usize = android.activity(ctx);
-  let stored: usize = jni.set_static_long_field(e, receiver_class, jni.get_static_field_id(e, receiver_class, "fern", "J"), activity);
   let none: usize = jni.jvalue_alloc(0);
   let receiver: usize = jni.new_object_a(e, receiver_class, jni.get_method_id(e, receiver_class, "<init>", "()V"), none);
   jni.free_buffer(none);
@@ -172,8 +170,7 @@ pub function stop(ctx: usize, p: Manager): void {
 // its arguments. It sends the state, the peers or the group to the loop
 // thread.
 pub function received(e: usize, receiver: usize, intent: usize): void {
-  let class: usize = jni.get_object_class(e, receiver);
-  let activity: usize = jni.get_static_long_field(e, class, jni.get_static_field_id(e, class, "fern", "J"));
+  let activity: usize = android.live_activity(e);
   if (activity == 0 as usize || intent == 0 as usize) {
     return;
   }
