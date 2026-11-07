@@ -128,7 +128,7 @@ function per_module_view(entry_path: string, entry: parser.Module, loaded: flatt
 }
 
 function merged_program(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string): parser.Module {
-  let merged = modloader.bundle(entry_path, entry, loaded, target, "");
+  let merged = modloader.bundle(modloader.no_overlay(), entry_path, entry, loaded, target, "");
   let md = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, md.environment, md.isa);
   return constfold.prune_literal_branches(merged);

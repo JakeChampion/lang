@@ -3,7 +3,8 @@ import "std/utf8";
 
 pub struct TokEof { line: i32, col: i32 }
 
-pub struct TokNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
+// The low four bits hold the suffix tag. Bit four marks a float.
+pub struct TokNumber { text: string, raw: string, flags: u8, line: i32, col: i32 }
 
 pub struct TokIdent { name: string, line: i32, col: i32 }
 
@@ -119,10 +120,56 @@ pub function keywords(): string[] {
   return ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f32x4", "f64", "f64x2", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "use", "usize", "void", "when", "while"];
 }
 
-function is_valid_numeric_suffix(s: string): boolean {
-  return s == "i32" || s == "i64"
-    || s == "u8" || s == "u32" || s == "u64" || s == "usize"
-    || s == "f32" || s == "f64";
+const NUMERIC_SUFFIXES: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char"];
+
+function numeric_suffix_tag(s: string): u8 {
+  if (s == "i32") {
+    return 1u8;
+  }
+  if (s == "i64") {
+    return 2u8;
+  }
+  if (s == "u8") {
+    return 3u8;
+  }
+  if (s == "u32") {
+    return 4u8;
+  }
+  if (s == "u64") {
+    return 5u8;
+  }
+  if (s == "usize") {
+    return 6u8;
+  }
+  if (s == "f32") {
+    return 7u8;
+  }
+  if (s == "f64") {
+    return 8u8;
+  }
+  if (s == "char") {
+    return 9u8;
+  }
+  return 0u8;
+}
+
+function numeric_flags(suffix: u8, is_float: boolean): u8 {
+  if (is_float) {
+    return suffix | 16u8;
+  }
+  return suffix;
+}
+
+pub function (t: TokNumber) suffix(): string {
+  let tag = (t.flags & 15u8) as i32;
+  if (tag < NUMERIC_SUFFIXES.len()) {
+    return NUMERIC_SUFFIXES[tag];
+  }
+  return "";
+}
+
+pub function (t: TokNumber) is_float(): boolean {
+  return (t.flags & 16u8) != 0u8;
 }
 
 function suffix_end(src: string, i: i32, n: i32): i32 {
@@ -164,6 +211,9 @@ function misplaced_separator(src: string, begin: i32, end: i32, n: i32): boolean
 }
 
 function without_separators(text: string): string {
+  if (__memchr(text, 95, 0) < 0) {
+    return text;
+  }
   let out = "";
   let from = 0;
   for at in 0..text.len() {
@@ -471,11 +521,11 @@ pub function punct_tok(text: string, line: i32, col: i32): Token {
 }
 
 pub function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
-  return TokNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: line, col: col };
+  return TokNumber { text: text, raw: "", flags: numeric_flags(numeric_suffix_tag(suffix), is_float), line: line, col: col };
 }
 
 pub function quoted_tok(text: string, suffix: string, raw: string, line: i32, col: i32): Token {
-  return TokNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
+  return TokNumber { text: text, raw: raw, flags: numeric_suffix_tag(suffix), line: line, col: col };
 }
 
 pub function error_tok(msg: string, line: i32, col: i32): Token {
@@ -652,12 +702,14 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   }
   let text = slice_unchecked(l.src, begin, l.i);
   let suffix = "";
+  let suffix_tag = 0u8;
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin = l.i;
     let run_end = suffix_end(l.src, l.i, l.n);
     l = l.advance_in_line(run_end);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
-    if (!is_valid_numeric_suffix(suffix)) {
+    suffix_tag = numeric_suffix_tag(suffix);
+    if (suffix_tag == 0u8) {
       return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(text + ""), start_line, start_col) };
     }
     if (is_float && suffix[0] != b'f') {
@@ -671,9 +723,9 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   let digits = without_separators(spelled);
   if (digits.len() != spelled.len()) {
     let raw = slice_unchecked(l.src, begin, l.i) + "";
-    return NumResult { lex: l, tok: TokNumber { text: digits, suffix: suffix, raw: raw, is_float: is_float, line: start_line, col: start_col } };
+    return NumResult { lex: l, tok: TokNumber { text: digits, raw: raw, flags: numeric_flags(suffix_tag, is_float), line: start_line, col: start_col } };
   }
-  let tok = number_tok(text, suffix, is_float, start_line, start_col);
+  let tok: Token = TokNumber { text: digits, raw: "", flags: numeric_flags(suffix_tag, is_float), line: start_line, col: start_col };
   return NumResult { lex: l, tok: tok };
 }
 
@@ -715,17 +767,19 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
     return NumResult { lex: l, tok: num_error_tok("invalid digit " + quote_char(l.src, l.i, l.n) + " in a " + prefix + " literal", start_line, start_col) };
   }
   let suffix = "";
+  let suffix_tag = 0u8;
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin = l.i;
     let run_end = suffix_end(l.src, l.i, l.n);
     l = l.advance_in_line(run_end);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
-    if (!is_valid_numeric_suffix(suffix) || suffix[0] == b'f') {
+    suffix_tag = numeric_suffix_tag(suffix);
+    if (suffix_tag == 0u8 || suffix[0] == b'f') {
       return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
     }
   }
   let raw = slice_unchecked(l.src, begin, l.i) + "";
-  return NumResult { lex: l, tok: TokNumber { text: radix_digits_hex(digits, base), suffix: suffix, raw: raw, is_float: false, line: start_line, col: start_col } };
+  return NumResult { lex: l, tok: TokNumber { text: radix_digits_hex(digits, base), raw: raw, flags: suffix_tag, line: start_line, col: start_col } };
 }
 
 function radix_digits_hex(digits: i32[], base: i32): string {
@@ -1095,6 +1149,25 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
   return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, raw, start_line, start_col) };
 }
 
+const STRING_STOP: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+];
+
 function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();
   let out = "";
@@ -1112,10 +1185,7 @@ function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
       out += utf8_encode(ev.val);
       continue;
     }
-    let re = l.i;
-    while (re < l.n && l.src[re] != b'"' && l.src[re] != 92 && l.src[re] != b'\n') {
-      re += 1;
-    }
+    let re = __scan_set(l.src, l.i, STRING_STOP);
     out += slice_unchecked(l.src, l.i, re);
     l = l.advance_in_line(re);
   }
@@ -1404,10 +1474,10 @@ function test_mixed(): i32 {
       if (t.text != "42") {
         return 600;
       }
-      if (t.suffix != "i64") {
+      if (t.suffix() != "i64") {
         return 601;
       }
-      if (t.is_float) {
+      if (t.is_float()) {
         return 602;
       }
     },
@@ -1463,10 +1533,10 @@ function test_mixed(): i32 {
       if (t.text != "1.5") {
         return 1100;
       }
-      if (t.suffix != "f64") {
+      if (t.suffix() != "f64") {
         return 1101;
       }
-      if (!t.is_float) {
+      if (!t.is_float()) {
         return 1102;
       }
     },
@@ -1505,7 +1575,7 @@ function test_hex(): i32 {
       if (t.text != "0x2A") {
         return 1401;
       }
-      if (t.is_float) {
+      if (t.is_float()) {
         return 1402;
       }
     },
@@ -1548,7 +1618,7 @@ function test_hex(): i32 {
       if (t.text != "0x10") {
         return 1410;
       }
-      if (t.suffix != "u8") {
+      if (t.suffix() != "u8") {
         return 1411;
       }
     },
@@ -1577,7 +1647,7 @@ function test_scientific(): i32 {
       if (t.text != "1e3") {
         return 1501;
       }
-      if (!t.is_float) {
+      if (!t.is_float()) {
         return 1502;
       }
     },
@@ -1696,7 +1766,7 @@ function test_chained_tuple(): i32 {
       if (t.text != "1") {
         return 1605;
       }
-      if (t.is_float) {
+      if (t.is_float()) {
         return 1606;
       }
     },
@@ -1719,7 +1789,7 @@ function test_chained_tuple(): i32 {
       if (t.text != "0") {
         return 1610;
       }
-      if (t.is_float) {
+      if (t.is_float()) {
         return 1611;
       }
     },
@@ -1737,7 +1807,7 @@ function test_float_after_nondot(): i32 {
   while (i < toks.len()) {
     match (toks[i]) {
       TokNumber(t) => {
-        if (t.is_float) {
+        if (t.is_float()) {
           floats += 1;
         }
       },
@@ -1927,8 +1997,8 @@ function check_quoted(src: string, want_text: string, want_suffix: string): bool
   }
   match (t[0]) {
     TokNumber(n) => {
-      return n.text == want_text && n.suffix == want_suffix
-        && n.raw == src && !n.is_float;
+      return n.text == want_text && n.suffix() == want_suffix
+        && n.raw == src && !n.is_float();
     },
     _ => {
       return false;
@@ -2353,6 +2423,72 @@ function test_multibyte(): i32 {
   return 0;
 }
 
+function test_numeric_flags(): i32 {
+  let src = "1 1i32 2i64 3u8 4u32 5u64 6usize 7f32 8f64 'A' b'A' 18446744073709551615u64 340282366920938463463374607431768211455";
+  let suffixes: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "u8", "u64", ""];
+  let toks = rebase_tokens(tokenize(src), 4, 10);
+  if (toks.len() != suffixes.len() + 1) {
+    return 2247;
+  }
+  for i in 0..suffixes.len() {
+    match (toks[i]) {
+      TokNumber(t) => {
+        if (t.suffix() != suffixes[i] || t.is_float() != (i == 7 || i == 8) || t.line != 4 || t.col < 10) {
+          return 2248;
+        }
+        if (i == 11 && t.text != "18446744073709551615" || i == 12 && t.text != "340282366920938463463374607431768211455") {
+          return 2250;
+        }
+      },
+      _ => {
+        return 2249;
+      }
+    }
+  }
+  return 0;
+}
+
+function test_string_scan_boundaries(): i32 {
+  let text = "";
+  let prefix = "";
+  for n in 0..81 {
+    let src = prefix + "\"" + text + "é\\n\\\"\\u{1F600}" + text + "\";";
+    let toks = tokenize(src);
+    if (toks.len() != 3) {
+      return 2240;
+    }
+    match (toks[0]) {
+      TokString(t) => {
+        if (t.value != text + "é\n\"😀" + text || t.line != 1 || t.col != n + 1) {
+          return 2241;
+        }
+      },
+      _ => {
+        return 2242;
+      }
+    }
+    match (toks[1]) {
+      TokPunct(t) => {
+        if (t.text != ";" || t.col != src.len()) {
+          return 2243;
+        }
+      },
+      _ => {
+        return 2244;
+      }
+    }
+    if (!has_error(tokenize("\"" + text + "\n"))) {
+      return 2245;
+    }
+    if (!has_error(tokenize("\"" + text))) {
+      return 2246;
+    }
+    text += "x";
+    prefix += " ";
+  }
+  return 0;
+}
+
 function test_source_decoding(): i32 {
   match (decode_source([47 as u8, 47 as u8, 10 as u8, 32 as u8, 255 as u8])) {
     Ok(_) => {
@@ -2379,6 +2515,14 @@ function test_source_decoding(): i32 {
 
 function main(): i32 {
   let c = 0;
+  c = test_numeric_flags();
+  if (c != 0) {
+    return c;
+  }
+  c = test_string_scan_boundaries();
+  if (c != 0) {
+    return c;
+  }
   c = test_mixed();
   if (c != 0) {
     return c;

@@ -83,6 +83,50 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("interp-dispatches-byte-methods", func(t *testing.T) { playgroundInterpByteMethods(t, bin) })
 	t.Run("lsp-publishes-diagnostics", func(t *testing.T) { playgroundLSPDiagnostics(t, bin) })
 	t.Run("lsp-answers-from-the-stdlib", func(t *testing.T) { playgroundLSPStdlibAnswers(t, bin) })
+	t.Run("package-methods-in-the-stdlib", playgroundPackageMethods)
+}
+
+func playgroundPackageMethods(t *testing.T) {
+	stdlib := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(stdlib, "std"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, src := range map[string]string{
+		"owner": `pub struct Box { n: i32 }
+pub(package) function (b: Box) value(): i32 { return b.n; }
+function (b: Box) hidden(): i32 { return b.n; }
+`,
+		"peer": `import "std/owner";
+pub function value(): i32 { let b = owner.Box { n: 42 }; return b.value(); }
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(stdlib, "std", name+".fern"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := buildPlaygroundDriverWith(t, stdlib)
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "fern.toml"), []byte("[package]\nname = \"decoy\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const peer = `import "std/peer"; function main(): i32 { return peer.value(); }`
+	for _, mode := range []string{"-check", "-interp"} {
+		_, stderr, code := runPlayground(t, bin, cwd, peer, mode)
+		want := 0
+		if mode == "-interp" {
+			want = 42
+		}
+		if code != want || stderr != "" {
+			t.Fatalf("%s: code=%d, want %d\n%s", mode, code, want, stderr)
+		}
+	}
+	for _, method := range []string{"value", "hidden"} {
+		src := `import "std/owner"; function main(): i32 { let b = owner.Box { n: 42 }; return b.` + method + `(); }`
+		_, stderr, code := runPlayground(t, bin, cwd, src, "-check")
+		if code == 0 || !strings.Contains(stderr, "E043") {
+			t.Fatalf("entry must not call %s: code=%d\n%s", method, code, stderr)
+		}
+	}
 }
 
 const playgroundLSPURI = "file:///playground.fern"

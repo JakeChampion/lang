@@ -49,6 +49,19 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
+      - uses: astral-sh/setup-uv@v7
+      - name: Qualify QOI against the pinned reference codec
+        run: |
+          reference="$(mktemp -d "$RUNNER_TEMP/qoi-reference.XXXXXX")"
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/phoboslab/qoi/ffb2d2cb74a1de60819b21b939f7209aa53e91c1/qoi.h \
+            -o "$reference/qoi.h"
+          uv run --no-project python fern-image/tests/qualify_qoi.py \
+            --fern "$GITHUB_WORKSPACE/bin/fern" --reference-header "$reference/qoi.h" \
+            --target x86-64-linux --output "$reference/native"
+          uv run --no-project python fern-image/tests/qualify_qoi.py \
+            --fern "$GITHUB_WORKSPACE/bin/fern" --reference-header "$reference/qoi.h" \
+            --target wasm32-wasi --runner wasmtime --runner run --output "$reference/wasm"
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-png-corpus.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern

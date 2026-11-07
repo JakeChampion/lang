@@ -1,3 +1,5 @@
+import "./sysreg";
+
 function arm64_x0(): i32 {
   return 0;
 }
@@ -3003,34 +3005,11 @@ function arm64_ldrsh(buf: i32[], rt: i32, rn: i32, off: i32, w: boolean): i32[] 
 }
 
 function arm64_mrs_base(name: string): i64 {
-  if (name == "cntvct_el0") {
-    return 0xd53be040;
+  let enc = sysreg.arm64_encoding(name, sysreg.READ);
+  if (enc < 0) {
+    return -1;
   }
-  if (name == "cntfrq_el0") {
-    return 0xd53be000;
-  }
-  if (name == "tpidr_el0") {
-    return 0xd53bd040;
-  }
-  if (name == "nzcv") {
-    return 0xd53b4200;
-  }
-  if (name == "fpcr") {
-    return 0xd53b4400;
-  }
-  if (name == "fpsr") {
-    return 0xd53b4420;
-  }
-  if (name == "dczid_el0") {
-    return 0xd53b00e0;
-  }
-  if (name == "mpidr_el1") {
-    return 0xd53800a0;
-  }
-  if (name == "sctlr_el1") {
-    return 0xd5381000;
-  }
-  return -1;
+  return 0xd5300000 | enc as i64 << 5;
 }
 
 function arm64_mrs(buf: i32[], rt: i32, name: string): i32[] {
@@ -3038,34 +3017,11 @@ function arm64_mrs(buf: i32[], rt: i32, name: string): i32[] {
 }
 
 function arm64_msr_base(name: string): i64 {
-  if (name == "tpidr_el0") {
-    return 0xd51bd040;
+  let enc = sysreg.arm64_encoding(name, sysreg.WRITE);
+  if (enc < 0) {
+    return -1;
   }
-  if (name == "nzcv") {
-    return 0xd51b4200;
-  }
-  if (name == "fpcr") {
-    return 0xd51b4400;
-  }
-  if (name == "fpsr") {
-    return 0xd51b4420;
-  }
-  if (name == "cpacr_el1") {
-    return 0xd5181040;
-  }
-  if (name == "sctlr_el1") {
-    return 0xd5181000;
-  }
-  if (name == "mair_el1") {
-    return 0xd518a200;
-  }
-  if (name == "tcr_el1") {
-    return 0xd5182040;
-  }
-  if (name == "ttbr0_el1") {
-    return 0xd5182000;
-  }
-  return -1;
+  return 0xd5100000 | enc as i64 << 5;
 }
 
 function arm64_msr(buf: i32[], rt: i32, name: string): i32[] {
@@ -3476,9 +3432,11 @@ function arm64_gas_fp_regnum(tok: string): i32 {
   return arm64_gas_reg(tok);
 }
 
+// A system register such as s3_0_c12_c0_0 starts as an s register does, but is
+// not one.
 function arm64_gas_reg_shaped_bad(t: string): boolean {
   return t.len() >= 2 && (t[0] == b'x' || t[0] == b'w' || t[0] == b'd' || t[0] == b's')
-    && t[1] >= b'0' && t[1] <= b'9' && arm64_gas_reg(t) < 0;
+    && t[1] >= b'0' && t[1] <= b'9' && arm64_gas_reg(t) < 0 && sysreg.arm64_encoding(t, sysreg.READ | sysreg.WRITE) < 0;
 }
 
 function arm64_gas_cond(s: string): i32 {

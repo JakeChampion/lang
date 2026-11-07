@@ -223,10 +223,23 @@ each one with E066:
   protocol puts the address of the device tree there. qemu-virt gives 0 to an ELF
   image. On `x86-64-kernel` it is `%ebx`, the address of the PVH start info,
   which `std/pvh` reads.
+- `__sysreg_read(name)` reads a system register, and `__sysreg_write(name,
+  value)` writes one. Both need an `unsafe` block, because a read of a register
+  such as `icc_iar1_el1` acknowledges an interrupt. The name is a string literal,
+  because the instruction encodes the register. The checker refuses with E038 a
+  name that is not a literal, that names no register, or that names a register
+  without the access. `compiler/sysreg.fern` holds the register table.
+  - On arm64, the name is a register that `mrs` and `msr` accept, such as
+    `vbar_el1`, or the generic form `s3_0_c12_c0_0`. A write is `msr` and then
+    `isb`, so it takes effect before the next instruction.
+  - On x86-64, the name is a control register (`cr0`, `cr2`, `cr3`, `cr4` or
+    `cr8`), a named MSR such as `efer` or `kernel_gs_base`, or the generic form
+    `msr_c0000080`. An MSR goes through `rdmsr` and `wrmsr`.
+  - Each backend refuses a register of the other ISA.
 
 They take the host-call path of the MMIO ops, so no pass removes or moves them.
-x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`. System
-registers and cache and TLB maintenance come next.
+x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`. Cache and TLB
+maintenance come next.
 
 Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops like
 these, rather than opening a general `asm` block. The floor's ~14 ops work because each is a *portable

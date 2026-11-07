@@ -75,8 +75,8 @@ func parseExprFromText(text string, base ast.Position) (ast.Expr, error) {
 	}
 	for i := range tokens {
 		tokens[i].Pos = offsetPos(base, tokens[i].Pos)
-		for j := range tokens[i].FParts {
-			tokens[i].FParts[j].Pos = offsetPos(base, tokens[i].FParts[j].Pos)
+		for j := range tokens[i].FParts() {
+			tokens[i].FParts()[j].Pos = offsetPos(base, tokens[i].FParts()[j].Pos)
 		}
 	}
 	p := &parser{tokens: tokens}
@@ -245,7 +245,7 @@ func (p *parser) fipModifierShapeAt(i int) (name string, allowance int, next int
 	j := i + 1
 	if j+2 < len(p.tokens) && p.tokens[j].Kind == lexer.Punct && p.tokens[j].Text == "(" {
 		numTok := p.tokens[j+1]
-		if numTok.Kind != lexer.Number || numTok.Suffix != "" {
+		if numTok.Kind != lexer.Number || numTok.Suffix() != "" {
 			return "", 0, 0, false
 		}
 		if p.tokens[j+2].Kind != lexer.Punct || p.tokens[j+2].Text != ")" {
@@ -3310,7 +3310,7 @@ func (p *parser) peekTypeArgs(opener string) bool {
 }
 
 func isConstArgTok(t lexer.Token) bool {
-	return t.Kind == lexer.Number && t.Suffix == ""
+	return t.Kind == lexer.Number && t.Suffix() == ""
 }
 
 func isTypeKeyword(s string) bool {
@@ -5267,7 +5267,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		if spelled {
 			lit.Raw = t.Text
 		}
-		switch t.Suffix {
+		switch t.Suffix() {
 		case "":
 		case "i32":
 			lit.Width = 32
@@ -5286,7 +5286,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			lit.Width = ast.WidthPtr
 			lit.IsUnsigned = true
 		default:
-			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on integer literal", t.Suffix)
+			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on integer literal", t.Suffix())
 		}
 		return lit, nil
 	case lexer.Float:
@@ -5296,15 +5296,15 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			return nil, p.errorfCode(t.Pos, "P002", "invalid float literal %q: %v", t.Text, err)
 		}
 		lit := &ast.FloatLit{P: t.Pos, Value: f, Raw: t.Text}
-		switch t.Suffix {
+		switch t.Suffix() {
 		case "", "f32":
 			lit.Width = 32
 		case "f64":
 			lit.Width = 64
 		default:
-			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on float literal", t.Suffix)
+			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on float literal", t.Suffix())
 		}
-		if t.Suffix == "" {
+		if t.Suffix() == "" {
 			lit.Width = 0
 		}
 		return lit, nil
@@ -5317,7 +5317,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.FString:
 		p.advance()
 		var parts []ast.FStringPart
-		for _, fp := range t.FParts {
+		for _, fp := range t.FParts() {
 			if fp.Expr != "" {
 				expr, err := parseExprFromText(fp.Expr, fp.Pos)
 				if err != nil {
