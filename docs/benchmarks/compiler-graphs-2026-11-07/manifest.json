@@ -53,6 +53,29 @@
     "allocations.json": "26357fbb3329ee8d65fbc2713f9c7dae0252344040f7a8c3bc54f3893438525e",
     "cpu-top.txt": "53b5ce9a028456034cbd803554acff8d85f6be65c0389b9f6c1bd92ffc6b363a",
     "alloc-top.txt": "9c2ebe8a1943460befc56f5509b2102df086e6f7f63817a94aa2108bf7db8412",
-    "profile-runs.json": "86125b2b55c07fa1536dfffeb2088aa55d3cb66de6993665f58578dfbbbdf279"
+    "profile-runs.json": "86125b2b55c07fa1536dfffeb2088aa55d3cb66de6993665f58578dfbbbdf279",
+    "instructions.json": "a0c5fa6e1360819279e7e80d294867386846a80a09996b8d28f01ad6ee19ec11",
+    "before-callgrind.log": "7fc5d1753b75fc3404397176acdda08bd7cd313fc6383ed384a2bc961c492cdc",
+    "after-callgrind.log": "98015dc4001593717b08bf418cf1a81754d2aef11bcae94d45afcb64abed7bcd"
+  },
+  "instruction_run": {
+    "tool": "Valgrind 3.24.0 Callgrind",
+    "arguments": [
+      "--tool=callgrind",
+      "--cache-sim=no",
+      "--branch-sim=no"
+    ],
+    "priming": "one native compile per compiler in a separate proof cache",
+    "proof_cache": "isolated-warm",
+    "certification": "enabled",
+    "debug_variables": false,
+    "cache_build_stamp_entries": {
+      "before": 1,
+      "after": 1
+    },
+    "cache_proof_entries": {
+      "before": 2335,
+      "after": 2335
+    }
   }
 }

@@ -16,6 +16,10 @@ Seven paired wall-time samples per cache mode vary too much to establish a speed
 The harness now measures cold and warm proof caches separately.
 The [measurement archive](../benchmarks/compiler-graphs-2026-11-07/README.md) retains every timing sample, exact counters, and profile summaries.
 
+A separate warm compile executes 13,342,618 fewer instructions under Callgrind, a reduction of 0.0448%.
+Both compilers emit identical native executables in that comparison.
+This reduction does not establish a wall-time gain.
+
 Dependency verification passes on x86-64, ARM64 under QEMU, and WebAssembly.
 The regression graph covers sparse IDs, loops, a nonzero entry position, and an unreachable self-loop.
 The selected certifier tests, source check, Go vet, and CI self-tests pass locally.

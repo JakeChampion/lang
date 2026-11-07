@@ -62,19 +62,28 @@ Systematic sampling and reservoir scaling limit the precision of that estimate.
 The first change reuses graph positions and derives reachability from dominator results during certification.
 It retains the proof rules and computes fresh results for each extracted graph.
 
+The [fixed-input comparison](benchmarks/compiler-graphs-2026-11-07/README.md) records 45,563 fewer cold allocation events and 13,342,618 fewer warm instructions.
+These are small reductions of 0.0875% and 0.0448%, respectively.
+The wall-time samples do not establish a speedup.
+
 ## Priorities
 
 1. Remove repeated graph analysis and allocation in ownership certification.
    Reuse results only while the graph remains unchanged.
    Evaluate compact bitsets and worklists for repeated dataflow propagation.
+
 2. Reduce repeated semantic planning and function analysis in `semlower.produced_rows`.
    Measure schema views, ownership-mode inference, and selective re-lowering before changes.
    Evaluate canonical type IDs where type lookups dominate.
+
 3. Reduce temporary arrays, boxed tuples, and repeated AST traversal across compiler passes.
    Prefer a compiler or runtime improvement when every program can benefit.
+
 4. Evaluate compact token, AST, and IR storage with real source corpora.
    Measure SIMD scans, source slices, and phase-local allocation against their lifetime costs.
+
 5. Measure output buffers and object emission after the earlier phases improve.
+
 6. Evaluate deterministic module concurrency and persistent typed IR caches.
    Measure dependency invalidation, memory use, diagnostics, and cold performance before adoption.
 

@@ -61,6 +61,35 @@ This shared-host trial does not establish a wall-time improvement.
 It also does not resolve whether the higher warm ratio represents a regression or host variation.
 The [timing report](timings.json) retains the complete observations, including both generated-program comparisons.
 
+## Warm instruction count
+
+Valgrind 3.24.0 Callgrind counts guest instructions for both production compiler builds.
+Each compiler first populates a separate proof cache through a native run.
+The counted runs use the same fixed input and output path.
+Both runs keep ownership certification enabled and use their warm proof caches.
+The build-stamp files retain one entry each, and both proof files contain 2,335 entries.
+Cache simulation and branch simulation remain disabled.
+
+| Measurement | Baseline | Candidate |
+| --- | ---: | ---: |
+| Guest instructions | 29,767,466,522 | 29,754,123,904 |
+
+The candidate executes 13,342,618 fewer instructions, or 0.0448%.
+Both native executables have SHA-256 `7f5f2f60c2a584c744b5f87e6e90f21cceb536bd104c7875e3681425a298bd87`.
+The [instruction report](instructions.json) records the commands and binary hashes.
+The archive also retains the [baseline log](before-callgrind.log) and [candidate log](after-callgrind.log).
+This small reduction in execution work does not establish a wall-time gain.
+
+For reproduction, populate separate proof caches with one native compile per compiler.
+Run each compiler under Callgrind with its populated cache:
+
+```sh
+FERN_RC_CERTIFY=1 FERN_RC_CERTIFY_MEMO=CACHE valgrind --tool=callgrind --cache-sim=no --branch-sim=no --callgrind-out-file=counts.out COMPILER -target x86-64-linux -o checker FIXED_SOURCE_ROOT/compiler/checker.fern FIXED_SOURCE_ROOT/internal/stdlib
+```
+
+Check each exit status and the generated executable hash.
+Read the instruction count from the `summary` field in each Callgrind output.
+
 ## Diagnostic profiles
 
 The baseline profiling compilers use `FERN_PROFILE=cpu-pprof` or `FERN_PROFILE=alloc-pprof` during their build.
