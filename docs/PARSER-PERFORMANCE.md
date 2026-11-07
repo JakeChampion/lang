@@ -179,5 +179,6 @@ The selected printer tests pass in 19 seconds.
 The initial CI run exposed [issue #14453](https://github.com/JakeChampion/lang/issues/14453).
 The playground called the flattening operation without package metadata for embedded modules.
 This caused E043 diagnostics for package methods within the standard library.
-The overlay bundle operation now assigns that metadata without filesystem access for sealed overlays.
-Regression tests permit calls between standard library modules and reject calls from the entry program.
+[PR #14450](https://github.com/JakeChampion/lang/pull/14450) fixed the bundle operation on `main` during this comparison.
+This branch retains that fix and updates its remaining driver call sites for the overlay argument.
+Additional regression tests permit calls between standard library modules and reject calls from the entry program.
