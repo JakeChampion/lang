@@ -17094,6 +17094,8 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                           }
                         } else if (cur.has_union(cqual)) {
                           out = out.append(dg_at("E029", "variant pattern qualifier \"" + shown_enum(cur, cqual) + "\" does not match scrutinee enum " + shown_enum(cur, mun.name), elem.line, elem.col));
+                        } else {
+                          out = out.append(dg_at("E087", "unknown module \"" + cqual + "\" in variant pattern", elem.line, elem.col));
                         }
                       } else {
                         if (!elem.has_guard) {
