@@ -1,0 +1,8 @@
+// A method without `pub` on a struct is private to its module, as on any
+// other receiver type. Its public method stays callable.
+import "./lib";
+
+function main(): i32 {
+    let b = lib.make();
+    return b.open() + b.secret();
+}

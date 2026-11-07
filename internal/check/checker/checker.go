@@ -9172,7 +9172,11 @@ func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, 
 		c.errfCode(pos, "E043", "%s", c.unknownMethodMessage(structName, field, ast.StructType{Name: structName}))
 		return
 	}
-	e := c.report(c.currentModule(), pos, "E043", fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field))
+	msg := fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field)
+	if module, ok := c.privateMethodModule(structName, field); ok {
+		msg += fmt.Sprintf(" — %q is declared without `pub` in module %q, so only that module can call it", field, moduleBaseName(module))
+	}
+	e := c.report(c.currentModule(), pos, "E043", msg)
 	if e == nil {
 		return
 	}
@@ -16233,8 +16237,8 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	prefix := st.Name + "."
 	var methodNames []string
-	for key := range c.info.Methods {
-		if strings.HasPrefix(key, prefix) {
+	for key, mangled := range c.info.Methods {
+		if strings.HasPrefix(key, prefix) && c.methodVisibleHere(mangled) {
 			methodNames = append(methodNames, key[len(prefix):])
 		}
 	}
