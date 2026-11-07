@@ -135,10 +135,13 @@ to the storage those views read, and a call result to the arguments its
 contract says it may keep (`borrow_parents`). A cell read (`cell_get`) is
 anchored to its cell when every use of the read, and of each projection off
 it, comes before the first write or call on the path from the read
-(`cell_borrows`). The function must also have no value type that can hold a
-user finalizer. Implicit drops can invoke a finalizer that writes the cell.
-The current region proof does not track those drop sites, including edge
-drops. A read that passes both proofs owns no count. Other reads own a
+(`cell_borrows`). The function must also have no value type that can hold
+the receiver of a finalizer that can write a cell. Implicit drops can invoke
+such a finalizer. The current region proof does not track those drop sites,
+including edge drops. `mark_cell_writers` finds those finalizers over the
+whole module. A finalizer can write a cell when its body, a function that it
+calls, or a drop in either can write one. A read that passes both proofs owns
+no count. Other reads own a
 unit. The closure of those chains
 (`Closure.dependencies`) is what liveness is computed over (`ssalive`,
 validated by `ssadeps`): a container is live wherever a value anchored to it

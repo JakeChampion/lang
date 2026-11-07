@@ -8,7 +8,9 @@ import "./semrecords";
 import "./typeinfo";
 import "./byteconst";
 
-pub struct Finalizer { receiver: string, symbol: string }
+// writes is false only for a finalizer that cannot write a cell
+// (mark_cell_writers).
+pub struct Finalizer { receiver: string, symbol: string, writes: boolean }
 
 pub function finalizer_index(rows: Finalizer[], receiver: string): i32 {
   let i = 0;
@@ -3809,9 +3811,10 @@ function borrow_parents(f: Func): i32[][] {
   return view_roots(f, parents);
 }
 
-// Implicit drops can invoke user finalizers through contained values.
+// Implicit drops can invoke user finalizers through contained values. Only a
+// finalizer that can write a cell is a hazard.
 function cell_read_has_drop_hazard(f: Func): boolean {
-  if (f.finalizers.len() == 0) {
+  if (!any_cell_writer(f.finalizers)) {
     return false;
   }
   let checked: string[] = [];
@@ -3825,13 +3828,235 @@ function cell_read_has_drop_hazard(f: Func): boolean {
     }
     checked = checked.append(key);
     for hook in f.finalizers {
-      let receiver = typeinfo.TypeStruct { name: hook.receiver, args: [] };
-      if (can_hold(f, t, receiver)) {
+      if (hook.writes && can_hold(f, t, finalized_type(hook))) {
         return true;
       }
     }
   }
   return false;
+}
+
+function any_cell_writer(rows: Finalizer[]): boolean {
+  for r in rows {
+    if (r.writes) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function finalized_type(r: Finalizer): typeinfo.Type {
+  return typeinfo.TypeStruct { name: r.receiver, args: [] };
+}
+
+// mark_cell_writers sets writes on each finalizer whose drop can write a
+// cell. A body can write a cell through its own instructions
+// (writes_cell_itself) or through a function that it calls. A drop of a value
+// that can hold the receiver of such a finalizer can also write a cell. A
+// finalizer whose body is not in funcs can write a cell.
+pub function mark_cell_writers(rows: Finalizer[], funcs: Func[], ok: boolean[], names: string[]): Finalizer[] {
+  if (rows.len() == 0) {
+    return rows;
+  }
+  let ix = util.name_index(names);
+  let w = settled_writers(writer_graph(rows, funcs, ok, ix), rows, ix);
+  let out: Finalizer[] = [];
+  for r in rows {
+    out = out.append(Finalizer { ...r, writes: row_writes(w, ix.find(r.symbol)) });
+  }
+  return out;
+}
+
+// The functions that a finalizer drop can reach. Each has the rows that it
+// calls and the finalizers that a drop in it can run. slot maps a row to its
+// member.
+struct Writers { members: i32[], slot: i32[], callees: i32[][], held: i32[][], writes: boolean[] }
+
+function row_writes(w: Writers, at: i32): boolean {
+  return at < 0 || w.writes[w.slot[at]];
+}
+
+function with_member(own w: Writers, at: i32): Writers {
+  if (at < 0 || w.slot[at] >= 0) {
+    return w;
+  }
+  return Writers { ...w, members: w.members.append(at), slot: w.slot.with(at, w.members.len()) };
+}
+
+function writer_graph(rows: Finalizer[], funcs: Func[], ok: boolean[], ix: util.NameIndex): Writers {
+  let w = Writers { members: [], slot: util.minus_ones(funcs.len()), callees: [], held: [], writes: [] };
+  for r in rows {
+    w = with_member(w, ix.find(r.symbol));
+  }
+  let mi = 0;
+  while (mi < w.members.len()) {
+    let i = w.members[mi];
+    let own = writes_cell_itself(funcs, ok, ix, i);
+    let next: i32[] = [];
+    let drops: i32[] = [];
+    if (!own) {
+      next = called_rows(funcs[i], ix);
+      drops = held_finalizers(funcs[i], rows);
+    }
+    for c in next {
+      w = with_member(w, c);
+    }
+    for r in drops {
+      w = with_member(w, ix.find(rows[r].symbol));
+    }
+    w = Writers { ...w, callees: w.callees.append(next), held: w.held.append(drops), writes: w.writes.append(own) };
+    mi += 1;
+  }
+  return w;
+}
+
+function settled_writers(own w: Writers, rows: Finalizer[], ix: util.NameIndex): Writers {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for k in 0..w.members.len() {
+      if (!w.writes[k] && writes_through(w, k, rows, ix)) {
+        w = Writers { ...w, writes: w.writes.with(k, true) };
+        changed = true;
+      }
+    }
+  }
+  return w;
+}
+
+function writes_through(w: Writers, k: i32, rows: Finalizer[], ix: util.NameIndex): boolean {
+  for c in w.callees[k] {
+    if (row_writes(w, c)) {
+      return true;
+    }
+  }
+  for r in w.held[k] {
+    if (row_writes(w, ix.find(rows[r].symbol))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A body writes a cell itself through one of its instructions
+// (inst_writes_cell), or when it was refused.
+function writes_cell_itself(funcs: Func[], ok: boolean[], ix: util.NameIndex, i: i32): boolean {
+  if (!ok[i]) {
+    return true;
+  }
+  for b in funcs[i].graph.blocks {
+    for ins in b.insts {
+      if (inst_writes_cell(funcs[i], ins, ok, ix)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// These instructions can write a cell: a cell write, an indirect call and a
+// map operation, which can run a user Eq or Hash. A call to a refused
+// function or to an unknown dyn arm can also write one. So can a builtin
+// that takes a function value.
+function inst_writes_cell(f: Func, ins: ssa.SInst, ok: boolean[], ix: util.NameIndex): boolean {
+  if (writing_kind(ins.kind_tag)) {
+    return true;
+  }
+  if (ins.kind_tag != call()) {
+    return false;
+  }
+  if (is_dyn_call(ins.str)) {
+    return unknown_arm(ins.str, ok, ix);
+  }
+  let at = ix.find(ins.str);
+  if (at >= 0) {
+    return !ok[at];
+  }
+  return passes_code(f, ins.args);
+}
+
+function writing_kind(k: i32): boolean {
+  return k == cell_set() || k == call_value() || k == map_insert() || k == map_has() || k == map_get_or() || k == map_get() || k == map_delete();
+}
+
+function unknown_arm(name: string, ok: boolean[], ix: util.NameIndex): boolean {
+  for arm in dyn_call_arms(name) {
+    let at = ix.find(arm);
+    if (at < 0 || !ok[at]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function passes_code(f: Func, args: i32[]): boolean {
+  for a in args {
+    if (a < 0 || a >= f.values.len()) {
+      continue;
+    }
+    match (f.values[a]) {
+      typeinfo.TypeFunc(_) => {
+        return true;
+      },
+      typeinfo.TypeDyn(_) => {
+        return true;
+      },
+      typeinfo.TypeUnknown(_) => {
+        return true;
+      },
+      typeinfo.TypeErased(_) => {
+        return true;
+      },
+      _ => {}
+    }
+  }
+  return false;
+}
+
+// The rows of the functions that f calls by name, dyn arms included.
+function called_rows(f: Func, ix: util.NameIndex): i32[] {
+  let out: i32[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag != call()) {
+        continue;
+      }
+      let targets = [ins.str];
+      if (is_dyn_call(ins.str)) {
+        targets = dyn_call_arms(ins.str);
+      }
+      for name in targets {
+        let at = ix.find(name);
+        if (at >= 0 && util.index_of_i32(out, at) < 0) {
+          out = out.append(at);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The finalizers whose receiver a reference value of f can hold, so that a
+// drop in f can run them.
+function held_finalizers(f: Func, rows: Finalizer[]): i32[] {
+  let out: i32[] = [];
+  let checked: string[] = [];
+  for t in f.values {
+    if (!reference(t)) {
+      continue;
+    }
+    let key = type_key(t);
+    if (util.index_of_str(checked, key) >= 0) {
+      continue;
+    }
+    checked = checked.append(key);
+    for r in 0..rows.len() {
+      if (util.index_of_i32(out, r) < 0 && can_hold(f, t, finalized_type(rows[r]))) {
+        out = out.append(r);
+      }
+    }
+  }
+  return out;
 }
 
 // A cell read borrows only before explicit writes and calls, and without

@@ -6894,12 +6894,39 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
   return out;
 }
 
+function cell_writing_finalizers(all: Produced[], names: string[], rows: ssasem.Finalizer[]): ssasem.Finalizer[] {
+  if (rows.len() == 0) {
+    return rows;
+  }
+  let funcs: ssasem.Func[] = [];
+  let ok: boolean[] = [];
+  for p in all {
+    funcs = funcs.append(p.func);
+    ok = ok.append(p.ok && !p.template);
+  }
+  return ssasem.mark_cell_writers(rows, funcs, ok, names);
+}
+
+function with_finalizers(all: Produced[], rows: ssasem.Finalizer[]): Produced[] {
+  if (rows.len() == 0) {
+    return all;
+  }
+  let i = 0;
+  while (i < all.len()) {
+    if (all[i].func.finalizers.len() > 0) {
+      all = all.with(i, Produced { ...all[i], func: ssasem.Func { ...all[i].func, finalizers: rows } });
+    }
+    i += 1;
+  }
+  return all;
+}
+
 function finalized_types(funcs: parser.FuncDecl[]): ssasem.Finalizer[] {
   let out: ssasem.Finalizer[] = [];
   for fd in funcs {
     let provider = fd.impl_trait == "Drop" || fd.impl_trait == "" && util.index_of_str(fd.dyn_traits, "Drop") >= 0;
     if (provider && parser.derive_simple_name(fd.name) == "drop" && fd.receiver_type != "" && !generic_decl(fd)) {
-      out = out.append(ssasem.Finalizer { receiver: fd.receiver_type, symbol: parser.decl_key(fd) });
+      out = out.append(ssasem.Finalizer { receiver: fd.receiver_type, symbol: parser.decl_key(fd), writes: true });
     }
   }
   return out;
@@ -8695,7 +8722,9 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     names = names.append(r.name);
     at += 1;
   }
-  let anchored = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  let closed = close_module(util.append_all(decls, instances), util.name_index(names));
+  finalizers = cell_writing_finalizers(closed, names, finalizers);
+  let anchored = anchor_module(with_finalizers(closed, finalizers), names, verify);
   let all = anchored.all;
   names = anchored.names;
   let laid: semrecords.Record[] = [];
