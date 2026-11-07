@@ -16009,6 +16009,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		n.KeyType = keyType
 		n.ValueType = valueType
+		if len(n.Entries) == 0 {
+			return ast.StructType{Name: "Map"}
+		}
 		return ast.StructType{Name: "Map", Args: []ast.Type{keyType, valueType}}
 	case *ast.FieldAccess:
 		if tid, ok := n.Target.(*ast.Ident); ok {
@@ -17235,7 +17238,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 	}
 	for i, tp := range fn.TypeParams {
 		want, ok := c.genericResultBinding(declared, hint, tp)
-		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) {
+		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) && !bareMap(call.TypeArgs[i]) {
 			continue
 		}
 		var bound []ast.Expr
@@ -17245,7 +17248,7 @@ func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
 				break
 			}
 			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
-				if !unsettledNumericShape(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
+				if !unsettledNumericShape(call.Args[j]) && !emptyMapLit(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
@@ -17368,9 +17371,11 @@ func (c *checker) genericResultBinding(declared ast.Type, hint ast.Type, tp stri
 	if !ok || isPolymorphicNumeric(want) {
 		return nil, false
 	}
-	switch want.(type) {
+	switch w := want.(type) {
 	case ast.NumberType, ast.FloatType:
 		return want, true
+	case ast.StructType:
+		return want, w.Name == "Map" && len(w.Args) == 2 && !c.holdsOpenEnum(want)
 	}
 	return nil, false
 }
