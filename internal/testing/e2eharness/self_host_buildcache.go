@@ -278,22 +278,10 @@ func CachedLink(t testing.TB, gcc, asm string) string {
 				}
 			}
 		}
-		diskBin := ""
-		if d := diskCacheWriteDir(); d != "" {
-			diskBin = filepath.Join(d, diskKey+".bin")
-		}
 		if err := linkSelfHostAsm(gcc, base, key, asm, binPath); err != nil {
 			return "", err
 		}
-		if diskBin != "" {
-			_ = os.MkdirAll(filepath.Dir(diskBin), 0o755)
-			if in, rerr := os.ReadFile(binPath); rerr == nil {
-				tmp := diskBin + ".tmp"
-				if werr := os.WriteFile(tmp, in, 0o755); werr == nil {
-					_ = os.Rename(tmp, diskBin)
-				}
-			}
-		}
+		publishToDiskCache(binPath, diskKey+".bin")
 		return binPath, nil
 	})
 	if err != nil {
