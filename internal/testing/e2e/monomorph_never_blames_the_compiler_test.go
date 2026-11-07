@@ -9,6 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestMonomorphNeverBlamesTheCompilerOverTheCorpus(t *testing.T) {
@@ -28,16 +29,22 @@ func TestMonomorphNeverBlamesTheCompilerOverTheCorpus(t *testing.T) {
 		}
 		checked++
 		t.Run(name, func(t *testing.T) {
-			prog, _, lerr := modload.Load(main)
-			if lerr != nil {
-				return
-			}
-			info, cerr := checker.Check(prog)
-			if cerr != nil {
-				return
-			}
-			if merr := monomorph.Run(prog, info); merr != nil {
-				msg := merr.Error()
+			out, failed := e2eharness.InProcessVerdict(t, "modload.Load, checker.Check, monomorph.Run", main, func() ([]byte, int) {
+				prog, _, lerr := modload.Load(main)
+				if lerr != nil {
+					return nil, 0
+				}
+				info, cerr := checker.Check(prog)
+				if cerr != nil {
+					return nil, 0
+				}
+				if merr := monomorph.Run(prog, info); merr != nil {
+					return []byte(merr.Error()), 1
+				}
+				return nil, 0
+			})
+			if failed != 0 {
+				msg := string(out)
 				for _, banned := range []string{"compiler bug", "monomorph:"} {
 					if strings.Contains(msg, banned) {
 						t.Errorf("monomorph reported %q to the user:\n%s\n\n"+

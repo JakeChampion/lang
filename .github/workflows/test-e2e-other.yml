@@ -95,6 +95,9 @@ jobs:
           # could catch it never ran anywhere in CI.
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/oracle-verdict-cache
+        with:
+          slot: e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
       - name: aarch64 cross toolchain + qemu (the arm64 legs of the arch-split tests)
         uses: ./.github/actions/apt-cross-toolchain
         with:
