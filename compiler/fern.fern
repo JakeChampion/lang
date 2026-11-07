@@ -692,7 +692,7 @@ function comp_dir(): string {
 }
 
 function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean, pie: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words);
+  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
   }
@@ -778,7 +778,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
 }
 
 function arm64_elf_binary_pie(asm: string, words: u8[]): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words);
+  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
   }
@@ -805,7 +805,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // A kernel image: the position-independent layout at `base`, as an ET_EXEC that
 // the loader enters at _start.
 function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words);
+  let p = arm64_native.arm64_gas_program_words(asm, words, elf.elf_text_vaddr_pie());
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-kernel", "assembler", p.unknown);
   }
@@ -2004,7 +2004,7 @@ function export_widen_arm64(x: string, w: string, t: string): string {
 }
 
 function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module, note: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words);
+  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
   }
@@ -2957,7 +2957,7 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 }
 
 pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
-  let out = platforms.provider_diags(merged);
+  let out = util.append_diags(platforms.provider_diags(merged), norc.interrupt_target_diags(merged, target));
   if (out.len() > 0 || platforms.enforce(merged, target).len() == 0) {
     return out;
   }
@@ -2969,17 +2969,28 @@ pub function capability_diags(merged: parser.Module, target: string): util.Diag[
   return out;
 }
 
-// The diagnostics of the rules that read the annotated module: E080 and E102.
+// Each `@interrupt` handler as "slot symbol", for the vector table of the
+// kernel image.
+function interrupt_entries(merged: parser.Module): string[] {
+  let out: string[] = [];
+  for m in parser.marked(merged, "interrupt") {
+    out = out.append(m.arg + " __fn_" + asmcore.sanitize_label(m.func_name));
+  }
+  return out;
+}
+
+// The diagnostics of the rules that read the annotated module: E080, E102 and
+// E103.
 pub function annotated_diags(merged: parser.Module): util.Diag[] {
   return util.append_diags(ambient_diags(merged), norc_diags(merged));
 }
 
 function norc_diags(merged: parser.Module): util.Diag[] {
-  if (parser.marked(merged, "norc").len() == 0) {
+  if (norc.marks(merged).len() == 0) {
     let none: util.Diag[] = [];
     return none;
   }
-  return norc.diags(checker.annotate_module(merged));
+  return util.append_diags(norc.interrupt_diags(merged), norc.diags(checker.annotate_module(merged)));
 }
 
 function ambient_diags(merged: parser.Module): util.Diag[] {
@@ -7132,7 +7143,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged) } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

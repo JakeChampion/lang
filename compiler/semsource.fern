@@ -9059,7 +9059,8 @@ function envs_left(rows: ssasem.EnvRow[], gone: util.NameIndex): ssasem.EnvRow[]
 }
 
 function outside_names(all: Produced[], mod: parser.Module): string[] {
-  let out = treeshake.top_level_names(mod, ["main"]);
+  let roots = treeshake.entry_roots(mod);
+  let out = treeshake.top_level_names(mod, roots);
   for x in mod.exports {
     out = out.append(x.func_name);
   }
@@ -9075,12 +9076,7 @@ function outside_names(all: Produced[], mod: parser.Module): string[] {
 }
 
 function entry_decl(fd: parser.FuncDecl, mod: parser.Module): boolean {
-  for x in mod.exports {
-    if (x.func_name == fd.name) {
-      return true;
-    }
-  }
-  return fd.import_iface != "" || fd.async;
+  return parser.named_outside(mod, fd.name) || fd.import_iface != "" || fd.async;
 }
 
 function rooted_method(fd: parser.FuncDecl, mod: parser.Module): boolean {
@@ -9184,7 +9180,7 @@ function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module,
     return false;
   }
   let fd = mod.funcs[i];
-  return fd.receiver_type.len() > 0 && fd.import_iface == "" && !exported(fd, mod) && !rooted_method(fd, mod);
+  return fd.receiver_type.len() > 0 && fd.import_iface == "" && !parser.named_outside(mod, fd.name) && !rooted_method(fd, mod);
 }
 
 // A method's body joins the once set only when it is one block. A branch in
@@ -9198,17 +9194,8 @@ function spliceable_body(p: Produced, name: string, i: i32, mod: parser.Module):
   return p.func.graph.blocks.len() == 1;
 }
 
-function exported(fd: parser.FuncDecl, mod: parser.Module): boolean {
-  for x in mod.exports {
-    if (x.func_name == fd.name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
-  return fd.receiver_type.len() == 0 && fd.import_iface == "" && !exported(fd, mod);
+  return fd.receiver_type.len() == 0 && fd.import_iface == "" && !parser.named_outside(mod, fd.name);
 }
 
 // roots[i] is the entry that all[i] is a clone of, or i.

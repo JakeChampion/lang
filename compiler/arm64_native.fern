@@ -1333,6 +1333,9 @@ pub function arm64_fixed_word(mnem: string): i64 {
   if (mnem == "xpaclri") {
     return 0xd50320ff;
   }
+  if (mnem == "eret") {
+    return 0xd69f03e0;
+  }
   return arm64_nop_word();
 }
 
@@ -5141,8 +5144,8 @@ function arm64_gas_family_len4(mnem: string): i32 {
   if (c == b'c') {
     return arm64_gas_family_len4_c(mnem);
   }
-  if (c == b'e' && mnem == "extr") {
-    return arm64_fam_extr_ror();
+  if (c == b'e') {
+    return arm64_gas_family_len4_e(mnem);
   }
   if (c == b'f') {
     return arm64_gas_family_len4_f(mnem);
@@ -5247,6 +5250,16 @@ function arm64_gas_family_len4_c_cs(mnem: string): i32 {
   }
   if (mnem == "cset") {
     return arm64_fam_condsel();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len4_e(mnem: string): i32 {
+  if (mnem == "eret") {
+    return arm64_fam_fixed();
+  }
+  if (mnem == "extr") {
+    return arm64_fam_extr_ror();
   }
   return 0 - 1;
 }
@@ -9120,13 +9133,33 @@ function arm64_section_kind(line: string): i32 {
 // The sections whose bytes the data directives fill.
 // A `.word` inside .text is a data word among the instructions, such as the
 // signature word ahead of a CFI stub.
-function arm64_gas_text_words(code: usize, line: string): void {
-  if (arm64_gas_data_width(line) != 4) {
-    return;
+// A directive in .text: a word of data, or an alignment, which pads with nop
+// up to the boundary of the address. `origin` is the address of the first code
+// byte modulo a page, or -1 when the caller does not know it. The result is a
+// refusal, or "".
+function arm64_gas_text_directive(code: usize, line: string, origin: i32): string {
+  if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
+    return arm64_gas_text_align(code, arm64_gas_alignment(line), origin, line);
   }
-  for v in arm64_gas_values(line) {
-    arm64_push_word(code, arm64_gas_atoi64(v));
+  if (arm64_gas_data_width(line) == 4) {
+    for v in arm64_gas_values(line) {
+      arm64_push_word(code, arm64_gas_atoi64(v));
+    }
   }
+  return "";
+}
+
+function arm64_gas_text_align(code: usize, a: i32, origin: i32, line: string): string {
+  if (a > 0 && a <= 4) {
+    return "";
+  }
+  if (a == 0 || a > 4096 || origin < 0) {
+    return line + ": a text alignment above 4 needs a known origin, and at most a page";
+  }
+  while ((origin + buf_len(code)) % a != 0) {
+    arm64_push_word(code, arm64_nop_word());
+  }
+  return "";
 }
 
 function arm64_data_like(section: i32): boolean {
@@ -9191,10 +9224,10 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
 }
 
 pub function arm64_gas_program(src: string): Arm64GasProg {
-  return arm64_gas_program_words(src, []);
+  return arm64_gas_program_words(src, [], 0 - 1);
 }
 
-pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
+pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm64GasProg {
   let p = arm64_gas_prog_new();
   let cfi = cfi_new(cfi_profile_arm64());
   let a = p.asm;
@@ -9323,7 +9356,10 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       } else if (arm64_data_like(section)) {
         p = arm64_gas_data_directive(p, line, section);
       } else {
-        arm64_gas_text_words(a.code, line);
+        let tbad = arm64_gas_text_directive(a.code, line, origin);
+        if (tbad.len() > 0) {
+          p = Arm64GasProg { ...p, unknown: p.unknown.append(tbad) };
+        }
       }
       continue;
     }
