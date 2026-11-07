@@ -37,6 +37,7 @@ a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
 a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
+a_literal_local_takes_the_type_of_an_index_read 0
 a_map_key_eq_may_take_its_keys_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
@@ -733,6 +734,7 @@ radix_literals                                       0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
+range_ignores_names_in_the_users_scope               0
 range_value                                          0
 raw_storage_paths_keep_literals_fresh                 0
 rc_borrowed_box_field                                0

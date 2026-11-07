@@ -1281,7 +1281,7 @@ function __rx_mark_range(own mask: u8[], lo: i32, hi: i32, value: u8): u8[] {
 function __rx_mask(token: string, errors: Cell[Option[CompileError]], offset: i32): u8[] {
   let units = __rx_class_units(token, errors, offset);
   let out = __alloc_u8(512);
-  let fill: u8 = if (token[1] == 94) { 1 } else { 0 };
+  let fill = if (token[1] == 94) { 1 } else { 0 };
   let value = 1 - fill;
   if (fill != 0) {
     for i in 0..512 {
