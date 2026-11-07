@@ -1,0 +1,115 @@
+import "../packages/pixels/sample_bytes";
+import "std/test";
+
+function known(): test.TestOutcome {
+  let input: u8[] = [99, 1, 35, 69, 103, 137, 171, 205, 239, 98];
+  return test.assert_true(match (sample_bytes.read_word(input, 1, 8, sample_bytes.Big)) { Ok(v) => v == 81985529216486895u64, Err(_) => false }
+    && match (sample_bytes.read_word(input, 1, 8, sample_bytes.Little)) { Ok(v) => v == 17279655951921914625u64, Err(_) => false }
+    && match (sample_bytes.read_word(input[2:6], 0, 3, sample_bytes.Big)) { Ok(v) => v == 2311527u64, Err(_) => false });
+}
+
+function every_width(): test.TestOutcome {
+  for width in 1..=8 {
+    let maximum = if (width == 8) { 18446744073709551615u64 } else { (1u64 << (width * 8) as u64) - 1u64 };
+    for order in [sample_bytes.Big, sample_bytes.Little] {
+      for value in [0u64, 1u64, maximum >> 1, maximum] {
+        let input = __alloc_u8(width + 2);
+        let Ok(output) = sample_bytes.write_word(input, 1, width, order, value) else {
+          return test.fail("word write");
+        };
+        let Ok(actual) = sample_bytes.read_word(output, 1, width, order) else {
+          return test.fail("word read");
+        };
+        if (actual != value || output[0] != 0 || output[width + 1] != 0 || input[1] != 0) {
+          return test.fail("word value, padding or alias");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function bounds(): test.TestOutcome {
+  let bytes: u8[] = [1, 2, 3, 4];
+  for width in [-2147483647 - 1, -1, 0, 9, 2147483647] {
+    match (sample_bytes.read_word(bytes, -1, width, sample_bytes.Big)) {
+      Err(sample_bytes.Width) => {},
+      _ => {
+        return test.fail("read width precedes offset");
+      }
+    }
+    match (sample_bytes.write_word(bytes, -1, width, sample_bytes.Big, 0u64)) {
+      Err(sample_bytes.Width) => {},
+      _ => {
+        return test.fail("write width precedes offset");
+      }
+    }
+  }
+  for offset in [-2147483647 - 1, -1, 2, 4, 2147483647] {
+    match (sample_bytes.read_word(bytes, offset, 3, sample_bytes.Little)) {
+      Err(sample_bytes.Bounds) => {},
+      _ => {
+        return test.fail("read bounds");
+      }
+    }
+    match (sample_bytes.write_word(bytes, offset, 3, sample_bytes.Little, 0u64)) {
+      Err(sample_bytes.Bounds) => {},
+      _ => {
+        return test.fail("write bounds");
+      }
+    }
+  }
+  let empty: u8[] = [];
+  return test.assert_true(match (sample_bytes.read_word(empty, 0, 1, sample_bytes.Big)) { Err(sample_bytes.Bounds) => true, _ => false });
+}
+
+function values(): test.TestOutcome {
+  let input = __alloc_u8(8);
+  for width in 1..8 {
+    for order in [sample_bytes.Big, sample_bytes.Little] {
+      let first_invalid = 1u64 << (width * 8) as u64;
+      match (sample_bytes.write_word(input, 0, width, order, first_invalid)) {
+        Err(sample_bytes.Value) => {},
+        _ => {
+          return test.fail("out-of-range value");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+struct Pattern { width: i32, bits: u64 }
+
+function raw_patterns(): test.TestOutcome {
+  // Binary16/32/64 patterns remain exact, including zeros and nonfinite values.
+  let patterns = [
+    Pattern { width: 2, bits: 0u64 }, Pattern { width: 2, bits: 32768u64 }, Pattern { width: 2, bits: 31744u64 }, Pattern { width: 2, bits: 32257u64 },
+    Pattern { width: 4, bits: 2147483648u64 }, Pattern { width: 4, bits: 2139095040u64 }, Pattern { width: 4, bits: 2143289345u64 },
+    Pattern { width: 8, bits: 9223372036854775808u64 }, Pattern { width: 8, bits: 9218868437227405312u64 }, Pattern { width: 8, bits: 9221120237041090561u64 },
+  ];
+  for pattern in patterns {
+    for order in [sample_bytes.Big, sample_bytes.Little] {
+      let Ok(output) = sample_bytes.write_word(__alloc_u8(pattern.width), 0, pattern.width, order, pattern.bits) else {
+        return test.fail("raw pattern write");
+      };
+      let Ok(actual) = sample_bytes.read_word(output, 0, pattern.width, order) else {
+        return test.fail("raw pattern read");
+      };
+      if (actual != pattern.bits) {
+        return test.fail("raw pattern changed");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("shared sample byte words");
+  runner = runner.it("independent big and little endian patterns", known);
+  runner = runner.it("every width, endpoints, padding and aliases", every_width);
+  runner = runner.it("invalid widths and overflow-safe offsets", bounds);
+  runner = runner.it("integer values fit the selected word", values);
+  runner = runner.it("raw floating-point patterns remain unchanged", raw_patterns);
+  return runner.finish();
+}

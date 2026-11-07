@@ -1,0 +1,124 @@
+import "../packages/codecs/jpeg/rgb_ycbcr";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function same(r: u8, g: u8, b: u8, y: u8, cb: u8, cr: u8): boolean {
+  let value = rgb_ycbcr.convert(r, g, b);
+  return value.y == y && value.cb == cb && value.cr == cr;
+}
+
+function scalar(): test.TestOutcome {
+  for value in 0..256 {
+    if (!same(value as u8, value as u8, value as u8, value as u8, 128, 128)) {
+      return test.fail("neutral full range");
+    }
+  }
+  return test.assert_true(same(255, 0, 0, 76, 85, 255)
+    && same(0, 255, 0, 150, 44, 21) && same(0, 0, 255, 29, 255, 107)
+    && same(2, 130, 128, 92, 149, 64) && same(1, 1, 128, 15, 192, 118)
+    && same(1, 128, 128, 90, 149, 65));
+}
+
+function rows(): test.TestOutcome {
+  let rgb: u8[] = [0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255];
+  let expected: u8[] = [0, 128, 128, 255, 128, 128, 76, 85, 255, 150, 44, 21, 29, 255, 107];
+  let Ok(out) = rgb_ycbcr.convert_row(rgb, 15, never) else {
+    return test.fail("packed row");
+  };
+  if (out.len() != expected.len()) {
+    return test.fail("output length");
+  }
+  for i in 0..out.len() {
+    if (out[i] != expected[i]) {
+      return test.fail("sample order");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  let polls = cell_new(0);
+  let cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return true;
+  };
+  let inputs: u8[][] = [[], [1], [1, 2], [1, 2, 3, 4]];
+  for input in inputs {
+    match (rgb_ycbcr.convert_row(input, 0, cancel)) {
+      Err(rgb_ycbcr.Shape) => {},
+      _ => {
+        return test.fail("shape precedes callback and byte limit");
+      }
+    }
+  }
+  let input: u8[] = [0, 0, 0];
+  for limit in [-1, 0, 1, 2] {
+    match (rgb_ycbcr.convert_row(input, limit, cancel)) {
+      Err(rgb_ycbcr.Limit) => {},
+      _ => {
+        return test.fail("exact byte admission");
+      }
+    }
+  }
+  return test.assert_true(polls.get() == 0);
+}
+
+function ownership(): test.TestOutcome {
+  let input: u8[] = [9, 255, 0, 0, 0, 255, 0, 8];
+  let view = input[1:7];
+  let Ok(first) = rgb_ycbcr.convert_row(view, 6, never) else {
+    return test.fail("borrowed view");
+  };
+  input = input.with(1, 0);
+  let retained = first;
+  first = first.with(0, 123);
+  let Ok(again) = rgb_ycbcr.convert_row(view, 6, never) else {
+    return test.fail("independent output");
+  };
+  return test.assert_true(view[0] == 255 && input[1] == 0 && retained[0] == 76 && first[0] == 123 && again[0] == 76);
+}
+
+function cancellation(): test.TestOutcome {
+  let rgb = __alloc_u8(771);
+  let polls = cell_new(0);
+  let count = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let Ok(result) = rgb_ycbcr.convert_row(rgb, 771, count) else {
+    return test.fail("poll census");
+  };
+  if (result.len() != 771 || polls.get() != 8) {
+    return test.fail("bounded cancellation groups");
+  }
+  for stop in 1..=polls.get() {
+    let observed = cell_new(0);
+    let cancel = (): boolean => {
+      observed.set(observed.get() + 1);
+      return observed.get() == stop;
+    };
+    match (rgb_ycbcr.convert_row(rgb, 771, cancel)) {
+      Err(rgb_ycbcr.Cancelled) => {},
+      _ => {
+        return test.fail("every cancellation poll");
+      }
+    }
+    if (observed.get() != stop) {
+      return test.fail("continued after cancellation");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("explicit RGB to JFIF YCbCr");
+  runner = runner.it("neutral samples, primary colors and exact half ties", scalar);
+  runner = runner.it("packed sample order and exact output length", rows);
+  runner = runner.it("shape and byte admission before callbacks", admission);
+  runner = runner.it("borrowed input and independent owned outputs", ownership);
+  runner = runner.it("every cancellation poll", cancellation);
+  return runner.finish();
+}

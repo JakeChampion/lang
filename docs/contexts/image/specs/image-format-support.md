@@ -85,6 +85,11 @@ The broader image request remains active after the QOI slice.
 
 ## Confirmed scope
 
+The user selected explicit integer and floating-point formats in the shared pixel model on 2026-11-07.
+Retain the existing RGB8/RGBA8 APIs.
+Specify exact sample precision, storage, conversion and admission before implementation.
+Use this shared model for full PNG and JPEG XL support.
+
 The PNG sample-transparency checkpoint extends the existing RGBA8 model with grayscale and RGB tRNS.
 It retains original samples, unused-bit masks and exact admission checks.
 This checkpoint does not complete PNG coverage. Full decode and encode remain the acceptance scope.

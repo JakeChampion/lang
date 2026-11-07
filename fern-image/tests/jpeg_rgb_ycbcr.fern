@@ -1,0 +1,47 @@
+import "../packages/codecs/jpeg/rgb_ycbcr";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function emit(path: string): i32 {
+  let Ok(bytes) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (bytes.len() <= 0 || bytes.len() % 3 != 0) {
+    return 3;
+  }
+  let Ok(output) = rgb_ycbcr.convert_row(bytes, bytes.len(), never) else {
+    return 4;
+  };
+  if (output.len() != bytes.len()) {
+    return 5;
+  }
+  let count = bytes.len() / 3;
+  for i in 0..count {
+    let sample = rgb_ycbcr.convert(bytes[i * 3], bytes[i * 3 + 1], bytes[i * 3 + 2]);
+    if (output[i * 3] != sample.y || output[i * 3 + 1] != sample.cb || output[i * 3 + 2] != sample.cr) {
+      return 6;
+    }
+  }
+  if let Err(_) = write_file_bytes(path + ".ycbcr.raw", output) {
+    return 7;
+  }
+  print(f"converted {path} {count}");
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
