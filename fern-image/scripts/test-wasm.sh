@@ -5,7 +5,7 @@ FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
 wasmtime --version
-for source in tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
+for source in tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
   output="build/wasm-$(basename "$source" .fern).wasm"
   "$FERN" -check "$source"
   "$FERN" -target wasm32-wasi -sanitize -o "$output" "$source"

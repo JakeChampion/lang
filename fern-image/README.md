@@ -38,6 +38,8 @@ The [MCU entropy producer](docs/jpeg-mcu-entropy.md) emits explicit baseline com
 The [component frame writer](docs/jpeg-component-frames.md) adds complete baseline markers with explicit component and table metadata.
 The [component-plane connector](docs/jpeg-component-planes.md) writes those frames directly from explicit sample planes without a complete coefficient image.
 The [shared sample word primitive](docs/sample-bytes.md) preserves exact raw words with explicit byte order.
+The [JPEG XL box prerequisite](../docs/contexts/image/specs/jxl-container.md) checks signatures and bounded envelopes in both directions.
+It preserves opaque payloads and header forms. Complete container semantics and JPEG XL pixel coding remain unfinished.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.

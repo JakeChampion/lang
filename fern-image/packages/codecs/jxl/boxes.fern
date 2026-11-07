@@ -1,0 +1,142 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum BoxError { Bounds, Truncated, Length, Limit, Cancelled }
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum Size { Short, Extended, ToEnd }
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum Signature { Invalid, NeedMore, Codestream, Container }
+
+pub struct Header { kind: u32, size: Size, start: i32, payload: i32, bytes: i32, next: i32 }
+
+function be(input: [u8], at: i32, count: i32): u64 {
+  let value = 0u64;
+  for i in 0..count {
+    value = value << 8 | input[at + i] as u64;
+  }
+  return value;
+}
+
+pub function signature(input: [u8]): Signature {
+  if (input.len() == 0) {
+    return NeedMore;
+  }
+  if (input[0] == 255) {
+    if (input.len() < 2) {
+      return NeedMore;
+    }
+    return if (input[1] == 10) { Codestream } else { Invalid };
+  }
+  if (input[0] != 0) {
+    return Invalid;
+  }
+  if (input.len() < 12) {
+    return NeedMore;
+  }
+  let expected: u8[] = [0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10];
+  for i in 0..12 {
+    if (input[i] != expected[i]) {
+      return Invalid;
+    }
+  }
+  return Container;
+}
+
+function extent(input: [u8], at: i32, length: u64, header: i32, size: Size): Result[Header, BoxError] {
+  if (length < header as u64) {
+    return Err(BoxError.Length);
+  }
+  if (length > (input.len() - at) as u64) {
+    return Err(BoxError.Truncated);
+  }
+  let end = at + length as i32;
+  return Ok(Header { kind: be(input, at + 4, 4) as u32, size: size, start: at, payload: at + header, bytes: length as i32 - header, next: end });
+}
+
+pub function read(input: [u8], at: i32): Result[Header, BoxError] {
+  if (at < 0 || at > input.len()) {
+    return Err(BoxError.Bounds);
+  }
+  if (input.len() - at < 8) {
+    return Err(BoxError.Truncated);
+  }
+  let length = be(input, at, 4);
+  if (length == 0u64) {
+    return extent(input, at, (input.len() - at) as u64, 8, ToEnd);
+  }
+  if (length != 1u64) {
+    return extent(input, at, length, 8, Short);
+  }
+  if (input.len() - at < 16) {
+    return Err(BoxError.Truncated);
+  }
+  return extent(input, at, be(input, at + 8, 8), 16, Extended);
+}
+
+pub function scan(input: [u8], max_input_bytes: i32, max_boxes: i32, cancelled: () => boolean): Result[Header[], BoxError] {
+  if (cancelled()) {
+    return Err(BoxError.Cancelled);
+  }
+  if (max_input_bytes <= 0 || max_boxes <= 0 || input.len() > max_input_bytes) {
+    return Err(BoxError.Limit);
+  }
+  let headers: Header[] = [];
+  let at = 0;
+  while (at < input.len()) {
+    if (cancelled()) {
+      return Err(BoxError.Cancelled);
+    }
+    if (headers.len() >= max_boxes) {
+      return Err(BoxError.Limit);
+    }
+    let header = read(input, at)?;
+    headers = headers.append(header);
+    at = header.next;
+  }
+  if (cancelled()) {
+    return Err(BoxError.Cancelled);
+  }
+  return Ok(headers);
+}
+
+function word(own output: u8[], value: u64, width: i32): u8[] {
+  for i in 0..width {
+    output = output.append((value >> ((width - i - 1) * 8) as u64) as u8);
+  }
+  return output;
+}
+
+function prepare_output(kind: u32, bytes: i32, size: Size, max_bytes: i32): Result[u8[], BoxError] {
+  let header = if (size == Extended) { 16 } else { 8 };
+  let Some(total) = bytes +? header else {
+    return Err(BoxError.Limit);
+  };
+  if (total > max_bytes) {
+    return Err(BoxError.Limit);
+  }
+  let length = match (size) { Short => total as u64, Extended => 1u64, ToEnd => 0u64 };
+  let output = word(word([], length, 4), kind as u64, 4);
+  if (size == Extended) {
+    output = word(output, total as u64, 8);
+  }
+  return Ok(output);
+}
+
+pub function write(kind: u32, payload: [u8], size: Size, max_bytes: i32, cancelled: () => boolean): Result[u8[], BoxError] {
+  if (cancelled()) {
+    return Err(BoxError.Cancelled);
+  }
+  let output = prepare_output(kind, payload.len(), size, max_bytes)?;
+  for i in 0..payload.len() {
+    if (i % 256 == 0 && cancelled()) {
+      return Err(BoxError.Cancelled);
+    }
+    output = output.append(payload[i]);
+  }
+  if (cancelled()) {
+    return Err(BoxError.Cancelled);
+  }
+  return Ok(output);
+}
