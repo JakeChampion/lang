@@ -165,6 +165,11 @@ func bareMap(t ast.Type) bool {
 	return ok && st.Name == "Map" && len(st.Args) == 0
 }
 
+func typedMap(t ast.Type) bool {
+	st, ok := t.(ast.StructType)
+	return ok && st.Name == "Map" && len(st.Args) == 2
+}
+
 func (c *checker) errMapNeedsType(decl *ast.Var) {
 	c.errfCode(decl.P, "E020", "map %q needs a type annotation: no use gives the types of its keys and values", decl.Name)
 }
