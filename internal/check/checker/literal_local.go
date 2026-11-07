@@ -10,6 +10,10 @@ type litLocal struct {
 	fixed bool
 	width ast.NumberType
 	onFix []func(ast.NumberType)
+	// float marks a float literal inside a tuple or an array. fwidth is its
+	// type once fixed, and width is not used.
+	float  bool
+	fwidth ast.FloatType
 }
 
 func (c *checker) beginLitLocal(decl *ast.Var, s *scope) {
@@ -47,8 +51,8 @@ func (c *checker) beginLitCompositeLocal(decl *ast.Var, args []ast.Type, s *scop
 	}
 }
 
-// beginLitNestedLocal tracks each polymorphic integer inside a tuple or an
-// array of an unannotated local's type, by its path through that type.
+// beginLitNestedLocal tracks each polymorphic integer or float inside a tuple
+// or an array of an unannotated local's type, by its path through that type.
 func (c *checker) beginLitNestedLocal(decl *ast.Var, s *scope) {
 	var lls []*litLocal
 	var walk func(t ast.Type, path []int, nested bool)
@@ -57,6 +61,10 @@ func (c *checker) beginLitNestedLocal(decl *ast.Var, s *scope) {
 		case ast.NumberType:
 			if x.Polymorphic && nested {
 				lls = append(lls, &litLocal{decl: decl, scope: s, arg: -1, path: append([]int(nil), path...)})
+			}
+		case ast.FloatType:
+			if x.Polymorphic && nested {
+				lls = append(lls, &litLocal{decl: decl, scope: s, arg: -1, path: append([]int(nil), path...), float: true})
 			}
 		case ast.TupleType:
 			for i, el := range x.Elems {
@@ -202,15 +210,20 @@ func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	decl := c.litCompositeReads[id]
 	if decl != nil {
 		c.settleOpenEnumLocal(decl, hint)
-		if at, ok := hint.(ast.ArrayType); ok {
-			if ft, ok := at.Elem.(ast.FloatType); ok {
-				c.settleFloatArrayLocal(decl, ft)
-			}
-		}
 	}
 	for _, ll := range c.litNestedOf[decl] {
-		if nt, ok := typeAt(hint, ll.path).(ast.NumberType); ok && !nt.Polymorphic && !ll.fixed {
-			c.fixLitLocal(ll, nt, id.P)
+		if ll.fixed {
+			continue
+		}
+		switch t := typeAt(hint, ll.path).(type) {
+		case ast.NumberType:
+			if !t.Polymorphic && !ll.float {
+				c.fixLitLocal(ll, t, id.P)
+			}
+		case ast.FloatType:
+			if !t.Polymorphic && ll.float {
+				c.fixLitFloat(ll, t)
+			}
 		}
 	}
 	name, args := literalNominalArgs(hint)
@@ -240,7 +253,7 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *s
 		return
 	}
 	decl := s.lookupVarDecl(id.Name)
-	if decl == nil || c.litNestedOf[decl] == nil && c.floatArrayLocals[decl] == nil {
+	if decl == nil || c.litNestedOf[decl] == nil {
 		return
 	}
 	if _, array := decl.Type.(ast.ArrayType); !array {
@@ -257,14 +270,21 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *s
 		return
 	}
 	c.litCompositeReads[id] = decl
-	switch t := c.checkExpr(call.Args[at], s).(type) {
-	case ast.NumberType:
-		if !t.Polymorphic {
-			c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
-		}
-	case ast.FloatType:
-		c.settleFloatArrayLocal(decl, t)
+	if t := c.checkExpr(call.Args[at], s); typedNumber(t) {
+		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
 	}
+}
+
+// typedNumber is true for an integer or a float type that is not the type of
+// an untyped literal.
+func typedNumber(t ast.Type) bool {
+	switch t := t.(type) {
+	case ast.NumberType:
+		return !t.Polymorphic
+	case ast.FloatType:
+		return !t.Polymorphic
+	}
+	return false
 }
 
 // settleLitArrayByIndex gives a literal array local the element type of a
@@ -274,53 +294,9 @@ func (c *checker) settleLitArrayByIndex(ix *ast.Index, hint ast.Type) {
 	if !ok || c.litCompositeReads[id] == nil {
 		return
 	}
-	switch h := hint.(type) {
-	case ast.NumberType:
-		if !h.Polymorphic {
-			c.settleLitCompositeLocal(id, ast.ArrayType{Elem: h})
-		}
-	case ast.FloatType:
-		c.settleFloatArrayLocal(c.litCompositeReads[id], h)
+	if typedNumber(hint) {
+		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: hint})
 	}
-}
-
-// beginFloatArrayLocal tracks an unannotated local whose type is an array of
-// float literals, such as `let z = [1.5, 2.0];`, until a use gives its width.
-func (c *checker) beginFloatArrayLocal(decl *ast.Var, s *scope) {
-	if !polyFloatArray(decl.Type) {
-		return
-	}
-	if c.floatArrayLocals == nil {
-		c.floatArrayLocals = map[*ast.Var]*scope{}
-	}
-	if c.litCompositeReads == nil {
-		c.litCompositeReads = map[*ast.Ident]*ast.Var{}
-	}
-	c.floatArrayLocals[decl] = s
-}
-
-func polyFloatArray(t ast.Type) bool {
-	at, ok := t.(ast.ArrayType)
-	if !ok {
-		return false
-	}
-	ft, ok := at.Elem.(ast.FloatType)
-	return ok && ft.Polymorphic
-}
-
-// settleFloatArrayLocal gives a float-literal array local the width w.
-func (c *checker) settleFloatArrayLocal(decl *ast.Var, w ast.FloatType) {
-	s := c.floatArrayLocals[decl]
-	if s == nil || w.Polymorphic {
-		return
-	}
-	delete(c.floatArrayLocals, decl)
-	at := decl.Type.(ast.ArrayType)
-	at.Elem = ast.FloatType{Width: w.Width}
-	decl.Type = at
-	c.info.VarTypes[decl] = at
-	s.set(decl.Name, at)
-	c.settleNumeric(decl.Init, at)
 }
 
 func literalNominalArgs(t ast.Type) (string, []ast.Type) {
@@ -385,10 +361,10 @@ func (c *checker) litCompositeType(id *ast.Ident) ast.Type {
 }
 
 func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
-	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil && c.openEnumLocals == nil && c.floatArrayLocals == nil {
+	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil && c.openEnumLocals == nil {
 		return
 	}
-	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil || c.openEnumLocals[decl] != nil || c.floatArrayLocals[decl] != nil {
+	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil || c.openEnumLocals[decl] != nil {
 		c.litCompositeReads[id] = decl
 		return
 	}
@@ -506,6 +482,20 @@ func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) 
 	ll.onFix = nil
 }
 
+// fixLitFloat gives a float literal inside a tuple or an array the type w.
+func (c *checker) fixLitFloat(ll *litLocal, w ast.FloatType) {
+	w = ast.FloatType{Width: w.Width}
+	ll.fixed = true
+	ll.fwidth = w
+	nt := withTypeAt(ll.decl.Type, ll.path, w)
+	ll.decl.Type = nt
+	c.info.VarTypes[ll.decl] = nt
+	if ll.scope.vars[ll.decl.Name] == ll.decl {
+		ll.scope.set(ll.decl.Name, nt)
+	}
+	c.settleNumeric(ll.decl.Init, nt)
+}
+
 func (c *checker) fixLitStructArg(ll *litLocal, w ast.NumberType) {
 	st := ll.decl.Type.(ast.StructType)
 	args := append([]ast.Type(nil), st.Args...)
@@ -535,7 +525,8 @@ func (c *checker) settleLitLocals(body *ast.Block) {
 		c.propagateLitLocals(body)
 		var open *litLocal
 		for _, ll := range c.litLocals {
-			if !ll.fixed {
+			// An open float literal stays unsettled and takes f64 later.
+			if !ll.fixed && !ll.float {
 				open = ll
 				break
 			}

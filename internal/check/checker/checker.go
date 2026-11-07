@@ -5763,7 +5763,6 @@ type checker struct {
 	litFields         map[*ast.FieldAccess]*litLocal
 	litCompositeReads map[*ast.Ident]*ast.Var
 	openEnumLocals    map[*ast.Var]*scope
-	floatArrayLocals  map[*ast.Var]*scope
 	openPassedOver    map[*ast.Var]bool
 	current           *ast.FuncDecl
 	loopDepth         int
@@ -11647,7 +11646,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if unannotated {
 			c.beginLitNestedLocal(n, s)
 			c.beginOpenEnumLocal(n, s)
-			c.beginFloatArrayLocal(n, s)
 		}
 	case *ast.Destructure:
 		got := c.checkExpr(n.Init, s)
@@ -15561,7 +15559,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		c.expectedType = nil
 		c.elemHint = nil
-		if id, ok := n.Target.(*ast.Ident); ok && (c.holdsOpenEnum(lt) || polyFloatArray(lt) || c.litNestedOf[s.lookupVarDecl(id.Name)] != nil) {
+		if id, ok := n.Target.(*ast.Ident); ok && (c.holdsOpenEnum(lt) || c.litNestedOf[s.lookupVarDecl(id.Name)] != nil) {
 			// A use of the open local on the right side can give it its type.
 			lt, _ = s.lookup(id.Name)
 		}

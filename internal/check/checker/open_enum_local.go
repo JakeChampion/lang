@@ -169,7 +169,6 @@ func (c *checker) finishOpenEnumLocals() {
 		}
 	}
 	c.openEnumLocals = nil
-	c.floatArrayLocals = nil
 	c.openPassedOver = nil
 }
 

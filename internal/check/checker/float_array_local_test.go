@@ -24,3 +24,22 @@ func TestFloatArrayLocalTakesTheWidthOfItsFirstUse(t *testing.T) {
 		t.Errorf("an append at another width after the read: want E038, got %v", err)
 	}
 }
+
+func TestNestedFloatArrayLocalKeepsTheWidthOfItsFirstUse(t *testing.T) {
+	for _, test := range []struct {
+		name, width, codes string
+	}{
+		{"matching width", "f32", ""},
+		{"different width", "f64", "E038"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			src := "function consume(xs: f32[][]): i32 { return xs.len(); }\n" +
+				"function main(): i32 { let z = [[1.5, 2.0]]; let n = consume(z); " +
+				"let f: " + test.width + " = 3.0; let w = z[0].append(f); return n + w.len(); }\n"
+			err := checkSource(t, src)
+			if got := errCodes(err); got != test.codes {
+				t.Fatalf("want codes %q, got %q: %v", test.codes, got, err)
+			}
+		})
+	}
+}
