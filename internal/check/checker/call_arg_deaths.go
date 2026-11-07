@@ -30,7 +30,8 @@ type IdentOrder struct {
 func IdentOrderOf(body ast.Node) IdentOrder {
 	o := IdentOrder{Idx: map[*ast.Ident]int{}, last: map[string]int{}}
 	n := 0
-	ast.Walk(body, func(node ast.Node) bool {
+	var visit func(node ast.Node) bool
+	visit = func(node ast.Node) bool {
 		if id, ok := node.(*ast.Ident); ok {
 			n++
 			o.Idx[id] = n
@@ -38,9 +39,30 @@ func IdentOrderOf(body ast.Node) IdentOrder {
 				o.last[id.Name] = n
 			}
 		}
+		if m, ok := node.(*ast.Match); ok && m.Origin == ast.OriginLetElse && len(m.Arms) > 0 {
+			walkLetElseInSourceOrder(m, visit)
+			return false
+		}
 		return true
-	})
+	}
+	ast.Walk(body, visit)
 	return o
+}
+
+// The parser puts the statements after a let-else into its success arms and
+// its else block into the last arm. The source writes the else block first.
+func walkLetElseInSourceOrder(m *ast.Match, visit func(ast.Node) bool) {
+	ast.Walk(m.Tag, visit)
+	last := len(m.Arms) - 1
+	arms := append([]*ast.MatchArm{m.Arms[last]}, m.Arms[:last]...)
+	for _, a := range arms {
+		if a.Guard != nil {
+			ast.Walk(a.Guard, visit)
+		}
+		if a.Body != nil {
+			ast.Walk(a.Body, visit)
+		}
+	}
 }
 
 func (o IdentOrder) IsLast(id *ast.Ident) bool {
