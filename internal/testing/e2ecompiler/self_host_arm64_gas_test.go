@@ -40,6 +40,8 @@ func TestSelfHostArm64DarwinMachOGasRuns(t *testing.T) {
 
 const arm64GasSelfTestMain = `
 function main(): i32 {
+    let sr = arm64_gas_assemble("mrs x9, currentel");
+    if (sr.text.len() != 4 || sr.text[0] != 73 || sr.text[1] != 66 || sr.text[2] != 56 || sr.text[3] != 213) { return 61; }
     // mov x0, #42 -> movz -> 0xD2800540 -> 40 05 80 D2
     let a: Arm64Asm = arm64_gas_assemble("mov x0, #42");
     if (a.text[0] != 64 || a.text[1] != 5 || a.text[2] != 128 || a.text[3] != 210) { return 1; }

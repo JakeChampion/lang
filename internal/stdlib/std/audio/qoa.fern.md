@@ -154,7 +154,7 @@ function decode_samples(input: [u8], at: i32, h: FrameHeader, own samples: i32[]
     for c in 0..cc {
       let slice = wire.be(input, pos, 8);
       let sf = (slice >> 60) as i32;
-      slice = slice << 4;
+      slice <<= 4;
       let state = states[c];
       for i in 0..n {
         let q = (slice >> 61) as i32;
@@ -162,7 +162,7 @@ function decode_samples(input: [u8], at: i32, h: FrameHeader, own samples: i32[]
         let value = clamp(predict(state) + residual, -32768, 32767);
         samples = samples.with(output_at + (base + i) * cc + c, value);
         state = update(state, value, residual);
-        slice = slice << 3;
+        slice <<= 3;
       }
       states = states.with(c, state);
       pos += 8;

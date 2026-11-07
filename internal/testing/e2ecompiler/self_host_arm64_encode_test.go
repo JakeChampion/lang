@@ -8,11 +8,8 @@ import (
 )
 
 func arm64NativeSrc(t *testing.T) string {
-	b, err := os.ReadFile("../../../compiler/arm64_native.fern")
-	if err != nil {
-		t.Fatalf("read arm64_native.fern: %v", err)
-	}
-	return string(b) + toU8Src
+	t.Helper()
+	return assemblerSource(t, "arm64_native.fern") + toU8Src
 }
 
 const toU8Src = `

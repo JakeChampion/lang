@@ -17,6 +17,8 @@ After a decode error, reset the decoder before the next packet.
 
 ```fern
 <<*>>=
+// Encode and decode bounded Opus CELT packets with interleaved samples.
+
 import "std/audio/pcm";
 import "std/opus/packet";
 import "std/opus/celt";
