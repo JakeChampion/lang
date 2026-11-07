@@ -288,6 +288,53 @@ function on_input_created_entry(): usize;
 @callback("on_input_destroyed")
 function on_input_destroyed_entry(): usize;
 
+// The system property that names the live ANativeActivity of the process.
+// A component that can outlive the activity, such as a service, reads it,
+// so it does not reach an activity that Android freed.
+const LIVE: string = "dev.fern.android.activity";
+
+// Sets the property LIVE to `value`, or clears it when `value` is "".
+function set_live(e: usize, value: string): void {
+  let class: usize = jni.find_class(e, "java/lang/System");
+  let key: usize = jni.new_string(e, LIVE);
+  if (value.len() == 0) {
+    let args: usize = jni.jvalues([key]);
+    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "clearProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
+    jni.free_buffer(args);
+  } else {
+    let args: usize = jni.jvalues([key, jni.new_string(e, value)]);
+    let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"), args);
+    jni.free_buffer(args);
+  }
+  let cleared: usize = jni.exception_clear(e);
+}
+
+// The ANativeActivity that runs now, or 0 when there is none: before its
+// start, or after its Destroy. Android starts and destroys an activity on the
+// UI thread, so call it there, as a service does in onStartCommand.
+pub function live_activity(e: usize): usize {
+  let class: usize = jni.find_class(e, "java/lang/System");
+  let args: usize = jni.jvalues([jni.new_string(e, LIVE)]);
+  let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
+  jni.free_buffer(args);
+  let text: string = jni.string_of(e, got);
+  let v: usize = 0 as usize;
+  for c in text.as_bytes() {
+    if (c < 48u8 || c > 57u8) {
+      return 0 as usize;
+    }
+    v = v * (10 as usize) + (c - 48u8) as usize;
+  }
+  return v;
+}
+
+// The JNIEnv of the UI thread, which ANativeActivity holds.
+function ui_env(activity: usize): usize {
+  unsafe {
+    return __load_ptr(activity + 16 as usize);
+  }
+}
+
 // Sets the callbacks of `activity` and starts the loop thread at
 // `thread_main`, a C function of one usize argument, such as an @callback
 // entry. The loop thread gets the context, which it gives to `run`. Call it
@@ -321,6 +368,7 @@ pub function start(activity: usize, thread_main: usize): void {
       let ignored: i32 = c_pthread_detach(__load_ptr(ctx + 24 as usize));
     }
   }
+  set_live(ui_env(activity), (activity as u64).to_string());
 }
 
 // Sends the message `kind` with `arg` to the loop thread of the
@@ -363,6 +411,9 @@ function on_stop(activity: usize): void {
 }
 
 function on_destroy(activity: usize): void {
+  if (live_activity(ui_env(activity)) == activity) {
+    set_live(ui_env(activity), "");
+  }
   send(activity, DESTROY, 0 as usize);
 }
 
@@ -583,13 +634,6 @@ pub function env(ctx: usize): usize {
 pub function activity_object(ctx: usize): usize {
   unsafe {
     return __load_ptr(__load_ptr(ctx + 16 as usize) + 24 as usize);
-  }
-}
-
-// The ANativeActivity of the app, for `send` from another thread.
-pub function activity(ctx: usize): usize {
-  unsafe {
-    return __load_ptr(ctx + 16 as usize);
   }
 }
 
