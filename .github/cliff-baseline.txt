@@ -1,3 +1,6 @@
+# 2026-11-07: PR #14407, after #14376 and #14384. The copies that grew the cliff since 2026-11-05 are gone
+# (#14179): a local FERN_CLIFF_REPORT run on the PR head measures 36,773,408 bytes and 372,426 crossings.
+# The bytes row moves down to that value. The count row keeps its limit, so its growth stays visible.
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the ownership-checker changes of #14145
 # and this PR. checker.cliff_bytes rises 27.22% to 59063536 and checker.cliff_count 8.62% to 373320.
 # Retain the preceding limits. The measured regression must remain visible.
@@ -146,5 +149,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	46426872
+x86_64/checker.cliff_bytes	36773408
 x86_64/checker.cliff_count	343679
