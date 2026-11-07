@@ -764,11 +764,19 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   return Graph { entry: stamp_imports(ov, entry, edir, sroot, keys, idents), loaded: stamped, files: files, missing: missing };
 }
 
-pub function bundle(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, stdlib: string): parser.Module {
-  let root = graph_stdlib_dir(no_overlay(), dirname(entry_path), stdlib);
-  let packages: string[] = [visibility.package_root(flatten.module_ident(entry_path), root, manifest_dir(dirname(entry_path)))];
+// A sealed overlay reads no manifest from the disk.
+function package_owner(ov: Overlay, path: string): string {
+  if (ov.sealed) {
+    return dirname(path);
+  }
+  return manifest_dir(dirname(path));
+}
+
+pub function bundle(ov: Overlay, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, stdlib: string): parser.Module {
+  let root = graph_stdlib_dir(ov, dirname(entry_path), stdlib);
+  let packages: string[] = [visibility.package_root(flatten.module_ident(entry_path), root, package_owner(ov, entry_path))];
   for lm in loaded {
-    packages = packages.append(visibility.package_root(lm.ident, root, manifest_dir(dirname(lm.ident))));
+    packages = packages.append(visibility.package_root(lm.ident, root, package_owner(ov, lm.ident)));
   }
   return visibility.scope_enums(flatten.bundle(entry, loaded, target), flatten.assign_prefixes(loaded), packages);
 }
