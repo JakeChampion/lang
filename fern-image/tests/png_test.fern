@@ -109,7 +109,7 @@ function rejects(data: u8[], expected: png.PngError): boolean {
 }
 
 function semantics(): test.TestOutcome {
-  return test.assert_true(rejects(fixtures.transparency(), png.Unsupported)
+  return test.assert_true(rejects(fixtures.transparency(), png.Length)
     && rejects(fixtures.profile(), png.Unsupported) && rejects(fixtures.animation(), png.Unsupported)
     && rejects(fixtures.critical(), png.Unsupported) && rejects(fixtures.short_scanline(), png.Scanline));
 }

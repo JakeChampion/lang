@@ -1,0 +1,306 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "../packages/codecs/png/provider";
+import "../packages/pipeline/pipeline";
+import "./fixtures/png_indexed" as fixtures;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function goldens(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let Ok(image) = png.decode(fixture.encoded, pixels.default_limits()) else {
+      return test.fail("indexed decode");
+    };
+    if (image.layout.width != fixture.width || image.layout.height != 5 || pixels.channels(image.layout.format) != fixture.channels
+      || !same(image.data, fixture.expected)) {
+      return test.fail("indexed pixels");
+    }
+    let Ok(encoded) = png.encode(image, 65536) else {
+      return test.fail("expanded encode");
+    };
+    let Ok(roundtrip) = png.decode(encoded, pixels.default_limits()) else {
+      return test.fail("expanded decode");
+    };
+    if (!same(roundtrip.data, fixture.expected)) {
+      return test.fail("indexed round trip");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function rows(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    for incremental in [false, true] {
+      let opened = if (incremental) { png.open_incremental_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), never) } else { png.open_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), never) };
+      let Ok(decoder) = opened else {
+        return test.fail("indexed row open");
+      };
+      let stride = fixture.width * fixture.channels;
+      for y in 0..5 {
+        let Ok(row) = decoder.read(y, never) else {
+          return test.fail("indexed row read");
+        };
+        if (!same(row.data, fixture.expected[y * stride:(y + 1) * stride])) {
+          return test.fail("indexed row pixels");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function limits(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let exact = pixels.Limits { max_pixels: fixture.width * 5, max_bytes: fixture.width * 5 * fixture.channels };
+    if let Err(_) = png.decode(fixture.encoded, exact) {
+      return test.fail("indexed exact output limit");
+    }
+    let limited = pixels.Limits { ...exact, max_bytes: exact.max_bytes - 1 };
+    if (!match (png.decode(fixture.encoded, limited)) { Err(png.PngError.Limit) => true, _ => false }) {
+      return test.fail("indexed expanded limit");
+    }
+    let Ok(plan) = png.inspect_rows(fixture.encoded, exact, png.default_row_limits()) else {
+      return test.fail("indexed inspect");
+    };
+    let wire = (fixture.width * fixture.depth + 7) / 8;
+    if (plan.filtered_bytes != 5 * (wire + 1)) {
+      return test.fail("indexed filtered budget");
+    }
+    let wanted_work = 5i64 + 5i64 * (wire as i64) + 5i64 * (fixture.width as i64 * (fixture.channels as i64)) + 5i64 * (wire as i64 + fixture.width as i64);
+    let wanted_payload = 2i64 * (fixture.encoded.len() as i64) + plan.filtered_bytes as i64 + plan.row_scratch_bytes + fixture.entries as i64 * 4i64;
+    if (plan.row_work != wanted_work || plan.payload_bytes != wanted_payload) {
+      return test.fail("palette storage and validation work");
+    }
+    for incremental in [false, true] {
+      let inspected = if (incremental) { png.inspect_incremental_rows(fixture.encoded, exact, png.default_row_limits()) } else { png.inspect_rows(fixture.encoded, exact, png.default_row_limits()) };
+      let Ok(full) = inspected else {
+        return test.fail("indexed row plan");
+      };
+      let admitted = png.RowLimits { max_payload_bytes: full.payload_bytes, max_row_work: full.row_work };
+      let opened = if (incremental) { png.open_incremental_rows(fixture.encoded, exact, admitted, never) } else { png.open_rows(fixture.encoded, exact, admitted, never) };
+      let Ok(_) = opened else {
+        return test.fail("exact logical limits");
+      };
+      for work_limit in [false, true] {
+        let below = png.RowLimits { max_payload_bytes: admitted.max_payload_bytes - (if (work_limit) { 0i64 } else { 1i64 }), max_row_work: admitted.max_row_work - (if (work_limit) { 1i64 } else { 0i64 }) };
+        let rejected = if (incremental) { png.open_incremental_rows(fixture.encoded, exact, below, never) } else { png.open_rows(fixture.encoded, exact, below, never) };
+        if (!match (rejected) { Err(png.DecoderBudget) => true, _ => false }) {
+          return test.fail("short logical limit");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function open(input: [u8], incremental: boolean): Result[png.RowDecoder, png.DecoderError] {
+  return if (incremental) { png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never) } else { png.open_rows(input, pixels.default_limits(), png.default_row_limits(), never) };
+}
+
+function aliases(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  let wrapped: u8[] = [7];
+  for byte in fixture.encoded {
+    wrapped = wrapped.append(byte);
+  }
+  wrapped = wrapped.append(9);
+  for incremental in [false, true] {
+    let Ok(decoder) = open(wrapped[1:wrapped.len() - 1], incremental) else {
+      return test.fail("indexed borrowed input");
+    };
+    let Ok(first) = decoder.read(0, never) else {
+      return test.fail("indexed first row");
+    };
+    let retained = first.data;
+    let Ok(changed) = pixels.write_pixel(first, 0, 0, pixels.Pixel { r: 13, g: 27, b: 41, a: 255 }) else {
+      return test.fail("indexed retained row update");
+    };
+    let Ok(last) = decoder.read(4, never) else {
+      return test.fail("indexed final row");
+    };
+    let Ok(repeated) = decoder.read(4, never) else {
+      return test.fail("indexed repeated row");
+    };
+    let stride = fixture.width * fixture.channels;
+    if (changed.data[0] != 13 || !same(retained, fixture.expected[:stride]) || !same(last.data, fixture.expected[4 * stride:])
+      || !same(last.data, repeated.data) || !same(wrapped[1:wrapped.len() - 1], fixture.encoded)) {
+      return test.fail("indexed aliases");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function cancellation(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  for incremental in [false, true] {
+    let Ok(baseline) = open(fixture.encoded, incremental) else {
+      return test.fail("indexed cancellation baseline");
+    };
+    let polls = cell_new(0);
+    let counter = (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    };
+    if let Err(_) = baseline.read(4, counter) {
+      return test.fail("indexed poll count");
+    }
+    for stop in 1..polls.get() + 1 {
+      let Ok(decoder) = open(fixture.encoded, incremental) else {
+        return test.fail("indexed cancellation session");
+      };
+      let count = cell_new(0);
+      let cancel = (): boolean => {
+        count.set(count.get() + 1);
+        return count.get() == stop;
+      };
+      if (!match (decoder.read(4, cancel)) { Err(png.DecoderCancelled) => true, _ => false }) {
+        return test.fail("indexed cancellation poll");
+      }
+      if (incremental && !match (decoder.read(4, never)) { Err(png.DecoderCancelled) => true, _ => false }) {
+        return test.fail("indexed terminal cancellation");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let suite = test.new("PNG indexed color");
+  suite = suite.it("indexed color samples, filters and padding", goldens);
+  suite = suite.it("indexed sequential and incremental rows", rows);
+  suite = suite.it("indexed and expanded admission", limits);
+  suite = suite.it("indexed input and row aliases", aliases);
+  suite = suite.it("cancellation at every indexed row poll", cancellation);
+  suite = suite.it("late invalid indices precede consumer callbacks", late_index);
+  suite = suite.it("indexed graph providers preserve samples", providers);
+  suite = suite.it("cancellation at every preflight poll", preflight_cancellation);
+  suite = suite.it("single encoded row crosses a reader chunk", wide_row);
+  return suite.finish();
+}
+
+function wide_row(): test.TestOutcome {
+  let input = fixtures.wide_row();
+  let Ok(eager) = png.decode(input, pixels.default_limits()) else {
+    return test.fail("wide indexed decode");
+  };
+  for incremental in [false, true] {
+    let Ok(decoder) = open(input, incremental) else {
+      return test.fail("wide indexed row open");
+    };
+    let Ok(row) = decoder.read(0, never) else {
+      return test.fail("wide indexed row read");
+    };
+    if (row.layout.width != 32769 || !same(row.data, eager.data)) {
+      return test.fail("wide row shape");
+    }
+    for x in 0..32769 {
+      let index = x % 256;
+      if (row.data[x * 4] != index as u8 || row.data[x * 4 + 1] != (255 - index) as u8 || row.data[x * 4 + 2] != (index * 37) as u8
+        || row.data[x * 4 + 3] != (if (index == 0) { 0 } else { 255 })) {
+        return test.fail("wide independent samples");
+      }
+    }
+    let source = if (incremental) { provider.incremental_source(input, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) } else { provider.source(input, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) };
+    if (!match (source) { Err(pipeline.Budget) => true, _ => false }) {
+      return test.fail("preserve graph row limit");
+    }
+  }
+  return test.pass();
+}
+
+function late_index(): test.TestOutcome {
+  for index in 0..4 {
+    let input = fixtures.bad_index(index);
+    if (!match (png.decode(input, pixels.default_limits())) { Err(png.PngError.Scanline) => true, _ => false }) {
+      return test.fail("eager late bad index");
+    }
+    for incremental in [false, true] {
+      if (!match (open(input, incremental)) { Err(png.DecoderCodec(png.PngError.Scanline)) => true, _ => false }) {
+        return test.fail("preflight late bad index");
+      }
+      let calls = cell_new(0);
+      let consume = (sum: i32, row: pixels.Image): Result[i32, string] => {
+        calls.set(calls.get() + 1);
+        return Ok(sum + 1);
+      };
+      let result = if (incremental) { png.fold_incremental_rows(input, 0, 1, pixels.default_limits(), png.default_row_limits(), never, 0, consume) } else { png.fold_rows(input, 0, 1, pixels.default_limits(), png.default_row_limits(), never, 0, consume) };
+      if (!match (result) { Err(png.RowCodec(png.PngError.Scanline)) => true, _ => false } || calls.get() != 0) {
+        return test.fail("no consumer before full validation");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function providers(): test.TestOutcome {
+  for index in 0..fixtures.count() {
+    let fixture = fixtures.get(index);
+    for incremental in [false, true] {
+      let source = if (incremental) { provider.incremental_source(fixture.encoded, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) } else { provider.source(fixture.encoded, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) };
+      let Ok(graph) = source else {
+        return test.fail("indexed provider");
+      };
+      let Ok(cache) = pipeline.required_cache(graph, pipeline.default_limits()) else {
+        return test.fail("indexed provider cache");
+      };
+      let Ok(result) = pipeline.fold_rows(graph, 0, 5, pipeline.default_limits(), cache, never, 0, (y: i32, row: pixels.Image): Result[i32, string] => {
+        let stride = fixture.width * fixture.channels;
+        if (!same(row.data, fixture.expected[y * stride:(y + 1) * stride])) {
+          return Err("provider indexed pixels");
+        }
+        return Ok(y + 1);
+      }) else {
+        return test.fail("indexed provider rows");
+      };
+      if (result.value != 5) {
+        return test.fail("complete provider rows");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function preflight_cancellation(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  for incremental in [false, true] {
+    let total = cell_new(0);
+    let counter = (): boolean => {
+      total.set(total.get() + 1);
+      return false;
+    };
+    let baseline = if (incremental) { png.open_incremental_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), counter) } else { png.open_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), counter) };
+    let Ok(_) = baseline else {
+      return test.fail("preflight cancellation count");
+    };
+    for stop in 1..total.get() + 1 {
+      let calls = cell_new(0);
+      let cancel = (): boolean => {
+        calls.set(calls.get() + 1);
+        return calls.get() == stop;
+      };
+      let result = if (incremental) { png.open_incremental_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), cancel) } else { png.open_rows(fixture.encoded, pixels.default_limits(), png.default_row_limits(), cancel) };
+      if (!match (result) { Err(png.DecoderCancelled) => true, _ => false } || calls.get() != stop) {
+        return test.fail("every preflight checkpoint");
+      }
+    }
+  }
+  return test.pass();
+}

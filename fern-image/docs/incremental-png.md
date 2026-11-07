@@ -2,7 +2,8 @@
 
 Issue #13459 adds opt-in row output from the native DEFLATE reader.
 The existing eager decoder, row sessions, folds, and graph provider preserve their contracts and budgets.
-The supported PNG profile remains 8-bit RGB/RGBA with the documented restrictions.
+The supported PNG profile includes packed grayscale and indexed samples, plus eight-bit grayscale-alpha, RGB and RGBA.
+Grayscale and RGB tRNS use original sample keys before RGBA expansion.
 
 Use `png.inspect_incremental_rows` for the full-range logical plan.
 Use `png.open_incremental_rows` for a fresh forward session.
@@ -16,6 +17,9 @@ Its first reader validates the complete stream before any row callback.
 It checks exact compressed consumption, strict zlib framing, Adler-32, filtered length, and every filter byte.
 Checksum and framing failures precede filter errors, as in the eager path.
 A bad final filter rejects a selection of an earlier row before the consumer runs.
+
+Indexed validation also reconstructs bounded encoded rows and checks every pixel index before callbacks.
+A bad final index therefore rejects a selection of an earlier row.
 
 The validation helper releases its reader before a second fresh reader reconstructs row prefixes.
 The session retains the previous reconstructed row and requests chunks of at most 32768 bytes.
@@ -52,6 +56,17 @@ The full-range plan charges these logical payload lengths:
 - `2 * R + W + 1` covers two rows, an output chunk, and the filter byte.
 
 The table allowance uses the current reader's fixed symbol and code-length limits.
+
+For grayscale, the filtered length and filter dependencies use the encoded row width.
+The row allowance covers the greater of two expanded rows and two encoded rows plus one expanded row.
+The plan adds the window and filter-byte allowances to that row allowance.
+Its work charge uses the encoded prefix width and one expanded width for each selected row.
+
+Indexed plans use the same row allowance and also retain four bytes per palette entry.
+Their extra preflight work is image height times the sum of encoded row bytes and image width.
+Validation keeps two encoded rows within that allowance, with no complete filtered frame.
+Nonindexed plans retain their previous charges and limits.
+
 Fixed trees use at most 288 literal/length symbols and 30 distance symbols.
 Dynamic headers use at most 316 combined code-length entries.
 The allowance is not an allocator cap.
