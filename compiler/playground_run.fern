@@ -182,7 +182,7 @@ function run(): i32 {
     return 1;
   }
 
-  let merged = flatten.bundle(entry, loaded, target);
+  let merged = modloader.bundle(ov, "stdin", entry, loaded, target, "");
   merged = parser.fill_default_args_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
 
