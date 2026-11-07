@@ -531,6 +531,7 @@ let_else_payload_copy                                0
 let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
 literal_local_read_at_two_widths                    0
+literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0
 literal_match_alternatives_share_one_body            0
 literal_payload_pattern                              0

@@ -563,6 +563,7 @@ func (c *checker) settleLitLocals(body *ast.Block) {
 	c.litNestedOf = nil
 	c.litFields = nil
 	c.litCompositeReads = nil
+	c.litRecvCalls = nil
 }
 
 func (c *checker) propagateLitLocals(body *ast.Block) {
@@ -717,6 +718,10 @@ func (c *checker) litTreeLocals(e ast.Expr, acc []*litLocal) ([]*litLocal, bool)
 		if x.Tail != nil {
 			return c.litTreeLocals(x.Tail, acc)
 		}
+	case *ast.Call:
+		if _, open := c.litRecvCalls[x]; open {
+			return c.litTreeLocals(x.Args[0], acc)
+		}
 	}
 	return acc, false
 }
@@ -782,4 +787,42 @@ func (c *checker) settleIndexOperand(e ast.Expr, t ast.Type) ast.Type {
 		return c.postSettleType(e, t)
 	}
 	return t
+}
+
+// deferLitReceiver keeps an open literal receiver open: the method takes
+// the width the receiver settles to, from any use in the function.
+func (c *checker) deferLitReceiver(call *ast.Call, recv ast.Expr, t ast.Type, prefer []string) *litLocal {
+	id, ok := recv.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	ll := c.litIdents[id]
+	if nt, isNum := t.(ast.NumberType); ll == nil || ll.fixed || !isNum || !nt.Polymorphic {
+		return nil
+	}
+	if c.litRecvCalls == nil {
+		c.litRecvCalls = map[*ast.Call][]int{}
+	}
+	c.litRecvCalls[call] = nil
+	field := call.Method.Field
+	ll.onFix = append(ll.onFix, func(w ast.NumberType) {
+		name, _ := methodTypeName(w)
+		callee := call.Callee.(*ast.Ident)
+		if mangled, owner, _, found := c.resolveMethodFrom(name, field, prefer); found {
+			callee.Name = c.instForReceiver(name, field, owner, mangled, w)
+		} else if builtin, found := builtinScalarMethod(name, field); found {
+			callee.Name = builtin
+		} else {
+			c.errfCode(call.Method.FieldPos, "E043", "%s", c.unknownMethodMessage(name, field, w))
+			return
+		}
+		call.Method.Receiver = w
+		ft := c.info.FuncSigs[callee.Name]
+		for _, i := range c.litRecvCalls[call] {
+			if ft != nil && i < len(ft.Params) {
+				c.settleNumeric(call.Args[i], ft.Params[i])
+			}
+		}
+	})
+	return ll
 }
