@@ -2424,8 +2424,8 @@ function test_multibyte(): i32 {
 }
 
 function test_numeric_flags(): i32 {
-  let src = "1 1i32 2i64 3u8 4u32 5u64 6usize 7f32 8f64 'A' b'A'";
-  let suffixes: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "u8"];
+  let src = "1 1i32 2i64 3u8 4u32 5u64 6usize 7f32 8f64 'A' b'A' 18446744073709551615u64 340282366920938463463374607431768211455";
+  let suffixes: string[] = ["", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "char", "u8", "u64", ""];
   let toks = rebase_tokens(tokenize(src), 4, 10);
   if (toks.len() != suffixes.len() + 1) {
     return 2247;
@@ -2435,6 +2435,9 @@ function test_numeric_flags(): i32 {
       TokNumber(t) => {
         if (t.suffix() != suffixes[i] || t.is_float() != (i == 7 || i == 8) || t.line != 4 || t.col < 10) {
           return 2248;
+        }
+        if (i == 11 && t.text != "18446744073709551615" || i == 12 && t.text != "340282366920938463463374607431768211455") {
+          return 2250;
         }
       },
       _ => {
