@@ -1961,7 +1961,7 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
 
 pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], const_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string, must_consume: boolean }
 
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean, is_pub: boolean, is_package: boolean }
 
 pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], const_params: string[], instance: string, visible_from: string[], must_consume: boolean }
 
@@ -4049,7 +4049,19 @@ function (s: Scope) imports_directly(path: string): boolean {
 }
 
 function (s: Scope) method_visible(m: MethodSig): boolean {
-  return m.impl_trait.len() > 0 || s.imports.sees(s.fn_module, m.module);
+  if (m.impl_trait.len() > 0) {
+    return true;
+  }
+  return s.imports.sees(s.fn_module, m.module) && s.method_scope_admits(m);
+}
+
+// A method declared without `pub` is visible only in its own module, and a
+// `pub(package)` one only in modules of the same package.
+function (s: Scope) method_scope_admits(m: MethodSig): boolean {
+  if (m.module == s.fn_module || m.is_pub) {
+    return true;
+  }
+  return m.is_package && s.imports.same_package(s.fn_module, m.module);
 }
 
 function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
@@ -4146,6 +4158,10 @@ function (s: Scope) stdlib_receiver_matches(ns: string, method: string, recv: ty
 
 function (s: Scope) unknown_method_message(ns: string, method: string, label: string, recv: typeinfo.Type): string {
   let base = "no method \"" + method + "\" on " + label;
+  let hidden = s.private_method_note(ns, method);
+  if (hidden.len() > 0) {
+    return base + hidden;
+  }
   let repl = retired_collection_spelling(ns, method);
   let view = false;
   if let typeinfo.TypeArray(a) = recv {
@@ -4287,6 +4303,35 @@ function (s: Scope) element_meets_bounds(method: MethodSig, rt: string, recv: ty
 // parameter that a receiver introduces with a leading digit, `0_T`.
 function array_element_is_generic(rt: string): boolean {
   return rt.len() > 2 && rt[0] >= b'0' && rt[0] <= b'9';
+}
+
+// The note for a method of this name that its missing `pub` hides here.
+function (s: Scope) private_method_note(ns: string, method: string): string {
+  for m in s.methods.methods {
+    let on_ns = m.receiver_type == ns || ns == "Array" && array_receiver_matches(m.receiver_type, false);
+    if (m.name == method && on_ns && m.impl_trait.len() == 0 && s.imports.sees(s.fn_module, m.module) && !s.method_scope_admits(m)) {
+      return " — \"" + method + "\" is declared without `pub` in module \"" + s.module_label(m.module) + "\", so only that module can call it";
+    }
+  }
+  return "";
+}
+
+// The base name of the module with mangle prefix `prefix`, as the current
+// module imports it.
+function (s: Scope) module_label(prefix: string): string {
+  for sg in s.imports.sights {
+    if (sg.module != s.fn_module) {
+      continue;
+    }
+    let i = 0;
+    while (i < sg.direct.len() && i < sg.imports.len()) {
+      if (sg.direct[i] == prefix) {
+        return util.module_name(sg.imports[i]);
+      }
+      i += 1;
+    }
+  }
+  return prefix;
 }
 
 // The advice for a method call that names a public free function of an
@@ -7456,7 +7501,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
       }
       let rtn = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd), is_unsafe: fd.is_unsafe });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd), is_unsafe: fd.is_unsafe, is_pub: fd.is_pub, is_package: fd.is_package });
     }
   }
   return out;
@@ -13690,7 +13735,7 @@ function trait_bound_method(s: Scope, bound: string, self: string, field: string
         i += 1;
       }
       let rt = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(m.ret_type, m.ret_fn_ret, m.ret_fn_param_types), self), req.type_params, args);
-      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m), is_unsafe: m.is_unsafe });
+      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m), is_unsafe: m.is_unsafe, is_pub: true, is_package: false });
     }
   }
   for parent in req.supertraits {
@@ -28697,6 +28742,20 @@ function unloaded_qualifiers(mod: parser.Module): string[] {
     }
   }
   return out;
+}
+
+function (im: Imports) package_of(module: string): string {
+  for sg in im.sights {
+    if (sg.module == module) {
+      return sg.package;
+    }
+  }
+  return "";
+}
+
+function (im: Imports) same_package(a: string, b: string): boolean {
+  let pa = im.package_of(a);
+  return pa.len() > 0 && pa == im.package_of(b);
 }
 
 function (im: Imports) sees(from: string, decl: string): boolean {

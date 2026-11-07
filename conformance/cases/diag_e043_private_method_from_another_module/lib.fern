@@ -1,0 +1,7 @@
+function (n: i32) whisper(): i32 {
+    return n;
+}
+
+pub function (n: i32) shout(): i32 {
+    return n.whisper() * 2;
+}

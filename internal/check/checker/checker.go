@@ -2563,6 +2563,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
+			c.recordMethodViewers(fn, mangled)
 		} else if fn.MethodRecv != "" {
 			// A method hoisted by an earlier check keeps its receiver as its
 			// first parameter.
@@ -2570,6 +2571,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				c.consumingTypes[fn.MethodRecv] = true
 			}
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
+			c.recordMethodViewers(fn, fn.Name)
 		}
 		// A method's receiver is its first parameter once hoisted, as a second
 		// check of the same program sees it.
@@ -3131,6 +3133,31 @@ func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string 
 		}
 	}
 	return prefix + typeName + "_" + name
+}
+
+// privateMethodModule is the module of a method of that name on typeName
+// whose missing `pub` hides it from the current module.
+func (c *checker) privateMethodModule(typeName, method string) (string, bool) {
+	if c.current == nil {
+		return "", false
+	}
+	from := c.current.BodyModule()
+	for _, im := range c.info.InherentMethods[typeName+"."+method] {
+		if viewers, ok := c.methodViewers[im.Mangled]; ok && !viewers[from] {
+			return im.Module, true
+		}
+	}
+	return "", false
+}
+
+func (c *checker) recordMethodViewers(fn *ast.FuncDecl, mangled string) {
+	if fn.VisibleFrom == nil {
+		return
+	}
+	if c.methodViewers == nil {
+		c.methodViewers = map[string]map[string]bool{}
+	}
+	c.methodViewers[mangled] = fn.VisibleFrom
 }
 
 func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule string, pos ast.Position) {
@@ -5668,7 +5695,11 @@ func (c *checker) methodVisibleHere(mangled string) bool {
 	if c.current == nil {
 		return true
 	}
-	return c.moduleSees(c.current.BodyModule(), c.info.MethodSources[mangled])
+	from := c.current.BodyModule()
+	if viewers, ok := c.methodViewers[mangled]; ok && !viewers[from] {
+		return false
+	}
+	return c.moduleSees(from, c.info.MethodSources[mangled])
 }
 
 func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
@@ -5756,7 +5787,10 @@ type checker struct {
 	funcSources    map[string]string
 	// publicFreeFuncs lists the public free functions under the name their
 	// module declares, so a method call can name a function of that name.
-	publicFreeFuncs   map[string][]publicFreeFunc
+	publicFreeFuncs map[string][]publicFreeFunc
+	// methodViewers holds the modules that may call each method declared
+	// without `pub`.
+	methodViewers     map[string]map[string]bool
 	consts            map[string]*ast.ConstDecl
 	constTypes        map[string]ast.Type
 	constBusy         map[string]bool
@@ -8548,6 +8582,9 @@ func (c *checker) stdlibReceiverMatches(typeName, method string, recv ast.Type) 
 
 func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
 	msg := fmt.Sprintf("no method %q on %s", method, recv)
+	if module, ok := c.privateMethodModule(typeName, method); ok {
+		return fmt.Sprintf("%s — %q is declared without `pub` in module %q, so only that module can call it", msg, method, moduleBaseName(module))
+	}
 	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
 		if typeName == "Map" && (method == "has" || method == "without") {
 			return fmt.Sprintf("%s — it was renamed; use %q", msg, repl)
