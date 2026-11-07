@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/lexer"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 type cacheEntry[T any] struct {
@@ -116,7 +117,7 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 		}
 		seen[path] = true
 		order = append(order, path)
-		src, err := os.ReadFile(path)
+		src, err := literate.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("self-host import closure: read %s: %w", path, err)
 		}
@@ -132,6 +133,12 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 			imp := strings.TrimPrefix(imported, "./")
 			cand := filepath.Join(base, imp+".fern")
 			if _, statErr := os.Stat(cand); statErr != nil {
+				if _, docErr := os.Stat(cand + ".md"); docErr == nil {
+					if err := visit(cand + ".md"); err != nil {
+						return err
+					}
+					continue
+				}
 				return fmt.Errorf("self-host import closure: %s imports %q but %s does not exist "+
 					"(the driver's project dir is missing a source; it would be silently "+
 					"omitted from the build-cache key)", path, imported, cand)

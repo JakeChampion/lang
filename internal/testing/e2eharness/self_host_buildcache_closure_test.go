@@ -230,3 +230,20 @@ func TestImportClosureFailsOnUnlexableSource(t *testing.T) {
 		t.Fatal("unlexable source must not yield a partial dependency closure")
 	}
 }
+
+func TestImportClosureFollowsLiterateModules(t *testing.T) {
+	dir := writeClosure(t, map[string]string{
+		"entry.fern":  "import \"./lit\";\nfunction main(): i32 { return 0; }\n",
+		"lit.fern.md": "# A literate module\n\n```fern\n<<*>>=\nimport \"./leaf\";\npub function l(): i32 { return 1; }\n```\n",
+		"leaf.fern":   "pub function f(): i32 { return 2; }\n",
+	})
+	got := map[string]bool{}
+	for _, p := range SelfHostImportClosure(t, dir, "entry.fern") {
+		got[filepath.Base(p)] = true
+	}
+	for _, want := range []string{"entry.fern", "lit.fern.md", "leaf.fern"} {
+		if !got[want] {
+			t.Errorf("closure is missing %s — it would be absent from the cache key", want)
+		}
+	}
+}
