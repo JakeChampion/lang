@@ -413,6 +413,11 @@ pub function eprint_ir_ineligible(): void {
   eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)");
 }
 
+// The host-call name of a cache or TLB op.
+pub function maintenance_op(name: string): boolean {
+  return util.str_has_prefix(name, "dev_cache_") || util.str_has_prefix(name, "dev_tlb_");
+}
+
 // A register that the checker knows, but that belongs to another ISA.
 pub function sysreg_refuse(name: string, isa: string): i32 {
   eprint("error: the system register " + name + " does not exist on " + isa);

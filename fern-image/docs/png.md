@@ -1,6 +1,12 @@
 # Restricted PNG codec
 
-The PNG module supports eight-bit RGB and RGBA without interlace.
+The PNG module decodes grayscale at one, two, four or eight bits per sample without interlace.
+It also decodes eight-bit grayscale with alpha, RGB and RGBA.
+Indexed input supports one, two, four and eight-bit indices with PLTE and optional indexed tRNS.
+Grayscale and RGB tRNS produce RGBA8 with exact sample-key comparisons before expansion.
+
+Packed samples use exact full-range expansion into RGB8 after byte-based filter reconstruction.
+Unused row padding does not produce pixels. Its bits remain part of filter dependencies.
 It uses Fern-native CRC-32, DEFLATE, and Adler-32 from the standard library.
 
 It does not call an external image codec.
@@ -32,16 +38,35 @@ These are separate arrays. They do not establish an aggregate process memory bud
 
 ## Compatibility limits
 
-Indexed, grayscale, interlaced, and non-eight-bit images return Unsupported.
-Unknown critical chunks, tRNS transparency, animation, and nontrivial color metadata also return Unsupported.
+Interlaced and sixteen-bit images return Unsupported.
+Grayscale and indexed input admit one, two and four-bit samples.
+Unknown critical chunks, animation and nontrivial color metadata also return Unsupported.
 
 This includes ICC, gamma, and chromaticity chunks.
 Other ancillary chunks do not survive a decode and encode cycle.
 
 The decoder preserves raw channel bytes without a color-profile conversion.
+It expands grayscale to equal red, green and blue samples in RGB8 output.
+Grayscale with alpha produces RGBA8 and preserves the explicit alpha sample.
+The filter predictors use the encoded one-byte or two-byte pixel width before expansion.
+
+Transparent pixels retain their original gray sample.
 The caller must use the documented sRGB interpretation only for compatible input.
 
 There is no general PNG color-management claim.
+
+Indexed images require one PLTE before IDAT. Indexed tRNS must follow PLTE and precede IDAT.
+The decoder rejects duplicate palettes, excess entries, invalid alpha lengths and out-of-range pixel indices.
+
+RGB8 output retains exact palette samples. A tRNS chunk selects RGBA8 output.
+Missing alpha entries are opaque, and transparent pixels retain their palette colors.
+An optional suggested palette on RGB/RGBA input does not change its samples.
+
+Grayscale tRNS requires two bytes. Truecolor tRNS requires six bytes.
+The decoder masks unused key bits and retains colors under zero alpha.
+
+The decoder rejects duplicate tRNS, tRNS after IDAT, PLTE after tRNS and tRNS on explicit alpha formats.
+Fixed key metadata adds no retained sample array. Row plans charge expanded RGBA rows through existing limits.
 
 ## Encode contract
 
@@ -61,7 +86,7 @@ A failure returns an explicit error rather than partial output.
 Seven native cases cover independent RGB/RGBA goldens for all five filters.
 They also cover round trips, every truncated prefix, CRC and length failures, invalid filters, and resource budgets.
 
-Fixtures reject transparency, profiles, animation, unknown critical chunks, and incorrect scanline length.
+Fixtures reject malformed transparency, unsupported profiles, animation, unknown critical chunks and incorrect scanline length.
 Python zlib generated the fixture streams offline. It is not a runtime dependency.
 
 The fixture generator resides beside the Fern fixture module.

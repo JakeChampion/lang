@@ -1,6 +1,6 @@
 # Image format support
 
-**Status:** In progress. Broader scope questions remain open.
+**Status:** In progress. Format and dependency scope confirmed.
 **Context:** Fern-native image engine.
 **Date:** 2026-11-07.
 
@@ -17,6 +17,10 @@ Retain explicit pixel formats, color interpretation, errors and admission limits
 Keep codec state local to each call and preserve caller-owned input.
 Keep current APIs compatible while new interfaces mature.
 
+Completion requires full feature coverage for each requested format, implemented in Fern.
+Intermediate restricted modes are delivery checkpoints.
+The performance objective is the fastest implementation in the world, supported by reproducible measurements.
+
 ## Delivery order
 
 1. Add a complete QOI codec for RGB8/RGBA8, with explicit color-space metadata.
@@ -28,14 +32,15 @@ Keep current APIs compatible while new interfaces mature.
 
 QOI provides the first independent end-to-end codec slice.
 The current PNG and JPEG implementations remain the base for their extensions.
-JPEG XL requires a separate format and dependency audit before an implementation promise.
-The user can change this order through the open scope questions.
+JPEG XL requires a full format and architecture audit under the pure Fern requirement.
+The user confirmed decode and encode for all four formats on 2026-11-07.
 
 ## Implementation decisions
 
 - Reuse checked pixel layouts and owned image storage.
-- Use pure Fern codecs under the current epic policy.
-  The user can explicitly approve a different runtime dependency policy.
+- Always implement image features and runtime codecs in pure Fern, including JPEG XL.
+  The user confirmed this standing requirement on 2026-11-07.
+  External runtime codec libraries, bindings and helper processes are excluded.
 - Preserve encoded color-space declarations without implicit conversion.
 - Check dimensions and arithmetic before allocation.
 - Apply caller limits to input, decoded storage and encoded output.
@@ -54,6 +59,20 @@ Run applicable native and Wasm tests with heap checks.
 Measure memory and performance before any optimization claim.
 Do not weaken original assertions or increase baselines to obtain a pass.
 
+## Complete coverage and performance
+
+Inventory each format's defined modes, sample depths, color interpretation, metadata and other features.
+Track missing decode and encode coverage until the full acceptance scope is complete.
+Retain explicit current limitations in documentation throughout the work.
+An internal transform or restricted codec does not complete a format milestone.
+
+Establish reproducible native benchmarks against leading independent implementations.
+Compare equal feature sets, input classes, output quality and resource conditions.
+Measure throughput, latency and memory with exact source, compiler, hardware and option records.
+Use those results to select algorithms and optimizations in Fern.
+Verify correctness and feature coverage after each optimization.
+Keep the fastest-in-the-world objective separate from any unmeasured performance claim.
+
 QOI validation covers every opcode, initial index state, modular channel arithmetic,
 run boundaries, alpha changes and both color declarations.
 It also covers padded source rows, exact stream termination, malformed headers and oversized dimensions.
@@ -64,7 +83,12 @@ Use the published QOI specification and the reference codec as independent check
 HTTP/CDN service work, animation, implicit color transforms and production certification.
 The broader image request remains active after the QOI slice.
 
-## Pending questions
+## Confirmed scope
 
-- Does the user want decode and encode together, or decode first?
-- Must every runtime codec remain pure Fern, with JPEG XL under the same rule?
+The PNG sample-transparency checkpoint extends the existing RGBA8 model with grayscale and RGB tRNS.
+It retains original samples, unused-bit masks and exact admission checks.
+This checkpoint does not complete PNG coverage. Full decode and encode remain the acceptance scope.
+
+- PNG, JPEG, JPEG XL and QOI each require decode and encode.
+- All image implementations and runtime codecs remain pure Fern.
+- Independent codec libraries remain offline test references only.

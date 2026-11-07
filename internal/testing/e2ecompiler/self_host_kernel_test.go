@@ -89,6 +89,19 @@ function registers(): string {
   }
 }
 
+// Each cache and TLB op on a heap word, which keeps its value.
+function maintenance(): string {
+  unsafe {
+    let p = __alloc(64);
+    __store_i64(p, 7i64);
+    __cache_clean(p);
+    __cache_flush(p);
+    __tlb_flush(p);
+    __tlb_flush_all();
+    return "maintenance " + __load_i64(p).to_string();
+  }
+}
+
 function main(): i32 {
   let xs: i32[] = [];
   let i = 0;
@@ -99,6 +112,7 @@ function main(): i32 {
   print("hello from fern, total " + xs.len().to_string());
   print("boot info " + (__boot_info() as i64).to_string());
   print(registers());
+  print(maintenance());
   match (fdt.parse(board.device_tree())) {
     Ok(t) => {
       let line = describe(t);
@@ -200,7 +214,7 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 				t.Fatalf("qemu: %v; console:\n%s", err, console)
 			}
 			// qemu-virt passes no boot argument in x0 to an ELF image.
-			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "el 1 tpidr_el1 42\n", "uart 150994944 psci hvc\n"} {
+			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "el 1 tpidr_el1 42\n", "maintenance 7\n", "uart 150994944 psci hvc\n"} {
 				if !strings.Contains(string(console), want) {
 					t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 				}

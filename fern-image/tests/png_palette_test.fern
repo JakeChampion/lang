@@ -1,0 +1,238 @@
+import "../packages/codecs/png/palette";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function colors(count: i32): u8[] {
+  let output: u8[] = [];
+  for i in 0..count {
+    output = output.append(i as u8).append((255 - i) as u8).append((i * 37) as u8);
+  }
+  return output;
+}
+
+function bytes(count: i32, value: u8): u8[] {
+  let output: u8[] = [];
+  for i in 0..count {
+    output = output.append(value);
+  }
+  return output;
+}
+
+function samples(): test.TestOutcome {
+  let rows: u8[][] = [[0x50], [0x1b], [0x01, 0x23], [0, 1, 2, 3]];
+  let depths = [1, 2, 4, 8];
+  let indexes: i32[][] = [[0, 1, 0, 1], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]];
+  for n in 0..4 {
+    let count = if (n == 0) { 2 } else { 4 };
+    for alpha in [false, true] {
+      let Ok(table) = palette.prepare(colors(count), if (alpha) { [0, 99] } else { [] }, alpha, depths[n], never) else {
+        return test.fail("palette admission");
+      };
+      let channels = if (alpha) { 4 } else { 3 };
+      let Ok(output) = palette.expand_row(rows[n], 4, table, 4 * channels, never) else {
+        return test.fail("high-bit-first samples");
+      };
+      for x in 0..4 {
+        let index = indexes[n][x];
+        if (output[x * channels] != index as u8 || output[x * channels + 1] != (255 - index) as u8 || output[x * channels + 2] != (index * 37) as u8) {
+          return test.fail("palette RGB samples");
+        }
+        if (alpha && output[x * channels + 3] != (if (index == 0) { 0 } else if (index == 1) { 99 } else { 255 })) {
+          return test.fail("partial alpha table and transparent colors");
+        }
+      }
+    }
+  }
+  for depth in [1, 2, 4] {
+    let Ok(table) = palette.prepare(colors(1), [], false, depth, never) else {
+      return test.fail("single palette entry");
+    };
+    let padding = ((1 << 8 - depth) - 1) as u8;
+    let Ok(output) = palette.expand_row([padding], 1, table, 3, never) else {
+      return test.fail("unused bits are not pixel indices");
+    };
+    if (output[0] != 0 || output[1] != 255 || output[2] != 0) {
+      return test.fail("padding changes output");
+    }
+  }
+  return test.pass();
+}
+
+function all_entries(): test.TestOutcome {
+  let source = colors(256);
+  let row: u8[] = [];
+  for i in 0..256 {
+    row = row.append(i as u8);
+  }
+  for count in 0..257 {
+    let alpha: u8[] = [];
+    for i in 0..count {
+      alpha = alpha.append((i * 17) as u8);
+    }
+    let Ok(table) = palette.prepare(source, alpha, true, 8, never) else {
+      return test.fail("every alpha count");
+    };
+    let Ok(output) = palette.expand_row(row, 256, table, 1024, never) else {
+      return test.fail("every eight-bit index");
+    };
+    for i in 0..256 {
+      let wanted = if (i < count) { (i * 17) as u8 } else { 255 as u8 };
+      if (output[i * 4] != i as u8 || output[i * 4 + 3] != wanted) {
+        return test.fail("full palette or implicit opacity");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for depth in [-1, 0, 3, 5, 16, 32] {
+    if (!match (palette.prepare(colors(1), [], false, depth, cancel)) { Err(palette.Depth) => true, _ => false }) {
+      return test.fail("depth rejection");
+    }
+  }
+  for length in [0, 1, 2, 4, 767, 769, 771] {
+    if (!match (palette.prepare(bytes(length, 0), [], false, 8, cancel)) { Err(palette.Palette) => true, _ => false }) {
+      return test.fail("PLTE shape");
+    }
+  }
+  for depth in [1, 2, 4] {
+    if (!match (palette.prepare(colors((1 << depth) + 1), [], false, depth, cancel)) { Err(palette.Palette) => true, _ => false }) {
+      return test.fail("palette exceeds depth");
+    }
+  }
+  for has_alpha in [false, true] {
+    if (!match (palette.prepare(colors(1), [0, 1], has_alpha, 8, cancel)) { Err(palette.Transparency) => true, _ => false }) {
+      return test.fail("excess alpha");
+    }
+  }
+  if (!match (palette.prepare(colors(1), [0], false, 8, cancel)) { Err(palette.Transparency) => true, _ => false }) {
+    return test.fail("alpha without chunk admission");
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function row_errors(): test.TestOutcome {
+  let Ok(table) = palette.prepare(colors(1), [], false, 8, never) else {
+    return test.fail("palette");
+  };
+  for value in 1..256 {
+    if (!match (palette.expand_row([value as u8], 1, table, 3, never)) { Err(palette.Index) => true, _ => false }) {
+      return test.fail("every invalid index");
+    }
+  }
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for width in [-2147483648, -1, 0, 2, 2147483647] {
+    if (!match (palette.expand_row([0], width, table, 3, cancel)) { Err(palette.Shape) => true, _ => false }) {
+      return test.fail("row shape before callbacks");
+    }
+  }
+  for limit in [-1, 0, 1, 2] {
+    if (!match (palette.expand_row([0], 1, table, limit, cancel)) { Err(palette.Limit) => true, _ => false }) {
+      return test.fail("exact output admission");
+    }
+  }
+  let forged = palette.IndexedPalette { ...table, rgba: [] };
+  if (!match (palette.expand_row([0], 1, forged, 3, cancel)) { Err(palette.Palette) => true, _ => false }) {
+    return test.fail("forged palette");
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function ownership(): test.TestOutcome {
+  let source = colors(2);
+  let alpha: u8[] = [0, 37];
+  let saved_source = source;
+  let saved_alpha = alpha;
+  let Ok(table) = palette.prepare(source, alpha, true, 1, never) else {
+    return test.fail("prepared palette");
+  };
+  let row: u8[] = [255, 0x50, 255];
+  let saved_row = row;
+  let Ok(output) = palette.expand_row(row[1:2], 4, table, 16, never) else {
+    return test.fail("borrowed row");
+  };
+  let retained_output = output;
+  let retained_table = table;
+  source = source.with(0, 99);
+  alpha = alpha.with(0, 255);
+  row = row.with(1, 0);
+  output = output.with(0, 99);
+  table = palette.IndexedPalette { ...table, rgba: table.rgba.with(0, 99) };
+  let Ok(fresh) = palette.expand_row(saved_row[1:2], 4, retained_table, 16, never) else {
+    return test.fail("retained palette state");
+  };
+  for i in 0..16 {
+    if (fresh[i] != retained_output[i]) {
+      return test.fail("result alias");
+    }
+  }
+  return test.assert_true(saved_source[0] == 0 && saved_alpha[0] == 0 && saved_row[1] == 0x50 && fresh[0] == 0 && fresh[3] == 0);
+}
+
+function cancellation(): test.TestOutcome {
+  let source = colors(256);
+  let row = bytes(257, 0);
+  let total = cell_new(0);
+  let count = (): boolean => {
+    total.set(total.get() + 1);
+    return false;
+  };
+  let Ok(_) = palette.prepare(source, [], true, 8, count) else {
+    return test.fail("count table polls");
+  };
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (palette.prepare(source, [], true, 8, cancel)) { Err(palette.Cancelled) => true, _ => false }) {
+      return test.fail("every table cancellation poll");
+    }
+  }
+  let Ok(table) = palette.prepare(source, [], true, 8, never) else {
+    return test.fail("palette");
+  };
+  total.set(0);
+  let Ok(_) = palette.expand_row(row, 257, table, 1028, count) else {
+    return test.fail("count row polls");
+  };
+  for stop in 1..total.get() + 1 {
+    let calls = cell_new(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() == stop;
+    };
+    if (!match (palette.expand_row(row, 257, table, 1028, cancel)) { Err(palette.Cancelled) => true, _ => false }) {
+      return test.fail("every row cancellation poll");
+    }
+    if (calls.get() != stop) {
+      return test.fail("stop after cancellation");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("Indexed PNG palette prerequisite");
+  suite = suite.it("packed sample order and padding", samples);
+  suite = suite.it("all entries and partial alpha tables", all_entries);
+  suite = suite.it("malformed palettes before callbacks", malformed);
+  suite = suite.it("index and exact row admission", row_errors);
+  suite = suite.it("borrowed rows and retained caller aliases", ownership);
+  suite = suite.it("every cancellation checkpoint", cancellation);
+  return suite.finish();
+}

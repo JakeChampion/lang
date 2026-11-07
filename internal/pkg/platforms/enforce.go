@@ -212,6 +212,7 @@ var gatedBuiltins = map[string]string{
 	"__raw_vg_request": "rawmem",
 	"__wfi":            "privileged", "__hvc": "privileged", "__smc": "privileged",
 	"__boot_info": "privileged", "__sysreg_read": "privileged", "__sysreg_write": "privileged",
+	"__cache_clean": "privileged", "__cache_flush": "privileged", "__tlb_flush": "privileged", "__tlb_flush_all": "privileged",
 	"__port_in8": "privileged", "__port_in16": "privileged", "__port_in32": "privileged",
 	"__port_out8": "privileged", "__port_out16": "privileged", "__port_out32": "privileged",
 }

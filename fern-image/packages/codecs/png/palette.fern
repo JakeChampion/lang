@@ -1,0 +1,111 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum PaletteError { Depth, Palette, Transparency, Shape, Index, Limit, Cancelled }
+
+pub struct IndexedPalette { rgba: u8[], depth: i32, has_alpha: boolean }
+
+function valid_depth(depth: i32): boolean {
+  return depth == 1 || depth == 2 || depth == 4 || depth == 8;
+}
+
+function table_shape(colors: [u8], alpha: [u8], has_alpha: boolean, depth: i32): Result[void, PaletteError] {
+  if (!valid_depth(depth)) {
+    return Err(PaletteError.Depth);
+  }
+  if (colors.len() == 0 || colors.len() % 3 != 0 || colors.len() / 3 > 1 << depth) {
+    return Err(PaletteError.Palette);
+  }
+  if (alpha.len() > colors.len() / 3 || !has_alpha && alpha.len() != 0) {
+    return Err(PaletteError.Transparency);
+  }
+  return Ok(());
+}
+
+// PLTE triples and optional tRNS bytes retain their exact sample values.
+pub function prepare(colors: [u8], alpha: [u8], has_alpha: boolean, depth: i32, cancelled: () => boolean): Result[IndexedPalette, PaletteError] {
+  table_shape(colors, alpha, has_alpha, depth)?;
+  if (cancelled()) {
+    return Err(PaletteError.Cancelled);
+  }
+  let rgba: u8[] = [];
+  for i in 0..colors.len() / 3 {
+    if (i % 32 == 0 && cancelled()) {
+      return Err(PaletteError.Cancelled);
+    }
+    let opacity = if (i < alpha.len()) { alpha[i] } else { 255 as u8 };
+    rgba = rgba.append(colors[i * 3]).append(colors[i * 3 + 1]).append(colors[i * 3 + 2]).append(opacity);
+  }
+  if (cancelled()) {
+    return Err(PaletteError.Cancelled);
+  }
+  return Ok(IndexedPalette { rgba: rgba, depth: depth, has_alpha: has_alpha });
+}
+
+function row_shape(row: [u8], width: i32, palette: IndexedPalette): Result[void, PaletteError] {
+  if (!valid_depth(palette.depth)) {
+    return Err(PaletteError.Depth);
+  }
+  if (palette.rgba.len() == 0 || palette.rgba.len() % 4 != 0 || palette.rgba.len() / 4 > 1 << palette.depth) {
+    return Err(PaletteError.Palette);
+  }
+  let bytes = (width as i64 * (palette.depth as i64) + 7i64) / 8i64;
+  if (width <= 0 || bytes != row.len() as i64) {
+    return Err(PaletteError.Shape);
+  }
+  return Ok(());
+}
+
+function sample(row: [u8], x: i32, depth: i32): i32 {
+  let per_byte = 8 / depth;
+  let shift = 8 - depth - x % per_byte * depth;
+  return row[x / per_byte] as i32 >> shift & (1 << depth) - 1;
+}
+
+pub function validate_row(row: [u8], width: i32, palette: IndexedPalette, cancelled: () => boolean): Result[void, PaletteError] {
+  row_shape(row, width, palette)?;
+  if (cancelled()) {
+    return Err(PaletteError.Cancelled);
+  }
+  for x in 0..width {
+    if (x % 64 == 0 && cancelled()) {
+      return Err(PaletteError.Cancelled);
+    }
+    if (sample(row, x, palette.depth) >= palette.rgba.len() / 4) {
+      return Err(PaletteError.Index);
+    }
+  }
+  if (cancelled()) {
+    return Err(PaletteError.Cancelled);
+  }
+  return Ok(());
+}
+
+function output_size(width: i32, channels: i32, max_output_bytes: i32): Result[i32, PaletteError] {
+  let output_bytes = width as i64 * (channels as i64);
+  if (max_output_bytes < 0 || output_bytes > max_output_bytes as i64) {
+    return Err(PaletteError.Limit);
+  }
+  return Ok(output_bytes as i32);
+}
+
+pub function expand_row(row: [u8], width: i32, palette: IndexedPalette, max_output_bytes: i32, cancelled: () => boolean): Result[u8[], PaletteError] {
+  row_shape(row, width, palette)?;
+  let channels = if (palette.has_alpha) { 4 } else { 3 };
+  let output_bytes = output_size(width, channels, max_output_bytes)?;
+  validate_row(row, width, palette, cancelled)?;
+  let output = __alloc_u8(output_bytes);
+  for x in 0..width {
+    if (x % 64 == 0 && cancelled()) {
+      return Err(PaletteError.Cancelled);
+    }
+    let index = sample(row, x, palette.depth);
+    for channel in 0..channels {
+      output = output.with(x * channels + channel, palette.rgba[index * 4 + channel]);
+    }
+  }
+  if (cancelled()) {
+    return Err(PaletteError.Cancelled);
+  }
+  return Ok(output);
+}

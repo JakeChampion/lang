@@ -50,6 +50,17 @@ jobs:
           python-version: '3.12'
       - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
       - uses: astral-sh/setup-uv@v7
+      - name: Check independent grayscale PNG fixtures
+        run: |
+          uv run --no-project python fern-image/tests/fixtures/generate_png_grayscale.py --check
+          uv run --no-project python fern-image/tests/fixtures/generate_png_packed.py --check
+          uv run --no-project python fern-image/tests/fixtures/generate_png_indexed.py --check
+          uv run --no-project python fern-image/tests/fixtures/generate_png_transparency.py --check
+      - name: Check sample transparency with offline libpng
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpng-dev pkg-config
+          bash fern-image/scripts/test-png-transparency-reference.sh
       - name: Qualify QOI against the pinned reference codec
         run: |
           reference="$(mktemp -d "$RUNNER_TEMP/qoi-reference.XXXXXX")"

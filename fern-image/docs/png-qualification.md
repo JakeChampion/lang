@@ -1,9 +1,57 @@
 # PNG differential and mutation qualification
 
+## Sample transparency extension
+
+The current corpus adds grayscale and RGB tRNS, including packed depths and nonzero unused key bits.
+Every accepted file checks eager pixels, sequential and incremental rows, providers, cropped tiles and re-encoded pixels.
+Malformed keys check lengths, duplicate chunks, order, late filters and checksum error precedence.
+
+The Pillow adapter normalizes the sample key before conversion to RGBA.
+Pillow 12.3.0 expands packed grayscale pixels but retains unscaled tRNS metadata at depths two and four.
+It also normalizes one-bit metadata before the adapter can mask the original key.
+The adapter reads original key bytes, masks unused bits and scales the key to the decoded sample depth.
+This correction applies to reference metadata only. Fern compares original samples.
+
+An additional offline libpng executable checks canonical keys without a color transform.
+It verifies exact RGB and alpha for all packed key values and selected eight-bit keys.
+The generator uses canonical inputs for this comparison. Fern additionally checks nonzero unused key bits.
+Run `bash fern-image/scripts/test-png-transparency-reference.sh` with libpng development files and pkg-config.
+The collector records the executable, source, shared library and input hashes.
+Neither reference executable nor library is a runtime dependency of the Fern codec.
+
+Historical measurements below retain their original source and corpus scope.
+
 Issue #13338 belongs to PNG milestone #13214 and cross-cutting suite #13223.
-The finite corpus contains 964 generated inputs.
-It exercises the restricted noninterlaced RGB8/RGBA8 codec.
+Historical records below contain 964 generated inputs for the restricted RGB8/RGBA8 codec.
+The current collector also accepts eight-bit grayscale and grayscale with alpha.
+The packed extension adds one, two and four-bit grayscale inputs.
+Its fixtures cover byte boundaries, every filter and nonzero row padding.
+Historical corpus counts below describe the earlier eight-bit checkpoint.
+It compares their expanded RGB8/RGBA8 bytes through every existing row and graph check.
+Historical records retain their original inputs and results.
 It does not qualify photographs, broad PNG compatibility, or production safety.
+
+## Grayscale extension
+
+The extended collector checks 1100 generated inputs against Pillow 12.3.0.
+Of these, 280 inputs decode successfully and 820 produce explicit codec errors.
+The valid set includes 138 grayscale and grayscale-alpha files.
+Each target uses 69 fresh processes.
+Every accepted eager image, row sequence, selected row sequence, graph output and cropped tile matches the reference bytes.
+Pillow also checks the re-encoded image.
+
+Local Darwin ARM64 and Wasm campaigns pass with identical samples and zero final live bytes.
+The targeted grayscale suite covers all five filters, alpha preservation, exact limits, malformed rows, cancellation and aliases.
+Its wide rows cross DEFLATE history and output-chunk boundaries.
+The full native image suite passes 335 TAP cases across 45 programs.
+The complete Wasm image script passes 348 TAP cases across 48 suites and its other probes.
+These observations do not establish performance, physical memory bounds or production readiness.
+
+The compiler uses the clean e8033eac sources and reaches a four-stage fixed point.
+Its SHA-256 is `421bbb7046157b87d2b21cdd18efe123631bb7053d2bf73a157eec8794595a08`.
+The corpus script writes raw records to `fern-image/build/png-corpus-{mode}.json`.
+Each record includes exact source, compiler, runner and reference hashes.
+Current-head GitHub CI remains a separate gate.
 
 ## Corpus and references
 
