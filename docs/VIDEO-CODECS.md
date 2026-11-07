@@ -1,6 +1,6 @@
 # Video codecs
 
-Status: initial implementation, 2026-11-07.
+Status: [reference] initial implementation, 2026-11-07.
 
 The video APIs provide a native lossless codec and an Android platform decoder adapter.
 They do not yet constitute a complete video player.

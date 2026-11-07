@@ -7,6 +7,7 @@ The modules perform no file, device, or network I/O.
 
 ```fern
 <<*>>=
+// This module provides integer PCM values and resource limits.
 import "core/cmp";
 import "core/error";
 

@@ -12,6 +12,7 @@ The module does not decode compressed pixels or split AV1 temporal units.
 
 ```fern
 <<*>>=
+// This module reads IVF packet offsets and timestamps.
 import "std/video/frame";
 import "std/audio/wire";
 import "core/cmp";

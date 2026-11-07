@@ -21,6 +21,7 @@ Limits apply to the complete input record and the combined output buffers.
 
 ```fern
 <<*>>=
+// This module converts AVC and HEVC configuration records and packets.
 import "std/video/frame";
 import "std/audio/wire";
 

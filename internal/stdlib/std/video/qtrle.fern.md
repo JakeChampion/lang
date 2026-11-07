@@ -23,6 +23,7 @@ There is no MOV container reader in this module.
 
 ```fern
 <<*>>=
+// This module encodes and decodes QuickTime Animation packets.
 import "std/video/frame";
 import "std/audio/wire";
 

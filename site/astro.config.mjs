@@ -59,6 +59,7 @@ const STDLIB_GROUPS = [
     "crypto_ecdsa", "crypto_ed25519", "crypto_field25519", "crypto_mlkem768", "crypto_montgomery", "crypto_p256", "crypto_rsa", "crypto_sha2", "crypto_x25519", "csv", "deflate", "fdt", "hash", "hash_bsd_sum", "hash_cksum", "hash_crc32", "hash_sysv_sum", "hex", "json", "opus_bands", "opus_celt", "opus_celt_encoder", "opus_energy", "opus_mdct", "opus_modes", "opus_packet", "opus_pitch", "opus_pvq", "opus_pvq_table", "opus_range", "opus_rate", "opus_vq", "png", "protobuf", "pvh", "semver", "url", "uuid", "zstd"]],
   ["Collections & errors", ["array", "constmap", "error", "iter", "map", "ndarray", "option",
     "result", "ordmap", "ordset", "pmap", "pset", "pvec"]],
+  ["Media", ["audio_flac", "audio_pcm", "audio_qoa", "audio_wav", "audio_wire", "opus", "video_frame", "video_ivf", "video_nal", "video_qtrle"]],
   ["Traits", ["cmp", "convert", "mem", "ops"]],
   ["Numbers", ["bigint", "f32", "f64", "f64_text", "i32", "i64", "math", "num", "number_parse", "rand", "simd", "u32",
     "u64"]],
@@ -70,7 +71,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_p2p", "android_property", "android_service", "jni"]],
+  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_p2p", "android_property", "android_service", "android_video", "jni"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

@@ -10,6 +10,7 @@ They do not bound process memory or allocations inside a platform decoder.
 
 ```fern
 <<*>>=
+// This module provides video frame values and resource limits.
 import "core/cmp";
 import "core/error";
 

@@ -30,6 +30,7 @@ The module does not provide a demuxer, audio synchronization, or a playback cloc
 
 ```fern
 <<*>>=
+// This module submits video packets to Android MediaCodec surfaces.
 import "std/video/frame";
 import "core/cmp";
 

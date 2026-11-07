@@ -17,6 +17,7 @@ After a decode error, reset the decoder before the next packet.
 
 ```fern
 <<*>>=
+// This module encodes and decodes CELT-only Opus packets.
 import "std/audio/pcm";
 import "std/opus/packet";
 import "std/opus/celt";
