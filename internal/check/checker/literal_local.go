@@ -202,6 +202,11 @@ func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	decl := c.litCompositeReads[id]
 	if decl != nil {
 		c.settleOpenEnumLocal(decl, hint)
+		if at, ok := hint.(ast.ArrayType); ok {
+			if ft, ok := at.Elem.(ast.FloatType); ok {
+				c.settleFloatArrayLocal(decl, ft)
+			}
+		}
 	}
 	for _, ll := range c.litNestedOf[decl] {
 		if nt, ok := typeAt(hint, ll.path).(ast.NumberType); ok && !nt.Polymorphic && !ll.fixed {
@@ -226,8 +231,8 @@ func (c *checker) settleLitCompositeLocal(id *ast.Ident, hint ast.Type) {
 	}
 }
 
-// settleLitArrayByCall gives an integer-literal array local the element type
-// of a typed argument to append or with, as a literal takes the type of the other
+// settleLitArrayByCall gives a literal array local the element type of a
+// typed argument to append or with, as a literal takes the type of the other
 // operand of a binary operator.
 func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *scope) {
 	id, ok := fa.Target.(*ast.Ident)
@@ -235,7 +240,7 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *s
 		return
 	}
 	decl := s.lookupVarDecl(id.Name)
-	if decl == nil || c.litNestedOf[decl] == nil {
+	if decl == nil || c.litNestedOf[decl] == nil && c.floatArrayLocals[decl] == nil {
 		return
 	}
 	if _, array := decl.Type.(ast.ArrayType); !array {
@@ -252,21 +257,70 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, s *s
 		return
 	}
 	c.litCompositeReads[id] = decl
-	if t, ok := c.checkExpr(call.Args[at], s).(ast.NumberType); ok && !t.Polymorphic {
-		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
+	switch t := c.checkExpr(call.Args[at], s).(type) {
+	case ast.NumberType:
+		if !t.Polymorphic {
+			c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
+		}
+	case ast.FloatType:
+		c.settleFloatArrayLocal(decl, t)
 	}
 }
 
-// settleLitArrayByIndex gives an integer-literal array local the element type
-// of a typed destination of one of its elements, such as `let m: u8 = z[0];`.
+// settleLitArrayByIndex gives a literal array local the element type of a
+// typed destination of one of its elements, such as `let m: u8 = z[0];`.
 func (c *checker) settleLitArrayByIndex(ix *ast.Index, hint ast.Type) {
 	id, ok := ix.Array.(*ast.Ident)
 	if !ok || c.litCompositeReads[id] == nil {
 		return
 	}
-	if h, ok := hint.(ast.NumberType); ok && !h.Polymorphic {
-		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: h})
+	switch h := hint.(type) {
+	case ast.NumberType:
+		if !h.Polymorphic {
+			c.settleLitCompositeLocal(id, ast.ArrayType{Elem: h})
+		}
+	case ast.FloatType:
+		c.settleFloatArrayLocal(c.litCompositeReads[id], h)
 	}
+}
+
+// beginFloatArrayLocal tracks an unannotated local whose type is an array of
+// float literals, such as `let z = [1.5, 2.0];`, until a use gives its width.
+func (c *checker) beginFloatArrayLocal(decl *ast.Var, s *scope) {
+	if !polyFloatArray(decl.Type) {
+		return
+	}
+	if c.floatArrayLocals == nil {
+		c.floatArrayLocals = map[*ast.Var]*scope{}
+	}
+	if c.litCompositeReads == nil {
+		c.litCompositeReads = map[*ast.Ident]*ast.Var{}
+	}
+	c.floatArrayLocals[decl] = s
+}
+
+func polyFloatArray(t ast.Type) bool {
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return false
+	}
+	ft, ok := at.Elem.(ast.FloatType)
+	return ok && ft.Polymorphic
+}
+
+// settleFloatArrayLocal gives a float-literal array local the width w.
+func (c *checker) settleFloatArrayLocal(decl *ast.Var, w ast.FloatType) {
+	s := c.floatArrayLocals[decl]
+	if s == nil || w.Polymorphic {
+		return
+	}
+	delete(c.floatArrayLocals, decl)
+	at := decl.Type.(ast.ArrayType)
+	at.Elem = ast.FloatType{Width: w.Width}
+	decl.Type = at
+	c.info.VarTypes[decl] = at
+	s.set(decl.Name, at)
+	c.settleNumeric(decl.Init, at)
 }
 
 func literalNominalArgs(t ast.Type) (string, []ast.Type) {
@@ -331,10 +385,10 @@ func (c *checker) litCompositeType(id *ast.Ident) ast.Type {
 }
 
 func (c *checker) noteLitIdent(id *ast.Ident, t ast.Type, decl *ast.Var) {
-	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil && c.openEnumLocals == nil {
+	if decl == nil || c.litLocalOf == nil && c.litCompositeOf == nil && c.litNestedOf == nil && c.openEnumLocals == nil && c.floatArrayLocals == nil {
 		return
 	}
-	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil || c.openEnumLocals[decl] != nil {
+	if c.litCompositeOf[decl] != nil || c.litNestedOf[decl] != nil || c.openEnumLocals[decl] != nil || c.floatArrayLocals[decl] != nil {
 		c.litCompositeReads[id] = decl
 		return
 	}
