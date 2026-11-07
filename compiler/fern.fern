@@ -804,7 +804,7 @@ function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
     return arm64_refusals("arm64-kernel", "assembler", p.unknown);
   }
   let tv = base + elf.elf_text_vaddr_pie() as i64;
-  let dv = base + elf.elf_data_vaddr_pie(p.asm.text.len()) as i64;
+  let dv = base + elf.elf_data_vaddr_kernel(p.asm.text.len()) as i64;
   let gap = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
@@ -2372,7 +2372,7 @@ function ram_layout(text: string, target: string): (i64, i64, boolean) {
     base = ram_number(parts[0]);
     size = ram_number(parts[1]);
   }
-  if (base < 0i64 || size < 4194304i64 || base % 65536i64 != 0i64 || base + size > 1099511627776i64) {
+  if (base < 0i64 || base > 1099511627776i64 || size < 4194304i64 || base % 65536i64 != 0i64 || size > 1099511627776i64 - base) {
     eprint("fern: -ram takes BASE,SIZE: a BASE that is a multiple of 64K, a SIZE of at least 4M, and an end at or below 1T (got \"" + text + "\")");
     return (0i64, 0i64, false);
   }
@@ -2381,25 +2381,42 @@ function ram_layout(text: string, target: string): (i64, i64, boolean) {
 
 // A decimal or 0x hex number with an optional K, M or G suffix, or -1.
 function ram_number(text: string): i64 {
-  if (!text.starts_with("0x")) {
-    let v = size_bytes(text);
-    if (v <= 0i64 && text != "0") {
-      return -1i64;
+  let radix = 10i64;
+  let start = 0;
+  let end = text.len();
+  let scale = 1i64;
+  if (text.starts_with("0x")) {
+    radix = 16i64;
+    start = 2;
+  } else if (end > 0) {
+    let last = text[end - 1];
+    if (last == b'K') {
+      scale = 1024i64;
+      end -= 1;
+    } else if (last == b'M') {
+      scale = 1048576i64;
+      end -= 1;
+    } else if (last == b'G') {
+      scale = 1073741824i64;
+      end -= 1;
     }
-    return v;
   }
-  let v = 0i64;
-  for i in 2..text.len() {
-    let d = hex_digit(text[i]);
-    if (d < 0i64 || v > 1099511627776i64) {
-      return -1i64;
-    }
-    v = v * 16i64 + d;
-  }
-  if (text.len() == 2) {
+  if (start >= end) {
     return -1i64;
   }
-  return v;
+  let limit = 1099511627776i64 / scale;
+  let v = 0i64;
+  for i in start..end {
+    let d = hex_digit(text[i]);
+    if (d < 0i64 || d >= radix || v > (limit - d) / radix) {
+      return -1i64;
+    }
+    v = v * radix + d;
+  }
+  if (v == 0i64 && radix == 10i64 && text != "0") {
+    return -1i64;
+  }
+  return v * scale;
 }
 
 function hex_digit(c: u8): i64 {

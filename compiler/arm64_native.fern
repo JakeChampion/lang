@@ -3027,6 +3027,9 @@ function arm64_mrs_base(name: string): i64 {
   if (name == "mpidr_el1") {
     return 0xd53800a0;
   }
+  if (name == "sctlr_el1") {
+    return 0xd5381000;
+  }
   return -1;
 }
 
@@ -3049,6 +3052,18 @@ function arm64_msr_base(name: string): i64 {
   }
   if (name == "cpacr_el1") {
     return 0xd5181040;
+  }
+  if (name == "sctlr_el1") {
+    return 0xd5181000;
+  }
+  if (name == "mair_el1") {
+    return 0xd518a200;
+  }
+  if (name == "tcr_el1") {
+    return 0xd5182040;
+  }
+  if (name == "ttbr0_el1") {
+    return 0xd5182000;
   }
   return -1;
 }
@@ -9426,6 +9441,14 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         arm64_push_word(a.code, arm64_logical_imm_word(0xd2000000, ew, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), eimm));
       } else {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
+      }
+      continue;
+    }
+    if (mnem == "tlbi") {
+      if (ops.len() == 1 && arm64_gas_trim(ops[0]) == "vmalle1") {
+        arm64_push_word(a.code, 0xd508871f);
+      } else {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("tlbi:" + rest) };
       }
       continue;
     }

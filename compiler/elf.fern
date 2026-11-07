@@ -631,12 +631,12 @@ pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32,
 // `relro` is the length of the read-only-after-start region that leads the
 // data segment. `PT_GNU_RELRO` covers it, and the startup protects it.
 pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr() as i64, 2, true, note, true, elf_page_align(), relro);
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr() as i64, 2, true, note, true, elf_page_align(), relro, 16);
 }
 
 // The same layout as a position-independent executable: ET_DYN at base 0, which the kernel loads at a random base.
 pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0i64, 3, true, note, true, elf_page_align(), relro);
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0i64, 3, true, note, true, elf_page_align(), relro, 16);
 }
 
 pub function elf_text_vaddr_pie_wx(note: boolean): i32 {
@@ -697,14 +697,14 @@ pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i
 }
 
 pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0i64, 3, true, false, true, elf_x86_page_align(), relro);
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0i64, 3, true, false, true, elf_x86_page_align(), relro, 16);
 }
 
 pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr() as i64, 2, true, false, true, elf_x86_page_align(), relro);
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr() as i64, 2, true, false, true, elf_x86_page_align(), relro, 16);
 }
 
-function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i64, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32, relro: i32): u8[] {
+function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i64, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32, relro: i32, data_alignment: i32): u8[] {
   let nph = elf_image_phnum(unwind_ph, note, nx_stack);
   let headers = elf_align16(elf_eh_size() + nph * elf_ph_size());
   let has_unwind = hdr.len() > 0 && eh.len() > 0;
@@ -717,7 +717,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   let unwind_end = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());
   let note_off = elf_align8(unwind_end);
   let text_end = elf_code_end(unwind_end, note);
-  let data_off = elf_align16(text_end);
+  let data_off = (text_end + data_alignment - 1) / data_alignment * data_alignment;
   let code_sz = text_end as i64;
   let hole = 0;
   let readonly = 0;
@@ -734,7 +734,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   let data_filesz = (data.len() - mutable) as i64;
   let data_memsz = data_filesz + elf_u32_to_i64(bss);
   let code_vaddr = base;
-  let data_vaddr = base + elf_data_vaddr_after(text_end, page_align) as i64;
+  let data_vaddr = base + elf_data_vaddr_after(data_off, page_align) as i64;
   let entry = base + (headers + entry_off) as i64;
   let zero64: i64 = 0;
 
@@ -968,14 +968,19 @@ pub function elf_data_vaddr_pie(text_len: i32): i32 {
   return elf_data_vaddr_after(elf_text_vaddr_pie() + text_len, elf_page_align());
 }
 
-// The same layout at a fixed `base`: a kernel image that a boot loader or a VMM
-// loads where the RAM is.
+// Kernel translation tables need a page-aligned data segment.
+pub function elf_data_vaddr_kernel(text_len: i32): i32 {
+  let end = elf_text_vaddr_pie() + text_len;
+  return elf_data_vaddr_after((end + 4095) / 4096 * 4096, elf_page_align());
+}
+
+// A kernel image that a boot loader or a VMM loads at the fixed RAM base.
 pub function elf_image_kernel(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32, base: i64): u8[] {
-  return elf_image_executable(text, [], [], data, machine, entry_off, bss, base, 2, false, false, true, elf_page_align(), relro);
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, base, 2, false, false, true, elf_page_align(), relro, 4096);
 }
 
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32): u8[] {
-  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, false, true, elf_page_align(), relro);
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, false, true, elf_page_align(), relro, 16);
 }
 
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {

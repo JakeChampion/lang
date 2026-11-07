@@ -6915,20 +6915,77 @@ function reset_stack_bytes(): i64 {
   return 1048576i64;
 }
 
-// The reset entry runs on the boot core with the MMU off. It parks the other
-// cores, sets the stack, enables the FP and SIMD unit (CPACR_EL1.FPEN), clears
-// .bss, gives the heap the RAM between the image and the stack, and calls main.
+// The loader enters EL1 with the MMU and data cache off.
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
-  let top = s.ram_base + s.ram_size;
+  let top = s.ram_base + s.ram_size & -16i64;
   s = s.write("_start:\n    mrs x9, mpidr_el1\n    and x9, x9, #255\n    cbnz x9, .Lreset_park\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
   s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
   s = s.write("    adrp x0, __fern_bss_start\n    add x0, x0, :lo12:__fern_bss_start\n");
   s = s.write("    adrp x1, __fern_bss_end\n    add x1, x1, :lo12:__fern_bss_end\n");
   s = s.write(".Lreset_clear:\n    cmp x0, x1\n    b.hs .Lreset_cleared\n    str xzr, [x0], #8\n    b .Lreset_clear\n.Lreset_cleared:\n");
+  s = emit_reset_mmu(s);
+  s = s.write("    adrp x1, __fern_bss_end\n    add x1, x1, :lo12:__fern_bss_end\n");
   s = s.write("    add x0, x1, #15\n    and x0, x0, #-16\n");
   s = s.write(mov_imm64("x1", top - reset_stack_bytes()) + "    sub x1, x1, x0\n    bl __fern_heap_init\n");
   s = s.write("    bl __fn_main\n.Lreset_park:\n    wfe\n    b .Lreset_park\n");
+  return s;
+}
+
+function reset_table_name(level: i32, address: i64): string {
+  return "__fern_reset_table_" + util.i32_to_string(level) + "_" + util.i64_to_string(address);
+}
+
+// Only the two RAM boundaries need finer tables. L0 plus two L1 tables and
+// at most two tables at each lower level occupy at most seven pages.
+function emit_reset_table(s: asmcore.EmitState, level: i32, address: i64, span: i64): asmcore.EmitState {
+  let ram_end = s.ram_base + s.ram_size + 4095i64 & -4096i64;
+  s = s.write("    .p2align 12\n" + reset_table_name(level, address) + ":\n");
+  for i in 0..512 {
+    let start = address + i as i64 * span;
+    let end = start + span;
+    if (start >= 1099511627776i64) {
+      s = s.write("    .quad 0\n");
+    } else if (level == 0 || level < 3 && start < ram_end && end > s.ram_base && (start < s.ram_base || end > ram_end)) {
+      s = s.write("    .quad " + reset_table_name(level + 1, start) + "\n");
+    } else {
+      // AF, privileged RW, Normal-NC inner-shareable or Device-nGnRnE XN.
+      let flags = 0x60000000000401i64;
+      if (start >= s.ram_base && end <= ram_end) {
+        flags = 0x40000000000705i64;
+      }
+      if (level == 3) {
+        flags |= 2i64;
+      }
+      s = s.write("    .quad " + util.i64_to_string(start | flags) + "\n");
+    }
+  }
+  if (level < 3) {
+    for i in 0..512 {
+      let start = address + i as i64 * span;
+      let end = start + span;
+      if (start < 1099511627776i64 && (level == 0 || start < ram_end && end > s.ram_base && (start < s.ram_base || end > ram_end))) {
+        s = emit_reset_table(s, level + 1, start, span / 512i64);
+      }
+    }
+  }
+  return s;
+}
+
+function emit_reset_mmu(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .data\n    .p2align 12\n__fern_reset_tables:\n");
+  s = emit_reset_table(s, 0, 0i64, 549755813888i64);
+  s = s.write("__fern_reset_tables_end:\n    .text\n");
+  // The linker writes aligned child addresses. Set their table type after
+  // relocation, leaving valid block/page descriptors and zero entries alone.
+  s = s.write("    adrp x9, __fern_reset_tables\n    add x9, x9, :lo12:__fern_reset_tables\n    adrp x11, __fern_reset_tables_end\n    add x11, x11, :lo12:__fern_reset_tables_end\n");
+  s = s.write(".Lreset_table_links:\n    ldr x10, [x9]\n    cbz x10, .Lreset_table_next\n    tbnz x10, #0, .Lreset_table_next\n    orr x10, x10, #3\n    str x10, [x9]\n.Lreset_table_next:\n    add x9, x9, #8\n    cmp x9, x11\n    b.lo .Lreset_table_links\n");
+  // MAIR: index 0 Device-nGnRnE, index 1 Normal-NC. TCR: 40-bit VA/PA,
+  // 4K granule, inner-shareable NC walks, TTBR1 disabled.
+  s = s.write("    mov x9, #17408\n    msr mair_el1, x9\n");
+  s = s.write(mov_imm64("x9", 0x280983018i64) + "    msr tcr_el1, x9\n");
+  s = s.write("    adrp x9, __fern_reset_tables\n    add x9, x9, :lo12:__fern_reset_tables\n    msr ttbr0_el1, x9\n    dsb sy\n    tlbi vmalle1\n    dsb sy\n    isb\n");
+  s = s.write("    mrs x9, sctlr_el1\n    and x9, x9, #-3\n    and x9, x9, #-5\n    and x9, x9, #-524289\n    orr x9, x9, #1\n    msr sctlr_el1, x9\n    isb\n");
   return s;
 }
 
