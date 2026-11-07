@@ -1,0 +1,187 @@
+import "std/opus";
+import "std/opus/celt";
+import "std/opus/packet";
+import "std/audio/pcm";
+import "std/f32";
+import "std/test";
+
+function errors(): test.TestOutcome {
+  for rate in [0, 44100, 96000] {
+    match (opus.decoder(rate, 2)) {
+      Err(pcm.Unsupported) => {},
+      _ => {
+        return test.fail("decoder rate");
+      }
+    }
+  }
+  match (opus.encoder(3, 128000)) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("encoder channels");
+    }
+  }
+  let Ok(d) = opus.decoder(48000, 2) else {
+    return test.fail("decoder");
+  };
+  let (d1, a) = d.decode([]);
+  match (a) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("empty packet");
+    }
+  }
+  let (d2, b) = d1.decode([0 as u8, 255 as u8]);
+  match (b) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("SILK support");
+    }
+  }
+  let (d3, c) = d2.decode([96 as u8, 255 as u8]);
+  match (c) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("hybrid support");
+    }
+  }
+  let (_, e) = d3.decode([227 as u8, 0 as u8]);
+  match (e) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("zero frames");
+    }
+  }
+  let Ok(enc) = opus.encoder(1, 128000) else {
+    return test.fail("encoder");
+  };
+  match (enc.encode([], 120, 1000)) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("PCM length");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function encode_packets(): test.TestOutcome {
+  for cc in [1, 2] {
+    for n in [120, 240, 480, 960] {
+      let Ok(enc) = opus.encoder(cc, 128000) else {
+        return test.fail("encoder");
+      };
+      let Ok(dec) = opus.decoder(48000, cc) else {
+        return test.fail("decoder");
+      };
+      let Ok(raw) = celt.decoder(48000, cc) else {
+        return test.fail("CELT decoder");
+      };
+      for frame in 0..2 {
+        let samples: f32[] = [];
+        for i in 0..n * cc {
+          samples = samples.append(((i + frame * n) * 31 % 512 - 256) as f32 / 512.0f32);
+        }
+        let Ok(out) = enc.encode(samples, n, 1000) else {
+          return test.fail("Opus encode");
+        };
+        enc = out.encoder;
+        let Ok(p) = packet.parse(out.packet) else {
+          return test.fail("standard packet");
+        };
+        if (p.frames.len() != 1 || packet.samples_per_frame(p.toc, 48000) != n || packet.stereo(p.toc) != (cc == 2) || packet.bandwidth(p.toc) != packet.FULLBAND || out.packet.len() > 1000) {
+          return test.fail("TOC and packet budget");
+        }
+        let (d, result) = dec.decode(out.packet);
+        dec = d;
+        let Ok(pcm) = result else {
+          return test.fail("Opus decode");
+        };
+        let (r, direct) = raw.decode(p.frames[0], celt.Frame { frame_size: n, stream_channels: cc, start: 0, end: 21 });
+        raw = r;
+        let Ok(expected) = direct else {
+          return test.fail("CELT decode");
+        };
+        if (pcm.len() != n * cc) {
+          return test.fail("PCM size");
+        }
+        for i in 0..pcm.len() {
+          if (!pcm[i].is_finite() || f32_bits(pcm[i]) != f32_bits(expected[i])) {
+            return test.fail("PCM and decoder continuity");
+          }
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function bandwidths(): test.TestOutcome {
+  // A CELT silence frame has the same output at every bandwidth.
+  for toc in [128, 160, 192, 224] {
+    for rate in [8000, 12000, 16000, 24000, 48000] {
+      let Ok(d) = opus.decoder(rate, 2) else {
+        return test.fail("decoder");
+      };
+      let bytes: u8[] = [toc as u8, 255, 255];
+      let (d1, result) = d.decode(bytes);
+      let Ok(samples) = result else {
+        return test.fail("CELT bandwidth");
+      };
+      if (samples.len() != rate / 400 * 2) {
+        return test.fail("sample rate");
+      }
+      for sample in samples {
+        if (sample.abs() > 1.0e-30f32) {
+          return test.fail("silence");
+        }
+      }
+      let Ok(padded) = packet.pad(bytes, 30) else {
+        return test.fail("padding");
+      };
+      let (_, result2) = d1.reset().decode(padded);
+      let Ok(same) = result2 else {
+        return test.fail("padded decode");
+      };
+      if (same.len() != samples.len()) {
+        return test.fail("padded duration");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function multi_frame(): test.TestOutcome {
+  for frames in [1, 2, 3, 48] {
+    let raw: u8[][] = [];
+    for _ in 0..frames {
+      raw = raw.append([255 as u8, 255 as u8]);
+    }
+    let Ok(bytes) = packet.write(224 as u8, raw, 1000, false) else {
+      return test.fail("multi-frame packet");
+    };
+    let Ok(d) = opus.decoder(48000, 1) else {
+      return test.fail("decoder");
+    };
+    let (_, result) = d.decode(bytes);
+    let Ok(samples) = result else {
+      return test.fail("multi-frame decode");
+    };
+    if (samples.len() != 120 * frames) {
+      return test.fail("multi-frame duration");
+    }
+    for sample in samples {
+      if (sample.abs() > 1.0e-30f32) {
+        return test.fail("multi-frame silence");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let r = test.new("Opus CELT packets");
+  r = r.it("unsupported modes and malformed arguments", errors);
+  r = r.it("standard Opus framing and persistent CELT state", encode_packets);
+  r = r.it("bandwidths, output rates, channel conversion, and padding", bandwidths);
+  r = r.it("packet frame-count codes and 120 ms duration", multi_frame);
+  return r.finish();
+}

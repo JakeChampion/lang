@@ -27,6 +27,8 @@ The [internal frame writer](docs/jpeg-frame-writer.md) serializes complete one-c
 The [component-block extractor](docs/jpeg-component-blocks.md) prepares partial image edges with explicit replication or constant fill.
 The [component fold](docs/jpeg-plane-coefficients.md) delivers quantized blocks without a required complete coefficient plane.
 The [producer writer](docs/jpeg-produced-frames.md) connects these blocks directly to complete one-component frames.
+The [forward sample converter](docs/jpeg-rgb-ycbcr.md) prepares explicit full-range JFIF samples from packed RGB8 rows.
+The [shared sample word primitive](docs/sample-bytes.md) preserves exact raw words with explicit byte order.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.

@@ -23,11 +23,8 @@ func runX86GasWasmSelfTest(t *testing.T, name, mainSrc string) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
-	if err != nil {
-		t.Fatalf("read x86_native.fern: %v", err)
-	}
-	source := string(nat) + "\n" + mainSrc
+	nat := assemblerSource(t, "x86_native.fern")
+	source := nat + "\n" + mainSrc
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -142,15 +139,12 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
-	if err != nil {
-		t.Fatalf("read x86_native.fern: %v", err)
-	}
+	nat := assemblerSource(t, "x86_native.fern")
 	elf, err := os.ReadFile("../../../compiler/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
+	source := nat + "\n" + string(elf) + toU8Src + driverMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -208,6 +202,8 @@ function main(): i32 {
 
 const x86GasSelfTestMain = `
 function main(): i32 {
+    let sr = x86_gas_assemble("movq %cr3, %rax");
+    if (sr.unknown.len() != 0 || sr.text.len() != 3 || sr.text[0] != 15 || sr.text[1] != 32 || sr.text[2] != 216) { return 104; }
     if (x86_gas_reg("%rax") != 0 || x86_gas_reg("%rdi") != 7 || x86_gas_reg("rbp") != 5) { return 1; }
     if (x86_gas_reg("%rip") != (0 - 1)) { return 2; }
     if (x86_gas_atoi("$60") != 60 || x86_gas_atoi("42") != 42 || x86_gas_atoi("-8") != (0 - 8)) { return 3; }

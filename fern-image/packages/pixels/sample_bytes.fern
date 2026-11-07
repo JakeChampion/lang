@@ -1,0 +1,41 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum SampleError { Width, Bounds, Value }
+
+pub enum ByteOrder { Big, Little }
+
+function admit(bytes: [u8], offset: i32, width: i32): Result[void, SampleError] {
+  if (width < 1 || width > 8) {
+    return Err(SampleError.Width);
+  }
+  if (offset < 0 || offset > bytes.len() - width) {
+    return Err(SampleError.Bounds);
+  }
+  return Ok(());
+}
+
+// Access raw sample bits without a color transform or numeric conversion.
+pub function read_word(bytes: [u8], offset: i32, width: i32, order: ByteOrder): Result[u64, SampleError] {
+  admit(bytes, offset, width)?;
+  let value = 0u64;
+  for i in 0..width {
+    let at = match (order) { Big => offset + i, Little => offset + width - i - 1 };
+    value = value << 8 | bytes[at] as u64;
+  }
+  return Ok(value);
+}
+
+// Return owned bytes and preserve any existing aliases through copy-on-write.
+pub function write_word(bytes: u8[], offset: i32, width: i32, order: ByteOrder, value: u64): Result[u8[], SampleError] {
+  admit(bytes, offset, width)?;
+  if (width < 8 && value >> (width * 8) as u64 != 0u64) {
+    return Err(SampleError.Value);
+  }
+  let output = bytes;
+  for i in 0..width {
+    let at = match (order) { Big => offset + width - i - 1, Little => offset + i };
+    output = output.with(at, (value >> (i * 8) as u64) as u8);
+  }
+  return Ok(output);
+}

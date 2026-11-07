@@ -1,0 +1,38 @@
+import "std/opus";
+import "std/hex";
+import "std/audio/wire";
+import "std/hash/crc32";
+
+function main(): i32 {
+  for cc in [1, 2] {
+    for n in [120, 240, 480, 960] {
+      let Ok(enc) = opus.encoder(cc, 128000) else {
+        return 1;
+      };
+      let Ok(dec) = opus.decoder(48000, cc) else {
+        return 2;
+      };
+      for frame in 0..3 {
+        let samples: f32[] = [];
+        for i in 0..n * cc {
+          samples = samples.append(((i + frame * n) * 31 % 512 - 256) as f32 / 512.0f32);
+        }
+        let Ok(out) = enc.encode(samples, n, 1000) else {
+          return 3;
+        };
+        enc = out.encoder;
+        let (d, result) = dec.decode(out.packet);
+        dec = d;
+        let Ok(pcm) = result else {
+          return 4;
+        };
+        let bytes: u8[] = [];
+        for sample in pcm {
+          bytes = wire.put_le(bytes, f32_bits(sample) as u64, 4);
+        }
+        print(cc.to_string() + " " + n.to_string() + " " + hex.encode(out.packet) + " " + hex.encode(bytes));
+      }
+    }
+  }
+  return 0;
+}

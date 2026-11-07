@@ -35,7 +35,7 @@ Integer arithmetic sets every pixel, and no float result differs between targets
 <<Test image>>=
 fip function rand(state: u32): u32 {
   let x = state ^ state << 13;
-  x = x ^ x >> 17;
+  x ^= x >> 17;
   return x ^ x << 5;
 }
 

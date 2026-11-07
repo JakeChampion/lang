@@ -142,6 +142,9 @@ decoder, a compatible encoder, and WAV tools.
 - **Debugging.** `fern -sanitize` catches double frees and use-after-free and
   prints a leak census at exit; `-g` emits a symbol table; fatal aborts print
   a frame-pointer backtrace by default. `docs/SANITIZER.md`.
+- **Audio.** Native FLAC decode, integer PCM WAVE and QOA encode/decode, and
+  CELT-only Opus packets. Frame APIs support bounded playback buffers. MP3
+  and complete Opus file playback remain unimplemented. See [audio codecs](docs/AUDIO-CODECS.md).
 - **Profiling.** On Linux, `FERN_PROFILE=cpu` and `FERN_PROFILE=alloc` include
   self-contained CPU or allocation sampling in native builds, with collapsed
   stacks at exit. The `cpu-pprof` and `alloc-pprof` modes write pprof files.

@@ -1,0 +1,31 @@
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/audio/wav";
+import "std/audio/qoa";
+import "std/audio/flac";
+import "std/io";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 4 || argv[1] != "wav" && argv[1] != "qoa") {
+    print("usage: audio-convert wav|qoa INPUT OUTPUT");
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(argv[2]) else {
+    print("cannot read input");
+    return 1;
+  };
+  let limits = pcm.default_limits();
+  let decoded = if (wire.tag(input, 0, "fLaC")) { flac.decode(input, limits) } else if (wire.tag(input, 0, "qoaf")) { qoa.decode(input, limits) } else { wav.decode(input, limits) };
+  let block = match (decoded) { Ok(value) => value, Err(e) => { print(e.message()); return 1; } };
+  let encoded = if (argv[1] == "qoa") { qoa.encode(block.samples, block.format, limits) } else { wav.encode(block.samples, block.format, limits) };
+  let bytes = match (encoded) { Ok(value) => value, Err(e) => { print(e.message()); return 1; } };
+  match (write_file_bytes(argv[3], bytes)) {
+    Ok(_) => {},
+    Err(_) => {
+      print("cannot write output");
+      return 1;
+    }
+  }
+  return 0;
+}
