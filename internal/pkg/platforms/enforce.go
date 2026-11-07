@@ -74,6 +74,7 @@ var gatedBuiltins = map[string]string{
 
 	"tcp_listen":            "tcp",
 	"tcp_accept":            "tcp",
+	"tcp_accept_with":       "tcp",
 	"tcp_local_port":        "tcp",
 	"tcp_send_bytes":        "tcp",
 	"tcp_sendfile":          "tcp",

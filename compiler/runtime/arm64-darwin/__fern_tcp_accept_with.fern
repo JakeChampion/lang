@@ -1,0 +1,19 @@
+function __fern_tcp_accept_with(fd: i32, nonblocking: boolean): i32 {
+  let s: i32 = __syscall3(30, fd as i64, 0, 0) as i32;
+  if (s < 0) {
+    return s;
+  }
+  let rc: i32 = __syscall3(92, s as i64, 2, 1) as i32;
+  if (rc >= 0 && nonblocking) {
+    let flags: i32 = __syscall3(92, s as i64, 3, 0) as i32;
+    rc = flags;
+    if (flags >= 0) {
+      rc = __syscall3(92, s as i64, 4, (flags | 4) as i64) as i32;
+    }
+  }
+  if (rc < 0) {
+    __syscall3(6, s as i64, 0, 0);
+    return rc;
+  }
+  return s;
+}

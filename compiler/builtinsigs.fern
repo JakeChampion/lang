@@ -247,6 +247,7 @@ pub function builtin_sigs(): string[] {
     "target_arch(): string",
     "target_os(): string",
     "tcp_accept(Socket): Socket",
+    "tcp_accept_with(Socket, boolean): Socket",
     "tcp_addr_into(Socket, boolean, u8[]): i32",
     "tcp_close(Socket): i32",
     "tcp_connect_with(u8[], i32, boolean): Socket",

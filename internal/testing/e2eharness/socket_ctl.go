@@ -63,6 +63,19 @@ function main(): i32 {
     if (tcp_addr_into(a, true, rec) != 19 || !lo4_at(rec, tcp_local_port(c))) { return fail(30); }
     if (tcp_addr_into(ln, true, rec) >= 0) { return fail(31); }
     if (tcp_addr_into(a, false, [0u8, 0u8]) >= 0) { return fail(32); }
+    // tcp_accept_with hands the connection back non-blocking when asked, as
+    // accept4 does: an empty receive answers at once, and the bytes the
+    // peer then sends arrive once the socket is blocking again.
+    let c2: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c2.fd < 0) { return fail(33); }
+    let a2: Socket = tcp_accept_with(ln, true);
+    if (a2.fd < 0) { return fail(34); }
+    if (tcp_recv_into(a2, nothing) >= 0) { return fail(35); }
+    if (tcp_socket_ctl(a2, 3, 0) != 0) { return fail(36); }
+    if (tcp_send_bytes(c2, [111u8, 107u8]) != 2) { return fail(37); }
+    if (tcp_recv_into(a2, got) != 2 || got[0] != 111u8 || got[1] != 107u8) { return fail(38); }
+    tcp_close(c2);
+    tcp_close(a2);
     // Op 8 steers the listener's SO_REUSEPORT group by CPU: attached on
     // Linux (-ENOPROTOOPT where the host lacks the option, as qemu-user
     // does), -ENOTSUP on Darwin and on wasm.

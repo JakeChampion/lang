@@ -14,6 +14,7 @@ pub function builtin_caps(): BuiltinCap[] {
   return [
     BuiltinCap { builtin: "tcp_listen", capability: "net" },
     BuiltinCap { builtin: "tcp_accept", capability: "net" },
+    BuiltinCap { builtin: "tcp_accept_with", capability: "net" },
     BuiltinCap { builtin: "tcp_local_port", capability: "net" },
     BuiltinCap { builtin: "tcp_send_bytes", capability: "net" },
     BuiltinCap { builtin: "tcp_close", capability: "net" },

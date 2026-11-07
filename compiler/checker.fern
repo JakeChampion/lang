@@ -23500,7 +23500,7 @@ function ow_fresh_builtins(): string[] {
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
-    "__socket_from_fd", "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "__socket_from_fd", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "udp_bind", "udp_bind_with", "unix_connect", "unix_listen",
     "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",

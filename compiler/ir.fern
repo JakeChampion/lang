@@ -1012,6 +1012,10 @@ pub function op_tcp_accept(): Op {
   return op0(201);
 }
 
+pub function op_tcp_accept_with(): Op {
+  return op0(507);
+}
+
 pub function op_tcp_local_port(): Op {
   return op0(320);
 }
@@ -3808,6 +3812,9 @@ function kind_id_len15(name: string): i32 {
   if (name == "count_below_u64") {
     return 482;
   }
+  if (name == "tcp_accept_with") {
+    return 507;
+  }
   if (name == "buf_push_base64") {
     return 487;
   }
@@ -4571,6 +4578,9 @@ function kind_name_4a(id: i32): string {
   }
   if (id == 201) {
     return "tcp_accept";
+  }
+  if (id == 507) {
+    return "tcp_accept_with";
   }
   if (id == 320) {
     return "tcp_local_port";
@@ -5377,7 +5387,7 @@ function pops2_mem(t: i32): boolean {
 }
 
 function pops2_io(t: i32): boolean {
-  return t == 170 || t == 226 || t == 352
+  return t == 170 || t == 226 || t == 352 || t == 507
     || t == 237
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268
     || t == 356 || t == 357

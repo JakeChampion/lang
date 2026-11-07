@@ -7628,6 +7628,7 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_handle("Socket") },
     ssasem.Contract { name: "tcp_accept", params: [t_handle("Socket")], modes: [v], result: t_handle("Socket") },
+    ssasem.Contract { name: "tcp_accept_with", params: [t_handle("Socket"), t_bool()], modes: [v, v], result: t_handle("Socket") },
     ssasem.Contract { name: "tcp_local_port", params: [t_handle("Socket")], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_send", params: [t_i32(), t_i32()], modes: [v, v], result: done },
     ssasem.Contract { name: "chown_at", params: [t_string(), t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: done },

@@ -747,11 +747,10 @@ function (e: Exporter) end_scrape[D: async.Driver](drv: D, at: i32): Exporter {
 ```fern
 <<27 function (e: Exporter) accept[D: async.Driver](drv: D): Exporter>>=
 function (e: Exporter) accept[D: async.Driver](drv: D): Exporter {
-  let sock: Socket = tcp_accept(e.listener);
+  let sock: Socket = tcp_accept_with(e.listener, true);
   if (sock.fd < 0) {
     return e;
   }
-  tcp_socket_ctl(sock, 3, 1);
   if (drv.watch(sock.fd, 1) < 0) {
     tcp_close(sock);
     return e;
