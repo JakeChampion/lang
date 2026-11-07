@@ -451,6 +451,9 @@ function digit_string_to_i32(s: string): i32 {
     if (b < 48 || b > 57) {
       return -1;
     }
+    if (acc > (2147483647 - (b - 48)) / 10) {
+      return -1;
+    }
     acc = acc * 10 + (b - 48);
     i += 1;
   }
@@ -15364,18 +15367,22 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
 
 function tuple_element_field(t: typeinfo.Type, field: string): boolean {
   if let typeinfo.TypeTuple(_) = t {
-    return digit_string_to_i32(field) >= 0;
+    return util.is_all_digits(field);
   }
   return false;
 }
 
 function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col: i32): util.Diag[] {
   let idx = digit_string_to_i32(field);
-  if (idx < 0) {
+  if (idx < 0 && !util.is_all_digits(field)) {
     return [dg_at("E046", "tuple field access requires a numeric index, got \"" + field + "\"", line, col)];
   }
-  if (idx >= tt.elements.len()) {
-    return [dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + util.i32_to_string(idx) + " is out of range", line, col)];
+  if (idx < 0 || idx >= tt.elements.len()) {
+    let shown = field;
+    if (idx >= 0) {
+      shown = util.i32_to_string(idx);
+    }
+    return [dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + shown + " is out of range", line, col)];
   }
   return [];
 }
@@ -31575,8 +31582,8 @@ function lit_tuple_field_demand(fa: ast.ExprFieldAccess, want: typeinfo.Type, s:
   if (!util.is_all_digits(fa.field) || !settled_number(want)) {
     return st;
   }
-  let i = util.digits_to_i32(fa.field);
-  if (i >= t.elements.len()) {
+  let i = digit_string_to_i32(fa.field);
+  if (i < 0 || i >= t.elements.len()) {
     return st;
   }
   let k = lit_id(t.elements[i]);
