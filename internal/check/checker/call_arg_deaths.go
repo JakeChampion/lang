@@ -192,6 +192,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 // predicate no such payload is.
 func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) ArgDeaths {
 	body := fn.Body
+	bf := newBodyFrames(body)
 	out := map[*ast.Call]map[string]bool{}
 	occurrences := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
@@ -435,7 +436,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 		switch it := v.Init.(type) {
 		case *ast.Ident:
-			if (ownParam[it.Name] && declCount[it.Name] == 0 || admitted(it.Name) && !isParam[it.Name]) && !escaping[it.Name] && !liveAfter(info, body, v, it, order) {
+			if (ownParam[it.Name] && declCount[it.Name] == 0 || admitted(it.Name) && !isParam[it.Name]) && !escaping[it.Name] && !liveAfter(info, bf, v, it, order) {
 				iterOwned[v.Name] = true
 			}
 		case *ast.FieldAccess:
@@ -453,9 +454,9 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	})
 	borrowedAssigns := map[*ast.Var]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
-		if a, ok := n.(*ast.Assign); ok && !freshInit(info, a.Value) && !freshLocalReplacement(info, body, a, a.Value, order) {
+		if a, ok := n.(*ast.Assign); ok && !freshInit(info, a.Value) && !freshLocalReplacement(info, bf, a, a.Value, order) {
 			if target, ok := a.Target.(*ast.Ident); ok {
-				borrowedAssigns[bindingVar(body, a, target.Name)] = true
+				borrowedAssigns[bindingVar(bf, a, target.Name)] = true
 			}
 		}
 		return true
@@ -470,7 +471,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	moveSite := func(holder ast.Node, e ast.Expr) {
 		switch t := e.(type) {
 		case *ast.Ident:
-			if escaping[t.Name] || !admitted(t.Name) || liveAfter(info, body, holder, t, order) {
+			if escaping[t.Name] || !admitted(t.Name) || liveAfter(info, bf, holder, t, order) {
 				return
 			}
 			moves[e] = true
@@ -709,10 +710,10 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !ok || escaping[aid.Name] || !admitted(aid.Name) && declCount[aid.Name] == 0 {
 				continue
 			}
-			if heldByEnclosingCall(body, c, aid.Name) {
+			if bf.heldByEnclosingCall(c, aid.Name) {
 				continue
 			}
-			if liveAfterBinding(info, body, c, aid, order, declNode[aid.Name]) {
+			if liveAfterBinding(info, bf, c, aid, order, declNode[aid.Name]) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -791,7 +792,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, body, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, bf, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -813,8 +814,8 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if !ok || escaping[aid.Name] || lambdaCaptured[aid.Name] {
 				continue
 			}
-			v := bindingVar(body, c, aid.Name)
-			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(body, c, aid, order) {
+			v := bindingVar(bf, c, aid.Name)
+			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(bf, c, aid, order) {
 				moves[aid] = true
 			}
 		}
@@ -950,8 +951,8 @@ func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates ma
 // fieldBaseDead reports that no path after the statement that holds c reads
 // q, and that the statement reads only other fields of q after q.field. A
 // later mention in a branch that the call does not reach is not a read.
-func fieldBaseDead(info *Info, body *ast.Block, c *ast.Call, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string) bool {
-	frames := enclosingFrames(body, c)
+func fieldBaseDead(info *Info, bf *bodyFrames, c *ast.Call, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string) bool {
+	frames := bf.of(c)
 	if len(frames) == 0 {
 		return false
 	}
@@ -1065,14 +1066,15 @@ func freshArmPayload(info *Info, block *ast.BlockExpr, id *ast.Ident) bool {
 			break
 		}
 	}
-	bound := bindingVar(body, id, id.Name)
+	bf := newBodyFrames(body)
+	bound := bindingVar(bf, id, id.Name)
 	if bound != nil && !freshInit(info, bound.Init) {
 		return false
 	}
 	fresh := true
 	ast.Walk(body, func(n ast.Node) bool {
 		if a, ok := n.(*ast.Assign); ok {
-			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == bound && !freshInit(info, a.Value) && !freshLocalReplacement(info, body, a, a.Value, IdentOrderOf(body)) {
+			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(bf, a, id.Name) == bound && !freshInit(info, a.Value) && !freshLocalReplacement(info, bf, a, a.Value, IdentOrderOf(body)) {
 				fresh = false
 			}
 		}
@@ -1082,25 +1084,21 @@ func freshArmPayload(info *Info, block *ast.BlockExpr, id *ast.Ident) bool {
 }
 
 // A replacement can take an unmodified fresh local at its last read.
-func freshLocalReplacement(info *Info, body *ast.Block, holder ast.Node, value ast.Expr, order IdentOrder) bool {
+func freshLocalReplacement(info *Info, bf *bodyFrames, holder ast.Node, value ast.Expr, order IdentOrder) bool {
 	id, ok := value.(*ast.Ident)
-	if !ok || DeferOrLambdaNames(body)[id.Name] {
+	if !ok || bf.deferOrLambda()[id.Name] {
 		return false
 	}
-	source := bindingVar(body, holder, id.Name)
-	if source == nil || !freshInit(info, source.Init) || loopRepeats(body, holder, source) || !lastInBinding(body, holder, id, order) {
+	source := bindingVar(bf, holder, id.Name)
+	if source == nil || !freshInit(info, source.Init) || loopRepeats(bf.body, holder, source) || !lastInBinding(bf, holder, id, order) {
 		return false
 	}
-	unmodified := true
-	ast.Walk(body, func(n ast.Node) bool {
-		if a, ok := n.(*ast.Assign); ok {
-			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == source {
-				unmodified = false
-			}
+	for _, a := range bf.assignsTo(id.Name) {
+		if bindingVar(bf, a, id.Name) == source {
+			return false
 		}
-		return unmodified
-	})
-	return unmodified
+	}
+	return true
 }
 
 // moveAdmission names the locals that can move into an own parameter: each
@@ -1333,49 +1331,43 @@ func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[strin
 	return out
 }
 
-func heldByEnclosingCall(body ast.Node, c *ast.Call, name string) bool {
-	found := false
-	ast.Walk(body, func(n ast.Node) bool {
-		if found {
+// heldByEnclosingCall reports whether a call that encloses c reads name
+// outside c.
+func (b *bodyFrames) heldByEnclosingCall(c *ast.Call, name string) bool {
+	if b.enclosing == nil {
+		b.enclosing = map[*ast.Call][]*ast.Call{}
+		b.held = map[*ast.Call]map[string]bool{}
+		ast.Walk(b.body, func(n ast.Node) bool {
+			p, ok := n.(*ast.Call)
+			if !ok {
+				return true
+			}
+			ast.Walk(p, func(m ast.Node) bool {
+				if mc, ok := m.(*ast.Call); ok && mc != p {
+					b.enclosing[mc] = append(b.enclosing[mc], p)
+				}
+				return true
+			})
 			return false
-		}
-		p, isCall := n.(*ast.Call)
-		if !isCall || p == c || !callContains(p, c) {
-			return true
-		}
-		ast.Walk(p, func(m ast.Node) bool {
-			if found {
-				return false
-			}
-			if mc, isC := m.(*ast.Call); isC && mc == c {
-				return false
-			}
-			if id, isID := m.(*ast.Ident); isID && id.Name == name {
-				found = true
-			}
-			return true
 		})
-		return !found
-	})
-	return found
-}
-
-func callContains(p *ast.Call, target *ast.Call) bool {
-	if p == target {
-		return false
 	}
-	found := false
-	ast.Walk(p, func(n ast.Node) bool {
-		if found {
-			return false
+	names, ok := b.held[c]
+	if !ok {
+		names = map[string]bool{}
+		for _, p := range b.enclosing[c] {
+			ast.Walk(p, func(m ast.Node) bool {
+				if mc, ok := m.(*ast.Call); ok && mc == c {
+					return false
+				}
+				if id, ok := m.(*ast.Ident); ok {
+					names[id.Name] = true
+				}
+				return true
+			})
 		}
-		if c, ok := n.(*ast.Call); ok && c == target {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
+		b.held[c] = names
+	}
+	return names[name]
 }
 
 func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, target string) {
@@ -1610,70 +1602,103 @@ func nodeHolds(n ast.Node, target ast.Node) bool {
 	return found
 }
 
-// enclosingFrames is the chain of blocks from body down to the innermost
-// statement that holds target. A statement inside an expression-level block
-// or a deferred action counts as its enclosing statement.
-func enclosingFrames(body *ast.Block, target ast.Node) []liveFrame {
-	if body == nil {
-		return nil
-	}
-	return framesIn(body.Stmts, nil, "", target)
+// bodyFrames answers questions about one body, which the analysis does not
+// change, and keeps each answer.
+type bodyFrames struct {
+	body      *ast.Block
+	frames    map[ast.Node][]liveFrame
+	escapes   map[string]bool
+	assigns   map[string][]*ast.Assign
+	enclosing map[*ast.Call][]*ast.Call // the outermost calls that hold each call
+	held      map[*ast.Call]map[string]bool
 }
 
-func framesIn(stmts []ast.Stmt, loop ast.Stmt, label string, target ast.Node) []liveFrame {
-	for i, st := range stmts {
-		if !nodeHolds(st, target) {
-			continue
+func newBodyFrames(body *ast.Block) *bodyFrames {
+	return &bodyFrames{body: body}
+}
+
+// of is the chain of blocks from the body down to the innermost statement
+// that holds target. A statement inside an expression-level block or a
+// deferred action counts as its enclosing statement.
+func (b *bodyFrames) of(target ast.Node) []liveFrame {
+	if b.frames == nil {
+		b.frames = map[ast.Node][]liveFrame{}
+		if b.body != nil {
+			b.index(b.body.Stmts, nil, "", nil)
 		}
-		out := []liveFrame{{stmts: stmts, idx: i, loop: loop, label: label}}
-		var sub []liveFrame
+	}
+	f := b.frames[target]
+	return f[:len(f):len(f)]
+}
+
+// index gives each node under stmts its chain. A node that two places hold
+// keeps the chain of the first statement, of a then branch before its else
+// branch, of the first match arm, and of the innermost statement.
+func (b *bodyFrames) index(stmts []ast.Stmt, loop ast.Stmt, label string, outer []liveFrame) {
+	for i, st := range stmts {
+		chain := append(outer[:len(outer):len(outer)], liveFrame{stmts: stmts, idx: i, loop: loop, label: label})
 		switch x := st.(type) {
 		case *ast.Block:
-			sub = framesIn(x.Stmts, nil, "", target)
+			b.index(x.Stmts, nil, "", chain)
 		case *ast.If:
-			sub = framesInStmt(x.Then, target)
-			if sub == nil && x.Else != nil {
-				sub = framesInStmt(x.Else, target)
-			}
+			b.indexBody(x.Then, nil, "", chain)
+			b.indexBody(x.Else, nil, "", chain)
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				if arm.Body != nil && nodeHolds(arm.Body, target) {
-					sub = framesIn(arm.Body.Stmts, nil, "", target)
-					break
+				if arm.Body != nil {
+					b.index(arm.Body.Stmts, nil, "", chain)
 				}
 			}
 		case *ast.While:
-			sub = framesInLoopBody(x.Body, x, x.Label, target)
+			b.indexBody(x.Body, x, x.Label, chain)
 		case *ast.Loop:
-			sub = framesInLoopBody(x.Body, x, x.Label, target)
+			b.indexBody(x.Body, x, x.Label, chain)
 		case *ast.For:
-			sub = framesInLoopBody(x.Body, x, x.Label, target)
+			b.indexBody(x.Body, x, x.Label, chain)
 		case *ast.ForEach:
-			sub = framesInLoopBody(x.Body, x, x.Label, target)
+			b.indexBody(x.Body, x, x.Label, chain)
 		}
-		return append(out, sub...)
+		ast.Walk(st, func(n ast.Node) bool {
+			if _, ok := b.frames[n]; !ok {
+				b.frames[n] = chain
+			}
+			return true
+		})
 	}
-	return nil
 }
 
-func framesInStmt(st ast.Stmt, target ast.Node) []liveFrame {
-	if blk, ok := st.(*ast.Block); ok {
-		return framesIn(blk.Stmts, nil, "", target)
-	}
-	if st == nil {
-		return nil
-	}
-	return framesIn([]ast.Stmt{st}, nil, "", target)
-}
-
-func framesInLoopBody(body ast.Stmt, loop ast.Stmt, label string, target ast.Node) []liveFrame {
+// indexBody indexes a branch or a loop body, which is a block or one
+// statement.
+func (b *bodyFrames) indexBody(body ast.Stmt, loop ast.Stmt, label string, outer []liveFrame) {
 	if blk, ok := body.(*ast.Block); ok {
-		return framesIn(blk.Stmts, loop, label, target)
+		b.index(blk.Stmts, loop, label, outer)
+	} else if body != nil {
+		b.index([]ast.Stmt{body}, loop, label, outer)
 	}
-	if body == nil {
-		return nil
+}
+
+// assignsTo is each assignment in the body whose target is the name.
+func (b *bodyFrames) assignsTo(name string) []*ast.Assign {
+	if b.assigns == nil {
+		b.assigns = map[string][]*ast.Assign{}
+		ast.Walk(b.body, func(n ast.Node) bool {
+			if a, ok := n.(*ast.Assign); ok {
+				if target, ok := a.Target.(*ast.Ident); ok {
+					b.assigns[target.Name] = append(b.assigns[target.Name], a)
+				}
+			}
+			return true
+		})
 	}
-	return framesIn([]ast.Stmt{body}, loop, label, target)
+	return b.assigns[name]
+}
+
+// deferOrLambda is DeferOrLambdaNames of the body.
+func (b *bodyFrames) deferOrLambda() map[string]bool {
+	if b.escapes == nil {
+		b.escapes = DeferOrLambdaNames(b.body)
+	}
+	return b.escapes
 }
 
 // stmtJumps is the control that leaves a statement without completing it:
@@ -1927,12 +1952,12 @@ func loopHeadLive(frames []liveFrame, l int, name string) bool {
 // statement that holds c, the call, match or let that consumes it. A path
 // that reaches the end of a loop body, or continues, comes back to every
 // use in that loop.
-func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
-	return liveAfterBinding(info, body, c, aid, order, nil)
+func liveAfter(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
+	return liveAfterBinding(info, bf, c, aid, order, nil)
 }
 
-func liveAfterBinding(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder, decl ast.Node) bool {
-	frames := enclosingFrames(body, c)
+func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, order IdentOrder, decl ast.Node) bool {
+	frames := bf.of(c)
 	if len(frames) == 0 {
 		return true
 	}
@@ -2235,8 +2260,8 @@ func armBinds(parent, f liveFrame, name string) bool {
 
 // lastInBinding reports whether no later read of name belongs to the binding
 // that aid reads: no read after aid inside the block that declares it.
-func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
-	frames := enclosingFrames(body, c)
+func lastInBinding(bf *bodyFrames, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
+	frames := bf.of(c)
 	scope := bindingLevel(frames, aid.Name)
 	if scope < 0 {
 		return order.IsLast(aid)
@@ -2260,8 +2285,8 @@ func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder
 
 // bindingVar is the let that a read of name at c belongs to, or nil when
 // another kind of declaration or a parameter binds it.
-func bindingVar(body *ast.Block, c ast.Node, name string) *ast.Var {
-	frames := enclosingFrames(body, c)
+func bindingVar(bf *bodyFrames, c ast.Node, name string) *ast.Var {
+	frames := bf.of(c)
 	l := bindingLevel(frames, name)
 	if l < 0 {
 		return nil

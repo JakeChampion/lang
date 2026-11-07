@@ -25,41 +25,52 @@ const fernModulePath = "github.com/jakechampion/lang"
 // status, through the verdict cache of oracleVerdict.
 func InterpVerdict(t testing.TB, oracle, src string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, []string{"-interp"}, src, false)
+	return oracleVerdict(t, oracle, []string{"-interp"}, src, "", false)
+}
+
+// InterpInputVerdict is InterpVerdict with stdin as the program's input.
+func InterpInputVerdict(t testing.TB, oracle, src, stdin string) ([]byte, int) {
+	t.Helper()
+	return oracleVerdict(t, oracle, []string{"-interp"}, src, stdin, false)
 }
 
 // CheckVerdict runs `oracle -check src` and returns its combined stdout and
 // stderr and its exit status, through the verdict cache of oracleVerdict.
 func CheckVerdict(t testing.TB, oracle, src string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, []string{"-check"}, src, true)
+	return oracleVerdict(t, oracle, []string{"-check"}, src, "", true)
 }
 
 // CheckTargetVerdict runs `oracle -check -target target src` and returns its
 // combined stdout and stderr and its exit status, through the verdict cache.
 func CheckTargetVerdict(t testing.TB, oracle, src, target string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, []string{"-check", "-target", target}, src, true)
+	return oracleVerdict(t, oracle, []string{"-check", "-target", target}, src, "", true)
 }
 
-// oracleVerdict runs the Go oracle with flags on src.
+// oracleVerdict runs the Go oracle with flags on src, with stdin as its input.
 // FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the oracle's Go
 // source and embedded files, the source's relative import closure, and the
 // FERN_* environment. It excludes the compiler package's embedded self-host
 // sources, which -interp and -check do not read.
 // FERN_BIN suites also run an external executable. Run them
 // without the verdict cache because that executable can change at the same path.
-func oracleVerdict(t testing.TB, oracle string, flags []string, src string, combined bool) ([]byte, int) {
+func oracleVerdict(t testing.TB, oracle string, flags []string, src, stdin string, combined bool) ([]byte, int) {
 	t.Helper()
 	var key string
 	if os.Getenv("FERN_BIN") == "" {
+		keyed := flags
+		if stdin != "" {
+			keyed = append(append([]string{}, flags...), "stdin", stdin)
+		}
 		var err error
-		key, err = oracleVerdictKey(flags, combined, src)
+		key, err = oracleVerdictKey(keyed, combined, src)
 		if err != nil {
 			t.Fatalf("oracle verdict key for %s %s: %v", strings.Join(flags, " "), src, err)
 		}
 	}
 	cmd := exec.Command(oracle, append(append([]string{}, flags...), src)...)
+	cmd.Stdin = strings.NewReader(stdin)
 	return cachedOracleRun(t, key, cmd, combined)
 }
 
