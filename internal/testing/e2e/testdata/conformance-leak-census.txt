@@ -734,6 +734,7 @@ radix_literals                                       0
 random_bytes                                         0
 range_for                                            0
 range_for_nested                                     0
+range_ignores_names_in_the_users_scope               0
 range_value                                          0
 raw_storage_paths_keep_literals_fresh                 0
 rc_borrowed_box_field                                0
