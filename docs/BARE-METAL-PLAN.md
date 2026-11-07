@@ -236,10 +236,24 @@ each one with E066:
     `cr8`), a named MSR such as `efer` or `kernel_gs_base`, or the generic form
     `msr_c0000080`. An MSR goes through `rdmsr` and `wrmsr`.
   - Each backend refuses a register of the other ISA.
+- `__cache_clean(address)` writes back the cache line that holds the address.
+  `__cache_flush(address)` writes it back and invalidates it. They need an
+  `unsafe` block, because the address must be mapped. A driver cleans a buffer
+  before a device reads it, and flushes it after a device writes it, then calls
+  `__fence()`.
+  - On arm64, they are `dc cvac` and `dc civac`.
+  - On x86-64, both are `clflush`, because the baseline has no `clwb`.
+- `__tlb_flush(address)` drops the translation of the page that holds the
+  address, and `__tlb_flush_all()` drops every translation. A kernel calls one
+  after it changes a page table.
+  - On arm64, they are `tlbi vaae1is` and `tlbi vmalle1is`, between `dsb ishst`
+    and `dsb ish` and then `isb`. So every core of the inner-shareable domain
+    drops the translation before the next instruction.
+  - On x86-64, they are `invlpg` and a reload of `%cr3`. The reload keeps the
+    global pages.
 
 They take the host-call path of the MMIO ops, so no pass removes or moves them.
-x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`. Cache and TLB
-maintenance come next.
+x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`.
 
 Extend the existing floor (`docs/RUNTIME-INTRINSICS.md`) with named ops like
 these, rather than opening a general `asm` block. The floor's ~14 ops work because each is a *portable
