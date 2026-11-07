@@ -111,6 +111,10 @@ jobs:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_ycbcr_test.py
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_rgb_ycbcr_test.py
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_sample_bytes_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-sample-bytes.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-ycbcr.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -255,6 +259,12 @@ jobs:
         with:
           name: image-jpeg-rgb-ycbcr
           path: fern-image/build/jpeg-rgb-ycbcr-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/sample-bytes-*.json') != ''
+        with:
+          name: image-sample-bytes
+          path: fern-image/build/sample-bytes-*.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && hashFiles('fern-image/build/jpeg-planes-*.json') != ''

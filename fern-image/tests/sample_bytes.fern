@@ -1,0 +1,71 @@
+import "../packages/pixels/sample_bytes";
+import "std/i32";
+import "std/u64";
+
+function network(bytes: [u8], at: i32, width: i32): u64 {
+  let value = 0u64;
+  for i in 0..width {
+    value = value * 256u64 + bytes[at + i] as u64;
+  }
+  return value;
+}
+
+function error_name(error: sample_bytes.SampleError): string {
+  return match (error) { sample_bytes.Width => "Width", sample_bytes.Bounds => "Bounds", sample_bytes.Value => "Value" };
+}
+
+function emit(path: string): i32 {
+  let Ok(requests) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (requests.len() == 0 || requests.len() % 16 != 0) {
+    return 3;
+  }
+  let output: u8[] = [];
+  for i in 0..requests.len() / 16 {
+    let at = i * 16;
+    let width = requests[at] as i32;
+    let order = if (requests[at + 1] == 0) { sample_bytes.Big } else { sample_bytes.Little };
+    let offset = (network(requests, at + 2, 4) as u32) as i32;
+    let size = network(requests, at + 6, 2) as i32;
+    let value = network(requests, at + 8, 8);
+    if (size > 64 || requests[at + 1] > 1) {
+      return 4;
+    }
+    let input: u8[] = [];
+    for n in 0..size {
+      input = input.append(165);
+    }
+    match (sample_bytes.write_word(input, offset, width, order, value)) {
+      Err(error) => {
+        print(f"error {i} {error_name(error)}");
+      },
+      Ok(bytes) => {
+        let Ok(actual) = sample_bytes.read_word(bytes, offset, width, order) else {
+          return 5;
+        };
+        for n in 0..input.len() {
+          if (input[n] != 165) {
+            return 6;
+          }
+        }
+        for byte in bytes {
+          output = output.append(byte);
+        }
+        print(f"sample {i} {actual}");
+      }
+    }
+  }
+  if let Err(_) = write_file_bytes(path + ".raw", output) {
+    return 7;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() != 2) {
+    return 1;
+  }
+  return emit(paths[1]);
+}
