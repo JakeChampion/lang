@@ -20,6 +20,7 @@ spec = importlib.util.spec_from_file_location('fixtures', root / 'scripts/gen-au
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
 compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+compiler = shutil.which(compiler) or compiler
 target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
 with tempfile.TemporaryDirectory() as temp:
     temp = Path(temp)
