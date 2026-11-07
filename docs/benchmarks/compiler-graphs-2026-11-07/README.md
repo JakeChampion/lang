@@ -132,7 +132,8 @@ Keep the output path identical for both compilers.
 
 ## Correctness checks
 
-Dependency verification and selected ownership-certifier tests pass on x86-64 and WebAssembly.
+Dependency verification passes on x86-64 and WebAssembly.
+The selected ownership-certifier tests pass on x86-64.
 The dependency verification driver also passes on ARM64 under QEMU.
 The regression graph includes sparse block IDs, a nonzero entry position, a loop, and an unreachable self-loop.
 It checks concrete dominators, independent reachability, and graph preservation.
