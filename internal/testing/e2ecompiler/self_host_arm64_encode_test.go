@@ -85,7 +85,7 @@ function main(): i32 {
     let i: i32[] = arm64_movreg([], arm64_x0(), arm64_x1(), false);
     if (i[0] != 224 || i[1] != 3 || i[2] != 1 || i[3] != 170) { return 9; }
     // svc #0x80 -> 0xD4001001 -> 01 10 00 D4
-    let j: i32[] = arm64_svc([], 128);
+    let j: i32[] = arm64_exception([], "svc", 128);
     if (j[0] != 1 || j[1] != 16 || j[2] != 0 || j[3] != 212) { return 10; }
     // ret (x30) -> 0xD65F03C0 -> C0 03 5F D6
     let k: i32[] = arm64_ret([], arm64_lr());
@@ -102,7 +102,7 @@ function main(): i32 {
     let code: i32[] = [];
     code = arm64_movz(code, arm64_x0(), 42, 0, false);  // exit status
     code = arm64_movz(code, arm64_x16(), 1, 0, false);  // SYS_exit (Darwin)
-    code = arm64_svc(code, 128);                  // svc #0x80
+    code = arm64_exception(code, "svc", 128);                  // svc #0x80
     let none: i32[] = [];
     let bin: i32[] = macho_executable(to_u8(code), none, none, "fern", 0, 0, none);
     write(string_from_bytes_unchecked(to_u8(bin)));

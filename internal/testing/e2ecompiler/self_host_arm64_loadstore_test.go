@@ -66,7 +66,7 @@ function main(): i32 {
     code = arm64_ldr(code, arm64_x0(), arm64_sp(), 8, false);     // ldr x0, [sp, #8]
     code = arm64_addimm(code, arm64_sp(), arm64_sp(), 16, false); // add sp, sp, #16
     code = arm64_movz(code, arm64_x16(), 1, 0, false);            // SYS_exit (Darwin)
-    code = arm64_svc(code, 128);                            // svc #0x80
+    code = arm64_exception(code, "svc", 128);                            // svc #0x80
     let none: i32[] = [];
     let bin: i32[] = macho_executable(to_u8(code), none, none, "fern", 0, 0, none);
     write(string_from_bytes_unchecked(to_u8(bin)));
