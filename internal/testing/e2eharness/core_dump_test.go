@@ -14,7 +14,8 @@ func TestWithoutCoreDump(t *testing.T) {
 		t.Skip("Linux per-process core filter")
 	}
 	parent, err := os.ReadFile("/proc/self/coredump_filter")
-	if err != nil {
+	hasFilter := err == nil
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	var parentLimit syscall.Rlimit
@@ -22,7 +23,7 @@ func TestWithoutCoreDump(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := filepath.Join(t.TempDir(), "probe.sh")
-	if err := os.WriteFile(probe, []byte("#!/bin/sh\n"+`read -r f < /proc/self/coredump_filter; [ "$f" = 00000000 ] || exit 52; [ "$(ulimit -c)" = 0 ] || exit 53; printf '%s' "$1"; kill -SEGV $$`), 0o700); err != nil {
+	if err := os.WriteFile(probe, []byte("#!/bin/sh\n"+`if [ -e /proc/self/coredump_filter ]; then read -r f < /proc/self/coredump_filter; [ "$f" = 00000000 ] || exit 52; fi; [ "$(ulimit -c)" = 0 ] || exit 53; printf '%s' "$1"; kill -SEGV $$`), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -55,7 +56,7 @@ func TestWithoutCoreDump(t *testing.T) {
 		})
 	}
 	after, err := os.ReadFile("/proc/self/coredump_filter")
-	if err != nil || string(after) != string(parent) {
+	if hasFilter && (err != nil || string(after) != string(parent)) || !hasFilter && !os.IsNotExist(err) {
 		t.Fatalf("parent filter changed: before %q, after %q, error %v", parent, after, err)
 	}
 	var afterLimit syscall.Rlimit

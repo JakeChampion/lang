@@ -5,13 +5,13 @@ import (
 	"runtime"
 )
 
-// WithoutCoreDump disables QEMU guest cores and clears the Linux core filter.
+// WithoutCoreDump disables QEMU guest cores and clears an available Linux core filter.
 // A piped host core handler ignores RLIMIT_CORE, so both controls are needed.
 func WithoutCoreDump(cmd *exec.Cmd) *exec.Cmd {
 	if runtime.GOOS != "linux" || cmd.Err != nil {
 		return cmd
 	}
-	args := append([]string{"-c", `ulimit -c 0 && printf '0\n' > /proc/self/coredump_filter && exec "$@"`, "sh", cmd.Path}, cmd.Args[1:]...)
+	args := append([]string{"-c", `ulimit -c 0 && { [ ! -e /proc/self/coredump_filter ] || printf '0\n' > /proc/self/coredump_filter; } && exec "$@"`, "sh", cmd.Path}, cmd.Args[1:]...)
 	out := exec.Command("/bin/sh", args...)
 	out.Env, out.Dir = cmd.Env, cmd.Dir
 	return out
