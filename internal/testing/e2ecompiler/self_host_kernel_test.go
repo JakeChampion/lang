@@ -179,7 +179,7 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, qemu, "-M", "virt", "-cpu", "cortex-a76", "-m", c.mem,
-				"-nographic", "-monitor", "none", "-kernel", out)
+				"-nographic", "-monitor", "none", "-nic", "none", "-kernel", out)
 			console, err := cmd.CombinedOutput()
 			if ctx.Err() != nil {
 				t.Fatalf("the VM did not power off in 60s; console:\n%s", console)
