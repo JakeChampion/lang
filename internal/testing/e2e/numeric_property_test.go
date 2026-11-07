@@ -197,16 +197,22 @@ func interpStdoutOrSkip(t *testing.T, src string) string {
 
 func interpStdoutGap(t *testing.T, src string, skipOnGap bool) string {
 	t.Helper()
-	i := interpLoaded(t, src)
-	var buf bytes.Buffer
-	i.Stdout = &buf
-	if _, err := i.CallByName("main", nil); err != nil {
-		if skipOnGap {
-			t.Skipf("interp coverage gap: %v\nsrc:\n%s", err, src)
+	out, gap := e2eharness.InProcessSourceVerdict(t, "interpLoaded, CallByName main", src, func() ([]byte, int) {
+		i := interpLoaded(t, src)
+		var buf bytes.Buffer
+		i.Stdout = &buf
+		if _, err := i.CallByName("main", nil); err != nil {
+			return []byte(err.Error()), 1
 		}
-		t.Fatalf("interp coverage gap on a hand-written case: %v\nsrc:\n%s", err, src)
+		return buf.Bytes(), 0
+	})
+	if gap != 0 {
+		if skipOnGap {
+			t.Skipf("interp coverage gap: %s\nsrc:\n%s", out, src)
+		}
+		t.Fatalf("interp coverage gap on a hand-written case: %s\nsrc:\n%s", out, src)
 	}
-	return strings.TrimRight(buf.String(), "\n")
+	return strings.TrimRight(string(out), "\n")
 }
 
 func trimOut(s string) string { return strings.TrimRight(strings.TrimSpace(s), "\n") }
