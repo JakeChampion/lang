@@ -49,6 +49,7 @@ HTTP and CDN services remain unimplemented.
 | QOI | RGB8/RGBA8 | RGB8/RGBA8 |
 
 Each codec documents its metadata policy and resource limits.
+A [native QOI benchmark pipeline](docs/benchmarks.md) checks exact pixels before native time and memory observations.
 JPEG XL and wider PNG/JPEG compatibility are active roadmap items.
 
 ## Build and test

@@ -62,6 +62,7 @@ jobs:
           sudo apt-get install -y libpng-dev pkg-config
           bash fern-image/scripts/test-png-transparency-reference.sh
       - name: Qualify QOI against the pinned reference codec
+        # External codec code serves only as an offline test reference.
         run: |
           reference="$(mktemp -d "$RUNNER_TEMP/qoi-reference.XXXXXX")"
           curl --fail --silent --show-error --location \
@@ -73,6 +74,7 @@ jobs:
           uv run --no-project python fern-image/tests/qualify_qoi.py \
             --fern "$GITHUB_WORKSPACE/bin/fern" --reference-header "$reference/qoi.h" \
             --target wasm32-wasi --runner wasmtime --runner run --output "$reference/wasm"
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p benchmark_qoi_test.py
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-png-corpus.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
