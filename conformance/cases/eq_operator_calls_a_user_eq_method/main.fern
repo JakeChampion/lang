@@ -1,0 +1,22 @@
+// `==` and `!=` on a struct call the `eq` method its type declares, on
+// every engine. This `eq` compares one field, so values that differ in
+// another field are equal. A derived `Eq` compares every field.
+import "core/cmp";
+
+struct Version { major: i32, label: string }
+
+function (a: Version) eq(b: Version): boolean {
+    return a.major == b.major;
+}
+
+@derive(cmp.Eq)
+struct Plain { x: i32 }
+
+function main(): i32 {
+    let a = Version { major: 1, label: "a" };
+    let b = Version { major: 1, label: "b" };
+    let c = Version { major: 2, label: "a" };
+    print(f"{a == b} {a != b} {a == c} {a != c}");
+    print(f"{Plain { x: 1 } == Plain { x: 1 }} {Plain { x: 1 } == Plain { x: 2 }}");
+    return 0;
+}
