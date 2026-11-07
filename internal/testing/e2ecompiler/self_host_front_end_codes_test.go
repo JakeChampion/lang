@@ -53,7 +53,7 @@ type frontEndCodeCase struct {
 
 func runFrontEndCodeCases(t *testing.T, cases []frontEndCodeCase) {
 	t.Helper()
-	checker := hostCheckerCodesBin(t)
+	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			out := checkerCodesOutput(checker, tc.src)

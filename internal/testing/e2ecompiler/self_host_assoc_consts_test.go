@@ -133,7 +133,7 @@ function main(): i32 {
 }
 
 func TestSelfHostAssocConstsDifferential(t *testing.T) {
-	checker := hostCheckerCodesBin(t)
+	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 
 	for _, tc := range assocConstCases {
 		t.Run(tc.name, func(t *testing.T) {

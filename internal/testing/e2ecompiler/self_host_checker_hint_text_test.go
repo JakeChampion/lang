@@ -388,7 +388,7 @@ function main(): i32 { return 0; }`,
 var hintTextDivergences = map[string]string{}
 
 func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
-	checker := hostCheckerCodesBin(t)
+	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 
 	for _, tc := range hintTextCases {
 		t.Run(tc.name, func(t *testing.T) {

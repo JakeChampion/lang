@@ -194,7 +194,7 @@ function main(): i32 { return 0; }`,
 }
 
 func TestSelfHostAssocTypesDifferential(t *testing.T) {
-	checker := hostCheckerCodesBin(t)
+	checker := hostDriverBin(t, "drivers/checker_codes_run.fern")
 
 	for _, tc := range assocTypeCases {
 		t.Run(tc.name, func(t *testing.T) {
