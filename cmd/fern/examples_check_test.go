@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/corpus"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestEveryExampleChecks(t *testing.T) {
@@ -17,8 +18,14 @@ func TestEveryExampleChecks(t *testing.T) {
 		path := filepath.Join(root, rel)
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
-			if err := runCheck(path, ""); err != nil {
-				t.Errorf("%v", err)
+			out, exit := e2eharness.InProcessVerdict(t, "cmd/fern runCheck", path, func() ([]byte, int) {
+				if err := runCheck(path, ""); err != nil {
+					return []byte(err.Error()), 1
+				}
+				return nil, 0
+			})
+			if exit != 0 {
+				t.Errorf("%s", out)
 			}
 		})
 	}

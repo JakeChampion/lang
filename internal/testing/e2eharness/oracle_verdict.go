@@ -93,6 +93,30 @@ func CheckSourceVerdict(t testing.TB, oracle, source string) ([]byte, int) {
 	return cachedOracleRun(t, key, cmd, true)
 }
 
+// InProcessVerdict returns the verdict that run computes for src, through the
+// verdict cache. run must compute it with the oracle's own Go code in this
+// process, which the oracle's key covers. mode names what run does, and keeps
+// its verdicts apart from those of other modes.
+func InProcessVerdict(t testing.TB, mode, src string, run func() ([]byte, int)) ([]byte, int) {
+	t.Helper()
+	var key string
+	if os.Getenv("FERN_BIN") == "" {
+		var err error
+		key, err = oracleVerdictKey([]string{"in-process", mode}, true, src)
+		if err != nil {
+			t.Fatalf("oracle verdict key for %s %s: %v", mode, src, err)
+		}
+		if out, exit, ok := readOracleVerdict(key); ok {
+			return out, exit
+		}
+	}
+	out, exit := run()
+	if key != "" {
+		writeOracleVerdict(key, out, exit)
+	}
+	return out, exit
+}
+
 // cachedOracleRun returns the verdict under key, or runs cmd and keeps its
 // verdict there. An empty key runs cmd without the cache.
 func cachedOracleRun(t testing.TB, key string, cmd *exec.Cmd, combined bool) ([]byte, int) {
