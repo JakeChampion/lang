@@ -2795,16 +2795,7 @@ func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
 	if low < 0 || high > slen || low > high {
 		return nil, sliceAbort(CauseStrOOB, "slice_unchecked", low, high, slen)
 	}
-	if splitsChar(string(s), low) || splitsChar(string(s), high) {
-		return nil, &Abort{CauseStrOOB, fmt.Sprintf("slice_unchecked [%d:%d] splits a UTF-8 character", low, high)}
-	}
 	return String(string(s)[low:high]), nil
-}
-
-// splitsChar reports whether byte offset at of s falls inside a character,
-// on a UTF-8 continuation byte.
-func splitsChar(s string, at int64) bool {
-	return at > 0 && at < int64(len(s)) && s[at]&0xC0 == 0x80
 }
 
 func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
