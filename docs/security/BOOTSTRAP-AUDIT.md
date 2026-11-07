@@ -54,4 +54,4 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostReproducibleAcrossPaths
 
 - Diverse double compilation of the whole compiler is not feasible with the interpreter's speed, as measured above.
 - The pin's provenance is a release asset on GitHub. There is no signature on the asset beyond the hash in the lock, which the repository history carries.
-- A `-g` image is not reproducible across directories.
+- A `-g` image holds the compile directory and the source paths. It is reproducible across directories only when `-remap-path-prefix` maps them ([REPRODUCIBILITY.md](REPRODUCIBILITY.md)).
