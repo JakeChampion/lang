@@ -51,3 +51,15 @@ func TestLiteralTupleTakesTheTypeOfAnElementRead(t *testing.T) {
 		t.Errorf("a literal out of range of the read's type: want E047, got %v", err)
 	}
 }
+
+func TestLiteralTupleRejectsAnOverflowingIndex(t *testing.T) {
+	for _, index := range []string{"2147483647", "2147483648", "4294967295", "4294967296", "18446744073709551616"} {
+		t.Run(index, func(t *testing.T) {
+			src := "function main(): i32 { let t = (1, 2); let x: u8 = t." + index + "; return x as i32; }\n"
+			err := checkSource(t, src)
+			if errCodes(err) != "E046" {
+				t.Fatalf("tuple index %s: want E046, got %v", index, err)
+			}
+		})
+	}
+}
