@@ -15,6 +15,42 @@ function name(error: entropy_writer.EncodeError): string {
   };
 }
 
+function produced(values: [i32], dc: header.HuffmanTable, ac: header.HuffmanTable, restart: i32, limit: i32): Result[u8[], entropy_writer.EncodeError] {
+  let count = if (values.len() % 64 == 0) { values.len() / 64 } else { 0 };
+  let result = entropy_writer.encode_produced(
+    values, count, dc, ac, restart, limit, never,
+    (source: [i32], consume: ([i32]) => Result[void, entropy_writer.EncodeError]): Result[void, entropy_writer.EncodeError] => {
+      for i in 0..source.len() / 64 {
+        consume(source[i * 64:i * 64 + 64])?;
+      }
+      return Ok(());
+    },
+  );
+  return match (result) { Ok(v) => Ok(v), Err(entropy_writer.ProducerEncode(e)) => Err(e), Err(entropy_writer.ProducerSource(e)) => Err(e) };
+}
+
+function equal(left: Result[u8[], entropy_writer.EncodeError], right: Result[u8[], entropy_writer.EncodeError]): boolean {
+  match (left) {
+    Err(a) => {
+      return match (right) { Err(b) => a == b, _ => false };
+    },
+    Ok(a) => {
+      let Ok(b) = right else {
+        return false;
+      };
+      if (a.len() != b.len()) {
+        return false;
+      }
+      for i in 0..a.len() {
+        if (a[i] != b[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+}
+
 function emit_case(path: string): i32 {
   let Ok(data) = read_file_bytes(path) else {
     return 2;
@@ -61,7 +97,12 @@ function emit_case(path: string): i32 {
     values = values.append(value as i32);
     at += 4;
   }
-  match (entropy_writer.encode_blocks(values, tables[0], tables[1], restart as i32, limit as i32, never)) {
+  let legacy = entropy_writer.encode_blocks(values, tables[0], tables[1], restart as i32, limit as i32, never);
+  let result = produced(values, tables[0], tables[1], restart as i32, limit as i32);
+  if (!equal(legacy, result)) {
+    return 6;
+  }
+  match (result) {
     Ok(output) => {
       print(path + " ok " + hex.encode(output));
     },
