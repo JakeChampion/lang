@@ -2584,6 +2584,18 @@ function sentinel_scan_expr(e: ast.Expr, own hit: boolean): boolean {
   return hit;
 }
 
+// `unsafe { …; e }` is a value block whose statements and value sit in an
+// unsafe block, so it accepts the obligations of what it calls.
+function parse_unsafe_value_block(p: Par): (ast.Expr, Par) {
+  let line = p.peek_line();
+  let col = p.peek_col();
+  let (body, rt, after) = parse_branch_body(p.advance());
+  let no_params: ast.ParamDecl[] = [];
+  let no_args: ast.Expr[] = [];
+  let lam = e_lambda_origin(no_params, rt, [s_if_tagged(body, "unsafe")], ORIGIN_BLOCK);
+  return parse_postfix(after, e_call_at(lam, no_args, line, col));
+}
+
 function parse_primary(p: Par): (ast.Expr, Par) {
   if (p.too_deep()) {
     return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail());
@@ -2593,6 +2605,9 @@ function parse_primary(p: Par): (ast.Expr, Par) {
 }
 
 function parse_primary_nested(p: Par): (ast.Expr, Par) {
+  if (!p.no_struct && p.peek_ident() == "unsafe" && p.advance().peek_punct() == "{") {
+    return parse_unsafe_value_block(p);
+  }
   let t = p.peek();
   match (t) {
     lexer.TokNumber(x) => {
@@ -4091,17 +4106,22 @@ function bracket_step(t: string): i32 {
   return 0;
 }
 
+// A block, or an unsafe block, that ends in a value.
 function nested_block_tail(p: Par): (boolean, Par) {
-  if (p.peek_punct() != "{") {
+  let open = p;
+  if (p.peek_ident() == "unsafe") {
+    open = p.advance();
+  }
+  if (open.peek_punct() != "{") {
     return (false, p);
   }
-  let k = util.index_of_i32(p.tail_at, p.pos);
+  let k = util.index_of_i32(p.tail_at, open.pos);
   if (k >= 0) {
     return (p.tail_is[k], p);
   }
-  let (nb_leading, nb_have_tail, nb_tail, nb_ok, nb_p) = parse_block_items(p);
+  let (nb_leading, nb_have_tail, nb_tail, nb_ok, nb_p) = parse_block_items(open);
   let yes = nb_ok && nb_have_tail && nb_p.peek_punct() == "}";
-  return (yes, Par { ...p, tail_at: nb_p.tail_at.append(p.pos), tail_is: nb_p.tail_is.append(yes) });
+  return (yes, Par { ...p, tail_at: nb_p.tail_at.append(open.pos), tail_is: nb_p.tail_is.append(yes) });
 }
 
 function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {

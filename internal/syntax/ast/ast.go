@@ -1088,6 +1088,9 @@ type BlockExpr struct {
 	P     Position
 	Stmts []Stmt
 	Tail  Expr
+	// Unsafe marks `unsafe { …; e }`: its statements and value accept the
+	// obligations of unsafe calls.
+	Unsafe bool
 }
 type BoolLit struct {
 	P     Position

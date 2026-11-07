@@ -2865,16 +2865,29 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 	return &ast.BlockExpr{P: open.Pos, Stmts: stmts, Tail: tail}, nil
 }
 
+// unsafeBlockAt reports `unsafe {` at the cursor.
+func (p *parser) unsafeBlockAt() bool {
+	t := p.peek()
+	return t.Kind == lexer.Ident && t.Text == "unsafe" && p.i+1 < len(p.tokens) &&
+		p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "{"
+}
+
+// nestedBlockTail reports a block, or an unsafe block, that ends in a value.
 func (p *parser) nestedBlockTail() bool {
-	if !p.match(lexer.Punct, "{") {
+	mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+	open := p.i
+	if p.unsafeBlockAt() {
+		open++
+	} else if !p.match(lexer.Punct, "{") {
 		return false
 	}
-	if yes, ok := p.nestedTails[p.i]; ok {
+	if yes, ok := p.nestedTails[open]; ok {
 		return yes
 	}
-	mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+	p.i = open
 	if err := p.enter(); err != nil {
 		p.leave()
+		p.i = mark
 		p.errors = p.errors[:nErr]
 		return false
 	}
@@ -2889,7 +2902,7 @@ func (p *parser) nestedBlockTail() bool {
 	if p.nestedTails == nil {
 		p.nestedTails = map[int]bool{}
 	}
-	p.nestedTails[mark] = yes
+	p.nestedTails[open] = yes
 	return yes
 }
 
@@ -2957,7 +2970,7 @@ func (p *parser) matchArmsBraced() bool {
 
 func (p *parser) branchStmtStart() bool {
 	t := p.peek()
-	if t.Kind == lexer.Punct && t.Text == "{" {
+	if t.Kind == lexer.Punct && t.Text == "{" || p.unsafeBlockAt() {
 		return true
 	}
 	if t.Kind == lexer.Ident && p.i+2 < len(p.tokens) {
@@ -5234,6 +5247,21 @@ var keywordModuleQualifier = map[string]bool{
 
 func (p *parser) parsePrimary() (ast.Expr, error) {
 	t := p.peek()
+	if t.Kind == lexer.Ident && t.Text == "unsafe" && !p.noStructLit && p.i+1 < len(p.tokens) &&
+		p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "{" {
+		p.advance()
+		body, err := p.parseBranchBody()
+		if err != nil {
+			return nil, err
+		}
+		b, ok := body.(*ast.BlockExpr)
+		if !ok {
+			b = &ast.BlockExpr{Tail: body}
+		}
+		b.P = t.Pos
+		b.Unsafe = true
+		return b, nil
+	}
 	switch t.Kind {
 	case lexer.Number:
 		p.advance()

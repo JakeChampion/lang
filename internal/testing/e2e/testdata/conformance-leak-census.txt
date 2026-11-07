@@ -1258,6 +1258,7 @@ unsafe_block_accepts_obligations                     0
 unsafe_block_accepts_pointer_casts                   0
 unsafe_block_accepts_raw_builtins                    0
 unsafe_block_holds_a_match_in_an_arm                 0
+unsafe_value_block                                   0
 url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0

@@ -59,3 +59,32 @@ func TestUnsafeNestedFunctionRefused(t *testing.T) {
 		t.Fatal("unsupported unsafe nested function was accepted")
 	}
 }
+
+func TestUnsafeBlockAtABranchTail(t *testing.T) {
+	prog, err := Parse("function f(n: i32): i32 { match (n) { 0 => { unsafe { return 1; } }, _ => { return 2; } } }")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("got %T, want a match statement", prog.Funcs[0].Body.Stmts[0])
+	}
+	if block, ok := m.Arms[0].Body.Stmts[0].(*ast.Block); !ok || !block.IsUnsafe {
+		t.Fatalf("an unsafe block with no value is not a statement: %#v", m.Arms[0].Body.Stmts[0])
+	}
+	prog, err = Parse("function g(): i32 { let v = { let a = 1; unsafe { a + 1 } }; return v; }")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	if !ok {
+		t.Fatalf("got %T, want a let", prog.Funcs[0].Body.Stmts[0])
+	}
+	outer, ok := v.Init.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("got %T, want a value block", v.Init)
+	}
+	if inner, ok := outer.Tail.(*ast.BlockExpr); !ok || !inner.Unsafe {
+		t.Fatalf("an unsafe block that ends in a value is not the tail value: %#v", outer.Tail)
+	}
+}
