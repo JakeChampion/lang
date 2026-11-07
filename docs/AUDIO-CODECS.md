@@ -10,6 +10,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | WAVE | Yes | Yes | Integer PCM, 8/16/24/32 bits, one through eight channels. Extensible PCM uses standard channel masks and matching valid and container depths. |
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
+| ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Partial | Partial | Standard CELT-only packets. The encoder uses 48 kHz fullband mono or stereo. The decoder accepts all CELT bandwidths and Opus output rates. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
@@ -18,6 +19,9 @@ QOA is Quite OK Audio, the audio counterpart of QOI.
 It uses approximately 3.2 bits per sample plus frame headers.
 The codec favors simple, fast decode over the compression efficiency of Opus.
 It is lossy. FLAC and integer PCM WAVE preserve every sample.
+
+The [ULC2 example library](../examples/ulc/README.md) has its own block API and WAV tools.
+Its documentation includes reference checks and a separate performance report.
 
 ## Use
 
