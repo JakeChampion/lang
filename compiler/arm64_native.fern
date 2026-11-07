@@ -8569,6 +8569,14 @@ function arm64_gas_strip_lo12(tok: string): string {
   return arm64_gas_trim(s);
 }
 
+function arm64_gas_word_at(data: i32[], off: i32): i64 {
+  let v = 0i64;
+  for b in 0..8 {
+    v |= (data[off + b] & 255) as i64 << b * 8;
+  }
+  return v;
+}
+
 function arm64_gas_data_le(own p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
   let i = 0;
   while (i < n) {
@@ -9056,17 +9064,38 @@ function arm64_gas_data_align_directive(own p: Arm64GasProg, line: string): Arm6
   return arm64_gas_data_align(p, a);
 }
 
-// A symbol word is a fixup into its section. Read-only data takes none.
-function arm64_gas_sym_word(own p: Arm64GasProg, sym: string, sec: i32): Arm64GasProg {
+// A symbol word is a fixup into its section. Read-only data takes none. The
+// word holds a `sym + N` addend until the link adds the symbol address.
+function arm64_gas_sym_word(own p: Arm64GasProg, tok: string, sec: i32): Arm64GasProg {
   if (sec == 3) {
-    return Arm64GasProg { ...p, unknown: p.unknown.append(".quad " + sym + " in read-only data") };
+    return Arm64GasProg { ...p, unknown: p.unknown.append(".quad " + tok + " in read-only data") };
+  }
+  let sym = tok;
+  let addend = 0i64;
+  let plus = arm64_str_indexof(tok, "+");
+  if (plus >= 0) {
+    sym = arm64_gas_trim_span(tok, 0, plus);
+    let n = arm64_gas_trim_span(tok, plus + 1, tok.len());
+    if (sym.len() == 0 || !arm64_gas_decimal_tok(n)) {
+      return Arm64GasProg { ...p, unknown: p.unknown.append(".quad " + tok) };
+    }
+    addend = arm64_gas_atoi64(n);
   }
   if (sec == 4) {
     p = Arm64GasProg { ...p, rref_offs: p.rref_offs.append(p.data.len()), rref_syms: p.rref_syms.append(sym) };
   } else {
     p = Arm64GasProg { ...p, dref_offs: p.dref_offs.append(p.data.len()), dref_syms: p.dref_syms.append(sym) };
   }
-  return arm64_gas_data_le(p, 0, 8);
+  return arm64_gas_data_le(p, addend, 8);
+}
+
+function arm64_gas_decimal_tok(tok: string): boolean {
+  for i in 0..tok.len() {
+    if (tok[i] < b'0' || tok[i] > b'9') {
+      return false;
+    }
+  }
+  return tok.len() > 0;
 }
 
 // Sections 0 to 4 are text, .data, .bss, .rodata and .data.rel.ro, with the
@@ -9636,13 +9665,14 @@ function arm64_gas_link_image(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: 
   let di = 0;
   while (di < p.dref_offs.len()) {
     let dres = arm64_gas_sym_addr(p, aw, p.dref_syms[di], text_vaddr, data_vaddr, data_len, image_header);
-    if (!dres.found && arm64_import_sym(p.dref_syms[di])) {
-      p = Arm64GasProg { ...p, bind_offs: p.bind_offs.append(p.dref_offs[di]), bind_syms: p.bind_syms.append(p.dref_syms[di]) };
+    let off = p.dref_offs[di];
+    let addend = arm64_gas_word_at(dat, off);
+    if (!dres.found && arm64_import_sym(p.dref_syms[di]) && addend == 0i64) {
+      p = Arm64GasProg { ...p, bind_offs: p.bind_offs.append(off), bind_syms: p.bind_syms.append(p.dref_syms[di]) };
     } else if (!dres.found) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.dref_syms[di]) };
     } else {
-      let off = p.dref_offs[di];
-      let v = dres.addr;
+      let v = dres.addr + addend;
       let b: i32 = 0;
       while (b < 8) {
         dat = dat.with(off + b, (v >> b * 8 & 255) as i32);

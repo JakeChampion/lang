@@ -14,6 +14,15 @@ function main(): i32 {
     // Each symbol in a .quad list is its own relocation.
     let syms = arm64_gas_program(".data\nt: .quad t, 0, t\n");
     if (syms.data.len() != 24 || syms.dref_offs.len() != 2 || syms.dref_offs[0] != 0 || syms.dref_offs[1] != 16) { return 8; }
+    // A sym + N addend stays in the word, and the link adds the address.
+    let plus = arm64_gas_program(".data\nt: .quad t, t + 3, t+16\n");
+    if (plus.unknown.len() != 0 || plus.dref_syms.len() != 3 || plus.dref_syms[1] != "t" || plus.dref_syms[2] != "t") { return 9; }
+    if (plus.data[0] != 0 || plus.data[8] != 3 || plus.data[16] != 16) { return 10; }
+    plus = arm64_gas_link(plus, 4096i64, 131072i64);
+    if (plus.unknown.len() != 0 || plus.data[8] as i64 != plus.data[0] as i64 + 3i64 || plus.data[16] as i64 != plus.data[0] as i64 + 16i64) { return 11; }
+    for bad in [".data\n.quad t + x\n", ".data\n.quad t +\n"] {
+      if (arm64_gas_program(bad).unknown.len() != 1) { return 12; }
+    }
     return 0;
 }
 `

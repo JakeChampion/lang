@@ -32,7 +32,7 @@ Keep addresses outside that RAM as Device memory for board MMIO.
   separate contract. Mark Device mappings execute-never.
 - Keep the table region outside the heap. Retain the boot core, FP/SIMD,
   BSS clearing, heap initialization and board capability contracts.
-- Extend the assembler with named EL1 translation registers and TLB invalidation.
+- Extend the assembler with EL1 translation registers, TLBI and data addends.
 - Reject numeric overflow before the configured RAM range reaches the emitter.
 
 ## Testing Strategy

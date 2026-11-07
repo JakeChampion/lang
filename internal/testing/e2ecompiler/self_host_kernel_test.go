@@ -312,10 +312,11 @@ func TestSelfHostKernelMemoryAttributes(t *testing.T) {
 				for i, entry := range entries {
 					start := address + uint64(i)*span
 					if strings.HasPrefix(entry, "__fern_reset_table_") {
-						if level >= 3 || start >= 1<<40 {
-							t.Fatalf("invalid child at %#x level %d", start, level)
+						child, ok := strings.CutSuffix(entry, " + 3")
+						if !ok || level >= 3 || start >= 1<<40 {
+							t.Fatalf("invalid child %q at %#x level %d", entry, start, level)
 						}
-						walk(entry, level+1, start, span/512)
+						walk(child, level+1, start, span/512)
 						continue
 					}
 					got, err := strconv.ParseUint(entry, 10, 64)
