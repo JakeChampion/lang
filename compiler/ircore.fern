@@ -413,6 +413,13 @@ pub function eprint_ir_ineligible(): void {
   eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)");
 }
 
+// A register that the checker knows, but that belongs to another ISA.
+pub function sysreg_refuse(name: string, isa: string): i32 {
+  eprint("error: the system register " + name + " does not exist on " + isa);
+  exit(3);
+  return 0;
+}
+
 pub function unsupported_op_refuse(tag: i32, backend: string): string {
   eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)");
   exit(3);

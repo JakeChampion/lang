@@ -1,0 +1,179 @@
+// The system registers that __sysreg_read and __sysreg_write name. An arm64
+// register has the encoding that mrs and msr take. An x86-64 register is a
+// control register or a model-specific register.
+import "./util";
+
+pub const READ: i32 = 1;
+
+pub const WRITE: i32 = 2;
+
+const BOTH: i32 = 3;
+
+// __sysreg_read(name) and __sysreg_write(name, value), where the name is a
+// string literal.
+pub function intrinsic(name: string): boolean {
+  return name == "__sysreg_read" || name == "__sysreg_write";
+}
+
+struct Arm64Reg { name: string, op0: i32, op1: i32, crn: i32, crm: i32, op2: i32, access: i32 }
+
+function arm64_regs(): Arm64Reg[] {
+  return [
+    Arm64Reg { name: "midr_el1", op0: 3, op1: 0, crn: 0, crm: 0, op2: 0, access: READ },
+    Arm64Reg { name: "mpidr_el1", op0: 3, op1: 0, crn: 0, crm: 0, op2: 5, access: READ },
+    Arm64Reg { name: "id_aa64pfr0_el1", op0: 3, op1: 0, crn: 0, crm: 4, op2: 0, access: READ },
+    Arm64Reg { name: "id_aa64isar0_el1", op0: 3, op1: 0, crn: 0, crm: 6, op2: 0, access: READ },
+    Arm64Reg { name: "id_aa64mmfr0_el1", op0: 3, op1: 0, crn: 0, crm: 7, op2: 0, access: READ },
+    Arm64Reg { name: "sctlr_el1", op0: 3, op1: 0, crn: 1, crm: 0, op2: 0, access: BOTH },
+    Arm64Reg { name: "cpacr_el1", op0: 3, op1: 0, crn: 1, crm: 0, op2: 2, access: BOTH },
+    Arm64Reg { name: "ttbr0_el1", op0: 3, op1: 0, crn: 2, crm: 0, op2: 0, access: BOTH },
+    Arm64Reg { name: "ttbr1_el1", op0: 3, op1: 0, crn: 2, crm: 0, op2: 1, access: BOTH },
+    Arm64Reg { name: "tcr_el1", op0: 3, op1: 0, crn: 2, crm: 0, op2: 2, access: BOTH },
+    Arm64Reg { name: "spsr_el1", op0: 3, op1: 0, crn: 4, crm: 0, op2: 0, access: BOTH },
+    Arm64Reg { name: "elr_el1", op0: 3, op1: 0, crn: 4, crm: 0, op2: 1, access: BOTH },
+    Arm64Reg { name: "sp_el0", op0: 3, op1: 0, crn: 4, crm: 1, op2: 0, access: BOTH },
+    Arm64Reg { name: "spsel", op0: 3, op1: 0, crn: 4, crm: 2, op2: 0, access: BOTH },
+    Arm64Reg { name: "currentel", op0: 3, op1: 0, crn: 4, crm: 2, op2: 2, access: READ },
+    Arm64Reg { name: "icc_pmr_el1", op0: 3, op1: 0, crn: 4, crm: 6, op2: 0, access: BOTH },
+    Arm64Reg { name: "esr_el1", op0: 3, op1: 0, crn: 5, crm: 2, op2: 0, access: BOTH },
+    Arm64Reg { name: "far_el1", op0: 3, op1: 0, crn: 6, crm: 0, op2: 0, access: BOTH },
+    Arm64Reg { name: "par_el1", op0: 3, op1: 0, crn: 7, crm: 4, op2: 0, access: BOTH },
+    Arm64Reg { name: "mair_el1", op0: 3, op1: 0, crn: 10, crm: 2, op2: 0, access: BOTH },
+    Arm64Reg { name: "vbar_el1", op0: 3, op1: 0, crn: 12, crm: 0, op2: 0, access: BOTH },
+    Arm64Reg { name: "icc_iar1_el1", op0: 3, op1: 0, crn: 12, crm: 12, op2: 0, access: READ },
+    Arm64Reg { name: "icc_eoir1_el1", op0: 3, op1: 0, crn: 12, crm: 12, op2: 1, access: WRITE },
+    Arm64Reg { name: "icc_sre_el1", op0: 3, op1: 0, crn: 12, crm: 12, op2: 5, access: BOTH },
+    Arm64Reg { name: "icc_igrpen1_el1", op0: 3, op1: 0, crn: 12, crm: 12, op2: 7, access: BOTH },
+    Arm64Reg { name: "contextidr_el1", op0: 3, op1: 0, crn: 13, crm: 0, op2: 1, access: BOTH },
+    Arm64Reg { name: "tpidr_el1", op0: 3, op1: 0, crn: 13, crm: 0, op2: 4, access: BOTH },
+    Arm64Reg { name: "cntkctl_el1", op0: 3, op1: 0, crn: 14, crm: 1, op2: 0, access: BOTH },
+    Arm64Reg { name: "dczid_el0", op0: 3, op1: 3, crn: 0, crm: 0, op2: 7, access: READ },
+    Arm64Reg { name: "nzcv", op0: 3, op1: 3, crn: 4, crm: 2, op2: 0, access: BOTH },
+    Arm64Reg { name: "daif", op0: 3, op1: 3, crn: 4, crm: 2, op2: 1, access: BOTH },
+    Arm64Reg { name: "fpcr", op0: 3, op1: 3, crn: 4, crm: 4, op2: 0, access: BOTH },
+    Arm64Reg { name: "fpsr", op0: 3, op1: 3, crn: 4, crm: 4, op2: 1, access: BOTH },
+    Arm64Reg { name: "tpidr_el0", op0: 3, op1: 3, crn: 13, crm: 0, op2: 2, access: BOTH },
+    Arm64Reg { name: "tpidrro_el0", op0: 3, op1: 3, crn: 13, crm: 0, op2: 3, access: BOTH },
+    Arm64Reg { name: "cntfrq_el0", op0: 3, op1: 3, crn: 14, crm: 0, op2: 0, access: BOTH },
+    Arm64Reg { name: "cntpct_el0", op0: 3, op1: 3, crn: 14, crm: 0, op2: 1, access: READ },
+    Arm64Reg { name: "cntvct_el0", op0: 3, op1: 3, crn: 14, crm: 0, op2: 2, access: READ },
+    Arm64Reg { name: "cntp_tval_el0", op0: 3, op1: 3, crn: 14, crm: 2, op2: 0, access: BOTH },
+    Arm64Reg { name: "cntp_ctl_el0", op0: 3, op1: 3, crn: 14, crm: 2, op2: 1, access: BOTH },
+    Arm64Reg { name: "cntp_cval_el0", op0: 3, op1: 3, crn: 14, crm: 2, op2: 2, access: BOTH },
+    Arm64Reg { name: "cntv_tval_el0", op0: 3, op1: 3, crn: 14, crm: 3, op2: 0, access: BOTH },
+    Arm64Reg { name: "cntv_ctl_el0", op0: 3, op1: 3, crn: 14, crm: 3, op2: 1, access: BOTH },
+    Arm64Reg { name: "cntv_cval_el0", op0: 3, op1: 3, crn: 14, crm: 3, op2: 2, access: BOTH },
+    Arm64Reg { name: "mdscr_el1", op0: 2, op1: 0, crn: 0, crm: 2, op2: 2, access: BOTH },
+  ];
+}
+
+function arm64_pack(r: Arm64Reg): i32 {
+  return r.op0 - 2 << 14 | r.op1 << 11 | r.crn << 7 | r.crm << 3 | r.op2;
+}
+
+// The 15-bit field that mrs and msr put at bit 5, for a register that permits
+// `access`, or -1. A name of the form s3_0_c12_c0_0 gives the fields directly.
+pub function arm64_encoding(name: string, access: i32): i32 {
+  for r in arm64_regs() {
+    if (r.name == name) {
+      if ((r.access & access) == 0) {
+        return -1;
+      }
+      return arm64_pack(r);
+    }
+  }
+  return arm64_generic(name);
+}
+
+function arm64_generic(name: string): i32 {
+  let parts = util.split_char(name, b'_');
+  if (parts.len() != 5 || !field(parts[0], "s", 2, 3) || !field(parts[1], "", 0, 7) || !field(parts[2], "c", 0, 15) || !field(parts[3], "c", 0, 15) || !field(parts[4], "", 0, 7)) {
+    return -1;
+  }
+  return arm64_pack(Arm64Reg { name: name, op0: number(parts[0], 1), op1: number(parts[1], 0), crn: number(parts[2], 1), crm: number(parts[3], 1), op2: number(parts[4], 0), access: BOTH });
+}
+
+// Whether `part` is `prefix` and then a decimal number from lo to hi.
+function field(part: string, prefix: string, lo: i32, hi: i32): boolean {
+  if (!util.str_has_prefix(part, prefix) || part.len() == prefix.len() || part.len() > prefix.len() + 2) {
+    return false;
+  }
+  for i in prefix.len()..part.len() {
+    if (part[i] < b'0' || part[i] > b'9') {
+      return false;
+    }
+  }
+  let n = number(part, prefix.len());
+  return n >= lo && n <= hi;
+}
+
+function number(part: string, from: i32): i32 {
+  return util.digits_to_i32(slice_unchecked(part, from, part.len()) + "");
+}
+
+struct X86Msr { name: string, index: i64 }
+
+function x86_msrs(): X86Msr[] {
+  return [
+    X86Msr { name: "tsc", index: 0x10i64 },
+    X86Msr { name: "apic_base", index: 0x1bi64 },
+    X86Msr { name: "misc_enable", index: 0x1a0i64 },
+    X86Msr { name: "pat", index: 0x277i64 },
+    X86Msr { name: "tsc_deadline", index: 0x6e0i64 },
+    X86Msr { name: "efer", index: 0xc0000080i64 },
+    X86Msr { name: "star", index: 0xc0000081i64 },
+    X86Msr { name: "lstar", index: 0xc0000082i64 },
+    X86Msr { name: "cstar", index: 0xc0000083i64 },
+    X86Msr { name: "fmask", index: 0xc0000084i64 },
+    X86Msr { name: "fs_base", index: 0xc0000100i64 },
+    X86Msr { name: "gs_base", index: 0xc0000101i64 },
+    X86Msr { name: "kernel_gs_base", index: 0xc0000102i64 },
+    X86Msr { name: "tsc_aux", index: 0xc0000103i64 },
+  ];
+}
+
+// The number of an x86-64 control register, such as 3 for cr3, or -1.
+pub function x86_control(name: string): i32 {
+  if (util.has_str(["cr0", "cr2", "cr3", "cr4", "cr8"], name)) {
+    return number(name, 2);
+  }
+  return -1;
+}
+
+// The index of an x86-64 model-specific register, or -1. A name of the form
+// msr_c0000080 gives the index in hexadecimal.
+pub function x86_msr(name: string): i64 {
+  for m in x86_msrs() {
+    if (m.name == name) {
+      return m.index;
+    }
+  }
+  if (!util.str_has_prefix(name, "msr_") || name.len() == 4 || name.len() > 12) {
+    return -1i64;
+  }
+  let index = 0i64;
+  for i in 4..name.len() {
+    let d = hex_digit(name[i]);
+    if (d < 0) {
+      return -1i64;
+    }
+    index = index * 16i64 + d as i64;
+  }
+  return index;
+}
+
+function hex_digit(b: u8): i32 {
+  if (b >= b'0' && b <= b'9') {
+    return (b - b'0') as i32;
+  }
+  if (b >= b'a' && b <= b'f') {
+    return (b - b'a') as i32 + 10;
+  }
+  return -1;
+}
+
+// Whether `name` is a system register of any ISA that permits `access`. The
+// backend of an ISA refuses a register of another ISA.
+pub function known(name: string, access: i32): boolean {
+  return arm64_encoding(name, access) >= 0 || x86_control(name) >= 0 || x86_msr(name) >= 0i64;
+}

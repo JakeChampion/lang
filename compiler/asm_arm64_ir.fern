@@ -7,6 +7,7 @@ import "./rtmodule";
 import "./arm64_native";
 import "./checker";
 import "./util";
+import "./sysreg";
 import "./ir";
 import "./irtables";
 import "./irverifygate";
@@ -3712,9 +3713,31 @@ function ssa_host_kind(op: string): boolean {
   return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "dev_");
 }
 
+// A system-register op. An isb after msr makes the write take effect before the
+// next instruction, as a write to a control register does on x86-64.
+function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let name = slice_unchecked(ins.str, util.index_of_sub(ins.str, ":") + 1, ins.str.len()) + "";
+  if (util.str_has_prefix(ins.str, "dev_sysreg_read")) {
+    if (sysreg.arm64_encoding(name, sysreg.READ) < 0) {
+      ircore.sysreg_refuse(name, "arm64");
+    }
+    s = s.write("    mrs x0, " + name + "\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  }
+  if (sysreg.arm64_encoding(name, sysreg.WRITE) < 0) {
+    ircore.sysreg_refuse(name, "arm64");
+  }
+  s = ssa_load(reg_of, ins.args[0], "x9", s);
+  s = s.write("    msr " + name + ", x9\n    isb\n    mov x0, #0\n");
+  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
 // convention. boot_info reads the x0 that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (util.str_has_prefix(ins.str, "dev_sysreg_")) {
+    return ssa_sysreg(ins, reg_of, s);
+  }
   if (ins.str == "dev_wfi") {
     s = s.write("    wfi\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
