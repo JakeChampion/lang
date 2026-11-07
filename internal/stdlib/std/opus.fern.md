@@ -42,6 +42,8 @@ pub function (own d: Decoder) reset(): Decoder {
   return Decoder { ...d, state: d.state.reset() };
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One arm per packet mode and per bandwidth.
 pub function (own d: Decoder) decode(input: [u8]): (Decoder, Result[f32[], pcm.AudioError]) {
   if (input.len() > 61440) {
     return (d, Err(pcm.Limit));
@@ -86,6 +88,8 @@ pub function encoder(channels: i32, bitrate: i32): Result[Encoder, pcm.AudioErro
   return Ok(Encoder { state: state, channels: channels });
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per argument, and one arm per frame size.
 pub function (own enc: Encoder) encode(samples: [f32], frame_size: i32, max_bytes: i32): Result[Encoded, pcm.AudioError] {
   if (enc.channels < 1 || enc.channels > 2 || frame_size != 120 && frame_size != 240 && frame_size != 480 && frame_size != 960) {
     return Err(pcm.Header);
