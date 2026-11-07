@@ -13,6 +13,7 @@ import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "./builtinsigs";
 import "./semarrayreport";
 import "./sempair";
 import "./semscalarreturn";
@@ -6356,7 +6357,7 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__free") {
     return Lowered { found: true, r: emit(r, ir.op_free()) };
   }
-  if (util.str_has_prefix(ins.str, "__task_")) {
+  if (builtinsigs.task_intrinsic(ins.str)) {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_" + slice_unchecked(ins.str, 2, ins.str.len()), ins.args.len())) };
   }
   if (ins.str == "__fern_box_free") {
@@ -6426,7 +6427,7 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__store_ptr") {
     return Lowered { found: true, r: emit(r, ir.op_store_ptr()) };
   }
-  if (device_name(ins.str)) {
+  if (builtinsigs.device_intrinsic(ins.str)) {
     return Lowered { found: true, r: emit(r, device_op(ins.str)) };
   }
   return raw_floor_site(r, ins);
@@ -6451,12 +6452,6 @@ function device_op(name: string): ir.Op {
     return ir.op_mmio_load(util.digits_to_i32(slice_unchecked(name, 11, name.len()) + ""));
   }
   return ir.op_mmio_store(util.digits_to_i32(slice_unchecked(name, 12, name.len()) + ""));
-}
-
-// An intrinsic that lowers to a device op: an MMIO or port access, __fence, or
-// a privileged op.
-function device_name(name: string): boolean {
-  return util.str_has_prefix(name, "__mmio_") || util.str_has_prefix(name, "__port_") || name == "__fence" || privileged_kind(name) > 0;
 }
 
 // The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.

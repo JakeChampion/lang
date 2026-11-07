@@ -318,3 +318,49 @@ pub function builtin_result(name: string): string {
   }
   return slice_unchecked(row, close + 3, row.len()) + "";
 }
+
+// An intrinsic that reaches a device: an MMIO or port access, __fence, or a
+// privileged op. No pass removes, merges or moves one.
+pub function device_intrinsic(name: string): boolean {
+  return mmio_width(name) > 0 || port_intrinsic(name) || name == "__fence" || privileged_intrinsic(name);
+}
+
+// A port access: __port_in8 to __port_in32 read a port, and __port_out8 to
+// __port_out32 write one. Only x86-64 has an I/O port space.
+pub function port_intrinsic(name: string): boolean {
+  return util.has_str(["__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32"], name);
+}
+
+// A privileged op that only a kernel environment grants. __hvc and __smc call
+// the hypervisor and the secure monitor in the SMC calling convention.
+// __boot_info gives the address that the loader passed to the reset entry.
+pub function privileged_intrinsic(name: string): boolean {
+  return name == "__wfi" || name == "__hvc" || name == "__smc" || name == "__boot_info";
+}
+
+// The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
+// other name.
+pub function mmio_width(name: string): i32 {
+  if (!util.str_has_prefix(name, "__mmio_")) {
+    return 0;
+  }
+  if (name == "__mmio_load8" || name == "__mmio_store8") {
+    return 8;
+  }
+  if (name == "__mmio_load16" || name == "__mmio_store16") {
+    return 16;
+  }
+  if (name == "__mmio_load32" || name == "__mmio_store32") {
+    return 32;
+  }
+  if (name == "__mmio_load64" || name == "__mmio_store64") {
+    return 64;
+  }
+  return 0;
+}
+
+// A task intrinsic, which lowers to a call of the runtime's `__fern_task_*`
+// function of the same name.
+pub function task_intrinsic(name: string): boolean {
+  return util.has_str(["__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait"], name);
+}

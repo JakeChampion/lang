@@ -1,0 +1,30 @@
+// Each function has the prefix of an intrinsic family but is not one, so a
+// call to it stays a plain call. Each one recurses, so no pass inlines it.
+
+function __port_text(port: i32): string {
+  if (port <= 0) {
+    return "port";
+  }
+  return __port_text(port / 10) + "_";
+}
+
+function __mmio_note(n: i32): i32 {
+  if (n <= 0) {
+    return 0;
+  }
+  return __mmio_note(n - 1) + 2;
+}
+
+function __task_count(n: i32): i32 {
+  if (n <= 0) {
+    return 1;
+  }
+  return __task_count(n - 1) + 1;
+}
+
+function main(): i32 {
+  print(__port_text(8080));
+  print(__mmio_note(21).to_string());
+  print(__task_count(6).to_string());
+  return 0;
+}

@@ -795,7 +795,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__str_bytes") {
     return t_usize();
   }
-  if (device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name)) {
     return mmio_result(name);
   }
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
@@ -971,7 +971,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") {
     return ([t_usize()], true);
   }
-  if (device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name)) {
     return (mmio_params(name), true);
   }
   if (name == "__store_u8") {
@@ -1082,46 +1082,6 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   return ([], false);
 }
 
-// An intrinsic that reaches a device: an MMIO or port access, __fence, or a
-// privileged op. No pass removes, merges or moves one.
-pub function device_intrinsic(name: string): boolean {
-  return mmio_width(name) > 0 || port_intrinsic(name) || name == "__fence" || privileged_intrinsic(name);
-}
-
-// A port access: __port_in8 to __port_in32 read a port, and __port_out8 to
-// __port_out32 write one. Only x86-64 has an I/O port space.
-pub function port_intrinsic(name: string): boolean {
-  return util.has_str(["__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32"], name);
-}
-
-// A privileged op that only a kernel environment grants. __hvc and __smc call
-// the hypervisor and the secure monitor in the SMC calling convention.
-// __boot_info gives the address that the loader passed to the reset entry.
-pub function privileged_intrinsic(name: string): boolean {
-  return name == "__wfi" || name == "__hvc" || name == "__smc" || name == "__boot_info";
-}
-
-// The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any
-// other name.
-pub function mmio_width(name: string): i32 {
-  if (!util.str_has_prefix(name, "__mmio_")) {
-    return 0;
-  }
-  if (name == "__mmio_load8" || name == "__mmio_store8") {
-    return 8;
-  }
-  if (name == "__mmio_load16" || name == "__mmio_store16") {
-    return 16;
-  }
-  if (name == "__mmio_load32" || name == "__mmio_store32") {
-    return 32;
-  }
-  if (name == "__mmio_load64" || name == "__mmio_store64") {
-    return 64;
-  }
-  return 0;
-}
-
 function mmio_result(name: string): typeinfo.Type {
   if (util.str_has_prefix(name, "__mmio_store") || util.str_has_prefix(name, "__port_out") || name == "__fence" || name == "__wfi") {
     return t_void();
@@ -1129,7 +1089,7 @@ function mmio_result(name: string): typeinfo.Type {
   if (name == "__boot_info") {
     return t_usize();
   }
-  if (mmio_width(name) == 64 || privileged_intrinsic(name)) {
+  if (builtinsigs.mmio_width(name) == 64 || builtinsigs.privileged_intrinsic(name)) {
     return t_i64();
   }
   return t_i32();
@@ -1139,7 +1099,7 @@ function mmio_params(name: string): typeinfo.Type[] {
   if (name == "__fence" || name == "__wfi" || name == "__boot_info") {
     return [];
   }
-  if (privileged_intrinsic(name)) {
+  if (builtinsigs.privileged_intrinsic(name)) {
     return [t_i64(), t_i64(), t_i64(), t_i64()];
   }
   if (util.str_has_prefix(name, "__port_out")) {
@@ -1149,7 +1109,7 @@ function mmio_params(name: string): typeinfo.Type[] {
     return [t_i32()];
   }
   let value = t_i32();
-  if (mmio_width(name) == 64) {
+  if (builtinsigs.mmio_width(name) == 64) {
     value = t_i64();
   }
   if (util.str_has_prefix(name, "__mmio_store")) {

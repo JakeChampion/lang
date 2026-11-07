@@ -6,6 +6,7 @@ import "./util";
 import "./aborts";
 import "./astwalk";
 import "./checker";
+import "./builtinsigs";
 import "./aesref";
 import "./platforms";
 import "./typeinfo";
@@ -7426,7 +7427,7 @@ function is_raw_mem_builtin(name: string): boolean {
   if (name == "__alloc" || name == "__free" || name == "__memcpy" || name == "__memset" || name == "__ptr_width") {
     return true;
   }
-  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr" || checker.device_intrinsic(name)) {
+  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr" || builtinsigs.device_intrinsic(name)) {
     return true;
   }
   return name == "__store_u8" || name == "__store_i32" || name == "__store_i64" || name == "__store_ptr";
@@ -7435,7 +7436,7 @@ function is_raw_mem_builtin(name: string): boolean {
 // The interpreter is a compiled program, so the raw builtins act on its own
 // heap, as the buffer builtins do.
 function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
-  if (checker.device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name)) {
     return call_mmio_builtin(name, args);
   }
   let want = 1;
@@ -7479,7 +7480,7 @@ function call_mmio_builtin(name: string, args: Value[]): Value {
   if (name == "__fence") {
     return v_void();
   }
-  if (checker.privileged_intrinsic(name) || checker.port_intrinsic(name)) {
+  if (builtinsigs.privileged_intrinsic(name) || builtinsigs.port_intrinsic(name)) {
     return v_err(name + ": needs a kernel target");
   }
   let want = 1;
@@ -7502,7 +7503,7 @@ function call_mmio_builtin(name: string, args: Value[]): Value {
 // No device answers the interpreter, so an MMIO access is an ordinary access
 // to its own memory.
 function raw_mmio(name: string, w: i64[]): Value {
-  let bits = checker.mmio_width(name);
+  let bits = builtinsigs.mmio_width(name);
   let p = w[0] as usize;
   unsafe {
     if (util.str_has_prefix(name, "__mmio_load")) {
