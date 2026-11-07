@@ -96,8 +96,6 @@ type Info struct {
 	// recheckOpenLocals: a map local settled after a use that the check
 	// passed over, so checkTarget checks the program again.
 	recheckOpenLocals bool
-	// openAtEnd holds the open locals that no use gave a type.
-	openAtEnd []*ast.Var
 }
 
 func (c *checker) tryEnumWithOk(t ast.EnumType, ok ast.Type) (ast.EnumType, bool) {
@@ -539,11 +537,6 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	expandVecImpls(prog)
 	info, err := checkImpl(ctx, prog, target)
 	if info != nil && info.recheckOpenLocals {
-		// The first check wrote each inferred type into its `let`. An open
-		// local is unannotated again, so the second check infers it the same way.
-		for _, v := range info.openAtEnd {
-			v.Type = nil
-		}
 		info, err = checkImpl(ctx, prog, target)
 	}
 	if info != nil {
@@ -2427,6 +2420,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__wfi"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	c.info.FuncSigs["__boot_info"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
 	i64T := ast.NumberType{Width: 64, Signed: true}
+	c.info.FuncSigs["__sysreg_read"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: i64T}
+	c.info.FuncSigs["__sysreg_write"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}, i64T}, Result: ast.VoidType{}}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
@@ -9353,7 +9348,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
-	"__hvc": true, "__smc": true,
+	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
@@ -11786,7 +11781,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if unannotated {
 			c.beginLitNestedLocal(n, s)
+		}
+		// A recheck retains inferred Type fields, including unresolved maps.
+		if !n.WasAnnotated {
 			c.beginOpenEnumLocal(n, s)
+		}
+		if unannotated {
 			c.beginOpenGenericCall(n)
 		}
 	case *ast.Destructure:
@@ -14541,6 +14541,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		return nil
 	case *ast.Call:
 		c.laneIndexArg(n)
+		c.sysregNameArg(n)
 		delete(c.info.IntrinsicCalls, n)
 		callExpected := c.expectedType
 		c.expectedType = nil
@@ -17747,6 +17748,20 @@ func (c *checker) registerLaneBuiltins() {
 			c.info.FuncSigs[p+v] = sigs[v]
 		}
 	}
+}
+
+// sysregNameArg requires the register of a system-register intrinsic to be a
+// string literal. The self-hosted checker also checks the name against its
+// register table.
+func (c *checker) sysregNameArg(n *ast.Call) {
+	id, ok := n.Callee.(*ast.Ident)
+	if !ok || len(n.Args) == 0 || (id.Name != "__sysreg_read" && id.Name != "__sysreg_write") {
+		return
+	}
+	if _, ok := n.Args[0].(*ast.StringLit); ok {
+		return
+	}
+	c.errfCode(n.Args[0].Pos(), "E038", "argument 1 to %q: the register is a string literal that names a system register that permits the access", id.Name)
 }
 
 func (c *checker) laneIndexArg(n *ast.Call) {

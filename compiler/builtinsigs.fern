@@ -2,6 +2,7 @@
 // from its row, and the monomorphiser reads the result type from it.
 
 import "./util";
+import "./sysreg";
 
 // One row for each builtin, sorted by name: the name, the parameter types
 // and the result type.
@@ -334,8 +335,9 @@ pub function port_intrinsic(name: string): boolean {
 // A privileged op that only a kernel environment grants. __hvc and __smc call
 // the hypervisor and the secure monitor in the SMC calling convention.
 // __boot_info gives the address that the loader passed to the reset entry.
+// __sysreg_read and __sysreg_write access a system register.
 pub function privileged_intrinsic(name: string): boolean {
-  return name == "__wfi" || name == "__hvc" || name == "__smc" || name == "__boot_info";
+  return name == "__wfi" || name == "__hvc" || name == "__smc" || name == "__boot_info" || sysreg.intrinsic(name);
 }
 
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any

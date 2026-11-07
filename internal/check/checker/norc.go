@@ -14,7 +14,7 @@ var noRCIntrinsics = map[string]bool{
 	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
-	"__fence": true, "__wfi": true, "__hvc": true, "__smc": true, "__boot_info": true,
+	"__fence": true, "__wfi": true, "__hvc": true, "__smc": true, "__boot_info": true, "__sysreg_read": true, "__sysreg_write": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
 	"__popcount32": true, "__popcount64": true,

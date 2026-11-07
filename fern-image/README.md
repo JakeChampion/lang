@@ -6,6 +6,7 @@ It supports checked RGB8 and RGBA8 allocation and safe pixel access.
 The color module provides sRGB transfer functions, grayscale, channel operations, and alpha compositing.
 
 The resize module provides scalar nearest-neighbor and bilinear filters.
+A pure Fern [QOI codec](docs/qoi.md) reads and writes RGB8/RGBA8 with explicit color-space metadata and resource limits.
 A restricted native PNG codec decodes and encodes noninterlaced RGB8/RGBA8.
 Its [sequential row interface](docs/png-rows.md) emits selected rows after a complete filtered-frame decode.
 The [PNG provider adapter](docs/png-providers.md) connects fresh decoder sessions to graph rows and cropped tiles.
@@ -22,6 +23,16 @@ The [restricted JFIF inspector](docs/jpeg-jfif.md) identifies explicit Y or YCbC
 The [restricted JFIF RGB decoder](docs/jpeg-rgb.md) assembles canonical YCbCr planes with an explicit centered filter.
 
 HTTP and CDN services remain unimplemented.
+
+| Format | Read | Write |
+|---|---|---|
+| PNG | Noninterlaced RGB8/RGBA8 | RGB8/RGBA8 |
+| JPEG | Restricted baseline grayscale and JFIF RGB | Planned |
+| JPEG XL | Planned | Planned |
+| QOI | RGB8/RGBA8 | RGB8/RGBA8 |
+
+Each codec documents its metadata policy and resource limits.
+JPEG XL and wider PNG/JPEG compatibility are active roadmap items.
 
 ## Build and test
 
@@ -68,7 +79,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 326 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
+The TAP cases cover compression, pixels, color, resize, PNG, QOI, the restricted JPEG slices, and standalone ICC primitives.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.

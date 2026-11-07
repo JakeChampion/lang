@@ -181,7 +181,6 @@ func (c *checker) finishOpenEnumLocals() {
 		if bareMap(decl.Type) {
 			c.errMapNeedsType(decl)
 		}
-		c.info.openAtEnd = append(c.info.openAtEnd, decl)
 	}
 	c.finishOpenGenericCalls()
 	c.openEnumLocals = nil

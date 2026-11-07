@@ -35,12 +35,13 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}
-	bad := []struct{ name, src string }{
-		{"no use gives the types", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; return m.len(); }\n"},
-		{"no use", "import \"core/map\";\nfunction main(): i32 { let m = map_new(8); return 0; }\n"},
-		{"no use through a generic call", ident + "function main(): i32 { let m = id(Map { }); return 0; }\n"},
-		{"no arm gives the types", "import \"core/map\";\nfunction main(): i32 { let m = if (true) { Map { } } else { Map { } }; return m.len(); }\n"},
-		{"no use, beside a map that a later insert gives the types", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; let g = Map { }; let n = g.len(); g = g.insert(\"k\", 1); return n; }\n"},
+	bad := []struct{ name, src, binding string }{
+		{"unused map survives another local recheck", "import \"core/map\";\nfunction main(): i32 { let unused = map_new(8); let m = Map { }; let n = m.len(); m = m.insert(1, 2); return n; }\n", "unused"},
+		{"shadowed map survives another function recheck", "import \"core/map\";\nfunction nope(): boolean { return false; }\nfunction fresh(): Map[i32, string] { let m = map_new(8); if (nope()) { let m = map_new(8); } return m; }\nfunction main(): i32 { let g = Map { }; let n = g.len(); g = g.insert(1, 2); return n + fresh().len(); }\n", "m"},
+		{"no use gives the types", "import \"core/map\";\nfunction main(): i32 { let m = Map { }; return m.len(); }\n", "m"},
+		{"no use", "import \"core/map\";\nfunction main(): i32 { let m = map_new(8); return 0; }\n", "m"},
+		{"no use through a generic call", ident + "function main(): i32 { let m = id(Map { }); return 0; }\n", "m"},
+		{"no arm gives the types", "import \"core/map\";\nfunction main(): i32 { let m = if (true) { Map { } } else { Map { } }; return m.len(); }\n", "m"},
 	}
 	for _, c := range bad {
 		err := checkSource(t, c.src)
@@ -49,7 +50,7 @@ func TestOpenMapLocalTakesTheTypeOfItsUse(t *testing.T) {
 			continue
 		}
 		msg := err.Error()
-		if strings.Count(msg, "type error") != 1 || !strings.Contains(msg, `map "m" needs a type annotation`) || strings.Contains(msg, "K") {
+		if strings.Count(msg, "type error") != 1 || !strings.Contains(msg, `map "`+c.binding+`" needs a type annotation`) || strings.Contains(msg, "K") {
 			t.Errorf("%s: want one E020 that names the map, got:\n%s", c.name, msg)
 		}
 	}

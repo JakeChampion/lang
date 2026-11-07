@@ -11,7 +11,7 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-type Kind int
+type Kind uint8
 
 const (
 	EOF Kind = iota
@@ -60,12 +60,23 @@ type FStringPart struct {
 
 type Token struct {
 	Kind   Kind
+	suffix uint8
+	Scalar int32
 	Text   string
 	Pos    ast.Position
-	FParts []FStringPart
-	Suffix string
-	Scalar int32
+	fparts *[]FStringPart
 }
+
+func (t Token) FParts() []FStringPart {
+	if t.fparts == nil {
+		return nil
+	}
+	return *t.fparts
+}
+
+var numericSuffixes = [...]string{"", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64"}
+
+func (t Token) Suffix() string { return numericSuffixes[t.suffix] }
 
 func (t Token) String() string {
 	return fmt.Sprintf("%s(%q) at %s", t.Kind, t.Text, t.Pos)
@@ -157,14 +168,26 @@ var (
 	_ diag.Coded      = (*Error)(nil)
 )
 
-func validNumericSuffix(s string) bool {
+func numericSuffixIndex(s string) uint8 {
 	switch s {
-	case "i32", "i64",
-		"u8", "u32", "u64", "usize",
-		"f32", "f64":
-		return true
+	case "i32":
+		return 1
+	case "i64":
+		return 2
+	case "u8":
+		return 3
+	case "u32":
+		return 4
+	case "u64":
+		return 5
+	case "usize":
+		return 6
+	case "f32":
+		return 7
+	case "f64":
+		return 8
 	}
-	return false
+	return 0
 }
 
 func (l *lexer) scanDigits(start ast.Position, base int) error {
@@ -317,9 +340,12 @@ func (l *lexer) skipTrivia() {
 			l.advance()
 			l.advance()
 			textStart := l.i
-			for l.i < len(l.src) && l.src[l.i] != '\n' {
-				l.advance()
+			end := strings.IndexByte(l.src[l.i:], '\n')
+			if end < 0 {
+				end = len(l.src) - l.i
 			}
+			l.i += end
+			l.col += end
 			l.comments = append(l.comments, ast.Comment{
 				Pos:      start,
 				Text:     l.src[textStart:l.i],
@@ -355,7 +381,7 @@ func (l *lexer) next() (Token, error) {
 		if err != nil {
 			return Token{}, err
 		}
-		return Token{Kind: FString, Pos: start, FParts: parts}, nil
+		return Token{Kind: FString, Pos: start, fparts: &parts}, nil
 	}
 
 	if r == 'b' && l.i+1 < len(l.src) && l.src[l.i+1] == '\'' {
@@ -437,6 +463,7 @@ func (l *lexer) next() (Token, error) {
 		}
 		text := l.src[begin:l.i]
 		suffix := ""
+		var suffixID uint8
 		if l.i < len(l.src) {
 			ch := l.src[l.i]
 			if ch == 'i' || ch == 'u' || ch == 'f' {
@@ -451,7 +478,8 @@ func (l *lexer) next() (Token, error) {
 					l.advance()
 				}
 				suffix = l.src[sBegin:l.i]
-				if !validNumericSuffix(suffix) {
+				suffixID = numericSuffixIndex(suffix)
+				if suffixID == 0 {
 					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown numeric suffix %q on %q", suffix, text), Numeric: true}
 				}
 				if isFloat && suffix[0] != 'f' {
@@ -466,18 +494,24 @@ func (l *lexer) next() (Token, error) {
 		if isFloat {
 			kind = Float
 		}
-		return Token{Kind: kind, Text: text, Pos: start, Suffix: suffix}, nil
+		return Token{Kind: kind, Text: text, Pos: start, suffix: suffixID}, nil
 	}
 
 	if r == '"' {
 		l.advance()
+		begin := l.i
 		var b strings.Builder
+		escaped := false
 		for l.i < len(l.src) && rune(l.src[l.i]) != '"' {
 			c := rune(l.src[l.i])
 			if c == '\n' {
 				return Token{}, &Error{Pos: start, Msg: "newline inside string literal"}
 			}
 			if c == '\\' {
+				if !escaped {
+					b.WriteString(l.src[begin:l.i])
+					escaped = true
+				}
 				v, err := l.scanQuotedEscape(start, false, "string")
 				if err != nil {
 					return Token{}, err
@@ -485,14 +519,20 @@ func (l *lexer) next() (Token, error) {
 				b.WriteRune(rune(v))
 				continue
 			}
-			b.WriteByte(l.src[l.i])
+			if escaped {
+				b.WriteByte(l.src[l.i])
+			}
 			l.advance()
 		}
 		if l.i >= len(l.src) {
 			return Token{}, &Error{Pos: start, Msg: "unterminated string literal"}
 		}
+		text := l.src[begin:l.i]
+		if escaped {
+			text = b.String()
+		}
 		l.advance()
-		return Token{Kind: String, Text: b.String(), Pos: start}, nil
+		return Token{Kind: String, Text: text, Pos: start}, nil
 	}
 
 	for _, p := range multiPunct {
@@ -507,7 +547,7 @@ func (l *lexer) next() (Token, error) {
 	switch r {
 	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '~', '&', '|', '^', '?', '.', '@':
 		l.advance()
-		return Token{Kind: Punct, Text: string(r), Pos: start}, nil
+		return Token{Kind: Punct, Text: l.src[l.i-1 : l.i], Pos: start}, nil
 	}
 
 	return Token{}, l.badCharError(start)

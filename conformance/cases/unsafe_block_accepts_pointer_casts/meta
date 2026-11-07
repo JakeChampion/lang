@@ -1,0 +1,4 @@
+waiver: harness-limit
+reason: internal/oracle/interp has no addresses. A cast between an integer and
+  a heap value has no meaning there, so the case runs on the compiled
+  backends only.
