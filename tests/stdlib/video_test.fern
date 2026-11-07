@@ -1,0 +1,393 @@
+import "std/video/frame";
+import "std/video/qtrle";
+import "std/video/ivf";
+import "std/video/nal";
+import "std/audio/wire";
+import "std/hex";
+import "std/hash/crc32";
+import "std/test";
+import "video_vectors";
+import "video_nal_vectors";
+
+function pixel_crc(pixels: [u32]): u32 {
+  let bytes: u8[] = [];
+  for p in pixels {
+    bytes = wire.put_be(bytes, p as u64, 4);
+  }
+  return crc32.of(bytes);
+}
+
+function reference(): test.TestOutcome {
+  let limits = frame.default_limits();
+  for v in video_vectors.vectors() {
+    let format = frame.Format { width: v.width, height: v.height };
+    let Ok(initial) = frame.create(format, limits) else {
+      return test.fail("frame allocation");
+    };
+    let pixels = initial.pixels;
+    for i in 0..v.packets.len() {
+      let Ok(packet) = hex.decode(v.packets[i]) else {
+        return test.fail("fixture");
+      };
+      let previous = pixels;
+      let Ok(decoded) = qtrle.decode_into(packet, format, v.depth, pixels, limits) else {
+        return test.fail("FFmpeg packet decode");
+      };
+      pixels = decoded.pixels;
+      if (pixel_crc(pixels) != v.crcs[i]) {
+        return test.fail("FFmpeg pixel equality");
+      }
+      if (i > 0 && pixel_crc(previous) != v.crcs[i - 1]) {
+        return test.fail("retained frame mutation");
+      }
+      let base = if (i == 0) { [] } else { previous };
+      let Ok(encoded) = qtrle.encode(pixels, base, format, v.depth, limits) else {
+        return test.fail("encode");
+      };
+      let Ok(roundtrip) = qtrle.decode_into(encoded, format, v.depth, previous, limits) else {
+        return test.fail("roundtrip decode");
+      };
+      if (roundtrip.pixels != pixels) {
+        return test.fail("roundtrip pixels");
+      }
+      if (i == 2 && encoded.len() != 7) {
+        return test.fail("unchanged frame size");
+      }
+      let exact = frame.Limits { max_pixels: v.width * v.height, max_packet_bytes: encoded.len() };
+      if (qtrle.encode(pixels, base, format, v.depth, exact).is_err()) {
+        return test.fail("exact output budget");
+      }
+      let small = frame.Limits { ...exact, max_packet_bytes: encoded.len() - 1 };
+      match (qtrle.encode(pixels, base, format, v.depth, small)) {
+        Err(frame.Limit) => {},
+        _ => {
+          return test.fail("output budget");
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function malformed(): test.TestOutcome {
+  let limits = frame.default_limits();
+  let format = frame.Format { width: 2, height: 1 };
+  let packets: u8[][] = [
+    [0, 0, 0, 12, 0, 0, 1, 3, 10, 20, 30, 255],
+    [0, 0, 0, 12, 0, 0, 1, 253, 10, 20, 30, 255],
+    [0, 0, 0, 10, 0, 0, 1, 0, 0, 255],
+    [0, 0, 0, 10, 0, 0, 1, 0, 4, 255],
+    [0, 0, 0, 15, 0, 8, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+    [0, 0, 0, 9, 0, 0, 0, 1, 2],
+  ];
+  for p in packets {
+    match (qtrle.decode_into(p, format, 24, [0u32, 0u32], limits)) {
+      Err(frame.Header) => {},
+      _ => {
+        return test.fail("malformed packet accepted");
+      }
+    }
+  }
+  let valid: u8[] = [0, 0, 0, 12, 0, 0, 1, 254, 10, 20, 30, 255];
+  for n in 0..valid.len() {
+    let prefix: u8[] = [];
+    for i in 0..n {
+      prefix = prefix.append(valid[i]);
+    }
+    if (n >= 4) {
+      prefix = prefix.with(3, n as u8);
+    }
+    if (n < 4 || n >= 8) {
+      if (!qtrle.decode_into(prefix, format, 24, [0u32, 0u32], limits).is_err()) {
+        return test.fail("truncated packet accepted");
+      }
+    }
+  }
+  let Ok(decoded) = qtrle.decode_into(valid, format, 24, [0u32, 0u32], limits) else {
+    return test.fail("repeat run");
+  };
+  if (decoded.pixels != [4278850590u32, 4278850590u32]) {
+    return test.fail("repeat pixels");
+  }
+  match (qtrle.decode_into(valid.with(5, 1), format, 24, [0u32, 0u32], limits)) {
+    Err(frame.Unsupported) => {},
+    _ => {
+      return test.fail("unknown header");
+    }
+  }
+  match (qtrle.decode_into(valid, format, 16, [0u32, 0u32], limits)) {
+    Err(frame.Unsupported) => {},
+    _ => {
+      return test.fail("unknown depth");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function bounds(): test.TestOutcome {
+  let format = frame.Format { width: 2, height: 1 };
+  let limits = frame.default_limits();
+  let p: u8[] = [0, 0, 0, 7, 0, 0, 0];
+  match (qtrle.decode_into(p, format, 32, [], limits)) {
+    Err(frame.Buffer) => {},
+    _ => {
+      return test.fail("buffer size");
+    }
+  }
+  match (qtrle.decode_into(p, format, 32, [0u32, 0u32], frame.Limits { max_pixels: 1, max_packet_bytes: 7 })) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("pixel limit");
+    }
+  }
+  match (qtrle.decode_into(p, format, 32, [0u32, 0u32], frame.Limits { max_pixels: 2, max_packet_bytes: 6 })) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("packet limit");
+    }
+  }
+  match (frame.create(frame.Format { width: 2147483647, height: 2 }, limits)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("dimension overflow");
+    }
+  }
+  match (frame.create(frame.Format { width: 0, height: 1 }, limits)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("zero dimensions");
+    }
+  }
+  match (frame.create(format, frame.Limits { max_pixels: -1, max_packet_bytes: 7 })) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("negative limit");
+    }
+  }
+  match (qtrle.encode([0u32, 0u32], [], format, 24, limits)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("RGB24 alpha loss");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function ivf_header(tag: string): u8[] {
+  let bytes: u8[] = [68, 75, 73, 70, 0, 0, 32, 0];
+  for b in tag.as_bytes() {
+    bytes = bytes.append(b);
+  }
+  bytes = wire.put_le(bytes, 521u64, 2);
+  bytes = wire.put_le(bytes, 3u64, 2);
+  bytes = wire.put_le(bytes, 30000u64, 4);
+  bytes = wire.put_le(bytes, 1001u64, 4);
+  bytes = wire.put_le(bytes, 0u64, 4);
+  return wire.put_le(bytes, 0u64, 4);
+}
+
+function ivf_packets(): test.TestOutcome {
+  let limits = frame.default_limits();
+  for tag in ["VP80", "VP90", "AV01"] {
+    let bytes = ivf_header(tag);
+    let Ok(header) = ivf.inspect(bytes, limits) else {
+      return test.fail("IVF header");
+    };
+    if (header.format.width != 521 || header.rate != 30000u32 || header.scale != 1001u32) {
+      return test.fail("IVF fields");
+    }
+    bytes = wire.put_le(bytes, 3u64, 4);
+    bytes = wire.put_le(bytes, 90000u64, 8);
+    bytes = bytes.append(11).append(22).append(33);
+    let Ok(Some(packet)) = ivf.next_packet(bytes, 32, limits) else {
+      return test.fail("IVF packet");
+    };
+    if (packet.offset != 44 || packet.size != 3 || packet.next_offset != 47 || packet.timestamp != 90000u64) {
+      return test.fail("IVF packet fields");
+    }
+    match (ivf.next_packet(bytes, 47, limits)) {
+      Ok(None()) => {},
+      _ => {
+        return test.fail("IVF EOF");
+      }
+    }
+    match (ivf.next_packet(bytes[:46], 32, limits)) {
+      Err(frame.Truncated) => {},
+      _ => {
+        return test.fail("IVF truncation");
+      }
+    }
+    match (ivf.next_packet(bytes, -1, limits)) {
+      Err(frame.Header) => {},
+      _ => {
+        return test.fail("IVF offset");
+      }
+    }
+    match (ivf.next_packet(bytes, 32, frame.Limits { max_pixels: 10000, max_packet_bytes: 2 })) {
+      Err(frame.Limit) => {},
+      _ => {
+        return test.fail("IVF packet limit");
+      }
+    }
+    let Ok(us) = ivf.timestamp_us(packet.timestamp, header.rate, header.scale) else {
+      return test.fail("IVF time");
+    };
+    if (us != 3003000000i64) {
+      return test.fail("IVF rational time");
+    }
+    for n in 0..32 {
+      if (!ivf.inspect(bytes[:n], limits).is_err()) {
+        return test.fail("IVF short header");
+      }
+    }
+  }
+  match (ivf.inspect(ivf_header("????"), limits)) {
+    Err(frame.Unsupported) => {},
+    _ => {
+      return test.fail("IVF codec");
+    }
+  }
+  match (ivf.timestamp_us(18446744073709551615u64, 1u32, 1u32)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("timestamp overflow");
+    }
+  }
+  let Ok(large) = ivf.timestamp_us(4294967294u64, 4294967295u32, 4294967295u32) else {
+    return test.fail("avoidable timestamp overflow");
+  };
+  if (large != 4294967294000000i64) {
+    return test.fail("large rational timestamp");
+  }
+  match (ivf.timestamp_us(1u64, 0u32, 1u32)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("zero timebase");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function nal_packets(): test.TestOutcome {
+  let limits = frame.default_limits();
+  for prefix in [1, 2, 4] {
+    let input: u8[] = [];
+    input = wire.put_be(input, 2u64, prefix);
+    input = input.append(103).append(42);
+    input = wire.put_be(input, 1u64, prefix);
+    input = input.append(104);
+    let Ok(out) = nal.to_annex_b(input, prefix, limits) else {
+      return test.fail("Annex B conversion");
+    };
+    if (out != [0u8, 0, 0, 1, 103, 42, 0, 0, 0, 1, 104]) {
+      return test.fail("Annex B bytes");
+    }
+    match (nal.to_annex_b(input[:input.len() - 1], prefix, limits)) {
+      Err(frame.Truncated) => {},
+      _ => {
+        return test.fail("NAL truncated payload");
+      }
+    }
+    match (nal.to_annex_b(input, prefix, frame.Limits { max_pixels: 1, max_packet_bytes: out.len() - 1 })) {
+      Err(frame.Limit) => {},
+      _ => {
+        return test.fail("NAL expansion limit");
+      }
+    }
+  }
+  match (nal.to_annex_b([0], 1, limits)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("empty NAL");
+    }
+  }
+  match (nal.to_annex_b([1], 3, limits)) {
+    Err(frame.Unsupported) => {},
+    _ => {
+      return test.fail("reserved NAL length size");
+    }
+  }
+  let avcc: u8[] = [1, 100, 0, 40, 255, 225, 0, 2, 103, 42, 1, 0, 2, 104, 19, 253, 248, 248, 1, 0, 2, 109, 99];
+  let Ok(avc) = nal.avc_config(avcc, limits) else {
+    return test.fail("AVC config");
+  };
+  if (avc.length_size != 4 || avc.csd0 != [0u8, 0, 0, 1, 103, 42, 0, 0, 0, 1, 109, 99] || avc.csd1 != [0u8, 0, 0, 1, 104, 19]) {
+    return test.fail("AVC CSD bytes");
+  }
+  for n in 0..15 {
+    if (!nal.avc_config(avcc[:n], limits).is_err()) {
+      return test.fail("AVC truncated config");
+    }
+  }
+  match (nal.avc_config(avcc.with(13, 103), limits)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("AVC parameter type");
+    }
+  }
+  match (nal.avc_config(avcc.with(4, 254), limits)) {
+    Err(frame.Unsupported) => {},
+    _ => {
+      return test.fail("AVC reserved length size");
+    }
+  }
+  let hvcc: u8[] = [
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 240, 0, 252, 253, 248, 248, 0, 0, 3, 3,
+    162, 0, 1, 0, 2, 68, 1, 160, 0, 1, 0, 2, 64, 1, 161, 0, 1, 0, 2, 66, 1,
+  ];
+  let Ok(hevc) = nal.hevc_config(hvcc, limits) else {
+    return test.fail("HEVC config");
+  };
+  if (hevc.length_size != 4 || hevc.csd0 != [0u8, 0, 0, 1, 64, 1, 0, 0, 0, 1, 66, 1, 0, 0, 0, 1, 68, 1] || hevc.csd1.len() != 0) {
+    return test.fail("HEVC reordered CSD");
+  }
+  for n in 0..hvcc.len() {
+    if (!nal.hevc_config(hvcc[:n], limits).is_err()) {
+      return test.fail("HEVC truncated config");
+    }
+  }
+  match (nal.hevc_config(hvcc.with(23, 165), limits)) {
+    Err(frame.Unsupported) => {},
+    _ => {
+      return test.fail("HEVC unsupported array");
+    }
+  }
+  match (nal.hevc_config(hvcc.with(29, 0), limits)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("HEVC temporal id");
+    }
+  }
+  for v in video_nal_vectors.vectors() {
+    let Ok(config) = hex.decode(v.config) else {
+      return test.fail("real config fixture");
+    };
+    let Ok(packet) = hex.decode(v.packet) else {
+      return test.fail("real packet fixture");
+    };
+    let parsed = if (v.hevc) { nal.hevc_config(config, limits) } else { nal.avc_config(config, limits) };
+    let Ok(csd) = parsed else {
+      return test.fail("FFmpeg config record");
+    };
+    if (csd.length_size != 4 || csd.csd0.len() < 5) {
+      return test.fail("FFmpeg config fields");
+    }
+    let Ok(annexb) = nal.to_annex_b(packet, csd.length_size, limits) else {
+      return test.fail("FFmpeg packet conversion");
+    };
+    if (annexb.len() != packet.len()) {
+      return test.fail("four-byte prefix size");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let r = test.new("video codecs");
+  r = r.it("QTRLE matches FFmpeg pixels and roundtrips delta frames", reference);
+  r = r.it("QTRLE rejects malformed and truncated packets", malformed);
+  r = r.it("video dimensions, storage, precision, and resource limits", bounds);
+  r = r.it("IVF packets, timestamps, and resource limits", ivf_packets);
+  r = r.it("AVC and HEVC configuration and Annex B packets", nal_packets);
+  return r.finish();
+}

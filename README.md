@@ -142,6 +142,9 @@ target. `-backend flat` is refused there. Per-backend support and known gaps:
 - **Audio.** Native FLAC decode, integer PCM WAVE and QOA encode/decode, and
   CELT-only Opus packets. Frame APIs support bounded playback buffers. MP3
   and complete Opus file playback remain unimplemented. See [audio codecs](docs/AUDIO-CODECS.md).
+- **Video.** Native lossless QTRLE packet encode/decode, IVF packet reads, and
+  AVC/HEVC packet conversion. The Android MediaCodec adapter provides surface
+  decode for device-supported formats. See [video codecs](docs/VIDEO-CODECS.md).
 - **Profiling.** On Linux, `FERN_PROFILE=cpu` and `FERN_PROFILE=alloc` include
   self-contained CPU or allocation sampling in native builds, with collapsed
   stacks at exit. The `cpu-pprof` and `alloc-pprof` modes write pprof files.

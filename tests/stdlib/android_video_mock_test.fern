@@ -1,0 +1,151 @@
+import "std/android/video";
+import "std/video/frame";
+
+@import("libmediandk.so", "mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "mock_live")
+function live(): i32;
+
+@import("libmediandk.so", "mock_queued")
+function queued(): i32;
+
+@import("libmediandk.so", "mock_released")
+function released(): i32;
+
+function main(): i32 {
+  let config = video.Config { codec: video.H264, format: frame.Format { width: 16, height: 8 }, csd0: [0, 0, 0, 1, 103], csd1: [0, 0, 0, 1, 103] };
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 64 };
+  for failure in 1..5 {
+    mode(failure);
+    match (video.open(config, 123 as usize, limits)) {
+      Err(_) => {},
+      _ => {
+        return 1;
+      }
+    }
+    if (live() != 0) {
+      return 2;
+    }
+  }
+  mode(0);
+  match (video.open(config, 0 as usize, limits)) {
+    Err(frame.Header) => {},
+    _ => {
+      return 3;
+    }
+  }
+  let Ok(d) = video.open(config, 123 as usize, limits) else {
+    return 4;
+  };
+  match (d.input(0i64)) {
+    Ok(None()) => {},
+    _ => {
+      return 5;
+    }
+  }
+  match (d.input(-1i64)) {
+    Err(frame.Header) => {},
+    _ => {
+      return 6;
+    }
+  }
+  let Ok(Some(slot)) = d.input(100i64) else {
+    return 7;
+  };
+  if (slot.index != 3 || slot.capacity != 8) {
+    return 8;
+  }
+  match (d.submit(slot, [0, 1, 2, 3, 4, 5, 6, 7, 8], 0i64, 0u32)) {
+    Err(frame.Buffer) => {},
+    _ => {
+      return 9;
+    }
+  }
+  if (queued() != 0) {
+    return 10;
+  }
+  match (d.submit(slot, [1], -1i64, 0u32)) {
+    Err(frame.Header) => {},
+    _ => {
+      return 11;
+    }
+  }
+  let Ok(_) = d.submit(slot, [1, 2, 3], 123456i64, video.FLAG_KEY_FRAME) else {
+    return 12;
+  };
+  if (queued() != 1) {
+    return 13;
+  }
+  let Ok(Some(eos)) = d.input(1i64) else {
+    return 14;
+  };
+  let Ok(_) = d.submit(eos, [], 123456i64, video.FLAG_END_OF_STREAM) else {
+    return 15;
+  };
+  match (d.output(0i64)) {
+    Ok(video.Retry) => {},
+    _ => {
+      return 16;
+    }
+  }
+  let Ok(video.FormatChanged(format)) = d.output(0i64) else {
+    return 17;
+  };
+  if (format.width != 16 || format.height != 8 || format.crop_left != 2 || format.crop_right != 13 || format.crop_top != 0 || format.crop_bottom != 7 || format.color_standard != 1 || format.color_range != 0) {
+    return 18;
+  }
+  match (d.output(0i64)) {
+    Ok(video.BuffersChanged) => {},
+    _ => {
+      return 19;
+    }
+  }
+  let Ok(video.Buffer(buffer)) = d.output(0i64) else {
+    return 20;
+  };
+  if (buffer.index != 2 || buffer.offset != 7 || buffer.size != 99 || buffer.presentation_time_us != 123456i64 || buffer.flags != video.FLAG_END_OF_STREAM) {
+    return 21;
+  }
+  let Ok(_) = d.release(buffer, false) else {
+    return 22;
+  };
+  let Ok(video.Buffer(next)) = d.output(0i64) else {
+    return 23;
+  };
+  let Ok(_) = d.release_at(next, 9876543210i64) else {
+    return 24;
+  };
+  if (released() != 2) {
+    return 25;
+  }
+  let Ok(_) = d.flush() else {
+    return 26;
+  };
+  match (d.output(0i64)) {
+    Ok(video.Retry) => {},
+    _ => {
+      return 27;
+    }
+  }
+  let Ok(_) = d.close() else {
+    return 28;
+  };
+  if (live() != 0) {
+    return 29;
+  }
+  mode(5);
+  let Ok(last) = video.open(config, 123 as usize, limits) else {
+    return 30;
+  };
+  match (last.close()) {
+    Err(frame.Platform) => {},
+    _ => {
+      return 31;
+    }
+  }
+  if (live() != 0) {
+    return 32;
+  }
+  return 0;
+}
