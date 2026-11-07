@@ -47,13 +47,16 @@ const serveSyscallsSlackPerSecond = 4
 
 func TestSelfHostServeSyscallsPerRequest(t *testing.T) {
 	cli := buildNativeSelfHostCLI(t)
-	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(port, serveSyscallsRounds)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(0, serveSyscallsRounds)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tr := traceSyscalls(t, exec.Command(cli.nativeBinary(t, src, "FERN_STRICT_IR=1")))
-	get := e2eharness.KeepAliveGET(t, fmt.Sprintf("127.0.0.1:%d", port))
+	cmd := exec.Command(cli.nativeBinary(t, src, "FERN_STRICT_IR=1"))
+	ln := e2eharness.ListenInherited(t)
+	ln.Hand(cmd)
+	tr := traceSyscalls(t, cmd)
+	ln.Close()
+	get := e2eharness.KeepAliveGET(t, ln.Addr())
 	for i := 0; i < serveSyscallsWarm; i++ {
 		get("/")
 	}
@@ -101,15 +104,17 @@ func TestSelfHostServeSyscallsPerRequestTwoFetch(t *testing.T) {
 		io.WriteString(w, "upstream")
 	}))
 	t.Cleanup(up.Close)
-	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(port, serveSyscallsRounds)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(0, serveSyscallsRounds)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(cli.nativeBinary(t, src, "FERN_STRICT_IR=1"))
 	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String(), "no_proxy=")
+	ln := e2eharness.ListenInherited(t)
+	ln.Hand(cmd)
 	tr := traceSyscalls(t, cmd)
-	get := e2eharness.KeepAliveGET(t, fmt.Sprintf("127.0.0.1:%d", port))
+	ln.Close()
+	get := e2eharness.KeepAliveGET(t, ln.Addr())
 	for i := 0; i < serveSyscallsWarm; i++ {
 		get("/")
 	}

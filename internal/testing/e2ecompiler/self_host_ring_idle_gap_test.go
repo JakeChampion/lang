@@ -3,7 +3,6 @@
 package e2ecompiler
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,13 +17,16 @@ func TestSelfHostServeRingIdleGap(t *testing.T) {
 	t.Setenv("FERN_IO_URING", "1")
 	const rounds = 64
 	cli := buildNativeSelfHostCLI(t)
-	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(port, rounds)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(0, rounds)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tr := traceSyscalls(t, exec.Command(cli.nativeBinary(t, src, "FERN_STRICT_IR=1")))
-	get := e2eharness.KeepAliveGET(t, fmt.Sprintf("127.0.0.1:%d", port))
+	cmd := exec.Command(cli.nativeBinary(t, src, "FERN_STRICT_IR=1"))
+	ln := e2eharness.ListenInherited(t)
+	ln.Hand(cmd)
+	tr := traceSyscalls(t, cmd)
+	ln.Close()
+	get := e2eharness.KeepAliveGET(t, ln.Addr())
 	for i := 0; i < rounds; i++ {
 		get("/")
 	}
