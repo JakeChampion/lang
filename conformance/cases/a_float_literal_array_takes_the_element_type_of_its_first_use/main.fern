@@ -1,0 +1,16 @@
+function half(x: f32): f32 {
+  return x / 2.0;
+}
+
+function main(): i32 {
+  let z = [1.5, 2.0];
+  let f: f32 = 3.0;
+  let w = z.append(f);
+  let m: f32 = w[2];
+  let ys = [4.0, 8.0];
+  if (m + half(ys[1]) != 7.0) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}
