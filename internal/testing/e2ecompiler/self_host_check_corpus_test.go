@@ -38,11 +38,12 @@ func checkAgreesWithGo(t *testing.T, progs []string, least int) {
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
 			path := e2eharness.RepoPath(rel)
-			goOut, goOK := checkVerdict(exec.Command(oracle, "-check", path))
+			goOut, goExit := e2eharness.CheckVerdict(t, oracle, path)
+			goOK := goExit == 0
 			shOut, shOK := checkVerdict(exec.Command(cli, "-check", path, root))
 			if goOK != shOK {
 				t.Errorf("the Go checker %s it and the self-host %s it\n--- Go ---\n%s--- self-host ---\n%s",
-					verdictWord(goOK), verdictWord(shOK), goOut, shOut)
+					verdictWord(goOK), verdictWord(shOK), string(goOut), shOut)
 			}
 		})
 	}
