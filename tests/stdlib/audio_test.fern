@@ -1,0 +1,322 @@
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/audio/wav";
+import "std/audio/qoa";
+import "std/audio/flac";
+import "std/hash/crc32";
+import "std/hex";
+import "std/test";
+import "audio_vectors";
+
+function sum(samples: [i32]): u32 {
+  let bytes: u8[] = [];
+  for s in samples {
+    bytes = wire.put_le(bytes, s as u64, 4);
+  }
+  return crc32.new().update(bytes).finish();
+}
+
+function signal(frames: i32, cc: i32): i32[] {
+  let x = 42u32;
+  let samples: i32[] = [];
+  for i in 0..frames * cc {
+    x = x * 1664525u32 + 1013904223u32;
+    let v = (x >> 16) as i32 - 32768;
+    if (i % 7 < 3) {
+      v = i * 31 % 65536 - 32768;
+    }
+    if (i % 11 == 0) {
+      v = 0;
+    }
+    samples = samples.append(v);
+  }
+  return samples;
+}
+
+function qoa_reference(): test.TestOutcome {
+  for v in audio_vectors.qoas() {
+    let format = pcm.Format { sample_rate: 48000, channels: v.channels, bits_per_sample: 16 };
+    let Ok(encoded) = qoa.encode(signal(v.frames, v.channels), format, pcm.default_limits()) else {
+      return test.fail("QOA encode");
+    };
+    if (crc32.new().update(encoded).finish() != v.encoded_crc) {
+      return test.fail("QOA reference encoder");
+    }
+    let Ok(decoded) = qoa.decode(encoded, pcm.default_limits()) else {
+      return test.fail("QOA decode");
+    };
+    if (sum(decoded.samples) != v.decoded_crc || decoded.format != format) {
+      return test.fail("QOA reference decoder");
+    }
+    let Ok(frame) = qoa.decode_frame_into(encoded, 8, pcm.zeros(5120 * v.channels), pcm.default_limits()) else {
+      return test.fail("QOA buffer reuse");
+    };
+    let count = frame.frames * v.channels;
+    if (sum(frame.samples[:count]) != sum(decoded.samples[:count])) {
+      return test.fail("QOA frame output");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function flac_reference(): test.TestOutcome {
+  for v in audio_vectors.invalid_flacs() {
+    let Ok(bytes) = hex.decode(v) else {
+      return test.fail("invalid FLAC fixture");
+    };
+    match (flac.decode(bytes, pcm.default_limits())) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("forbidden FLAC subframe");
+      }
+    }
+  }
+  for v in audio_vectors.flacs() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("FLAC fixture");
+    };
+    let Ok(decoded) = flac.decode(bytes, pcm.default_limits()) else {
+      return test.fail("FLAC " + v.name);
+    };
+    if (decoded.samples.len() != v.count || sum(decoded.samples) != v.crc) {
+      return test.fail("FLAC PCM " + v.name);
+    }
+    let Ok(unknown) = flac.decode(bytes.with(21, bytes[21] & 240u8).with(22, 0).with(23, 0).with(24, 0).with(25, 0), pcm.default_limits()) else {
+      return test.fail("FLAC unknown total " + v.name);
+    };
+    if (sum(unknown.samples) != v.crc) {
+      return test.fail("FLAC unknown total samples");
+    }
+    let Ok(header) = flac.inspect(bytes, pcm.default_limits()) else {
+      return test.fail("FLAC inspect");
+    };
+    let at = header.data_offset;
+    let offset = 0;
+    while (at < bytes.len()) {
+      let Ok(frame) = flac.decode_frame_into(bytes, at, header, pcm.zeros(v.count + 1), pcm.default_limits()) else {
+        return test.fail("FLAC buffer reuse");
+      };
+      let count = frame.frames * frame.format.channels;
+      if (sum(frame.samples[:count]) != sum(decoded.samples[offset:offset + count])) {
+        return test.fail("FLAC frame " + v.name);
+      }
+      offset += count;
+      at += frame.bytes_read;
+    }
+    if (offset != v.count || at != bytes.len()) {
+      return test.fail("FLAC frame chain");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function wave_pcm(): test.TestOutcome {
+  for bits in [8, 16, 24, 32] {
+    for cc in [1, 2, 8] {
+      let samples: i32[] = [];
+      for i in 0..21 * cc {
+        let v = if (i % 3 == 0) { -((1i64 << (bits - 1) as i64) as i32) } else if (i % 3 == 1) { ((1i64 << (bits - 1) as i64) - 1i64) as i32 } else { 0 };
+        samples = samples.append(v);
+      }
+      let format = pcm.Format { sample_rate: 44100, channels: cc, bits_per_sample: bits };
+      let Ok(bytes) = wav.encode(samples, format, pcm.default_limits()) else {
+        return test.fail("WAVE encode");
+      };
+      let Ok(decoded) = wav.decode(bytes, pcm.default_limits()) else {
+        return test.fail("WAVE decode");
+      };
+      if (decoded.format != format || sum(decoded.samples) != sum(samples)) {
+        return test.fail("WAVE samples");
+      }
+      let limits = pcm.Limits { max_input_bytes: 20000, max_samples: 2 * cc };
+      let Ok(range) = wav.decode_range(bytes, 3, 2, limits) else {
+        return test.fail("WAVE range");
+      };
+      if (sum(range.samples) != sum(samples[3 * cc:5 * cc])) {
+        return test.fail("WAVE range samples");
+      }
+      match (wav.decode(bytes, limits)) {
+        Ok(_) => {
+          return test.fail("WAVE allocation limit");
+        },
+        Err(_) => {}
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function wave_bytes(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 8000, channels: 1, bits_per_sample: 8 };
+  let Ok(bytes) = wav.encode([-128, 0, 127], format, pcm.default_limits()) else {
+    return test.fail("WAVE 8-bit");
+  };
+  if (bytes.len() != 48 || bytes[44] != 0 || bytes[45] != 128 || bytes[46] != 255 || bytes[47] != 0 || wire.le(bytes, 4, 4) != 40u64) {
+    return test.fail("WAVE disk layout");
+  }
+  for n in 0..bytes.len() {
+    match (wav.decode(bytes[:n], pcm.default_limits())) {
+      Ok(_) => {
+        return test.fail("WAVE truncation");
+      },
+      Err(_) => {}
+    }
+  }
+  let bad = bytes.with(32, 3);
+  match (wav.decode(bad, pcm.default_limits())) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("WAVE block alignment");
+    }
+  }
+  match (wav.encode([128], format, pcm.default_limits())) {
+    Err(pcm.Sample) => {},
+    _ => {
+      return test.fail("WAVE sample bounds");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function corrupt_input(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+  let Ok(bytes) = qoa.encode([100], format, pcm.default_limits()) else {
+    return test.fail("QOA fixture");
+  };
+  for n in 0..bytes.len() {
+    match (qoa.decode(bytes[:n], pcm.default_limits())) {
+      Ok(_) => {
+        return test.fail("QOA truncation");
+      },
+      Err(_) => {}
+    }
+  }
+  for changed in [bytes.with(4, 127), bytes.with(8, 0), bytes.with(13, 0), bytes.with(15, 0), bytes.append(0)] {
+    match (qoa.decode(changed, pcm.default_limits())) {
+      Ok(_) => {
+        return test.fail("QOA malformed frame");
+      },
+      Err(_) => {}
+    }
+  }
+  let v = audio_vectors.flacs()[0];
+  let Ok(flac_bytes) = hex.decode(v.bytes) else {
+    return test.fail("FLAC fixture");
+  };
+  for n in 0..flac_bytes.len() {
+    match (flac.decode(flac_bytes[:n], pcm.default_limits())) {
+      Ok(_) => {
+        return test.fail("FLAC truncation");
+      },
+      Err(_) => {}
+    }
+  }
+  let last = flac_bytes.len() - 1;
+  match (flac.decode(flac_bytes.with(last, flac_bytes[last] ^ 1u8), pcm.default_limits())) {
+    Err(pcm.Checksum) => {},
+    _ => {
+      return test.fail("FLAC CRC-16");
+    }
+  }
+  match (flac.decode(flac_bytes.with(26, flac_bytes[26] ^ 1u8), pcm.default_limits())) {
+    Err(pcm.Checksum) => {},
+    _ => {
+      return test.fail("FLAC MD5");
+    }
+  }
+  match (flac.decode(flac_bytes.with(49, flac_bytes[49] ^ 1u8), pcm.default_limits())) {
+    Err(pcm.Checksum) => {},
+    _ => {
+      return test.fail("FLAC CRC-8");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function wave_extensible(): test.TestOutcome {
+  let Ok(bytes) = hex.decode("524946464e000000574156454a554e4b010000007800666d742028000000feff020080bb000000ee02000400100016001000030000000100000000001000800000aa00389b7164617461080000000080ff7f0100ffff") else {
+    return test.fail("extensible fixture");
+  };
+  let Ok(block) = wav.decode(bytes, pcm.default_limits()) else {
+    return test.fail("extensible PCM and odd metadata chunk");
+  };
+  if (block.format.channels != 2 || block.format.bits_per_sample != 16 || block.format.sample_rate != 48000 || sum(block.samples) != sum([-32768, 32767, 1, -1])) {
+    return test.fail("extensible samples");
+  }
+  match (wav.decode(bytes.with(48, 15), pcm.default_limits())) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("valid bit depth");
+    }
+  }
+  match (wav.decode(bytes.with(54, 3), pcm.default_limits())) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("subformat GUID");
+    }
+  }
+  match (wav.decode(bytes.with(50, 1), pcm.default_limits())) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("channel mask");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function limits(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+  let Ok(bytes) = qoa.encode([100], format, pcm.default_limits()) else {
+    return test.fail("fixture");
+  };
+  let tiny = pcm.Limits { max_input_bytes: 100, max_samples: 0 };
+  match (qoa.decode(bytes, tiny)) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("QOA sample limit");
+    }
+  }
+  match (qoa.decode_frame_into(bytes, 8, [], pcm.default_limits())) {
+    Err(pcm.Buffer) => {},
+    _ => {
+      return test.fail("QOA buffer limit");
+    }
+  }
+  match (qoa.decode(bytes, pcm.Limits { max_input_bytes: -1, max_samples: -1 })) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("negative limits");
+    }
+  }
+  let Ok(flac_bytes) = hex.decode(audio_vectors.flacs()[0].bytes) else {
+    return test.fail("FLAC fixture");
+  };
+  match (flac.decode(flac_bytes, tiny)) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("FLAC sample limit");
+    }
+  }
+  let Ok(h) = flac.inspect(flac_bytes, pcm.default_limits()) else {
+    return test.fail("FLAC inspect");
+  };
+  match (flac.decode_frame_into(flac_bytes, h.data_offset, h, [], pcm.default_limits())) {
+    Err(pcm.Buffer) => {},
+    _ => {
+      return test.fail("FLAC buffer limit");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let r = test.new("audio codecs");
+  r = r.it("QOA matches the independent reference codec", qoa_reference);
+  r = r.it("FLAC matches independent PCM vectors", flac_reference);
+  r = r.it("WAVE PCM depths, channels, and ranges", wave_pcm);
+  r = r.it("WAVE byte layout and malformed input", wave_bytes);
+  r = r.it("truncation, checksums, and malformed frames", corrupt_input);
+  r = r.it("WAVE extensible PCM and metadata chunks", wave_extensible);
+  r = r.it("allocation and buffer limits", limits);
+  return r.finish();
+}

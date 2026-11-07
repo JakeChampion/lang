@@ -1,0 +1,19 @@
+import "std/audio/qoa";
+import "std/audio/pcm";
+import "std/io";
+
+function main(): i32 {
+  let a = args();
+  let Ok(input) = io.read_input_bytes(a[1]) else {
+    return 1;
+  };
+  let total = 0;
+  for _ in 0..1000 {
+    let Ok(block) = qoa.decode(input, pcm.default_limits()) else {
+      return 2;
+    };
+    total += block.samples[0] + block.samples[block.samples.len() - 1];
+  }
+  print(total.to_string());
+  return 0;
+}

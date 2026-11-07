@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+fern_audio_compiler=${FERN:-$(./bootstrap/bootstrap.sh stage0)}
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-linux ;;
+  'Linux aarch64') target=arm64-linux ;;
+  'Darwin arm64') target=arm64-darwin ;;
+  *) echo 'unsupported host' >&2; exit 1 ;;
+esac
+mkdir -p build/audio
+for suite in audio opus; do
+  source="tests/stdlib/${suite}_test.fern"
+  "$fern_audio_compiler" -check "$source" internal/stdlib
+  "$fern_audio_compiler" -target "$target" -sanitize -o "build/audio/$suite" "$source" internal/stdlib
+  "build/audio/$suite"
+  "$fern_audio_compiler" -target wasm32-wasi -o "build/audio/$suite.wasm" "$source" internal/stdlib
+  wasmtime run "build/audio/$suite.wasm"
+  "$fern_audio_compiler" -target arm64-android -shared -export main -o "build/audio/$suite.so" "$source" internal/stdlib
+ done
