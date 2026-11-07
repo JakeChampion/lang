@@ -524,6 +524,7 @@ is the number of slots it leaves.
 | `worker_unmap` | 496 | 3 | 1 |
 | `send_root` | 497 | 1 | 1 |
 | `writer_set_times` | 498 | 6 | 1 |
+| `boot_info` | 499 | 0 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

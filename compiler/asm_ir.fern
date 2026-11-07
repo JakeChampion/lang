@@ -8466,7 +8466,12 @@ function ssa_port(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 }
 
 // A privileged op. x86-64 has hlt for wfi, and no equivalent of hvc or smc.
+// boot_info reads the %ebx that the reset entry saved.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "dev_boot_info") {
+    s = s.write("    movq __fern_boot_info(%rip), %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  }
   if (ins.str != "dev_wfi") {
     ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
   }
@@ -12170,23 +12175,23 @@ function reset_stack_bytes(): i64 {
 // The page tables and the GDT of the reset entry: a PML4, a PDPT, four page
 // directories and a GDT page, below the stack.
 function reset_tables(s: asmcore.EmitState): i64 {
-  return s.ram_base + s.ram_size - reset_stack_bytes() - 7i64 * 4096i64 & -4096i64;
+  return s.ram_base + s.ram_size - reset_stack_bytes() - 7i64 * 4096i64;
 }
 
 // A VMM enters _start through the PVH note in 32-bit protected mode with
-// paging off. The 32-bit code identity-maps 4 GiB with 2 MiB pages, enables
+// paging off, and with the address of its start info in %ebx. The 32-bit code identity-maps 4 GiB with 2 MiB pages, enables
 // SSE, AVX and long mode, and returns far to __fern_start64.
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
-  let top = s.ram_base + s.ram_size & -16i64;
+  let top = s.ram_base + s.ram_size;
   let blob = reset_trampoline(reset_tables(s) as i32, top as i32);
-  s = s.write("_start:\n");
+  s = s.write("    .section .data\n    .align 8\n__fern_boot_info:\n    .quad 0\n    .text\n_start:\n");
   let i = 0;
   while (i < blob.len()) {
     let w = blob[i] | blob[i + 1] << 8 | blob[i + 2] << 16 | blob[i + 3] << 24;
     s = s.write("    .long " + util.i32_to_string(w) + "\n");
     i += 4;
   }
-  s = s.write("__fern_start64:\n    movabsq $" + util.i64_to_string(top) + ", %rax\n    movq %rax, %rsp\n");
+  s = s.write("__fern_start64:\n    movl %ebx, %eax\n    movq %rax, __fern_boot_info(%rip)\n    movabsq $" + util.i64_to_string(top) + ", %rax\n    movq %rax, %rsp\n");
   s = s.write("    leaq __fern_bss_start(%rip), %rdi\n    leaq __fern_bss_end(%rip), %rcx\n    subq %rdi, %rcx\n    xorl %eax, %eax\n    rep stosb\n");
   s = s.write("    leaq __fern_bss_end(%rip), %rdi\n    addq $15, %rdi\n    andq $-16, %rdi\n");
   s = s.write("    movabsq $" + util.i64_to_string(reset_tables(s)) + ", %rsi\n    subq %rdi, %rsi\n    call __fern_heap_init\n");

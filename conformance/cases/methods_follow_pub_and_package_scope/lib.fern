@@ -1,0 +1,11 @@
+function (n: i32) inner(): i32 {
+    return n + 1;
+}
+
+pub(package) function (n: i32) sibling(): i32 {
+    return n.inner() * 10;
+}
+
+pub function (n: i32) everyone(): i32 {
+    return n.inner();
+}

@@ -1,10 +1,10 @@
-# Network-order integer fields
+# Fixed-width integer fields
 
-This module reads and writes fixed-width integers in network byte order.
+This module reads and writes fixed-width integers in network byte order and in little-endian order.
 
 ## Model
 
-The byte append helpers construct owned buffers. Integer fields use network byte order, with the most significant byte first.
+The byte append helpers construct owned buffers. A `_be` function uses network byte order, with the most significant byte first. A `_le` function puts the least significant byte first, as x86-64, arm64 and most boot protocols do.
 
 ## Contracts
 
@@ -19,6 +19,9 @@ function main(): i32 {
   let bytes = binary.append_u32_be([], 0x01020304 as u32);
   let Ok(value) = binary.read_u32_be(bytes, 0) else { return 1; };
   if (value != 0x01020304 as u32 || bytes[0] != 1 as u8) { return 2; }
+  let little = binary.append_u32_le([], 0x01020304 as u32);
+  let Ok(same) = binary.read_u32_le(little, 0) else { return 3; };
+  if (same != value || little[0] != 4 as u8) { return 4; }
   return 0;
 }
 ```
@@ -46,7 +49,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module reads and writes fixed-width integers in network byte order.
+// This module reads and writes fixed-width integers in network byte order and
+// in little-endian order.
 ```
 
 ### `dependencies 2`
@@ -121,6 +125,35 @@ pub function read_u64_be(input: [u8], offset: i32): Result[u64, DecodeError] {
   }
   let high: u32 = read_u32_be(input, offset)?;
   let low: u32 = read_u32_be(input, offset + 4)?;
+  return Ok(high as u64 << 32 | low as u64);
+}
+
+pub function append_u32_le(own output: u8[], value: u32): u8[] {
+  output = output.append((value & 255) as u8);
+  output = output.append((value >> 8 & 255) as u8);
+  output = output.append((value >> 16 & 255) as u8);
+  return output.append((value >> 24) as u8);
+}
+
+pub function append_u64_le(own output: u8[], value: u64): u8[] {
+  output = append_u32_le(output, value as u32);
+  return append_u32_le(output, (value >> 32) as u32);
+}
+
+pub function read_u32_le(input: [u8], offset: i32): Result[u32, DecodeError] {
+  if (offset < 0 || input.len() < 4 || offset > input.len() - 4) {
+    return Err(OutOfBounds);
+  }
+  return Ok(input[offset + 3] as u32 << 24 | input[offset + 2] as u32 << 16
+    | input[offset + 1] as u32 << 8 | input[offset] as u32);
+}
+
+pub function read_u64_le(input: [u8], offset: i32): Result[u64, DecodeError] {
+  if (offset < 0 || input.len() < 8 || offset > input.len() - 8) {
+    return Err(OutOfBounds);
+  }
+  let low: u32 = read_u32_le(input, offset)?;
+  let high: u32 = read_u32_le(input, offset + 4)?;
   return Ok(high as u64 << 32 | low as u64);
 }
 ```

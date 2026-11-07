@@ -176,7 +176,16 @@ pub function scope_enums(mod: parser.Module, prefixes: string[], packages: strin
     }
     enums = enums.append(parser.EnumDecl { ...en, visible_from: viewers });
   }
-  return parser.Module { ...mod, enums: enums };
+  let sights: parser.ModuleSight[] = [];
+  for sg in mod.sights {
+    let at = index.find(sg.module);
+    if (at >= 0 && at < packages.len()) {
+      sights = sights.append(parser.ModuleSight { ...sg, package: packages[at] });
+    } else {
+      sights = sights.append(sg);
+    }
+  }
+  return parser.Module { ...mod, enums: enums, sights: sights };
 }
 
 function package_keys(loaded: flatten.LoadedModule[]): string[] {

@@ -34,7 +34,9 @@ function main(): i32 {
     report("ldr_w", ".text\n    ldr w1, [x1, :lo12:wide]\n" + data);
     report("ldr_pageoff", ".text\n    ldr x16, [x16, quad@PAGEOFF]\n" + data);
     report("ldr_odd", ".text\n    ldr x0, [x0, :lo12:odd]\n" + data);
-    report("str_lo12", ".text\n    str x0, [x1, :lo12:quad]\n" + data);
+    report("str_x", ".text\n    str x0, [x1, :lo12:quad]\n" + data);
+    report("str_w", ".text\n    str w1, [x1, :lo12:wide]\n" + data);
+    report("add_pageoff_in_sub", ".text\n    sub x0, x1, :lo12:quad\n" + data);
     report("ldr_bad_mem", ".text\n    ldr x0, :lo12:quad\n" + data);
     report("ldr_empty_mem", ".text\n    ldr x0, []\n    ldr x0, [x0, :lo12:quad]\n" + data);
     report("ldr_missing", ".text\n    ldr :lo12:quad\n" + data);
@@ -43,8 +45,8 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostArm64PageOffsetLoads pins the low-12 load of a symbol in the
-// in-process assembler. The offset is the symbol's page offset scaled by the
+// TestSelfHostArm64PageOffsetLoads pins the low-12 load and store of a symbol
+// in the in-process assembler. The offset is the symbol's page offset scaled by the
 // access size, a misaligned target is refused, and a page offset in an
 // instruction with no such fixup is refused rather than read as a number.
 func TestSelfHostArm64PageOffsetLoads(t *testing.T) {
@@ -71,7 +73,11 @@ func TestSelfHostArm64PageOffsetLoads(t *testing.T) {
 		"ldr_w 3107983393\n",
 		"ldr_pageoff 4181722640\n",
 		"ldr_odd [ldr:align:odd]\n",
-		"str_lo12 [page offset in str]\n",
+		// str x0, [x1, #8]: 0xf9000420.
+		"str_x 4177527840\n",
+		// str w1, [x1, #16]: 0xb9001021.
+		"str_w 3103789089\n",
+		"add_pageoff_in_sub [page offset in sub]\n",
 		"ldr_bad_mem [ldr:page-offset operands]\n",
 		"ldr_empty_mem [",
 		"ldr_missing [",
