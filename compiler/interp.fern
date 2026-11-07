@@ -4894,6 +4894,15 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
+  if ((b.op == "==" || b.op == "!=") && has_eq_method(lv, env.funcs, env.aliases)) {
+    let e = call_method(env.heap, lv, "eq", [rv], env.funcs, env.aliases, env.type_decls);
+    if let VBool(eb) = e {
+      if (b.op == "!=") {
+        return v_bool(!eb.v);
+      }
+    }
+    return e;
+  }
   if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") && orders_by_cmp(lv)) {
     let c = call_method(env.heap, lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
     if (is_err(c)) {
@@ -6153,6 +6162,20 @@ function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: parser.F
     i += 1;
   }
   return -1;
+}
+
+// `==` on a struct or an enum value calls an `eq` method of its type, as
+// the compiled code does, whether an impl declares it or the type itself.
+function has_eq_method(v: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {
+  if let VStruct(sv) = v {
+    for fd in funcs {
+      let base = util.base_type_name(fd.receiver_type);
+      if (fd.name == "eq" && (base == sv.type_name || variant_of_enum(v, base, aliases))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {

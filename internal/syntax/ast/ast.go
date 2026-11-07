@@ -1988,6 +1988,9 @@ type FuncDecl struct {
 	SourceFile               string
 	DeclName                 string
 	DefiningModule           string
+	// VisibleFrom holds the modules that may call a method declared without
+	// `pub`; nil when every importer may.
+	VisibleFrom map[string]bool
 }
 
 func (f *FuncDecl) BodyModule() string {
