@@ -94,7 +94,7 @@ env:
   # self-builds) measure 50 to 165 seconds each and ride the shards.
   # Gather's server and 512-participant client need CPU time together. Its
   # unchanged throughput assertions run in cli after the compiler workers.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelX86BootsOnQemu"
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelX86BootsOnQemu"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -251,7 +251,8 @@ jobs:
 
   # STDLIB SUITES. The tests/stdlib runner suites compiled by the self-host
   # compiler, one job per leg: x86-64 and arm64 (under qemu), each plain and
-  # TLS, plus the wasm leg of std/crypto and std/tls. Each measures 800 to
+  # TLS, the wasm leg of std/crypto and std/tls, and the interp leg, which runs
+  # the plain suites under the self-host interpreter. Each measures 800 to
   # 1,400 seconds, half or more of a shard worker's 28-minute budget, so no
   # weight could place one without crowding its worker (#6667); run 39091470716
   # timed out two workers that each held one of them.
@@ -263,7 +264,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [x86-64, x86-64-tls, arm64, arm64-tls, crypto-wasm]
+        leg: [x86-64, x86-64-tls, arm64, arm64-tls, crypto-wasm, interp]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -313,6 +314,15 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestE2EArm64TLS$' -test.v -test.timeout 33m
+      - name: stdlib suites under the self-host interpreter
+        if: ${{ !cancelled() && matrix.leg == 'interp' }}
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestInterp$' -test.v -test.timeout 33m
       - name: std/crypto and std/tls suites on wasm
         if: ${{ !cancelled() && matrix.leg == 'crypto-wasm' }}
         run: |
