@@ -127,7 +127,7 @@ function test_settings_screen(): test.TestOutcome {
   let server: screen.Rect = screen.server_row(W, H);
   let back: screen.Rect = screen.back_button(W, H);
   let forget: screen.Rect = screen.forget_button(W, H);
-  let v: ui.View = ui.View { ...base("SEARCHING"), title: "SETTINGS", status: "how does this phone find the other phone?", menu: Some(2), available: [true, true, true, false], known: true };
+  let v = ui.View { ...base("SEARCHING"), title: "SETTINGS", status: "how does this phone find the other phone?", menu: Some(2), available: [true, true, true, false], known: true };
   let points: i32[][] = [[chosen.x + chosen.w / 2, chosen.y + 1], [other.x + other.w / 2, other.y + 1], [back.x + back.w / 2, back.y + 1], [chosen.x + chosen.w * 85 / 100, chosen.y + chosen.h / 4], [chosen.x + chosen.w - chosen.h / 4, chosen.y + chosen.h / 2], [server.x + server.w / 2, server.y + 1], [forget.x + forget.w / 2, forget.y + 1]];
   let c: i32[] = colours("settings", v, points);
   let none: i32[] = colours("settings-none", ui.View { ...v, known: false }, [[forget.x + forget.w / 2, forget.y + 1]]);

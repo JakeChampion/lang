@@ -126,7 +126,7 @@ pub function talk_command(env: usize, thiz: usize, intent: usize, flags: i32, id
 // The notification of the service. Its TALK action talks while the app is
 // in the background, and a second tap stops.
 function notice(talking: boolean): service.Notice {
-  let n: service.Notice = service.Notice { channel: "walkie", channel_name: "Walkie-talkie", title: "Fern Walkie", text: "The walkie-talkie is on.", action: "Talk", stop: "Disconnect", unlock: true };
+  let n = service.Notice { channel: "walkie", channel_name: "Walkie-talkie", title: "Fern Walkie", text: "The walkie-talkie is on.", action: "Talk", stop: "Disconnect", unlock: true };
   if (talking) {
     return service.Notice { ...n, text: "Talking. The other phone hears you.", action: "Stop talking" };
   }
@@ -315,7 +315,7 @@ function app_main(ctx: usize): usize {
   let n: node.Node = fresh_node(notice, id_seed, pins, lan.ROLE_ANY);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, toggled: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, audio_focus: focus.new(ctx, FOCUS), listener: None, stream: None, owner_ip: None, dial_at: 0i64, room: None, asking: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
+  let first = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, toggled: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, audio_focus: focus.new(ctx, FOCUS), listener: None, stream: None, owner_ip: None, dial_at: 0i64, room: None, asking: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -441,7 +441,7 @@ function subnet_broadcast(owner: string): Option[net.IpAddr] {
 }
 
 function grouped(own s: App, g: p2p.Group): App {
-  let t: App = App { ...s, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
+  let t = App { ...s, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
   if (!g.formed) {
     log.info("walkie: no Wi-Fi Direct group");
     return App { ...t, group_broadcast: None, group_role: lan.ROLE_ANY, node: node.with_role(t.node, lan.ROLE_ANY, node_id()), drawn: "" };
