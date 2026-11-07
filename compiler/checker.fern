@@ -6642,6 +6642,14 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first_expr = joined.e;
       continue;
     }
+    if (bare_map(first) && !bare_map(et)) {
+      if let typeinfo.TypeMap(_) = et {
+        first = et;
+        first_lit = 0;
+        first_expr = a.elements[i];
+        continue;
+      }
+    }
     let scalar = scalar_numeric_join(first, et);
     if (!is_unknown(scalar) && !int_literal_tree(first_expr) && !int_literal_tree(a.elements[i])) {
       first = scalar;
@@ -10908,6 +10916,12 @@ function mx_arm_join(a: VbStore, b: VbStore): VbStore {
   }
   if let typeinfo.TypeMap(am) = a.t {
     if let typeinfo.TypeMap(bm) = b.t {
+      if (bare_map(a.t)) {
+        return b;
+      }
+      if (bare_map(b.t)) {
+        return a;
+      }
       let v = mx_arm_join(mx_map_value_store(a.e, am.value), mx_map_value_store(b.e, bm.value));
       return VbStore { t: t_map(am.key, v.t), e: mx_joined_literal(v, a.e) };
     }
@@ -29932,6 +29946,16 @@ function vb_join(a: VbStore, b: VbStore): VbStore {
           return VbStore { t: t, e: none };
         }
         return VbStore { t: t, e: a.e };
+      }
+    }
+  }
+  if let typeinfo.TypeMap(_) = a.t {
+    if let typeinfo.TypeMap(_) = b.t {
+      if (bare_map(a.t)) {
+        return b;
+      }
+      if (bare_map(b.t)) {
+        return a;
       }
     }
   }
