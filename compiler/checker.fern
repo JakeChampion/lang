@@ -31551,7 +31551,7 @@ function lit_index_demand(ix: ast.ExprIndex, want: typeinfo.Type, s: Scope, st: 
     return st;
   };
   let k = lit_id(a.elem);
-  if (k < 0 || !is_integer(want) || is_poly_int(want)) {
+  if (k < 0 || !typed_number(want)) {
     return st;
   }
   return lit_fix(st, [k], want);
@@ -31957,7 +31957,7 @@ function lit_open_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   return lit_open_fill(st, k, t_map(settled_literal(check_expr(c.args[0], s)), settled_literal(check_expr(c.args[1], s))));
 }
 
-// lit_array_receiver gives an integer-literal array local the element type of
+// lit_array_receiver gives a literal array local the element type of
 // a typed argument to `append` or `with`, as a literal takes the type of the
 // other operand of a binary operator.
 function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
@@ -31976,10 +31976,16 @@ function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     return st;
   }
   let have = check_expr(c.args[at], s);
-  if (is_integer(have) && !is_poly_int(have)) {
+  if (typed_number(have)) {
     return lit_fix(st, [k], have);
   }
   return st;
+}
+
+// typed_number is true for an integer or a float type that is not the type
+// of an untyped literal.
+function typed_number(t: typeinfo.Type): boolean {
+  return is_integer(t) && !is_poly_int(t) || is_float(t) && !is_poly_float(t);
 }
 
 // settled_literal is the type an untyped literal settles to by default.

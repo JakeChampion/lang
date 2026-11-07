@@ -1,0 +1,25 @@
+function total(xs: f32[]): f32 {
+  let t: f32 = 0.0;
+  for x in xs {
+    t += x;
+  }
+  return t;
+}
+
+function main(): i32 {
+  let appended = [1.5, 2.0];
+  let f: f32 = 3.25;
+  appended = appended.append(f);
+  let replaced = [0.5, 0.25];
+  let g: f32 = 4.0;
+  replaced = replaced.with(0, g);
+  let read = [2.5, 1.0];
+  let r: f32 = read[0];
+  let wide = [0.5, 0.25];
+  let w: f64 = wide[0] + wide[1];
+  if (total(appended) != 6.75 || total(replaced) != 4.25 || r != 2.5 || w != 0.75) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}
