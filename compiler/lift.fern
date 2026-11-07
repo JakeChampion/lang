@@ -1790,21 +1790,18 @@ pub function mfuncs_table(decls: parser.FuncDecl[], local: irtables.SigReg): MFu
   return MFuncs { decls: decls, head: head, next: next, local: local };
 }
 
-pub function mfuncs_extend(base: MFuncs, extra: parser.FuncDecl[]): MFuncs {
-  let decls = base.decls;
-  let head = base.head;
-  let next = base.next;
-  let i = 0;
-  while (i < extra.len()) {
-    let k = decls.len();
-    decls = decls.append(extra[i]);
-    next = next.append(-1);
-    let bk = util.hash_bucket(extra[i].name, head.len());
-    next = next.with(k, head[bk]);
-    head = head.with(bk, k);
-    i += 1;
+pub function mfuncs_extend(own base: MFuncs, extra: parser.FuncDecl[]): MFuncs {
+  for f in extra {
+    base = mfuncs_add(base, f);
   }
-  return MFuncs { decls: decls, head: head, next: next, local: base.local };
+  return base;
+}
+
+function mfuncs_add(own m: MFuncs, f: parser.FuncDecl): MFuncs {
+  let k = m.decls.len();
+  let bk = util.hash_bucket(f.name, m.head.len());
+  let chain = m.head[bk];
+  return MFuncs { decls: m.decls.append(f), head: m.head.with(bk, k), next: m.next.append(chain), local: m.local };
 }
 
 function lift_callee_is_typevar_passthrough(mfuncs: MFuncs, callee: string, idx: i32): boolean {
@@ -4061,6 +4058,10 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
     worklist = worklist.append(wf);
     wlcp += 1;
   }
+  // A lifted function has a name of its own, so the names and signatures of
+  // the functions lifted so far serve each later function too.
+  let lgfns = gfns;
+  let lsigs = mf;
   let wi = 0;
   while (wi < worklist.len()) {
     let fd = worklist[wi];
@@ -4085,8 +4086,6 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
       }
     }
     let cbody = fd.body;
-    let lgfns = gfns;
-    let lsigs = mf;
     let joined = 0;
     let more = true;
     while (more) {
