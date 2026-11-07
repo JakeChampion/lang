@@ -1,6 +1,6 @@
 # Audio codecs
 
-Status: initial implementation, 2026-11-07.
+Status: [reference] - Initial implementation, 2026-11-07.
 
 The codecs use Fern code on every target. They need no C library, process, or platform codec at runtime.
 The Opus packet API reuses the Fern CELT implementation.

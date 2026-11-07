@@ -236,6 +236,7 @@ which ones.
 
 | Doc | Status | What it is |
 | --- | --- | --- |
+| `AUDIO-CODECS.md` | [reference] | WAVE, FLAC, QOA and partial Opus APIs, limits and independent validation. |
 | `ARRAY-SHAPES.md` | [policy] | Normative rules for std/ndarray: a counted handle with shape, strides and offset, views, shape mismatch, and when a view materializes. |
 | `CURSOR-IDIOM.md` | [policy] | The immutable read-and-advance cursor idiom for stdlib parsers and readers. |
 | `CRASH-ONLY-SERVE.md` | [reference] | Crash-only serving in std/serve: the trap taxonomy, the supervisor with a prefork worker pool, and its test bar. |
