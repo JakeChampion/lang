@@ -1,0 +1,19 @@
+function total(xs: f32[]): f32 {
+  let sum: f32 = 0.0;
+  for x in xs {
+    sum = sum + x;
+  }
+  return sum;
+}
+
+function main(): i32 {
+  let scale: f32 = 0.5;
+  let weights = [1.5, 2.0];
+  weights = weights.append(scale);
+  let first: f32 = weights[0];
+  if (total(weights) != 4.0 || first != 1.5) {
+    return 1;
+  }
+  print("ok");
+  return 0;
+}
