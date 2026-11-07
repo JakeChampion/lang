@@ -1,0 +1,35 @@
+import "../packages/codecs/png/png";
+import "../packages/pixels/pixels";
+import "std/hex";
+import "std/i32";
+import "core/cmp";
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(input) = read_file_bytes(path) else {
+    return 1;
+  };
+  let image = match (png.decode(input, pixels.default_limits())) {
+    Ok(v) => v,
+    Err(e) => { print(f"{index} error {e.to_debug()}"); return 0; },
+  };
+  let width = image.layout.width;
+  let height = image.layout.height;
+  let channels = pixels.channels(image.layout.format);
+  let samples = hex.encode(image.data);
+  print(f"{index} ok {width} {height} {channels} {samples}");
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 2;
+  }
+  for i in 1..paths.len() {
+    let status = inspect(paths[i], i - 1);
+    if (status != 0) {
+      return status;
+    }
+  }
+  return 0;
+}

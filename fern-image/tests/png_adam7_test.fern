@@ -1,0 +1,132 @@
+import "../packages/codecs/png/png";
+import "../packages/codecs/png/provider";
+import "../packages/pipeline/pipeline";
+import "../packages/pixels/pixels";
+import "./fixtures/png_adam7" as fixtures;
+import "std/test";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function exact(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let Ok(image) = png.decode(fixture.encoded, pixels.default_limits()) else {
+      return test.fail("independent Adam7 decode");
+    };
+    if (image.layout.width != fixture.width || image.layout.height != fixture.height || pixels.channels(image.layout.format) != fixture.channels || !same(image.data, fixture.expected)) {
+      return test.fail("exact independent Adam7 pixels");
+    }
+    let Ok(encoded) = png.encode(image, 10000) else {
+      return test.fail("noninterlaced output from interlaced input");
+    };
+    let Ok(decoded) = png.decode(encoded, pixels.default_limits()) else {
+      return test.fail("interlaced input round trip");
+    };
+    if (!same(decoded.data, fixture.expected)) {
+      return test.fail("round trip samples and transparency");
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  for i in 0..fixtures.bad_count() {
+    let (input, error) = fixtures.bad(i);
+    if (!match (png.decode(input, pixels.default_limits())) { Err(e) => e == error, _ => false }) {
+      return test.fail("malformed interlaced stream category");
+    }
+  }
+  for i in [0, fixtures.count() - 1] {
+    let input = fixtures.get(i).encoded;
+    for cut in 0..input.len() {
+      if let Ok(_) = png.decode(input[:cut], pixels.default_limits()) {
+        return test.fail("truncated Adam7 prefix");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  for i in 0..fixtures.count() {
+    let fixture = fixtures.get(i);
+    let bytes = fixture.expected.len();
+    let admitted = if (bytes > fixture.filtered_bytes) { bytes } else { fixture.filtered_bytes };
+    let limits = pixels.Limits { max_pixels: fixture.width * fixture.height, max_bytes: admitted };
+    if let Err(_) = png.decode(fixture.encoded, limits) {
+      return test.fail("exact output and complete pass admission");
+    }
+    for limited in [pixels.Limits { ...limits, max_pixels: limits.max_pixels - 1 }, pixels.Limits { ...limits, max_bytes: admitted - 1 }] {
+      if (!match (png.decode(fixture.encoded, limited)) { Err(png.Limit) => true, _ => false }) {
+        return test.fail("short output or pass admission");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function row_contracts(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  let limits = pixels.default_limits();
+  let rows = png.default_row_limits();
+  if (!match (png.inspect_rows(fixture.encoded, limits, rows)) { Err(png.DecoderCodec(png.Unsupported)) => true, _ => false }
+    || !match (png.inspect_incremental_rows(fixture.encoded, limits, rows)) { Err(png.DecoderCodec(png.Unsupported)) => true, _ => false }) {
+    return test.fail("row plans reject interlace before allocation");
+  }
+  for incremental in [false, true] {
+    let opened = if (incremental) { png.open_incremental_rows(fixture.encoded, limits, rows, never) } else { png.open_rows(fixture.encoded, limits, rows, never) };
+    if (!match (opened) { Err(png.DecoderCodec(png.Unsupported)) => true, _ => false }) {
+      return test.fail("row open retains explicit interlace rejection");
+    }
+    let graph = if (incremental) { provider.incremental_source(fixture.encoded, limits, rows, pipeline.default_limits()) } else { provider.source(fixture.encoded, limits, rows, pipeline.default_limits()) };
+    if (!match (graph) { Err(pipeline.ProviderFailure(message)) => message == "PNG Unsupported", _ => false }) {
+      return test.fail("graph source retains explicit interlace rejection");
+    }
+  }
+  return test.pass();
+}
+
+function aliases(): test.TestOutcome {
+  let fixture = fixtures.get(fixtures.count() - 1);
+  let source = [99u8];
+  for byte in fixture.encoded {
+    source = source.append(byte);
+  }
+  source = source.append(88);
+  let alias = source;
+  let view = source[1:source.len() - 1];
+  let Ok(first) = png.decode(view, pixels.default_limits()) else {
+    return test.fail("borrowed interlaced view");
+  };
+  let changed = pixels.Image { ...first, data: first.data.with(0, first.data[0] + 1) };
+  let Ok(second) = png.decode(view, pixels.default_limits()) else {
+    return test.fail("independent repeated decode");
+  };
+  return test.assert_true(same(second.data, fixture.expected) && same(first.data, fixture.expected)
+    && changed.data[0] != first.data[0] && same(alias, source) && alias[0] == 99 && alias[alias.len() - 1] == 88);
+}
+
+function main(): i32 {
+  let suite = test.new("Adam7 eager PNG input");
+  suite = suite.it("independent pixels and noninterlaced round trips", exact);
+  suite = suite.it("bad pass filters, lengths, palettes and prefixes", malformed);
+  suite = suite.it("exact pixel, output and total pass limits", budgets);
+  suite = suite.it("row and graph APIs preserve bounded-memory contracts", row_contracts);
+  suite = suite.it("borrowed views, output aliases and independent calls", aliases);
+  return suite.finish();
+}

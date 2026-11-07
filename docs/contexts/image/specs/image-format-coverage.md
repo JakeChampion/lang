@@ -15,7 +15,7 @@ The [PNG third edition](https://www.w3.org/TR/2025/REC-png-3-20250624/) defines 
 | --- | --- | --- |
 | Sample representation | RGB8/RGBA8 output, packed grayscale and indexed input | Sixteen-bit precision and corresponding output modes |
 | Grayscale | Decode at depths 1/2/4/8, grayscale-alpha8 | Sixteen-bit input and grayscale output options |
-| Reconstruction | Five filters, noninterlaced input, packed sample expansion | Adam7 and wider output modes and filter selection |
+| Reconstruction | Five filters, eager Adam7 and noninterlaced input, packed sample expansion | Adam7 row/progressive contracts, wider output modes and filter selection |
 | Transparency | Explicit alpha, palette alpha and grayscale/RGB keys | Complete precision and output options |
 | Color | Restricted admission | Standard color declarations, profiles and HDR interpretation |
 | Metadata | Most data is discarded or rejected | Defined ancillary chunks and explicit preservation policies |
