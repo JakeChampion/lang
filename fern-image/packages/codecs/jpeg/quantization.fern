@@ -1,0 +1,50 @@
+import "std/f64";
+import "core/cmp";
+import "./coefficient_order";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum QuantizationError { Shape, Quantizer, NonFinite, Coefficient, Cancelled }
+
+function quantized(coefficient: f64, step: u8): Result[i32, QuantizationError] {
+  if (step == 0) {
+    return Err(QuantizationError.Quantizer);
+  }
+  if (!coefficient.is_finite()) {
+    return Err(QuantizationError.NonFinite);
+  }
+  let quotient = coefficient / (step as f64);
+  let magnitude = quotient.abs();
+  let integer = magnitude.floor();
+  // Separate the fraction to preserve representable values just below a tie.
+  let rounded = integer + (if (magnitude - integer >= 0.5) { 1.0 } else { 0.0 });
+  let signed = if (quotient < 0.0) { -rounded } else { rounded };
+  if (signed < -32768.0 || signed > 32767.0) {
+    return Err(QuantizationError.Coefficient);
+  }
+  return Ok(signed as i32);
+}
+
+// Natural-order coefficients and transmitted-order quantizers, as in IDCT.
+pub function quantize(coefficients: [f64], quantizers: [u8], cancelled: () => boolean): Result[i32[], QuantizationError] {
+  if (coefficients.len() != 64 || quantizers.len() != 64) {
+    return Err(QuantizationError.Shape);
+  }
+  if (cancelled()) {
+    return Err(QuantizationError.Cancelled);
+  }
+  let output: i32[] = [];
+  for i in 0..64 {
+    output = output.append(0);
+  }
+  for i in 0..64 {
+    if (i % 8 == 0 && cancelled()) {
+      return Err(QuantizationError.Cancelled);
+    }
+    let natural = coefficient_order.ZIGZAG[i];
+    output = output.with(natural, quantized(coefficients[natural], quantizers[i])?);
+  }
+  if (cancelled()) {
+    return Err(QuantizationError.Cancelled);
+  }
+  return Ok(output);
+}

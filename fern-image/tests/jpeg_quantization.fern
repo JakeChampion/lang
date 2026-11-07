@@ -1,0 +1,61 @@
+import "../packages/codecs/jpeg/quantization";
+import "std/binary";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function error_name(error: quantization.QuantizationError): string {
+  return match (error) {
+    quantization.Shape => "Shape", quantization.Quantizer => "Quantizer",
+    quantization.NonFinite => "NonFinite", quantization.Coefficient => "Coefficient",
+    quantization.Cancelled => "Cancelled",
+  };
+}
+
+function emit_case(path: string): i32 {
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (data.len() != 576) {
+    return 3;
+  }
+  let coefficients: f64[] = [];
+  let quantizers: u8[] = [];
+  for i in 0..64 {
+    let Ok(bits) = binary.read_u64_be(data, i * 8) else {
+      return 4;
+    };
+    coefficients = coefficients.append(f64_from_bits(bits as i64));
+    quantizers = quantizers.append(data[512 + i]);
+  }
+  let line = path;
+  match (quantization.quantize(coefficients, quantizers, never)) {
+    Ok(output) => {
+      line += " ok";
+      for value in output {
+        line += f" {value}";
+      }
+    },
+    Err(error) => {
+      line += " error " + error_name(error);
+    }
+  }
+  print(line);
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit_case(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

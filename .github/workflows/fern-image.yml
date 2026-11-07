@@ -84,6 +84,21 @@ jobs:
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-idct.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-dct.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_quantization_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-quantization.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: sudo apt-get update && sudo apt-get install -y libjpeg-dev pkg-config
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_entropy_writer_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-entropy-writer.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-frame-writer.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_grayscale_test.py
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-grayscale.sh
         env:
@@ -206,6 +221,12 @@ jobs:
         with:
           name: image-jpeg-idct
           path: fern-image/build/jpeg-idct-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-dct-*.json') != ''
+        with:
+          name: image-jpeg-dct
+          path: fern-image/build/jpeg-dct-*.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && hashFiles('fern-image/build/jpeg-grayscale-*.json') != ''
@@ -335,6 +356,12 @@ jobs:
           path: fern-image/build/icc-quadratic-inverse-*.json
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-quantization-*.json') != ''
+        with:
+          name: image-jpeg-quantization
+          path: fern-image/build/jpeg-quantization-*.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && hashFiles('fern-image/build/icc-inverse-*.json') != ''
         with:
