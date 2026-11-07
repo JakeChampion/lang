@@ -235,10 +235,11 @@ Keep the annotation in these cases:
 - The local must stay `i32` and a later use can widen it. An integer
   literal settles from its uses: after `let b = 0;`, the shift `v >> b` with
   an `i64` value makes `b` an `i64`.
-- The local holds a variant, and the code uses it as its sum type:
-  `let e: ast.Expr = ast.ExprIdent { ... };`. Without the annotation, the
-  local has the variant type, and a later assignment of another variant is
-  an error.
+- The local holds a member struct of a `type A | B` union, and the code uses
+  it as the union: `let e: ast.Expr = ast.ExprIdent { ... };`. Without the
+  annotation, the local has the struct type, and a later assignment of
+  another member is an error. An `enum` variant does not need this: the
+  local has the enum type.
 - The initializer is an empty collection: `let out: string[] = [];`.
 - The initializer is `None`, `Ok(…)` or `Err(…)` and the other half of the
   type is not clear.

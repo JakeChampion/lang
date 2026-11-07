@@ -23,7 +23,8 @@ Keep a blank line between that introduction and the code or declaration document
 ## Imports and namespaces
 
 `std/` contains application libraries such as text processing, codecs, files, networking, and time.
-`core/` contains foundations such as comparison traits, maps, iterators, and big integers.
+`core/` contains foundations such as comparison traits, maps, iterators, and the error trait.
+Big integers are in `std/bigint`.
 Both namespaces have public APIs for application code.
 
 Module function names omit the module name prefix: use `hex.encode` and `uuid.v4`.
@@ -52,7 +53,7 @@ function main(): i32 {
 }
 ```
 
-The numeric import supplies the display contract used by `print` in this example.
+`print` takes a number with no import.
 Built-in types such as `Option` and `Result` need no import, but their library methods do.
 
 ## Values and collections
