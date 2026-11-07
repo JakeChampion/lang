@@ -84,7 +84,7 @@ costs a silent failure on the first target that lacks it.
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
 | `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption |
 | `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
-| `privileged` | `__wfi`, `__hvc`, `__smc`, `__boot_info`, `__sysreg_read`, `__sysreg_write`, `__cache_clean`, `__cache_flush`, `__tlb_flush`, `__tlb_flush_all`, `__breakpoint`, `__port_in8` … `__port_out32` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
+| `privileged` | `__wfi`, `__hvc`, `__smc`, `__boot_info`, `__sysreg_read`, `__sysreg_write`, `__cache_clean`, `__cache_flush`, `__tlb_flush`, `__tlb_flush_all`, `__breakpoint`, `__irq_mask`, `__irq_unmask`, `__irq_wait`, `__irq_pending`, `__port_in8` … `__port_out32` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
 | `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |
 
 ### Core
@@ -728,6 +728,11 @@ only honest thing left. `__fern_report` stays defined, because call sites branch
 Only its body changes, and the backtrace code is not emitted, because nothing can write
 it. A dynamic dispatch with no matching arm also traps, for the same reason.
 
+A board can give `exit` a body with an `exit` provider (below). Then `exit(code)` calls
+the provider before the trap, and a kernel's reset entry calls it with the result of
+`main`. A `FERN_LEAKCHECK` build prints its census first, through the `log` provider,
+so the census of a kernel image reads as it does on a host.
+
 ### The heap is handed in, not acquired
 
 A hostless target cannot `mmap` a region, and with no MMU may have no address space to
@@ -777,14 +782,18 @@ The program names its board with an import, as a TamaGo program does. The rule:
 - **The E066 gate grants each capability that a provider implements**, in addition to
   the descriptor set (`platforms.provided` in `compiler/platforms.fern`,
   `platforms.Provided` in Go).
-- **Only `log` takes a provider.** Its signature is `(data: usize, len: i32): void`. The
-  provider gets an address and a length, not a string, so the call changes no
-  reference count.
+- **`log` and `exit` take providers.** A `log` provider has the signature
+  `(data: usize, len: i32): void`. It gets an address and a length, not a string, so
+  the call changes no reference count. An `exit` provider has the signature
+  `(code: i32): void`. It ends the run of the machine: a qemu-virt board calls PSCI
+  `SYSTEM_OFF`, and a qemu microvm board writes the `isa-debug-exit` port.
 - **E101** refuses a capability that takes no provider, a provider with a different
   signature, and two providers of one capability.
 - **The target's own implementation wins.** On a target that grants the capability, the
   provider is an ordinary function. One board module can thus also compile for a hosted
-  test.
+  test. `exit` is core, so its rule is the entry shape: a process exits through its
+  kernel, and the `exit` provider serves a target whose entry is not a process
+  (`platforms.provider_used`, `platforms.ProviderUsed`).
 
 On a target that does not grant `log`, the backend writes `__fern_print_str` and
 `__fern_eprint_str` as short stubs. Each stub passes the bytes and the length of the
@@ -816,7 +825,7 @@ Today: **58 of 89 modules are core-safe.** The table classifies only the top-lev
 modules. Nested modules such as `http/*` and `crypto/*` are not in it (#14400). Two results
 worth knowing:
 
-- **`std/test` reaches 13 host capabilities**, `tcp`, `reactor` and `ktls` among them. It
+- **`std/test` reaches 14 host capabilities**, `tcp`, `reactor` and `ktls` among them. It
   imports `std/http` for its HTTP assertions, and `std/http` imports `std/platform`
   (#14402). So a freestanding target cannot run the in-language test runner.
   Do not treat "core-safe" and "testable in-language" as the same set.

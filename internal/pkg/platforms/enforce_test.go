@@ -616,15 +616,18 @@ function b(data: string): void {}
 function c(data: usize, len: i32): void {}
 @provide("log")
 function d(data: usize, len: i32): void {}
+@provide("exit")
+function e(code: i64): void {}
 function main(): i32 { return 0; }
 `)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		"`@provide(\"now\")`: no capability `now` takes a provider; a provider can implement `log`",
+		"`@provide(\"now\")`: no capability `now` takes a provider; a provider can implement `log` or `exit`",
 		"the `log` provider \"b\" must be a function with the signature (data: usize, len: i32): void",
 		"capability `log` has two providers, \"c\" and \"d\"",
+		"the `exit` provider \"e\" must be a function with the signature (code: i32): void",
 	}
 	got := platforms.ProviderProblems(prog)
 	if len(got) != len(want) {

@@ -875,6 +875,19 @@ function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.Emi
   return s;
 }
 
+// .Lhev_w writes the %rdx bytes at %rsi to stderr, or to the `log` provider on
+// a target without a host.
+function emit_hev_write(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".Lhev_w:\n");
+  if (s.log_provider.len() == 0) {
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    movq $1, %rax\n");
+    s = s.syscall(1);
+    return s.write("    ret\n");
+  }
+  return s.write("    pushq %rdx\n    pushq %rdx\n    pushq %rsi\n    call " + s.log_provider + "\n    addq $24, %rsp\n    ret\n");
+}
+
 function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!hev_on(s)) {
     return s;
@@ -1030,11 +1043,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = hev_restore(s);
   s = s.write("    ret\n");
-  s = s.write(".Lhev_w:\n");
-  s = s.write("    movq $2, %rdi\n");
-  s = s.write("    movq $1, %rax\n");
-  s = s.syscall(1);
-  s = s.write("    ret\n");
+  s = emit_hev_write(s);
   if (rc_trace_on()) {
     s = s.write(".Lhev_hex:\n");
     s = s.write("    addq $16, %rdi\n");
@@ -8522,6 +8531,10 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
     s = s.write("    movq __fern_boot_info(%rip), %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
+  if (ins.str == "dev_irq_pending") {
+    s = s.write("    leaq __fern_irq_pending(%rip), %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  }
   let fixed = x86_no_operand_op(ins.str);
   if (fixed == "") {
     ircore.unsupported_op_refuse(ir.kind_id(slice_unchecked(ins.str, 4, ins.str.len()) + ""), "x86-64");
@@ -8531,12 +8544,24 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
 }
 
 // wfi is hlt and breakpoint is int3. x86-64 has no equivalent of hvc or smc.
+// The IRQ ops clear and set IF. irq_wait is sti then hlt: sti delays the
+// interrupt until after the next instruction, so no wakeup is lost between
+// them. cli masks again before the op returns.
 function x86_no_operand_op(op: string): string {
   if (op == "dev_wfi") {
     return "hlt";
   }
   if (op == "dev_breakpoint") {
     return "int3";
+  }
+  if (op == "dev_irq_mask") {
+    return "cli";
+  }
+  if (op == "dev_irq_unmask") {
+    return "sti";
+  }
+  if (op == "dev_irq_wait") {
+    return "sti\n    hlt\n    cli";
   }
   return "";
 }
@@ -8618,7 +8643,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     if (asmcore.process_entry(s)) {
       s = s.write("    movq %r11, %rdi\n    movq $231, %rax\n").syscall(231);
     } else {
-      s = s.write("    ud2\n");
+      s = s.write(exit_provider_call(s, "%r11") + "    ud2\n");
     }
     s = s.write("    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -11904,7 +11929,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
 pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches, retain: boolean): ssaprepare.Output {
   let s = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("x86-64") };
-  s = asmcore.with_funcs(asmcore.with_log_provider(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), mod), all_funcs);
+  s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), mod), all_funcs);
   let derrs = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
@@ -12246,7 +12271,8 @@ function reset_tables(s: asmcore.EmitState): i64 {
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   let top = s.ram_base + s.ram_size;
   let blob = reset_trampoline(reset_tables(s) as i32, top as i32);
-  s = s.write("    .section .data\n    .align 8\n__fern_boot_info:\n    .quad 0\n    .text\n_start:\n");
+  s = s.write("    .section .data\n    .align 8\n__fern_boot_info:\n    .quad 0\n");
+  s = s.write("    .section .bss\n    .p2align 2\n__fern_irq_pending:\n    .skip " + util.i32_to_string(asmcore.irq_region_bytes()) + "\n    .text\n_start:\n");
   let i = 0;
   while (i < blob.len()) {
     let w = blob[i] | blob[i + 1] << 8 | blob[i + 2] << 16 | blob[i + 3] << 24;
@@ -12258,9 +12284,20 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq __fern_bss_end(%rip), %rdi\n    addq $15, %rdi\n    andq $-16, %rdi\n");
   s = s.write("    movabsq $" + util.i64_to_string(reset_tables(s)) + ", %rsi\n    subq %rdi, %rsi\n    call __fern_heap_init\n");
   s = emit_idt_load(s);
-  s = s.write("    xorl %ebp, %ebp\n    pushq %rbp\n    movq %rsp, %rbp\n    call __fn_main\n");
-  s = s.write(".Lreset_park:\n    cli\n    hlt\n    jmp .Lreset_park\n");
+  s = s.write("    xorl %ebp, %ebp\n    pushq %rbp\n    movq %rsp, %rbp\n    call __fn_main\n    movq %rax, %rbx\n");
+  if (s.leak_check) {
+    s = s.write("    call __fern_lc_report\n");
+  }
+  s = s.write(exit_provider_call(s, "%rbx") + ".Lreset_park:\n    cli\n    hlt\n    jmp .Lreset_park\n");
   return emit_idt_vectors(s);
+}
+
+// A call of the `exit` provider with the code in `reg`, or nothing without one.
+function exit_provider_call(s: asmcore.EmitState, reg: string): string {
+  if (s.exit_provider.len() == 0) {
+    return "";
+  }
+  return "    pushq " + reg + "\n    pushq " + reg + "\n    call " + s.exit_provider + "\n    addq $16, %rsp\n";
 }
 
 // The IDT has 256 interrupt gates in .bss. Each one starts at the park stub,

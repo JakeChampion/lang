@@ -339,7 +339,9 @@ jobs:
   # An arm64-kernel image boots on qemu-system-aarch64 -M virt, prints on the
   # board's UART and powers the VM off through PSCI. An x86-64-kernel image
   # boots on qemu-system-x86_64 -M microvm through its PVH note, prints on
-  # COM1 and exits through isa-debug-exit (#14260). Only this job installs
+  # COM1 and exits through isa-debug-exit (#14260). The tick images take
+  # timer interrupts through a @interrupt top half and a std/async task
+  # while the main context churns the heap (#14261). Only this job installs
   # the full-system emulators, so FERN_REQUIRE_QEMU_SYSTEM makes a missing one
   # a failure.
   kernel-boot:
@@ -357,7 +359,7 @@ jobs:
           qemu-package: qemu-system
           cross-gcc: "false"
       - uses: ./.github/actions/build-e2e-binaries
-      - name: boot the arm64 kernel image on qemu-virt
+      - name: boot the arm64 kernel images on qemu-virt
         env:
           FERN_REQUIRE_QEMU_SYSTEM: "1"
         run: |
@@ -366,8 +368,8 @@ jobs:
           BIN="$PWD/e2ecompiler.test"
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelBootsOnQemu$' -test.v -test.timeout 10m
-      - name: boot the x86-64 kernel image on qemu microvm
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernel(Boots|Ticks)OnQemu$' -test.v -test.timeout 12m
+      - name: boot the x86-64 kernel images on qemu microvm
         if: ${{ !cancelled() }}
         env:
           FERN_REQUIRE_QEMU_SYSTEM: "1"
@@ -377,7 +379,7 @@ jobs:
           BIN="$PWD/e2ecompiler.test"
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86BootsOnQemu$' -test.v -test.timeout 10m
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86(Boots|Ticks)OnQemu$' -test.v -test.timeout 12m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
