@@ -19,6 +19,8 @@ Limits apply before sample allocation. They also bound streams with an unknown s
 
 ```fern
 <<*>>=
+// Decode native FLAC streams to bounded integer PCM audio.
+
 import "std/audio/pcm";
 import "std/audio/wire";
 import "std/crypto";

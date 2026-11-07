@@ -5,6 +5,8 @@ Do not call a reader with an offset outside the input.
 
 ```fern
 <<*>>=
+// Read and write byte fields within validated audio buffers.
+
 pub function be(input: [u8], at: i32, bytes: i32): u64 {
   let value = 0u64;
   for i in 0..bytes {
