@@ -1,7 +1,8 @@
 # Binary hardening (`-harden`)
 
-Status: [reference] shipped. `-harden` is opt-in on arm64-linux and
-x86-64-linux executables and shared objects.
+Status: [reference] shipped. `-harden` is opt-in on the arm64-linux,
+x86-64-linux, arm64-android and x86-64-android executables and shared
+objects.
 
 `fern -harden -target arm64-linux -o OUT FILE.fern` builds an executable that
 turns on three protections:
@@ -260,7 +261,6 @@ with it active. It reads the kernel's own records and infers nothing from the em
 - **Speculation barriers**: none are emitted. Speculation attacks are outside
   the threat model (`docs/security/GUARANTEES.md`), because a Fern process
   runs only the code it was compiled from.
-- **arm64-android**: the PIE image writer has no fourth program header yet.
 - **arm64-darwin**: Apple's arm64e ABI, not BTI, is the mechanism there.
 - **x86-64 IBT**: the kernel enforces no user-space IBT. The `endbr64`
   each stub carries is the entry it requires, the image carries no IBT

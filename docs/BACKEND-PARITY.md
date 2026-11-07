@@ -516,22 +516,21 @@ The sampler installs a signal handler and an interval timer, and writes its
 report through raw syscalls at exit, so it needs a native executable with a
 host. Android, wasm and `-shared` builds refuse it with exit 2.
 
-### Binary hardening (`-harden`) is arm64-linux and x86-64-linux executables only
+### Binary hardening (`-harden`) is the Linux and Android executables and shared objects
 
-On arm64-linux `-harden` adds BTI landing pads, the GNU property note that
-enforces them, and return-address signing. On both Linux targets it adds a
-stack canary in every framed function and a check on every indirect call
-(`docs/security/CFI.md`). On x86-64-linux it also asks the kernel for the
-shadow stack and continues without one where the kernel refuses
-(`docs/security/SHADOW-STACK.md`). Every
-other target, and `-shared`, refuses the flag with exit 2.
-What is left (x86-64 CET, the shared and Android images, the runtime's
-hand-written frames) is listed in `docs/HARDENING.md`.
+On arm64-linux and arm64-android `-harden` adds BTI landing pads, the GNU
+property note that enforces them, and return-address signing. On all four
+targets it adds a stack canary in every framed function and a check on every
+indirect call (`docs/security/CFI.md`). On x86-64 it also asks the kernel
+for the shadow stack and continues without one where the kernel refuses
+(`docs/security/SHADOW-STACK.md`). Every other target refuses the flag with
+exit 2. What is left (x86-64 CET, the runtime's hand-written frames) is
+listed in `docs/HARDENING.md`.
 
 ### Build profiles (`-profile`) follow their flags
 
-`-profile hardened` is `-harden -pie`, so the two Linux native targets accept
-it and every other target refuses it with exit 2. `safe`, `diagnostic` and
+`-profile hardened` is `-harden -pie`, so the Linux and Android native
+targets accept it and every other target refuses it with exit 2. `safe`, `diagnostic` and
 `minimal` build wherever their flags build. The support table and the
 measured cost of each profile per target are in
 `docs/security/PROFILE-COSTS.md`.
