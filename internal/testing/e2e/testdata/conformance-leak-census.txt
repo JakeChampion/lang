@@ -303,6 +303,7 @@ enum_reuse_churn                                     0
 enum_shares_a_struct_name                            0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
+eq_operator_calls_a_user_eq_method                   0
 eq_struct_enum                                       0
 erased_typevar_ret                                   0
 escape_sequences                                     0
@@ -590,6 +591,7 @@ match_wildcard                                       0
 method_from_nearest_module                           0
 method_type_arg_names_the_method                     0
 method_written_type_arg_result                       0
+methods_follow_pub_and_package_scope                 0
 minimum_i32_crc_seed                                0
 mock_platform_log                                    0
 module_scoped_variant                                0
