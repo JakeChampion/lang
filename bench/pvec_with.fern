@@ -1,7 +1,7 @@
 import "std/pvec";
 
 function main(): i32 {
-  let v: pvec.PVec[i32] = pvec.new();
+  let v = pvec.new();
   for i in 0..4000 {
     v = v.append(i);
   }

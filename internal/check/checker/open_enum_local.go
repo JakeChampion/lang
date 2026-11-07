@@ -8,6 +8,8 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 
 func (c *checker) holdsOpenEnum(t ast.Type) bool {
 	switch x := t.(type) {
+	case ast.UnboundType:
+		return true
 	case ast.EnumType:
 		if len(x.Args) == 0 {
 			ed := c.info.Enums[x.Name]
@@ -23,7 +25,7 @@ func (c *checker) holdsOpenEnum(t ast.Type) bool {
 			return x.Name == "Map"
 		}
 		for _, a := range x.Args {
-			if c.holdsOpenEnum(a) {
+			if _, open := a.(ast.UnboundType); open || c.holdsOpenEnum(a) {
 				return true
 			}
 		}
@@ -44,6 +46,8 @@ func (c *checker) holdsOpenEnum(t ast.Type) bool {
 // shape.
 func (c *checker) fillOpenEnums(t, hint ast.Type) (ast.Type, bool) {
 	switch x := t.(type) {
+	case ast.UnboundType:
+		return hint, hint != nil && !c.holdsOpenEnum(hint)
 	case ast.EnumType:
 		h, ok := hint.(ast.EnumType)
 		if !ok || h.Name != x.Name {
@@ -81,6 +85,10 @@ func (c *checker) fillOpenEnums(t, hint ast.Type) (ast.Type, bool) {
 		}
 		args := make([]ast.Type, len(x.Args))
 		for i, a := range x.Args {
+			if _, open := a.(ast.UnboundType); open {
+				args[i] = h.Args[i]
+				continue
+			}
 			filled, ok := c.fillOpenEnums(a, h.Args[i])
 			if !ok {
 				return t, false
@@ -143,6 +151,7 @@ func (c *checker) settleOpenEnumLocal(decl *ast.Var, hint ast.Type) {
 	decl.Type = filled
 	c.info.VarTypes[decl] = filled
 	s.set(decl.Name, filled)
+	c.settleOpenCall(decl, filled)
 	c.settleNumeric(decl.Init, filled)
 }
 
@@ -168,6 +177,7 @@ func (c *checker) finishOpenEnumLocals() {
 			c.errMapNeedsType(decl)
 		}
 	}
+	c.finishOpenGenericCalls()
 	c.openEnumLocals = nil
 	c.openPassedOver = nil
 }
@@ -226,7 +236,7 @@ func (c *checker) quietOpenReceiver(e ast.Expr) bool {
 		return false
 	}
 	decl := c.litCompositeReads[id]
-	if c.openEnumLocals[decl] == nil || !bareMap(decl.Type) {
+	if c.openEnumLocals[decl] == nil || !bareMap(decl.Type) && c.openGenericCalls[decl] == nil {
 		return false
 	}
 	if c.openPassedOver == nil {

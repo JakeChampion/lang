@@ -1,0 +1,53 @@
+import "std/ordmap";
+import "std/pmap";
+
+function empty[T](): T[] {
+  return [];
+}
+
+function total(xs: i64[]): i64 {
+  let sum = 0i64;
+  for x in xs {
+    sum += x;
+  }
+  return sum;
+}
+
+function count(m: ordmap.OrdMap[string, i64]): i32 {
+  return m.len();
+}
+
+function fresh(): ordmap.OrdMap[i32, string] {
+  let m = ordmap.new();
+  return m;
+}
+
+function main(): i32 {
+  let m = ordmap.new();
+  m = m.insert(3, "c");
+  m = m.insert(1, "a");
+  if (m.len() != 2 || m.get_or(1, "") != "a") {
+    return 1;
+  }
+  let xs = empty();
+  if (total(xs) != 0 || total(xs.append(5000000000)) != 5000000000) {
+    return 2;
+  }
+  let w = ordmap.new();
+  if (count(w) != 0) {
+    return 3;
+  }
+  let f = fresh().insert(7, "seven");
+  if (f.get_or(7, "") != "seven") {
+    return 4;
+  }
+  let p = pmap.new();
+  for i in 0..4 {
+    p = p.insert(i * 7, i);
+  }
+  if (p.get_or(21, 0) != 3) {
+    return 5;
+  }
+  print("ok");
+  return 0;
+}
