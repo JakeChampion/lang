@@ -193,6 +193,11 @@ pub function in_room(n: Node, lead: boolean, random: i64, now: i64): Node {
   return Node { ...with_role(n, role, random), sess: s1 };
 }
 
+// The control stream to the peer closed.
+pub function transport_lost(n: Node, now: i64): Node {
+  return act(n, session.TransportLost, now);
+}
+
 // The transport was lost, and the peer did not leave.
 pub function reconnecting(n: Node): boolean {
   if let session.Reconnecting = n.sess.state {

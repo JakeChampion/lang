@@ -15,6 +15,7 @@ import "std/hex";
 import "std/log";
 import "std/net";
 import "std/rand";
+import "./control";
 import "./internet";
 import "./lan";
 import "./modes";
@@ -67,6 +68,13 @@ struct App {
   group_role: i32,
   // The audio focus, which the phone holds while it talks.
   audio_focus: Option[focus.Focus],
+  // The control stream of a Wi-Fi Direct group: the listening socket of the
+  // owner, the stream to the peer, and the owner that the client dials at
+  // `dial_at`.
+  listener: Option[Socket],
+  stream: Option[control.Stream],
+  owner_ip: Option[net.IpAddr],
+  dial_at: i64,
   // The room of the internet mode, and the code that the user types.
   room: Option[internet.Room],
   entering: Option[string],
@@ -302,7 +310,7 @@ function app_main(ctx: usize): usize {
   let n: node.Node = fresh_node(notice, id_seed, pins, lan.ROLE_ANY);
   log.warn("walkie: identity " + hex.encode(node.identity_key(n).take(4)) + ", " + pins.len().to_string() + " known phones");
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string() + ", mode " + modes.name(mode) + ", server " + server);
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, audio_focus: focus.new(ctx, FOCUS), room: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), agc: pcm.agc(), queue: [], pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, audio_focus: focus.new(ctx, FOCUS), listener: None, stream: None, owner_ip: None, dial_at: 0i64, room: None, entering: None, dir: dir, keys: keys, id_seed: id_seed, pins: pins, mode: mode, menu: false, server: server, host_edit: None, awake: None, noticed: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -425,17 +433,18 @@ function subnet_broadcast(owner: string): Option[net.IpAddr] {
 }
 
 function grouped(own s: App, g: p2p.Group): App {
+  let t: App = App { ...s, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
   if (!g.formed) {
     log.info("walkie: no Wi-Fi Direct group");
-    return App { ...s, group_broadcast: None, group_role: lan.ROLE_ANY, node: node.with_role(s.node, lan.ROLE_ANY, node_id()), drawn: "" };
+    return App { ...t, group_broadcast: None, group_role: lan.ROLE_ANY, node: node.with_role(t.node, lan.ROLE_ANY, node_id()), drawn: "" };
   }
   log.info("walkie: Wi-Fi Direct group, owner " + g.owner_address + ", this phone owns it " + g.owner.to_string());
-  let role = lan.ROLE_FOLLOW;
+  let n: node.Node = node.noticed(t.node, "");
   if (g.owner) {
-    role = lan.ROLE_LEAD;
+    return App { ...t, group_broadcast: subnet_broadcast(g.owner_address), group_role: lan.ROLE_LEAD, node: node.with_role(n, lan.ROLE_LEAD, node_id()), listener: control.listen(lan.PORT), drawn: "" };
   }
-  let n: node.Node = node.with_role(node.noticed(s.node, ""), role, node_id());
-  return App { ...s, group_broadcast: subnet_broadcast(g.owner_address), group_role: role, node: n, drawn: "" };
+  let owner: Option[net.IpAddr] = net.ip_parse(g.owner_address).ok();
+  return App { ...t, group_broadcast: subnet_broadcast(g.owner_address), group_role: lan.ROLE_FOLLOW, node: node.with_role(n, lan.ROLE_FOLLOW, node_id()), owner_ip: owner, dial_at: 0i64, drawn: "" };
 }
 
 function nearby_permission(ctx: usize): string {
@@ -537,7 +546,7 @@ function destroyed(own s: App): App {
   if let Some(f) = s.audio_focus {
     focus.close(s.ctx, f);
   }
-  return App { ...s, serving: false, p2p: None, awake: None, audio_focus: None };
+  return App { ...s, serving: false, p2p: None, awake: None, audio_focus: None, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
 }
 
 // A call or another app took the audio focus: the transmission stops. A
@@ -751,7 +760,7 @@ function drop_direct(own s: App): App {
   if let Some(p) = s.p2p {
     p2p.stop(s.ctx, p);
   }
-  return App { ...s, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY };
+  return App { ...s, p2p: None, peers: [], group_broadcast: None, group_role: lan.ROLE_ANY, listener: control.close_listener(s.listener), stream: control.close_option(s.stream), owner_ip: None };
 }
 
 function search_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
@@ -873,11 +882,79 @@ function restart(own s: App): App {
 }
 
 // The network, the timers and the microphone, after each event.
-function pump(s: App, now: i64): App {
-  let t: App = receive_all(s, now);
+function pump(own s: App, now: i64): App {
+  let t: App = streamed(receive_all(s, now), now);
   t = App { ...t, node: node.tick(node.fresh(t.node, rand.bytes(node.RANDOM_BYTES)), now) };
   t = speak(sync_mic(t, now));
-  return sync_notice(save_pins(rejoin(flush(t), now)));
+  return sync_notice(save_pins(rejoin(flush(route(t)), now)));
+}
+
+// The control stream of a Wi-Fi Direct group: the owner accepts the client,
+// and the client dials the owner again each second while it has no stream.
+// The frames of the stream go to the node. When the stream closes, the node
+// loses its peer at once.
+function streamed(own s: App, now: i64): App {
+  let t: App = dialled(accepted(s), now);
+  t = App { ...t, stream: control.step_option(t.stream) };
+  let Some(st) = t.stream else {
+    return t;
+  };
+  let n: node.Node = t.node;
+  let from: net.SocketAddr = net.socket_addr(st.peer, lan.PORT);
+  for f in st.frames {
+    n = node.receive(n, f, f.len(), from, now);
+  }
+  if (!st.lost) {
+    return App { ...t, node: n };
+  }
+  log.info("walkie: the control stream to " + st.peer.to_string() + " closed");
+  if (n.peer_addr.ip.eq(st.peer)) {
+    n = node.transport_lost(n, now);
+  }
+  return App { ...t, node: n, stream: control.close_option(t.stream), dial_at: now + 1000i64 };
+}
+
+function accepted(own s: App): App {
+  let Some(l) = s.listener else {
+    return s;
+  };
+  let Some(st) = control.accept(l) else {
+    return s;
+  };
+  log.info("walkie: control stream from " + st.peer.to_string());
+  let old: Option[control.Stream] = control.close_option(s.stream);
+  return App { ...s, stream: Some(st) };
+}
+
+function dialled(own s: App, now: i64): App {
+  let Some(ip) = s.owner_ip else {
+    return s;
+  };
+  if (s.stream.is_some() || now < s.dial_at) {
+    return s;
+  }
+  return App { ...s, stream: control.dial(ip, lan.PORT), dial_at: now + 1000i64 };
+}
+
+// The key exchange, the control frames and the proofs go over the control
+// stream once it is up. The beacons and the voice stay on UDP.
+function route(own s: App): App {
+  let Some(st) = s.stream else {
+    return s;
+  };
+  if (!st.connected || s.room.is_some()) {
+    return s;
+  }
+  let keep: node.Datagram[] = [];
+  let sent: u8[][] = [];
+  for d in s.node.out {
+    if (!d.broadcast && control.carries(d.data)) {
+      sent = sent.append(d.data);
+    } else {
+      keep = keep.append(d);
+    }
+  }
+  return App { ...s, node: node.Node { ...s.node, out: keep }, stream: control.send_all(s.stream, sent) };
 }
 
 // In a room, a lost transport starts a new key exchange through the relay,
@@ -894,7 +971,7 @@ function rejoin(own s: App, now: i64): App {
   return App { ...s, node: node.in_room(n, r.lead, node_id(), now), pressed: false, drawn: "" };
 }
 
-function receive_all(s: App, now: i64): App {
+function receive_all(own s: App, now: i64): App {
   let Some(sock) = s.sock else {
     return s;
   };
@@ -926,7 +1003,7 @@ function receive_all(s: App, now: i64): App {
 }
 
 // Starts or stops the microphone as the node asks.
-function sync_mic(s: App, now: i64): App {
+function sync_mic(own s: App, now: i64): App {
   if (s.node.capture == s.capturing) {
     return s;
   }
@@ -963,7 +1040,7 @@ function release_focus(s: App): void {
 }
 
 // The microphone samples since the last step.
-function speak(s: App): App {
+function speak(own s: App): App {
   if (!s.capturing) {
     return s;
   }
@@ -987,7 +1064,7 @@ function send_out(sock: Socket, n: node.Node, room: Option[internet.Room], targe
 }
 
 // Sends the datagrams of the node, plays its frames and writes its log lines.
-function flush(s: App): App {
+function flush(own s: App): App {
   let n: node.Node = s.node;
   if let Some(sock) = s.sock {
     send_out(sock, n, s.room, modes.beacon_targets(s.mode, s.group_broadcast));

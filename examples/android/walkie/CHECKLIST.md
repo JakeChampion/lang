@@ -45,6 +45,8 @@ Set the mode to WI-FI DIRECT on both phones.
 
 ### Lose and find the peer
 
+- [ ] **Control stream.** The log of the group owner shows
+  `control stream from` and the address of the other phone.
 - [ ] **Lost peer.** While phone 1 talks, turn off the Wi-Fi of phone 2.
   In 5 seconds, phone 1 stops TALKING and shows TAP TO SEARCH AGAIN.
 - [ ] **Known phones.** Close the app on both phones and open it again.

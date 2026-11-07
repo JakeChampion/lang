@@ -140,6 +140,19 @@ with the freezer of cached apps off. It taps MATCH in each copy, holds the
 talk button of each, presses BACK in one copy, and reads the result in
 logcat.
 
+## `control.fern`
+
+The control stream of a Wi-Fi Direct group. When the group forms, the group
+owner listens on TCP port 47120, and the other phone connects to it. The key
+exchange, the control frames and the proofs of identity then go over this
+connection. Each one has a length of 2 bytes in front. The beacons and the
+voice stay on UDP, because a late voice frame has no use.
+
+When the connection closes, the phone loses its peer at once. It does not
+wait 5 seconds for the heartbeats. The other phone connects again each
+second while it has no connection. `control_test.fern` tests the frames, and
+a connection on the loopback address.
+
 ## `protocol.fern`
 
 The control messages of the protocol, and their byte form.
