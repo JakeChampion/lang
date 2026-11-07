@@ -218,6 +218,10 @@ each one with E066:
   `__port_out8`, `__port_out16` and `__port_out32` write one. An x86-64 board
   reaches its serial port and the qemu exit device through them. They need an
   `unsafe` block. arm64 has no port space, so its emitter refuses them.
+- `__boot_info()` gives the word that the loader passed at entry, which the
+  reset code saves. It is the address of the PVH start info on x86-64 (`%ebx`)
+  and of the device tree on arm64 (`x0`, under the Linux boot protocol). qemu
+  passes 0 to an arm64 ELF that is not a Linux kernel.
 
 They take the host-call path of the MMIO ops, so no pass removes or moves them.
 x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`. System
@@ -347,8 +351,9 @@ no boot loader.
 `internal/testing/e2ecompiler/self_host_kernel_x86_test.go` checks the program
 headers and the note. `TestSelfHostKernelX86BootsOnQemu` boots the image on
 `qemu-system-x86_64 -M microvm`. The image prints through COM1 with
-`__port_out8` and exits through qemu's `isa-debug-exit` device. The
-`kernel-boot` job runs it too.
+`__port_out8`. It reads the PVH start info at `__boot_info()` with `std/pvh`,
+and prints its version and the RAM of its memory map. Then it exits through
+qemu's `isa-debug-exit` device. The `kernel-boot` job runs it too.
 
 ### 5. Atomics
 
@@ -505,7 +510,7 @@ check time, in the same mechanism that enforces the OS boundary today.
   Fern already ships, which emit ELF rather than shelling out to one.
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
   once volatile and memory layout exist; no new language surface. `std/fdt`
-  reads a device tree (#14260).
+  reads a device tree, and `std/pvh` reads the PVH start info (#14260).
 
 ### Milestones, each producing something that runs
 
@@ -559,8 +564,8 @@ environment over the FernOS syscalls can come later, as an improvement.
    `arm64-kernel` (section 4).
 7. **Started: milestone 1** (#14260). An arm64 image on qemu-virt and an
    x86-64 image on qemu microvm boot, print and stop the VM in CI. `std/fdt`
-   reads the device tree. The x86-64 boot parameters (the PVH start info) and
-   Firecracker remain. **Started: the effect intrinsics** (#14252), with
+   reads the device tree, and `std/pvh` reads the PVH start info. A run on
+   Firecracker remains. **Started: the effect intrinsics** (#14252), with
    `__fence`, `__wfi`, `__hvc`, `__smc` and the port ops (section 2).
    Then: `interrupt` and `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).

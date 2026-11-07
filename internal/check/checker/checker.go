@@ -2422,6 +2422,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}
+	c.info.FuncSigs["__boot_info"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
 	for _, bits := range []int{8, 16, 32} {
 		c.info.FuncSigs[fmt.Sprintf("__port_in%d", bits)] = &ast.FuncType{Params: []ast.Type{ast.NumberType{}}, Result: ast.NumberType{}}
 		c.info.FuncSigs[fmt.Sprintf("__port_out%d", bits)] = &ast.FuncType{Params: []ast.Type{ast.NumberType{}, ast.NumberType{}}, Result: ast.VoidType{}}

@@ -1,0 +1,99 @@
+import "std/pvh";
+import "std/test";
+
+// A start info at p with a memory map of two RAM regions and one reserved
+// region at p + 64.
+function fill(p: usize, version: i32): void {
+  unsafe {
+    __memset(p, 0, 160);
+    __store_i32(p, 0x336ec578);
+    __store_i32(p + 4, version);
+    __store_i32(p + 8, 1);
+    __store_i32(p + 12, 2);
+    __store_i64(p + 24, 4096i64);
+    __store_i64(p + 32, 917504i64);
+    __store_i64(p + 40, (p + 64) as i64);
+    __store_i32(p + 48, 3);
+    region(p + 64, 0i64, 654336i64, 1);
+    region(p + 88, 654336i64, 1024i64, 2);
+    region(p + 112, 1048576i64, 133169152i64, 1);
+  }
+}
+
+function region(e: usize, address: i64, size: i64, kind: i32): void {
+  unsafe {
+    __store_i64(e, address);
+    __store_i64(e + 8, size);
+    __store_i32(e + 16, kind);
+  }
+}
+
+function read_at(version: i32, magic: i32): Result[pvh.StartInfo, pvh.PvhError] {
+  unsafe {
+    let p: usize = __alloc(160);
+    fill(p, version);
+    if (magic != 0) {
+      __store_i32(p, magic);
+    }
+    let r = pvh.read(p);
+    __free(p, 160);
+    return r;
+  }
+}
+
+function test_fields(): test.TestOutcome {
+  match (read_at(1, 0)) {
+    Ok(s) => {
+      return test.assert_eq(s.version.to_string() + " " + s.flags.to_string() + " " + s.modules.to_string() + " " + s.cmdline.to_string() + " " + s.rsdp.to_string(), "1 1 2 4096 917504");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+}
+
+function test_memory_map(): test.TestOutcome {
+  match (read_at(1, 0)) {
+    Ok(s) => {
+      let kinds = "";
+      for r in s.memory {
+        kinds = kinds + r.kind.to_string() + "@" + r.address.to_string() + "+" + r.size.to_string() + " ";
+      }
+      return test.assert_eq(kinds + s.ram_bytes().to_string(), "1@0+654336 2@654336+1024 1@1048576+133169152 133823488");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+}
+
+function test_version_0_has_no_map(): test.TestOutcome {
+  match (read_at(0, 0)) {
+    Ok(s) => {
+      return test.assert_eq(s.memory.len().to_string() + " " + s.ram_bytes().to_string(), "0 0");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+}
+
+function test_refuses_a_bad_magic(): test.TestOutcome {
+  match (read_at(1, 0x12345678)) {
+    Ok(_) => {
+      return test.fail("accepted a bad magic");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "pvh start info: no start-info magic");
+    }
+  }
+}
+
+function main(): i32 {
+  let r = test.new("std/pvh");
+  r = r.it("read copies the fields of the start info", test_fields);
+  r = r.it("read copies the memory map, and ram_bytes adds the RAM", test_memory_map);
+  r = r.it("a version 0 start info has no memory map", test_version_0_has_no_map);
+  r = r.it("read refuses a bad magic", test_refuses_a_bad_magic);
+  return r.finish();
+}

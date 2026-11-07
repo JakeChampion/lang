@@ -33,16 +33,22 @@ pub function uart_write(data: usize, len: i32): void {
   }
 }
 
-// A copy of the device tree, with the length that its header gives.
+// A copy of the device tree, with the length that its header gives. A loader
+// that follows the Linux boot protocol passes its address at entry. qemu
+// passes 0 to an ELF that is not a Linux kernel.
 pub function device_tree(): u8[] {
   let out: u8[] = [];
+  let base = __boot_info();
+  if (base == 0 as usize) {
+    base = DEVICE_TREE;
+  }
   unsafe {
     let size = 0;
     for k in 4..8 {
-      size = size << 8 | __load_u8(DEVICE_TREE + k as usize);
+      size = size << 8 | __load_u8(base + k as usize);
     }
     for k in 0..size {
-      out = out.append(__load_u8(DEVICE_TREE + k as usize) as u8);
+      out = out.append(__load_u8(base + k as usize) as u8);
     }
   }
   return out;

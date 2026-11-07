@@ -70,6 +70,7 @@ var stdModuleReach = map[string]string{
 	"std/protobuf":      "",
 	"std/pset":          "",
 	"std/pvec":          "",
+	"std/pvh":           "",
 	"std/publicsuffix":  "",
 	"std/rand":          "random",
 	"std/regex":         "",

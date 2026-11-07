@@ -40,6 +40,20 @@ pub function exit_qemu(value: i32): void {
 `
 
 const kernelX86MainSrc = `import "./board";
+import "std/pvh";
+
+function describe(): string {
+  unsafe {
+    match (pvh.read(__boot_info())) {
+      Ok(s) => {
+        return "pvh version " + s.version.to_string() + ", " + s.memory.len().to_string() + " regions, ram " + (s.ram_bytes() / (1048576 as u64)).to_string() + "M";
+      },
+      Err(e) => {
+        return e.message();
+      }
+    }
+  }
+}
 
 function main(): i32 {
   let xs: i32[] = [];
@@ -49,6 +63,7 @@ function main(): i32 {
     i += 1;
   }
   print("hello from fern on x86-64, total " + xs.len().to_string());
+  print(describe());
   board.exit_qemu(16);
   return 0;
 }
@@ -199,8 +214,42 @@ func TestSelfHostKernelX86BootsOnQemu(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 33 {
 		t.Fatalf("qemu: %v, want exit status 33 from isa-debug-exit; console:\n%s", err, console)
 	}
-	if !strings.Contains(string(console), "hello from fern on x86-64, total 10\n") {
-		t.Errorf("console:\n%s\nwant the line %q", console, "hello from fern on x86-64, total 10")
+	// qemu gives a start info of version 1 with a memory map. With -m 128M,
+	// the RAM regions add up to 127 whole MiB.
+	for _, want := range []string{"hello from fern on x86-64, total 10\n", "pvh version 1, ", " regions, ram 127M\n"} {
+		if !strings.Contains(string(console), want) {
+			t.Errorf("console:\n%s\nwant %q", console, strings.TrimSpace(want))
+		}
+	}
+}
+
+// __boot_info gives the word that the loader passed at entry. Only a kernel
+// target has a loader, so a hosted target refuses it with E066.
+func TestSelfHostKernelBootInfoNeedsAKernel(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 {\n  return __boot_info() as i32;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		msg, err := cli.compileCmd(target, filepath.Join(dir, "out-"+target), src).CombinedOutput()
+		if err == nil || !strings.Contains(string(msg), "E066") || !strings.Contains(string(msg), "__boot_info") {
+			t.Errorf("%s: err %v; want E066 naming __boot_info in:\n%s", target, err, msg)
+		}
+	}
+	asmPath := filepath.Join(dir, "kernel.s")
+	if msg, err := cli.compileCmd("x86-64-kernel", asmPath, src, "-ram", kernelX86RAM, "-emit", "asm").CombinedOutput(); err != nil {
+		t.Fatalf("emit: %v\n%s", err, msg)
+	}
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"    movl %ebx, %ebx\n    movq %rbx, __fern_boot_info(%rip)\n", "    movq __fern_boot_info(%rip), %rax\n"} {
+		if !strings.Contains(string(asm), want) {
+			t.Errorf("no %q in the x86-64-kernel assembly", strings.TrimSpace(want))
+		}
 	}
 }
 

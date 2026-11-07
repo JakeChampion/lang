@@ -154,6 +154,10 @@ function read_port(): i32 {
   }
 }
 
+function boot_word(): usize {
+  return __boot_info();
+}
+
 function main(): i32 {
   return 0;
 }
@@ -232,6 +236,7 @@ func TestRawMemoryRefusesABrokenObligation(t *testing.T) {
 		{"wait_for_interrupt", "__wfi: needs a kernel target"},
 		{"call_firmware", "__smc: needs a kernel target"},
 		{"read_port", "__port_in8: needs a kernel target"},
+		{"boot_word", "__boot_info: needs a kernel target"},
 	} {
 		_, err := i.CallByName(c.fn, nil)
 		if err == nil || !strings.Contains(err.Error(), c.want) {

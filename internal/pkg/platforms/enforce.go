@@ -213,6 +213,7 @@ var gatedBuiltins = map[string]string{
 	"__wfi":            "privileged", "__hvc": "privileged", "__smc": "privileged",
 	"__port_in8": "privileged", "__port_in16": "privileged", "__port_in32": "privileged",
 	"__port_out8": "privileged", "__port_out16": "privileged", "__port_out32": "privileged",
+	"__boot_info": "privileged",
 }
 
 var coreBuiltins = map[string]bool{

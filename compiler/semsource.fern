@@ -7973,6 +7973,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__port_out8", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__port_out16", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__port_out32", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__boot_info", params: [], modes: [], result: t_usize() },
     ssasem.Contract { name: "__ct_secret", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
     ssasem.Contract { name: "__ct_public", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
   ];

@@ -237,7 +237,7 @@ func registerRawMemory(i *Interp) {
 		}
 		return Void{}, nil
 	}}
-	for _, name := range []string{"__wfi", "__hvc", "__smc", "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32"} {
+	for _, name := range []string{"__wfi", "__hvc", "__smc", "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32", "__boot_info"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
 			return nil, fmt.Errorf("%s: needs a kernel target", name)
 		}}

@@ -3715,6 +3715,10 @@ function ssa_host_kind(op: string): boolean {
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
 // convention.
 function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.str == "dev_boot_info") {
+    s = s.write("    adrp x9, __fern_boot_info\n    ldr x0, [x9, :lo12:__fern_boot_info]\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  }
   if (ins.str == "dev_wfi") {
     s = s.write("    wfi\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -6922,6 +6926,7 @@ function reset_stack_bytes(): i64 {
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   let top = s.ram_base + s.ram_size;
   s = s.write("_start:\n    mrs x9, mpidr_el1\n    and x9, x9, #255\n    cbnz x9, .Lreset_park\n");
+  s = s.write("    adrp x9, __fern_boot_info\n    add x9, x9, :lo12:__fern_boot_info\n    str x0, [x9]\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
   s = s.write("    movz x9, #48, lsl #16\n    msr cpacr_el1, x9\n    isb\n");
   s = s.write("    adrp x0, __fern_bss_start\n    add x0, x0, :lo12:__fern_bss_start\n");
@@ -12574,7 +12579,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
     s = emit_seccomp_install(s);
   }
   if (asmcore.reset_entry(s)) {
-    s = s.write("    .section .data\n    .p2align 4\n    .section .bss\n    .p2align 4\n__fern_bss_end:\n    .text\n");
+    s = s.write("    .section .data\n    .p2align 3\n__fern_boot_info:\n    .quad 0\n    .p2align 4\n    .section .bss\n    .p2align 4\n__fern_bss_end:\n    .text\n");
   }
   irverifygate.close_memo(s.memo);
   let leak = asmcore.hostless_syscall_refusal(s);

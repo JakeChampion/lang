@@ -1291,13 +1291,16 @@ pub function op_privileged(kind: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// boot_info reads the word that the loader passed the kernel at entry, which
+// the reset code saved.
 pub function is_privileged_kind(id: i32): boolean {
-  return id == K_WFI || id == K_HVC || id == K_SMC;
+  return id == K_WFI || id == K_HVC || id == K_SMC || id == K_BOOT_INFO;
 }
 
-// wfi takes nothing. hvc and smc take the function and three arguments.
+// wfi and boot_info take nothing. hvc and smc take the function and three
+// arguments.
 function privileged_pops(id: i32): i32 {
-  if (id == K_WFI) {
+  if (id == K_WFI || id == K_BOOT_INFO) {
     return 0;
   }
   return 4;
@@ -1335,6 +1338,9 @@ function device_kind_name(id: i32): string {
   }
   if (id == K_PORT_IN || id == K_PORT_OUT) {
     return port_kind_name(id);
+  }
+  if (id == K_BOOT_INFO) {
+    return "boot_info";
   }
   return "mmio_store";
 }
@@ -2324,6 +2330,8 @@ pub const K_PORT_IN: i32 = 418;
 
 pub const K_PORT_OUT: i32 = 419;
 
+pub const K_BOOT_INFO: i32 = 499;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2518,6 +2526,9 @@ function kind_id_device(name: string): i32 {
   }
   if (name == "port_out") {
     return K_PORT_OUT;
+  }
+  if (name == "boot_info") {
+    return K_BOOT_INFO;
   }
   if (name == "wfi") {
     return K_WFI;
