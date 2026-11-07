@@ -25,31 +25,38 @@ const fernModulePath = "github.com/jakechampion/lang"
 // status, through the verdict cache of oracleVerdict.
 func InterpVerdict(t testing.TB, oracle, src string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, "-interp", src, false)
+	return oracleVerdict(t, oracle, []string{"-interp"}, src, false)
 }
 
 // CheckVerdict runs `oracle -check src` and returns its combined stdout and
 // stderr and its exit status, through the verdict cache of oracleVerdict.
 func CheckVerdict(t testing.TB, oracle, src string) ([]byte, int) {
 	t.Helper()
-	return oracleVerdict(t, oracle, "-check", src, true)
+	return oracleVerdict(t, oracle, []string{"-check"}, src, true)
 }
 
-// oracleVerdict runs the Go oracle with one mode flag on src.
+// CheckTargetVerdict runs `oracle -check -target target src` and returns its
+// combined stdout and stderr and its exit status, through the verdict cache.
+func CheckTargetVerdict(t testing.TB, oracle, src, target string) ([]byte, int) {
+	t.Helper()
+	return oracleVerdict(t, oracle, []string{"-check", "-target", target}, src, true)
+}
+
+// oracleVerdict runs the Go oracle with flags on src.
 // FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the oracle's Go
 // source and embedded files, the source's relative import closure, and the
 // FERN_* environment. It excludes the compiler package's embedded self-host
 // sources, which -interp and -check do not read.
 // FERN_BIN suites also run an external executable. Run them
 // without the verdict cache because that executable can change at the same path.
-func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byte, int) {
+func oracleVerdict(t testing.TB, oracle string, flags []string, src string, combined bool) ([]byte, int) {
 	t.Helper()
 	var key string
 	if os.Getenv("FERN_BIN") == "" {
 		var err error
-		key, err = oracleVerdictKey(flag, combined, src)
+		key, err = oracleVerdictKey(flags, combined, src)
 		if err != nil {
-			t.Fatalf("oracle verdict key for %s %s: %v", flag, src, err)
+			t.Fatalf("oracle verdict key for %s %s: %v", strings.Join(flags, " "), src, err)
 		}
 		if out, exit, ok := readOracleVerdict(key); ok {
 			return out, exit
@@ -58,7 +65,7 @@ func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byt
 	var out []byte
 	exit := 0
 	err := WithBuildMemoryMB(1024, func() error {
-		cmd := exec.Command(oracle, flag, src)
+		cmd := exec.Command(oracle, append(append([]string{}, flags...), src)...)
 		var runErr error
 		if combined {
 			out, runErr = cmd.CombinedOutput()
@@ -73,7 +80,7 @@ func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byt
 		return runErr
 	})
 	if err != nil {
-		t.Fatalf("oracle %s on %s: %v", flag, src, err)
+		t.Fatalf("oracle %s on %s: %v", strings.Join(flags, " "), src, err)
 	}
 	if key != "" {
 		writeOracleVerdict(key, out, exit)
@@ -81,7 +88,7 @@ func oracleVerdict(t testing.TB, oracle, flag, src string, combined bool) ([]byt
 	return out, exit
 }
 
-func oracleVerdictKey(flag string, combined bool, src string) (string, error) {
+func oracleVerdictKey(flags []string, combined bool, src string) (string, error) {
 	oracle, err := oracleSourcesKey()
 	if err != nil {
 		return "", err
@@ -90,17 +97,21 @@ func oracleVerdictKey(flag string, combined bool, src string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	closure, err := selfHostImportClosure(filepath.Dir(abs), filepath.Base(abs))
+	closure, missing, err := importClosureNotingMissing(filepath.Dir(abs), filepath.Base(abs))
 	if err != nil {
 		return "", err
 	}
 	sort.Strings(closure)
+	sort.Strings(missing)
 	h := sha256.New()
-	fmt.Fprintf(h, "oracle-verdict-v1\x00%s\x00%t\x00%s\x00%s\x00", flag, combined, oracle, abs)
+	fmt.Fprintf(h, "oracle-verdict-v2\x00%s\x00%t\x00%s\x00%s\x00%s\x00", strings.Join(flags, "\x00"), combined, oracle, src, abs)
 	for _, p := range closure {
 		if err := hashFile(h, p, p); err != nil {
 			return "", err
 		}
+	}
+	for _, p := range missing {
+		fmt.Fprintf(h, "missing\x00%s\x00", p)
 	}
 	var env []string
 	for _, kv := range os.Environ() {
