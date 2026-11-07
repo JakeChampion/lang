@@ -104,7 +104,9 @@ function exception(): string {
   unsafe {
     __sysreg_write("tpidrro_el0", 0i64);
     __sysreg_read("s3_4_c1_c1_0");
-    return "sync " + __sysreg_read("tpidrro_el0").to_string();
+    let undefined = __sysreg_read("tpidrro_el0");
+    __breakpoint();
+    return "sync " + undefined.to_string() + " " + __sysreg_read("tpidrro_el0").to_string();
   }
 }
 
@@ -234,7 +236,7 @@ func TestSelfHostKernelBootsOnQemu(t *testing.T) {
 				t.Fatalf("qemu: %v; console:\n%s", err, console)
 			}
 			// qemu-virt passes no boot argument in x0 to an ELF image.
-			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "el 1 tpidr_el1 42\n", "maintenance 7\n", "sync 100\n", "uart 150994944 psci hvc\n"} {
+			for _, want := range []string{"hello from fern, total 10\n", "boot info 0\n", "el 1 tpidr_el1 42\n", "maintenance 7\n", "sync 100 160\n", "uart 150994944 psci hvc\n"} {
 				if !strings.Contains(string(console), want) {
 					t.Errorf("console:\n%s\nwant the line %q", console, strings.TrimSpace(want))
 				}

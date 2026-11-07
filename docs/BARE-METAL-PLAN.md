@@ -310,13 +310,18 @@ and can rebuild a struct in a reused box, and both touch the allocator. The
 attribute changes no code. `compiler/norc.fern` and
 `internal/check/checker/norc.go` hold the rule.
 
-**`@interrupt("slot")` exists on `arm64-kernel` (#14253).** It marks an exception
-handler, and it implies `@norc`.
+**`@interrupt("slot")` exists on both kernel targets (#14253).** It marks an
+exception handler, and it implies `@norc`. E103 refuses these handlers:
+
+- a handler with an unknown slot, or with a slot that another handler takes
+- a handler with a parameter or a result
+- a handler with a slot that the target does not have, or on a target that is
+  not a kernel
+
+On `arm64-kernel`:
 
 - The slot is `"sync"`, `"irq"`, `"fiq"` or `"serror"`, for the current level
-  with SP_ELx. E103 refuses an unknown slot, a slot that two handlers take, a
-  handler with a parameter or a result, and a target other than
-  `arm64-kernel`.
+  with SP_ELx.
 - The image has a 2 KiB vector table, and the reset entry writes its address to
   `VBAR_EL1`. Each slot with a handler branches to a trampoline, and every other
   slot parks the core.
@@ -329,7 +334,24 @@ handler, and it implies `@norc`.
 - The qemu boot test reads an EL2 register from EL1. The read is undefined, so
   the sync handler runs, records the exception class and steps over the read.
 
-x86-64 (an IDT and `iretq`) and `naked` come next.
+On `x86-64-kernel`:
+
+- The slot is an exception mnemonic from `"de"` (vector 0) to `"cp"` (vector
+  21), or a number from `"32"` to `"255"` for an external interrupt.
+- The reset entry fills a 256-entry IDT in `.bss` with interrupt gates to a
+  park stub. Then it writes the gate of each handler and loads the IDT with
+  `lidt`.
+- The trampoline saves the nine caller-saved general registers and ymm0 to
+  ymm15, because the baseline has AVX2. It clears the direction flag and calls
+  the handler. Then it restores the registers, drops the error code that the
+  CPU pushes for some exceptions, and returns with `iretq`.
+- The CPU pushes the interrupt frame onto the current stack. The x86-64 backend
+  keeps no data below `%rsp`, so this is safe, and
+  `TestSelfHostKernelX86UsesNoRedZone` keeps it so.
+- `__breakpoint()` is `int3`, a trap, so the handler returns to the next
+  instruction. On arm64 it is `brk #0`, which takes the sync exception.
+
+`naked` comes next.
 
 ### 4. Memory layout
 

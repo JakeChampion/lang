@@ -452,3 +452,4 @@ cache_clean=502
 cache_flush=503
 tlb_flush=504
 tlb_flush_all=505
+breakpoint=506

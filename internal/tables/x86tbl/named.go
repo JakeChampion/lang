@@ -123,6 +123,7 @@ var Named = []NamedFamily{
 	{Name: "memext", Doc: "a two-byte 0F op on a memory operand, with the ModRM reg field as an opcode extension; packed as ext*256 + op", FernFn: "x86_gas_memext_op", Pack: extOp, Ops: []NamedOp{
 		{ATT: "clflush", Op: 0xAE, Ext: 7, ATTProbe: "clflush (%rax)"},
 		{ATT: "invlpg", Op: 0x01, Ext: 7, ATTProbe: "invlpg 8(%r9)"},
+		{ATT: "lidt", Op: 0x01, Ext: 3, ATTProbe: "lidt (%rsp)"},
 	}},
 
 	{Name: "movqd", Doc: "the GPR/xmm moves; direction from which operand is the xmm. AT&T's movq spelling is the mov family's, resolved there", Ops: []NamedOp{

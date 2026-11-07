@@ -7972,6 +7972,7 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__cache_flush", params: [t_usize()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__tlb_flush", params: [t_usize()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__tlb_flush_all", params: [], modes: [], result: t_void() },
+    ssasem.Contract { name: "__breakpoint", params: [], modes: [], result: t_void() },
     ssasem.Contract { name: "__hvc", params: [t_i64(), t_i64(), t_i64(), t_i64()], modes: [v, v, v, v], result: t_i64() },
     ssasem.Contract { name: "__smc", params: [t_i64(), t_i64(), t_i64(), t_i64()], modes: [v, v, v, v], result: t_i64() },
     ssasem.Contract { name: "__port_in8", params: [t_i32()], modes: [v], result: t_i32() },

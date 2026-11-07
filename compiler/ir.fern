@@ -1291,19 +1291,19 @@ pub function op_privileged(kind: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-// The privileged kinds are 415 to 417 and 499 to 505.
+// The privileged kinds are 415 to 417 and 499 to 506.
 pub function is_privileged_kind(id: i32): boolean {
-  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_TLB_FLUSH_ALL;
+  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_BREAKPOINT;
 }
 
 // hvc and smc take the function and three arguments. wfi, boot_info,
-// sysreg_read and tlb_flush_all take nothing. The others take one operand: the
-// value of sysreg_write, or the address of a cache or TLB op.
+// sysreg_read, tlb_flush_all and breakpoint take nothing. The others take one
+// operand: the value of sysreg_write, or the address of a cache or TLB op.
 function privileged_pops(id: i32): i32 {
   if (id == K_HVC || id == K_SMC) {
     return 4;
   }
-  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_TLB_FLUSH_ALL) {
+  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_TLB_FLUSH_ALL || id == K_BREAKPOINT) {
     return 0;
   }
   return 1;
@@ -1379,6 +1379,9 @@ function maintenance_kind_name(id: i32): string {
   }
   if (id == K_TLB_FLUSH_ALL) {
     return "tlb_flush_all";
+  }
+  if (id == K_BREAKPOINT) {
+    return "breakpoint";
   }
   return "mmio_store";
 }
@@ -2379,6 +2382,8 @@ pub const K_TLB_FLUSH: i32 = 504;
 
 pub const K_TLB_FLUSH_ALL: i32 = 505;
 
+pub const K_BREAKPOINT: i32 = 506;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2611,6 +2616,9 @@ function kind_id_maintenance(name: string): i32 {
   }
   if (name == "tlb_flush_all") {
     return K_TLB_FLUSH_ALL;
+  }
+  if (name == "breakpoint") {
+    return K_BREAKPOINT;
   }
   return 0;
 }
