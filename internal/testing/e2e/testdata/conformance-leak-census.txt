@@ -1118,6 +1118,7 @@ single_alias                                         0
 single_alias_with_arg                                0
 single_insert                                        0
 slice_at_length                                      0
+slice_unchecked_aborts_on_a_split_character          0
 slice_unchecked_bytes                                0
 slice_unchecked_oob                                  0
 slice_views                                          0

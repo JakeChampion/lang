@@ -251,10 +251,7 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       no_more = true;
       i += 1;
     } else if (a.starts_with("--") || a.len() >= 2 && a[0] == 45) {
-      let st = __cli_long(s, opts, argv, i);
-      if (!a.starts_with("--")) {
-        st = __cli_cluster(s, opts, argv, i);
-      }
+      let st = if (a.starts_with("--")) { __cli_long(s, opts, argv, i) } else { __cli_cluster(s, opts, argv, i) };
       if (st.error.len() > 0) {
         return __cli_err(positionals, st.error);
       }

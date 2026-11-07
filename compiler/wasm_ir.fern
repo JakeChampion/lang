@@ -931,6 +931,9 @@ function wasm_helper_symbol(name: string): string {
   if (name == "__fern_oob_abort") {
     return "$__fern_oob_abort";
   }
+  if (name == "__fern_str_oob_abort") {
+    return "$__fern_str_oob_abort";
+  }
   if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
   }
@@ -9013,6 +9016,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   let o = "";
   o += "  (func $__fern_oob_abort (result i32) (call $__fern_abort_arr) (unreachable))\n";
   o += "  (func $__fern_slice_abort (result i32) (call $__fern_abort_slice) (unreachable))\n";
+  o += "  (func $__fern_str_oob_abort (result i32) (call $__fern_abort_str) (unreachable))\n";
   o += "  (func $__alloc (param $n i32) (result i32)\n";
   o += "    (call $__fern_alloc (local.get $n)))\n";
   o += "  (func $__free (param $p i32) (result i32)\n";

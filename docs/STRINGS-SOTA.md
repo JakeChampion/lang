@@ -141,7 +141,7 @@ below proposes changing it.
 | `s.len()` | bytes |
 | `s[i]` | byte, as `u8` (the byte type — distinct from `i32`, #5629) |
 | `s[a:b]` | **`Option[str]`** — `Some` of a fresh copy when `0 <= a <= b <= len` and both indices are code-point boundaries, `None` otherwise |
-| `slice_unchecked(s, a, b)` | **`str`**, fresh copy — byte-indexed, no boundary check, aborts (exit 134) out of range |
+| `slice_unchecked(s, a, b)` | **`str`**, fresh copy — byte-indexed, aborts (exit 134) where `s[a:b]` answers `None`: an endpoint out of range or inside a character |
 | `==` | byte equality |
 | `.to_upper()` / `.to_lower()` | ASCII byte fold (A–Z ↔ a–z), everything ≥ 0x80 passes through |
 | `(b: i32) .to_upper()` / `.is_alpha()` / `.is_digit()` | ASCII byte classes on a bare `i32` |
@@ -279,8 +279,10 @@ iterators. The three positions on what happens at a *bad* index:
 - **Swift**: makes indices opaque (`String.Index`) so a bad one is
   unrepresentable — and then needs "breadcrumbs" (a cached side-table)
   to make UTF-16 offset conversion O(1) for Objective-C interop.
-- **Go / Fern**: allows it. Slicing mid-codepoint yields invalid UTF-8
+- **Go**: allows it. Slicing mid-codepoint yields invalid UTF-8
   and nothing complains.
+- **Fern**: `s[a:b]` answers `None` and `slice_unchecked` aborts, as Rust
+  panics, so a slice is always valid UTF-8.
 
 Roc's argument deserves engagement rather than dismissal: getting the
 n-th grapheme "is some combination of more error-prone or slower
@@ -1299,9 +1301,9 @@ Costs, stated honestly:
 
   The primitive/wrapper split for the flip **has landed too** (#5634
   slice 3, PR 1): builtin `slice_unchecked(s, a, b): str` is the OLD
-  `s[a:b]` under its honest name (byte-indexed, exit-134 trap on OOB,
-  no boundary check — the caller guarantees both indices are
-  boundaries),
+  `s[a:b]` under its honest name (byte-indexed, with an exit-134 trap
+  where `s[a:b]` answers `None`: an index out of range or inside a
+  character),
   and `std/string.slice_snap(a, b)` is the total sibling that clamps
   to `[0, len]` and snaps INWARD (`a` forward, `b` backward, `""` when
   they cross — identity on boundary indices, hence on all ASCII).
