@@ -86,6 +86,53 @@ def synthetic():
     return container(blocks, offset=32)
 
 
+def analysis_parity(p):
+    reference = Path(REFERENCE).resolve().parent
+    driver = p / "reference-trace"
+    run(os.environ.get("CC", "cc"), "-O2", "-I" + str(reference / "include"),
+        "-I" + str(reference / "libulc"), "-I" + str(reference / "libfourier/include"), ROOT / "tests/reference_trace.c",
+        *sorted((reference / "libulc").glob("*.c")),
+        reference / "libfourier/release/libfourier.a", "-lm", "-o", driver)
+    maxima = {"coefficient": 0.0, "complexity": 0.0, "noise": 0.0}
+    for n in (256, 2048):
+        for channels in (1, 2, 3):
+            rng = random.Random(42)
+            blocks = 12
+            samples = []
+            for block in range(blocks):
+                for i in range(n):
+                    for ch in range(channels):
+                        value = 0.25 * math.sin((block * n + i) * (0.04 + ch * 0.07))
+                        if block in (2, 3, 7) and i < n // 5:
+                            value += rng.uniform(-0.5, 0.5)
+                        if block > 9:
+                            value = 0.0
+                        samples.append(value)
+            raw = p / "trace.raw"
+            raw.write_bytes(struct.pack("<4I", n, channels, 44100, blocks)
+                            + struct.pack(f"<{len(samples)}f", *samples))
+            run(driver, raw, p / "reference.trace")
+            run(ULC.parent / "trace", raw, p / "fern.trace")
+            a, b = (p / "reference.trace").read_bytes(), (p / "fern.trace").read_bytes()
+            count = n * channels
+            stride = 16 + count * 8
+            assert len(a) == len(b) == stride * blocks
+            for block in range(blocks):
+                at = block * stride
+                ca, na, _, xa = struct.unpack_from("<3If", a, at)
+                cb, nb, _, xb = struct.unpack_from("<3If", b, at)
+                assert (ca, na) == (cb, nb), (n, channels, block, ca, cb, na, nb)
+                maxima["complexity"] = max(maxima["complexity"], abs(xa - xb))
+                for key, offset in (("coefficient", 16), ("noise", 16 + count * 4)):
+                    av = struct.unpack_from(f"<{count}f", a, at + offset)
+                    bv = struct.unpack_from(f"<{count}f", b, at + offset)
+                    maxima[key] = max(maxima[key], max(abs(x - y) for x, y in zip(av, bv)))
+    assert maxima["coefficient"] < 0.000005, maxima
+    assert maxima["complexity"] < 0.0001, maxima
+    assert maxima["noise"] < 0.003, maxima
+    print("ok - reference transient decisions, MDCT/MDST analysis, noise, and complexity", maxima)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="fern-ulc-") as temp:
         p = Path(temp)
@@ -116,6 +163,24 @@ def main():
                         run(Path(REFERENCE) / "ulcdecodetool", encoded, p / "c.wav", "-format:FLOAT32")
                         run(ULC, "decode", encoded, fern_wav, "FLOAT32")
                         compare(fern_wav, p / "c.wav")
+        for command in ("encode-cbr", "encode-abr"):
+            for extra in ([], ["0.5"]) if command == "encode-abr" else ([],):
+                run(ULC, command, source, encoded, 64, 256, *extra)
+                run(ULC, "decode", encoded, p / "mode.wav", "FLOAT32")
+                if REFERENCE:
+                    run(Path(REFERENCE) / "ulcdecodetool", encoded, p / "mode-c.wav", "-format:FLOAT32")
+                    compare(p / "mode.wav", p / "mode-c.wav")
+        average = float(run(ULC, "analyze", source, 256).stdout)
+        assert 0 < average <= 1, average
+        run(ULC, "encode-cbr", source, p / "bad.ulc", "0.001", good=False)
+        run(ULC, "encode-abr", source, p / "bad.ulc", 64, 256, 0, good=False)
+        run(ULC, "encode", source, encoded, "75.5", 256)
+        # Signed PCM32 input uses the full negative range without a 32-bit shift.
+        pcm32 = p / "pcm32.wav"
+        with wave.open(str(pcm32), "wb") as w:
+            w.setparams((1, 4, 48000, 0, "NONE", "not compressed"))
+            w.writeframes(struct.pack("<4i", -2147483648, -1, 0, 2147483647))
+        run(ULC, "encode", pcm32, p / "pcm32.ulc", 100, 256)
         # Exercise supported block size endpoints without quadratic transforms.
         for size in (512, 1024, 4096, 8192, 16384, 32768):
             run(ULC, "encode", source, p / "large.ulc", 10, size)
@@ -146,6 +211,7 @@ def main():
         run(ULC, "decode", p / "synthetic.ulc", p / "synthetic-fern.wav", "FLOAT32")
         if REFERENCE:
             run(Path(REFERENCE) / "ulcdecodetool", p / "synthetic.ulc", p / "synthetic-c.wav", "-format:FLOAT32")
+            analysis_parity(p)
             error = compare(p / "synthetic-fern.wav", p / "synthetic-c.wav")
             print(f"ok - C interoperability, every window shape and overlap scale (max sample error {error:.3g})")
         else:

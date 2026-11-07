@@ -3,6 +3,7 @@ import "std/array";
 import "std/f64";
 import "std/i32";
 import "./transform";
+import "./windows";
 
 pub function valid_config(block_size: i32, channels: i32): boolean {
   return channels >= 1 && channels <= 255 && block_size >= 256 && block_size <= 32768 && (block_size & block_size - 1) == 0;
@@ -22,56 +23,77 @@ function read(own r: BitReader): BitReader {
   return BitReader { ...r, pos: r.pos + 1, value: v };
 }
 
-function quantizer(own r: BitReader): BitReader {
-  r = read(r);
-  let q = r.value;
+@inline
+function nybble(data: [u8], pos: i32): i32 {
+  if (pos < 0 || pos / 2 >= data.len()) {
+    return -1;
+  }
+  return data[pos / 2] as i32 >> (pos & 1) * 4 & 15;
+}
+
+struct Quantizer { pos: i32, value: i32 }
+
+function quantizer(data: [u8], pos0: i32): Quantizer {
+  let pos = pos0;
+  let q = nybble(data, pos);
+  pos += 1;
+  if (q < 0) {
+    return Quantizer { pos: pos, value: -3 };
+  }
   if (q == 15) {
-    return BitReader { ...r, value: -2 };
+    return Quantizer { pos: pos, value: -2 };
   }
   if (q == 14) {
-    r = read(r);
-    if (r.value == 15) {
-      return BitReader { ...r, value: -1 };
+    let extended = nybble(data, pos);
+    pos += 1;
+    if (extended < 0 || extended == 13 || extended == 14) {
+      return Quantizer { pos: pos, value: -3 };
     }
-    if (r.value > 12) {
-      return BitReader { ...r, error: true };
+    if (extended == 15) {
+      return Quantizer { pos: pos, value: -1 };
     }
-    q += r.value;
+    q += extended;
   }
-  return BitReader { ...r, value: q };
+  return Quantizer { pos: pos, value: q };
 }
 
 function scale(q: i32): f64 {
   return 1.0 / ((1u64 << (5 + q) as u64) as f64);
 }
 
-function random(own r: BitReader): BitReader {
-  let s = r.seed;
-  s ^= s << 13u32;
-  s ^= s >> 17u32;
-  s ^= s << 5u32;
-  return BitReader { ...r, seed: s };
+function random(seed: u32): u32 {
+  let value = seed;
+  value ^= value << 13u32;
+  value ^= value >> 17u32;
+  value ^= value << 5u32;
+  return value;
 }
 
 pub struct Coefficients { reader: BitReader, values: f64[] }
 
 pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, string] {
-  if (size < 16 || size > 32768) {
-    return Err("invalid subblock size");
+  if (size < 16 || size > 32768 || r.error) {
+    return Err("invalid subblock size or reader state");
   }
-  r = quantizer(r);
+  let data = r.data;
+  let initial = quantizer(data, r.pos);
+  let pos = initial.pos;
   let out = transform.zeros(size);
-  if (r.error || r.value == -2) {
+  if (initial.value < -1) {
     return Err("invalid initial quantizer or truncated block");
   }
-  if (r.value == -1) {
-    return Ok(Coefficients { reader: r, values: out });
+  if (initial.value == -1) {
+    return Ok(Coefficients { reader: BitReader { ...r, pos: pos }, values: out });
   }
-  let quant = scale(r.value);
+  let seed = r.seed;
+  let quant = scale(initial.value);
   let n = 0;
-  while (n < size && !r.error) {
-    r = read(r);
-    let code = r.value;
+  while (n < size) {
+    let code = nybble(data, pos);
+    pos += 1;
+    if (code < 0) {
+      return Err("truncated coefficient command");
+    }
     if (code != 0 && code != 1 && code != 8 && code != 15) {
       let v = code;
       if (v >= 8) {
@@ -84,52 +106,70 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
       out = out.with(n, square as f64 * quant);
       n += 1;
     } else if (code == 0 || code == 1 || code == 8) {
-      r = read(r);
-      let count = r.value + 1;
+      let hi = nybble(data, pos);
+      pos += 1;
+      if (hi < 0) {
+        return Err("truncated coefficient run");
+      }
+      let count = hi + 1;
       let level = 0.0;
       if (code == 1 || code == 8) {
-        let hi = r.value;
-        r = read(r);
-        count = (hi << 4 | r.value) + 33;
+        let lo = nybble(data, pos);
+        pos += 1;
+        if (lo < 0) {
+          return Err("truncated coefficient run");
+        }
+        count = (hi << 4 | lo) + 33;
         if (code == 8) {
-          let packed = (hi << 4 | r.value) << 1;
-          r = read(r);
-          count = (packed | r.value & 1) + 16;
-          let v = (r.value >> 1) + 1;
+          let extra = nybble(data, pos);
+          pos += 1;
+          if (extra < 0) {
+            return Err("truncated noise run");
+          }
+          count = ((hi << 4 | lo) << 1 | extra & 1) + 16;
+          let v = (extra >> 1) + 1;
           level = v as f64 * (v as f64) * quant * 0.25;
         }
       }
       if (count > size - n) {
         return Err("coefficient run exceeds subblock");
       }
-      for i in 0..count {
-        if (code == 8) {
-          r = random(r);
-          if ((r.seed & 2147483648u32) != 0u32) {
+      if (code == 8) {
+        for i in 0..count {
+          seed = random(seed);
+          if ((seed & 2147483648u32) != 0u32) {
             level = -level;
           }
           out = out.with(n, level);
+          n += 1;
         }
-        n += 1;
+      } else {
+        n += count;
       }
     } else {
-      r = quantizer(r);
-      if (r.value >= 0) {
-        quant = scale(r.value);
-      } else if (r.value == -1) {
+      let next_quant = quantizer(data, pos);
+      pos = next_quant.pos;
+      if (next_quant.value == -3) {
+        return Err("invalid quantizer or truncated block");
+      }
+      if (next_quant.value >= 0) {
+        quant = scale(next_quant.value);
+      } else if (next_quant.value == -1) {
         n = size;
       } else {
-        r = read(r);
-        let v = r.value + 1;
-        r = read(r);
-        let hi = r.value;
-        r = read(r);
-        let decay_code = hi << 4 | r.value;
-        let level = (v as f64 * (v as f64) * quant / 16.0) as f32;
+        let v = nybble(data, pos);
+        let hi = nybble(data, pos + 1);
+        let lo = nybble(data, pos + 2);
+        pos += 3;
+        if (v < 0 || hi < 0 || lo < 0) {
+          return Err("truncated noise tail");
+        }
+        let decay_code = hi << 4 | lo;
+        let level = ((v + 1) as f64 * ((v + 1) as f64) * quant / 16.0) as f32;
         let decay = (1.0 - decay_code as f64 * (decay_code as f64) / 524288.0) as f32;
         while (n < size) {
-          r = random(r);
-          if ((r.seed & 2147483648u32) != 0u32) {
+          seed = random(seed);
+          if ((seed & 2147483648u32) != 0u32) {
             level = -level;
           }
           out = out.with(n, level as f64);
@@ -139,13 +179,10 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
       }
     }
   }
-  if (r.error) {
-    return Err("truncated block");
-  }
-  return Ok(Coefficients { reader: r, values: out });
+  return Ok(Coefficients { reader: BitReader { ...r, seed: seed, pos: pos }, values: out });
 }
 
-pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32 }
+pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32, plans: transform.Plan[] }
 
 pub struct Block { state: Decoder, samples: f64[], next_byte: i32 }
 
@@ -153,10 +190,12 @@ pub function decoder(block_size: i32, channels: i32): Result[Decoder, string] {
   if (!valid_config(block_size, channels)) {
     return Err("block size must be a power of two from 256 to 32768; channels must be 1..255");
   }
-  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32 });
+  let plans: transform.Plan[] = [];
+  for shift in 0..4 {
+    plans = plans.append(transform.plan(block_size >> shift));
+  }
+  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32, plans: plans });
 }
-
-const PATTERNS: i32[] = [0, 8, 25, 145, 298, 418, 673, 2593, 4667, 4787, 5042, 6962, 9137, 11057, 15137, 45857];
 
 // Blocks in the file container start on byte boundaries. Output is interleaved.
 pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
@@ -186,7 +225,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       lap = lap.with(i, all_lap[channel * n / 2 + i]);
     }
     last = state.last_size;
-    let pattern = PATTERNS[pattern_index];
+    let pattern = windows.pattern(pattern_index << 4 | control & 15);
     let at = 0;
     while (pattern != 0) {
       let subsize = n >> (pattern & 7);
@@ -200,7 +239,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         overlap = last;
       }
       last = subsize;
-      let inv = transform.inverse(decoded.values, lap, overlap);
+      let inv = transform.inverse_planned(decoded.values, lap, overlap, state.plans[pattern & 7]);
       lap = inv.lap;
       if (subsize == n) {
         for i in 0..n {
@@ -261,178 +300,4 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
   }
   let next = (r.pos + 1) / 2;
   return Ok(Block { state: Decoder { ...state, last_size: last, lap: all_lap, seed: r.seed }, samples: output, next_byte: next });
-}
-
-// Nybbles are packed low half first, unlike the multi-nybble run arguments.
-function pack(nybbles: [i32]): u8[] {
-  let bytes: u8[] = [];
-  let i = 0;
-  while (i < nybbles.len()) {
-    let b = nybbles[i];
-    if (i + 1 < nybbles.len()) {
-      b |= nybbles[i + 1] << 4;
-    }
-    bytes = bytes.append(b as u8);
-    i += 2;
-  }
-  return bytes;
-}
-
-function put_quant(own codes: i32[], q: i32): i32[] {
-  if (q < 14) {
-    return codes.append(q);
-  }
-  return codes.append(14).append(q - 14);
-}
-
-function quantize(x: f64, q: i32): i32 {
-  let magnitude = x.abs() / scale(q);
-  if (magnitude < 2.0) {  // +/-1 are control codes, so choose between 0 and +/-2.
-    return 0;
-  }
-  let v = (0.5 + (magnitude - 0.25).sqrt()) as i32;
-  if (v < 2) {
-    v = 2;
-  }
-  if (v > 7) {
-    v = 7;
-  }
-  if (x < 0.0) {
-    return -v;
-  }
-  return v;
-}
-
-// A conservative compatible encoder: adapt quantizer per small group of bins.
-// Quality controls the smallest quantizer; no psychoacoustic noise substitution.
-pub function encode_coefficients(coefs: [f64], quality: i32): i32[] {
-  let values: i32[] = [];
-  let quantizers: i32[] = [];
-  let n = coefs.len();
-  let base = 0;
-  while (base < n) {
-    let end = base + 1 + (100 - quality) / 7;
-    if (end > n) {
-      end = n;
-    }
-    let q = 0;
-    let limit = 5 + quality * 21 / 100;
-    let best_error = 1.0e100;
-    for candidate in 0..limit + 1 {
-      let error = 0.0;
-      for i in base..end {
-        let v = quantize(coefs[i], candidate);
-        let reconstructed = v as f64 * (v.abs() as f64) * scale(candidate);
-        let difference = reconstructed - coefs[i];
-        error += difference * difference;
-      }
-      if (error < best_error) {
-        q = candidate;
-        best_error = error;
-      }
-    }
-    for i in base..end {
-      values = values.append(quantize(coefs[i], q));
-      quantizers = quantizers.append(q);
-    }
-    base = end;
-  }
-  let first = 0;
-  while (first < n && values[first] == 0) {
-    first += 1;
-  }
-  if (first == n) {
-    return [14, 15];
-  }
-  let current = quantizers[first];
-  let out = put_quant([], current);
-  let i = 0;
-  while (i < n) {
-    if (values[i] == 0) {
-      let count = 1;
-      while (i + count < n && values[i + count] == 0) {
-        count += 1;
-      }
-      if (i + count == n) {
-        return out.append(15).append(14).append(15);
-      }
-      i += count;
-      while (count > 0) {
-        if (count >= 33) {
-          let run = count;
-          if (run > 288) {
-            run = 288;
-          }
-          out = out.append(1).append(run - 33 >> 4).append(run - 33 & 15);
-          count -= run;
-        } else {
-          let run = count;
-          if (run > 16) {
-            run = 16;
-          }
-          out = out.append(0).append(run - 1);
-          count -= run;
-        }
-      }
-    } else {
-      if (quantizers[i] != current) {
-        current = quantizers[i];
-        out = out.append(15);
-        out = put_quant(out, current);
-      }
-      out = out.append(values[i] & 15);
-      i += 1;
-    }
-  }
-  return out;
-}
-
-pub struct Encoder { block_size: i32, channels: i32, quality: i32, lap: f64[] }
-
-pub struct EncodedBlock { state: Encoder, bytes: u8[] }
-
-pub function encoder(block_size: i32, channels: i32, quality: i32): Result[Encoder, string] {
-  if (!valid_config(block_size, channels)) {
-    return Err("invalid encoder block size or channels");
-  }
-  if (quality < 1 || quality > 100) {
-    return Err("quality must be 1..100");
-  }
-  return Ok(Encoder { block_size: block_size, channels: channels, quality: quality, lap: transform.zeros(block_size * channels / 2) });
-}
-
-pub function encode_block(own state: Encoder, samples: [f64]): Result[EncodedBlock, string] {
-  let n = state.block_size;
-  if (!valid_config(n, state.channels) || state.quality < 1 || state.quality > 100 || state.lap.len() != n * state.channels / 2 || samples.len() != n * state.channels) {
-    return Err("invalid encoder state or sample count");
-  }
-  for x in samples {
-    if (!x.is_finite() || x.abs() > 1.0) {
-      return Err("samples must be finite and in [-1, 1]");
-    }
-  }
-  let codes: i32[] = [0];  // one long block, full overlap
-  let all_lap = state.lap;
-  for ch in 0..state.channels {
-    let input = transform.zeros(n);
-    let lap = transform.zeros(n / 2);
-    for i in 0..n {
-      let x = samples[i * state.channels + ch];
-      if (ch % 2 == 0 && ch + 1 < state.channels) {
-        x = 0.5 * (x + samples[i * state.channels + ch + 1]);
-      } else if (ch % 2 == 1) {
-        x = 0.5 * (samples[i * state.channels + ch - 1] - x);
-      }
-      input = input.with(i, x);
-    }
-    for i in 0..n / 2 {
-      lap = lap.with(i, all_lap[ch * n / 2 + i]);
-    }
-    let result = transform.forward(input, lap);
-    codes = codes.concat(encode_coefficients(result.coefs, state.quality));
-    for i in 0..n / 2 {
-      all_lap = all_lap.with(ch * n / 2 + i, result.lap[i]);
-    }
-  }
-  return Ok(EncodedBlock { state: Encoder { ...state, lap: all_lap }, bytes: pack(codes) });
 }

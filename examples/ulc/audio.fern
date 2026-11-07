@@ -2,6 +2,7 @@
 import "std/array";
 import "std/f64";
 import "./codec";
+import "./encoder";
 import "./transform";
 
 pub struct Audio { rate: i32, channels: i32, samples: f64[] }
@@ -19,6 +20,16 @@ function put(own out: u8[], value: u32, count: i32): u8[] {
     out = out.append((value >> (8 * i) as u32 & 255u32) as u8);
   }
   return out;
+}
+
+@inline
+function put32(own out: u8[], value: u32): u8[] {
+  return out.append(value as u8).append((value >> 8u32) as u8).append((value >> 16u32) as u8).append((value >> 24u32) as u8);
+}
+
+@inline
+function put16(own out: u8[], value: u32): u8[] {
+  return out.append(value as u8).append((value >> 8u32) as u8);
 }
 
 function tag(data: [u8], at: i32, a: i32, b: i32, c: i32, d: i32): boolean {
@@ -78,8 +89,8 @@ pub function read_wav(data: [u8]): Result[Audio, string] {
   if (at != end || start == -1 || channels < 1 || channels > 255 || rate < 1) {
     return Err("missing or invalid WAV metadata");
   }
-  if (!(format == 1 && (bits == 8 || bits == 16 || bits == 24) || format == 3 && bits == 32)) {
-    return Err("supported WAV input: PCM8, PCM16, PCM24, or FLOAT32");
+  if (!(format == 1 && (bits == 8 || bits == 16 || bits == 24 || bits == 32) || format == 3 && bits == 32)) {
+    return Err("supported WAV input: PCM8, PCM16, PCM24, PCM32, or FLOAT32");
   }
   let bytes = bits / 8;
   if (align != channels * bytes || length % align != 0) {
@@ -89,17 +100,26 @@ pub function read_wav(data: [u8]): Result[Audio, string] {
   let cursor = start;
   while (cursor < start + length) {
     let value = 0.0;
-    let raw = le(data, cursor, bytes);
+    let raw = data[cursor] as u32;
+    if (bytes >= 2) {
+      raw |= data[cursor + 1] as u32 << 8u32;
+    }
+    if (bytes >= 3) {
+      raw |= data[cursor + 2] as u32 << 16u32;
+    }
+    if (bytes == 4) {
+      raw |= data[cursor + 3] as u32 << 24u32;
+    }
     if (format == 3) {
       value = f32_from_bits(raw as i32) as f64;
     } else if (bits == 8) {
       value = (raw as i32 - 128) as f64 / 128.0;
     } else {
       let signed = raw as i32;
-      if ((signed & 1 << bits - 1) != 0) {
+      if (bits < 32 && (signed & 1 << bits - 1) != 0) {
         signed -= 1 << bits;
       }
-      value = signed as f64 / ((1 << bits - 1) as f64);
+      value = signed as f64 / ((1u64 << (bits - 1) as u64) as f64);
     }
     if (!value.is_finite() || value.abs() > 1.0) {
       return Err("WAV samples must be finite and in [-1, 1]");
@@ -146,7 +166,7 @@ pub function write_wav(audio: Audio, bits: i32): Result[u8[], string] {
       return Err("nonfinite output sample");
     }
     if (bits == 32) {
-      out = put(out, f32_bits(sample as f32) as u32, 4);
+      out = put32(out, f32_bits(sample as f32) as u32);
     } else {
       let x = sample;
       if (x > 1.0) {
@@ -163,7 +183,14 @@ pub function write_wav(audio: Audio, bits: i32): Result[u8[], string] {
       if (bits == 8) {
         q += 128;
       }
-      out = put(out, q as u32, bytes);
+      if (bytes == 1) {
+        out = out.append(q as u8);
+      } else if (bytes == 2) {
+        out = put16(out, q as u32);
+      } else {
+        out = put16(out, q as u32);
+        out = out.append((q as u32 >> 16u32) as u8);
+      }
     }
   }
   if ((size & 1) != 0) {
@@ -218,13 +245,47 @@ pub function decode(data: u8[]): Result[Audio, string] {
   return Ok(Audio { rate: h.rate, channels: h.channels, samples: out });
 }
 
-pub function encode(audio: Audio, quality: i32, block_size: i32): Result[u8[], string] {
-  let state = codec.encoder(block_size, audio.channels, quality)?;
-  if (audio.rate < 1 || audio.samples.len() % audio.channels != 0) {
-    return Err("invalid audio metadata");
+function sample_block(audio: Audio, block: i32, block_size: i32): f64[] {
+  let input = transform.zeros(block_size * audio.channels);
+  let start = block as i64 * (block_size as i64) * (audio.channels as i64);
+  for i in 0..input.len() {
+    if (start + i as i64 < audio.samples.len() as i64) {
+      input = input.with(i, audio.samples[(start + i as i64) as i32]);
+    }
   }
-  if (audio.samples.len() > 134217728) {
-    return Err("input audio exceeds the in-memory limit (134217728 samples)");
+  return input;
+}
+
+pub function analyze(audio: Audio, block_size: i32): Result[f64, string] {
+  let state = encoder.create(block_size, audio.channels, audio.rate, encoder.Vbr(100.0))?;
+  if (audio.samples.len() % audio.channels != 0 || audio.samples.len() > 134217728) {
+    return Err("invalid audio sample count");
+  }
+  let frames = audio.samples.len() / audio.channels;
+  let blocks = frames / block_size + 2;
+  if (frames % block_size != 0) {
+    blocks += 1;
+  }
+  let sum = 0.0;
+  for b in 0..blocks {
+    let prepared = encoder.prepare(state, sample_block(audio, b, block_size))?;
+    state = prepared.state;
+    sum += prepared.complexity;
+  }
+  return Ok(sum / (blocks as f64));
+}
+
+pub function encode(audio: Audio, quality: i32, block_size: i32): Result[u8[], string] {
+  if (quality < 1 || quality > 100) {
+    return Err("quality must be 1..100");
+  }
+  return encode_mode(audio, encoder.Vbr(quality as f64), block_size);
+}
+
+pub function encode_mode(audio: Audio, mode: encoder.Mode, block_size: i32): Result[u8[], string] {
+  let state = encoder.create(block_size, audio.channels, audio.rate, mode)?;
+  if (audio.samples.len() % audio.channels != 0 || audio.samples.len() > 134217728) {
+    return Err("invalid audio sample count");
   }
   let frames = audio.samples.len() / audio.channels;
   let blocks = frames / block_size + 2;
@@ -234,16 +295,7 @@ pub function encode(audio: Audio, quality: i32, block_size: i32): Result[u8[], s
   let stream: u8[] = [];
   let max_bytes = 0;
   for b in 0..blocks {
-    let input = transform.zeros(block_size * audio.channels);
-    if (b > 0 && b < blocks - 1) {
-      let start = (b - 1) * block_size * audio.channels;
-      for i in 0..input.len() {
-        if (start + i < audio.samples.len()) {
-          input = input.with(i, audio.samples[start + i]);
-        }
-      }
-    }
-    let block = codec.encode_block(state, input)?;
+    let block = encoder.encode_block(state, sample_block(audio, b, block_size))?;
     state = block.state;
     if (block.bytes.len() > max_bytes) {
       max_bytes = block.bytes.len();
@@ -254,9 +306,9 @@ pub function encode(audio: Audio, quality: i32, block_size: i32): Result[u8[], s
     stream = stream.concat(block.bytes);
   }
   let kbps = stream.len() as f64 * 8.0 * (audio.rate as f64) / (blocks as f64 * (block_size as f64) * 1000.0);
-  let nominal = kbps as i32;
-  if (nominal > 65535) {
-    nominal = 65535;
+  let nominal = 65535;
+  if (kbps < 65535.0) {
+    nominal = kbps as i32;
   }
   if (max_bytes > 65535) {
     max_bytes = 0;

@@ -5,84 +5,153 @@ import "std/f64";
 const PI: f64 = 3.141592653589793;
 
 pub function zeros(n: i32): f64[] {
-  let a: f64[] = [];
-  for i in 0..n {
-    a = a.append(0.0);
+  if (n <= 0) {
+    return [];
   }
-  return a;
+  let out: f64[] = [0.0];
+  while (out.len() <= n / 2) {
+    out = out.concat(out);
+  }
+  if (out.len() < n) {
+    out = out.concat(out.take(n - out.len()));
+  }
+  return out;
 }
 
-// DCT-IV(x)[k] = sum_j x[j] cos(pi/N (j+1/2)(k+1/2)).
-// A 2N-point complex FFT with pre/post rotations avoids a quadratic transform.
-pub function dct4(input: [f64]): f64[] {
-  let n = input.len();
-  let size = 2 * n;
-  let re = zeros(size);
-  let im = zeros(size);
-  for j in 0..n {
-    let angle = -PI * (j as f64) / (size as f64);
-    re = re.with(j, input[j] * angle.cos());
-    im = im.with(j, input[j] * angle.sin());
+pub struct Plan { n: i32, reversal: i32[], pre_cos: f64[], pre_sin: f64[], post_cos: f64[], post_sin: f64[], fft_cos: f64[], fft_sin: f64[], window_cos: f64[], window_sin: f64[] }
+
+pub function plan(n: i32): Plan {
+  let half = n / 2;
+  let pre_cos = zeros(half);
+  let pre_sin = zeros(half);
+  let post_cos = zeros(half);
+  let post_sin = zeros(half);
+  let fft_cos = zeros(half / 2);
+  let fft_sin = zeros(half / 2);
+  let reversal: i32[] = [];
+  let bits = 0;
+  let t = half;
+  while (t > 1) {
+    bits += 1;
+    t >>= 1;
   }
-  let j = 0;
-  for i in 1..size {
-    let bit = size >> 1;
-    while ((j & bit) != 0) {
-      j ^= bit;
-      bit >>= 1;
+  for j in 0..half {
+    let angle = PI * (j as f64) / (n as f64);
+    pre_cos = pre_cos.with(j, angle.cos());
+    pre_sin = pre_sin.with(j, angle.sin());
+    let post = PI * (j as f64 + 0.25) / (n as f64);
+    post_cos = post_cos.with(j, post.cos());
+    post_sin = post_sin.with(j, post.sin());
+    let reversed = 0;
+    let value = j;
+    for k in 0..bits {
+      reversed = reversed << 1 | value & 1;
+      value >>= 1;
     }
-    j ^= bit;
-    if (i < j) {
-      let t = re[i];
-      re = re.with(i, re[j]);
-      re = re.with(j, t);
-      let u = im[i];
-      im = im.with(i, im[j]);
-      im = im.with(j, u);
+    reversal = reversal.append(reversed);
+  }
+  for j in 0..half / 2 {
+    let angle = 2.0 * PI * (j as f64) / (half as f64);
+    fft_cos = fft_cos.with(j, angle.cos());
+    fft_sin = fft_sin.with(j, angle.sin());
+  }
+  let window_cos: f64[] = [];
+  let window_sin: f64[] = [];
+  let overlap = n;
+  while (overlap >= 2) {
+    for i in 0..overlap / 2 {
+      let angle = PI * (i as f64 + 0.5) / ((2 * overlap) as f64);
+      window_cos = window_cos.append(angle.cos());
+      window_sin = window_sin.append(angle.sin());
     }
+    overlap >>= 1;
+  }
+  window_cos = window_cos.append(0.7071067811865476);
+  window_sin = window_sin.append(0.7071067811865476);
+  return Plan { n: n, reversal: reversal, pre_cos: pre_cos, pre_sin: pre_sin, post_cos: post_cos, post_sin: post_sin, fft_cos: fft_cos, fft_sin: fft_sin, window_cos: window_cos, window_sin: window_sin };
+}
+
+// Pair even coefficients with reversed odd coefficients for an N/2-point FFT.
+pub function dct4_planned(input: [f64], p: Plan): f64[] {
+  let n = p.n;
+  let half = n / 2;
+  let re = zeros(half);
+  let im = zeros(half);
+  for j in 0..half {
+    let a = input[2 * j];
+    let b = input[n - 1 - 2 * j];
+    let at = p.reversal[j];
+    re = re.with(at, a * p.pre_cos[j] + b * p.pre_sin[j]);
+    im = im.with(at, a * p.pre_sin[j] - b * p.pre_cos[j]);
   }
   let width = 2;
-  while (width <= size) {
-    let angle = -2.0 * PI / (width as f64);
-    let wr = angle.cos();
-    let wi = angle.sin();
+  while (width <= half) {
+    let stride = half / width;
     let base = 0;
-    while (base < size) {
-      let cr = 1.0;
-      let ci = 0.0;
-      for k in 0..width / 2 {
-        let a = base + k;
-        let b = a + width / 2;
-        let vr = re[b] * cr - im[b] * ci;
-        let vi = re[b] * ci + im[b] * cr;
-        let ur = re[a];
-        let ui = im[a];
-        re = re.with(a, ur + vr);
-        im = im.with(a, ui + vi);
-        re = re.with(b, ur - vr);
-        im = im.with(b, ui - vi);
-        let old = cr;
-        cr = cr * wr - ci * wi;
-        ci = old * wi + ci * wr;
+    while (base < half) {
+      if (width == 2) {
+        let ar = re[base];
+        let ai = im[base];
+        let br = re[base + 1];
+        let bi = im[base + 1];
+        re = re.with(base, ar + br);
+        im = im.with(base, ai + bi);
+        re = re.with(base + 1, ar - br);
+        im = im.with(base + 1, ai - bi);
+      } else {
+        let k = 0;
+        while (k < width / 2) {
+          let a = base + k;
+          let b = a + width / 2;
+          let cr = __f64x2_of(p.fft_cos[k * stride], p.fft_cos[(k + 1) * stride]);
+          let ci = __f64x2_of(p.fft_sin[k * stride], p.fft_sin[(k + 1) * stride]);
+          let br = __f64x2_load(re, b);
+          let bi = __f64x2_load(im, b);
+          let vr = br * cr - bi * ci;
+          let vi = br * ci + bi * cr;
+          let ur = __f64x2_load(re, a);
+          let ui = __f64x2_load(im, a);
+          re = __f64x2_with(re, a, ur + vr);
+          im = __f64x2_with(im, a, ui + vi);
+          re = __f64x2_with(re, b, ur - vr);
+          im = __f64x2_with(im, b, ui - vi);
+          k += 2;
+        }
       }
       base += width;
     }
     width *= 2;
   }
   let out = zeros(n);
-  for k in 0..n {
-    let angle = -PI * (k as f64 + 0.5) / (size as f64);
-    out = out.with(k, re[k] * angle.cos() - im[k] * angle.sin());
+  for j in 0..half {
+    let c = p.post_cos[j];
+    let s = p.post_sin[j];
+    out = out.with(2 * j, re[j] * c - im[j] * s);
+    out = out.with(n - 1 - 2 * j, re[j] * s + im[j] * c);
   }
   return out;
+}
+
+pub function dct4(input: [f64]): f64[] {
+  return dct4_planned(input, plan(input.len()));
 }
 
 pub struct Inverse { samples: f64[], lap: f64[] }
 
 // The lapping layout follows libfourier's Fourier_IMDCT_Template.
-pub function inverse(coefs: [f64], own lap: f64[], overlap: i32): Inverse {
+pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan): Inverse {
   let n = coefs.len();
-  let temp = dct4(coefs);
+  let silent = true;
+  for value in coefs {
+    if (value != 0.0) {
+      silent = false;
+      break;
+    }
+  }
+  let temp = zeros(n);
+  if (!silent) {
+    temp = dct4_planned(coefs, p);
+  }
   let out = zeros(n);
   let flat = (n - overlap) / 2;
   for i in 0..n / 2 {
@@ -92,9 +161,8 @@ pub function inverse(coefs: [f64], own lap: f64[], overlap: i32): Inverse {
       out = out.with(i, a);
       out = out.with(n - 1 - i, b);
     } else {
-      let angle = PI * ((i - flat) as f64) / ((2 * overlap) as f64) + PI / ((4 * overlap) as f64);
-      let c = angle.cos();
-      let s = angle.sin();
+      let c = p.window_cos[n - overlap + i - flat];
+      let s = p.window_sin[n - overlap + i - flat];
       out = out.with(i, c * a - s * b);
       out = out.with(n - 1 - i, s * a + c * b);
     }
@@ -103,6 +171,10 @@ pub function inverse(coefs: [f64], own lap: f64[], overlap: i32): Inverse {
     lap = lap.with(i, temp[i]);
   }
   return Inverse { samples: out, lap: lap };
+}
+
+pub function inverse(coefs: [f64], own lap: f64[], overlap: i32): Inverse {
+  return inverse_planned(coefs, lap, overlap, plan(coefs.len()));
 }
 
 pub struct Forward { coefs: f64[], lap: f64[] }
@@ -124,4 +196,44 @@ pub function forward(samples: [f64], own lap: f64[]): Forward {
     coefs = coefs.with(i, coefs[i] * (2.0 / (n as f64)));
   }
   return Forward { coefs: coefs, lap: lap };
+}
+
+pub struct Dual { mdct: f64[], mdst: f64[], lap: f64[] }
+
+pub function forward_dual(samples: [f64], own lap: f64[], offset: i32, overlap: i32, p: Plan): Dual {
+  let n = samples.len();
+  let half = n / 2;
+  let ct = zeros(n);
+  let st = zeros(n);
+  let flat = (n - overlap) / 2;
+  for i in 0..half {
+    let a = lap[offset + i];
+    let b = lap[offset + n - 1 - i];
+    let c = samples[i];
+    let d = samples[n - 1 - i];
+    let cosine = 1.0;
+    let sine = 0.0;
+    if (i >= flat) {
+      cosine = p.window_cos[n - overlap + i - flat];
+      sine = p.window_sin[n - overlap + i - flat];
+    }
+    lap = lap.with(offset + i, sine * c);
+    lap = lap.with(offset + n - 1 - i, cosine * d);
+    ct = ct.with(half - 1 - i, cosine * c + sine * d);
+    ct = ct.with(half + i, -a + b);
+    st = st.with(half - 1 - i, cosine * c - sine * d);
+    st = st.with(half + i, a + b);
+  }
+  for i in 0..half {
+    st = st.with(2 * i + 1, -st[2 * i + 1]);
+  }
+  ct = dct4_planned(ct, p);
+  st = dct4_planned(st, p);
+  let mdst = zeros(n);
+  let scale = 2.0 / (n as f64);
+  for i in 0..n {
+    ct = ct.with(i, ct[i] * scale);
+    mdst = mdst.with(i, st[n - 1 - i] * scale);
+  }
+  return Dual { mdct: ct, mdst: mdst, lap: lap };
 }

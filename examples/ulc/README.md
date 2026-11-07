@@ -3,7 +3,7 @@
 This example implements [Aikku93's ULC2 audio codec](https://github.com/Aikku93/ulc-codec) in Fern.
 The library and CLI use no C code or external codec process.
 The decoder supports the complete documented ULC2 syntax.
-The encoder uses a simpler quality model than the reference encoder.
+The encoder includes transient windows, Bark-band masking, noise substitution, and all three rate-control modes.
 
 ## Build
 
@@ -26,18 +26,21 @@ Run these commands from the repository root:
 ```sh
 examples/ulc/build/ulc encode input.wav output.ulc
 examples/ulc/build/ulc encode input.wav output.ulc 90 512
+examples/ulc/build/ulc encode-cbr input.wav output.ulc 96 2048
+examples/ulc/build/ulc encode-abr input.wav output.ulc 96 2048
+examples/ulc/build/ulc analyze input.wav 2048
 examples/ulc/build/ulc decode input.ulc output.wav
 examples/ulc/build/ulc decode input.ulc output.wav FLOAT32
 examples/ulc/build/ulc info input.ulc
 ```
 
 The optional encoder arguments are quality and block size.
-Quality is an integer from 1 to 100, with a default of 75.
-Quality values do not correspond to the reference encoder's quality values.
+Quality is a positive number up to 100, with a default of 75.
+VBR uses the reference encoder's complexity model.
 Block size is a power of two from 256 to 32768, with a default of 2048.
 The CLI returns status 1 for invalid arguments, unsupported formats, or malformed input.
 
-Input WAV formats are unsigned PCM8, signed PCM16, signed PCM24, and IEEE FLOAT32.
+Input WAV formats are unsigned PCM8, signed PCM16/PCM24/PCM32, and IEEE FLOAT32.
 Input samples must be finite and within `[-1, 1]`.
 Output formats are PCM8, PCM16, PCM24, and FLOAT32.
 PCM16 is the default output format.
@@ -49,7 +52,11 @@ It does not support WAVE_FORMAT_EXTENSIBLE or RF64.
 ## Implementation
 
 - `codec.fern` implements coefficient commands, quantizers, noise fill, window patterns, overlap scales, and M/S channel pairs.
-- `transform.fern` implements DCT-IV through a radix-2 complex FFT and the sine-window transforms.
+- `encoder.fern` manages lookahead, transforms, and rate control.
+- `windows.fern` detects transients.
+- `analysis.fern` calculates masking levels, noise spectra, and coefficient priorities.
+- `bitstream.fern` selects quantizer zones and emits coefficient commands.
+- `transform.fern` implements DCT-IV through an N/2-point complex FFT and the sine-window transforms.
 - `audio.fern` implements WAV and ULC2 containers.
 - `ulc.fern` implements command-line file I/O.
 
@@ -60,11 +67,21 @@ The reference decoder uses a global seed for the process.
 Different trigonometric functions and operation order cause small sample differences from the reference decoder.
 The parser rejects reserved commands, truncated commands, and runs that exceed their subblock.
 
-The encoder uses long windows, M/S channel pairs, adaptive quantizers, signed-square coefficients, and zero runs.
-Higher quality permits smaller quantizers and smaller groups of coefficients.
-The encoder does not implement transient window selection, perceptual masking, noise substitution, or CBR/ABR rate targets.
-The reference decoder accepts its output.
-Its compression and perceptual quality differ from the reference encoder.
+The encoder follows the reference algorithm for transient windows, overlap scales, M/S channel pairs, and coefficient priorities.
+It includes Bark-band masking, noise runs, and exponential noise tails.
+It uses stable radix sorting instead of heapsort.
+The transform uses cached tables and SIMD operations.
+CBR and ABR measure candidate sizes without allocation of an output bitstream for each search pass.
+
+CBR enforces a byte-aligned budget for each block.
+An impossible budget returns an error.
+ABR distributes the target bitrate according to block complexity.
+The CLI calculates average complexity in a separate pass unless the caller supplies it as the final argument.
+Silent ABR blocks still require the minimum header and stop commands.
+
+Floating-point precision and coefficient ties can change the output bytes relative to C.
+These differences do not change the format or the supported features.
+The tests compare transient decisions, transform coefficients, noise analysis, and complexity with the reference implementation.
 
 ULC2 does not store the original sample count.
 File output preserves the initial delay and final padding, as the reference tools do.
@@ -98,10 +115,13 @@ Save `block.state` for the next call.
 Advance the input offset to `block.next_byte`.
 Output samples are interleaved.
 
-`codec.encoder(block_size, channels, quality)` creates an encoder state.
-`codec.encode_block(state, samples)` returns the next state and a byte-aligned block.
+`encoder.create(block_size, channels, rate, mode)` creates an encoder state.
+Modes are `encoder.Vbr(quality)`, `encoder.Cbr(kbps)`, and `encoder.Abr(kbps, average_complexity)`.
+`encoder.encode_block(state, samples)` returns the next state and a byte-aligned block.
 An input block contains exactly `block_size * channels` interleaved samples.
-The caller manages delay and final flush blocks with this API.
+The encoder owns the initial lookahead buffer.
+The caller supplies two final zero blocks with this API.
+
 `audio.encode` and `audio.decode` manage the file container, delay, and padding.
 
 ## Tests
@@ -130,18 +150,28 @@ examples/ulc/build/unit-sanitize
 
 The tests compare DCT-IV with its direct definition and check exact reconstruction through the transform pair.
 They check coefficient commands, malformed input, WAV formats, and codec reconstruction with delay.
-Native CLI tests cover all block sizes and audio with one, two, or three channels.
+Native CLI tests cover all block sizes, three rate-control modes, and audio with one, two, or three channels.
 
-The optional C tests check compatibility in both directions.
+The optional C tests require a C compiler and a complete reference checkout.
+They check compatibility in both directions.
 They check every window pattern at all eight overlap scales, with noise and silence.
 Python 3 is necessary for the CLI tests.
 The example CI entry point is `examples/tests/ulc_codec.fern`.
 
-Validation used x86-64 Linux, Fern `e8033eacb25d`, and reference ulc-codec `b47df8d50c2ef2d765e5dbec0bf567b5e558173a`.
+Validation used x86-64 Linux and the compiler from this checkout.
+It also used Fern nightly `e8033eacb25d`.
+The reference version is ulc-codec `b47df8d50c2ef2d765e5dbec0bf567b5e558173a`.
 The reference checkout used its pinned libfourier submodule.
 The maximum FLOAT32 sample difference across all windows was `2.38e-6`.
 The comparison tolerance is `1e-5`.
 The sanitized unit tests reported zero live allocations at exit.
+
+## Performance
+
+[Benchmark instructions and results](bench/README.md) describe the workloads and comparison limits.
+The benchmark records input hashes, executable hashes, machine details, and individual timings.
+A larger speed ratio means that Fern is faster.
+These results do not establish a worldwide speed or perceptual-quality ranking.
 
 ## License
 

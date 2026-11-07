@@ -1,0 +1,224 @@
+// Bark-band masking and noise analysis from ulc-codec.
+import "std/array";
+import "std/f64";
+import "./transform";
+
+pub struct Profile { n: i32, mask_begin: i32[], mask_end: i32[], noise_begin: i32[], noise_end: i32[], bands: i32[], fractions: f64[] }
+
+pub function ints(n: i32): i32[] {
+  return __alloc_i32(n);
+}
+
+function bound(x: i32, high: i32): i32 {
+  if (x < 0) {
+    return 0;
+  }
+  if (x > high) {
+    return high;
+  }
+  return x;
+}
+
+pub function profile(n: i32, rate: i32): Profile {
+  let lines = n / 2;
+  let nyquist = rate as f64 * 0.5;
+  let mb: i32[] = [];
+  let me: i32[] = [];
+  let nb: i32[] = [];
+  let ne: i32[] = [];
+  for band in 0..25 {
+    mb = mb.append(bound((600.0 * ((band as f64 - 0.75) / 6.0).sinh() * (lines as f64) / nyquist - 0.5).floor() as i32, lines - 1));
+    me = me.append(bound((600.0 * ((band as f64 + 0.25) / 6.0).sinh() * (lines as f64) / nyquist - 0.5).ceil() as i32, lines));
+    nb = nb.append(bound((600.0 * (band as f64 / 6.0).sinh() * (lines as f64) / nyquist - 0.5).floor() as i32, lines - 1));
+    ne = ne.append(bound((600.0 * ((band as f64 + 2.0) / 6.0).sinh() * (lines as f64) / nyquist - 0.5).ceil() as i32, lines));
+  }
+  let bands: i32[] = [];
+  let fractions: f64[] = [];
+  for line in 0..lines {
+    let x = (line as f64 + 0.5) * nyquist / (lines as f64) / 600.0;
+    let bark = 6.0 * (x + (x * x + 1.0).sqrt()).log();
+    let band = bark as i32;
+    bands = bands.append(bound(band, 24));
+    if (band >= 24) {
+      fractions = fractions.append(0.0);
+    } else {
+      fractions = fractions.append(bark - band as f64);
+    }
+  }
+  return Profile { n: n, mask_begin: mb, mask_end: me, noise_begin: nb, noise_end: ne, bands: bands, fractions: fractions };
+}
+
+// Use the reference polynomial to preserve its coefficient-priority scale.
+pub function fast_log(x: f64): f64 {
+  let bits = f32_bits(x as f32) as u32;
+  let exponent = (bits >> 23u32) as i32 - 127;
+  let mantissa = f32_from_bits((127u32 << 23u32 | bits & 8388607u32) as i32) as f64;
+  return -1.7417939 + (2.8212026 + (-1.4699568 + (0.44717955 - 0.056570851 * mantissa) * mantissa) * mantissa) * mantissa + 0.6931471806 * (exponent as f64);
+}
+
+pub struct Spectrum { mask: f64[], noise: f64[] }
+
+pub function spectrum(power: [f64], p: Profile, noise_mode: boolean): f64[] {
+  let n = power.len();
+  let floor = transform.zeros(n + 1);
+  let peak = transform.zeros(n + 1);
+  let weight = transform.zeros(n + 1);
+  for i in 0..n {
+    let v = power[i];
+    let log_v = fast_log(1.1754943508222875e-38 + v);
+    floor = floor.with(i + 1, floor[i] + log_v);
+    peak = peak.with(i + 1, peak[i] + log_v * v);
+    weight = weight.with(i + 1, weight[i] + v);
+  }
+  let levels = transform.zeros(25);
+  let level = 0.0;
+  if (noise_mode) {
+    level = -100.0;
+  }
+  for band in 0..25 {
+    let begin = p.mask_begin[band];
+    let end = p.mask_end[band];
+    if (noise_mode) {
+      begin = p.noise_begin[band];
+      end = p.noise_end[band];
+    }
+    let w = weight[end] - weight[begin];
+    if (w > 0.0 && end > begin) {
+      let mean_peak = (peak[end] - peak[begin]) / w;
+      let mean_floor = (floor[end] - floor[begin]) / ((end - begin) as f64);
+      if (noise_mode) {
+        level = 0.5 * ((w / ((end - begin) as f64)).log() + mean_floor - mean_peak);
+      } else {
+        level = mean_peak - mean_floor - w.log();
+      }
+    }
+    levels = levels.with(band, level);
+  }
+  let out = transform.zeros(n);
+  if (noise_mode) {
+    out = transform.zeros(2 * n);
+  }
+  for i in 0..n {
+    let band = p.bands[i];
+    let right = band + 1;
+    if (right > 24) {
+      right = 24;
+    }
+    let value = levels[band] * (1.0 - p.fractions[i]) + levels[right] * p.fractions[i];
+    if (noise_mode) {
+      let w = (0.5 * value).exp();
+      out = out.with(2 * i, w);
+      out = out.with(2 * i + 1, w * (value + 0.6931471805599453));
+    } else {
+      out = out.with(i, value);
+    }
+  }
+  return out;
+}
+
+pub function unsigned_quantize(v: f64, limit: i32): i32 {
+  if (v < 0.5) {
+    return 0;
+  }
+  if (v >= (limit * limit + limit) as f64 + 0.5) {
+    return limit;
+  }
+  let q = (0.5 + (v - 0.25).sqrt()) as i32;
+  if (q > limit) {
+    q = limit;
+  }
+  return q;
+}
+
+pub function noise_quantizer(data: [f64], base: i32, band: i32, count: i32, quant: f64): i32 {
+  let begin = base + band / 2 * 2;
+  let lines = (count + (band & 1) + 1) / 2;
+  let sum = 0.0;
+  let weight = 0.0;
+  for i in 0..lines {
+    weight += data[begin + 2 * i];
+    sum += data[begin + 2 * i + 1];
+  }
+  if (sum == 0.0 || weight <= 0.0) {
+    return 0;
+  }
+  return unsigned_quantize((sum / weight).exp() * quant, 8);
+}
+
+pub function noise_tail(data: [f64], base: i32, band: i32, count: i32, quant: f64): (i32, i32) {
+  let begin = base + band / 2 * 2;
+  let lines = (count + (band & 1) + 1) / 2;
+  let sx = 0.0;
+  let sx2 = 0.0;
+  let sxy = 0.0;
+  let sy = 0.0;
+  let sw = 0.0;
+  for i in 0..lines {
+    let x = 2.0 * (i as f64);
+    let w = data[begin + 2 * i];
+    let wy = data[begin + 2 * i + 1];
+    sx += w * x;
+    sx2 += w * x * x;
+    sxy += x * wy;
+    sy += wy;
+    sw += w;
+  }
+  let determinant = sw * sx2 - sx * sx;
+  if (determinant <= 0.0) {
+    return (0, 0);
+  }
+  let amplitude = ((sx2 * sy - sx * sxy) / determinant).exp();
+  let slope = (sw * sxy - sx * sy) / determinant;
+  let decay = 1.0;
+  if (slope < 0.0) {
+    decay = slope.exp();
+  }
+  let noise_q = unsigned_quantize(amplitude * quant * 4.0, 16);
+  let decay_q = unsigned_quantize((1.0 - decay) * 524288.0, 255);
+  if (decay_q == 0) {
+    return (0, 0);
+  }
+  return (noise_q, decay_q);
+}
+
+// Stable radix order gives bounded linear cost for the coefficient priorities.
+pub function ranks(keys: [f64]): i32[] {
+  let n = keys.len();
+  let order: i32[] = [];
+  let bits: u32[] = [];
+  for i in 0..n {
+    order = order.append(i);
+    let b = f32_bits(keys[i] as f32) as u32;
+    if ((b & 2147483648u32) != 0u32) {
+      b ^= 4294967295u32;
+    } else {
+      b ^= 2147483648u32;
+    }
+    bits = bits.append(b);
+  }
+  for pass in 0..4 {
+    let counts = ints(256);
+    for index in order {
+      let byte = (bits[index] >> (8 * pass) as u32 & 255u32) as i32;
+      counts = counts.with(byte, counts[byte] + 1);
+    }
+    let total = 0;
+    for i in 0..256 {
+      let count = counts[i];
+      counts = counts.with(i, total);
+      total += count;
+    }
+    let next = ints(n);
+    for index in order {
+      let byte = (bits[index] >> (8 * pass) as u32 & 255u32) as i32;
+      next = next.with(counts[byte], index);
+      counts = counts.with(byte, counts[byte] + 1);
+    }
+    order = next;
+  }
+  let result = ints(n);
+  for i in 0..n {
+    result = result.with(order[i], n - 1 - i);
+  }
+  return result;
+}

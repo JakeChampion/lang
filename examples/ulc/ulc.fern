@@ -1,13 +1,23 @@
 import "std/number_parse";
 import "std/string";
 import "std/i32";
+import "std/f64";
 import "std/io";
 import "std/result";
 import "./audio";
+import "./encoder";
 
 function usage(): i32 {
-  print("ULC2 codec in Fern\nUsage:\n  ulc encode INPUT.wav OUTPUT.ulc [QUALITY=75] [BLOCKSIZE=2048]\n  ulc decode INPUT.ulc OUTPUT.wav [PCM8|PCM16|PCM24|FLOAT32]\n  ulc info INPUT.ulc");
+  print("ULC2 codec in Fern\nUsage:\n  ulc encode INPUT.wav OUTPUT.ulc [QUALITY=75] [BLOCKSIZE=2048]\n  ulc encode-cbr INPUT.wav OUTPUT.ulc KBPS [BLOCKSIZE=2048]\n  ulc encode-abr INPUT.wav OUTPUT.ulc KBPS [BLOCKSIZE=2048] [AVERAGE_COMPLEXITY]\n  ulc analyze INPUT.wav [BLOCKSIZE=2048]\n  ulc decode INPUT.ulc OUTPUT.wav [PCM8|PCM16|PCM24|FLOAT32]\n  ulc info INPUT.ulc");
   return 1;
+}
+
+function integer(s: string): Result[i32, string] {
+  return i32.parse_i32(s).map_err((e: number_parse.ParseNumberError): string => e.message());
+}
+
+function number(s: string): Result[f64, string] {
+  return f64.parse_f64(s).map_err((e: number_parse.ParseNumberError): string => e.message());
 }
 
 function run(argv: string[]): Result[i32, string] {
@@ -15,19 +25,33 @@ function run(argv: string[]): Result[i32, string] {
     return Ok(usage());
   }
   let command = argv[1];
-  if (command != "encode" && command != "decode" && command != "info") {
+  if (command != "encode" && command != "encode-cbr" && command != "encode-abr" && command != "decode" && command != "info" && command != "analyze") {
     return Ok(usage());
   }
-  if (command != "info" && argv.len() < 4) {
+  if (command == "info" && argv.len() != 3 || command == "analyze" && argv.len() > 4) {
     return Ok(usage());
   }
-  if (command == "info" && argv.len() != 3 || command == "decode" && argv.len() > 5 || argv.len() > 6) {
+  if (command != "info" && command != "analyze" && argv.len() < 4) {
+    return Ok(usage());
+  }
+  if ((command == "encode-cbr" || command == "encode-abr") && argv.len() < 5) {
+    return Ok(usage());
+  }
+  if (command == "decode" && argv.len() > 5 || command != "encode-abr" && argv.len() > 6 || argv.len() > 7) {
     return Ok(usage());
   }
   let input = read_file_bytes(argv[2]).map_err((e: IoError): string => e.message())?;
   if (command == "info") {
     let h = audio.header(input)?;
     print("ULC2: " + h.rate.to_string() + " Hz, " + h.channels.to_string() + " channels, block size " + h.block_size.to_string() + ", " + h.blocks.to_string() + " blocks");
+    return Ok(0);
+  }
+  if (command == "analyze") {
+    let size = 2048;
+    if (argv.len() == 4) {
+      size = integer(argv[3])?;
+    }
+    print(audio.analyze(audio.read_wav(input)?, size)?.to_string());
     return Ok(0);
   }
   let output: u8[] = [];
@@ -49,15 +73,31 @@ function run(argv: string[]): Result[i32, string] {
     }
     output = audio.write_wav(audio.decode(input)?, bits)?;
   } else {
-    let quality = 75;
+    let rate = 75.0;
     let size = 2048;
     if (argv.len() >= 5) {
-      quality = i32.parse_i32(argv[4]).map_err((e: number_parse.ParseNumberError): string => e.message())?;
+      rate = number(argv[4])?;
     }
     if (argv.len() >= 6) {
-      size = i32.parse_i32(argv[5]).map_err((e: number_parse.ParseNumberError): string => e.message())?;
+      size = integer(argv[5])?;
     }
-    output = audio.encode(audio.read_wav(input)?, quality, size)?;
+    let source = audio.read_wav(input)?;
+    let mode = encoder.Vbr(rate);
+    if (command == "encode-cbr") {
+      mode = encoder.Cbr(rate);
+    } else if (command == "encode-abr") {
+      let average = 1.0;
+      if (argv.len() == 7) {
+        average = number(argv[6])?;
+      } else {
+        average = audio.analyze(source, size)?;
+        if (average == 0.0) {
+          average = 1.0;
+        }
+      }
+      mode = encoder.Abr(rate, average);
+    }
+    output = audio.encode_mode(source, mode, size)?;
   }
   write_file_bytes(argv[3], output).map_err((e: IoError): string => e.message())?;
   return Ok(0);

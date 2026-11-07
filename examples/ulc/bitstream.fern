@@ -1,0 +1,233 @@
+// ULC coefficient selection and nybble output.
+import "std/array";
+import "std/f64";
+import "std/i32";
+import "./analysis";
+import "./windows";
+
+pub struct BitWriter { bytes: u8[], count: i32, low: i32, measure: boolean }
+
+function writer(measure: boolean): BitWriter {
+  return BitWriter { bytes: [], count: 0, low: 0, measure: measure };
+}
+
+function put(own w: BitWriter, code: i32): BitWriter {
+  let value = code & 15;
+  if (w.measure) {
+    return BitWriter { ...w, count: w.count + 1 };
+  }
+  if ((w.count & 1) == 0) {
+    return BitWriter { ...w, count: w.count + 1, low: value };
+  }
+  let byte = (w.low | value << 4) as u8;
+  return BitWriter { ...w, count: w.count + 1, bytes: w.bytes.append(byte) };
+}
+
+function quantizer(own w: BitWriter, q: i32, lead: boolean): BitWriter {
+  if (lead) {
+    w = put(w, 15);
+  }
+  let code = q - 5;
+  if (code < 14) {
+    return put(w, code);
+  }
+  w = put(w, 14);
+  return put(w, code - 14);
+}
+
+function build_quantizer(peak: f64): i32 {
+  let q = (5.584962500721156 - 1.4426950408889634 * peak.log()) as i32;
+  if (q < 5) {
+    q = 5;
+  }
+  if (q > 31) {
+    q = 31;
+  }
+  return q;
+}
+
+function quantize(value: f64, multiplier: f64): i32 {
+  let q = analysis.unsigned_quantize(value.abs() * multiplier, 7);
+  if (value < 0.0) {
+    return -q;
+  }
+  return q;
+}
+
+struct Zone { writer: BitWriter, next: i32 }
+
+function zone(own w: BitWriter, coefs: [f64], noise: [f64], ranks: [i32], begin: i32, end: i32, next0: i32, quant: f64, keep: i32): Zone {
+  let current = begin;
+  let next = next0;
+  while (true) {
+    while (current < end && ranks[current] >= keep) {
+      current += 1;
+    }
+    if (current >= end) {
+      break;
+    }
+    if ((coefs[current] * quant).abs() < 2.5) {
+      current += 1;
+      continue;
+    }
+    let run = current - next;
+    while (run > 0) {
+      if (run <= 2) {
+        let a = quantize(coefs[next], quant);
+        let b = 0;
+        if (run == 2) {
+          b = quantize(coefs[next + 1], quant);
+        }
+        if (a.abs() > 1 && (run == 1 || b.abs() > 1)) {
+          w = put(w, a);
+          if (run == 2) {
+            w = put(w, b);
+          }
+          next += run;
+          break;
+        }
+      }
+      let count = 0;
+      let code = 0;
+      let nq = 0;
+      if (run >= 16) {
+        code = run - 16;
+        if (code > 511) {
+          code = 511;
+        }
+        count = code + 16;
+        nq = analysis.noise_quantizer(noise, 0, next, count, quant);
+      }
+      if (nq != 0) {
+        w = put(w, 8);
+        w = put(w, code >> 5);
+        w = put(w, code >> 1);
+        w = put(w, code & 1 | nq - 1 << 1);
+      } else if (run < 33) {
+        count = run;
+        if (count > 16) {
+          count = 16;
+        }
+        w = put(w, 0);
+        w = put(w, count - 1);
+      } else {
+        count = run;
+        if (count > 288) {
+          count = 288;
+        }
+        code = count - 33;
+        w = put(w, 1);
+        w = put(w, code >> 4);
+        w = put(w, code);
+      }
+      next += count;
+      run -= count;
+    }
+    w = put(w, quantize(coefs[current], quant));
+    next += 1;
+    current += 1;
+  }
+  return Zone { writer: w, next: next };
+}
+
+function subblock(own w: BitWriter, coefs: [f64], noise: [f64], ranks: [i32], begin: i32, size: i32, keep: i32): BitWriter {
+  let end = begin + size;
+  let current = begin;
+  let next = begin;
+  let previous = -1;
+  let start = -1;
+  let minimum = 1000.0;
+  let maximum = -1000.0;
+  while (true) {
+    while (current < end && ranks[current] >= keep) {
+      current += 1;
+    }
+    let lo = 0.0;
+    let hi = maximum;
+    let level = 0.0;
+    if (current < end) {
+      level = coefs[current].abs();
+      lo = level;
+      hi = level;
+      if (minimum < lo) {
+        lo = minimum;
+      }
+      if (maximum > hi) {
+        hi = maximum;
+      }
+      if (start == -1) {
+        start = current;
+      }
+    }
+    if (hi > lo * 4.0) {
+      let q = build_quantizer(maximum);
+      if (q != previous) {
+        w = quantizer(w, q, previous != -1);
+        previous = q;
+      }
+      let result = zone(w, coefs, noise, ranks, start, current, next, (1u64 << q as u64) as f64, keep);
+      w = result.writer;
+      next = result.next;
+      start = current;
+      minimum = level;
+      maximum = level;
+    } else {
+      minimum = lo;
+      maximum = hi;
+    }
+    current += 1;
+    if (current > end) {
+      break;
+    }
+  }
+  let tail = end - next;
+  if (tail > 4) {
+    if (previous != -1) {
+      w = put(w, 15);
+    }
+    let nq = 0;
+    let decay = 0;
+    if (previous != -1 && tail >= 16) {
+      let params = analysis.noise_tail(noise, 0, next, tail, (1u64 << previous as u64) as f64);
+      nq = params.0;
+      decay = params.1;
+    }
+    if (nq != 0) {
+      w = put(w, 15);
+      w = put(w, nq - 1);
+      w = put(w, decay >> 4);
+      w = put(w, decay);
+    } else {
+      w = put(w, 14);
+      w = put(w, 15);
+    }
+  } else if (tail > 0) {
+    w = put(w, 0);
+    w = put(w, tail - 1);
+  }
+  return w;
+}
+
+pub struct Encoded { bytes: u8[], bits: i32 }
+
+pub function pass(coefs: [f64], noise: [f64], ranks: [i32], block_size: i32, channels: i32, control: i32, keep: i32, measure: boolean): Encoded {
+  let w = put(writer(measure), control);
+  if ((control & 8) != 0) {
+    w = put(w, control >> 4);
+  }
+  let at = 0;
+  for ch in 0..channels {
+    let pattern = windows.pattern(control);
+    while (pattern != 0) {
+      let size = block_size >> (pattern & 7);
+      w = subblock(w, coefs, noise, ranks, at, size, keep);
+      at += size;
+      pattern >>= 4;
+    }
+  }
+  let bytes = w.bytes;
+  if (!measure && (w.count & 1) != 0) {
+    bytes = bytes.append(w.low as u8);
+  }
+  return Encoded { bytes: bytes, bits: (w.count + 1) / 2 * 8 };
+}

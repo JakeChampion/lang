@@ -1,5 +1,6 @@
 FERN ?= ../../bin/fern
 TARGET ?= x86-64-linux
+FERNFLAGS ?= -stdlib ../../internal/stdlib
 SOURCES := $(wildcard *.fern)
 
 .PHONY: all check test clean
@@ -9,16 +10,19 @@ build:
 	mkdir -p $@
 
 build/ulc: $(SOURCES) | build
-	$(FERN) -target $(TARGET) -o $@ ulc.fern
+	$(FERN) $(FERNFLAGS) -target $(TARGET) -o $@ ulc.fern
 
 check:
-	$(FERN) -check ulc.fern
-	$(FERN) -check tests/unit.fern
+	$(FERN) $(FERNFLAGS) -check ulc.fern
+	$(FERN) $(FERNFLAGS) -check tests/unit.fern
 
 build/unit: tests/unit.fern $(SOURCES) | build
-	$(FERN) -target $(TARGET) -o $@ tests/unit.fern
+	$(FERN) $(FERNFLAGS) -target $(TARGET) -o $@ tests/unit.fern
 
-test: build/ulc build/unit
+build/trace: tests/trace.fern $(SOURCES) | build
+	$(FERN) $(FERNFLAGS) -target $(TARGET) -o $@ tests/trace.fern
+
+test: build/ulc build/unit build/trace
 	./build/unit
 	python3 tests/integration.py
 
