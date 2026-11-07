@@ -1,3 +1,5 @@
+import "./sysreg";
+
 function x86_rax(): i32 {
   return 0;
 }
@@ -2459,6 +2461,41 @@ function x86_gas_parse_mem(op: string): GasMem {
   return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: ix, scale: sc, no_base: b0.len() == 0 };
 }
 
+// The number of a control-register operand such as %cr3, or -1.
+function x86_gas_creg(tok: string): i32 {
+  if (!x86_str_starts_with(tok, "%cr")) {
+    return -1;
+  }
+  return sysreg.x86_control(slice_unchecked(tok, 1, tok.len()) + "");
+}
+
+// movq to or from a control register: 0F 20 reads it and 0F 22 writes it. The
+// ModRM reg field holds the control register and r/m holds the 64-bit register.
+function x86_gas_movq_creg(own a: X86Asm, src: string, dst: string): X86Asm {
+  let cr = x86_gas_creg(src);
+  let gpr = x86_gas_reg64(dst);
+  let op = 32;
+  if (cr < 0) {
+    cr = x86_gas_creg(dst);
+    gpr = x86_gas_reg64(src);
+    op = 34;
+  }
+  if (cr < 0) {
+    return x86_gas_movq(a, src, dst);
+  }
+  if (gpr < 0) {
+    return x86_gas_bad(a, "movq " + src + ", " + dst);
+  }
+  let rex = cr / 8 * 4 + gpr / 8;
+  if (rex != 0) {
+    buf_push_byte(a.code, 64 + rex);
+  }
+  buf_push_byte(a.code, 15);
+  buf_push_byte(a.code, op);
+  buf_push_byte(a.code, 192 + cr % 8 * 8 + gpr % 8);
+  return a;
+}
+
 function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
   let src_xmm = x86_gas_is_xmm(src);
   let dst_xmm = x86_gas_is_xmm(dst);
@@ -4157,6 +4194,12 @@ function x86_gas_fixed_op(mnem: string): i32 {
     "sti" => {
       return x86_pack1(251);
     },
+    "rdmsr" => {
+      return x86_pack2(15, 50);
+    },
+    "wrmsr" => {
+      return x86_pack2(15, 48);
+    },
     "movsb" => {
       return x86_pack1(164);
     },
@@ -5735,7 +5778,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return a;
   }
   if (k == GK_MOVQ) {
-    return x86_gas_movq(a, src, dst);
+    return x86_gas_movq_creg(a, src, dst);
   }
   if (k == GK_MOV) {
     return x86_gas_mov_rm(a, mnem, l.ext, src, dst);
