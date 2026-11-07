@@ -343,6 +343,11 @@ as it does for `make bootstrap`, and it is how a compiler change is tested as
 the drivers' builder before the pin carries it. Every driver is held to what
 the pin can compile, like `fern.fern`.
 
+The self-host CLI for the tree builds some programs itself, such as the
+playground driver and the shipped `fern`. `e2eharness.CachedCLIBuild` keeps
+them in the same cache. Its key adds the CLI's bytes, the `-embed` tree and the
+`FERN_*` settings of the compile. CI does not carry these entries between jobs.
+
 **Measured 4-way, shard 0: 48 min (green).** So sharding pays only if you run
 ONE shard — four in sequence is ~3.2 h, worse than the unsharded run it
 replaces. Run them in parallel only if RAM allows: each heavy driver build
