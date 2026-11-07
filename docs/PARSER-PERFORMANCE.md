@@ -25,14 +25,21 @@ The existing kernels use AVX2 on x86-64 and NEON on ARM64.
 WebAssembly uses the existing scan implementation for that target.
 The string decoder still handles each escape and error.
 
+The Fern numeric token stores its suffix tag and float flag in one `u8` field.
+The parser reads these values through `suffix()` and `is_float()`.
+Numeric validation computes the suffix tag once.
+Numbers without digit separators reuse their decoded text.
+`__memchr` detects that case before the separator decoder copies the text.
+Raw spellings for separators, radix literals, characters, and bytes remain available to the formatter.
+
 ## Existing techniques
 
 | Article technique | Repository treatment |
 | --- | --- |
-| Slim token types | Compact Go tokens and suffix indices. Fern retains its existing token union. |
-| Smaller integers | One-byte Go token tags and suffix indices. Fern already uses 32-bit source positions. |
+| Slim token types | Compact Go tokens and suffix indices. Fern retains its token union with a smaller numeric payload. |
+| Smaller integers | One-byte Go token tags and suffix indices. Fern uses a byte for numeric flags and retains 32-bit source positions. |
 | Small strings | Fern already stores short strings inline. Go reuses source text instead of a new string allocation. |
-| SIMD scans | Fern string runs now use the existing scan kernel. Fern comments already use `__memchr`. |
+| SIMD scans | Fern string runs use the scan kernel. Numeric separator detection uses `__memchr`. Fern comments already use `__memchr`. |
 | Contiguous allocation | Go tokens already occupy one slice. Fern already uses arrays. Both retain their existing allocation model. |
 
 The change does not narrow Go AST positions.
@@ -49,7 +56,7 @@ Both Go binaries read the same source files from the base checkout.
 Wall times describe this host and workload.
 
 The Go rows show medians from five samples.
-The native row shows medians from seven samples.
+The native row shows medians from seven samples of the string-scan change.
 
 | Workload | Base | Candidate |
 | --- | ---: | ---: |
@@ -84,6 +91,42 @@ The payload benchmark records this tradeoff separately.
 | Numeric suffixes | 311,297 | 172,032 | 1 | 1 |
 | F-strings | 163,841 | 137,217 | 1,281 | 1,537 |
 
+## Self-hosted frontend
+
+`bench/compiler/lexer_numbers.fern` exercises integer suffixes, floats, separators, radix literals, characters, and bytes.
+The program tokenizes the same source 100 times.
+Both binaries return checksum 34 and print sum 230700.
+
+| Numeric workload | Base | Candidate |
+| --- | ---: | ---: |
+| Allocations | 1,383,700 | 1,178,900 |
+| Fresh heap growth, bytes | 403,184 | 354,032 |
+
+This workload uses 14.8% fewer allocations and 12.2% less fresh heap growth.
+Fresh heap growth measures the allocator high-water mark, not the sum of all allocated bytes.
+
+`bench/compiler/frontend.fern` measures real compiler source files.
+The fixed corpus contains `lexer.fern`, `parser.fern`, `checker.fern`, `ssarc.fern`, and `fern.fern` from the comparison base.
+These five files total 2,535,504 bytes.
+Each sample processes the corpus five times.
+The lexer checksum is 6, and the parser checksum is 23.
+
+| Corpus workload | Base allocations | Candidate allocations | Base fresh heap growth | Candidate fresh heap growth |
+| --- | ---: | ---: | ---: | ---: |
+| Tokenize | 4,889,350 | 4,774,010 | 30,183,960 | 30,141,664 |
+| Tokenize and parse | 10,815,960 | 10,700,620 | 50,067,160 | 50,041,120 |
+
+The real corpus has fewer numeric tokens than the numeric benchmark.
+Its allocation reduction is 2.4% for the lexer and 1.1% for the combined lexer and parser.
+The total heap change is small because other token payloads and AST nodes retain their layouts.
+
+Wall times for the real corpus varied during the comparison.
+Instruction counts from Callgrind provide a separate check of execution work.
+On the fixed five-file corpus, the lexer decreases from 2,019,615,638 to 2,001,389,723 instructions.
+The combined lexer and parser decrease from 5,403,658,355 to 5,386,513,375 instructions.
+These reductions are 0.9% and 0.3%, respectively.
+These runs use Valgrind 3.24.0 and the same native benchmark binaries.
+
 ## Reproduction
 
 Run the Go benchmarks with the toolchain from `scripts/toolchain-env`:
@@ -111,6 +154,10 @@ Copy the benchmark into the base checkout before that build.
 Compare seven pairs after both builds finish.
 Alternate which binary runs first.
 
+Compile the numeric and frontend benchmarks with the same command and their respective entry files.
+Run `frontend lex` or `frontend parse` with the five absolute source paths after the mode argument.
+Use paths from the comparison base for both binaries.
+
 ## Validation
 
 The Go lexer, parser, and grammar tests pass.
@@ -126,3 +173,11 @@ The overlay retains `ulimit -c 0` and does not change compiler or lexer code.
 Direct execution of the native lexer driver also passes.
 The full unsharded printer suite was stopped after five minutes.
 The selected printer tests pass in 19 seconds.
+
+## Playground visibility fix
+
+The initial CI run exposed [issue #14453](https://github.com/JakeChampion/lang/issues/14453).
+The playground called the flattening operation without package metadata for embedded modules.
+This caused E043 diagnostics for package methods within the standard library.
+The overlay bundle operation now assigns that metadata without filesystem access for sealed overlays.
+Regression tests permit calls between standard library modules and reject calls from the entry program.
