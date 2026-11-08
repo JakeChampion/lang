@@ -136,6 +136,96 @@ function test_bounded_type_parameter_crosses(): test.TestOutcome {
   return test.assert_eq(pair.1.name + ":" + names.1[1], "seven:rush");
 }
 
+// Polls the worker until it is done, at most `limit` times, then joins it.
+function poll_until_ready(own w: worker.Worker[i32], polls: i32, limit: i32): (i32, i32) {
+  match (w.poll()) {
+    worker.Finished(v) => {
+      return (v, polls + 1);
+    },
+    worker.Running(again) => {
+      if (polls + 1 >= limit) {
+        return (again.join(), polls + 1);
+      }
+      return poll_until_ready(again, polls + 1, limit);
+    }
+  }
+}
+
+function spin(n: i32): i32 {
+  let acc = 0;
+  for i in 0..n {
+    acc = (acc * 31 + i) % 1000003;
+  }
+  return acc;
+}
+
+function test_poll_returns_the_result(): test.TestOutcome {
+  let n = 4;
+  let got = poll_until_ready(worker.spawn((): i32 => n * 10), 0, 100000);
+  return test.assert_eq(got.0.to_string(), "40");
+}
+
+// A body that runs for about a quarter of a second natively.
+const SPIN_STEPS: i32 = 50000000;
+
+const SPIN_RESULT: string = "922688";
+
+// A worker that runs apart from the program is still running at the first
+// poll. An engine that runs the body inline at `spawn` returns late from it,
+// and its worker is ready.
+function test_poll_gives_a_running_worker_back(): test.TestOutcome {
+  let start = monotonic_ns();
+  let w = worker.spawn((): i32 => spin(SPIN_STEPS));
+  let spawned = monotonic_ns();
+  match (w.poll()) {
+    worker.Finished(v) => {
+      let polled = monotonic_ns();
+      if (spawned - start < 20000000i64 && polled - start < 40000000i64) {
+        return test.fail("a worker that runs apart was ready at once");
+      }
+      return test.assert_eq(v.to_string(), SPIN_RESULT);
+    },
+    worker.Running(again) => {
+      return test.assert_eq(again.join().to_string(), SPIN_RESULT);
+    }
+  }
+}
+
+struct Loop { job: Option[worker.Worker[string]], polls: i32 }
+
+function step(own l: Loop): (Loop, string) {
+  match (l.job) {
+    Some(w) => {
+      match (w.poll()) {
+        worker.Finished(v) => {
+          return (Loop { job: None, polls: l.polls + 1 }, v);
+        },
+        worker.Running(again) => {
+          return (Loop { job: Some(again), polls: l.polls + 1 }, "");
+        }
+      }
+    },
+    None => {
+      return (Loop { job: None, polls: l.polls }, "");
+    }
+  }
+}
+
+function test_an_event_loop_holds_a_worker(): test.TestOutcome {
+  let name = "loop";
+  let l = Loop { job: Some(worker.spawn((): string => name + "!")), polls: 0 };
+  let got = "";
+  while (got.len() == 0) {
+    let next = step(l);
+    l = next.0;
+    got = next.1;
+  }
+  if (l.job.is_some() || l.polls < 1) {
+    return test.fail("the loop kept its worker");
+  }
+  return test.assert_eq(got, "loop!");
+}
+
 function main(): i32 {
   let r = test.new("std/worker");
   r = r.it("spawn and join a scalar", test_spawn_join_scalar);
@@ -147,5 +237,8 @@ function main(): i32 {
   r = r.it("a map crosses the boundary both ways", test_map_crosses_both_ways);
   r = r.it("a captured map is read in the child", test_captured_map_is_read_in_the_child);
   r = r.it("a type parameter bounded by Send crosses", test_bounded_type_parameter_crosses);
+  r = r.it("poll returns the result of a finished worker", test_poll_returns_the_result);
+  r = r.it("poll gives a running worker back", test_poll_gives_a_running_worker_back);
+  r = r.it("an event loop holds a worker across polls", test_an_event_loop_holds_a_worker);
   return r.finish();
 }

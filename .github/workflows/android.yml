@@ -16,6 +16,8 @@ name: Android
 # the loop thread, so the emulator runs with its audio on.
 # tests/android/focus checks std/android/focus: two listeners of one @jni
 # class take the audio focus from each other.
+# tests/android/worker forks two workers from the loop thread and polls
+# them, and one child resolves a name through netd.
 # tests/android/tz/zone.fern requires that tz.local_zone follows the zone
 # that the emulator keeps in the property persist.sys.timezone.
 # examples/android/walkie is the LAN walkie-talkie: its check runs two
@@ -60,6 +62,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
       - uses: actions/upload-artifact@v7
@@ -76,6 +79,7 @@ jobs:
             build/android-stopwatch/fern-audiotest.apk
             build/android-stopwatch/fern-focustest.apk
             build/android-stopwatch/fern-dnstest.apk
+            build/android-stopwatch/fern-workertest.apk
             build/android-stopwatch/fern-walkie.apk
             build/android-stopwatch/fern-walkie2.apk
           if-no-files-found: error
@@ -112,6 +116,7 @@ jobs:
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
+            python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie
       - uses: actions/upload-artifact@v7

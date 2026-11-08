@@ -12,7 +12,7 @@ A type parameter is send-safe when its bound names `Send`. The bound holds for e
 
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.
 
-On Linux a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into the parent heap, and removes the region.
+On Linux and Android a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into the parent heap, and removes the region.
 
 Every other engine runs the worker on the `Inline` scheduler, which runs the body at `spawn`. That is one of the schedules a process can produce.
 
@@ -24,6 +24,7 @@ Every other engine runs the worker on the `Inline` scheduler, which runs the bod
 
 A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
+`poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
 A worker that exits with a signal or without a result stops the program with exit 134.
 
 ## Executable example
@@ -57,7 +58,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub function (own w: Worker[T: Send]) join(): T>>
 
-<<6 function __join_process[T: Send](own w: Worker[T]): T>>
+<<6 function __join_process[T: Send](own w: Worker[T], status: i32): T>>
+
+<<13 pub function (own w: Worker[T: Send]) poll(): Polled[T]>>
 
 <<7 function __wait_worker(pid: i32): i32>>
 
@@ -77,9 +80,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // This module runs a closure as a worker and joins its result.
 //
 // A value crosses the worker boundary only by copy, and only a send-safe
-// value is admitted (E100). On Linux a worker is a process that writes its
-// result into a shared region. Every other engine runs the worker on a
-// scheduler, and the default scheduler runs it inline.
+// value is admitted (E100). On Linux and Android a worker is a process that
+// writes its result into a shared region. Every other engine runs the worker
+// on a scheduler, and the default scheduler runs it inline.
 ```
 
 ### `2 pub struct Worker[T]`
@@ -95,13 +98,15 @@ pub struct Worker[T] { sched: Option[dyn Scheduler], index: i32, pid: i32, regio
 
 ### `3 pub function spawn[T: Send](send body: () => T): Worker[T]`
 
-Runs `body` as a worker. The closure's captures and its result cross the worker boundary, so both must be send-safe (E100). A native Linux program runs the worker as a process. Every other engine runs the body on the `Inline` scheduler before `spawn` returns. The interpreters map no region, so they take the inline path of `__spawn_process`.
+Runs `body` as a worker. The closure's captures and its result cross the worker boundary, so both must be send-safe (E100). A native Linux or Android program runs the worker as a process. Every other engine runs the body on the `Inline` scheduler before `spawn` returns. The interpreters map no region, so they take the inline path of `__spawn_process`.
 
 ```fern
 <<3 pub function spawn[T: Send](send body: () => T): Worker[T]>>=
 /// Runs `body` as a worker and returns the handle that `join` takes.
 pub function spawn[T: Send](send body: () => T): Worker[T] {
-  if (target_os() == "linux") {
+  // Android has the syscalls of Linux. The child makes no call into the C
+  // library or the Java runtime of the app.
+  if (target_os() == "linux" || target_os() == "android") {
     return __spawn_process(body);
   }
   return __spawn_on(inline(), body);
@@ -158,8 +163,9 @@ pub function (own w: Worker[T: Send]) join(): T {
     },
     None => {}
   }
-  if (target_os() == "linux") {
-    return __join_process(w);
+  if (target_os() == "linux" || target_os() == "android") {
+    let status = __wait_worker(w.pid);
+    return __join_process(w, status);
   }
   eprint("worker: a worker without a scheduler on this target");
   exit(134);
@@ -179,14 +185,13 @@ function __join_scheduled[T](s: dyn Scheduler, index: i32): T {
 }
 ```
 
-### `6 function __join_process[T: Send](own w: Worker[T]): T`
+### `6 function __join_process[T: Send](own w: Worker[T], status: i32): T`
 
-Waits for the process and copies its result into the parent heap. The original tree leaves the worker region through bulk reclamation. It never enters the parent's free lists. Only a native Linux program reaches this function.
+Copies the result of the process that exited with `status` into the parent heap. The original tree leaves the worker region through bulk reclamation. It never enters the parent's free lists. Only a native Linux or Android program reaches this function.
 
 ```fern
-<<6 function __join_process[T: Send](own w: Worker[T]): T>>=
-function __join_process[T: Send](own w: Worker[T]): T {
-  let status: i32 = __wait_worker(w.pid);
+<<6 function __join_process[T: Send](own w: Worker[T], status: i32): T>>=
+function __join_process[T: Send](own w: Worker[T], status: i32): T {
   if (status != 0) {
     __unmap_region(w.region, w.size, false);
     eprint("worker: the worker exited with status " + status.to_string() + " and no result");
@@ -213,6 +218,31 @@ function __join_process[T: Send](own w: Worker[T]): T {
       }
     }
   }
+}
+```
+
+### `13 pub function (own w: Worker[T: Send]) poll(): Polled[T]`
+
+An event loop cannot wait in `join`, so it polls. A process worker that still runs comes back as `Running`. `proc_waitpid_nohang` gives -1 for a child that still runs, and its exit status for a child that it reaps. A worker on a scheduler has no process, so its pid is 0, and `poll` joins it: the scheduler has no state that tells a running worker from a finished one.
+
+```fern
+<<13 pub function (own w: Worker[T: Send]) poll(): Polled[T]>>=
+/// A worker that `poll` found finished, with its result, or still running.
+pub enum Polled[T] { Finished(T), Running(Worker[T]) }
+
+/// Returns `Finished` with the result of a finished worker, or `Running` with
+/// the worker. It does not wait. The call consumes the worker.
+pub function (own w: Worker[T: Send]) poll(): Polled[T] {
+  if (target_os() == "linux" || target_os() == "android") {
+    if (w.pid > 0) {
+      let status = proc_waitpid_nohang(w.pid);
+      if (status == -1 || status == -4) {
+        return Running(w);
+      }
+      return Finished(__join_process(w, status));
+    }
+  }
+  return Finished(w.join());
 }
 ```
 
