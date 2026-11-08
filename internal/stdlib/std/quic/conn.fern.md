@@ -110,6 +110,7 @@ import "std/array";
 import "std/option";
 import "std/i64";
 import "std/time";
+import "std/crypto";
 ```
 
 ### `3 const HANDSHAKING: i32`
@@ -236,7 +237,27 @@ pub struct Conn {
   key_sent: i64,
   failed_auth: i64,
   wall_offset: i64,
+  cid_secret: u8[],
+  local_cids: Cid[],
+  local_next: i64,
+  remote_cids: Cid[],
+  dcid_seq: i64,
+  retire_prior: i64,
+  cids_version: i64,
+  on_dcid: u8[],
+  accepted: i64,
+  path: u8[],
+  probe: Option[Probe],
 }
+
+// Cid is one connection ID with its sequence number and the stateless reset
+// token that goes with it.
+pub struct Cid { seq: i64, id: u8[], token: u8[] }
+
+// Probe is a peer path under validation: its address, the PATH_CHALLENGE
+// data, when validation gives up, the bytes exchanged on the path before
+// it is validated, and the path to return to when validation fails.
+struct Probe { path: u8[], data: u8[], until: i64, received: i64, sent: i64, previous: u8[] }
 ```
 
 ### `6 function __space(): Space`
@@ -253,12 +274,16 @@ function __space(): Space {
 ```fern
 <<7 pub function client_entropy(c: Config): i32>>=
 pub function client_entropy(c: Config): i32 {
-  return c.cid_len + 8 + handshake.client_entropy(__tls_client_config(c, [], []));
+  return c.cid_len + 8 + CID_SECRET + handshake.client_entropy(__tls_client_config(c, [], []));
 }
+
+// CID_SECRET is the size of the secret new connection IDs and their reset
+// tokens are derived from.
+const CID_SECRET: i32 = 32;
 
 pub function server_entropy(c: Config): i32 {
   let sc = __tls_server_config(c, [], [], []);
-  return c.cid_len + 16 + handshake.server_entropy(sc);
+  return c.cid_len + 16 + CID_SECRET + handshake.server_entropy(sc);
 }
 ```
 
@@ -278,7 +303,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: -1i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64, cid_secret: [], local_cids: [Cid { seq: 0 as i64, id: scid, token: [] }], local_next: 1 as i64, remote_cids: [], dcid_seq: 0 as i64, retire_prior: 0 as i64, cids_version: 0 as i64, on_dcid: [], accepted: 0 as i64, path: [], probe: None };
 }
 ```
 
@@ -296,10 +321,11 @@ function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn
   let dcid = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
   let cc = __tls_client_config(c, scid, params.encode(p, false));
-  match (handshake.client_start(cc, entropy[c.cid_len + 8:entropy.len()])) {
+  let secret = __bytes_range(entropy, c.cid_len + 8, c.cid_len + 8 + CID_SECRET);
+  match (handshake.client_start(cc, entropy[c.cid_len + 8 + CID_SECRET:entropy.len()])) {
     Ok(step) => {
       let conn = __base(c, false, scid, dcid, dcid, now).__initial_keys(dcid);
-      conn = Conn { ...conn, tls: TlsClient(step.client), wall_offset: unix_ms * 1000000 - now };
+      conn = Conn { ...conn, tls: TlsClient(step.client), wall_offset: unix_ms * 1000000 - now, cid_secret: secret };
       return Ok(conn.__tls_events(step.events, now));
     },
     Err(e) => {
@@ -320,10 +346,11 @@ function __accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Res
   let reset = __bytes_range(entropy, c.cid_len, c.cid_len + 16);
   let p = params.Params { ...c.params, original_destination_connection_id: Some(first.dcid), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset) };
   let sc = __tls_server_config(c, id.chain, [id.key.scheme()], params.encode(p, true));
-  match (handshake.server_new(sc, entropy[c.cid_len + 16:entropy.len()])) {
+  let secret = __bytes_range(entropy, c.cid_len + 16, c.cid_len + 16 + CID_SECRET);
+  match (handshake.server_new(sc, entropy[c.cid_len + 16 + CID_SECRET:entropy.len()])) {
     Ok(s) => {
       let conn = __base(c, true, scid, first.scid, first.dcid, now).__initial_keys(first.dcid);
-      return Ok(Conn { ...conn, tls: TlsServer(s), reset_token: reset });
+      return Ok(Conn { ...conn, tls: TlsServer(s), reset_token: reset, cid_secret: secret, local_cids: [Cid { seq: 0 as i64, id: scid, token: reset }] });
     },
     Err(e) => {
       return Err(e.message());
@@ -377,6 +404,37 @@ pub function (c: Conn) scid(): u8[] {
   return c.scid;
 }
 
+// local_cids is every connection ID this side currently answers to: the
+// IDs a datagram may name for this connection.
+pub function (c: Conn) local_cids(): u8[][] {
+  let out: u8[][] = [];
+  for k in c.local_cids {
+    out = out.append(k.id);
+  }
+  return out;
+}
+
+// cids_version changes whenever local_cids changes, so a caller that routes
+// datagrams by connection ID knows when to read them again.
+pub function (c: Conn) cids_version(): i64 {
+  return c.cids_version;
+}
+
+// path is the peer address, as the caller gave it to receive_from, that
+// datagrams are sent to now. Empty until the first receive_from.
+pub function (c: Conn) path(): u8[] {
+  return c.path;
+}
+
+// rotate_dcid addresses the peer by the next connection ID it issued and
+// retires the one in use. Without a spare ID the connection is unchanged.
+pub function (c: Conn) rotate_dcid(): Conn {
+  let Some(next) = __cid_after(c.remote_cids, c.dcid_seq) else {
+    return c;
+  };
+  return Conn { ...c, pending: c.pending.append(frames.RetireConnectionId(c.dcid_seq)), remote_cids: __cids_minus(c.remote_cids, c.dcid_seq), dcid: next.id, dcid_seq: next.seq };
+}
+
 pub function (c: Conn) peer_params(): Option[params.Params] {
   return c.peer_params;
 }
@@ -401,7 +459,11 @@ function (c: Conn) __deadline(): i64 {
   if (c.state == CLOSING || c.state == DRAINING) {
     return c.close_until;
   }
-  return __earliest(__earliest(c.recovery.timer_ns(), c.idle_until), __earliest(c.key_generate_at, c.key_discard_at));
+  let probe_until = 0 as i64;
+  if let Some(pr) = c.probe {
+    probe_until = pr.until;
+  }
+  return __earliest(__earliest(__earliest(c.recovery.timer_ns(), c.idle_until), __earliest(c.key_generate_at, c.key_discard_at)), probe_until);
 }
 ```
 
@@ -604,11 +666,12 @@ function (c: Conn) __tick(now: i64): Conn {
     let why = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "idle timeout", app: false, remote: false };
     return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) };
   }
-  let t = c.recovery.timer_ns();
+  let cur = c.__probe_timed_out(now);
+  let t = cur.recovery.timer_ns();
   if (t == 0 || now < t) {
-    return c;
+    return cur;
   }
-  let cur = Conn { ...c, recovery: c.recovery.on_timeout(time.instant_from_nanos(now)) };
+  cur = Conn { ...cur, recovery: cur.recovery.on_timeout(time.instant_from_nanos(now)) };
   let lost = cur.recovery.lost;
   let probe = cur.recovery.probe;
   let after = Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__requeue(lost);
@@ -616,6 +679,18 @@ function (c: Conn) __tick(now: i64): Conn {
     after = Conn { ...after, probes: after.probes.append(probe) };
   }
   return after;
+}
+
+// __probe_timed_out abandons a path whose validation got no answer in time
+// and returns to the previous path (RFC 9000 section 9.3.2).
+function (c: Conn) __probe_timed_out(now: i64): Conn {
+  let Some(pr) = c.probe else {
+    return c;
+  };
+  if (now < pr.until) {
+    return c;
+  }
+  return Conn { ...c, probe: None, path: pr.previous };
 }
 ```
 
@@ -741,6 +816,29 @@ pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
   return c.__receive(datagram, time.instant_nanos(now));
 }
 
+// receive_from is receive with the address the datagram came from, in any
+// encoding the caller keeps to. A server moves to a client's new address
+// once a packet from it is authenticated, validating the path; a client
+// drops datagrams from an address that is not its server's (RFC 9000
+// section 9).
+pub function (c: Conn) receive_from(datagram: [u8], path: [u8], now: Instant): Conn {
+  let ns = time.instant_nanos(now);
+  if (c.path.len() == 0) {
+    return Conn { ...c, path: __bytes_range(path, 0, path.len()) }.__receive(datagram, ns);
+  }
+  if (__same(path, c.path)) {
+    return c.__receive(datagram, ns);
+  }
+  if (!c.server || c.state != ESTABLISHED) {
+    return c;
+  }
+  let cur = c.__receive(datagram, ns);
+  if (cur.accepted == c.accepted || cur.state >= CLOSING) {
+    return cur;
+  }
+  return cur.__migrating(path, datagram.len() as i64, ns);
+}
+
 function (c: Conn) __receive(datagram: [u8], now: i64): Conn {
   if (c.state == CLOSED) {
     return c;
@@ -816,8 +914,10 @@ function (c: Conn) __retry(datagram: [u8], h: packet.Header, now: i64): Conn {
 }
 
 function (c: Conn) __ours(h: packet.Header): boolean {
-  if (__same(h.dcid, c.scid)) {
-    return true;
+  for k in c.local_cids {
+    if (__same(h.dcid, k.id)) {
+      return true;
+    }
   }
   return c.server && __same(h.dcid, c.odcid);
 }
@@ -920,17 +1020,16 @@ function (c: Conn) __retry_held(now: i64): Conn {
 }
 
 function (c: Conn) __maybe_reset(datagram: [u8], h: packet.Header, now: i64): Conn {
-  let Some(p) = c.peer_params else {
-    return c;
-  };
-  let Some(token) = p.stateless_reset_token else {
-    return c;
-  };
   let n = datagram.len();
-  if (c.server || n < 21 || !__same(datagram[n - 16:n], token)) {
+  if (c.server || n < 21) {
     return c;
   }
-  return c.__drain(Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "stateless reset", app: false, remote: true }, now);
+  for k in c.remote_cids {
+    if (k.token.len() == 16 && __same(datagram[n - 16:n], k.token)) {
+      return c.__drain(Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "stateless reset", app: false, remote: true }, now);
+    }
+  }
+  return c;
 }
 
 function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind: i32, now: i64): Conn {
@@ -947,7 +1046,7 @@ function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind
   if (o.payload.len() == 0) {
     return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a packet with no frames", now);
   }
-  cur = Conn { ...cur, reader: cur.reader.started(o.payload) }.__frames(o.payload, space, kind, now);
+  cur = Conn { ...cur, reader: cur.reader.started(o.payload), on_dcid: h.dcid }.__frames(o.payload, space, kind, now);
   let eliciting = cur.reader.elicited;
   cur = Conn { ...cur, reader: cur.reader.done() };
   if (cur.state < CLOSING) {
@@ -989,7 +1088,7 @@ function __idle(c: Conn, now: i64): i64 {
 }
 
 function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
-  return Conn { ...c, spaces: c.spaces.with(space, c.spaces[space].__received(pn, eliciting, now)) };
+  return Conn { ...c, spaces: c.spaces.with(space, c.spaces[space].__received(pn, eliciting, now)), accepted: c.accepted + 1 };
 }
 
 function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
@@ -1054,6 +1153,9 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
     frames.PathChallenge(data) => {
       return Conn { ...c, pending: c.pending.append(frames.PathResponse(data)) };
     },
+    frames.PathResponse(data) => {
+      return c.__path_answered(data);
+    },
     _ => {
       return c.__frame_rest(f, now);
     }
@@ -1072,15 +1174,178 @@ function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
       return c;
     },
     frames.RetireConnectionId(seq) => {
-      if (seq > 0) {
-        return c.__fail(frames.PROTOCOL_VIOLATION, frames.RETIRE_CONNECTION_ID, "RETIRE_CONNECTION_ID for a sequence number never issued", now);
-      }
-      return c;
+      return c.__retired_by_peer(seq, now);
+    },
+    frames.NewConnectionIdFrame(n) => {
+      return c.__cid_offered(n, now);
     },
     _ => {
       return c;
     }
   }
+}
+
+// __retired_by_peer drops a connection ID this side issued once the peer
+// retires it, and issues another in its place.
+function (c: Conn) __retired_by_peer(seq: i64, now: i64): Conn {
+  if (seq >= c.local_next) {
+    return c.__fail(frames.PROTOCOL_VIOLATION, frames.RETIRE_CONNECTION_ID, "RETIRE_CONNECTION_ID for a sequence number never issued", now);
+  }
+  let k = __cid_index(c.local_cids, seq);
+  if (k < 0) {
+    return c;
+  }
+  if (__same(c.local_cids[k].id, c.on_dcid)) {
+    return c.__fail(frames.PROTOCOL_VIOLATION, frames.RETIRE_CONNECTION_ID, "RETIRE_CONNECTION_ID names the connection ID it arrived on", now);
+  }
+  return Conn { ...c, local_cids: __cids_minus(c.local_cids, seq), cids_version: c.cids_version + 1 }.__cids_offered();
+}
+
+// __cids_offered issues connection IDs until the peer holds as many as its
+// active_connection_id_limit allows (RFC 9000 section 5.1.1).
+function (c: Conn) __cids_offered(): Conn {
+  let Some(p) = c.peer_params else {
+    return c;
+  };
+  if (c.config.cid_len == 0 || c.state != ESTABLISHED) {
+    return c;
+  }
+  let cur = c;
+  while (cur.local_cids.len() as i64 < p.active_connection_id_limit) {
+    let next = Cid { seq: cur.local_next, id: __derived(cur, 105u8, cur.local_next, cur.config.cid_len), token: __derived(cur, 116u8, cur.local_next, 16) };
+    let f = frames.NewConnectionIdFrame(frames.NewConnectionId { sequence: next.seq, retire_prior_to: 0 as i64, id: next.id, reset_token: next.token });
+    cur = Conn { ...cur, local_cids: cur.local_cids.append(next), local_next: cur.local_next + 1, cids_version: cur.cids_version + 1, pending: cur.pending.append(f) };
+  }
+  return cur;
+}
+
+// __derived is `n` bytes keyed by the connection's secret, distinct for each
+// label and sequence number: a connection ID or a reset token nobody off the
+// path can predict.
+function __derived(c: Conn, label: u8, seq: i64, n: i32): u8[] {
+  let msg: u8[] = [label];
+  let shift = 56;
+  while (shift >= 0) {
+    msg = msg.append((seq >> shift & 255) as u8);
+    shift -= 8;
+  }
+  return __bytes_range(crypto.hmac_sha256(c.cid_secret, msg), 0, n);
+}
+
+// __cid_offered stores a connection ID the peer issued, retires those it
+// asks to retire, and refuses more than this side's limit (RFC 9000
+// section 19.15).
+function (c: Conn) __cid_offered(n: frames.NewConnectionId, now: i64): Conn {
+  if (c.dcid.len() == 0) {
+    return c.__fail(frames.PROTOCOL_VIOLATION, frames.NEW_CONNECTION_ID, "NEW_CONNECTION_ID from a peer with a zero-length connection ID", now);
+  }
+  let k = __cid_index(c.remote_cids, n.sequence);
+  if (k >= 0) {
+    if (__same(c.remote_cids[k].id, n.id) && __same(c.remote_cids[k].token, n.reset_token)) {
+      return c.__retire_prior(n.retire_prior_to);
+    }
+    return c.__fail(frames.PROTOCOL_VIOLATION, frames.NEW_CONNECTION_ID, "NEW_CONNECTION_ID repeats a sequence number with another connection ID", now);
+  }
+  for known in c.remote_cids {
+    if (__same(known.id, n.id)) {
+      return c.__fail(frames.PROTOCOL_VIOLATION, frames.NEW_CONNECTION_ID, "NEW_CONNECTION_ID repeats a connection ID under another sequence number", now);
+    }
+  }
+  if (n.sequence < c.retire_prior) {
+    return Conn { ...c, pending: c.pending.append(frames.RetireConnectionId(n.sequence)) };
+  }
+  let cur = Conn { ...c, remote_cids: c.remote_cids.append(Cid { seq: n.sequence, id: n.id, token: n.reset_token }) }.__retire_prior(n.retire_prior_to);
+  if (cur.remote_cids.len() as i64 > cur.config.params.active_connection_id_limit) {
+    return cur.__fail(frames.CONNECTION_ID_LIMIT_ERROR, frames.NEW_CONNECTION_ID, "more connection IDs than active_connection_id_limit allows", now);
+  }
+  return cur;
+}
+
+// __retire_prior retires every connection ID the peer issued below `prior`,
+// moving to a newer one when the ID in use is among them.
+function (c: Conn) __retire_prior(prior: i64): Conn {
+  if (prior <= c.retire_prior) {
+    return c;
+  }
+  let kept: Cid[] = [];
+  let pending = c.pending;
+  for k in c.remote_cids {
+    if (k.seq < prior) {
+      pending = pending.append(frames.RetireConnectionId(k.seq));
+    } else {
+      kept = kept.append(k);
+    }
+  }
+  let cur = Conn { ...c, remote_cids: kept, pending: pending, retire_prior: prior };
+  if (cur.dcid_seq >= prior) {
+    return cur;
+  }
+  let Some(next) = __cid_after(cur.remote_cids, -1i64) else {
+    return cur;
+  };
+  return Conn { ...cur, dcid: next.id, dcid_seq: next.seq };
+}
+
+// __path_answered ends the validation of the probed path when the response
+// carries the challenge's data; the path then stays in use.
+function (c: Conn) __path_answered(data: u8[]): Conn {
+  let Some(pr) = c.probe else {
+    return c;
+  };
+  if (!__same(data, pr.data)) {
+    return c;
+  }
+  return Conn { ...c, probe: None };
+}
+
+// __migrating moves to the path a client's datagram arrived on, validates it
+// with a PATH_CHALLENGE and, when the peer issued a spare connection ID,
+// addresses it by that one (RFC 9000 sections 9.3 and 9.5).
+function (c: Conn) __migrating(path: [u8], received: i64, now: i64): Conn {
+  let to = __bytes_range(path, 0, path.len());
+  let data = __derived(c, 112u8, now, 8);
+  let pr = Probe { path: to, data: data, until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), received: received, sent: 0 as i64, previous: c.path };
+  return Conn { ...c, path: to, probe: Some(pr), pending: c.pending.append(frames.PathChallenge(data)) }.rotate_dcid();
+}
+
+function __cid_index(ids: Cid[], seq: i64): i32 {
+  for i in 0..ids.len() {
+    if (ids[i].seq == seq) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// __cid_after is the connection ID with the lowest sequence number above
+// `seq`.
+function __cid_after(ids: Cid[], seq: i64): Option[Cid] {
+  let best: Option[Cid] = None;
+  for k in ids {
+    if (k.seq > seq) {
+      match (best) {
+        Some(b) => {
+          if (k.seq < b.seq) {
+            best = Some(k);
+          }
+        },
+        None => {
+          best = Some(k);
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function __cids_minus(ids: Cid[], seq: i64): Cid[] {
+  let out: Cid[] = [];
+  for k in ids {
+    if (k.seq != seq) {
+      out = out.append(k);
+    }
+  }
+  return out;
 }
 
 function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
@@ -1360,11 +1625,15 @@ function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boole
 function (c: Conn) __connected(now: i64): Conn {
   match (c.__peer_transport_params()) {
     Ok(p) => {
-      let cur = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(time.duration_millis(p.max_ack_delay)), events: c.events.append(Event.Connected) };
+      let token: u8[] = [];
+      if let Some(t) = p.stateless_reset_token {
+        token = t;
+      }
+      let cur = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(time.duration_millis(p.max_ack_delay)), events: c.events.append(Event.Connected), remote_cids: [Cid { seq: 0 as i64, id: c.dcid, token: token }] };
       if (cur.server) {
         cur = Conn { ...cur, handshake_done_pending: true, recovery: cur.recovery.confirmed() }.__discard(recovery.HANDSHAKE);
       }
-      return Conn { ...cur, idle_until: __idle(cur, now) };
+      return Conn { ...cur, idle_until: __idle(cur, now) }.__cids_offered();
     },
     Err(e) => {
       return c.__fail(e.code, 0 as i64, e.reason, now);
@@ -1439,15 +1708,18 @@ function (c: Conn) __transmit(now: i64): Conn {
 ```fern
 <<30 function (c: Conn) __datagram_sent(now: i64): Conn>>=
 function (c: Conn) __datagram_sent(now: i64): Conn {
-  if (c.validated) {
-    return c.__datagram_out(now);
-  }
-  let before = c;
   let next = c.__datagram_out(now);
-  if (next.sent_bytes > 3 * next.received_bytes) {
-    return before;
+  if (!c.validated && next.sent_bytes > 3 * next.received_bytes) {
+    return c;
   }
-  return next;
+  let Some(pr) = c.probe else {
+    return next;
+  };
+  let added = next.sent_bytes - c.sent_bytes;
+  if (pr.sent + added > 3 * pr.received) {
+    return c;
+  }
+  return Conn { ...next, probe: Some(Probe { ...pr, sent: pr.sent + added }) };
 }
 ```
 
@@ -1458,7 +1730,7 @@ function (c: Conn) __datagram_sent(now: i64): Conn {
 // A plan is one space's part of the next datagram, built in the space's
 // slot in `plans`. `sized` is whether its payload's buffer has the
 // datagram's room; the slot keeps that buffer for the next datagram.
-struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Resend[], sized: boolean }
+struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Resend[], sized: boolean, challenge: boolean }
 ```
 
 ### `32 function __no_plan(space: i32): Plan`
@@ -1466,14 +1738,14 @@ struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Re
 ```fern
 <<32 function __no_plan(space: i32): Plan>>=
 function __no_plan(space: i32): Plan {
-  return Plan { space: space, payload: [], eliciting: false, resend: [], sized: false };
+  return Plan { space: space, payload: [], eliciting: false, resend: [], sized: false, challenge: false };
 }
 
 // __emptied is a sealed plan made ready for the next datagram, its buffer kept.
 function __emptied(p: Plan): Plan {
   unsafe {
     __arr_set_len(p.payload, 0);
-    return Plan { ...p, eliciting: false, resend: [] };
+    return Plan { ...p, eliciting: false, resend: [], challenge: false };
   }
 }
 
@@ -1563,6 +1835,9 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
 
 function (c: Conn) __planned(space: i32, f: frames.Frame, again: boolean): Conn {
   let cur = c.__pushed(space, f);
+  if let frames.PathChallenge(_) = f {
+    cur = Conn { ...cur, plans: cur.plans.with(space, Plan { ...cur.plans[space], challenge: true }) };
+  }
   if (!again) {
     return cur;
   }
@@ -1760,7 +2035,7 @@ function (c: Conn) __probe_out(space: i32): Conn {
 <<34 function (c: Conn) __seal(planned: i32, now: i64): Conn>>=
 // __seal seals the plans of the spaces set in `planned` into one datagram.
 function (c: Conn) __seal(planned: i32, now: i64): Conn {
-  let pad = __planned_in(planned, recovery.INITIAL) && (!c.server || c.plans[recovery.INITIAL].eliciting);
+  let pad = __planned_in(planned, recovery.INITIAL) && (!c.server || c.plans[recovery.INITIAL].eliciting) || c.__challenge_padded(planned);
   let cur = c;
   let out: u8[] = [];
   for space in 0..3 {
@@ -1794,6 +2069,19 @@ function (c: Conn) __seal(planned: i32, now: i64): Conn {
 
 function __planned_in(planned: i32, space: i32): boolean {
   return (planned >> space & 1) != 0;
+}
+
+// __challenge_padded says whether a datagram carrying a PATH_CHALLENGE is
+// expanded to the minimum datagram size (RFC 9000 section 8.2.1): yes, when
+// the probed path's amplification budget has room for it.
+function (c: Conn) __challenge_padded(planned: i32): boolean {
+  if (!__planned_in(planned, recovery.APPLICATION) || !c.plans[recovery.APPLICATION].challenge) {
+    return false;
+  }
+  let Some(pr) = c.probe else {
+    return true;
+  };
+  return 3 * pr.received - pr.sent >= packet.MIN_INITIAL_DATAGRAM as i64;
 }
 
 function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
@@ -1851,7 +2139,7 @@ function (c: Conn) __close_datagram(): Conn {
     let s = c.spaces[space];
     if (!s.discarded && s.send.is_some()) {
       planned |= 1 << space;
-      cur = Conn { ...cur, plans: cur.plans.with(space, Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [], sized: false }) };
+      cur = Conn { ...cur, plans: cur.plans.with(space, Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [], sized: false, challenge: false }) };
     }
   }
   return cur.__seal(planned, 0 as i64);

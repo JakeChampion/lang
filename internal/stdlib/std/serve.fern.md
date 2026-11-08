@@ -5934,7 +5934,10 @@ function __port_from_env(name: string, fallback: i32): i32 {
 
 ```fern
 <<73 struct __Quic>>=
-struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
+// keys[i] is every connection ID connection i answers to, read again when
+// its cids_version moves; paths[i] is the address it is sent to, as the
+// socket reported it, and peers[i] the same address parsed.
+struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5952,7 +5955,7 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: None, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
+  return __Quic { sock: None, port: 0, cfg: quic.config([]), conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
 }
 
 function __quic_socket(port: i32): Socket {
@@ -6139,7 +6142,7 @@ function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flights, d: [
   }
   let q = cur.quic;
   let serial = q.serials[i];
-  cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].receive(d, clock.instant())) } };
+  cur = __h3_repathed(__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].receive_from(d, from, clock.instant())) } }, i);
   let taken = __h3_events(cur, i, burst);
   let more = __h3_more(drv, taken.0, fls, serial);
   return (more.0, more.1, __h3_touched(taken.1, serial));
@@ -6160,7 +6163,7 @@ function __h3_route(c: __Conns, d: [u8], from: [u8], opts: Config, stop: __Stop,
   if (i >= 0) {
     return (c, i);
   }
-  return __h3_accept(c, h, d, net.sender(from), opts, stop, host_for);
+  return __h3_accept(c, h, d, from, opts, stop, host_for);
 }
 
 function __h3_short_find(q: __Quic, d: [u8]): i32 {
@@ -6170,8 +6173,10 @@ function __h3_short_find(q: __Quic, d: [u8]): i32 {
   }
   let i = 0;
   while (i < q.keys.len()) {
-    if (__names(q.keys[i], d, n)) {
-      return i;
+    for key in q.keys[i] {
+      if (__names(key, d, n)) {
+        return i;
+      }
     }
     i += 1;
   }
@@ -6192,11 +6197,33 @@ function __names(key: u8[], d: [u8], n: i32): boolean {
   return true;
 }
 
+// __h3_repathed brings the routing table and the peer address of connection
+// i up to date after the connection issued or retired an ID or moved to
+// another path.
+function __h3_repathed(c: __Conns, i: i32): __Conns {
+  let q = c.quic;
+  let quic = q.conns[i].quic();
+  let out = q;
+  if (quic.cids_version() != q.versions[i]) {
+    out = __Quic { ...out, keys: out.keys.with(i, quic.local_cids()), versions: out.versions.with(i, quic.cids_version()) };
+  }
+  let path = quic.path();
+  if (path.len() > 0 && !__bytes_same(path, out.paths[i])) {
+    out = __Quic { ...out, paths: out.paths.with(i, path), peers: out.peers.with(i, net.sender(path)) };
+  }
+  return __Conns { ...c, quic: out };
+}
+
 function __h3_find(q: __Quic, dcid: u8[]): i32 {
   let i: i32 = 0;
   while (i < q.conns.len()) {
-    if (__bytes_same(q.keys[i], dcid) || __bytes_same(q.origs[i], dcid)) {
+    if (__bytes_same(q.origs[i], dcid)) {
       return i;
+    }
+    for key in q.keys[i] {
+      if (__bytes_same(key, dcid)) {
+        return i;
+      }
     }
     i = i + 1;
   }
@@ -6227,8 +6254,9 @@ function __h3_from_ip(q: __Quic, ip: net.IpAddr): i32 {
   return n;
 }
 
-function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, i32) {
+function __h3_accept(c: __Conns, h: packet.Header, d: [u8], path: [u8], opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, i32) {
   let q = c.quic;
+  let from = net.sender(path);
   let initial = false;
   match (h.kind) {
     packet.Initial => {
@@ -6246,7 +6274,7 @@ function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr
     return (c, -1);
   };
   let conn = h3q.server(made, h3.config()).with_max_body(opts.limits.body as i64);
-  let grown = __Quic { ...q, conns: q.conns.append(conn), keys: q.keys.append(made.scid()), origs: q.origs.append(h.dcid), peers: q.peers.append(from), hosts: q.hosts.append(host_for(Some(from))), serials: q.serials.append(q.next), next: q.next + 1 };
+  let grown = __Quic { ...q, conns: q.conns.append(conn), keys: q.keys.append(made.local_cids()), versions: q.versions.append(made.cids_version()), origs: q.origs.append(h.dcid), peers: q.peers.append(from), paths: q.paths.append(__bytes_range(path, 0, path.len())), hosts: q.hosts.append(host_for(Some(from))), serials: q.serials.append(q.next), next: q.next + 1 };
   return (__Conns { ...c, quic: grown }, grown.conns.len() - 1);
 }
 
@@ -6552,7 +6580,7 @@ function __h3_pass[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, opts
     }
     if (due) {
       let serial = q.serials[i];
-      cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].tick(now)) } };
+      cur = __h3_repathed(__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].tick(now)) } }, i);
       let before = burst.reqs.len();
       let taken = __h3_events(cur, i, burst);
       cur = __h3_flush(taken.0, serial);
@@ -6591,14 +6619,14 @@ function __h3_forget_done(own c: __Conns): __Conns {
     return c;
   }
   let q: __Quic = c.quic;
-  let kept: __Quic = __Quic { ...q, conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [] };
+  let kept: __Quic = __Quic { ...q, conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [] };
   let producers: __H3Producer[] = q.producers;
   let i: i32 = 0;
   while (i < q.conns.len()) {
     if (q.conns[i].done()) {
       producers = __h3_producers_of_gone(producers, q.serials[i]);
     } else {
-      kept = __Quic { ...kept, conns: kept.conns.append(q.conns[i]), keys: kept.keys.append(q.keys[i]), origs: kept.origs.append(q.origs[i]), peers: kept.peers.append(q.peers[i]), hosts: kept.hosts.append(q.hosts[i]), serials: kept.serials.append(q.serials[i]) };
+      kept = __Quic { ...kept, conns: kept.conns.append(q.conns[i]), keys: kept.keys.append(q.keys[i]), versions: kept.versions.append(q.versions[i]), origs: kept.origs.append(q.origs[i]), peers: kept.peers.append(q.peers[i]), paths: kept.paths.append(q.paths[i]), hosts: kept.hosts.append(q.hosts[i]), serials: kept.serials.append(q.serials[i]) };
     }
     i = i + 1;
   }
