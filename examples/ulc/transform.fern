@@ -13,58 +13,71 @@ pub function zeros(n: i32): f64[] {
 
 pub struct Plan { n: i32, reversal: i32[], pre_cos: f64[], pre_sin: f64[], post_cos: f64[], post_sin: f64[], fft_cos: f64[], fft_sin: f64[], window_cos: f64[], window_sin: f64[] }
 
+struct TrigGrid { cosine: f64[], sine: f64[] }
+
+// Direct evaluation every 32 steps bounds the error of the angle recurrence.
+@inline
+function grid(own cosine: f64[], own sine: f64[], offset: i32, count: i32, start: f64, step: f64): TrigGrid {
+  let dc = step.cos();
+  let ds = step.sin();
+  let base = 0;
+  while (base < count) {
+    let angle = start + step * (base as f64);
+    let c = angle.cos();
+    let s = angle.sin();
+    let end = if (count - base < 32) { count } else { base + 32 };
+    let i = base;
+    while (i < end) {
+      cosine = cosine.with(offset + i, c);
+      sine = sine.with(offset + i, s);
+      let next = c * dc - s * ds;
+      s = s * dc + c * ds;
+      c = next;
+      i += 1;
+    }
+    base = end;
+  }
+  return TrigGrid { cosine: cosine, sine: sine };
+}
+
 pub function plan(n: i32): Plan {
+  if (n <= 0) {
+    return Plan { n: n, reversal: [], pre_cos: [], pre_sin: [], post_cos: [], post_sin: [], fft_cos: [], fft_sin: [], window_cos: [0.7071067811865476], window_sin: [0.7071067811865476] };
+  }
   let half = n / 2;
-  let pre_cos = zeros(half);
-  let pre_sin = zeros(half);
-  let post_cos = zeros(half);
-  let post_sin = zeros(half);
+  let TrigGrid { cosine: pre_cos, sine: pre_sin } = grid(zeros(half), zeros(half), 0, half, 0.0, PI / (n as f64));
+  let TrigGrid { cosine: post_cos, sine: post_sin } = grid(zeros(half), zeros(half), 0, half, PI / (4.0 * (n as f64)), PI / (n as f64));
   let fft_cos = zeros(half - 1);
   let fft_sin = zeros(half - 1);
-  let reversal: i32[] = [];
-  let bits = 0;
-  let t = half;
-  while (t > 1) {
-    bits += 1;
-    t >>= 1;
-  }
+  let reversal = __alloc_i32(half);
+  let reversed = 0;
   for j in 0..half {
-    let angle = PI * (j as f64) / (n as f64);
-    pre_cos = pre_cos.with(j, angle.cos());
-    pre_sin = pre_sin.with(j, angle.sin());
-    let post = PI * (j as f64 + 0.25) / (n as f64);
-    post_cos = post_cos.with(j, post.cos());
-    post_sin = post_sin.with(j, post.sin());
-    let reversed = 0;
-    let value = j;
-    for k in 0..bits {
-      reversed = reversed << 1 | value & 1;
-      value >>= 1;
+    reversal = reversal.with(j, reversed);
+    let bit = half >> 1;
+    while ((reversed & bit) != 0) {
+      reversed ^= bit;
+      bit >>= 1;
     }
-    reversal = reversal.append(reversed);
+    reversed ^= bit;
   }
   let width = 2;
   while (width <= half) {
-    for k in 0..width / 2 {
-      let angle = 2.0 * PI * (k as f64) / (width as f64);
-      fft_cos = fft_cos.with(width / 2 - 1 + k, angle.cos());
-      fft_sin = fft_sin.with(width / 2 - 1 + k, angle.sin());
-    }
+    let pair = grid(fft_cos, fft_sin, width / 2 - 1, width / 2, 0.0, 2.0 * PI / (width as f64));
+    fft_cos = pair.cosine;
+    fft_sin = pair.sine;
     width *= 2;
   }
-  let window_cos: f64[] = [];
-  let window_sin: f64[] = [];
+  let window_cos = zeros(n);
+  let window_sin = zeros(n);
   let overlap = n;
   while (overlap >= 2) {
-    for i in 0..overlap / 2 {
-      let angle = PI * (i as f64 + 0.5) / ((2 * overlap) as f64);
-      window_cos = window_cos.append(angle.cos());
-      window_sin = window_sin.append(angle.sin());
-    }
+    let pair = grid(window_cos, window_sin, n - overlap, overlap / 2, PI / (4.0 * (overlap as f64)), PI / (2.0 * (overlap as f64)));
+    window_cos = pair.cosine;
+    window_sin = pair.sine;
     overlap >>= 1;
   }
-  window_cos = window_cos.append(0.7071067811865476);
-  window_sin = window_sin.append(0.7071067811865476);
+  window_cos = window_cos.with(n - 1, 0.7071067811865476);
+  window_sin = window_sin.with(n - 1, 0.7071067811865476);
   return Plan { n: n, reversal: reversal, pre_cos: pre_cos, pre_sin: pre_sin, post_cos: post_cos, post_sin: post_sin, fft_cos: fft_cos, fft_sin: fft_sin, window_cos: window_cos, window_sin: window_sin };
 }
 

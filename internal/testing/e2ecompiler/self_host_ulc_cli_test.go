@@ -84,3 +84,36 @@ func TestSelfHostULCNativeCLI(t *testing.T) {
 		t.Fatalf("native CLI integration: %v\n%s", err, out)
 	}
 }
+
+func TestSelfHostULCAccuracy(t *testing.T) {
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("no native self-host target")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is unavailable")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "ulc")
+	reference := filepath.Join(dir, "reference64")
+	for _, entry := range []struct{ source, output string }{
+		{"ulc.fern", binary}, {"tests/reference64.fern", reference},
+	} {
+		cmd := e2eharness.SelfHostCompileCmd(t, target, e2eharness.RepoPath("examples", "ulc", entry.source), entry.output)
+		cmd.Env = e2eharness.SelfHostChildEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("compile accuracy decoder: %v\n%s", err, out)
+		}
+	}
+	run := exec.Command(python, e2eharness.RepoPath("examples", "ulc", "tests", "accuracy.py"))
+	for _, value := range e2eharness.SelfHostChildEnv() {
+		if !strings.HasPrefix(value, "ULC=") && !strings.HasPrefix(value, "ULC_REFERENCE64=") {
+			run.Env = append(run.Env, value)
+		}
+	}
+	run.Env = append(run.Env, "ULC="+binary, "ULC_REFERENCE64="+reference)
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("FFT accuracy: %v\n%s", err, out)
+	}
+}

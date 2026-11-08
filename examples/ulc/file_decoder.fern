@@ -108,7 +108,7 @@ function serial(data: u8[], h: audio.Header, bits: i32): Result[u8[], string] {
   unsafe {
     out = decoded_buffer(h, bits, h.blocks)?;
   }
-  let state = packed_decoder.decoder(h.block_size, h.channels)?;
+  let state = packed_decoder.decoder(h.block_size, h.channels, true)?;
   let offset = h.offset;
   for i in 0..h.blocks {
     let block = packed_decoder.decode_block(state, data, offset)?;
@@ -272,7 +272,7 @@ function write_linux(data: u8[], bits: i32, threads: i32, path: string): Result[
   if (size > 1073741760u64) {
     return Err("WAV output is too large");
   }
-  if (threads == 1 || h.blocks < 4 || count < 65536u64) {
+  if (threads == 1 || h.blocks < 32 || count < 65536u64) {
     return save(path, decode(data, bits, threads)?);
   }
   let ix = index(data, h)?;

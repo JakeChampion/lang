@@ -33,6 +33,13 @@ func jniBuild(t *testing.T, src string, args ...string) (string, string, error) 
 	return java, string(out), err
 }
 
+func TestJNIJavaRequiresShared(t *testing.T) {
+	_, out, err := jniBuild(t, "function main(): i32 { return 0; }\n", "-jni-java", t.TempDir())
+	if err == nil || !strings.Contains(out, "-jni-java takes effect only with -shared") {
+		t.Fatalf("want the Java output flag refusal, got %v:\n%s", err, out)
+	}
+}
+
 // The Java class that -jni-java writes: a final class with a private
 // constructor when each method is static, the library of -o, and a native
 // declaration for each @jni function.

@@ -1,0 +1,53 @@
+// Accuracy oracle with a double-precision FFT and double-precision overlap.
+import "std/io";
+import "std/array";
+import "std/result";
+import "../audio";
+import "../codec";
+
+function decode(path: string): Result[audio.Audio, string] {
+  let data = read_file_bytes(path).map_err((e: IoError): string => e.message())?;
+  let h = audio.header(data)?;
+  let count = h.blocks as u64 * (h.block_size as u64) * (h.channels as u64);
+  if (count > 134217728u64) {
+    return Err("reference output exceeds the sample limit");
+  }
+  let output = __alloc_f64(count as i32);
+  let state = codec.decoder(h.block_size, h.channels)?;
+  let offset = h.offset;
+  let at = 0;
+  for block in 0..h.blocks {
+    let decoded = codec.decode_block_precise(state, data, offset)?;
+    if (h.max_block_bytes != 0 && decoded.next_byte - offset > h.max_block_bytes) {
+      return Err("block exceeds ULC2 maximum block size");
+    }
+    offset = decoded.next_byte;
+    state = decoded.state;
+    for sample in decoded.samples {
+      output = output.with(at, sample);
+      at += 1;
+    }
+  }
+  return Ok(audio.Audio { rate: h.rate, channels: h.channels, samples: output });
+}
+
+function run(): Result[void, string] {
+  let argv = args();
+  if (argv.len() != 3) {
+    return Err("usage: reference64 INPUT.ulc OUTPUT.wav");
+  }
+  let bytes = audio.write_wav(decode(argv[1])?, 32)?;
+  return write_file_bytes(argv[2], bytes).map_err((e: IoError): string => e.message());
+}
+
+function main(): i32 {
+  match (run()) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(error) => {
+      eprint(error);
+      return 1;
+    }
+  }
+}

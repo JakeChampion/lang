@@ -1,11 +1,101 @@
 # ULC benchmarks
 
 Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
-Fern has lower median elapsed time in all 32 measured rows against the tuned upstream C tools.
-The narrowest lead is 1.039× for long, single-worker noise decoding.
-These results cover the configurations below and do not establish a universal performance ranking.
+The final suite records 131 lower Fern medians across 144 comparisons against tuned upstream C.
+The geometric mean of C/Fern ratios is 1.374×, with equal weights for all cases.
+Without silence, the ratio is 1.253× across 108 cases.
+Several cases still favor C, particularly large-block noise decode.
+These results do not establish a universal performance ranking.
 
-## Method
+## Final method and results
+
+The compiler and codec source is `07136183f64ee18bab4a0b1044baac247e9e8b14`.
+The suite covers all eight block sizes with one and four workers.
+Each fixture lasts ten seconds, with stereo PCM16 at 44.1 kHz and VBR quality 75.
+Two additional configurations use 100-second inputs and the default block size of 2048.
+Each case has eleven alternating repetitions, including process startup and file I/O.
+No other local builds or tests run during measurement.
+
+The single-worker runs use CPU 0.
+The four-worker runs allow CPUs 0–3 for both implementations.
+Upstream C remains single-threaded.
+The Fern worker count is a maximum, because short files can take a serial path.
+The C source, libfourier source, and compiler flags match the earlier method below.
+
+A win means a lower median elapsed time.
+Each configuration includes four inputs and both operations, for eight comparisons.
+A C/Fern ratio above 1 means Fern is faster.
+The next table gives the minimum and maximum ratios across the ten-second cases.
+
+| Block size | One-worker wins | One-worker C/Fern range | Four-worker wins | Four-worker C/Fern range |
+| ---: | ---: | ---: | ---: | ---: |
+| 256 | 6/8 | 0.977–2.918 | 8/8 | 1.266–2.251 |
+| 512 | 8/8 | 1.040–2.439 | 7/8 | 0.878–2.479 |
+| 1024 | 8/8 | 1.061–2.369 | 7/8 | 0.938–2.335 |
+| 2048 | 8/8 | 1.081–2.366 | 8/8 | 1.162–2.692 |
+| 4096 | 8/8 | 1.051–2.166 | 6/8 | 0.933–1.876 |
+| 8192 | 8/8 | 1.080–2.340 | 8/8 | 1.087–2.110 |
+| 16384 | 7/8 | 0.855–2.578 | 7/8 | 0.800–1.789 |
+| 32768 | 6/8 | 0.788–2.623 | 5/8 | 0.718–2.261 |
+
+The 100-second default-block runs give these ratios:
+
+| Input | Operation | One worker | Four workers |
+| --- | --- | ---: | ---: |
+| silence | encode | 1.345 | 1.432 |
+| silence | decode | 2.340 | 2.184 |
+| tone | encode | 1.159 | 1.729 |
+| tone | decode | 1.289 | 1.610 |
+| noise | encode | 1.007 | 1.896 |
+| noise | decode | 1.090 | 1.145 |
+| transients | encode | 1.153 | 1.788 |
+| transients | decode | 1.161 | 1.611 |
+
+[All eighteen raw reports](x86-64-block-sweep.json) retain individual times, input hashes, executable hashes, and compiler hashes.
+A bootstrap of paired repetitions gives a 95% interval of 1.344× to 1.398× for the aggregate ratio.
+The calculation uses 2000 repetitions and seed 417.
+This interval covers repetitions within this fixed suite.
+It does not quantify other inputs, machines, or runs.
+
+The oracle checks both decoder outputs outside the timed repetitions.
+The maximum Fern error against the double-precision FFT is `2.38e-7` across these fixtures.
+The records include C errors separately, without a wider Fern tolerance.
+
+## Reproduce the final suite
+
+Build the C tools with the flags in the reproduction section below.
+Build the Fern tools from the measured source:
+
+```sh
+git worktree add /tmp/ulc-measured 07136183f64ee18bab4a0b1044baac247e9e8b14
+make -C /tmp/ulc-measured build
+make -C /tmp/ulc-measured/examples/ulc
+make -C /tmp/ulc-measured/examples/ulc build/reference64
+python3 examples/ulc/bench/run.py \
+  --fern /tmp/ulc-measured/examples/ulc/build/ulc --compiler /tmp/ulc-measured/bin/fern \
+  --oracle /tmp/ulc-measured/examples/ulc/build/reference64 \
+  --source-commit 07136183f64ee18bab4a0b1044baac247e9e8b14 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --seconds 10 --repetitions 11 --cpu 0 --threads 1 --block-size 256 \
+  --output /tmp/ulc-report-256-one.json
+```
+
+Repeat for all block sizes and worker counts.
+Use `--cpus 0,1,2,3 --threads 4` for the four-worker runs.
+Add the two 100-second runs at block size 2048.
+Combine the reports and reproduce the bootstrap interval:
+
+```sh
+python3 examples/ulc/bench/summarize.py \
+  --output /tmp/ulc-sweep.json /tmp/ulc-report-*.json
+```
+
+## Earlier default-block method
+
+The next four result tables record source `15212d32dc49807e204a9767467ff574a3f3fd98`.
+Fern has lower median elapsed time in all 32 comparisons in those tables.
+Their narrowest lead is 1.039× for long, single-worker noise decode.
 
 - Fern compiler and codec source: `15212d32dc49807e204a9767467ff574a3f3fd98`.
 - C source: `b47df8d50c2ef2d765e5dbec0bf567b5e558173a`.
@@ -145,10 +235,31 @@ Exact noise tests cover all 512 ordinary run lengths and all 256 decay codes at 
 
 A scalar generator checks the noise tables.
 `python3 tests/generate_noise_tables.py --write` regenerates them from the codec directory.
-The sanitizer unit run reports 191613 allocations, 191613 frees, and zero live bytes.
+The sanitizer unit run for source `15212d32` reports 191613 allocations, 191613 frees, and zero live bytes.
 
 These synthetic inputs do not replace speech and music collections, other hardware, or listening panels.
 The measurements do not establish speed for other quality settings, block sizes, or rate-control modes.
+
+## Accuracy reference
+
+The optional `--oracle` argument selects `tests/reference64.fern`, which uses a double-precision FFT and overlap.
+The oracle runs outside the timed repetitions.
+The runner records each decoder's maximum and RMS error against this reference.
+It keeps the strict `1e-5` bound for Fern.
+Without this option, the runner keeps its original C/Fern comparison.
+
+At 32768 samples, tuned C differs from this reference by up to `3.11e-5` on the noise stream.
+Fern differs by at most `2.38e-7` across the endpoint fixtures.
+This check attributes the difference without accepting a wider Fern error bound.
+
+Build the oracle from the measured checkout:
+
+```sh
+/tmp/fern-ulc -target x86-64-linux -stdlib internal/stdlib \
+  -o /tmp/ulc-reference64 examples/ulc/tests/reference64.fern
+```
+
+Add `--oracle /tmp/ulc-reference64 --block-size 32768` to the benchmark command for the large-block comparison.
 
 ## Earlier measurements
 
