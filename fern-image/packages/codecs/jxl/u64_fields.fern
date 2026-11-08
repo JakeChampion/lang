@@ -1,0 +1,65 @@
+import "./bits";
+
+function field(value: u64, width: i32): bits.Field {
+  return bits.Field { value: value, width: width };
+}
+
+function extended(input: [u8], position: i64, extent: i64): Result[bits.Read, bits.BitError] {
+  let first = bits.read(input, position, 12, extent)?;
+  let value = first.value;
+  let next = first.next;
+  let shift = 12;
+  loop {
+    let more = bits.read(input, next, 1, extent)?;
+    next = more.next;
+    if (more.value == 0u64) {
+      return Ok(bits.Read { value: value, next: next });
+    }
+    let width = if (shift == 60) { 4 } else { 8 };
+    let payload = bits.read(input, next, width, extent)?;
+    value |= payload.value << shift as u64;
+    next = payload.next;
+    if (shift == 60) {
+      return Ok(bits.Read { value: value, next: next });
+    }
+    shift += 8;
+  }
+}
+
+pub function read(input: [u8], position: i64, extent: i64): Result[bits.Read, bits.BitError] {
+  let selector = bits.read(input, position, 2, extent)?;
+  if (selector.value == 0u64) {
+    return Ok(bits.Read { value: 0u64, next: selector.next });
+  }
+  if (selector.value == 3u64) {
+    return extended(input, selector.next, extent);
+  }
+  let width = if (selector.value == 1u64) { 4 } else { 8 };
+  let offset = if (selector.value == 1u64) { 1u64 } else { 17u64 };
+  let payload = bits.read(input, selector.next, width, extent)?;
+  return Ok(bits.Read { value: payload.value + offset, next: payload.next });
+}
+
+pub function fields(value: u64): bits.Field[] {
+  if (value == 0u64) {
+    return [field(0u64, 2)];
+  }
+  if (value <= 16u64) {
+    return [field(1u64, 2), field(value - 1u64, 4)];
+  }
+  if (value <= 272u64) {
+    return [field(2u64, 2), field(value - 17u64, 8)];
+  }
+  let output = [field(3u64, 2), field(value & 4095u64, 12)];
+  let remaining = value >> 12u64;
+  let shift = 12;
+  while (remaining > 0u64 && shift < 60) {
+    output = output.append(field(1u64, 1)).append(field(remaining & 255u64, 8));
+    remaining >>= 8u64;
+    shift += 8;
+  }
+  if (remaining > 0u64) {
+    return output.append(field(1u64, 1)).append(field(remaining, 4));
+  }
+  return output.append(field(0u64, 1));
+}

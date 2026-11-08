@@ -1,7 +1,7 @@
 # Image format coverage
 
 **Status:** In progress. No format-wide completion or performance claim.
-**Date:** 2026-11-07.
+**Date:** 2026-11-08.
 
 The user requires complete decode and encode support in pure Fern.
 This inventory keeps restricted delivery stages separate from the final acceptance scope.
@@ -42,13 +42,17 @@ The final audit must map every supported process to its normative conformance re
 
 ## JPEG XL
 
-The [reference project's overview](https://github.com/libjxl/libjxl/blob/main/doc/format_overview.md) describes the codestream and container separately.
+The [pinned reference overview](https://github.com/libjxl/libjxl/blob/v0.12.0/doc/format_overview.md) describes the codestream and container separately.
 The implementation must follow ISO/IEC 18181 and its conformance requirements.
-No JPEG XL runtime codec exists in the current image engine.
+Internal preparation covers bounded box envelopes, raw fields and unsigned integer codes.
+Pixel coding and complete container semantics remain unfinished.
 
 The inventory includes Modular and VarDCT, lossless and lossy operation, color and extra channels, and progressive groups.
 It also includes frames, animation, blending, orientation, profiles, patches, splines, noise and reconstruction filters.
 Container coverage includes complete and partial codestream boxes, metadata, compressed boxes, frame indexes and exact JPEG bitstream reconstruction.
+
+The [edition-three preview](https://www.iso.org/obp/ui?_escaped_fragment_=iso:std:iso-iec:18181:-2:ed-3:v1:en) also defines the jhgm HDR gain map box.
+Its gain-map interpretation remains part of the complete format requirement.
 Precision and extension limits require a normative field-by-field audit before implementation.
 All required entropy, compression and color operations must use Fern.
 
