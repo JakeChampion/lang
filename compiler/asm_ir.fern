@@ -7125,7 +7125,10 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
     return true;
   }
-  return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+    return true;
+  }
+  return util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 function ssa_funary_known(what: string): boolean {
@@ -8767,16 +8770,12 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.EmitState { ...s, capture: outer };
   let pops = ssa_leading_pops(arm, ins.args.len());
   let moves = ssa_arg_moves(ins, reg_of, pops, s);
-  if (!moves.ok) {
-    pops = [];
-    moves = ssa_arg_moves(ins, reg_of, pops, s);
-  }
   let i = 0;
   while (i < ins.args.len() - pops.len()) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i += 1;
   }
-  for m in moves.text {
+  for m in moves {
     s = s.write(m);
   }
   let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
@@ -8856,9 +8855,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
   return slice_unchecked(text, at + prefix.len() - 1, end) + "";
 }
 
-struct SsaArgMoves { ok: boolean, text: string[] }
-
-function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): SsaArgMoves {
+function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): string[] {
   let srcs: string[] = [];
   let dsts: string[] = [];
   let k = 0;
@@ -8912,7 +8909,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
       }
     }
   }
-  return SsaArgMoves { ok: true, text: out };
+  return out;
 }
 
 function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
@@ -11374,8 +11371,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_nonblocking");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
-    s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("sleep_ms");
@@ -11388,16 +11383,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     ircore.flat_arm_missing(o);
   }
   return s;
-}
-
-function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  let k = asmcore.buf_arity(o.kind_tag);
-  while (k > 0) {
-    k -= 1;
-    s = s.write("    popq " + ssa_arg_regs()[k] + "\n");
-  }
-  let sym = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  return s.write("    call " + sym + "\n    pushq %rax\n").buf_needs(sym);
 }
 
 function const_text_u32(t: string): boolean {

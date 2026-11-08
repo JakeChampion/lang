@@ -2409,7 +2409,10 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
     return true;
   }
-  return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
+  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+    return true;
+  }
+  return util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 function ssa_funary_known(what: string): boolean {
@@ -5947,8 +5950,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("writer_nonblocking");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_nonblocking\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
-    s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.need("sleep_ms");
     s = s.write("    bl __fn___fern_sleep_ms\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -6391,16 +6392,6 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
   s = s.write("    str x0, [sp, #-16]!\n");
 
   return s;
-}
-
-function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  let k = asmcore.buf_arity(o.kind_tag);
-  while (k > 0) {
-    k -= 1;
-    s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
-  }
-  let sym = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  return s.buf_needs(sym).write("    bl " + sym + "\n    str x0, [sp, #-16]!\n");
 }
 
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
