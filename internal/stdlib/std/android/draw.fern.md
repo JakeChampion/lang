@@ -196,7 +196,7 @@ pub function (f: Frame) blend_frame(src: Frame, x: i32, y: i32, alpha: i32): voi
     return;
   }
   let w = clamp(alpha, 0, 255);
-  w = w + (w >> 7);
+  w += w >> 7;
   let x0 = clamp(x, 0, f.width);
   let x1 = clamp(x + src.width, 0, f.width);
   let y0 = clamp(y, 0, f.height);

@@ -349,10 +349,10 @@ function set_bars(ctx: usize, light_top: boolean, light_bottom: boolean): void {
   let act = android.activity_object(ctx);
   let flags = 0;
   if (light_top) {
-    flags = flags | LIGHT_STATUS;
+    flags |= LIGHT_STATUS;
   }
   if (light_bottom) {
-    flags = flags | LIGHT_NAV;
+    flags |= LIGHT_NAV;
   }
   let class = jni.load_class(e, act, "dev.fern.paper.Bars");
   if (failed(e) || class == 0 as usize) {
@@ -379,7 +379,7 @@ pub function bars_run(env: usize, thiz: usize): void {
   let class = jni.get_object_class(env, thiz);
   let flags = jni.get_static_long_field(env, class, jni.get_static_field_id(env, class, "fern", "J")) as i32;
   drop(env, class);
-  let obj: usize = 0 as usize;
+  let obj = 0 as usize;
   unsafe {
     obj = __load_ptr(activity + 24 as usize);
   }

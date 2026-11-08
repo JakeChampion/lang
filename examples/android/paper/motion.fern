@@ -29,17 +29,17 @@ pub function velocity(samples: Sample[]): f64 {
   let mt = 0.0;
   let my = 0.0;
   for s in samples {
-    mt = mt + (s.t - t0) as f64 / 1.0e9;
-    my = my + s.y;
+    mt += (s.t - t0) as f64 / 1.0e9;
+    my += s.y;
   }
-  mt = mt / (n as f64);
-  my = my / (n as f64);
+  mt /= n as f64;
+  my /= n as f64;
   let num = 0.0;
   let den = 0.0;
   for s in samples {
     let dt = (s.t - t0) as f64 / 1.0e9 - mt;
-    num = num + dt * (s.y - my);
-    den = den + dt * dt;
+    num += dt * (s.y - my);
+    den += dt * dt;
   }
   if (den <= 0.0) {
     return 0.0;

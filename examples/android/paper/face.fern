@@ -65,7 +65,7 @@ pub function descent(fs: Fonts, w: i32, px: i32): i32 {
     return px / 4;
   }
   let f = font(fs, w);
-  return (0 - f.descender * px + f.units_per_em - 1) / f.units_per_em;
+  return (-f.descender * px + f.units_per_em - 1) / f.units_per_em;
 }
 
 // The height of a line, as Android gives a text view with no font padding.
@@ -86,7 +86,7 @@ function pens(f: truetype.Font, px: i32, track: i32, s: string): (i32[], f64[]) 
   for c in s.chars() {
     let g = f.glyph(c as i32);
     if (prev >= 0) {
-      pen = pen + f.kerning(prev, g) as f64 * scale;
+      pen += f.kerning(prev, g) as f64 * scale;
     }
     glyphs = glyphs.append(g);
     out = out.append(pen);
@@ -189,7 +189,7 @@ pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
   let cache = c;
   let bms: truetype.Bitmap[] = [];
   let xs: i32[] = [];
-  let (x0, x1, y0, y1) = (1 << 20, 0 - (1 << 20), 1 << 20, 0 - (1 << 20));
+  let (x0, x1, y0, y1) = (1 << 20, -(1 << 20), 1 << 20, -(1 << 20));
   for i in 0..glyphs.len() {
     let q = (p[i] * 4.0 + 0.5).floor() as i32;
     let (next, bm) = glyph(cache, fs, w, px, glyphs[i], q & 3);
@@ -227,7 +227,7 @@ pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
       }
     }
   }
-  let sp = Sprite { w: sw, h: sh, left: 0 - x0, base: 0 - y0, cov: cov };
+  let sp = Sprite { w: sw, h: sh, left: -x0, base: -y0, cov: cov };
   return (Cache { glyphs: cache.glyphs, sprites: cache.sprites.insert(key, sp) }, sp);
 }
 
@@ -285,15 +285,15 @@ function box_blur(src: i32[], w: i32, h: i32, r: i32, rows: boolean): i32[] {
     let start = l * stride;
     let sum = 0;
     for k in 0..min(r + 1, len) {
-      sum = sum + src[start + k * step];
+      sum += src[start + k * step];
     }
     for i in 0..len {
       out = out.with(start + i * step, sum / n);
       if (i + r + 1 < len) {
-        sum = sum + src[start + (i + r + 1) * step];
+        sum += src[start + (i + r + 1) * step];
       }
       if (i - r >= 0) {
-        sum = sum - src[start + (i - r) * step];
+        sum -= src[start + (i - r) * step];
       }
     }
   }

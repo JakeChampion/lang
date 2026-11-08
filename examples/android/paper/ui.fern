@@ -265,7 +265,7 @@ function held_h(m: Metrics, f: face.Fonts): i32 {
 pub function favourites_height(m: Metrics, f: face.Fonts, v: View): i32 {
   let h = v.favourites.len() * fav_row(m, f);
   if (v.held > 0) {
-    h = h + held_h(m, f);
+    h += held_h(m, f);
   }
   return h;
 }
@@ -373,7 +373,7 @@ function favourites(m: Metrics, f: face.Fonts, v: View): Node[] {
       let n = node(x, y, w, row, Shadowed(text, px, face.SEMIBOLD, cream_text, dp(m, 8.0)));
       ns = ns.append(in_list(Node { ...n, act: "open:" + a.key, long: "menu:" + a.key }, "fav", top, bottom));
     }
-    y = y + row;
+    y += row;
   }
   if (v.held > 0) {
     let spx = dp(m, 16.0);
@@ -482,14 +482,14 @@ function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
     if (paper.has(v.dim, a.key)) {
       color = ink_faded();
       if (paper.has(v.dim, "blocked:" + a.key)) {
-        text = text + " · blocked";
+        text += " · blocked";
       }
     }
     let ty = y + (row - face.line(f, face.SEMIBOLD, px)) / 2;
     let n = node(x, ty, m.w - x, face.line(f, face.SEMIBOLD, px), Label(face.fit(f, face.SEMIBOLD, px, text, m.w - 2 * x), px, face.SEMIBOLD, 0, color));
     ns = ns.append(in_list(n, "list", top, bottom));
     ns = ns.append(in_list(Node { ...node(0, y, m.w, row, Blank), act: "open:" + a.key, long: "menu:" + a.key }, "list", top, bottom));
-    y = y + row;
+    y += row;
     i += 1;
   }
   return ns;
@@ -520,7 +520,7 @@ pub function row_height(m: Metrics, f: face.Fonts, r: Row): i32 {
 function rows_height(m: Metrics, f: face.Fonts, s: Sheet): i32 {
   let h = 0;
   for r in s.rows {
-    h = h + row_height(m, f, r);
+    h += row_height(m, f, r);
   }
   return h;
 }
@@ -612,10 +612,10 @@ function dialog(m: Metrics, f: face.Fonts, s: Sheet): Node[] {
           color = dialog_soft();
         }
         ns = ns.append(in_list(label(f, tx, ly, face.fit(f, face.REGULAR, rpx, lines[k], left + w - pad - tx), rpx, face.REGULAR, color), "sheet", r0, r1));
-        ly = ly + lh;
+        ly += lh;
       }
     }
-    ry = ry + rh;
+    ry += rh;
   }
   if (s.buttons.len() > 0) {
     let bpx = dp(m, 14.0);
@@ -665,9 +665,9 @@ function pause(m: Metrics, f: face.Fonts, p: Pause, blocked: boolean): Node[] {
   for line in p.lines {
     let lw = face.width(f, face.MEDIUM, spx, line);
     ns = ns.append(label(f, (m.w - lw) / 2, y, line, spx, face.MEDIUM, draw.rgba(255, 244, 230, 204)));
-    y = y + sub_line;
+    y += sub_line;
   }
-  y = y + dp(m, 56.0);
+  y += dp(m, 56.0);
   let bw = dp(m, 240.0);
   let bx = (m.w - bw) / 2;
   let ty = (bh - face.line(f, face.BOLD, bpx)) / 2;
