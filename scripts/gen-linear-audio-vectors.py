@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze independent FFmpeg PCM references for AIFF, AIFF-C, AU, and CAF."""
+"""Freeze independent FFmpeg PCM references for AIFF, AIFF-C, AU, CAF, and WAVE."""
 import argparse
 import base64
 import hashlib
@@ -73,7 +73,7 @@ def main():
                                             '-map', '0:a:0', '-c:a', codec, '-f', format, '-'])
 
         def freeze(name, data, container, channels, bits, rate, floating=False, expected=None, presentation=None):
-            path = temp / ('reference.' + ['aiff', 'au', 'caf'][container])
+            path = temp / ('reference.' + ['aiff', 'au', 'caf', 'wav'][container])
             path.write_bytes(data)
             floats = decode(path, 'pcm_f64le', 'f64le')
             assert len(floats) % (8 * channels) == 0
@@ -97,7 +97,7 @@ def main():
                 integers = b''.join(struct.pack('<i', x) for x in samples)
             frames = len(floats) // (8 * channels)
             vectors.append(f'    Vector {{ name: "{name}", container: {container}, channels: {channels}, bits: {bits}, rate: {rate}, frames: {frames}, floating: {str(floating).lower()}, encoded: "{packed(data)}", integers: "{packed(integers)}", floats: "{packed(floats)}" }},')
-            manifest.append({'name': name, 'container': ['AIFF/AIFC', 'AU', 'CAF'][container],
+            manifest.append({'name': name, 'container': ['AIFF/AIFC', 'AU', 'CAF', 'WAVE'][container],
                              'channels': channels, 'bits': bits, 'rate': rate, 'frames': frames,
                              'floating': floating, 'encoded_sha256': hashlib.sha256(data).hexdigest(),
                              'integer_sha256': hashlib.sha256(integers).hexdigest(),
@@ -108,12 +108,16 @@ def main():
 
         codecs = [('pcm_s8', 8), ('pcm_s16be', 16), ('pcm_s24be', 24), ('pcm_s32be', 32),
                   ('pcm_f32be', 32), ('pcm_f64be', 64), ('pcm_alaw', 16), ('pcm_mulaw', 16)]
-        for container, name in enumerate(['aiff', 'au', 'caf']):
+        for container, name in enumerate(['aiff', 'au', 'caf', 'wav']):
             extra = [('pcm_s16le', 16)] if container == 0 else []
             if container == 2:
                 extra = [('pcm_s16le', 16), ('pcm_s24le', 24), ('pcm_s32le', 32), ('pcm_f32le', 32), ('pcm_f64le', 64)]
-            for codec, bits in codecs + extra:
-                layouts = list(range(1, 9)) if codec == 'pcm_s16be' else [1, 2]
+            selected = codecs + extra
+            if container == 3:
+                selected = [('pcm_u8', 8), ('pcm_s16le', 16), ('pcm_s24le', 24), ('pcm_s32le', 32), ('pcm_f32le', 32), ('pcm_f64le', 64)]
+            for codec, bits in selected:
+                every_layout = codec == 'pcm_s16be' or container == 3 and codec in ('pcm_s16le', 'pcm_f32le', 'pcm_f64le')
+                layouts = list(range(1, 9)) if every_layout else [1, 2]
                 for channels in layouts:
                     rate = [8000, 44100, 48000, 96000, 192000][(channels + bits) % 5]
                     floating = codec.startswith('pcm_f')
@@ -128,8 +132,12 @@ def main():
                         raw = b''.join(struct.pack('<i', x) for x in values)
                         source = 's32le'
                     path = temp / ('encoded.' + name)
+                    layout = []
+                    if container == 3:
+                        masks = [0, 4, 3, 7, 51, 55, 63, 1807, 1599]
+                        layout = ['-channel_layout', hex(masks[channels])]
                     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', source, '-ar', str(rate),
-                                    '-ac', str(channels), '-i', 'pipe:0', '-map_metadata', '-1',
+                                    '-ac', str(channels)] + layout + ['-i', 'pipe:0', '-map_metadata', '-1',
                                     '-c:a', codec, '-fflags', '+bitexact', '-flags:a', '+bitexact',
                                     '-f', name, str(path)], input=raw, check=True)
                     freeze(f'{name}-{codec}-{channels}ch', path.read_bytes(), container, channels, bits, rate, floating)

@@ -1,0 +1,207 @@
+import "std/audio/wav";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+
+function join(own first: u8[], rest: [u8]): u8[] {
+  for byte in rest {
+    first = first.append(byte);
+  }
+  return first;
+}
+
+function chunk(name: string, data: [u8]): u8[] {
+  let out = wire.put_le(join([], name.as_bytes()), data.len() as u64, 4);
+  out = join(out, data);
+  if (data.len() % 2 != 0) {
+    out = out.append(0u8);
+  }
+  return out;
+}
+
+function riff(body: [u8]): u8[] {
+  return join(join(wire.put_le([82u8, 73u8, 70u8, 70u8], (body.len() + 4) as u64, 4), [87u8, 65u8, 86u8, 69u8]), body);
+}
+
+function format(bits: i32, extensible: boolean): u8[] {
+  let out = wire.put_le([], if (extensible) { 65534u64 } else { 3u64 }, 2);
+  out = wire.put_le(out, 1u64, 2);
+  out = wire.put_le(out, 48000u64, 4);
+  out = wire.put_le(out, 48000u64 * (bits as u64 / 8u64), 4);
+  out = wire.put_le(out, bits as u64 / 8u64, 2);
+  out = wire.put_le(out, bits as u64, 2);
+  if (extensible) {
+    out = wire.put_le(out, 22u64, 2);
+    out = wire.put_le(out, bits as u64, 2);
+    out = wire.put_le(out, 4u64, 4);
+    out = join(out, [3u8, 0u8, 0u8, 0u8, 0u8, 0u8, 16u8, 0u8, 128u8, 0u8, 0u8, 170u8, 0u8, 56u8, 155u8, 113u8]);
+  }
+  return out;
+}
+
+function fixture(bits: i32, extensible: boolean, data: [u8]): u8[] {
+  return riff(join(chunk("fmt ", format(bits, extensible)), chunk("data", data)));
+}
+
+function field(input: [u8], at: i32, bytes: i32, value: u64): u8[] {
+  let out = join([], input);
+  for i in 0..bytes {
+    out = out.with(at + i, (value >> (i * 8) as u64) as u8);
+  }
+  return out;
+}
+
+function samples(): test.TestOutcome {
+  for bits in [32, 64] {
+    let data = if (bits == 32) { join(wire.put_le([], 2147483648u64, 4), wire.put_le([], 1069547520u64, 4)) } else { join(wire.put_le([], 9223372036854775808u64, 8), wire.put_le([], f64_bits(1.5f64) as u64, 8)) };
+    for extensible in [false, true] {
+      let input = fixture(bits, extensible, data);
+      let Ok(index) = wav.inspect_linear(input, pcm.default_limits()) else {
+        return test.fail("float header");
+      };
+      if (index.information().frames != 2 || index.information().format.bits != bits || index.data_offset() != (if (extensible) { 68 } else { 44 }) || index.data_bytes() != bits / 4) {
+        return test.fail("float index metadata");
+      }
+      let buffer: f64[] = [71.5, 71.5, 71.5];
+      let saved = buffer;
+      let Ok(block) = index.read_float_into(input, 0, 2, buffer, pcm.default_limits()) else {
+        return test.fail("reusable float read");
+      };
+      if (f64_bits(block.samples[0]) != f64_bits(-0f64) || block.samples[1] != 1.5f64 || block.samples[2] != 71.5f64 || saved[0] != 71.5f64 || saved[1] != 71.5f64) {
+        return test.fail("float bits, clipping, suffix, or alias");
+      }
+      let Ok(all) = wav.decode_float(input, pcm.default_limits()) else {
+        return test.fail("complete float decode");
+      };
+      if (all.frames != 2 || all.samples[1] != 1.5f64) {
+        return test.fail("complete float extent");
+      }
+      if let Err(pcm.Unsupported) = wav.decode(input, pcm.default_limits()) {} else {
+        return test.fail("implicit integer quantization");
+      }
+      if let Err(pcm.Unsupported) = wav.inspect(input, pcm.default_limits()) {} else {
+        return test.fail("integer header API accepts float");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for extensible in [false, true] {
+    let input = fixture(32, extensible, [0u8, 0u8, 0u8, 0u8]);
+    for cut in 0..input.len() {
+      if let Err(_) = wav.inspect_linear(input[:cut], pcm.default_limits()) {} else {
+        return test.fail("incomplete float WAVE prefix");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function formats(): test.TestOutcome {
+  let input = fixture(32, false, [0u8, 0u8, 0u8, 0u8]);
+  for changed in [
+    field(input, 20, 2, 2u64), field(input, 22, 2, 0u64), field(input, 22, 2, 9u64),
+    field(input, 24, 4, 0u64), field(input, 24, 4, 16777216u64), field(input, 28, 4, 1u64),
+    field(input, 32, 2, 1u64), field(input, 34, 2, 16u64), field(input, 34, 2, 128u64), input.append(0u8),
+  ] {
+    if let Err(_) = wav.inspect_linear(changed, pcm.default_limits()) {} else {
+      return test.fail("invalid scalar WAVE fields");
+    }
+  }
+  let ext = fixture(64, true, wire.put_le([], 0u64, 8));
+  for changed in [
+    field(ext, 36, 2, 21u64), field(ext, 36, 2, 65535u64), field(ext, 38, 2, 32u64),
+    field(ext, 40, 4, 3u64), field(ext, 40, 4, 8u64), field(ext, 44, 4, 2u64), field(ext, 48, 1, 1u64),
+  ] {
+    if let Err(_) = wav.inspect_linear(changed, pcm.default_limits()) {} else {
+      return test.fail("invalid float extensible fields");
+    }
+  }
+  let reversed = riff(join(chunk("data", [0u8, 0u8, 0u8, 0u8]), chunk("fmt ", format(32, false))));
+  if let Err(pcm.Header) = wav.inspect_linear(reversed, pcm.default_limits()) {} else {
+    return test.fail("data before format");
+  }
+  let duplicate = riff(join(join(chunk("fmt ", format(32, false)), chunk("fmt ", format(32, false))), chunk("data", [])));
+  if let Err(pcm.Header) = wav.inspect_linear(duplicate, pcm.default_limits()) {} else {
+    return test.fail("duplicate format");
+  }
+  return test.pass();
+}
+
+function float_errors(): test.TestOutcome {
+  for bits in [32, 64] {
+    for raw in if (bits == 32) { [2139095040u64, 4286578688u64, 2143289344u64] } else { [9218868437227405312u64, 18442240474082181120u64, 9221120237041090560u64] } {
+      let input = fixture(bits, false, wire.put_le([], raw, bits / 8));
+      if let Err(pcm.Sample) = wav.decode_float(input, pcm.default_limits()) {} else {
+        return test.fail("non-finite float payload");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ranges(): test.TestOutcome {
+  let data = join(wire.put_le([], f64_bits(-1.5f64) as u64, 8), wire.put_le([], f64_bits(1.5f64) as u64, 8));
+  let input = fixture(64, false, data);
+  let limits = pcm.Limits { max_input_bytes: input.len(), max_samples: 1 };
+  let Ok(index) = wav.inspect_linear(input, limits) else {
+    return test.fail("small output budget permits an index");
+  };
+  let Ok(last) = index.read_float_into(input, 1, 1, [0f64, 71f64], limits) else {
+    return test.fail("bounded final frame");
+  };
+  if (last.samples[0] != 1.5f64 || last.samples[1] != 71f64) {
+    return test.fail("bounded final sample");
+  }
+  if let Err(pcm.Limit) = index.read_float(input, 0, 2, limits) {} else {
+    return test.fail("sample budget");
+  }
+  if let Err(pcm.Buffer) = index.read_float_into(input, 0, 1, [], limits) {} else {
+    return test.fail("short output");
+  }
+  if let Err(pcm.Header) = index.read_float(input, -1, 1, limits) {} else {
+    return test.fail("negative range");
+  }
+  if let Err(pcm.Header) = index.read_float(input, 2, 1, limits) {} else {
+    return test.fail("range after end");
+  }
+  let Ok(end) = index.read_float_into(input, 2, 0, [71f64], limits) else {
+    return test.fail("exact end");
+  };
+  if (end.frames != 0 || end.samples[0] != 71f64) {
+    return test.fail("exact end storage");
+  }
+  let empty = fixture(32, true, []);
+  let Ok(all) = wav.decode_float(empty, pcm.Limits { max_input_bytes: empty.len(), max_samples: 0 }) else {
+    return test.fail("empty float WAVE");
+  };
+  if (all.samples.len() != 0 || all.frames != 0) {
+    return test.fail("empty extent");
+  }
+  return test.pass();
+}
+
+function mutations(): test.TestOutcome {
+  let input = fixture(32, true, [0u8, 0u8, 0u8, 0u8]);
+  for at in 0..input.len() {
+    let changed = input.with(at, input[at] ^ 255u8);
+    if let Ok(index) = wav.inspect_linear(changed, pcm.default_limits()) {
+      let frames = if (index.information().frames < 8) { index.information().frames } else { 8 };
+      let _ = index.read_float(changed, 0, frames, pcm.Limits { max_input_bytes: 1024, max_samples: 64 });
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("WAVE float headers, payloads, and reusable ranges");
+  runner = runner.it("ordinary/extensible float bits, suffixes, and live aliases", samples);
+  runner = runner.it("every incomplete byte prefix", prefixes);
+  runner = runner.it("format fields, channel masks, GUIDs, and chunk order", formats);
+  runner = runner.it("non-finite float payloads", float_errors);
+  runner = runner.it("ranges, output budgets, exact end, and empty files", ranges);
+  runner = runner.it("every-byte mutations remain bounded", mutations);
+  return runner.finish();
+}
