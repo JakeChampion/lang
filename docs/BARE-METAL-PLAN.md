@@ -570,7 +570,9 @@ check time, in the same mechanism that enforces the OS boundary today.
 
 - **Physical memory.** #6511's embedder-supplied heap is the guest half. A kernel
   *produces* memory: page-frame allocator, page tables, then the Fern heap on
-  top of that, then a fresh heap per process.
+  top of that, then a fresh heap per process. `std/frames` is the page-frame
+  allocator, and `__heap_adopt` moves the heap onto its frames (sequencing,
+  step 9).
 - **DMA** (#14255). Volatile is not sufficient. A driver needs physically contiguous,
   uncached (or explicitly cache-maintained) allocations, and physical addresses
   distinct from virtual ones. This is an allocator feature, and it is the one
@@ -680,7 +682,22 @@ environment over the FernOS syscalls can come later, as an improvement.
    write-back everywhere. A board on real hardware needs the local APIC and its
    MMIO pages mapped uncached, before milestone 3. Then: `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-9. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+9. **First slice done: milestone 3** (#14262). `std/frames` is a page-frame
+   allocator over raw memory. Its header and bitmap live in the first frames
+   of its region, and its `@norc` core takes only the base address. The kernel
+   image reads its RAM from the device tree or the PVH memory map. It builds
+   the frames over the RAM above the cursor of the bootstrap heap. It takes
+   every frame and gives every one back. Then it moves the heap onto a run of
+   frames with `__heap_adopt`, which the `kernel` profile grants as `arena`.
+
+   The milestone 2 program then runs on the adopted heap, and a
+   `FERN_LEAKCHECK` image prints a balanced census
+   (`TestSelfHostKernelFramesOnQemu`, `TestSelfHostKernelX86FramesOnQemu`).
+   The reset entry still seeds a bootstrap heap from `-ram`. The page tables
+   are still the identity map of the reset entry. The second slice builds the
+   kernel mapping in Fern, with the MMIO and DMA regions outside ordinary
+   memory.
+10. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 

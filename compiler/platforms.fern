@@ -28,7 +28,7 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "config", "random", "fetch", "pollable"];
   }
   if (profile == "kernel") {
-    return ["privileged"];
+    return ["privileged", "arena"];
   }
   let empty: string[] = [];
   return empty;
