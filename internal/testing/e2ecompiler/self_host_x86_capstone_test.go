@@ -23,9 +23,9 @@ func TestSelfHostX86Capstone(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/wasm_run.fern")
 	asmRun := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "asm_run")
 	wasmRun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	nat := mustRead(t, "../../../compiler/x86_native.fern")
+	nat := assemblerSource(t, "x86_native.fern")
 	elf := mustRead(t, "../../../compiler/elf.fern")
-	prelude := string(nat) + "\n" + string(elf) + toU8Src
+	prelude := nat + "\n" + string(elf) + toU8Src
 
 	driverWat := runCapture(t, gcc, runner, wasmRun, []byte(prelude+x86CapstoneDriver))
 	if len(driverWat) == 0 {
