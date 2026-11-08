@@ -12,8 +12,21 @@ A program that passes a number at run time is refused at compile time, so the li
 The installer sets `PR_SET_NO_NEW_PRIVS` first, so the filter needs no privilege and an `execve` of a setuid or setcap program cannot gain privilege.
 A denied call kills the process with `SIGSYS`.
 
-The filter also checks one argument. The list admits `mmap`, `mprotect` and `pkey_mprotect` by number when the program contains them, because the runtime maps its arena and guards its stack.
-A request for an executable mapping, a protection word with `PROT_EXEC`, is killed. No runtime path asks for one, so the rule costs no program anything.
+The filter also checks one argument of the calls below. Each rule admits the values the runtime passes. A program that reaches the call on its ordinary path is never killed, and a call with another value is.
+A value rule reads both words of the argument. The kernel reads the low word alone, so a value with a high word set is killed too.
+The rules are the table `arg_rules` in `compiler/asmcore.fern`, one per architecture, and the filter carries a rule's block only when the program contains its call.
+
+| Call | Argument | Admitted |
+|---|---|---|
+| `mmap`, `mprotect`, `pkey_mprotect` | protection word | no `PROT_EXEC` bit |
+| `socket` | domain | `AF_UNIX`, `AF_INET`, `AF_INET6` |
+| `setsockopt` | level | `SOL_SOCKET`, `SOL_TCP`, `SOL_IPV6`, `SOL_TLS` |
+| `ioctl` | request | `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF`, `TIOCOUTQ`, `TIOCGWINSZ`, `TIOCSWINSZ`, `FICLONE` |
+| `prctl` | option | `PR_SET_PDEATHSIG`, `PR_SET_DUMPABLE`, `PR_GET_TAGGED_ADDR_CTRL`, `PR_PAC_GET_ENABLED_KEYS` |
+| `clone` (arm64, where the runtime forks through it) | flags | `SIGCHLD` alone |
+
+So a sandboxed process cannot open a netlink or packet socket, and cannot reach a device through an `ioctl` the terminal helpers do not use. It cannot install a second filter or change its memory map through `prctl`, and it cannot make a namespace.
+`prctl` is on the list only when the program calls `disable_core_dumps`, `prctl_query` or a worker that sets its parent-death signal. `seccomp` is never on it.
 
 A child process inherits the filter across `execve`, so a program the sandboxed program runs is held to the same list.
 
@@ -23,7 +36,9 @@ A child process inherits the filter across `execve`, so a program the sandboxed 
 | `TestSeccompDoesNotBreakWorkingPrograms` | arithmetic, constant data, heap and strings, allocation churn and the clock run to the same result under the filter |
 | `TestSeccompFilterDenies` | an `execve` spliced into the program dies with `SIGSYS` under the filter and returns `EFAULT` without it |
 | `TestSeccompFixtureCorpus` | the conformance corpus under the filter, on request |
-| `TestSelfHostSandboxFilterShape` | the emitted filter on both targets checks the audit architecture first, lists the program's calls in ascending order, sends the mapping calls through the protection check, and leaves out `prctl` and `seccomp` |
+| `TestSelfHostSandboxFilterShape` | the emitted filter on both targets, run by a BPF interpreter over seccomp_data records: it checks the audit architecture first, lists the program's calls in ascending order, allows each call with the runtime's argument, kills each call with a foreign argument or a high word, kills `execve`, `ptrace` and `seccomp`, and the installer loads the filter's length |
+| `TestSelfHostSandboxRulesCoverRuntime` | every raw system call of the Linux and Android runtime sources passes an argument its rule admits, so a new constant in a runtime helper is a test failure before it is a kill |
+| `TestSeccompDeniesArguments` | a `socket` for `AF_NETLINK`, a `socket` whose domain carries a high word, an `ioctl` for `TIOCSTI`, a `prctl` for `PR_SET_MM`, a `setsockopt` for `SOL_NETLINK` and, on arm64, a `clone` with `CLONE_NEWUSER` each die with `SIGSYS` under the filter; the runtime's own argument passes, and the foreign call only fails without the filter |
 | `TestSeccompDeniesExecutableMapping` | an `mprotect` with `PROT_EXEC` spliced into the program dies with `SIGSYS` under the filter, the same call with read and write passes, and the executable request passes without the filter |
 | `TestSelfHostSandboxRefusesDarwin`, `TestSelfHostSandboxRefusesRunTimeSyscallNumber`, `TestSelfHostSandboxNoBareSyscallEmit` | an `arm64-darwin` build refuses the flag, a run-time syscall number is refused on both targets, and no backend writes a `syscall` or `svc #0` outside the recorders |
 | `TestSeccompNoNewPrivsBlocksSetuidEscalation` | a sandboxed program that dropped to user 65534 runs a setuid-root helper, and the helper reports 65534. Without the sandbox the same helper reports 0, which is the control. The child inherits the filter, so the helper can only make the calls the driver makes. The test needs root to install the helper and skips where the host refuses setuid |
@@ -34,7 +49,8 @@ The runtime provides `setuid`, `setgid` and `setgroups` for a privilege drop, an
 ## Remaining limits
 
 - The sandbox is Linux only. An `arm64-darwin` build refuses the flag, and a wasm image has no process to confine. QEMU user mode does not emulate seccomp, so the arm64 run-time tests and the arm64 fixture corpus run on the native arm64 runner alone.
-- The allowlist constrains one argument, the protection word of a mapping call. An allowed `openat` can open any path the process can reach.
+- The rules constrain one argument of six calls. An allowed `openat` can open any path the process can reach. A `setsockopt` option, a `fcntl` command and the flags of `openat` are not checked.
+- `prctl_query` passes its caller's option to the kernel. Under the sandbox, an option other than `PR_GET_TAGGED_ADDR_CTRL` and `PR_PAC_GET_ENABLED_KEYS`, the two `std/mitigations` queries, is killed.
 - There is no namespace, chroot-by-default, or mount isolation. `chroot` exists as a builtin for a program that is already root.
 - A privilege drop is the program's own call. Nothing drops privilege at startup, and nothing verifies that a drop happened before the program reads untrusted input.
 - The resource quotas are the arena and the descriptor ceiling. There is no CPU time or child process quota.

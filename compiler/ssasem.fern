@@ -1269,12 +1269,24 @@ function array_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type):
     return "array index type";
   }
   if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
-    if (!semtypes.equal(a.elem, result) && !lane_group(a.elem, result)) {
+    if (!semtypes.equal(a.elem, result) && !lane_group(a.elem, result) && !packed_lane_group(ins, a.elem, result)) {
       return "array projection type";
     }
     return "";
   }
   return "array container type";
+}
+
+function packed_lane_group(ins: ssa.SInst, elem: typeinfo.Type, t: typeinfo.Type): boolean {
+  if (ins.str != "lane_bytes") {
+    return false;
+  }
+  if let typeinfo.TypeI32(e) = elem {
+    if let typeinfo.TypeLanes(_) = t {
+      return e.width == 8 && e.unsigned;
+    }
+  }
+  return false;
 }
 
 pub function lane_group(elem: typeinfo.Type, t: typeinfo.Type): boolean {
@@ -1363,7 +1375,7 @@ function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (a.view) {
       return "with receiver must own storage";
     }
-    if (!semtypes.equal(a.elem, f.values[ins.args[2]]) && !lane_group(a.elem, f.values[ins.args[2]])) {
+    if (!semtypes.equal(a.elem, f.values[ins.args[2]]) && !lane_group(a.elem, f.values[ins.args[2]]) && !packed_lane_group(ins, a.elem, f.values[ins.args[2]])) {
       return "with element type";
     }
     return "";

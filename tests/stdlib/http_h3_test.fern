@@ -224,6 +224,9 @@ function test_malformed(): test.TestOutcome {
     [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/"), qpack.field("te", "gzip")],
     [qpack.field(":method", "GET"), qpack.field("accept", "*/*"), qpack.field(":scheme", "https"), qpack.field(":path", "/")],
     [qpack.field(":method", "CONNECT"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":authority", "a"), qpack.field(":path", "/"), qpack.field("host", "b")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":authority", ""), qpack.field(":path", "/")],
   ];
   let out = "";
   let id: i64 = 0;
@@ -235,13 +238,16 @@ function test_malformed(): test.TestOutcome {
   let len = linked();
   len = flow(Link { ...len, log: "", c: len.c.send_headers(0 as i64, post("5"), false).send_data(0 as i64, "abc".bytes(), true) });
   out += len.log;
+  let hosted = linked();
+  hosted = flow(Link { ...hosted, log: "", c: hosted.c.send_headers(0 as i64, [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/h"), qpack.field("host", "example.com")], true) });
+  out += "\n" + hosted.log;
   let want = "";
   let i = 0;
-  while (i < 6) {
+  while (i < 9) {
     want += "server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \n";
     i += 1;
   }
-  return test.assert_eq(out, want + "server headers 0 [:method=POST :scheme=https :authority=example.com :path=/upload content-length=5 ]; server data 0 abc; server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; ");
+  return test.assert_eq(out, want + "server headers 0 [:method=POST :scheme=https :authority=example.com :path=/upload content-length=5 ]; server data 0 abc; server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \nserver headers 0 [:method=GET :scheme=https :path=/h host=example.com ]; server end 0; ");
 }
 
 function test_connection_errors(): test.TestOutcome {
@@ -253,6 +259,12 @@ function test_connection_errors(): test.TestOutcome {
   out += closes(p.s.on_stream(6 as i64, [], true));
   out += closes(p.s.on_stream(18 as i64, __codec_bytes(hex.decode("01")), false));
   out += closes(p.s.on_stream(22 as i64, __codec_bytes(hex.decode("21")), false));
+  out += closes(linked().s.on_stream(2 as i64, __codec_bytes(hex.decode("030100")), false));
+  out += closes(linked().s.on_stream(2 as i64, __codec_bytes(hex.decode("0d01050d0103")), false));
+  out += closes(linked().s.on_stream(2 as i64, __codec_bytes(hex.decode("070100070104")), false));
+  out += closes(linked().s.on_stream(2 as i64, __codec_bytes(hex.decode("0d020500")), false));
+  out += closes(linked().s.on_stream(2 as i64, __codec_bytes(hex.decode("07c000000040000000")), false));
+  out += closes(linked().s.on_stream(2 as i64, __codec_bytes(hex.decode("0d0105030103070104070100")), false));
   let step3 = p.c.send_headers(4 as i64, get("/g"), true);
   let cacts = step3.actions;
   let request: u8[] = [];
@@ -265,7 +277,7 @@ function test_connection_errors(): test.TestOutcome {
   }
   let step4 = p.s.on_stream(4 as i64, __codec_bytes(hex.decode("2103abcdef")).concat(request), true);
   let evs = step4.events;
-  return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
+  return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; 264 a CANCEL_PUSH for a push ID past MAX_PUSH_ID; 264 a MAX_PUSH_ID that went down; 264 a GOAWAY push ID that rose; 262 MAX_PUSH_ID with octets after its identifier; 263 a frame larger than this side reads; open; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
 }
 
 function closes(s: h3.Session): string {

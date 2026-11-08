@@ -1,0 +1,92 @@
+import "std/audio/pcm";
+import "std/hash/crc32";
+import "std/opus/silk/math";
+import "std/opus/silk/resample";
+import "std/test";
+import "opus_silk_resample_vectors";
+import "opus_silk_frame_vectors";
+
+function references(): test.TestOutcome {
+  let state = match (resample.resampler(8, 8)) { Ok(value) => value, Err(_) => { return test.fail("resampler creation"); } };
+  let previous_input = 0;
+  let previous_output = 0;
+  let seed = 1234567u32;
+  let rows = opus_silk_resample_vectors.OUTPUTS;
+  for row in 0..rows.len() / 21 {
+    let at = row * 21;
+    let rate = rows[at];
+    let output_rate = rows[at + 1];
+    let duration = rows[at + 2];
+    let trial = rows[at + 3];
+    if (rate != previous_input || output_rate != previous_output) {
+      state = match (resample.resampler(rate, output_rate)) { Ok(value) => value, Err(_) => { return test.fail("valid rates rejected"); } };
+      seed = 1234567u32;
+      previous_input = rate;
+      previous_output = output_rate;
+    }
+    let input: i32[] = [];
+    for i in 0..rate * duration {
+      seed = seed * 1664525u32 + 1013904223u32;
+      let value = math.s16((seed >> 16u32) as i32);
+      if (trial == 0) {
+        value = if (i % 2 == 0) { 32767 } else { -32768 };
+      } else if (trial == 1) {
+        value = if (i == 0) { 32767 } else { 0 };
+      } else if (trial == 2) {
+        value = math.s16(i * 997);
+      }
+      input = input.append(value);
+    }
+    let count = output_rate * duration;
+    let buffer = pcm.zeros(count + 1).with(count, 456789);
+    let (next, output) = match (resample.process_into(state, input, buffer)) { Ok(values) => values, Err(_) => { return test.fail("reference input rejected"); } };
+    state = next;
+    if (output[count] != 456789) {
+      return test.fail("resampler changed output tail");
+    }
+    let bytes: u8[] = [];
+    for i in 0..count {
+      bytes = bytes.append((output[i] & 255) as u8).append((output[i] >> 8 & 255) as u8);
+    }
+    if (crc32.of(bytes) != rows[at + 4] as u32) {
+      return test.fail("resampler checksum row " + row.to_string());
+    }
+    for i in 0..8 {
+      if (output[i] != rows[at + 5 + i] || output[count - 8 + i] != rows[at + 13 + i]) {
+        return test.fail("resampler boundary samples");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function libopus_delay(): test.TestOutcome {
+  let state = match (resample.resampler(16, 16)) { Ok(value) => value, Err(_) => { return test.fail("resampler creation"); } };
+  let (_, output) = match (resample.process_into(state, opus_silk_frame_vectors.LIBOPUS_PRE_RESAMPLE, pcm.zeros(320))) { Ok(values) => values, Err(_) => { return test.fail("libopus input rejected"); } };
+  let expected = opus_silk_frame_vectors.LIBOPUS_POST_RESAMPLE;
+  for i in 0..320 {
+    if (output[i] != expected[i]) {
+      return test.fail("libopus resampling delay");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function invalid(): test.TestOutcome {
+  let state = match (resample.resampler(12, 8)) { Ok(value) => value, Err(_) => { return test.fail("resampler creation"); } };
+  let invalid_rate = match (resample.resampler(48, 8)) { Err(pcm.Header) => true, _ => false };
+  let fractional = match (resample.process_into(resample.State { ...state }, pcm.zeros(13), pcm.zeros(9))) { Err(pcm.Header) => true, _ => false };
+  let small_output = match (resample.process_into(resample.State { ...state }, pcm.zeros(12), pcm.zeros(7))) { Err(pcm.Buffer) => true, _ => false };
+  let invalid_sample = match (resample.process_into(resample.State { ...state }, pcm.zeros(12).with(0, 32768), pcm.zeros(8))) { Err(pcm.Sample) => true, _ => false };
+  let bad_state = resample.State { ...state, ratio_q16: 1 };
+  let invalid_state = match (resample.process_into(bad_state, pcm.zeros(12), pcm.zeros(8))) { Err(pcm.Header) => true, _ => false };
+  return test.assert_true(invalid_rate && fractional && small_output && invalid_sample && invalid_state);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK resampling reference");
+  runner = runner.it("all 15 rate pairs with continuous filter and delay history", references);
+  runner = runner.it("pinned libopus input delay", libopus_delay);
+  runner = runner.it("invalid rates, samples, buffers, and filter state", invalid);
+  return runner.finish();
+}

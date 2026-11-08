@@ -1071,6 +1071,12 @@ function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
       }
       return c;
     },
+    frames.RetireConnectionId(seq) => {
+      if (seq > 0) {
+        return c.__fail(frames.PROTOCOL_VIOLATION, frames.RETIRE_CONNECTION_ID, "RETIRE_CONNECTION_ID for a sequence number never issued", now);
+      }
+      return c;
+    },
     _ => {
       return c;
     }
@@ -1178,10 +1184,10 @@ function (c: Conn) __discard(space: i32): Conn {
 
 function (c: Conn) __crypto(space: i32, offset: i64, data: u8[], now: i64): Conn {
   let s = c.spaces[space];
-  let (r, bytes) = s.crypto_in.add(offset, data).take();
-  if (r.held_bytes > MAX_CRYPTO_HELD) {
-    return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "too much CRYPTO data held out of order", now);
+  if (offset + data.len() as i64 - s.crypto_in.delivered() > MAX_CRYPTO_HELD) {
+    return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "CRYPTO data past what this side holds out of order", now);
   }
+  let (r, bytes) = s.crypto_in.add(offset, data).take();
   let cur = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: r }) };
   if (bytes.len() == 0) {
     return cur;

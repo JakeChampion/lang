@@ -1,0 +1,87 @@
+import "std/opus/silk/math";
+import "std/test";
+import "opus_silk_math_vectors";
+
+function pair_operations(): test.TestOutcome {
+  let rows = opus_silk_math_vectors.pairs();
+  for row in 0..rows.len() / 13 {
+    let at = row * 13;
+    let a = rows[at];
+    let b = rows[at + 1];
+    let actual = [math.smulbb(a, b), math.smulwb(a, b), math.smulww(a, b), math.smulwt(a, b), math.smmul(a, b), math.add_sat32(a, b), math.sub_sat32(a, b), math.smlabb(a, b, 1234567), math.smlawb(a, b, 1234567), math.smlawt(a, b, 1234567), math.smla_ww(a, b, 1234567)];
+    for i in 0..actual.len() {
+      if (actual[i] != rows[at + 2 + i]) {
+        return test.fail("fixed-point multiply or saturation");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function unary_operations(): test.TestOutcome {
+  let rows = opus_silk_math_vectors.unary();
+  for row in 0..rows.len() / 9 {
+    let at = row * 9;
+    let a = rows[at];
+    let actual = [math.clz32(a), math.ilog(a), math.abs32(a), math.s16(a), math.silk_rand(a), math.sqrt_approx(a), if (a > 0) { math.lin2log(a) } else { 0 }, math.sigm_q15(a)];
+    for i in 0..actual.len() {
+      if (actual[i] != rows[at + 1 + i]) {
+        return test.fail("fixed-point scalar approximation");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function rounding(): test.TestOutcome {
+  let a = opus_silk_math_vectors.round32();
+  for row in 0..a.len() / 4 {
+    let i = row * 4;
+    if (math.rshift_round32(a[i], a[i + 1]) != a[i + 2] || math.lshift_sat32(a[i], a[i + 1]) != a[i + 3]) {
+      return test.fail("signed 32-bit rounding");
+    }
+  }
+  let b = opus_silk_math_vectors.round64();
+  for row in 0..b.len() / 3 {
+    let i = row * 3;
+    if (math.rshift_round64(b[i], b[i + 1] as i32) != b[i + 2]) {
+      return test.fail("signed 64-bit rounding");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function division(): test.TestOutcome {
+  let rows = opus_silk_math_vectors.quotients();
+  for row in 0..rows.len() / 5 {
+    let i = row * 5;
+    if (math.div32_varq(rows[i], rows[i + 1], rows[i + 2]) != rows[i + 3] || math.inverse32_varq(rows[i + 1], rows[i + 2]) != rows[i + 4]) {
+      return test.fail("fixed-point reciprocal or division");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function bandwidth_expansion(): test.TestOutcome {
+  let rows = opus_silk_math_vectors.chirps();
+  for row in 0..rows.len() / 5 {
+    let i = row * 5;
+    let actual = math.expand_lpc([2147483647, -2147483647, 65537, -65537], rows[i]);
+    for n in 0..4 {
+      if (actual[n] != rows[i + 1 + n]) {
+        return test.fail("LPC bandwidth expansion");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK fixed-point reference arithmetic");
+  runner = runner.it("multiply, narrow, and saturate", pair_operations);
+  runner = runner.it("scalar approximations and random state", unary_operations);
+  runner = runner.it("signed shifts and rounding", rounding);
+  runner = runner.it("variable-Q division and reciprocal", division);
+  runner = runner.it("LPC bandwidth expansion", bandwidth_expansion);
+  return runner.finish();
+}

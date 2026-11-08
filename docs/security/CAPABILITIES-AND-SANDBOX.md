@@ -15,7 +15,7 @@ Grants attenuate.
 A governed dependency can grant its own dependencies at most what it holds, and an amplifying grant is a manifest error at load time.
 
 The sandbox is a run-time rule about a process.
-`FERN_SANDBOX=1` installs a seccomp allowlist of the system call numbers the program contains, after `no_new_privs`, and a denied call ends the process with `SIGSYS`. The filter also kills a request for an executable mapping.
+`FERN_SANDBOX=1` installs a seccomp allowlist of the system call numbers the program contains, after `no_new_privs`, and a denied call ends the process with `SIGSYS`. The filter also checks one argument of six calls. An executable mapping, a socket outside `AF_UNIX`, `AF_INET` and `AF_INET6`, and a foreign `ioctl` request, `setsockopt` level or `prctl` option are killed. On arm64 a `clone` that makes a namespace is killed.
 `-heap-limit` bounds the arena, `rlimit_nofile` reads the descriptor ceiling, and `setuid`, `setgid` and `setgroups` drop privilege.
 
 The two compose.
@@ -38,12 +38,12 @@ The compiler reads sources and writes an image, so a sandbox for build scripts h
 | `TestTraitDefaultChargesTheDeclaringPackage`, `TestTraitDefaultChargesTheDeclarerThroughAnIntermediate` | a trait default method is charged to the package that declares it |
 | `TestSelfHostCapsRules`, `TestSelfHostPackageCapabilityDifferentialX86_64`, `TestSelfHostCapsTraitDefaultDifferentialX86_64`, `TestSelfHostCapabilitiesReportAgreesWithNative` | the self-host checker refuses the same programs with `E070` and reports the same reaches as the Go analysis |
 | `TestInventoryCoversCheckerRegistry`, `TestSelfHostRegistryFullyClassified`, `TestUngatedBuiltinsAreNotCapabilities` | every builtin is classified, in both compilers, so a new builtin cannot slip past the gate |
-| `TestSeccompFilterDenies`, `TestSeccompNoNewPrivsBlocksSetuidEscalation` | the sandbox kills a denied `execve` and blocks a setuid escalation |
+| `TestSeccompFilterDenies`, `TestSeccompNoNewPrivsBlocksSetuidEscalation`, `TestSeccompDeniesArguments` | the sandbox kills a denied `execve`, blocks a setuid escalation, and kills an allowed call with an argument no runtime path passes |
 
 ## Remaining limits
 
 - The vocabulary is coarse. `net` is every host and every port, and `fs` is every path.
 - A grant is static. A program cannot attenuate a capability at run time or hand a dependency a single file.
-- The sandbox filters by system call number alone, on x86-64-linux and arm64-linux.
+- The sandbox filters by system call number and one argument of six calls, on x86-64-linux and arm64-linux. A path, a `setsockopt` option and the flags of `openat` are not checked.
 - A foreign function reached through `__c_call` is outside the vocabulary. The raw builtins are the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md).
 - A resource quota exists for the arena and the descriptor count. There is no CPU time or child process quota.

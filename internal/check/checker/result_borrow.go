@@ -326,7 +326,7 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 			return false
 		}
 		if call.Method != nil {
-			return c.freshMethodResult(call)
+			return c.freshMethodResult(call) || !c.signatureResultBorrows(id.Name)
 		}
 		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name] && !c.holdsNoHandle(sig.Result)
 	}

@@ -1,0 +1,31 @@
+import "std/array";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    exit(1);
+  }
+}
+
+function main(): i32 {
+  let source = __alloc_u8(33);
+  for i in 0..33 {
+    source = source.with(i, (i * 37 + 11) as u8);
+  }
+  let copy = source;
+  let f = __f32x4_load_bytes(source, 1);
+  source = __f32x4_with_bytes(source, 17, f);
+  for i in 0..16 {
+    require(source[17 + i] == copy[1 + i]);
+    require(copy[17 + i] == ((17 + i) * 37 + 11) as u8);
+  }
+  let d = __f64x2_load_bytes(copy, 0);
+  source = __f64x2_with_bytes(source, 1, d);
+  for i in 0..16 {
+    require(source[1 + i] == copy[i]);
+  }
+  let values = __f32x4_pack(__f64x2_of(1.0, -2.0), __f64x2_of(3.0, -0.0));
+  let packed = __f32x4_with_bytes(__alloc_u8(16), 0, values);
+  require(packed[2] == 128u8 && packed[3] == 63u8 && packed[15] == 128u8);
+  require(__f32x4_lane(__f32x4_load_bytes(packed, 0), 2) == 3.0 as f32);
+  return 0;
+}

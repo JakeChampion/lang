@@ -28,6 +28,7 @@ var stdModuleReach = map[string]string{
 	"std/crypto":        "",
 	"std/csv":           "",
 	"std/deflate":       "",
+	"std/dma":           "privileged",
 	"std/dns":           "fs,host,log,now,pollable,privileged,random,reactor,tcp,unix,uring",
 	"std/dotenv":        "",
 	"std/envflag":       "env",

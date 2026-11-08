@@ -788,7 +788,7 @@ function __at_key_change(c: Conn): Result[boolean, HandshakeError] {
 
 function __key_update(c: Conn, request: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (c.quic) {
-    return Err(Illegal("KeyUpdate under QUIC"));
+    return Err(OutOfOrder(message.KEY_UPDATE));
   }
   __at_key_change(c)?;
   let h = c.suite.hash();

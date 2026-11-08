@@ -63,6 +63,12 @@ name: Net nightly
 # (#9860). Every case passes or the job fails; the counts are recorded like
 # the bench's.
 #
+# The `h3spec` job runs scripts/net-h3spec: h3spec's cases, the QUIC
+# transport and TLS cases and the HTTP/3 and QPACK cases, against
+# scripts/net-h3spec.d/server.fern, std/serve with TLS and HTTP/3 on,
+# h3spec at the release the script pins by hash. One failed case fails
+# the job; the counts are recorded like the bench's (#12511).
+#
 # The `grpc` job runs scripts/net-grpc-interop: grpc-go's interop client
 # at the release the script pins runs its cases (unary, client, server
 # and bidirectional streaming, deadlines, status codes and messages,
@@ -373,6 +379,31 @@ jobs:
         with:
           name: h2spec-report-x86_64
           path: ${{ runner.temp }}/h2spec-report.txt
+          if-no-files-found: warn
+
+  h3spec:
+    name: net-h3spec-x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Restore h3spec
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-h3spec
+          key: h3spec-${{ runner.os }}-${{ hashFiles('scripts/net-h3spec') }}
+      - name: Run h3spec against the server
+        run: scripts/net-h3spec "${{ runner.temp }}/h3spec-report.txt"
+      - name: Record the report in refs/notes/perf
+        if: github.ref == 'refs/heads/main'
+        run: scripts/perf-history record net-h3spec "${{ runner.temp }}/h3spec-report.txt"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: h3spec-report-x86_64
+          path: ${{ runner.temp }}/h3spec-report.txt
           if-no-files-found: warn
 
   grpc:

@@ -42,6 +42,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/crypto";
 import "std/crypto/aead";
 ```
 
@@ -128,5 +129,11 @@ pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i
     return Err(aead.Forged);
   }
   return Ok(buf);
+}
+
+// Zeroes the round keys and the hash key before their release. The key is consumed.
+pub function (own k: Key) erase(): void {
+  crypto.erase(k.rk);
+  crypto.erase(k.h);
 }
 ```

@@ -2761,6 +2761,16 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   if (b == "vbitmask") {
     return ssa_vbitmask(ins, reg_of, s);
   }
+  if (b == "vpack") {
+    s = ssa_fread(reg_of, ins.args[0], "d1", s);
+    s = ssa_fread(reg_of, ins.args[1], "d2", s);
+    let a = slice_unchecked(ssa_fsrc(reg_of, ins.args[0], "d1"), 1, ssa_fsrc(reg_of, ins.args[0], "d1").len());
+    let b = slice_unchecked(ssa_fsrc(reg_of, ins.args[1], "d2"), 1, ssa_fsrc(reg_of, ins.args[1], "d2").len());
+    s = s.write("    fcvtn v0.2s, v" + a + ".2d\n    fcvtn2 v0.4s, v" + b + ".2d\n");
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    mov v" + slice_unchecked(d, 1, d.len()) + ".16b, v0.16b\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   if (b == "vsplat") {
     return ssa_vsplat(ins, reg_of, s);
   }
@@ -2986,6 +2996,22 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_load(reg_of, ins.args[0], a, s);
   let b = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
+  if (util.str_has_suffix(ins.str, ":bytes")) {
+    s = s.need("heap");
+    s = ssa_ldst0(s, true, "x6", a);
+    s = ssa_cmp_rr(s, b, "x6");
+    s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+    s = s.write("    sub x16, x6, " + b + "\n    cmp x16, #16\n");
+    s = ssa_trap_guard(s, CC_HS, "__fern_oob_abort");
+    s = s.write("    add x17, " + a + ", " + b + "\n");
+    if (set) {
+      s = ssa_fread(reg_of, ins.args[2], "d1", s);
+      return s.write("    str " + ssa_vq(ssa_fsrc(reg_of, ins.args[2], "d1")) + ", [x17, #8]\n");
+    }
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    ldr " + ssa_vq(d) + ", [x17, #8]\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   s = s.need("heap");
   s = ssa_ldst0(s, true, "x6", a);
   s = ssa_cmp_rr(s, b, "x6");
@@ -3962,25 +3988,18 @@ function raw_alloc_sym(s: asmcore.EmitState): string {
   return "__fern_alloc";
 }
 
-// The owned-allocation census takes the request of a user `__alloc` in x0,
-// the redzone included.
+// The owned-allocation census takes the request of a user `__alloc` in x0.
 function lc_rt_req_alloc(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.leak_check || !s.rt_owned_allocs) {
     return s;
   }
   s = s.write("    adrp x1, __fern_lc_rt_req\n    add x1, x1, :lo12:__fern_lc_rt_req\n");
-  if (s.rc_free_debug) {
-    return s.write("    add x9, x0, #16\n    str x9, [x1]\n");
-  }
   return s.write("    str x0, [x1]\n");
 }
 
-// The census takes the size of a user `__free` in x1, the redzone included.
+// The census takes the size of a user `__free` in x1.
 function lc_rt_req_free(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x2, __fern_lc_rt_req\n    add x2, x2, :lo12:__fern_lc_rt_req\n");
-  if (s.rc_free_debug) {
-    return s.write("    add x9, x1, #16\n    str x9, [x2]\n");
-  }
   return s.write("    str x1, [x2]\n");
 }
 
@@ -7910,20 +7929,24 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
 // Under -sanitize a raw block carries a redzone: the two words after its
 // size rounded to 8 hold the poison pattern from `__alloc` to `__free`.
 // The allocation takes 16 bytes more, and the free checks the two words.
+// The census counts the block without its redzone, so a release through
+// the typed runtime, which does not know the redzone, balances it.
 function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_raw_alloc_san:\n");
-  s = s.write(rt_frame_of(s, 32) + "    mov x29, sp\n    str x0, [sp, #16]\n    add x0, x0, #16\n    bl __fern_alloc\n    ldr x1, [sp, #16]\n");
+  s = s.write(rt_frame_of(s, 32) + "    mov x29, sp\n    str x0, [sp, #16]\n    add x0, x0, #16\n    bl __fern_alloc\n");
+  if (s.leak_check) {
+    s = s.write("    adrp x9, __fern_lc_alloc_bytes\n    add x9, x9, :lo12:__fern_lc_alloc_bytes\n    ldr x10, [x9]\n    sub x10, x10, #16\n    str x10, [x9]\n");
+  }
+  s = s.write("    ldr x1, [sp, #16]\n");
   s = s.write("    add x1, x1, #7\n    lsr x1, x1, #3\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
   return s.write("    str x10, [x9]\n    str x10, [x9, #8]\n" + rt_unframe_of(s, 32) + "    ret\n");
 }
 
 // The free side of the redzone: x0 is the block and x5 its size in words.
 // A word that lost the pattern was written past the end of the block.
-// The size then counts the redzone, as the allocation did.
 function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x9, x0, x5, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
-  s = s.write("    ldr x11, [x9]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x11, [x9, #8]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n");
-  return s.write("    add x5, x5, #2\n");
+  return s.write("    ldr x11, [x9]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x11, [x9, #8]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n");
 }
 
 function emit_san_hbo_abort(s: asmcore.EmitState): asmcore.EmitState {
@@ -10427,10 +10450,15 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    cbz x5, .Lrawfree_done\n");
   if (s.rc_free_debug) {
+    // The census counts the block, and the quarantine takes the redzone too.
     s = san_raw_twice_check(s);
     s = s.write(quarantine_rc("[x0]", "w9", s.rc_free_debug));
+    s = lc_bump_free_words(s, "x5", "x3", "x10", "x0");
+    s = s.write("    add x5, x5, #2\n");
+    s = quar_push(s, "x0", "x5", 16);
+  } else {
+    s = buf_block_free(s, "x0", "x5", "Lrawfree_b", true);
   }
-  s = buf_block_free(s, "x0", "x5", "Lrawfree_b", true);
   s = s.write(".Lrawfree_done:\n");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
