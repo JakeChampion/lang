@@ -1632,6 +1632,7 @@ TestSelfHostInterpStructOps 2
 TestSelfHostInterpUsizeIsTheHostWidth 3
 TestSelfHostInterpX86_64 15
 TestSelfHostInterpreterCompositeCells 15
+TestSelfHostInterpreterFunctionBindings 26
 TestSelfHostInterpreterHeap 3
 TestSelfHostInterpreterScalarArrayCells 13
 TestSelfHostInterpreterScalarCellValues 15

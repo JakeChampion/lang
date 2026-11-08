@@ -15,7 +15,7 @@ Source reads can block, so applications must set appropriate I/O deadlines.
 
 ```fern
 <<*>>=
-// Adapt borrowed Readers and byte-source callbacks to bounded Ogg Vorbis playback.
+// Bounded Ogg Vorbis input from a borrowed Reader or source callback.
 
 import "std/audio/source";
 import "std/audio/vorbisfile";

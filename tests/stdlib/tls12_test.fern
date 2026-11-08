@@ -1,0 +1,339 @@
+import "std/test";
+import "std/hex";
+import "std/codec";
+import "std/crypto";
+import "std/tls/handshake";
+import "std/tls/keyschedule";
+import "std/tls/message";
+import "std/tls/record";
+import "std/tls/tls12";
+
+// The expected bytes come from Python's hmac, hashlib and cryptography, an implementation independent of this one.
+const SECRET: string = "9bbe436ba940f017b17652849a71db35";
+
+const SEED: string = "a0ba9f936cda311827a6f796ffd5198c";
+
+const PRF256: string = "e3f229ba727be17b8d122620557cd453c2aab21d07c3d495329b52d4e61edb5a6b301791e90d35c9c9a46b4e14baf9af0fa022f7077def17abfd3797c0564bab4fbc91666e9def9b97fce34f796789baa48082d122ee42c5a72e5a5110fff70187347b66";
+
+const PRF384: string = "dd88775cd827187b67a3f7652b5c13f715791cc46e0274a6d3fb16651103defc544cd8afb68369a219bb918b8b21ddb1764af0a70339e6dec085e574f655851ba692513203536bdfc3675e53768210f0a2389dd324311a440c7c30ef44b391d914c3b0c7c80f1cb5e134cf4253d859fa8a46e978360d095dd2fba0c18a1f4d7b4cf9f24667b5cb0adc5ab65df3a0dc627c9b73cc";
+
+const MASTER: string = "f6550fc97649b6cb29f5d4d5006cbf69edacc80c5af55f7cf19db4e3e3b90ca2a198457b64a6ed72c4b524d822cefc59";
+
+const EXTENDED: string = "08c57243a4862f4c185b0cacc6294ca503e0d7faf36b4f6a53c7114a4f2cbd031dd7de18962373e6009459baa3926d03";
+
+const GCM_RECORD: string = "17030300260000000000000005888abba4c7ec1f2518bcc958a43938ff40e3af71806fd664fa6903707a18";
+
+const CHACHA_RECORD: string = "170303001e30ff288c72a8ac690951f4f0f2b7e497d8cc5a03c58ea6e829754c507016";
+
+const VERIFY_DATA: string = "467d67c6539f1a04dc9b3a16";
+
+function bytes(h: string): u8[] {
+  return __codec_bytes(hex.decode(h));
+}
+
+function filled(n: i32, b: i32): u8[] {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    out = out.append(b as u8);
+  }
+  return out;
+}
+
+function counting(n: i32): u8[] {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    out = out.append(out.len() as u8);
+  }
+  return out;
+}
+
+function client_random(): u8[] {
+  return filled(32, 0x11);
+}
+
+function server_random(): u8[] {
+  return filled(32, 0x22);
+}
+
+function session_hash(): u8[] {
+  return crypto.sha256("transcript".bytes());
+}
+
+function master(): u8[] {
+  return tls12.master_secret(keyschedule.Sha256, counting(32), false, [], client_random(), server_random());
+}
+
+function contains(hay: [u8], needle: [u8]): boolean {
+  let i = 0;
+  while (i + needle.len() <= hay.len()) {
+    let j = 0;
+    while (j < needle.len() && hay[i + j] == needle[j]) {
+      j += 1;
+    }
+    if (j == needle.len()) {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+function test_prf(): test.TestOutcome {
+  if (hex.encode(tls12.prf(keyschedule.Sha256, bytes(SECRET), "test label", bytes(SEED), 100)) != PRF256) {
+    return test.fail("SHA-256");
+  }
+  return test.assert_eq(hex.encode(tls12.prf(keyschedule.Sha384, bytes(SECRET), "test label", bytes(SEED), 148)), PRF384);
+}
+
+function test_master_secret(): test.TestOutcome {
+  if (hex.encode(master()) != MASTER) {
+    return test.fail("master secret");
+  }
+  return test.assert_eq(hex.encode(tls12.master_secret(keyschedule.Sha256, counting(32), true, session_hash(), client_random(), server_random())), EXTENDED);
+}
+
+function test_verify_data(): test.TestOutcome {
+  return test.assert_eq(hex.encode(tls12.verify_data(keyschedule.Sha256, master(), "client finished", session_hash())), VERIFY_DATA);
+}
+
+// Seals the plaintext at sequence number 5, compares the record, and opens it again.
+function sealed_record(suite: keyschedule.CipherSuite, want: string): test.TestOutcome {
+  let k = tls12.keys(suite, master(), client_random(), server_random());
+  let p = record.Protection { ...k.client, seq: 5 as u64 };
+  match (tls12.seal(p, record.ApplicationData, "hello, tls 1.2".bytes())) {
+    Ok(s) => {
+      if (hex.encode(s.record) != want) {
+        return test.fail("sealed " + hex.encode(s.record));
+      }
+      if (s.next.seq != 6 as u64) {
+        return test.fail("next sequence number");
+      }
+      match (record.record_at(s.record, 0)) {
+        Ok(r) => {
+          match (tls12.open(p, r)) {
+            Ok(o) => {
+              if (o.content_type.code() != 23) {
+                return test.fail("content type");
+              }
+              return test.assert_eq(hex.encode(o.content), hex.encode("hello, tls 1.2".bytes()));
+            },
+            Err(e) => {
+              return test.fail("open: " + e.message());
+            }
+          }
+        },
+        Err(e) => {
+          return test.fail("record_at: " + e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail("seal: " + e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_gcm_record(): test.TestOutcome {
+  return sealed_record(keyschedule.Aes128GcmSha256, GCM_RECORD);
+}
+
+function test_chacha_record(): test.TestOutcome {
+  return sealed_record(keyschedule.ChaCha20Poly1305Sha256, CHACHA_RECORD);
+}
+
+// A record opened at another sequence number, or with a changed byte, fails its tag.
+function test_forged_record(): test.TestOutcome {
+  let k = tls12.keys(keyschedule.Aes128GcmSha256, master(), client_random(), server_random());
+  let good = bytes(GCM_RECORD);
+  let p = record.Protection { ...k.client, seq: 6 as u64 };
+  match (record.record_at(good, 0)) {
+    Ok(r) => {
+      if let Ok(_) = tls12.open(p, r) {
+        return test.fail("opened at the wrong sequence number");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let bad = good.with(20, good[20] ^ 1 as u8);
+  match (record.record_at(bad, 0)) {
+    Ok(r) => {
+      if let Ok(_) = tls12.open(record.Protection { ...p, seq: 5 as u64 }, r) {
+        return test.fail("opened a changed record");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.pass();
+}
+
+// The TLS 1.3 suite code that a TLS 1.2 suite maps to, or 0.
+function mapped(code: i32): i32 {
+  match (tls12.suite(code)) {
+    Some(suite) => {
+      return suite.code();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function test_suites(): test.TestOutcome {
+  if (mapped(0xc02f) != 0x1301 || mapped(0xc02b) != 0x1301 || mapped(0xc030) != 0x1302) {
+    return test.fail("AES-GCM suites");
+  }
+  if (mapped(0xcca9) != 0x1303) {
+    return test.fail("ChaCha20-Poly1305 suite");
+  }
+  return test.assert_eq(mapped(0x009c), 0);
+}
+
+function test_downgraded(): test.TestOutcome {
+  let marked = filled(24, 7).concat(bytes("444f574e47524401"));
+  if (!tls12.downgraded(marked)) {
+    return test.fail("the sentinel");
+  }
+  return test.assert_false(tls12.downgraded(server_random()));
+}
+
+function test_key_exchange(): test.TestOutcome {
+  // curve_type 3, x25519, a 32-byte point, rsa_pss_rsae_sha256 and a 3-byte signature.
+  let body = bytes("03001d20").concat(filled(32, 9)).concat(bytes("08040003aabbcc"));
+  match (tls12.key_exchange(tls12.handshake_message(12, body))) {
+    Ok(kx) => {
+      if (kx.group != 0x001d || kx.scheme != 0x0804 || hex.encode(kx.public) != hex.encode(filled(32, 9))) {
+        return test.fail("group, scheme or point");
+      }
+      if (hex.encode(kx.params) != "03001d20" + hex.encode(filled(32, 9)) || hex.encode(kx.signature) != "aabbcc") {
+        return test.fail("params or signature");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let short = bytes("03001d20").concat(filled(32, 9)).concat(bytes("08040004aabbcc"));
+  if let Ok(_) = tls12.key_exchange(tls12.handshake_message(12, short)) {
+    return test.fail("took a signature shorter than its length");
+  }
+  return test.pass();
+}
+
+function test_certificate_chain(): test.TestOutcome {
+  match (tls12.certificate_chain(tls12.handshake_message(11, bytes("00000a000002aabb000002ccdd")))) {
+    Ok(chain) => {
+      if (chain.len() != 2 || hex.encode(chain[1]) != "ccdd") {
+        return test.fail("chain");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  if let Ok(_) = tls12.certificate_chain(tls12.handshake_message(11, bytes("000000"))) {
+    return test.fail("took an empty certificate_list");
+  }
+  return test.pass();
+}
+
+function started(tls12_offered: boolean): handshake.ClientStep {
+  let cfg = handshake.ClientConfig { ...handshake.client_config("example.com"), tls12: tls12_offered };
+  match (handshake.client_start(cfg, counting(handshake.client_entropy(cfg)))) {
+    Ok(step) => {
+      return step;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(97);
+    }
+  }
+  exit(97);
+}
+
+function server_hello(random: u8[], suite: i32, exts: message.Extension[]): u8[] {
+  return record.frame(record.Handshake, 0x0303, message.encode(message.ServerHelloMsg(message.ServerHello { random: random, session_id: [], cipher_suite: suite, extensions: exts })));
+}
+
+// The alert of the error that reading wire gives, or 0 when the read succeeds.
+function alert_after(c: handshake.Client, wire: u8[]): i32 {
+  match (c.read(wire)) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      return e.alert();
+    }
+  }
+  return 0;
+}
+
+function test_hello_offers_tls12(): test.TestOutcome {
+  let offered = started(true).output;
+  if (!contains(offered, bytes("002b00050403040303")) || !contains(offered, bytes("c02bc02fc02cc030cca9cca8")) || !contains(offered, bytes("00170000ff01000100"))) {
+    return test.fail("versions, suites or extended_master_secret");
+  }
+  let plain = started(false).output;
+  if (contains(plain, bytes("c02f"))) {
+    return test.fail("a TLS 1.3 client offers a TLS 1.2 suite");
+  }
+  return test.assert_true(contains(plain, bytes("002b0003020304")));
+}
+
+function test_server_hello12(): test.TestOutcome {
+  let ems = [message.Extension { kind: 23, data: [] }];
+  if (alert_after(started(true).client, server_hello(server_random(), 0xc02f, ems)) != 0) {
+    return test.fail("a TLS 1.2 ServerHello");
+  }
+  // A ServerHello that leaves out its extensions: legacy_version, random, an empty session_id, the suite, no compression.
+  let bare = record.frame(record.Handshake, 0x0303, bytes("02000026").concat(bytes("0303")).concat(server_random()).concat(bytes("00c02f00")));
+  if (alert_after(started(true).client, bare) != 0) {
+    return test.fail("a ServerHello with no extensions");
+  }
+  let marked = filled(24, 7).concat(bytes("444f574e47524401"));
+  if (alert_after(started(true).client, server_hello(marked, 0xc02f, ems)) != 47) {
+    return test.fail("the downgrade sentinel");
+  }
+  if (alert_after(started(true).client, server_hello(server_random(), 0x009c, ems)) != 47) {
+    return test.fail("a suite the client did not offer");
+  }
+  if (alert_after(started(true).client, server_hello(server_random(), 0xc02f, [message.Extension { kind: 35, data: [] }])) != 110) {
+    return test.fail("an extension the client did not offer");
+  }
+  return test.assert_eq(alert_after(started(false).client, server_hello(server_random(), 0xc02f, ems)), 70);
+}
+
+function main(): i32 {
+  let r = test.new("std/tls/tls12");
+  r = r.it("PRF with SHA-256 and SHA-384", test_prf);
+  r = r.it("master secret and extended master secret", test_master_secret);
+  r = r.it("Finished verify_data", test_verify_data);
+  r = r.it("AES-128-GCM record", test_gcm_record);
+  r = r.it("ChaCha20-Poly1305 record", test_chacha_record);
+  r = r.it("a forged record does not open", test_forged_record);
+  r = r.it("TLS 1.2 suites", test_suites);
+  r = r.it("downgrade sentinel", test_downgraded);
+  r = r.it("ServerKeyExchange", test_key_exchange);
+  r = r.it("Certificate", test_certificate_chain);
+  r = r.it("the client hello offers TLS 1.2", test_hello_offers_tls12);
+  r = r.it("a TLS 1.2 ServerHello", test_server_hello12);
+  return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(b) => {
+      return b;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+    }
+  }
+  exit(98);
+}

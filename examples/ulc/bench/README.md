@@ -1,13 +1,72 @@
 # ULC benchmarks
 
 Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
-The final suite records 131 lower Fern medians across 144 comparisons against tuned upstream C.
+The FLOAT32/VBR suite records 131 lower Fern medians across 144 comparisons against tuned upstream C.
 The geometric mean of C/Fern ratios is 1.374×, with equal weights for all cases.
 Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
-## Final method and results
+## Integer PCM output
+
+Source `a0fee5aed7260df5f6878f146e5ced7644fa0549` adds direct paired PCM conversion.
+It preserves the scalar writer's rounding, clipping, and exact output bytes.
+The input is PCM16 at 44.1 kHz, encoded by tuned upstream C at VBR quality 75.
+Both decoders read the same C bitstream.
+The C build, hardware, and CPU affinity match the FLOAT32 method below.
+No other local builds or tests run during timing.
+
+The suite has 168 decode comparisons, each with eleven alternating repetitions.
+Ten-second fixtures cover mono and stereo at blocks 256, 2048, and 32768.
+Each configuration uses PCM8, PCM16, and PCM24 output with one and four workers.
+The remaining configurations use 100-second stereo fixtures at block 2048.
+
+Fern has lower medians in 116 of 168 cases.
+The geometric-mean C/Fern ratio is 1.455× overall and 1.081× without silence.
+The fixed-suite bootstrap interval is 1.432× to 1.482×, with 2000 repetitions and seed 417.
+The 52 losses remain in the raw data.
+Large-block noise still favors C.
+These measurements do not establish a universal ranking.
+
+Each row below combines three block sizes and four input types.
+
+| Channels | Output | One-worker wins | One-worker geometric mean | Four-worker wins | Four-worker geometric mean |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | PCM8 | 8/12 | 1.326 | 9/12 | 1.688 |
+| 1 | PCM16 | 9/12 | 1.307 | 9/12 | 1.461 |
+| 1 | PCM24 | 8/12 | 1.275 | 9/12 | 1.492 |
+| 2 | PCM8 | 5/12 | 1.352 | 9/12 | 1.682 |
+| 2 | PCM16 | 7/12 | 1.327 | 8/12 | 1.480 |
+| 2 | PCM24 | 6/12 | 1.261 | 9/12 | 1.500 |
+
+The 100-second stereo results use the default block size:
+
+| Input | PCM8 one/four workers | PCM16 one/four workers | PCM24 one/four workers |
+| --- | ---: | ---: | ---: |
+| silence | 7.401 / 6.466 | 4.509 / 3.865 | 3.174 / 3.050 |
+| tone | 1.001 / 1.885 | 1.007 / 1.702 | 0.971 / 1.557 |
+| noise | 0.869 / 1.216 | 0.877 / 1.176 | 0.858 / 1.123 |
+| transients | 1.017 / 1.748 | 1.037 / 1.822 | 1.005 / 1.410 |
+
+[The 42 raw reports](x86-64-pcm.json) include all times, hashes, and oracle errors.
+The oracle output is clipped to the PCM range before each error calculation.
+The Fern error bound includes half of one quantization step.
+FLOAT32 checks retain their original tolerance.
+
+[The before-and-after probes](x86-64-pcm-before-after.json) use 31 alternating repetitions on stereo noise.
+The candidate binary matches the committed build byte for byte.
+Every output WAV matches the previous writer byte for byte.
+The ten-second, block-32768 probes improve by 1.88× to 1.98×.
+The 100-second, block-2048 probes improve by 2.29× to 2.31×.
+Tuned C remains faster in these six probes.
+
+To reproduce the PCM suite, build the pinned source in a separate worktree.
+Use the commands below with source `a0fee5aed7260df5f6878f146e5ced7644fa0549`.
+Add `--direction decode --output-format PCM16` and select the format for each run.
+Use `--channels 1` or `--channels 2` for the short fixtures.
+Combine the resulting reports with `bench/summarize.py`.
+
+## FLOAT32 and VBR method and results
 
 The compiler and codec source is `07136183f64ee18bab4a0b1044baac247e9e8b14`.
 The suite covers all eight block sizes with one and four workers.
@@ -61,7 +120,7 @@ The oracle checks both decoder outputs outside the timed repetitions.
 The maximum Fern error against the double-precision FFT is `2.38e-7` across these fixtures.
 The records include C errors separately, without a wider Fern tolerance.
 
-## Reproduce the final suite
+## Reproduce the FLOAT32 and VBR suite
 
 Build the C tools with the flags in the reproduction section below.
 Build the Fern tools from the measured source:

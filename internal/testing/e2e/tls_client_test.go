@@ -78,6 +78,7 @@ type tlsWorld struct {
 	caFile, clientCert, clientKey       string
 	main, retry, rsa, ed, bad, echo, px int
 	mtls, h2                            int
+	tls12ec, tls12rsa, tls12chacha      int
 	mainConns, h2Conns                  atomic.Int64
 	mu                                  sync.Mutex
 	tunnels                             []string
@@ -106,6 +107,11 @@ func startTLSWorld(t *testing.T) *tlsWorld {
 		}
 	})
 	w.rsa = serveTLS(t, ca.leaf(t, mustKey(t, "rsa"), []string{"localhost"}, false), nil, nil)
+	w.tls12ec = serveTLS12(t, ecLeaf, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, nil)
+	pkcs1Leaf := ca.leaf(t, mustKey(t, "rsa"), []string{"localhost"}, false)
+	pkcs1Leaf.SupportedSignatureAlgorithms = []tls.SignatureScheme{tls.PKCS1WithSHA256}
+	w.tls12rsa = serveTLS12(t, pkcs1Leaf, tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, []tls.CurveID{tls.CurveP256})
+	w.tls12chacha = serveTLS12(t, ca.leaf(t, mustKey(t, "rsa"), []string{"localhost"}, false), tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, nil)
 	w.ed = serveTLS(t, ca.leaf(t, mustKey(t, "ed25519"), []string{"localhost"}, false), nil, nil)
 	w.bad = serveTLS(t, other.leaf(t, mustKey(t, "p256"), names, true), nil, nil)
 	w.echo = serveEcho(t, ecLeaf, nil)
@@ -143,6 +149,7 @@ func (w *tlsWorld) source(total time.Duration) string {
 		"@MAIN@", strconv.Itoa(w.main), "@RETRY@", strconv.Itoa(w.retry), "@RSA@", strconv.Itoa(w.rsa),
 		"@ED@", strconv.Itoa(w.ed), "@BAD@", strconv.Itoa(w.bad), "@ECHO@", strconv.Itoa(w.echo), "@PROXY@", strconv.Itoa(w.px),
 		"@MTLS@", strconv.Itoa(w.mtls), "@CLIENT_CERT@", w.clientCert, "@CLIENT_KEY@", w.clientKey, "@H2@", strconv.Itoa(w.h2),
+		"@TLS12EC@", strconv.Itoa(w.tls12ec), "@TLS12RSA@", strconv.Itoa(w.tls12rsa), "@TLS12CHACHA@", strconv.Itoa(w.tls12chacha),
 	).Replace(tlsClientSource)
 }
 
@@ -319,6 +326,12 @@ function main(): i32 {
   show("retry", fetch.send(interop_get("https://localhost:@RETRY@/d")));
   show("rsa", fetch.send(interop_get("https://localhost:@RSA@/e")));
   show("ed25519", fetch.send(interop_get("https://localhost:@ED@/f")));
+  show("tls12 ecdsa", fetch.send(interop_get("https://localhost:@TLS12EC@/m")));
+  show("tls12 rsa pkcs1 p256", fetch.send(interop_get("https://localhost:@TLS12RSA@/n")));
+  let kept: fetch.Sockets = fetch.sockets();
+  show("tls12 chacha", fetch.send_on(kept, interop_get("https://localhost:@TLS12CHACHA@/o"), proxies("")));
+  show("tls12 chacha again", fetch.send_on(kept, interop_get("https://localhost:@TLS12CHACHA@/p").with_body(BodyText("twelve")), proxies("")));
+  fetch.close_idle(kept);
   show("untrusted", fetch.send(interop_get("https://localhost:@BAD@/")));
   show("wrongname", fetch.send(interop_get("https://127.0.0.1:@RSA@/")));
   show("tunnel", fetch.send_on(fetch.sockets(), interop_get("https://tls.test:@MAIN@/g"), proxies("http://127.0.0.1:@PROXY@")));
@@ -356,6 +369,10 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"retry: " + ok("/d", "X25519"),
 		"rsa: " + ok("/e", "X25519MLKEM768"),
 		"ed25519: " + ok("/f", "X25519MLKEM768"),
+		"tls12 ecdsa: 200 /m TLS 1.2 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 http/1.1 X25519 body=0",
+		"tls12 rsa pkcs1 p256: 200 /n TLS 1.2 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 http/1.1 CurveP256 body=0",
+		"tls12 chacha: 200 /o TLS 1.2 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 http/1.1 X25519 body=0",
+		"tls12 chacha again: 200 /p TLS 1.2 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 http/1.1 X25519 body=6",
 		"untrusted: error TLS: the peer's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"wrongname: error TLS: the peer's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
@@ -391,6 +408,19 @@ func serveTLS(t *testing.T, cert tls.Certificate, curves []tls.CurveID, state fu
 	}))
 	s.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, CurvePreferences: curves, NextProtos: []string{"http/1.1"}}
 	s.Config.ConnState = state
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	return s.Listener.Addr().(*net.TCPAddr).Port
+}
+
+// serveTLS12 is a server that speaks only TLS 1.2, with one cipher suite.
+func serveTLS12(t *testing.T, cert tls.Certificate, suite uint16, curves []tls.CurveID) int {
+	t.Helper()
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		fmt.Fprintf(rw, "%s %s %s %s %s body=%d", r.URL.Path, tls.VersionName(r.TLS.Version), tls.CipherSuiteName(r.TLS.CipherSuite), r.TLS.NegotiatedProtocol, r.TLS.CurveID, len(body))
+	}))
+	s.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MaxVersion: tls.VersionTLS12, CipherSuites: []uint16{suite}, CurvePreferences: curves, NextProtos: []string{"http/1.1"}}
 	s.StartTLS()
 	t.Cleanup(s.Close)
 	return s.Listener.Addr().(*net.TCPAddr).Port

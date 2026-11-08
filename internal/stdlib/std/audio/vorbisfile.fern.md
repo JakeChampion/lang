@@ -28,7 +28,7 @@ This interface supplies `std/audio/vorbisfile/seek` with bounded index records.
 
 ```fern
 <<*>>=
-// Decode or scan incremental Ogg Vorbis input with exact sample boundaries.
+// Incremental Ogg Vorbis playback with bounded packet storage.
 
 import "std/audio/ogg";
 import "std/audio/pcm";

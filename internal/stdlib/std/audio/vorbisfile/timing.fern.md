@@ -10,7 +10,7 @@ Counts use samples per channel at the stream sample rate.
 
 ```fern
 <<*>>=
-// Map Vorbis packet durations to checked granule timestamps and playable sample ranges.
+// Vorbis granule positions and playable sample boundaries.
 
 import "std/audio/pcm";
 
