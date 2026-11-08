@@ -25,14 +25,18 @@ const sandboxSocketProg = `function main(): i32 {
 
 // sandboxRuleProg reaches every call the filter checks an argument of: socket
 // and setsockopt through tcp_listen, ioctl through isatty, prctl through
-// disable_core_dumps, and clone through proc_fork on arm64. It is compiled,
-// never run.
+// disable_core_dumps, fcntl through a pipe's non-blocking flag, and clone
+// through proc_fork on arm64. It is compiled, never run.
 const sandboxRuleProg = `function main(): i32 {
     let fd: Socket = tcp_listen(0);
     if (fd.fd < 0) { return 1; }
     tcp_close(fd);
     if (isatty(0)) { return 2; }
     if (!disable_core_dumps()) { return 3; }
+    let Ok(q) = pipe() else { return 4; };
+    let Ok(_) = q.w.set_nonblocking(true) else { return 5; };
+    q.r.close();
+    q.w.close();
     let pid: i32 = proc_fork();
     if (pid == 0) { exit(0); }
     return 0;
@@ -80,6 +84,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 16, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
 			{nr: 41, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
 			{nr: 54, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 72, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 157, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
 		},
 		install:  "    call __fern_seccomp_install\n",
@@ -99,6 +104,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 29, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
 			{nr: 198, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
 			{nr: 208, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 25, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 167, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
 			{nr: 220, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
 		},

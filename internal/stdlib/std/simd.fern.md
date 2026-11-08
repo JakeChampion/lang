@@ -982,24 +982,31 @@ They preserve the original bits and perform no float conversion.
 pub function reverse_f32x4(value: f32x4): f32x4 {
   return __f32x4_reverse(value);
 }
+
 pub function reverse_f64x2(value: f64x2): f64x2 {
   return __f64x2_reverse(value);
 }
+
 pub function swap_halves_f32x4(value: f32x4): f32x4 {
   return __f32x4_swap_halves(value);
 }
+
 pub function swap_halves_f64x2(value: f64x2): f64x2 {
   return __f64x2_swap_halves(value);
 }
+
 pub function zip_lo_f32x4(a: f32x4, b: f32x4): f32x4 {
   return __f32x4_zip_lo(a, b);
 }
+
 pub function zip_lo_f64x2(a: f64x2, b: f64x2): f64x2 {
   return __f64x2_zip_lo(a, b);
 }
+
 pub function zip_hi_f32x4(a: f32x4, b: f32x4): f32x4 {
   return __f32x4_zip_hi(a, b);
 }
+
 pub function zip_hi_f64x2(a: f64x2, b: f64x2): f64x2 {
   return __f64x2_zip_hi(a, b);
 }
