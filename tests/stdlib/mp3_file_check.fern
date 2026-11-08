@@ -1,0 +1,125 @@
+import "std/audio/mp3";
+import "std/audio/mp3/file";
+import "std/audio/mp3/seek";
+import "std/audio/pcm";
+import "std/hex";
+import "mp3_vectors";
+import "flac_file_check" as io;
+
+function read_source(src: io.Source): (i32) => Result[u8[], IoError] {
+  return io.source_read(src, if (src.bytes.len() > 65536) { 4096 } else { 17 });
+}
+
+function bounded(builder: file.Builder): boolean {
+  let window = match (builder.window) { Some(value) => value.buffer.bytes.len() <= 160, None => true };
+  return window && builder.decoder.buffer.bytes.len() <= builder.limits.input.input.max_buffer_bytes && builder.trailer.first.len() <= 32 && builder.trailer.last.len() <= 160;
+}
+
+pub function index(src: io.Source, limits: file.Limits): Result[file.Index, string] {
+  let builder = match (file.create(src.bytes.len() as i64, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  while (true) {
+    let before = src.operations.get();
+    let entries = builder.entries.len();
+    let (next, value) = match (builder.step_with(io.seek_source(src), read_source(src))) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    builder = next;
+    if (src.operations.get() - before > 1 || builder.entries.len() > entries + 1 || !bounded(builder)) {
+      return Err("index cooperative work bound");
+    }
+    match (value) {
+      file.BuildReady(index) => {
+        let (_, done) = match (builder.step_with(io.no_seek, io.no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        if let file.BuildFinished = done {
+          return Ok(index);
+        }
+        return Err("index read after completion");
+      },
+      file.BuildFinished => {
+        return Err("missing complete index");
+      },
+      file.BuildPending => {}
+    }
+  }
+}
+
+pub function same(audio: seek.Audio, ref: mp3.Decoded, position: i64): boolean {
+  if (audio.position != position || audio.sample_rate != ref.sample_rate || audio.channels != ref.channels || audio.frames < 1) {
+    return false;
+  }
+  if (audio.samples.len() != audio.frames * ref.channels) {
+    return false;
+  }
+  let at = position as i32 * ref.channels;
+  if (audio.samples.len() > ref.samples.len() - at) {
+    return false;
+  }
+  for i in 0..audio.samples.len() {
+    if (f32_bits(audio.samples[i]) != f32_bits(ref.samples[at + i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function tail(own cursor: file.Cursor, src: io.Source, ref: mp3.Decoded, position: i64): Result[file.Cursor, string] {
+  let at = position;
+  while (true) {
+    let before = src.operations.get();
+    let (next, value) = match (cursor.step_with(io.seek_source(src), read_source(src))) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    let operations = src.operations.get() - before;
+    if (operations > 1) {
+      return Err("playback cooperative work bound");
+    }
+    match (value) {
+      file.Output(audio) => {
+        if (operations != 0 || !same(audio, ref, at)) {
+          return Err("selected MP3 PCM or decode/read separation");
+        }
+        at += audio.frames as i64;
+      },
+      file.Finished => {
+        if (at != cursor.index.frames) {
+          return Err("incomplete selected MP3 tail");
+        }
+        let (done, value) = match (cursor.next_with(io.no_seek, io.no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        if let None = value {
+          return Ok(done);
+        }
+        return Err("source access after completion");
+      },
+      file.Pending => {}
+    }
+  }
+}
+
+pub function run(bytes: u8[], ref: mp3.Decoded): Result[void, string] {
+  let src = io.mock(bytes);
+  let idx = index(src, file.default_limits())?;
+  if (idx.frames * (ref.channels as i64) != ref.samples.len() as i64 || idx.input_bytes != bytes.len() as i64) {
+    return Err("index track counts");
+  }
+  let positions: i64[] = [idx.frames, 0i64, 1i64, idx.frames - 1i64, idx.frames / 2i64, 0i64];
+  for entry in 0..idx.entries.len() {
+    let raw = entry as i64 * (idx.frame_size as i64) - idx.info.skip_frames as i64;
+    if (raw >= 0i64 && raw < idx.frames) {
+      positions = positions.append(raw);
+    }
+    if (raw > 0i64 && raw <= idx.frames) {
+      positions = positions.append(raw - 1i64);
+    }
+  }
+  let cursor = file.reader(idx);
+  for position in positions {
+    cursor = match (cursor.seek(position)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = tail(cursor, src, ref, position)?;
+  }
+  return Ok(());
+}
+
+pub function reference(v: mp3_vectors.Vector): Result[void, string] {
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return Err("reference input");
+  };
+  let ref = match (mp3.decode(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  return run(bytes, ref);
+}
