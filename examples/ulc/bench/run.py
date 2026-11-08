@@ -21,12 +21,11 @@ def run(args):
                           stderr=subprocess.PIPE, timeout=120)
 
 
-def fixture(path, kind, seconds):
+def fixture(path, kind, seconds, channels=2, rate=44100):
     rng = random.Random(417)
     values = []
-    rate = 44100
     for i in range(round(rate * seconds)):
-        for ch in range(2):
+        for ch in range(channels):
             tone = 0.25 * math.sin(2 * math.pi * (440 + ch * 220) * i / rate)
             if kind == "silence":
                 value = 0.0
@@ -40,7 +39,7 @@ def fixture(path, kind, seconds):
                     value += rng.uniform(-0.4, 0.4)
             values.append(round(value * 32767))
     with wave.open(str(path), "wb") as wav:
-        wav.setparams((2, 2, rate, 0, "NONE", "not compressed"))
+        wav.setparams((channels, 2, rate, 0, "NONE", "not compressed"))
         wav.writeframes(struct.pack(f"<{len(values)}h", *values))
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -69,9 +68,15 @@ def main():
     parser.add_argument("--cpu", type=int)
     parser.add_argument("--cpus", help="comma-separated CPU affinity for both executables")
     parser.add_argument("--threads", type=int, choices=(1, 2, 4), default=1)
+    parser.add_argument("--block-size", type=int, choices=tuple(1 << n for n in range(8, 16)), default=2048)
+    parser.add_argument("--channels", type=int, default=2)
+    parser.add_argument("--sample-rate", type=int, default=44100)
+    parser.add_argument("--quality", type=float, default=75)
     args = parser.parse_args()
     if args.seconds <= 0 or args.repetitions < 3:
         parser.error("use positive seconds and at least three repetitions")
+    if not 1 <= args.channels <= 255 or not 1 <= args.sample_rate <= 384000 or not 0 < args.quality <= 100:
+        parser.error("use channels 1..255, sample rate 1..384000, and quality in (0, 100]")
     if args.cpu is not None and args.cpus is not None:
         parser.error("select --cpu or --cpus")
     if args.cpu is not None:
@@ -88,7 +93,8 @@ def main():
     report = {"threads": args.threads, "platform": platform.platform(), "cpu": cpu,
               "affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
               "seconds": args.seconds, "repetitions": args.repetitions,
-              "reference_label": args.reference_label, "quality": 75, "block_size": 2048,
+              "reference_label": args.reference_label, "quality": args.quality, "block_size": args.block_size,
+              "channels": args.channels, "sample_rate": args.sample_rate,
               "fern_binary_sha256": hashlib.sha256(fern.read_bytes()).hexdigest(),
               "reference_encoder_sha256": hashlib.sha256((reference / "ulcencodetool").read_bytes()).hexdigest(),
               "reference_decoder_sha256": hashlib.sha256((reference / "ulcdecodetool").read_bytes()).hexdigest(),
@@ -102,10 +108,10 @@ def main():
         root = Path(temp)
         for kind in ("silence", "tone", "noise", "transients"):
             source = root / "input.wav"
-            checksum = fixture(source, kind, args.seconds)
+            checksum = fixture(source, kind, args.seconds, args.channels, args.sample_rate)
             encoded = {name: root / f"{name}.ulc" for name in ("C", "Fern")}
-            commands = {"C": [reference / "ulcencodetool", source, encoded["C"], "-75"],
-                        "Fern": [fern, "encode", source, encoded["Fern"], "75", "2048"]}
+            commands = {"C": [reference / "ulcencodetool", source, encoded["C"], f"-{args.quality:g}", f"-blocksize:{args.block_size}"],
+                        "Fern": [fern, "encode", source, encoded["Fern"], f"{args.quality:g}", str(args.block_size)]}
             for command in commands.values():
                 run(command)
             sizes = {name: path.stat().st_size for name, path in encoded.items()}

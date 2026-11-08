@@ -1027,6 +1027,9 @@ function sat_trunc_opcode(op: string): i32 {
 }
 
 function simd_opcode(op: string): i32 {
+  if (op == "i8x16.shuffle") {
+    return 13;
+  }
   if (op == "v128.load") {
     return 0;
   }
@@ -1231,6 +1234,27 @@ function simd_opcode(op: string): i32 {
   return -1;
 }
 
+function shuffle_indices(own out: i32[], nodes: SExpr[], start: i32): i32[] {
+  if (start < 0 || start + 16 > nodes.len()) {
+    eprint("watbin: shuffle requires 16 byte indices");
+    exit(1);
+  }
+  for i in start..start + 16 {
+    let text = nodes[i].text;
+    let valid = text.len() > 0 && text.len() <= 2;
+    for c in text {
+      valid = valid && c >= b'0' && c <= b'9';
+    }
+    let index = parse_dec(text);
+    if (!valid || index < 0 || index > 31) {
+      eprint("watbin: shuffle byte index must be from 0 to 31");
+      exit(1);
+    }
+    out = out.append(index);
+  }
+  return out;
+}
+
 function simd_has_memarg(op: string): boolean {
   return op == "v128.load" || op == "v128.store";
 }
@@ -1271,6 +1295,9 @@ function simd_lane_index(op: string, text: string): i32 {
 }
 
 function simd_arity(op: string): i32 {
+  if (op == "i8x16.shuffle") {
+    return 2;
+  }
   if (op == "v128.bitselect") {
     return 3;
   }
@@ -1590,6 +1617,9 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     if (simd_has_lane(op)) {
       first = 2;
     }
+    if (op == "i8x16.shuffle") {
+      first = 17;
+    }
     let sk = first;
     while (sk < first + sa) {
       out = wcat(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
@@ -1597,6 +1627,9 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     out = out.append(253);
     out = leb_u32(out, sop);
+    if (op == "i8x16.shuffle") {
+      out = shuffle_indices(out, node.items, 1);
+    }
     if (simd_has_memarg(op)) {
       out = leb_u32(out, 0);
       out = leb_u32(out, 0);
@@ -1744,6 +1777,10 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
       } else if (sop >= 0) {
         out = out.append(253);
         out = leb_u32(out, sop);
+        if (op == "i8x16.shuffle") {
+          out = shuffle_indices(out, instrs, i + 1);
+          i += 16;
+        }
         if (simd_has_memarg(op)) {
           out = leb_u32(out, 0);
           out = leb_u32(out, 0);

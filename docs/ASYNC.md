@@ -377,6 +377,15 @@ answers the first seed that fails (0 if all pass), and `Sim.rng_state()`
 is there for lockstep assertions. See `tests/stdlib/sim_fetch_test.fern`
 and `tests/stdlib/sim_platform_test.fern`.
 
+HTTP/3 has an endpoint of its own: `n.serve_h3(addr, port, identity,
+handler)` answers QUIC at a UDP port with the handler, and a TCP answer
+served from the same address carries the Alt-Svc field that names it.
+`n.datagram_delay(d)` is the time a datagram takes each way and
+`n.datagram_loss(every)` drops every n-th one. `n.h3_connections()`,
+`n.h3_requests()` and `n.datagrams()` count what happened. The pool learns
+the endpoint from an Alt-Svc field, or from `pool.offer_h3(host, port,
+h3_port)`. See `tests/stdlib/sim_fetch_h3_test.fern`.
+
 ## 10. The reactor: `async.Driver`
 
 `async.Driver` is the reactor that a scheduler watches descriptors

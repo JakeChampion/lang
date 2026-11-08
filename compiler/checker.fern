@@ -574,10 +574,10 @@ function is_f64_primitive(name: string): boolean {
 
 function is_lane_builtin(name: string): boolean {
   let names: string[] = [
-    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
+    "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
     "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
-    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
+    "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
   ];
@@ -629,6 +629,9 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   }
   if (argc == 1 && name == "__alloc_i64") {
     return typeinfo.TypeArray { elem: t_i64(), view: false };
+  }
+  if (argc == 1 && name == "__alloc_f64") {
+    return typeinfo.TypeArray { elem: typeinfo.TypeFloat { width: 64, polymorphic: false }, view: false };
   }
   if (argc == 1 && name == "__alloc_bool") {
     return typeinfo.TypeArray { elem: t_bool(), view: false };
@@ -866,7 +869,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (util.has_str(["__alloc", "__fd_close", "__socket_from_fd"], name)) {
     return ([t_i32()], true);
   }
-  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
+  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     return ([t_i32()], true);
   }
   if (name == "__free") {
@@ -1097,7 +1100,7 @@ function device_sig(name: string): DeviceSig {
   if (builtinsigs.port_intrinsic(name)) {
     return port_sig(name);
   }
-  return mmio_sig(name);
+  return access_sig(name);
 }
 
 // A cache or TLB op of one address takes the address.
@@ -1128,12 +1131,13 @@ function port_sig(name: string): DeviceSig {
   return DeviceSig { params: [t_i32()], result: t_i32() };
 }
 
-function mmio_sig(name: string): DeviceSig {
+// An MMIO or raw memory access takes the address, and a store the value too.
+function access_sig(name: string): DeviceSig {
   let value = t_i32();
-  if (builtinsigs.mmio_width(name) == 64) {
+  if (builtinsigs.access_width(name) == 64) {
     value = t_i64();
   }
-  if (util.str_has_prefix(name, "__mmio_store")) {
+  if (builtinsigs.access_store(name)) {
     return DeviceSig { params: [t_usize(), value], result: t_void() };
   }
   return DeviceSig { params: [t_usize()], result: value };
@@ -1217,7 +1221,7 @@ function sysreg_name_diags(name: string, c: ast.ExprCall): util.Diag[] {
 }
 
 function lane_index_diags(name: string, c: ast.ExprCall): util.Diag[] {
-  if (c.args.len() != 2 || !is_lane_builtin(name) || typeinfo.lane_builtin_verb(name) != "lane") {
+  if (c.args.len() != 2 || !is_lane_builtin(name) || typeinfo.lane_builtin_verb(name) != "lane" && typeinfo.lane_builtin_verb(name) != "lane_bits") {
     return [];
   }
   let lanes = 128 / typeinfo.lane_builtin_width(name);
@@ -10260,7 +10264,9 @@ pub function unsafe_intrinsics(): string[] {
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
     "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
-    "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
+    "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
+    "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
+    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__memcpy", "__memset", "__str_bytes", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
@@ -18216,7 +18222,7 @@ function registered_intrinsics(): string[] {
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
     "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
@@ -18226,13 +18232,14 @@ function registered_intrinsics(): string[] {
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
+    "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
     "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
-    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
-    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+    "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
+    "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
   ];
 }
 
@@ -23515,7 +23522,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",
@@ -25445,7 +25452,8 @@ function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
     "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
-    "__f64x2_of", "__f64x2_splat", "__f64x2_lane",
+    "__f64x2_of", "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_lane_bits", "__f64x2_lane",
+    "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_lane_bits",
     "__f64x2_lt", "__f64x2_ne", "__f64x2_bitmask", "__f32x4_bitmask",
   ] {
     let declared = false;
@@ -31116,9 +31124,7 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     ast.ExprFieldAccess(fa) => {
       callee = qualify_expr(c.callee, none, s, coll);
       if (args_name_shared(c.args, coll) && qual_enum_name(fa.obj, s).len() == 0) {
-        if let Some(ms) = s.lookup_method(fa.field, cmp_method_receiver(check_expr(fa.obj, s))) {
-          dests = ms.param_types;
-        }
+        dests = method_arg_dests(fa.field, check_expr(fa.obj, s), s);
       }
     },
     _ => {
@@ -31130,6 +31136,25 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
   }
   return ast.ExprCall { ...c, callee: callee, args: args };
+}
+
+// method_arg_dests is the types a method call's arguments are expected to
+// have: a declared method's parameters, or the element an array's builtin
+// `append` and `with` take.
+function method_arg_dests(method: string, recv: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  if let typeinfo.TypeArray(ar) = recv {
+    if (!ar.view && method == "append") {
+      return [ar.elem];
+    }
+    if (!ar.view && method == "with") {
+      return [t_i32(), ar.elem];
+    }
+    return [];
+  }
+  if let Some(ms) = s.lookup_method(method, cmp_method_receiver(recv)) {
+    return ms.param_types;
+  }
+  return [];
 }
 
 function args_name_shared(args: ast.Expr[], coll: util.NameIndex): boolean {

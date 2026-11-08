@@ -1,0 +1,106 @@
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/f32";
+import "std/opus/multistream";
+import "std/test";
+
+function word(bytes: [u8], at: i32): i32 {
+  return wire.le(bytes, at, 4) as i32;
+}
+
+function buffer(own samples: f32[], capacity: i32): f32[] {
+  while (samples.len() < capacity) {
+    samples = samples.append(1.25f32);
+  }
+  return samples;
+}
+
+function decode(own state: multistream.Decoder, bytes: [u8], action: i32, frames: i32, own output: f32[], reuse: boolean): Result[(multistream.Decoder, multistream.Audio), pcm.AudioError] {
+  if (reuse) {
+    return decode_into(state, bytes, action, frames, output);
+  }
+  if (action == 3) {
+    return state.reset().decode_lost(frames);
+  }
+  if (action == 1) {
+    return state.decode_lost(frames);
+  }
+  if (action == 2) {
+    return state.decode_fec(bytes, frames);
+  }
+  return state.decode(bytes);
+}
+
+function decode_into(own state: multistream.Decoder, bytes: [u8], action: i32, frames: i32, own output: f32[]): Result[(multistream.Decoder, multistream.Audio), pcm.AudioError] {
+  if (action == 3) {
+    return state.reset().decode_lost_into(frames, output);
+  }
+  if (action == 1) {
+    return state.decode_lost_into(frames, output);
+  }
+  if (action == 2) {
+    return state.decode_fec_into(bytes, frames, output);
+  }
+  return state.decode_into(bytes, output);
+}
+
+function compare(actual: multistream.Audio, bytes: [u8], at: i32, frames: i32, reuse: boolean): test.TestOutcome {
+  if (actual.frames != frames || actual.samples.len() < frames * actual.channels) {
+    return test.fail("decoded frame count or output length");
+  }
+  for i in 0..frames * actual.channels {
+    let expected = f32_from_bits(word(bytes, at + i * 4));
+    if (!actual.samples[i].is_finite() || (actual.samples[i] - expected).abs() > 0.000001f32) {
+      return test.fail("sample " + i.to_string() + " actual " + actual.samples[i].to_string() + " expected " + expected.to_string());
+    }
+  }
+  if (reuse) {
+    for i in actual.samples.len() - 4..actual.samples.len() {
+      if (actual.samples[i] != 1.25f32) {
+        return test.fail("output buffer sentinel");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function configuration(bytes: [u8]): multistream.Config {
+  let channels = word(bytes, 4);
+  let map: u8[] = [];
+  for i in 0..channels {
+    map = map.append(bytes[20 + i]);
+  }
+  return multistream.Config { sample_rate: word(bytes, 0), channels: channels, streams: word(bytes, 8), coupled: word(bytes, 12), mapping: map };
+}
+
+pub function check_case(bytes: [u8], reuse: boolean): test.TestOutcome {
+  let config = configuration(bytes);
+  let rate = config.sample_rate;
+  let channels = config.channels;
+  let state = match (multistream.decoder(config, multistream.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("multistream decoder creation"); } };
+  let capacity = rate * 120 / 1000 * channels + 4;
+  let output = buffer([], capacity);
+  let at = 20 + channels;
+  for step in 0..word(bytes, 16) {
+    let action = word(bytes, at);
+    let frames = word(bytes, at + 4);
+    let range = word(bytes, at + 8) as u32;
+    let size = word(bytes, at + 12);
+    at += 16;
+    let (next, actual) = match (decode(state, bytes[at:at + size], action, frames, output, reuse)) { Ok(value) => value, Err(error) => { return test.fail("multistream step " + step.to_string() + ": " + error.to_string()); } };
+    state = next;
+    at += size;
+    if (state.final_range() != range) {
+      return test.fail("entropy range step " + step.to_string());
+    }
+    match (compare(actual, bytes, at, frames, reuse)) {
+      test.Pass => {},
+      test.Fail(message) => {
+        return test.fail("step " + step.to_string() + ": " + message);
+      }
+    }
+    at += frames * channels * 4;
+    output = buffer(actual.samples, capacity);
+  }
+  return test.assert_eq(at, bytes.len());
+}

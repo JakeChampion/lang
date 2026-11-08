@@ -11,8 +11,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
-| Opus | Yes | Partial | SILK, hybrid, and CELT packets, mono/stereo, all Opus output rates, loss concealment, and forward error correction. The CELT encoder uses 48 kHz fullband mono or stereo. |
-| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. Codec headers and playback trimming need a codec-specific layer. |
+| Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
+| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus layer supplies file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
 
@@ -97,7 +97,7 @@ It rejects Layer I, Layer II, and free-format bitrate headers.
 `decode_raw` retains all coded samples and codec delay.
 `decode` skips a Xing or Info metadata frame and applies recognized LAME delay and padding.
 `inspect_track` exposes those boundaries. It skips ID3v2.2 through ID3v2.4, ID3v1, and bounded trailing APE tags.
-The module does not expose tag contents or build a seek index.
+The module does not expose tag contents. `std/audio/mp3/seek` supplies a separate seek index.
 
 Zero-padding stream-copy tags are valid. Adjusted padding has a minimum of zero.
 
@@ -116,6 +116,32 @@ Use that result for decoder warmup after a seek. A decode error resets decoder s
 Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 960 synthesis floats.
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
+
+## Indexed MP3 and FLAC playback
+
+`std/audio/mp3/seek` and `std/audio/flac/seek` build bounded frame indexes.
+Each cursor returns at most one codec frame of PCM per `next` call.
+The output declares its playable position and frame count.
+The caller supplies the same immutable encoded input view to each call.
+These APIs do not perform file I/O.
+
+MP3 index construction scans frame headers without decoding PCM.
+The cursor applies recognized Xing/LAME delay and padding once.
+A seek restores up to 511 bytes of reservoir history before two complete frames warm the overlap and synthesis filters.
+FLAC index construction decodes frames to verify checksums, lengths, and sequence, without retaining their PCM.
+FLAC seeks use a binary search of sample positions and need no codec history.
+
+The logical MP3 index stores four bytes per audio frame.
+The logical FLAC index stores twelve bytes per frame.
+Array capacity, headers, and allocator overhead add to those counts.
+Input and index limits bound separate storage. The sample limit applies to each decoded frame.
+FLAC index construction needs an output budget for the STREAMINFO maximum block size.
+
+Tests compare repeated forward and backward seeks with slices of complete reference-qualified decode.
+They cover frame interiors, boundaries, the exact track end, MP3 gapless metadata, and fixed and variable FLAC blocks.
+Every compiled sample matches exactly.
+The independent MP3 interpreter smoke uses a float slice from hash-pinned scalar minimp3.
+Regenerate it with `scripts/gen-mp3-seek-smoke.py`.
 
 ## Ogg
 
@@ -155,12 +181,47 @@ Private channel mappings and the 255-channel bound have separate RFC checks.
 `std/opus/packet.parse_delimited` reads one stream from a multistream packet.
 It returns a normal Opus packet and the consumed byte count.
 Its 1,896 reference cases compare boundaries, frame lengths, padding, and packet bytes with pinned libopus.
-These modules supply file-decoder components. Complete file playback still needs the stream and granule rules.
 
 ```sh
 python3 scripts/gen-opus-headers-vectors.py
 python3 scripts/gen-opus-delimited-vectors.py
 ```
+
+## Ogg Opus files
+
+`std/audio/opusfile` decodes complete files from incremental input.
+It emits identification, comment, sample, and end events.
+It selects the first Opus logical stream, then accepts subsequent chains, including changes in channel count.
+Other interleaved streams remain subject to Ogg validation and storage limits.
+
+Call `feed` with the unconsumed input until it is consumed.
+Events can consume zero bytes. After the last input, drain events with `feed([])` until no event remains, then call `finish`.
+An error requires a new decoder.
+
+Output uses interleaved float samples at 48 kHz and the declared channel map.
+The file decoder applies header gain, pre-skip, initial granule offsets, and final sample trimming.
+The input sample rate remains metadata. Output can exceed the device sample range.
+Each sample event reports its playable position and absolute granule timestamp.
+Each end event reports the playable frame count for that logical stream.
+
+The decoder retains one page of completed packets, bounded partial packets, and codec state.
+A packet can span pages. Each sample event contains at most one packet of decoded output.
+The default limits allow eight coded streams, 46,080 raw output samples per packet, and 1 MiB per encoded packet.
+Separate limits bound comments, active Ogg streams, partial packet storage, and the number of logical links.
+Output limits include samples that pre-skip or final trimming removes.
+
+The complete-file corpus compares 139,814 float samples across ten files and twelve logical links with pinned libopusfile.
+It covers mono through eight-channel surround, positive and negative gain, large comment packets, continued audio packets, and changing chain formats.
+It also covers initial granule offsets, several packets per page, a single audio page, and a track with zero playable frames.
+Each case runs with complete and partial input. Sample differences must not exceed 0.000001.
+
+Separate tests check malformed pages, truncation, limits, pending output, and signed 64-bit timing boundaries.
+An independent complete file checks the self-host interpreter.
+
+Regenerate the file corpus with `scripts/gen-opus-file-vectors.py`.
+The generator verifies pinned libopusfile, libopus, and libogg archive hashes.
+Normal tests need no reference library or network access.
+Seeking and file-reader adapters remain separate work.
 
 ## Opus and Android
 
@@ -169,6 +230,20 @@ The packet API handles multi-frame packets and padding.
 The decoder accepts all five Opus output rates and mono or stereo output.
 `decode_lost` conceals missing packets. `decode_fec` recovers a preceding packet when the next packet contains redundancy.
 Decode that next packet normally after the FEC call.
+
+`std/opus/multistream` combines coupled and mono streams with explicit channel maps.
+It supports repeated channels, silent channels, and decoded channels that the output omits.
+Its limits bound input bytes, stream count, and output samples.
+
+The `decode_into`, `decode_lost_into`, and `decode_fec_into` methods consume reusable output buffers.
+Each result declares the valid frame count. Entries after the valid samples retain their values.
+Codec scratch space still allocates within bounded limits.
+
+The multistream corpus compares 972,000 float samples across 605 steps with pinned libopus.
+It covers all five output rates, mono through eight-channel surround, custom maps, loss, FEC, and reset.
+Every final entropy range matches. Sample differences must not exceed 0.000001.
+An independent six-step subset also checks the self-host interpreter.
+Regenerate both corpora with `scripts/gen-opus-multistream-vectors.py`.
 
 `std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
 `std/opus/silk/entropy` decodes frame parameters. `std/opus/silk/core` reconstructs integer PCM for one coded channel.

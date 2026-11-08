@@ -14,23 +14,29 @@ case "$(uname -sm)" in
   *) echo 'unsupported host' >&2; exit 1 ;;
 esac
 mkdir -p build/video
-source=tests/stdlib/video_test.fern
-"$fern_video_compiler" -check "$source" internal/stdlib
-"$fern_video_compiler" -target "$target" -sanitize -o build/video/tests "$source" internal/stdlib
-build/video/tests
-"$fern_video_compiler" -target wasm32-wasi -o build/video/tests.wasm "$source" internal/stdlib
-wasmtime run build/video/tests.wasm
-"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/tests.so "$source" internal/stdlib
+for suite in video android_video_policy; do
+  source="tests/stdlib/${suite}_test.fern"
+  "$fern_video_compiler" -check "$source" internal/stdlib
+  "$fern_video_compiler" -target "$target" -sanitize -o "build/video/${suite}-tests" "$source" internal/stdlib
+  "build/video/${suite}-tests"
+  "$fern_video_compiler" -target wasm32-wasi -o "build/video/${suite}-tests.wasm" "$source" internal/stdlib
+  wasmtime run "build/video/${suite}-tests.wasm"
+  "$fern_video_compiler" -target arm64-android -shared -export main -o "build/video/${suite}-tests.so" "$source" internal/stdlib
+done
+"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/hardware-api.so tests/stdlib/android_video_hardware_mock_test.fern internal/stdlib
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/android-api.so tests/stdlib/android_video_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
-  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/libmediandk.so scripts/video-reference/mediandk-mock.c
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/libmediandk.so scripts/video-reference/mediandk-mock.c scripts/video-reference/codec-jni-mock.c
+  ln -sf libmediandk.so build/video/libandroid.so
   "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/android-mock.so tests/stdlib/android_video_mock_test.fern internal/stdlib
+  "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/hardware-mock.so tests/stdlib/android_video_hardware_mock_test.fern internal/stdlib
   LD_LIBRARY_PATH="$PWD/build/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
 import ctypes
-library = ctypes.CDLL('./build/video/android-mock.so')
-result = library.main()
-if result != 0:
-    raise SystemExit(f'Android MediaCodec ABI test failed at check {result}')
-print('Android MediaCodec lifecycle and ABI checks passed')
+for name in ('android', 'hardware'):
+    library = ctypes.CDLL(f'./build/video/{name}-mock.so')
+    result = library.main()
+    if result != 0:
+        raise SystemExit(f'Android {name} ABI test failed at check {result}')
+    print(f'Android {name} lifecycle and ABI checks passed')
 PY
 fi

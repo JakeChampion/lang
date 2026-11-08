@@ -57,14 +57,14 @@ const STDLIB_GROUPS = [
     "table", "textwrap", "unicode", "utf8"]],
   ["Data & encoding", ["base32", "base64", "binary", "brotli", "brotli_dictionary", "brotli_encoder", "codec", "crypto", "crypto_aead", "crypto_aes_gcm", "crypto_chacha20poly1305",
     "crypto_ecdsa", "crypto_ed25519", "crypto_field25519", "crypto_mlkem768", "crypto_montgomery", "crypto_p256", "crypto_rsa", "crypto_sha2", "crypto_x25519", "csv", "deflate", "fdt", "hash", "hash_bsd_sum", "hash_cksum", "hash_crc32", "hash_sysv_sum", "hex", "json", "png", "protobuf", "pvh", "semver", "url", "uuid", "zstd"]],
-  ["Audio", ["audio_ogg", "audio_ogg_tables", "audio_opusfile_headers", "audio_flac", "audio_mp3", "audio_mp3_bits", "audio_mp3_header", "audio_mp3_spectral", "audio_mp3_synthesis", "audio_mp3_tables", "audio_pcm", "audio_qoa", "audio_wav", "audio_wire", "opus", "opus_bands", "opus_celt", "opus_celt_encoder", "opus_energy", "opus_mdct", "opus_modes", "opus_packet", "opus_pitch", "opus_playback", "opus_pvq", "opus_pvq_table", "opus_range", "opus_silk", "opus_silk_core", "opus_silk_entropy", "opus_silk_loss", "opus_silk_math", "opus_silk_noise", "opus_silk_output", "opus_silk_predict", "opus_silk_resample", "opus_silk_stereo", "opus_silk_tables", "opus_rate", "opus_vq"]],
+  ["Audio", ["audio_ogg", "audio_ogg_tables", "audio_opusfile", "audio_opusfile_headers", "audio_opusfile_timing", "audio_flac", "audio_flac_seek", "audio_mp3", "audio_mp3_seek", "audio_mp3_bits", "audio_mp3_header", "audio_mp3_spectral", "audio_mp3_synthesis", "audio_mp3_tables", "audio_pcm", "audio_qoa", "audio_wav", "audio_wire", "opus", "opus_bands", "opus_celt", "opus_celt_encoder", "opus_energy", "opus_mdct", "opus_modes", "opus_multistream", "opus_packet", "opus_pitch", "opus_playback", "opus_pvq", "opus_pvq_table", "opus_range", "opus_silk", "opus_silk_core", "opus_silk_entropy", "opus_silk_loss", "opus_silk_math", "opus_silk_noise", "opus_silk_output", "opus_silk_predict", "opus_silk_resample", "opus_silk_stereo", "opus_silk_tables", "opus_rate", "opus_vq"]],
   ["Collections & errors", ["array", "constmap", "error", "iter", "map", "ndarray", "option",
     "result", "ordmap", "ordset", "pmap", "pset", "pvec"]],
-  ["Video", ["video_frame", "video_ivf", "video_nal", "video_qtrle"]],
+  ["Video", ["video_frame", "video_playback_clock", "video_ivf", "video_nal", "video_qtrle"]],
   ["Traits", ["cmp", "convert", "mem", "ops"]],
   ["Numbers", ["bigint", "f32", "f64", "f64_text", "i32", "i64", "math", "num", "number_parse", "rand", "simd", "u32",
     "u64"]],
-  ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "dma", "filetime", "frames", "io", "io_buffered", "pagetable",
+  ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "dma", "filetime", "frames", "io", "io_buffered", "pagetable", "raw",
     "log", "mitigations", "path", "signal", "stream", "time", "clock", "tz", "worker"]],
   ["Networking", ["dns", "fetch", "headers", "http", "http_accesslog", "http_auth", "http_cache", "http_compress", "http_cookie", "http_cors", "http_form", "http_forwarded", "http_grpc", "http_h2", "http_h2_frame", "http_h3", "http_h3q", "http_hpack", "http_huffman", "http_multipart", "http_qpack", "http_requestid", "http_router", "http_sse", "http_static", "http_trace", "http_websocket", "metrics", "net", "platform", "publicsuffix", "quic_conn", "quic_frames", "quic_packet", "quic_params", "quic_recovery", "quic_streams", "serve",
     "tls", "tls_client", "tls_der", "tls_handshake", "tls_identity", "tls_keyschedule", "tls_keyshare", "tls_ktls", "tls_message", "tls_mozilla", "tls_pem", "tls_record", "tls_server", "tls_verify", "tls_x509", "wasi_http"]],
@@ -72,7 +72,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_p2p", "android_property", "android_service", "android_video", "jni"]],
+  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_p2p", "android_property", "android_service", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "jni"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

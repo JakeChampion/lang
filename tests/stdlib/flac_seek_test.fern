@@ -1,0 +1,147 @@
+import "std/audio/flac";
+import "std/audio/flac/seek";
+import "std/audio/pcm";
+import "std/hex";
+import "std/test";
+import "audio_vectors";
+
+function same(audio: seek.Audio, full: pcm.Block, position: i64): boolean {
+  if (audio.position != position || audio.format != full.format || audio.frames <= 0) {
+    return false;
+  }
+  let at = position as i32 * full.format.channels;
+  if (audio.samples.len() != audio.frames * full.format.channels || audio.samples.len() > full.samples.len() - at) {
+    return false;
+  }
+  for i in 0..audio.samples.len() {
+    if (audio.samples[i] != full.samples[at + i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function read_tail(own cursor: seek.Cursor, bytes: [u8], full: pcm.Block, position: i64): Result[seek.Cursor, pcm.AudioError] {
+  let at = position;
+  while (true) {
+    let (next, value) = cursor.next(bytes)?;
+    cursor = next;
+    match (value) {
+      None => {
+        if (at != cursor.index.frames) {
+          return Err(pcm.Header);
+        }
+        return Ok(cursor);
+      },
+      Some(audio) => {
+        if (!same(audio, full, at)) {
+          return Err(pcm.Sample);
+        }
+        at += audio.frames as i64;
+      }
+    }
+  }
+}
+
+function seek_positions(positions: [i64], total: i64): i64[] {
+  let probes: i64[] = [total, 0i64, 1i64, total - 1i64, total / 2i64, 0i64];
+  for at in positions {
+    probes = probes.append(at);
+    if (at > 0i64) {
+      probes = probes.append(at - 1i64);
+    }
+  }
+  return probes;
+}
+
+function check_case(v: audio_vectors.Flac): Result[void, pcm.AudioError] {
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let full = flac.decode(bytes, pcm.default_limits())?;
+  let index = seek.inspect(bytes, seek.default_limits())?;
+  let total = index.frames;
+  if (total * (full.format.channels as i64) != full.samples.len() as i64) {
+    return Err(pcm.Header);
+  }
+  let positions = index.positions;
+  let cursor = seek.reader(index);
+  let probes = seek_positions(positions, total);
+  for position in probes {
+    cursor = cursor.seek(position)?;
+    cursor = read_tail(cursor, bytes, full, position)?;
+  }
+  return Ok(());
+}
+
+function references(): test.TestOutcome {
+  for v in audio_vectors.flacs() {
+    match (check_case(v)) {
+      Ok(_) => {},
+      Err(e) => {
+        return test.fail(v.name + ": " + e.message());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  for encoded in audio_vectors.invalid_flacs() {
+    let Ok(bytes) = hex.decode(encoded) else {
+      return test.fail("invalid reference bytes");
+    };
+    match (seek.inspect(bytes, seek.default_limits())) {
+      Err(_) => {},
+      _ => {
+        return test.fail("invalid frame sequence or payload accepted");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  // This reference has several fixed-size frames and a shorter last frame.
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return test.fail("fixed-frame reference");
+  };
+  let base = seek.default_limits();
+  let Ok(header) = flac.inspect(bytes, base.audio) else {
+    return test.fail("FLAC header");
+  };
+  let bounded = pcm.Limits { ...base.audio, max_samples: header.max_block * header.format.channels };
+  let Ok(index) = seek.inspect(bytes, seek.Limits { ...base, audio: bounded }) else {
+    return test.fail("per-frame sample budget");
+  };
+  if (index.frames <= header.max_block as i64) {
+    return test.fail("track exceeds one-frame budget");
+  }
+  for count in [0, 1] {
+    match (seek.inspect(bytes, seek.Limits { ...base, max_entries: count })) {
+      Err(pcm.Limit) => {},
+      _ => {
+        return test.fail("index entry budget");
+      }
+    }
+  }
+  let total = index.frames;
+  for position in [-1i64, total + 1i64] {
+    let Ok(fresh) = seek.inspect(bytes, base) else {
+      return test.fail("fresh index");
+    };
+    match (seek.reader(fresh).seek(position)) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid seek position");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("FLAC seek and bounded frame output");
+  runner = runner.it("exact repeated seeks through fixed and variable frames", references);
+  runner = runner.it("malformed frames and frame sequences", invalid);
+  runner = runner.it("index and per-frame sample budgets", limits);
+  return runner.finish();
+}

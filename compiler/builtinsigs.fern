@@ -321,10 +321,11 @@ pub function builtin_result(name: string): string {
   return slice_unchecked(row, close + 3, row.len()) + "";
 }
 
-// An intrinsic that reaches a device: an MMIO or port access, __fence, or a
-// privileged op. No pass removes, merges or moves one.
+// An intrinsic that reaches a device or raw memory: an MMIO, raw memory or
+// port access, __fence, or a privileged op. No pass removes, merges or moves
+// one.
 pub function device_intrinsic(name: string): boolean {
-  return mmio_width(name) > 0 || port_intrinsic(name) || name == "__fence" || privileged_intrinsic(name);
+  return access_width(name) > 0 || port_intrinsic(name) || name == "__fence" || privileged_intrinsic(name);
 }
 
 // A port access: __port_in8 to __port_in32 read a port, and __port_out8 to
@@ -363,6 +364,43 @@ pub function mmio_width(name: string): i32 {
     return 64;
   }
   return 0;
+}
+
+// The bit width of a raw memory intrinsic, such as 32 for __mem_load32, or 0
+// for any other name. The family reads and writes memory at a raw address,
+// which only a kernel or a driver owns, so the `privileged` capability gates
+// it (E066).
+pub function mem_width(name: string): i32 {
+  if (!util.str_has_prefix(name, "__mem_")) {
+    return 0;
+  }
+  if (name == "__mem_load8" || name == "__mem_store8") {
+    return 8;
+  }
+  if (name == "__mem_load16" || name == "__mem_store16") {
+    return 16;
+  }
+  if (name == "__mem_load32" || name == "__mem_store32") {
+    return 32;
+  }
+  if (name == "__mem_load64" || name == "__mem_store64") {
+    return 64;
+  }
+  return 0;
+}
+
+// The bit width of an MMIO or raw memory access, or 0 for any other name.
+pub function access_width(name: string): i32 {
+  let w = mmio_width(name);
+  if (w > 0) {
+    return w;
+  }
+  return mem_width(name);
+}
+
+// Whether an MMIO or raw memory access is a store.
+pub function access_store(name: string): boolean {
+  return util.str_has_prefix(name, "__mmio_store") || util.str_has_prefix(name, "__mem_store");
 }
 
 // A task intrinsic, which lowers to a call of the runtime's `__fern_task_*`

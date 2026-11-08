@@ -55,7 +55,7 @@ pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see be
 
 An optional `capabilities = ["net", …]` on any dependency form grants
 the dependency the listed v1 capabilities (`net`, `fs`, `env`,
-`subprocess`, `time`, `random` — an unknown name is a manifest error).
+`subprocess`, `time`, `random`, `privileged` — an unknown name is a manifest error).
 When the key is present, the checker enforces it by call-graph
 reachability (E070); without the key, reaches print as warnings for
 now. Grants attenuate: a governed dependency may grant its own

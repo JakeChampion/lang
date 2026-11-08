@@ -70,6 +70,11 @@ import "std/url";
 import "std/json";
 import "std/headers";
 import "std/time";
+import "std/quic/conn" as quic;
+import "std/quic/packet";
+import "std/http/h3";
+import "std/http/h3q";
+import "std/tls/identity";
 ```
 
 ### `2 pub struct Answer`
@@ -175,7 +180,16 @@ pub struct Server { addr: string, port: i32, handler: (HttpRequest) => HttpRespo
 
 pub struct Flake { addr: string, port: i32, path: string, percent: i32, fault: Answer }
 
-pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle }
+// Endpoint is an HTTP/3 server at a UDP port, with the identity its TLS
+// presents.
+pub struct Endpoint { addr: string, port: i32, id: identity.Identity, handler: (HttpRequest) => HttpResponse }
+
+// Peer is one datagram socket the client opened: the HTTP/3 server it
+// reaches when an endpoint listens there, and the datagrams on their way
+// back with the time each arrives.
+pub struct Peer { id: i32, endpoint: i32, server: Option[h3q.Parked], inbox: u8[][], due: i64[], open: boolean }
+
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle, endpoints: Endpoint[], peers: Cell[Peer[]], delay: Duration, loss: i32, carried: Cell[i32], h3_served: Cell[i32], h3_accepted: Cell[i32] }
 ```
 
 ### `7 pub function new(drv: sim.Sim): Net`
@@ -188,7 +202,9 @@ pub function new(drv: sim.Sim): Net {
   let routes: Route[] = [];
   let servers: Server[] = [];
   let flakes: Flake[] = [];
-  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, flakes: flakes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle() };
+  let endpoints: Endpoint[] = [];
+  let peers: Peer[] = [];
+  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, flakes: flakes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle(), endpoints: endpoints, peers: cell_new(peers), delay: time.DURATION_ZERO, loss: 0, carried: cell_new(0), h3_served: cell_new(0), h3_accepted: cell_new(0) };
 }
 
 pub function (n: Net) pooling(pool: fetch.Idle): Net {
@@ -218,8 +234,42 @@ pub function (n: Net) flaky(addr: string, port: i32, path: string, percent: i32,
   return Net { ...n, flakes: n.flakes.append(Flake { addr: __canon(addr), port: port, path: path, percent: percent, fault: fault }) };
 }
 
+// serve_h3 answers HTTP/3 at `addr` and UDP `port` with `handler`, as the
+// server `id` identifies. A TCP answer served from `addr` then carries an
+// Alt-Svc field naming the port.
+pub function (n: Net) serve_h3(addr: string, port: i32, id: identity.Identity, handler: (HttpRequest) => HttpResponse): Net {
+  return Net { ...n, endpoints: n.endpoints.append(Endpoint { addr: __canon(addr), port: port, id: id, handler: handler }) };
+}
+
+// datagram_delay is the time a datagram takes each way. None by default.
+pub function (n: Net) datagram_delay(d: Duration): Net {
+  return Net { ...n, delay: d };
+}
+
+// datagram_loss drops every `every`-th datagram, in either direction. 0
+// drops none.
+pub function (n: Net) datagram_loss(every: i32): Net {
+  return Net { ...n, loss: every };
+}
+
+// connects is how many TCP connections were made.
 pub function (n: Net) connects(): i32 {
-  return n.next.get() - 1;
+  return __rows(n.conns.get()).len();
+}
+
+// h3_requests is how many requests the HTTP/3 endpoints answered.
+pub function (n: Net) h3_requests(): i32 {
+  return n.h3_served.get();
+}
+
+// h3_connections is how many QUIC connections the HTTP/3 endpoints accepted.
+pub function (n: Net) h3_connections(): i32 {
+  return n.h3_accepted.get();
+}
+
+// datagrams is how many datagrams either side sent, lost ones included.
+pub function (n: Net) datagrams(): i32 {
+  return n.carried.get();
 }
 
 pub function (n: Net) open(): i32 {
@@ -381,6 +431,11 @@ impl fetch.Transport for Net {
     return Ok(net.Chunk(out));
   }
   function close(self: Net, conn: i32): i32 {
+    let k = __peer_at(self, conn);
+    if (k >= 0) {
+      __peer_set(self, k, Peer { ...self.peers.get()[k], open: false });
+      return 0;
+    }
     let row = __conn(self, conn);
     if (row.len() > 0) {
       __set_conn(self, conn, __row(conn, row[1], __field(row, 2), __field(row, 3), __field(row, 4), __field(row, 5), __field64(row, 6), 0));
@@ -393,6 +448,227 @@ impl fetch.Transport for Net {
   function socket(self: Net, conn: i32): Option[Socket] {
     return None;
   }
+  function datagram_open(self: Net, addrs: net.IpAddr[], port: i32): Result[i32, net.NetError] {
+    if (addrs.len() == 0) {
+      return Err(net.ConnectionRefused);
+    }
+    let id = self.next.get();
+    self.next.set(id + 1);
+    let inbox: u8[][] = [];
+    let due: i64[] = [];
+    self.peers.set(self.peers.get().append(Peer { id: id, endpoint: __endpoint_at(self, addrs[0].to_string(), port), server: None, inbox: inbox, due: due, open: true }));
+    return Ok(id);
+  }
+  function datagram_send(self: Net, conn: i32, data: u8[]): i32 {
+    let k = __peer_at(self, conn);
+    if (k < 0) {
+      return -9;
+    }
+    if (__lost(self)) {
+      return data.len();
+    }
+    let at = self.drv.clock_ns.get() + self.delay.as_nanos();
+    __peer_set(self, k, __h3_delivered(self, self.peers.get()[k], data, at));
+    return data.len();
+  }
+  function datagram_recv(self: Net, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+    let k = __peer_at(self, conn);
+    if (k < 0) {
+      return Err(net.Other(9));
+    }
+    let deadline = self.drv.clock_ns.get() + wait.as_nanos();
+    while (true) {
+      let p = self.peers.get()[k];
+      let next = __h3_next(p);
+      if (__h3_timer_first(p, next, deadline)) {
+        if (!__sim_advance(self, __h3_timer(p))) {
+          return Ok(net.Abandoned);
+        }
+        __peer_set(self, k, __h3_ticked(self, p, self.drv.clock_ns.get()));
+        continue;
+      }
+      if (next >= 0 && p.due[next] <= deadline) {
+        if (!__sim_advance(self, p.due[next])) {
+          return Ok(net.Abandoned);
+        }
+        let d = p.inbox[next];
+        __peer_set(self, k, Peer { ...p, inbox: __without_at(p.inbox, next), due: __without_at(p.due, next) });
+        return Ok(net.Chunk(d));
+      }
+      if (!__sim_advance(self, deadline)) {
+        return Ok(net.Abandoned);
+      }
+      return Ok(net.Elapsed);
+    }
+    return Ok(net.Elapsed);
+  }
+}
+
+function __sim_advance(n: Net, to: i64): boolean {
+  if (to <= n.drv.clock_ns.get()) {
+    return true;
+  }
+  return n.drv.advance_to(time.instant_from_nanos(to));
+}
+
+function __peer_at(n: Net, id: i32): i32 {
+  let peers = n.peers.get();
+  for k in 0..peers.len() {
+    if (peers[k].id == id && peers[k].open) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+function __peer_set(n: Net, k: i32, p: Peer): void {
+  let peers = n.peers.get();
+  let none: Peer[] = [];
+  n.peers.set(none);
+  n.peers.set(peers.with(k, p));
+}
+
+// __lost counts a datagram and says whether the loss schedule drops it.
+function __lost(n: Net): boolean {
+  let count = n.carried.get() + 1;
+  n.carried.set(count);
+  return n.loss > 0 && count % n.loss == 0;
+}
+
+function __endpoint_at(n: Net, addr: string, port: i32): i32 {
+  for k in 0..n.endpoints.len() {
+    if (n.endpoints[k].addr == addr && n.endpoints[k].port == port) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+function __sim_bytes(n: Net, count: i32): u8[] {
+  let out: u8[] = [];
+  while (out.len() < count) {
+    out = out.append((n.drv.random_i32() & 255) as u8);
+  }
+  return out;
+}
+
+function __without_at[T](xs: T[], k: i32): T[] {
+  let out: T[] = [];
+  for i in 0..xs.len() {
+    if (i != k) {
+      out = out.append(xs[i]);
+    }
+  }
+  return out;
+}
+
+// __h3_delivered hands a datagram the client sent to the peer's server at
+// `at`, accepting the connection on its first.
+function __h3_delivered(n: Net, p: Peer, data: u8[], at: i64): Peer {
+  if (p.endpoint < 0) {
+    return p;
+  }
+  let now = time.instant_from_nanos(at);
+  let Some(s) = __h3_server(n, p, data, now) else {
+    return p;
+  };
+  return __h3_sent(n, p, __h3_answering(n, p.endpoint, s.receive(data, now)), at);
+}
+
+function __h3_server(n: Net, p: Peer, data: u8[], now: Instant): Option[h3q.Conn] {
+  if let Some(parked) = p.server {
+    return Some(h3q.unpark(parked));
+  }
+  let cfg = h3q.transport(quic.config([]).server_side(n.endpoints[p.endpoint].id));
+  let Ok(h) = packet.parse(data, 0, cfg.cid_len) else {
+    return None;
+  };
+  let Ok(q) = quic.accept(cfg, __sim_bytes(n, quic.server_entropy(cfg)), h, now) else {
+    return None;
+  };
+  n.h3_accepted.set(n.h3_accepted.get() + 1);
+  return Some(h3q.server(q, h3.config()));
+}
+
+// __h3_answering answers each request the server has read with the
+// endpoint's handler.
+function __h3_answering(n: Net, endpoint: i32, s: h3q.Conn): h3q.Conn {
+  let evs = s.events;
+  let cur = s.events_taken();
+  let handle = n.endpoints[endpoint].handler;
+  for e in evs {
+    if let h3q.Requested(id, req) = e {
+      n.h3_served.set(n.h3_served.get() + 1);
+      cur = cur.respond(id, handle(req));
+    }
+  }
+  return cur;
+}
+
+// __h3_sent queues what the server sends at `at` for the client, each
+// datagram due after the delay.
+function __h3_sent(n: Net, p: Peer, s: h3q.Conn, at: i64): Peer {
+  let flushed = s.transmit(time.instant_from_nanos(at));
+  let inbox = p.inbox;
+  let due = p.due;
+  for d in flushed.datagrams() {
+    if (!__lost(n)) {
+      inbox = inbox.append(d);
+      due = due.append(at + n.delay.as_nanos());
+    }
+  }
+  return Peer { ...p, server: Some(flushed.sent().park()), inbox: inbox, due: due };
+}
+
+function __h3_ticked(n: Net, p: Peer, at: i64): Peer {
+  let Some(parked) = p.server else {
+    return p;
+  };
+  return __h3_sent(n, p, __h3_answering(n, p.endpoint, h3q.unpark(parked).tick(time.instant_from_nanos(at))), at);
+}
+
+// __h3_timer is when the peer's server next needs a tick, or -1.
+function __h3_timer(p: Peer): i64 {
+  let Some(parked) = p.server else {
+    return -1i64;
+  };
+  let Some(at) = parked.quic.deadline() else {
+    return -1i64;
+  };
+  return time.instant_nanos(at);
+}
+
+// __h3_timer_first says whether the server's timer comes before `deadline`
+// and before the datagram at `next` in the inbox, if there is one.
+function __h3_timer_first(p: Peer, next: i32, deadline: i64): boolean {
+  let timer = __h3_timer(p);
+  return timer >= 0 && timer <= deadline && (next < 0 || timer < p.due[next]);
+}
+
+// __h3_next is the index of the datagram due first in the peer's inbox, or
+// -1.
+function __h3_next(p: Peer): i32 {
+  let best = -1;
+  for k in 0..p.due.len() {
+    if (best < 0 || p.due[k] < p.due[best]) {
+      best = k;
+    }
+  }
+  return best;
+}
+
+// __with_alt_svc adds the Alt-Svc field for the HTTP/3 endpoint at `addr`
+// to a TCP answer, as std/serve does.
+function __with_alt_svc(n: Net, addr: string, resp: HttpResponse): HttpResponse {
+  if (resp.headers.has("alt-svc")) {
+    return resp;
+  }
+  for e in n.endpoints {
+    if (e.addr == addr) {
+      return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + e.port.to_string() + "\"; ma=86400") };
+    }
+  }
+  return resp;
 }
 ```
 
@@ -819,7 +1095,7 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
   for s in n.servers {
     if (s.addr == addr && s.port == port) {
       let k = __journal_all(n.made.get()).len();
-      let entry = __response_entry(s, bytes);
+      let entry = __response_entry(n, s, bytes);
       n.made.set(n.made.get() + entry.len().to_string() + ":" + entry);
       return -3 - k;
     }
@@ -827,11 +1103,11 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
   return -2;
 }
 
-function __response_entry(s: Server, bytes: u8[]): string {
+function __response_entry(n: Net, s: Server, bytes: u8[]): string {
   match (http.parse_request_framed(bytes)) {
     http.Complete(f) => {
       let h = s.handler;
-      let resp = h(f.request);
+      let resp = __with_alt_svc(n, s.addr, h(f.request));
       let flag = "c";
       if (f.keep_alive) {
         flag = "k";

@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: nine http_hello rows grow 1.0% to 2.3% and each is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. Every row below moved with the drift of main since the last bank, not with this change. Each is pinned at its measured value.
 # 2026-11-06: PR #14352. Local scripts/profile-costs runs of this change and of main 075aa763, from checkouts
 # at paths of one length. Under -sanitize a raw free checks the quarantine for a second free. Six diagnostic
@@ -118,12 +119,12 @@ profile/arm64-linux/enum_match.minimal.emit	1083
 profile/arm64-linux/enum_match.safe.bytes	5496
 profile/arm64-linux/enum_match.safe.emit	1163
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	124920
-profile/arm64-linux/http_hello.diagnostic.emit	15996
+profile/arm64-linux/http_hello.diagnostic.bytes	127800
+profile/arm64-linux/http_hello.diagnostic.emit	16195
 profile/arm64-linux/http_hello.hardened.bytes	79256
 profile/arm64-linux/http_hello.hardened.emit	17668
-profile/arm64-linux/http_hello.minimal.bytes	60344
-profile/arm64-linux/http_hello.minimal.emit	12873
+profile/arm64-linux/http_hello.minimal.bytes	60984
+profile/arm64-linux/http_hello.minimal.emit	13056
 profile/arm64-linux/http_hello.safe.bytes	73016
 profile/arm64-linux/http_hello.safe.emit	16098
 profile/arm64-linux/int_loop.diagnostic.bytes	5312
@@ -211,17 +212,17 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4544
 profile/x86-64-linux/enum_match.safe.emit	930
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	114936
+profile/x86-64-linux/http_hello.diagnostic.bytes	116920
 profile/x86-64-linux/http_hello.diagnostic.emit	14803
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/http_hello.diagnostic.ir	39724679
-profile/x86-64-linux/http_hello.hardened.bytes	69456
+profile/x86-64-linux/http_hello.hardened.bytes	70208
 profile/x86-64-linux/http_hello.hardened.emit	15649
 profile/x86-64-linux/http_hello.hardened.ir	29734736
-profile/x86-64-linux/http_hello.minimal.bytes	53600
-profile/x86-64-linux/http_hello.minimal.emit	12434
+profile/x86-64-linux/http_hello.minimal.bytes	54192
+profile/x86-64-linux/http_hello.minimal.emit	12595
 profile/x86-64-linux/http_hello.minimal.ir	23248401
-profile/x86-64-linux/http_hello.safe.bytes	64192
+profile/x86-64-linux/http_hello.safe.bytes	64880
 profile/x86-64-linux/http_hello.safe.emit	15117
 profile/x86-64-linux/http_hello.safe.ir	21796408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5480

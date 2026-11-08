@@ -1,0 +1,30 @@
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+import "opus_file_malformed";
+
+function references(): test.TestOutcome {
+  for i in 0..opus_file_vectors.CASES.len() {
+    let ref = match (opus_file_check.reference(opus_file_vectors.CASES[i])) { Ok(value) => value, Err(_) => { return test.fail("reference data"); } };
+    for partial in [false, true] {
+      match (opus_file_check.check_case(ref, partial)) {
+        test.Pass => {},
+        test.Fail(message) => {
+          return test.fail("case " + i.to_string() + ": " + message);
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Opus files against libopusfile");
+  runner = runner.it("complete PCM, gain, pre-skip, trim, tags, continuations, and chains", references);
+  runner = runner.it("truncated headers, pages, and packets", opus_file_malformed.truncation);
+  runner = runner.it("invalid identification pages and timing", opus_file_malformed.bad_headers);
+  runner = runner.it("invalid comment packets and page granules", opus_file_malformed.bad_tags);
+  runner = runner.it("input, comment, sample, and chain limits", opus_file_malformed.limits);
+  runner = runner.it("pending output must drain before completion", opus_file_malformed.drain);
+  return runner.finish();
+}

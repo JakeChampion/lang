@@ -231,6 +231,16 @@ func registerRawMemory(i *Interp) {
 	i.Builtins["__mmio_store16"] = &Builtin{Fn: rawStore("__mmio_store16", 2, func(b []byte, v int64) { le.PutUint16(b, uint16(v)) })}
 	i.Builtins["__mmio_store32"] = &Builtin{Fn: rawStore("__mmio_store32", 4, func(b []byte, v int64) { le.PutUint32(b, uint32(v)) })}
 	i.Builtins["__mmio_store64"] = &Builtin{Fn: rawStore("__mmio_store64", 8, func(b []byte, v int64) { le.PutUint64(b, uint64(v)) })}
+	// A raw memory access names an address the kernel owns; here it is the
+	// interpreter's own memory.
+	i.Builtins["__mem_load8"] = &Builtin{Fn: rawLoad("__mem_load8", 1, func(b []byte) int64 { return int64(b[0]) })}
+	i.Builtins["__mem_load16"] = &Builtin{Fn: rawLoad("__mem_load16", 2, func(b []byte) int64 { return int64(le.Uint16(b)) })}
+	i.Builtins["__mem_load32"] = &Builtin{Fn: rawLoad("__mem_load32", 4, func(b []byte) int64 { return int64(int32(le.Uint32(b))) })}
+	i.Builtins["__mem_load64"] = &Builtin{Fn: rawLoad("__mem_load64", 8, func(b []byte) int64 { return int64(le.Uint64(b)) })}
+	i.Builtins["__mem_store8"] = &Builtin{Fn: rawStore("__mem_store8", 1, func(b []byte, v int64) { b[0] = byte(v) })}
+	i.Builtins["__mem_store16"] = &Builtin{Fn: rawStore("__mem_store16", 2, func(b []byte, v int64) { le.PutUint16(b, uint16(v)) })}
+	i.Builtins["__mem_store32"] = &Builtin{Fn: rawStore("__mem_store32", 4, func(b []byte, v int64) { le.PutUint32(b, uint32(v)) })}
+	i.Builtins["__mem_store64"] = &Builtin{Fn: rawStore("__mem_store64", 8, func(b []byte, v int64) { le.PutUint64(b, uint64(v)) })}
 	i.Builtins["__fence"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if _, err := rawArgs("__fence", args, 0); err != nil {
 			return nil, err

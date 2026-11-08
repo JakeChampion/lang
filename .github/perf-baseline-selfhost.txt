@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: http_hello.emit on wasm32-wasi grows 3.3% and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. The three video_qtrle rows rise with the split codec of this change. The other rows are the drift of main since the last bank. Every row is pinned at its measured value.
 # 2026-11-06: SEC-021. Matched primary compilers compare this change with main a0e50a15.
 # Each static limit adds at most the measured native increase to its previous value.
@@ -271,7 +272,7 @@ selfhost/wasm32-wasi/deflate_decode.emit	19938
 selfhost/wasm32-wasi/deflate_encode.emit	11578
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	17893
+selfhost/wasm32-wasi/http_hello.emit	18478
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
