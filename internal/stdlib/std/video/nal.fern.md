@@ -73,6 +73,9 @@ pub function to_annex_b(input: [u8], prefix_bytes: i32, limits: frame.Limits): R
   return Ok(output);
 }
 
+// The unit reader walks the length-prefixed units with a bounds check and a
+// budget check at each step.
+// fern-lint: allow cyclomatic-complexity
 function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boolean, own output: u8[], budget: i32): Result[Units, frame.VideoError] {
   let pos = at;
   for _ in 0..count {
@@ -100,10 +103,15 @@ function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boole
   return Ok(Units { bytes: output, next_offset: pos });
 }
 
+// One comparison for each AVC profile that carries the extended SPS fields.
+// fern-lint: allow cyclomatic-complexity
 function extended_profile(profile: u8): boolean {
   return profile == 100 || profile == 110 || profile == 122 || profile == 144 || profile == 244 || profile == 44 || profile == 83 || profile == 86 || profile == 118 || profile == 128 || profile == 138 || profile == 139 || profile == 134 || profile == 135;
 }
 
+// The avcC parser reads each field of the record with a bounds check, in the
+// order of the record.
+// fern-lint: allow cyclomatic-complexity
 pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
   frame.check_packet(input, limits)?;
   if (input.len() < 7) {
@@ -153,6 +161,9 @@ pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame
   return Ok(Config { length_size: prefix, csd0: csd0, csd1: pps.bytes });
 }
 
+// The hvcC parser reads each field and each array of the record with a bounds
+// check, in the order of the record.
+// fern-lint: allow cyclomatic-complexity
 pub function hevc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
   frame.check_packet(input, limits)?;
   if (input.len() < 23) {

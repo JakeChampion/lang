@@ -44,6 +44,9 @@ function pixel(input: [u8], at: i32, bpp: i32): u32 {
   return 4278190080u32 | wire.be(input, at, 3) as u32;
 }
 
+// A QTRLE decoder is one loop over the skip and run codes of a frame, with
+// one arm for each code and each pixel depth, as the format is written.
+// fern-lint: allow cyclomatic-complexity
 pub function decode_into(input: [u8], format: frame.Format, depth: i32, own pixels: u32[], limits: frame.Limits): Result[frame.Frame, frame.VideoError] {
   frame.check_packet(input, limits)?;
   let count = frame.pixel_count(format, limits)?;
@@ -175,6 +178,9 @@ function row_equal(a: [u32], b: [u32], row: i32, width: i32): boolean {
   return true;
 }
 
+// The row encoder compares each pixel with the previous frame and chooses a
+// skip, a repeat or a literal run in one pass, with the budget checked at each.
+// fern-lint: allow cyclomatic-complexity
 function encode_row(own out: u8[], pixels: [u32], previous: [u32], row: i32, width: i32, bpp: i32, budget: i32): Result[u8[], frame.VideoError] {
   let at = row * width;
   let end = at + width;
@@ -224,6 +230,9 @@ function encode_row(own out: u8[], pixels: [u32], previous: [u32], row: i32, wid
   return Ok(out.append(255));
 }
 
+// The frame encoder checks each limit and each depth, and writes the header
+// and the row loop in one function, as the format is read.
+// fern-lint: allow cyclomatic-complexity
 pub function encode(pixels: [u32], previous: [u32], format: frame.Format, depth: i32, limits: frame.Limits): Result[u8[], frame.VideoError] {
   let count = frame.pixel_count(format, limits)?;
   let bpp = bytes_per_pixel(depth)?;
