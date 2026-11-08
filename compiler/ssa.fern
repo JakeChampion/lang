@@ -640,7 +640,7 @@ pub function cold_blocks(f: SFunc): boolean[] {
       }
     }
   }
-  let idom = dominators(f, at);
+  let idom = immediate_dominators(f, at);
   let out = __alloc_bool(n);
   for i in 0..n {
     out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
@@ -648,7 +648,9 @@ pub function cold_blocks(f: SFunc): boolean[] {
   return out;
 }
 
-function dominators(f: SFunc, at: i32[]): i32[] {
+// The immediate dominator of each block position, the entry its own, or -1
+// for a block the entry does not reach.
+pub function immediate_dominators(f: SFunc, at: i32[]): i32[] {
   let n = f.blocks.len();
   let entry = position_of(at, f.entry);
   let idom = __alloc_i32(n);
