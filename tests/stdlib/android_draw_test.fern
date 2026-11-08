@@ -67,6 +67,21 @@ function test_round_rect(): test.TestOutcome {
   return test.assert_eq(inside.to_string() + " " + tips.to_string() + " " + outside.to_string(), "true true true");
 }
 
+// Over a transparent pixel, a blend and a mask give the premultiplied
+// colour: each channel multiplied by the alpha. An opaque colour stays
+// opaque.
+function test_premultiplied(): test.TestOutcome {
+  let half = draw.rgba(200, 100, 50, 128);
+  let f = draw.offscreen(3, 1);
+  f.store(0, 0, 3, 1, 0);
+  f.mask(0, 0, 1, 1, [255 as u8], half);
+  f.fill(1, 0, 1, 1, draw.rgb(7, 8, 9));
+  let want = draw.rgba(100, 50, 25, 128);
+  let got = (draw.over(half, 0) == want).to_string() + " " + (f.pixel(0, 0) == want).to_string() + " " + (f.pixel(1, 0) == draw.rgb(7, 8, 9)).to_string() + " " + f.pixel(2, 0).to_string();
+  draw.release(f);
+  return test.assert_eq(got, "true true true 0");
+}
+
 function test_rgb(): test.TestOutcome {
   return test.assert_eq(draw.rgb(1, 2, 3), -16777216 | 3 << 16 | 2 << 8 | 1);
 }
@@ -361,5 +376,6 @@ function main(): i32 {
   r = r.it("blit copies an offscreen frame", test_offscreen_blit);
   r = r.it("blend_frame blends a frame by an alpha", test_blend_frame);
   r = r.it("mask blends a colour by a coverage map", test_mask);
+  r = r.it("a blend over a transparent pixel is premultiplied", test_premultiplied);
   return r.finish();
 }

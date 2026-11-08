@@ -61,6 +61,13 @@ inputs:
       the dlopen loaders of the shared-object tests do, sets this true.
     required: false
     default: "false"
+  host-gl:
+    description: >
+      Also install Mesa's EGL and OpenGL ES 2 (libegl1, libgles2 and
+      libegl-mesa0). The std/android/gl tests draw with them on the host,
+      with no display server.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -92,7 +99,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/apt-cross-cache
-        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-libc${{ inputs.cross-libc }}-${{ inputs.qemu-package }}
+        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-libc${{ inputs.cross-libc }}-gl${{ inputs.host-gl }}-${{ inputs.qemu-package }}
 
     - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
       shell: bash
@@ -100,6 +107,7 @@ runs:
         CACHE_DIR: ${{ runner.temp }}/apt-cross-cache
         WANT_GCC: ${{ inputs.cross-gcc }}
         WANT_LIBC: ${{ inputs.cross-libc }}
+        WANT_GL: ${{ inputs.host-gl }}
         QEMU_PKG: ${{ inputs.qemu-package }}
       run: |
         set -uo pipefail
@@ -129,6 +137,9 @@ runs:
         if [ "$WANT_LIBC" = "true" ]; then
           PACKAGES="libc6-dev-arm64-cross $PACKAGES"
         fi
+        if [ "$WANT_GL" = "true" ]; then
+          PACKAGES="libegl1 libgles2 libegl-mesa0 $PACKAGES"
+        fi
 
         toolchain_present() {
           if [ "$WANT_GCC" = "true" ]; then
@@ -137,6 +148,11 @@ runs:
           fi
           if [ "$WANT_LIBC" = "true" ]; then
             aarch64-linux-gnu-gcc -x c -fsyntax-only -include dlfcn.h - </dev/null >/dev/null 2>&1 || return 1
+          fi
+          if [ "$WANT_GL" = "true" ]; then
+            for lib in libEGL.so.1 libGLESv2.so.2 libEGL_mesa.so.0; do
+              ldconfig -p | grep -q "$lib" || return 1
+            done
           fi
           # The unit lane looks up qemu-aarch64, while other lanes request
           # the static executable. An installed sibling is not a cache hit

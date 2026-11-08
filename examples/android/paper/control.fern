@@ -4,10 +4,10 @@
 // the phone, and control_test.fern gives one that records what the app does.
 import "std/android";
 import "std/android/draw";
-import "std/android/layer";
 import "std/option";
 import "std/worker";
 import "./face";
+import "./gpu";
 import "./motion";
 import "./paper";
 import "./ui";
@@ -36,11 +36,9 @@ const CLOSE_MS: i64 = 150;
 
 const WEATHER_MAX_AGE_MS: i64 = 1800000;
 
-// The input and output of the app. `layer_new` gives a layer above the
-// window, which the display compositor moves and fades, or None on a device
-// without them; the app list slides on it. `wallpaper` decodes the
-// wallpaper at a
-// width. `apps` gives the launchable apps with their labels, and `app_keys`
+// The input and output of the app. `open_gpu` puts the painter on a
+// window, `present` draws a frame of passes with it, and `close_gpu` takes
+// it off the window. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
 // `open` starts a screen of the system: "alarms", "calendar", "search" (with
@@ -55,8 +53,6 @@ pub struct Device {
   read: (string) => string,
   write: (string, string) => void,
   size: (usize) => (i32, i32),
-  lock: (usize) => draw.Frame,
-  post: (draw.Frame) => void,
   wallpaper: (i32) => draw.Image,
   apps: () => paper.Entry[],
   app_keys: () => string[],
@@ -73,11 +69,9 @@ pub struct Device {
   default_allowed: () => string[],
   open_held: (string, string) => void,
   request_frame: () => void,
-  layer_new: (usize, i32, i32) => Option[layer.Layer],
-  layer_fill: (layer.Layer, draw.Frame) => layer.Layer,
-  layer_show: (layer.Layer, i32, i32, f32) => void,
-  layer_hide: (layer.Layer) => void,
-  layer_free: (layer.Layer) => void,
+  open_gpu: (gpu.Painter, usize) => gpu.Painter,
+  present: (gpu.Painter, ui.Pass[]) => gpu.Painter,
+  close_gpu: (gpu.Painter) => gpu.Painter,
 }
 
 // A touch from its down event to its up event. `samples` are the last
@@ -91,9 +85,6 @@ struct Fling { group: string, f: motion.Fling }
 // asked for, when `t0` is 0.
 struct Slide { active: boolean, opening: boolean, t0: i64 }
 
-// A layer in memory and the key of what it holds.
-struct Layer { f: draw.Frame, key: string }
-
 pub struct App {
   dev: Device,
   dir: string,
@@ -104,20 +95,9 @@ pub struct App {
   d: f64,
   top: i32,
   bottom: i32,
-  wall: draw.Frame,
-  cache: face.Cache,
-  base: Layer,
-  under: Layer,
-  over: Layer,
+  painter: gpu.Painter,
   slide: Slide,
   frame_ns: i64,
-  // The layer of the app list above the window, the key of what it holds,
-  // the key of what the window shows, and the frames to wait before the
-  // layer hides once the list has slid in.
-  hw: Option[layer.Layer],
-  hw_key: string,
-  shown_key: string,
-  settle: i32,
   settings: paper.Settings,
   installed: paper.Entry[],
   apps: paper.Entry[],
@@ -155,10 +135,6 @@ function no_fling(): Fling {
   return Fling { group: "", f: motion.no_fling() };
 }
 
-function no_layer(): Layer {
-  return Layer { f: draw.offscreen(0, 0), key: "" };
-}
-
 function no_slide(): Slide {
   return Slide { active: false, opening: false, t0: 0i64 };
 }
@@ -171,7 +147,7 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, wall: draw.offscreen(0, 0), cache: face.new_cache(), base: no_layer(), under: no_layer(), over: no_layer(), slide: no_slide(), frame_ns: 0i64, hw: None, hw_key: "", shown_key: "", settle: 0, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
@@ -308,7 +284,7 @@ function home(own s: App): App {
 
 function open_drawer(own s: App): App {
   s.dev.keyboard(true);
-  return App { ...s, layer: ui.DRAWER, query: "", typing: true, list_scroll: 0, slide: Slide { active: true, opening: true, t0: 0i64 }, settle: 0, fling: no_fling(), dirty: true };
+  return App { ...s, layer: ui.DRAWER, query: "", typing: true, list_scroll: 0, slide: Slide { active: true, opening: true, t0: 0i64 }, fling: no_fling(), dirty: true };
 }
 
 // The app list slides out, then the home screen shows. The list keeps its
@@ -317,7 +293,7 @@ function close_drawer(own s: App): App {
   if (s.typing) {
     s.dev.keyboard(false);
   }
-  return App { ...s, slide: Slide { active: true, opening: false, t0: 0i64 }, settle: 0, fling: no_fling(), dirty: true };
+  return App { ...s, slide: Slide { active: true, opening: false, t0: 0i64 }, fling: no_fling(), dirty: true };
 }
 
 function close_sheet(own s: App): App {
@@ -1012,15 +988,9 @@ function slide_frame(own s: App, ns: i64): App {
     return App { ...s, dirty: true };
   }
   if (s.slide.opening) {
-    // The window draws the list under the layer, and the layer hides at the
-    // frame after, so the list never flickers.
-    return App { ...s, slide: no_slide(), settle: 2, dirty: true };
+    return App { ...s, slide: no_slide(), dirty: true };
   }
-  let t = home(s);
-  if let Some(l) = t.hw {
-    t.dev.layer_hide(l);
-  }
-  return t;
+  return home(s);
 }
 
 // --- keys and typing
@@ -1195,24 +1165,18 @@ function started(own s: App): App {
   return refresh_weather(t, false);
 }
 
+// The app on the window `window`: the painter draws on it, with the
+// wallpaper at its width.
 function placed(own s: App, window: usize): App {
   let (w, h) = s.dev.size(window);
-  if (w == s.w && h == s.h && s.wall.width == w && s.hw.is_some()) {
-    return App { ...s, window: window, dirty: true };
+  let p = s.painter;
+  if (window != s.window || !gpu.attached(p)) {
+    p = s.dev.open_gpu(p, window);
   }
-  let u = drop_layer(App { ...s, window: window, dirty: true });
-  draw.release(u.wall);
-  let wall = ui.wallpaper_layer(u.dev.wallpaper(w));
-  let hw = u.dev.layer_new(window, w, h);
-  return App { ...u, w: w, h: h, wall: wall, hw: hw, hw_key: "", shown_key: "" };
-}
-
-// The app with no layer above its window.
-function drop_layer(own s: App): App {
-  if let Some(l) = s.hw {
-    s.dev.layer_free(l);
+  if (w != s.w || h != s.h || gpu.wall_width(p) != w) {
+    p = gpu.with_screen(p, ui.wallpaper_layer(s.dev.wallpaper(w)), w, h, s.d);
   }
-  return App { ...s, hw: None, hw_key: "", shown_key: "" };
+  return App { ...s, window: window, w: w, h: h, painter: p, dirty: true };
 }
 
 function event(own s: App, e: android.Event): App {
@@ -1236,7 +1200,8 @@ function event(own s: App, e: android.Event): App {
       return draw_now(App { ...s, window: w.ptr, dirty: true });
     },
     android.WindowDestroyed(_) => {
-      return App { ...drop_layer(s), window: 0 as usize };
+      let p = s.dev.close_gpu(s.painter);
+      return App { ...s, painter: p, window: 0 as usize };
     },
     android.ContentRect(_, top, _, bottom) => {
       let b = s.h - bottom;
@@ -1289,7 +1254,7 @@ function timers(own s: App, now: i64): App {
 
 // Something moves on the screen, so each frame draws.
 function animating(s: App): boolean {
-  return s.slide.active || s.fling.group.len() > 0 || s.layer == ui.PAUSE || s.settle > 0;
+  return s.slide.active || s.fling.group.len() > 0 || s.layer == ui.PAUSE;
 }
 
 function pause_view(s: App, ns: i64): ui.Pause {
@@ -1347,158 +1312,28 @@ function sync_bars(own s: App): App {
   return App { ...s, bars: code };
 }
 
-// `l` holding a frame of w by h, with its old content when the size is the
-// same.
-function sized(own l: Layer, w: i32, h: i32): Layer {
-  if (l.f.width == w && l.f.height == h) {
-    return l;
-  }
-  draw.release(l.f);
-  return Layer { f: draw.offscreen(w, h), key: "" };
-}
-
-// What a layer draws with: its size, the fonts, the wallpaper and the
-// density.
-struct Paint { w: i32, h: i32, fonts: face.Fonts, wall: draw.Frame, d: f64 }
-
-function paint_of(s: App): Paint {
-  return Paint { w: s.w, h: s.h, fonts: s.fonts, wall: s.wall, d: s.d };
-}
-
-// The layer `l` with the nodes `ns` drawn into it, when its key is not
-// `key` already. It gives the cache with the sprites it made.
-function fill_layer(own l: Layer, own c: face.Cache, p: Paint, key: string, ns: ui.Node[]): (Layer, face.Cache) {
-  let layer = sized(l, p.w, p.h);
-  if (layer.key == key) {
-    return (layer, c);
-  }
-  let cache = ui.render(layer.f, p.fonts, c, ns, p.wall, p.d);
-  return (Layer { f: layer.f, key: key }, cache);
-}
-
 // Draws the frame at the time `ns`. While the app list slides, the frame is
-// the home screen with the app list over it, both drawn once into layers.
-// Otherwise it is the base of the screen, kept in a layer while its key
-// stays the same, with its top drawn over it.
+// the home screen with the app list over it, which fades in or out as one
+// image.
 function draw_frame(own s: App, ns: i64): App {
   if (s.window == 0 as usize || s.w == 0) {
     return s;
   }
   let v = view(s, ns);
-  let p = paint_of(s);
-  let f = s.dev.lock(s.window);
-  if (s.slide.active && s.hw.is_some()) {
-    s.dev.post(f);
-    return slide_layer(s, ns, v, p);
-  }
   if (s.slide.active) {
-    return draw_slide(s, ns, v, p, f);
+    let part = motion.ease(slide_part(s, ns));
+    if (!s.slide.opening) {
+      part = 1.0 - part;
+    }
+    let home_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.HOME, sheet: None });
+    let list_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.DRAWER, sheet: None });
+    let shift = ((1.0 - part) * (s.h as f64) * 0.08) as i32;
+    let slid = s.dev.present(s.painter, [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }]);
+    return App { ...s, painter: slid, nodes: [], dirty: false };
   }
-  let sp = ui.split(p.fonts, v);
-  let (base, c1) = fill_layer(s.base, s.cache, p, sp.key, sp.base);
-  let cache = c1;
-  if (f.width > 0) {
-    f.blit(base.f, 0, 0);
-    cache = ui.render(f, p.fonts, c1, sp.top, p.wall, p.d);
-  }
-  let shown = "";
-  if (s.layer == ui.HOME && s.sheet.is_none()) {
-    shown = ui.full_key(v);
-  }
-  let t = App { ...s, base: base, cache: cache, nodes: ui.cat_nodes(sp.base, sp.top), shown_key: shown, dirty: false };
-  t.dev.post(f);
-  return t;
-}
-
-// The frame of the app list sliding over the home screen: both drawn once
-// into layers, then the list blended over the home screen by the part of
-// the slide that is done.
-function draw_slide(own s: App, ns: i64, v: ui.View, p: Paint, f: draw.Frame): App {
-  let part = motion.ease(slide_part(s, ns));
-  if (!s.slide.opening) {
-    part = 1.0 - part;
-  }
-  let home_view = ui.View { ...v, layer: ui.HOME, sheet: None };
-  let list_view = ui.View { ...v, layer: ui.DRAWER, sheet: None };
-  let hs = ui.split(p.fonts, home_view);
-  let ls = ui.split(p.fonts, list_view);
-  let (under, c1) = fill_layer(s.under, s.cache, p, ui.full_key(home_view), ui.cat_nodes(hs.base, hs.top));
-  let (over, c2) = fill_layer(s.over, c1, p, ui.full_key(list_view), ui.cat_nodes(ls.base, ls.top));
-  if (f.width > 0) {
-    f.blit(under.f, 0, 0);
-    f.blend_frame(over.f, 0, ((1.0 - part) * (p.h as f64) * 0.08) as i32, (part * 255.0) as i32);
-  }
-  let t = App { ...s, under: under, over: over, cache: c2, nodes: [], dirty: false };
-  t.dev.post(f);
-  return t;
-}
-
-// The view of the app list as it opens: no query, at the top.
-function list_view(v: ui.View): ui.View {
-  return ui.View { ...v, layer: ui.DRAWER, sheet: None, query: "", typing: true, list_scroll: 0 };
-}
-
-// The frame of the app list sliding over the home screen on the layer: the
-// compositor moves and fades the layer, so the frame draws nothing unless
-// the layer or the window does not hold its screen yet. At the first frame
-// of a close, the layer covers the list before the window draws home.
-function slide_layer(own s: App, ns: i64, v: ui.View, p: Paint): App {
-  let Some(hw) = s.hw else {
-    return s;
-  };
-  let part = motion.ease(slide_part(s, ns));
-  if (!s.slide.opening) {
-    part = 1.0 - part;
-  }
-  let lv = ui.View { ...v, layer: ui.DRAWER, sheet: None };
-  if (s.slide.opening) {
-    lv = list_view(v);
-  }
-  let ls = ui.split(p.fonts, lv);
-  let (over, c1) = fill_layer(s.over, s.cache, p, ui.full_key(lv), ui.cat_nodes(ls.base, ls.top));
-  let l = hw;
-  let held = s.hw_key;
-  if (held != over.key) {
-    l = s.dev.layer_fill(hw, over.f);
-    held = over.key;
-  }
-  s.dev.layer_show(l, 0, ((1.0 - part) * (p.h as f64) * 0.08) as i32, part as f32);
-  let t = App { ...s, over: over, cache: c1, hw: Some(l), hw_key: held, nodes: [], dirty: false };
-  let home_view = ui.View { ...v, layer: ui.HOME, sheet: None };
-  let home_key = ui.full_key(home_view);
-  if (t.shown_key == home_key || !t.slide.opening && t.slide.t0 == ns) {
-    return t;
-  }
-  let hs = ui.split(p.fonts, home_view);
-  let (under, c2) = fill_layer(t.under, t.cache, p, home_key, ui.cat_nodes(hs.base, hs.top));
-  let f = t.dev.lock(t.window);
-  if (f.width > 0) {
-    f.blit(under.f, 0, 0);
-  }
-  let u = App { ...t, under: under, cache: c2, shown_key: home_key };
-  u.dev.post(f);
-  return u;
-}
-
-// While home shows and nothing moves, the layer of the app list gets its
-// screen ahead of time, so the first frame of its slide draws nothing.
-function prepare_layer(own s: App): App {
-  let Some(hw) = s.hw else {
-    return s;
-  };
-  if (s.layer != ui.HOME || s.sheet.is_some() || animating(s) || s.window == 0 as usize || s.w == 0) {
-    return s;
-  }
-  let p = paint_of(s);
-  let lv = list_view(view(s, s.frame_ns));
-  let key = ui.full_key(lv);
-  if (s.hw_key == key) {
-    return s;
-  }
-  let ls = ui.split(p.fonts, lv);
-  let (over, c1) = fill_layer(s.over, s.cache, p, key, ui.cat_nodes(ls.base, ls.top));
-  let l = s.dev.layer_fill(hw, over.f);
-  return App { ...s, over: over, cache: c1, hw: Some(l), hw_key: key };
+  let shown = ui.nodes(s.fonts, v);
+  let p = s.dev.present(s.painter, [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }]);
+  return App { ...s, painter: p, nodes: shown, dirty: false };
 }
 
 // Draws at once: the window needs its pixels before the call returns.
@@ -1512,20 +1347,9 @@ function draw_now(own s: App): App {
 function frame(own s: App, ns: i64): App {
   let t = slide_frame(fling_frame(App { ...s, frame_ns: ns }, ns), ns);
   if (!t.dirty && !animating(t)) {
-    return prepare_layer(t);
+    return t;
   }
-  let u = draw_frame(t, ns);
-  if (u.settle > 0) {
-    u = App { ...u, settle: u.settle - 1 };
-    if (u.settle == 0) {
-      if let Some(l) = u.hw {
-        u.dev.layer_hide(l);
-      }
-      // A frame with nothing to draw fills the layer for the next slide.
-      u.dev.request_frame();
-    }
-  }
-  return u;
+  return draw_frame(t, ns);
 }
 
 // The state after event `e`: the app handles it, runs its timers and polls

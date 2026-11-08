@@ -713,98 +713,39 @@ function note(m: Metrics, f: face.Fonts, text: string): Node[] {
 // Each screen in two parts: a base that changes seldom, which the app keeps
 // as a layer and copies to each frame, and a top that it draws on each
 // frame. The key names what the base shows, so a new key means a new base.
-pub struct Split { key: string, base: Node[], top: Node[] }
-
-function metrics_key(m: Metrics): string {
-  return m.w.to_string() + "x" + m.h.to_string() + "+" + m.top.to_string() + "+" + m.bottom.to_string() + "@" + m.d.to_string();
+// The nodes of the screen, in the order they draw: the screen, the dialog
+// over it, and the note over both.
+pub function nodes(f: face.Fonts, v: View): Node[] {
+  let all = screen_nodes(f, v);
+  if let Some(s) = v.sheet {
+    all = cat(all, dialog(v.m, f, s));
+  }
+  return cat(all, note(v.m, f, v.note));
 }
 
-function weather_key(w: Option[paper.Weather]): string {
-  if let Some(x) = w {
-    return paper.degrees(x.temp) + "/" + paper.degrees(x.high) + "/" + paper.degrees(x.low) + "/" + x.code.to_string();
-  }
-  return "-";
-}
-
-// The key of what the top of a screen shows, for a dialog over it.
-function top_key(v: View): string {
-  let out = v.layer.to_string() + "|" + v.fav_scroll.to_string() + "|" + v.held.to_string() + "|" + v.list_scroll.to_string() + "|" + v.query + "|";
-  for a in v.favourites {
-    out = out + a.label + "\t";
-  }
-  if (v.layer == DRAWER) {
-    for a in v.results {
-      out = out + a.key + "\t" + a.label + "\t";
-    }
-    out += v.dim.join(",");
-  }
-  return out;
-}
-
-function screen_split(f: face.Fonts, v: View): Split {
+// The nodes of the screen of the layer of `v`. The breathing circle of the
+// pause draws over the rest of the pause.
+function screen_nodes(f: face.Fonts, v: View): Node[] {
   let m = v.m;
   if (v.layer == PAUSE || v.layer == BLOCKED) {
-    let p = v.pause;
-    let key = "pause|" + metrics_key(m) + "|" + p.title + "|" + p.lines.join("|") + "|" + p.open + "|" + p.ready.to_string();
-    let all = pause(m, f, p, v.layer == BLOCKED);
-    let base: Node[] = [];
-    let top: Node[] = [];
-    for n in all {
+    let still: Node[] = [];
+    let breath: Node[] = [];
+    for n in pause(m, f, v.pause, v.layer == BLOCKED) {
       match (n.paint) {
         Breath(_) => {
-          top = top.append(n);
+          breath = breath.append(n);
         },
         _ => {
-          base = base.append(n);
+          still = still.append(n);
         }
       }
     }
-    return Split { key: key, base: base, top: top };
+    return cat(still, breath);
   }
   if (v.layer == DRAWER) {
-    let key = "drawer|" + metrics_key(m) + "|" + v.query + "|" + v.typing.to_string();
-    return Split { key: key, base: drawer_head(m, f, v), top: drawer_rows(m, f, v) };
+    return cat(drawer_head(m, f, v), drawer_rows(m, f, v));
   }
-  let key = "home|" + metrics_key(m) + "|" + v.date + "|" + v.time + "|" + weather_key(v.weather) + "|" + v.weather_note + "|" + (v.hint && v.favourites.len() == 0).to_string();
-  return Split { key: key, base: home_base(m, f, v), top: favourites(m, f, v) };
-}
-
-pub function split(f: face.Fonts, v: View): Split {
-  let sc = screen_split(f, v);
-  let top = sc.top;
-  let key = sc.key;
-  let base = sc.base;
-  if let Some(s) = v.sheet {
-    let d = dialog(v.m, f, s);
-    // The scrim goes into the base, over the whole screen under it.
-    key = key + "|" + top_key(v) + "|dialog";
-    base = cat(cat(base, top), [d[0]]);
-    top = d.drop(1);
-  }
-  return Split { key: key, base: base, top: cat(top, note(v.m, f, v.note)) };
-}
-
-// The key of all that a screen shows, base and top.
-pub function full_key(v: View): string {
-  return split_key(v) + "|" + top_key(v) + "|" + v.note;
-}
-
-function split_key(v: View): string {
-  let m = v.m;
-  if (v.layer == DRAWER) {
-    return "drawer|" + metrics_key(m) + "|" + v.query + "|" + v.typing.to_string();
-  }
-  return "home|" + metrics_key(m) + "|" + v.date + "|" + v.time + "|" + weather_key(v.weather) + "|" + v.weather_note + "|" + (v.hint && v.favourites.len() == 0).to_string();
-}
-
-pub function cat_nodes(a: Node[], b: Node[]): Node[] {
-  return cat(a, b);
-}
-
-// The nodes of the screen, base and top, in the order they draw.
-pub function nodes(f: face.Fonts, v: View): Node[] {
-  let sp = split(f, v);
-  return cat(sp.base, sp.top);
+  return cat(home_base(m, f, v), favourites(m, f, v));
 }
 
 // The topmost node under x and y with an action.
@@ -837,6 +778,113 @@ pub function group_at(ns: Node[], x: i32, y: i32): string {
 }
 
 // --- drawing
+
+// The nodes of one screen, moved down `dy` rows, with one alpha for all of
+// them: a screen that fades draws as one image.
+pub struct Pass { nodes: Node[], dy: i32, alpha: f64 }
+
+// The key of what node `n` shows at its size, which names its image on the
+// GPU, or "" for a node that the GPU draws with no image of its own: the
+// wallpaper, the fade of a list edge, and a blank node.
+pub function paint_key(n: Node): string {
+  let size = "|" + n.w.to_string() + "x" + n.h.to_string();
+  match (n.paint) {
+    Fill(color, r) => {
+      return "fill|" + color.to_string() + "|" + r.to_string() + size;
+    },
+    Outline(color, r, width) => {
+      return "outline|" + color.to_string() + "|" + r.to_string() + "|" + width.to_string() + size;
+    },
+    Label(text, px, weight, track, color) => {
+      return "label|" + px.to_string() + "|" + weight.to_string() + "|" + track.to_string() + "|" + color.to_string() + "|" + text + size;
+    },
+    Shadowed(text, px, weight, color, blur) => {
+      return "shadow|" + px.to_string() + "|" + weight.to_string() + "|" + color.to_string() + "|" + blur.to_string() + "|" + text + size;
+    },
+    _ => {
+      return shape_key(n.paint, size);
+    }
+  }
+}
+
+function shape_key(p: Paint, size: string): string {
+  match (p) {
+    Weather(sky) => {
+      return "sky|" + sky_index(sky).to_string() + size;
+    },
+    Gauge(now, range, frac) => {
+      return "gauge|" + now + "|" + range + "|" + ((frac * 1000.0).round() as i32).to_string() + size;
+    },
+    Music => {
+      return "music" + size;
+    },
+    Ridge => {
+      return "ridge" + size;
+    },
+    Breath(scale) => {
+      return "breath|" + ((scale * 1000.0).round() as i32).to_string() + size;
+    },
+    Check(on) => {
+      return "check|" + on.to_string() + size;
+    },
+    Underline(color) => {
+      return "fill|" + color.to_string() + "|0" + size;
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+function sky_index(sky: paper.Sky): i32 {
+  match (sky) {
+    paper.Clear => {
+      return 0;
+    },
+    paper.Partly => {
+      return 1;
+    },
+    paper.Cloudy => {
+      return 2;
+    },
+    paper.Fog => {
+      return 3;
+    },
+    paper.Rain => {
+      return 4;
+    },
+    paper.Snow => {
+      return 5;
+    },
+    paper.Storm => {
+      return 6;
+    }
+  }
+}
+
+// The pixels around node `n` that its image keeps, for the parts of glyphs
+// and shadows that go past the box of the node.
+pub function margin(n: Node, d: f64): i32 {
+  match (n.paint) {
+    Label(_, _, _, _, _) => {
+      return 4;
+    },
+    Shadowed(_, _, _, _, blur) => {
+      return 3 * blur + d.ceil() as i32 + 4;
+    },
+    _ => {
+      return (8.0 * d) as i32;
+    }
+  }
+}
+
+// Draws node `n` alone on the transparent frame `fr`, with its top left
+// corner `m` pixels in from the corner of the frame. The pixels of the frame
+// are then premultiplied.
+pub function raster(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, m: i32, wall: draw.Frame, d: f64): face.Cache {
+  fr.store(0, 0, fr.width, fr.height, 0);
+  return paint(fr, f, c, Node { ...n, x: m, y: m, clip0: 0, clip1: 1 << 30 }, wall, d, 0);
+}
 
 // The rows of `fr` from y0 to y1, as a frame of its own.
 function band(fr: draw.Frame, y0: i32, y1: i32): draw.Frame {
