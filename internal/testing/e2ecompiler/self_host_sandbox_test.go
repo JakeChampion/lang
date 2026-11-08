@@ -39,6 +39,7 @@ const sandboxRuleProg = `function main(): i32 {
     q.w.close();
     let pid: i32 = proc_fork();
     if (pid == 0) { exit(0); }
+    match (read_file("/proc/self/stat")) { Ok(_) => {}, Err(_) => { return 6; } }
     return 0;
 }
 `
@@ -75,7 +76,7 @@ var sandboxTargets = []sandboxTarget{
 		name:      e2eharness.TargetX86_64Linux,
 		arch:      0xC000003E,
 		installer: []uint32{317},
-		program:   []uint32{3, 49, 50, 57, 231},
+		program:   []uint32{3, 49, 50, 231},
 		denied:    []uint32{59, 101},
 		rules: []sandboxRule{
 			{nr: 9, arg: 2, good: 3, bad: []uint64{7, 4}},
@@ -84,8 +85,11 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 16, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
 			{nr: 41, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
 			{nr: 54, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 54, arg: 2, good: 2, bad: []uint64{25, 0, 1<<32 | 2}},
+			{nr: 56, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
 			{nr: 72, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 157, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
+			{nr: 257, arg: 2, good: 577, bad: []uint64{0x200000, 0x400000 | 0x10000, 0x2000, 0x8000}},
 		},
 		install:  "    call __fern_seccomp_install\n",
 		mainCall: "    call __fn_main\n",
@@ -104,9 +108,11 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 29, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
 			{nr: 198, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
 			{nr: 208, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 208, arg: 2, good: 2, bad: []uint64{25, 0, 1<<32 | 2}},
 			{nr: 25, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 167, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
 			{nr: 220, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
+			{nr: 56, arg: 2, good: 577, bad: []uint64{0x200000, 0x400000 | 0x4000, 0x2000, 0x20000}},
 		},
 		install:  "    bl __fern_seccomp_install\n",
 		mainCall: "    bl __fn_main\n",
@@ -316,15 +322,12 @@ func checkSandboxFilterShape(t *testing.T, tgt sandboxTarget) {
 		if !allowed[r.nr] {
 			// pkey_mprotect is the one call with a rule that the program does
 			// not reach. Off the list, it is killed whatever its arguments.
-			var args [6]uint64
-			args[r.arg] = r.good
-			if got := run(r.nr, args); got != sandboxKill {
+			if got := run(r.nr, sandboxGoodArgs(tgt.rules, r.nr)); got != sandboxKill {
 				t.Errorf("syscall %d is off the list but the filter gives %#x, want KILL", r.nr, got)
 			}
 			continue
 		}
-		var args [6]uint64
-		args[r.arg] = r.good
+		args := sandboxGoodArgs(tgt.rules, r.nr)
 		if got := run(r.nr, args); got != sandboxAllow {
 			t.Errorf("syscall %d with argument %d = %#x: filter gave %#x, want ALLOW", r.nr, r.arg, r.good, got)
 		}
@@ -335,6 +338,18 @@ func checkSandboxFilterShape(t *testing.T, tgt sandboxTarget) {
 			}
 		}
 	}
+}
+
+// sandboxGoodArgs is the argument vector that satisfies every rule of `nr`,
+// so a bad value in one argument is the only reason a run is killed.
+func sandboxGoodArgs(rules []sandboxRule, nr uint32) [6]uint64 {
+	var args [6]uint64
+	for _, r := range rules {
+		if r.nr == nr {
+			args[r.arg] = r.good
+		}
+	}
+	return args
 }
 
 func TestSelfHostSandboxOffEmitsNothing(t *testing.T) {

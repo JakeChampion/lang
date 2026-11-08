@@ -605,9 +605,12 @@ check time, in the same mechanism that enforces the OS boundary today.
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver. **The driver exists:** `std/virtio` is the virtio-mmio
-  version 2 transport with split virtqueues in `std/dma` buffers, and
-  `std/virtio_net` sends and receives Ethernet frames over it, by polling. The
-  stack above it is the open part.
+  version 2 transport with split virtqueues in `std/dma` buffers.
+  `std/virtio_net` sends and receives Ethernet frames over it.
+  `std/ip` is Ethernet, ARP, IPv4, UDP and the TCP segments over the driver.
+  `std/tcp/conn` is the TCP connection, `std/tcp` binds connections to an
+  interface, and `std/tcp/serve` serves HTTP over it with the shape of
+  `std/serve`. `std/serve` itself over `std/tcp` waits for milestone 4.
 - **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
   self-host-compiler internal, the floor of the runtime helpers. The public
   surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
@@ -661,7 +664,10 @@ environment over the FernOS syscalls can come later, as an improvement.
 1. **Done: the freestanding codegen is in the compiler** (#14245). It reads the
    entry shape from the descriptor, so `EntryReset` can be a second value.
 2. **Done: MMIO loads and stores that no pass removes** (#14249). The compiler
-   still removes an unused plain raw load (see "Volatile").
+   still removes an unused plain raw load (see "Volatile"). The `mmio`
+   capability gates the intrinsics: the `kernel` and the freestanding profiles
+   grant it, a hosted target refuses them with E066, and a dependency needs
+   the `mmio` package capability.
 3. **Done: the interrupt/RC rule** (#14250). "The decision (#14250)" above records
    it: a checked top half, the IRQ region in raw memory, a masked idle wait, and a
    bottom half in the reactor.
@@ -735,10 +741,46 @@ environment over the FernOS syscalls can come later, as an improvement.
    echo to the gateway of qemu's user network and receive both replies. qemu
    needs `-global virtio-mmio.force-legacy=false` for version 2, and the
    microvm runs without ACPI so that its eight transports sit at
-   `0xfeb00000`. The driver polls; its IRQ line through `std/async` comes
-   with the stack.
-13. Beside those: the TCP/IP stack over the driver (#14259). The panic scope is
-   decided (#14257, see the north-star section).
+   `0xfeb00000`. The driver polls, and step 15 adds its IRQ line.
+13. **The first layers of the stack exist** (#14259, second slice), as
+   `std/ip`: Ethernet framing, an ARP cache in a page of raw memory with
+   requests and replies, IPv4 and UDP, by polling the device.
+   `TestSelfHostKernelUDPEchoOnQemu` and `TestSelfHostKernelX86UDPEchoOnQemu`
+   run a UDP echo server on port 7 behind a forwarded host port. The host
+   sends three datagrams and reads each one back. qemu's user network asks
+   for the guest's MAC first, so the ARP reply is on the path.
+14. **TCP exists** (#14259, third slice). `std/tcp/conn` is the state machine
+   of one connection over `Segment` values and a clock the caller supplies,
+   in the core partition, so `tests/stdlib/tcp_conn_test.fern` drives it
+   with synthetic segments: the handshake, data in and out of order, the
+   window, retransmission with the doubled timeout, both closes and the
+   reset. `std/tcp` binds up to eight connections to a `std/ip` interface,
+   and `std/ip` parses and builds the segments with their checksums.
+   `TestSelfHostKernelHTTPOnQemu` and `TestSelfHostKernelX86HTTPOnQemu`
+   answer three requests from Go's HTTP client with `std/http` over it.
+15. **The device's IRQ line drives the stack** (#14259, fourth slice).
+   `TestSelfHostKernelHTTPByInterruptOnQemu` and
+   `TestSelfHostKernelX86HTTPByInterruptOnQemu` answer the same requests
+   from wakes in `async.race` on the device's line and the timer's line. The
+   device tree gives the SPI on arm64, and the `virtio_mmio.device=...:GSI`
+   entry of the command line gives the IOAPIC input on x86-64. Both lines
+   are edge-triggered. The bottom half acknowledges the device with
+   `interrupt` of `std/virtio_net` and then drains the listener with `poll`
+   of `std/tcp`. A buffer the device returns after the acknowledgement
+   raises the line again, so nothing is lost.
+16. **A handler serves from the kernel** (#14259, fifth slice).
+   `std/tcp/serve` has the shape of `std/serve` over `std/tcp`: framing with
+   `std/http` under its limits, keep-alive, pipelining, `100 Continue`, and
+   the refusal of a request that does not frame. A program moves to a
+   kernel by one import and the handler type, which has no `platform.Host`.
+   `TestSelfHostKernelServeMatchesHostedOnQemu` and
+   `TestSelfHostKernelX86ServeMatchesHostedOnQemu` run one handler under
+   the hosted `std/serve` and under `std/tcp/serve` on the kernel, and the
+   answers match but for the date header. `std/serve` itself over `std/tcp`
+   waits for the Linux ABI of milestone 4: then `std/serve` is a user
+   program and the kernel implements its `tcp_*` syscalls over `std/tcp`.
+17. Beside those: the panic scope is decided (#14257, see the north-star
+   section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 

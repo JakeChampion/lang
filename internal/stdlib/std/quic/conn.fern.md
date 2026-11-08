@@ -335,27 +335,126 @@ function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn
 }
 
 pub function accept(c: Config, entropy: [u8], first: packet.Header, now: Instant): Result[Conn, string] {
-  return __accept(c, entropy, first, time.instant_nanos(now));
+  return __accept(c, entropy, first, first.dcid, None, time.instant_nanos(now));
 }
 
-function __accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Result[Conn, string] {
+// accept_validated accepts `first`, an Initial whose token `validated`
+// returned `odcid` for: the client's first Initial named `odcid`, and the
+// Retry that answered it named `first.dcid` (RFC 9000 section 7.3).
+pub function accept_validated(c: Config, entropy: [u8], first: packet.Header, odcid: [u8], now: Instant): Result[Conn, string] {
+  return __accept(c, entropy, first, odcid, Some(first.dcid), time.instant_nanos(now));
+}
+
+function __accept(c: Config, entropy: [u8], first: packet.Header, odcid: [u8], retried: Option[u8[]], now: i64): Result[Conn, string] {
   let Some(id) = c.identity else {
     return Err("quic: a server needs an identity");
   };
   let scid = __bytes_range(entropy, 0, c.cid_len);
   let reset = __bytes_range(entropy, c.cid_len, c.cid_len + 16);
-  let p = params.Params { ...c.params, original_destination_connection_id: Some(first.dcid), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset) };
+  let p = params.Params { ...c.params, original_destination_connection_id: Some(__copy(odcid)), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset), retry_source_connection_id: retried };
   let sc = __tls_server_config(c, id.chain, [id.key.scheme()], params.encode(p, true));
   let secret = __bytes_range(entropy, c.cid_len + 16, c.cid_len + 16 + CID_SECRET);
   match (handshake.server_new(sc, entropy[c.cid_len + 16 + CID_SECRET:entropy.len()])) {
     Ok(s) => {
-      let conn = __base(c, true, scid, first.scid, first.dcid, now).__initial_keys(first.dcid);
-      return Ok(Conn { ...conn, tls: TlsServer(s), reset_token: reset, cid_secret: secret, local_cids: [Cid { seq: 0 as i64, id: scid, token: reset }] });
+      let conn = __base(c, true, scid, first.scid, __copy(odcid), now).__initial_keys(first.dcid);
+      return Ok(Conn { ...conn, tls: TlsServer(s), retry_scid: retried, reset_token: reset, cid_secret: secret, local_cids: [Cid { seq: 0 as i64, id: scid, token: reset }] });
     },
     Err(e) => {
       return Err(e.message());
     }
   }
+}
+
+// retry_entropy is the number of random bytes `retry` needs.
+pub function retry_entropy(c: Config): i32 {
+  return c.cid_len;
+}
+
+// TOKEN_LIFETIME_MS is how long a server accepts a token its Retry issued.
+// A client answers a Retry within one round trip, so a token older than this
+// was replayed or kept.
+const TOKEN_LIFETIME_MS: i64 = 10000;
+
+// A Retry token: this label, the issue time in Unix milliseconds, the length
+// and bytes of the connection ID the client's first Initial named, then
+// HMAC-SHA256 over the client's address, the Retry's connection ID and
+// those bytes (RFC 9000 section 8.1.4).
+const TOKEN_RETRY: u8 = 1u8;
+
+const TOKEN_MAC: i32 = 32;
+
+// retry answers `first`, an Initial from `path` without a token, with a
+// Retry packet (RFC 9000 section 8.1.2): a connection ID from `entropy`
+// and a token authenticated with `key` that binds the client's address and
+// first connection ID to that ID. The server keeps no state for the client
+// until the token comes back.
+pub function retry(c: Config, key: [u8], entropy: [u8], first: packet.Header, path: [u8], now: time.Timestamp): u8[] {
+  let scid = __bytes_range(entropy, 0, c.cid_len);
+  if (__same(scid, first.dcid)) {
+    scid = scid.with(0, (scid[0] as i32 ^ 1) as u8);
+  }
+  let body: u8[] = [TOKEN_RETRY];
+  body = __be64_appended(body, now.unix_millis());
+  body = body.append(first.dcid.len() as u8).concat(first.dcid);
+  let token = body.concat(crypto.hmac_sha256(key, __token_message(path, scid, body)));
+  return packet.retry(first.scid, scid, first.dcid, token);
+}
+
+function __token_message(path: [u8], scid: [u8], body: [u8]): u8[] {
+  let out: u8[] = [path.len() as u8];
+  return out.concat(path).append(scid.len() as u8).concat(scid).concat(body);
+}
+
+function __be64_appended(own out: u8[], v: i64): u8[] {
+  let shift = 56;
+  while (shift >= 0) {
+    out = out.append((v >> shift & 255) as u8);
+    shift -= 8;
+  }
+  return out;
+}
+
+function __be64_at(b: [u8], at: i32): i64 {
+  let v: i64 = 0;
+  let i = 0;
+  while (i < 8) {
+    v = v << 8 | b[at + i] as i64;
+    i += 1;
+  }
+  return v;
+}
+
+// validated checks the token on `first`, an Initial from `path`, against
+// `key`: `retry` issued it for this address and this connection ID within
+// TOKEN_LIFETIME_MS of `now`. Some is the connection ID the client's first
+// Initial named; None is a token this server did not issue or no longer
+// accepts, which `invalid_token` answers.
+pub function validated(key: [u8], first: packet.Header, path: [u8], now: time.Timestamp): Option[u8[]] {
+  let t = first.token;
+  if (t.len() < 10 + TOKEN_MAC || t[0] != TOKEN_RETRY) {
+    return None;
+  }
+  let n = t[9] as i32;
+  if (t.len() != 10 + n + TOKEN_MAC) {
+    return None;
+  }
+  if (!crypto.hmac_sha256_verify(key, __token_message(path, first.dcid, t[0:10 + n]), t[10 + n:t.len()])) {
+    return None;
+  }
+  let issued = __be64_at(t, 1);
+  let ms = now.unix_millis();
+  if (issued > ms || ms - issued > TOKEN_LIFETIME_MS) {
+    return None;
+  }
+  return Some(__bytes_range(t, 10, 10 + n));
+}
+
+// invalid_token is the CONNECTION_CLOSE a server answers `first` with when
+// `validated` refused its token (RFC 9000 section 8.1.3), sealed with the
+// Initial keys of the connection ID it names, so the server keeps no state.
+pub function invalid_token(first: packet.Header): u8[] {
+  let why = frames.ConnectionClose { code: frames.INVALID_TOKEN, frame_type: 0 as i64, reason: "the token is not one this server issued", app: false };
+  return packet.seal_long(packet.Long { kind: packet.Initial, dcid: first.scid, scid: first.dcid, token: [], pn: 0 as i64, pn_len: 1 }, frames.encode(frames.ConnectionCloseFrame(why)), packet.initial_keys(first.dcid, false));
 }
 ```
 
@@ -376,6 +475,18 @@ function (c: Conn) __initial_keys(dcid: [u8]): Conn {
 <<11 pub function (c: Conn) connected(): boolean>>=
 pub function (c: Conn) connected(): boolean {
   return c.state == ESTABLISHED;
+}
+
+// handshaking is whether the connection has neither completed its handshake
+// nor begun to close.
+pub function (c: Conn) handshaking(): boolean {
+  return c.state == HANDSHAKING;
+}
+
+// retried is whether the connection went through a Retry: the server asked
+// the client to prove its address before it kept any state.
+pub function (c: Conn) retried(): boolean {
+  return c.retry_scid.is_some();
 }
 
 pub function (c: Conn) confirmed(): boolean {
@@ -905,7 +1016,7 @@ function (c: Conn) __version_negotiation(h: packet.Header, now: i64): Conn {
 }
 
 function (c: Conn) __retry(datagram: [u8], h: packet.Header, now: i64): Conn {
-  if (c.server || c.peer_seen || c.retry_scid.is_some() || !packet.retry_valid(datagram[h.at:h.end], c.odcid)) {
+  if (c.server || c.peer_seen || c.retry_scid.is_some() || __same(h.scid, c.dcid) || !packet.retry_valid(datagram[h.at:h.end], c.odcid)) {
     return c;
   }
   let fresh = Conn { ...c, dcid: h.scid, retry_scid: Some(h.scid), token: h.token, recovery: c.recovery.discard(recovery.INITIAL) }.__initial_keys(h.scid);
@@ -913,13 +1024,22 @@ function (c: Conn) __retry(datagram: [u8], h: packet.Header, now: i64): Conn {
   return Conn { ...fresh, spaces: fresh.spaces.with(recovery.INITIAL, Space { ...s, crypto_sent: 0 as i64, crypto_lost: [] }) };
 }
 
+// __ours is whether a datagram names this connection: one of the IDs this
+// side issued, or, on a server still in its handshake, the ID the client
+// addressed it by first: the Retry's, or the one the client chose.
 function (c: Conn) __ours(h: packet.Header): boolean {
   for k in c.local_cids {
     if (__same(h.dcid, k.id)) {
       return true;
     }
   }
-  return c.server && __same(h.dcid, c.odcid);
+  if (!c.server) {
+    return false;
+  }
+  if let Some(r) = c.retry_scid {
+    return __same(h.dcid, r);
+  }
+  return __same(h.dcid, c.odcid);
 }
 
 function (c: Conn) __protected(datagram: [u8], h: packet.Header, space: i32, kind: i32, now: i64): Conn {

@@ -142,7 +142,6 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return e;
     }
   }
-  return e;
 }
 
 function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
@@ -219,7 +218,6 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       return st;
     }
   }
-  return st;
 }
 
 function scalar_pattern_cells(pattern: ast.Pattern, boxed: string[]): string[] {

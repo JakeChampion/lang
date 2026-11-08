@@ -235,20 +235,24 @@ pub struct ArgRule { nr: i32, arg: i32, values: i32[], mask: i32 }
 // PR_SET_PDEATHSIG, PR_SET_DUMPABLE, PR_GET_TAGGED_ADDR_CTRL and
 // PR_PAC_GET_ENABLED_KEYS. An ioctl is one of the eight terminal and
 // reflink requests. A setsockopt level is SOL_SOCKET, SOL_TCP, SOL_IPV6 or
-// SOL_TLS. A fcntl command is F_DUPFD, F_GETFL, F_SETFL, F_SETPIPE_SZ or
-// F_GETPIPE_SZ, so no lock, owner or signal command passes. On arm64, where
-// the runtime forks through clone, the clone flags are SIGCHLD alone, so no
-// call makes a namespace.
+// SOL_TLS, and its option is one of the ten the runtime sets. A fcntl command is F_DUPFD, F_GETFL, F_SETFL, F_SETPIPE_SZ or
+// F_GETPIPE_SZ, so no lock, owner or signal command passes. The flags of an
+// openat carry only the bits the runtime and the open options set, so
+// O_ASYNC, O_PATH, O_TMPFILE and an undefined bit are killed. The runtime
+// forks through clone with SIGCHLD alone, so no call makes a namespace.
 pub function arg_rules(target: string): ArgRule[] {
   let ioctls: i32[] = [21505, 21506, 21507, 21508, 21521, 21523, 21524, 1074041865];
   let fcntls: i32[] = [0, 3, 4, 1031, 1032];
+  let sockopts: i32[] = [1, 2, 6, 9, 15, 26, 31, 51];
   if (target == "arm64-linux" || target == "arm64-android") {
     return [
       ArgRule { nr: 25, arg: 1, values: fcntls, mask: 0 },
       ArgRule { nr: 29, arg: 1, values: ioctls, mask: 0 },
+      ArgRule { nr: 56, arg: 2, values: [], mask: 2145525822 },
       ArgRule { nr: 167, arg: 0, values: [1, 4, 56, 61], mask: 0 },
       ArgRule { nr: 198, arg: 0, values: [1, 2, 10], mask: 0 },
       ArgRule { nr: 208, arg: 1, values: [1, 6, 41, 282], mask: 0 },
+      ArgRule { nr: 208, arg: 2, values: sockopts, mask: 0 },
       ArgRule { nr: 220, arg: 0, values: [17], mask: 0 },
       ArgRule { nr: 222, arg: 2, values: [], mask: 4 },
       ArgRule { nr: 226, arg: 2, values: [], mask: 4 },
@@ -261,8 +265,11 @@ pub function arg_rules(target: string): ArgRule[] {
     ArgRule { nr: 16, arg: 1, values: ioctls, mask: 0 },
     ArgRule { nr: 41, arg: 0, values: [1, 2, 10], mask: 0 },
     ArgRule { nr: 54, arg: 1, values: [1, 6, 41, 282], mask: 0 },
+    ArgRule { nr: 54, arg: 2, values: sockopts, mask: 0 },
+    ArgRule { nr: 56, arg: 0, values: [17], mask: 0 },
     ArgRule { nr: 72, arg: 1, values: fcntls, mask: 0 },
     ArgRule { nr: 157, arg: 0, values: [1, 4, 56, 61], mask: 0 },
+    ArgRule { nr: 257, arg: 2, values: [], mask: 2145427518 },
     ArgRule { nr: 329, arg: 2, values: [], mask: 4 },
   ];
 }
@@ -288,10 +295,36 @@ function rule_len(r: ArgRule): i32 {
   return r.values.len() + 4;
 }
 
+// The block of the first rule of `nr`, when `first` is the block of the
+// first rule, or `allow_at` when the call has no rule.
+function rule_block(rules: ArgRule[], nr: i32, first: i32, allow_at: i32): i32 {
+  let block = first;
+  for r in rules {
+    if (r.nr == nr) {
+      return block;
+    }
+    block = block + rule_len(r);
+  }
+  return allow_at;
+}
+
+// Where the rule at `ri`, whose block starts at `at`, goes when it holds: the
+// block of the next rule of the same call, or `allow_at` after the last one.
+function rule_pass(rules: ArgRule[], ri: i32, at: i32, allow_at: i32): i32 {
+  let block = at + rule_len(rules[ri]);
+  for j in ri + 1..rules.len() {
+    if (rules[j].nr == rules[ri].nr) {
+      return block;
+    }
+    block = block + rule_len(rules[j]);
+  }
+  return allow_at;
+}
+
 // The BPF program at `.Lseccomp_filter`. A call from another architecture or
-// with a number outside `allowed` kills the process. An allowed call with an
-// argument rule goes through the rule's block after the kill, and passes only
-// when the rule holds.
+// with a number outside `allowed` kills the process. An allowed call with
+// argument rules goes through their blocks in order after the kill, and
+// passes only when every rule holds.
 pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): EmitState {
   s = s.write("    .section .rodata\n    .balign 8\n.Lseccomp_filter:\n");
   s = bpf_insn(s, 32, 0, "4");
@@ -303,23 +336,17 @@ pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): Em
   let allow_at = seccomp_filter_len(s, allowed) - 1;
   for i in 0..n {
     let at = 4 + i;
-    let target = allow_at;
-    let block = n + 5;
-    for r in rules {
-      if (r.nr == allowed[i]) {
-        target = block;
-      }
-      block = block + rule_len(r);
-    }
-    s = bpf_insn(s, 21, target - at - 1, util.i32_to_string(allowed[i]));
+    s = bpf_insn(s, 21, rule_block(rules, allowed[i], n + 5, allow_at) - at - 1, util.i32_to_string(allowed[i]));
   }
   s = bpf_insn(s, 6, 0, "0x80000000");
   let at = n + 5;
-  for r in rules {
+  for ri in 0..rules.len() {
+    let r = rules[ri];
+    let pass = rule_pass(rules, ri, at, allow_at);
     let word = 16 + r.arg * 8;
     if (r.values.len() == 0) {
       s = bpf_insn(s, 32, 0, util.i32_to_string(word));
-      s = bpf_jump(s, 69, 0, allow_at - at - 2, util.i32_to_string(r.mask));
+      s = bpf_jump(s, 69, 0, pass - at - 2, util.i32_to_string(r.mask));
       s = bpf_insn(s, 6, 0, "0x80000000");
     } else {
       s = bpf_insn(s, 32, 0, util.i32_to_string(word + 4));
@@ -327,7 +354,7 @@ pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): Em
       s = bpf_insn(s, 32, 0, util.i32_to_string(word));
       let k = r.values.len();
       for j in 0..k {
-        s = bpf_insn(s, 21, allow_at - (at + 3 + j) - 1, util.i32_to_string(r.values[j]));
+        s = bpf_insn(s, 21, pass - (at + 3 + j) - 1, util.i32_to_string(r.values[j]));
       }
       s = bpf_insn(s, 6, 0, "0x80000000");
     }
@@ -2769,7 +2796,6 @@ pub function ty_struct_name(t: Ty): string {
       return "";
     }
   }
-  return "";
 }
 
 pub function ty_i32(): Ty {
@@ -2881,7 +2907,6 @@ pub function is_cell(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function cell_val(t: Ty): Ty {
@@ -2893,7 +2918,6 @@ pub function cell_val(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function ty_ord(t: Ty): i32 {
@@ -2983,7 +3007,6 @@ pub function ty_ord(t: Ty): i32 {
       return -1;
     }
   }
-  return -1;
 }
 
 pub function is_int_tag(t: Ty): boolean {
@@ -3010,7 +3033,6 @@ pub function is_int_tag(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_int_array_tag(t: Ty): boolean {
@@ -3031,7 +3053,6 @@ pub function is_int_array_tag(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_map(t: Ty): boolean {
@@ -3049,7 +3070,6 @@ pub function is_map(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function map_key_is_i32(t: Ty): boolean {
@@ -3061,7 +3081,6 @@ pub function map_key_is_i32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_option(t: Ty): boolean {
@@ -3073,7 +3092,6 @@ pub function is_option(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_result(t: Ty): boolean {
@@ -3085,7 +3103,6 @@ pub function is_result(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_fn(t: Ty): boolean {
@@ -3100,7 +3117,6 @@ pub function is_fn(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_i32(t: Ty): boolean {
@@ -3112,7 +3128,6 @@ pub function ty_is_i32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_u8(t: Ty): boolean {
@@ -3124,7 +3139,6 @@ pub function ty_is_u8(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_bool(t: Ty): boolean {
@@ -3136,7 +3150,6 @@ pub function ty_is_bool(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_string(t: Ty): boolean {
@@ -3148,7 +3161,6 @@ pub function ty_is_string(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_f64(t: Ty): boolean {
@@ -3160,7 +3172,6 @@ pub function ty_is_f64(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_unknown(t: Ty): boolean {
@@ -3172,7 +3183,6 @@ pub function ty_is_unknown(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array(t: Ty): boolean {
@@ -3184,7 +3194,6 @@ pub function ty_is_array(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_i32(t: Ty): boolean {
@@ -3196,7 +3205,6 @@ pub function ty_is_array_i32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_u32(t: Ty): boolean {
@@ -3208,7 +3216,6 @@ pub function ty_is_array_u32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_u64(t: Ty): boolean {
@@ -3220,7 +3227,6 @@ pub function ty_is_array_u64(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_i64(t: Ty): boolean {
@@ -3232,7 +3238,6 @@ pub function ty_is_array_i64(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_string(t: Ty): boolean {
@@ -3244,7 +3249,6 @@ pub function ty_is_array_string(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function option_inner(t: Ty): Ty {
@@ -3256,7 +3260,6 @@ pub function option_inner(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function result_inner(t: Ty): Ty {
@@ -3268,7 +3271,6 @@ pub function result_inner(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function fn_ret(t: Ty): Ty {
@@ -3280,7 +3282,6 @@ pub function fn_ret(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function map_val(t: Ty): Ty {
@@ -3295,7 +3296,6 @@ pub function map_val(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function ty_tag(t: Ty): string {
@@ -3382,7 +3382,6 @@ pub function ty_tag(t: Ty): string {
       return x.name;
     }
   }
-  return "unknown";
 }
 
 pub function ty_eq(a: Ty, b: Ty): boolean {
@@ -3616,7 +3615,6 @@ pub function ty_friendly(t: Ty): string {
       return ty_tag(t);
     }
   }
-  return ty_tag(t);
 }
 
 function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
@@ -4217,7 +4215,6 @@ function infer_expr_call_type(c: ast.ExprCall, s: EmitState): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
@@ -4412,7 +4409,6 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return ty_from_name(z.type_name);
     }
   }
-  return ty_unknown();
 }
 
 pub function (s: EmitState) reset_locals(): EmitState {
@@ -5222,7 +5218,6 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     }
   }
-  return a;
 }
 
 function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
@@ -5288,7 +5283,6 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
       return a;
     }
   }
-  return a;
 }
 
 function unknown_errors_stmts(stmts: ast.Stmt[], where: string, errs: util.Diag[]): util.Diag[] {
@@ -5565,7 +5559,6 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return ctx;
     }
   }
-  return ctx;
 }
 
 function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
@@ -6042,7 +6035,6 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       return errs;
     }
   }
-  return errs;
 }
 
 function callgate_known_callee(name: string, known: string[]): boolean {
@@ -6337,7 +6329,6 @@ function is_parse_sentinel(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function check_undefined_calls(mod: parser.Module): util.Diag[] {

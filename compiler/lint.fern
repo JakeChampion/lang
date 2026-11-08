@@ -184,7 +184,6 @@ function is_wild(p: ast.Pattern): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function sugar_forks(sg: ast.MatchSugar): i32 {
@@ -257,7 +256,6 @@ function stmt_forks(st: ast.Stmt): i32 {
       return 0;
     }
   }
-  return 0;
 }
 
 function exprs_forks(es: ast.Expr[]): i32 {
@@ -330,7 +328,6 @@ function expr_forks(e: ast.Expr): i32 {
       return 0;
     }
   }
-  return 0;
 }
 
 pub function display_name(fd: parser.FuncDecl): string {

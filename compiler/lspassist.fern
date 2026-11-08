@@ -357,7 +357,6 @@ function bound_in_stmt(st: ast.Stmt, s: checker.Scope, own acc: Bound[]): Bound[
       return acc;
     }
   }
-  return acc;
 }
 
 function bound_in_arms(m: ast.StmtMatch, s: checker.Scope, own acc: Bound[]): Bound[] {

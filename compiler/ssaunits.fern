@@ -897,7 +897,7 @@ function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][], owned: bo
 // widened to its union or narrowed back), the value at the bottom of the
 // chain, whose unit it is; -1 for every other value.
 function identity_roots(defs: ssa.SInst[]): i32[] {
-  let out = no_takes(defs.len());
+  let out = util.minus_ones(defs.len());
   let v = 0;
   while (v < defs.len()) {
     let r = v;
@@ -2013,7 +2013,7 @@ function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
     }
     w += 1;
   }
-  deps = through_takes(parents, deps, no_takes(f.graph.nvals), held, __alloc_bool(f.graph.nvals));
+  deps = through_takes(parents, deps, util.minus_ones(f.graph.nvals), held, __alloc_bool(f.graph.nvals));
   let flow = ssadeps.analyze_checked(f.graph, deps, a.facts);
   if (!flow.ok) {
     return none;
@@ -2121,16 +2121,6 @@ function slot_held(defs: ssa.SInst[], held: boolean[], r: i32): boolean {
     w += 1;
   }
   return false;
-}
-
-function no_takes(n: i32): i32[] {
-  let out = __alloc_i32(n);
-  let i = 0;
-  while (i < n) {
-    out = out.with(i, -1);
-    i += 1;
-  }
-  return out;
 }
 
 function through_takes(parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {

@@ -1,0 +1,146 @@
+import "std/audio/opusfile";
+import "std/audio/opusfile/input";
+import "std/audio/pcm";
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+import "opus_input_check";
+
+function references(): test.TestOutcome {
+  for i in 0..opus_file_vectors.CASES.len() {
+    let Ok(ref) = opus_file_check.reference(opus_file_vectors.CASES[i]) else {
+      return test.fail("reference data");
+    };
+    match (opus_input_check.run(ref, 16384, true)) {
+      Ok(_) => {},
+      Err(message) => {
+        return test.fail("input case " + i.to_string() + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function no_input(_: i32): Result[u8[], IoError] {
+  return Ok([]);
+}
+
+function read_error(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function oversized(_: i32): Result[u8[], IoError] {
+  return Ok([0u8, 0u8]);
+}
+
+function errors(): test.TestOutcome {
+  let limits = opusfile.default_limits();
+  for size in [-1, 0, 1048577] {
+    match (input.create(limits, size)) {
+      Err(input.ReadSize) => {},
+      _ => {
+        return test.fail("input chunk size");
+      }
+    }
+  }
+  let Ok(empty) = input.create(limits, 1) else {
+    return test.fail("create");
+  };
+  match (empty.next_with(no_input)) {
+    Err(input.ReadAudio(pcm.Header)) => {},
+    _ => {
+      return test.fail("empty input must fail validation");
+    }
+  }
+  let Ok(failed) = input.create(limits, 1) else {
+    return test.fail("create");
+  };
+  match (failed.step_with(read_error)) {
+    Err(input.ReadIo(Interrupted())) => {},
+    _ => {
+      return test.fail("I/O error must remain an error");
+    }
+  }
+  let Ok(large) = input.create(limits, 1) else {
+    return test.fail("create");
+  };
+  match (large.step_with(oversized)) {
+    Err(input.ReadSize) => {},
+    _ => {
+      return test.fail("source exceeds its requested size");
+    }
+  }
+  return test.pass();
+}
+
+function before_error(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference data");
+  };
+  let Ok(state) = input.create(opusfile.default_limits(), 16384) else {
+    return test.fail("create");
+  };
+  let calls = cell_new(0);
+  let read = (_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return if (calls.get() == 1) { Ok(ref.bytes) } else { Err(IoError.Interrupted) };
+  };
+  let events = 0;
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(_))) => {
+        state = next;
+        events += 1;
+      },
+      Err(input.ReadIo(Interrupted())) => {
+        return test.assert_true(events == 4 && calls.get() == 2);
+      },
+      _ => {
+        return test.fail("pending output or late I/O error");
+      }
+    }
+  }
+}
+
+function eof_validation(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference data");
+  };
+  let Ok(state) = input.create(opusfile.default_limits(), 16384) else {
+    return test.fail("create");
+  };
+  let calls = cell_new(0);
+  let read = (_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    if (calls.get() > 1) {
+      return Ok([]);
+    }
+    let bytes: u8[] = [];
+    for i in 0..ref.bytes.len() - 1 {
+      bytes = bytes.append(ref.bytes[i]);
+    }
+    return Ok(bytes);
+  };
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(_))) => {
+        state = next;
+      },
+      Err(input.ReadAudio(pcm.Truncated)) => {
+        return test.assert_eq(calls.get(), 2);
+      },
+      _ => {
+        return test.fail("physical EOF must validate the incomplete page");
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let runner = test.new("Bounded Ogg Opus byte sources");
+  runner = runner.it("complete independent PCM and metadata through short source reads", references);
+  runner = runner.it("invalid requests, source sizes, and I/O errors", errors);
+  runner = runner.it("pending output drains before a later source error", before_error);
+  runner = runner.it("physical EOF validates the remaining partial page", eof_validation);
+  return runner.finish();
+}

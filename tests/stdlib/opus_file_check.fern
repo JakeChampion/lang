@@ -11,7 +11,7 @@ pub struct Expected { serial: u32, initial: i64, frames: i64, fields: i64[], map
 
 pub struct Reference { bytes: u8[], links: Expected[] }
 
-struct Progress { link: i32, stage: i32, samples: i32 }
+pub struct Progress { link: i32, stage: i32, samples: i32 }
 
 function word(bytes: [u8], at: i32): i32 {
   return wire.le(bytes, at, 4) as i32;
@@ -187,7 +187,7 @@ function chunk(remaining: i32, turn: i32, partial: boolean): i32 {
   return if (count > remaining) { remaining } else { count };
 }
 
-function event_progress(event: Option[opusfile.Event], ref: Reference, progress: Progress): Result[Progress, string] {
+pub function event_progress(event: Option[opusfile.Event], ref: Reference, progress: Progress): Result[Progress, string] {
   match (event) {
     None => {
       return Ok(progress);

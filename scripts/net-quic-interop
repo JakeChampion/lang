@@ -132,18 +132,23 @@ fern_h3_client() {
   expect "fern h3 client, aioquic h3 server" "$log" "fern h3 client: stream 0 -> 200 GET /hello 0 | x-served-by=aioquic" "fern h3 client: stream 4 -> 200 POST /upload $SIZE | x-served-by=aioquic"
 }
 
-# aioquic_h3_client — aioquic's HTTP/3 client against the Fern HTTP/3
-# server.
+# aioquic_h3_client MODE — aioquic's HTTP/3 client against the Fern HTTP/3
+# server: plainly, or through the Retry the server sends every new client in
+# retry mode, whose token aioquic echoes in its next Initial.
 aioquic_h3_client() {
-  local port log="$work/aioquic-h3-client.log"
+  local mode="$1" port log="$work/aioquic-h3-client-$1.log"
   port="$(free_port)"
-  start_server "$work/fern-h3-server.log" "$work/h3_server" "$port" "$certs/leaf.pem" "$certs/leaf.key"
-  await_line "$work/fern-h3-server.log" "fern h3 server: listening"
+  start_server "$work/fern-h3-server-$mode.log" "$work/h3_server" "$port" "$certs/leaf.pem" "$certs/leaf.key" "$mode"
+  await_line "$work/fern-h3-server-$mode.log" "fern h3 server: listening"
   "$venv/bin/python" "$d/aioquic_h3_client.py" "$port" "$certs/ca.pem" "$SIZE" > "$log" 2>&1 || echo "aioquic h3 client: exit $?" >> "$log"
-  await_line "$work/fern-h3-server.log" "fern h3 server: ended"
+  await_line "$work/fern-h3-server-$mode.log" "fern h3 server: ended"
   stop_server
-  cat "$work/fern-h3-server.log" >> "$log"
-  expect "aioquic h3 client, fern h3 server" "$log" "aioquic h3 client: GET /hello -> 200 GET /hello 0 | x-served-by=fern" "aioquic h3 client: changed connection id: True" "aioquic h3 client: POST /upload -> 200 POST /upload $SIZE | x-served-by=fern" "fern h3 server: ended code=256 remote=true"
+  cat "$work/fern-h3-server-$mode.log" >> "$log"
+  local -a through=()
+  if [ "$mode" = retry ]; then
+    through=("fern h3 server: retry sent" "fern h3 server: token accepted")
+  fi
+  expect "aioquic h3 client, fern h3 server ($mode)" "$log" "aioquic h3 client: GET /hello -> 200 GET /hello 0 | x-served-by=fern" "aioquic h3 client: changed connection id: True" "aioquic h3 client: POST /upload -> 200 POST /upload $SIZE | x-served-by=fern" "fern h3 server: ended code=256 remote=true" "${through[@]}"
 }
 
 # fern_fetch — std/fetch over HTTP/3 against aioquic's HTTP/3 server.
@@ -166,7 +171,8 @@ fern_client chacha20
 aioquic_client plain
 aioquic_client chacha20
 fern_h3_client
-aioquic_h3_client
+aioquic_h3_client plain
+aioquic_h3_client retry
 fern_fetch
 if [ "$failed" -ne 0 ]; then
   echo "net-quic-interop: a case failed" >&2

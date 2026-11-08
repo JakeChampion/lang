@@ -279,7 +279,39 @@ An independent complete file checks the self-host interpreter.
 Regenerate the file corpus with `scripts/gen-opus-file-vectors.py`.
 The generator verifies pinned libopusfile, libopus, and libogg archive hashes.
 Normal tests need no reference library or network access.
-File-reader adapters remain separate work.
+The bounded byte-source adapter supplies sequential file reads.
+
+### Bounded Opus byte sources
+
+`std/audio/opusfile/input` connects the incremental file decoder to a byte source.
+It retains one input chunk, bounded container state, and codec state.
+It does not retain the complete encoded track or collect PCM output.
+The chunk size accepts one byte through 1 MiB.
+
+`create(file_limits, chunk_size)` creates the input state.
+`step(reader)` borrows a Fern `Reader` and returns the next state and one read event.
+`step_with(callback)` supports custom byte sources with the same bounded read contract.
+A callback returns at most the requested bytes. An empty successful read means permanent end of input.
+
+I/O errors remain distinct from codec errors through `ReadIo` and `ReadAudio`.
+
+Each step performs at most one source read and one decoder feed.
+Pending output drains before another source read, including audio that a completed page queues without an immediate event.
+`Pending` gives control to the application between steps. `Output` contains a file event.
+`Finished` confirms complete validation at physical end of input.
+Subsequent calls return the end without another source read.
+
+`next(reader)` and `next_with(callback)` continue through pending steps until an event or the end.
+Source reads can block. A source needs appropriate deadlines when the application requires bounded latency.
+The caller retains and closes the reader, including after a decode error.
+An application cancels further work when it discards the input state. This releases its buffers.
+
+The adapter supplies sequential reads. Indexed file seeks remain separate work.
+
+Tests compare the complete independent file corpus through short source reads.
+They check read counts, backpressure, EOF validation, source-size violations, and late I/O errors.
+The interpreter smoke suite compares independent PCM through one-byte reads and the `next_with` API.
+Real-file tests check both APIs, exact PCM, reader ownership, truncated files, and missing files on native and WASI targets.
 
 ### Indexed Opus seeks
 

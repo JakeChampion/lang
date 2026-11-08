@@ -43,7 +43,7 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
   let out_w = __load_i32(fds + 12);
   let err_r = __load_i32(fds + 16);
   let err_w = __load_i32(fds + 20);
-  let pid = __syscall3(57, 0, 0, 0) as i32;
+  let pid = __syscall5(56, 17, 0, 0, 0, 0) as i32;
   if (pid == 0) {
     __syscall3(292, in_r as i64, 0, 0);
     __syscall3(292, out_w as i64, 1, 0);

@@ -903,7 +903,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(h_mix + ":\n");
     s = s.write("    eor x2, x2, x1\n    mul x2, x2, x4\n");
     s = s.write(h_fin + ":\n");
-    s = s.write("    lsr x7, x2, #32\n    eor x2, x2, x7\n");
+    s = s.write("    lsr x7, x2, #33\n    eor x2, x2, x7\n");
+    s = s.write("    movz x7, #0x8ccd\n    movk x7, #0xed55, lsl #16\n    movk x7, #0xafd7, lsl #32\n    movk x7, #0xff51, lsl #48\n    mul x2, x2, x7\n");
+    s = s.write("    lsr x7, x2, #33\n    eor x2, x2, x7\n");
+    s = s.write("    movz x7, #0xec53\n    movk x7, #0x1a85, lsl #16\n    movk x7, #0xb9fe, lsl #32\n    movk x7, #0xc4ce, lsl #48\n    mul x2, x2, x7\n");
+    s = s.write("    lsr x7, x2, #33\n    eor x2, x2, x7\n");
     s = s.write("    sxtw x2, w2\n    str x2, [sp, #-16]!\n");
     return s;
   }
@@ -2405,7 +2409,10 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
     return true;
   }
-  return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
+  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+    return true;
+  }
+  return util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 function ssa_funary_known(what: string): boolean {
@@ -2463,7 +2470,7 @@ function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
       return cur;
     }
     let b = f.blocks[bi];
-    if (!ssa_only_phis(b) || b.term.kind_tag != 2 || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
+    if (!ssa.only_phis(b) || b.term.kind_tag != 2 || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
       return cur;
     }
     cur = b.term.target;
@@ -2481,15 +2488,6 @@ function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: 
     return s;
   }
   return ssa_jump(fr, lp, ssa_forward(f, fr, reg_of, to), next, s);
-}
-
-function ssa_only_phis(b: ssa.SBlock): boolean {
-  for ins in b.insts {
-    if (ins.kind_tag != 8) {
-      return false;
-    }
-  }
-  return true;
 }
 
 // The edge from pred needs a move for some phi of id.
@@ -3611,7 +3609,7 @@ function ssa_register_runtime(ins: ssa.SInst, reg_of: i32[], target: string, s: 
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = ssa_str_marks(ins.str, s);
-  let target = "__fern_" + ssa_str_target(ins.str);
+  let target = "__fern_" + ssa.runtime_helper_name(ins.str);
   if (ssa_register_runtime(ins, reg_of, target, s)) {
     let srcs: i32[] = [];
     let dsts: i32[] = [];
@@ -3628,7 +3626,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_push_operand(reg_of, ins.args[i], (argc - 1 - i) * 16, s);
     i -= 1;
   }
-  s = ssa_bl_sym(s, "__fn___fern_" + ssa_str_target(ins.str));
+  s = ssa_bl_sym(s, "__fn___fern_" + ssa.runtime_helper_name(ins.str));
   if (argc > 0) {
     s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
@@ -3673,40 +3671,6 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   s = ssa_mov_imm(s, "x0", "0");
   s = s.lab_def(done);
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
-}
-
-function ssa_str_target(op: string): string {
-  if (op == "str_from_bytes") {
-    return "string_from_bytes";
-  }
-  if (op == "str_from_bytes_u8") {
-    return "string_from_bytes_u8";
-  }
-  if (op == "str_from_bytes_range_u8") {
-    return "string_from_bytes_range_u8";
-  }
-  if (op == "read_chunk") {
-    return "reader_read_chunk";
-  }
-  if (op == "write_bytes") {
-    return "writer_write_bytes";
-  }
-  if (op == "write_bytes_u8") {
-    return "writer_write_bytes_u8";
-  }
-  if (op == "write_some_bytes") {
-    return "writer_write_some_bytes";
-  }
-  if (op == "write_some_bytes_u8") {
-    return "writer_write_some_bytes_u8";
-  }
-  if (op == "read_chunk_bytes") {
-    return "reader_read_chunk_bytes";
-  }
-  if (op == "read_chunk_bytes_u8") {
-    return "reader_read_chunk_bytes_u8";
-  }
-  return op;
 }
 
 function ssa_host_need(op: string): string {
@@ -4169,35 +4133,6 @@ function push_count_test(unique: boolean, slow: asmcore.Lab, ok: asmcore.Lab, s:
   return ssa_tbz(s, false, "w3", 31, slow);
 }
 
-function ssa_view_slots(f: ssa.SFunc): i32[] {
-  let out: i32[] = [];
-  let n = 0;
-  for blk in f.blocks {
-    for ins in blk.insts {
-      if (ins.kind_tag == 51) {
-        if (out.len() == 0) {
-          out = util.minus_ones(f.nvals);
-        }
-        if (ins.imm >= 1) {
-          out = out.with(ins.result, n);
-          n += 1;
-        }
-      }
-    }
-  }
-  return out;
-}
-
-function ssa_view_count(views: i32[]): i32 {
-  let n = 0;
-  for v in views {
-    if (v >= 0) {
-      n += 1;
-    }
-  }
-  return n;
-}
-
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   if (ins.imm == 2) {
@@ -4288,13 +4223,13 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     if (cmp.result != last.args[0] || fv.uses[cmp.result] != 1) {
       return value_test;
     }
-    if (!ssa_unique_test(cmp) && !ssa_fusable_cmp(cmp)) {
+    if (!ssa.unique_test(cmp) && !ssa_fusable_cmp(cmp)) {
       return value_test;
     }
     n = 2;
     inverted = true;
   }
-  if (ssa_unique_test(cmp)) {
+  if (ssa.unique_test(cmp)) {
     return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
   if (!ssa_fusable_cmp(cmp)) {
@@ -4350,17 +4285,12 @@ struct SelectCond { fu: SsaFuse, first: boolean }
 // Whether the instruction at ii is a select that takes the flags of the compare
 // before it, so that the compare emits nothing of its own.
 function ssa_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
-  return ssa_is_select(blk, ii) && ssa_select_fuse(ssa_fuse_view(fr), blk, ii).fu.n > 0;
-}
-
-// A select past the first instruction, which the select fusion can read.
-function ssa_is_select(blk: ssa.SBlock, ii: i32): boolean {
-  return ii >= 1 && ii < blk.insts.len() && blk.insts[ii].kind_tag == 36;
+  return ssa.select_at(blk, ii) && ssa_select_fuse(ssa_fuse_view(fr), blk, ii).fu.n > 0;
 }
 
 function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
   let none = SelectCond { fu: ssa_no_fuse(), first: false };
-  if (!ssa_is_select(blk, ii)) {
+  if (!ssa.select_at(blk, ii)) {
     return none;
   }
   let c = blk.insts[ii].args[0];
@@ -4490,10 +4420,6 @@ function ssa_select_load(reg_of: i32[], v: i32, at: string, s: asmcore.EmitState
 
 function ssa_join(lp: string, blk: i32): string {
   return lp + "uq" + util.i32_to_string(blk);
-}
-
-function ssa_unique_test(ins: ssa.SInst): boolean {
-  return ssa.rc_inlined(ins) && ins.str == "__fern_rc_is_unique";
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
@@ -5244,7 +5170,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // Whether the select at `ii` starts a run that reads the flags of the compare
 // just before it.
 function ssa_select_head(fv: FuseView, blk: ssa.SBlock, ii: i32): boolean {
-  if (!ssa_is_select(blk, ii)) {
+  if (!ssa.select_at(blk, ii)) {
     return false;
   }
   let sc = ssa_select_fuse(fv, blk, ii);
@@ -5294,9 +5220,9 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(entry, lp, s);
   let saved = ssa_saved_regs(reg_of);
-  let views = ssa_view_slots(f);
+  let views = ssa.view_slots(f);
   let tails = s.profile == 0;
-  let leaf = s.profile == 0 && ssa.spill_count(reg_of) == 0 && ssa_view_count(views) == 0 && saved.len() == 0 && !ssa_calls_besides_tails(f, s, tails) && util.index_of_i32(reg_of, 12) < 0;
+  let leaf = s.profile == 0 && ssa.spill_count(reg_of) == 0 && ssa.view_count(views) == 0 && saved.len() == 0 && !ssa_calls_besides_tails(f, s, tails) && util.index_of_i32(reg_of, 12) < 0;
   let canary = 0;
   if (s.harden && !leaf) {
     canary = ssa_save_bytes(saved) + 8;
@@ -5321,9 +5247,9 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
   let cold = ssa_cold_saves(f, alloc);
-  let fr = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa_view_count(views), canary: canary };
+  let fr = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary };
   let fusions: ssaprepare.Fusion[] = [];
-  let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
+  let frame: i32 = (fr.nspill + 3 * ssa.view_count(views)) * 8;
   if (cold.any) {
     frame = frame + COLD_SLOTS * 8;
   }
@@ -6024,8 +5950,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("writer_nonblocking");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_nonblocking\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
-    s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.need("sleep_ms");
     s = s.write("    bl __fn___fern_sleep_ms\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -6468,16 +6392,6 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
   s = s.write("    str x0, [sp, #-16]!\n");
 
   return s;
-}
-
-function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  let k = asmcore.buf_arity(o.kind_tag);
-  while (k > 0) {
-    k -= 1;
-    s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
-  }
-  let sym = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  return s.buf_needs(sym).write("    bl " + sym + "\n    str x0, [sp, #-16]!\n");
 }
 
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
