@@ -1,0 +1,265 @@
+// Draws each screen of Paper on a frame in memory and checks its parts.
+// With PAPER_UI_PNG set to a directory, it writes each screen there as a
+// PNG file.
+import "std/android/draw";
+import "std/png";
+import "std/test";
+import "./face";
+import "./paper";
+import "./ui";
+
+const W: i32 = 1080;
+
+const H: i32 = 2400;
+
+pub function frame_of(w: i32, h: i32): draw.Frame {
+  return frame(w, h);
+}
+
+function frame(w: i32, h: i32): draw.Frame {
+  unsafe {
+    let bits = __alloc(w * h * 4);
+    return draw.Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: w, height: h, stride: w };
+  }
+}
+
+pub function fonts(): face.Fonts {
+  let data: u8[][] = [];
+  for name in face.files() {
+    if let Ok(b) = read_file_bytes(dir() + "/assets/" + name) {
+      data = data.append(b);
+    }
+  }
+  return face.load(data);
+}
+
+// The directory of this file: the tests run from the root of the repository
+// or from this directory.
+function dir(): string {
+  if let Ok(_) = read_file_bytes("examples/android/paper/assets/wallpaper.jpg") {
+    return "examples/android/paper";
+  }
+  return ".";
+}
+
+// The wallpaper of the app at the width `w`.
+pub function wallpaper(w: i32): draw.Image {
+  if let Ok(b) = read_file_bytes(dir() + "/assets/wallpaper.jpg") {
+    return ui.wallpaper(b, w);
+  }
+  return draw.Image { width: 0, height: 0, pixels: [] };
+}
+
+pub function metrics(): ui.Metrics {
+  return ui.Metrics { w: W, h: H, d: 2.75, top: 66, bottom: 132 };
+}
+
+function sample_apps(): paper.Entry[] {
+  let s = paper.with_name(paper.defaults(), "com.android.chrome/Main", "Web browser");
+  s = paper.with_name(s, "com.google.android.gm/Main", "Email");
+  return paper.named(
+    [
+      paper.entry("com.android.chrome", "Main", "Chrome", ""),
+      paper.entry("com.google.android.gm", "Main", "Gmail", ""),
+      paper.entry("com.whatsapp", "Main", "WhatsApp", ""),
+      paper.entry("dev.fern.paper", "android.app.NativeActivity", "Paper", ""),
+      paper.entry("com.spotify.music", "Main", "Spotify", ""),
+      paper.entry("com.google.android.apps.maps", "Main", "Maps", ""),
+      paper.entry("com.android.camera", "Main", "Camera", ""),
+    ],
+    s,
+  );
+}
+
+pub function home_view(): ui.View {
+  let apps = sample_apps();
+  let favs: paper.Entry[] = [];
+  for a in apps {
+    if (a.label == "Email" || a.label == "Web browser" || a.label == "Maps" || a.label == "WhatsApp") {
+      favs = favs.append(a);
+    }
+  }
+  return ui.View { m: metrics(), layer: ui.HOME, date: "Thursday, August 21", time: "9:06", weather: Some(paper.Weather { temp: 77.0, high: 82.0, low: 74.0, code: 3 }), weather_note: "", favourites: favs, fav_scroll: 0, held: 3, hint: true, query: "", typing: false, results: apps, dim: [], list_scroll: 0, sheet: None, pause: ui.no_pause(), note: "" };
+}
+
+function draw_view(v: ui.View, name: string): draw.Frame {
+  let f = frame(W, H);
+  let fs = fonts();
+  let ns = ui.nodes(fs, v);
+  let wall = ui.wallpaper_layer(wallpaper(W));
+  let c = ui.render(f, fs, face.new_cache(), ns, wall, v.m.d);
+  draw.release(wall);
+  if let Some(out) = env("PAPER_UI_PNG") {
+    save(f, out + "/" + name + ".png");
+  }
+  return f;
+}
+
+function save(f: draw.Frame, path: string): void {
+  let rgb: u8[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      let p = f.pixel(x, y);
+      rgb = rgb.append((p & 255) as u8).append((p >> 8 & 255) as u8).append((p >> 16 & 255) as u8);
+    }
+  }
+  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
+    let ok = write_file_bytes(path, bytes);
+  }
+}
+
+// The node with action `act`, or one far off the screen.
+function node_of(ns: ui.Node[], act: string): ui.Node {
+  for n in ns {
+    if (n.act == act) {
+      return n;
+    }
+  }
+  return ui.Node { x: -1, y: -1, w: 0, h: 0, paint: ui.Blank, act: "", long: "", group: "", clip0: 0, clip1: 0 };
+}
+
+function dark(p: i32): boolean {
+  return (p & 255) + (p >> 8 & 255) + (p >> 16 & 255) < 150;
+}
+
+function test_home_layout(): test.TestOutcome {
+  let v = home_view();
+  let f = draw_view(v, "home");
+  let ns = ui.nodes(fonts(), v);
+  let clock = node_of(ns, "alarms");
+  let date = node_of(ns, "calendar");
+  let fav = node_of(ns, "open:com.android.chrome/Main");
+  // The clock is centred under the date, the home apps are in the sky,
+  // and the clock has ink in its middle row.
+  let ink_in_clock = false;
+  for x in clock.x..clock.x + clock.w {
+    if (dark(f.pixel(x, clock.y + clock.h / 2))) {
+      ink_in_clock = true;
+    }
+  }
+  let centred = (clock.x + clock.w / 2 - W / 2).abs() <= 2 && (date.x + date.w / 2 - W / 2).abs() <= 2;
+  let in_sky = fav.y >= ui.wallpaper_y(v.m, ui.WALLPAPER_RATIO, ui.SKY_TOP);
+  return test.assert_eq(centred.to_string() + " " + in_sky.to_string() + " " + ink_in_clock.to_string() + " " + (date.y + date.h < clock.y + clock.h / 4).to_string(), "true true true true");
+}
+
+function test_home_long_press(): test.TestOutcome {
+  let ns = ui.nodes(fonts(), home_view());
+  let fav = node_of(ns, "open:com.android.chrome/Main");
+  let Some(n) = ui.hit(ns, fav.x + 2, fav.y + fav.h / 2) else {
+    return test.fail("no node under the home app");
+  };
+  let beside = ui.hit(ns, W - 20, fav.y + fav.h / 2);
+  return test.assert_eq(n.long + " " + beside.is_none().to_string() + " " + ui.group_at(ns, fav.x + 2, fav.y + 2), "menu:com.android.chrome/Main true fav");
+}
+
+function test_drawer(): test.TestOutcome {
+  let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "", typing: true };
+  let f = draw_view(v, "drawer");
+  let ns = ui.nodes(fonts(), v);
+  let paper_row = node_of(ns, "open:dev.fern.paper/android.app.NativeActivity");
+  let first = node_of(ns, "open:com.android.camera/Main");
+  return test.assert_eq((paper_row.y > 0).to_string() + " " + (first.y < paper_row.y).to_string() + " " + (f.pixel(5, H / 2) == ui.paper_color()).to_string(), "true true true");
+}
+
+function test_drawer_search(): test.TestOutcome {
+  let apps = sample_apps();
+  let v = ui.View { ...home_view(), layer: ui.DRAWER, query: "chrome", typing: true, results: paper.search(apps, "chrome", []) };
+  let f = draw_view(v, "drawer-search");
+  let ns = ui.nodes(fonts(), v);
+  return test.assert_eq(node_of(ns, "open:com.android.chrome/Main").y > 0 && node_of(ns, "open:com.whatsapp/Main").y < 0, true);
+}
+
+function app_menu(): ui.Sheet {
+  let rows = [
+    ui.Row { text: "Remove from home", sub: "", check: -1, act: "toggle-fav" },
+    ui.Row { text: "Move up", sub: "", check: -1, act: "up" },
+    ui.Row { text: "Rename", sub: "", check: -1, act: "rename" },
+    ui.Row { text: "Block for a while", sub: "", check: -1, act: "block" },
+    ui.Row { text: "Pause before opening", sub: "", check: -1, act: "mindful" },
+    ui.Row { text: "App info", sub: "", check: -1, act: "info" },
+  ];
+  return ui.Sheet { title: "Web browser", rows: rows, buttons: [], field: false, text: "", hint: "", scroll: 0 };
+}
+
+function test_sheet(): test.TestOutcome {
+  let v = ui.View { ...home_view(), sheet: Some(app_menu()) };
+  let f = draw_view(v, "sheet");
+  let ns = ui.nodes(fonts(), v);
+  let rename = node_of(ns, "rename");
+  let Some(n) = ui.hit(ns, W / 2, rename.y + rename.h / 2) else {
+    return test.fail("no node under the row");
+  };
+  let Some(out) = ui.hit(ns, W / 2, 40) else {
+    return test.fail("no node over the scrim");
+  };
+  return test.assert_eq(n.act + " " + out.act, "rename dismiss");
+}
+
+function test_rename_sheet(): test.TestOutcome {
+  let s = ui.Sheet { title: "Rename Chrome", rows: [], buttons: [ui.Row { text: "Use Chrome", sub: "", check: -1, act: "reset" }, ui.Row { text: "Cancel", sub: "", check: -1, act: "cancel" }, ui.Row { text: "Save", sub: "", check: -1, act: "save" }], field: true, text: "Web browser", hint: "Chrome", scroll: 0 };
+  let v = ui.View { ...home_view(), sheet: Some(s), m: ui.Metrics { ...metrics(), bottom: 900 } };
+  let f = draw_view(v, "rename");
+  let ns = ui.nodes(fonts(), v);
+  let save = node_of(ns, "save");
+  return test.assert_eq(save.y + save.h <= H - 900 && save.x > node_of(ns, "cancel").x, true);
+}
+
+function test_pick_sheet(): test.TestOutcome {
+  let rows: ui.Row[] = [];
+  for a in sample_apps() {
+    let on = 0;
+    if (a.label == "Email") {
+      on = 1;
+    }
+    rows = rows.append(ui.Row { text: a.label, sub: "", check: on, act: "check:" + rows.len().to_string() });
+  }
+  let s = ui.Sheet { title: "Home apps", rows: rows, buttons: [ui.Row { text: "Cancel", sub: "", check: -1, act: "cancel" }, ui.Row { text: "Done", sub: "", check: -1, act: "done" }], field: false, text: "", hint: "", scroll: 0 };
+  let v = ui.View { ...home_view(), sheet: Some(s) };
+  let f = draw_view(v, "pick");
+  return test.assert_eq(node_of(ui.nodes(fonts(), v), "done").y > 0, true);
+}
+
+function test_pause(): test.TestOutcome {
+  let p = ui.Pause { title: "Take a breath.", lines: ["Do you need Instagram", "right now?"], open: "Open in 3", ready: false, breath: 0.8 };
+  let v = ui.View { ...home_view(), layer: ui.PAUSE, pause: p };
+  let f = draw_view(v, "pause");
+  let ns = ui.nodes(fonts(), v);
+  return test.assert_eq(node_of(ns, "pause-open").y > 0 && node_of(ns, "pause-cancel").y > node_of(ns, "pause-open").y && f.pixel(4, 4) == ui.night(), true);
+}
+
+function test_blocked(): test.TestOutcome {
+  let p = ui.Pause { title: "Blocked.", lines: ["Instagram is blocked", "until 3:45."], open: "", ready: false, breath: 1.0 };
+  let v = ui.View { ...home_view(), layer: ui.BLOCKED, pause: p };
+  let f = draw_view(v, "blocked");
+  let ns = ui.nodes(fonts(), v);
+  return test.assert_eq(node_of(ns, "pause-open").y < 0 && node_of(ns, "pause-cancel").y > 0, true);
+}
+
+function test_many_favourites_scroll(): test.TestOutcome {
+  let favs: paper.Entry[] = [];
+  for i in 0..20 {
+    favs = favs.append(paper.entry("p" + i.to_string(), "C", "App " + i.to_string(), ""));
+  }
+  let v = ui.View { ...home_view(), favourites: favs };
+  let f = draw_view(v, "home-many");
+  let limit = ui.fav_scroll_limit(v.m, fonts(), v);
+  let scrolled = ui.View { ...v, fav_scroll: limit };
+  let ns = ui.nodes(fonts(), scrolled);
+  let last = node_of(ns, "held");
+  return test.assert_eq(limit > 0 && last.y + last.h <= ui.favourites_bottom(v.m) + 1, true);
+}
+
+function main(): i32 {
+  let r = test.new("android paper ui");
+  r = r.it("home layout", test_home_layout);
+  r = r.it("home app long press", test_home_long_press);
+  r = r.it("app list lists Paper", test_drawer);
+  r = r.it("app list search", test_drawer_search);
+  r = r.it("app menu sheet", test_sheet);
+  r = r.it("rename sheet above the keyboard", test_rename_sheet);
+  r = r.it("home apps sheet", test_pick_sheet);
+  r = r.it("pause before an app", test_pause);
+  r = r.it("blocked app", test_blocked);
+  r = r.it("many home apps scroll", test_many_favourites_scroll);
+  return r.finish();
+}

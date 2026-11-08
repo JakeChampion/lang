@@ -22,6 +22,8 @@ name: Android
 # class take the audio focus from each other.
 # tests/android/worker forks two workers from the loop thread and polls
 # them, and one child resolves a name through netd.
+# examples/android/paper is a home screen: its check makes it the home app,
+# opens the app list, finds Paper in it, and goes back with the back key.
 # examples/android/plex is the Plex client: its check runs it against a fake
 # Plex server on the host, for the posters, a track and a video that moves
 # between the media player and the drawing of the app on one window.
@@ -74,6 +76,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-paper.apk -apk-package dev.fern.paper -apk-label Paper -apk-icon examples/android/paper/icon.png -apk-min-sdk 26 -apk-home -apk-permission INTERNET,ACCESS_COARSE_LOCATION,EXPAND_STATUS_BAR,REQUEST_DELETE_PACKAGES,QUERY_ALL_PACKAGES -apk-asset examples/android/paper/assets/wallpaper.jpg,examples/android/paper/assets/Roboto-Regular.ttf,examples/android/paper/assets/Roboto-Medium.ttf,examples/android/paper/assets/Roboto-SemiBold.ttf,examples/android/paper/assets/Roboto-Bold.ttf,examples/android/paper/assets/Roboto-ExtraBold.ttf examples/android/paper/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-plex.apk -apk-package dev.fern.plex -apk-label "Fern for Plex" -apk-min-sdk 30 -apk-permission INTERNET -apk-cleartext examples/android/plex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
@@ -94,6 +97,7 @@ jobs:
             build/android-stopwatch/fern-focustest.apk
             build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-workertest.apk
+            build/android-stopwatch/fern-paper.apk
             build/android-stopwatch/fern-plex.apk
             build/android-stopwatch/fern-walkie.apk
             build/android-stopwatch/fern-walkie2.apk
@@ -139,6 +143,7 @@ jobs:
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker
+            python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/emulator/paper
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie

@@ -402,6 +402,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__c_call6", capability: "cabi" },
     Gate { builtin: "__c_call6_f32", capability: "cabi" },
     Gate { builtin: "__c_call6_f64", capability: "cabi" },
+    Gate { builtin: "__c_callv", capability: "cabi" },
     Gate { builtin: "__syscall3", capability: "syscall" },
     Gate { builtin: "__syscall4", capability: "syscall" },
     Gate { builtin: "__syscall5", capability: "syscall" },

@@ -2,11 +2,11 @@
 
 Status: [reference] shipped.
 
-The standard library has 160 source modules. Of these, 154 use literate Fern documents.
+The standard library has 162 source modules. Of these, 156 use literate Fern documents.
 These documents contain handwritten code, STE prose, and named chunks.
 Seven documents also contain generated regions. Each generated region stays inside one complete chunk with its boundary markers intact.
 
-The library has 73 executable examples across 70 documents.
+The library has 75 executable examples across 72 documents.
 The root chunk preserves the original declaration order. Module imports retain their public names.
 The compiler expands each source document in memory and maps diagnostics back to its document lines.
 
@@ -129,6 +129,7 @@ They are outside the public library inventory below.
 | `std/io` | [Reader and input helpers](../internal/stdlib/std/io.fern.md) |
 | `std/io_buffered` | [Buffered byte input and output](../internal/stdlib/std/io_buffered.fern.md) |
 | `std/jni` | [Java Native Interface calls](../internal/stdlib/std/jni.fern.md) |
+| `std/jpeg` | [JPEG images](../internal/stdlib/std/jpeg.fern.md) |
 | `std/json` | [JSON trees and documents](../internal/stdlib/std/json.fern.md) |
 | `std/log` | [Structured log entries](../internal/stdlib/std/log.fern.md) |
 | `std/math` | [Ranges, numeric constants, and RGB values](../internal/stdlib/std/math.fern.md) |
@@ -187,6 +188,7 @@ They are outside the public library inventory below.
 | `std/tls/server` | [TLS 1.3 server sessions](../internal/stdlib/std/tls/server.fern.md) |
 | `std/tls/verify` | [Certificate and signature verification](../internal/stdlib/std/tls/verify.fern.md) |
 | `std/tls/x509` | [X.509 certificate fields](../internal/stdlib/std/tls/x509.fern.md) |
+| `std/truetype` | [TrueType fonts](../internal/stdlib/std/truetype.fern.md) |
 | `std/tz` | [Local time-zone rules](../internal/stdlib/std/tz.fern.md) |
 | `std/u32` | [Unsigned 32-bit integer methods](../internal/stdlib/std/u32.fern.md) |
 | `std/u64` | [Unsigned 64-bit integer methods](../internal/stdlib/std/u64.fern.md) |

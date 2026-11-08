@@ -334,10 +334,11 @@ function elf_so_shstrtab(): i32[] {
 
 // Libraries and symbols imported by a shared object. Each slot receives
 // the symbol's address through a GLOB_DAT relocation. data marks objects.
-pub struct SoImports { libs: string[], syms: string[], slots: i32[], data: boolean[] }
+// A weak symbol may be absent, and then its slot holds zero.
+pub struct SoImports { libs: string[], syms: string[], slots: i32[], data: boolean[], weak: boolean[] }
 
 pub function no_so_imports(): SoImports {
-  return SoImports { libs: [], syms: [], slots: [], data: [] };
+  return SoImports { libs: [], syms: [], slots: [], data: [], weak: [] };
 }
 
 // The libraries of `imp`, each once, in first-use order.
@@ -357,12 +358,16 @@ function so_needed(imp: SoImports): string[] {
   return out;
 }
 
-// One undefined global function or object symbol for each import.
-function so_import_syms(buf: i32[], offs: i32[], data: boolean[]): i32[] {
+// One undefined function or object symbol for each import: global, or
+// weak where the import is weak.
+function so_import_syms(buf: i32[], offs: i32[], data: boolean[], weak: boolean[]): i32[] {
   for i in 0..offs.len() {
     let kind = 18;
     if (data[i]) {
       kind = 17;
+    }
+    if (weak[i]) {
+      kind += 16;
     }
     buf = elf_le32(buf, offs[i]);
     buf = buf.append(kind);
@@ -518,7 +523,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     buf = elf_le64(buf, sizes[k] as i64);
     k += 1;
   }
-  buf = so_import_syms(buf, imp_offs, imp.data);
+  buf = so_import_syms(buf, imp_offs, imp.data, imp.weak);
   buf = elf_cat(buf, dynstr);
   buf = elf_pad_to(buf, hash_off);
   buf = elf_le32(buf, 1);

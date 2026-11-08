@@ -119,6 +119,131 @@ pub function (f: Frame) store(x: i32, y: i32, w: i32, h: i32, color: i32): void 
   }
 }
 
+// Blends `color` over the pixel at x and y, which it covers by `a`, from 0
+// for none to 255 for all of it. A pixel outside the frame is not drawn.
+pub function (f: Frame) cover(x: i32, y: i32, color: i32, a: i32): void {
+  if (a <= 0 || x < 0 || y < 0 || x >= f.width || y >= f.height) {
+    return;
+  }
+  unsafe {
+    let at = f.bits + ((y * f.stride + x) * 4) as usize;
+    __store_i32(at, blend(color, __load_i32(at), clamp(a, 0, 255) * alpha_of(color) / 255));
+  }
+}
+
+// A frame of w by h pixels in plain memory, for a layer that a program
+// draws once and copies to the window with `blit`. Free it with `release`.
+pub function offscreen(w: i32, h: i32): Frame {
+  unsafe {
+    let n = w * h * 4;
+    if (w <= 0 || h <= 0) {
+      return Frame { window: 0 as usize, buffer: 0 as usize, bits: 0 as usize, width: 0, height: 0, stride: 0 };
+    }
+    let bits = __alloc(n);
+    return Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: w, height: h, stride: w };
+  }
+}
+
+// Frees a frame that `offscreen` gave. Do not give it the frame of a
+// window.
+pub function release(f: Frame): void {
+  if (f.bits == 0 as usize || f.window != 0 as usize) {
+    return;
+  }
+  unsafe {
+    __free(f.bits, f.stride * f.height * 4);
+  }
+}
+
+// Copies `src` with its top left corner at x and y, with no blend. The part
+// outside the frame is not written.
+pub function (f: Frame) blit(src: Frame, x: i32, y: i32): void {
+  let x0 = clamp(x, 0, f.width);
+  let x1 = clamp(x + src.width, 0, f.width);
+  let y0 = clamp(y, 0, f.height);
+  let y1 = clamp(y + src.height, 0, f.height);
+  if (x1 <= x0 || y1 <= y0) {
+    return;
+  }
+  unsafe {
+    for row in y0..y1 {
+      __memcpy(f.bits + ((row * f.stride + x0) * 4) as usize, src.bits + (((row - y) * src.stride + x0 - x) * 4) as usize, (x1 - x0) * 4);
+    }
+  }
+}
+
+// The opaque pixel word of `src` over `dst` with the weight w, from 0 for
+// none to 256 for all of `src`. Red and blue go in one 64-bit product.
+function mix_word(src: i32, dst: i32, w: i32): i32 {
+  let k = w as i64;
+  let srb = (src & 16711935) as i64;
+  let drb = (dst & 16711935) as i64;
+  let rb = srb * k + drb * (256i64 - k) >> 8 & 16711935i64;
+  let g = (src & 65280) * w + (dst & 65280) * (256 - w) >> 8 & 65280;
+  return -16777216 | rb as i32 | g;
+}
+
+// Blends `src` over the frame with its top left corner at x and y, with the
+// weight `alpha` from 0 to 255 for each pixel.
+pub function (f: Frame) blend_frame(src: Frame, x: i32, y: i32, alpha: i32): void {
+  if (alpha >= 255) {
+    f.blit(src, x, y);
+    return;
+  }
+  let w = clamp(alpha, 0, 255);
+  w = w + (w >> 7);
+  let x0 = clamp(x, 0, f.width);
+  let x1 = clamp(x + src.width, 0, f.width);
+  let y0 = clamp(y, 0, f.height);
+  let y1 = clamp(y + src.height, 0, f.height);
+  if (x1 <= x0 || y1 <= y0 || w == 0) {
+    return;
+  }
+  unsafe {
+    for row in y0..y1 {
+      let to = f.bits + ((row * f.stride + x0) * 4) as usize;
+      let from = src.bits + (((row - y) * src.stride + x0 - x) * 4) as usize;
+      for i in 0..x1 - x0 {
+        let at = (i * 4) as usize;
+        __store_i32(to + at, mix_word(__load_i32(from + at), __load_i32(to + at), w));
+      }
+    }
+  }
+}
+
+// Blends `color` over the box of w by h at x and y, by the coverage of each
+// pixel in `cov`, row by row, from 0 for none to 255 for all of it. Text
+// that a program draws once into a coverage map goes on the frame this way.
+pub function (f: Frame) mask(x: i32, y: i32, w: i32, h: i32, cov: [u8], color: i32): void {
+  let ca = alpha_of(color);
+  let x0 = clamp(x, 0, f.width);
+  let x1 = clamp(x + w, 0, f.width);
+  let y0 = clamp(y, 0, f.height);
+  let y1 = clamp(y + h, 0, f.height);
+  if (x1 <= x0 || y1 <= y0 || cov.len() < w * h || ca == 0) {
+    return;
+  }
+  let solid = -16777216 | color;
+  unsafe {
+    for row in y0..y1 {
+      let to = f.bits + (row * f.stride * 4) as usize;
+      let from = (row - y) * w - x;
+      for col in x0..x1 {
+        let a = cov[from + col] as i32;
+        if (a != 0) {
+          let at = to + (col * 4) as usize;
+          let k = a * ca * 257 + 32768 >> 16;
+          if (k >= 255) {
+            __store_i32(at, solid);
+          } else {
+            __store_i32(at, mix_word(color, __load_i32(at), k + (k >> 7)));
+          }
+        }
+      }
+    }
+  }
+}
+
 // The pixel word at x and y, or 0 outside the frame.
 pub function (f: Frame) pixel(x: i32, y: i32): i32 {
   if (x < 0 || y < 0 || x >= f.width || y >= f.height) {
@@ -229,6 +354,43 @@ pub function (img: Image) pixel(x: i32, y: i32): i32 {
   }
   let at = (y * img.width + x) * 4;
   return rgba(img.pixels[at] as i32, img.pixels[at + 1] as i32, img.pixels[at + 2] as i32, img.pixels[at + 3] as i32);
+}
+
+// `img` at w by h pixels. Each pixel takes the four pixels of `img` nearest
+// to its centre, weighed by how near they are.
+pub function (img: Image) scaled(w: i32, h: i32): Image {
+  if (w <= 0 || h <= 0 || img.width <= 0 || img.height <= 0 || img.pixels.len() < img.width * img.height * 4) {
+    return Image { width: 0, height: 0, pixels: [] };
+  }
+  let px = img.pixels;
+  let sx = img.width as f64 / (w as f64);
+  let sy = img.height as f64 / (h as f64);
+  let out: u8[] = [];
+  for y in 0..h {
+    let (y0, y1, ty) = nearest(y, sy, img.height);
+    for x in 0..w {
+      let (x0, x1, tx) = nearest(x, sx, img.width);
+      let a = (y0 * img.width + x0) * 4;
+      let b = (y0 * img.width + x1) * 4;
+      let c = (y1 * img.width + x0) * 4;
+      let d = (y1 * img.width + x1) * 4;
+      for k in 0..4 {
+        let top = px[a + k] as f64 + (px[b + k] as f64 - px[a + k] as f64) * tx;
+        let bottom = px[c + k] as f64 + (px[d + k] as f64 - px[c + k] as f64) * tx;
+        out = out.append((top + (bottom - top) * ty + 0.5) as u8);
+      }
+    }
+  }
+  return Image { width: w, height: h, pixels: out };
+}
+
+// The two source pixels, of `n`, nearest to the centre of pixel `i` at
+// scale `s`, and the weight of the second.
+function nearest(i: i32, s: f64, n: i32): (i32, i32, f64) {
+  let f = (i as f64 + 0.5) * s - 0.5;
+  let i0 = clamp(f.floor() as i32, 0, n - 1);
+  let i1 = clamp(i0 + 1, 0, n - 1);
+  return (i0, i1, (f - i0 as f64).max(0.0));
 }
 
 // The size of an image of w0 by h0 scaled to cover a box of w by h, with its

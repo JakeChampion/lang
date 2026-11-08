@@ -9423,6 +9423,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
 	"__c_call5": true, "__c_call5_f32": true, "__c_call5_f64": true,
 	"__c_call6": true, "__c_call6_f32": true, "__c_call6_f64": true,
+	"__c_callv":  true,
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,

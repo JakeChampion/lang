@@ -155,6 +155,14 @@ const usesCleartextTrafficID = 0x010104ec
 
 const debuggableID = 0x0101000f
 
+const themeID = 0x01010000
+
+// Theme.DeviceDefault.Wallpaper.NoTitleBar, the theme of a home screen, and
+// Theme.NoTitleBar.Fullscreen, the theme of other apps.
+const homeThemeID = 0x0103013d
+
+const appThemeID = 0x0103000a
+
 // TestApkCleartext checks that -apk-cleartext sets
 // android:usesCleartextTraffic, so the Java networking of the app, such as
 // a media player, can use http://, and that an APK without it leaves the
@@ -663,5 +671,104 @@ func checkDex(t *testing.T, b []byte) {
 	}
 	if got := binary.LittleEndian.Uint32(b[8:]); got != adler32.Checksum(b[12:]) {
 		t.Error("the Adler-32 checksum does not match")
+	}
+}
+
+// -apk-home makes the activity a home screen: the home categories beside
+// the launcher category, one task, and the wallpaper theme, which keeps the
+// status bar. An APK without it keeps the fullscreen theme and no home
+// category.
+func TestApkHome(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	man := readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, themeID); !ok || v != appThemeID {
+		t.Errorf("android:theme = %#x (set %v) with no -apk-home, want %#x", v, ok, appThemeID)
+	}
+	if bytes.Contains(man, utf16le("android.intent.category.HOME")) {
+		t.Error("an APK with no -apk-home has the home category")
+	}
+	path, raw := buildApk(t, dir, "-apk-home")
+	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, themeID); !ok || v != homeThemeID {
+		t.Errorf("android:theme = %#x (set %v), want %#x", v, ok, homeThemeID)
+	}
+	for _, s := range []string{"android.intent.category.HOME", "android.intent.category.DEFAULT", "android.intent.category.LAUNCHER"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the manifest tree is not checked")
+	}
+	o, err := exec.Command(aapt, "dump", "xmltree", path, "AndroidManifest.xml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+	}
+	tree := string(o)
+	for _, want := range []string{
+		`A: android:taskAffinity(0x01010012)="" (Raw: "")`,
+		"A: android:clearTaskOnLaunch(0x01010015)=(type 0x12)0xffffffff",
+		"A: android:stateNotNeeded(0x01010016)=(type 0x12)0xffffffff",
+		"A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff",
+		"A: android:launchMode(0x0101001d)=(type 0x10)0x2",
+		"A: android:windowSoftInputMode(0x0101022b)=(type 0x11)0x10",
+		"A: android:resumeWhilePausing(0x010104b2)=(type 0x12)0xffffffff",
+		`A: android:name(0x01010003)="android.intent.category.HOME"`,
+	} {
+		if !strings.Contains(tree, want) {
+			t.Errorf("the manifest has no %s:\n%s", want, tree)
+		}
+	}
+}
+
+// -apk-asset puts each file under assets/ with its own name, stored, and
+// refuses a file it cannot read and two files with one name.
+func TestApkAsset(t *testing.T) {
+	dir := t.TempDir()
+	one := filepath.Join(dir, "one.txt")
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	two := filepath.Join(sub, "two.bin")
+	if err := os.WriteFile(one, []byte("first asset"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(two, []byte{0, 1, 2, 255}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, raw := buildApk(t, dir, "-apk-asset", one+","+two)
+	zr := zipOf(t, raw)
+	if got := string(readZipEntry(t, zr, "assets/one.txt")); got != "first asset" {
+		t.Errorf("assets/one.txt = %q", got)
+	}
+	if got := readZipEntry(t, zr, "assets/two.bin"); !bytes.Equal(got, []byte{0, 1, 2, 255}) {
+		t.Errorf("assets/two.bin = %v", got)
+	}
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "assets/") && f.Method != zip.Store {
+			t.Errorf("%s: method %d, want stored", f.Name, f.Method)
+		}
+	}
+	verifyApkV2(t, raw)
+	again := filepath.Join(dir, "again")
+	if err := os.MkdirAll(again, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	same := filepath.Join(again, "one.txt")
+	if err := os.WriteFile(same, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range []string{one + "," + same, filepath.Join(dir, "missing.png")} {
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", filepath.Join(dir, "bad.apk"), "-apk-asset", list,
+			e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd.Env = e2eharness.ChildEnv()
+		o, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(o), "-apk-asset") {
+			t.Errorf("-apk-asset %s: %v\n%s, want a refusal that names -apk-asset", list, err, o)
+		}
 	}
 }

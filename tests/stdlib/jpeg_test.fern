@@ -1,0 +1,96 @@
+import "std/jpeg";
+import "std/test";
+import "./image_vectors";
+
+// The largest difference between the pixels of `got` and the RGB pixels of
+// `want`, or 1000 when the sizes differ.
+function max_diff(got: jpeg.Image, want: i32[]): i32 {
+  if (got.width != 16 || got.height != 16 || got.pixels.len() != 16 * 16 * 4) {
+    return 1000;
+  }
+  let most = 0;
+  for i in 0..256 {
+    for k in 0..3 {
+      let d = (got.pixels[4 * i + k] as i32 - want[3 * i + k]).abs();
+      if (d > most) {
+        most = d;
+      }
+    }
+    if (got.pixels[4 * i + 3] != 255u8) {
+      return 1000;
+    }
+  }
+  return most;
+}
+
+function diff_of(data: u8[], want: i32[]): i32 {
+  match (jpeg.decode_image(data)) {
+    Ok(img) => {
+      return max_diff(img, want);
+    },
+    Err(e) => {
+      return 2000;
+    }
+  }
+}
+
+function test_baseline_444(): test.TestOutcome {
+  return test.assert_eq(diff_of(image_vectors.jpeg_base444(), image_vectors.pixels_base444()) <= 2, true);
+}
+
+function test_progressive_444(): test.TestOutcome {
+  return test.assert_eq(diff_of(image_vectors.jpeg_prog444(), image_vectors.pixels_prog444()) <= 2, true);
+}
+
+// Pillow spreads the chroma samples over the pixels, and this module takes
+// the nearest sample, so the pixels at a colour edge differ more.
+function test_baseline_420(): test.TestOutcome {
+  return test.assert_eq(diff_of(image_vectors.jpeg_base420(), image_vectors.pixels_base420()) <= 24, true);
+}
+
+function test_progressive_420(): test.TestOutcome {
+  return test.assert_eq(diff_of(image_vectors.jpeg_prog420(), image_vectors.pixels_prog420()) <= 24, true);
+}
+
+function test_restart_interval(): test.TestOutcome {
+  return test.assert_eq(diff_of(image_vectors.jpeg_restart(), image_vectors.pixels_restart()) <= 2, true);
+}
+
+function test_grayscale(): test.TestOutcome {
+  return test.assert_eq(diff_of(image_vectors.jpeg_gray(), image_vectors.pixels_gray()) <= 2, true);
+}
+
+function message(data: u8[]): string {
+  match (jpeg.decode_image(data)) {
+    Ok(_) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_errors(): test.TestOutcome {
+  let good = image_vectors.jpeg_base444();
+  let cut: u8[] = [];
+  for i in 0..40 {
+    cut = cut.append(good[i]);
+  }
+  // A frame marker of arithmetic coding, SOF9.
+  let arith: u8[] = [255 as u8, 216 as u8, 255 as u8, 201 as u8, 0 as u8, 11 as u8, 8 as u8, 0 as u8, 1 as u8, 0 as u8, 1 as u8, 1 as u8, 1 as u8, 17 as u8, 0 as u8];
+  let got = message([1 as u8, 2 as u8, 3 as u8]) + " | " + message(cut) + " | " + message(arith);
+  return test.assert_eq(got, "jpeg: not a JPEG file | jpeg: the data ends early | jpeg: unsupported: lossless or arithmetic coding");
+}
+
+function main(): i32 {
+  let r = test.new("std/jpeg");
+  r = r.it("baseline 4:4:4", test_baseline_444);
+  r = r.it("progressive 4:4:4", test_progressive_444);
+  r = r.it("baseline 4:2:0", test_baseline_420);
+  r = r.it("progressive 4:2:0", test_progressive_420);
+  r = r.it("restart intervals", test_restart_interval);
+  r = r.it("grayscale", test_grayscale);
+  r = r.it("errors", test_errors);
+  return r.finish();
+}
