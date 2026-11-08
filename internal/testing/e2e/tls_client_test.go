@@ -163,7 +163,7 @@ import "std/tls/identity";
 import "std/tls/verify";
 
 function interop_get(url: string): fetch.Request {
-  return fetch.get(url).with_timeouts(fetch.Timeouts { ...fetch.timeouts(), total: time.duration_seconds(@TOTAL@) });
+  return fetch.get(url).with_timeouts(fetch.Timeouts { ...fetch.timeouts(), connect: time.duration_seconds(@TOTAL@), total: time.duration_seconds(@TOTAL@) });
 }
 
 function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
