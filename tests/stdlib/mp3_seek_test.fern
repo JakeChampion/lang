@@ -1,0 +1,151 @@
+import "std/audio/mp3";
+import "std/audio/mp3/seek";
+import "std/audio/pcm";
+import "std/hex";
+import "std/test";
+import "mp3_vectors";
+
+function samples_match(audio: seek.Audio, expected: [f32], position: i64): boolean {
+  if (audio.position != position || audio.frames <= 0 || audio.samples.len() != audio.frames * audio.channels) {
+    return false;
+  }
+  let start = position as i32 * audio.channels;
+  if (audio.samples.len() > expected.len() - start) {
+    return false;
+  }
+  for i in 0..audio.samples.len() {
+    if (f32_bits(audio.samples[i]) != f32_bits(expected[start + i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function read_tail(own cursor: seek.Cursor, bytes: [u8], expected: [f32], start: i64): Result[seek.Cursor, pcm.AudioError] {
+  let position = start;
+  while (true) {
+    let (next, value) = cursor.next(bytes)?;
+    cursor = next;
+    match (value) {
+      None => {
+        if (position != cursor.index.frames) {
+          return Err(pcm.Header);
+        }
+        return Ok(cursor);
+      },
+      Some(audio) => {
+        if (!samples_match(audio, expected, position)) {
+          return Err(pcm.Sample);
+        }
+        position += audio.frames as i64;
+      }
+    }
+  }
+}
+
+function case_matches(v: mp3_vectors.Vector): Result[void, pcm.AudioError] {
+  let bytes = match (hex.decode(v.bytes)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let full = mp3.decode(bytes, pcm.default_limits())?;
+  let index = seek.inspect(bytes, seek.default_limits())?;
+  if (index.frames * (v.channels as i64) != full.samples.len() as i64) {
+    return Err(pcm.Header);
+  }
+  let frames = index.frames;
+  let size = index.frame_size as i64;
+  let cursor = seek.reader(index);
+  // Deliberately alternate directions and include frame-interior positions.
+  let positions: i64[] = [0i64, frames, 1i64, frames - 1i64, frames / 2i64, 0i64, frames * 3i64 / 4i64, size + 7i64, size * 5i64 + 13i64];
+  for position in positions {
+    if (position <= frames) {
+      cursor = cursor.seek(bytes, position)?;
+      cursor = read_tail(cursor, bytes, full.samples, position)?;
+    }
+  }
+  return Ok(());
+}
+
+function reference_seeks(): test.TestOutcome {
+  for v in mp3_vectors.cases() {
+    match (case_matches(v)) {
+      Ok(_) => {},
+      Err(e) => {
+        return test.fail(v.name + ": " + e.message());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[0].bytes) else {
+    return test.fail("MP3 reference bytes");
+  };
+  let defaults = seek.default_limits();
+  for count in [0, 1] {
+    match (seek.inspect(bytes, seek.Limits { ...defaults, max_entries: count })) {
+      Err(pcm.Limit) => {},
+      _ => {
+        return test.fail("index entry budget");
+      }
+    }
+  }
+  let bounded = pcm.Limits { ...defaults.audio, max_samples: 1152 };
+  let Ok(index) = seek.inspect(bytes, seek.Limits { ...defaults, audio: bounded }) else {
+    return test.fail("index does not allocate whole-track PCM");
+  };
+  if (index.frames <= 1152i64) {
+    return test.fail("longer than PCM budget");
+  }
+  let total = index.frames;
+  for position in [-1i64, total + 1i64] {
+    let Ok(copy) = seek.inspect(bytes, defaults) else {
+      return test.fail("fresh index");
+    };
+    match (seek.reader(copy).seek(bytes, position)) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid playable position");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function bad_input(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[0].bytes) else {
+    return test.fail("MP3 reference bytes");
+  };
+  let defaults = seek.default_limits();
+  for size in [3, bytes.len() - 1] {
+    match (seek.inspect(bytes[:size], defaults)) {
+      Err(_) => {},
+      _ => {
+        return test.fail("invalid frame chain");
+      }
+    }
+  }
+  match (seek.inspect(bytes.with(0, 0u8), defaults)) {
+    Err(_) => {},
+    _ => {
+      return test.fail("invalid capture");
+    }
+  }
+  let Ok(index) = seek.inspect(bytes, defaults) else {
+    return test.fail("index");
+  };
+  match (seek.reader(index).next(bytes[:bytes.len() - 1])) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("input view changed");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MP3 seek and bounded frame output");
+  runner = runner.it("repeated exact seeks against complete reference-qualified PCM", reference_seeks);
+  runner = runner.it("index and per-frame output limits", limits);
+  runner = runner.it("invalid frame chains and changed input views", bad_input);
+  return runner.finish();
+}

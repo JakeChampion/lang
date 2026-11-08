@@ -90,7 +90,7 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 var interpSlowStdTests = map[string]bool{
 	"brotli": true, "deflate": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
-	"mitigations": true, "mlkem768": true, "mp3": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
+	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
 	"opus_bands": true, "opus_celt": true, "opus_celt_encoder": true,
 	"opus_celt_frame": true, "opus_celt_prefilter": true, "opus_energy": true,
 	// Full PCM corpora use the compiled gates. Independent smoke suites stay here.
@@ -335,6 +335,9 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"audio_ogg", langSrcAbs(t, "tests/stdlib/audio_ogg_test.fern"), ""},
 		{"video", langSrcAbs(t, "tests/stdlib/video_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
+		{"mp3_seek", langSrcAbs(t, "tests/stdlib/mp3_seek_test.fern"), ""},
+		{"mp3_seek_smoke", langSrcAbs(t, "tests/stdlib/mp3_seek_smoke_test.fern"), ""},
+		{"flac_seek", langSrcAbs(t, "tests/stdlib/flac_seek_test.fern"), ""},
 		{"opus", langSrcAbs(t, "tests/stdlib/opus_test.fern"), ""},
 		{"opus_range", langSrcAbs(t, "tests/stdlib/opus_range_test.fern"), ""},
 		{"opus_silk_math", langSrcAbs(t, "tests/stdlib/opus_silk_math_test.fern"), ""},
