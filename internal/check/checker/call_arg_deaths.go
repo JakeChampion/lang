@@ -2244,6 +2244,9 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 	if later {
 		return true
 	}
+	if _, returns := st.(*ast.Return); returns {
+		return false
+	}
 	if target, assignment := storeTarget(st); target == aid.Name && assignment != nil && nodeHolds(assignment.Value, c) {
 		return false
 	}
