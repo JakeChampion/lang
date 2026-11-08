@@ -22,10 +22,14 @@ build/unit: tests/unit.fern $(SOURCES) | build
 build/trace: tests/trace.fern $(SOURCES) | build
 	$(FERN) $(FERNFLAGS) -target $(TARGET) -o $@ tests/trace.fern
 
-test: build/ulc build/unit build/trace
+build/reference64: tests/reference64.fern $(SOURCES) | build
+	$(FERN) $(FERNFLAGS) -target $(TARGET) -o $@ tests/reference64.fern
+
+test: build/ulc build/unit build/trace build/reference64
 	python3 tests/generate_noise_tables.py
 	./build/unit
 	python3 tests/integration.py
+	python3 tests/accuracy.py
 
 clean:
 	rm -rf build

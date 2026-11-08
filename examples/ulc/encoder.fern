@@ -45,6 +45,46 @@ pub function create(block_size: i32, channels: i32, rate: i32, mode: Mode): Resu
   return Ok(Encoder { block_size: block_size, channels: channels, rate: rate, mode: mode, pending: transform.zeros(block_size * channels), lap: transform.zeros(block_size * channels), detector: windows.detector(), control: 0x10, plans: plans, profiles: profiles, work: packed_transform.scratch(block_size) });
 }
 
+// Convert adjacent channel pairs to planar mid/side samples.
+@inline
+pub function planar(samples: [f64], n: i32, channels: i32): Result[f64[], string] {
+  if (n < 0 || channels < 1 || channels > 255 || n as u64 * (channels as u64) != samples.len() as u64) {
+    return Err("incorrect encoder sample count");
+  }
+  let next = transform.zeros(samples.len());
+  let half = __f64x2_splat(0.5);
+  let channel = 0;
+  while (channel + 1 < channels) {
+    let i = 0;
+    while (i + 1 < n) {
+      let left = __f64x2_of(samples[i * channels + channel], samples[(i + 1) * channels + channel]);
+      let right = __f64x2_of(samples[i * channels + channel + 1], samples[(i + 1) * channels + channel + 1]);
+      next = __f64x2_with(next, channel * n + i, (left + right) * half);
+      next = __f64x2_with(next, (channel + 1) * n + i, (left - right) * half);
+      i += 2;
+    }
+    if (i < n) {
+      let left = samples[i * channels + channel];
+      let right = samples[i * channels + channel + 1];
+      next = next.with(channel * n + i, 0.5 * (left + right));
+      next = next.with((channel + 1) * n + i, 0.5 * (left - right));
+    }
+    channel += 2;
+  }
+  if (channel < channels) {
+    let i = 0;
+    while (i + 1 < n) {
+      let pair = __f64x2_of(samples[i * channels + channel], samples[(i + 1) * channels + channel]);
+      next = __f64x2_with(next, channel * n + i, pair);
+      i += 2;
+    }
+    if (i < n) {
+      next = next.with(channel * n + i, samples[i * channels + channel]);
+    }
+  }
+  return Ok(next);
+}
+
 pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, string] {
   let n = state.block_size;
   let channels = state.channels;
@@ -56,18 +96,7 @@ pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, strin
       return Err("samples must be finite and in [-1, 1]");
     }
   }
-  let next = transform.zeros(n * channels);
-  for ch in 0..channels {
-    for i in 0..n {
-      let value = samples[i * channels + ch];
-      if ((ch & 1) == 0 && ch + 1 < channels) {
-        value = 0.5 * (value + samples[i * channels + ch + 1]);
-      } else if ((ch & 1) != 0) {
-        value = 0.5 * (samples[i * channels + ch - 1] - value);
-      }
-      next = next.with(ch * n + i, value);
-    }
-  }
+  let next = planar(samples, n, channels)?;
   let control = state.control;
   let detector = windows.detect(state.detector, state.pending, next, n, channels, state.rate);
   let silent = true;
@@ -209,9 +238,11 @@ pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, strin
     pattern >>= 4;
   }
   for ch in 0..channels {
-    for i in 0..n {
-      let index = ch * n + i;
-      keys = keys.with(index, 2.0 * keys[index] + mask[i / 2] - 1.3862943611198906 * ((ch & 1) as f64));
+    let adjustment = __f64x2_splat(1.3862943611198906 * ((ch & 1) as f64));
+    let two = __f64x2_splat(2.0);
+    for group in 0..n / 2 {
+      let index = ch * n + 2 * group;
+      keys = __f64x2_with(keys, index, two * __f64x2_load(keys, index) + __f64x2_splat(mask[group]) - adjustment);
     }
   }
   let complexity = 0.0;

@@ -3,11 +3,26 @@ import "std/array";
 import "std/f64";
 import "./transform";
 
-pub struct Plan { shape: transform.Plan, cosine: u8[], sine: u8[], triple_cos: u8[], triple_sin: u8[], pre_cos: u8[], pre_sin: u8[], merge_cos: u8[], merge_sin: u8[], post_cos: u8[], post_sin: u8[], window_cos: u8[], window_sin: u8[] }
+pub struct Plan { prepared: boolean, shape: transform.Plan, cosine: u8[], sine: u8[], triple_cos: u8[], triple_sin: u8[], pre_cos: u8[], pre_sin: u8[], merge_cos: u8[], merge_sin: u8[], post_cos: u8[], post_sin: u8[], window_cos: u8[], window_sin: u8[] }
 
 pub struct Scratch { re: u8[], im: u8[], transformed: f64[], samples: f64[] }
 
 pub struct Inverse { lap: f64[], work: Scratch }
+
+pub function deferred(n: i32): Plan {
+  let shape = transform.Plan { n: n, reversal: [], pre_cos: [], pre_sin: [], post_cos: [], post_sin: [], fft_cos: [], fft_sin: [], window_cos: [], window_sin: [] };
+  return Plan { prepared: false, shape: shape, cosine: [], sine: [], triple_cos: [], triple_sin: [], pre_cos: [], pre_sin: [], merge_cos: [], merge_sin: [], post_cos: [], post_sin: [], window_cos: [], window_sin: [] };
+}
+
+pub function is_deferred(p: Plan): boolean {
+  return !p.prepared && p.shape.n >= 16 && p.shape.n <= 32768 && (p.shape.n & p.shape.n - 1) == 0
+    && p.shape.reversal.len() == 0 && p.shape.pre_cos.len() == 0 && p.shape.pre_sin.len() == 0
+    && p.shape.post_cos.len() == 0 && p.shape.post_sin.len() == 0 && p.shape.fft_cos.len() == 0 && p.shape.fft_sin.len() == 0
+    && p.shape.window_cos.len() == 0 && p.shape.window_sin.len() == 0 && p.cosine.len() == 0 && p.sine.len() == 0
+    && p.triple_cos.len() == 0 && p.triple_sin.len() == 0 && p.pre_cos.len() == 0 && p.pre_sin.len() == 0
+    && p.merge_cos.len() == 0 && p.merge_sin.len() == 0 && p.post_cos.len() == 0 && p.post_sin.len() == 0
+    && p.window_cos.len() == 0 && p.window_sin.len() == 0;
+}
 
 function pack(values: [f64]): u8[] {
   let out = __alloc_u8((values.len() + 3) / 4 * 16);
@@ -43,13 +58,19 @@ pub function plan(n: i32): Plan {
   let post_cos = __alloc_u8(quarter * 16);
   let post_sin = __alloc_u8(quarter * 16);
   for k in 0..quarter {
-    let angle = 2.0 * 3.141592653589793 * (k as f64) / ((n / 2) as f64);
-    merge_cos = __f32x4_with_bytes(merge_cos, 16 * k, __f32x4_of(1.0 as f32, angle.cos() as f32, (2.0 * angle).cos() as f32, (3.0 * angle).cos() as f32));
-    merge_sin = __f32x4_with_bytes(merge_sin, 16 * k, __f32x4_of(0.0 as f32, angle.sin() as f32, (2.0 * angle).sin() as f32, (3.0 * angle).sin() as f32));
+    let offset = n / 4 - 1;
+    let third = 3 * k;
+    let sign = 1.0;
+    if (third >= n / 4) {
+      third -= n / 4;
+      sign = -1.0;
+    }
+    merge_cos = __f32x4_with_bytes(merge_cos, 16 * k, __f32x4_of(1.0 as f32, p.fft_cos[offset + k] as f32, p.fft_cos[offset + 2 * k] as f32, (sign * p.fft_cos[offset + third]) as f32));
+    merge_sin = __f32x4_with_bytes(merge_sin, 16 * k, __f32x4_of(0.0 as f32, p.fft_sin[offset + k] as f32, p.fft_sin[offset + 2 * k] as f32, (sign * p.fft_sin[offset + third]) as f32));
     post_cos = __f32x4_with_bytes(post_cos, 16 * k, __f32x4_of(p.post_cos[k] as f32, p.post_cos[k + 2 * quarter] as f32, p.post_cos[k + quarter] as f32, p.post_cos[k + 3 * quarter] as f32));
     post_sin = __f32x4_with_bytes(post_sin, 16 * k, __f32x4_of(p.post_sin[k] as f32, p.post_sin[k + 2 * quarter] as f32, p.post_sin[k + quarter] as f32, p.post_sin[k + 3 * quarter] as f32));
   }
-  return Plan { shape: p, cosine: cosine, sine: sine, triple_cos: triple_cos, triple_sin: triple_sin, pre_cos: pack(p.pre_cos), pre_sin: pack(p.pre_sin), merge_cos: merge_cos, merge_sin: merge_sin, post_cos: post_cos, post_sin: post_sin, window_cos: pack(p.window_cos), window_sin: pack(p.window_sin) };
+  return Plan { prepared: true, shape: p, cosine: cosine, sine: sine, triple_cos: triple_cos, triple_sin: triple_sin, pre_cos: pack(p.pre_cos), pre_sin: pack(p.pre_sin), merge_cos: merge_cos, merge_sin: merge_sin, post_cos: post_cos, post_sin: post_sin, window_cos: pack(p.window_cos), window_sin: pack(p.window_sin) };
 }
 
 pub function scratch(n: i32): Scratch {
@@ -75,7 +96,7 @@ pub function dct4(input: [f64], p: Plan, own work: Scratch, scaled: boolean = fa
   let n = p.shape.n;
   let half = n / 2;
   let quarter = half / 4;
-  if (n < 16 || n > 32768 || (n & n - 1) != 0 || input.len() < n || transformed.len() < n || re.len() < 2 * n || im.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.triple_cos.len() < 16 * (quarter - 1) || p.triple_sin.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
+  if (!p.prepared || n < 16 || n > 32768 || (n & n - 1) != 0 || input.len() < n || transformed.len() < n || re.len() < 2 * n || im.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.triple_cos.len() < 16 * (quarter - 1) || p.triple_sin.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
     eprint("invalid packed FFT dimensions");
     exit(1);
   }
@@ -123,7 +144,7 @@ function execute[const PACKED: i32](p: Plan, re_address: usize, im_address: usiz
     let merge_sin_address = p.merge_sin as usize + 8 as usize;
     let width = if (packed) { 4 } else { 2 };
     while (width <= quarter) {
-      if (packed && width * 2 <= quarter) {
+      if (width * 2 <= quarter) {
         radix4(p, re_address, im_address, width);
         width *= 4;
         continue;
@@ -283,7 +304,7 @@ pub unsafe function dct4_packed(input: usize, output: usize, re_address: usize, 
   let n = p.shape.n;
   let half = n / 2;
   let quarter = n / 8;
-  if (n < 16 || n > 32768 || (n & n - 1) != 0 || p.shape.reversal.len() < quarter || p.pre_cos.len() < 2 * n || p.pre_sin.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.triple_cos.len() < 16 * (quarter - 1) || p.triple_sin.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
+  if (!p.prepared || n < 16 || n > 32768 || (n & n - 1) != 0 || p.shape.reversal.len() < quarter || p.pre_cos.len() < 2 * n || p.pre_sin.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.triple_cos.len() < 16 * (quarter - 1) || p.triple_sin.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
     eprint("invalid packed FFT dimensions");
     exit(1);
   }
@@ -342,7 +363,18 @@ function put_post(address: usize, n: i32, j: i32, left: f32, right: f32, packed:
   }
 }
 
+@inline
 pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch, scaled: boolean = false): Inverse {
+  return inverse_impl[0](coefs, lap, overlap, p, work, scaled);
+}
+
+// This path retains double precision throughout the transform and overlap.
+@inline
+pub function inverse_precise(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch): Inverse {
+  return inverse_impl[1](coefs, lap, overlap, p, work, false);
+}
+
+function inverse_impl[const PRECISE: i32](coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch, scaled: boolean): Inverse {
   let n = p.shape.n;
   let silent = true;
   for i in 0..n {
@@ -352,7 +384,16 @@ pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own wo
     }
   }
   if (!silent) {
-    work = dct4(coefs, p, work, scaled);
+    if (PRECISE != 0) {
+      let accurate = transform.dct4_planned(coefs, p.shape);
+      let output = work.transformed;
+      for i in 0..n {
+        output = output.with(i, accurate[i]);
+      }
+      work = Scratch { ...work, transformed: output };
+    } else {
+      work = dct4(coefs, p, work, scaled);
+    }
   }
   let Scratch { re, im, transformed: temp, samples: out } = work;
   if (silent) {

@@ -202,6 +202,9 @@ pub function ranks(keys: [f64]): i32[] {
       let byte = (bits[index] >> (8 * pass) as u32 & 255u32) as i32;
       counts = counts.with(byte, counts[byte] + 1);
     }
+    if (n > 0 && counts[(bits[0] >> (8 * pass) as u32 & 255u32) as i32] == n) {
+      continue;
+    }
     let total = 0;
     for i in 0..256 {
       let count = counts[i];

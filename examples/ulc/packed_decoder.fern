@@ -13,13 +13,13 @@ pub struct Decoder { block_size: i32, channels: i32, last_size: i32, seed: u32, 
 
 pub struct Block { state: Decoder, samples: u8[], next_byte: i32, silent: boolean }
 
-pub function decoder(n: i32, channels: i32): Result[Decoder, string] {
+pub function decoder(n: i32, channels: i32, defer_plans: boolean = false): Result[Decoder, string] {
   if (!codec.valid_config(n, channels)) {
     return Err("invalid decoder configuration");
   }
   let plans: packed_transform.Plan[] = [];
   for shift in 0..4 {
-    plans = plans.append(packed_transform.plan(n >> shift));
+    plans = plans.append(if (defer_plans) { packed_transform.deferred(n >> shift) } else { packed_transform.plan(n >> shift) });
   }
   let output = __alloc_u8(4 * n * channels);
   return Ok(Decoder { block_size: n, channels: channels, last_size: 0, seed: 1234567u32, plans: plans, lap: __alloc_u8(2 * n * channels), coefs: __alloc_u8(4 * n), re: __alloc_u8(2 * n), im: __alloc_u8(2 * n), temp: __alloc_u8(4 * n), samples: __alloc_u8(4 * n), output: output, zero_samples: output, lap_zero: true });
@@ -163,7 +163,16 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       while (pattern != 0) {
         let shift = pattern & 7;
         let size = n >> shift;
-        if (shift > 3 || plans[shift].shape.n != size || plans[shift].window_cos.len() < 4 * size || plans[shift].window_sin.len() < 4 * size) {
+        if (shift > 3 || plans[shift].shape.n != size) {
+          return Err("invalid packed transform plan");
+        }
+        if (!plans[shift].prepared) {
+          if (!packed_transform.is_deferred(plans[shift])) {
+            return Err("invalid deferred transform plan");
+          }
+          plans = plans.with(shift, packed_transform.plan(size));
+        }
+        if (plans[shift].window_cos.len() < 4 * size || plans[shift].window_sin.len() < 4 * size) {
           return Err("invalid packed transform plan");
         }
         __memset(coefficient_address, 0, 4 * size);

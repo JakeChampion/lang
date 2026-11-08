@@ -67,6 +67,11 @@ The transform cost is `O(N log N)`.
 Each decoder owns its xorshift seed and overlap buffers.
 Packed float SIMD computes the FFT.
 The block API retains double precision for window and overlap operations.
+`codec.decode_block_precise` also uses a double-precision FFT.
+This API provides a numerical reference for the faster packed transform.
+
+Serial file decode creates each transform plan when its block size first occurs.
+Silent blocks need no transform plan.
 File decode uses packed float buffers and cached float windows.
 
 The file decoder stores coefficients and overlap samples at a scale of `2^96`.
