@@ -1750,10 +1750,10 @@ pub function (b: Batch) send(sock: Socket): (Batch, Result[i32, NetError]) {
   }
   let data = buf_take_bytes(b.bytes.h);
   let empty = Batch { ...b, addrs: [], lens: [], messages: 0 };
-  if (target_os() != "linux" && target_os() != "android") {
-    return (empty, __sent_one_by_one(sock, b.addrs, data, b.lens));
+  if (target_os() == "linux" || target_os() == "android") {
+    return (empty, __socket_count(udp_sendmmsg(sock, b.addrs, data, b.lens)));
   }
-  return (empty, __socket_count(udp_sendmmsg(sock, b.addrs, data, b.lens)));
+  return (empty, __sent_one_by_one(sock, b.addrs, data, b.lens));
 }
 
 function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
