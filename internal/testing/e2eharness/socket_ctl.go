@@ -53,7 +53,7 @@ function main(): i32 {
     let got: u8[] = [0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(c, got) != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
     if (tcp_recv_into(c, got) != 0) { return fail(14); }
-    if (tcp_socket_ctl(a, 11, 0) >= 0) { return fail(15); }
+    if (tcp_socket_ctl(a, 13, 0) >= 0) { return fail(15); }
     // tcp_addr_into answers the local address, or the peer's, as the
     // 19-byte sender record: the accepted side is 127.0.0.1 at the
     // listener's port, its peer 127.0.0.1 at the dialler's port. A

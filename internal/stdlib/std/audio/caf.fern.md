@@ -15,6 +15,13 @@ An audio event retains the decoded packet buffer and declares its playable range
 Both values count frames. The playable samples are `samples[start * channels:(start + frames) * channels]`.
 This avoids a PCM copy for initial or final trim.
 
+`max_packet_frames` returns the frame capacity for one packet.
+`step_into` consumes caller-owned integer PCM storage and returns a `BufferEvent`.
+Each successful event returns that storage, including pending and completion events.
+The decoder writes only the decoded packet prefix and preserves the remaining suffix.
+Samples retain the same playable `start` and `frames` range.
+The caller can return the storage on the next step.
+
 CAF can declare nominal final-packet capacity beyond the actual partial ALAC packet.
 The playable end cannot exceed the actual decoded packet extents.
 Explicit CAF channel layouts control the output speaker mask and WAVE channel order.
@@ -45,6 +52,8 @@ pub struct Audio { format: pcm.Format, channel_mask: u32, frames: i32, start: i3
 pub struct Decoded { info: Info, samples: i32[] }
 
 pub enum ReadEvent { Pending, Samples(Audio), Finished }
+
+pub enum BufferEvent { BufferPending(i32[]), BufferSamples(Audio), BufferFinished(i32[]) }
 
 struct Description { rate: i32, channels: i32, bytes: i32, frames: i32, depth: i32 }
 
@@ -295,6 +304,10 @@ pub function (value: Index) packet_count(): i32 {
   return value.sizes.len();
 }
 
+pub function (value: Index) max_packet_frames(): i32 {
+  return wire.be(value.configuration, 0, 4) as i32;
+}
+
 pub function cursor(index: Index): Result[Cursor, pcm.AudioError] {
   let codec = alac.create(index.configuration, index.limits.audio)?;
   return Ok(Cursor { index: index, codec: codec, packet: 0, target: 0i64 });
@@ -345,16 +358,16 @@ function ordered(own samples: i32[], format: pcm.Format, mask: u32, frames: i32)
 
 // One step validates one selected payload and returns its trimmed range in the same PCM buffer.
 // fern-lint: allow cyclomatic-complexity
-pub function (own state: Cursor) step(input: [u8]): Result[(Cursor, ReadEvent), pcm.AudioError] {
+pub function (own state: Cursor) step_into(input: [u8], own output: i32[]): Result[(Cursor, BufferEvent), pcm.AudioError] {
   if (input.len() != state.index.bytes) {
     return Err(pcm.Header);
   }
   if (state.packet >= state.index.sizes.len()) {
-    return Ok((state, Finished));
+    return Ok((state, BufferFinished(output)));
   }
   let Cursor { index, codec, packet, target } = state;
   let offset = index.offsets[packet];
-  let (next_codec, frame) = codec.decode_packet(input[offset:offset + index.sizes[packet]], index.limits.audio)?;
+  let (next_codec, frame) = codec.decode_packet_into(input[offset:offset + index.sizes[packet]], output, index.limits.audio)?;
   let alac.Frame { format, frames: raw, bytes_read, samples } = frame;
   if (raw as i64 != index.positions[packet + 1] - index.positions[packet]) {
     return Err(pcm.Header);
@@ -367,10 +380,24 @@ pub function (own state: Cursor) step(input: [u8]): Result[(Cursor, ReadEvent), 
   let begin = if (first > raw_start) { first } else { raw_start };
   let last = if (end < index.positions[packet + 1]) { end } else { index.positions[packet + 1] };
   if (last <= begin) {
-    return Ok((next, Pending));
+    return Ok((next, BufferPending(samples)));
   }
   let audio = Audio { format: format, channel_mask: index.info.channel_mask, frames: (last - begin) as i32, start: (begin - raw_start) as i32, position: begin - index.info.priming, packet: packet, samples: samples };
-  return Ok((next, Samples(audio)));
+  return Ok((next, BufferSamples(audio)));
+}
+
+pub function (own state: Cursor) step(input: [u8]): Result[(Cursor, ReadEvent), pcm.AudioError] {
+  if (input.len() != state.index.bytes) {
+    return Err(pcm.Header);
+  }
+  if (state.packet >= state.index.sizes.len()) {
+    return Ok((state, Finished));
+  }
+  let frames = (state.index.positions[state.packet + 1] - state.index.positions[state.packet]) as i32;
+  let count = pcm.sample_count(frames, state.index.info.format.channels, state.index.limits.audio)?;
+  let (next, event) = state.step_into(input, pcm.zeros(count))?;
+  let result = match (event) { BufferPending(_) => Pending, BufferSamples(audio) => Samples(audio), BufferFinished(_) => Finished };
+  return Ok((next, result));
 }
 
 pub function (own state: Cursor) next(input: [u8]): Result[(Cursor, Option[Audio]), pcm.AudioError] {

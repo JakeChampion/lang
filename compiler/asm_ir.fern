@@ -74,14 +74,18 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
 function emit_ccallv_shim(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("\n__fn___c_callv:\n    pushq %rbp\n    movq %rsp, %rbp\n");
   s = s.write("    movq 16(%rbp), %r11\n    movq 24(%rbp), %rax\n    movq 32(%rbp), %r10\n");
+  for i in 0..8 {
+    s = s.write("    movq " + util.i32_to_string(8 * i) + "(%r10), %xmm" + util.i32_to_string(i) + "\n");
+  }
+  // Integers 6 to 13 go on the stack, in the order of the arguments.
+  s = s.write("    andq $-16, %rsp\n    subq $64, %rsp\n");
+  for i in 0..8 {
+    s = s.write("    movq " + util.i32_to_string(48 + 8 * i) + "(%rax), %r10\n    movq %r10, " + util.i32_to_string(8 * i) + "(%rsp)\n");
+  }
   let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
   for i in 0..6 {
     s = s.write("    movq " + util.i32_to_string(8 * i) + "(%rax), " + regs[i] + "\n");
   }
-  for i in 0..8 {
-    s = s.write("    movq " + util.i32_to_string(8 * i) + "(%r10), %xmm" + util.i32_to_string(i) + "\n");
-  }
-  s = s.write("    andq $-16, %rsp\n");
   if (s.shared) {
     s = s.write(busy_give_x86());
   }

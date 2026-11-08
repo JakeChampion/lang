@@ -6,6 +6,7 @@ import "std/test";
 import "aac_kernel_check" as ref;
 import "caf_smoke_vectors";
 import "caf_vectors";
+import "alac_smoke_vectors";
 
 function fixture(): Result[u8[], string] {
   return ref.unpack(caf_smoke_vectors.vector().encoded);
@@ -264,6 +265,167 @@ function mutations(): test.TestOutcome {
   return test.pass();
 }
 
+function storage_matches(values: [i32], expected: [u8], capacity: i32): boolean {
+  if (values.len() != capacity) {
+    return false;
+  }
+  for i in 0..19 {
+    if (values[i] != ref.word(expected, 4 * i)) {
+      return false;
+    }
+  }
+  for i in 19..capacity {
+    if (values[i] != -1234567) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function buffer_events(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = ref.unpack(alac_smoke_vectors.vector().pcm) else {
+    return test.fail("PCM");
+  };
+  let Ok(index) = caf.inspect(input, caf.default_limits()) else {
+    return test.fail("index");
+  };
+  if (index.max_packet_frames() != 32) {
+    return test.fail("packet frame capacity");
+  }
+  let storage: i32[] = [];
+  for _ in 0..40 {
+    storage = storage.append(-1234567);
+  }
+  let Ok(state) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  let Ok((next, event)) = state.step_into(input, storage) else {
+    return test.fail("buffered packet");
+  };
+  let caf.BufferSamples(audio) = event else {
+    return test.fail("buffered sample event");
+  };
+  if (audio.start != 5 || audio.frames != 11 || !storage_matches(audio.samples, expected, 40)) {
+    return test.fail("packet prefix, trim, or retained suffix");
+  }
+  let Ok((finished, done)) = next.step_into(input, audio.samples) else {
+    return test.fail("buffered completion");
+  };
+  let caf.BufferFinished(returned) = done else {
+    return test.fail("completion must return storage");
+  };
+  if (!storage_matches(returned, expected, 40)) {
+    return test.fail("completion must preserve all storage");
+  }
+  let Ok(end) = finished.seek(11i64) else {
+    return test.fail("exact end");
+  };
+  let Ok((_, final)) = end.step_into(input, [7, 8, 9]) else {
+    return test.fail("completion requires no PCM capacity");
+  };
+  let caf.BufferFinished(tiny) = final else {
+    return test.fail("repeated buffer completion");
+  };
+  if (tiny.len() != 3 || tiny[0] != 7 || tiny[1] != 8 || tiny[2] != 9) {
+    return test.fail("tiny completion buffer");
+  }
+  for vector in caf_vectors.vectors() {
+    if (vector.name != "empty-presentation") {
+      continue;
+    }
+    let Ok(encoded) = ref.unpack(vector.encoded) else {
+      return test.fail("empty presentation");
+    };
+    let Ok(empty) = caf.inspect(encoded, caf.default_limits()) else {
+      return test.fail("empty index");
+    };
+    let Ok(cursor) = caf.cursor(empty) else {
+      return test.fail("empty cursor");
+    };
+    let scratch: i32[] = [];
+    for _ in 0..40 {
+      scratch = scratch.append(-1234567);
+    }
+    let Ok((_, pending)) = cursor.step_into(encoded, scratch) else {
+      return test.fail("empty packet range");
+    };
+    let caf.BufferPending(buffer) = pending else {
+      return test.fail("pending must return storage");
+    };
+    if (!storage_matches(buffer, expected, 40)) {
+      return test.fail("pending prefix or suffix");
+    }
+  }
+  return test.pass();
+}
+
+function buffer_errors(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = caf.inspect(input, caf.default_limits()) else {
+    return test.fail("index");
+  };
+  let Ok(state) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  if let Err(pcm.Buffer) = state.step_into(input, pcm.zeros(18)) {} else {
+    return test.fail("short caller buffer");
+  }
+  let Ok(next) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  if let Err(pcm.Header) = next.step_into(input[:input.len() - 1], pcm.zeros(40)) {} else {
+    return test.fail("changed input extent");
+  }
+  let changed = input.with(input.len() - 1, input[input.len() - 1] | 1u8);
+  let Ok(broken) = caf.inspect(changed, caf.default_limits()) else {
+    return test.fail("mode-only index");
+  };
+  let Ok(decoder) = caf.cursor(broken) else {
+    return test.fail("cursor");
+  };
+  if let Err(pcm.Header) = decoder.step_into(changed, pcm.zeros(40)) {} else {
+    return test.fail("buffered payload validation");
+  }
+  return test.pass();
+}
+
+function buffer_aliases(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = caf.inspect(input, caf.default_limits()) else {
+    return test.fail("index");
+  };
+  let Ok(state) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  let original: i32[] = [];
+  for _ in 0..40 {
+    original = original.append(7654321);
+  }
+  let storage = original;
+  let Ok((_, event)) = state.step_into(input, storage) else {
+    return test.fail("shared caller buffer");
+  };
+  let caf.BufferSamples(audio) = event else {
+    return test.fail("shared-buffer output");
+  };
+  for value in original {
+    if (value != 7654321) {
+      return test.fail("buffer reuse changed a live alias");
+    }
+  }
+  if (audio.samples.len() != 40 || audio.samples[39] != 7654321) {
+    return test.fail("shared-buffer suffix");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("CAF chunk, packet, clock, and seek boundaries");
   runner = runner.it("every incomplete byte prefix", prefixes);
@@ -274,5 +436,8 @@ function main(): i32 {
   runner = runner.it("invalid positions, one-packet work, retained trim storage, and completion", positions);
   runner = runner.it("header inspection defers payload validation to reads", payloads);
   runner = runner.it("every-byte mutations remain within explicit budgets", mutations);
+  runner = runner.it("sample, pending, and completion events return caller storage", buffer_events);
+  runner = runner.it("buffer and payload errors consume bounded state", buffer_errors);
+  runner = runner.it("shared caller buffers retain value semantics", buffer_aliases);
   return runner.finish();
 }
