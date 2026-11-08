@@ -33,6 +33,10 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdQPACK` | the QPACK decoder of `std/http/qpack`: encoder-stream bytes, then one header section | `tests/fuzz/stdparse.fern qpack` | the same |
 | `FuzzSelfHostStdQUIC` | the QUIC packet reader of `std/quic/packet`: the coalesced packets of a datagram, and the opening of each Initial packet with the client Initial keys | `tests/fuzz/stdparse.fern quic` | the same |
 | `FuzzSelfHostStdQUICFrames` | the QUIC frame reader of `std/quic/frames` on one packet payload | `tests/fuzz/stdparse.fern frames` | the same |
+| `FuzzSelfHostStdTLS` | the TLS record deframer of `std/tls/record`, the handshake message reader of `std/tls/message` on the handshake records, and the extension readers on each hello | `tests/fuzz/stdparse.fern tls` | the same |
+| `FuzzSelfHostStdTLSServer` | a server handshake of `std/tls/handshake` fed the input in pieces of eleven bytes | `tests/fuzz/stdparse.fern tls-server` | the same |
+| `FuzzSelfHostStdTLSClient` | a client handshake of `std/tls/handshake` fed the input as the server flight, in pieces of eleven bytes | `tests/fuzz/stdparse.fern tls-client` | the same |
+| `FuzzSelfHostStdX509` | the PEM reader of `std/tls/pem`, the certificate reader of `std/tls/x509`, and the chain verifier of `std/tls/verify` with each certificate as its own root | `tests/fuzz/stdparse.fern x509` | the same |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -72,6 +76,30 @@ They also carry a version negotiation packet, a Retry packet, a connection ID of
 The frame seeds carry ACK frames with ranges and with an ECN count, and CRYPTO and STREAM frames.
 They also carry a stream offset at the varint limit and a connection ID of 21 bytes.
 Two more carry a close reason that is not UTF-8 and an unknown frame type.
+
+The TLS seeds come from Go's `crypto/tls` and `crypto/x509`, so the Fern readers start from bytes that a different implementation wrote.
+The test runs a Go client against a Go server over loopback TCP and records the ClientHello and the reply of the server.
+The certificate seeds are self-signed certificates for `example.com` with ECDSA P-256, Ed25519 and RSA 2048 keys, and a PEM bundle of the three.
+
+`TestSelfHostStdTLSAgainstGo` runs the readers on those bytes and checks the result.
+Each Go certificate must parse and verify as its own root.
+An expired certificate and a certificate for a different name must parse, but they must not verify.
+The Go ClientHello must decode with no refused extension, and a server handshake must reach its request for a signature.
+
+A client handshake must refuse the reply that Go's server wrote for a different client.
+The test also sends the ClientHello of the Fern client to a Go server.
+The client must read the reply of that server to the end, verify the chain and connect.
+
+The server reader answers a request for a signature with zeros, so a hostile input can reach the next state.
+
+Other TLS seeds carry a ClientHello for TLS 1.2 and a ChangeCipherSpec record before the ClientHello.
+They also carry a message length past its record, a record over the size limit and an unknown content type.
+The client seeds start from the reply of a Go server to the ClientHello of the Fern client.
+The keys of that reply agree, so the flight decrypts.
+They also carry a HelloRetryRequest from a Go server that accepts only P-256.
+
+The certificate seeds carry a name of 250 bytes, a truncated certificate and a byte after the certificate.
+They also carry PEM text that is not base64 and a DER length of four bytes.
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
@@ -118,6 +146,10 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdQPACK` | 46110 | 1 | none |
 | `FuzzSelfHostStdQUIC` | 65431 | 4 | none |
 | `FuzzSelfHostStdQUICFrames` | 57205 | 1 | none |
+| `FuzzSelfHostStdTLS` | 45705 | 0 | none |
+| `FuzzSelfHostStdTLSServer` | 48819 | 3 | none |
+| `FuzzSelfHostStdTLSClient` | 47367 | 4 | none |
+| `FuzzSelfHostStdX509` | 57720 | 0 | none |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
@@ -131,9 +163,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the eighteen targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the twenty-two targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the eighteen targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the twenty-two targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits

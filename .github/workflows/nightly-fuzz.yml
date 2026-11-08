@@ -441,6 +441,10 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: qpack,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQPACK,        wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: quic,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQUIC,         wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: quic-frames, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQUICFrames, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: tls,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTLS,          wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: tls-server, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTLSServer, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: tls-client, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTLSClient, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: x509,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdX509,         wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
