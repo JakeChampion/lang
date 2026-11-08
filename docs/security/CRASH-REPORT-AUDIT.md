@@ -62,7 +62,8 @@ That call can signal other processes, and every program's seccomp allowlist then
 `__fern_bt_exit` walks the frame-pointer chain from the current frame.
 It stops after 64 frames.
 It also stops at a frame pointer below the stack pointer, or not 8-byte aligned, and at a return address below 64 KiB.
-It now also stops at a frame pointer at or above the application stack's top.
+It stops at a frame pointer at or above the application stack's top.
+It stops at a frame pointer that is not above the frame before it. So a record whose saved frame pointer is itself, or points back down the stack, prints once.
 
 The top is the stack pointer after the startup switch, stored in `__fern_stack_top`.
 A shared object runs on its caller's stack. Each export wrapper stores its own frame address there on entry, so the walk ends at the wrapper.
@@ -83,6 +84,7 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 | Stack overflow, a deep control, and an unrelated fault | `TestSelfHostStackOverflow` |
 | A stack mapping or a guard the kernel refuses stops startup before `main` | `TestSelfHostStackMapDenial`, `TestSelfHostStackGuardDenial` (`docs/security/STACK-GUARD.md`) |
 | A frame pointer above the stack top ends the walk, and the report keeps its cause line and status 134 | `TestSelfHostAbortBacktraceCorruptFrame`, on x86-64 and arm64 under QEMU |
+| A frame record that names itself as the frame before it prints once | `TestSelfHostAbortBacktraceCorruptFrame`, the `loop-frame` case, on x86-64 and arm64 under QEMU |
 | An abort in a shared object prints the Fern frames and stops at the export wrapper | `TestSharedLibX86AbortBacktrace`, `TestArm64SharedLibAbortBacktrace` |
 | An overflow report walks past the handler's record into the application stack | `TestSelfHostStackOverflow` requires two frames or more |
 | The sanitizer's use-after-free report carries a backtrace | `TestSelfHostSanitizeReportCarriesBacktrace` |
@@ -93,7 +95,7 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 
 | Gap | Consequence |
 |---|---|
-| A corrupt frame pointer inside the stack range | The walk prints whatever the frame holds, up to 64 lines, and stops at the first failed check; it cannot fault, because every address it reads is inside the mapped stack |
+| A corrupt frame pointer inside the stack range | The walk prints whatever the frame holds and stops at the first failed check: a frame pointer that does not climb, an unaligned one, or a return address below 64 KiB. A chain of words that climbs through the stack prints up to 64 lines. It cannot fault, because every address it reads is inside the mapped stack |
 | A frame the backend turned into a tail jump, or an x86-64 function that needs no frame pointer | The walk cannot see it; `docs/security/ABI-AUDIT.md` records both rules |
 | A real `SIGBUS` on arm64 | QEMU user mode does not enforce alignment, so the arm64 test covers the sent signal alone |
 | A report from a thread | The runtime has one context, so no second thread exists to report |
