@@ -11,8 +11,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
-| Opus | Yes | Partial | SILK, hybrid, and CELT packets, mono/stereo, all Opus output rates, loss concealment, and forward error correction. The CELT encoder uses 48 kHz fullband mono or stereo. |
-| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. Codec headers and playback trimming need a codec-specific layer. |
+| Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
+| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus layer supplies file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
 
@@ -155,12 +155,47 @@ Private channel mappings and the 255-channel bound have separate RFC checks.
 `std/opus/packet.parse_delimited` reads one stream from a multistream packet.
 It returns a normal Opus packet and the consumed byte count.
 Its 1,896 reference cases compare boundaries, frame lengths, padding, and packet bytes with pinned libopus.
-These modules supply file-decoder components. Complete file playback still needs the stream and granule rules.
 
 ```sh
 python3 scripts/gen-opus-headers-vectors.py
 python3 scripts/gen-opus-delimited-vectors.py
 ```
+
+## Ogg Opus files
+
+`std/audio/opusfile` decodes complete files from incremental input.
+It emits identification, comment, sample, and end events.
+It selects the first Opus logical stream, then accepts subsequent chains, including changes in channel count.
+Other interleaved streams remain subject to Ogg validation and storage limits.
+
+Call `feed` with the unconsumed input until it is consumed.
+Events can consume zero bytes. After the last input, drain events with `feed([])` until no event remains, then call `finish`.
+An error requires a new decoder.
+
+Output uses interleaved float samples at 48 kHz and the declared channel map.
+The file decoder applies header gain, pre-skip, initial granule offsets, and final sample trimming.
+The input sample rate remains metadata. Output can exceed the device sample range.
+Each sample event reports its playable position and absolute granule timestamp.
+Each end event reports the playable frame count for that logical stream.
+
+The decoder retains one page of completed packets, bounded partial packets, and codec state.
+A packet can span pages. Each sample event contains at most one packet of decoded output.
+The default limits allow eight coded streams, 46,080 raw output samples per packet, and 1 MiB per encoded packet.
+Separate limits bound comments, active Ogg streams, partial packet storage, and the number of logical links.
+Output limits include samples that pre-skip or final trimming removes.
+
+The complete-file corpus compares 139,814 float samples across ten files and twelve logical links with pinned libopusfile.
+It covers mono through eight-channel surround, positive and negative gain, large comment packets, continued audio packets, and changing chain formats.
+It also covers initial granule offsets, several packets per page, a single audio page, and a track with zero playable frames.
+Each case runs with complete and partial input. Sample differences must not exceed 0.000001.
+
+Separate tests check malformed pages, truncation, limits, pending output, and signed 64-bit timing boundaries.
+An independent complete file checks the self-host interpreter.
+
+Regenerate the file corpus with `scripts/gen-opus-file-vectors.py`.
+The generator verifies pinned libopusfile, libopus, and libogg archive hashes.
+Normal tests need no reference library or network access.
+Seeking and file-reader adapters remain separate work.
 
 ## Opus and Android
 

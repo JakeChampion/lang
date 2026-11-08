@@ -1,0 +1,142 @@
+import "std/audio/opusfile/timing";
+import "std/audio/pcm";
+import "std/test";
+
+function same(r: timing.Range, start: i32, end: i32, position: i64, granule: i64): boolean {
+  return r.start == start && r.end == end && r.position == position && r.granule == granule;
+}
+
+function valid_boundaries(one: timing.Range, two: timing.Range, three: timing.Range): boolean {
+  return same(one, 312, 960, 0i64, 312i64) && same(two, 0, 960, 648i64, 960i64) && same(three, 0, 840, 1608i64, 1920i64);
+}
+
+function boundaries(): test.TestOutcome {
+  let Ok(initial) = timing.create(312) else {
+    return test.fail("timing creation");
+  };
+  let Ok(first) = timing.page(initial, 1920i64, 1920i64, false) else {
+    return test.fail("first audio page");
+  };
+  let Ok((a, one)) = timing.advance(first, 960) else {
+    return test.fail("first packet");
+  };
+  let Ok((b, two)) = timing.advance(a, 960) else {
+    return test.fail("second packet");
+  };
+  let Ok(last) = timing.page(b, 2760i64, 960i64, true) else {
+    return test.fail("final page");
+  };
+  let Ok((done, three)) = timing.advance(last, 960) else {
+    return test.fail("final packet");
+  };
+  if (!valid_boundaries(one, two, three)) {
+    return test.fail("pre-skip, sample positions, or final trim");
+  }
+  let Ok(total) = timing.finish(done) else {
+    return test.fail("complete sample count");
+  };
+  return test.assert_eq(total, 2448i64);
+}
+
+function offsets(): test.TestOutcome {
+  let Ok(initial) = timing.create(312) else {
+    return test.fail("timing creation");
+  };
+  let Ok(first) = timing.page(initial, 100960i64, 960i64, false) else {
+    return test.fail("cropped start");
+  };
+  let Ok((next, one)) = timing.advance(first, 960) else {
+    return test.fail("cropped first packet");
+  };
+  let Ok(last) = timing.page(next, 101800i64, 960i64, true) else {
+    return test.fail("cropped final page");
+  };
+  let Ok((done, two)) = timing.advance(last, 960) else {
+    return test.fail("cropped final packet");
+  };
+  if (!same(one, 312, 960, 0i64, 100312i64) || !same(two, 0, 840, 648i64, 100960i64)) {
+    return test.fail("granule offset changes timestamps without changing pre-skip");
+  }
+  let Ok(total) = timing.finish(done) else {
+    return test.fail("cropped sample count");
+  };
+  return test.assert_eq(total, 1488i64);
+}
+
+function single_page(): test.TestOutcome {
+  let Ok(initial) = timing.create(312) else {
+    return test.fail("timing creation");
+  };
+  for granule in [500i64, 100500i64] {
+    let Ok(page) = timing.page(initial, granule, 960i64, true) else {
+      return test.fail("single audio page");
+    };
+    let Ok((done, range)) = timing.advance(page, 960) else {
+      return test.fail("single packet");
+    };
+    let expected = if (granule == 500i64) { 188i64 } else { 648i64 };
+    let Ok(total) = timing.finish(done) else {
+      return test.fail("single page count");
+    };
+    if ((range.end - range.start) as i64 != expected || total != expected) {
+      return test.fail("single page initial granule and final trim");
+    }
+  }
+  return test.pass();
+}
+
+function invalid_pages(): test.TestOutcome {
+  let Ok(initial) = timing.create(312) else {
+    return test.fail("timing creation");
+  };
+  if let Err(pcm.Header) = timing.page(initial, 959i64, 960i64, false) {} else {
+    return test.fail("first granule below decoded duration");
+  }
+  if let Err(pcm.Header) = timing.page(initial, 311i64, 960i64, true) {} else {
+    return test.fail("final granule below pre-skip");
+  }
+  let Ok(page) = timing.page(initial, 960i64, 960i64, false) else {
+    return test.fail("first page");
+  };
+  if let Err(pcm.Header) = timing.page(page, 1920i64, 960i64, false) {} else {
+    return test.fail("undecoded page packets");
+  }
+  let Ok((next, _)) = timing.advance(page, 960) else {
+    return test.fail("first packet");
+  };
+  for granule in [959i64, 1919i64, 1921i64] {
+    if let Err(pcm.Header) = timing.page(next, granule, 960i64, false) {} else {
+      return test.fail("nonfinal granule must increase by the decoded duration");
+    }
+  }
+  return test.pass();
+}
+
+function overflow(): test.TestOutcome {
+  let Ok(initial) = timing.create(0) else {
+    return test.fail("timing creation");
+  };
+  let Ok(page) = timing.page(initial, 9223372036854775807i64, 960i64, false) else {
+    return test.fail("last representable granule");
+  };
+  let Ok((next, range)) = timing.advance(page, 960) else {
+    return test.fail("last representable packet");
+  };
+  if (range.granule != 9223372036854774847i64) {
+    return test.fail("large granule stays exact");
+  }
+  if let Err(pcm.Limit) = timing.page(next, 9223372036854775807i64, 960i64, false) {} else {
+    return test.fail("granule addition overflow");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Opus file timing");
+  runner = runner.it("pre-skip and final packet trim", boundaries);
+  runner = runner.it("initial granule offsets", offsets);
+  runner = runner.it("one audio page with EOS", single_page);
+  runner = runner.it("invalid and incomplete page timelines", invalid_pages);
+  runner = runner.it("signed 64-bit granule boundaries", overflow);
+  return runner.finish();
+}

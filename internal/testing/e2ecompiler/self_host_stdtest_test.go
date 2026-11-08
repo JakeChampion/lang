@@ -93,8 +93,8 @@ var interpSlowStdTests = map[string]bool{
 	"mitigations": true, "mlkem768": true, "mp3": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
 	"opus_bands": true, "opus_celt": true, "opus_celt_encoder": true,
 	"opus_celt_frame": true, "opus_celt_prefilter": true, "opus_energy": true,
-	// Full PCM corpora use the compiled gates. The independent multistream smoke stays here.
-	"opus_playback": true, "opus_multistream": true,
+	// Full PCM corpora use the compiled gates. Independent smoke suites stay here.
+	"opus_playback": true, "opus_multistream": true, "opus_file": true,
 	"opus_mdct": true, "opus_packet": true, "opus_pitch_doubling": true, "opus_pvq": true,
 	"opus_rate": true, "opus_vq": true, "ordmap": true, "p256": true, "parse_limits": true,
 	"pmap": true, "publicsuffix": true, "pvec": true, "quic_conn": true, "rsa": true,
@@ -363,6 +363,9 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"opus_headers", langSrcAbs(t, "tests/stdlib/opus_headers_test.fern"), ""},
 		{"opus_multistream", langSrcAbs(t, "tests/stdlib/opus_multistream_test.fern"), ""},
 		{"opus_multistream_smoke", langSrcAbs(t, "tests/stdlib/opus_multistream_smoke_test.fern"), ""},
+		{"opus_file", langSrcAbs(t, "tests/stdlib/opus_file_test.fern"), ""},
+		{"opus_file_smoke", langSrcAbs(t, "tests/stdlib/opus_file_smoke_test.fern"), ""},
+		{"opus_timing", langSrcAbs(t, "tests/stdlib/opus_timing_test.fern"), ""},
 		{"opus_pitch", langSrcAbs(t, "tests/stdlib/opus_pitch_test.fern"), ""},
 		{"opus_pitch_doubling", langSrcAbs(t, "tests/stdlib/opus_pitch_doubling_test.fern"), ""},
 		{"net_broadcast", langSrcAbs(t, "tests/stdlib/net_broadcast_test.fern"), ""},

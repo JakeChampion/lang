@@ -1,0 +1,248 @@
+import "std/audio/opusfile";
+import "std/audio/opusfile/headers";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/base64";
+import "std/deflate";
+import "std/f32";
+import "std/test";
+
+pub struct Expected { serial: u32, initial: i64, frames: i64, fields: i64[], mapping: u8[], tags: headers.Tags, pcm: u8[] }
+
+pub struct Reference { bytes: u8[], links: Expected[] }
+
+struct Progress { link: i32, stage: i32, samples: i32 }
+
+function word(bytes: [u8], at: i32): i32 {
+  return wire.le(bytes, at, 4) as i32;
+}
+
+function blob(bytes: [u8], at: i32): (u8[], i32) {
+  let size = word(bytes, at);
+  let copied: u8[] = [];
+  for i in 0..size {
+    copied = copied.append(bytes[at + 4 + i]);
+  }
+  return (copied, at + 4 + size);
+}
+
+function expected(bytes: [u8], at: i32): (Expected, i32) {
+  let fields: i64[] = [];
+  for i in 0..8 {
+    fields = fields.append(wire.le(bytes, at + 20 + i * 8, 8) as i64);
+  }
+  let (mapping, map_end) = blob(bytes, at + 84);
+  let (vendor, vendor_end) = blob(bytes, map_end);
+  let count = word(bytes, vendor_end);
+  let cursor = vendor_end + 4;
+  let comments: u8[][] = [];
+  for _ in 0..count {
+    let (value, end) = blob(bytes, cursor);
+    comments = comments.append(value);
+    cursor = end;
+  }
+  let (suffix, suffix_end) = blob(bytes, cursor);
+  let (samples, end) = blob(bytes, suffix_end);
+  let value = Expected {
+    serial: wire.le(bytes, at, 4) as u32, initial: wire.le(bytes, at + 4, 8) as i64,
+    frames: wire.le(bytes, at + 12, 8) as i64, fields: fields, mapping: mapping,
+    tags: headers.Tags { vendor: vendor, comments: comments, suffix: suffix }, pcm: samples,
+  };
+  return (value, end);
+}
+
+pub function reference(encoded: string): Result[Reference, pcm.AudioError] {
+  let packed = match (base64.decode(encoded)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let bytes = match (deflate.zlib_decode(packed, 1048576)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let (raw, raw_end) = blob(bytes, 0);
+  let links: Expected[] = [];
+  let at = raw_end + 4;
+  for _ in 0..word(bytes, raw_end) {
+    let (link, end) = expected(bytes, at);
+    links = links.append(link);
+    at = end;
+  }
+  if (at != bytes.len()) {
+    return Err(pcm.Header);
+  }
+  return Ok(Reference { bytes: raw, links: links });
+}
+
+function equal(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function info_matches(info: opusfile.Info, want: Expected, index: i32): boolean {
+  if (info.index != index || info.serial != want.serial) {
+    return false;
+  }
+  let h = info.header;
+  let fields: i64[] = [h.version as i64, h.channels as i64, h.pre_skip as i64, h.input_sample_rate as i64, h.output_gain as i64, h.mapping_family as i64, h.streams as i64, h.coupled as i64];
+  for i in 0..8 {
+    if (fields[i] != want.fields[i]) {
+      return false;
+    }
+  }
+  return equal(h.mapping, want.mapping);
+}
+
+function tags_match(actual: headers.Tags, want: headers.Tags): boolean {
+  if (!equal(actual.vendor, want.vendor) || !equal(actual.suffix, want.suffix) || actual.comments.len() != want.comments.len()) {
+    return false;
+  }
+  for i in 0..want.comments.len() {
+    if (!equal(actual.comments[i], want.comments[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function valid_offsets(actual: opusfile.Audio, raw: [u8]): boolean {
+  return actual.page_offset >= 0i64 && actual.page_offset <= (raw.len() - 4) as i64
+    && actual.packet_offset >= actual.page_offset && actual.packet_offset < raw.len() as i64
+    && wire.tag(raw, actual.page_offset as i32, "OggS");
+}
+
+function samples(actual: opusfile.Audio, want: Expected, progress: Progress): Result[Progress, string] {
+  let channels = actual.info.header.channels;
+  let count = actual.frames * channels;
+  if (actual.frames < 0 || count != actual.samples.len() || count > want.pcm.len() / 4 - progress.samples) {
+    return Err("sample count exceeds the reference");
+  }
+  if (actual.frames > 0) {
+    let position = (progress.samples / channels) as i64;
+    if (actual.position != position || actual.granule != want.initial + want.fields[2] + position) {
+      return Err("playable frame position or absolute granule");
+    }
+  }
+  for i in 0..count {
+    let expected = f32_from_bits(word(want.pcm, (progress.samples + i) * 4));
+    if (!actual.samples[i].is_finite() || (actual.samples[i] - expected).abs() > 0.000001f32) {
+      return Err("PCM sample " + (progress.samples + i).to_string() + " actual " + actual.samples[i].to_string() + " expected " + expected.to_string());
+    }
+  }
+  return Ok(Progress { ...progress, samples: progress.samples + count });
+}
+
+function begin_event(info: opusfile.Info, want: Expected, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 0 || !info_matches(info, want, progress.link)) {
+    return Err("identification header or event order");
+  }
+  return Ok(Progress { ...progress, stage: 1 });
+}
+
+function metadata_event(metadata: opusfile.Metadata, want: Expected, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 1 || !info_matches(metadata.info, want, progress.link) || !tags_match(metadata.tags, want.tags)) {
+    return Err("comment header or event order");
+  }
+  return Ok(Progress { ...progress, stage: 2 });
+}
+
+function audio_event(audio: opusfile.Audio, want: Expected, progress: Progress, raw: [u8]): Result[Progress, string] {
+  if (progress.stage != 2 || !info_matches(audio.info, want, progress.link) || !valid_offsets(audio, raw)) {
+    return Err("audio metadata, offsets, or event order");
+  }
+  return samples(audio, want, progress);
+}
+
+function end_event(summary: opusfile.Summary, want: Expected, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 2 || summary.frames != want.frames || summary.initial_granule != want.initial || progress.samples != want.pcm.len() / 4) {
+    return Err("final frame count, initial granule, or complete PCM");
+  }
+  return Ok(Progress { link: progress.link + 1, stage: 0, samples: 0 });
+}
+
+function check_event(event: opusfile.Event, want: Expected, progress: Progress, raw: [u8]): Result[Progress, string] {
+  match (event) {
+    opusfile.Begin(info) => {
+      return begin_event(info, want, progress);
+    },
+    opusfile.Tags(metadata) => {
+      return metadata_event(metadata, want, progress);
+    },
+    opusfile.Samples(audio) => {
+      return audio_event(audio, want, progress, raw);
+    },
+    opusfile.End(summary) => {
+      return end_event(summary, want, progress);
+    }
+  }
+}
+
+function chunk(remaining: i32, turn: i32, partial: boolean): i32 {
+  if (!partial) {
+    return remaining;
+  }
+  let limits = [1, 3, 27, 255, 4096, 65536];
+  let count = limits[turn % limits.len()];
+  return if (count > remaining) { remaining } else { count };
+}
+
+function event_progress(event: Option[opusfile.Event], ref: Reference, progress: Progress): Result[Progress, string] {
+  match (event) {
+    None => {
+      return Ok(progress);
+    },
+    Some(value) => {
+      if (progress.link >= ref.links.len()) {
+        return Err("too many logical streams");
+      }
+      return check_event(value, ref.links[progress.link], progress, ref.bytes);
+    }
+  }
+}
+
+function valid_progress(used: i32, count: i32, turn: i32, total: i32): boolean {
+  return used >= 0 && used <= count && turn <= total * 2 + 64;
+}
+
+function ended(event: Option[opusfile.Event], used: i32, count: i32, at: i32, total: i32): Result[boolean, string] {
+  if (used == 0) {
+    if let None = event {
+      if (count != 0 || at != total) {
+        return Err("no progress before input ends");
+      }
+      return Ok(true);
+    }
+  }
+  return Ok(false);
+}
+
+function run(ref: Reference, own state: opusfile.Decoder, partial: boolean): Result[Progress, string] {
+  let at = 0;
+  let turn = 0;
+  let progress = Progress { link: 0, stage: 0, samples: 0 };
+  while (true) {
+    let count = chunk(ref.bytes.len() - at, turn, partial);
+    let (next, used, event) = match (state.feed(ref.bytes[at:at + count])) { Ok(value) => value, Err(error) => { return Err("file decode at " + at.to_string() + ": " + error.to_string()); } };
+    state = next;
+    if (!valid_progress(used, count, turn, ref.bytes.len())) {
+      return Err("input progress");
+    }
+    progress = event_progress(event, ref, progress)?;
+    at += used;
+    turn += 1;
+    if (ended(event, used, count, at, ref.bytes.len())?) {
+      break;
+    }
+  }
+  if let Err(error) = state.finish() {
+    return Err("file completion: " + error.to_string());
+  }
+  return Ok(progress);
+}
+
+pub function check_case(ref: Reference, partial: boolean): test.TestOutcome {
+  let state = match (opusfile.decoder(opusfile.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("file decoder creation"); } };
+  let progress = match (run(ref, state, partial)) { Ok(value) => value, Err(message) => { return test.fail(message); } };
+  return test.assert_eq(progress.link, ref.links.len());
+}

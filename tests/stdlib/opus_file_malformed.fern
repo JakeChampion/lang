@@ -1,0 +1,164 @@
+import "std/audio/opusfile";
+import "std/audio/opusfile/headers";
+import "std/audio/pcm";
+import "std/opus/multistream";
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+
+function raw(): Result[u8[], pcm.AudioError] {
+  return Ok(opus_file_check.reference(opus_file_vectors.SMOKE)?.bytes);
+}
+
+function page_size(bytes: [u8], at: i32): i32 {
+  let size = 27 + bytes[at + 26] as i32;
+  for i in 0..bytes[at + 26] as i32 {
+    size += bytes[at + 27 + i] as i32;
+  }
+  return size;
+}
+
+// A bitwise checksum keeps malformed-page construction independent of the decoder table.
+function seal(bytes: u8[], at: i32): u8[] {
+  let size = page_size(bytes, at);
+  let crc = 0u32;
+  for i in 0..size {
+    let byte = if (i >= 22 && i < 26) { 0u8 } else { bytes[at + i] };
+    crc = crc ^ byte as u32 << 24u32;
+    for _ in 0..8 {
+      crc = if ((crc & 2147483648u32) != 0u32) { crc << 1u32 ^ 79764919u32 } else { crc << 1u32 };
+    }
+  }
+  for i in 0..4 {
+    bytes = bytes.with(at + 22 + i, (crc >> (i * 8) as u32) as u8);
+  }
+  return bytes;
+}
+
+function stopped(event: Option[opusfile.Event], used: i32, at: i32, total: i32): Result[boolean, pcm.AudioError] {
+  if (used == 0) {
+    if let None = event {
+      if (at != total) {
+        return Err(pcm.Buffer);
+      }
+      return Ok(true);
+    }
+  }
+  return Ok(false);
+}
+
+function consume(bytes: [u8], limits: opusfile.Limits): Result[void, pcm.AudioError] {
+  let state = opusfile.decoder(limits)?;
+  let at = 0;
+  let turn = 0;
+  while (true) {
+    let (next, used, event) = state.feed(bytes[at:])?;
+    state = next;
+    if (used < 0 || used > bytes.len() - at || turn > bytes.len() * 2 + 64) {
+      return Err(pcm.Buffer);
+    }
+    at += used;
+    turn += 1;
+    if (stopped(event, used, at, bytes.len())?) {
+      break;
+    }
+  }
+  return state.finish();
+}
+
+function expect(bytes: [u8], limits: opusfile.Limits, error: pcm.AudioError): boolean {
+  match (consume(bytes, limits)) {
+    Err(value) => {
+      return value == error;
+    },
+    Ok(_) => {
+      return false;
+    }
+  }
+}
+
+pub function truncation(): test.TestOutcome {
+  let bytes = match (raw()) { Ok(value) => value, Err(_) => { return test.fail("reference file"); } };
+  let first = page_size(bytes, 0);
+  let second = first + page_size(bytes, first);
+  for size in [1, 26, 27, first - 1, first, first + 1, second - 1, second, second + 1, bytes.len() - 1] {
+    if (!expect(bytes[:size], opusfile.default_limits(), pcm.Truncated)) {
+      return test.fail("incomplete file prefix " + size.to_string());
+    }
+  }
+  return test.assert_true(expect([], opusfile.default_limits(), pcm.Header));
+}
+
+pub function bad_headers(): test.TestOutcome {
+  let bytes = match (raw()) { Ok(value) => value, Err(_) => { return test.fail("reference file"); } };
+  let start = 27 + bytes[26] as i32;
+  let cases = [seal(bytes.with(6, 1u8), 0), seal(bytes.with(5, 6u8), 0), seal(bytes.with(start, 0u8), 0), seal(bytes.with(start + 10, 65u8).with(start + 11, 3u8), 0)];
+  for invalid in cases {
+    if (!expect(invalid, opusfile.default_limits(), pcm.Header)) {
+      return test.fail("identification page, format, or pre-skip");
+    }
+  }
+  if (!expect(seal(bytes.with(start + 8, 16u8), 0), opusfile.default_limits(), pcm.Unsupported)) {
+    return test.fail("incompatible header version");
+  }
+  if (!expect(seal(bytes.with(start + 18, 2u8), 0), opusfile.default_limits(), pcm.Unsupported)) {
+    return test.fail("unsupported channel mapping family");
+  }
+  return test.pass();
+}
+
+pub function bad_tags(): test.TestOutcome {
+  let bytes = match (raw()) { Ok(value) => value, Err(_) => { return test.fail("reference file"); } };
+  let page = page_size(bytes, 0);
+  let body = page + 27 + bytes[page + 26] as i32;
+  let cases = [seal(bytes.with(page + 6, 1u8), page), seal(bytes.with(body, 0u8), page)];
+  for invalid in cases {
+    if (!expect(invalid, opusfile.default_limits(), pcm.Header)) {
+      return test.fail("comment magic or page granule");
+    }
+  }
+  return test.pass();
+}
+
+pub function limits(): test.TestOutcome {
+  let bytes = match (raw()) { Ok(value) => value, Err(_) => { return test.fail("reference file"); } };
+  let base = opusfile.default_limits();
+  let cases = [opusfile.Limits { ...base, max_links: 0 }, opusfile.Limits { ...base, tags: headers.TagLimits { ...base.tags, max_comments: 2 } }, opusfile.Limits { ...base, audio: multistream.Limits { ...base.audio, max_samples: 959 } }, opusfile.Limits { ...base, audio: multistream.Limits { ...base.audio, max_input_bytes: 1 } }];
+  for limit in cases {
+    if (!expect(bytes, limit, pcm.Limit)) {
+      return test.fail("header, input, or decoded storage budget");
+    }
+  }
+  let chain = match (opus_file_check.reference(opus_file_vectors.CASES[8])) { Ok(value) => value, Err(_) => { return test.fail("chained reference"); } };
+  return test.assert_true(expect(chain.bytes, opusfile.Limits { ...base, max_links: 1 }, pcm.Limit));
+}
+
+function drain_events(own state: opusfile.Decoder): Result[void, pcm.AudioError] {
+  let empty = false;
+  while (!empty) {
+    let (next, _, event) = state.feed([])?;
+    state = next;
+    if let None = event {
+      empty = true;
+    }
+  }
+  return state.finish();
+}
+
+pub function drain(): test.TestOutcome {
+  let bytes = match (raw()) { Ok(value) => value, Err(_) => { return test.fail("reference file"); } };
+  let state = match (opusfile.decoder(opusfile.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+  let at = 0;
+  while (at < bytes.len()) {
+    let (next, used, _) = match (state.feed(bytes[at:])) { Ok(value) => value, Err(_) => { return test.fail("complete file feed"); } };
+    state = next;
+    at += used;
+  }
+  if let Err(pcm.Buffer) = state.finish() {} else {
+    return test.fail("undelivered packets need a drain");
+  }
+  if let Err(_) = drain_events(state) {
+    return test.fail("drained file completion");
+  }
+  return test.pass();
+}
