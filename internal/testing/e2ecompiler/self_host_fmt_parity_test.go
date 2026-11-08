@@ -22,11 +22,16 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
-	{"function-attribute-name-collisions", `@norc function count(base: usize): usize { return base; }
-struct Frames { base: usize }
-function (f: Frames) count(): usize { return count(f.base); }
-function release(base: usize): void {}
-@norc function (f: Frames) release(): void {}
+	{"norc-marks-the-free-function-not-the-method", `struct Pool { base: usize }
+
+@norc
+pub function count(base: usize): usize {
+  return base;
+}
+
+pub function (p: Pool) count(): usize {
+  return count(p.base);
+}
 `},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };

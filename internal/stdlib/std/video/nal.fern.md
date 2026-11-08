@@ -73,25 +73,34 @@ pub function to_annex_b(input: [u8], prefix_bytes: i32, limits: frame.Limits): R
   return Ok(output);
 }
 
+// Whether the unit at `pos` is of the parameter-set type the array holds.
+function unit_kind_ok(input: [u8], pos: i32, nal_type: i32, hevc: boolean): boolean {
+  if ((input[pos] & 128u8) != 0u8) {
+    return false;
+  }
+  let kind = if (hevc) { input[pos] as i32 >> 1 & 63 } else { input[pos] as i32 & 31 };
+  if (kind != nal_type) {
+    return false;
+  }
+  return !hevc || (input[pos + 1] & 7u8) != 0u8;
+}
+
 function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boolean, own output: u8[], budget: i32): Result[Units, frame.VideoError] {
   let pos = at;
+  let least = if (hevc) { 2 } else { 1 };
   for _ in 0..count {
     if (input.len() - pos < 2) {
       return Err(frame.Truncated);
     }
     let size = wire.be(input, pos, 2) as i32;
     pos += 2;
-    if (size < (if (hevc) { 2 } else { 1 })) {
+    if (size < least) {
       return Err(frame.Header);
     }
     if (size > input.len() - pos) {
       return Err(frame.Truncated);
     }
-    if ((input[pos] & 128u8) != 0u8) {
-      return Err(frame.Header);
-    }
-    let kind = if (hevc) { input[pos] as i32 >> 1 & 63 } else { input[pos] as i32 & 31 };
-    if (kind != nal_type || hevc && (input[pos + 1] & 7u8) == 0u8) {
+    if (!unit_kind_ok(input, pos, nal_type, hevc)) {
       return Err(frame.Header);
     }
     output = append_unit(output, input, pos, size, budget)?;
@@ -100,18 +109,20 @@ function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boole
   return Ok(Units { bytes: output, next_offset: pos });
 }
 
+// The AVC profiles whose avcC record may carry the extension block.
 function extended_profile(profile: u8): boolean {
-  return profile == 100 || profile == 110 || profile == 122 || profile == 144 || profile == 244 || profile == 44 || profile == 83 || profile == 86 || profile == 118 || profile == 128 || profile == 138 || profile == 139 || profile == 134 || profile == 135;
+  for p in [100, 110, 122, 144, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135] {
+    if (p == profile as i32) {
+      return true;
+    }
+  }
+  return false;
 }
 
-pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
-  frame.check_packet(input, limits)?;
-  if (input.len() < 7) {
-    return Err(frame.Truncated);
-  }
-  if (input[0] != 1) {
-    return Err(frame.Unsupported);
-  }
+struct Sets { prefix: i32, sps: u8[], pps: u8[], at: i32 }
+
+// The length size, then the SPS and PPS arrays of an avcC record.
+function avc_sets(input: [u8], limits: frame.Limits): Result[Sets, frame.VideoError] {
   if ((input[4] & 252u8) != 252u8 || (input[5] & 224u8) != 224u8) {
     return Err(frame.Header);
   }
@@ -131,41 +142,67 @@ pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame
     return Err(frame.Unsupported);
   }
   let pps = read_units(input, at + 1, npps, 8, false, [], limits.max_packet_bytes - sps.bytes.len())?;
-  at = pps.next_offset;
-  let csd0 = sps.bytes;
+  return Ok(Sets { prefix: prefix, sps: sps.bytes, pps: pps.bytes, at: pps.next_offset });
+}
+
+// The extension block after the PPS array, appended to the SPS units.
+function avc_extensions(input: [u8], at: i32, own csd0: u8[], budget: i32): Result[Units, frame.VideoError] {
+  if (!extended_profile(input[1])) {
+    return Err(frame.Unsupported);
+  }
+  if (input.len() - at < 4) {
+    return Err(frame.Truncated);
+  }
+  if ((input[at] & 252u8) != 252u8 || (input[at + 1] & 248u8) != 248u8 || (input[at + 2] & 248u8) != 248u8) {
+    return Err(frame.Header);
+  }
+  return read_units(input, at + 4, input[at + 3] as i32, 13, false, csd0, budget);
+}
+
+pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
+  frame.check_packet(input, limits)?;
+  if (input.len() < 7) {
+    return Err(frame.Truncated);
+  }
+  if (input[0] != 1) {
+    return Err(frame.Unsupported);
+  }
+  let sets = avc_sets(input, limits)?;
+  let at = sets.at;
+  let csd0 = sets.sps;
   if (at < input.len()) {
-    if (!extended_profile(input[1])) {
-      return Err(frame.Unsupported);
-    }
-    if (input.len() - at < 4) {
-      return Err(frame.Truncated);
-    }
-    if ((input[at] & 252u8) != 252u8 || (input[at + 1] & 248u8) != 248u8 || (input[at + 2] & 248u8) != 248u8) {
-      return Err(frame.Header);
-    }
-    let extensions = read_units(input, at + 4, input[at + 3] as i32, 13, false, csd0, limits.max_packet_bytes - pps.bytes.len())?;
+    let extensions = avc_extensions(input, at, csd0, limits.max_packet_bytes - sets.pps.len())?;
     csd0 = extensions.bytes;
     at = extensions.next_offset;
   }
   if (at != input.len()) {
     return Err(frame.Header);
   }
-  return Ok(Config { length_size: prefix, csd0: csd0, csd1: pps.bytes });
+  return Ok(Config { length_size: sets.prefix, csd0: csd0, csd1: sets.pps });
 }
 
-pub function hevc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
-  frame.check_packet(input, limits)?;
-  if (input.len() < 23) {
-    return Err(frame.Truncated);
-  }
-  if (input[0] != 1) {
-    return Err(frame.Unsupported);
-  }
-  if ((input[13] & 240u8) != 240u8 || (input[15] & 252u8) != 252u8 || (input[16] & 252u8) != 252u8 || (input[17] & 248u8) != 248u8 || (input[18] & 248u8) != 248u8) {
+struct Arrays { vps: u8[], sps: u8[], pps: u8[], sei: u8[] }
+
+// The reserved bits of an hvcC record's fixed part, all set.
+function hevc_header_ok(input: [u8]): boolean {
+  return (input[13] & 240u8) == 240u8 && (input[15] & 252u8) == 252u8 && (input[16] & 252u8) == 252u8 && (input[17] & 248u8) == 248u8 && (input[18] & 248u8) == 248u8;
+}
+
+// The NAL type an array holds: VPS, SPS, PPS, or prefix or suffix SEI.
+function hevc_array_kind(input: [u8], at: i32): Result[i32, frame.VideoError] {
+  if ((input[at] & 64u8) != 0u8) {
     return Err(frame.Header);
   }
-  let prefix = (input[21] & 3u8) as i32 + 1;
-  length_size(prefix)?;
+  let kind = (input[at] & 63u8) as i32;
+  if ((kind < 32 || kind > 34) && kind != 39 && kind != 40) {
+    return Err(frame.Unsupported);
+  }
+  return Ok(kind);
+}
+
+// The arrays of an hvcC record from offset 23, each into its own buffer,
+// within one budget for all four.
+function hevc_arrays(input: [u8], limits: frame.Limits): Result[Arrays, frame.VideoError] {
   let vps: u8[] = [];
   let sps: u8[] = [];
   let pps: u8[] = [];
@@ -175,13 +212,7 @@ pub function hevc_config(input: [u8], limits: frame.Limits): Result[Config, fram
     if (input.len() - at < 3) {
       return Err(frame.Truncated);
     }
-    if ((input[at] & 64u8) != 0u8) {
-      return Err(frame.Header);
-    }
-    let kind = (input[at] & 63u8) as i32;
-    if ((kind < 32 || kind > 34) && kind != 39 && kind != 40) {
-      return Err(frame.Unsupported);
-    }
+    let kind = hevc_array_kind(input, at)?;
     let count = wire.be(input, at + 1, 2) as i32;
     let used = vps.len() + sps.len() + pps.len() + sei.len();
     if (kind == 32) {
@@ -206,19 +237,44 @@ pub function hevc_config(input: [u8], limits: frame.Limits): Result[Config, fram
       at = units.next_offset;
     }
   }
-  if (at != input.len() || vps.len() == 0 || sps.len() == 0 || pps.len() == 0) {
+  if (at != input.len()) {
     return Err(frame.Header);
   }
-  let output = vps;
-  for b in sps {
+  return Ok(Arrays { vps: vps, sps: sps, pps: pps, sei: sei });
+}
+
+// The arrays in VPS, SPS, PPS, SEI order as one buffer.
+function joined(a: Arrays): u8[] {
+  let output = a.vps;
+  for b in a.sps {
     output = output.append(b);
   }
-  for b in pps {
+  for b in a.pps {
     output = output.append(b);
   }
-  for b in sei {
+  for b in a.sei {
     output = output.append(b);
   }
-  return Ok(Config { length_size: prefix, csd0: output, csd1: [] });
+  return output;
+}
+
+pub function hevc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
+  frame.check_packet(input, limits)?;
+  if (input.len() < 23) {
+    return Err(frame.Truncated);
+  }
+  if (input[0] != 1) {
+    return Err(frame.Unsupported);
+  }
+  if (!hevc_header_ok(input)) {
+    return Err(frame.Header);
+  }
+  let prefix = (input[21] & 3u8) as i32 + 1;
+  length_size(prefix)?;
+  let a = hevc_arrays(input, limits)?;
+  if (a.vps.len() == 0 || a.sps.len() == 0 || a.pps.len() == 0) {
+    return Err(frame.Header);
+  }
+  return Ok(Config { length_size: prefix, csd0: joined(a), csd1: [] });
 }
 ```

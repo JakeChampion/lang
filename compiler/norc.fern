@@ -107,10 +107,16 @@ pub function interrupt_target_diags(mod: parser.Module, target: string): util.Di
   return out;
 }
 
+// Whether the mark is this function's: a method may share a name with a
+// marked free function, so the mark's position decides.
+function marks_function(fd: parser.FuncDecl, m: parser.FuncMark): boolean {
+  return fd.name == m.func_name && fd.line == m.line && fd.col == m.col;
+}
+
 function interrupt_shape(mod: parser.Module, m: parser.FuncMark, what: string, module: string): util.Diag[] {
   let out: util.Diag[] = [];
   for fd in mod.funcs {
-    if (fd.name == m.func_name && (fd.params.len() > 0 || fd.ret_type != "void")) {
+    if (marks_function(fd, m) && (fd.params.len() > 0 || fd.ret_type != "void")) {
       out = out.append(util.violation_diag("E103", what + "must take no parameters and return void", module, m.line, m.col));
     }
   }
@@ -144,7 +150,7 @@ pub function diags(mod: parser.Module): util.Diag[] {
   }
   for m in rule {
     for fd in mod.funcs {
-      if (fd.name == m.func_name) {
+      if (marks_function(fd, m)) {
         out = check_function(fd, Ctx { attr: m.attr, fname: util.mangled_name(fd.name), module: util.mangled_module(fd.name), callable: callable }, m, out);
       }
     }
