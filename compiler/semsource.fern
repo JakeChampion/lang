@@ -9349,38 +9349,38 @@ function unroll_loops(all: Produced[], names: string[]): Produced[] {
 }
 
 function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Produced[] {
+  let sw = optbisect.switches();
   let out: Produced[] = [];
-  let i = 0;
-  while (i < all.len()) {
-    let p = all[i];
+  for old in all {
+    let p = old;
     if (p.ok && !p.template && !p.bodyless) {
+      let name = p.func.graph.name;
       let fc = semunroll.fold_constants(p.func);
-      if (fc.folded > 0) {
+      if (fc.folded > 0 && optbisect.allowed_by(sw, "fold-constants", name)) {
         p = Produced { ...p, func: fc.f, analysis: None };
       }
       let th = semthread.thread(p.func, stack_phi_joins);
-      if (th.changed > 0) {
+      if (th.changed > 0 && optbisect.allowed_by(sw, "thread", name)) {
         p = Produced { ...p, func: th.f, analysis: None };
       }
       let ho = semhoist.hoist(p.func);
-      if (ho.moved > 0) {
+      if (ho.moved > 0 && optbisect.allowed_by(sw, "hoist", name)) {
         p = Produced { ...p, func: ho.f, analysis: None };
       }
       let sk = semsink.sink(p.func);
-      if (sk.reread > 0) {
+      if (sk.reread > 0 && optbisect.allowed_by(sw, "sink", name)) {
         p = Produced { ...p, func: sk.f, analysis: None };
       }
       let cs = semcse.merge(p.func);
-      if (cs.merged > 0) {
+      if (cs.merged > 0 && optbisect.allowed_by(sw, "cse", name)) {
         p = Produced { ...p, func: cs.f, analysis: None };
       }
       let pr = semdead.prune(p.func);
-      if (pr.removed > 0) {
+      if (pr.removed > 0 && optbisect.allowed_by(sw, "prune", name)) {
         p = Produced { ...p, func: pr.f, analysis: None };
       }
     }
     out = out.append(p);
-    i += 1;
   }
   return out;
 }
