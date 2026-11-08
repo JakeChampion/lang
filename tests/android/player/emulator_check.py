@@ -144,6 +144,19 @@ def run_playback(uri, error_uri, out):
         (out / "device.txt").write_text(adb("shell", "getprop", "ro.build.fingerprint"))
     finally:
         (out / "logcat.txt").write_text(log)
+        # Keep platform errors and URI grants before force-stop removes them.
+        for name, command in (
+            ("logcat-all.txt", ("logcat", "-d", "-v", "time")),
+            ("activity-permissions.txt", ("shell", "dumpsys", "activity", "permissions")),
+            ("media-player-final.txt", ("shell", "dumpsys", "media.player")),
+        ):
+            try:
+                details = adb(*command)
+                (out / name).write_text(details)
+                if name == "logcat-all.txt" and "playertest: FAIL" in log:
+                    print("\n".join(details.splitlines()[-160:]), flush=True)
+            except (OSError, subprocess.SubprocessError) as error:
+                print("Player diagnostic failed: " + name + ": " + str(error), flush=True)
         adb("shell", "am", "force-stop", PACKAGE)
 
 
