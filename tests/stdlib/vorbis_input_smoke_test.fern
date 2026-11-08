@@ -1,0 +1,29 @@
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_input_check";
+import "vorbis_file_smoke_vectors";
+
+function complete(): test.TestOutcome {
+  let value = vorbis_file_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(value.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(formats) = ref.unpack(value.formats) else {
+    return test.fail("formats");
+  };
+  let Ok(expected) = ref.unpack(value.pcm) else {
+    return test.fail("PCM");
+  };
+  for cooperative in [true, false] {
+    if let Err(e) = vorbis_input_check.run(encoded, formats, expected, 17, cooperative) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Vorbis byte-source interpreter smoke");
+  runner = runner.it("independent PCM through short reads, step, and next", complete);
+  return runner.finish();
+}

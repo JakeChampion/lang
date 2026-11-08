@@ -1,0 +1,238 @@
+import "std/audio/vorbisfile";
+import "std/audio/vorbisfile/timing";
+import "std/audio/ogg/tables";
+import "std/audio/ogg";
+import "std/audio/vorbis/types";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_file_check";
+import "vorbis_file_smoke_vectors";
+
+function run(input: [u8], limits: vorbisfile.Limits): Result[void, pcm.AudioError] {
+  let decoder = vorbisfile.decoder(limits)?;
+  let at = 0;
+  while (true) {
+    let eof = at == input.len();
+    let (next, used, event) = decoder.feed(input[at:])?;
+    decoder = next;
+    at += used;
+    if let None = event {
+      if (eof) {
+        break;
+      }
+      if (used == 0 && at < input.len()) {
+        return Err(pcm.Header);
+      }
+    }
+  }
+  return decoder.finish();
+}
+
+function copied(input: [u8]): u8[] {
+  let out: u8[] = [];
+  for value in input {
+    out = out.append(value);
+  }
+  return out;
+}
+
+function next_page(input: [u8], start: i32): i32 {
+  let end = start + 27 + input[start + 26] as i32;
+  for i in start + 27..end {
+    end += input[i] as i32;
+  }
+  return end;
+}
+
+function crc(own input: u8[], start: i32): u8[] {
+  let end = next_page(input, start);
+  let value = 0u32;
+  for i in start..end {
+    let byte = if (i >= start + 22 && i < start + 26) { 0u32 } else { input[i] as u32 };
+    value = value << 8u32 ^ tables.CRC[(value >> 24u32 ^ byte) as i32];
+  }
+  for i in 0..4 {
+    input = input.with(start + 22 + i, (value >> (8 * i) as u32) as u8);
+  }
+  return input;
+}
+
+function changed(input: [u8], start: i32, offset: i32, value: u8): u8[] {
+  return crc(copied(input).with(start + offset, value), start);
+}
+
+function partial(): test.TestOutcome {
+  let value = vorbis_file_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(value.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(formats) = ref.unpack(value.formats) else {
+    return test.fail("formats");
+  };
+  let Ok(expected) = ref.unpack(value.pcm) else {
+    return test.fail("PCM");
+  };
+  for chunk in [1, 26, 255, 65307] {
+    if let Err(e) = vorbis_file_check.run(encoded, formats, expected, chunk) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(vorbis_file_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  for size in 0..58 {
+    if let Ok(_) = run(encoded[:size], vorbisfile.default_limits()) {
+      return test.fail("identification byte prefix");
+    }
+  }
+  let at = 0;
+  while (at < encoded.len()) {
+    let end = next_page(encoded, at);
+    for size in [at + 1, end - 1] {
+      if let Ok(_) = run(encoded[:size], vorbisfile.default_limits()) {
+        return test.fail("page prefix");
+      }
+    }
+    at = end;
+  }
+  return test.pass();
+}
+
+function headers(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(vorbis_file_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let first = next_page(encoded, 0);
+  for input in [changed(encoded, 0, 6, 1u8), changed(encoded, 0, 5, 6u8), changed(encoded, first, 6, 1u8), changed(encoded, first, 5, 4u8)] {
+    if let Err(pcm.Header) = run(input, vorbisfile.default_limits()) {} else {
+      return test.fail("header placement or timestamp");
+    }
+  }
+  if let Err(pcm.Checksum) = run(copied(encoded).with(encoded.len() - 1, encoded[encoded.len() - 1] ^ 1u8), vorbisfile.default_limits()) {} else {
+    return test.fail("CRC");
+  }
+  return test.pass();
+}
+
+function trim_spans(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(vorbis_file_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let audio = next_page(encoded, next_page(encoded, 0));
+  if let Err(pcm.Header) = run(changed(encoded, audio, 6, 0u8), vorbisfile.default_limits()) {} else {
+    return test.fail("final trim beyond the last packet");
+  }
+  let open = changed(encoded, audio, 5, 0u8);
+  if let Err(pcm.Header) = run(changed(open, audio, 6, 63u8), vorbisfile.default_limits()) {} else {
+    return test.fail("nonzero origin requires a flush after the second packet");
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(vorbis_file_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let limits = vorbisfile.default_limits();
+  for bound in [vorbisfile.Limits { ...limits, max_links: 0 }, vorbisfile.Limits { ...limits, codec: types.Limits { ...limits.codec, max_setup_bytes: 0 } }, vorbisfile.Limits { ...limits, ogg: ogg.Limits { ...limits.ogg, max_packet_bytes: 29 } }, vorbisfile.Limits { ...limits, codec: types.Limits { ...limits.codec, audio: pcm.Limits { ...limits.codec.audio, max_samples: 0 } } }] {
+    if let Err(pcm.Limit) = run(encoded, bound) {} else {
+      return test.fail("resource limit");
+    }
+  }
+  let chain = copied(encoded);
+  for byte in encoded {
+    chain = chain.append(byte);
+  }
+  if let Err(pcm.Limit) = run(chain, vorbisfile.Limits { ...limits, max_links: 1 }) {} else {
+    return test.fail("chain count");
+  }
+  return test.pass();
+}
+
+function boundaries(): test.TestOutcome {
+  let Ok(first) = timing.page(timing.create(), 96i64, 128i64, false) else {
+    return test.fail("initial trim");
+  };
+  let Ok((primed, empty)) = timing.advance(first, 0) else {
+    return test.fail("priming");
+  };
+  let Ok((next, range)) = timing.advance(primed, 128) else {
+    return test.fail("first PCM");
+  };
+  if (empty.end != 0 || range.start != 32 || range.end != 128 || range.position != 0i64 || range.granule != 0i64) {
+    return test.fail("initial sample boundary");
+  }
+  let Ok(last) = timing.page(next, 176i64, 128i64, true) else {
+    return test.fail("final trim");
+  };
+  let Ok((done, final)) = timing.advance(last, 128) else {
+    return test.fail("final PCM");
+  };
+  if (final.start != 0 || final.end != 80 || final.position != 96i64 || final.granule != 96i64) {
+    return test.fail("final sample boundary");
+  }
+  let Ok(total) = timing.finish(done) else {
+    return test.fail("total");
+  };
+  if (total != 176i64) {
+    return test.fail("trimmed length");
+  }
+  for granule in [95i64, 225i64, 223i64] {
+    if let Err(pcm.Header) = timing.page(next, granule, 128i64, false) {} else {
+      return test.fail("invalid granule progression");
+    }
+  }
+  if let Err(pcm.Header) = timing.page(done, 200i64, 1i64, true) {} else {
+    return test.fail("page after EOS");
+  }
+  if let Err(pcm.Truncated) = timing.finish(first) {} else {
+    return test.fail("undecoded page");
+  }
+  return test.pass();
+}
+
+function overflow(): test.TestOutcome {
+  let Ok(first) = timing.page(timing.create(), 9223372036854775807i64, 128i64, false) else {
+    return test.fail("wide initial granule");
+  };
+  let Ok((next, range)) = timing.advance(first, 128) else {
+    return test.fail("wide sample boundary");
+  };
+  if (range.granule != 9223372036854775679i64 || range.end != 128) {
+    return test.fail("wide range");
+  }
+  if let Err(pcm.Limit) = timing.page(next, 9223372036854775807i64, 1i64, true) {} else {
+    return test.fail("granule overflow");
+  }
+  let Ok(single) = timing.page(timing.create(), 63i64, 128i64, true) else {
+    return test.fail("single-page trim");
+  };
+  let Ok((done, output)) = timing.advance(single, 128) else {
+    return test.fail("single-page PCM");
+  };
+  if (output.start != 0 || output.end != 63) {
+    return test.fail("single page trims the end");
+  }
+  let Ok(frames) = timing.finish(done) else {
+    return test.fail("single-page length");
+  };
+  return test.assert_eq(frames, 63i64);
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Vorbis boundaries and partial reads");
+  runner = runner.it("one-byte reads, exact pages, and large chunks preserve independent PCM", partial);
+  runner = runner.it("identification byte prefixes and incomplete pages reject truncation", prefixes);
+  runner = runner.it("header placement, timestamps, and CRC checks", headers);
+  runner = runner.it("initial flush and final packet trim extents", trim_spans);
+  runner = runner.it("packet, setup, PCM, and chain budgets", budgets);
+  runner = runner.it("initial and final boundaries, zero output, and invalid progression", boundaries);
+  runner = runner.it("full-width granules and single-page final trim", overflow);
+  return runner.finish();
+}

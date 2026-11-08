@@ -1,0 +1,70 @@
+import "std/audio/vorbisfile/input";
+import "std/audio/vorbisfile";
+import "std/audio/source";
+import "vorbis_file_check";
+import "vorbis_file_smoke_vectors";
+import "aac_kernel_check" as ref;
+
+function event(own state: input.Input, reader: Reader, cooperative: boolean): Result[(input.Input, input.ReadEvent), source.ReadError] {
+  if (cooperative) {
+    return state.step(reader);
+  }
+  let (next, value) = state.next(reader)?;
+  return Ok((next, match (value) { Some(value) => input.Output(value), None => input.Finished }));
+}
+
+function decode(reader: Reader, encoded_bytes: i32, formats: [u8], expected: [u8], cooperative: boolean): Result[void, string] {
+  let state = match (input.create(vorbisfile.default_limits(), 17)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let progress = vorbis_file_check.create();
+  while (true) {
+    let (next, value) = match (event(state, reader, cooperative)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    state = next;
+    match (value) {
+      input.Pending => {},
+      input.Output(value) => {
+        progress = vorbis_file_check.event(value, formats, expected, progress)?;
+      },
+      input.Finished => {
+        break;
+      }
+    }
+  }
+  vorbis_file_check.finish(progress, formats, expected)?;
+  let offset = match (reader.seek(0i64, 1)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (offset != encoded_bytes as i64) {
+    return Err("reader position or borrowed handle");
+  }
+  return Ok(());
+}
+
+function read_file(path: string, encoded_bytes: i32, formats: [u8], expected: [u8], cooperative: boolean): Result[void, string] {
+  let reader = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let result = decode(reader, encoded_bytes, formats, expected, cooperative);
+  let closed = reader.close();
+  result?;
+  return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let value = vorbis_file_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(value.encoded) else {
+    return 3;
+  };
+  let Ok(formats) = ref.unpack(value.formats) else {
+    return 3;
+  };
+  let Ok(expected) = ref.unpack(value.pcm) else {
+    return 3;
+  };
+  for cooperative in [true, false] {
+    if let Err(e) = read_file(argv[1], encoded.len(), formats, expected, cooperative) {
+      eprint(e);
+      return 1;
+    }
+  }
+  return 0;
+}

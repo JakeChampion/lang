@@ -7,6 +7,7 @@ Output uses WAVE speaker order and retains unclipped float samples.
 
 Create a decoder from the identification and setup packets.
 The first audio packet primes overlap storage and produces no PCM.
+`block_size` reads the time-domain block length without an overlap-state change.
 Container code must apply its granule positions to trim the beginning and end.
 Comment packets are read separately with `std/audio/vorbis/headers`.
 
@@ -57,6 +58,11 @@ pub function (decoder: Decoder) packet_frames(input: [u8], limits: pcm.Limits): 
   let frames = dsp.frames(current, decoder.previous)?;
   let _ = pcm.sample_count(frames, decoder.info.channels, limits)?;
   return Ok(frames);
+}
+
+pub function (decoder: Decoder) block_size(input: [u8], limits: pcm.Limits): Result[i32, pcm.AudioError] {
+  pcm.check_input(input, limits)?;
+  return Ok(1 << packet.exponent(input, decoder.info, decoder.config)?);
 }
 
 pub function (own decoder: Decoder) decode_packet_into(input: [u8], own output: f32[], limits: pcm.Limits): Result[(Decoder, Frame), pcm.AudioError] {
