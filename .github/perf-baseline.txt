@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14591, perf-aarch64 job 128688225606 on b6f70f98. aarch64/http_hello.text grows 1.10% with the HTTP/3 fields std/fetch gained in #14551, whose arm64 perf lane never reported before the merge; the x86_64 row was pinned there. Pinned at the measured value.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: the pool and its kept connections carry the HTTP/3 fields, so http_hello.text grows 1.09% on x86_64 and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb. video_qtrle.ir falls with the split codec and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-aarch64 job 128621787370 on 3318c8cb, and the same bin/fern run on x86_64 here.
@@ -529,7 +530,7 @@ aarch64/deflate_encode.text	7818
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16052
+aarch64/http_hello.text	16228
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23616615
 aarch64/int_loop.text	383

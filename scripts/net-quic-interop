@@ -13,7 +13,8 @@
 # Then HTTP/3 (std/http/h3q) each way against aioquic's own HTTP/3
 # (aioquic.h3): a GET and a POST of $SIZE bytes on one connection, each
 # answered with a body naming the request and a trailer, which the client
-# checks. Then std/fetch against aioquic's HTTP/3 server
+# checks; aioquic's client moves to a connection ID the Fern server issued
+# between the two. Then std/fetch against aioquic's HTTP/3 server
 # (scripts/net-quic-interop.d/fetch_h3.fern): the pool told the origin
 # offers HTTP/3, two GETs ride one QUIC connection the pool keeps, and the
 # POST dials a connection of its own, as a POST does over TCP.
@@ -142,7 +143,7 @@ aioquic_h3_client() {
   await_line "$work/fern-h3-server.log" "fern h3 server: ended"
   stop_server
   cat "$work/fern-h3-server.log" >> "$log"
-  expect "aioquic h3 client, fern h3 server" "$log" "aioquic h3 client: GET /hello -> 200 GET /hello 0 | x-served-by=fern" "aioquic h3 client: POST /upload -> 200 POST /upload $SIZE | x-served-by=fern" "fern h3 server: ended code=256 remote=true"
+  expect "aioquic h3 client, fern h3 server" "$log" "aioquic h3 client: GET /hello -> 200 GET /hello 0 | x-served-by=fern" "aioquic h3 client: changed connection id: True" "aioquic h3 client: POST /upload -> 200 POST /upload $SIZE | x-served-by=fern" "fern h3 server: ended code=256 remote=true"
 }
 
 # fern_fetch — std/fetch over HTTP/3 against aioquic's HTTP/3 server.
