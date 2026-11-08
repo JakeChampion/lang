@@ -4,7 +4,7 @@ This module reads boolean environment flags. Empty values, `0`, `false`, `off`, 
 
 ## Model
 
-`value_on` interprets a supplied string. `on` and `value` read a process-environment entry through the same policy.
+`value_on` interprets a supplied string. `on` reads a process-environment entry through the same policy. `value` returns the raw string of a set, nonempty entry and does not interpret it. A caller that needs the literal text, `no` included, reads it with `value` or the builtin `env`.
 
 ## Contracts
 
