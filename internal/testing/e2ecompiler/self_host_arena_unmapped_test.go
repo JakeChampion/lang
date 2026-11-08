@@ -18,8 +18,10 @@ func TestSelfHostArenaUnmappedExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = "fern: could not map the heap arena (errno 12)\n"
+	// The cap admits the 1 GiB stack, which startup maps first, and refuses
+	// the arena.
 	capped := func(bin string) *exec.Cmd {
-		return exec.Command("sh", "-c", `ulimit -v 1048576 && exec "$0"`, bin)
+		return exec.Command("sh", "-c", `ulimit -v 4194304 && exec "$0"`, bin)
 	}
 	check := func(t *testing.T, cmd *exec.Cmd) {
 		var errb bytes.Buffer

@@ -13,11 +13,11 @@ pub struct Header { layout: pixels.Layout, color_space: ColorSpace }
 
 pub struct Decoded { image: pixels.Image, color_space: ColorSpace }
 
-struct Cursor { at: i32, pixel: pixels.Pixel, index: u32[] }
+struct Cursor { at: i32, pixel: u32, index: u32[] }
 
 struct Chunk { cursor: Cursor, count: i32 }
 
-struct Encoder { bytes: u8[], previous: pixels.Pixel, index: u32[], run: i32 }
+struct Encoder { bytes: u8[], previous: u32, index: u32[], run: i32 }
 
 pub function default_limits(): Limits {
   return Limits { pixels: pixels.default_limits(), max_input_bytes: 16777216 };
@@ -64,16 +64,16 @@ pub function inspect(input: [u8], limits: Limits): Result[Header, QoiError] {
   return Ok(Header { layout: layout, color_space: color_space });
 }
 
-function pack(p: pixels.Pixel): u32 {
-  return p.r as u32 << 24 | p.g as u32 << 16 | p.b as u32 << 8 | p.a as u32;
+function pack(r: u8, g: u8, b: u8, a: u8): u32 {
+  return r as u32 << 24 | g as u32 << 16 | b as u32 << 8 | a as u32;
 }
 
-function unpack(p: u32): pixels.Pixel {
-  return pixels.Pixel { r: (p >> 24) as u8, g: (p >> 16) as u8, b: (p >> 8) as u8, a: p as u8 };
+function channel(p: u32, shift: u32): u8 {
+  return (p >> shift) as u8;
 }
 
-function hash(p: pixels.Pixel): i32 {
-  return (p.r as i32 * 3 + p.g as i32 * 5 + p.b as i32 * 7 + p.a as i32 * 11) % 64;
+function hash(p: u32): i32 {
+  return (channel(p, 24) as i32 * 3 + channel(p, 16) as i32 * 5 + channel(p, 8) as i32 * 7 + channel(p, 0) as i32 * 11) % 64;
 }
 
 function empty_index(): u32[] {
@@ -84,8 +84,8 @@ function empty_index(): u32[] {
   return out;
 }
 
-function initial_pixel(): pixels.Pixel {
-  return pixels.Pixel { r: 0, g: 0, b: 0, a: 255 };
+function initial_pixel(): u32 {
+  return 255u32;
 }
 
 function end_at(input: [u8]): Result[i32, QoiError] {
@@ -104,8 +104,8 @@ function end_at(input: [u8]): Result[i32, QoiError] {
   return Ok(at);
 }
 
-function difference(p: pixels.Pixel, dr: i32, dg: i32, db: i32): pixels.Pixel {
-  return pixels.Pixel { r: (p.r as i32 + dr) as u8, g: (p.g as i32 + dg) as u8, b: (p.b as i32 + db) as u8, a: p.a };
+function difference(p: u32, dr: i32, dg: i32, db: i32): u32 {
+  return pack((channel(p, 24) as i32 + dr) as u8, (channel(p, 16) as i32 + dg) as u8, (channel(p, 8) as i32 + db) as u8, channel(p, 0));
 }
 
 function literal(input: [u8], end: i32, tag: u8, own cursor: Cursor): Result[Cursor, QoiError] {
@@ -114,8 +114,8 @@ function literal(input: [u8], end: i32, tag: u8, own cursor: Cursor): Result[Cur
     return Err(QoiError.Truncated);
   }
   let at = cursor.at;
-  let alpha = if (n == 4) { input[at + 3] } else { cursor.pixel.a };
-  let p = pixels.Pixel { r: input[at], g: input[at + 1], b: input[at + 2], a: alpha };
+  let alpha = if (n == 4) { input[at + 3] } else { channel(cursor.pixel, 0) };
+  let p = pack(input[at], input[at + 1], input[at + 2], alpha);
   return Ok(Cursor { ...cursor, at: at + n, pixel: p });
 }
 
@@ -134,7 +134,7 @@ function next(input: [u8], end: i32, own cursor: Cursor): Result[Chunk, QoiError
   }
   let p = cursor.pixel;
   if (kind == 0) {
-    p = unpack(cursor.index[tag as i32]);
+    p = cursor.index[tag as i32];
   }
   if (kind == 64) {
     p = difference(p, (tag as i32 >> 4 & 3) - 2, (tag as i32 >> 2 & 3) - 2, (tag as i32 & 3) - 2);
@@ -151,10 +151,10 @@ function next(input: [u8], end: i32, own cursor: Cursor): Result[Chunk, QoiError
   return Ok(Chunk { cursor: Cursor { ...cursor, pixel: p }, count: 1 });
 }
 
-function store(own bytes: u8[], at: i32, n: i32, p: pixels.Pixel): u8[] {
-  bytes = bytes.with(at, p.r).with(at + 1, p.g).with(at + 2, p.b);
+function store(own bytes: u8[], at: i32, n: i32, p: u32): u8[] {
+  bytes = bytes.with(at, channel(p, 24)).with(at + 1, channel(p, 16)).with(at + 2, channel(p, 8));
   if (n == 4) {
-    bytes = bytes.with(at + 3, p.a);
+    bytes = bytes.with(at + 3, channel(p, 0));
   }
   return bytes;
 }
@@ -184,7 +184,7 @@ function decode_pixels(input: [u8], layout: pixels.Layout, end: i32, cancelled: 
     if (chunk.count > total - done) {
       return Err(QoiError.Pixels);
     }
-    cursor = Cursor { ...cursor, index: cursor.index.with(hash(cursor.pixel), pack(cursor.pixel)) };
+    cursor = Cursor { ...cursor, index: cursor.index.with(hash(cursor.pixel), cursor.pixel) };
     for _ in 0..chunk.count {
       bytes = store(bytes, done * n, n, cursor.pixel);
       done += 1;
@@ -199,12 +199,12 @@ function decode_pixels(input: [u8], layout: pixels.Layout, end: i32, cancelled: 
   return Ok(pixels.Image { layout: layout, data: bytes });
 }
 
-function emit(own bytes: u8[], token: [u8], limit: i32): Result[u8[], QoiError] {
-  if (bytes.len() > limit - 8 - token.len()) {
+function emit(own bytes: u8[], token: u64, count: i32, limit: i32): Result[u8[], QoiError] {
+  if (bytes.len() > limit - 8 - count) {
     return Err(QoiError.Limit);
   }
-  for b in token {
-    bytes = bytes.append(b);
+  for i in 0..count {
+    bytes = bytes.append((token >> ((count - i - 1) * 8) as u64) as u8);
   }
   return Ok(bytes);
 }
@@ -213,7 +213,7 @@ function flush(own state: Encoder, limit: i32): Result[Encoder, QoiError] {
   if (state.run == 0) {
     return Ok(state);
   }
-  return Ok(Encoder { ...state, bytes: emit(state.bytes, [(192 | state.run - 1) as u8], limit)?, run: 0 });
+  return Ok(Encoder { ...state, bytes: emit(state.bytes, (192 | state.run - 1) as u64, 1, limit)?, run: 0 });
 }
 
 function delta(a: u8, b: u8): i32 {
@@ -224,23 +224,24 @@ function in_range(n: i32, low: i32, high: i32): boolean {
   return n >= low && n <= high;
 }
 
-function rgb_token(own bytes: u8[], p: pixels.Pixel, previous: pixels.Pixel, limit: i32): Result[u8[], QoiError] {
-  let dr = delta(p.r, previous.r);
-  let dg = delta(p.g, previous.g);
-  let db = delta(p.b, previous.b);
+function rgb_token(own bytes: u8[], p: u32, previous: u32, limit: i32): Result[u8[], QoiError] {
+  let dr = delta(channel(p, 24), channel(previous, 24));
+  let dg = delta(channel(p, 16), channel(previous, 16));
+  let db = delta(channel(p, 8), channel(previous, 8));
   if (in_range(dr, -2, 1) && in_range(dg, -2, 1) && in_range(db, -2, 1)) {
-    return emit(bytes, [(64 | dr + 2 << 4 | dg + 2 << 2 | db + 2) as u8], limit);
+    return emit(bytes, (64 | dr + 2 << 4 | dg + 2 << 2 | db + 2) as u64, 1, limit);
   }
   let rg = dr - dg;
   let bg = db - dg;
   if (in_range(dg, -32, 31) && in_range(rg, -8, 7) && in_range(bg, -8, 7)) {
-    return emit(bytes, [(128 | dg + 32) as u8, (rg + 8 << 4 | bg + 8) as u8], limit);
+    let token = (128 | dg + 32) as u64 << 8 | (rg + 8 << 4 | bg + 8) as u64;
+    return emit(bytes, token, 2, limit);
   }
-  return emit(bytes, [254 as u8, p.r, p.g, p.b], limit);
+  return emit(bytes, 254u64 << 24 | (p >> 8) as u64, 4, limit);
 }
 
-function encode_pixel(own state: Encoder, p: pixels.Pixel, limit: i32): Result[Encoder, QoiError] {
-  if (pack(p) == pack(state.previous)) {
+function encode_pixel(own state: Encoder, p: u32, limit: i32): Result[Encoder, QoiError] {
+  if (p == state.previous) {
     state = Encoder { ...state, run: state.run + 1 };
     if (state.run == 62) {
       return flush(state, limit);
@@ -251,14 +252,14 @@ function encode_pixel(own state: Encoder, p: pixels.Pixel, limit: i32): Result[E
   let slot = hash(p);
   let seen = state.index[slot];
   let bytes = state.bytes;
-  if (seen == pack(p)) {
-    bytes = emit(bytes, [slot as u8], limit)?;
-  } else if (p.a != state.previous.a) {
-    bytes = emit(bytes, [255 as u8, p.r, p.g, p.b, p.a], limit)?;
+  if (seen == p) {
+    bytes = emit(bytes, slot as u64, 1, limit)?;
+  } else if (channel(p, 0) != channel(state.previous, 0)) {
+    bytes = emit(bytes, 255u64 << 32 | p as u64, 5, limit)?;
   } else {
     bytes = rgb_token(bytes, p, state.previous, limit)?;
   }
-  return Ok(Encoder { ...state, bytes: bytes, previous: p, index: state.index.with(slot, pack(p)) });
+  return Ok(Encoder { ...state, bytes: bytes, previous: p, index: state.index.with(slot, p) });
 }
 
 function source_layout(image: pixels.Image): Result[pixels.Layout, QoiError] {
@@ -315,7 +316,7 @@ function encode_rows(own state: Encoder, image: pixels.Image, max_bytes: i32, ca
       }
       let at = y * l.stride + x * n;
       let alpha: u8 = if (n == 4) { image.data[at + 3] } else { 255 };
-      let p = pixels.Pixel { r: image.data[at], g: image.data[at + 1], b: image.data[at + 2], a: alpha };
+      let p = pack(image.data[at], image.data[at + 1], image.data[at + 2], alpha);
       state = encode_pixel(state, p, max_bytes)?;
     }
   }

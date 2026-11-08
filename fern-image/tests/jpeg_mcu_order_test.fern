@@ -1,0 +1,164 @@
+import "../packages/codecs/jpeg/mcu_order" as order;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function collect(value: order.Address[], address: order.Address): Result[order.Address[], string] {
+  return Ok(value.append(address));
+}
+
+function factors(h: i32, v: i32): order.Sampling {
+  return order.Sampling { horizontal: h, vertical: v };
+}
+
+function literal_order(): test.TestOutcome {
+  let sampling = [factors(2, 2), factors(1, 1), factors(1, 1)];
+  let Ok(result) = order.fold_blocks(17, 9, sampling, 12, never, [], collect) else {
+    return test.fail("odd 420 order");
+  };
+  if (result.plan.columns != 2 || result.plan.rows != 1 || result.plan.units != 6 || result.plan.blocks != 12) {
+    return test.fail("odd 420 geometry");
+  }
+  let positions = [
+    (0, 0, 0), (0, 1, 0), (0, 0, 1), (0, 1, 1), (1, 0, 0), (2, 0, 0),
+    (0, 2, 0), (0, 3, 0), (0, 2, 1), (0, 3, 1), (1, 1, 0), (2, 1, 0),
+  ];
+  for i in 0..positions.len() {
+    let (component, x, y) = positions[i];
+    let actual = result.value[i];
+    if (actual.mcu != i / 6 || actual.unit != i % 6 || actual.component != component || actual.x != x || actual.y != y) {
+      return test.fail("literal MCU block sequence");
+    }
+    let width = if (component == 0) { 17 } else { 9 };
+    let height = if (component == 0) { 9 } else { 5 };
+    if (actual.width != width || actual.height != height || actual.dummy != (i == 7 || i == 9)) {
+      return test.fail("component dimensions and dummy blocks");
+    }
+  }
+  return test.pass();
+}
+
+function noninterleaved(): test.TestOutcome {
+  for h in 1..5 {
+    for v in 1..5 {
+      let Ok(result) = order.fold_blocks(17, 9, [factors(h, v)], 6, never, [], collect) else {
+        return test.fail("single component factors");
+      };
+      if (result.plan.columns != 3 || result.plan.rows != 2 || result.plan.units != 1 || result.value.len() != 6) {
+        return test.fail("single block MCUs");
+      }
+      for i in 0..6 {
+        let actual = result.value[i];
+        if (actual.mcu != i || actual.unit != 0 || actual.component != 0 || actual.x != i % 3 || actual.y != i / 3
+          || actual.width != 17 || actual.height != 9 || actual.dummy) {
+          return test.fail("single component raster order");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function geometry(): test.TestOutcome {
+  let Ok(result) = order.fold_blocks(25, 17, [factors(3, 1), factors(2, 2)], 28, never, [], collect) else {
+    return test.fail("nonintegral sample ratios");
+  };
+  if (result.plan.columns != 2 || result.plan.rows != 2 || result.plan.units != 7 || result.plan.blocks != 28) {
+    return test.fail("nonintegral MCU count");
+  }
+  for actual in result.value {
+    if (actual.width != (if (actual.component == 0) { 25 } else { 17 })
+      || actual.height != (if (actual.component == 0) { 9 } else { 17 })) {
+      return test.fail("ceiling of component dimensions");
+    }
+  }
+  let Ok(boundary) = order.inspect(65535, 65535, [factors(4, 1), factors(1, 2), factors(2, 2)], 83886080) else {
+    return test.fail("maximum dimensions and ten blocks");
+  };
+  if (boundary.columns != 2048 || boundary.rows != 4096 || boundary.blocks != 83886080) {
+    return test.fail("wide count arithmetic");
+  }
+  return test.assert_true(match (order.inspect(65535, 65535, [factors(4, 1), factors(1, 2), factors(2, 2)], 83886079)) {
+    Err(order.Limit) => true, _ => false,
+  });
+}
+
+function malformed(): test.TestOutcome {
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for size in [-2147483648, -1, 0, 65536, 2147483647] {
+    if (!match (order.fold_blocks(size, 1, [], -1, cancel, [], collect)) { Err(order.Order(order.Dimensions)) => true, _ => false }
+      || !match (order.inspect(1, size, [factors(1, 1)], 1)) { Err(order.Dimensions) => true, _ => false }) {
+      return test.fail("dimension admission");
+    }
+  }
+  for items in [[], [factors(1, 1), factors(1, 1), factors(1, 1), factors(1, 1), factors(1, 1)]] {
+    if (!match (order.fold_blocks(1, 1, items, -1, cancel, [], collect)) { Err(order.Order(order.Components)) => true, _ => false }) {
+      return test.fail("component admission");
+    }
+  }
+  for item in [factors(0, 1), factors(1, 0), factors(-1, 1), factors(1, -1), factors(5, 1), factors(1, 5), factors(2147483647, 2147483647)] {
+    if (!match (order.fold_blocks(1, 1, [item], -1, cancel, [], collect)) { Err(order.Order(order.Sampling)) => true, _ => false }) {
+      return test.fail("factor admission");
+    }
+  }
+  if (!match (order.fold_blocks(1, 1, [factors(4, 2), factors(3, 1)], 11, cancel, [], collect)) { Err(order.Order(order.Sampling)) => true, _ => false }) {
+    return test.fail("interleaved ten block limit");
+  }
+  for limit in [-1, 0, 2] {
+    if (!match (order.fold_blocks(1, 1, [factors(1, 1), factors(1, 1), factors(1, 1)], limit, cancel, [], collect)) { Err(order.Order(order.Limit)) => true, _ => false }) {
+      return test.fail("block admission");
+    }
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function cancellation(): test.TestOutcome {
+  let sampling = [factors(2, 2), factors(1, 1), factors(1, 1)];
+  for stop in 1..15 {
+    let polls = cell_new(0);
+    let consumed = cell_new(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    };
+    let consume = (value: i32, address: order.Address): Result[i32, string] => {
+      consumed.set(consumed.get() + 1);
+      return Ok(value + address.component);
+    };
+    if (!match (order.fold_blocks(17, 9, sampling, 12, cancel, 0, consume)) { Err(order.Order(order.Cancelled)) => true, _ => false }) {
+      return test.fail("every traversal cancellation checkpoint");
+    }
+    let expected = if (stop == 1) { 0 } else { stop - 2 };
+    if (consumed.get() != expected) {
+      return test.fail("no callbacks after cancellation");
+    }
+  }
+  for stop in 0..12 {
+    let calls = cell_new(0);
+    let consume = (value: i32, address: order.Address): Result[i32, string] => {
+      calls.set(calls.get() + 1);
+      return if (value == stop) { Err("stop") } else { Ok(value + 1) };
+    };
+    if (!match (order.fold_blocks(17, 9, sampling, 12, never, 0, consume)) { Err(order.Consumer(e)) => e == "stop", _ => false }
+      || calls.get() != stop + 1) {
+      return test.fail("immediate consumer error");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG MCU order");
+  suite = suite.it("literal odd 420 order and dummy blocks", literal_order);
+  suite = suite.it("single-component factors retain one-block MCUs", noninterleaved);
+  suite = suite.it("nonintegral ratios and wide admission", geometry);
+  suite = suite.it("malformed geometry precedes callbacks", malformed);
+  suite = suite.it("cancellation and consumer errors stop traversal", cancellation);
+  return suite.finish();
+}

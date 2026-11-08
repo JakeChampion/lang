@@ -246,6 +246,8 @@ def corpus():
         altered = bytearray(ihdr)
         altered[position] = value
         add(f"unsupported-header-{position}", assemble([(b"IHDR", altered), *parts[1:]]))
+        if position == 12:
+            cases[-1].update(eager_error='scanline', row_error='unsupported')
     for width, height in [(0, 9), (7, 0), (0x80000000, 9), (7, 0xffffffff), (65536, 65536), (65537, 1)]:
         add(f"dimension-{width}x{height}", assemble([(b"IHDR", struct.pack(">II", width, height) + ihdr[8:]), *parts[1:]]))
     for kind, data in [(b"tRNS", b"\0" * 6), (b"iCCP", b"x\0\0x"), (b"gAMA", struct.pack(">I", 45455)),
@@ -413,9 +415,11 @@ def main():
                     sample.update({"pixel_sha256": sha(raw), "row_pixel_sha256": sha(rows), "selected_pixel_sha256": sha(selected), "encoded_sha256": sha(encoded), "encoded_bytes": len(encoded)})
                     sample.update({"incremental_row_pixel_sha256": sha(incremental_rows),
                                    "incremental_selected_pixel_sha256": sha(incremental_selected)})
-                elif any(fields.get(api) != fields.get("error") for api in
+                elif any(fields.get(api) != case.get('row_error', fields.get("error")) for api in
                          ["row_error", "provider_error", "incremental_error", "incremental_provider_error"]):
                     raise ValueError("row or provider rejection mismatch in " + case["name"])
+                if 'eager_error' in case and fields.get('error') != case['eager_error']:
+                    raise ValueError('eager interlaced error differs in ' + case['name'])
                 if (directory / name).read_bytes() != case["data"]:
                     raise ValueError("input fixture changed")
                 samples.append(sample)
@@ -432,7 +436,7 @@ def main():
         "max_cases": options.max_cases,
         "warmup_processes": 0, "cache_policy": "No page-cache flush or cold/warm performance comparison.",
         "row_checks": {"accepted": "Full rows and a middle selection match independent reference bytes.",
-                       "rejected": "Eager, row, and graph provider APIs return the same codec error class.",
+                       "rejected": "All prior error checks remain exact. The malformed Adam7-header fixture requires eager Scanline and row/provider Unsupported.",
                        "filtered_frame": "The eager row API materializes the frame before callbacks. The incremental API validates the complete stream before a second decode pass."},
         "incremental_checks": {"rows": "Full rows and a middle selection match the independent reference.",
                                "providers": "Legacy/fused graph rows and cropped tiles match the independent reference.",

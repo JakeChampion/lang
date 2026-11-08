@@ -1,0 +1,95 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/sample_depth";
+import "std/hex";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function word(input: [u8], at: i32, width: i32): u64 {
+  let value = 0u64;
+  for i in 0..width {
+    value |= input[at + i] as u64 << (i * 8) as u64;
+  }
+  return value;
+}
+
+function emit(floating: boolean, precision: u32, exponent: u32, budget: i32, prefix: i32, path: string, index: i32): i32 {
+  let fields = match (sample_depth.fields(floating, precision, exponent)) {
+    Ok(value) => value,
+    Err(error) => {
+      print(f"{index} pack error {error.to_debug()}");
+      return 0;
+    },
+  };
+  match (bits.pack([bits.Field { value: 0u64, width: prefix }].concat(fields), budget, never)) {
+    Ok(output) => {
+      let size = output.bits;
+      let data = hex.encode(output.bytes);
+      print(f"{index} pack ok {size} {data}");
+      if let Err(_) = write_file_bytes(path + ".packed", output.bytes) {
+        return 4;
+      }
+    },
+    Err(error) => {
+      print(f"{index} pack error {error.to_debug()}");
+    }
+  }
+  return 0;
+}
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(packet) = read_file_bytes(path) else {
+    return 1;
+  };
+  if (packet.len() < 28) {
+    return 2;
+  }
+  let floating = word(packet, 0, 4);
+  let precision = word(packet, 4, 4) as u32;
+  let exponent = word(packet, 8, 4) as u32;
+  let budget = word(packet, 12, 4) as i32;
+  let prefix = word(packet, 16, 4) as i32;
+  let queries = word(packet, 20, 4) as i32;
+  let length = word(packet, 24, 4) as i32;
+  if (floating > 1u64 || queries < 0 || queries > 4096 || length < 0 || length > 65536 || packet.len() != 28 + queries * 16 + length) {
+    return 3;
+  }
+  let code = emit(floating != 0u64, precision, exponent, budget, prefix, path, index);
+  if (code != 0) {
+    return code;
+  }
+  let input = packet[28 + queries * 16:];
+  for i in 0..queries {
+    let position = word(packet, 28 + i * 16, 8) as i64;
+    let extent = word(packet, 36 + i * 16, 8) as i64;
+    match (sample_depth.read(input, position, extent)) {
+      Ok(value) => {
+        let flag = if (value.floating) { 1 } else { 0 };
+        let precision = value.bits;
+        let exponent = value.exponent;
+        let next = value.next;
+        print(f"{index} query {i} depth {flag} {precision} {exponent} {next}");
+      },
+      Err(error) => {
+        print(f"{index} query {i} error {error.to_debug()}");
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 5;
+  }
+  for i in 1..paths.len() {
+    let code = inspect(paths[i], i - 1);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

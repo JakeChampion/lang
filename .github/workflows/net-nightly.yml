@@ -2,7 +2,7 @@ name: Net nightly
 
 # The HTTP throughput record of #9854 and #9857: once a night,
 # scripts/net-bench loads the Fern hello server, Go's net/http hello,
-# hyper's and h2o's, then the Fern and hyper two-fetch servers (a handler
+# hyper's, h2o's, http.zig's and zap's, then the Fern and hyper two-fetch servers (a handler
 # fetching an upstream twice per request, the Fern one a single loop
 # built by the self-host compiler), with oha at 64 and 4,096 connections
 # and appends throughput, p50 and p99 per server and count, plus the heap
@@ -128,7 +128,8 @@ jobs:
     runs-on: ubuntu-24.04
     # Room for the HTTP/3 tools' first build, before the cache holds them.
     timeout-minutes: 45
-    # The Rust toolchain that builds the hyper server is pinned in
+    # The Rust toolchain that builds the hyper server and the Zig toolchain
+    # that builds the http.zig and zap servers are pinned in
     # mise.net-nightly.toml, which this env selects on top of mise.toml.
     env:
       MISE_ENV: net-nightly
@@ -136,12 +137,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
 
-      # The load generator mise.toml pins and the Rust toolchain
+      # The load generator mise.toml pins and the Rust and Zig toolchains
       # mise.net-nightly.toml pins, beside the base toolchain setup-fern
       # installs; h2o is the runner image's package, its version in the
       # report's header.
-      - name: Install oha and rust (mise.toml, mise.net-nightly.toml)
-        run: mise install oha rust
+      - name: Install oha, rust and zig (mise.toml, mise.net-nightly.toml)
+        run: mise install oha rust zig
       - name: Install h2o
         run: sudo apt-get install -y --no-install-recommends h2o
       # h2load and h2o with HTTP/3, built by scripts/net-bench.d/h3tools

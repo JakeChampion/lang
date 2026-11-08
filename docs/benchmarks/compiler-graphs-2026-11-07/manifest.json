@@ -1,0 +1,81 @@
+{
+  "date": "2026-11-07",
+  "baseline_source_revision": "d4636805f696a93b35f8461d8f29cb477d682a1c",
+  "candidate_source_revision": "99e807b132ff7100613ef1d0f18d1fa52cf8d2e3",
+  "fixed_input_revision": "d4636805f696a93b35f8461d8f29cb477d682a1c",
+  "producer_source_revision": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu_model": "Intel Xeon Platinum 8573C",
+  "debug_variables": false,
+  "compiler_build_flags": [
+    "-target",
+    "x86-64-linux"
+  ],
+  "allocation_build_environment": {
+    "FERN_LEAKCHECK": "1"
+  },
+  "profile_build_environment": {
+    "FERN_PROFILE": [
+      "cpu-pprof",
+      "alloc-pprof"
+    ],
+    "FERN_PROFILE_FILE": "mode-specific output path"
+  },
+  "cold_run_environment": {
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "warm_run_environment": {
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "separate temporary directory for each compiler"
+  },
+  "candidate_source_sha256": {
+    "compiler/rccertify.fern": "8f2c4b716006a3a4779e68b162fa9888155eb99ee5652178ef970c6d3d237e4e",
+    "compiler/ssadeps.fern": "7785b6ae9ea6e96955a3bce7d068b7c639bfe6cdf1bf3139f1e21482c138a297"
+  },
+  "profile_compiler_sha256": {
+    "cpu": "94b1d2b5028852f0138f6c57305e5b964e59a63a2dc37880fb271c5b97bd463d",
+    "alloc": "622c4cd31b778b5cc03c35e61ed1d6bf5cc1c314a7e51f2ab9430cb5275ce343"
+  },
+  "profile_sha256": {
+    "cpu": "e2278502de2041b7276724ca996be24b6f6f7b49a1bd19275bd9f56e182520ce",
+    "alloc": "6cf1df097ca6a1424fbaf3501b8613e4ec89c2b9a987fe23a46da2765f6a33fe"
+  },
+  "tool_versions": {
+    "Go": "1.27.3",
+    "Valgrind": "3.24.0",
+    "wasmtime": "50.0.1"
+  },
+  "files_sha256": {
+    "timings.json": "314541395ec5984d81022921eb177e48547454107983d8487b5cec7926f27c4b",
+    "allocations.json": "26357fbb3329ee8d65fbc2713f9c7dae0252344040f7a8c3bc54f3893438525e",
+    "cpu-top.txt": "53b5ce9a028456034cbd803554acff8d85f6be65c0389b9f6c1bd92ffc6b363a",
+    "alloc-top.txt": "9c2ebe8a1943460befc56f5509b2102df086e6f7f63817a94aa2108bf7db8412",
+    "profile-runs.json": "86125b2b55c07fa1536dfffeb2088aa55d3cb66de6993665f58578dfbbbdf279",
+    "instructions.json": "a0c5fa6e1360819279e7e80d294867386846a80a09996b8d28f01ad6ee19ec11",
+    "before-callgrind.log": "7fc5d1753b75fc3404397176acdda08bd7cd313fc6383ed384a2bc961c492cdc",
+    "after-callgrind.log": "98015dc4001593717b08bf418cf1a81754d2aef11bcae94d45afcb64abed7bcd"
+  },
+  "instruction_run": {
+    "tool": "Valgrind 3.24.0 Callgrind",
+    "arguments": [
+      "--tool=callgrind",
+      "--cache-sim=no",
+      "--branch-sim=no"
+    ],
+    "priming": "one native compile per compiler in a separate proof cache",
+    "proof_cache": "isolated-warm",
+    "certification": "enabled",
+    "debug_variables": false,
+    "cache_build_stamp_entries": {
+      "before": 1,
+      "after": 1
+    },
+    "cache_proof_entries": {
+      "before": 2335,
+      "after": 2335
+    }
+  }
+}

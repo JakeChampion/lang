@@ -36,14 +36,23 @@ function rejected_rows(data: [u8], limits: pixels.Limits, incremental: boolean):
   return match (result) { Err(png.RowCodec(error)) => error_name(error), _ => "unexpected" };
 }
 
-function rejected_provider(data: u8[], limits: pixels.Limits, expected: png.PngError, incremental: boolean): string {
+function provider_error_name(message: string): string {
+  for error in [png.Signature, png.Truncated, png.Length, png.Crc, png.Order, png.Unsupported, png.Dimensions, png.Limit, png.Compressed, png.Scanline] {
+    if (message == "PNG " + error.to_debug()) {
+      return error_name(error);
+    }
+  }
+  return "unexpected";
+}
+
+function rejected_provider(data: u8[], limits: pixels.Limits, incremental: boolean): string {
   let source = if (incremental) { provider.incremental_source(data, limits, png.default_row_limits(), pipeline.default_limits()) } else { provider.source(data, limits, png.default_row_limits(), pipeline.default_limits()) };
-  let graph = match (source) { Ok(v) => v, Err(pipeline.ProviderFailure(e)) => { return if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }; }, Err(_) => { return "unexpected"; } };
+  let graph = match (source) { Ok(v) => v, Err(pipeline.ProviderFailure(e)) => { return provider_error_name(e); }, Err(_) => { return "unexpected"; } };
   let Ok(cache) = pipeline.required_cache(graph, pipeline.default_limits()) else {
     return "unexpected";
   };
   let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value);
-  return match (pipeline.fold_rows_fused(graph, 0, 1, pipeline.default_limits(), cache, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }, _ => "unexpected" };
+  return match (pipeline.fold_rows_fused(graph, 0, 1, pipeline.default_limits(), cache, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => provider_error_name(e), _ => "unexpected" };
 }
 
 function graph_bytes(graph: pipeline.Graph, height: i32, cache: i32, fused: boolean): Result[u8[], string] {
@@ -68,7 +77,7 @@ function inspect(path: string, index: i32): i32 {
   };
   let prefix = f"index={index}";
   let limits = pixels.Limits { max_pixels: 65536, max_bytes: 262144 };
-  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(f"{prefix} status=error error={error_name(e)} row_error={rejected_rows(data, limits, false)} provider_error={rejected_provider(data, limits, e, false)} incremental_error={rejected_rows(data, limits, true)} incremental_provider_error={rejected_provider(data, limits, e, true)}"); return 0; } };
+  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(f"{prefix} status=error error={error_name(e)} row_error={rejected_rows(data, limits, false)} provider_error={rejected_provider(data, limits, false)} incremental_error={rejected_rows(data, limits, true)} incremental_provider_error={rejected_provider(data, limits, true)}"); return 0; } };
   let Ok(rows) = row_bytes(data, 0, image.layout.height, limits, false) else {
     return 6;
   };

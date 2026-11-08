@@ -1,0 +1,120 @@
+import "../packages/codecs/jpeg/component_planes" as planes;
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "../packages/codecs/jpeg/frame_writer" as frame;
+import "../packages/codecs/jpeg/entropy_writer" as entropy;
+import "../packages/codecs/jpeg/header";
+import "std/binary";
+import "std/hex";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function number(data: [u8], at: i32): i32 {
+  return match (binary.read_u32_be(data, at)) { Ok(v) => v as i32, Err(_) => 0 };
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function tables(): frame.ComponentTables {
+  let q: header.QuantTable[] = [];
+  for i in 0..4 {
+    let values: u8[] = [];
+    for j in 0..64 {
+      values = values.append((1 + (j * (i + 1) + i * 31) % 255) as u8);
+    }
+    q = q.append(header.QuantTable { values: values });
+  }
+  return frame.ComponentTables { quantization: q, huffman: entropy.ScanTables { dc: [table(false), table(false)], ac: [table(true), table(true)] } };
+}
+
+function entropy_name(error: entropy.EncodeError): string {
+  return match (error) { entropy.Shape => "Shape", entropy.Table => "Table", entropy.MissingSymbol => "MissingSymbol", entropy.Coefficient => "Coefficient", entropy.Limit => "Limit", entropy.Cancelled => "Cancelled" };
+}
+
+function name(error: planes.WriteError): string {
+  return match (error) {
+    planes.Shape => "Shape", planes.Cancelled => "Cancelled",
+    planes.Order(e) => "Order." + e.to_debug(), planes.Block(e) => "Block." + e.to_debug(),
+    planes.Transform(e) => "Transform." + e.to_debug(), planes.Quantization(e) => "Quantization." + e.to_debug(),
+    planes.Frame(frame.Shape) => "Frame.Shape", planes.Frame(frame.Dimensions) => "Frame.Dimensions",
+    planes.Frame(frame.Table) => "Frame.Table", planes.Frame(frame.Limit) => "Frame.Limit",
+    planes.Frame(frame.Cancelled) => "Cancelled", planes.Frame(frame.Entropy(e)) => "Frame.Entropy." + entropy_name(e),
+  };
+}
+
+function emit(path: string): i32 {
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (data.len() < 28) {
+    return 3;
+  }
+  let config = planes.Options { frame: frame.Options { width: number(data, 0), height: number(data, 4), restart_interval: number(data, 8), max_output_bytes: number(data, 12) }, max_blocks: number(data, 16) };
+  let count = number(data, 20);
+  let nplanes = number(data, 24);
+  if (count < 0 || count > 5 || nplanes < 0 || nplanes > 5 || data.len() - 28 < count * 24) {
+    return 3;
+  }
+  let components: frame.Component[] = [];
+  let at = 28;
+  for i in 0..count {
+    components = components.append(frame.Component { id: number(data, at), horizontal: number(data, at + 4), vertical: number(data, at + 8), quantization: number(data, at + 12), dc: number(data, at + 16), ac: number(data, at + 20) });
+    at += 24;
+  }
+  let input: planes.Plane[] = [];
+  for i in 0..nplanes {
+    if (data.len() - at < 24) {
+      return 3;
+    }
+    let layout = blocks.PlaneLayout { width: number(data, at), height: number(data, at + 4), stride: number(data, at + 8) };
+    let edge = if (number(data, at + 12) == 0) { blocks.Replicate } else { blocks.Constant(number(data, at + 16) as u8) };
+    let size = number(data, at + 20);
+    at += 24;
+    if (size < 0 || size > data.len() - at) {
+      return 3;
+    }
+    let samples: u8[] = [];
+    for j in 0..size {
+      samples = samples.append(data[at + j]);
+    }
+    input = input.append(planes.Plane { samples: samples, layout: layout, edge: edge });
+    at += size;
+  }
+  if (at != data.len()) {
+    return 3;
+  }
+  match (planes.encode(input, components, tables(), config, never)) {
+    Ok(v) => {
+      print(path + " ok " + hex.encode(v));
+    },
+    Err(e) => {
+      print(path + " error " + name(e));
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  for i in 1..paths.len() {
+    let result = emit(paths[i]);
+    if (result != 0) {
+      return result;
+    }
+  }
+  return 0;
+}

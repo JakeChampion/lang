@@ -56,12 +56,50 @@ jobs:
           uv run --no-project python fern-image/tests/fixtures/generate_png_packed.py --check
           uv run --no-project python fern-image/tests/fixtures/generate_png_indexed.py --check
           uv run --no-project python fern-image/tests/fixtures/generate_png_transparency.py --check
+          uv run --no-project python fern-image/tests/fixtures/generate_png_adam7.py --check
+          uv run --no-project python -m unittest discover -s fern-image/tests -p generate_png_adam7_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_png_adam7_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_boxes_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_bits_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_integers_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_headers_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_sample_depth_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_f16_test.py
+      - name: Qualify Adam7 PNG input with offline references
+        run: |
+          results="$(mktemp -d "$RUNNER_TEMP/png-adam7.XXXXXX")"
+          uv run --no-project python fern-image/tests/qualify_png_adam7.py \
+            --fern "$GITHUB_WORKSPACE/bin/fern" --target x86-64-linux --output "$results/native"
+          uv run --no-project python fern-image/tests/qualify_png_adam7.py \
+            --fern "$GITHUB_WORKSPACE/bin/fern" --target wasm32-wasi --output "$results/wasm" \
+            --runner wasmtime --runner run --runner=--dir=.
+      - name: Qualify JPEG XL bit fields with the pinned offline reader
+        run: bash fern-image/scripts/test-jxl-bits-reference.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - name: Qualify JPEG XL integer fields with pinned offline coders
+        run: bash fern-image/scripts/test-jxl-integers-reference.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - name: Qualify JPEG XL headers with pinned offline classes
+        run: bash fern-image/scripts/test-jxl-headers-reference.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - name: Qualify JPEG XL sample precision with pinned offline classes
+        run: bash fern-image/scripts/test-jxl-sample-depth-reference.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - name: Qualify JPEG XL finite metadata with pinned offline coders
+        run: bash fern-image/scripts/test-jxl-f16-reference.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - name: Check sample transparency with offline libpng
         run: |
           sudo apt-get update
           sudo apt-get install -y libpng-dev pkg-config
           bash fern-image/scripts/test-png-transparency-reference.sh
       - name: Qualify QOI against the pinned reference codec
+        # External codec code serves only as an offline test reference.
         run: |
           reference="$(mktemp -d "$RUNNER_TEMP/qoi-reference.XXXXXX")"
           curl --fail --silent --show-error --location \
@@ -73,6 +111,7 @@ jobs:
           uv run --no-project python fern-image/tests/qualify_qoi.py \
             --fern "$GITHUB_WORKSPACE/bin/fern" --reference-header "$reference/qoi.h" \
             --target wasm32-wasi --runner wasmtime --runner run --output "$reference/wasm"
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p benchmark_qoi_test.py
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-png-corpus.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -100,6 +139,26 @@ jobs:
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-component-blocks.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_mcu_order_test.py
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_component_frames_test.py
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_component_planes_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-component-planes.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-component-frames.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_mcu_entropy_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-mcu-entropy.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jpeg_padded_blocks_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-padded-blocks.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: bash ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-mcu-order.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-jpeg-plane-coefficients.sh
@@ -387,6 +446,36 @@ jobs:
         with:
           name: image-jpeg-quantization
           path: fern-image/build/jpeg-quantization-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-mcu-order-*.json') != ''
+        with:
+          name: image-jpeg-mcu-order
+          path: fern-image/build/jpeg-mcu-order-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-component-frames-*.json') != ''
+        with:
+          name: image-jpeg-component-frames
+          path: fern-image/build/jpeg-component-frames-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-component-planes-*.json') != ''
+        with:
+          name: image-jpeg-component-planes
+          path: fern-image/build/jpeg-component-planes-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-padded-blocks-*.json') != ''
+        with:
+          name: image-jpeg-padded-blocks
+          path: fern-image/build/jpeg-padded-blocks-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-mcu-entropy-*.json') != ''
+        with:
+          name: image-jpeg-mcu-entropy
+          path: fern-image/build/jpeg-mcu-entropy-*.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always() && hashFiles('fern-image/build/icc-inverse-*.json') != ''

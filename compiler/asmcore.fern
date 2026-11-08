@@ -71,6 +71,7 @@ pub struct EmitState {
   build_profile: string,
   build_target: string,
   log_provider: string,
+  exit_provider: string,
   ram_base: i64,
   ram_size: i64,
   interrupts: string[],
@@ -524,6 +525,7 @@ pub function new_state(): EmitState {
     build_profile: "",
     build_target: "",
     log_provider: "",
+    exit_provider: "",
     ram_base: 0i64,
     ram_size: 0i64,
     interrupts: [],
@@ -2259,15 +2261,20 @@ pub function runtime_files(s: EmitState, isa_key: string): string {
   return isa_key;
 }
 
-// The label of the program's `log` provider when the target does not grant
-// `log`. Then print and eprint call it in place of a write syscall.
-pub function with_log_provider(s: EmitState, mod: parser.Module): EmitState {
-  if (platforms.has_capability(s.build_target, "log")) {
-    return s;
-  }
+// The labels of the program's providers that serve this target. With a `log`
+// provider, print and eprint call it in place of a write syscall. With an
+// `exit` provider, `exit` and the return from `main` call it in place of a
+// trap.
+pub function with_providers(s: EmitState, mod: parser.Module): EmitState {
   for pv in parser.marked(mod, "provide") {
+    if (!platforms.provider_used(s.build_target, pv.arg)) {
+      continue;
+    }
     if (pv.arg == "log") {
-      return EmitState { ...s, log_provider: "__fn_" + sanitize_label(pv.func_name) };
+      s = EmitState { ...s, log_provider: "__fn_" + sanitize_label(pv.func_name) };
+    }
+    if (pv.arg == "exit") {
+      s = EmitState { ...s, exit_provider: "__fn_" + sanitize_label(pv.func_name) };
     }
   }
   return s;
@@ -2277,6 +2284,12 @@ pub function with_log_provider(s: EmitState, mod: parser.Module): EmitState {
 // runtime make syscalls and own the startup.
 pub function process_entry(s: EmitState): boolean {
   return platforms.entry_shape(s.build_target) == "process";
+}
+
+// The IRQ region that __irq_pending names: one pending word for each 32 IRQ
+// lines, 1024 lines in all.
+pub function irq_region_bytes(): i32 {
+  return 128;
 }
 
 // A kernel image starts at a reset vector, with no stack and no process.

@@ -7,11 +7,16 @@ The color module provides sRGB transfer functions, grayscale, channel operations
 
 The resize module provides scalar nearest-neighbor and bilinear filters.
 A pure Fern [QOI codec](docs/qoi.md) reads and writes RGB8/RGBA8 with explicit color-space metadata and resource limits.
-A restricted native PNG codec decodes noninterlaced grayscale at one, two, four or eight bits per sample.
+
+A restricted native PNG codec decodes grayscale at one, two, four or eight bits per sample.
 It also decodes eight-bit grayscale with alpha, RGB and RGBA.
+
 Indexed PNG input supports one, two, four and eight-bit indices, with PLTE and indexed tRNS.
 Grayscale and RGB tRNS select transparent samples in RGBA8 output.
 Its encoder writes RGB8/RGBA8.
+Eager input accepts Adam7 interlace in all current sample modes.
+The row and graph APIs retain noninterlaced input until their memory plans cover interlaced reconstruction.
+
 Its [sequential row interface](docs/png-rows.md) emits selected rows after a complete filtered-frame decode.
 The [PNG provider adapter](docs/png-providers.md) connects fresh decoder sessions to graph rows and cropped tiles.
 The [resumable DEFLATE reader](docs/deflate-reader.md) provides bounded output chunks.
@@ -24,11 +29,24 @@ The [forward block transform](docs/jpeg-dct.md) prepares natural-order coefficie
 The [coefficient quantizer](docs/jpeg-quantization.md) applies explicit nearest-integer rules and preserves the decoder's quantizer order.
 The [internal entropy writer](docs/jpeg-entropy-writer.md) emits baseline coefficient scans with explicit tables, restart markers and exact byte limits.
 The [internal frame writer](docs/jpeg-frame-writer.md) serializes complete one-component baseline files from explicit quantized blocks and tables.
-The [component-block extractor](docs/jpeg-component-blocks.md) prepares partial image edges with explicit replication or constant fill.
+The [component-block extractor](docs/jpeg-component-blocks.md) prepares partial edges and complete MCU dummy blocks with explicit replication or constant fill.
 The [component fold](docs/jpeg-plane-coefficients.md) delivers quantized blocks without a required complete coefficient plane.
 The [producer writer](docs/jpeg-produced-frames.md) connects these blocks directly to complete one-component frames.
 The [forward sample converter](docs/jpeg-rgb-ycbcr.md) prepares explicit full-range JFIF samples from packed RGB8 rows.
+The [MCU order fold](docs/jpeg-mcu-order.md) describes component block positions and complete dummy blocks for a future color writer.
+The [MCU entropy producer](docs/jpeg-mcu-entropy.md) emits explicit baseline component scans with separate DC predictors and complete-MCU restart intervals.
+The [component frame writer](docs/jpeg-component-frames.md) adds complete baseline markers with explicit component and table metadata.
+The [component-plane connector](docs/jpeg-component-planes.md) writes those frames directly from explicit sample planes without a complete coefficient image.
 The [shared sample word primitive](docs/sample-bytes.md) preserves exact raw words with explicit byte order.
+The [JPEG XL box prerequisite](../docs/contexts/image/specs/jxl-container.md) checks signatures and bounded envelopes in both directions.
+It preserves opaque payloads and header forms. Complete container semantics and JPEG XL pixel coding remain unfinished.
+The [JPEG XL bit-field prerequisite](../docs/contexts/image/specs/jxl-bitstream.md) checks raw low-bit-first fields, logical extents and exact bounded output.
+The [JPEG XL integer prerequisite](../docs/contexts/image/specs/jxl-integers.md) checks U32 distributions and the complete unsigned U64 code in both directions.
+The [JPEG XL header prerequisite](../docs/contexts/image/specs/jxl-headers.md) reads and writes dimension, preview and animation descriptors without image allocation.
+The [JPEG XL precision prerequisite](../docs/contexts/image/specs/jxl-sample-depth.md) reads and writes integer and floating-point sample declarations without sample conversion.
+
+The [JPEG XL finite metadata prerequisite](../docs/contexts/image/specs/jxl-f16-fields.md) reads exact F16 values and writes the original metadata coder's finite truncation form.
+
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.
@@ -39,12 +57,13 @@ HTTP and CDN services remain unimplemented.
 
 | Format | Read | Write |
 |---|---|---|
-| PNG | Noninterlaced grayscale1/2/4/8 and RGB8 with optional tRNS, indexed1/2/4/8 with optional alpha, grayscale-alpha8, RGBA8 | RGB8/RGBA8 |
+| PNG | Eager Adam7 or noninterlaced grayscale1/2/4/8 and RGB8 with optional tRNS, indexed1/2/4/8 with optional alpha, grayscale-alpha8, RGBA8 | Noninterlaced RGB8/RGBA8 |
 | JPEG | Restricted baseline grayscale and JFIF RGB | Planned |
 | JPEG XL | Planned | Planned |
 | QOI | RGB8/RGBA8 | RGB8/RGBA8 |
 
 Each codec documents its metadata policy and resource limits.
+A [native QOI benchmark pipeline](docs/benchmarks.md) checks exact pixels before native time and memory observations.
 JPEG XL and wider PNG/JPEG compatibility are active roadmap items.
 
 ## Build and test

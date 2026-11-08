@@ -3758,12 +3758,27 @@ function arm64_maintenance_text(op: string): string {
 }
 
 // brk takes the sync exception with the class 0x3c, and elr_el1 holds its
-// address.
+// address. The IRQ ops set and clear the I bit of PSTATE. irq_wait runs with
+// IRQs masked: a pending IRQ wakes wfi also when PSTATE masks it, so no wakeup
+// is lost, and the unmask then lets its handler run before the mask returns.
 function arm64_no_operand_op(op: string): string {
   if (op == "dev_breakpoint") {
     return "    brk #0\n";
   }
+  if (op == "dev_irq_mask") {
+    return "    msr daifset, #2\n";
+  }
+  if (op == "dev_irq_unmask") {
+    return "    msr daifclr, #2\n";
+  }
+  if (op == "dev_irq_wait") {
+    return "    wfi\n    msr daifclr, #2\n    msr daifset, #2\n";
+  }
   return "    wfi\n";
+}
+
+function arm64_no_operand(op: string): boolean {
+  return op == "dev_wfi" || op == "dev_breakpoint" || op == "dev_irq_mask" || op == "dev_irq_unmask" || op == "dev_irq_wait";
 }
 
 // A privileged op. hvc and smc take x0 to x3 and return x0, in the SMC calling
@@ -3775,12 +3790,16 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   if (ircore.maintenance_op(ins.str)) {
     return ssa_maintenance(ins, reg_of, s);
   }
-  if (ins.str == "dev_wfi" || ins.str == "dev_breakpoint") {
+  if (arm64_no_operand(ins.str)) {
     s = s.write(arm64_no_operand_op(ins.str) + "    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   if (ins.str == "dev_boot_info") {
     s = s.write("    adrp x0, __fern_boot_info\n    ldr x0, [x0, :lo12:__fern_boot_info]\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  }
+  if (ins.str == "dev_irq_pending") {
+    s = s.write("    adrp x0, __fern_irq_pending\n    add x0, x0, :lo12:__fern_irq_pending\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   for i in 0..ins.args.len() {
@@ -3876,7 +3895,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
       s = s.write(profile_exit_asm(s));
       s = s.write("    mov x8, #94\n").svc(94);
     } else {
-      s = s.write("    brk #1\n");
+      s = s.write(exit_provider_call(s, "x0") + "    brk #1\n");
     }
     s = s.write("    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -6757,8 +6776,8 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
-  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
-  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n.Lfern_stack_kept:\n");
+  s = s.write("    tbnz x0, #63, .Lfern_stack_map_failed\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
+  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n");
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   if (darwin) {
     s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n");
@@ -6879,11 +6898,9 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   } else {
     s = s.write("    .section .bss\n    .align 8\n__fern_sig_sp: .quad 0, 0\n    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n.Lmsg_illegal_instruction:\n    .ascii \"" + ill + "\\n\"\n.Lmsg_bus_error:\n    .ascii \"" + bus + "\\n\"\n    .text\n");
   }
-  // A fault inside the guard of the runtime's own stack is an overflow. On
-  // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
-  // of the stack pointer counts as one.
-  let guard = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    cbz x14, .Lfern_segv_near_sp\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.lo .Lfern_segv_overflow\n    b .Lfern_segv_other\n.Lfern_segv_near_sp:\n";
-  s = s.write("__fern_segv:\n" + landing_pad(s) + dispatch + addr + guard + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n.Lfern_segv_overflow:\n" + frame);
+  // A fault inside the guard of the runtime's own stack is an overflow.
+  let guard = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.hs .Lfern_segv_other\n";
+  s = s.write("__fern_segv:\n" + landing_pad(s) + dispatch + addr + guard + ".Lfern_segv_overflow:\n" + frame);
   s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n" + ctx + "    adrp x9, __fern_bt_floor\n    add x9, x9, :lo12:__fern_bt_floor\n    str x10, [x9]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp = "xzr";
   if (darwin) {
@@ -6911,6 +6928,7 @@ function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("relro_protect")) {
     s = emit_startup_failure(s, ".Lfern_relro_failed", aborts.relro());
   }
+  s = emit_startup_failure(s, ".Lfern_stack_map_failed", aborts.stack_map());
   s = emit_startup_failure(s, ".Lfern_stack_guard_failed", aborts.stack_guard());
   s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
   s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());
@@ -6993,11 +7011,17 @@ function reset_stack_bytes(): i64 {
   return 1048576i64;
 }
 
+// The IRQ region: one pending word for each 32 IRQ lines, 1024 lines in all.
+// A top half sets a bit, and the reactor clears it with IRQs masked.
+function irq_region(): string {
+  return "    .section .bss\n    .p2align 2\n__fern_irq_pending:\n    .skip " + util.i32_to_string(asmcore.irq_region_bytes()) + "\n";
+}
+
 // The loader enters EL1 with the MMU and data cache off, and with its boot
 // argument in x0.
 function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   let top = s.ram_base + s.ram_size;
-  s = s.write("    .section .data\n    .p2align 3\n__fern_boot_info:\n    .quad 0\n    .text\n");
+  s = s.write("    .section .data\n    .p2align 3\n__fern_boot_info:\n    .quad 0\n" + irq_region() + "    .text\n");
   s = s.write("_start:\n    mrs x9, mpidr_el1\n    and x9, x9, #255\n    cbnz x9, .Lreset_park\n");
   s = s.write("    adrp x10, __fern_boot_info\n    str x0, [x10, :lo12:__fern_boot_info]\n");
   s = s.write(mov_imm64("x9", top) + "    mov sp, x9\n");
@@ -7011,8 +7035,20 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_reset_mmu(s);
   s = s.write("    add x0, x1, #15\n    and x0, x0, #-16\n");
   s = s.write(mov_imm64("x1", top - reset_stack_bytes()) + "    sub x1, x1, x0\n    bl __fern_heap_init\n");
-  s = s.write("    bl __fn_main\n.Lreset_park:\n    wfe\n    b .Lreset_park\n");
+  s = s.write("    bl __fn_main\n    mov x19, x0\n");
+  if (s.leak_check) {
+    s = s.write("    bl __fern_lc_report\n");
+  }
+  s = s.write(exit_provider_call(s, "x19") + ".Lreset_park:\n    wfe\n    b .Lreset_park\n");
   return emit_vectors(s);
+}
+
+// A call of the `exit` provider with the code in `reg`, or nothing without one.
+function exit_provider_call(s: asmcore.EmitState, reg: string): string {
+  if (s.exit_provider.len() == 0) {
+    return "";
+  }
+  return "    sub sp, sp, #16\n    str " + reg + ", [sp]\n    bl " + s.exit_provider + "\n    add sp, sp, #16\n";
 }
 
 // The VBAR_EL1 table has 16 slots of 128 bytes. Slots 4 to 7 take an exception
@@ -7626,13 +7662,10 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
-  s = s.write(".Llc_write:\n");
-  s = s.write("    mov x0, #2\n");
-  s = s.write("    mov x8, #64\n");
-  s = s.svc(64);
-  s = s.write("    ret\n");
+  s = emit_lc_write(s);
   s = s.write(".Llc_wrnum:\n");
   s = s.write("    sub sp, sp, #48\n");
+  s = s.write("    str x30, [sp]\n");
   s = s.write("    add x3, sp, #32\n");
   s = s.write("    mov x4, #10\n");
   s = s.write("    mov x5, #0\n");
@@ -7656,12 +7689,27 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x2, sp, #32\n");
   s = s.write("    sub x2, x2, x3\n");
   s = s.write("    mov x1, x3\n");
-  s = s.write("    mov x0, #2\n");
-  s = s.write("    mov x8, #64\n");
-  s = s.svc(64);
+  s = s.write("    bl .Llc_write\n");
+  s = s.write("    ldr x30, [sp]\n");
   s = s.write("    add sp, sp, #48\n");
   s = s.write("    ret\n");
   return s;
+}
+
+// .Llc_write writes the x2 bytes at x1 to stderr, or to the `log` provider on
+// a target without a host. The provider is a Fern function, so the stub keeps
+// x10, which the sanitizer's leak line holds across a write.
+function emit_lc_write(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".Llc_write:\n");
+  if (s.log_provider.len() == 0) {
+    s = s.write("    mov x0, #2\n");
+    s = s.write("    mov x8, #64\n");
+    s = s.svc(64);
+    return s.write("    ret\n");
+  }
+  s = s.write("    stp x29, x30, [sp, #-16]!\n    stp x10, x11, [sp, #-16]!\n    mov x29, sp\n");
+  s = s.write("    sub sp, sp, #32\n    str x1, [sp, #0]\n    str x2, [sp, #16]\n    bl " + s.log_provider + "\n    add sp, sp, #32\n");
+  return s.write("    ldp x10, x11, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
 }
 
 function rc_poison(): i32 {
@@ -12743,7 +12791,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
     return "";
   }
   let s = asmcore.new_state();
-  s = asmcore.with_funcs(asmcore.with_log_provider(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
+  s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
   if (asmcore.sandbox_on()) {
@@ -12784,7 +12832,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   mod = parser.infer_ret_types_module(mod);
   let s = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("arm64") };
-  s = asmcore.with_funcs(asmcore.with_log_provider(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, sw), mod), all_funcs);
+  s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, sw), mod), all_funcs);
   let derrs = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));

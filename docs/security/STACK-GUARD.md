@@ -15,6 +15,24 @@ The original `absent` classification for SEC-015 was incorrect.
 `TestSelfHostStackOverflow` checks recursion overflow, a valid million-deep call chain, and an unrelated memory fault.
 It executes x86-64 programs natively and AArch64 programs with QEMU on an x86 host.
 
+## Stack mapping failure
+
+Startup maps the 1 GiB application stack before it protects the guard.
+Startup previously kept the kernel's stack when the kernel refused that mapping.
+The program then ran with an 8 MiB stack and no guard of its own.
+The fault handler then had to call a fault within 1 MiB of the stack pointer an overflow.
+Startup now stops the program when the mapping fails, and the handler tests the guard range alone.
+The diagnostic is a fixed string, and the exit status is 134:
+
+```text
+fern: could not map the stack
+```
+
+The arena mapping already stopped the program when the kernel refused it.
+An address space that cannot hold the stack cannot hold the arena.
+So no program that ran before this change stops now.
+The AArch64 startup shares the check with Darwin.
+
 ## Guard protection failure
 
 Startup previously ignored the return value from the guard's `mprotect` call.
@@ -69,8 +87,8 @@ Before #14051 the in-process assembler encoded these loads at the wrong offset, 
 
 ## Regression evidence
 
-`TestSelfHostStackGuardDenial`, `TestSelfHostSignalStackMapDenial`, `TestSelfHostSignalStackDenial` and `TestSelfHostFaultHandlerDenial` use a test-only seccomp launcher.
-The launcher takes a mode and denies one startup call: the guard `mprotect`, the 64 KiB `mmap`, `sigaltstack`, or `rt_sigaction` for signal 11.
+`TestSelfHostStackMapDenial`, `TestSelfHostStackGuardDenial`, `TestSelfHostSignalStackMapDenial`, `TestSelfHostSignalStackDenial` and `TestSelfHostFaultHandlerDenial` use a test-only seccomp launcher.
+The launcher takes a mode and denies one startup call: the 1 GiB `mmap`, the guard `mprotect`, the 64 KiB `mmap`, `sigaltstack`, or `rt_sigaction` for signal 11.
 It verifies its own errno injection before it executes the program.
 
 The positive control must print its marker and return 42 without the launcher.
@@ -98,8 +116,6 @@ The emitted runtime retains its no-libc contract.
 ## Remaining limits
 
 This change does not complete SEC-015.
-Stack mapping failure still selects the original process stack.
-That stack has the kernel's guard gap, and the fault handler then reports a fault near the stack pointer as an overflow.
 Fern has no dynamic frames, so the probes cover every frame the compiler emits.
 
 The hand-written runtime frames, leaf functions and bare frames hold no canary.

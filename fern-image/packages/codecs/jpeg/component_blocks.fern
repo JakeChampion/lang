@@ -7,6 +7,8 @@ pub enum Edge { Replicate, Constant(u8) }
 
 pub struct PlaneLayout { width: i32, height: i32, stride: i32 }
 
+pub struct BlockExtent { columns: i32, rows: i32 }
+
 pub function validate(bytes: [u8], layout: PlaneLayout): Result[void, BlockError] {
   if (layout.width <= 0 || layout.height <= 0 || layout.stride < layout.width) {
     return Err(BlockError.Layout);
@@ -62,4 +64,47 @@ pub function block(bytes: [u8], layout: PlaneLayout, block_x: i32, block_y: i32,
     return Err(BlockError.Cancelled);
   }
   return Ok(output);
+}
+
+function admit_padding(bytes: [u8], layout: PlaneLayout, extent: BlockExtent, block_x: i32, block_y: i32): Result[void, BlockError] {
+  validate(bytes, layout)?;
+  if (extent.columns < (layout.width - 1) / 8 + 1 || extent.rows < (layout.height - 1) / 8 + 1) {
+    return Err(BlockError.Layout);
+  }
+  if (block_x < 0 || block_y < 0 || block_x >= extent.columns || block_y >= extent.rows) {
+    return Err(BlockError.Bounds);
+  }
+  return Ok(());
+}
+
+function dummy_block(bytes: [u8], layout: PlaneLayout, block_x: i32, block_y: i32, edge: Edge, cancelled: () => boolean): Result[u8[], BlockError] {
+  if (cancelled()) {
+    return Err(BlockError.Cancelled);
+  }
+  let dummy_x = block_x > (layout.width - 1) / 8;
+  let dummy_y = block_y > (layout.height - 1) / 8;
+  let output = __alloc_u8(64);
+  for y in 0..8 {
+    if (cancelled()) {
+      return Err(BlockError.Cancelled);
+    }
+    let sy = if (dummy_y) { layout.height } else { block_y * 8 + y };
+    for x in 0..8 {
+      let sx = if (dummy_x) { layout.width } else { block_x * 8 + x };
+      output = output.with(y * 8 + x, sample(bytes, layout, sx, sy, edge));
+    }
+  }
+  if (cancelled()) {
+    return Err(BlockError.Cancelled);
+  }
+  return Ok(output);
+}
+
+// An explicit extent admits the complete dummy blocks of an interleaved MCU.
+pub function block_padded(bytes: [u8], layout: PlaneLayout, extent: BlockExtent, block_x: i32, block_y: i32, edge: Edge, cancelled: () => boolean): Result[u8[], BlockError] {
+  admit_padding(bytes, layout, extent, block_x, block_y)?;
+  if (block_x <= (layout.width - 1) / 8 && block_y <= (layout.height - 1) / 8) {
+    return block(bytes, layout, block_x, block_y, edge, cancelled);
+  }
+  return dummy_block(bytes, layout, block_x, block_y, edge, cancelled);
 }

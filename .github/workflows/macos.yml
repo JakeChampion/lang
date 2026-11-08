@@ -30,18 +30,31 @@ name: macOS arm64
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
+    inputs:
+      groups:
+        description: JSON list of affected Darwin test groups
+        required: false
+        type: string
+        default: '["profile","coreutils","native","fixtures","examples"]'
+      selection:
+        description: Dependency plan with affected native tests
+        required: false
+        type: string
+        default: '{"full":true}'
   workflow_dispatch:
 
 env:
   # gotestsum reads this as --jsonfile: the event stream the
   # failure-annotation step names the failed tests from.
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+  FERN_CI_SELECTION: ${{ inputs.selection }}
 
 jobs:
   # Publish native profiler results before the longer corpus and execution
   # suites. This always executes on Apple Silicon, independently of a local
   # signoff for the other native tests.
   profile-arm64-darwin:
+    if: contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'profile')
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -122,11 +135,11 @@ jobs:
           save: ${{ matrix.shard == 0 && 'true' || 'false' }}
 
       - name: go vet
-        if: matrix.shard == 1
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'native') && (matrix.shard == 1) }}
         run: go vet ./internal/testing/e2e/... ./internal/oracle/interp/...
 
       - name: go test (Darwin interpreter timestamps, renames, xattrs, seeks and clones)
-        if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'native') && (matrix.shard == 1 && steps.gate.outputs.signed != 'true') }}
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives|TestInterpRenameFlagsPrimitives|TestInterpXattrPrimitives|TestInterpHandleStatSeek|TestInterpSeekHole|TestInterpCloneFile)$' ./internal/oracle/interp/ ./internal/testing/e2e/
 
@@ -135,14 +148,14 @@ jobs:
       # other lane is Linux, where the sixteen Darwin overrides are unread
       # data — exactly the shape that goes stale without anyone noticing.
       - name: go test (Darwin errno table)
-        if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'native') && (matrix.shard == 1 && steps.gate.outputs.signed != 'true') }}
         run: |
           gotestsum --format standard-verbose -- ./internal/tables/strerror/
 
       # internal/tools/tty has Darwin-only files (ioctl numbers, isatty's
       # FIODTYPE question, the pty opener) that no Linux lane compiles in.
       - name: go test (Darwin terminal ioctls)
-        if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'native') && (matrix.shard == 1 && steps.gate.outputs.signed != 'true') }}
         run: |
           gotestsum --format standard-verbose -- ./internal/tools/tty/
 
@@ -160,13 +173,14 @@ jobs:
       # no system GNU to fall back to and this installs the whole tree.
       # `hw.ncpu` because there is no nproc until the thing being built exists.
       - name: Cache the GNU coreutils oracle
+        if: ${{ (contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') || fromJSON(inputs.selection || '{"full":true}').needsGNU) }}
         id: gnu-oracle
         uses: actions/cache@v6
         with:
           path: ~/gnu-coreutils
           key: gnu-coreutils-full-arch-${{ env.GNU_COREUTILS_VERSION }}-macos-15
       - name: Build the GNU coreutils oracle
-        if: steps.gnu-oracle.outputs.cache-hit != 'true'
+        if: ${{ (contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') || fromJSON(inputs.selection || '{"full":true}').needsGNU) && (steps.gnu-oracle.outputs.cache-hit != 'true') }}
         run: |
           set -euo pipefail
           ver="$GNU_COREUTILS_VERSION"
@@ -224,6 +238,7 @@ jobs:
       # tree is one this check must cover, and an enumerated list is a list
       # that goes stale silently.
       - name: Assert the oracle is GNU coreutils, and point the corpus at it
+        if: ${{ (contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') || fromJSON(inputs.selection || '{"full":true}').needsGNU) }}
         run: |
           set -euo pipefail
           bindir="$HOME/gnu-coreutils/bin"
@@ -316,7 +331,7 @@ jobs:
       # killing the step mid-write cannot lose it, and the summary prints
       # after that.
       - name: go test (coreutils corpus on Darwin)
-        if: steps.gate.outputs.signed != 'true'
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') && (steps.gate.outputs.signed != 'true') }}
         timeout-minutes: 50
         # The runner's bash is macOS's 3.2, so no mapfile and no bash-4 forms.
         run: |
@@ -344,7 +359,7 @@ jobs:
       # The artifact FIRST, and the summary after it. The whole log is the
       # thing worth keeping, so it must not be behind a step that prints.
       - name: Keep the corpus log
-        if: always() && steps.gate.outputs.signed != 'true'
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') && (always() && steps.gate.outputs.signed != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: coreutils-corpus-darwin-shard${{ matrix.shard }}
@@ -365,7 +380,7 @@ jobs:
       # reporting as a second bug. The upload above stays `always()`, because
       # a partial log is still worth keeping.
       - name: which cases failed
-        if: "!cancelled() && steps.gate.outputs.signed != 'true'"
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') && (!cancelled() && steps.gate.outputs.signed != 'true') }}
         timeout-minutes: 3
         run: |
           if [ ! -f corpus-darwin.log ]; then
@@ -390,7 +405,7 @@ jobs:
       # the self-host step run on shard 0 and the rest on shard 1, to balance
       # the two.
       - name: go test (arm64-darwin native execution)
-        if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'native') && (!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true') }}
         # The TestArm64Darwin* tests detect runtime.GOOS=="darwin"
         # && GOARCH=="arm64" and run the arm64-darwin binaries the
         # self-host compiler emits, asserting exit codes. The other
@@ -399,12 +414,15 @@ jobs:
         # the case on macOS). `standard-verbose` keeps the streamed
         # RUN/PASS/FAIL of the old `-v` run.
         run: |
-          gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/testing/e2e/
+          pattern=$(node scripts/ci-test-pattern.mjs internal/testing/e2e '^TestArm64Darwin')
+          if [ "$pattern" != '^$' ]; then
+            gotestsum --format standard-verbose -- -count=1 -run "$pattern" ./internal/testing/e2e/
+          fi
 
       # The arm64-darwin leg of the fixture corpus. The Linux legs run in
       # test-e2e-selfhost.yml. Shard 1 runs it because shard 1 is the shorter.
       - name: go test (fixture corpus on arm64-darwin)
-        if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'fixtures') && (!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true') }}
         timeout-minutes: 30
         env:
           FERN_SELFHOST_FIXTURES: "1"
@@ -412,7 +430,7 @@ jobs:
           gotestsum --format standard-verbose -- -timeout 25m -run '^TestFernFixturesSelfHostArm64Darwin$' ./internal/testing/e2e/
 
       - name: go test (SELF-HOST arm64-darwin native execution)
-        if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'native') && (!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true') }}
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
         # which lives in a different package (internal/testing/e2ecompiler) and so was
         # not selected by the `-run TestArm64Darwin ./internal/testing/e2e/` filter —
@@ -427,13 +445,16 @@ jobs:
         # this runner's twofold speed swing.
         timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint|TestSelfHostStringArrayReleaseRuntime|TestSelfHostNativePollables)$' ./internal/testing/e2ecompiler/
+          pattern=$(node scripts/ci-test-pattern.mjs internal/testing/e2ecompiler '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint|TestSelfHostStringArrayReleaseRuntime|TestSelfHostNativePollables)$')
+          if [ "$pattern" != '^$' ]; then
+            gotestsum --format standard-verbose -- -count=1 -timeout 25m -run "$pattern" ./internal/testing/e2ecompiler/
+          fi
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
       - name: Compile + run every example for arm64-darwin (native, default)
-        if: "!cancelled() && matrix.shard == 1"
+        if: ${{ contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'examples') && (!cancelled() && matrix.shard == 1) }}
         # Build each examples/*.fern via the driver's DEFAULT path — the
         # in-process Mach-O backend, no clang/ld64 — then actually execute
         # the binary. This is the full-corpus execution check for the
@@ -475,7 +496,7 @@ jobs:
   # both. It needs no macOS runner, only the two logs.
   darwin-ratchet:
     needs: [test-arm64-darwin]
-    if: ${{ !cancelled() && needs.test-arm64-darwin.outputs.signed != 'true' }}
+    if: ${{ !cancelled() && contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') && needs.test-arm64-darwin.outputs.signed != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

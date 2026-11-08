@@ -19,6 +19,7 @@
 #endif
 
 /* Each mode makes one startup system call of a Fern program fail:
+   stack-map        mmap of the 1 GiB application stack          -> ENOMEM
    guard            mprotect of the 1 MiB guard with PROT_NONE   -> EPERM
    signal-stack-map mmap of the 64 KiB alternate signal stack    -> ENOMEM
    signal-stack     sigaltstack                                   -> EPERM
@@ -30,6 +31,17 @@
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, HOST_AUDIT_ARCH, 1, 0), \
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS), \
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr))
+
+static struct sock_filter stack_map_rules[] = {
+    ARCH_CHECK,
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_mmap, 0, 5),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 1073741824, 0, 3),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1]) + 4),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | ENOMEM),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+};
 
 static struct sock_filter guard_rules[] = {
     ARCH_CHECK,
@@ -90,7 +102,15 @@ int main(int argc, char **argv) {
     const char *mode = argv[1];
     int rc;
     errno = 0;
-    if (strcmp(mode, "guard") == 0) {
+    if (strcmp(mode, "stack-map") == 0) {
+        rc = install(stack_map_rules, sizeof(stack_map_rules) / sizeof(stack_map_rules[0]));
+        if (rc) return rc;
+        if (!injected(syscall(SYS_mmap, 0, 1073741824, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0), ENOMEM)) {
+            fputs("startup failure test did not inject ENOMEM for the stack mmap\n", stderr);
+            return 67;
+        }
+    } else if (strcmp(mode, "guard") == 0) {
         rc = install(guard_rules, sizeof(guard_rules) / sizeof(guard_rules[0]));
         if (rc) return rc;
         if (!injected(syscall(SYS_mprotect, 0, 1048576, 0), EPERM)) {

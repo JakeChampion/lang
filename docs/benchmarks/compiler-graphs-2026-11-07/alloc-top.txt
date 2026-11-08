@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=8192 dropped=789488
+Type: alloc_space
+Showing nodes accounting for 9271.36MB, 97.74% of 9486.22MB total
+Dropped 1111 nodes (cum <= 47.43MB)
+Showing top 40 nodes out of 143
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%  9485.79MB   100%  __fn_main
+         0     0%     0%  9485.79MB   100%  __fn_run_with_gate
+         0     0%     0%  9485.03MB   100%  _start
+ 9271.36MB 97.74% 97.74%  9271.36MB 97.74%  __fern_arr_box
+         0     0% 97.74%  5693.09MB 60.01%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 97.74%  5667.65MB 59.75%  __fn_asm_ir__emit_module_ir_gated_sub
+         0     0% 97.74%  5630.85MB 59.36%  __fn_asm_ir__emit_module_ir_unit_flat
+         0     0% 97.74%  5630.47MB 59.35%  __fn_asm_ir__emit_module_ir_unit_prepared
+         0     0% 97.74%  5613.69MB 59.18%  __fn_asm_ir__emit_module_funcs
+         0     0% 97.74%  5571.52MB 58.73%  __fn_asm_ir__emit_function_via_ir_named
+         0     0% 97.74%  5556.16MB 58.57%  __fn_asm_ir__emit_ssa_function
+         0     0% 97.74%  5488.74MB 57.86%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0% 97.74%  4540.16MB 47.86%  __fn_irverifygate__certify_or_refuse
+         0     0% 97.74%  4468.13MB 47.10%  __fern_alloc_u8
+         0     0% 97.74%  4135.55MB 43.60%  __fn_rccertify__walk_assuming
+         0     0% 97.74%  3272.41MB 34.50%  __fern_arr_push
+         0     0% 97.74%  2838.80MB 29.93%  __fn_rccertify__walk_of
+         0     0% 97.74%  2788.35MB 29.39%  __fn_semlower__target_substitution
+         0     0% 97.74%  2732.48MB 28.80%  __fn_semlower__produced_rows
+         0     0% 97.74%  2727.92MB 28.76%  __fn_semlower__substitution_of
+         0     0% 97.74%  2727.11MB 28.75%  __fn_semlower__substitution
+         0     0% 97.74%  2475.41MB 26.09%  __fern_arr_push_owned
+         0     0% 97.74%  2138.45MB 22.54%  __fn_rccertify__origins
+         0     0% 97.74%  1242.46MB 13.10%  __fn_semlower__inferred_rows
+         0     0% 97.74%  1098.39MB 11.58%  __fn_semsource__produce_module
+         0     0% 97.74%  1035.92MB 10.92%  __fn_rccertify__escape_paths
+         0     0% 97.74%   954.33MB 10.06%  __fn_semlower__produced_body
+         0     0% 97.74%   954.33MB 10.06%  __fn_semlower__rows_lowered
+         0     0% 97.74%   954.33MB 10.06%  __fn_ssarc__build_lower
+         0     0% 97.74%   954.33MB 10.06%  __fn_ssarc__lower
+         0     0% 97.74%   777.84MB  8.20%  __fn_util__minus_ones
+         0     0% 97.74%   550.48MB  5.80%  __fn_semlower__rows_planned
+         0     0% 97.74%   522.24MB  5.51%  __fn_asm_ir__emit_ssa_allocated_x86
+         0     0% 97.74%   522.24MB  5.51%  __fn_asm_ir__emit_ssa_function_x86
+         0     0% 97.74%   493.71MB  5.20%  __fn_rccertify__settle
+         0     0% 97.74%   487.86MB  5.14%  __fn_checker__check_module_raw_floor
+         0     0% 97.74%   487.86MB  5.14%  __fn_checker__checked_module
+         0     0% 97.74%   486.96MB  5.13%  __fn_checker__build_gate_diags_with_file
+         0     0% 97.74%   486.96MB  5.13%  __fn_checker__build_gate_diags_with_file$wrap
+         0     0% 97.74%   455.01MB  4.80%  __fn_checker__check_module_pass

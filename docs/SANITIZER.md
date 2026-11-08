@@ -158,6 +158,19 @@ a program that raw-allocates and raw-frees reports every block as leaked there
 while native reports it reclaimed. That is the census being accurate about the
 runtime it is measuring, not a divergence to paper over.
 
+## A kernel image: the census through the board
+
+A target without a host has no stderr and no exit syscall. Thus the compiler
+refuses a `FERN_LEAKCHECK` or `-sanitize` build of one, with one exception. A
+kernel image whose board supplies a `log` provider prints the census through
+the provider. Its reset entry prints the census after `main` returns, before
+the `exit` provider stops the machine (`docs/FREESTANDING-CORE.md`, "A board
+supplies a capability").
+
+`TestSelfHostKernelTicksOnQemu` and `TestSelfHostKernelX86TicksOnQemu` read a
+balanced census off the serial console. The fatal checks of `-sanitize` still
+need a host, because their abort path is a syscall.
+
 ## wasm: the census, and only the census
 
 The wasm backend carries the **leak census** — the same line, the same verdict

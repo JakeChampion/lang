@@ -56,7 +56,8 @@ func testDependencyVerificationIR(t *testing.T, target string) {
 		fmt.Fprintf(&main, "if (dependency_case_%d() != 0) { return %d; }\n", i, i+1)
 		want.WriteString(tc.want + "\n")
 	}
-	main.WriteString("return 0;\n}\n")
+	main.WriteString("if (dominance_reuse_checks() != 0) { return 99; }\nreturn 0;\n}\n")
+	source.WriteString(dominanceReuseChecks)
 	source.WriteString(main.String())
 	entry := filepath.Join(dir, "dependency_fixture.fern")
 	if err := os.WriteFile(entry, []byte(source.String()), 0o644); err != nil {
@@ -131,6 +132,18 @@ return 0;
 
 func TestSelfHostSSADependencyVerification(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
+	t.Run("dominator-reuse", func(t *testing.T) {
+		dir := t.TempDir()
+		copySelfHostDriver(t, dir, "ssadeps.fern")
+		source := "import \"./ssa\"; import \"./ssadeps\";\n" + dominanceReuseChecks + "\nfunction main(): i32 { return dominance_reuse_checks(); }\n"
+		if err := os.WriteFile(filepath.Join(dir, "dominator_reuse.fern"), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := buildSelfHostBin(t, gcc, dir, "dominator_reuse.fern", "dominator-reuse")
+		if output, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
+			t.Fatalf("dominator reuse: %v\n%s", err, output)
+		}
+	})
 	for _, tc := range dependencyVerifyCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -149,3 +162,30 @@ func TestSelfHostSSADependencyVerification(t *testing.T) {
 		})
 	}
 }
+
+const dominanceReuseChecks = `function dominance_reuse_checks(): i32 {
+  let ret = ssa.STerm { kind_tag: 1, cond: -1, target: -1, t: -1, f: -1, value: 0 };
+  let split = ssa.STerm { kind_tag: 3, cond: 0, target: -1, t: 11, f: 30, value: -1 };
+  let dead = ssa.STerm { kind_tag: 2, cond: -1, target: 50, t: -1, f: -1, value: -1 };
+  let param = ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
+  let blocks: ssa.SBlock[] = [
+    ssa.SBlock { id: 30, preds: [7, 11], insts: [], term: ret },
+    ssa.SBlock { id: 7, preds: [], insts: [param], term: split },
+    ssa.SBlock { id: 11, preds: [7, 11], insts: [], term: split },
+    ssa.SBlock { id: 50, preds: [50], insts: [], term: dead },
+  ];
+  let f = ssa.SFunc { name: "sparse_loop", nparams: 1, nvals: 1, entry: 7, blocks: blocks, takes_env: false };
+  let before = ssa.print_func(f);
+  let d = ssadeps.dominates_at(f, ssadeps.position_of(f));
+  let reach = ssadeps.reachable_from_dom(d);
+  let dfs = ssadeps.reachable_blocks(f);
+  for bi in 0..4 {
+    if (reach[bi] != (bi != 3) || reach[bi] != dfs[bi]) { return 1; }
+    if (ssadeps.dom_holds(d, bi, 1) != (bi != 3)) { return 2; }
+  }
+  if (ssadeps.dom_holds(d, 0, 2) || ssadeps.dom_holds(d, 3, 3)) { return 3; }
+  if (d.idom[0] != 1 || d.idom[1] != 1 || d.idom[2] != 1 || d.idom[3] != -1) { return 4; }
+  if (ssa.print_func(f) != before) { return 5; }
+  return 0;
+}
+`

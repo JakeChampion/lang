@@ -1,0 +1,71 @@
+import "./bits";
+import "./u32_fields";
+import "std/array";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum DepthError { Value, Input(bits.BitError) }
+
+pub struct Depth { floating: boolean, bits: u32, exponent: u32, next: i64 }
+
+function choices(floating: boolean): u32_fields.Distribution[] {
+  let values = if (floating) { [32u32, 16u32, 24u32] } else { [8u32, 10u32, 12u32] };
+  return [u32_fields.Distribution { width: 0, offset: values[0] }, u32_fields.Distribution { width: 0, offset: values[1] }, u32_fields.Distribution { width: 0, offset: values[2] }, u32_fields.Distribution { width: 6, offset: 1u32 }];
+}
+
+function admit(floating: boolean, precision: u32, exponent: u32): Result[void, DepthError] {
+  if (!floating) {
+    if (precision == 0u32 || precision > 31u32) {
+      return Err(DepthError.Value);
+    }
+    return Ok(());
+  }
+  if (exponent < 2u32 || exponent > 8u32) {
+    return Err(DepthError.Value);
+  }
+  let mantissa = precision as i64 - exponent as i64 - 1i64;
+  if (mantissa < 2i64 || mantissa > 23i64) {
+    return Err(DepthError.Value);
+  }
+  return Ok(());
+}
+
+function translate(error: u32_fields.IntegerError): DepthError {
+  return match (error) {
+    u32_fields.Input(cause) => DepthError.Input(cause),
+    _ => DepthError.Value,
+  };
+}
+
+function raw(input: [u8], position: i64, width: i32, extent: i64): Result[bits.Read, DepthError] {
+  return match (bits.read(input, position, width, extent)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(DepthError.Input(error)),
+  };
+}
+
+pub function read(input: [u8], position: i64, extent: i64): Result[Depth, DepthError] {
+  let flag = raw(input, position, 1, extent)?;
+  let floating = flag.value != 0u64;
+  let precision = match (u32_fields.read(input, flag.next, extent, choices(floating))) {
+    Ok(value) => value,
+    Err(error) => { return Err(translate(error)); },
+  };
+  let exponent = if (floating) { raw(input, precision.next, 4, extent)? } else { bits.Read { value: 0u64, next: precision.next } };
+  let value = if (floating) { exponent.value as u32 + 1u32 } else { 0u32 };
+  admit(floating, precision.value as u32, value)?;
+  return Ok(Depth { floating: floating, bits: precision.value as u32, exponent: value, next: exponent.next });
+}
+
+pub function fields(floating: boolean, precision: u32, exponent: u32): Result[bits.Field[], DepthError] {
+  admit(floating, precision, exponent)?;
+  let encoded = match (u32_fields.fields(precision, choices(floating))) {
+    Ok(value) => value,
+    Err(error) => { return Err(translate(error)); },
+  };
+  let result = [bits.Field { value: if (floating) { 1u64 } else { 0u64 }, width: 1 }].concat(encoded);
+  if (floating) {
+    return Ok(result.append(bits.Field { value: (exponent - 1u32) as u64, width: 4 }));
+  }
+  return Ok(result);
+}

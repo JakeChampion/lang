@@ -15,6 +15,18 @@ struct ProducedState { output: BitOutput, previous: i32, count: i32, marker: i32
 
 struct ProducerSlot { state: Option[ProducedState], failure: Option[EncodeError], open: boolean }
 
+pub struct ScanComponent { horizontal: i32, vertical: i32, dc: i32, ac: i32 }
+
+pub struct ScanTables { dc: header.HuffmanTable[], ac: header.HuffmanTable[] }
+
+pub struct ScanOptions { mcus: i32, restart_interval: i32, max_output_bytes: i32 }
+
+struct ScanPrepared { dc: Codes[], ac: Codes[], components: ScanComponent[], members: i32[], blocks: i32 }
+
+struct ScanState { output: BitOutput, previous: i32[], count: i32, marker: i32 }
+
+struct ScanSlot { state: Option[ScanState], failure: Option[EncodeError], open: boolean }
+
 function insert_codes(result: Codes, table: header.HuffmanTable, offset: i32, code: i32, count: i32, size: i32, ac: boolean): Result[Codes, EncodeError] {
   let output = result;
   for j in 0..count {
@@ -337,6 +349,187 @@ pub function encode_produced[S, E](source: S, count: i32, dc: header.HuffmanTabl
     return Err(ProducerSource(error));
   }
   if (state.count != count) {
+    return Err(ProducerEncode(EncodeError.Shape));
+  }
+  let output = match (align(state.output, cancelled)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };
+  if (cancelled()) {
+    return Err(ProducerEncode(EncodeError.Cancelled));
+  }
+  return Ok(output.bytes);
+}
+
+function scan_component(item: ScanComponent, tables: ScanTables): Result[void, EncodeError] {
+  if (item.horizontal < 1 || item.horizontal > 4 || item.vertical < 1 || item.vertical > 4) {
+    return Err(EncodeError.Shape);
+  }
+  if (item.dc < 0 || item.dc >= tables.dc.len() || item.ac < 0 || item.ac >= tables.ac.len()) {
+    return Err(EncodeError.Table);
+  }
+  return Ok(());
+}
+
+function scan_table_shapes(tables: ScanTables): Result[void, EncodeError] {
+  if (tables.dc.len() < 1 || tables.dc.len() > 2 || tables.ac.len() < 1 || tables.ac.len() > 2) {
+    return Err(EncodeError.Shape);
+  }
+  for table in tables.dc {
+    check_table_shape(table)?;
+  }
+  for table in tables.ac {
+    check_table_shape(table)?;
+  }
+  return Ok(());
+}
+
+function scan_shape(components: [ScanComponent], tables: ScanTables): Result[i32, EncodeError] {
+  if (components.len() < 1 || components.len() > 4) {
+    return Err(EncodeError.Shape);
+  }
+  scan_table_shapes(tables)?;
+  let units = 0;
+  for item in components {
+    scan_component(item, tables)?;
+    units += item.horizontal * item.vertical;
+  }
+  if (components.len() > 1 && units > 10) {
+    return Err(EncodeError.Shape);
+  }
+  return Ok(if (components.len() == 1) { 1 } else { units });
+}
+
+function scan_admit(components: [ScanComponent], tables: ScanTables, options: ScanOptions): Result[(i32, i32), EncodeError] {
+  if (options.mcus <= 0) {
+    return Err(EncodeError.Shape);
+  }
+  let units = scan_shape(components, tables)?;
+  let count = options.mcus as i64 * (units as i64);
+  if (options.restart_interval < 0 || options.restart_interval > 65535 || options.max_output_bytes < 0 || count > 2147483647i64) {
+    return Err(EncodeError.Limit);
+  }
+  return Ok((units, count as i32));
+}
+
+function scan_codes(tables: header.HuffmanTable[], ac: boolean, cancelled: () => boolean): Result[Codes[], EncodeError] {
+  let result: Codes[] = [];
+  for table in tables {
+    result = result.append(codes(table, ac, cancelled)?);
+  }
+  return Ok(result);
+}
+
+function scan_prepare(components: [ScanComponent], tables: ScanTables, options: ScanOptions, cancelled: () => boolean): Result[(ScanPrepared, ScanState), EncodeError] {
+  let (units, count) = scan_admit(components, tables, options)?;
+  if (cancelled()) {
+    return Err(EncodeError.Cancelled);
+  }
+  let dc = scan_codes(tables.dc, false, cancelled)?;
+  let ac = scan_codes(tables.ac, true, cancelled)?;
+  let members: i32[] = [];
+  let copied: ScanComponent[] = [];
+  let previous: i32[] = [];
+  for i in 0..components.len() {
+    if (cancelled()) {
+      return Err(EncodeError.Cancelled);
+    }
+    let item = components[i];
+    copied = copied.append(item);
+    previous = previous.append(0);
+    let blocks = if (components.len() == 1) { units } else { item.horizontal * item.vertical };
+    for j in 0..blocks {
+      members = members.append(i);
+    }
+  }
+  let prepared = ScanPrepared { dc: dc, ac: ac, components: copied, members: members, blocks: count };
+  let output = BitOutput { bytes: [], pending: 0, used: 0, limit: options.max_output_bytes };
+  return Ok((prepared, ScanState { output: output, previous: previous, count: 0, marker: 0 }));
+}
+
+function scan_poison(slot: Cell[ScanSlot], error: EncodeError): EncodeError {
+  let current = slot.get();
+  if let Some(first) = current.failure {
+    return first;
+  }
+  slot.set(ScanSlot { ...current, failure: Some(error) });
+  return error;
+}
+
+function scan_take(slot: Cell[ScanSlot], length: i32, count: i32): Result[ScanState, EncodeError] {
+  let current = slot.get();
+  if (!current.open) {
+    return Err(EncodeError.Shape);
+  }
+  if let Some(error) = current.failure {
+    return Err(error);
+  }
+  let Some(state) = current.state else {
+    return Err(scan_poison(slot, EncodeError.Shape));
+  };
+  if (length != 64 || state.count >= count) {
+    return Err(scan_poison(slot, EncodeError.Shape));
+  }
+  slot.set(ScanSlot { state: None, failure: None, open: true });
+  return Ok(state);
+}
+
+function scan_block(state: ScanState, values: [i32], prepared: ScanPrepared, interval: i32, cancelled: () => boolean): Result[ScanState, EncodeError] {
+  if (cancelled()) {
+    return Err(EncodeError.Cancelled);
+  }
+  let output = state.output;
+  let previous = state.previous;
+  let marker = state.marker;
+  let units = prepared.members.len();
+  let mcu_start = state.count % units == 0;
+  if (interval > 0 && state.count > 0 && mcu_start && state.count / units % interval == 0) {
+    output = restart(output, marker, cancelled)?;
+    for i in 0..previous.len() {
+      previous = previous.with(i, 0);
+    }
+    marker = (marker + 1) % 8;
+  }
+  let index = prepared.members[state.count % units];
+  let component = prepared.components[index];
+  output = block(output, values, previous[index], prepared.dc[component.dc], prepared.ac[component.ac], cancelled)?;
+  previous = previous.with(index, values[0]);
+  return Ok(ScanState { output: output, previous: previous, count: state.count + 1, marker: marker });
+}
+
+function scan_accept(slot: Cell[ScanSlot], values: [i32], prepared: ScanPrepared, interval: i32, cancelled: () => boolean): Result[void, EncodeError] {
+  let state = scan_take(slot, values.len(), prepared.blocks)?;
+  let result = scan_block(state, values, prepared, interval, cancelled);
+  if let Some(first) = slot.get().failure {
+    return Err(first);
+  }
+  match (result) {
+    Ok(next) => {
+      slot.set(ScanSlot { state: Some(next), failure: None, open: true });
+    },
+    Err(error) => {
+      return Err(scan_poison(slot, error));
+    }
+  }
+  return Ok(());
+}
+
+function scan_close(slot: Cell[ScanSlot]): Result[ScanState, EncodeError] {
+  let current = slot.get();
+  slot.set(ScanSlot { state: None, failure: current.failure, open: false });
+  if let Some(first) = current.failure {
+    return Err(first);
+  }
+  return match (current.state) { Some(state) => Ok(state), None => Err(EncodeError.Shape) };
+}
+
+// Produce complete natural-order blocks in component order within each MCU.
+pub function encode_mcus_produced[S, E](source: S, components: [ScanComponent], tables: ScanTables, options: ScanOptions, cancelled: () => boolean, produce: (S, ([i32]) => Result[void, EncodeError]) => Result[void, E]): Result[u8[], ProducerError[E]] {
+  let (prepared, initial) = match (scan_prepare(components, tables, options, cancelled)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };
+  let slot = cell_new(ScanSlot { state: Some(initial), failure: None, open: true });
+  let result = produce(source, (values: [i32]): Result[void, EncodeError] => scan_accept(slot, values, prepared, options.restart_interval, cancelled));
+  let state = match (scan_close(slot)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };
+  if let Err(error) = result {
+    return Err(ProducerSource(error));
+  }
+  if (state.count != prepared.blocks) {
     return Err(ProducerEncode(EncodeError.Shape));
   }
   let output = match (align(state.output, cancelled)) { Ok(v) => v, Err(e) => { return Err(ProducerEncode(e)); } };

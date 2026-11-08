@@ -1,0 +1,376 @@
+{
+  "generator_sha256": "476c9833fe41c1b36ed255bc5831b019239e2807bda414a360eaae46271e9d10",
+  "reference_version": "cjxl v0.12.0 0.12.0 [_NEON_BF16_,NEON] {AppleClang 17.0.0.17000604}\nCopyright (c) the JPEG XL Project",
+  "reference_dependencies": {
+    "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/bin/cjxl": {
+      "sha256": "0fb7fa46ef3bfdb3e47af187ec29950e7da4ac02046e0018b08af9ca7e65f73b",
+      "links": [
+        {
+          "install_name": "@rpath/libjxl_threads.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_threads.0.12.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libjxl.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl.0.12.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libjxl_cms.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/giflib/lib/libgif.dylib",
+          "resolved": "/opt/homebrew/Cellar/giflib/6.1.3/lib/libgif.7.2.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-turbo/lib/libjpeg.8.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-turbo/3.2.1/lib/libjpeg.8.3.2.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/libpng/lib/libpng16.16.dylib",
+          "resolved": "/opt/homebrew/Cellar/libpng/1.6.59/lib/libpng16.16.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libOpenEXR-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXR-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libOpenEXRUtil-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRUtil-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libOpenEXRCore-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRCore-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libIex-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIex-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libIlmThread-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIlmThread-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/imath/lib/libImath-3_2.30.dylib",
+          "resolved": "/opt/homebrew/Cellar/imath/3.2.3/lib/libImath-3_2.30.3.2.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib": {
+      "sha256": "a751191b0171517db242747261866729c5a4ab06bb769944a3201b2992156218",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/imath/3.2.3/lib/libImath-3_2.30.3.2.3.dylib": {
+      "sha256": "0febdf6a8ada20ac9de5783b68a9afbe93e18c51302bc4798e57f598f527758c",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/imath/lib/libImath-3_2.30.dylib",
+          "resolved": "/opt/homebrew/Cellar/imath/3.2.3/lib/libImath-3_2.30.3.2.3.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIlmThread-3_5.34.3.5.3.dylib": {
+      "sha256": "02d119ee7a5ea4a27779bb7cc16208b74e7bffcfa32f4e16d34e490204a72951",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libIlmThread-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIlmThread-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libIex-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIex-3_5.34.3.5.3.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIex-3_5.34.3.5.3.dylib": {
+      "sha256": "f494543d27199b7c9b5b2b439ad468ec09c7632026f95d5fc9559cd2655672a0",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libIex-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIex-3_5.34.3.5.3.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRCore-3_5.34.3.5.3.dylib": {
+      "sha256": "58ec23ba23c7778866cc13892d02eac727cb8299530947f2a1c152a893dc42d4",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libOpenEXRCore-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRCore-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/imath/lib/libImath-3_2.30.dylib",
+          "resolved": "/opt/homebrew/Cellar/imath/3.2.3/lib/libImath-3_2.30.3.2.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/libdeflate/lib/libdeflate.0.dylib",
+          "resolved": "/opt/homebrew/Cellar/libdeflate/1.26/lib/libdeflate.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/zstd/lib/libzstd.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/zstd/1.5.7_1/lib/libzstd.1.5.7.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/zstd/1.5.7_1/lib/libzstd.1.5.7.dylib": {
+      "sha256": "69d8dee81bccdee425d167300d11431f3c5ecc34a3011400e536aa89f7756189",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/zstd/lib/libzstd.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/zstd/1.5.7_1/lib/libzstd.1.5.7.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/libdeflate/1.26/lib/libdeflate.0.dylib": {
+      "sha256": "be13ae95ee99fdb86aa45bee19ab7228d8b9b0b9b89ecf7209dc2349fb25cf70",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/libdeflate/lib/libdeflate.0.dylib",
+          "resolved": "/opt/homebrew/Cellar/libdeflate/1.26/lib/libdeflate.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRUtil-3_5.34.3.5.3.dylib": {
+      "sha256": "1f4e4f91cbcf862b151e0c3ef268abb4374fbf22dc97cf533d44932658aa8385",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libOpenEXRUtil-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRUtil-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libOpenEXR-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXR-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libOpenEXRCore-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRCore-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/imath/lib/libImath-3_2.30.dylib",
+          "resolved": "/opt/homebrew/Cellar/imath/3.2.3/lib/libImath-3_2.30.3.2.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libIlmThread-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIlmThread-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libIex-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIex-3_5.34.3.5.3.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXR-3_5.34.3.5.3.dylib": {
+      "sha256": "927fa6209c0725e6b3ae9d36d6d54c3daaee6e1c453aaf36776f2c3d291b4fe6",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/openexr/lib/libOpenEXR-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXR-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libIlmThread-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIlmThread-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libOpenEXRCore-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libOpenEXRCore-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "@rpath/libIex-3_5.34.dylib",
+          "resolved": "/opt/homebrew/Cellar/openexr/3.5.3_1/lib/libIex-3_5.34.3.5.3.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/imath/lib/libImath-3_2.30.dylib",
+          "resolved": "/opt/homebrew/Cellar/imath/3.2.3/lib/libImath-3_2.30.3.2.3.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/libpng/1.6.59/lib/libpng16.16.dylib": {
+      "sha256": "8bbeb64b87a9af6dbff4ba01584c49c9ee26298ddfdcda763ded5384597ef6c2",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/libpng/lib/libpng16.16.dylib",
+          "resolved": "/opt/homebrew/Cellar/libpng/1.6.59/lib/libpng16.16.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/jpeg-turbo/3.2.1/lib/libjpeg.8.3.2.dylib": {
+      "sha256": "e70660f31e3e364583c77f504a97d2448b4d3af1f6dce81e159a2399179767fb",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-turbo/lib/libjpeg.8.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-turbo/3.2.1/lib/libjpeg.8.3.2.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/giflib/6.1.3/lib/libgif.7.2.0.dylib": {
+      "sha256": "33135b2258dee0a56edce471a9cb82983da50a4960e4aa080bdf96f05d155faf",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/giflib/lib/libgif.dylib",
+          "resolved": "/opt/homebrew/Cellar/giflib/6.1.3/lib/libgif.7.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib": {
+      "sha256": "dc786129100b266e763dddd3abaf4ce3ac2d36058810df1afcd273877c6b3197",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-xl/lib/libjxl_cms.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib",
+          "resolved": "/opt/homebrew/Cellar/little-cms2/2.19.1/lib/liblcms2.2.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/little-cms2/2.19.1/lib/liblcms2.2.dylib": {
+      "sha256": "ee7ae735ed415d98567cfa1964949febdeef110a33ea3cf9c29d7c61c6a043c6",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib",
+          "resolved": "/opt/homebrew/Cellar/little-cms2/2.19.1/lib/liblcms2.2.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl.0.12.0.dylib": {
+      "sha256": "f993dfe302464a20f72c7ea7c235a20c8e37bc833ebb7408d83d8615222999b8",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-xl/lib/libjxl.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl.0.12.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libjxl_cms.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlidec.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlidec.1.2.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlienc.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlienc.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlienc.1.2.0.dylib": {
+      "sha256": "6f07b64b1247ef2963b69813326a2ad363391e07b90e2dca6cf244f17176f884",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlienc.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlienc.1.2.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib": {
+      "sha256": "41ea919f6b53d772067477235cbe8fdf97aaad403c30a90512c6c4b17cd529ef",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlidec.1.2.0.dylib": {
+      "sha256": "23f7347022952e956a8fd9a045e32069c0d9adda23100af9d061502008976330",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlidec.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlidec.1.2.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_threads.0.12.0.dylib": {
+      "sha256": "b40036562c640958b641e6223cb27b42258b20106f76791348a8f368c833b4d8",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-xl/lib/libjxl_threads.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_threads.0.12.0.dylib"
+        }
+      ]
+    }
+  },
+  "images": [
+    {
+      "width": 1,
+      "height": 1,
+      "input_ppm_sha256": "3ff6c5463ace13c0f26a735ac1af2bb96ab8a9ba1cb4398359cf2466f63a4d1b",
+      "options": [
+        "--distance=0",
+        "--effort=1",
+        "--container=0",
+        "--num_threads=1"
+      ],
+      "codestream_sha256": "708797fb4380dc4bfde21c9b4765ebbd6a91f999fc1a51d23983bbe4155dd841",
+      "codestream_base64": "/woAEBBQXAgIAgEAhAJLGJuccYQDOIADOCBKwDkFAQAgRIAIEAEiQIT/9+/576Ex55xr7XNvkiQJAVVVVVVV1f///3Pv6+7u7ob/9+/576Ex55xr7XNvkiQJAVVVVVVV1f///3Pv6+7u7ob/9+/576Ex55xr7XNvkiQJAVVVVVVV1f///3Pv6+7u7ob/9+/576Ex55xr7XNvkiQJAVVVVVVV1f///3Pv6+7u7j4AAA=="
+    },
+    {
+      "width": 9,
+      "height": 8,
+      "input_ppm_sha256": "25b0187faf4de544b6f81cf11a9d1d51353550a08cbbccbf63c8e2d5b663b703",
+      "options": [
+        "--distance=0",
+        "--effort=1",
+        "--container=0",
+        "--num_threads=1"
+      ],
+      "codestream_sha256": "be2cee97522a8ec71bb5bbb68994bf4d19cbb4ee6cd66d791e620d79713e22fc",
+      "codestream_base64": "/wqBQEBxIQgCAQCsBksYm5xxhAM4gAM4IErAOQUBACBEgAgQASJAhP/37/nvoTHnnGvtc2+SJAkBVVVVVVXV////c+/r7u7uhv/37/nvoTHnnGvtc2+SJAkBVVVVVVXV////c+/r7u7uhv/37/nvoTHnnGvtc2+SJAkBVVVVVVXV////c+/r7u7uhv/37/nvoTHnnGvtc2+SJAkBVVVVVVXV////c+/r7u7uvkAgAawYjsNxLMaxGAdijAPx+l7m63vBr+9lHbi+l/n6XuaB63tZB67vZb6+F7wZuL6X+fpe5oFm4Ppe5ut7wZuBeH0v80AzEK/vBW8GYhxoBmIciMzMMMMMzMAMMMMFvBYX8PpcrGsxc7Guz8W6PjMX5vrMXJhrdmGuYzVzEa7jRbiOM9XMga/tga93NcNhr/dMNcNhHxfVDMxUMzAD2d0dd9xxd3z3tt37dm9j97bd29i9jd3bdu/L7N62exuZ3dt278v47m1kfPe+jDsZdxwLIcZiYCCEGItqZKQuYlGMDAwMlGUxMDBQ13U1MjBS12VZnXC8HijL6ozF+GhZV8XZxgfqsao6XzFc1yU="
+    },
+    {
+      "width": 13,
+      "height": 17,
+      "input_ppm_sha256": "a1781040e87dd3c5b513c5ee7bba12960e6701428eaec6200f73d66477c88652",
+      "options": [
+        "--distance=0",
+        "--effort=1",
+        "--container=0",
+        "--num_threads=1"
+      ],
+      "codestream_sha256": "ad90af1aed0d63e8e546304e7d664eb062ce6940f4a829ccc558b9e254350b7a",
+      "codestream_base64": "/wqAABiAgOJCCAIBAJEDSxibnHGEAziAAzggSsA5BQEAIESACBABIkCE//fv+e+hMeeca+1zb5IkCQFVVVVVVdX///9z7+vu7u6G//fv+e+hMeeca+1zb5IkCQFVVVVVVdX///9z7+vu7u6G//fv+e+hMeeca+1zb5IkCQFVVVVVVdX///9z7+vu7u6G//fv+e+hMeeca+1zb5IkCQFVVVVVVdX///9z7+vu7u6+QHQDrBiOw3EsxrEYB2KMA/H6DlzW63vBr+9lvb4X/PoOTF7w6/ugegxd1ut7wa/vZb2+F/z6DlzW63vBr+9lvb4X/Ppe1qs4ecGv78Blvb4X/Ppe1ut7wa/vZb2Kl/X6XvDre1mv7wW/vpf1Kk5e8Ot7Wa/iZb2+F/z6Xtbre8Gv72W9ipf1+l7wyat4Wa/vBX/UXtbLehUnL/ij9rJe1qt4WR+1l/WCP54v+GV91F7WC/6ovayX9VF7wS/ro/ayXvDJR+0Fv6yP2st6wa/vZX3UXvDJC/6ovayX9VF7wa/vZb2+F/z6XtaB63vBr+9lvb4X/Ppe1oHre8EnB67vBb++l/X6XvDre1kHru8Fb67vBb++l3Xg+l7wyYHre8Gb63vBr+9lHbi+F7y5vhe8Gbi+F3xy4Ppe8Ob6XvBm4Ppe5ut7ma9kHGZmhhlmYAZmgBkuoF+LC3h9Lta1uIDX52L5outzsR5vF/H6XKxrdmGuz8W6ZhfGr9mFuY4X4ZpdmOt4Ea7ZgRddx4vg1/EiXNsDX8eLcG0PfB2Pd20PfL0Pe20PfL0Pe22Pt+h6H/baHu96H/YxcNjrfdjHwGGv9/EeA4d9XNTHewwc9nHxYDvhY+B4ix4XD7YTPgaO97h4sJ3wsfIAPO/j4sF2wsfKA+uEj4sH23kfKw+sEz5+6gfbeR8rD6wTPn4O+1h5YJ13wePnQXTCx8oD67wPohM+mM77IDphfhCd9wFzwgfReR8wJ5x5wJy3nnnAnPfBccIHzHkfHCeceXCct3pwnPeBcMKZB8J565kHwnmrB8J5L/oJZy76eauLft5q5gKfv565wOevLvD5q5mLef6Lef4LFwuyuzvuuOPu+G627d63e9vufbvp9u2+wNdi2+59u7ft3rebbbv37d62e9/ubfu6fbvZtnvf7m279+3etm/b7n27t+3et3vbvm7f7m37tu3et3vb7n27t+3btntft2/b7n3n3bZtX7fvvNu27dt23m37zr5v23m37Tvvtm3n3bftvNv2defdt+282/bt3nbefd2+827bdt59u7ft3rd7G7v37d62e9/ubeze17F73+5tu/ft3sbufXn3vt3b2L2vY/e+vHvf7m3s3pd378vs3texe1/evS+ze9vubbvdsRBiLEaGR4fHx0OIsSiHR4eHx5esKmJRjI4OD48vWLTsKpfF0PDw6Pj4mlXXt184NDw6PD68ZNnVbdcNj68bHh5fseiqTqwbHh5fsXB8fNGya7xueHR8fNGylWuWXd9+3fD48JplS0YPcWX7dcPD40sWrRodHbyO64aHxxcsWjY8Ojg4tnB4fHzNqhWjg4NjY9dw4fiSZWsGRwfHxgau1jHWrlo2Ojo2ODZy3YYXjx5kwejg4NDY9RtcPzo4uHJ0cGzsOo4dYnB0cGxs1eDYtRw5yOjo2ODYSFxzPUcOMjw6ODg0VoTHHQ=="
+    },
+    {
+      "width": 64,
+      "height": 33,
+      "input_ppm_sha256": "f09067482aa8393de4437bd1d6aaf5f99ea16cdce75a69d5cb0caf915fa5839a",
+      "options": [
+        "--distance=0",
+        "--effort=1",
+        "--container=0",
+        "--num_threads=1"
+      ],
+      "codestream_sha256": "b4ad343f4e07dff66b7c13469f4a04c0db8e689522175a3a791e348fc2e4e97a",
+      "codestream_base64": "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SimllFJKKV36lFJKKaWUUkrp0qeUUnoWSCmllFK69CmllFJKKaWU0qVPqU0ppZRSSimldOlpU0oppZRSSunS06aUngVSSimllC49bUoppZRSSildetqU2pRSSimllNKlp00ppZRSSimlS0+bUkrPAimllFK69LQppZRSSimldOlpU0qpTSmllFJKl542pZRSSimllC49bUopPQuklFJK6dLTppRSSimllNKlp00ppZTalFJKKV162pRSSimllFK69LQppZSeBVJKKaVLT5tSSimllFJKl542pZRSSqlNKaV06WlTSimllFJK6dLTppRSehZIKaWU0qVvU0oppZRSSild+jallFJKKaU2pZQufZtSSimllFJK6dK3KaWU0rNASimldOlpU0oppZRSSunS06aUUkoppZTalC49bUoppZRSSildetqUUkrPAimllNKlp00ppZRSSimlS0+bUkoppZRSSo+C9tLTppRSSimllNKlp00ppfQskFJKKV162pRSSimllFK69LQppZRSSiml9ChI6ZK3KaWUUkoppXTpaVNKKaVngZRSSpeeNqWUUkoppZQuPW1KKaWUUkopPQpSSqlNKaWUUkopXXralFJK6VkgpZTSpadNKaWUUkoppUtPm1JKKaWUUkrpUZBSSqlNKaWUUkrp0rcppZRSehZIKaV06duUUkoppZRSSpe+TSmllFJKKaX0KEgppZRSm1JKKaV06WlTSimlZ4GUUkqXnjallFJKKaWULj1tSimllFJKKV36x39KKaWUUptSSildetqUUkopPQuklNKlp00ppZRSSimlS0+bUkoppZRSSpf+8X/9U0oppZRSm1JKl542pZRSSs8CKaV06WlTSimllFJK6dLTppRSSimllNKl59kgpZRSSildetqULj1tSimllJ4FUkrp0tOmlFJKKaWU0qWnTSmllFJKKaVLz7NBSimllFJKl7699O2lp00ppZRSehZIKV162pRSSimllFJKl75NKaWUUkoppXTpnw1SSimllFK69LSXvr3kbUoppZTSs0BKKV36NqWUUkoppZTSpadNKaWUUkoppUvPs0FKKaWUUrr0tJeeNrUppZRSSs8CKaVLT5tSSimllFJKl542pZRSSimllC49zwYppZRSSild+vbS06aU2pRSSulZIKV06WlTSimllFJK6dLTppRSSimllNKlp30WSCmllFJKl55LTptSSqlNKaX0LJDSpadNKaWUUkoppUtPm1JKKaWUUkqXnvZZIKWUUkopXXouOW1KKaWU2pTSs0BKl542pZRSSimllC49bUoppZRSSildetr0LJBSSimllC59e+nblFJKKaXUpmeBlNKlb1NKKaWUUkopXfo2pZRSSimllNKlb9OzQEoppZRSuvRcctqUUkoppZTaZ4GULj1tSimllFJKKV162pRSSimllFK69LTPAimllFJK6dJzyWlTSimllFJK6dkgXXralFJKKaWUUrr0tCmllFJKKaV06WnTs0BKKaWUUrr0l5w2pZRSSimllC49l5w2pZRSSimllC49bUoppZRSSildetr0LJBSSimllC79AyC1KaWUUkoppXTpaVObUkoppZRSSpeeNqWUUkoppZQuPW1KzwIppZRSSpf+AZDalFJKKaWUUrr0tCmlNqWUUkoppUtPm1JKKaWUUkrp0rcpPQuklFJKKaVLf8nblFJKKaWUUkqXvk0ppdSmlFJKKaVL36aUUkoppZRSuvS0KT0LpJRSSild+gdAalNKKaWUUkrp0tOmlFJKbUoppZQuPW1KKaWUUkopXXralJ4FUkoppZQu/QMgtSmllFJKKaV06WlTSimllNqUUkqXnjallFJKKaWULj1tSs8CKaWUUkrpoZ/alFJKKaWUUrr0tCmllFJK6VmgTSldetqUUkoppZRSuvS0KaVngZRSSimlhz5tSimllFJKKV162pRSSiml9CyQUpsuPW1KKaWUUkopXXralNKzQEoppZTSQ582pZRSSimllNKlb1NKKaWUUnoWSOnSAw=="
+    }
+  ]
+}

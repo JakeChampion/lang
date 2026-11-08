@@ -1,0 +1,34 @@
+[
+  {
+    "mode": "cpu",
+    "seconds": 12.651927765000437,
+    "command": [
+      "build/compiler-profile/fern-cpu-opt",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang/build/compiler-profile/checker-profile-cpu",
+      "/workspace/lang-compiler-baseline/compiler/checker.fern",
+      "/workspace/lang-compiler-baseline/internal/stdlib"
+    ],
+    "proof_cache": "disabled",
+    "certification": "enabled",
+    "debug_variables": false
+  },
+  {
+    "mode": "alloc",
+    "seconds": 14.886680638999678,
+    "command": [
+      "build/compiler-profile/fern-alloc-opt",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang/build/compiler-profile/checker-profile-alloc",
+      "/workspace/lang-compiler-baseline/compiler/checker.fern",
+      "/workspace/lang-compiler-baseline/internal/stdlib"
+    ],
+    "proof_cache": "disabled",
+    "certification": "enabled",
+    "debug_variables": false
+  }
+]

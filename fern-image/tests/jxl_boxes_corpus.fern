@@ -1,0 +1,59 @@
+import "../packages/codecs/jxl/boxes";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function signature_code(value: boxes.Signature): i32 {
+  return match (value) { boxes.NeedMore => 0, boxes.Invalid => 1, boxes.Codestream => 2, boxes.Container => 3 };
+}
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(input) = read_file_bytes(path) else {
+    return 1;
+  };
+  let signature = signature_code(boxes.signature(input));
+  let headers = match (boxes.scan(input, 1048576, 4096, never)) {
+    Ok(v) => v,
+    Err(error) => { print(f"{index} {signature} error {error.to_debug()}"); return 0; },
+  };
+  let rewritten: u8[] = [];
+  let description = "";
+  for header in headers {
+    let payload = input[header.payload:header.next];
+    let Ok(encoded) = boxes.write(header.kind, payload, header.size, 1048576, never) else {
+      return 2;
+    };
+    for byte in encoded {
+      rewritten = rewritten.append(byte);
+    }
+    let kind = header.kind;
+    let form = header.size.to_debug();
+    let start = header.start;
+    let at = header.payload;
+    let count = header.bytes;
+    let end = header.next;
+    description += f"{kind}:{form}:{start}:{at}:{count}:{end},";
+  }
+  if let Err(_) = write_file_bytes(path + ".roundtrip", rewritten) {
+    return 3;
+  }
+  let count = headers.len();
+  print(f"{index} {signature} ok {count} {description}");
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 4;
+  }
+  for i in 1..paths.len() {
+    let status = inspect(paths[i], i - 1);
+    if (status != 0) {
+      return status;
+    }
+  }
+  return 0;
+}
