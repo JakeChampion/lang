@@ -39,6 +39,7 @@ const sandboxRuleProg = `function main(): i32 {
     q.w.close();
     let pid: i32 = proc_fork();
     if (pid == 0) { exit(0); }
+    match (read_file("/proc/self/stat")) { Ok(_) => {}, Err(_) => { return 6; } }
     return 0;
 }
 `
@@ -87,6 +88,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 54, arg: 2, good: 2, bad: []uint64{25, 0, 1<<32 | 2}},
 			{nr: 72, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 157, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
+			{nr: 257, arg: 2, good: 577, bad: []uint64{0x200000, 0x400000 | 0x10000, 0x2000, 0x8000}},
 		},
 		install:  "    call __fern_seccomp_install\n",
 		mainCall: "    call __fn_main\n",
@@ -109,6 +111,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 25, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 167, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
 			{nr: 220, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
+			{nr: 56, arg: 2, good: 577, bad: []uint64{0x200000, 0x400000 | 0x4000, 0x2000, 0x20000}},
 		},
 		install:  "    bl __fern_seccomp_install\n",
 		mainCall: "    bl __fn_main\n",

@@ -236,7 +236,9 @@ pub struct ArgRule { nr: i32, arg: i32, values: i32[], mask: i32 }
 // PR_PAC_GET_ENABLED_KEYS. An ioctl is one of the eight terminal and
 // reflink requests. A setsockopt level is SOL_SOCKET, SOL_TCP, SOL_IPV6 or
 // SOL_TLS, and its option is one of the ten the runtime sets. A fcntl command is F_DUPFD, F_GETFL, F_SETFL, F_SETPIPE_SZ or
-// F_GETPIPE_SZ, so no lock, owner or signal command passes. On arm64, where
+// F_GETPIPE_SZ, so no lock, owner or signal command passes. The flags of an
+// openat carry only the bits the runtime and the open options set, so
+// O_ASYNC, O_PATH, O_TMPFILE and an undefined bit are killed. On arm64, where
 // the runtime forks through clone, the clone flags are SIGCHLD alone, so no
 // call makes a namespace.
 pub function arg_rules(target: string): ArgRule[] {
@@ -247,6 +249,7 @@ pub function arg_rules(target: string): ArgRule[] {
     return [
       ArgRule { nr: 25, arg: 1, values: fcntls, mask: 0 },
       ArgRule { nr: 29, arg: 1, values: ioctls, mask: 0 },
+      ArgRule { nr: 56, arg: 2, values: [], mask: 2145525822 },
       ArgRule { nr: 167, arg: 0, values: [1, 4, 56, 61], mask: 0 },
       ArgRule { nr: 198, arg: 0, values: [1, 2, 10], mask: 0 },
       ArgRule { nr: 208, arg: 1, values: [1, 6, 41, 282], mask: 0 },
@@ -266,6 +269,7 @@ pub function arg_rules(target: string): ArgRule[] {
     ArgRule { nr: 54, arg: 2, values: sockopts, mask: 0 },
     ArgRule { nr: 72, arg: 1, values: fcntls, mask: 0 },
     ArgRule { nr: 157, arg: 0, values: [1, 4, 56, 61], mask: 0 },
+    ArgRule { nr: 257, arg: 2, values: [], mask: 2145427518 },
     ArgRule { nr: 329, arg: 2, values: [], mask: 4 },
   ];
 }
