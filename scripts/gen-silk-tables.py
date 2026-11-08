@@ -76,6 +76,18 @@ def generate(tables):
             lines += declaration(name+'_BIASES', biases, 'i32')
     return '\n'.join(lines)
 
+def sign_tables(tables):
+    signs = []
+    for signal in ['Inactive', 'Unvoiced', 'Voiced']:
+        for level in ['Low', 'High']:
+            for pulse in ['0', '1', '2', '3', '4', '5', '6Plus']:
+                key = f'icdfExcitationSign{signal}Signal{level}Quantization{pulse}Pulse'
+                inverse, bias = inverse_cdf(tables[key][1])
+                if bias or len(inverse) != 2:
+                    raise ValueError('unexpected excitation sign distribution')
+                signs.extend(inverse)
+    return '\n'.join(declaration('EXCITATION_SIGN_ICDFS', signs, 'u8'))
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-dir', type=Path)
@@ -91,7 +103,7 @@ def main():
     if len(tables) != 105:
         raise ValueError('unexpected table count')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(generate(tables))
+    args.output.write_text(generate(tables)+'\n'+sign_tables(tables))
 
 if __name__ == '__main__':
     main()

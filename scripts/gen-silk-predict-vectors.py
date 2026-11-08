@@ -49,15 +49,9 @@ func FernPredictReference() {
 '''
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source-dir', type=Path, required=True,
-                        help='Pion Opus git clone containing the pinned revision')
-    parser.add_argument('--output', type=Path,
-                        default=ROOT/'tests/stdlib/opus_silk_predict_vectors.fern')
-    args = parser.parse_args()
+def reference(source_dir, driver, entry):
     # git archive reads the named objects. Working-tree edits cannot change the reference.
-    archive = subprocess.check_output(['git', '-C', str(args.source_dir), 'archive', REV])
+    archive = subprocess.check_output(['git', '-C', str(source_dir), 'archive', REV])
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -71,11 +65,21 @@ def main():
                     raise ValueError('reference archive path leaves its root')
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(tar.extractfile(member).read())
-        (root/'internal/silk/fern_reference.go').write_text(DRIVER)
+        (root/'internal/silk/fern_reference.go').write_text(driver)
         command = root/'cmd/fern-reference/main.go'
         command.parent.mkdir(parents=True, exist_ok=True)
-        command.write_text('package main\nimport "github.com/pion/opus/internal/silk"\nfunc main(){silk.FernPredictReference()}\n')
-        args.output.write_bytes(subprocess.check_output(['go', 'run', './cmd/fern-reference'], cwd=root))
+        command.write_text('package main\nimport "github.com/pion/opus/internal/silk"\nfunc main(){silk.'+entry+'()}\n')
+        return subprocess.check_output(['go', 'run', './cmd/fern-reference'], cwd=root)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source-dir', type=Path, required=True,
+                        help='Pion Opus git clone containing the pinned revision')
+    parser.add_argument('--output', type=Path,
+                        default=ROOT/'tests/stdlib/opus_silk_predict_vectors.fern')
+    args = parser.parse_args()
+    args.output.write_bytes(reference(args.source_dir, DRIVER, 'FernPredictReference'))
 
 
 if __name__ == '__main__':

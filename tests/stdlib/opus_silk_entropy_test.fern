@@ -1,0 +1,163 @@
+import "std/opus/range";
+import "std/audio/pcm";
+import "std/opus/silk/entropy";
+import "std/opus/silk/core";
+import "std/test";
+import "opus_silk_frame_vectors";
+
+function equal(a: [i32], b: [i32]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function libopus_frame(): test.TestOutcome {
+  let decoder = range.decoder(opus_silk_frame_vectors.LIBOPUS_PACKET);
+  let (a, active) = decoder.bit_logp(1);
+  let (b, redundant) = a.bit_logp(1);
+  if (redundant) {
+    return test.fail("unexpected LBRR in reference");
+  }
+  let (last, _, control) = match (entropy.decode(b, entropy.history(), 16, 20, active, true, false)) {
+    Ok(values) => values,
+    Err(_) => { return test.fail("libopus parameters rejected"); },
+  };
+  if (last.rng != opus_silk_frame_vectors.LIBOPUS_RANGE) {
+    return test.fail("libopus final range");
+  }
+  if (!equal(control.gains, opus_silk_frame_vectors.LIBOPUS_GAINS_Q16)) {
+    return test.fail("libopus gains");
+  }
+  if (!equal(control.pulses, opus_silk_frame_vectors.LIBOPUS_PULSES)) {
+    return test.fail("libopus pulses");
+  }
+  for i in 0..control.excitation.len() {
+    if (control.excitation[i] << 6 != opus_silk_frame_vectors.LIBOPUS_EXCITATION_Q14[i]) {
+      return test.fail("libopus excitation");
+    }
+  }
+  let order = control.lpc.len();
+  for i in 0..order {
+    if (control.lpc[i] != opus_silk_frame_vectors.LIBOPUS_LPC_Q12[order + i]) {
+      return test.fail("libopus LPC");
+    }
+  }
+  let (_, output) = match (core.decode(core.state(), control, 16, 20)) {
+    Ok(values) => values,
+    Err(_) => { return test.fail("libopus core rejected"); },
+  };
+  if (!equal(output, opus_silk_frame_vectors.LIBOPUS_CORE_PCM)) {
+    return test.fail("libopus PCM reconstruction");
+  }
+  return test.assert_true(true);
+}
+
+function reference_frames(): test.TestOutcome {
+  let rows = opus_silk_frame_vectors.FRAMES;
+  let at = 0;
+  let previous_rate = 0;
+  let history = entropy.history();
+  let state = core.state();
+  while (at < rows.len()) {
+    let rate = rows[at];
+    let duration = rows[at + 1];
+    if (previous_rate != rate) {
+      history = entropy.history();
+      state = core.state();
+      previous_rate = rate;
+    }
+    let size = rows[at + 6];
+    let packet: u8[] = [];
+    for i in 0..size {
+      packet = packet.append(rows[at + 7 + i] as u8);
+    }
+    let (last, next, control) = match (entropy.decode(range.decoder(packet), history, rate, duration, rows[at + 2] == 1, rows[at + 3] == 1, rows[at + 4] == 1)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("reference frame rejected"); },
+    };
+    if (last.rng != rows[at + 5] as u32) {
+      return test.fail("reference final range");
+    }
+    history = next;
+    at += size + 7;
+    let arrays = [control.gains, control.lsf, control.first_lpc, control.lpc, control.pitch, control.ltp, control.pulses, control.excitation];
+    let stage = 0;
+    for values in arrays {
+      let count = rows[at];
+      if (values.len() != count) {
+        return test.fail("stage " + stage.to_string() + " length " + values.len().to_string() + " expected " + count.to_string() + " at " + at.to_string());
+      }
+      for i in 0..count {
+        if (values[i] != rows[at + 1 + i]) {
+          return test.fail("stage " + stage.to_string() + " sample " + i.to_string() + " at " + at.to_string() + " got " + values[i].to_string() + " expected " + rows[at + 1 + i].to_string());
+        }
+      }
+      at += count + 1;
+      stage += 1;
+    }
+    let (next_state, output) = match (core.decode(state, control, rate, duration)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("reference core rejected"); },
+    };
+    state = next_state;
+    let count = rows[at];
+    for i in 0..count {
+      if (output[i] != rows[at + 1 + i]) {
+        return test.fail("PCM sample " + i.to_string() + " at " + at.to_string() + " got " + output[i].to_string() + " expected " + rows[at + 1 + i].to_string());
+      }
+    }
+    at += count + 1;
+  }
+  return test.assert_true(true);
+}
+
+function invalid_frames(): test.TestOutcome {
+  let packet = opus_silk_frame_vectors.LIBOPUS_PACKET;
+  for size in 0..8 {
+    let result = entropy.decode(range.decoder(packet[0:size]), entropy.history(), 16, 20, true, true, false);
+    match (result) {
+      Err(_) => {},
+      Ok(_) => {
+        return test.fail("truncated entropy accepted");
+      }
+    }
+  }
+  let invalid_rate = match (entropy.decode(range.decoder(packet), entropy.history(), 48, 20, true, true, false)) { Err(pcm.Header) => true, _ => false };
+  let invalid_duration = match (entropy.decode(range.decoder(packet), entropy.history(), 16, 60, true, true, false)) { Err(pcm.Header) => true, _ => false };
+  let invalid_history = match (entropy.decode(range.decoder(packet), entropy.History { ...entropy.history(), gain: 64 }, 16, 20, true, true, false)) { Err(pcm.Header) => true, _ => false };
+  return test.assert_true(invalid_rate && invalid_duration && invalid_history);
+}
+
+function invalid_reconstruction(): test.TestOutcome {
+  let decoder = range.decoder(opus_silk_frame_vectors.LIBOPUS_PACKET);
+  let (a, active) = decoder.bit_logp(1);
+  let (b, _) = a.bit_logp(1);
+  let (_, _, control) = match (entropy.decode(b, entropy.history(), 16, 20, active, true, false)) {
+    Ok(values) => values,
+    Err(_) => { return test.fail("valid control rejected"); },
+  };
+  let bad_state = core.State { ...core.state(), lpc: [] };
+  let bad_gain = entropy.Control { ...control, gains: [0, 0, 0, 0] };
+  let bad_lpc = entropy.Control { ...control, lpc: [] };
+  let bad_pitch = entropy.Control { ...control, signal: 3, pitch: [1, 1, 1, 1], ltp: pcm.zeros(20) };
+  let state_error = match (core.decode(bad_state, control, 16, 20)) { Err(pcm.Header) => true, _ => false };
+  let gain_error = match (core.decode(core.state(), bad_gain, 16, 20)) { Err(pcm.Header) => true, _ => false };
+  let lpc_error = match (core.decode(core.state(), bad_lpc, 16, 20)) { Err(pcm.Header) => true, _ => false };
+  let pitch_error = match (core.decode(core.state(), bad_pitch, 16, 20)) { Err(pcm.Header) => true, _ => false };
+  return test.assert_true(state_error && gain_error && lpc_error && pitch_error);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK entropy reference frames");
+  runner = runner.it("pinned libopus frame parameters", libopus_frame);
+  runner = runner.it("all internal rates, durations, and predictor history", reference_frames);
+  runner = runner.it("truncated entropy and invalid parameters", invalid_frames);
+  runner = runner.it("invalid reconstruction buffers, gains, filters, and pitch", invalid_reconstruction);
+  return runner.finish();
+}
