@@ -1,0 +1,23 @@
+import "std/test";
+import "linear_audio_check";
+import "linear_audio_vectors";
+
+function references(): test.TestOutcome {
+  let count = 0;
+  for vector in linear_audio_vectors.all() {
+    if let Err(e) = linear_audio_check.run(vector) {
+      return test.fail(vector.name + ": " + e);
+    }
+    count += 1;
+  }
+  if (count < 50) {
+    return test.fail("independent reference corpus is incomplete");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("AIFF, AIFF-C, and AU independent PCM and frame ranges");
+  runner = runner.it("depths, byte order, float values, companding, channels, and reusable storage", references);
+  return runner.finish();
+}

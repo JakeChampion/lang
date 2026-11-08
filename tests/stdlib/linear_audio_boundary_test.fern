@@ -1,0 +1,315 @@
+import "std/audio/aiff";
+import "std/audio/au";
+import "std/audio/linear";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+
+function join(own first: u8[], second: [u8]): u8[] {
+  for byte in second {
+    first = first.append(byte);
+  }
+  return first;
+}
+
+function tag(text: string): u8[] {
+  return join([], text.as_bytes());
+}
+
+function chunk(name: string, body: [u8]): u8[] {
+  let output = wire.put_be(tag(name), body.len() as u64, 4);
+  output = join(output, body);
+  if (body.len() % 2 != 0) {
+    output = output.append(0u8);
+  }
+  return output;
+}
+
+function aiff_file(extra: [u8], frames: i32, data: [u8]): u8[] {
+  let common = wire.put_be([], 1u64, 2);
+  common = wire.put_be(common, frames as u64, 4);
+  common = wire.put_be(common, 16u64, 2);
+  common = join(common, [64u8, 14u8, 172u8, 68u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+  let body = join(tag("AIFF"), chunk("COMM", common));
+  body = join(body, extra);
+  let sound = join([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8], data);
+  body = join(body, chunk("SSND", sound));
+  return join(wire.put_be(tag("FORM"), body.len() as u64, 4), body);
+}
+
+function au_file(code: u64, data: [u8]): u8[] {
+  let out = wire.put_be(tag(".snd"), 24u64, 4);
+  out = wire.put_be(out, data.len() as u64, 4);
+  out = wire.put_be(out, code, 4);
+  out = wire.put_be(out, 44100u64, 4);
+  out = wire.put_be(out, 1u64, 4);
+  return join(out, data);
+}
+
+function aifc_file(codec: string): u8[] {
+  let plain = aiff_file([], 1, [0u8, 128u8]);
+  let common = join(join(join([], plain[20:38]), codec.as_bytes()), [0u8, 0u8]);
+  let body = join(tag("AIFC"), chunk("FVER", [162u8, 128u8, 81u8, 64u8]));
+  body = join(body, chunk("COMM", common));
+  body = join(body, plain[38:]);
+  return join(wire.put_be(tag("FORM"), body.len() as u64, 4), body);
+}
+
+function field(input: [u8], at: i32, bytes: i32, value: u64): u8[] {
+  let output = join([], input);
+  for i in 0..bytes {
+    output = output.with(at + i, (value >> ((bytes - 1 - i) * 8) as u64) as u8);
+  }
+  return output;
+}
+
+function prefixes(): test.TestOutcome {
+  let a = aiff_file([], 3, [128u8, 0u8, 0u8, 0u8, 127u8, 255u8]);
+  let b = au_file(3u64, [128u8, 0u8, 0u8, 0u8, 127u8, 255u8]);
+  for cut in 0..a.len() {
+    if let Err(_) = aiff.inspect(a[:cut], aiff.default_limits()) {} else {
+      return test.fail("AIFF byte prefix");
+    }
+  }
+  for cut in 0..b.len() {
+    if let Err(_) = au.inspect(b[:cut], pcm.default_limits()) {} else {
+      return test.fail("AU byte prefix");
+    }
+  }
+  return test.pass();
+}
+
+function au_fields(): test.TestOutcome {
+  let input = au_file(3u64, [0u8, 0u8]);
+  for changed in [
+    field(input, 0, 4, 0u64), field(input, 4, 4, 23u64), field(input, 4, 4, 4294967295u64),
+    field(input, 8, 4, 0u64), field(input, 8, 4, 3u64), field(input, 12, 4, 99u64),
+    field(input, 16, 4, 0u64), field(input, 16, 4, 16777216u64), field(input, 20, 4, 0u64), field(input, 20, 4, 9u64), input.append(0u8),
+  ] {
+    if let Err(_) = au.inspect(changed, pcm.default_limits()) {} else {
+      return test.fail("AU header or extent");
+    }
+  }
+  let unknown = field(input, 8, 4, 4294967295u64);
+  if let Ok(index) = au.inspect(unknown, pcm.default_limits()) {
+    if (index.information().frames != 1) {
+      return test.fail("AU unknown-size extent");
+    }
+  } else {
+    return test.fail("AU unknown-size header");
+  }
+  return test.pass();
+}
+
+function aiff_fields(): test.TestOutcome {
+  let input = aiff_file([], 1, [0u8, 0u8]);
+  for changed in [
+    field(input, 0, 4, 0u64), field(input, 4, 4, 0u64), field(input, 4, 4, 4294967295u64),
+    field(input, 20, 2, 0u64), field(input, 20, 2, 9u64), field(input, 22, 4, 0u64), field(input, 22, 4, 4294967295u64),
+    field(input, 26, 2, 0u64), field(input, 26, 2, 33u64), field(input, 28, 2, 65535u64), field(input, 30, 8, 0u64),
+    field(input, 30, 8, 12403002323737460737u64), field(input, 46, 4, 4294967295u64), field(input, 50, 4, 1u64), input.append(0u8),
+  ] {
+    if let Err(_) = aiff.inspect(changed, aiff.default_limits()) {} else {
+      return test.fail("AIFF format, clock, or sound extent");
+    }
+  }
+  let limits = aiff.Limits { audio: pcm.default_limits(), max_chunks: 1 };
+  if let Err(pcm.Limit) = aiff.inspect(input, limits) {} else {
+    return test.fail("AIFF chunk budget");
+  }
+  let duplicate = aiff_file(chunk("COMM", input[20:38]), 1, [0u8, 0u8]);
+  if let Err(pcm.Header) = aiff.inspect(duplicate, aiff.default_limits()) {} else {
+    return test.fail("duplicate common chunk");
+  }
+  let odd = aiff_file(chunk("JUNK", [1u8, 2u8, 3u8]), 1, [0u8, 0u8]);
+  if let Err(_) = aiff.inspect(odd, aiff.default_limits()) {
+    return test.fail("unknown odd-sized chunk");
+  }
+  return test.pass();
+}
+
+function ranges(): test.TestOutcome {
+  let input = au_file(3u64, [128u8, 0u8, 0u8, 0u8, 127u8, 255u8]);
+  let Ok(index) = au.inspect(input, pcm.default_limits()) else {
+    return test.fail("range fixture");
+  };
+  for start in [-1, 4, 2147483647] {
+    if let Err(pcm.Header) = index.read_integer(input, start, 0, pcm.default_limits()) {} else {
+      return test.fail("invalid range position");
+    }
+  }
+  if let Err(pcm.Header) = index.read_integer(input, 2, 2, pcm.default_limits()) {} else {
+    return test.fail("range end");
+  }
+  if let Err(pcm.Buffer) = index.read_integer_into(input, 0, 3, [0, 0], pcm.default_limits()) {} else {
+    return test.fail("short output");
+  }
+  if let Err(pcm.Header) = index.read_integer(input.append(0u8), 0, 1, pcm.default_limits()) {} else {
+    return test.fail("changed input extent");
+  }
+  let small = pcm.Limits { max_input_bytes: input.len(), max_samples: 2 };
+  if let Err(pcm.Limit) = index.read_integer(input, 0, 3, small) {} else {
+    return test.fail("sample budget");
+  }
+  let Ok(end) = index.read_integer_into(input, 3, 0, [71], small) else {
+    return test.fail("exact end");
+  };
+  if (end.frames != 0 || end.samples.len() != 1 || end.samples[0] != 71) {
+    return test.fail("exact end storage");
+  }
+  let output = pcm.zeros(5).with(3, 71).with(4, 72);
+  for i in 0..100 {
+    let Ok(block) = index.read_integer_into(input, i % 3, 1, output, pcm.default_limits()) else {
+      return test.fail("repeated range");
+    };
+    if (block.samples[0] != [-32768, 0, 32767][i % 3] || block.samples[3] != 71 || block.samples[4] != 72) {
+      return test.fail("reused range or suffix");
+    }
+    output = block.samples;
+  }
+  return test.pass();
+}
+
+function compression(): test.TestOutcome {
+  let input = aifc_file("sowt");
+  let Ok(block) = aiff.decode(input, aiff.default_limits()) else {
+    return test.fail("AIFF-C header");
+  };
+  if (block.samples.len() != 1 || block.samples[0] != -32768) {
+    return test.fail("AIFF-C sample byte order");
+  }
+  for changed in [field(input, 20, 4, 0u64), field(input, 12, 4, 1247104587u64), field(input, 54, 1, 255u64), aifc_file("ima4")] {
+    if let Err(_) = aiff.inspect(changed, aiff.default_limits()) {} else {
+      return test.fail("AIFF-C version, name extent, or compression tag");
+    }
+  }
+  let body = join(join([], input[8:12]), chunk("FVER", [162u8, 128u8, 81u8, 64u8]));
+  body = join(body, input[12:]);
+  let duplicate = join(wire.put_be(tag("FORM"), body.len() as u64, 4), body);
+  if let Err(pcm.Header) = aiff.inspect(duplicate, aiff.default_limits()) {} else {
+    return test.fail("duplicate version");
+  }
+  return test.pass();
+}
+
+function scalar_formats(): test.TestOutcome {
+  let input: u8[] = [0, 128, 255];
+  let format = linear.Format { sample_rate: 44100, channels: 1, bits: 8, storage_bits: 8, little_endian: false, kind: linear.Unsigned };
+  let Ok(index) = linear.create(input, 0, 3, format, pcm.default_limits()) else {
+    return test.fail("unsigned scalar format");
+  };
+  let Ok(block) = index.read_integer(input, 0, 3, pcm.default_limits()) else {
+    return test.fail("unsigned scalar read");
+  };
+  for i in 0..3 {
+    if (block.samples[i] != [-128, 0, 127][i]) {
+      return test.fail("unsigned normalization");
+    }
+  }
+  for invalid in [
+    linear.Format { ...format, channels: 0 }, linear.Format { ...format, channels: 9 },
+    linear.Format { ...format, sample_rate: 0 }, linear.Format { ...format, sample_rate: 16777216 },
+    linear.Format { ...format, bits: 0 }, linear.Format { ...format, bits: 9 }, linear.Format { ...format, storage_bits: 7 },
+    linear.Format { ...format, kind: linear.Float }, linear.Format { ...format, kind: linear.MuLaw },
+    linear.Format { ...format, kind: linear.Float, bits: 64, storage_bits: 32 },
+  ] {
+    if let Err(pcm.Header) = linear.create(input, 0, 3, invalid, pcm.default_limits()) {} else {
+      return test.fail("invalid scalar representation");
+    }
+  }
+  for offset in [-1, 4, 2147483647] {
+    if let Err(pcm.Header) = linear.create(input, offset, 0, format, pcm.default_limits()) {} else {
+      return test.fail("scalar offset");
+    }
+  }
+  if let Err(pcm.Header) = linear.create(input, 0, 4, format, pcm.default_limits()) {} else {
+    return test.fail("scalar byte extent");
+  }
+  let stereo = linear.Format { ...format, channels: 2 };
+  if let Err(pcm.Header) = linear.create(input, 0, 3, stereo, pcm.default_limits()) {} else {
+    return test.fail("partial scalar frame");
+  }
+  if let Err(pcm.Limit) = linear.create(input, 0, 3, format, pcm.Limits { max_input_bytes: 2, max_samples: 16 }) {} else {
+    return test.fail("input byte budget");
+  }
+  return test.pass();
+}
+
+function floats(): test.TestOutcome {
+  for bits in [32, 64] {
+    for bad in if (bits == 32) { [2139095040u64, 4286578688u64, 2143289344u64] } else { [9218868437227405312u64, 18442240474082181120u64, 9221120237041090560u64] } {
+      let input = au_file(if (bits == 32) { 6u64 } else { 7u64 }, wire.put_be([], bad, bits / 8));
+      let Ok(index) = au.inspect(input, pcm.default_limits()) else {
+        return test.fail("float header");
+      };
+      if let Err(pcm.Sample) = index.read_float(input, 0, 1, pcm.default_limits()) {} else {
+        return test.fail("non-finite float");
+      }
+      if let Err(pcm.Unsupported) = index.read_integer(input, 0, 1, pcm.default_limits()) {} else {
+        return test.fail("implicit float quantization");
+      }
+    }
+  }
+  let input = au_file(7u64, join(wire.put_be([], f64_bits(-0f64) as u64, 8), wire.put_be([], f64_bits(1.5f64) as u64, 8)));
+  let Ok(index) = au.inspect(input, pcm.default_limits()) else {
+    return test.fail("finite floats");
+  };
+  let Ok(block) = index.read_float(input, 0, 2, pcm.default_limits()) else {
+    return test.fail("finite float read");
+  };
+  if (f64_bits(block.samples[0]) != f64_bits(-0f64) || block.samples[1] != 1.5f64) {
+    return test.fail("float sign or clipping");
+  }
+  return test.pass();
+}
+
+function empty(): test.TestOutcome {
+  let limits = pcm.Limits { max_input_bytes: 1024, max_samples: 0 };
+  let input = au_file(3u64, []);
+  let Ok(block) = au.decode(input, limits) else {
+    return test.fail("empty AU");
+  };
+  if (block.samples.len() != 0) {
+    return test.fail("empty AU samples");
+  }
+  let a = aiff_file([], 0, []);
+  let Ok(index) = aiff.inspect(a, aiff.Limits { audio: limits, max_chunks: 2 }) else {
+    return test.fail("empty AIFF");
+  };
+  let Ok(values) = index.read_float_into(a, 0, 0, [9.5f64], limits) else {
+    return test.fail("empty float view");
+  };
+  if (values.frames != 0 || values.samples[0] != 9.5f64) {
+    return test.fail("empty float storage");
+  }
+  return test.pass();
+}
+
+function mutations(): test.TestOutcome {
+  for container in 0..2 {
+    let input = if (container == 0) { aiff_file([], 3, [128u8, 0u8, 0u8, 0u8, 127u8, 255u8]) } else { au_file(3u64, [128u8, 0u8, 0u8, 0u8, 127u8, 255u8]) };
+    for at in 0..input.len() {
+      let changed = input.with(at, input[at] ^ 255u8);
+      if let Ok(index) = if (container == 0) { aiff.inspect(changed, aiff.default_limits()) } else { au.inspect(changed, pcm.default_limits()) } {
+        let info = index.information();
+        let frames = if (info.frames < 8) { info.frames } else { 8 };
+        let _ = index.read_float(changed, 0, frames, pcm.Limits { max_input_bytes: 1024, max_samples: 64 });
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("AIFF and AU bounds, floats, and reusable ranges");
+  runner = runner.it("all incomplete byte prefixes", prefixes);
+  runner = runner.it("AU encoding, rate, channels, and extents", au_fields);
+  runner = runner.it("AIFF clocks, chunks, offsets, padding, and limits", aiff_fields);
+  runner = runner.it("ranges, exact end, buffers, limits, and repeated seeks", ranges);
+  runner = runner.it("AIFF-C versions, name extents, and compression tags", compression);
+  runner = runner.it("scalar representations, unsigned PCM, and byte extents", scalar_formats);
+  runner = runner.it("non-finite floats, signed zero, and unclipped finite values", floats);
+  runner = runner.it("empty presentations preserve output storage", empty);
+  runner = runner.it("every-byte mutations remain bounded", mutations);
+  return runner.finish();
+}

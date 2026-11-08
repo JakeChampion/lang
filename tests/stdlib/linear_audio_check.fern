@@ -1,0 +1,93 @@
+import "std/audio/aiff";
+import "std/audio/au";
+import "std/audio/linear";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "aac_kernel_check" as ref;
+import "linear_audio_vectors";
+
+pub function run(vector: linear_audio_vectors.Vector): Result[void, string] {
+  let input = ref.unpack(vector.encoded)?;
+  let integers = ref.unpack(vector.integers)?;
+  let floats = ref.unpack(vector.floats)?;
+  let limits = pcm.default_limits();
+  let index = match (if (vector.container == 0) { aiff.inspect(input, aiff.default_limits()) } else { au.inspect(input, limits) }) {
+    Ok(value) => value,
+    Err(e) => { return Err("inspect: " + e.message()); },
+  };
+  let info = index.information();
+  if (info.frames != vector.frames || info.format.sample_rate != vector.rate || info.format.channels != vector.channels || info.format.bits != vector.bits) {
+    return Err("reference format or frame count");
+  }
+  let all = match (index.read_float(input, 0, info.frames, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (all.frames != info.frames || all.samples.len() != info.frames * vector.channels) {
+    return Err("complete float extent");
+  }
+  for i in 0..all.samples.len() {
+    if (f64_bits(all.samples[i]) != wire.le(floats, 8 * i, 8) as i64) {
+      return Err("complete float sample " + i.to_string());
+    }
+  }
+  if (vector.floating) {
+    if let Err(pcm.Unsupported) = index.read_integer(input, 0, info.frames, limits) {} else {
+      return Err("float input requires explicit integer quantization");
+    }
+  } else {
+    let all_integer = match (index.read_integer(input, 0, info.frames, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    for i in 0..all_integer.samples.len() {
+      if (all_integer.samples[i] != ref.word(integers, 4 * i)) {
+        return Err("complete integer sample " + i.to_string());
+      }
+    }
+  }
+  for start in [0, info.frames / 2, info.frames - 1, info.frames, 1, 0] {
+    let frames = if (info.frames - start < 5) { info.frames - start } else { 5 };
+    let count = frames * vector.channels;
+    let capacity = 5 * vector.channels + 3;
+    let output: f64[] = [];
+    for _ in 0..capacity {
+      output = output.append(123.5f64);
+    }
+    let saved = output;
+    let block = match (index.read_float_into(input, start, frames, output, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if (block.frames != frames || block.samples.len() != capacity) {
+      return Err("float range extent");
+    }
+    for i in 0..capacity {
+      if (saved[i] != 123.5f64) {
+        return Err("float buffer alias changed");
+      }
+      if (i < count) {
+        if (f64_bits(block.samples[i]) != wire.le(floats, 8 * (start * vector.channels + i), 8) as i64) {
+          return Err("float range sample " + i.to_string());
+        }
+      } else if (block.samples[i] != 123.5f64) {
+        return Err("float range suffix");
+      }
+    }
+    if (!vector.floating) {
+      let int_output = pcm.zeros(capacity);
+      for i in 0..capacity {
+        int_output = int_output.with(i, 123456789);
+      }
+      let int_saved = int_output;
+      let values = match (index.read_integer_into(input, start, frames, int_output, limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+      if (values.frames != frames || values.samples.len() != capacity) {
+        return Err("integer range extent");
+      }
+      for i in 0..capacity {
+        if (int_saved[i] != 123456789) {
+          return Err("integer buffer alias changed");
+        }
+        if (i < count) {
+          if (values.samples[i] != ref.word(integers, 4 * (start * vector.channels + i))) {
+            return Err("integer range sample " + i.to_string());
+          }
+        } else if (values.samples[i] != 123456789) {
+          return Err("integer range suffix");
+        }
+      }
+    }
+  }
+  return Ok(());
+}
