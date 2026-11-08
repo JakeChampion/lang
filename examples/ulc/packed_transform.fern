@@ -1,0 +1,206 @@
+// Packed float SIMD for the decoder. Lapping retains double precision.
+import "std/array";
+import "std/f64";
+import "./transform";
+
+pub struct Plan { shape: transform.Plan, cosine: u8[], sine: u8[], pre_cos: u8[], pre_sin: u8[], merge_cos: u8[], merge_sin: u8[] }
+
+pub struct Scratch { re: u8[], im: u8[], transformed: f64[], samples: f64[] }
+
+pub struct Inverse { lap: f64[], work: Scratch }
+
+function pack(values: [f64]): u8[] {
+  let out = __alloc_u8((values.len() + 3) / 4 * 16);
+  let i = 0;
+  while (i < values.len()) {
+    let a = values[i];
+    let b = if (i + 1 < values.len()) { values[i + 1] } else { 0.0 };
+    let c = if (i + 2 < values.len()) { values[i + 2] } else { 0.0 };
+    let d = if (i + 3 < values.len()) { values[i + 3] } else { 0.0 };
+    out = __f32x4_with_bytes(out, 4 * i, __f32x4_pack(__f64x2_of(a, b), __f64x2_of(c, d)));
+    i += 4;
+  }
+  return out;
+}
+
+pub function plan(n: i32): Plan {
+  let p = transform.plan(n);
+  let quarter = n / 8;
+  let cosine = __alloc_u8((quarter - 1) * 16);
+  let sine = __alloc_u8((quarter - 1) * 16);
+  for k in 0..quarter - 1 {
+    cosine = __f32x4_with_bytes(cosine, 16 * k, __f32x4_splat(p.fft_cos[k] as f32));
+    sine = __f32x4_with_bytes(sine, 16 * k, __f32x4_splat(p.fft_sin[k] as f32));
+  }
+  let merge_cos = __alloc_u8(quarter * 16);
+  let merge_sin = __alloc_u8(quarter * 16);
+  for k in 0..quarter {
+    let angle = 2.0 * 3.141592653589793 * (k as f64) / ((n / 2) as f64);
+    merge_cos = __f32x4_with_bytes(merge_cos, 16 * k, __f32x4_of(1.0 as f32, angle.cos() as f32, (2.0 * angle).cos() as f32, (3.0 * angle).cos() as f32));
+    merge_sin = __f32x4_with_bytes(merge_sin, 16 * k, __f32x4_of(0.0 as f32, angle.sin() as f32, (2.0 * angle).sin() as f32, (3.0 * angle).sin() as f32));
+  }
+  return Plan { shape: p, cosine: cosine, sine: sine, pre_cos: pack(p.pre_cos), pre_sin: pack(p.pre_sin), merge_cos: merge_cos, merge_sin: merge_sin };
+}
+
+pub function scratch(n: i32): Scratch {
+  return Scratch { re: __alloc_u8(2 * n), im: __alloc_u8(2 * n), transformed: transform.zeros(n), samples: transform.zeros(n) };
+}
+
+// Four interleaved FFTs share each SIMD butterfly and need no lane shuffle.
+pub function dct4(input: [f64], p: Plan, own work: Scratch): Scratch {
+  let Scratch { re, im, transformed, samples } = work;
+  let n = p.shape.n;
+  let half = n / 2;
+  let quarter = half / 4;
+  for group in 0..quarter {
+    let j = p.shape.reversal[group];
+    let a = __f32x4_pack(__f64x2_of(input[2 * j], input[2 * j + 2]), __f64x2_of(input[2 * j + 4], input[2 * j + 6]));
+    let b = __f32x4_pack(__f64x2_of(input[n - 1 - 2 * j], input[n - 3 - 2 * j]), __f64x2_of(input[n - 5 - 2 * j], input[n - 7 - 2 * j]));
+    let c = __f32x4_load_bytes(p.pre_cos, 4 * j);
+    let t = __f32x4_load_bytes(p.pre_sin, 4 * j);
+    re = __f32x4_with_bytes(re, 16 * group, a * c + b * t);
+    im = __f32x4_with_bytes(im, 16 * group, a * t - b * c);
+  }
+  let width = 2;
+  while (width <= quarter) {
+    let twiddle = width / 2 - 1;
+    let base = 0;
+    while (base < quarter) {
+      for k in 0..width / 2 {
+        let a = 16 * (base + k);
+        let b = a + 8 * width;
+        let c = __f32x4_load_bytes(p.cosine, 16 * (twiddle + k));
+        let t = __f32x4_load_bytes(p.sine, 16 * (twiddle + k));
+        let br = __f32x4_load_bytes(re, b);
+        let bi = __f32x4_load_bytes(im, b);
+        let vr = br * c - bi * t;
+        let vi = br * t + bi * c;
+        let ar = __f32x4_load_bytes(re, a);
+        let ai = __f32x4_load_bytes(im, a);
+        re = __f32x4_with_bytes(re, a, ar + vr);
+        im = __f32x4_with_bytes(im, a, ai + vi);
+        re = __f32x4_with_bytes(re, b, ar - vr);
+        im = __f32x4_with_bytes(im, b, ai - vi);
+      }
+      base += width;
+    }
+    width *= 2;
+  }
+  for k in 0..quarter {
+    let r = __f32x4_load_bytes(re, 16 * k);
+    let i = __f32x4_load_bytes(im, 16 * k);
+    let c = __f32x4_load_bytes(p.merge_cos, 16 * k);
+    let t = __f32x4_load_bytes(p.merge_sin, 16 * k);
+    let rr = r * c - i * t;
+    let ii = r * t + i * c;
+    let ar = __f32x4_lane(rr, 0) as f64;
+    let br = __f32x4_lane(rr, 1) as f64;
+    let cr = __f32x4_lane(rr, 2) as f64;
+    let dr = __f32x4_lane(rr, 3) as f64;
+    let ai = __f32x4_lane(ii, 0) as f64;
+    let bi = __f32x4_lane(ii, 1) as f64;
+    let ci = __f32x4_lane(ii, 2) as f64;
+    let di = __f32x4_lane(ii, 3) as f64;
+    let r0 = ar + br + cr + dr;
+    let i0 = ai + bi + ci + di;
+    let r1 = ar - cr - bi + di;
+    let i1 = ai - ci + br - dr;
+    let r2 = ar - br + cr - dr;
+    let i2 = ai - bi + ci - di;
+    let r3 = ar - cr + bi - di;
+    let i3 = ai - ci - br + dr;
+    transformed = post(transformed, p.shape, k, r0, i0);
+    transformed = post(transformed, p.shape, k + quarter, r1, i1);
+    transformed = post(transformed, p.shape, k + 2 * quarter, r2, i2);
+    transformed = post(transformed, p.shape, k + 3 * quarter, r3, i3);
+  }
+  return Scratch { re: re, im: im, transformed: transformed, samples: samples };
+}
+
+@inline
+function post(own out: f64[], p: transform.Plan, j: i32, re: f64, im: f64): f64[] {
+  let c = p.post_cos[j];
+  let s = p.post_sin[j];
+  return out.with(2 * j, re * c - im * s).with(p.n - 1 - 2 * j, re * s + im * c);
+}
+
+pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch): Inverse {
+  let n = coefs.len();
+  let silent = true;
+  for value in coefs {
+    if (value != 0.0) {
+      silent = false;
+      break;
+    }
+  }
+  if (!silent) {
+    work = dct4(coefs, p, work);
+  }
+  let temp = work.transformed;
+  if (silent) {
+    for i in 0..n {
+      temp = temp.with(i, 0.0);
+    }
+  }
+  let out = work.samples;
+  let flat = (n - overlap) / 2;
+  for i in 0..n / 2 {
+    let a = lap[n / 2 - 1 - i];
+    let b = temp[n / 2 + i];
+    if (i < flat) {
+      out = out.with(i, a);
+      out = out.with(n - 1 - i, b);
+    } else {
+      let c = p.shape.window_cos[n - overlap + i - flat];
+      let s = p.shape.window_sin[n - overlap + i - flat];
+      out = out.with(i, c * a - s * b);
+      out = out.with(n - 1 - i, s * a + c * b);
+    }
+  }
+  for i in 0..n / 2 {
+    lap = lap.with(i, temp[i]);
+  }
+  return Inverse { lap: lap, work: Scratch { ...work, transformed: temp, samples: out } };
+}
+
+pub struct Dual { mdct: f64[], mdst: f64[], lap: f64[], work: Scratch }
+
+pub function forward_dual(samples: [f64], own lap: f64[], offset: i32, overlap: i32, p: Plan, own work: Scratch): Dual {
+  let n = samples.len();
+  let half = n / 2;
+  let ct = transform.zeros(n);
+  let st = transform.zeros(n);
+  let flat = (n - overlap) / 2;
+  for i in 0..half {
+    let a = lap[offset + i];
+    let b = lap[offset + n - 1 - i];
+    let c = samples[i];
+    let d = samples[n - 1 - i];
+    let cosine = 1.0;
+    let sine = 0.0;
+    if (i >= flat) {
+      cosine = p.shape.window_cos[n - overlap + i - flat];
+      sine = p.shape.window_sin[n - overlap + i - flat];
+    }
+    lap = lap.with(offset + i, sine * c);
+    lap = lap.with(offset + n - 1 - i, cosine * d);
+    ct = ct.with(half - 1 - i, cosine * c + sine * d);
+    ct = ct.with(half + i, -a + b);
+    st = st.with(half - 1 - i, cosine * c - sine * d);
+    st = st.with(half + i, a + b);
+  }
+  for i in 0..half {
+    st = st.with(2 * i + 1, -st[2 * i + 1]);
+  }
+  work = dct4(ct, p, work);
+  ct = work.transformed;
+  work = dct4(st, p, work);
+  st = work.transformed;
+  let mdst = transform.zeros(n);
+  let scale = 2.0 / (n as f64);
+  for i in 0..n {
+    ct = ct.with(i, ct[i] * scale);
+    mdst = mdst.with(i, st[n - 1 - i] * scale);
+  }
+  return Dual { mdct: ct, mdst: mdst, lap: lap, work: work };
+}

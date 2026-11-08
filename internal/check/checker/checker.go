@@ -17752,7 +17752,7 @@ func isFloat(t ast.Type) bool {
 	return ok
 }
 
-var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with"}
+var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with", "load_bytes", "with_bytes"}
 
 func (c *checker) registerLaneBuiltins() {
 	i32 := ast.NumberType{}
@@ -17760,19 +17760,22 @@ func (c *checker) registerLaneBuiltins() {
 		p := "__" + lt.String() + "_"
 		e := ast.FloatType{Width: lt.Width}
 		arr := ast.ArrayType{Elem: e}
+		bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
 		of := make([]ast.Type, lt.Lanes())
 		for i := range of {
 			of[i] = e
 		}
 		sigs := map[string]*ast.FuncType{
-			"splat":   {Params: []ast.Type{e}, Result: lt},
-			"of":      {Params: of, Result: lt},
-			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
-			"bitmask": {Params: []ast.Type{lt}, Result: i32},
-			"mul_add": {Params: []ast.Type{lt, lt, lt}, Result: lt},
-			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
-			"load":    {Params: []ast.Type{arr, i32}, Result: lt},
-			"with":    {Params: []ast.Type{arr, i32, lt}, Result: arr},
+			"splat":      {Params: []ast.Type{e}, Result: lt},
+			"of":         {Params: of, Result: lt},
+			"lane":       {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask":    {Params: []ast.Type{lt}, Result: i32},
+			"mul_add":    {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"select":     {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"load":       {Params: []ast.Type{arr, i32}, Result: lt},
+			"with":       {Params: []ast.Type{arr, i32, lt}, Result: arr},
+			"load_bytes": {Params: []ast.Type{bytes, i32}, Result: lt},
+			"with_bytes": {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
 		}
 		for _, v := range []string{"sqrt", "abs", "floor", "round"} {
 			sigs[v] = &ast.FuncType{Params: []ast.Type{lt}, Result: lt}
@@ -17784,6 +17787,8 @@ func (c *checker) registerLaneBuiltins() {
 			c.info.FuncSigs[p+v] = sigs[v]
 		}
 	}
+	wide := ast.LanesType{Width: 64}
+	c.info.FuncSigs["__f32x4_pack"] = &ast.FuncType{Params: []ast.Type{wide, wide}, Result: ast.LanesType{Width: 32}}
 }
 
 // sysregNameArg requires the register of a system-register intrinsic to be a

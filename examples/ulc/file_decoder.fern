@@ -1,0 +1,217 @@
+// Parallel file decode with exact noise-seed and overlap reconstruction.
+import "std/array";
+import "std/worker";
+import "std/io";
+import "std/result";
+import "./audio";
+import "./codec";
+
+struct Index { offsets: i32[], noise: i32[], last_size: i32[] }
+
+function index(data: u8[], h: audio.Header): Result[Index, string] {
+  let offsets: i32[] = [h.offset];
+  let noise: i32[] = [0];
+  let sizes: i32[] = [0];
+  let at = h.offset;
+  let total = 0;
+  for i in 0..h.blocks {
+    let block = codec.scan_block(data, at, h.block_size, h.channels)?;
+    if (h.max_block_bytes != 0 && block.next_byte - at > h.max_block_bytes) {
+      return Err("block exceeds ULC2 maximum block size");
+    }
+    at = block.next_byte;
+    total += block.noise_samples;
+    offsets = offsets.append(at);
+    noise = noise.append(total);
+    sizes = sizes.append(block.last_size);
+  }
+  return Ok(Index { offsets: offsets, noise: noise, last_size: sizes });
+}
+
+function part(data: u8[], h: audio.Header, ix: Index, template: codec.Decoder, begin: i32, end: i32, bits: i32): Result[u8[], string] {
+  let start = if (begin > 0) { begin - 1 } else { 0 };
+  let state = template;
+  state = codec.Decoder { ...state, seed: codec.advance_seed(1234567u32, ix.noise[start]), last_size: ix.last_size[start] };
+  let out = audio.wav_buffer(h.rate, h.channels, bits, (end - begin) * h.block_size * h.channels)?;
+  for i in start..end {
+    let block = codec.decode_block(state, data, ix.offsets[i])?;
+    state = block.state;
+    if (i >= begin) {
+      out = audio.write_samples(out, 44 + (i - begin) * h.block_size * h.channels * (bits / 8), block.samples, bits)?;
+    }
+  }
+  return Ok(out);
+}
+
+function combine(parts: u8[][]): u8[] {
+  let total = 44;
+  for part in parts {
+    total += part.len() - 44;
+  }
+  let output = __alloc_u8(total);
+  let at = 0;
+  for i in 0..parts.len() {
+    let start = if (i == 0) { 0 } else { 44 };
+    let count = parts[i].len() - start;
+    output = __bytes_into(output, at, parts[i], start, count);
+    at += count;
+  }
+  let size = (output.len() - 44) as u32;
+  let riff = (output.len() - 8) as u32;
+  for i in 0..4 {
+    output = output.with(4 + i, (riff >> (8 * i) as u32) as u8);
+    output = output.with(40 + i, (size >> (8 * i) as u32) as u8);
+  }
+  return output;
+}
+
+function serial(data: u8[], h: audio.Header, bits: i32): Result[u8[], string] {
+  let out = audio.wav_buffer(h.rate, h.channels, bits, h.blocks * h.block_size * h.channels)?;
+  let state = codec.decoder(h.block_size, h.channels)?;
+  let offset = h.offset;
+  for i in 0..h.blocks {
+    let block = codec.decode_block(state, data, offset)?;
+    if (h.max_block_bytes != 0 && block.next_byte - offset > h.max_block_bytes) {
+      return Err("block exceeds ULC2 maximum block size");
+    }
+    state = block.state;
+    offset = block.next_byte;
+    out = audio.write_samples(out, 44 + i * h.block_size * h.channels * (bits / 8), block.samples, bits)?;
+  }
+  return Ok(out);
+}
+
+pub function decode(data: u8[], bits: i32, threads: i32): Result[u8[], string] {
+  if (threads != 1 && threads != 2 && threads != 4) {
+    return Err("decoder threads must be 1, 2, or 4");
+  }
+  let h = audio.header(data)?;
+  if (h.blocks as u64 * (h.block_size as u64) * (h.channels as u64) > 134217728u64) {
+    return Err("decoded audio exceeds the in-memory limit (134217728 samples)");
+  }
+  if (threads == 1 || h.blocks < 32) {
+    return serial(data, h, bits);
+  }
+  let ix = index(data, h)?;
+  let template = codec.decoder(h.block_size, h.channels)?;
+  let half = h.blocks / 2;
+  if (threads == 2) {
+    let left = worker.spawn((): Result[u8[], string] => part(data, h, ix, template, 0, half, bits));
+    let right = part(data, h, ix, template, half, h.blocks, bits);
+    let first = left.join();
+    return Ok(combine([first?, right?]));
+  }
+  let q = h.blocks / 4;
+  let a = worker.spawn((): Result[u8[], string] => part(data, h, ix, template, 0, q, bits));
+  let b = worker.spawn((): Result[u8[], string] => part(data, h, ix, template, q, half, bits));
+  let c = worker.spawn((): Result[u8[], string] => part(data, h, ix, template, half, half + q, bits));
+  let fourth = part(data, h, ix, template, half + q, h.blocks, bits);
+  let first = a.join();
+  let second = b.join();
+  let third = c.join();
+  return Ok(combine([first?, second?, third?, fourth?]));
+}
+
+function shared_part(data: u8[], h: audio.Header, ix: Index, template: codec.Decoder, begin: i32, end: i32, bits: i32, destination: usize): Result[void, string] {
+  let start = if (begin > 0) { begin - 1 } else { 0 };
+  let state = codec.Decoder { ...template, seed: codec.advance_seed(1234567u32, ix.noise[start]), last_size: ix.last_size[start] };
+  let block_bytes = h.block_size * h.channels * (bits / 8);
+  let bytes = __alloc_u8(block_bytes);
+  for i in start..end {
+    let block = codec.decode_block(state, data, ix.offsets[i])?;
+    state = block.state;
+    if (i >= begin) {
+      bytes = audio.write_samples(bytes, 0, block.samples, bits)?;
+      unsafe {
+        // The validated file limit bounds this offset. Workers own disjoint blocks.
+        __memcpy(destination + 44 as usize + (i * block_bytes) as usize, bytes as usize + 8 as usize, block_bytes);
+      }
+    }
+  }
+  return Ok(());
+}
+
+function shared_work(data: u8[], h: audio.Header, ix: Index, template: codec.Decoder, bits: i32, threads: i32, destination: usize): Result[void, string] {
+  let half = h.blocks / 2;
+  if (threads == 2) {
+    let left = worker.spawn((): Result[void, string] => shared_part(data, h, ix, template, 0, half, bits, destination));
+    let right = shared_part(data, h, ix, template, half, h.blocks, bits, destination);
+    let first = left.join();
+    first?;
+    right?;
+    return Ok(());
+  }
+  let q = h.blocks / 4;
+  let a = worker.spawn((): Result[void, string] => shared_part(data, h, ix, template, 0, q, bits, destination));
+  let b = worker.spawn((): Result[void, string] => shared_part(data, h, ix, template, q, half, bits, destination));
+  let c = worker.spawn((): Result[void, string] => shared_part(data, h, ix, template, half, half + q, bits, destination));
+  let fourth = shared_part(data, h, ix, template, half + q, h.blocks, bits, destination);
+  let first = a.join();
+  let second = b.join();
+  let third = c.join();
+  first?;
+  second?;
+  third?;
+  fourth?;
+  return Ok(());
+}
+
+// The mapping stays live until every worker joins and the file write ends.
+pub function write(data: u8[], bits: i32, threads: i32, path: string): Result[void, string] {
+  if (threads != 1 && threads != 2 && threads != 4) {
+    return Err("decoder threads must be 1, 2, or 4");
+  }
+  let h = audio.header(data)?;
+  let count = h.blocks as u64 * (h.block_size as u64) * (h.channels as u64);
+  if (count > 134217728u64) {
+    return Err("decoded audio exceeds the in-memory limit (134217728 samples)");
+  }
+  let header = audio.wav_buffer(h.rate, h.channels, bits, 0)?;
+  let size = count * ((bits / 8) as u64);
+  if (size > 1073741760u64) {
+    return Err("WAV output is too large");
+  }
+  if (target_os() != "linux" || threads == 1 || h.blocks < 32) {
+    return save(path, decode(data, bits, threads)?);
+  }
+  let ix = index(data, h)?;
+  let template = codec.decoder(h.block_size, h.channels)?;
+  let region_size = (size + 128u64) as i64;
+  let region = 0i64;
+  unsafe {
+    region = __worker_region(region_size);
+  }
+  if (region <= 0i64) {
+    return save(path, decode(data, bits, threads)?);
+  }
+  let box = region as usize + 64 as usize;
+  let destination = box + 8 as usize;
+  unsafe {
+    // This temporary byte-array header is immortal. It never enters the heap.
+    __store_i32(box - 8 as usize, -1);
+    __store_i64(box, (size + 44u64) as i64);
+    __memcpy(destination, header as usize + 8 as usize, 44);
+    __store_i32(destination + 4 as usize, (size + 36u64) as i32);
+    __store_i32(destination + 40 as usize, size as i32);
+  }
+  let result = shared_work(data, h, ix, template, bits, threads, destination);
+  if let Err(error) = result {
+    unsafe {
+      __worker_unmap(region, region_size, false);
+    }
+    return Err(error);
+  }
+  let written: Result[void, string] = Ok(());
+  unsafe {
+    let bytes = box as u8[];
+    written = save(path, bytes);
+    // Drop the borrowed array before its mapping leaves the address space.
+    __send_release(bytes);
+    __worker_unmap(region, region_size, false);
+  }
+  return written;
+}
+
+function save(path: string, bytes: u8[]): Result[void, string] {
+  return write_file_bytes(path, bytes).map_err((e: IoError): string => e.message());
+}

@@ -4,6 +4,7 @@ import "std/f64";
 import "std/string";
 import "std/i32";
 import "../transform";
+import "../packed_transform";
 import "../codec";
 import "../encoder";
 import "../analysis";
@@ -283,10 +284,56 @@ function encoder_features(): void {
   require(audio.encode_mode(source, encoder.Cbr(0.001), 256).is_err(), "reject impossible CBR budget");
 }
 
+function packed_tests(): void {
+  for n in [32, 256, 2048, 32768] {
+    let input = transform.zeros(n);
+    for i in 0..n {
+      input = input.with(i, (i as f64 * 0.19).sin() * 0.01 + (i as f64 * 0.071).cos() * 0.003);
+    }
+    let expected = transform.dct4(input);
+    let result = packed_transform.dct4(input, packed_transform.plan(n), packed_transform.scratch(n));
+    let peak = 1.0;
+    let error = 0.0;
+    for i in 0..n {
+      if (expected[i].abs() > peak) {
+        peak = expected[i].abs();
+      }
+      let diff = (expected[i] - result.transformed[i]).abs();
+      if (diff > error) {
+        error = diff;
+      }
+    }
+    require(error < peak * 0.000003, "packed FFT matches double precision");
+  }
+  let seed = 1234567u32;
+  for count in 0..1001 {
+    require(codec.advance_seed(1234567u32, count) == seed, "noise seed jump matches scalar xorshift");
+    seed ^= seed << 13u32;
+    seed ^= seed >> 17u32;
+    seed ^= seed << 5u32;
+  }
+  for codes in [[0, 0, 15, 15, 0, 0, 0], [0, 0, 8, 0, 0, 0, 15, 14, 15]] {
+    let data = nybbles(codes);
+    let Ok(scan) = codec.scan_block(data, 0, 256, 1) else {
+      exit(1);
+    };
+    let Ok(state) = codec.decoder(256, 1) else {
+      exit(1);
+    };
+    let Ok(block) = codec.decode_block(state, data, 0) else {
+      exit(1);
+    };
+    require(scan.next_byte == block.next_byte && scan.last_size == block.state.last_size, "scan matches block boundaries");
+    require(codec.advance_seed(1234567u32, scan.noise_samples) == block.state.seed, "scan counts noise samples");
+  }
+}
+
 pub function run_tests(): i32 {
   window_cache_tests();
   transform_tests();
   print("ok - transform definition and lapping");
+  packed_tests();
+  print("ok - packed FFT, noise index, and seed jumps");
   syntax_tests();
   print("ok - coefficient syntax and validation");
   encoder_features();

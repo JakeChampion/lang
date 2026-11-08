@@ -22,16 +22,6 @@ function put(own out: u8[], value: u32, count: i32): u8[] {
   return out;
 }
 
-@inline
-function put32(own out: u8[], value: u32): u8[] {
-  return out.append(value as u8).append((value >> 8u32) as u8).append((value >> 16u32) as u8).append((value >> 24u32) as u8);
-}
-
-@inline
-function put16(own out: u8[], value: u32): u8[] {
-  return out.append(value as u8).append((value >> 8u32) as u8);
-}
-
 function tag(data: [u8], at: i32, a: i32, b: i32, c: i32, d: i32): boolean {
   return data[at] as i32 == a && data[at + 1] as i32 == b && data[at + 2] as i32 == c && data[at + 3] as i32 == d;
 }
@@ -130,17 +120,17 @@ pub function read_wav(data: [u8]): Result[Audio, string] {
   return Ok(Audio { rate: rate, channels: channels, samples: samples });
 }
 
-// Output format codes are the number of PCM bits, or 32 for IEEE float.
-pub function write_wav(audio: Audio, bits: i32): Result[u8[], string] {
-  if (audio.rate < 1 || audio.channels < 1 || audio.channels > 255 || audio.samples.len() % audio.channels != 0) {
+// Allocate the complete WAV once. Audio blocks fill this buffer in place.
+pub function wav_buffer(rate: i32, channels: i32, bits: i32, count: i32): Result[u8[], string] {
+  if (rate < 1 || channels < 1 || channels > 255 || count < 0 || count % channels != 0) {
     return Err("invalid audio metadata");
   }
   if (bits != 8 && bits != 16 && bits != 24 && bits != 32) {
     return Err("invalid WAV output format");
   }
   let bytes = bits / 8;
-  let size64 = audio.samples.len() as u64 * (bytes as u64);
-  let avg = audio.rate as u64 * (audio.channels as u64) * (bytes as u64);
+  let size64 = count as u64 * (bytes as u64);
+  let avg = rate as u64 * (channels as u64) * (bytes as u64);
   if (size64 > 1073741760u64 || avg > 4294967295u64) {
     return Err("WAV output is too large");
   }
@@ -154,49 +144,84 @@ pub function write_wav(audio: Audio, bits: i32): Result[u8[], string] {
     format = 3u32;
   }
   out = put(out, format, 2);
-  out = put(out, audio.channels as u32, 2);
-  out = put(out, audio.rate as u32, 4);
+  out = put(out, channels as u32, 2);
+  out = put(out, rate as u32, 4);
   out = put(out, avg as u32, 4);
-  out = put(out, (audio.channels * bytes) as u32, 2);
+  out = put(out, (channels * bytes) as u32, 2);
   out = put(out, bits as u32, 2);
   out = out.concat([100u8, 97u8, 116u8, 97u8]);
   out = put(out, size as u32, 4);
-  for sample in audio.samples {
+  let buffer = __alloc_u8(44 + size + (size & 1));
+  return Ok(__bytes_into(buffer, 0, out, 0, 44));
+}
+
+pub function write_samples(own out: u8[], at: i32, samples: f64[], bits: i32): Result[u8[], string] {
+  if (bits != 8 && bits != 16 && bits != 24 && bits != 32) {
+    return Err("invalid WAV output format");
+  }
+  let bytes = bits / 8;
+  if (at < 0 || at > out.len() || samples.len() as u64 * (bytes as u64) > (out.len() - at) as u64) {
+    return Err("sample output exceeds WAV buffer bounds");
+  }
+  let index = 0;
+  if (bits == 32) {
+    let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
+    while (index + 4 <= samples.len()) {
+      let lo = __f64x2_load(samples, index);
+      let hi = __f64x2_load(samples, index + 2);
+      if (__f64x2_bitmask(__f64x2_lt(__f64x2_abs(lo), infinity)) != 3 || __f64x2_bitmask(__f64x2_lt(__f64x2_abs(hi), infinity)) != 3) {
+        return Err("nonfinite output sample");
+      }
+      out = __f32x4_with_bytes(out, at + 4 * index, __f32x4_pack(lo, hi));
+      index += 4;
+    }
+    while (index < samples.len()) {
+      let value = samples[index];
+      if (!value.is_finite()) {
+        return Err("nonfinite output sample");
+      }
+      let raw = f32_bits(value as f32) as u32;
+      let cursor = at + 4 * index;
+      out = out.with(cursor, raw as u8).with(cursor + 1, (raw >> 8u32) as u8).with(cursor + 2, (raw >> 16u32) as u8).with(cursor + 3, (raw >> 24u32) as u8);
+      index += 1;
+    }
+    return Ok(out);
+  }
+  let cursor = at;
+  for sample in samples {
     if (!sample.is_finite()) {
       return Err("nonfinite output sample");
     }
-    if (bits == 32) {
-      out = put32(out, f32_bits(sample as f32) as u32);
-    } else {
-      let x = sample;
-      if (x > 1.0) {
-        x = 1.0;
-      }
-      if (x < -1.0) {
-        x = -1.0;
-      }
-      let scale = 1 << bits - 1;
-      let q = (x * (scale as f64)).round() as i32;
-      if (q >= scale) {
-        q = scale - 1;
-      }
-      if (bits == 8) {
-        q += 128;
-      }
-      if (bytes == 1) {
-        out = out.append(q as u8);
-      } else if (bytes == 2) {
-        out = put16(out, q as u32);
-      } else {
-        out = put16(out, q as u32);
-        out = out.append((q as u32 >> 16u32) as u8);
-      }
+    let x = sample;
+    if (x > 1.0) {
+      x = 1.0;
     }
-  }
-  if ((size & 1) != 0) {
-    out = out.append(0u8);
+    if (x < -1.0) {
+      x = -1.0;
+    }
+    let scale = 1 << bits - 1;
+    let q = (x * (scale as f64)).round() as i32;
+    if (q >= scale) {
+      q = scale - 1;
+    }
+    if (bits == 8) {
+      q += 128;
+    }
+    out = out.with(cursor, q as u8);
+    if (bytes >= 2) {
+      out = out.with(cursor + 1, (q as u32 >> 8u32) as u8);
+    }
+    if (bytes == 3) {
+      out = out.with(cursor + 2, (q as u32 >> 16u32) as u8);
+    }
+    cursor += bytes;
   }
   return Ok(out);
+}
+
+// Output format codes are the number of PCM bits, or 32 for IEEE float.
+pub function write_wav(audio: Audio, bits: i32): Result[u8[], string] {
+  return write_samples(wav_buffer(audio.rate, audio.channels, bits, audio.samples.len())?, 44, audio.samples, bits);
 }
 
 pub struct Header { block_size: i32, max_block_bytes: i32, blocks: i32, rate: i32, channels: i32, kbps: i32, offset: i32 }
@@ -245,7 +270,7 @@ pub function decode(data: u8[]): Result[Audio, string] {
   return Ok(Audio { rate: h.rate, channels: h.channels, samples: out });
 }
 
-function sample_block(audio: Audio, block: i32, block_size: i32): f64[] {
+pub function sample_block(audio: Audio, block: i32, block_size: i32): f64[] {
   let input = transform.zeros(block_size * audio.channels);
   let start = block as i64 * (block_size as i64) * (audio.channels as i64);
   for i in 0..input.len() {
@@ -305,7 +330,14 @@ pub function encode_mode(audio: Audio, mode: encoder.Mode, block_size: i32): Res
     }
     stream = stream.concat(block.bytes);
   }
-  let kbps = stream.len() as f64 * 8.0 * (audio.rate as f64) / (blocks as f64 * (block_size as f64) * 1000.0);
+  return ulc_file(stream, max_bytes, blocks, audio.rate, block_size, audio.channels);
+}
+
+pub function ulc_file(stream: u8[], max_bytes: i32, blocks: i32, rate: i32, block_size: i32, channels: i32): Result[u8[], string] {
+  if (!codec.valid_config(block_size, channels) || rate < 1 || blocks < 1 || max_bytes < 0 || stream.len() > 1073741799) {
+    return Err("invalid ULC2 output metadata or size");
+  }
+  let kbps = stream.len() as f64 * 8.0 * (rate as f64) / (blocks as f64 * (block_size as f64) * 1000.0);
   let nominal = 65535;
   if (kbps < 65535.0) {
     nominal = kbps as i32;
@@ -317,8 +349,8 @@ pub function encode_mode(audio: Audio, mode: encoder.Mode, block_size: i32): Res
   out = put(out, block_size as u32, 2);
   out = put(out, max_bytes as u32, 2);
   out = put(out, blocks as u32, 4);
-  out = put(out, audio.rate as u32, 4);
-  out = put(out, audio.channels as u32, 2);
+  out = put(out, rate as u32, 4);
+  out = put(out, channels as u32, 2);
   out = put(out, nominal as u32, 2);
   out = put(out, 24u32, 4);
   return Ok(out.concat(stream));

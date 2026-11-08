@@ -42,6 +42,8 @@ func TestLanesAccepted(t *testing.T) {
 		"builtins":     `function f(a: f64x2): f64 { let m: f64x2 = __f64x2_lt(a, __f64x2_of(1.0, 2.0)); let b: f64x2 = __f64x2_select(__f64x2_min(a, a), __f64x2_max(a, a), m); return __f64x2_lane(__f64x2_round(__f64x2_floor(b)), 1) + __f64x2_lane(__f64x2_ne(a, b), 0); }`,
 		"direct call":  `function g(v: f64x2, k: f64): f64x2 { return v * __f64x2_splat(k); } function f(): f64 { return __f64x2_lane(g(__f64x2_splat(1.0), 2.0), 0); }`,
 		"array lanes":  `function f(xs: f64[]): f64[] { let v: f64x2 = __f64x2_load(xs, 0); return __f64x2_with(xs, 2, v); }`,
+		"packed f32":   `function f(xs: u8[]): u8[] { return __f32x4_with_bytes(xs, 1, __f32x4_load_bytes(xs, 0)); }`,
+		"packed f64":   `function f(xs: u8[]): u8[] { return __f64x2_with_bytes(xs, 0, __f64x2_load_bytes(xs, 1)); }`,
 		"f32 array":    `function f(xs: f32[]): f32[] { return __f32x4_with(xs, 0, __f32x4_load(xs, 4)); }`,
 		"lambda local": `function f(v: f64x2): f64 { let x: f64 = __f64x2_lane(v, 0); let g = (y: f64): f64 => y + x; return g(1.0); }`,
 	} {

@@ -7453,6 +7453,14 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     s = s.write("    " + m + " " + ssa_fsrc(reg_of, ins.args[0], "%xmm1") + ", " + ssa_r32(d) + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
+  if (b == "vpack") {
+    s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+    s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+    s = s.write("    cvtpd2ps " + ssa_fsrc(reg_of, ins.args[0], "%xmm1") + ", %xmm1\n    cvtpd2ps " + ssa_fsrc(reg_of, ins.args[1], "%xmm2") + ", %xmm2\n    movlhps %xmm2, %xmm1\n");
+    let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+    s = s.write("    movaps %xmm1, " + d + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   if (b == "vsplat") {
     return ssa_vsplat(ins, reg_of, s);
   }
@@ -7755,6 +7763,20 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_load(reg_of, ins.args[0], a, s);
   let b = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
+  if (util.str_has_suffix(ins.str, ":bytes")) {
+    s = s.need("heap");
+    s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
+    s = s.write("    movq (" + a + "), %rdx\n    subq " + b + ", %rdx\n    cmpq $16, %rdx\n");
+    s = ssa_trap_jump(s, "jb", "__fern_oob_abort");
+    let address = "8(" + a + "," + b + ")";
+    if (set) {
+      s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);
+      return s.write("    movupd " + ssa_fsrc(reg_of, ins.args[2], "%xmm1") + ", " + address + "\n");
+    }
+    let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+    s = s.write("    movupd " + address + ", " + d + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   s = s.need("heap");
   s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
   s = s.write("    leaq " + util.i32_to_string(128 / ins.imm - 1) + "(" + b + "), %rdx\n");

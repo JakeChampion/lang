@@ -275,6 +275,9 @@ pub function lane_builtin_params(name: string): Type[] {
   let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   let arr: Type = TypeArray { elem: e, view: false };
   let v = lane_builtin_verb(name);
+  if (v == "pack") {
+    return [TypeLanes { width: 64 }, TypeLanes { width: 64 }];
+  }
   if (v == "splat") {
     return [e];
   }
@@ -287,6 +290,13 @@ pub function lane_builtin_params(name: string): Type[] {
   }
   if (v == "lane") {
     return [lt, i];
+  }
+  if (v == "load_bytes" || v == "with_bytes") {
+    let bytes: Type = TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false };
+    if (v == "load_bytes") {
+      return [bytes, i];
+    }
+    return [bytes, i, lt];
   }
   if (v == "load") {
     return [arr, i];
@@ -315,6 +325,9 @@ pub function lane_builtin_result(name: string): Type {
   }
   if (v == "lane") {
     return TypeFloat { width: w, polymorphic: false };
+  }
+  if (v == "with_bytes") {
+    return TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false };
   }
   if (v == "with") {
     return TypeArray { elem: TypeFloat { width: w, polymorphic: false }, view: false };

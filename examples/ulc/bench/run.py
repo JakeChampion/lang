@@ -66,18 +66,25 @@ def main():
     parser.add_argument("--repetitions", type=int, default=7)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--cpu", type=int)
+    parser.add_argument("--cpus", help="comma-separated CPU affinity for both executables")
+    parser.add_argument("--threads", type=int, choices=(1, 2, 4), default=1)
     args = parser.parse_args()
     if args.seconds <= 0 or args.repetitions < 3:
         parser.error("use positive seconds and at least three repetitions")
+    if args.cpu is not None and args.cpus is not None:
+        parser.error("select --cpu or --cpus")
     if args.cpu is not None:
         os.sched_setaffinity(0, {args.cpu})
+    if args.cpus is not None:
+        os.sched_setaffinity(0, {int(cpu) for cpu in args.cpus.split(",")})
+    os.environ["ULC_THREADS"] = str(args.threads)
     fern = args.fern.resolve()
     reference = args.reference.resolve()
     cpu = "unknown"
     if Path("/proc/cpuinfo").exists():
         cpu = next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
                     if line.startswith("model name")), "unknown")
-    report = {"platform": platform.platform(), "cpu": cpu,
+    report = {"threads": args.threads, "platform": platform.platform(), "cpu": cpu,
               "affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
               "seconds": args.seconds, "repetitions": args.repetitions,
               "reference_label": args.reference_label, "quality": 75, "block_size": 2048,

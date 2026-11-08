@@ -985,7 +985,7 @@ pub function lane_builtin_op(verb: string): string {
   if (verb == "bitmask") {
     return "vbitmask";
   }
-  let verbs: string[] = ["splat", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select"];
+  let verbs: string[] = ["splat", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "pack"];
   let i = util.index_of_str(verbs, verb);
   if (i < 0) {
     return "";
