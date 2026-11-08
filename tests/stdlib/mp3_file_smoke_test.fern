@@ -1,0 +1,43 @@
+import "std/audio/mp3/file";
+import "std/hex";
+import "std/test";
+import "mp3_seek_smoke_vectors";
+import "mp3_file_check";
+import "flac_file_check" as io;
+
+function independent(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_seek_smoke_vectors.INPUT) else {
+    return test.fail("reference bytes");
+  };
+  let src = io.mock(bytes);
+  let Ok(index) = mp3_file_check.index(src, file.default_limits()) else {
+    return test.fail("file index");
+  };
+  if (index.frames != 576i64 || index.info.sample_rate != 8000 || index.info.channels != 1) {
+    return test.fail("reference format or length");
+  }
+  let Ok(cursor) = file.reader(index).seek(mp3_seek_smoke_vectors.POSITION) else {
+    return test.fail("seek");
+  };
+  let Ok((next, Some(audio))) = cursor.next_with(io.seek_source(src), io.read_source(src)) else {
+    return test.fail("file PCM");
+  };
+  if (audio.position != mp3_seek_smoke_vectors.POSITION || audio.samples.len() != mp3_seek_smoke_vectors.SAMPLE_BITS.len()) {
+    return test.fail("reference sample interval");
+  }
+  for i in 0..audio.samples.len() {
+    if (f32_bits(audio.samples[i]) != mp3_seek_smoke_vectors.SAMPLE_BITS[i] as i32) {
+      return test.fail("independent minimp3 PCM bits");
+    }
+  }
+  let Ok((_, None())) = next.next_with(io.no_seek, io.no_read) else {
+    return test.fail("source access after end");
+  };
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed MP3 file interpreter smoke");
+  runner = runner.it("independent scalar minimp3 PCM through an indexed file seek", independent);
+  return runner.finish();
+}
