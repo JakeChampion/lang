@@ -619,7 +619,11 @@ check time, in the same mechanism that enforces the OS boundary today.
   program fails with E066, and a dependency needs the `privileged` package
   capability (`docs/PACKAGE-CAPABILITIES-BRIEF.md`).
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
-  Fern already ships, which emit ELF rather than shelling out to one.
+  Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
+  reads the header and the program headers of an ELF64 image, and
+  `TestSelfHostElfReaderMatchesDebugElf` holds it to Go's `debug/elf` on the
+  images of every ELF target. The loader that maps the segments is milestone 5
+  (#14264).
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
   once volatile and memory layout exist; no new language surface. `std/fdt`
   reads a device tree and `std/pvh` reads the PVH start info (#14260).
