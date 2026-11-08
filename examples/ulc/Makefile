@@ -23,6 +23,7 @@ build/trace: tests/trace.fern $(SOURCES) | build
 	$(FERN) $(FERNFLAGS) -target $(TARGET) -o $@ tests/trace.fern
 
 test: build/ulc build/unit build/trace
+	python3 tests/generate_noise_tables.py
 	./build/unit
 	python3 tests/integration.py
 

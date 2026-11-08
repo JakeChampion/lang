@@ -26,7 +26,9 @@ harness (`internal/testing/e2eharness/self_host_compiler.go`) builds every test 
 with it, so the drivers are held to the pin the way `fern.fern` is.
 
 Everything lands in `build/bootstrap/`: the cached stage0 under
-`stage0/<release>/`, `stage1`, `stage2`, `stage3`, and the smoke programs. The smoke is
+`stage0/<release>/`, `stage1`, `stage2`, `stage3`, and the smoke programs. CI
+restores `stage0/` from the Actions cache, keyed on the lock
+(`.github/actions/stage0`). Only a cache miss downloads the release asset. The smoke is
 a one-line program and `coreutils/tr` built with `-O` and run: a stage1 that
 an old stage0 built through its AST-lowering fallback compiles the first and
 aborts on the second (#9763), so a one-liner alone installed a compiler that

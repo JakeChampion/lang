@@ -1,3 +1,4 @@
+# 2026-11-08: Three generic and must_consume fixtures measured with RC trace; all clean.
 # 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
 # The handler fan-out retains two task-pool blocks. The task deadline case
 # retains four blocks. The pool records and their backing storage survive task-id reuse.
@@ -383,6 +384,7 @@ generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
 generic_enum_payload_settles_its_parameter           0
+generic_enum_payload_struct_at_option_instances      0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
@@ -400,6 +402,7 @@ generic_receiver_array_drop                          0
 generic_receiver_methods                             0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
+generic_struct_argument_from_a_some_literal          0
 generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_struct_method_map_arg                        0
@@ -499,6 +502,7 @@ iter_build_consume                                   0
 iter_range_collect                                   0
 iter_step_by                                         0
 iterator_nested_tuple_adapter                        0
+iterator_ranges_include_i32_max                      0
 json_array_field                                     0
 json_arrays_and_options                              0
 json_error_location                                  0
@@ -601,6 +605,7 @@ module_scoped_variant                                0
 multi_file                                           0
 multi_hop_alias                                      0
 multiline_stdin                                      0
+must_consume_destructure_in_one_arm_moves            0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0

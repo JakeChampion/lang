@@ -540,6 +540,7 @@ is the number of slots it leaves.
 | `vpack` | 512 | 2 | 1 |
 | `vpermute` | 513 | 2 | 1 |
 | `vextract_bits` | 514 | 1 | 1 |
+| `alloc_uninit` | 515 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

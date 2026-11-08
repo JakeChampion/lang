@@ -269,7 +269,7 @@ function kind_facts(): KindFacts {
   ];
   let two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64", "arr_push_owned_i64", "arr_push_owned_f64"];
   let one: string[] = [
-    "str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
+    "str_from_bytes", "alloc", "alloc_u8", "alloc_uninit", "raw_alloc", "print_str", "eprint_str",
     "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
     "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close",
   ];
@@ -556,7 +556,7 @@ function unique_push(k: string, op: ir.Op): i32 {
 }
 
 function prod_call_kind(k: string): i32 {
-  if (k == "alloc" || k == "alloc_u8" || k == "raw_alloc" || util.str_has_prefix(k, "arr_push")) {
+  if (k == "alloc" || k == "alloc_u8" || k == "alloc_uninit" || k == "raw_alloc" || util.str_has_prefix(k, "arr_push")) {
     return 50;
   }
   return 49;
