@@ -51,6 +51,27 @@ Each operation bounds its JNI references, so repeated position queries do not re
 A failed construction releases partial resources.
 Seek requests use the closest-frame mode and reject values above Android's signed 32-bit millisecond limit.
 
+## Native MP4 video packets
+
+`std/video/mp4` indexes self-contained AVC and HEVC video tracks without Android or an external codec library.
+It reuses the existing ISO box, sample-table, clock, and data-reference readers.
+It preserves packet ranges, descriptions, decode order, decode times, composition times, durations, and sync-sample flags.
+Each packet range refers to the original byte view, without a payload copy.
+
+AVC and HEVC descriptions use the existing NAL configuration readers.
+The index validates configuration framing and dimensions. It does not decode pixels or validate coded parameter-set syntax.
+The native decode and encode columns above remain unchanged.
+
+Times use the track clock's ticks. Version-one composition offsets can produce negative presentation times.
+The index preserves edit lists in their original movie-duration and media-time units.
+An application must apply these edits to construct the movie presentation timeline.
+Fragmented media, encryption, and external data references return `Unsupported`.
+
+The input must be a complete byte view, within an explicit input limit.
+Separate budgets bound boxes, tracks, descriptions, edits, packets, dimensions, and each packet's size.
+The packet budget is cumulative across video tracks. The track budget includes audio and other non-video tracks.
+This API does not stream a large file or define an exact process-memory bound.
+
 ## Android packet path
 
 `std/android/video` configures an NDK MediaCodec decoder for an existing `ANativeWindow`.
@@ -251,7 +272,7 @@ It also builds ARM64 Android shared libraries.
 On Linux, it executes the MediaCodec ABI test through a shared library for the host architecture.
 The unit workflow runs this script on x86-64 and ARM64 hosts.
 
-The compiler differential suite includes the native video, codec-policy, and source-range tests.
+The compiler differential suite includes the native video, MP4 packet, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
 The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
@@ -264,6 +285,12 @@ The test requires surface playback, pause, resume, seek, and a gray screenshot.
 The workflow also copies the byte-buffer export into MediaStore and grants the video APK access to that item.
 The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
+
+The APK build lane also runs `scripts/check-video-mp4-interop` on fresh FFmpeg fixtures.
+It compares native packet ranges, timestamps, durations, and sync flags with FFprobe.
+It extracts AVC and HEVC Annex B streams through Fern and compares every FFmpeg-decoded RGB sample with the original MP4 decode.
+Fixtures cover reordered frames, signed composition offsets, fast-start layout, interleaved AAC, multiple video tracks, compact sample sizes, and 64-bit offsets.
+Normal native and WASI tests use checked-in reference bytes and require no FFmpeg installation.
 
 Emulator results do not establish physical hardware throughput or battery consumption.
 
