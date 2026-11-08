@@ -32,6 +32,15 @@ var socketProbes = []struct {
 	{"read_reset", e2eharness.NetReadResetProbe},
 }
 
+// compiledSocketProbes read the kernel's own view of a descriptor, which the
+// interpreter's socket numbers do not reach.
+var compiledSocketProbes = []struct {
+	name string
+	src  func() string
+}{
+	{"accept_with_cloexec", e2eharness.AcceptWithCloexecProbe},
+}
+
 func TestSocketCtlInterp(t *testing.T) {
 	for _, p := range socketProbes {
 		t.Run(p.name, func(t *testing.T) {
@@ -43,7 +52,10 @@ func TestSocketCtlInterp(t *testing.T) {
 }
 
 func TestSocketCtlX86_64(t *testing.T) {
-	for _, p := range socketProbes {
+	for _, p := range append(append([]struct {
+		name string
+		src  func() string
+	}{}, socketProbes...), compiledSocketProbes...) {
 		t.Run(p.name, func(t *testing.T) {
 			if out, got := compileAndRunX86_64(t, p.src()); got != 42 {
 				t.Fatalf("x86-64 got %d, want 42; first failing check: %s", got, out)
@@ -53,7 +65,10 @@ func TestSocketCtlX86_64(t *testing.T) {
 }
 
 func TestSocketCtlArm64(t *testing.T) {
-	for _, p := range socketProbes {
+	for _, p := range append(append([]struct {
+		name string
+		src  func() string
+	}{}, socketProbes...), compiledSocketProbes...) {
 		t.Run(p.name, func(t *testing.T) {
 			if out, got := compileAndRunArm64(t, p.src()); got != 42 {
 				t.Fatalf("arm64 got %d, want 42; first failing check: %s", got, out)
