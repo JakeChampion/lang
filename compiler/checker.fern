@@ -20790,6 +20790,9 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
   if (lu_later_in(st, aid)) {
     return true;
   }
+  if let ast.StmtReturn(_) = st {
+    return false;
+  }
   if let ast.StmtAssign(a) = st {
     if (a.target == aid.name && lu_mentions_at(a.value, aid)) {
       return false;
