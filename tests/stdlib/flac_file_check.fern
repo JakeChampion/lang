@@ -24,10 +24,14 @@ pub function seek_source(src: Source): (i64) => Result[i64, IoError] {
 }
 
 pub function read_source(src: Source): (i32) => Result[u8[], IoError] {
+  return source_read(src, 17);
+}
+
+pub function source_read(src: Source, maximum: i32): (i32) => Result[u8[], IoError] {
   return (requested: i32): Result[u8[], IoError] => {
     src.operations.set(src.operations.get() + 1);
     src.reads.set(src.reads.get() + 1);
-    let count = if (requested > 17) { 17 } else { requested };
+    let count = if (requested > maximum) { maximum } else { requested };
     let left = src.bytes.len() as i64 - src.position.get();
     count = if (count as i64 > left) { left as i32 } else { count };
     let bytes: u8[] = [];

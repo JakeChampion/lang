@@ -20,23 +20,35 @@ import "std/audio/source";
 pub struct Window { offset: i64, bytes: i32, buffer: source.Buffer, positioned: boolean, ready: boolean }
 
 pub function create(offset: i64, bytes: i32, limits: source.Limits): Result[Window, source.ReadError] {
-  if (offset < 0i64 || bytes < 1 || bytes > limits.max_buffer_bytes) { return Err(source.ReadSize); }
-  let Some(_) = offset +? bytes as i64 else { return Err(source.ReadSize); };
+  if (offset < 0i64 || bytes < 1 || bytes > limits.max_buffer_bytes) {
+    return Err(source.ReadSize);
+  }
+  let Some(_) = offset +? bytes as i64 else {
+    return Err(source.ReadSize);
+  };
   let buffer = source.create(source.Limits { ...limits, max_buffer_bytes: bytes })?;
   return Ok(Window { offset: offset, bytes: bytes, buffer: buffer, positioned: false, ready: false });
 }
 
-pub function (window: Window) view(): [u8] { return window.buffer.view(); }
+pub function (window: Window) view(): [u8] {
+  return window.buffer.view();
+}
 
 pub function (own window: Window) step_with(seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[Window, source.ReadError] {
-  if (window.ready) { return Ok(window); }
+  if (window.ready) {
+    return Ok(window);
+  }
   if (!window.positioned) {
     let offset = match (seek(window.offset)) { Ok(value) => value, Err(e) => { return Err(source.ReadIo(e)); } };
-    if (offset != window.offset) { return Err(source.ReadSize); }
+    if (offset != window.offset) {
+      return Err(source.ReadSize);
+    }
     return Ok(Window { ...window, positioned: true });
   }
   let (buffer, ready) = window.buffer.ensure(window.bytes, read)?;
-  if (!ready && buffer.eof) { return Err(source.ReadAudio(pcm.Truncated)); }
+  if (!ready && buffer.eof) {
+    return Err(source.ReadAudio(pcm.Truncated));
+  }
   return Ok(Window { ...window, buffer: buffer, ready: ready });
 }
 

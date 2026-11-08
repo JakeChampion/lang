@@ -197,23 +197,23 @@ function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.S
 }
 
 function t_ret(value: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: value };
 }
 
 function t_br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function t_brif(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
 function t_none(): ssa.STerm {
-  return ssa.STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_NONE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
 }
 
 function t_unreachable(): ssa.STerm {
-  return ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
 }
 
 function emit(s: State, ins: ssa.SInst): State {
@@ -292,7 +292,7 @@ function merge_binding(s: State, envs: i32[][], at: i32): Value {
   if (same) {
     return Value { s: s, id: first };
   }
-  return define(s, 8, args, 0, "", s.values[first]);
+  return define(s, ssa.PHI, args, 0, "", s.values[first]);
 }
 
 function merge_env(s: State, envs: i32[][], count: i32): State {
@@ -809,14 +809,14 @@ function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Val
     }
   }
   if (narrow) {
-    return define(s, 1, [], 0, n.text, t_f32());
+    return define(s, ssa.CONST_INT, [], 0, n.text, t_f32());
   }
-  return define(s, 1, [], 0, n.text, t_f64());
+  return define(s, ssa.CONST_INT, [], 0, n.text, t_f64());
 }
 
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (parser.is_unit_literal(n)) {
-    return define(s, 1, [], 0, "", t_void());
+    return define(s, ssa.CONST_INT, [], 0, "", t_void());
   }
   if (n.is_float || n.suffix == "" && ssasem.is_float(expected)) {
     return float_number(n, s, expected);
@@ -834,9 +834,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     return refused(s, "unsupported literal width");
   }
   if (ssasem.text_constant(ty) || ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) {
-    return define(s, 1, [], 0, decimal_text(n.text), ty);
+    return define(s, ssa.CONST_INT, [], 0, decimal_text(n.text), ty);
   }
-  return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
+  return define(s, ssa.CONST_INT, [], util.lit_to_i32(n.text), "", ty);
 }
 
 function decimal_text(t: string): string {
@@ -1224,7 +1224,7 @@ function index_operand(v: Value): Value {
     return narrowed;
   }
   let back = define(narrowed.s, ssasem.cast(), [narrowed.id], 0, "", source);
-  let fits = define(back.s, 9, [back.id, v.id], 0, "==", t_bool());
+  let fits = define(back.s, ssa.BINARY, [back.id, v.id], 0, "==", t_bool());
   s = fits.s;
   let pred = s.cur.id;
   let hit = s.next_block;
@@ -1250,20 +1250,20 @@ function slice_probe(t: SliceTree, src: i32, at: i32, len: i32, sink: i32): Slic
   let ok = lead + 1;
   s = State { ...s, next_block: ok + 1 };
 
-  let zero = define(s, 1, [], 0, "", t_i32());
-  let after_start = define(zero.s, 9, [at, zero.id], 0, ">", t_bool());
+  let zero = define(s, ssa.CONST_INT, [], 0, "", t_i32());
+  let after_start = define(zero.s, ssa.BINARY, [at, zero.id], 0, ">", t_bool());
   s = terminate(after_start.s, t_brif(after_start.id, below, ok));
 
   let inside = define(open(s, below, [interior]), 9, [at, len], 0, "<", t_bool());
   s = terminate(inside.s, t_brif(inside.id, byte, ok));
 
   let b = define(open(s, byte, [below]), ssasem.str_index(), [src, at], 0, "", t_u8());
-  let low = define(b.s, 1, [], 128, "", t_u8());
-  let ascii = define(low.s, 9, [b.id, low.id], 0, "<", t_bool());
+  let low = define(b.s, ssa.CONST_INT, [], 128, "", t_u8());
+  let ascii = define(low.s, ssa.BINARY, [b.id, low.id], 0, "<", t_bool());
   s = terminate(ascii.s, t_brif(ascii.id, ok, lead));
 
   let first = define(open(s, lead, [byte]), 1, [], 192, "", t_u8());
-  let starts = define(first.s, 9, [b.id, first.id], 0, ">=", t_bool());
+  let starts = define(first.s, ssa.BINARY, [b.id, first.id], 0, ">=", t_bool());
   s = terminate(starts.s, t_brif(starts.id, ok, sink));
 
   return SliceTree { s: open(s, ok, [interior, below, byte, lead]), preds: preds.append(lead) };
@@ -1275,7 +1275,7 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
   let from = s.cur.id;
   let next = s.next_block;
   s = State { ...s, next_block: next + 1 };
-  let held = define(s, 9, [left, right], 0, op, t_bool());
+  let held = define(s, ssa.BINARY, [left, right], 0, op, t_bool());
   s = terminate(held.s, t_brif(held.id, next, sink));
   return SliceTree { s: open(s, next, [from]), preds: preds.append(from) };
 }
@@ -1346,7 +1346,7 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
   let sink = s.next_block;
   let join = sink + 1;
   s = State { ...s, next_block: join + 1 };
-  let floor = define(s, 1, [], 0, "", t_i32());
+  let floor = define(s, ssa.CONST_INT, [], 0, "", t_i32());
   s = floor.s;
 
   let t = SliceTree { s: s, preds: [] };
@@ -1788,7 +1788,7 @@ function arithmetic(b: ast.ExprBinary, left: i32, right: i32, s: State): Value {
   if let Some(v) = folded_value(s, b.op, left, right, ty, literal_operand(b.left) && literal_operand(b.right)) {
     return v;
   }
-  return define(s, 9, [left, right], 0, b.op, ty);
+  return define(s, ssa.BINARY, [left, right], 0, b.op, ty);
 }
 
 // An i32 or i64 operation on constants that the block just defined, folded.
@@ -1829,7 +1829,7 @@ function recent_wide(s: State, v: i32): Option[Wide] {
 
 function wide_at(s: State, at: i32): Option[Wide] {
   let ins = s.cur.insts[at];
-  if (ins.kind_tag == 1 && ins.args.len() == 0 && util.is_decimal_i64(ins.str)) {
+  if (ins.kind_tag == ssa.CONST_INT && ins.args.len() == 0 && util.is_decimal_i64(ins.str)) {
     return Some(Wide { value: util.lit_to_i64(ins.str), temps: [ins.result] });
   }
   if (ins.kind_tag != ssasem.cast() || ins.args.len() != 1 || at == 0) {
@@ -1878,7 +1878,7 @@ function folded_text(s: State, v: i64, ty: typeinfo.Type, temps: i32[], literal:
   if (literal) {
     return define(without_temporaries(s, temps), 1, [], 0, util.i64_to_string(v), ty);
   }
-  return define(s, 1, [], 0, util.i64_to_string(v), ty);
+  return define(s, ssa.CONST_INT, [], 0, util.i64_to_string(v), ty);
 }
 
 // The constant v in place of an operation on constants. The constants of a
@@ -1888,7 +1888,7 @@ function folded(s: State, v: i32, ty: typeinfo.Type, operands: i32[], literal: b
   if (literal) {
     return define(without_temporaries(s, operands), 1, [], v, "", ty);
   }
-  return define(s, 1, [], v, "", ty);
+  return define(s, ssa.CONST_INT, [], v, "", ty);
 }
 
 // Whether e is an integer literal, or a negation, sum, difference or product
@@ -1948,7 +1948,7 @@ function recent_constant(s: State, v: i32): Option[i32] {
     if (i < n) {
       let ins = insts[n - 1 - i];
       if (ins.result == v) {
-        if (ins.kind_tag == 1 && ins.str == "" && ins.args.len() == 0 && ssasem.is_i32(s.values[v])) {
+        if (ins.kind_tag == ssa.CONST_INT && ins.str == "" && ins.args.len() == 0 && ssasem.is_i32(s.values[v])) {
           return Some(ins.imm);
         }
         return None;
@@ -2039,13 +2039,13 @@ function composite_compare(b: ast.ExprBinary, left: i32, key: string, s: State):
     if (b.op == "==") {
       return call;
     }
-    return define(s, 10, [call.id], 0, "!", t_bool());
+    return define(s, ssa.UNARY, [call.id], 0, "!", t_bool());
   }
   if (!ssasem.is_integer(s.values[call.id])) {
     return refused(s, "operator contract: " + key + " answers " + typeinfo.spelling(s.values[call.id]));
   }
-  let zero = define(s, 1, [], 0, "", s.values[call.id]);
-  return define(zero.s, 9, [call.id, zero.id], 0, b.op, t_bool());
+  let zero = define(s, ssa.CONST_INT, [], 0, "", s.values[call.id]);
+  return define(zero.s, ssa.BINARY, [call.id, zero.id], 0, b.op, t_bool());
 }
 
 function shift_count(op: string, count: i32, s: State, value: typeinfo.Type): Value {
@@ -2092,8 +2092,8 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
       if (ssasem.text_constant(ot)) {
         text = "0";
       }
-      let zero = define(s, 1, [], 0, text, ot);
-      return define(zero.s, 9, [zero.id, operand.id], 0, "-", ot);
+      let zero = define(s, ssa.CONST_INT, [], 0, text, ot);
+      return define(zero.s, ssa.BINARY, [zero.id, operand.id], 0, "-", ot);
     }
   }
   let ty = ssasem.unary_result(u.op, s.values[operand.id]);
@@ -2118,10 +2118,10 @@ function bitwise_not(s: State, operand: i32): Value {
     one_text = "1";
     one_imm = 0;
   }
-  let zero = define(s, 1, [], 0, zero_text, ot);
-  let one = define(zero.s, 1, [], one_imm, one_text, ot);
-  let ones = define(one.s, 9, [zero.id, one.id], 0, "-", ot);
-  return define(ones.s, 9, [operand, ones.id], 0, "^", ot);
+  let zero = define(s, ssa.CONST_INT, [], 0, zero_text, ot);
+  let one = define(zero.s, ssa.CONST_INT, [], one_imm, one_text, ot);
+  let ones = define(one.s, ssa.BINARY, [zero.id, one.id], 0, "-", ot);
+  return define(ones.s, ssa.BINARY, [operand, ones.id], 0, "^", ot);
 }
 
 // A negation of an i32 constant that the block just defined is that constant.
@@ -2138,7 +2138,7 @@ function unary_op(s: State, op: string, operand: i32, ty: typeinfo.Type, literal
       return v;
     }
   }
-  return define(s, 10, [operand], 0, op, ty);
+  return define(s, ssa.UNARY, [operand], 0, op, ty);
 }
 
 function negated_wide(s: State, operand: i32, ty: typeinfo.Type, literal: boolean): Option[Value] {
@@ -2344,7 +2344,7 @@ function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
   let names = variant_names(s, whole, semrecords.layout_option());
   let t = define(s, ssasem.cast(), [v.id], 0, "", target);
   let back = define(t.s, ssasem.cast(), [t.id], 0, "", source);
-  let fits = define(back.s, 9, [back.id, v.id], 0, "==", t_bool());
+  let fits = define(back.s, ssa.BINARY, [back.id, v.id], 0, "==", t_bool());
   s = fits.s;
   let signed: i32 = -1;
   if (!ssasem.is_unsigned_int(source) && ssasem.is_unsigned_int(target)) {
@@ -2374,7 +2374,7 @@ function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
       text = "0";
     }
     let zero = define(open(s, sign, [pred]), 1, [], 0, text, st);
-    let nonneg = define(zero.s, 9, [signed, zero.id], 0, ">=", t_bool());
+    let nonneg = define(zero.s, ssa.BINARY, [signed, zero.id], 0, ">=", t_bool());
     hit_pred = nonneg.s.cur.id;
     miss_preds = miss_preds.append(hit_pred);
     s = terminate(nonneg.s, t_brif(nonneg.id, hit, miss));
@@ -3118,7 +3118,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   }
   let run: i32[] = [];
   for id in ids {
-    let cp = define(s, 7, [id], 0, "", s.values[id]);
+    let cp = define(s, ssa.COPY, [id], 0, "", s.values[id]);
     s = cp.s;
     run = run.append(cp.id);
   }
@@ -3261,8 +3261,8 @@ function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
   if (!kept) {
     return define(s, ssasem.str_as(), [v.id], 0, "", param);
   }
-  let empty = define(s, 5, [], 0, "", param);
-  return define(empty.s, 9, [v.id, empty.id], 0, "+", param);
+  let empty = define(s, ssa.CONST_STR, [], 0, "", param);
+  return define(empty.s, ssa.BINARY, [v.id, empty.id], 0, "+", param);
 }
 
 function keeps(s: State, contract: ssasem.Contract): boolean {
@@ -4258,9 +4258,9 @@ function zero_value(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
 
 function string_literal(st: ast.ExprString, s: State, expected: typeinfo.Type): Value {
   if (ssasem.is_view(expected)) {
-    return define(s, 5, [], 0, st.value, expected);
+    return define(s, ssa.CONST_STR, [], 0, st.value, expected);
   }
-  return define(s, 5, [], 0, st.value, t_string());
+  return define(s, ssa.CONST_STR, [], 0, st.value, t_string());
 }
 
 function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
@@ -4269,7 +4269,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
       return number(n, s, expected);
     },
     ast.ExprBool(b) => {
-      return define(s, 2, [], boolean_value(b.value), "", t_bool());
+      return define(s, ssa.CONST_BOOL, [], boolean_value(b.value), "", t_bool());
     },
     ast.ExprString(st) => {
       return string_literal(st, s, expected);
@@ -4523,7 +4523,7 @@ function kept_view(v: Value): Value {
 }
 
 function fresh_view(v: Value): Value {
-  let zero = define(v.s, 1, [], 0, "", t_i32());
+  let zero = define(v.s, ssa.CONST_INT, [], 0, "", t_i32());
   let n = define(zero.s, ssasem.length(), [v.id], 0, "", t_i32());
   return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", t_str());
 }
@@ -4535,11 +4535,11 @@ function merge_arms(s: State, values: i32[], ty: typeinfo.Type): Value {
   for v in values {
     let owner = lent_owner(s, v);
     if (owner < 0 || owners.len() > 0 && !semtypes.equal(s.values[owner], s.values[owners[0]])) {
-      return define(s, 8, values, 0, "", ty);
+      return define(s, ssa.PHI, values, 0, "", ty);
     }
     owners = owners.append(owner);
   }
-  let owned = define(s, 8, owners, 0, "", s.values[owners[0]]);
+  let owned = define(s, ssa.PHI, owners, 0, "", s.values[owners[0]]);
   return define(owned.s, ssasem.array_lend(), [owned.id], 0, "", ty);
 }
 
@@ -4842,7 +4842,7 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
   }
   if (fields.len() == 0) {
-    let unit = define(s, 1, [], 0, "", t_void());
+    let unit = define(s, ssa.CONST_INT, [], 0, "", t_void());
     if (util.index_of_str(unit.s.names, pv.binding) >= 0) {
       return replace(unit.s, pv.binding, unit.id);
     }
@@ -4986,7 +4986,7 @@ function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit:
     return ScalarGate { s: low.s, hit: [], miss: [] };
   }
   let op: string = if (literal.has_range) { ">=" } else { "==" };
-  let test = define(low.s, 9, [scrut, low.id], 0, op, t_bool());
+  let test = define(low.s, ssa.BINARY, [scrut, low.id], 0, op, t_bool());
   let pred = test.s.cur.id;
   if (!literal.has_range) {
     return ScalarGate { s: terminate(test.s, t_brif(test.id, hit, miss)), hit: [pred], miss: [pred] };
@@ -4998,7 +4998,7 @@ function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit:
     return ScalarGate { s: high.s, hit: [], miss: [] };
   }
   let upper_op: string = if (literal.range_inclusive) { "<=" } else { "<" };
-  let test_high = define(high.s, 9, [scrut, high.id], 0, upper_op, t_bool());
+  let test_high = define(high.s, ssa.BINARY, [scrut, high.id], 0, upper_op, t_bool());
   let upper_pred = test_high.s.cur.id;
   return ScalarGate { s: terminate(test_high.s, t_brif(test_high.id, hit, miss)), hit: [upper_pred], miss: [pred, upper_pred] };
 }
@@ -5313,7 +5313,7 @@ function header_phis(s: State, count: i32): State {
   while (at < count) {
     let entry = s.vals[at];
     let name = s.names[at];
-    let phi = define(s, 8, [entry], 0, "", s.values[entry]);
+    let phi = define(s, ssa.PHI, [entry], 0, "", s.values[entry]);
     s = note_binding(State { ...phi.s, vals: phi.s.vals.with(at, phi.id) }, name, phi.id);
     at += 1;
   }
@@ -5429,7 +5429,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   }
   let before = s.names.len();
   let outer = s.scope;
-  let start = define(s, 1, [], 0, "", t_i32());
+  let start = define(s, ssa.CONST_INT, [], 0, "", t_i32());
   s = bind(start.s, index_name(), start.id);
 
   let pred = s.cur.id;
@@ -5446,7 +5446,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
 
   let at = lookup(s, index_name());
   let n = define(s, ssasem.length(), [it], 0, "", t_i32());
-  let test = define(n.s, 9, [at, n.id], 0, "<", t_bool());
+  let test = define(n.s, ssa.BINARY, [at, n.id], 0, "<", t_bool());
   s = test.s;
   if (!s.ok) {
     return s;
@@ -5513,8 +5513,8 @@ function step_index(s: State, step_id: i32, header: i32, continues: Exit[], coun
   if (!s.live) {
     return s;
   }
-  let one = define(s, 1, [], 1, "", t_i32());
-  let step = define(one.s, 9, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
+  let one = define(s, ssa.CONST_INT, [], 1, "", t_i32());
+  let step = define(one.s, ssa.BINARY, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
   s = replace(step.s, index_name(), step.id);
   let back = Exit { block: s.cur.id, env: prefix(s.vals, count) };
   s = terminate(s, t_br(header));
@@ -5596,7 +5596,7 @@ function stmt(st: ast.Stmt, s: State): State {
 }
 
 function line_mark(st: ast.Stmt, s: State): State {
-  let v = define(s, 35, [], ast.stmt_line(st), util.i32_to_string(ast.stmt_col(st)), t_void());
+  let v = define(s, ssa.LINE, [], ast.stmt_line(st), util.i32_to_string(ast.stmt_col(st)), t_void());
   return v.s;
 }
 
@@ -5643,7 +5643,7 @@ function trivial_phis(blocks: ssa.SBlock[], nvals: i32): i32[] {
     changed = false;
     for b in blocks {
       for ins in b.insts {
-        if (ins.kind_tag != 8 || map[ins.result] != ins.result) {
+        if (ins.kind_tag != ssa.PHI || map[ins.result] != ins.result) {
           continue;
         }
         let source = trivial_source(ins, map);
@@ -5733,7 +5733,7 @@ function live_edges(b: ssa.SBlock, seen: boolean[]): ssa.SBlock {
   }
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
-    if (ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.PHI) {
       insts = insts.append(ins);
       continue;
     }
@@ -5763,7 +5763,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
   let kept: typeinfo.Type[] = [];
   for b in blocks {
     for ins in b.insts {
-      if (ins.kind_tag == 35) {
+      if (ins.kind_tag == ssa.LINE) {
         has_lines = true;
         continue;
       }
@@ -6055,7 +6055,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
     if (m == ssaunits.counted_mode()) {
       spelled = "own";
     }
-    let p = define(s, 6, [], at, spelled, ty);
+    let p = define(s, ssa.PARAM, [], at, spelled, ty);
     let id = p.id;
     s = p.s;
     s = bind(State { ...s, modes: s.modes.append(m) }, names[at], id);
@@ -8307,7 +8307,7 @@ function copy_returned_views(f: ssasem.Func): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
     let v = b.term.value;
-    if (b.term.kind_tag == 1 && v >= 0 && ssasem.is_view(values[v])) {
+    if (b.term.kind_tag == ssa.TERM_RET && v >= 0 && ssasem.is_view(values[v])) {
       let first = values.len();
       for t in ssasem.view_copy_types() {
         values = values.append(t);
@@ -8517,7 +8517,7 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
       let out: i32[] = [];
       for b in all[i].func.graph.blocks {
         for ins in b.insts {
-          if (ins.kind_tag == ssasem.call() || ins.kind_tag == 8 && ins.str != "") {
+          if (ins.kind_tag == ssasem.call() || ins.kind_tag == ssa.PHI && ins.str != "") {
             let to = ownership.find(rows, ix, ins.str);
             if (to >= 0 && quiet[to]) {
               out = out.append(to);
@@ -9683,7 +9683,7 @@ function renumber_source(blocks: ssa.SBlock[], map: i32[], ids: i32[], n: i32): 
 function renumber_source_block(own out: sourcepos.SourceInfo, b: ssa.SBlock, map: i32[], ids: i32[]): sourcepos.SourceInfo {
   let pos = sourcepos.SourcePos { line: 0, col: "0" };
   for ins in b.insts {
-    if (ins.kind_tag == 35) {
+    if (ins.kind_tag == ssa.LINE) {
       pos = sourcepos.SourcePos { line: ins.imm as i32, col: ins.str };
       if (out.entry.line == 0) {
         out = sourcepos.SourceInfo { ...out, entry: pos };
@@ -9695,7 +9695,7 @@ function renumber_source_block(own out: sourcepos.SourceInfo, b: ssa.SBlock, map
       }
     }
   }
-  if (b.term.kind_tag == 1) {
+  if (b.term.kind_tag == ssa.TERM_RET) {
     out = sourcepos.SourceInfo { ...out, terms: out.terms.with(b.id, pos) };
   }
   return out;
@@ -9704,7 +9704,7 @@ function renumber_source_block(own out: sourcepos.SourceInfo, b: ssa.SBlock, map
 function renumber_block(b: ssa.SBlock, map: i32[], ids: i32[]): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
-    if (ins.kind_tag == 35) {
+    if (ins.kind_tag == ssa.LINE) {
       continue;
     }
     if (map[ins.result] != ins.result) {
@@ -9727,10 +9727,10 @@ function renumber_block(b: ssa.SBlock, map: i32[], ids: i32[]): ssa.SBlock {
 
 function renumber_term(input: ssa.STerm, map: i32[], ids: i32[]): ssa.STerm {
   let term = mapped_term(input, map);
-  if (term.kind_tag == 1 && term.value >= 0) {
+  if (term.kind_tag == ssa.TERM_RET && term.value >= 0) {
     term = ssa.STerm { ...term, value: ids[term.value] };
   }
-  if (term.kind_tag == 3) {
+  if (term.kind_tag == ssa.TERM_BRIF) {
     term = ssa.STerm { ...term, cond: ids[term.cond] };
   }
   return term;

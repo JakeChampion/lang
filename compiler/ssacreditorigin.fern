@@ -13,7 +13,7 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
     return refused(f, "unsupported allocation producer boundary");
   }
   let b = f.blocks[0];
-  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1 || f.nvals < f.nparams) {
+  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != ssa.TERM_RET || f.nvals < f.nparams) {
     return refused(f, "unsupported allocation producer graph");
   }
   let values: i32[] = [];

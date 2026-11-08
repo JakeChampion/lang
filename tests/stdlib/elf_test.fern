@@ -1,0 +1,194 @@
+import "core/cmp";
+import "core/error";
+import "std/binary";
+import "std/elf";
+import "std/string";
+import "std/test";
+
+function u16(own b: u8[], v: i64): u8[] {
+  return b.append((v & 255) as u8).append((v >> 8 & 255) as u8);
+}
+
+// An ELF64 header for `machine` with `count` program headers right after it.
+function header(machine: i64, count: i64, kind: i64): u8[] {
+  let b: u8[] = [0x7fu8, 0x45u8, 0x4cu8, 0x46u8, 2u8, 1u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+  b = u16(b, kind);
+  b = u16(b, machine);
+  b = binary.append_u32_le(b, 1 as u32);
+  b = binary.append_u64_le(b, 0x401000 as u64);
+  b = binary.append_u64_le(b, 64 as u64);
+  b = binary.append_u64_le(b, 0 as u64);
+  b = binary.append_u32_le(b, 0 as u32);
+  b = u16(b, 64);
+  b = u16(b, 56);
+  b = u16(b, count);
+  b = u16(b, 0);
+  b = u16(b, 0);
+  return u16(b, 0);
+}
+
+function program_header(own b: u8[], kind: i64, flags: i64, offset: i64, address: i64, file_size: i64, memory_size: i64): u8[] {
+  b = binary.append_u32_le(b, kind as u32);
+  b = binary.append_u32_le(b, flags as u32);
+  b = binary.append_u64_le(b, offset as u64);
+  b = binary.append_u64_le(b, address as u64);
+  b = binary.append_u64_le(b, address as u64);
+  b = binary.append_u64_le(b, file_size as u64);
+  b = binary.append_u64_le(b, memory_size as u64);
+  return binary.append_u64_le(b, 4096 as u64);
+}
+
+// A text segment of four bytes right after the three program headers, at
+// file offset 232, and a data segment with eight bytes of file and sixteen
+// of memory, after a note.
+function image(): u8[] {
+  let b = header(183, 3, 2);
+  b = program_header(b, 1, 5, 232, 0x401000, 4, 4);
+  b = program_header(b, 4, 4, 236, 0, 0, 0);
+  b = program_header(b, 1, 6, 236, 0x402000, 8, 16);
+  b = b.append(0xd5u8).append(0x03u8).append(0x20u8).append(0x1fu8);
+  for i in 0..8 {
+    b = b.append((i + 1) as u8);
+  }
+  return b;
+}
+
+function test_header(): test.TestOutcome {
+  let Ok(img) = elf.parse(image()) else {
+    return test.fail("parse refused the image");
+  };
+  if (img.kind != elf.ET_EXEC || img.machine != elf.EM_AARCH64) {
+    return test.fail("kind " + img.kind.to_string() + " machine " + img.machine.to_string());
+  }
+  if (img.entry != 0x401000 as u64) {
+    return test.fail("entry " + img.entry.to_string());
+  }
+  return test.assert_eq(img.segments.len(), 3);
+}
+
+function test_segments(): test.TestOutcome {
+  let Ok(img) = elf.parse(image()) else {
+    return test.fail("parse refused the image");
+  };
+  let loads = img.loads();
+  if (loads.len() != 2) {
+    return test.fail("loads " + loads.len().to_string() + ", want 2");
+  }
+  let text = loads[0];
+  let data = loads[1];
+  if (!text.executable() || !text.readable() || text.writable()) {
+    return test.fail("the text segment has flags " + text.flags.to_string());
+  }
+  if (!data.writable() || data.executable()) {
+    return test.fail("the data segment has flags " + data.flags.to_string());
+  }
+  if (text.address != 0x401000 as u64 || text.offset != 232 as u64 || text.file_size != 4 as u64 || text.align != 4096 as u64) {
+    return test.fail("the text segment is misread");
+  }
+  if (data.address != 0x402000 as u64 || data.physical != 0x402000 as u64 || data.file_size != 8 as u64 || data.memory_size != 16 as u64) {
+    return test.fail("the data segment is misread");
+  }
+  if (img.segments[1].is_load() || img.segments[1].kind != elf.PT_NOTE) {
+    return test.fail("the note is not a note");
+  }
+  return test.pass();
+}
+
+function test_bytes(): test.TestOutcome {
+  let b = image();
+  let Ok(img) = elf.parse(b) else {
+    return test.fail("parse refused the image");
+  };
+  let loads = img.loads();
+  let Ok(text) = loads[0].bytes(b) else {
+    return test.fail("the text bytes are cut");
+  };
+  if (text.len() != 4 || text[0] != 0xd5u8 || text[3] != 0x1fu8) {
+    return test.fail("the text bytes are misread");
+  }
+  let Ok(data) = loads[1].bytes(b) else {
+    return test.fail("the data bytes are cut");
+  };
+  if (data.len() != 8 || data[0] != 1u8 || data[7] != 8u8) {
+    return test.fail("the data bytes are misread");
+  }
+  let cut = elf.Segment { ...loads[1], file_size: 9 as u64 };
+  match (cut.bytes(b)) {
+    Ok(got) => {
+      return test.fail("a segment beyond the image gave " + got.len().to_string() + " bytes");
+    },
+    Err(e) => {
+      return test.assert_contains(e.message(), "beyond the image");
+    }
+  }
+}
+
+function test_refusals(): test.TestOutcome {
+  let bad_magic = image().with(1, 0x46u8);
+  match (elf.parse(bad_magic)) {
+    Ok(img) => {
+      return test.fail("a bad magic parsed");
+    },
+    Err(e) => {
+      if (!e.message().contains("magic")) {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (elf.parse(image().with(4, 1u8))) {
+    Ok(img) => {
+      return test.fail("an ELF32 class parsed");
+    },
+    Err(e) => {
+      if (!e.message().contains("ELF64")) {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (elf.parse(image().with(5, 2u8))) {
+    Ok(img) => {
+      return test.fail("a big-endian image parsed");
+    },
+    Err(e) => {
+      if (!e.message().contains("little-endian")) {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (elf.parse(header(62, 1, 2))) {
+    Ok(img) => {
+      return test.fail("program headers beyond the image parsed");
+    },
+    Err(e) => {
+      if (!e.message().contains("beyond the image")) {
+        return test.fail(e.message());
+      }
+    }
+  }
+  let short: u8[] = [0x7fu8, 0x45u8, 0x4cu8, 0x46u8];
+  match (elf.parse(short)) {
+    Ok(img) => {
+      return test.fail("a short image parsed");
+    },
+    Err(e) => {
+      return test.assert_contains(e.message(), "shorter");
+    }
+  }
+}
+
+function test_no_program_headers(): test.TestOutcome {
+  let Ok(img) = elf.parse(header(62, 0, 3)) else {
+    return test.fail("an image with no program headers was refused");
+  };
+  return test.assert_eq(img.kind == elf.ET_DYN && img.machine == elf.EM_X86_64 && img.segments.len() == 0, true);
+}
+
+function main(): i32 {
+  let r = test.new("elf");
+  r = r.it("parse reads the header", test_header);
+  r = r.it("parse reads the program headers and loads picks the PT_LOAD ones", test_segments);
+  r = r.it("bytes gives the file bytes of a segment and refuses one beyond the image", test_bytes);
+  r = r.it("parse refuses what is not a little-endian ELF64 image", test_refusals);
+  r = r.it("an image with no program headers parses", test_no_program_headers);
+  return r.finish();
+}

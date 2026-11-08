@@ -153,7 +153,7 @@ pub function callee(f0: ssasem.Func): ssasem.Func {
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
     let b = f.graph.blocks[bi];
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       let out = lower_return(f, b, parts);
       let block = ssa.SBlock { ...b, insts: out.insts, term: ssa.STerm { ...b.term, value: out.result } };
       f = ssasem.Func { ...out.f, graph: ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, block) } };
@@ -334,7 +334,7 @@ pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: type
 
 pub function tag_word(f: ssasem.Func, insts: ssa.SInst[], at: i32): Lanes {
   let tag = f.values.len();
-  let out = Build { f: value(f, dummy_type()), insts: insts.append(ssa.SInst { kind_tag: 1, result: tag, args: [], imm: at, str: "" }), result: tag };
+  let out = Build { f: value(f, dummy_type()), insts: insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: tag, args: [], imm: at, str: "" }), result: tag };
   out = call(out, conversion(bits_name(), dummy_type()), tag, dummy_type(), word_type());
   return Lanes { f: out.f, insts: out.insts, value: out.result };
 }
@@ -453,14 +453,14 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      if (ins.args.len() == 1 && ins.args[0] == p && ins.kind_tag != 7 && ins.kind_tag != 8 && ins.kind_tag != ssasem.call()) {
+      if (ins.args.len() == 1 && ins.args[0] == p && ins.kind_tag != ssa.COPY && ins.kind_tag != ssa.PHI && ins.kind_tag != ssasem.call()) {
         insts = insts.append(read_of_parts(ins, moved(map, ins.result), consecutive(p, types.len()), payload));
         continue;
       }
       insts = insts.append(moved_inst(ins, map, p, extra));
-      if (ins.kind_tag == 6 && ins.result == p) {
+      if (ins.kind_tag == ssa.PARAM && ins.result == p) {
         for k in 1..types.len() {
-          insts = insts.append(ssa.SInst { kind_tag: 6, result: p + k, args: [], imm: ins.imm + k, str: "" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.PARAM, result: p + k, args: [], imm: ins.imm + k, str: "" });
         }
       }
     }
@@ -499,13 +499,13 @@ function consecutive(first: i32, n: i32): i32[] {
 // a record built of the parts after it.
 pub function read_of_parts(ins: ssa.SInst, result: i32, parts: i32[], payload: typeinfo.Type[]): ssa.SInst {
   if (ins.kind_tag == ssasem.variant_is() && ins.str == "None") {
-    return ssa.SInst { kind_tag: 10, result: result, args: [parts[0]], imm: 0, str: "!" };
+    return ssa.SInst { kind_tag: ssa.UNARY, result: result, args: [parts[0]], imm: 0, str: "!" };
   }
   if (ins.kind_tag == ssasem.variant_is()) {
-    return ssa.SInst { kind_tag: 7, result: result, args: [parts[0]], imm: 0, str: "" };
+    return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [parts[0]], imm: 0, str: "" };
   }
   if (ins.kind_tag == ssasem.variant_get() && payload.len() == 1 && scalar(payload[0])) {
-    return ssa.SInst { kind_tag: 7, result: result, args: [parts[1]], imm: 0, str: "" };
+    return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [parts[1]], imm: 0, str: "" };
   }
   if (ins.kind_tag == ssasem.variant_get()) {
     let fields: i32[] = [];
@@ -514,7 +514,7 @@ pub function read_of_parts(ins: ssa.SInst, result: i32, parts: i32[], payload: t
     }
     return ssa.SInst { kind_tag: ssasem.record_new(), result: result, args: fields, imm: 0, str: "" };
   }
-  return ssa.SInst { kind_tag: 7, result: result, args: [parts[ins.imm]], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [parts[ins.imm]], imm: 0, str: "" };
 }
 
 function spliced_types(ts: typeinfo.Type[], at: i32, parts: typeinfo.Type[]): typeinfo.Type[] {
@@ -542,7 +542,7 @@ function moved_inst(ins: ssa.SInst, map: i32[], p: i32, extra: i32): ssa.SInst {
     args = args.append(moved(map, a));
   }
   let imm = ins.imm;
-  if (ins.kind_tag == 6 && ins.imm > p) {
+  if (ins.kind_tag == ssa.PARAM && ins.imm > p) {
     imm = ins.imm + extra;
   }
   let donor = ssasem.update_base(ins);
@@ -662,7 +662,7 @@ function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst
   let d = through_copies(defs, a);
   let w = w0;
   if (d.kind_tag == ssasem.variant_new() && d.str == "None") {
-    w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: 2, result: 0, args: [], imm: 0, str: "" });
+    w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssa.CONST_BOOL, result: 0, args: [], imm: 0, str: "" });
     let parts: typeinfo.Type[] = [payload];
     if (!scalar(payload)) {
       parts = record_parts(w.b.f, payload);
@@ -674,7 +674,7 @@ function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst
   }
   let inner: i32 = -1;
   if (d.kind_tag == ssasem.variant_new() && d.args.len() == 1) {
-    w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: 2, result: 0, args: [], imm: 1, str: "" });
+    w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssa.CONST_BOOL, result: 0, args: [], imm: 1, str: "" });
     inner = d.args[0];
   } else {
     w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssasem.variant_is(), result: 0, args: [a], imm: 0, str: "Some" });
@@ -725,7 +725,7 @@ pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {
   for i in 0..some.args.len() {
     let v = f.values.len();
     f = value(f, f.values[some.args[i]]);
-    joins = joins.append(ssa.SInst { kind_tag: 8, result: v, args: [some.args[i], none.args[i]], imm: 0, str: "" });
+    joins = joins.append(ssa.SInst { kind_tag: ssa.PHI, result: v, args: [some.args[i], none.args[i]], imm: 0, str: "" });
     parts = parts.append(v);
   }
   return Branch { f: f, head: head, flag: flag, some: some.b.insts, none: none.b.insts, joins: joins, parts: parts };
@@ -748,7 +748,7 @@ pub function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
 
 function flag_constant(b: Build): Build {
   let v = b.f.values.len();
-  let out = Build { f: value(b.f, dummy_type()), insts: b.insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: 1, str: "" }), result: v };
+  let out = Build { f: value(b.f, dummy_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: 1, str: "" }), result: v };
   return call(out, conversion(bits_name(), dummy_type()), v, dummy_type(), word_type());
 }
 
@@ -760,9 +760,9 @@ pub function flag_pair(f: ssasem.Func, insts: ssa.SInst[], lo: i32, hi: i32, slo
   let high = b.result;
   b = flag_constant(b);
   let shifted = b.f.values.len();
-  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: shifted, args: [high, b.result], imm: 0, str: "<<" }), result: shifted };
+  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: shifted, args: [high, b.result], imm: 0, str: "<<" }), result: shifted };
   let packed = b.f.values.len();
-  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: packed, args: [low, shifted], imm: 0, str: "|" }), result: packed };
+  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: packed, args: [low, shifted], imm: 0, str: "|" }), result: packed };
   b = call(b, set_prefix() + util.i32_to_string(slot), packed, word_type(), dummy_type());
   return Lanes { f: b.f, insts: b.insts, value: -1 };
 }
@@ -773,11 +773,11 @@ pub function flag_part(f: ssasem.Func, insts: ssa.SInst[], packed: i32, which: i
   let source = packed;
   if (which == 1) {
     let shifted = b.f.values.len();
-    b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: shifted, args: [packed, one], imm: 0, str: ">>" }), result: shifted };
+    b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: shifted, args: [packed, one], imm: 0, str: ">>" }), result: shifted };
     source = shifted;
   }
   let masked = b.f.values.len();
-  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: masked, args: [source, one], imm: 0, str: "&" }), result: masked };
+  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: masked, args: [source, one], imm: 0, str: "&" }), result: masked };
   let t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   b = call(b, conversion(as_name(), t), masked, word_type(), t);
   return Lanes { f: b.f, insts: b.insts, value: b.result };

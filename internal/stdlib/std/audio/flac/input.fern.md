@@ -31,10 +31,15 @@ import "std/audio/wire";
 import "std/crypto";
 
 pub struct Limits { audio: pcm.Limits, input: source.Limits, max_metadata_bytes: i64 }
+
 pub struct Info { format: pcm.Format, total_frames: u64, min_block: i32, max_block: i32, data_offset: i64, md5: u8[] }
+
 pub struct Audio { info: Info, position: i64, frames: i32, samples: i32[] }
+
 pub struct Summary { info: Info, frames: i64, encoded_frames: i64, bytes_read: i64 }
+
 pub enum Event { Begin(Info), Samples(Audio), End(Summary) }
+
 pub enum ReadEvent { Pending, Output(Event), Finished }
 
 enum Stage { StreamInfo, MetadataHeader, SkipMetadata, BeginTrack, ReadFrame, Decode, Complete }
@@ -78,7 +83,9 @@ pub function create(limits: Limits): Result[Input, source.ReadError] {
 }
 
 function consume(own state: Input, count: i32): Result[Input, source.ReadError] {
-  let Some(offset) = state.offset +? count as i64 else { return Err(audio_error(pcm.Limit)); };
+  let Some(offset) = state.offset +? count as i64 else {
+    return Err(audio_error(pcm.Limit));
+  };
   return Ok(Input { ...state, buffer: state.buffer.advance(count)?, offset: offset });
 }
 
@@ -88,22 +95,30 @@ function pending(own state: Input): Result[(Input, ReadEvent), source.ReadError]
 
 function ensure(own state: Input, count: i32, read: (i32) => Result[u8[], IoError]): Result[(Input, boolean), source.ReadError] {
   let (buffer, ready) = state.buffer.ensure(count, read)?;
-  if (!ready && buffer.eof) { return Err(audio_error(pcm.Truncated)); }
+  if (!ready && buffer.eof) {
+    return Err(audio_error(pcm.Truncated));
+  }
   return Ok((Input { ...state, buffer: buffer }, ready));
 }
 
 function supplied(digest: [u8]): boolean {
   for byte in digest {
-    if (byte != 0u8) { return true; }
+    if (byte != 0u8) {
+      return true;
+    }
   }
   return false;
 }
 
 function stream_info(own state: Input, read: (i32) => Result[u8[], IoError]): Result[(Input, ReadEvent), source.ReadError] {
   let (ready, complete) = ensure(state, 42, read)?;
-  if (!complete) { return pending(ready); }
+  if (!complete) {
+    return pending(ready);
+  }
   let bytes: u8[] = [];
-  for byte in ready.buffer.view()[:42] { bytes = bytes.append(byte); }
+  for byte in ready.buffer.view()[:42] {
+    bytes = bytes.append(byte);
+  }
   let last = (bytes[4] & 128u8) != 0u8;
   bytes = bytes.with(4, bytes[4] | 128u8);
   let header = match (flac.inspect(bytes, pcm.Limits { ...ready.limits.audio, max_input_bytes: 42 })) { Ok(value) => value, Err(e) => { return Err(audio_error(e)); } };
@@ -114,13 +129,19 @@ function stream_info(own state: Input, read: (i32) => Result[u8[], IoError]): Re
 
 function metadata_header(own state: Input, read: (i32) => Result[u8[], IoError]): Result[(Input, ReadEvent), source.ReadError] {
   let (ready, complete) = ensure(state, 4, read)?;
-  if (!complete) { return pending(ready); }
+  if (!complete) {
+    return pending(ready);
+  }
   let bytes = ready.buffer.view();
   let kind = bytes[0] as i32 & 127;
-  if (kind == 0 || kind == 127) { return Err(audio_error(pcm.Header)); }
+  if (kind == 0 || kind == 127) {
+    return Err(audio_error(pcm.Header));
+  }
   let remaining = wire.be(bytes, 1, 3) as i32;
   let total = remaining as i64 + 4i64;
-  if (total > ready.limits.max_metadata_bytes - ready.metadata_bytes) { return Err(audio_error(pcm.Limit)); }
+  if (total > ready.limits.max_metadata_bytes - ready.metadata_bytes) {
+    return Err(audio_error(pcm.Limit));
+  }
   let last = (bytes[0] as i32 & 128) != 0;
   let next = consume(ready, 4)?;
   return pending(Input { ...next, remaining: remaining, last_metadata: last, metadata_bytes: next.metadata_bytes + total, stage: SkipMetadata });
@@ -131,7 +152,9 @@ function skip_metadata(own state: Input, read: (i32) => Result[u8[], IoError]): 
     return pending(Input { ...state, stage: if (state.last_metadata) { BeginTrack } else { MetadataHeader } });
   }
   let (ready, complete) = ensure(state, 1, read)?;
-  if (!complete) { return pending(ready); }
+  if (!complete) {
+    return pending(ready);
+  }
   let count = if (ready.remaining < ready.buffer.available()) { ready.remaining } else { ready.buffer.available() };
   let remaining = ready.remaining - count;
   let next = consume(ready, count)?;
@@ -139,17 +162,25 @@ function skip_metadata(own state: Input, read: (i32) => Result[u8[], IoError]): 
 }
 
 function begin(own state: Input): Result[(Input, ReadEvent), source.ReadError] {
-  let Some(header) = state.header else { return Err(audio_error(pcm.Header)); };
+  let Some(header) = state.header else {
+    return Err(audio_error(pcm.Header));
+  };
   let info = Info { format: header.format, total_frames: header.frames, min_block: header.min_block, max_block: header.max_block, data_offset: state.offset, md5: header.md5 };
   return Ok((Input { ...state, info: Some(info), stage: ReadFrame }, Output(Begin(info))));
 }
 
 function finish(own state: Input): Result[(Input, ReadEvent), source.ReadError] {
-  let Some(info) = state.info else { return Err(audio_error(pcm.Truncated)); };
-  if (state.encoded_frames == 0i64 || info.total_frames != 0u64 && state.position as u64 != info.total_frames) { return Err(audio_error(pcm.Truncated)); }
+  let Some(info) = state.info else {
+    return Err(audio_error(pcm.Truncated));
+  };
+  if (state.encoded_frames == 0i64 || info.total_frames != 0u64 && state.position as u64 != info.total_frames) {
+    return Err(audio_error(pcm.Truncated));
+  }
   if (state.check_md5) {
     let actual = state.hash.finish();
-    if (actual != info.md5) { return Err(audio_error(pcm.Checksum)); }
+    if (actual != info.md5) {
+      return Err(audio_error(pcm.Checksum));
+    }
   }
   let summary = Summary { info: info, frames: state.position, encoded_frames: state.encoded_frames, bytes_read: state.offset };
   return Ok((Input { ...state, stage: Complete }, Output(End(summary))));
@@ -163,23 +194,35 @@ function read_frame(own state: Input, read: (i32) => Result[u8[], IoError]): Res
   let needed = if (state.needed < ceiling(state)) { state.needed } else { ceiling(state) };
   let (buffer, complete) = state.buffer.ensure(needed, read)?;
   let next = Input { ...state, buffer: buffer };
-  if (!complete && !next.buffer.eof) { return pending(next); }
-  if (next.buffer.eof && next.buffer.available() == 0) { return finish(next); }
+  if (!complete && !next.buffer.eof) {
+    return pending(next);
+  }
+  if (next.buffer.eof && next.buffer.available() == 0) {
+    return finish(next);
+  }
   return pending(Input { ...next, stage: Decode });
 }
 
 function retry(own state: Input, e: pcm.AudioError): Result[(Input, ReadEvent), source.ReadError] {
-  if (e == pcm.Limit || state.buffer.eof) { return Err(audio_error(e)); }
+  if (e == pcm.Limit || state.buffer.eof) {
+    return Err(audio_error(e));
+  }
   let cap = ceiling(state);
   let available = state.buffer.available();
-  if (available >= cap) { return Err(audio_error(pcm.Limit)); }
+  if (available >= cap) {
+    return Err(audio_error(pcm.Limit));
+  }
   let needed = if (available > cap / 2) { cap } else { available * 2 };
   return pending(Input { ...state, needed: needed, stage: ReadFrame });
 }
 
 function follows(state: Input, frame: flac.Frame): boolean {
-  if (state.encoded_frames == 0i64) { return frame.number == 0u64; }
-  if (frame.variable != state.variable) { return false; }
+  if (state.encoded_frames == 0i64) {
+    return frame.number == 0u64;
+  }
+  if (frame.variable != state.variable) {
+    return false;
+  }
   let number = if (state.variable) { state.position as u64 } else { state.encoded_frames as u64 };
   return frame.number == number && (state.variable || state.previous == state.block_size && frame.frames <= state.block_size);
 }
@@ -187,21 +230,35 @@ function follows(state: Input, frame: flac.Frame): boolean {
 function hash_frame(hash: crypto.Md5, frame: flac.Frame): crypto.Md5 {
   let bytes: u8[] = [];
   let width = (frame.format.bits_per_sample + 7) / 8;
-  for sample in frame.samples { bytes = wire.put_le(bytes, sample as u64, width); }
+  for sample in frame.samples {
+    bytes = wire.put_le(bytes, sample as u64, width);
+  }
   return hash.update(bytes);
 }
 
 function counted(state: Input, frame: flac.Frame, info: Info): Result[(i64, i64), source.ReadError] {
-  if (!follows(state, frame)) { return Err(audio_error(pcm.Header)); }
-  if (state.max_frame_bytes != 0 && frame.bytes_read > state.max_frame_bytes || state.min_frame_bytes != 0 && frame.bytes_read < state.min_frame_bytes) { return Err(audio_error(pcm.Header)); }
-  let Some(position) = state.position +? frame.frames as i64 else { return Err(audio_error(pcm.Limit)); };
-  let Some(encoded) = state.encoded_frames +? 1i64 else { return Err(audio_error(pcm.Limit)); };
-  if (info.total_frames != 0u64 && position as u64 > info.total_frames) { return Err(audio_error(pcm.Header)); }
+  if (!follows(state, frame)) {
+    return Err(audio_error(pcm.Header));
+  }
+  if (state.max_frame_bytes != 0 && frame.bytes_read > state.max_frame_bytes || state.min_frame_bytes != 0 && frame.bytes_read < state.min_frame_bytes) {
+    return Err(audio_error(pcm.Header));
+  }
+  let Some(position) = state.position +? frame.frames as i64 else {
+    return Err(audio_error(pcm.Limit));
+  };
+  let Some(encoded) = state.encoded_frames +? 1i64 else {
+    return Err(audio_error(pcm.Limit));
+  };
+  if (info.total_frames != 0u64 && position as u64 > info.total_frames) {
+    return Err(audio_error(pcm.Header));
+  }
   return Ok((position, encoded));
 }
 
 function output(own state: Input, own frame: flac.Frame): Result[(Input, ReadEvent), source.ReadError] {
-  let Some(info) = state.info else { return Err(audio_error(pcm.Header)); };
+  let Some(info) = state.info else {
+    return Err(audio_error(pcm.Header));
+  };
   let (position, encoded) = counted(state, frame, info)?;
   let hash = if (state.check_md5) { hash_frame(state.hash, frame) } else { state.hash };
   let audio = Audio { info: info, position: state.position, frames: frame.frames, samples: frame.samples };
@@ -210,7 +267,9 @@ function output(own state: Input, own frame: flac.Frame): Result[(Input, ReadEve
 }
 
 function decode(own state: Input): Result[(Input, ReadEvent), source.ReadError] {
-  let Some(header) = state.header else { return Err(audio_error(pcm.Header)); };
+  let Some(header) = state.header else {
+    return Err(audio_error(pcm.Header));
+  };
   let available = state.buffer.available();
   let size = if (available < ceiling(state)) { available } else { ceiling(state) };
   let frame = match (flac.decode_frame(state.buffer.view()[:size], 0, header, state.limits.audio)) { Ok(value) => value, Err(e) => { return retry(state, e); } };
@@ -236,10 +295,18 @@ pub function (own state: Input) step(reader: Reader): Result[(Input, ReadEvent),
 pub function (own state: Input) next_with(read: (i32) => Result[u8[], IoError]): Result[(Input, Option[Event]), source.ReadError] {
   while (true) {
     match (state.step_with(read)) {
-      Ok((next, Pending())) => { state = next; },
-      Ok((next, Output(value))) => { return Ok((next, Some(value))); },
-      Ok((next, Finished())) => { return Ok((next, None)); },
-      Err(e) => { return Err(e); }
+      Ok((next, Pending())) => {
+        state = next;
+      },
+      Ok((next, Output(value))) => {
+        return Ok((next, Some(value)));
+      },
+      Ok((next, Finished())) => {
+        return Ok((next, None));
+      },
+      Err(e) => {
+        return Err(e);
+      }
     }
   }
 }

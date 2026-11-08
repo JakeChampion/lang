@@ -619,7 +619,11 @@ check time, in the same mechanism that enforces the OS boundary today.
   program fails with E066, and a dependency needs the `privileged` package
   capability (`docs/PACKAGE-CAPABILITIES-BRIEF.md`).
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
-  Fern already ships, which emit ELF rather than shelling out to one.
+  Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
+  reads the header and the program headers of an ELF64 image, and
+  `TestSelfHostElfReaderMatchesDebugElf` holds it to Go's `debug/elf` on the
+  images of every ELF target. The loader that maps the segments is milestone 5
+  (#14264).
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
   once volatile and memory layout exist; no new language surface. `std/fdt`
   reads a device tree and `std/pvh` reads the PVH start info (#14260).
@@ -675,12 +679,14 @@ environment over the FernOS syscalls can come later, as an improvement.
    `@provide("log")` function (section 6).
 5. **Done: the no-RC property** (#14253), as `@norc` (section 3). The
    `interrupt` and `naked` attributes wait for a kernel environment.
-6. **First slice done: memory layout and the reset entry** (#14254), as
-   `arm64-kernel` (section 4).
-7. **Started: milestone 1** (#14260). An arm64 image on qemu-virt and an
+6. **Done: memory layout and the reset entry** (#14254), as `arm64-kernel`
+   and `x86-64-kernel` (section 4). The image layout tests read the program
+   headers and the entry point of both.
+7. **Done: milestone 1** (#14260). An arm64 image on qemu-virt and an
    x86-64 image on qemu microvm boot, print and stop the VM in CI. `std/fdt`
    reads the device tree, and `std/pvh` reads the PVH start info through
-   `__boot_info`. Firecracker remains. **Done: the effect intrinsics** (#14252), with
+   `__boot_info`. Firecracker loads the same ELF and stays the production
+   target. **Done: the effect intrinsics** (#14252), with
    `__fence`, `__wfi`, `__hvc`, `__smc`, `__boot_info`, the system register,
    cache, TLB and port ops, `__breakpoint` and the IRQ ops (section 2).
    **Done: `@interrupt`** (#14253) on both kernel targets. `naked` remains.

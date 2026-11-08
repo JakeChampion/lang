@@ -1649,7 +1649,7 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
   if (pos.line > 0) {
-    s = ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+    s = ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
   }
   return ssa_exit(fr, s, target);
 }
@@ -2446,7 +2446,7 @@ function ssa_unsupported(f: ssa.SFunc): string {
         return "ssa " + ssa.kind_name(ins.kind_tag) + " " + ins.str;
       }
     }
-    if (blk.term.kind_tag > 3) {
+    if (blk.term.kind_tag > ssa.TERM_BRIF) {
       return "ssa terminator " + ssa.term_name(blk.term.kind_tag);
     }
   }
@@ -2470,7 +2470,7 @@ function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
       return cur;
     }
     let b = f.blocks[bi];
-    if (!ssa.only_phis(b) || b.term.kind_tag != 2 || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
+    if (!ssa.only_phis(b) || b.term.kind_tag != ssa.TERM_BR || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
       return cur;
     }
     cur = b.term.target;
@@ -2499,7 +2499,7 @@ function ssa_edge_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, id
   let tb = f.blocks[ti];
   let sl = ssa.pred_slot(tb, pred);
   for ins in tb.insts {
-    if (ins.kind_tag == 8 && reg_of[ins.result] != -1 && (fr.imm.is_imm[ins.args[sl]] || reg_of[ins.args[sl]] != reg_of[ins.result])) {
+    if (ins.kind_tag == ssa.PHI && reg_of[ins.result] != -1 && (fr.imm.is_imm[ins.args[sl]] || reg_of[ins.args[sl]] != reg_of[ins.result])) {
       return true;
     }
   }
@@ -2512,7 +2512,7 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
     return false;
   }
   for ins in f.blocks[ti].insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       return true;
     }
   }
@@ -2963,7 +2963,7 @@ function ssa_vunary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 }
 
 function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
-  return ssa.lane_inst(ins) || ins.kind_tag == 7 && ins.result < fr.lanes.len() && fr.lanes[ins.result];
+  return ssa.lane_inst(ins) || ins.kind_tag == ssa.COPY && ins.result < fr.lanes.len() && fr.lanes[ins.result];
 }
 
 function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -3335,7 +3335,7 @@ function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
 
 // A release whose count test is inline, so only its freeing call is slow.
 function ssa_inline_rc_dec(ins: ssa.SInst, s: asmcore.EmitState): boolean {
-  return ins.kind_tag == 11 && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
+  return ins.kind_tag == ssa.CALL && (ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size && ins.imm != 5;
 }
 
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, around: i32, base: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -4250,10 +4250,10 @@ function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
 
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let ins = blk.insts[ii];
-  if (ins.kind_tag == 36) {
+  if (ins.kind_tag == ssa.SELECT) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(ssa_fuse_view(fr), blk, ii), s);
   }
-  if (ins.kind_tag == 9 && ins.str == "and_not") {
+  if (ins.kind_tag == ssa.BINARY && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
   if (ssa.carry_triple(blk, ii, fr.uses)) {
@@ -4265,7 +4265,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
     return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
   }
-  if (ins.kind_tag == 37) {
+  if (ins.kind_tag == ssa.CARRY) {
     return ssa_carry(ins, reg_of, s);
   }
   if (ssa.low_word_pair(blk, ii, fr.uses)) {
@@ -4274,7 +4274,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
-  if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_feeds_select(fr, blk, ii + 1)) {
+  if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1)) {
     return s;
   }
   return ssa_inst(ins, reg_of, fr, lp, r, s);
@@ -4547,7 +4547,7 @@ function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: asmcore.EmitS
     return s;
   }
   let pos = rows[id];
-  return ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+  return ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
 }
 
 function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
@@ -4703,7 +4703,7 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
   let imm_dsts: i32[] = [];
   let imm_vals: i64[] = [];
   for ins in tb.insts {
-    if (ins.kind_tag != 8 || reg_of[ins.result] == -1) {
+    if (ins.kind_tag != ssa.PHI || reg_of[ins.result] == -1) {
       continue;
     }
     if (fr.imm.is_imm[ins.args[sl]]) {
@@ -5002,7 +5002,7 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
     return false;
   }
   let h = f.blocks[ti];
-  if (h.term.kind_tag != 3 || h.term.t == h.term.f) {
+  if (h.term.kind_tag != ssa.TERM_BRIF || h.term.t == h.term.f) {
     return false;
   }
   if (ssa_has_phis(f, fr, h.term.t) || ssa_has_phis(f, fr, h.term.f)) {
@@ -5010,8 +5010,8 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   }
   let n = 0;
   for ins in h.insts {
-    let imm = (ins.kind_tag == 1 || ins.kind_tag == 3) && fr.imm.is_imm[ins.result];
-    if (ins.kind_tag != 8 && !imm) {
+    let imm = (ins.kind_tag == ssa.CONST_INT || ins.kind_tag == ssa.CONST_I64) && fr.imm.is_imm[ins.result];
+    if (ins.kind_tag != ssa.PHI && !imm) {
       n += 1;
     }
   }
@@ -5111,7 +5111,7 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
 
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   let argc = ins.args.len();
-  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
+  if (ins.kind_tag != ssa.CALL || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
     return false;
   }
   if (ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
@@ -5133,7 +5133,7 @@ function ssa_float_calls(f: ssa.SFunc, s: asmcore.EmitState): boolean[] {
 }
 
 function ssa_f64_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
-  if (ins.kind_tag != 11 || ins.result < 0 || ssa.rc_inlined(ins) || ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
+  if (ins.kind_tag != ssa.CALL || ins.result < 0 || ssa.rc_inlined(ins) || ssa_is_helper(ins.str, s) || ircore.is_c_call(ins.str)) {
     return false;
   }
   return asmcore.float_result(s.float_mask(asmcore.sanitize_label(ins.str)));

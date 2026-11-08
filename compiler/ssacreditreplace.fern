@@ -18,7 +18,7 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
     return refused(f, "unsupported replacement boundary");
   }
   let b = f.blocks[0];
-  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1 || f.nvals < 2 || f.nvals > b.insts.len()) {
+  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != ssa.TERM_RET || f.nvals < 2 || f.nvals > b.insts.len()) {
     return refused(f, "unsupported replacement graph");
   }
   let values: i32[] = [];

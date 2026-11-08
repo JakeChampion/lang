@@ -65,13 +65,13 @@ function input_error(f: ssa.SFunc): string {
       }
       seen = seen.append(p);
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+    if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_BRIF || b.term.kind_tag == ssa.TERM_BRIF && b.term.t == b.term.f) {
       return "invalid scalar helper terminator";
     }
     let targets: i32[] = [];
-    if (b.term.kind_tag == 2) {
+    if (b.term.kind_tag == ssa.TERM_BR) {
       targets = [b.term.target];
-    } else if (b.term.kind_tag == 3) {
+    } else if (b.term.kind_tag == ssa.TERM_BRIF) {
       targets = [b.term.t, b.term.f];
     }
     for t in targets {
@@ -187,11 +187,11 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
       }
       row = row.with(op.result, value);
     }
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       if (!readable(row, b.term.value) || row[b.term.value] != 1) {
         return refused(f, "scalar helper return not proven zero");
       }
-    } else if (b.term.kind_tag == 3 && !readable(row, b.term.cond)) {
+    } else if (b.term.kind_tag == ssa.TERM_BRIF && !readable(row, b.term.cond)) {
       return refused(f, "unavailable scalar helper condition");
     }
     rows = rows.with(chosen, row);
@@ -211,10 +211,10 @@ function follows(f: ssa.SFunc, rows: Number[][], live: boolean[], from: i32, to:
     return false;
   }
   let term = f.blocks[index].term;
-  if (term.kind_tag == 2) {
+  if (term.kind_tag == ssa.TERM_BR) {
     return term.target == to;
   }
-  if (term.kind_tag == 3) {
+  if (term.kind_tag == ssa.TERM_BRIF) {
     let condition = rows[index][term.cond];
     return term.t == to && (!condition.known || condition.value != 0) || term.f == to && (!condition.known || condition.value == 0);
   }
@@ -341,7 +341,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
           row = row.with(op.result, value);
         }
       }
-      if (active && b.term.kind_tag == 1) {
+      if (active && b.term.kind_tag == ssa.TERM_RET) {
         result = Outcomes { ...result, returns: result.returns.with(input, true) };
       }
       rows = rows.with(chosen, row);

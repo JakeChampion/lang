@@ -321,14 +321,14 @@ function input_error(f: ssa.SFunc): string {
       }
       seen = seen.append(p);
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+    if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_BRIF) {
       return "unsupported containment terminator";
     }
     let targets: i32[] = [];
-    if (b.term.kind_tag == 2) {
+    if (b.term.kind_tag == ssa.TERM_BR) {
       targets = [b.term.target];
     }
-    if (b.term.kind_tag == 3) {
+    if (b.term.kind_tag == ssa.TERM_BRIF) {
       if (b.term.t == b.term.f) {
         return "duplicate conditional successor";
       }
@@ -448,7 +448,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
           c = transfer(c, op, offset, release.name, b.preds, b.id);
         }
       }
-      if (c.error == "" && b.term.kind_tag == 1) {
+      if (c.error == "" && b.term.kind_tag == ssa.TERM_RET) {
         c = available(c, b.term.value);
         if (c.error == "" && c.values[b.term.value].kind != 2) {
           c = failed(c, "owned child result required");
@@ -462,7 +462,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
         let path = c.state.path;
         let targets: i32[] = [b.term.target];
         let paths: i32[] = [path];
-        if (b.term.kind_tag == 3) {
+        if (b.term.kind_tag == ssa.TERM_BRIF) {
           c = available(c, b.term.cond);
           if (c.error == "" && c.values[b.term.cond].kind != 0) {
             c = failed(c, "scalar condition required");

@@ -119,7 +119,7 @@ function transfer(ins: ssa.SInst, values: i32[], params: i32[], returns: i32[], 
   if (ins.kind_tag == ssasem.param()) {
     return params[ins.imm];
   }
-  if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.args.len() > 0) {
+  if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && ins.args.len() > 0) {
     let result = unseen();
     for a in ins.args {
       result = meet(result, values[a]);
@@ -214,7 +214,7 @@ function step(f: ssasem.Func, i: i32, usable: boolean[], index: util.NameIndex, 
         changed = changed || fed.changed;
       }
     }
-    if (handle(f.result) && b.term.kind_tag == 1) {
+    if (handle(f.result) && b.term.kind_tag == ssa.TERM_RET) {
       result = meet(result, values[b.term.value]);
     }
   }

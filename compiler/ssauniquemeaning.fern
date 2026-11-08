@@ -130,7 +130,7 @@ function operation(op: ssa.SInst, b: ssa.SBlock, entry: i32): boolean {
 }
 
 function edges(f: ssa.SFunc, b: ssa.SBlock, g: Graph): boolean {
-  if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+  if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_BRIF || b.term.kind_tag == ssa.TERM_BRIF && b.term.t == b.term.f) {
     return false;
   }
   for pred in b.preds {
@@ -373,7 +373,7 @@ function run(f: ssa.SFunc, g: Graph, unique: boolean): i32 {
       }
       values = values.with(position(g.slots, op.result), v);
     }
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       return values[position(g.slots, b.term.value)];
     }
     pred = current;

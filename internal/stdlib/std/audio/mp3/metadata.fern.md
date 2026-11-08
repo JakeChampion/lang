@@ -3,6 +3,9 @@
 This helper validates ID3 headers and bounded MP3 trailers.
 It supports the metadata rules of `std/audio/mp3` for whole input and incremental byte sources.
 
+`inspect_tail` describes trailing tag sizes from the final 160 bytes or the complete file when shorter.
+Seekable callers verify the optional APE header at the returned tag boundary.
+
 ```fern
 <<*>>=
 // Validate MP3 metadata without retaining its payload.
@@ -98,6 +101,27 @@ function ape_footer(input: [u8], end: i64): Result[Ape, pcm.AudioError] {
     return Err(pcm.Header);
   }
   return Ok(Ape { bytes: bytes, header: (wire.le(input, 20, 4) & 2147483648u64) != 0u64 });
+}
+
+// Describe trailing tags from the final min(160, input_bytes) file bytes.
+pub struct Tail { bytes: i64, header: boolean }
+
+function trailing_id3v1(input: [u8]): boolean {
+  return input.len() >= 128 && wire.tag(input, input.len() - 128, "TAG");
+}
+
+pub function inspect_tail(input: [u8], input_bytes: i64): Result[Tail, pcm.AudioError] {
+  if (input_bytes < 0i64) { return Err(pcm.Header); }
+  let needed = if (input_bytes < 160i64) { input_bytes as i32 } else { 160 };
+  if (input.len() != needed) { return Err(pcm.Truncated); }
+  let at = input.len();
+  let removed = 0i64;
+  if (trailing_id3v1(input)) { at -= 128; removed = 128i64; }
+  if (at < 32 || !wire.tag(input, at - 32, "APETAGEX")) { return Ok(Tail { bytes: removed, header: false }); }
+  let footer = ape_footer(input[at - 32:at], input_bytes - removed)?;
+  let bytes = removed + footer.bytes + (if (footer.header) { 32i64 } else { 0i64 });
+  if (bytes > input_bytes) { return Err(pcm.Header); }
+  return Ok(Tail { bytes: bytes, header: footer.header });
 }
 
 pub struct Id3 { payload_bytes: i32, footer: boolean }
