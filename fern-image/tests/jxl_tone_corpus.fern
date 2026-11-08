@@ -1,0 +1,93 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/tone_metadata";
+import "std/hex";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function word(input: [u8], at: i32, width: i32): u64 {
+  let value = 0u64;
+  for i in 0..width {
+    value |= input[at + i] as u64 << (i * 8) as u64;
+  }
+  return value;
+}
+
+function encode(mapping: tone_metadata.Mapping, prefix: i32, budget: i32, index: i32, item: i32): void {
+  let fields = match (tone_metadata.fields(mapping)) {
+    Ok(value) => value,
+    Err(error) => {
+      print(f"{index} encode {item} error {error.to_debug()}");
+      return;
+    },
+  };
+  match (bits.pack([bits.Field { value: 0u64, width: prefix }].concat(fields), budget, never)) {
+    Ok(output) => {
+      let size = output.bits;
+      let data = hex.encode(output.bytes);
+      print(f"{index} encode {item} ok {size} {data}");
+    },
+    Err(error) => {
+      print(f"{index} encode {item} error {error.to_debug()}");
+    }
+  }
+}
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(packet) = read_file_bytes(path) else {
+    return 1;
+  };
+  if (packet.len() < 12) {
+    return 2;
+  }
+  let queries = word(packet, 0, 4) as i32;
+  let encodes = word(packet, 4, 4) as i32;
+  let length = word(packet, 8, 4) as i32;
+  if (queries < 0 || queries > 4096 || encodes < 0 || encodes > 4096 || length < 0 || length > 65536 || packet.len() != 12 + queries * 16 + encodes * 24 + length) {
+    return 3;
+  }
+  let input = packet[12 + queries * 16 + encodes * 24:];
+  for i in 0..queries {
+    let position = word(packet, 12 + i * 16, 8) as i64;
+    let extent = word(packet, 20 + i * 16, 8) as i64;
+    match (tone_metadata.read(input, position, extent)) {
+      Ok(value) => {
+        let intensity = f32_bits(value.mapping.intensity_target) as u32;
+        let minimum = f32_bits(value.mapping.min_nits) as u32;
+        let relative = if (value.mapping.relative_to_max_display) { 1 } else { 0 };
+        let linear = f32_bits(value.mapping.linear_below) as u32;
+        let next = value.next;
+        print(f"{index} query {i} tone {intensity} {minimum} {relative} {linear} {next}");
+      },
+      Err(error) => {
+        print(f"{index} query {i} error {error.to_debug()}");
+      }
+    }
+  }
+  for i in 0..encodes {
+    let at = 12 + queries * 16 + i * 24;
+    let relative = word(packet, at + 8, 4);
+    if (relative > 1u64) {
+      return 4;
+    }
+    let mapping = tone_metadata.Mapping { intensity_target: f32_from_bits(word(packet, at, 4) as i32), min_nits: f32_from_bits(word(packet, at + 4, 4) as i32), relative_to_max_display: relative != 0u64, linear_below: f32_from_bits(word(packet, at + 12, 4) as i32) };
+    encode(mapping, word(packet, at + 16, 4) as i32, word(packet, at + 20, 4) as i32, index, i);
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 5;
+  }
+  for i in 1..paths.len() {
+    let code = inspect(paths[i], i - 1);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

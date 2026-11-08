@@ -181,7 +181,7 @@ function main(): i32 {
     // PIE (ET_DYN, base 0): elf_image_pie shares the W^X two-segment layout
     // but with e_type = ET_DYN (3) and a load base of 0. 4-byte text + 8-byte
     // data, no bss. Measured text offset 352 and data offset 368.
-    let b7: u8[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0, 0);
+    let b7: u8[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0, 0, false);
     if (b7.len() != 376) { return 46; }
     // e_type = ET_DYN (3) @16.
     if (b7[16] != 3 || b7[17] != 0) { return 47; }
@@ -199,7 +199,7 @@ function main(): i32 {
     let gap = elf_executable_relro_gap(d3.len(), elf_page_align());
     let protected = d3.len() + gap;
     let d9 = elf_cat(elf_pad_to(d3, protected), d3);
-    let b9: u8[] = elf_image_pie(t3, d9, elf_em_aarch64(), 0, 0, protected);
+    let b9: u8[] = elf_image_pie(t3, d9, elf_em_aarch64(), 0, 0, protected, false);
     if (b9[240] != b7[128] || b9[241] != b7[129] || b9[248] != b7[136] || b9[249] != b7[137] || b9[250] != b7[138] || b9[251] != b7[139]) { return 64; }
     let constant_addr = test_u32(b9, 136);
     let mapped = protected - (constant_addr + protected) % 4096;

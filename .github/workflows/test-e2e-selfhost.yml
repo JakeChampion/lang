@@ -94,7 +94,7 @@ env:
   # self-builds) measure 50 to 165 seconds each and ride the shards.
   # Gather's server and 512-participant client need CPU time together. Its
   # unchanged throughput assertions run in cli after the compiler workers.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu"
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -341,7 +341,9 @@ jobs:
   # boots on qemu-system-x86_64 -M microvm through its PVH note, prints on
   # COM1 and exits through isa-debug-exit (#14260). The tick images take
   # timer interrupts through a @interrupt top half and a std/async task
-  # while the main context churns the heap (#14261). Only this job installs
+  # while the main context churns the heap (#14261). The frames images put
+  # the heap on page frames of their own, and the maps images replace the
+  # identity map with page tables built in Fern (#14262). Only this job installs
   # the full-system emulators, so FERN_REQUIRE_QEMU_SYSTEM makes a missing one
   # a failure.
   kernel-boot:
@@ -380,6 +382,28 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelTicksOnQemu$' -test.v -test.timeout 10m
+      - name: put the heap on page frames on qemu-virt
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelFramesOnQemu$' -test.v -test.timeout 10m
+      - name: build the page tables in Fern on qemu-virt
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelMapsOnQemu$' -test.v -test.timeout 10m
       - name: boot the x86-64 kernel image on qemu microvm
         if: ${{ !cancelled() }}
         env:
@@ -402,6 +426,28 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86TicksOnQemu$' -test.v -test.timeout 10m
+      - name: put the heap on page frames on qemu microvm
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86FramesOnQemu$' -test.v -test.timeout 10m
+      - name: build the page tables in Fern on qemu microvm
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86MapsOnQemu$' -test.v -test.timeout 10m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

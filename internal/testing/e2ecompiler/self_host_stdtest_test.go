@@ -330,6 +330,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
 		{"audio", langSrcAbs(t, "tests/stdlib/audio_test.fern"), ""},
+		{"video", langSrcAbs(t, "tests/stdlib/video_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
 		{"opus", langSrcAbs(t, "tests/stdlib/opus_test.fern"), ""},
 		{"opus_range", langSrcAbs(t, "tests/stdlib/opus_range_test.fern"), ""},
