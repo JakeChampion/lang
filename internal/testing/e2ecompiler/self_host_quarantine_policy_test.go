@@ -77,6 +77,60 @@ const quarantinePayloadReadSrc = `function main(): i32 {
 }
 `
 
+// A raw write one byte past a 64-byte block. The redzone after the block
+// holds the poison pattern, and the free of the block checks it.
+const redzoneWriteSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_u8(p + 64, 7);
+    __free(p, 64);
+  }
+  print("survived");
+  return 0;
+}
+`
+
+// The same write at the last byte of the redzone, 15 past the block.
+const redzoneLastByteSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_u8(p + 79, 7);
+    __free(p, 64);
+  }
+  print("survived");
+  return 0;
+}
+`
+
+// A write to the last byte of the block, and a 13-byte block written at
+// byte 13, inside the 8-byte rounding of its size. Neither reaches the
+// redzone, and the census balances.
+const redzoneInBoundsSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_u8(p + 63, 7);
+    __free(p, 64);
+    let q: usize = __alloc(13);
+    __store_u8(q + 13, 7);
+    __free(q, 13);
+  }
+  print("survived");
+  return 0;
+}
+`
+
+// A 13-byte block written at byte 16, the first byte after its rounded size.
+const redzoneRoundedSrc = `function main(): i32 {
+  unsafe {
+    let q: usize = __alloc(13);
+    __store_u8(q + 16, 7);
+    __free(q, 13);
+  }
+  print("survived");
+  return 0;
+}
+`
+
 // Sixteen blocks of one class are released and taken again 32 times. A
 // free list that hands out its head gives the last released block first
 // every time; the hardened list does so only by chance.
@@ -283,6 +337,23 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 				plain := quarantineBuild(t, cli, qemu, target, quarantineExitWriteSrc, nil)
 				if plain.code != 0 || !strings.Contains(plain.stdout, "survived") {
 					t.Fatalf("release build: exit %d\n%s%s", plain.code, plain.stdout, plain.stderr)
+				}
+			})
+			t.Run("redzone", func(t *testing.T) {
+				const report = "fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)"
+				for name, src := range map[string]string{"past-the-end": redzoneWriteSrc, "last-redzone-byte": redzoneLastByteSrc, "past-the-rounded-size": redzoneRoundedSrc} {
+					r := quarantineBuild(t, cli, qemu, target, src, []string{"-sanitize"})
+					if r.code != 124 || !strings.Contains(r.stderr, report) || strings.Contains(r.stdout, "survived") {
+						t.Fatalf("%s: exit %d, want 124 with the heap-buffer-overflow report\n%s%s", name, r.code, r.stdout, r.stderr)
+					}
+					plain := quarantineBuild(t, cli, qemu, target, src, nil)
+					if plain.code != 0 || !strings.Contains(plain.stdout, "survived") {
+						t.Fatalf("%s release build: exit %d\n%s%s", name, plain.code, plain.stdout, plain.stderr)
+					}
+				}
+				r := quarantineBuild(t, cli, qemu, target, redzoneInBoundsSrc, []string{"-sanitize"})
+				if r.code != 0 || !strings.Contains(r.stdout, "survived") || strings.Contains(r.stderr, "fern-sanitizer") || !strings.Contains(r.stdout+r.stderr, "allocs=2 frees=2 live_bytes=0") {
+					t.Fatalf("in bounds: exit %d, want a clean run with a balanced census\n%s%s", r.code, r.stdout, r.stderr)
 				}
 			})
 			t.Run("payload-read-after-free", func(t *testing.T) {

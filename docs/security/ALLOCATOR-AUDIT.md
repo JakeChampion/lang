@@ -70,6 +70,12 @@ The free compares the first word of the block with the quarantine's poison word,
 So a live block whose first word holds the poison value is still freed.
 A block that the quarantine has already evicted to a free list is not found.
 
+Under `-sanitize` a raw block also carries a redzone.
+`__alloc(n)` takes 16 bytes more and fills the two words after `n` rounded to 8 with the poison pattern.
+`__free(p, n)` reads the two words before the double-free check, and a word that lost the pattern aborts with `fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)`, status 124.
+The release build keeps the plain block.
+The `redzone` case of `TestSelfHostQuarantinePolicy` pins the report for a write one byte past the block, at the last byte of the redzone and at the first byte past the rounded size of a 13-byte block, and a clean census for a write at the last byte of the block.
+
 A block of one or two words has no room for the quarantine's three words, so the free keeps it out of every list.
 A second free of such a block is not found, and the block is not used again.
 `__fern_box_free` releases small typed boxes through the same path.
