@@ -2792,7 +2792,7 @@ function is_resolvable_raw_name(name: string): boolean {
   if (util.str_has_prefix(name, "__fern_")) {
     return true;
   }
-  return util.str_has_prefix(name, "__") && util.has_str(registered_intrinsics(), name);
+  return is_registered_intrinsic(name);
 }
 
 function for_iter_is_range(iter: ast.Expr): boolean {
@@ -18164,6 +18164,11 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
   return acc;
 }
 
+// Every intrinsic name starts with "__", so other names skip the list.
+function is_registered_intrinsic(name: string): boolean {
+  return util.str_has_prefix(name, "__") && util.has_str(registered_intrinsics(), name);
+}
+
 function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
@@ -18204,9 +18209,8 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin or an intrinsic redeclares it, as
-  // native's pre-registered signature makes it there.
-  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
+  // A free function named like a builtin or an intrinsic redeclares it.
+  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
     earlier = true;
   }
   return earlier;
