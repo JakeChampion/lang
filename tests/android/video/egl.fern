@@ -1,0 +1,114 @@
+// This test producer sends gray GLES frames to an encoder surface.
+import "std/jni";
+import "std/video/frame";
+
+pub struct Context { display: usize, context: usize, surface: usize, timestamp: usize }
+
+@import("libEGL.so", "eglGetDisplay")
+function display(native: usize): usize;
+
+@import("libEGL.so", "eglInitialize")
+function initialize(display: usize, major: usize, minor: usize): i32;
+
+@import("libEGL.so", "eglChooseConfig")
+function choose(display: usize, attributes: usize, config: usize, maximum: i32, count: usize): i32;
+
+@import("libEGL.so", "eglCreateContext")
+function create_context(display: usize, config: usize, share: usize, attributes: usize): usize;
+
+@import("libEGL.so", "eglCreateWindowSurface")
+function create_surface(display: usize, config: usize, window: usize, attributes: usize): usize;
+
+@import("libEGL.so", "eglMakeCurrent")
+function current(display: usize, draw: usize, read: usize, context: usize): i32;
+
+@import("libEGL.so", "eglSwapBuffers")
+function swap(display: usize, surface: usize): i32;
+
+@import("libEGL.so", "eglGetProcAddress")
+function procedure(name: usize): usize;
+
+@import("libEGL.so", "eglDestroySurface")
+function destroy_surface(display: usize, surface: usize): i32;
+
+@import("libEGL.so", "eglDestroyContext")
+function destroy_context(display: usize, context: usize): i32;
+
+@import("libEGL.so", "eglTerminate")
+function terminate(display: usize): i32;
+
+@import("libGLESv1_CM.so", "glClearColorx")
+function clear_color(red: i32, green: i32, blue: i32, alpha: i32): void;
+
+@import("libGLESv1_CM.so", "glClear")
+function clear(mask: u32): void;
+
+pub function open(window: usize): Result[Context, frame.VideoError] {
+  let d = display(0 as usize);
+  if (d == 0 as usize || initialize(d, 0 as usize, 0 as usize) == 0) {
+    return Err(frame.Platform);
+  }
+  unsafe {
+    let scratch = __alloc(96);
+    defer release_memory(scratch);
+    let attrs = [12324, 8, 12323, 8, 12322, 8, 12339, 4, 12352, 1, 12610, 1, 12344];
+    for i in 0..attrs.len() {
+      __store_i32(scratch + (i * 4) as usize, attrs[i]);
+    }
+    __store_ptr(scratch + 64 as usize, 0 as usize);
+    __store_i32(scratch + 72 as usize, 0);
+    if (choose(d, scratch, scratch + 64 as usize, 1, scratch + 72 as usize) == 0 || __load_i32(scratch + 72 as usize) != 1) {
+      let _ = terminate(d);
+      return Err(frame.Platform);
+    }
+    let config = __load_ptr(scratch + 64 as usize);
+    __store_i32(scratch, 12440);
+    __store_i32(scratch + 4 as usize, 1);
+    __store_i32(scratch + 8 as usize, 12344);
+    let ctx = create_context(d, config, 0 as usize, scratch);
+    if (ctx == 0 as usize) {
+      let _ = terminate(d);
+      return Err(frame.Platform);
+    }
+    let surface = create_surface(d, config, window, 0 as usize);
+    let name = jni.cstr("eglPresentationTimeANDROID");
+    let timestamp = procedure(name);
+    jni.free_buffer(name);
+    if (surface == 0 as usize || timestamp == 0 as usize || current(d, surface, surface, ctx) == 0) {
+      if (surface != 0 as usize) {
+        let _ = destroy_surface(d, surface);
+      }
+      let _ = destroy_context(d, ctx);
+      let _ = terminate(d);
+      return Err(frame.Platform);
+    }
+    return Ok(Context { display: d, context: ctx, surface: surface, timestamp: timestamp });
+  }
+}
+
+function release_memory(data: usize): void {
+  unsafe {
+    __free(data, 96);
+  }
+}
+
+pub function (ctx: Context) frame(presentation_ns: i64): Result[void, frame.VideoError] {
+  clear_color(32768, 32768, 32768, 65536);
+  clear(16384u32);
+  unsafe {
+    if (__c_call3(ctx.timestamp, ctx.display, ctx.surface, presentation_ns as usize) == 0 as usize) {
+      return Err(frame.Platform);
+    }
+  }
+  if (swap(ctx.display, ctx.surface) == 0) {
+    return Err(frame.Platform);
+  }
+  return Ok(());
+}
+
+pub function (ctx: Context) close(): void {
+  let _ = current(ctx.display, 0 as usize, 0 as usize, 0 as usize);
+  let _ = destroy_surface(ctx.display, ctx.surface);
+  let _ = destroy_context(ctx.display, ctx.context);
+  let _ = terminate(ctx.display);
+}
