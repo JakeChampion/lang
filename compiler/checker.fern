@@ -19025,12 +19025,12 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   return ow_is_owned_expr(e, ctx);
 }
 
-// A method call whose result is a kernel descriptor: a directory or a file
-// opened under another directory.
+// A method result that is fresh by signature, or a fresh kernel descriptor.
 function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
   if let ast.ExprFieldAccess(mfa) = c.callee {
     for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
-      if (util.has_str(ow_fresh_builtin_methods(), ns + "." + mfa.field)) {
+      let name = ns + "." + mfa.field;
+      if (util.has_str(ow_fresh_builtin_methods(), name) || util.has_str(ctx.fresh_scrut, name)) {
         return true;
       }
     }
@@ -19260,8 +19260,12 @@ function lu_sel_at(f: LuFacts, line: i32, col: i32): string {
 function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let init: ast.Expr = none;
-  if (lu_fresh_expr(v.init) && parser.destr_marker_split(v.type_name).at.len() == 0) {
-    init = v.init;
+  if (parser.destr_marker_split(v.type_name).at.len() == 0) {
+    if (lu_fresh_expr(v.init)) {
+      init = v.init;
+    } else if let Some(_) = lu_match_value(v.init) {
+      init = v.init;
+    }
   }
   for nm in split_pattern_names(v.name) {
     if (util.is_tuple_type_name(nm)) {
@@ -19436,16 +19440,7 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
 // A match expression on a fresh value whose each arm yields a payload it
 // binds, a fresh value, or leaves.
 function lu_fresh_match_value(fx: LuFn, e: ast.Expr): boolean {
-  let ast.ExprCall(c) = e else {
-    return false;
-  };
-  let ast.ExprLambda(lm) = c.callee else {
-    return false;
-  };
-  if (!parser.is_value_block(c) || lm.origin != parser.ORIGIN_MATCH_EXPR || lm.body.len() != 1) {
-    return false;
-  }
-  let ast.StmtMatch(m) = lm.body[0] else {
+  let Some(m) = lu_match_value(e) else {
     return false;
   };
   if let ast.ExprIdent(_) = m.scrutinee {
@@ -19460,6 +19455,24 @@ function lu_fresh_match_value(fx: LuFn, e: ast.Expr): boolean {
     }
   }
   return true;
+}
+
+// Keep the initializer for a tuple unpack. Freshness still depends on the
+// scrutinee and every arm, as lu_fresh_match_value checks with its context.
+function lu_match_value(e: ast.Expr): Option[ast.StmtMatch] {
+  let ast.ExprCall(c) = e else {
+    return None;
+  };
+  let ast.ExprLambda(lm) = c.callee else {
+    return None;
+  };
+  if (!parser.is_value_block(c) || lm.origin != parser.ORIGIN_MATCH_EXPR || lm.body.len() != 1) {
+    return None;
+  }
+  let ast.StmtMatch(m) = lm.body[0] else {
+    return None;
+  };
+  return Some(m);
 }
 
 function lu_arm_yields_fresh(fx: LuFn, arm: ast.MatchArm): boolean {
@@ -22433,6 +22446,14 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let re = ow_stmts(f.else_body, rc.moved, ctx);
       let then_on = !ow_block_diverges(f.then_body, util.has_str(ctx.bound, "exit"), ctx.noret);
       let else_on = f.else_body.len() == 0 || !ow_block_diverges(f.else_body, util.has_str(ctx.bound, "exit"), ctx.noret);
+      // The parser uses constant tests for the first lowered tuple arm.
+      // Its unreachable branch cannot keep a consumed outer value moved.
+      if let ast.ExprBool(b) = f.cond {
+        if (b.line == 0) {
+          then_on = then_on && b.value;
+          else_on = else_on && !b.value;
+        }
+      }
       let m = ow_settle(rc.moved, [rt.moved, re.moved], [then_on, else_on]);
       return OwnWalk { moved: m, diags: util.append_diags(util.append_diags(rc.diags, rt.diags), re.diags) };
     },
@@ -23762,7 +23783,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let fresh = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let noret = lu_no_return_funcs(mod);
-  let fresh_scrut = ow_signature_fresh_owners(mod, ofuncs, builtins, decls);
+  let fresh_scrut = ow_signature_fresh_owners(result_mod, collect_own_funcs(result_mod), builtins, decls);
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
   let lenders = ow_lenders(mod, ofuncs, decls);
   let out: util.Diag[] = [];
