@@ -94,7 +94,7 @@ env:
   # self-builds) measure 50 to 165 seconds each and ride the shards.
   # Gather's server and 512-participant client need CPU time together. Its
   # unchanged throughput assertions run in cli after the compiler workers.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu"
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestInterp|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency|TestSelfHostKernelBootsOnQemu|TestSelfHostKernelX86BootsOnQemu|TestSelfHostKernelTicksOnQemu|TestSelfHostKernelX86TicksOnQemu|TestSelfHostKernelFramesOnQemu|TestSelfHostKernelX86FramesOnQemu|TestSelfHostKernelMapsOnQemu|TestSelfHostKernelX86MapsOnQemu|TestSelfHostKernelDMAOnQemu|TestSelfHostKernelX86DMAOnQemu|TestSelfHostKernelRawOnQemu|TestSelfHostKernelX86RawOnQemu|TestSelfHostKernelVirtioNetOnQemu|TestSelfHostKernelX86VirtioNetOnQemu|TestSelfHostKernelUDPEchoOnQemu|TestSelfHostKernelX86UDPEchoOnQemu|TestSelfHostKernelHTTPOnQemu|TestSelfHostKernelX86HTTPOnQemu|TestSelfHostKernelHTTPByInterruptOnQemu|TestSelfHostKernelX86HTTPByInterruptOnQemu|TestSelfHostKernelServeMatchesHostedOnQemu|TestSelfHostKernelX86ServeMatchesHostedOnQemu"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -471,6 +471,17 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelHTTPByInterruptOnQemu$' -test.v -test.timeout 10m
+      - name: compare std/tcp/serve on qemu-virt with hosted std/serve
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelServeMatchesHostedOnQemu$' -test.v -test.timeout 10m
       - name: boot the x86-64 kernel image on qemu microvm
         if: ${{ !cancelled() }}
         env:
@@ -581,6 +592,17 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86HTTPByInterruptOnQemu$' -test.v -test.timeout 10m
+      - name: compare std/tcp/serve on qemu microvm with hosted std/serve
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_QEMU_SYSTEM: "1"
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostKernelX86ServeMatchesHostedOnQemu$' -test.v -test.timeout 10m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

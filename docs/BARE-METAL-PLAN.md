@@ -608,8 +608,9 @@ check time, in the same mechanism that enforces the OS boundary today.
   version 2 transport with split virtqueues in `std/dma` buffers, and
   `std/virtio_net` sends and receives Ethernet frames over it, by polling.
   `std/ip` is Ethernet, ARP, IPv4, UDP and the TCP segments over the driver.
-  `std/tcp/conn` is the TCP connection, and `std/tcp` binds connections to an
-  interface. The `std/net` surface over it is the open part.
+  `std/tcp/conn` is the TCP connection, `std/tcp` binds connections to an
+  interface, and `std/tcp/serve` serves HTTP over it with the shape of
+  `std/serve`. `std/serve` itself over `std/tcp` waits for milestone 4.
 - **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
   self-host-compiler internal, the floor of the runtime helpers. The public
   surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
@@ -764,9 +765,19 @@ environment over the FernOS syscalls can come later, as an improvement.
    `interrupt` of `std/virtio_net` and then drains the listener with `poll`
    of `std/tcp`. A buffer the device returns after the acknowledgement
    raises the line again, so nothing is lost.
-16. Beside those: the `std/net` surface over `std/tcp`, so that `std/serve`
-   runs over it with no change (#14259). The panic scope is decided (#14257,
-   see the north-star section).
+16. **A handler serves from the kernel** (#14259, fifth slice).
+   `std/tcp/serve` has the shape of `std/serve` over `std/tcp`: framing with
+   `std/http` under its limits, keep-alive, pipelining, `100 Continue`, and
+   the refusal of a request that does not frame. A program moves to a
+   kernel by one import and the handler type, which has no `platform.Host`.
+   `TestSelfHostKernelServeMatchesHostedOnQemu` and
+   `TestSelfHostKernelX86ServeMatchesHostedOnQemu` run one handler under
+   the hosted `std/serve` and under `std/tcp/serve` on the kernel, and the
+   answers match but for the date header. `std/serve` itself over `std/tcp`
+   waits for the Linux ABI of milestone 4: then `std/serve` is a user
+   program and the kernel implements its `tcp_*` syscalls over `std/tcp`.
+17. Beside those: the panic scope is decided (#14257, see the north-star
+   section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 
