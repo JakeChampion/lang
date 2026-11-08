@@ -145,8 +145,9 @@ echo
 # closed once on the compiled path while interp.fern still disagreed, so the
 # check is that each engine carries the machinery, not that an issue is closed.
 echo "4. SH-057-class semantics (mutable scalar capture) closed in every engine"
-if grep -q 'VCellI' compiler/interp.fern 2>/dev/null; then
-  ok "self-host interpreter has by-reference scalar capture (VCellI/VCellF)"
+if grep -Fq 'pub struct VCellV { root: interpheap.Root }' compiler/interp.fern 2>/dev/null \
+   && grep -Fq 'return VCellV { root: interpheap.allocate' compiler/interp.fern 2>/dev/null; then
+  ok "self-host interpreter has managed by-reference capture slots (VCellV)"
 else
   bad "interp.fern lost its scalar-capture cells — SH-057 regressed?"
 fi

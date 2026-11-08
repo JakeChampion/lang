@@ -270,6 +270,8 @@ UNVERIFIABLE rather than guessing.
    49 — #2850 had been closed on the compiled half alone. Fixed in #5988 and
    pinned by `TestSelfHostMutableScalarCaptureInterp`, which oracles every case
    against the native interpreter, plus a row in the cross-validation corpus.
+   The interpreter now uses managed `VCellV` slots for captured values.
+   The structural gate checks this representation and the capture path.
 
 None were date-driven; the last one went green on 2026-09-28 and the freeze
 is in force (`NATIVE-FREEZE.md`).
