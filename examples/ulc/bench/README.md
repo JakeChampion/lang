@@ -1,15 +1,15 @@
 # ULC benchmarks
 
 Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
-The final suite records 125 lower Fern medians across 144 comparisons against tuned upstream C.
-The geometric mean of C/Fern ratios is 1.313×, with equal weights for all cases.
-Without silence, the ratio is 1.193× across 108 cases.
+The final suite records 131 lower Fern medians across 144 comparisons against tuned upstream C.
+The geometric mean of C/Fern ratios is 1.374×, with equal weights for all cases.
+Without silence, the ratio is 1.253× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
 These results do not establish a universal performance ranking.
 
 ## Final method and results
 
-The compiler and codec source is `f8062c446be7c67bc5f1ea7290ffc117743b4440`.
+The compiler and codec source is `07136183f64ee18bab4a0b1044baac247e9e8b14`.
 The suite covers all eight block sizes with one and four workers.
 Each fixture lasts ten seconds, with stereo PCM16 at 44.1 kHz and VBR quality 75.
 Two additional configurations use 100-second inputs and the default block size of 2048.
@@ -29,30 +29,30 @@ The next table gives the minimum and maximum ratios across the ten-second cases.
 
 | Block size | One-worker wins | One-worker C/Fern range | Four-worker wins | Four-worker C/Fern range |
 | ---: | ---: | ---: | ---: | ---: |
-| 256 | 5/8 | 0.952–2.342 | 7/8 | 0.937–2.243 |
-| 512 | 8/8 | 1.045–2.785 | 8/8 | 1.004–2.299 |
-| 1024 | 8/8 | 1.109–2.777 | 7/8 | 0.985–2.301 |
-| 2048 | 8/8 | 1.135–1.985 | 8/8 | 1.084–2.486 |
-| 4096 | 7/8 | 0.962–2.365 | 7/8 | 0.791–2.172 |
-| 8192 | 8/8 | 1.052–2.369 | 6/8 | 0.846–2.483 |
-| 16384 | 6/8 | 0.751–2.825 | 5/8 | 0.835–2.813 |
-| 32768 | 6/8 | 0.687–1.855 | 5/8 | 0.805–1.904 |
+| 256 | 6/8 | 0.977–2.918 | 8/8 | 1.266–2.251 |
+| 512 | 8/8 | 1.040–2.439 | 7/8 | 0.878–2.479 |
+| 1024 | 8/8 | 1.061–2.369 | 7/8 | 0.938–2.335 |
+| 2048 | 8/8 | 1.081–2.366 | 8/8 | 1.162–2.692 |
+| 4096 | 8/8 | 1.051–2.166 | 6/8 | 0.933–1.876 |
+| 8192 | 8/8 | 1.080–2.340 | 8/8 | 1.087–2.110 |
+| 16384 | 7/8 | 0.855–2.578 | 7/8 | 0.800–1.789 |
+| 32768 | 6/8 | 0.788–2.623 | 5/8 | 0.718–2.261 |
 
 The 100-second default-block runs give these ratios:
 
 | Input | Operation | One worker | Four workers |
 | --- | --- | ---: | ---: |
-| silence | encode | 1.317 | 1.388 |
-| silence | decode | 2.163 | 2.173 |
-| tone | encode | 1.140 | 1.799 |
-| tone | decode | 1.264 | 1.557 |
-| noise | encode | 1.112 | 1.835 |
-| noise | decode | 1.013 | 1.181 |
-| transients | encode | 1.162 | 1.880 |
-| transients | decode | 1.261 | 1.325 |
+| silence | encode | 1.345 | 1.432 |
+| silence | decode | 2.340 | 2.184 |
+| tone | encode | 1.159 | 1.729 |
+| tone | decode | 1.289 | 1.610 |
+| noise | encode | 1.007 | 1.896 |
+| noise | decode | 1.090 | 1.145 |
+| transients | encode | 1.153 | 1.788 |
+| transients | decode | 1.161 | 1.611 |
 
 [All eighteen raw reports](x86-64-block-sweep.json) retain individual times, input hashes, executable hashes, and compiler hashes.
-A bootstrap of paired repetitions gives a 95% interval of 1.293× to 1.354× for the aggregate ratio.
+A bootstrap of paired repetitions gives a 95% interval of 1.344× to 1.398× for the aggregate ratio.
 The calculation uses 2000 repetitions and seed 417.
 This interval covers repetitions within this fixed suite.
 It does not quantify other inputs, machines, or runs.
@@ -67,14 +67,14 @@ Build the C tools with the flags in the reproduction section below.
 Build the Fern tools from the measured source:
 
 ```sh
-git worktree add /tmp/ulc-measured f8062c446be7c67bc5f1ea7290ffc117743b4440
+git worktree add /tmp/ulc-measured 07136183f64ee18bab4a0b1044baac247e9e8b14
 make -C /tmp/ulc-measured build
 make -C /tmp/ulc-measured/examples/ulc
 make -C /tmp/ulc-measured/examples/ulc build/reference64
 python3 examples/ulc/bench/run.py \
   --fern /tmp/ulc-measured/examples/ulc/build/ulc --compiler /tmp/ulc-measured/bin/fern \
   --oracle /tmp/ulc-measured/examples/ulc/build/reference64 \
-  --source-commit f8062c446be7c67bc5f1ea7290ffc117743b4440 \
+  --source-commit 07136183f64ee18bab4a0b1044baac247e9e8b14 \
   --reference /tmp/ulc-reference/release \
   --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
   --seconds 10 --repetitions 11 --cpu 0 --threads 1 --block-size 256 \
