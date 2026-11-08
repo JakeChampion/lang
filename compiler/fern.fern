@@ -7229,7 +7229,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged) } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged) } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

@@ -11969,7 +11969,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
   }
-  if (globl_defs && asmcore.sandbox_on()) {
+  if (globl_defs && s.sandbox) {
     eprint("fern: FERN_SANDBOX=1 needs the whole-program emit; a per-module unit cannot see its siblings' syscalls");
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
@@ -12016,7 +12016,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   s = asmcore.emit_shape_lits_from(s, 0);
   if (is_entry) {
     s = emit_entry_runtime_settled(s);
-    if (asmcore.sandbox_on()) {
+    if (s.sandbox) {
       s = emit_seccomp_install(s);
     }
   }
@@ -12075,7 +12075,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = emit_self_relocation(s);
   }
   s = emit_relro_protect(s);
-  if (asmcore.sandbox_on()) {
+  if (s.sandbox) {
     s = s.write("    call __fern_seccomp_install\n");
   }
   if (s.has_need("args")) {

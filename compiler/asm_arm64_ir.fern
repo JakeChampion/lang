@@ -6687,7 +6687,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   s = s.write("_start:\n");
   s = emit_ir_reloc(s, darwin);
   s = emit_relro_protect(s, reloc_wanted(s, darwin));
-  if (!darwin && asmcore.sandbox_on()) {
+  if (!darwin && s.sandbox) {
     s = s.write("    bl __fern_seccomp_install\n");
   }
   if (darwin) {
@@ -12791,7 +12791,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
-  if (darwin && asmcore.sandbox_on()) {
+  if (darwin && sw.sandbox) {
     eprint("fern: FERN_SANDBOX=1 has no sandbox on arm64-darwin; the seccomp filter is a Linux kernel feature");
     exit(1);
     return "";
@@ -12800,7 +12800,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
   s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
-  if (asmcore.sandbox_on()) {
+  if (s.sandbox) {
     s = emit_seccomp_install(s);
   }
   if (asmcore.reset_entry(s)) {
@@ -12845,7 +12845,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
   }
-  if (globl_defs && asmcore.sandbox_on()) {
+  if (globl_defs && s.sandbox) {
     eprint("fern: FERN_SANDBOX=1 needs the whole-program emit; a per-module unit cannot see its siblings' syscalls");
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
@@ -12896,7 +12896,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   }
   if (is_entry) {
     s = emit_ir_runtime_settled(s, false);
-    if (asmcore.sandbox_on()) {
+    if (s.sandbox) {
       s = emit_seccomp_install(s);
     }
   } else {
