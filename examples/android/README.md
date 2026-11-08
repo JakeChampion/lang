@@ -2,8 +2,9 @@
 
 An app with no Java code runs in NativeActivity through `std/android`, and
 `fern -apk` writes the signed APK with no Android SDK. `native/` is the
-smallest such app. [`stopwatch/`](stopwatch/README.md) and
-[`walkie/`](walkie/README.md) are complete apps. They share the dot font of
+smallest such app. [`stopwatch/`](stopwatch/README.md),
+[`walkie/`](walkie/README.md) and [`plex/`](plex/README.md), a Plex client,
+are complete apps. They share the dot font of
 `matrix.fern` and the look of `look.fern`.
 
 Fern also compiles to a native, position-independent shared object that an

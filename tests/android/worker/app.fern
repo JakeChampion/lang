@@ -1,0 +1,121 @@
+// A NativeActivity app for the emulator check of std/worker on Android. At the
+// first Resume the loop thread spawns two workers: one sums numbers, and one
+// resolves a public name through netd in the child. The loop polls them on
+// its timeouts, as an app does, logs each result and finishes.
+import "std/android";
+import "std/dns";
+import "std/log";
+import "std/worker";
+
+struct App { started: boolean, sum: Option[worker.Worker[i64]], name: Option[worker.Worker[string]], polls: i32 }
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+function app_main(ctx: usize): usize {
+  let last: App = android.run(ctx, App { started: false, sum: None, name: None, polls: 0 }, (own s: App, e: android.Event): App => step(ctx, s, e), (s: App): i32 => timeout(s));
+  close(last);
+  return 0 as usize;
+}
+
+function timeout(s: App): i32 {
+  if (s.sum.is_some() || s.name.is_some()) {
+    return 20;
+  }
+  return -1;
+}
+
+function total(n: i64): i64 {
+  let t = 0i64;
+  for i in 0..n as i32 {
+    t += i as i64;
+  }
+  return t;
+}
+
+function resolved(host: string): string {
+  match (dns.resolve(host)) {
+    Ok(addrs) => {
+      return host + " has " + addrs.len().to_string() + " addresses";
+    },
+    Err(e) => {
+      return host + " failed: " + e.message();
+    }
+  }
+}
+
+function step(ctx: usize, own s: App, e: android.Event): App {
+  match (e) {
+    android.Resume => {
+      if (s.started) {
+        return s;
+      }
+      let n = 1000000i64;
+      let host = "dns.google";
+      log.warn("workertest: spawning");
+      return App { started: true, sum: Some(worker.spawn((): i64 => total(n))), name: Some(worker.spawn((): string => resolved(host))), polls: s.polls };
+    },
+    android.Tick => {
+      let App { started, sum, name, polls } = s;
+      let now = polls + 1;
+      let next_sum = match (sum) {
+        Some(adder) => poll_sum(adder, now),
+        None => None,
+      };
+      let next_name = match (name) {
+        Some(lookup) => poll_name(lookup),
+        None => None,
+      };
+      return finish_when_done(ctx, App { started: started, sum: next_sum, name: next_name, polls: now });
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+function poll_sum(own w: worker.Worker[i64], polls: i32): Option[worker.Worker[i64]] {
+  match (w.poll()) {
+    worker.Finished(v) => {
+      log.warn("workertest: sum is " + v.to_string() + " after " + polls.to_string() + " polls");
+      return None;
+    },
+    worker.Running(again) => {
+      return Some(again);
+    }
+  }
+}
+
+function poll_name(own w: worker.Worker[string]): Option[worker.Worker[string]] {
+  match (w.poll()) {
+    worker.Finished(v) => {
+      log.warn("workertest: " + v);
+      return None;
+    },
+    worker.Running(again) => {
+      return Some(again);
+    }
+  }
+}
+
+function finish_when_done(ctx: usize, own s: App): App {
+  if (s.started && s.sum.is_none() && s.name.is_none()) {
+    log.warn("workertest: done");
+    android.finish(ctx);
+  }
+  return s;
+}
+
+// Joins a worker that is still running when the activity goes.
+function close(own s: App): void {
+  if let Some(w) = s.sum {
+    let v = w.join();
+  }
+  if let Some(w) = s.name {
+    let v = w.join();
+  }
+}

@@ -1,0 +1,2 @@
+main.fern:27:25: error[E051]: argument to owned parameter must be an owned value
+main.fern:34:15: error[E050]: use of owned parameter "h" after it was consumed

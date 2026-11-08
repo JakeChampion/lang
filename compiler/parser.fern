@@ -11264,8 +11264,17 @@ function unsigned_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: MFn
     return fn_value;
   }
   let variant = variant_call_type(c, name, env, funcs);
-  if (variant.len() > 0 || !is_builtin_function(name)) {
+  if (variant.len() > 0) {
     return variant;
+  }
+  if (name == "Some" && c.args.len() == 1) {
+    let inner = mono_infer(c.args[0], env, funcs);
+    if (inner.len() > 0) {
+      return "Option[" + inner + "]";
+    }
+  }
+  if (!is_builtin_function(name)) {
+    return "";
   }
   return builtinsigs.builtin_result(name);
 }
@@ -15743,7 +15752,24 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
   if (gi.ok) {
     return gi.mang;
   }
-  return "";
+  return ge_applied_key(arg, lb, enums);
+}
+
+// The key of `arg`, an applied type that is not an instance of a generic
+// enum, such as Option[i32]: its base, then the key of each argument.
+function ge_applied_key(arg: string, lb: i32, enums: EnumDecl[]): string {
+  if (arg[arg.len() - 1] != b']' || util.contains(slice_unchecked(arg, 0, lb) + "", " ")) {
+    return "";
+  }
+  let key = slice_unchecked(arg, 0, lb) + "";
+  for p in split_top_commas(slice_unchecked(arg, lb + 1, arg.len() - 1)) {
+    let piece = ge_targ_mangle(p, enums);
+    if (piece.len() == 0) {
+      return "";
+    }
+    key += "__" + piece;
+  }
+  return key;
 }
 
 function keyed_by_mangle(t: string): boolean {

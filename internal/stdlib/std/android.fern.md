@@ -91,6 +91,15 @@ function c_key_code(event: usize): i32;
 @import("libandroid.so", "AKeyEvent_getAction")
 function c_key_action(event: usize): i32;
 
+@import("libandroid.so", "AKeyEvent_getMetaState")
+function c_key_meta(event: usize): i32;
+
+@import("libandroid.so", "AInputEvent_getDeviceId")
+function c_event_device(event: usize): i32;
+
+@import("libandroid.so", "ANativeWindow_toSurface")
+function c_window_to_surface(env: usize, window: usize): usize;
+
 @import("libandroid.so", "ANativeWindow_getWidth")
 function c_window_width(window: usize): i32;
 
@@ -141,7 +150,9 @@ function c_pthread_detach(thread: usize): i32;
 
 `Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 18 belong to `std/android/service`, `std/android/p2p` and `std/android/focus`. The kinds from 100 are free for the app.
+`Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. The keyboard of the system types through these events, because the activity has no text field.
+
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
@@ -160,6 +171,7 @@ pub enum Event {
   WindowDestroyed(Window),
   Touch(i32, f32, f32),
   Key(i32, i32),
+  Char(i32),
   Tick,
   Posted(i32, usize),
 }
@@ -582,7 +594,14 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
           handled = 1;
         } else if (kind == 1) {
           let code: i32 = c_key_code(ev);
-          state = step(state, Key(code, c_key_action(ev)));
+          let action: i32 = c_key_action(ev);
+          state = step(state, Key(code, action));
+          if (action == 0 && !system_key(code)) {
+            let c: i32 = key_char(lp.ctx, c_event_device(ev), code, c_key_meta(ev));
+            if (c > 0) {
+              state = step(state, Char(c));
+            }
+          }
           if (!system_key(code)) {
             handled = 1;
           }
@@ -593,6 +612,32 @@ function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
     __free(slot, 8);
   }
   return state;
+}
+
+// The character that key `code` types with the shift state `meta` on the
+// keyboard `device`, or 0 when it types none. KeyCharacterMap.get sets the
+// top bit for a dead key, which types nothing alone.
+function key_char(ctx: usize, device: i32, code: i32, meta: i32): i32 {
+  let e: usize = env(ctx);
+  let class: usize = jni.find_class(e, "android/view/KeyCharacterMap");
+  let args: usize = jni.jvalues([device as usize]);
+  let map: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "load", "(I)Landroid/view/KeyCharacterMap;"), args);
+  jni.free_buffer(args);
+  if (jni.exception_occurred(e) != 0 as usize || map == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    let gone: usize = jni.delete_local_ref(e, class);
+    return 0;
+  }
+  let get_args: usize = jni.jvalues([code as usize, meta as usize]);
+  let c: i32 = jni.call_int_method_a(e, map, jni.get_method_id(e, class, "get", "(II)I"), get_args);
+  jni.free_buffer(get_args);
+  if (jni.exception_occurred(e) != 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    c = 0;
+  }
+  let a: usize = jni.delete_local_ref(e, map);
+  let b: usize = jni.delete_local_ref(e, class);
+  return c;
 }
 
 // The volume keys and the mute key, which the system handles after the app.
@@ -640,6 +685,29 @@ pub function activity_object(ctx: usize): usize {
 // The action of the Java Intent `intent`.
 pub function intent_action(e: usize, intent: usize): string {
   return jni.string_of(e, jni.call_object(e, intent, "getAction", "()Ljava/lang/String;", []));
+}
+
+// The string extra `name` of the Intent that started the activity, or ""
+// when it has none. Call it on the loop thread.
+pub function intent_extra(ctx: usize, name: string): string {
+  let e: usize = env(ctx);
+  let intent: usize = jni.call_object(e, activity_object(ctx), "getIntent", "()Landroid/content/Intent;", []);
+  if (jni.exception_occurred(e) != 0 as usize || intent == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    return "";
+  }
+  let value: usize = jni.call_object(e, intent, "getStringExtra", "(Ljava/lang/String;)Ljava/lang/String;", [jni.new_string(e, name)]);
+  if (jni.exception_occurred(e) != 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    value = 0 as usize;
+  }
+  let out: string = "";
+  if (value != 0 as usize) {
+    out = jni.string_of(e, value);
+    let a: usize = jni.delete_local_ref(e, value);
+  }
+  let b: usize = jni.delete_local_ref(e, intent);
+  return out;
 }
 
 // The API level of the device.
@@ -810,6 +878,10 @@ pub function show_keyboard(ctx: usize, show: boolean): void {
 
 `ANativeWindow_Buffer` has the width at 0, the height at 4, the stride in pixels at 8, and the pixels at 16. It is 48 bytes. `std/android/draw` draws on the frame of a locked window, and this module re-exports its `Frame` and `rgb`.
 
+The first `lock` connects the app to the window as its producer of pixels, and the window keeps one producer at a time. So a media player, such as `std/android/player`, can show its frames on the window only after `release_cpu`. The app can lock the window again only after the player gives the window up.
+
+The NDK has no function for `release_cpu`: it calls the `perform` entry of `struct ANativeWindow`, at 152 on LP64, with `NATIVE_WINDOW_API_DISCONNECT` (14) and `NATIVE_WINDOW_API_CPU` (2). The entry is part of the ABI between the platform and its graphics drivers, and the magic number at 0 is checked first. `surface` gives the Java `Surface` of the window, which a player takes.
+
 ```fern
 <<windows>>=
 pub use "std/android/draw".{Frame, rgb};
@@ -834,6 +906,32 @@ pub function (w: Window) lock(): draw.Frame {
     }
     return draw.Frame { window: w.ptr, buffer: buffer, bits: __load_ptr(buffer + 16 as usize), width: __load_i32(buffer), height: __load_i32(buffer + 4 as usize), stride: __load_i32(buffer + 8 as usize) };
   }
+}
+
+// The magic number of struct ANativeWindow: '_wnd'.
+const WINDOW_MAGIC: i32 = 1601662564;
+
+const API_DISCONNECT: i32 = 14;
+
+const API_CPU: i32 = 2;
+
+// Gives the window up as the target of `lock`, so that another producer can
+// connect to it. The next `lock` connects again. It is false when the
+// window refuses, for example when no lock connected it.
+pub function (w: Window) release_cpu(): boolean {
+  unsafe {
+    if (__load_i32(w.ptr) != WINDOW_MAGIC) {
+      return false;
+    }
+    let perform: usize = __load_ptr(w.ptr + 152 as usize);
+    return __c_call3(perform, w.ptr, API_DISCONNECT as usize, API_CPU as usize) as i32 == 0;
+  }
+}
+
+// A local reference to the Java Surface of the window, for the JNIEnv `e`
+// of the calling thread. It needs API level 26.
+pub function (w: Window) surface(e: usize): usize {
+  return c_window_to_surface(e, w.ptr);
 }
 
 // Shows the pixels of the frame and unlocks its window.

@@ -1,12 +1,14 @@
 # Drawing on an Android frame
 
-This module draws rectangles and text on the pixels of an Android window.
+This module draws rectangles, images and text on the pixels of an Android window.
 
 ## Model
 
 A `Frame` holds the pixels of a window while the window is locked: 4 bytes for each pixel, in the order red, green, blue and alpha, and `stride` pixels for each row. `std/android` locks a window and gives its frame. The functions here only write into the pixels, so a test can make a frame from plain memory.
 
 A color is a pixel word with an alpha from 0, for none, to 255, for opaque: `rgba` makes one, and `rgb` makes an opaque one. Each shape and each glyph blends its color over the pixels of the frame by the alpha and by the part of each pixel that it covers. A shape over opaque pixels leaves them opaque. `store` writes pixel words as they are, so it can make transparent pixels, for example the corners of an icon.
+
+An `Image` holds 4 bytes for each pixel, red, green, blue and alpha, row by row with no stride. `std/android/image` decodes one, and `image` copies a part of it into a frame. `cover_size` gives the size of an image scaled to fill a box with its shape kept. The box then shows the middle of the image. `clip_corners` rounds the corners of an opaque image on a flat background.
 
 Text uses the Fern raster of DejaVu Sans Mono in `std/android/font`. Each glyph pixel has a coverage from 0 to 15, and the text color blends over the frame by that coverage. `scale` draws each raster pixel as a square of `scale` by `scale` pixels.
 
@@ -22,6 +24,8 @@ The pixels of a frame are valid until the window is posted. A rectangle or text 
 
 <<frames>>
 
+<<images>>
+
 <<text>>
 ```
 
@@ -34,6 +38,7 @@ The pixels of a frame are valid until the window is posted. A rectangle or text 
 import "std/android/font";
 import "std/f64";
 import "std/string";
+import "std/utf8";
 ```
 
 ### `frames`
@@ -207,21 +212,113 @@ function corner(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i32
 }
 ```
 
+### `images`
+
+`image` copies rows with no blend, so an image overwrites the pixels under it, transparent pixels included.
+
+```fern
+<<images>>=
+// An image of `width` by `height` pixels, row by row: red, green, blue and
+// alpha for each pixel.
+pub struct Image { width: i32, height: i32, pixels: u8[] }
+
+// The pixel word of pixel x, y of `img`, or 0 outside it.
+pub function (img: Image) pixel(x: i32, y: i32): i32 {
+  if (x < 0 || y < 0 || x >= img.width || y >= img.height) {
+    return 0;
+  }
+  let at = (y * img.width + x) * 4;
+  return rgba(img.pixels[at] as i32, img.pixels[at + 1] as i32, img.pixels[at + 2] as i32, img.pixels[at + 3] as i32);
+}
+
+// The size of an image of w0 by h0 scaled to cover a box of w by h, with its
+// shape kept: one side is the side of the box, and the other is at least as
+// long.
+pub function cover_size(w0: i32, h0: i32, w: i32, h: i32): (i32, i32) {
+  if (w0 <= 0 || h0 <= 0) {
+    return (w, h);
+  }
+  if (w0 as i64 * (h as i64) >= h0 as i64 * (w as i64)) {
+    return (((w0 as i64 * (h as i64) + h0 as i64 - 1i64) / (h0 as i64)) as i32, h);
+  }
+  return (w, ((h0 as i64 * (w as i64) + w0 as i64 - 1i64) / (w0 as i64)) as i32);
+}
+
+// Copies the middle w by h part of `img` to x and y. A box larger than the
+// image keeps the frame where the image does not reach. The part outside the
+// frame is not written.
+pub function (f: Frame) image(x: i32, y: i32, w: i32, h: i32, img: Image): void {
+  let cw = w;
+  if (cw > img.width) {
+    cw = img.width;
+  }
+  let ch = h;
+  if (ch > img.height) {
+    ch = img.height;
+  }
+  let sx = (img.width - cw) / 2;
+  let sy = (img.height - ch) / 2;
+  let dx = x + (w - cw) / 2;
+  let dy = y + (h - ch) / 2;
+  let x0 = clamp(dx, 0, f.width);
+  let x1 = clamp(dx + cw, 0, f.width);
+  let y0 = clamp(dy, 0, f.height);
+  let y1 = clamp(dy + ch, 0, f.height);
+  if (x1 <= x0 || y1 <= y0 || img.pixels.len() < img.width * img.height * 4) {
+    return;
+  }
+  let px = img.pixels;
+  for row in y0..y1 {
+    let from = ((sy + row - dy) * img.width + sx + x0 - dx) * 4;
+    unsafe {
+      let to = f.bits + ((row * f.stride + x0) * 4) as usize;
+      for i in 0..x1 - x0 {
+        let k = from + i * 4;
+        __store_i32(to + (i * 4) as usize, rgba(px[k] as i32, px[k + 1] as i32, px[k + 2] as i32, px[k + 3] as i32));
+      }
+    }
+  }
+}
+
+// Paints `bg` over the corners of the box at x and y, of width w and height
+// h, outside the quarter circles of radius `r`, with smooth edges. Over an
+// opaque image it gives the image rounded corners.
+pub function (f: Frame) clip_corners(x: i32, y: i32, w: i32, h: i32, r: i32, bg: i32): void {
+  outside(f, x + r, y + r, x, y, r, bg);
+  outside(f, x + w - r, y + r, x + w - r, y, r, bg);
+  outside(f, x + r, y + h - r, x, y + h - r, r, bg);
+  outside(f, x + w - r, y + h - r, x + w - r, y + h - r, r, bg);
+}
+
+function outside(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i32): void {
+  for y in y0..y0 + r {
+    for x in x0..x0 + r {
+      put(f, x, y, color, 15 - cover(dist(x, y, cx as f64, cy as f64), r as f64));
+    }
+  }
+}
+```
+
 ### `text`
 
-A byte from 128 to 191 continues a UTF-8 character, so it takes no cell. Each other byte outside printable ASCII draws as "?".
+Text is UTF-8. Each code point takes one cell. The font has the printable ASCII, Latin-1 and Latin Extended-A glyphs, the dashes, the curly quotes, the bullet and the ellipsis. Each other code point, and each byte that does not start a valid sequence, draws as "?".
 
 ```fern
 <<text>>=
 // The width in pixels of `s` at `scale`.
 pub function text_width(s: string, scale: i32): i32 {
+  return text_cells(s) * font.CELL_W * scale;
+}
+
+// The count of cells of `s`: one for each code point.
+pub function text_cells(s: string): i32 {
   let n = 0;
-  for c in s.bytes() {
-    if (c < 128 as u8 || c >= 192 as u8) {
-      n += 1;
-    }
+  let i = 0;
+  while (i < s.len()) {
+    n += 1;
+    i += code_point(s, i).1;
   }
-  return n * font.CELL_W * scale;
+  return n;
 }
 
 // The height in pixels of a line of text at `scale`.
@@ -261,9 +358,10 @@ function dot(f: Frame, x: i32, y: i32, scale: i32, color: i32, a: i32): void {
 }
 
 function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
+  let g = font.glyph_index(c);
   for gy in 0..font.CELL_H {
     for gx in 0..font.CELL_W {
-      let a = font.coverage(c, gx, gy);
+      let a = font.glyph_coverage(g, gx, gy);
       if (a > 0) {
         dot(f, x + gx * scale, y + gy * scale, scale, color, a);
       }
@@ -275,11 +373,22 @@ function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
 // pixel word `color`, at `scale`.
 pub function (f: Frame) text(x: i32, y: i32, s: string, scale: i32, color: i32): void {
   let at = x;
-  for c in s.bytes() {
-    if (c < 128 as u8 || c >= 192 as u8) {
-      glyph(f, at, y, c as i32, scale, color);
-      at += font.CELL_W * scale;
-    }
+  let i = 0;
+  while (i < s.len()) {
+    let (c, n) = code_point(s, i);
+    glyph(f, at, y, c, scale, color);
+    at += font.CELL_W * scale;
+    i += n;
   }
+}
+
+// The code point that starts at byte `i` of `s`, and its length in bytes. A
+// byte that does not start a valid sequence is one code point that the font
+// draws as "?".
+function code_point(s: string, i: i32): (i32, i32) {
+  if let Some(got) = utf8.decode_at(s, i) {
+    return got;
+  }
+  return (63, 1);
 }
 ```

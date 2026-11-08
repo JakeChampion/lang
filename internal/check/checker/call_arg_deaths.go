@@ -23,14 +23,20 @@ func StmtReferencesName(st ast.Node, name string) bool {
 }
 
 type IdentOrder struct {
-	Idx  map[*ast.Ident]int
-	last map[string]int
+	Idx    map[*ast.Ident]int
+	last   map[string]int
+	byName map[string][]*ast.Ident
+	arms   map[*ast.Ident][]forkArm
 }
+
+// forkArm is one arm of a match or an if outside every loop. One run takes
+// one arm, so an identifier in one arm is not after one in another arm.
+type forkArm struct{ fork, arm int }
 
 // IdentOrderOf numbers the identifiers of body in source order. The else arm
 // of a let-else is the last arm of its match, but the source writes it first.
 func IdentOrderOf(body ast.Node) IdentOrder {
-	o := IdentOrder{Idx: map[*ast.Ident]int{}, last: map[string]int{}}
+	o := IdentOrder{Idx: map[*ast.Ident]int{}, last: map[string]int{}, byName: map[string][]*ast.Ident{}, arms: map[*ast.Ident][]forkArm{}}
 	n := 0
 	var visit func(node ast.Node) bool
 	visit = func(node ast.Node) bool {
@@ -38,6 +44,7 @@ func IdentOrderOf(body ast.Node) IdentOrder {
 		case *ast.Ident:
 			n++
 			o.Idx[x] = n
+			o.byName[x.Name] = append(o.byName[x.Name], x)
 			if n > o.last[x.Name] {
 				o.last[x.Name] = n
 			}
@@ -60,11 +67,86 @@ func IdentOrderOf(body ast.Node) IdentOrder {
 		return true
 	}
 	ast.Walk(body, visit)
+	if st, ok := body.(ast.Stmt); ok {
+		forks := 0
+		o.markForks(st, nil, &forks)
+	}
 	return o
 }
 
+// markForks records the arms of the forks that hold each identifier of st.
+// A loop body can take each arm in turn, so it records no fork inside a loop.
+func (o IdentOrder) markForks(st ast.Stmt, path []forkArm, forks *int) {
+	in := func(fork, arm int) []forkArm {
+		return append(slices.Clone(path), forkArm{fork, arm})
+	}
+	switch x := st.(type) {
+	case *ast.Block:
+		for _, s := range x.Stmts {
+			o.markForks(s, path, forks)
+		}
+		return
+	case *ast.If:
+		fork := *forks
+		*forks++
+		o.markIdents(x.Cond, path)
+		if x.Then != nil {
+			o.markForks(x.Then, in(fork, 0), forks)
+		}
+		if x.Else != nil {
+			o.markForks(x.Else, in(fork, 1), forks)
+		}
+		return
+	case *ast.Match:
+		fork := *forks
+		*forks++
+		o.markIdents(x.Tag, path)
+		for i, a := range x.Arms {
+			if a.Guard != nil {
+				o.markIdents(a.Guard, in(fork, i))
+			}
+			if a.Body != nil {
+				o.markForks(a.Body, in(fork, i), forks)
+			}
+		}
+		return
+	}
+	o.markIdents(st, path)
+}
+
+func (o IdentOrder) markIdents(node ast.Node, path []forkArm) {
+	if len(path) == 0 || node == nil {
+		return
+	}
+	ast.Walk(node, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			o.arms[id] = path
+		}
+		return true
+	})
+}
+
 func (o IdentOrder) IsLast(id *ast.Ident) bool {
-	return o.Idx[id] == o.last[id.Name]
+	if o.Idx[id] == o.last[id.Name] {
+		return true
+	}
+	for _, later := range o.byName[id.Name] {
+		if o.Idx[later] > o.Idx[id] && !forksApart(o.arms[id], o.arms[later]) {
+			return false
+		}
+	}
+	return true
+}
+
+func forksApart(a, b []forkArm) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x.fork == y.fork && x.arm != y.arm {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func DeferOrLambdaNames(body ast.Node) map[string]bool {

@@ -162,6 +162,115 @@ function test_text_outside_is_clipped(): test.TestOutcome {
   return test.assert_eq(f.pixel(19, 19) != 0, true);
 }
 
+// The pixels of `s` drawn alone in white, row by row.
+function drawn(s: string): i32[] {
+  let f = frame(60, 30);
+  defer free_frame(f);
+  f.text(0, 0, s, 1, draw.rgb(255, 255, 255));
+  let out: i32[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      out = out.append(f.pixel(x, y));
+    }
+  }
+  return out;
+}
+
+function same(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A Latin letter with an accent has a glyph of its own, and so do the dashes
+// and the curly quotes of a summary.
+function test_latin_letters_have_glyphs(): test.TestOutcome {
+  let unknown = drawn("?");
+  for s in ["é", "Ü", "ñ", "ø", "Œ", "ł", "–", "—", "’", "…", "·"] {
+    if (same(drawn(s), unknown)) {
+      return test.fail(s + " draws as ?");
+    }
+  }
+  if (same(drawn("é"), drawn("e"))) {
+    return test.fail("é draws as e");
+  }
+  return test.assert_eq(draw.text_width("Amélie – 2001", 1).to_string(), (13 * draw.text_width("a", 1)).to_string());
+}
+
+// A code point outside the font, and a byte that does not start a UTF-8
+// sequence, each take one cell and draw as "?".
+function test_unknown_code_points_draw_as_question_marks(): test.TestOutcome {
+  if (!same(drawn("漢"), drawn("?"))) {
+    return test.fail("a CJK character");
+  }
+  let stray = "";
+  unsafe {
+    stray = string_from_bytes_unchecked([97u8, 128u8, 98u8]);
+  }
+  if (!same(drawn(stray), drawn("a?b"))) {
+    return test.fail("a stray continuation byte");
+  }
+  return test.assert_eq(draw.text_cells(stray).to_string() + " " + draw.text_cells("漢字").to_string(), "3 2");
+}
+
+// An image of w by h whose pixel at x, y is rgb(x, y, 7).
+function ramp(w: i32, h: i32): draw.Image {
+  let px: u8[] = [];
+  for y in 0..h {
+    for x in 0..w {
+      px = px.append(x as u8).append(y as u8).append(7u8).append(255u8);
+    }
+  }
+  return draw.Image { width: w, height: h, pixels: px };
+}
+
+function test_cover_size_keeps_the_shape(): test.TestOutcome {
+  let tall = draw.cover_size(200, 300, 100, 100);
+  let wide = draw.cover_size(1920, 1080, 300, 450);
+  let exact = draw.cover_size(240, 360, 240, 360);
+  return test.assert_eq(tall.0.to_string() + "x" + tall.1.to_string() + " " + wide.0.to_string() + "x" + wide.1.to_string() + " " + exact.0.to_string() + "x" + exact.1.to_string(), "100x150 800x450 240x360");
+}
+
+// The box shows the middle of a larger image, and the frame keeps its pixels
+// where a smaller image does not reach.
+function test_image_copies_the_middle(): test.TestOutcome {
+  let f = frame(40, 30);
+  defer free_frame(f);
+  f.image(5, 4, 10, 6, ramp(20, 10));
+  if (f.pixel(5, 4) != draw.rgb(5, 2, 7) || f.pixel(14, 9) != draw.rgb(14, 7, 7) || f.pixel(15, 4) != draw.rgb(0, 0, 0) || f.pixel(4, 4) != draw.rgb(0, 0, 0)) {
+    return test.fail("the middle of a larger image");
+  }
+  f.image(20, 10, 10, 10, ramp(4, 2));
+  if (f.pixel(23, 14) != draw.rgb(0, 0, 7) || f.pixel(26, 15) != draw.rgb(3, 1, 7) || f.pixel(22, 14) != draw.rgb(0, 0, 0)) {
+    return test.fail("a smaller image in the middle of its box");
+  }
+  f.image(-3, 28, 6, 4, ramp(6, 4));
+  if (ramp(6, 4).pixel(3, 1) != draw.rgb(3, 1, 7) || ramp(6, 4).pixel(6, 0) != 0) {
+    return test.fail("Image.pixel");
+  }
+  return test.assert_eq(f.pixel(0, 29).to_string(), draw.rgb(3, 1, 7).to_string());
+}
+
+function test_clip_corners(): test.TestOutcome {
+  let f = frame(30, 30);
+  defer free_frame(f);
+  let white = draw.rgb(255, 255, 255);
+  f.fill(0, 0, 30, 30, white);
+  f.clip_corners(0, 0, 30, 30, 8, draw.rgb(0, 0, 0));
+  if (f.pixel(0, 0) != draw.rgb(0, 0, 0) || f.pixel(29, 29) != draw.rgb(0, 0, 0) || f.pixel(15, 15) != white || f.pixel(15, 0) != white || f.pixel(8, 8) != white) {
+    return test.fail("corners");
+  }
+  // Four corners of 8 - pi * 64 / 4 pixels go, and the edges blend.
+  let n = count(f, white);
+  return test.assert_eq((n < 850 && n > 790).to_string() + " " + n.to_string(), "true " + n.to_string());
+}
+
 function main(): i32 {
   let r = test.new("std/android/draw");
   r = r.it("rgb packs red, green and blue", test_rgb);
@@ -177,5 +286,10 @@ function main(): i32 {
   r = r.it("rgba carries an alpha", test_rgba);
   r = r.it("store writes the pixel word with no blend", test_store);
   r = r.it("a shape with an alpha blends", test_alpha_shapes);
+  r = r.it("the Latin letters and the punctuation have glyphs", test_latin_letters_have_glyphs);
+  r = r.it("an unknown code point draws as a question mark", test_unknown_code_points_draw_as_question_marks);
+  r = r.it("cover_size keeps the shape of an image", test_cover_size_keeps_the_shape);
+  r = r.it("an image shows its middle in its box", test_image_copies_the_middle);
+  r = r.it("clip_corners rounds the corners of a box", test_clip_corners);
   return r.finish();
 }

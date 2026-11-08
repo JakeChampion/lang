@@ -1,0 +1,779 @@
+// The Plex model of the app: the requests that it sends to plex.tv and to a
+// media server, and the records that it reads from their JSON replies. Every
+// function is pure. control.fern sends the requests through its Device.
+import "std/json";
+import "std/string";
+import "std/url";
+import "std/utf8";
+
+pub const PRODUCT: string = "Fern for Plex";
+
+pub const VERSION: string = "1.0";
+
+pub const PLEX_TV: string = "https://plex.tv";
+
+pub const CLIENTS: string = "https://clients.plex.tv";
+
+// The page at which the user types the code of a PIN.
+pub const LINK_PAGE: string = "plex.tv/link";
+
+// One HTTP request. A worker of app.fern sends it.
+pub struct Request { method: string, url: string, headers: (string, string)[], body: string }
+
+// The reply to a Request. `status` is 0 and `error` says why when no reply
+// came.
+pub struct Reply { status: i32, body: u8[], error: string }
+
+// The client that sends the requests. `id` is the X-Plex-Client-Identifier,
+// which stays the same for one installation. `token` is the token of the
+// account, or of the server for a request to a server.
+pub struct Client { id: string, device: string, token: string }
+
+pub function (c: Client) with_token(token: string): Client {
+  return Client { ...c, token: token };
+}
+
+// The headers that each request carries.
+pub function headers(c: Client): (string, string)[] {
+  let out: (string, string)[] = [
+    ("Accept", "application/json"),
+    ("X-Plex-Product", PRODUCT),
+    ("X-Plex-Version", VERSION),
+    ("X-Plex-Client-Identifier", c.id),
+    ("X-Plex-Platform", "Android"),
+    ("X-Plex-Device", c.device),
+    ("X-Plex-Device-Name", c.device),
+  ];
+  if (c.token.len() > 0) {
+    out = out.append(("X-Plex-Token", c.token));
+  }
+  return out;
+}
+
+pub function get(c: Client, u: string): Request {
+  return Request { method: "GET", url: u, headers: headers(c), body: "" };
+}
+
+pub function post(c: Client, u: string): Request {
+  return Request { method: "POST", url: u, headers: headers(c), body: "" };
+}
+
+pub function (r: Reply) ok(): boolean {
+  return r.status >= 200 && r.status < 300;
+}
+
+// The reply as text, for a JSON body.
+pub function (r: Reply) text(): string {
+  return utf8.from_bytes_lossy(r.body);
+}
+
+// What went wrong with a reply that is not ok, for the screen.
+pub function (r: Reply) problem(): string {
+  if (r.status == 0) {
+    if (r.error.len() > 0) {
+      return r.error;
+    }
+    return "no reply";
+  }
+  if (r.status == 401) {
+    return "not signed in (401)";
+  }
+  return "HTTP " + r.status.to_string();
+}
+
+// --- JSON fields
+
+function text_at(d: json.Document, n: i32): string {
+  if let Some(s) = d.as_string(n) {
+    return s;
+  }
+  if let Some(t) = d.number_text(n) {
+    return t;
+  }
+  if let Some(b) = d.as_bool(n) {
+    if (b) {
+      return "true";
+    }
+    return "false";
+  }
+  return "";
+}
+
+// The text of field `key` of object `n`, or "".
+pub function str(d: json.Document, n: i32, key: string): string {
+  if let Some(v) = d.get(n, key) {
+    return text_at(d, v);
+  }
+  return "";
+}
+
+// The integer of field `key` of object `n`, or 0. A string of digits counts.
+pub function int(d: json.Document, n: i32, key: string): i64 {
+  if let Some(v) = d.get(n, key) {
+    if let Some(i) = d.as_i64(v) {
+      return i;
+    }
+    if let Some(f) = d.as_f64(v) {
+      return f as i64;
+    }
+    return digits(text_at(d, v));
+  }
+  return 0i64;
+}
+
+function digits(s: string): i64 {
+  let v = 0i64;
+  let any = false;
+  for c in s.bytes() {
+    if (c < 48u8 || c > 57u8) {
+      if (any) {
+        return v;
+      }
+      return 0i64;
+    }
+    v = v * 10i64 + (c - 48u8) as i64;
+    any = true;
+  }
+  return v;
+}
+
+pub function flag(d: json.Document, n: i32, key: string): boolean {
+  if let Some(v) = d.get(n, key) {
+    if let Some(b) = d.as_bool(v) {
+      return b;
+    }
+    let t = text_at(d, v);
+    return t == "1" || t == "true";
+  }
+  return false;
+}
+
+// The elements of the array field `key` of object `n`.
+pub function elements(d: json.Document, n: i32, key: string): i32[] {
+  let out: i32[] = [];
+  let Some(a) = d.get(n, key) else {
+    return out;
+  };
+  return items_of(d, a);
+}
+
+pub function items_of(d: json.Document, a: i32): i32[] {
+  let out: i32[] = [];
+  if (!d.is_array(a)) {
+    return out;
+  }
+  let c = d.first(a);
+  while (c >= 0) {
+    out = out.append(c);
+    c = d.next(a, c);
+  }
+  return out;
+}
+
+// The MediaContainer of a reply of a server, or the root when it has none.
+pub function container(d: json.Document): i32 {
+  if let Some(m) = d.get(d.root(), "MediaContainer") {
+    return m;
+  }
+  return d.root();
+}
+
+// --- plex.tv: the sign-in with a PIN
+
+// A PIN of plex.tv. The user types `code` at plex.tv/link. `token` is the
+// token of the account once the user has done so.
+pub struct Pin { id: i64, code: string, token: string }
+
+pub function pin_request(c: Client): Request {
+  return post(c, PLEX_TV + "/api/v2/pins?strong=false");
+}
+
+pub function pin_check(c: Client, id: i64): Request {
+  return get(c, PLEX_TV + "/api/v2/pins/" + id.to_string());
+}
+
+pub function parse_pin(body: string): Option[Pin] {
+  let Ok(d) = json.parse_document(body) else {
+    return None;
+  };
+  let r = d.root();
+  let id = int(d, r, "id");
+  if (id == 0i64) {
+    return None;
+  }
+  return Some(Pin { id: id, code: str(d, r, "code"), token: str(d, r, "authToken") });
+}
+
+pub struct Account { name: string, email: string }
+
+pub function user_request(c: Client): Request {
+  return get(c, PLEX_TV + "/api/v2/user");
+}
+
+pub function parse_account(body: string): Account {
+  let Ok(d) = json.parse_document(body) else {
+    return Account { name: "", email: "" };
+  };
+  let r = d.root();
+  let name = str(d, r, "friendlyName");
+  if (name.len() == 0) {
+    name = str(d, r, "username");
+  }
+  if (name.len() == 0) {
+    name = str(d, r, "title");
+  }
+  return Account { name: name, email: str(d, r, "email") };
+}
+
+// --- plex.tv: the servers of the account
+
+pub struct Connection { uri: string, local: boolean, relay: boolean }
+
+pub struct Server { name: string, id: string, token: string, owned: boolean, connections: Connection[] }
+
+pub function resources_request(c: Client): Request {
+  return get(c, CLIENTS + "/api/v2/resources?includeHttps=1&includeRelay=1");
+}
+
+pub function parse_servers(body: string): Server[] {
+  let out: Server[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for n in items_of(d, d.root()) {
+    if (str(d, n, "provides").contains("server")) {
+      out = out.append(server_of(d, n));
+    }
+  }
+  return out;
+}
+
+function server_of(d: json.Document, n: i32): Server {
+  let conns: Connection[] = [];
+  for c in elements(d, n, "connections") {
+    let uri = str(d, c, "uri");
+    if (uri.len() > 0) {
+      conns = conns.append(Connection { uri: uri, local: flag(d, c, "local"), relay: flag(d, c, "relay") });
+    }
+  }
+  return Server { name: str(d, n, "name"), id: str(d, n, "clientIdentifier"), token: str(d, n, "accessToken"), owned: flag(d, n, "owned"), connections: conns };
+}
+
+// The addresses of a server in the order to try them: local, then remote,
+// then the relay of plex.tv, which is slow and limited.
+pub function connection_order(s: Server): string[] {
+  let out: string[] = [];
+  for c in s.connections {
+    if (c.local && !c.relay) {
+      out = out.append(c.uri);
+    }
+  }
+  for c in s.connections {
+    if (!c.local && !c.relay) {
+      out = out.append(c.uri);
+    }
+  }
+  for c in s.connections {
+    if (c.relay) {
+      out = out.append(c.uri);
+    }
+  }
+  return out;
+}
+
+// A server that the user typed, with a token of their own.
+pub function manual_server(uri: string, token: string): Server {
+  return Server { name: uri, id: "", token: token, owned: true, connections: [Connection { uri: trim_slash(uri), local: true, relay: false }] };
+}
+
+function trim_slash(s: string): string {
+  if (s.ends_with("/")) {
+    return s.split_at(s.len() - 1).0;
+  }
+  return s;
+}
+
+// --- a server
+
+// A server at the address `base`, with the token for it.
+pub struct Base { uri: string, token: string }
+
+pub function identity(c: Client, b: Base): Request {
+  return get(c.with_token(b.token), b.uri + "/identity");
+}
+
+pub function sections(c: Client, b: Base): Request {
+  return get(c.with_token(b.token), b.uri + "/library/sections");
+}
+
+// The first `size` items of library `key` from `start`, in `sort` order.
+pub function section_items(c: Client, b: Base, key: string, start: i32, size: i32, sort: string): Request {
+  let q = url.query_encode([("X-Plex-Container-Start", start.to_string()), ("X-Plex-Container-Size", size.to_string()), ("sort", sort), ("includeGuids", "0")]);
+  return get(c.with_token(b.token), b.uri + "/library/sections/" + key + "/all?" + q);
+}
+
+pub function hubs(c: Client, b: Base): Request {
+  return get(c.with_token(b.token), b.uri + "/hubs?count=15");
+}
+
+pub function metadata(c: Client, b: Base, key: string): Request {
+  return get(c.with_token(b.token), b.uri + "/library/metadata/" + key);
+}
+
+pub function children(c: Client, b: Base, key: string): Request {
+  return get(c.with_token(b.token), b.uri + "/library/metadata/" + key + "/children");
+}
+
+pub function search(c: Client, b: Base, query: string): Request {
+  let q = url.query_encode([("query", query), ("limit", "20"), ("includeCollections", "0")]);
+  return get(c.with_token(b.token), b.uri + "/hubs/search?" + q);
+}
+
+// Marks an item watched, or unwatched.
+pub function scrobble(c: Client, b: Base, key: string, watched: boolean): Request {
+  let verb = "/:/unscrobble?";
+  if (watched) {
+    verb = "/:/scrobble?";
+  }
+  let q = url.query_encode([("identifier", "com.plexapp.plugins.library"), ("key", key)]);
+  return get(c.with_token(b.token), b.uri + verb + q);
+}
+
+// Reports the state of playback: "playing", "paused" or "stopped", at
+// `time_ms` of `duration_ms`. The server keeps it as the resume point.
+pub function timeline(c: Client, b: Base, key: string, state: string, time_ms: i64, duration_ms: i64): Request {
+  let q = url.query_encode([("ratingKey", key), ("key", "/library/metadata/" + key), ("state", state), ("time", time_ms.to_string()), ("duration", duration_ms.to_string()), ("hasMDE", "1")]);
+  return get(c.with_token(b.token), b.uri + "/:/timeline?" + q);
+}
+
+// The address of image `path` of the server, scaled to w by h. A path of
+// plex.tv or of a web host is passed through the transcoder of the server
+// as well.
+pub function image_url(b: Base, path: string, w: i32, h: i32): string {
+  let q = url.query_encode([("width", w.to_string()), ("height", h.to_string()), ("minSize", "1"), ("upscale", "1"), ("url", path), ("X-Plex-Token", b.token)]);
+  return b.uri + "/photo/:/transcode?" + q;
+}
+
+// --- records of a server
+
+pub struct Section { key: string, kind: string, title: string }
+
+pub function parse_sections(body: string): Section[] {
+  let out: Section[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for n in elements(d, container(d), "Directory") {
+    let kind = str(d, n, "type");
+    if (kind == "movie" || kind == "show" || kind == "artist") {
+      out = out.append(Section { key: str(d, n, "key"), kind: kind, title: str(d, n, "title") });
+    }
+  }
+  return out;
+}
+
+// The file of a version of an item. `key` is its address on the server.
+pub struct Part { key: string, container: string, size: i64 }
+
+pub struct Media { container: string, video: string, audio: string, resolution: string, bitrate: i32, width: i32, height: i32, parts: Part[] }
+
+// An item of a library: a movie, a show, a season, an episode, an artist,
+// an album or a track. `key` is its ratingKey.
+pub struct Item {
+  key: string,
+  kind: string,
+  title: string,
+  parent: string,
+  grandparent: string,
+  year: i32,
+  index: i32,
+  parent_index: i32,
+  summary: string,
+  thumb: string,
+  art: string,
+  parent_thumb: string,
+  grandparent_thumb: string,
+  duration_ms: i64,
+  offset_ms: i64,
+  views: i32,
+  leaves: i32,
+  viewed_leaves: i32,
+  children: i32,
+  rating: string,
+  content_rating: string,
+  studio: string,
+  genres: string[],
+  media: Media[],
+}
+
+pub function no_item(): Item {
+  return Item { key: "", kind: "", title: "", parent: "", grandparent: "", year: 0, index: 0, parent_index: 0, summary: "", thumb: "", art: "", parent_thumb: "", grandparent_thumb: "", duration_ms: 0i64, offset_ms: 0i64, views: 0, leaves: 0, viewed_leaves: 0, children: 0, rating: "", content_rating: "", studio: "", genres: [], media: [] };
+}
+
+function tags(d: json.Document, n: i32, key: string): string[] {
+  let out: string[] = [];
+  for t in elements(d, n, key) {
+    let s = str(d, t, "tag");
+    if (s.len() > 0) {
+      out = out.append(s);
+    }
+  }
+  return out;
+}
+
+function media_of(d: json.Document, n: i32): Media[] {
+  let out: Media[] = [];
+  for m in elements(d, n, "Media") {
+    let parts: Part[] = [];
+    for p in elements(d, m, "Part") {
+      parts = parts.append(Part { key: str(d, p, "key"), container: str(d, p, "container"), size: int(d, p, "size") });
+    }
+    out = out.append(Media { container: str(d, m, "container"), video: str(d, m, "videoCodec"), audio: str(d, m, "audioCodec"), resolution: str(d, m, "videoResolution"), bitrate: int(d, m, "bitrate") as i32, width: int(d, m, "width") as i32, height: int(d, m, "height") as i32, parts: parts });
+  }
+  return out;
+}
+
+function rating_of(d: json.Document, n: i32): string {
+  let r = str(d, n, "audienceRating");
+  if (r.len() == 0) {
+    r = str(d, n, "rating");
+  }
+  return r;
+}
+
+pub function item_of(d: json.Document, n: i32): Item {
+  return Item {
+    key: str(d, n, "ratingKey"),
+    kind: str(d, n, "type"),
+    title: str(d, n, "title"),
+    parent: str(d, n, "parentTitle"),
+    grandparent: str(d, n, "grandparentTitle"),
+    year: int(d, n, "year") as i32,
+    index: int(d, n, "index") as i32,
+    parent_index: int(d, n, "parentIndex") as i32,
+    summary: str(d, n, "summary"),
+    thumb: str(d, n, "thumb"),
+    art: str(d, n, "art"),
+    parent_thumb: str(d, n, "parentThumb"),
+    grandparent_thumb: str(d, n, "grandparentThumb"),
+    duration_ms: int(d, n, "duration"),
+    offset_ms: int(d, n, "viewOffset"),
+    views: int(d, n, "viewCount") as i32,
+    leaves: int(d, n, "leafCount") as i32,
+    viewed_leaves: int(d, n, "viewedLeafCount") as i32,
+    children: int(d, n, "childCount") as i32,
+    rating: rating_of(d, n),
+    content_rating: str(d, n, "contentRating"),
+    studio: str(d, n, "studio"),
+    genres: tags(d, n, "Genre"),
+    media: media_of(d, n),
+  };
+}
+
+// A page of a library: the items, and the count of all its items.
+pub struct Page { items: Item[], total: i32 }
+
+pub function parse_items(body: string): Page {
+  let none: Item[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return Page { items: none, total: 0 };
+  };
+  let m = container(d);
+  let items: Item[] = [];
+  for n in elements(d, m, "Metadata") {
+    items = items.append(item_of(d, n));
+  }
+  let total = int(d, m, "totalSize") as i32;
+  if (total == 0) {
+    total = int(d, m, "size") as i32;
+  }
+  return Page { items: items, total: total };
+}
+
+// The first item of a reply, as /library/metadata/KEY gives it.
+pub function parse_item(body: string): Option[Item] {
+  let page = parse_items(body);
+  if (page.items.len() == 0) {
+    return None;
+  }
+  return Some(page.items[0]);
+}
+
+// A row of the home screen or of a search.
+pub struct Hub { title: string, ident: string, items: Item[] }
+
+pub function parse_hubs(body: string): Hub[] {
+  let out: Hub[] = [];
+  let Ok(d) = json.parse_document(body) else {
+    return out;
+  };
+  for h in elements(d, container(d), "Hub") {
+    let items: Item[] = [];
+    for n in elements(d, h, "Metadata") {
+      let it = item_of(d, n);
+      if (playable_kind(it.kind) || it.kind == "show" || it.kind == "season" || it.kind == "artist" || it.kind == "album") {
+        items = items.append(it);
+      }
+    }
+    if (items.len() > 0) {
+      out = out.append(Hub { title: str(d, h, "title"), ident: str(d, h, "hubIdentifier"), items: items });
+    }
+  }
+  return out;
+}
+
+// --- what the screens show of an item
+
+pub function playable_kind(kind: string): boolean {
+  return kind == "movie" || kind == "episode" || kind == "track" || kind == "clip";
+}
+
+// The image of the item for a card: an episode shows its show, a track its
+// album.
+pub function poster(it: Item): string {
+  if (it.kind == "episode" && it.grandparent_thumb.len() > 0) {
+    return it.grandparent_thumb;
+  }
+  if (it.kind == "track" && it.parent_thumb.len() > 0) {
+    return it.parent_thumb;
+  }
+  if (it.thumb.len() > 0) {
+    return it.thumb;
+  }
+  return it.parent_thumb;
+}
+
+// The name of the item on a card.
+pub function card_title(it: Item): string {
+  if (it.kind == "episode" && it.grandparent.len() > 0) {
+    return it.grandparent;
+  }
+  return it.title;
+}
+
+// The second line of a card: "S1 E3", a year, or the artist of an album.
+pub function card_subtitle(it: Item): string {
+  if (it.kind == "episode") {
+    return episode_code(it);
+  }
+  if (it.kind == "season") {
+    if (it.leaves > 0) {
+      return it.leaves.to_string() + " episodes";
+    }
+    return "";
+  }
+  if (it.kind == "album" || it.kind == "track") {
+    return it.parent;
+  }
+  if (it.year > 0) {
+    return it.year.to_string();
+  }
+  return "";
+}
+
+pub function episode_code(it: Item): string {
+  return "S" + it.parent_index.to_string() + " E" + it.index.to_string();
+}
+
+pub function watched(it: Item): boolean {
+  if (it.leaves > 0) {
+    return it.viewed_leaves >= it.leaves;
+  }
+  return it.views > 0 && it.offset_ms == 0i64;
+}
+
+// The part of the item that the user has seen, from 0 to 1000, for the bar
+// on a card. 0 when the user has not started it.
+pub function progress(it: Item): i32 {
+  if (it.duration_ms <= 0i64 || it.offset_ms <= 0i64) {
+    return 0;
+  }
+  let p = it.offset_ms * 1000i64 / it.duration_ms;
+  if (p > 1000i64) {
+    return 1000;
+  }
+  return p as i32;
+}
+
+// A duration as "1h 52m", or "48m".
+pub function duration_text(ms: i64): string {
+  let minutes = ms / 60000i64;
+  if (minutes >= 60i64) {
+    let h = minutes / 60i64;
+    let m = minutes % 60i64;
+    if (m == 0i64) {
+      return h.to_string() + "h";
+    }
+    return h.to_string() + "h " + m.to_string() + "m";
+  }
+  return minutes.to_string() + "m";
+}
+
+function two(n: i64): string {
+  if (n < 10i64) {
+    return "0" + n.to_string();
+  }
+  return n.to_string();
+}
+
+// A position as "1:02:03", or "2:03" under an hour.
+pub function clock_text(ms: i64): string {
+  let total = ms / 1000i64;
+  if (total < 0i64) {
+    total = 0i64;
+  }
+  let h = total / 3600i64;
+  let m = total / 60i64 % 60i64;
+  let s = total % 60i64;
+  if (h > 0i64) {
+    return h.to_string() + ":" + two(m) + ":" + two(s);
+  }
+  return m.to_string() + ":" + two(s);
+}
+
+// The facts on the detail screen, as one line: "2010 · 2h 28m · PG-13 · 8.7".
+pub function facts(it: Item): string {
+  let parts: string[] = [];
+  if (it.kind == "episode") {
+    parts = parts.append(episode_code(it));
+  } else if (it.year > 0) {
+    parts = parts.append(it.year.to_string());
+  }
+  if (it.duration_ms > 0i64) {
+    parts = parts.append(duration_text(it.duration_ms));
+  }
+  if (it.content_rating.len() > 0) {
+    parts = parts.append(it.content_rating);
+  }
+  if (it.rating.len() > 0) {
+    parts = parts.append(it.rating);
+  }
+  if (it.media.len() > 0 && it.media[0].resolution.len() > 0) {
+    parts = parts.append(resolution_badge(it.media[0].resolution));
+  }
+  return parts.join(" · ");
+}
+
+pub function resolution_badge(r: string): string {
+  if (r == "4k") {
+    return "4K";
+  }
+  if (r == "sd") {
+    return "SD";
+  }
+  if (r.len() > 0 && r[0] >= 48u8 && r[0] <= 57u8) {
+    return r + "p";
+  }
+  return r.to_ascii_upper();
+}
+
+// --- playback
+
+// A quality of playback. `kbps` 0 plays the file as it is.
+pub struct Quality { name: string, kbps: i32, resolution: string }
+
+pub function qualities(): Quality[] {
+  return [
+    Quality { name: "Original", kbps: 0, resolution: "" },
+    Quality { name: "1080p 20 Mbps", kbps: 20000, resolution: "1920x1080" },
+    Quality { name: "1080p 8 Mbps", kbps: 8000, resolution: "1920x1080" },
+    Quality { name: "720p 4 Mbps", kbps: 4000, resolution: "1280x720" },
+    Quality { name: "480p 1.5 Mbps", kbps: 1500, resolution: "720x480" },
+    Quality { name: "240p 320 kbps", kbps: 320, resolution: "320x240" },
+  ];
+}
+
+// The containers and codecs that Android plays with no help.
+function direct_container(c: string): boolean {
+  return c == "mp4" || c == "m4v" || c == "mov" || c == "mkv" || c == "webm" || c == "mpegts" || c == "ts" || c == "mp3" || c == "m4a" || c == "aac" || c == "flac" || c == "ogg" || c == "opus" || c == "wav";
+}
+
+function direct_video(v: string): boolean {
+  return v.len() == 0 || v == "h264" || v == "hevc" || v == "vp8" || v == "vp9" || v == "av1" || v == "mpeg4";
+}
+
+function direct_audio(a: string): boolean {
+  return a.len() == 0 || a == "aac" || a == "mp3" || a == "ac3" || a == "eac3" || a == "opus" || a == "vorbis" || a == "flac" || a == "pcm" || a == "alac";
+}
+
+// Whether the phone can play the first version of the item as it is.
+pub function direct_playable(it: Item): boolean {
+  if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
+    return false;
+  }
+  let m = it.media[0];
+  return direct_container(m.container) && direct_video(m.video) && direct_audio(m.audio);
+}
+
+// The address of the file of the item, which the player reads as it is.
+pub function direct_url(b: Base, it: Item): string {
+  return b.uri + it.media[0].parts[0].key + "?" + url.query_encode([("X-Plex-Token", b.token)]);
+}
+
+// The address of an HLS stream that the server makes from the item at
+// quality `q`, from `offset_ms`. `session` names the transcode, so that
+// stop_transcode can end it.
+pub function hls_url(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string): string {
+  let pairs: (string, string)[] = [
+    ("path", "/library/metadata/" + it.key),
+    ("mediaIndex", "0"),
+    ("partIndex", "0"),
+    ("protocol", "hls"),
+    ("fastSeek", "1"),
+    ("directPlay", "0"),
+    ("directStream", "1"),
+    ("directStreamAudio", "1"),
+    ("subtitleSize", "100"),
+    ("audioBoost", "100"),
+    ("location", "lan"),
+    ("offset", (offset_ms / 1000i64).to_string()),
+    ("session", session),
+    ("X-Plex-Session-Identifier", session),
+    ("X-Plex-Client-Identifier", c.id),
+    ("X-Plex-Product", PRODUCT),
+    ("X-Plex-Platform", "Android"),
+    ("X-Plex-Device", c.device),
+    ("X-Plex-Token", b.token),
+  ];
+  if (q.kbps > 0) {
+    pairs = pairs.append(("maxVideoBitrate", q.kbps.to_string()));
+    pairs = pairs.append(("videoResolution", q.resolution));
+    pairs = pairs.append(("videoQuality", "100"));
+  }
+  return b.uri + "/video/:/transcode/universal/start.m3u8?" + url.query_encode(pairs);
+}
+
+pub function stop_transcode(c: Client, b: Base, session: string): Request {
+  return get(c.with_token(b.token), b.uri + "/video/:/transcode/universal/stop?" + url.query_encode([("session", session)]));
+}
+
+// The address that the player opens for the item, and whether it is a
+// transcode that the server keeps a session for.
+pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
+
+pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string): Stream {
+  if (q.kbps == 0 && direct_playable(it)) {
+    return Stream { url: direct_url(b, it), transcode: false, offset_ms: offset_ms };
+  }
+  let chosen = q;
+  if (chosen.kbps == 0) {
+    chosen = qualities()[2];
+  }
+  // The transcode starts at the offset, so the player starts at 0.
+  return Stream { url: hls_url(c, b, it, chosen, offset_ms, session), transcode: true, offset_ms: 0i64 };
+}
+
+// The next episode after `key` in `episodes`, or None at the end.
+pub function next_episode(episodes: Item[], key: string): Option[Item] {
+  let i = 0;
+  while (i < episodes.len()) {
+    if (episodes[i].key == key) {
+      if (i + 1 < episodes.len()) {
+        return Some(episodes[i + 1]);
+      }
+      return None;
+    }
+    i += 1;
+  }
+  return None;
+}

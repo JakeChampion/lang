@@ -1,0 +1,39 @@
+// A use of the parameter after the match still follows the destructure in
+// the first arm, so the field is borrowed there.
+
+@must_consume
+struct Res { v: i32 }
+
+struct Holder { job: Option[Res], n: i32 }
+
+enum Ev { Go, Stop }
+
+function take(own r: Res): Option[Res] {
+  return Some(r);
+}
+
+function keep(own h: Holder): i32 {
+  if let Some(r) = h.job {
+    return r.v;
+  }
+  return 0;
+}
+
+function run(own h: Holder, e: Ev): i32 {
+  match (e) {
+    Go => {
+      let Holder { job, n } = h;
+      let next = match (job) {
+        Some(w) => take(w),
+        None => None,
+      };
+      let b = keep(Holder { job: next, n: n });
+    },
+    _ => {}
+  }
+  return keep(h);
+}
+
+function main(): i32 {
+  return run(Holder { job: Some(Res { v: 3 }), n: 1 }, Go);
+}

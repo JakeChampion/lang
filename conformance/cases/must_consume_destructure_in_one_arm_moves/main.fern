@@ -1,0 +1,49 @@
+// A destructure of an own parameter in one arm of a match moves its fields,
+// though a later arm returns the parameter: one run takes one arm. So a
+// field that holds a @must_consume value goes on to an own parameter.
+
+@must_consume
+struct Res { v: i32 }
+
+struct Holder { job: Option[Res], n: i32 }
+
+enum Ev { Go, Stop }
+
+function again(own r: Res): Option[Res] {
+    if (r.v > 2) {
+        return Some(r);
+    }
+    let gone = r.v;
+    return None;
+}
+
+function step(own h: Holder, e: Ev): Holder {
+    match (e) {
+        Go => {
+            let Holder { job, n } = h;
+            let next = match (job) {
+                Some(w) => again(w),
+                None => None,
+            };
+            return Holder { job: next, n: n + 1 };
+        },
+        _ => {
+            return h;
+        }
+    }
+}
+
+function close(own h: Holder): i32 {
+    if let Some(r) = h.job {
+        return r.v * 10 + h.n;
+    }
+    return h.n;
+}
+
+function main(): i32 {
+    let kept = step(step(Holder { job: Some(Res { v: 3 }), n: 0 }, Stop), Go);
+    print(close(kept).to_string());
+    let dropped = step(Holder { job: Some(Res { v: 1 }), n: 4 }, Go);
+    print(close(dropped).to_string());
+    return 0;
+}

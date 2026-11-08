@@ -1,8 +1,8 @@
 # Workers
 
-Status: [reference] shipped: `std/worker` with `spawn` and `join`, the `send`
-parameter mode, `E100`, a process per worker on native Linux, and the
-scheduler seam that `std/sim` implements. Every other engine runs a worker
+Status: [reference] shipped: `std/worker` with `spawn`, `join` and `poll`, the
+`send` parameter mode and `E100`. A worker is a process on native Linux and
+Android, and `std/sim` implements the scheduler seam. Every other engine runs a worker
 inline. Real threads are not shipped.
 
 ## The model
@@ -39,6 +39,7 @@ function main(): i32 {
 |---|---|
 | `spawn[T](send body: () => T): Worker[T]` | Runs `body` as a worker. The captures of `body` and its result cross the boundary, so both are send-safe (`E100`). |
 | `(own w: Worker[T]) join(): T` | Returns the result and consumes the worker. A second `join` is `E051`. |
+| `(own w: Worker[T]) poll(): Polled[T]` | Does not wait. Returns `Finished` with the result of a finished worker, or `Running` with the worker, which the caller polls or joins later. An event loop, such as an Android app, polls on its timeouts. A worker on a scheduler is joined. |
 | `@must_consume struct Worker[T]` | A program joins every worker it spawns (`E067`). No worker runs detached. |
 | `spawn_on[T](s: dyn Scheduler, send body: () => T): Worker[T]` | Runs `body` as a worker of scheduler `s`. `std/sim` is a scheduler. |
 | `trait Scheduler` | `admit(run)` starts a worker thunk and returns its index. `finish(index)` runs the workers until that one has its result. |
@@ -148,9 +149,20 @@ at a box the parent owns. `__send_copy` builds a fresh tree. Every box of
 that tree is inside the region, because the child's cursor is there and its
 free lists are empty.
 
-The module decides at `spawn`. A native Linux program forks. The
+The module decides at `spawn`. A native Linux or Android program forks. The
 interpreters map no region, and wasm and Darwin keep the inline order of
 step 1.
+
+An Android app is a library in a process that the Java runtime owns, with
+threads of its own. The child is a copy of one thread only, and a lock that
+another thread held at the fork stays held in the child. The fork is a raw
+`clone`, and the child exits through `exit_group`, so neither runs the fork
+or exit handlers of the C library.
+
+Fern code makes its system calls directly. So a body that stays in Fern
+code takes no such lock, and sockets and DNS through netd are Fern code. A
+body must not call a C function through `@import`, because `malloc` and
+`liblog` take locks.
 
 A fork or a mapping that the kernel refuses runs the body inline too.
 A refused fork releases its unused region before the inline fallback.
@@ -306,7 +318,13 @@ degrade until a thread primitive ships that wasmtime implements (R5).
 - `conformance/cases/worker_spawn_in_a_loop`: two hundred workers in
   turn, each joined, on every engine. On Linux each region goes back to the
   kernel at its join.
-- `tests/stdlib/worker_test.fern`: the module through `std/test`.
+
+- `tests/stdlib/worker_test.fern`: the module through `std/test`, `poll`
+  included. A forked worker has not finished at the first poll, and an
+  event loop holds a worker in its state across polls.
+- `tests/android/worker`: on the emulator, the loop thread of a
+  NativeActivity app polls two workers, and one of them resolves a name
+  through netd.
 
 - `conformance/cases/worker_runs_on_the_simulation`: three workers park on
   the virtual clock, their results cross back in join order, and the joins

@@ -151,6 +151,37 @@ func TestApkCompress(t *testing.T) {
 
 const extractNativeLibsID = 0x010104ea
 
+const usesCleartextTrafficID = 0x010104ec
+
+// TestApkCleartext checks that -apk-cleartext sets
+// android:usesCleartextTraffic, so the Java networking of the app, such as
+// a media player, can use http://, and that an APK without it leaves the
+// attribute out.
+func TestApkCleartext(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	if v, ok := applicationAttr(t, readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml"), usesCleartextTrafficID); ok {
+		t.Errorf("android:usesCleartextTraffic = %#x with no -apk-cleartext, want no attribute", v)
+	}
+	_, raw := buildApk(t, dir, "-apk-cleartext")
+	if v, ok := applicationAttr(t, readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml"), usesCleartextTrafficID); !ok || v != 0xffffffff {
+		t.Errorf("android:usesCleartextTraffic = %#x (set %v), want true", v, ok)
+	}
+	if v, ok := applicationAttr(t, readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml"), extractNativeLibsID); !ok || v != 0 {
+		t.Errorf("android:extractNativeLibs = %#x (set %v), want false beside the cleartext attribute", v, ok)
+	}
+	verifyApkV2(t, raw)
+}
+
+func zipOf(t *testing.T, raw []byte) *zip.Reader {
+	t.Helper()
+	z, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return z
+}
+
 // The value of the attribute with the resource ID `id` on the application
 // element of the binary manifest `man`. The application element is the one
 // with android:hasCode.

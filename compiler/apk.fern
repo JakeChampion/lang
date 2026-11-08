@@ -23,7 +23,7 @@ import "./util";
 // `permissions` are the full names of the permissions the app uses, and
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean }
 
 // A service of the app: its Java class, and its foreground service types as
 // the flags of android:foregroundServiceType, or 0.
@@ -97,9 +97,9 @@ function prefixed(b: [u8]): u8[] {
 
 // android:theme, label, icon, name, hasCode, exported, configChanges, value,
 // minSdkVersion, versionCode, versionName, targetSdkVersion,
-// extractNativeLibs and foregroundServiceType.
+// extractNativeLibs, usesCleartextTraffic and foregroundServiceType.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844010, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844010, 16844012, 16844185];
 }
 
 const S_THEME: i32 = 0;
@@ -128,17 +128,19 @@ const S_TARGET_SDK: i32 = 11;
 
 const S_EXTRACT_NATIVE_LIBS: i32 = 12;
 
-const S_FOREGROUND_TYPE: i32 = 13;
+const S_CLEARTEXT: i32 = 13;
 
-const S_PREFIX: i32 = 14;
+const S_FOREGROUND_TYPE: i32 = 14;
 
-const S_URI: i32 = 15;
+const S_PREFIX: i32 = 15;
 
-const S_PACKAGE: i32 = 16;
+const S_URI: i32 = 16;
+
+const S_PACKAGE: i32 = 17;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "extractNativeLibs", "foregroundServiceType",
+    "theme", "label", "icon", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -295,7 +297,11 @@ pub function manifest(app: App): u8[] {
   if (app.compress) {
     extract = -1;
   }
-  body = start(body, 3, application, app_attrs.append(attr_int(S_HAS_CODE, 18, has_code)).append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract)));
+  app_attrs = app_attrs.append(attr_int(S_HAS_CODE, 18, has_code)).append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract));
+  if (app.cleartext) {
+    app_attrs = app_attrs.append(attr_int(S_CLEARTEXT, 18, -1));
+  }
+  body = start(body, 3, application, app_attrs);
   activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1)).append(attr_int(S_CONFIG_CHANGES, 17, 1184));
   body = start(body, 4, activity, activity_attrs);
   body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));

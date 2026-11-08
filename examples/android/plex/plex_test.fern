@@ -1,0 +1,186 @@
+// The tests for plex.fern: the requests that it builds and the records that
+// it reads from replies in the shape that plex.tv and a server send.
+import "std/test";
+import "./plex";
+
+function client(): plex.Client {
+  return plex.Client { id: "dev-1", device: "Pixel", token: "" };
+}
+
+function base(): plex.Base {
+  return plex.Base { uri: "https://10-0-0-5.abc.plex.direct:32400", token: "srv" };
+}
+
+function header(r: plex.Request, name: string): string {
+  for h in r.headers {
+    if (h.0 == name) {
+      return h.1;
+    }
+  }
+  return "";
+}
+
+function test_headers_name_the_client(): test.TestOutcome {
+  let r = plex.pin_request(client());
+  if (r.method != "POST" || header(r, "X-Plex-Client-Identifier") != "dev-1" || header(r, "Accept") != "application/json") {
+    return test.fail("pin request headers");
+  }
+  if (header(r, "X-Plex-Token").len() != 0) {
+    return test.fail("a token on a request with none");
+  }
+  return test.assert_eq(header(plex.sections(client(), base()), "X-Plex-Token"), "srv");
+}
+
+function test_pin_parse(): test.TestOutcome {
+  let waiting = plex.parse_pin("{\"id\":2918,\"code\":\"7XKP\",\"product\":\"Fern for Plex\",\"trusted\":false,\"authToken\":null,\"expiresIn\":900}");
+  let Some(p) = waiting else {
+    return test.fail("no pin");
+  };
+  if (p.id != 2918i64 || p.code != "7XKP" || p.token.len() != 0) {
+    return test.fail("waiting pin " + p.code + " " + p.token);
+  }
+  let Some(done) = plex.parse_pin("{\"id\":2918,\"code\":\"7XKP\",\"authToken\":\"tok-123\"}") else {
+    return test.fail("no linked pin");
+  };
+  if (plex.parse_pin("{\"errors\":[]}").is_some()) {
+    return test.fail("an error as a pin");
+  }
+  return test.assert_eq(done.token, "tok-123");
+}
+
+const RESOURCES: string = "[{\"name\":\"Den\",\"product\":\"Plex Media Server\",\"provides\":\"server\",\"clientIdentifier\":\"abc\",\"accessToken\":\"srv\",\"owned\":true,\"connections\":[{\"protocol\":\"https\",\"address\":\"1.2.3.4\",\"port\":32400,\"uri\":\"https://1-2-3-4.abc.plex.direct:32400\",\"local\":false,\"relay\":false},{\"uri\":\"https://relay.plex.direct:8443\",\"local\":false,\"relay\":true},{\"uri\":\"https://10-0-0-5.abc.plex.direct:32400\",\"local\":true,\"relay\":false}]},{\"name\":\"Phone\",\"provides\":\"client,player\",\"connections\":[]}]";
+
+function test_servers_and_connection_order(): test.TestOutcome {
+  let servers = plex.parse_servers(RESOURCES);
+  if (servers.len() != 1 || servers[0].name != "Den" || servers[0].token != "srv" || !servers[0].owned) {
+    return test.fail("servers " + servers.len().to_string());
+  }
+  let order = plex.connection_order(servers[0]);
+  return test.assert_eq(order.join(" "), "https://10-0-0-5.abc.plex.direct:32400 https://1-2-3-4.abc.plex.direct:32400 https://relay.plex.direct:8443");
+}
+
+function test_manual_server(): test.TestOutcome {
+  let s = plex.manual_server("http://192.168.1.4:32400/", "t");
+  return test.assert_eq(plex.connection_order(s).join(" ") + " " + s.token, "http://192.168.1.4:32400 t");
+}
+
+function test_sections_keep_video_and_music(): test.TestOutcome {
+  let got = plex.parse_sections("{\"MediaContainer\":{\"size\":3,\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"},{\"key\":\"3\",\"type\":\"photo\",\"title\":\"Photos\"},{\"key\":\"4\",\"type\":\"artist\",\"title\":\"Music\"}]}}");
+  let names: string[] = [];
+  for s in got {
+    names = names.append(s.key + "=" + s.title);
+  }
+  return test.assert_eq(names.join(","), "1=Movies,2=TV Shows,4=Music");
+}
+
+const MOVIE: string = "{\"MediaContainer\":{\"size\":1,\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief.\",\"thumb\":\"/library/metadata/501/thumb/1\",\"art\":\"/library/metadata/501/art/1\",\"duration\":8880000,\"viewOffset\":4440000,\"contentRating\":\"PG-13\",\"audienceRating\":8.7,\"Genre\":[{\"tag\":\"Action\"},{\"tag\":\"Sci-Fi\"}],\"Media\":[{\"id\":9,\"container\":\"mkv\",\"videoCodec\":\"h264\",\"audioCodec\":\"dca\",\"videoResolution\":\"1080\",\"bitrate\":9000,\"Part\":[{\"id\":11,\"key\":\"/library/parts/11/1/file.mkv\",\"container\":\"mkv\",\"size\":1234567}]}]}]}}";
+
+function test_item_fields(): test.TestOutcome {
+  let Some(it) = plex.parse_item(MOVIE) else {
+    return test.fail("no item");
+  };
+  if (it.key != "501" || it.year != 2010 || it.duration_ms != 8880000i64 || it.offset_ms != 4440000i64 || it.genres.join("/") != "Action/Sci-Fi") {
+    return test.fail("fields of " + it.title);
+  }
+  if (it.media.len() != 1 || it.media[0].parts[0].key != "/library/parts/11/1/file.mkv" || it.media[0].audio != "dca") {
+    return test.fail("media");
+  }
+  if (plex.progress(it) != 500) {
+    return test.fail("progress " + plex.progress(it).to_string());
+  }
+  return test.assert_eq(plex.facts(it), "2010 · 2h 28m · PG-13 · 8.7 · 1080p");
+}
+
+function test_stream_choice(): test.TestOutcome {
+  let Some(it) = plex.parse_item(MOVIE) else {
+    return test.fail("no item");
+  };
+  let original = plex.qualities()[0];
+  // DTS audio is not one that Android decodes, so even Original transcodes.
+  let s = plex.stream_for(client(), base(), it, original, 60000i64, "s1");
+  if (!s.transcode || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || !s.url.contains("offset=60") || !s.url.contains("session=s1")) {
+    return test.fail("transcode " + s.url);
+  }
+  let aac = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "aac" }] };
+  let d = plex.stream_for(client(), base(), aac, original, 60000i64, "s1");
+  if (d.transcode || d.offset_ms != 60000i64) {
+    return test.fail("direct " + d.url);
+  }
+  let low = plex.stream_for(client(), base(), aac, plex.qualities()[3], 0i64, "s2");
+  if (!low.url.contains("maxVideoBitrate=4000") || !low.url.contains("videoResolution=1280x720")) {
+    return test.fail("720p " + low.url);
+  }
+  return test.assert_eq(d.url, "https://10-0-0-5.abc.plex.direct:32400/library/parts/11/1/file.mkv?X-Plex-Token=srv");
+}
+
+const HUBS: string = "{\"MediaContainer\":{\"size\":2,\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"size\":1,\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentThumb\":\"/library/metadata/70/thumb/2\",\"thumb\":\"/library/metadata/77/thumb/3\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Empty\",\"hubIdentifier\":\"x\",\"size\":0},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010},{\"ratingKey\":\"9\",\"type\":\"photo\",\"title\":\"Beach\"}]}]}}";
+
+function test_hubs(): test.TestOutcome {
+  let hubs = plex.parse_hubs(HUBS);
+  if (hubs.len() != 2 || hubs[1].items.len() != 1) {
+    return test.fail("hubs " + hubs.len().to_string());
+  }
+  let ep = hubs[0].items[0];
+  return test.assert_eq(plex.card_title(ep) + "|" + plex.card_subtitle(ep) + "|" + plex.poster(ep), "Lost|S1 E1|/library/metadata/70/thumb/2");
+}
+
+function test_page_total(): test.TestOutcome {
+  let page = plex.parse_items("{\"MediaContainer\":{\"size\":2,\"totalSize\":340,\"offset\":0,\"Metadata\":[{\"ratingKey\":\"1\",\"type\":\"show\",\"title\":\"A\",\"leafCount\":10,\"viewedLeafCount\":10},{\"ratingKey\":\"2\",\"type\":\"show\",\"title\":\"B\",\"leafCount\":10,\"viewedLeafCount\":3}]}}");
+  if (page.total != 340 || page.items.len() != 2) {
+    return test.fail("page " + page.total.to_string());
+  }
+  if (!plex.watched(page.items[0]) || plex.watched(page.items[1])) {
+    return test.fail("watched");
+  }
+  return test.assert_eq(plex.parse_items("not json").items.len().to_string(), "0");
+}
+
+function test_text(): test.TestOutcome {
+  let parts = [plex.clock_text(0i64), plex.clock_text(62000i64), plex.clock_text(3723000i64), plex.duration_text(2880000i64), plex.duration_text(7200000i64)];
+  return test.assert_eq(parts.join(" "), "0:00 1:02 1:02:03 48m 2h");
+}
+
+function test_urls(): test.TestOutcome {
+  let img = plex.image_url(base(), "/library/metadata/501/thumb/1", 240, 360);
+  if (!img.starts_with("https://10-0-0-5.abc.plex.direct:32400/photo/:/transcode?width=240&height=360") || !img.contains("url=%2Flibrary%2Fmetadata%2F501%2Fthumb%2F1")) {
+    return test.fail(img);
+  }
+  let tl = plex.timeline(client(), base(), "501", "paused", 1000i64, 9000i64).url;
+  if (!tl.contains("/:/timeline?ratingKey=501&key=%2Flibrary%2Fmetadata%2F501&state=paused&time=1000&duration=9000")) {
+    return test.fail(tl);
+  }
+  let q = plex.search(client(), base(), "star wars").url;
+  return test.assert_eq(q, "https://10-0-0-5.abc.plex.direct:32400/hubs/search?query=star+wars&limit=20&includeCollections=0");
+}
+
+function test_next_episode(): test.TestOutcome {
+  let a = plex.Item { ...plex.no_item(), key: "1" };
+  let b = plex.Item { ...plex.no_item(), key: "2" };
+  let eps = [a, b];
+  let next = match (plex.next_episode(eps, "1")) {
+    Some(it) => it.key,
+    None => "none",
+  };
+  let last = match (plex.next_episode(eps, "2")) {
+    Some(it) => it.key,
+    None => "none",
+  };
+  return test.assert_eq(next + " " + last, "2 none");
+}
+
+function main(): i32 {
+  let r = test.new("plex");
+  r = r.it("each request names the client", test_headers_name_the_client);
+  r = r.it("a PIN is read waiting and linked", test_pin_parse);
+  r = r.it("servers are read and their connections ordered", test_servers_and_connection_order);
+  r = r.it("a typed server has one connection", test_manual_server);
+  r = r.it("the libraries of video and music are kept", test_sections_keep_video_and_music);
+  r = r.it("an item is read with its media", test_item_fields);
+  r = r.it("a stream plays the file or a transcode", test_stream_choice);
+  r = r.it("the hubs of the home screen", test_hubs);
+  r = r.it("a page has the count of its library", test_page_total);
+  r = r.it("times and durations", test_text);
+  r = r.it("the addresses of images, timelines and searches", test_urls);
+  r = r.it("the next episode", test_next_episode);
+  return r.finish();
+}
