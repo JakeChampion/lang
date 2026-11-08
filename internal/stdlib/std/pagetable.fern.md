@@ -22,6 +22,8 @@ On x86-64, a table entry is present and writable. A 2 MiB page at level 2 adds t
 
 <<walk>>
 
+<<split>>
+
 <<activate>>
 ```
 
@@ -141,18 +143,23 @@ function index(address: usize, level: i32): usize {
 }
 
 // The table at `level` + 1 under the entry of `address` in `table`, made
-// when absent. 0 when the frames ran out.
+// when absent. A block at level 2 splits into a table of its pages, so a
+// page inside it can change on its own. 0 when the frames ran out.
 function (m: Tables) next_table(table: usize, address: usize, level: i32): usize {
   unsafe {
     let at = table + index(address, level) * ENTRY_BYTES;
     let entry = __load_i64(at);
-    if ((entry & 1i64) != 0i64) {
+    if (is_table(entry)) {
       return entry as usize & 0xfffffffff000 as usize;
     }
     let Some(fresh) = m.frames.alloc() else {
       return ZERO;
     };
-    clear(fresh);
+    if ((entry & 1i64) != 0i64) {
+      split(fresh, entry);
+    } else {
+      clear(fresh);
+    }
     __store_i64(at, table_entry(fresh));
     return fresh;
   }
@@ -174,7 +181,7 @@ function (m: Tables) map_range(start: usize, len: usize, attr: i64): boolean {
       return false;
     }
     unsafe {
-      if (at % BLOCK_BYTES == ZERO && end - at >= BLOCK_BYTES) {
+      if (at % BLOCK_BYTES == ZERO && end - at >= BLOCK_BYTES && !is_table(__load_i64(l2 + index(at, 2) * ENTRY_BYTES))) {
         __store_i64(l2 + index(at, 2) * ENTRY_BYTES, block_entry(at, attr));
         at += BLOCK_BYTES;
       } else {
@@ -188,6 +195,54 @@ function (m: Tables) map_range(start: usize, len: usize, attr: i64): boolean {
     }
   }
   return true;
+}
+```
+
+### `split`
+
+A level 2 entry is a table or a block. On arm64 a table has bit 1 set and a block has it clear. On x86-64 a block has the page-size bit, and a table does not. `split` fills a fresh table with the 512 pages of a block, with the attributes of the block. One page can then change on its own. A range that is already mapped can thus change its memory type page by page, which `std/dma` does.
+
+```fern
+<<split>>=
+function is_table(entry: i64): boolean {
+  if ((entry & 1i64) == 0i64) {
+    return false;
+  }
+  if (target_arch() == "arm64") {
+    return (entry & 2i64) != 0i64;
+  }
+  return (entry & 0x80i64) == 0i64;
+}
+
+// The attributes of a block, without its address and without the bit that
+// makes it a block.
+function block_attr(entry: i64): i64 {
+  let attr = entry & 0xffff000000000fffu64 as i64;
+  if (target_arch() == "arm64") {
+    return attr;
+  }
+  return attr & (0x7fi64 | 0xffff000000000f00u64 as i64);
+}
+
+function split(table: usize, block: i64): void {
+  unsafe {
+    let base = block as usize & 0xffffffe00000 as usize;
+    let attr = block_attr(block);
+    let i = ZERO;
+    while (i < ENTRIES) {
+      __store_i64(table + i * ENTRY_BYTES, page_entry(base + i * PAGE_BYTES, attr));
+      i += ONE;
+    }
+  }
+}
+
+// Drops every translation that the core cached, after a change to the active
+// mapping.
+pub function (m: Tables) flush(): void {
+  unsafe {
+    __fence();
+    __tlb_flush_all();
+  }
 }
 ```
 

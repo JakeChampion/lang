@@ -26,23 +26,31 @@ func filterSyscalls(asm string) ([]int, bool) {
 	if at < 0 {
 		return nil, false
 	}
+	// A jeq row compares the word the last ld row loaded: the syscall
+	// number at offset 0, or an argument of a rule at offset 16 and up.
 	var out []int
+	loaded := -1
 	for _, m := range seccompRow.FindAllStringSubmatch(asm[at:], -1) {
 		code, _ := strconv.Atoi(m[1])
-		if code&0xffff != 21 {
+		k, _ := strconv.Atoi(m[2])
+		if code == 32 {
+			loaded = k
 			continue
 		}
-		k, _ := strconv.Atoi(m[2])
+		if code&0xffff != 21 || loaded != 0 {
+			continue
+		}
 		out = append(out, k)
 	}
 	return out, true
 }
 
 func TestFilterSyscallsReadsTheJeqRows(t *testing.T) {
-	asm := ".Lseccomp_filter:\n    .long 32, 4\n    .long 65557, 0xC00000B7\n    .long 6, 0x80000000\n    .long 32, 0\n    .long 196629, 64\n    .long 131093, 93\n    .long 65557, 94\n    .long 6, 0x80000000\n    .long 6, 0x7FFF0000\n"
+	asm := ".Lseccomp_filter:\n    .long 32, 4\n    .long 65557, 0xC00000B7\n    .long 6, 0x80000000\n    .long 32, 0\n    .long 196629, 64\n    .long 131093, 93\n    .long 65557, 94\n    .long 6, 0x80000000\n" +
+		"    .long 32, 28\n    .long 150994965, 0\n    .long 32, 24\n    .long 2031637, 21505\n    .long 1966101, 21506\n    .long 6, 0x80000000\n    .long 32, 0\n    .long 65557, 16\n    .long 6, 0x7FFF0000\n"
 	got, ok := filterSyscalls(asm)
-	if !ok || fmt.Sprint(got) != "[64 93 94]" {
-		t.Fatalf("filterSyscalls = %v, %v; want [64 93 94]", got, ok)
+	if !ok || fmt.Sprint(got) != "[64 93 94 16]" {
+		t.Fatalf("filterSyscalls = %v, %v; want [64 93 94 16] (the argument rows of an ioctl rule are not syscalls)", got, ok)
 	}
 }
 
