@@ -1,10 +1,16 @@
 import "core/mem";
+import "./ast";
 
 // References belong to one Heap. Interpreter environments share that heap.
 pub struct Ref { slot: i32, generation: i64 }
 
+// Closure code has no runtime values. Captures use heap edges.
+pub struct ClosureCode { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_types: string[], generic_name: string }
+
 // Payloads contain data and internal references, without host cells or root handles.
-pub struct Payload { text: string, words: i64[], edges: Ref[] }
+pub struct NativeHandle { reader: Option[Reader], writer: Option[Writer], directory: Option[Dir] }
+
+pub struct Payload { text: string, words: i64[], edges: Ref[], closure: Option[ClosureCode], handle: Option[NativeHandle] }
 
 struct Node { generation: i64, active: boolean, payload: Payload, next_free: i32 }
 
@@ -38,7 +44,7 @@ function empty_counts(): Counts {
 }
 
 function empty_payload(): Payload {
-  return Payload { text: "", words: [], edges: [] };
+  return Payload { text: "", words: [], edges: [], closure: None, handle: None };
 }
 
 pub function create(): Heap {
@@ -177,6 +183,18 @@ function references(s: State, edges: Root[]): Ref[] {
 }
 
 pub function allocate(h: Heap, text: string, words: i64[], edges: Root[]): Root {
+  return allocate_payload(h, text, words, edges, None, None);
+}
+
+pub function allocate_closure(h: Heap, code: ClosureCode, text: string, edges: Root[]): Root {
+  return allocate_payload(h, text, [], edges, Some(code), None);
+}
+
+pub function allocate_handle(h: Heap, handle: NativeHandle): Root {
+  return allocate_payload(h, "", [], [], None, Some(handle));
+}
+
+function allocate_payload(h: Heap, text: string, words: i64[], edges: Root[], closure: Option[ClosureCode], handle: Option[NativeHandle]): Root {
   let s = h.state.get();
   h.state.set(empty_state());
   if (s.first_free < 0 && s.nodes.len() >= s.next_collection) {
@@ -192,7 +210,7 @@ pub function allocate(h: Heap, text: string, words: i64[], edges: Root[]): Root 
     require(s.nodes.len() < 2147483647);
     slot = s.nodes.len();
   }
-  let payload = Payload { text: text, words: words, edges: references(s, edges) };
+  let payload = Payload { text: text, words: words, edges: references(s, edges), closure: closure, handle: handle };
   let node = Node { generation: generation, active: true, payload: payload, next_free: -1 };
   let r = Ref { slot: slot, generation: generation };
   if (slot == s.nodes.len()) {
@@ -224,7 +242,7 @@ pub function replace(root: Root, text: string, words: i64[], edges: Root[]): voi
   let s = h.state.get();
   h.state.set(empty_state());
   require(live(s, r));
-  let payload = Payload { text: text, words: words, edges: references(s, edges) };
+  let payload = Payload { text: text, words: words, edges: references(s, edges), closure: None, handle: None };
   h.state.set(State { ...s, nodes: s.nodes.with(r.slot, Node { ...s.nodes[r.slot], payload: payload }) });
 }
 

@@ -20,6 +20,8 @@ Errors consume the decoder. Create a new decoder after an error.
 
 ```fern
 <<*>>=
+// Incremental Ogg Vorbis playback with bounded packet storage.
+
 import "std/audio/ogg";
 import "std/audio/pcm";
 import "std/audio/wire";
