@@ -111,16 +111,27 @@ function trailing_id3v1(input: [u8]): boolean {
 }
 
 pub function inspect_tail(input: [u8], input_bytes: i64): Result[Tail, pcm.AudioError] {
-  if (input_bytes < 0i64) { return Err(pcm.Header); }
+  if (input_bytes < 0i64) {
+    return Err(pcm.Header);
+  }
   let needed = if (input_bytes < 160i64) { input_bytes as i32 } else { 160 };
-  if (input.len() != needed) { return Err(pcm.Truncated); }
+  if (input.len() != needed) {
+    return Err(pcm.Truncated);
+  }
   let at = input.len();
   let removed = 0i64;
-  if (trailing_id3v1(input)) { at -= 128; removed = 128i64; }
-  if (at < 32 || !wire.tag(input, at - 32, "APETAGEX")) { return Ok(Tail { bytes: removed, header: false }); }
+  if (trailing_id3v1(input)) {
+    at -= 128;
+    removed = 128i64;
+  }
+  if (at < 32 || !wire.tag(input, at - 32, "APETAGEX")) {
+    return Ok(Tail { bytes: removed, header: false });
+  }
   let footer = ape_footer(input[at - 32:at], input_bytes - removed)?;
   let bytes = removed + footer.bytes + (if (footer.header) { 32i64 } else { 0i64 });
-  if (bytes > input_bytes) { return Err(pcm.Header); }
+  if (bytes > input_bytes) {
+    return Err(pcm.Header);
+  }
   return Ok(Tail { bytes: bytes, header: footer.header });
 }
 
