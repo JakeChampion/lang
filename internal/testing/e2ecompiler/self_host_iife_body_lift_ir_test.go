@@ -11,6 +11,18 @@ var iifeBodyLiftIRCases = []struct {
 	src  string
 	exit int
 }{
+	{"callee-retained-across-block-assignment", `function one(n: i32): i32 { return 1; }
+function two(n: i32): i32 { return 2; }
+function main(): i32 {
+    let f = one;
+    let value = f({ f = two; 0 });
+    return value * 10 + f(0);
+}`, 12},
+	{"callee-retained-across-block-lambda", `function main(): i32 {
+    let f = (n: i32): i32 => 1;
+    let value = f({ f = (n: i32): i32 => 2; 0 });
+    return value * 10 + f(0);
+}`, 12},
 	{"lambda-in-if-branch", `function main(): i32 {
     let v0: (i32) => i32 = ((x0: i32) => 189i32);
     let w: boolean = ((851i64 / 242i64) != 763i64);

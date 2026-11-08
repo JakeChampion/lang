@@ -1,0 +1,27 @@
+// spec: CL-03
+// spec: CL-04
+
+import "std/array";
+import "std/string";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let xs = [1, 2, 3];
+  let empty: i32[] = [];
+  for size in [-2, 0] {
+    if (xs.chunks(size).len() != 0 || xs.chunks_exact(size).len() != 0 || empty.chunks(size).len() != 0) { return 1; }
+    let text = "aé!".chunks(size);
+    if (text.len() != 1 || text[0] != "aé!" || "".chunks(size).len() != 0) { return 2; }
+  }
+  let scalars = "aé!".chunks(1);
+  if (scalars.len() != 3 || scalars[0] != "a" || scalars[1] != "é" || scalars[2] != "!") { return 3; }
+  let min32: i32 = -2147483647 - 1;
+  let max32: i32 = 2147483647;
+  if (max32.abs_diff(min32) != -1 || min32.abs_diff(max32) != -1 || min32.abs_diff(0) != min32) { return 4; }
+  let min64: i64 = -9223372036854775807i64 - 1i64;
+  let max64: i64 = 9223372036854775807i64;
+  if (max64.abs_diff(min64) != -1i64 || min64.abs_diff(max64) != -1i64 || min64.abs_diff(0i64) != min64) { return 5; }
+  if ((-5).abs_diff(3) != 8 || (-5i64).abs_diff(3i64) != 8i64) { return 6; }
+  return 0;
+}

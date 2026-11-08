@@ -1,0 +1,17 @@
+import "core/cmp";
+import "core/map";
+trait Add { function add(self: Self, n: i32): i32; }
+trait Eq { function same(self: Self, n: i32): boolean; }
+struct Box { n: i32 }
+impl Add for Box {
+  function add(self: Self, n: i32): i32 { return self.n + n; }
+}
+impl Eq for Box {
+  function same(self: Self, n: i32): boolean { return self.n == n; }
+}
+function make(): dyn Add { return Box { n: 7 }; }
+function equal(): dyn Eq { return Box { n: 7 }; }
+function main(): i32 {
+  if (make().add(2) != 9 || !equal().same(7)) { return 1; }
+  return 0;
+}

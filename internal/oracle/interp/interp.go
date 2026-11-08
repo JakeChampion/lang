@@ -1602,6 +1602,7 @@ func New() *Interp {
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
 	i.Builtins["udp_sendto_bytes"] = &Builtin{Fn: builtinUdpSendtoBytes}
+	i.Builtins["udp_sendmmsg"] = &Builtin{Fn: builtinUdpSendmmsg}
 	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
@@ -7505,6 +7506,30 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 }
 
 func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
+	var callee, receiver Value
+	if c.DynTrait != "" {
+		fa, ok := c.Callee.(*ast.FieldAccess)
+		if !ok {
+			return nil, fmt.Errorf("interp: dyn %s call without a field-access callee", c.DynTrait)
+		}
+		var err error
+		receiver, err = i.evalExpr(fa.Target, env)
+		if err != nil {
+			return nil, err
+		}
+		arrOwn(receiver)
+		defer arrDisown(receiver)
+	} else if id, named := c.Callee.(*ast.Ident); named {
+		if !id.Builtin {
+			callee, _ = env.get(id.Name)
+		}
+	} else {
+		var err error
+		callee, err = i.evalExpr(c.Callee, env)
+		if err != nil {
+			return nil, err
+		}
+	}
 	args := make([]Value, len(c.Args))
 	held := 0
 	for k, a := range c.Args {
@@ -7525,10 +7550,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("interp: dyn %s call without a field-access callee", c.DynTrait)
 		}
-		recv, err := i.evalExpr(fa.Target, env)
-		if err != nil {
-			return nil, err
-		}
+		recv := receiver
 		tn, ok := valueTypeName(recv)
 		if !ok {
 			return nil, fmt.Errorf("interp: cannot dispatch dyn %s.%s on a %T value", c.DynTrait, fa.Field, recv)
@@ -7561,14 +7583,14 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
-		if v, ok := env.get(id.Name); ok && !id.Builtin {
-			switch fv := v.(type) {
+		if callee != nil {
+			switch fv := callee.(type) {
 			case Func:
 				return i.callFunc(fv.Decl, args)
 			case *Closure:
 				return i.callClosure(fv, args)
 			}
-			return nil, fmt.Errorf("calling non-function %q (%T)", id.Name, v)
+			return nil, fmt.Errorf("calling non-function %q (%T)", id.Name, callee)
 		}
 		if b, ok := i.Builtins[id.Name]; ok {
 			return b.Fn(i, args)
@@ -7579,17 +7601,13 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("undefined function %q", id.Name)
 	}
-	cv, err := i.evalExpr(c.Callee, env)
-	if err != nil {
-		return nil, err
-	}
-	switch fv := cv.(type) {
+	switch fv := callee.(type) {
 	case Func:
 		return i.callFunc(fv.Decl, args)
 	case *Closure:
 		return i.callClosure(fv, args)
 	}
-	return nil, fmt.Errorf("interp: not a function: %T", cv)
+	return nil, fmt.Errorf("interp: not a function: %T", callee)
 }
 
 func disownAll(vs []Value) {
