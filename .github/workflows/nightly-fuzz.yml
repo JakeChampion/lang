@@ -431,6 +431,8 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: lock,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostLock,            wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: index,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostIndex,           wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: archive,  pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArchive,         wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: tangle,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostTangle,          wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: weave,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostWeave,           wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
