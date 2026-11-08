@@ -1957,6 +1957,9 @@ type FuncDecl struct {
 	// ImportIface is CallbackIface for @callback(ImportWITName).
 	ImportIface   string
 	ImportWITName string
+	// ImportWeak is the weak argument of a C @import: the symbol may be
+	// absent where the library loads.
+	ImportWeak    bool
 	ExportIface   string
 	ExportWITName string
 	// Provides is the capability that @provide("log") names.

@@ -82,6 +82,9 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 		b.WriteString(fn.ImportIface)
 		b.WriteString("\", \"")
 		b.WriteString(fn.ImportWITName)
+		if fn.ImportWeak {
+			b.WriteString("\", weak")
+		}
 		b.WriteString("\")\n")
 	}
 	if fn.PackageScoped {

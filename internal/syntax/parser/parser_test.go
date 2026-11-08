@@ -3159,6 +3159,32 @@ function get_random(): u64;`)
 	}
 }
 
+func TestWeakImportParses(t *testing.T) {
+	prog, err := Parse(`@import("libandroid.so", "ASurfaceTransaction_create", weak)
+function c_tx_create(): usize;`)
+	if err != nil {
+		t.Fatalf("weak @import should parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	if fn.ImportIface != "libandroid.so" || fn.ImportWITName != "ASurfaceTransaction_create" || !fn.ImportWeak {
+		t.Errorf("import = {%q %q weak %v}", fn.ImportIface, fn.ImportWITName, fn.ImportWeak)
+	}
+	strong, err := Parse(`@import("libm.so.6", "ldexp") function f(x: f64, e: i32): f64;`)
+	if err != nil || strong.Funcs[0].ImportWeak {
+		t.Errorf("a plain @import is strong: %v", err)
+	}
+	for _, src := range []string{
+		`@import("wasi:random/random@0.2.0", "get-random-u64", weak) function f(): u64;`,
+		`@import("libm.so.6", "ldexp", strong) function f(): i32;`,
+		`@import("libm.so.6", "ldexp", weak, weak) function f(): i32;`,
+		`@export("a:b/c", "d", weak) function f(): i32 { return 0; }`,
+	} {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: want a parse error", src)
+		}
+	}
+}
+
 func TestExportAttributeParses(t *testing.T) {
 	prog, err := Parse(`@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 0; }`)

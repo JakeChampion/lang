@@ -5012,7 +5012,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     stdlib: "", no_inline: false, always_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
-    import_iface: "", import_wit: "", all_type_params: [],
+    import_iface: "", import_wit: "", import_weak: false, all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
     is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [],

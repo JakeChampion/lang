@@ -7798,7 +7798,7 @@ function c_call_contracts(): ssasem.Contract[] {
     "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64",
     "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
-    "__c_call6", "__c_call6_f32", "__c_call6_f64",
+    "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv",
   ];
   let out: ssasem.Contract[] = [];
   for name in names {

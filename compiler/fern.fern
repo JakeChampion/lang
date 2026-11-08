@@ -1047,14 +1047,30 @@ function c_import_int(t: string): boolean {
   return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
 }
 
+function c_import_float(t: string): boolean {
+  return t == "f32" || t == "f64";
+}
+
+function c_import_floats(f: parser.FuncDecl): i32 {
+  let n = 0;
+  for p in f.params {
+    if (c_import_float(p.type_name)) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function c_import_refusal(f: parser.FuncDecl): string {
   let what = "@import " + f.name + ": ";
-  if (f.params.len() > 6) {
-    return what + "a C import takes at most 6 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  let floats = c_import_floats(f);
+  let ints = f.params.len() - floats;
+  if (floats == 0 && ints > 6 || floats > 0 && (ints > 6 || floats > 8)) {
+    return what + "a C import takes at most 6 integer parameters and 8 float parameters (it has " + util.i32_to_string(ints) + " and " + util.i32_to_string(floats) + ")";
   }
   for p in f.params {
-    if (!c_import_int(p.type_name)) {
-      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer and usize parameters";
+    if (!c_import_int(p.type_name) && !c_import_float(p.type_name)) {
+      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer, usize, f32 and f64 parameters";
     }
   }
   if (f.ret_type != "" && f.ret_type != "void" && f.ret_type != "f32" && f.ret_type != "f64" && !c_import_int(f.ret_type)) {
@@ -1186,7 +1202,7 @@ function so_imports(merged: parser.Module): elf.SoImports {
   let imp = elf.no_so_imports();
   for f in merged.funcs {
     if (is_c_library(f.import_iface)) {
-      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0), data: imp.data.append(false) };
+      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0), data: imp.data.append(false), weak: imp.weak.append(f.import_weak) };
     }
   }
   return imp;
@@ -1197,7 +1213,7 @@ function shared_environ_import(imp: elf.SoImports, slot: i32, target: string): e
   if (asmcore.is_android(target)) {
     libc = "libc.so";
   }
-  return elf.SoImports { libs: imp.libs.append(libc), syms: imp.syms.append("environ"), slots: imp.slots.append(slot), data: imp.data.append(true) };
+  return elf.SoImports { libs: imp.libs.append(libc), syms: imp.syms.append("environ"), slots: imp.slots.append(slot), data: imp.data.append(true), weak: imp.weak.append(false) };
 }
 
 function import_stub_names(merged: parser.Module): string[] {
@@ -1210,8 +1226,20 @@ function import_stub_names(merged: parser.Module): string[] {
   return out;
 }
 
+// The declaration of stub `k`, which keeps the @import of `f`.
+function stub_decl(f: parser.FuncDecl, k: i32): string {
+  let weak = "";
+  if (f.import_weak) {
+    weak = ", weak";
+  }
+  return "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\"" + weak + ")\nfunction " + import_stub(k) + "(): usize;\n";
+}
+
 // The source of the body that calls C import `f` through stub `k`.
 function c_import_body(f: parser.FuncDecl, k: i32): string {
+  if (c_import_floats(f) > 0) {
+    return c_import_body_floats(f, k);
+  }
   let args = import_stub(k) + "()";
   let params = "";
   for p in f.params {
@@ -1233,7 +1261,51 @@ function c_import_body(f: parser.FuncDecl, k: i32): string {
     stmt = "return " + call + " as " + f.ret_type + ";";
   }
   return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n    " + stmt + "\n  }\n}\n"
-    + "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\")\nfunction " + import_stub(k) + "(): usize;\n";
+    + stub_decl(f, k);
+}
+
+// The body of a C import with float parameters. The integer arguments go
+// in one block of memory and the bits of the float arguments in another,
+// each in the order of its kind, and __c_callv loads each into the argument
+// register that the ABI gives it.
+function c_import_body_floats(f: parser.FuncDecl, k: i32): string {
+  let params = "";
+  let stores = "";
+  let ni = 0;
+  let nf = 0;
+  for p in f.params {
+    if (params.len() > 0) {
+      params += ", ";
+    }
+    params = params + p.name + ": " + p.type_name;
+    if (c_import_float(p.type_name)) {
+      stores = stores + "    __store_i64(floats + " + util.i32_to_string(8 * nf) + " as usize, " + p.type_name + "_bits(" + p.name + ") as i64);\n";
+      nf += 1;
+    } else {
+      stores = stores + "    __store_i64(ints + " + util.i32_to_string(8 * ni) + " as usize, " + p.name + " as i64);\n";
+      ni += 1;
+    }
+  }
+  let kind = "0";
+  let ret = "";
+  let result = "";
+  if (f.ret_type == "f32") {
+    kind = "1";
+    ret = ": f32";
+    result = "    return f32_from_bits(r as i32);\n";
+  } else if (f.ret_type == "f64") {
+    kind = "2";
+    ret = ": f64";
+    result = "    return f64_from_bits(r as i64);\n";
+  } else if (f.ret_type != "" && f.ret_type != "void") {
+    ret = ": " + f.ret_type;
+    result = "    return r as " + f.ret_type + ";\n";
+  }
+  let body = "    let ints: usize = __alloc(64);\n    let floats: usize = __alloc(64);\n" + stores
+    + "    let r: usize = __c_callv(" + import_stub(k) + "(), ints, floats, " + kind + ");\n"
+    + "    __free(ints, 64);\n    __free(floats, 64);\n" + result;
+  return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n" + body + "  }\n}\n"
+    + stub_decl(f, k);
 }
 
 function has_c_imports(m: parser.Module): boolean {
@@ -1258,7 +1330,7 @@ pub function native_imports(m: parser.Module, target: string, shared: boolean): 
       let gen = parser.parse_module(lexer.tokenize(c_import_body(f, k)));
       let body = gen.funcs[0];
       let stub = gen.funcs[1];
-      funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "" });
+      funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "", import_weak: false });
       funcs = funcs.append(parser.FuncDecl { ...stub, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
     }
   }
