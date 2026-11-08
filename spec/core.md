@@ -541,6 +541,7 @@ is the number of slots it leaves.
 | `vpermute` | 513 | 2 | 1 |
 | `vextract_bits` | 514 | 1 | 1 |
 | `alloc_uninit` | 515 | 1 | 1 |
+| `udp_sendmmsg` | 516 | 4 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

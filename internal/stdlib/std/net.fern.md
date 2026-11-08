@@ -138,6 +138,7 @@ import "std/time";
 import "std/async";
 import "std/option";
 import "core/cmp";
+import "core/mem";
 ```
 
 ### `3 pub enum IpAddr`
@@ -1667,6 +1668,121 @@ pub function send_to(sock: Socket, data: u8[], to: SocketAddr): Result[i32, NetE
 pub function send(sock: Socket, data: u8[]): Result[i32, NetError] {
   let peer: u8[] = [];
   return __socket_count(udp_sendto_bytes(sock, peer, 0, data));
+}
+
+// send_many sends every datagram to the peer whose address `to` holds, in
+// the SENDER_BYTES form recv_into wrote, in as few system calls as the host
+// offers: a Batch of one flight. Ok carries the messages the host took.
+pub function send_many(sock: Socket, to: [u8], datagrams: u8[][]): Result[i32, NetError] {
+  return batch().add(to, datagrams).send(sock).1;
+}
+
+// A Batch gathers datagrams for several peers so that one call sends them
+// all: one 19-byte address per message, each message's byte count and
+// segment size (0 for a single datagram), and every message's bytes in
+// order. On Linux and Android the call is one `sendmmsg`, and a message
+// whose segment size is set is one `UDP_SEGMENT` message the kernel splits.
+pub struct Batch { addrs: u8[], lens: i32[], bytes: __Bytes, messages: i32 }
+
+struct __Bytes { h: usize }
+
+impl mem.Drop for __Bytes {
+  function drop(self: __Bytes): void {
+    buf_free(self.h);
+  }
+}
+
+pub function batch(): Batch {
+  return Batch { addrs: [], lens: [], bytes: __Bytes { h: buf_new(4096) }, messages: 0 };
+}
+
+// len is the messages the batch holds.
+pub function (b: Batch) len(): i32 {
+  return b.messages;
+}
+
+// GSO_SEGMENTS and GSO_BYTES are the most one UDP_SEGMENT message may
+// carry (UDP_MAX_SEGMENTS, and the 16-bit UDP length).
+const GSO_SEGMENTS: i32 = 64;
+
+const GSO_BYTES: i32 = 65535;
+
+// add puts a flight to the peer at `to` into the batch. A run of datagrams
+// of one size rides one message with that segment size, a shorter datagram
+// closes the run as its last segment, and a lone datagram is a message of
+// its own.
+pub function (b: Batch) add(to: [u8], datagrams: u8[][]): Batch {
+  let out = b;
+  let i = 0;
+  while (i < datagrams.len()) {
+    let size = datagrams[i].len();
+    let j = i + 1;
+    let total = size;
+    while (j < datagrams.len() && j - i < GSO_SEGMENTS && datagrams[j].len() <= size && total + datagrams[j].len() <= GSO_BYTES) {
+      total += datagrams[j].len();
+      j += 1;
+      if (datagrams[j - 1].len() < size) {
+        break;
+      }
+    }
+    let k = i;
+    while (k < j) {
+      buf_push_bytes_range(out.bytes.h, datagrams[k], 0, datagrams[k].len());
+      k += 1;
+    }
+    let segment = 0;
+    if (j - i > 1) {
+      segment = size;
+    }
+    out = Batch { ...out, addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment), messages: out.messages + 1 };
+    i = j;
+  }
+  return out;
+}
+
+// send hands the batch to the host and returns it empty, with the messages
+// the host took, which may be fewer than the batch held when the socket's
+// buffer is full. Where the host has no `sendmmsg`, each message goes as
+// its datagrams, one send_to each.
+pub function (b: Batch) send(sock: Socket): (Batch, Result[i32, NetError]) {
+  if (b.messages == 0) {
+    return (b, Ok(0));
+  }
+  let data = buf_take_bytes(b.bytes.h);
+  let empty = Batch { ...b, addrs: [], lens: [], messages: 0 };
+  if (target_os() == "linux" || target_os() == "android") {
+    return (empty, __socket_count(udp_sendmmsg(sock, b.addrs, data, b.lens)));
+  }
+  return (empty, __sent_one_by_one(sock, b.addrs, data, b.lens));
+}
+
+function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
+  let n = lens.len() / 2;
+  let off = 0;
+  let m = 0;
+  while (m < n) {
+    let size = lens[2 * m];
+    let seg = lens[2 * m + 1];
+    let to = sender(addrs[19 * m:19 * m + 19]);
+    let step = size;
+    if (seg > 0 && seg < size) {
+      step = seg;
+    }
+    let at = 0;
+    let first = true;
+    while (first || at < size) {
+      first = false;
+      let end = at + step;
+      if (end > size) {
+        end = size;
+      }
+      let r = send_to(sock, __bytes_owned(data[off + at:off + end]), to)?;
+      at = end;
+    }
+    off += size;
+    m += 1;
+  }
+  return Ok(n);
 }
 ```
 
