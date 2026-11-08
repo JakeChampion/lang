@@ -7,6 +7,10 @@ import (
 
 func TestLanesRejected(t *testing.T) {
 	for name, tc := range map[string]struct{ src, code, msg string }{
+		"raw f32 load":       {`function f(p: usize): f32x4 { return __f32x4_load_ptr(p); }`, "E095", "unsafe block"},
+		"raw f64 load":       {`function f(p: usize): f64x2 { return __f64x2_load_ptr(p); }`, "E095", "unsafe block"},
+		"raw f32 store":      {`function f(p: usize, v: f32x4): void { __f32x4_store(p, v); }`, "E095", "unsafe block"},
+		"raw f64 store":      {`function f(p: usize, v: f64x2): void { __f64x2_store(p, v); }`, "E095", "unsafe block"},
 		"array of lanes":     {`function f(): i32 { let xs: f64x2[] = []; return xs.len(); }`, "E085", "f64x2[] holds a lane value inside another type"},
 		"tuple of lanes":     {`function f(): (f32x4, i32) { return (__f32x4_splat(1.0), 1); }`, "E085", "(f32x4, i32) holds a lane value"},
 		"array literal":      {`function f(v: f64x2): i32 { let n: i32 = [v].len(); return n; }`, "E085", "holds a lane value inside another type"},
@@ -37,13 +41,17 @@ func TestLanesRejected(t *testing.T) {
 
 func TestLanesAccepted(t *testing.T) {
 	for name, src := range map[string]string{
-		"arithmetic":   `function f(a: f64x2, b: f64x2): f64x2 { return -(a + b) * a / b - a; }`,
-		"f32 lanes":    `function f(a: f32x4): f32x4 { return __f32x4_mul_add(a, a, __f32x4_sqrt(__f32x4_abs(a))); }`,
-		"builtins":     `function f(a: f64x2): f64 { let m: f64x2 = __f64x2_lt(a, __f64x2_of(1.0, 2.0)); let b: f64x2 = __f64x2_select(__f64x2_min(a, a), __f64x2_max(a, a), m); return __f64x2_lane(__f64x2_round(__f64x2_floor(b)), 1) + __f64x2_lane(__f64x2_ne(a, b), 0); }`,
-		"direct call":  `function g(v: f64x2, k: f64): f64x2 { return v * __f64x2_splat(k); } function f(): f64 { return __f64x2_lane(g(__f64x2_splat(1.0), 2.0), 0); }`,
-		"array lanes":  `function f(xs: f64[]): f64[] { let v: f64x2 = __f64x2_load(xs, 0); return __f64x2_with(xs, 2, v); }`,
-		"f32 array":    `function f(xs: f32[]): f32[] { return __f32x4_with(xs, 0, __f32x4_load(xs, 4)); }`,
-		"lambda local": `function f(v: f64x2): f64 { let x: f64 = __f64x2_lane(v, 0); let g = (y: f64): f64 => y + x; return g(1.0); }`,
+		"arithmetic":      `function f(a: f64x2, b: f64x2): f64x2 { return -(a + b) * a / b - a; }`,
+		"f32 lanes":       `function f(a: f32x4): f32x4 { return __f32x4_mul_add(a, a, __f32x4_sqrt(__f32x4_abs(a))); }`,
+		"builtins":        `function f(a: f64x2): f64 { let m: f64x2 = __f64x2_lt(a, __f64x2_of(1.0, 2.0)); let b: f64x2 = __f64x2_select(__f64x2_min(a, a), __f64x2_max(a, a), m); return __f64x2_lane(__f64x2_round(__f64x2_floor(b)), 1) + __f64x2_lane(__f64x2_ne(a, b), 0); }`,
+		"direct call":     `function g(v: f64x2, k: f64): f64x2 { return v * __f64x2_splat(k); } function f(): f64 { return __f64x2_lane(g(__f64x2_splat(1.0), 2.0), 0); }`,
+		"array lanes":     `function f(xs: f64[]): f64[] { let v: f64x2 = __f64x2_load(xs, 0); return __f64x2_with(xs, 2, v); }`,
+		"raw load block":  `function f(p: usize): f64x2 { unsafe { return __f64x2_load_ptr(p); } }`,
+		"raw store block": `function f(p: usize, v: f32x4): void { unsafe { __f32x4_store(p, v); } }`,
+		"packed f32":      `function f(xs: u8[]): u8[] { return __f32x4_with_bytes(xs, 1, __f32x4_load_bytes(xs, 0)); }`,
+		"packed f64":      `function f(xs: u8[]): u8[] { return __f64x2_with_bytes(xs, 0, __f64x2_load_bytes(xs, 1)); }`,
+		"f32 array":       `function f(xs: f32[]): f32[] { return __f32x4_with(xs, 0, __f32x4_load(xs, 4)); }`,
+		"lambda local":    `function f(v: f64x2): f64 { let x: f64 = __f64x2_lane(v, 0); let g = (y: f64): f64 => y + x; return g(1.0); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%s: want accepted, got %v", name, err)

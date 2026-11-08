@@ -2,13 +2,14 @@
 import "std/array";
 import "std/f64";
 import "./transform";
+import "./packed_transform";
 import "./analysis";
 import "./windows";
 import "./bitstream";
 
 pub enum Mode { Vbr(f64), Cbr(f64), Abr(f64, f64) }
 
-pub struct Encoder { block_size: i32, channels: i32, rate: i32, mode: Mode, pending: f64[], lap: f64[], detector: windows.Detector, control: i32, plans: transform.Plan[], profiles: analysis.Profile[] }
+pub struct Encoder { block_size: i32, channels: i32, rate: i32, mode: Mode, pending: f64[], lap: f64[], detector: windows.Detector, control: i32, plans: packed_transform.Plan[], profiles: analysis.Profile[], work: packed_transform.Scratch }
 
 pub struct Prepared { state: Encoder, coefs: f64[], noise: f64[], ranks: i32[], complexity: f64, nonzero: i32, control: i32 }
 
@@ -35,13 +36,13 @@ pub function create(block_size: i32, channels: i32, rate: i32, mode: Mode): Resu
       }
     }
   }
-  let plans: transform.Plan[] = [];
+  let plans: packed_transform.Plan[] = [];
   let profiles: analysis.Profile[] = [];
   for shift in 0..4 {
-    plans = plans.append(transform.plan(block_size >> shift));
+    plans = plans.append(packed_transform.plan(block_size >> shift));
     profiles = profiles.append(analysis.profile(block_size >> shift, rate));
   }
-  return Ok(Encoder { block_size: block_size, channels: channels, rate: rate, mode: mode, pending: transform.zeros(block_size * channels), lap: transform.zeros(block_size * channels), detector: windows.detector(), control: 0x10, plans: plans, profiles: profiles });
+  return Ok(Encoder { block_size: block_size, channels: channels, rate: rate, mode: mode, pending: transform.zeros(block_size * channels), lap: transform.zeros(block_size * channels), detector: windows.detector(), control: 0x10, plans: plans, profiles: profiles, work: packed_transform.scratch(block_size) });
 }
 
 pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, string] {
@@ -101,6 +102,7 @@ pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, strin
   let keys = transform.zeros(n * channels);
   let power_all = transform.zeros(n / 2);
   let all_lap = state.lap;
+  let work = state.work;
   let sum_square = 0.0;
   let sum_abs = 0.0;
   let nonzero = 0;
@@ -160,7 +162,8 @@ pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, strin
           read += 1;
         }
       }
-      let dual = transform.forward_dual(input, lap, (n - size) / 2, overlap, state.plans[shift]);
+      let dual = packed_transform.forward_dual(input, lap, (n - size) / 2, overlap, state.plans[shift], work);
+      work = dual.work;
       lap = dual.lap;
       let power = transform.zeros(size / 2);
       for i in 0..size {
@@ -222,7 +225,7 @@ pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, strin
     }
   }
   let ranks = analysis.ranks(keys);
-  return Ok(Prepared { state: Encoder { ...state, pending: next, lap: all_lap, detector: detector, control: detector.control }, coefs: coefs, noise: noise, ranks: ranks, complexity: complexity, nonzero: nonzero, control: control });
+  return Ok(Prepared { state: Encoder { ...state, pending: next, lap: all_lap, work: work, detector: detector, control: detector.control }, coefs: coefs, noise: noise, ranks: ranks, complexity: complexity, nonzero: nonzero, control: control });
 }
 
 function emit(p: Prepared, keep: i32, measure: boolean): bitstream.Encoded {

@@ -2761,6 +2761,16 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   if (b == "vbitmask") {
     return ssa_vbitmask(ins, reg_of, s);
   }
+  if (b == "vpack") {
+    s = ssa_fread(reg_of, ins.args[0], "d1", s);
+    s = ssa_fread(reg_of, ins.args[1], "d2", s);
+    let a = slice_unchecked(ssa_fsrc(reg_of, ins.args[0], "d1"), 1, ssa_fsrc(reg_of, ins.args[0], "d1").len());
+    let b = slice_unchecked(ssa_fsrc(reg_of, ins.args[1], "d2"), 1, ssa_fsrc(reg_of, ins.args[1], "d2").len());
+    s = s.write("    fcvtn v0.2s, v" + a + ".2d\n    fcvtn2 v0.4s, v" + b + ".2d\n");
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    mov v" + slice_unchecked(d, 1, d.len()) + ".16b, v0.16b\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   if (b == "vsplat") {
     return ssa_vsplat(ins, reg_of, s);
   }
@@ -2986,6 +2996,22 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_load(reg_of, ins.args[0], a, s);
   let b = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
+  if (util.str_has_suffix(ins.str, ":bytes")) {
+    s = s.need("heap");
+    s = ssa_ldst0(s, true, "x6", a);
+    s = ssa_cmp_rr(s, b, "x6");
+    s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+    s = s.write("    sub x16, x6, " + b + "\n    cmp x16, #16\n");
+    s = ssa_trap_guard(s, CC_HS, "__fern_oob_abort");
+    s = s.write("    add x17, " + a + ", " + b + "\n");
+    if (set) {
+      s = ssa_fread(reg_of, ins.args[2], "d1", s);
+      return s.write("    str " + ssa_vq(ssa_fsrc(reg_of, ins.args[2], "d1")) + ", [x17, #8]\n");
+    }
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    ldr " + ssa_vq(d) + ", [x17, #8]\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   s = s.need("heap");
   s = ssa_ldst0(s, true, "x6", a);
   s = ssa_cmp_rr(s, b, "x6");

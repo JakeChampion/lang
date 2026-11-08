@@ -1,0 +1,124 @@
+// Parallel block encoding with exact detector checkpoints and overlap preroll.
+import "std/array";
+import "std/worker";
+import "./audio";
+import "./encoder";
+import "./windows";
+import "./transform";
+
+struct Part { bytes: u8[], maximum: i32 }
+
+function planar(samples: [f64], n: i32, channels: i32): f64[] {
+  let next = transform.zeros(n * channels);
+  for ch in 0..channels {
+    for i in 0..n {
+      let value = samples[i * channels + ch];
+      if ((ch & 1) == 0 && ch + 1 < channels) {
+        value = 0.5 * (value + samples[i * channels + ch + 1]);
+      } else if ((ch & 1) != 0) {
+        value = 0.5 * (samples[i * channels + ch - 1] - value);
+      }
+      next = next.with(ch * n + i, value);
+    }
+  }
+  return next;
+}
+
+function checkpoints(source: audio.Audio, template: encoder.Encoder, begins: [i32]): encoder.Encoder[] {
+  let states: encoder.Encoder[] = [];
+  let old = template.pending;
+  let detector = template.detector;
+  let control = template.control;
+  let cursor = 0;
+  let next_checkpoint = 0;
+  while (next_checkpoint < begins.len()) {
+    let start = if (begins[next_checkpoint] > 2) { begins[next_checkpoint] - 2 } else { 0 };
+    if (cursor == start) {
+      states = states.append(encoder.Encoder { ...template, pending: old, detector: detector, control: control });
+      next_checkpoint += 1;
+      continue;
+    }
+    let next = planar(audio.sample_block(source, cursor, template.block_size), template.block_size, template.channels);
+    detector = windows.detect(detector, old, next, template.block_size, template.channels, template.rate);
+    old = next;
+    control = detector.control;
+    cursor += 1;
+  }
+  return states;
+}
+
+function part(source: audio.Audio, state0: encoder.Encoder, begin: i32, end: i32): Result[Part, string] {
+  let start = if (begin > 2) { begin - 2 } else { 0 };
+  let state = encoder.Encoder { ...state0 };
+  let n = state0.block_size;
+  let bytes: u8[] = [];
+  let maximum = 0;
+  for b in start..end {
+    let block = encoder.encode_block(state, audio.sample_block(source, b, n))?;
+    state = block.state;
+    if (b >= begin) {
+      if (bytes.len() > 1073741799 - block.bytes.len()) {
+        return Err("encoded file exceeds the in-memory limit");
+      }
+      bytes = bytes.concat(block.bytes);
+      if (block.bytes.len() > maximum) {
+        maximum = block.bytes.len();
+      }
+    }
+  }
+  return Ok(Part { bytes: bytes, maximum: maximum });
+}
+
+function finish(parts: Part[], source: audio.Audio, n: i32, blocks: i32): Result[u8[], string] {
+  let total = 0u64;
+  let maximum = 0;
+  for part in parts {
+    total += part.bytes.len() as u64;
+    if (part.maximum > maximum) {
+      maximum = part.maximum;
+    }
+  }
+  if (total > 1073741799u64) {
+    return Err("encoded file exceeds the in-memory limit");
+  }
+  let bytes = __alloc_u8(total as i32);
+  let at = 0;
+  for part in parts {
+    bytes = __bytes_into(bytes, at, part.bytes, 0, part.bytes.len());
+    at += part.bytes.len();
+  }
+  return audio.ulc_file(bytes, maximum, blocks, source.rate, n, source.channels);
+}
+
+pub function encode(source: audio.Audio, mode: encoder.Mode, n: i32, threads: i32): Result[u8[], string] {
+  if (threads != 1 && threads != 2 && threads != 4) {
+    return Err("encoder threads must be 1, 2, or 4");
+  }
+  let template = encoder.create(n, source.channels, source.rate, mode)?;
+  if (source.samples.len() % source.channels != 0 || source.samples.len() > 134217728) {
+    return Err("invalid audio sample count");
+  }
+  let frames = source.samples.len() / source.channels;
+  let blocks = (frames + n - 1) / n + 2;
+  if (threads == 1 || blocks < 32 || target_os() != "linux") {
+    return audio.encode_mode(source, mode, n);
+  }
+  let half = blocks / 2;
+  if (threads == 2) {
+    let states = checkpoints(source, template, [0, half]);
+    let left = worker.spawn((): Result[Part, string] => part(source, states[0], 0, half));
+    let right = part(source, states[1], half, blocks);
+    let first = left.join();
+    return finish([first?, right?], source, n, blocks);
+  }
+  let q = blocks / 4;
+  let states = checkpoints(source, template, [0, q, half, half + q]);
+  let a = worker.spawn((): Result[Part, string] => part(source, states[0], 0, q));
+  let b = worker.spawn((): Result[Part, string] => part(source, states[1], q, half));
+  let c = worker.spawn((): Result[Part, string] => part(source, states[2], half, half + q));
+  let fourth = part(source, states[3], half + q, blocks);
+  let first = a.join();
+  let second = b.join();
+  let third = c.join();
+  return finish([first?, second?, third?, fourth?], source, n, blocks);
+}

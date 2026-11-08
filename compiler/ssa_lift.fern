@@ -351,6 +351,9 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   if (k == "vextract" || k == "vreplace") {
     what = k + ":" + util.i32_to_string(op.i32_imm);
   }
+  if ((k == "vget" || k == "vset") && op.unsigned) {
+    what = k + ":bytes";
+  }
   let kind = 10;
   if (ir.lane_writes(op.kind_tag)) {
     kind = 62;

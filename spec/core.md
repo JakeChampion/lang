@@ -537,6 +537,7 @@ is the number of slots it leaves.
 | `irq_wait` | 509 | 0 | 1 |
 | `irq_pending` | 510 | 0 | 1 |
 | `tcp_accept_with` | 511 | 2 | 1 |
+| `vpack` | 512 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
