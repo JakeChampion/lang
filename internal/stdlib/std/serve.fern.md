@@ -1507,19 +1507,19 @@ function __backlog_due(c: __Conns, at: i32): i64 {
 ```fern
 <<29 function __serve_accept[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config)>>=
 function __serve_accept[D: async.Driver](drv: D, listener: Socket, own c: __Conns, opts: Config): __Conns {
-  let sock = tcp_accept(listener);
+  let sock = tcp_accept_with(listener, true);
   if (sock.fd < 0) {
     return c;
   }
+  let addr = __peer_of(sock);
   let peer = 0;
   if (opts.max_connections_per_ip > 0) {
-    peer = tcp_socket_ctl(sock, 7, 0);
+    peer = __peer_key_of(addr);
     if (peer != 0 && __peer_count(c.peer_counts, peer) >= opts.max_connections_per_ip) {
       tcp_close(sock);
       return c;
     }
   }
-  tcp_socket_ctl(sock, 3, 1);
   tcp_socket_ctl(sock, 1, 1);
   let tls = Plain;
   match (__tls_session(opts)) {
@@ -1540,8 +1540,29 @@ function __serve_accept[D: async.Driver](drv: D, listener: Socket, own c: __Conn
   }
   c.metrics.accepted.inc();
   c.metrics.open.inc();
-  let addr = __peer_of(sock);
   return __conns_add(c, sock, monotonic_ns() + opts.recv_deadline.as_nanos(), peer, addr, tls);
+}
+
+// __peer_key_of keys a peer for the per-address connection count as
+// net.peer_key does: an IPv4 address as one word, an IPv6 address by its
+// first eight bytes, never 0 for an address that is known.
+function __peer_key_of(addr: Option[net.SocketAddr]): i32 {
+  let Some(a) = addr else {
+    return 0;
+  };
+  match (a.ip) {
+    V4(b) => {
+      return b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24;
+    },
+    V6(b) => {
+      let key: i32 = (b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24) ^ (b[4] as i32 | b[5] as i32 << 8 | b[6] as i32 << 16 | b[7] as i32 << 24);
+      if (key == 0) {
+        return 1;
+      }
+      return key;
+    }
+  }
+  return 0;
 }
 
 function __peer_of(sock: Socket): Option[net.SocketAddr] {

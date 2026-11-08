@@ -47,6 +47,7 @@ func checkSelfHostSocketCtl(t *testing.T, targets []string) {
 		{"std_net_connect", e2eharness.NetConnectProbe()},
 		{"relisten", e2eharness.RelistenProbe()},
 		{"read_reset", e2eharness.NetReadResetProbe()},
+		{"accept_with_cloexec", e2eharness.AcceptWithCloexecProbe()},
 	}
 	stdlib, err := filepath.Abs("../../stdlib")
 	if err != nil {

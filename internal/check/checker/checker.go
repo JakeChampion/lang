@@ -1272,6 +1272,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{sock},
 		Result: sock,
 	}
+	c.info.FuncSigs["tcp_accept_with"] = &ast.FuncType{
+		Params: []ast.Type{sock, ast.BoolType{}},
+		Result: sock,
+	}
 	c.info.FuncSigs["tcp_local_port"] = &ast.FuncType{
 		Params: []ast.Type{sock},
 		Result: ast.NumberType{},

@@ -269,6 +269,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "random_i32", capability: "random" },
     Gate { builtin: "tcp_listen", capability: "tcp" },
     Gate { builtin: "tcp_accept", capability: "tcp" },
+    Gate { builtin: "tcp_accept_with", capability: "tcp" },
     Gate { builtin: "tcp_local_port", capability: "tcp" },
     Gate { builtin: "tcp_send_bytes", capability: "tcp" },
     Gate { builtin: "tcp_close", capability: "tcp" },

@@ -11102,7 +11102,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 486) {
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 486 || o.kind_tag == 511) {
     let udp_name = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc = ir.op_pops(o);
     let udp_regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx"];
@@ -13366,6 +13366,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_accept")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_tcp_accept", s);
+  }
+  if (s.has_need("tcp_accept_with")) {
+    s = s.write("    .text\n");
+    s = emit_runtime("__fern_tcp_accept_with", s);
   }
   if (s.has_need("tcp_local_port")) {
     s = s.write("    .text\n");
