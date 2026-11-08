@@ -141,6 +141,10 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	switch x := e.(type) {
 	case nil:
 		return false
+	case *ast.Lambda:
+		// A function value cannot consume its captures. Passing a read
+		// callback does not lend the captured reader to the call's result.
+		return false
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
 		*ast.Binary, *ast.Unary, *ast.CastExpr:
