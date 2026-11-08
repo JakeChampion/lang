@@ -29,8 +29,15 @@ pub function count(base: usize): usize {
   return base;
 }
 
+@provide("log")
+function log(p: usize, n: i32): void {}
+
 pub function (p: Pool) count(): usize {
   return count(p.base);
+}
+
+pub function (p: Pool) log(): usize {
+  return p.base;
 }
 `},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
