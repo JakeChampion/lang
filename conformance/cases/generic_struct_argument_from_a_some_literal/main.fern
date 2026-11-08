@@ -1,0 +1,31 @@
+// A generic struct instance takes its type argument from a bare `Some(...)`
+// literal, in a literal of the struct and in a call of a generic function,
+// next to an instance at another argument.
+
+struct Box[T] { v: T, n: i32 }
+
+function make[T](v: T): Box[T] {
+    return Box { v: v, n: 1 };
+}
+
+function show(b: Box[Option[i32]]): string {
+    match (b.v) {
+        Some(x) => { return "some " + x.to_string() + " n " + b.n.to_string(); },
+        None => { return "none n " + b.n.to_string(); }
+    }
+}
+
+function main(): i32 {
+    let literal = Box { v: Some(5), n: 2 };
+    let made = make(Some(7));
+    let nested = make(Some(Some("deep")));
+    let plain = make(40);
+    print(show(literal));
+    print(show(made));
+    match (nested.v) {
+        Some(Some(s)) => { print(s); },
+        _ => { print("lost"); }
+    }
+    print((plain.v + plain.n).to_string());
+    return 0;
+}

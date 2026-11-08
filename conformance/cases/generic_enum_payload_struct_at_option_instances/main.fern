@@ -1,0 +1,62 @@
+// A generic enum whose variant holds a generic struct of its parameter is
+// cloned for each instance, also when another instance has an Option, or an
+// Option of a tuple, for its argument.
+
+struct Box[T] { v: T, n: i32 }
+
+enum Wrap[T] { Got(T), Again(Box[T]) }
+
+function make[T](v: T): Box[T] {
+    return Box { v: v, n: 1 };
+}
+
+function (own b: Box[T]) wrap(): Wrap[T] {
+    if (b.n > 0) {
+        return Again(b);
+    }
+    return Got(b.v);
+}
+
+function (own b: Box[T]) open(): T {
+    return b.v;
+}
+
+function plain(own b: Box[i32]): i32 {
+    match (b.wrap()) {
+        Got(v) => { return v; },
+        Again(again) => { return again.open() + 30; }
+    }
+}
+
+function optional(own b: Box[Option[i32]]): string {
+    match (b.wrap()) {
+        Got(_) => { return "got"; },
+        Again(again) => {
+            match (again.open()) {
+                Some(x) => { return "again " + x.to_string(); },
+                None => { return "again none"; }
+            }
+        }
+    }
+}
+
+function paired(own b: Box[Option[(i32, string)]]): string {
+    match (b.wrap()) {
+        Got(_) => { return "got"; },
+        Again(again) => {
+            match (again.open()) {
+                Some(p) => { return p.1 + "=" + p.0.to_string(); },
+                None => { return "none"; }
+            }
+        }
+    }
+}
+
+function main(): i32 {
+    let o: Option[i32] = Some(4);
+    let t: Option[(i32, string)] = Some((9, "nine"));
+    print(plain(make(7)).to_string());
+    print(optional(make(o)));
+    print(paired(make(t)));
+    return 0;
+}
