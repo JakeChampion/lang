@@ -19263,7 +19263,7 @@ function lu_tuple_pattern_values(pv: ast.PatVariant, tuple: ast.ExprTuple, own m
     }
   }
   if (pv.at_binding.len() > 0) {
-    matched = matched.append(LuVar { name: pv.at_binding, init: ast.ExprTuple(tuple) });
+    matched = matched.append(LuVar { name: pv.at_binding, init: tuple });
   }
   return matched;
 }
