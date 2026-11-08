@@ -1,0 +1,17 @@
+.{
+    .name = .zaphello,
+    .version = "0.1.0",
+    .fingerprint = 0x8e63493a31b7774d,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zap = .{
+            .url = "https://github.com/zigzap/zap/archive/b12c07dd8cbbbacb2aa52790fb87fb2af185023f.tar.gz",
+            .hash = "zap-0.10.6-GoeB8y-IJAD3m9zkAkeTQalzU1NuvO072u8hA78Irdp8",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
