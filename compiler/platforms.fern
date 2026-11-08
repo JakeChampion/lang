@@ -13,10 +13,10 @@ pub struct Descriptor {
 
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-android") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "ktls"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "mmsg", "ktls"];
   }
   if (profile == "hosted-linux") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "ktls"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "mmsg", "ktls"];
   }
   if (profile == "hosted-darwin") {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"];
@@ -287,6 +287,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "udp_connect", capability: "tcp" },
     Gate { builtin: "udp_sendto", capability: "tcp" },
     Gate { builtin: "udp_sendto_bytes", capability: "tcp" },
+    Gate { builtin: "udp_sendmmsg", capability: "mmsg" },
     Gate { builtin: "udp_recvfrom", capability: "tcp" },
     Gate { builtin: "tcp_connect_with", capability: "tcp" },
     Gate { builtin: "unix_listen", capability: "unix" },

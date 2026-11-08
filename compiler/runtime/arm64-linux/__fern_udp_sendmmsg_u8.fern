@@ -1,0 +1,79 @@
+function __fern_udp_sendmmsg_u8(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i32 {
+  let n = lens.len() / 2;
+  if (n == 0) {
+    return 0;
+  }
+  // The table: one 64-byte mmsghdr per message, then per message a 16-byte
+  // iovec, a 32-byte sockaddr and a 24-byte control block. The box becomes
+  // an array only after the call, because an array is released at its last
+  // use, and the kernel reads the table during the call.
+  let slots = 17 * n;
+  let p = __raw_arr_box(slots + 1);
+  __store_i64(p, slots as i64);
+  let base = p + 8;
+  let z = 0;
+  while (z < slots) {
+    __raw_store_ptr(base, z, 0 as usize);
+    z += 1;
+  }
+  let bytes = __raw_arr_ptr(data) + 8;
+  let total = data.len();
+  let ap = __raw_arr_ptr(addrs) + 8;
+  let named = addrs.len();
+  let extra = base + 64 * n;
+  let lp = __raw_arr_ptr(lens);
+  let off = 0;
+  let i = 0;
+  while (i < n) {
+    let size = __raw_load_ptr(lp, 2 * i + 1) as i32;
+    let seg = __raw_load_ptr(lp, 2 * i + 2) as i32;
+    if (size < 0 || off + size > total) {
+      let dropped: i32[] = __raw_array(p);
+      return -22;
+    }
+    let hdr = base + 64 * i;
+    let iov = extra + 72 * i;
+    let sa = iov + 16;
+    let cm = sa + 32;
+    __raw_store_ptr(iov, 0, bytes + (off as usize));
+    __raw_store_ptr(iov, 1, size as usize);
+    __raw_store_ptr(hdr, 2, iov);
+    __raw_store_ptr(hdr, 3, 1 as usize);
+    if (named >= 19 * (i + 1)) {
+      let a = ap + ((19 * i) as usize);
+      let af = 2;
+      let salen = 16;
+      let at = 4;
+      let n_addr = 4;
+      if (__raw_load8(a, 0) == 6) {
+        af = 10;
+        salen = 28;
+        at = 8;
+        n_addr = 16;
+      }
+      __raw_store8(sa, 0, af);
+      __raw_store8(sa, 2, __raw_load8(a, 17));
+      __raw_store8(sa, 3, __raw_load8(a, 18));
+      let k = 0;
+      while (k < n_addr) {
+        __raw_store8(sa, at + k, __raw_load8(a, 1 + k));
+        k += 1;
+      }
+      __raw_store_ptr(hdr, 0, sa);
+      __raw_store_ptr(hdr, 1, salen as usize);
+    }
+    if (seg > 0) {
+      __raw_store_ptr(cm, 0, 18 as usize);
+      __raw_store_ptr(cm, 1, (17 as i64 | 103 as i64 << 32) as usize);
+      __raw_store8(cm, 16, seg & 255);
+      __raw_store8(cm, 17, seg >> 8 & 255);
+      __raw_store_ptr(hdr, 4, cm);
+      __raw_store_ptr(hdr, 5, 24 as usize);
+    }
+    off += size;
+    i += 1;
+  }
+  let rc = __syscall4(269, fd as i64, base as i64, n as i64, 16384) as i32;
+  let table: i32[] = __raw_array(p);
+  return rc;
+}
