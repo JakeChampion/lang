@@ -160,7 +160,7 @@ def main():
     text += '// Independent encoder and decoder: ' + version + '\n'
     binary = Path(shutil.which('ffmpeg')).resolve()
     text += '// FFmpeg executable SHA-256: ' + hashlib.sha256(binary.read_bytes()).hexdigest() + '\n'
-    text += 'pub struct Vector { name: string, rate: i32, channels: i32, count: i32, bytes: string, pcm: string }\n'
+    text += 'pub struct Vector { name: string, rate: i32, channels: i32, count: i32, bytes: string, pcm: string }\n\n'
     smoke = text
     text += 'pub function vectors(): Vector[] {\n  return [\n'
     with tempfile.TemporaryDirectory() as directory:
