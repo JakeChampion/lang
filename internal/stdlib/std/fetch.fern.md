@@ -194,6 +194,10 @@ import "std/crypto";
 import "std/hex";
 import "std/envflag";
 import "std/http/h2";
+import "std/http/h3";
+import "std/http/h3q";
+import "std/quic/conn" as quic;
+import "std/i64";
 import "core/cmp";
 ```
 
@@ -680,9 +684,16 @@ pub trait Transport {
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
   function socket(self: Self, conn: i32): Option[Socket];
+  function datagram_open(self: Self, addrs: net.IpAddr[], port: i32): Result[i32, net.NetError];
+  function datagram_send(self: Self, conn: i32, data: u8[]): i32;
+  function datagram_recv(self: Self, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError];
 }
 
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]], socks: Cell[Option[Socket][]] }
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]], socks: Cell[Option[Socket][]], alternatives: Cell[Alternative[]] }
+
+// Alternative is an origin's HTTP/3 endpoint: the UDP port an Alt-Svc field
+// or offer_h3 named. `until` None holds as long as the pool.
+pub struct Alternative { host: string, port: i32, h3_port: i32, until: Option[Instant] }
 ```
 
 ### `15 pub function (p: Idle) proxy_env(): ProxyEnv`
@@ -706,7 +717,7 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
 
 ```fern
 <<16 pub struct Kept>>=
-pub struct Kept { place: __Place, fd: i32, since: Instant, tls: Option[client.Session], h2: Option[h2.Conn], heard: HeaderMap }
+pub struct Kept { place: __Place, fd: i32, since: Instant, tls: Option[client.Session], h2: Option[h2.Conn], h3: Option[h3q.Parked], heard: HeaderMap }
 ```
 
 ### `17 pub function idle(): Idle`
@@ -720,7 +731,8 @@ pub function idle(): Idle {
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
   let no_socks: Option[Socket][] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None), armed: None, socks: cell_new(no_socks) };
+  let no_alts: Alternative[] = [];
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None), armed: None, socks: cell_new(no_socks), alternatives: cell_new(no_alts) };
 }
 
 pub function idle_shared(): Idle {
@@ -1423,7 +1435,7 @@ function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
 }
 
 function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
-  let rows = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2, heard: conn.heard });
+  let rows = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2, h3: __h3_parked(conn.h3), heard: conn.heard });
   let from = 0;
   while (rows.len() - from > tr.idle().max) {
     __close(tr, __kept_conn(rows[from]));
@@ -1458,7 +1470,21 @@ function __live_kept[T: Transport](tr: T): Kept[] {
 }
 
 function __kept_conn(k: Kept): __Conn {
-  return __Conn { fd: k.fd, tls: k.tls, closed: false, h2: k.h2, heard: k.heard };
+  return __Conn { fd: k.fd, tls: k.tls, closed: false, h2: k.h2, h3: __h3_unparked(k.h3), heard: k.heard };
+}
+
+function __h3_parked(h: Option[h3q.Conn]): Option[h3q.Parked] {
+  let Some(c) = h else {
+    return None;
+  };
+  return Some(c.park());
+}
+
+function __h3_unparked(p: Option[h3q.Parked]): Option[h3q.Conn] {
+  let Some(k) = p else {
+    return None;
+  };
+  return Some(h3q.unpark(k));
 }
 
 function __kept_without(rows: Kept[], skip: i32): Kept[] {
@@ -1474,6 +1500,126 @@ function __kept_from(rows: Kept[], from: i32): Kept[] {
     rows = rows.with(i - from, rows[i]);
   }
   return rows.truncate(rows.len() - from);
+}
+
+// offer_h3 records that the origin at `host` and `port` serves HTTP/3 on
+// UDP port `h3_port`, as an Alt-Svc field would, for as long as the pool
+// lives. A request to the origin then goes over HTTP/3 first.
+pub function (p: Idle) offer_h3(host: string, port: i32, h3_port: i32): void {
+  __offer_h3(p, host, port, h3_port, None);
+}
+
+// note_alt_svc applies an Alt-Svc field value the origin at `host` and
+// `port` sent, read at `now`.
+pub function (p: Idle) note_alt_svc(host: string, port: i32, value: string, now: Instant): void {
+  let read = alt_svc(host, value);
+  if (read.clear) {
+    __forget_h3(p, host, port);
+    return;
+  }
+  if (read.h3_port > 0) {
+    __offer_h3(p, host, port, read.h3_port, Some(now.add(read.max_age)));
+  }
+}
+
+// h3_offered is the UDP port the origin at `host` and `port` serves HTTP/3
+// on at `now`, or 0 when it offers none.
+pub function (p: Idle) h3_offered(host: string, port: i32, now: Instant): i32 {
+  for a in p.alternatives.get() {
+    if (a.port == port && a.host == host) {
+      if let Some(until) = a.until {
+        if (now.cmp(until) >= 0) {
+          __forget_h3(p, host, port);
+          return 0;
+        }
+      }
+      return a.h3_port;
+    }
+  }
+  return 0;
+}
+
+function __offer_h3(p: Idle, host: string, port: i32, h3_port: i32, until: Option[Instant]): void {
+  __forget_h3(p, host, port);
+  p.alternatives.set(p.alternatives.get().append(Alternative { host: host, port: port, h3_port: h3_port, until: until }));
+}
+
+function __forget_h3(p: Idle, host: string, port: i32): void {
+  let kept: Alternative[] = [];
+  for a in p.alternatives.get() {
+    if (a.port != port || a.host != host) {
+      kept = kept.append(a);
+    }
+  }
+  p.alternatives.set(kept);
+}
+
+// AltSvc is what an Alt-Svc field value says about HTTP/3. `h3_port` is the
+// alternative's UDP port, 0 when the value names none this client can use.
+// `max_age` is how long the alternative holds. `clear` says the origin
+// withdraws every alternative it named before.
+pub struct AltSvc { h3_port: i32, max_age: Duration, clear: boolean }
+
+// alt_svc reads an Alt-Svc field value (RFC 7838 section 3) sent by the
+// origin at `host`. The first `h3` alternative on the origin's own host
+// counts. One on another host does not: the certificate check stays with
+// the origin's name, and this client does not follow it there.
+pub function alt_svc(host: string, value: string): AltSvc {
+  let none = AltSvc { h3_port: 0, max_age: ALT_SVC_DAY, clear: false };
+  if (value.trim() == "clear") {
+    return AltSvc { ...none, clear: true };
+  }
+  for alt in value.split(",") {
+    let parts = alt.split(";");
+    let port = __alt_h3_port(host, parts[0].trim());
+    if (port > 0) {
+      return AltSvc { ...none, h3_port: port, max_age: __alt_max_age(parts) };
+    }
+  }
+  return none;
+}
+
+const ALT_SVC_DAY: Duration = Duration { sec: 86400, nsec: 0 };
+
+function __alt_h3_port(host: string, alternative: string): i32 {
+  let Some(eq) = alternative.index_of("=") else {
+    return 0;
+  };
+  if (alternative.take(eq) != "h3") {
+    return 0;
+  }
+  let Some(authority) = alternative.drop(eq + 1).strip_quotes() else {
+    return 0;
+  };
+  let Some(colon) = authority.last_index_of(":") else {
+    return 0;
+  };
+  let alt_host = authority.take(colon);
+  if (alt_host.len() > 0 && !alt_host.eq_ignore_ascii_case(host)) {
+    return 0;
+  }
+  let Ok(port) = i32.parse_i32(authority.drop(colon + 1)) else {
+    return 0;
+  };
+  if (port <= 0 || port > 65535) {
+    return 0;
+  }
+  return port;
+}
+
+function __alt_max_age(parts: string[]): Duration {
+  for i in 1..parts.len() {
+    let p = parts[i].trim();
+    if (p.starts_with("ma=")) {
+      let Ok(seconds) = i64.parse_i64(p.drop(3)) else {
+        return ALT_SVC_DAY;
+      };
+      if (seconds >= 0) {
+        return time.duration_seconds(seconds);
+      }
+    }
+  }
+  return ALT_SVC_DAY;
 }
 ```
 
@@ -1578,6 +1724,91 @@ impl Transport for Sockets {
   function socket(self: Sockets, conn: i32): Option[Socket] {
     return __sock_at(self.pool.socks, conn);
   }
+  function datagram_open(self: Sockets, addrs: net.IpAddr[], port: i32): Result[i32, net.NetError] {
+    if (addrs.len() == 0) {
+      return Err(net.ConnectionRefused);
+    }
+    let sock = net.udp_socket(__unspecified(addrs[0]))?;
+    match (__datagram_peer(sock, net.socket_addr(addrs[0], port))) {
+      Ok(_) => {
+        return Ok(__keep_sock(self.pool.socks, sock));
+      },
+      Err(e) => {
+        let closed = net.close(sock);
+        return Err(e);
+      }
+    }
+    return Err(net.ConnectionRefused);
+  }
+  function datagram_send(self: Sockets, conn: i32, data: u8[]): i32 {
+    let Some(sock) = __sock_at(self.pool.socks, conn) else {
+      return -9;
+    };
+    match (net.send(sock, data)) {
+      Ok(n) => {
+        return n;
+      },
+      Err(_) => {
+        return -1;
+      }
+    }
+    return -1;
+  }
+  function datagram_recv(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+    let Some(sock) = __sock_at(self.pool.socks, conn) else {
+      return Err(net.Other(9));
+    };
+    return __datagram_watched(sock, max, wait);
+  }
+}
+
+// __unspecified is the address a socket binds to send `like` from.
+function __unspecified(like: net.IpAddr): net.SocketAddr {
+  let any = "[::]:0";
+  if (like.is_v4()) {
+    any = "0.0.0.0:0";
+  }
+  let Ok(addr) = net.socket_addr_parse(any) else {
+    return net.socket_addr(like, 0);
+  };
+  return addr;
+}
+
+function __datagram_peer(sock: Socket, peer: net.SocketAddr): Result[void, net.NetError] {
+  net.set_peer(sock, peer)?;
+  return net.set_nonblocking(sock, true);
+}
+
+// __datagram_watched is one datagram, or Elapsed once `wait` has passed.
+function __datagram_watched(sock: Socket, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+  let until = monotonic_ns() + wait.as_nanos();
+  let buf = __alloc_u8(max);
+  while (true) {
+    let at = until;
+    if (at - monotonic_ns() < 1000000i64) {
+      at = monotonic_ns() + 1000000i64;
+    }
+    match (async.wait_any([sock.fd, 1], Some(time.instant_from_nanos(at)))) {
+      async.Woke(_) => {},
+      async.TimedOut => {
+        return Ok(net.Elapsed);
+      },
+      async.Cancelled => {
+        return Ok(net.Abandoned);
+      }
+    }
+    match (net.recv(sock, buf)) {
+      Ok(n) => {
+        return Ok(net.Chunk(buf.truncate(n)));
+      },
+      Err(e) => {
+        if (!e.eq(net.WouldBlock)) {
+          return Err(e);
+        }
+      }
+    }
+  }
+  return Ok(net.Elapsed);
 }
 ```
 
@@ -2018,6 +2249,9 @@ function __reset(e: FetchError): boolean {
 
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
   let place = __place_of(t, guard, roots);
+  if let Some(r) = __over_h3(tr, req, t, started, place, guard, roots, reuse) {
+    return r;
+  }
   let conn = __no_conn();
   if (reuse && http.method_idempotent(req.method)) {
     conn = __take_idle(tr, place);
@@ -2170,7 +2404,7 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
       } else {
         __close(tr, read.conn);
       }
-      return __decoded(read.response, req);
+      return __decoded(__noted(tr, t, read.response), req);
     },
     Err(e) => {
       tr.close(conn.fd);
@@ -2193,7 +2427,7 @@ function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i
       } else {
         __park(tr, place, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
       }
-      return __decoded(HttpResponse { ...done.1, headers: http.end_to_end(done.1.headers) }, req);
+      return __decoded(__noted(tr, t, HttpResponse { ...done.1, headers: http.end_to_end(done.1.headers) }), req);
     },
     Err(e) => {
       tr.close(conn.fd);
@@ -2201,6 +2435,19 @@ function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i
     }
   }
   return Err(Protocol("unreachable"));
+}
+
+// __noted applies the Alt-Svc fields of a response read over TCP from the
+// origin itself. A proxy's answer and a plain-http origin offer nothing: the
+// alternative's certificate is checked against the origin's name.
+function __noted[T: Transport](tr: T, t: __Target, resp: HttpResponse): HttpResponse {
+  if (!t.tls || !t.direct) {
+    return resp;
+  }
+  for v in resp.headers.get_all("alt-svc") {
+    tr.idle().note_alt_svc(t.origin, t.port, v, tr.now());
+  }
+  return resp;
 }
 ```
 
@@ -2259,6 +2506,287 @@ function __h2_answer(events: h2.Event[], stream: i32): Option[Result[HttpRespons
   }
   return None;
 }
+
+// __over_h3 is the request over HTTP/3 when the origin itself, reached
+// directly over TLS, offers it and a QUIC connection could be made.
+function __over_h3[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Option[Result[HttpResponse, FetchError]] {
+  if (!t.tls || !t.direct) {
+    return None;
+  }
+  let port = tr.idle().h3_offered(t.origin, t.port, tr.now());
+  if (port <= 0) {
+    return None;
+  }
+  return __attempt_h3(tr, req, t, started, place, guard, roots, port, reuse);
+}
+
+// __attempt_h3 is the request over HTTP/3 to the origin's alternative on UDP
+// `port`. None says no QUIC connection could be made: the alternative is
+// forgotten and the request goes over TCP (RFC 9114 section 3.1).
+function __attempt_h3[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, guard: boolean, roots: Option[verify.Roots], port: i32, reuse: boolean): Option[Result[HttpResponse, FetchError]] {
+  let at = __Place { ...place, port: port, tls: place.tls + " h3" };
+  let conn = __no_conn();
+  if (reuse && http.method_idempotent(req.method)) {
+    conn = __take_h3(tr, at);
+  }
+  if (conn.fd < 0) {
+    match (__connect_h3(tr, t, req, guard, roots, port)) {
+      Ok(c) => {
+        conn = c;
+      },
+      Err(e) => {
+        if (__cancelled(e)) {
+          return Some(Err(e));
+        }
+        __forget_h3(tr.idle(), t.origin, t.port);
+        return None;
+      }
+    }
+  }
+  return Some(__attempt_h3_opened(tr, req, t, started, at, conn));
+}
+
+function __cancelled(e: FetchError): boolean {
+  match (e) {
+    FetchError.Cancelled => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __take_h3 is a kept HTTP/3 connection to `at` that still takes requests
+// once its timers have run, or no connection.
+function __take_h3[T: Transport](tr: T, at: __Place): __Conn {
+  let conn = __take_idle(tr, at);
+  if (conn.fd < 0) {
+    return conn;
+  }
+  let Some(h) = conn.h3 else {
+    tr.close(conn.fd);
+    return __no_conn();
+  };
+  let now = tr.now();
+  if (__h3_due(h, now)) {
+    h = h.tick(now);
+  }
+  if (h.done() || !h.ready()) {
+    tr.close(conn.fd);
+    return __no_conn();
+  }
+  return __Conn { ...conn, h3: Some(h) };
+}
+
+function __h3_due(h: h3q.Conn, now: Instant): boolean {
+  let Some(at) = h.deadline() else {
+    return false;
+  };
+  return now.cmp(at) >= 0;
+}
+
+function __connect_h3[T: Transport](tr: T, t: __Target, req: Request, guard: boolean, roots: Option[verify.Roots], port: i32): Result[__Conn, FetchError] {
+  let deadline = time.instant_nanos(tr.now()) + __connect_bound(req.timeouts).as_nanos();
+  let addrs = __resolve(tr, t.host, guard)?;
+  let fd = 0 - 1;
+  match (tr.datagram_open(addrs, port)) {
+    Ok(opened) => {
+      fd = opened;
+    },
+    Err(e) => {
+      return Err(Connect(e));
+    }
+  }
+  match (__h3_handshake(tr, fd, t, roots, deadline)) {
+    Ok(h) => {
+      return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, h3: Some(h), heard: headers.new() });
+    },
+    Err(e) => {
+      tr.close(fd);
+      return Err(e);
+    }
+  }
+  return Err(Timeout(Connecting));
+}
+
+function __h3_handshake[T: Transport](tr: T, fd: i32, t: __Target, roots: Option[verify.Roots], deadline: i64): Result[h3q.Conn, FetchError] {
+  let cfg = h3q.transport(quic.config([]).client_side(__tls_name(t.origin), __roots(roots)?));
+  let h = h3q.client(__quic_started(tr, cfg)?, h3.config());
+  while (!h.ready()) {
+    if (h.done()) {
+      return Err(__h3_closed(h, "the handshake"));
+    }
+    h = __h3_flush(tr, fd, h);
+    let left = deadline - time.instant_nanos(tr.now());
+    if (left <= 0) {
+      return Err(Timeout(Connecting));
+    }
+    let step = __h3_pump(tr, fd, h, left)?;
+    h = step.0;
+  }
+  return Ok(h);
+}
+
+function __quic_started[T: Transport](tr: T, cfg: quic.Config): Result[quic.Conn, FetchError] {
+  match (quic.client(cfg, tr.random_bytes(quic.client_entropy(cfg)), tr.now(), tr.wall())) {
+    Ok(q) => {
+      return Ok(q);
+    },
+    Err(why) => {
+      return Err(Protocol("HTTP/3: " + why));
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+// __h3_flush sends what the connection has to send.
+function __h3_flush[T: Transport](tr: T, fd: i32, h: h3q.Conn): h3q.Conn {
+  let c = h.transmit(tr.now());
+  for d in c.datagrams() {
+    let sent = tr.datagram_send(fd, d);
+  }
+  return c.sent();
+}
+
+// __h3_pump waits up to `most` nanoseconds for a datagram, or until the
+// connection's next timer when that comes first, and says whether a
+// datagram arrived.
+function __h3_pump[T: Transport](tr: T, fd: i32, h: h3q.Conn, most: i64): Result[(h3q.Conn, boolean), FetchError] {
+  let wait = most;
+  if let Some(at) = h.deadline() {
+    let left = time.instant_nanos(at) - time.instant_nanos(tr.now());
+    if (left < wait) {
+      wait = left;
+    }
+  }
+  if (wait < 1000000) {
+    wait = 1000000;
+  }
+  match (__io(tr.datagram_recv(fd, 65536, time.duration_nanos(wait)))?) {
+    net.Chunk(d) => {
+      return Ok((h.receive(d, tr.now()), true));
+    },
+    net.Elapsed => {
+      let later = tr.now();
+      if (__h3_due(h, later)) {
+        return Ok((h.tick(later), false));
+      }
+      return Ok((h, false));
+    },
+    net.Abandoned => {
+      return Err(FetchError.Cancelled);
+    }
+  }
+  return Err(FetchError.Cancelled);
+}
+
+function __attempt_h3_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, at: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
+  let Some(h) = conn.h3 else {
+    tr.close(conn.fd);
+    return Err(Protocol("HTTP/3: no connection"));
+  };
+  match (h.request(__outgoing(req, t))) {
+    Ok(asked) => {
+      match (__h3_answered(tr, req, started, conn.fd, asked.0, asked.1)) {
+        Ok(done) => {
+          let kept = __Conn { ...conn, h3: Some(done.0) };
+          if (done.0.done() || !done.0.ready()) {
+            __close(tr, kept);
+          } else {
+            __park(tr, at, kept);
+          }
+          return __decoded(HttpResponse { ...done.1, headers: http.end_to_end(done.1.headers) }, req);
+        },
+        Err(e) => {
+          tr.close(conn.fd);
+          return Err(e);
+        }
+      }
+    },
+    Err(why) => {
+      tr.close(conn.fd);
+      return Err(Protocol("HTTP/3: " + why));
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+function __h3_answered[T: Transport](tr: T, req: Request, started: i64, fd: i32, h: h3q.Conn, id: i64): Result[(h3q.Conn, HttpResponse), FetchError] {
+  let quiet = time.instant_nanos(tr.now());
+  while (true) {
+    h = __h3_flush(tr, fd, h);
+    let evs = h.events;
+    h = h.events_taken();
+    match (__h3_answer(evs, id)) {
+      Some(answer) => {
+        return Ok((h, answer?));
+      },
+      None => {}
+    }
+    if (h.done()) {
+      return Err(__h3_closed(h, "the response"));
+    }
+    let step = __h3_pump(tr, fd, h, __h3_most(req.timeouts, started, quiet, time.instant_nanos(tr.now()))?)?;
+    h = step.0;
+    if (step.1) {
+      quiet = time.instant_nanos(tr.now());
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+// __h3_most is how long the response may still be waited for: the total
+// bound runs from `started`, the inactivity bound from `quiet`, the last
+// datagram.
+function __h3_most(timeouts: Timeouts, started: i64, quiet: i64, now: i64): Result[i64, FetchError] {
+  let most = started + timeouts.total.as_nanos() - now;
+  if (most <= 0) {
+    return Err(Timeout(Total));
+  }
+  let idle = quiet + timeouts.inactivity.as_nanos() - now;
+  if (idle <= 0) {
+    return Err(Timeout(Inactivity));
+  }
+  if (idle < most) {
+    return Ok(idle);
+  }
+  return Ok(most);
+}
+
+function __h3_answer(events: h3q.Event[], id: i64): Option[Result[HttpResponse, FetchError]] {
+  for e in events {
+    match (e) {
+      h3q.Responded(sid, resp) => {
+        if (sid == id) {
+          return Some(Ok(resp));
+        }
+      },
+      h3q.StreamDropped(sid, code) => {
+        if (sid == id) {
+          return Some(Err(Protocol("HTTP/3: the server reset the stream with code " + code.to_string())));
+        }
+      },
+      h3q.Ended(why) => {
+        return Some(Err(Protocol("HTTP/3: the connection closed with code " + why.code.to_string() + " before the response ended")));
+      },
+      _ => {}
+    }
+  }
+  return None;
+}
+
+function __h3_closed(h: h3q.Conn, during: string): FetchError {
+  let Some(why) = h.quic().closed_with() else {
+    return Protocol("HTTP/3: the connection closed during " + during);
+  };
+  let side = "this side";
+  if (why.remote) {
+    side = "the server";
+  }
+  return Protocol("HTTP/3: " + side + " closed the connection with code " + why.code.to_string() + " during " + during);
+}
 ```
 
 ### `48 struct __Conn`
@@ -2266,7 +2794,7 @@ function __h2_answer(events: h2.Event[], stream: i32): Option[Result[HttpRespons
 ```fern
 <<48 struct __Conn>>=
 // heard is the header block of the last response read on the connection.
-struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, h2: Option[h2.Conn], heard: HeaderMap }
+struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, h2: Option[h2.Conn], h3: Option[h3q.Conn], heard: HeaderMap }
 ```
 
 ### `49 function __has_tls(conn: __Conn): boolean`
@@ -2286,7 +2814,7 @@ function __has_tls(conn: __Conn): boolean {
 }
 
 function __no_conn(): __Conn {
-  return __Conn { fd: 0 - 1, tls: None, closed: false, h2: None, heard: headers.new() };
+  return __Conn { fd: 0 - 1, tls: None, closed: false, h2: None, h3: None, heard: headers.new() };
 }
 
 function __close[T: Transport](tr: T, conn: __Conn): void {
@@ -2294,6 +2822,9 @@ function __close[T: Transport](tr: T, conn: __Conn): void {
     if let Ok(step) = s.close() {
       __send_framed(tr, conn.fd, s, step.output);
     }
+  }
+  if let Some(h) = conn.h3 {
+    let closed = __h3_flush(tr, conn.fd, h.close(tr.now()));
   }
   tr.close(conn.fd);
 }
@@ -2315,12 +2846,12 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
   match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
     Ok(fd) => {
       if (!t.tls) {
-        return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, heard: headers.new() });
+        return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, h3: None, heard: headers.new() });
       }
       match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots, req)) {
         Ok(s) => {
           if (s.alpn() != "h2") {
-            return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None, heard: headers.new() });
+            return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None, h3: None, heard: headers.new() });
           }
           return __h2_opened(tr, fd, s);
         },
@@ -2345,7 +2876,7 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
 
 function __h2_opened[T: Transport](tr: T, fd: i32, s: client.Session): Result[__Conn, FetchError] {
   let start = h2.client(h2.config());
-  match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn), heard: headers.new() }, start.output)) {
+  match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn), h3: None, heard: headers.new() }, start.output)) {
     Ok(c) => {
       return Ok(c);
     },

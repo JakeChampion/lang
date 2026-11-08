@@ -1,0 +1,242 @@
+import "std/test";
+import "std/sim";
+import "std/sim_fetch";
+import "std/fetch";
+import "std/time";
+import "std/http";
+import "std/headers";
+import "std/hex";
+import "std/codec";
+import "std/string";
+import "std/utf8";
+import "std/option";
+import "std/result";
+import "std/tls/identity";
+import "std/tls/verify";
+
+// The test root and the leaf it signed for tls.example, from
+// tests/stdlib/http_h3q_test.fern.
+const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
+
+const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
+
+const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const ORIGIN: string = "192.0.2.7";
+
+const HOST: string = "tls.example";
+
+function server_identity(): Result[identity.Identity, string] {
+  let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else {
+    return Err("the test key did not parse");
+  };
+  let Ok(id) = identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k) else {
+    return Err("the test leaf did not pair with its key");
+  };
+  return Ok(id);
+}
+
+// dated is a simulation whose clock reads 2023, inside the test
+// certificate's validity.
+function dated(seed: i64): sim.Sim {
+  let d = sim.new(seed);
+  let moved = d.advance_to(sim.at(time.duration_seconds(1700000000)));
+  return d;
+}
+
+function trusting(): fetch.Policy {
+  return fetch.Policy { public_only: false, proxies: fetch.proxies("", "", ""), roots: Some(verify.roots([__codec_bytes(hex.decode(ROOT))])), jar: None, allow: None };
+}
+
+function handle(req: HttpRequest): HttpResponse {
+  if (req.method == "POST") {
+    let resp = http.ok("got " + req.body_bytes().len().to_string());
+    return HttpResponse { ...resp, trailers: headers.new().append("x-served-by", "sim") };
+  }
+  return http.ok("hello " + req.path);
+}
+
+// offering is a network with an HTTP/3 endpoint at the origin, and a pool
+// that knows about it, as a previous Alt-Svc field would have told it.
+function offering(d: sim.Sim, pool: fetch.Idle): Result[sim_fetch.Net, string] {
+  pool.offer_h3(HOST, 443, 443);
+  let id = server_identity()?;
+  return Ok(sim_fetch.new(d).pooling(pool).host(HOST, [ORIGIN]).serve_h3(ORIGIN, 443, id, handle).datagram_delay(time.duration_millis(2)));
+}
+
+function body(r: Result[HttpResponse, fetch.FetchError]): string {
+  match (r) {
+    Ok(resp) => {
+      return utf8.from_bytes_lossy(resp.body_bytes());
+    },
+    Err(e) => {
+      return "error: " + e.message();
+    }
+  }
+}
+
+function test_get_over_h3(): test.TestOutcome {
+  let d = dated(1);
+  let Ok(n) = offering(d, fetch.idle()) else {
+    return test.fail("no identity");
+  };
+  let got = fetch.send_on(n, fetch.get("https://tls.example/hello"), trusting());
+  if (body(got) != "hello /hello") {
+    return test.fail(body(got));
+  }
+  if (n.connects() != 0) {
+    return test.fail("a TCP connection was made for a request HTTP/3 carried");
+  }
+  if (n.h3_connections() != 1) {
+    return test.fail("QUIC connections: " + n.h3_connections().to_string());
+  }
+  return test.assert_eq(n.h3_requests(), 1);
+}
+
+function test_post_with_trailers(): test.TestOutcome {
+  let d = dated(2);
+  let Ok(n) = offering(d, fetch.idle()) else {
+    return test.fail("no identity");
+  };
+  let upload = __alloc_u8(70000);
+  let got = fetch.send_on(n, fetch.request("POST", "https://tls.example/upload").with_bytes(upload), trusting());
+  if (body(got) != "got 70000") {
+    return test.fail(body(got));
+  }
+  let Ok(resp) = got else {
+    return test.fail("unreachable");
+  };
+  return test.assert_eq(resp.trailers.get("x-served-by").unwrap_or("-"), "sim");
+}
+
+function test_pool_reuses_the_quic_connection(): test.TestOutcome {
+  let d = dated(3);
+  let Ok(n) = offering(d, fetch.idle()) else {
+    return test.fail("no identity");
+  };
+  let first = fetch.send_on(n, fetch.get("https://tls.example/a"), trusting());
+  let second = fetch.send_on(n, fetch.get("https://tls.example/b"), trusting());
+  if (body(first) != "hello /a" || body(second) != "hello /b") {
+    return test.fail(body(first) + " then " + body(second));
+  }
+  if (n.h3_requests() != 2) {
+    return test.fail("requests answered: " + n.h3_requests().to_string());
+  }
+  return test.assert_eq(n.h3_connections(), 1);
+}
+
+function test_loss_is_recovered(): test.TestOutcome {
+  let d = dated(4);
+  let Ok(served) = offering(d, fetch.idle()) else {
+    return test.fail("no identity");
+  };
+  let n = served.datagram_loss(5);
+  let got = fetch.send_on(n, fetch.get("https://tls.example/lossy"), trusting());
+  if (body(got) != "hello /lossy") {
+    return test.fail(body(got));
+  }
+  return test.assert_eq(n.h3_requests(), 1);
+}
+
+function test_unanswered_alternative_falls_back_to_tcp(): test.TestOutcome {
+  let d = dated(5);
+  let pool = fetch.idle();
+  pool.offer_h3(HOST, 443, 8443);
+  let n = sim_fetch.new(d).pooling(pool).host(HOST, [ORIGIN]).listen(ORIGIN, 443, time.duration_millis(1)).route(ORIGIN, 443, "/", [sim_fetch.reply(200, "plain")]);
+  let got = fetch.send_on(n, fetch.get("https://tls.example/"), trusting());
+  if (n.datagrams() == 0) {
+    return test.fail("HTTP/3 was never tried");
+  }
+  if (n.connects() != 1) {
+    return test.fail("TCP connections after the fallback: " + n.connects().to_string());
+  }
+  if (pool.h3_offered(HOST, 443, d.now()) != 0) {
+    return test.fail("the alternative that did not answer was kept");
+  }
+  // The TCP origin speaks no TLS, so the fallback ends in the handshake.
+  return test.assert_eq(body(got).starts_with("error: "), true);
+}
+
+function test_alt_svc_values(): test.TestOutcome {
+  let plain = fetch.alt_svc("example.test", "h3=\":443\"; ma=3600");
+  if (plain.h3_port != 443 || plain.max_age.as_millis() != 3600000 || plain.clear) {
+    return test.fail("plain: port " + plain.h3_port.to_string());
+  }
+  let second = fetch.alt_svc("example.test", "h3-29=\":443\", h3=\":8443\"; ma=10; persist=1");
+  if (second.h3_port != 8443 || second.max_age.as_millis() != 10000) {
+    return test.fail("second: port " + second.h3_port.to_string());
+  }
+  let same_host = fetch.alt_svc("example.test", "h3=\"EXAMPLE.test:443\"");
+  if (same_host.h3_port != 443 || same_host.max_age.as_millis() != 86400000) {
+    return test.fail("same host: port " + same_host.h3_port.to_string());
+  }
+  let other_host = fetch.alt_svc("example.test", "h3=\"other.test:443\"");
+  if (other_host.h3_port != 0) {
+    return test.fail("another host's alternative was taken");
+  }
+  let clear = fetch.alt_svc("example.test", "clear");
+  if (!clear.clear || clear.h3_port != 0) {
+    return test.fail("clear was not read");
+  }
+  let bad = fetch.alt_svc("example.test", "h3=\":70000\", h3=\"x\", h3=443, nonsense");
+  return test.assert_eq(bad.h3_port, 0);
+}
+
+function test_alt_svc_noted_and_expired(): test.TestOutcome {
+  let pool = fetch.idle();
+  let now = Instant { sec: 0, nsec: 0 };
+  pool.note_alt_svc(HOST, 443, "h3=\":8443\"; ma=10", now);
+  if (pool.h3_offered(HOST, 443, now.add(time.duration_seconds(9))) != 8443) {
+    return test.fail("the alternative was not offered inside its age");
+  }
+  if (pool.h3_offered(HOST, 8080, now) != 0) {
+    return test.fail("the alternative leaked to another port");
+  }
+  if (pool.h3_offered(HOST, 443, now.add(time.duration_seconds(11))) != 0) {
+    return test.fail("the alternative outlived its age");
+  }
+  pool.note_alt_svc(HOST, 443, "h3=\":9443\"", now);
+  pool.note_alt_svc(HOST, 443, "clear", now);
+  return test.assert_eq(pool.h3_offered(HOST, 443, now), 0);
+}
+
+function test_tcp_answer_carries_alt_svc(): test.TestOutcome {
+  let d = dated(6);
+  let Ok(id) = server_identity() else {
+    return test.fail("no identity");
+  };
+  let n = sim_fetch.new(d).host(HOST, [ORIGIN]).serve(ORIGIN, 80, handle).serve_h3(ORIGIN, 443, id, handle);
+  let got = fetch.send_on(n, fetch.get("http://tls.example/x"), trusting());
+  let Ok(resp) = got else {
+    return test.fail(body(got));
+  };
+  return test.assert_eq(resp.headers.get("alt-svc").unwrap_or("-"), "h3=\":443\"; ma=86400");
+}
+
+function main(): i32 {
+  let r = test.new("std/fetch over HTTP/3");
+  r = r.it("a GET to an origin that offers HTTP/3 goes over QUIC", test_get_over_h3);
+  r = r.it("a POST body and the response's trailers", test_post_with_trailers);
+  r = r.it("the pool reuses the QUIC connection", test_pool_reuses_the_quic_connection);
+  r = r.it("lost datagrams are recovered", test_loss_is_recovered);
+  r = r.it("an alternative that does not answer is forgotten and the request goes over TCP", test_unanswered_alternative_falls_back_to_tcp);
+  r = r.it("reads Alt-Svc field values", test_alt_svc_values);
+  r = r.it("an Alt-Svc alternative holds for its age", test_alt_svc_noted_and_expired);
+  r = r.it("a TCP answer beside an HTTP/3 endpoint carries Alt-Svc", test_tcp_answer_carries_alt_svc);
+  return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
+}
