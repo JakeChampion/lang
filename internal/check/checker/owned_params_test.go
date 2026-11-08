@@ -1970,13 +1970,19 @@ function work(): i32 {
 }`)
 }
 
-func TestOwnGuardLaterMentionInTheSameStatementKeepsItLive(t *testing.T) {
-	wantE051(t, "first-branch-of-an-if-expression", readerLoopPrelude+`
+func TestOwnGuardMutuallyExclusiveValueBranches(t *testing.T) {
+	wantOK(t, "one-close-on-each-alternative-path", readerLoopPrelude+`
 function pick(own h: Handle, flag: boolean): i32 {
     let h2: Handle = Handle { fd: 4 };
     let n: i32 = if (flag) { h2.close() } else { h2.close() + 1 };
     return n;
 }`)
+	wantE051(t, "read-after-close-in-the-selected-value-branch", readerLoopPrelude+`
+function pick(flag: boolean): i32 {
+    let h: Handle = Handle { fd: 4 };
+    return if (flag) { h.close() + h.fd } else { h.close() };
+}`)
+
 }
 
 const payloadPrelude = `struct Handle { fd: i32 }

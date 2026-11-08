@@ -1014,6 +1014,10 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return init.Base == nil
 	case *ast.MatchExpr:
 		return freshMatchValue(info, init)
+	case *ast.IfExpr:
+		return freshInit(info, init.Then) && freshInit(info, init.Else)
+	case *ast.BlockExpr:
+		return init.Tail != nil && freshInit(info, init.Tail)
 	}
 	return false
 }
@@ -1247,6 +1251,10 @@ func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]
 	switch x := v.(type) {
 	case *ast.TryOp:
 		return assignedOwned(info, target, x.Inner, freshLocal, payloadOwned, unpack)
+	case *ast.IfExpr:
+		return assignedOwned(info, target, x.Then, freshLocal, payloadOwned, unpack) && assignedOwned(info, target, x.Else, freshLocal, payloadOwned, unpack)
+	case *ast.BlockExpr:
+		return x.Tail != nil && assignedOwned(info, target, x.Tail, freshLocal, payloadOwned, unpack)
 	case *ast.Ident:
 		return freshLocal[x.Name] || payloadOwned(x.Name)
 	case *ast.StructLit:
@@ -1989,7 +1997,18 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 	}
 	later := false
-	ast.Walk(st, func(m ast.Node) bool {
+	var visit func(ast.Node) bool
+	visit = func(m ast.Node) bool {
+		if branch, ok := m.(*ast.IfExpr); ok {
+			if nodeHolds(branch.Then, aid) {
+				ast.Walk(branch.Then, visit)
+				return false
+			}
+			if nodeHolds(branch.Else, aid) {
+				ast.Walk(branch.Else, visit)
+				return false
+			}
+		}
 		if lm, ok := m.(*ast.Lambda); ok && !lambdaFreeNames(lm)[aid.Name] {
 			return false
 		}
@@ -1997,9 +2016,13 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 			later = true
 		}
 		return !later
-	})
+	}
+	ast.Walk(st, visit)
 	if later {
 		return true
+	}
+	if target, assignment := storeTarget(st); target == aid.Name && assignment != nil && nodeHolds(assignment.Value, c) {
+		return false
 	}
 	return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 }
