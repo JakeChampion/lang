@@ -17,7 +17,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
-| ALAC | Packets | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. Compressed stereo requires at most 32 predictor bits. File containers remain open. |
+| ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF supplies file playback. Compressed stereo requires at most 32 predictor bits. M4A remains open. |
+| CAF | ALAC | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
 | HE-AAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
@@ -120,8 +121,22 @@ python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --chec
 ```
 
 Compressed stereo with 33 predictor bits remains unsupported.
-M4A and CAF playback, readers, and seek integration remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+M4A playback and Reader integration remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
+
+`std/audio/caf` supplies CAF playback and exact byte-view seeks for ALAC.
+Inspection retains packet offsets, sizes, positions, and configuration. It retains no encoded bytes or PCM.
+The logical packet arrays use sixteen bytes per packet and an eight-byte terminal position, before capacity and runtime overhead.
+Each cursor step decodes at most one packet. Seeks reuse decoder storage and need no earlier packet.
+
+CAF audio events retain the original packet buffer and declare the playable range with `start` and `frames`.
+Both values count frames. This avoids an extra PCM buffer for initial and final trim.
+The channel mask and WAVE channel order follow supported explicit CAF layouts.
+The complete-file convenience method checks a cumulative PCM budget.
+
+The index checks packet headers and extents. Reads validate the selected audio payloads.
+The playable end respects partial ALAC packets when a CAF packet table describes nominal full-packet capacity.
+CAF readers, other CAF codecs, and custom channel descriptions remain open.
 
 ## Vorbis
 
