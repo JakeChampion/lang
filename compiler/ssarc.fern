@@ -6217,6 +6217,15 @@ function sysreg_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst)
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
+  if (verb == "reverse" || verb == "swap_halves" || verb == "zip_lo" || verb == "zip_hi") {
+    for a in ins.args {
+      r = emit(r, ir.op_drop());
+    }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(if (verb == "reverse" || verb == "swap_halves") { ins.args[0] } else { ins.args[1] }));
+    let mode = if (verb == "swap_halves") { 3 } else if (verb == "reverse") { 0 } else if (verb == "zip_lo") { 1 } else { 2 };
+    return emit(r, ir.op_lane_at("vpermute", w, mode));
+  }
   let op = irtables.lane_builtin_op(verb);
   if (op != "") {
     r = emit(r, ir.op_lane(op, w));
@@ -6225,9 +6234,9 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
     }
     return r;
   }
-  if (verb == "lane") {
+  if (verb == "lane" || verb == "lane_bits") {
     r = emit(r, ir.op_drop());
-    return emit(r, ir.op_lane_at("vextract", w, defining(f, ins.args[1]).imm));
+    return emit(r, ir.op_lane_at(if (verb == "lane_bits") { "vextract_bits" } else { "vextract" }, w, defining(f, ins.args[1]).imm));
   }
   for a in ins.args {
     r = emit(r, ir.op_drop());
@@ -6380,7 +6389,7 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__alloc_i32") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(32)) };
   }
-  if (ins.str == "__alloc_i64") {
+  if (ins.str == "__alloc_i64" || ins.str == "__alloc_f64") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(64)) };
   }
   if (ins.str == "__alloc_bool") {

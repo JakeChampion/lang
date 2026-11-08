@@ -59,12 +59,20 @@ It does not support WAVE_FORMAT_EXTENSIBLE or RF64.
 - `transform.fern` implements DCT-IV through an N/2-point complex FFT and the sine-window transforms.
 - `audio.fern` implements WAV and ULC2 containers.
 - `packed_transform.fern` implements four parallel FFTs with packed float SIMD.
+- `packed_decoder.fern` keeps planar float buffers for file decode and combines stereo conversion with the WAV write.
 - `file_decoder.fern` and `file_encoder.fern` manage parallel file operations.
 - `ulc.fern` implements command-line file I/O.
 
 The transform cost is `O(N log N)`.
 Each decoder owns its xorshift seed and overlap buffers.
-Packed float SIMD computes the FFT. Window and overlap operations retain double precision.
+Packed float SIMD computes the FFT.
+The block API retains double precision for window and overlap operations.
+File decode uses packed float buffers and cached float windows.
+
+The file decoder stores coefficients and overlap samples at a scale of `2^96`.
+This scale keeps tiny noise coefficients in the normal float range.
+The WAV write removes the scale.
+Noise tails preserve every Float32 multiplication result, with exact integer arithmetic for subnormal values.
 
 Each decoder starts with seed 1234567.
 The reference decoder uses a global seed for the process.
@@ -173,9 +181,11 @@ The optional C tests require a C compiler and a complete reference checkout.
 They check compatibility in both directions.
 They check every window pattern at all eight overlap scales, with noise and silence.
 Python 3 is necessary for the CLI tests.
+
 The example CI entry point is `examples/tests/ulc_codec.fern`.
 `TestSelfHostULCNativeCLI` runs the CLI integration suite on native CI.
 `TestSelfHostULCCLIWASI` checks the portable CLI build and entry point.
+`TestSelfHostULCUnit` and `TestSelfHostULCUnitWASI` run the full codec unit suite.
 
 Validation used x86-64 Linux and the compiler from this checkout.
 WASI unit and CLI tests also pass.

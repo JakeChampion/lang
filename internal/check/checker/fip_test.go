@@ -85,14 +85,21 @@ func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
 		`(__f64x2_lane(__f64x2_of(1.0, 2.0), 1) as i32)`, `(__f64x2_lane(__f64x2_splat(3.0), 0) as i32)`,
 		`__f64x2_bitmask(__f64x2_lt(__f64x2_of(1.0, 2.0), __f64x2_splat(2.0)))`,
 		`__f64x2_bitmask(__f64x2_ne(__f64x2_of(1.0, 2.0), __f64x2_splat(2.0)))`, `__f32x4_bitmask(v)`,
+		`(__f64x2_lane(__f64x2_reverse(__f64x2_of(1.0, 2.0)), 0) as i32)`,
+		`(__f64x2_lane(__f64x2_swap_halves(__f64x2_of(1.0, 2.0)), 0) as i32)`,
+		`(__f64x2_lane(__f64x2_zip_lo(__f64x2_of(1.0, 2.0), __f64x2_splat(3.0)), 0) as i32)`,
+		`(__f64x2_lane(__f64x2_zip_hi(__f64x2_of(1.0, 2.0), __f64x2_splat(3.0)), 0) as i32)`,
+		`(__f64x2_lane_bits(__f64x2_of(1.0, 2.0), 0) as i32)`,
+		`__f32x4_bitmask(__f32x4_reverse(v))`, `__f32x4_bitmask(__f32x4_swap_halves(v))`,
+		`__f32x4_bitmask(__f32x4_zip_lo(v, v))`, `__f32x4_bitmask(__f32x4_zip_hi(v, v))`, `(__f32x4_lane_bits(v, 0) as i32)`,
 	} {
 		for _, kw := range []string{"fip", "fbip"} {
 			wantNoErr(t, kw+" "+call, kw+` function probe(s: string, set: u8[], ws: u64[], x: u32, y: u64, v: f32x4): i32 { return `+call+`; }
 function main(): i32 { return 0; }`)
 		}
 	}
-	if len(fipNonAllocBuiltins) != 40 {
-		t.Errorf("fipNonAllocBuiltins has %d entries and this test covers 40: add a row for the new one", len(fipNonAllocBuiltins))
+	if len(fipNonAllocBuiltins) != 50 {
+		t.Errorf("fipNonAllocBuiltins has %d entries and this test covers 50: add a row for the new one", len(fipNonAllocBuiltins))
 	}
 }
 

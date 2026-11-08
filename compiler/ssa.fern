@@ -1156,7 +1156,7 @@ pub function lane_result(ins: SInst): boolean {
     return false;
   }
   let b = lane_base(ins.str);
-  return b != "vextract" && b != "vbitmask" && b != "vstore" && b != "vset";
+  return b != "vextract" && b != "vextract_bits" && b != "vbitmask" && b != "vstore" && b != "vset";
 }
 
 pub function lane_values(f: SFunc): boolean[] {

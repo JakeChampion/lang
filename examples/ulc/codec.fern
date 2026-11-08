@@ -7,6 +7,8 @@ import "./packed_transform";
 import "./windows";
 import "./noise_jump";
 
+const SIGNED_SQUARES: f64[] = [0.0, 0.0, 4.0, 9.0, 16.0, 25.0, 36.0, 49.0, 0.0, -49.0, -36.0, -25.0, -16.0, -9.0, -4.0, 0.0];
+
 pub function valid_config(block_size: i32, channels: i32): boolean {
   return channels >= 1 && channels <= 255 && block_size >= 256 && block_size <= 32768 && (block_size & block_size - 1) == 0;
 }
@@ -74,7 +76,7 @@ function quantizer(data: u8[], pos0: i32): i64 {
 }
 
 function scale(q: i32): f64 {
-  return 1.0 / ((1u64 << (5 + q) as u64) as f64);
+  return f64_from_bits((1018 - q) as i64 << 52i64);
 }
 
 function random(seed: u32): u32 {
@@ -91,15 +93,65 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
   if (size < 16 || size > 32768 || r.error) {
     return Err("invalid subblock size or reader state");
   }
+  return coefficients_into(r, size, transform.zeros(size), false);
+}
+
+function coefficients_into(own r: BitReader, size: i32, own out: f64[], clear: boolean): Result[Coefficients, string] {
+  if (size < 16 || size > 32768 || r.error || out.len() < size) {
+    return Err("invalid coefficient buffer or reader state");
+  }
+  unsafe {
+    if (__load_i32(out as usize - 8 as usize) != 1) {
+      out = __send_copy(out);
+    }
+    let address = out as usize + 8 as usize;
+    if (clear) {
+      __memset(address, 0, 8 * size);
+    }
+    let parsed = coefficient_buffer(r, size, address, false)?;
+    return Ok(Coefficients { reader: parsed.reader, values: out, noise_samples: parsed.noise_samples, silent: parsed.silent, needs_scale: parsed.needs_scale });
+  }
+}
+
+pub struct CoefficientCursor { reader: BitReader, noise_samples: i32, silent: boolean, needs_scale: boolean }
+
+@inline
+function store_coefficient(address: usize, n: i32, value: f64, packed: boolean): void {
+  unsafe {
+    if (packed) {
+      __store_i32(address + (4 * n) as usize, f32_bits((value * 79228162514264337593543950336.0) as f32));
+    } else {
+      __store_i64(address + (8 * n) as usize, f64_bits(value));
+    }
+  }
+}
+
+@inline
+function store_noise(address: usize, n: i32, magnitude: u32, sign: u32, packed: boolean): void {
+  unsafe {
+    if (packed) {
+      let bits = magnitude;
+      if (bits >= 8388608u32) {
+        bits += 805306368u32;
+      } else if (bits != 0u32) {
+        let shift = __clz32(bits) - 8;
+        bits = bits << shift as u32 & 8388607u32 | (97 - shift) as u32 << 23u32;
+      }
+      __store_i32(address + (4 * n) as usize, (bits ^ sign) as i32);
+    } else {
+      __store_i64(address + (8 * n) as usize, f64_bits(f32_from_bits((magnitude ^ sign) as i32) as f64));
+    }
+  }
+}
+
+// The caller owns size zeroed floats or doubles at output_address. Packed floats use a scale of 2^96.
+pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_address: usize, packed: boolean): Result[CoefficientCursor, string] {
+  if (size < 16 || size > 32768 || r.error) {
+    return Err("invalid subblock size or reader state");
+  }
   let data = r.data;
   let initial = quantizer(data, r.pos);
   let pos = quantizer_position(initial);
-  let out = transform.zeros(size);
-  let output_address = 0 as usize;
-  unsafe {
-    // The output is fresh and stays live until return. Each write is below size.
-    output_address = out as usize + 8 as usize;
-  }
   let noise_samples = 0;
   let silent = true;
   let needs_scale = false;
@@ -107,7 +159,7 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
     return Err("invalid initial quantizer or truncated block");
   }
   if (quantizer_value(initial) == -1) {
-    return Ok(Coefficients { reader: BitReader { ...r, pos: pos }, values: out, noise_samples: noise_samples, silent: silent, needs_scale: needs_scale });
+    return Ok(CoefficientCursor { reader: BitReader { ...r, pos: pos }, noise_samples: noise_samples, silent: silent, needs_scale: needs_scale });
   }
   let seed = r.seed;
   let quant = scale(quantizer_value(initial));
@@ -120,16 +172,8 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
     }
     if (code != 0 && code != 1 && code != 8 && code != 15) {
       silent = false;
-      let v = code;
-      if (v >= 8) {
-        v -= 16;
-      }
-      let square = v * v;
-      if (v < 0) {
-        square = -square;
-      }
       unsafe {
-        __store_i64(output_address + (8 * n) as usize, f64_bits(square as f64 * quant));
+        store_coefficient(output_address, n, SIGNED_SQUARES[code] * quant, packed);
       }
       n += 1;
     } else if (code == 0 || code == 1 || code == 8) {
@@ -166,12 +210,12 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
         noise_samples += count;
       }
       if (code == 8) {
+        let magnitude = f32_bits(level as f32) as u32;
+        let sign = 0u32;
         for i in 0..count {
           seed = random(seed);
-          level = f64_from_bits(f64_bits(level) ^ (seed as u64 << 32u64 & 9223372036854775808u64) as i64);
-          unsafe {
-            __store_i64(output_address + (8 * n) as usize, f64_bits(level));
-          }
+          sign ^= seed & 2147483648u32;
+          store_noise(output_address, n, magnitude, sign, packed);
           n += 1;
         }
       } else {
@@ -200,35 +244,45 @@ pub function coefficients(own r: BitReader, size: i32): Result[Coefficients, str
         let decay = ((1.0 - decay_code as f64 * (decay_code as f64) / 524288.0) as f32) as f64;
         silent = false;
         noise_samples += size - n;
+        let magnitude = f32_bits(level as f32) as u32;
+        let sign = 0u32;
         if (decay != 1.0) {
+          let current = __f32x4_splat(level as f32);
+          let factor = __f32x4_splat(decay as f32);
+          while (n < size && magnitude >= 8388608u32) {
+            seed = random(seed);
+            sign ^= seed & 2147483648u32;
+            store_noise(output_address, n, magnitude, sign, packed);
+            current *= factor;
+            magnitude = __f32x4_lane_bits(current, 0);
+            n += 1;
+          }
+          let mantissa = (f32_bits(decay as f32) as u32 & 8388607u32 | 8388608u32) as u64;
           while (n < size) {
             seed = random(seed);
-            level = f64_from_bits(f64_bits(level) ^ (seed as u64 << 32u64 & 9223372036854775808u64) as i64);
-            unsafe {
-              __store_i64(output_address + (8 * n) as usize, f64_bits(level));
-            }
-            let next = ((level * decay) as f32) as f64;
+            sign ^= seed & 2147483648u32;
+            store_noise(output_address, n, magnitude, sign, packed);
+            // Subnormal multiplication rounds an exact 47-bit product to nearest, with ties to even.
+            let product = magnitude as u64 * mantissa;
+            let next = (product + 8388607u64 + (product >> 24u64 & 1u64) >> 24u64) as u32;
             n += 1;
-            if (next == level) {
-              level = next;
+            if (next == magnitude) {
               break;
             }
-            level = next;
+            magnitude = next;
           }
         }
         while (n < size) {
           seed = random(seed);
-          level = f64_from_bits(f64_bits(level) ^ (seed as u64 << 32u64 & 9223372036854775808u64) as i64);
-          unsafe {
-            __store_i64(output_address + (8 * n) as usize, f64_bits(level));
-          }
+          sign ^= seed & 2147483648u32;
+          store_noise(output_address, n, magnitude, sign, packed);
           n += 1;
         }
-        needs_scale = needs_scale || level != 0.0 && level.abs() < 1.1754943508222875e-38;
+        needs_scale = needs_scale || magnitude != 0u32 && magnitude < 8388608u32;
       }
     }
   }
-  return Ok(Coefficients { reader: BitReader { ...r, seed: seed, pos: pos }, values: out, noise_samples: noise_samples, silent: silent, needs_scale: needs_scale });
+  return Ok(CoefficientCursor { reader: BitReader { ...r, seed: seed, pos: pos }, noise_samples: noise_samples, silent: silent, needs_scale: needs_scale });
 }
 
 pub struct Scan { next_byte: i32, noise_samples: i32, last_size: i32, silent: boolean }
@@ -407,7 +461,7 @@ pub function advance_seed(seed: u32, steps: i32): u32 {
   return value;
 }
 
-pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32, plans: packed_transform.Plan[], work: packed_transform.Scratch, lap_zero: boolean, output: f64[], zero_samples: f64[], lap_scratch: f64[] }
+pub struct Decoder { block_size: i32, channels: i32, last_size: i32, lap: f64[], seed: u32, plans: packed_transform.Plan[], work: packed_transform.Scratch, lap_zero: boolean, output: f64[], zero_samples: f64[], lap_scratch: f64[], coefs: f64[] }
 
 pub struct Block { state: Decoder, samples: f64[], next_byte: i32, silent: boolean }
 
@@ -420,12 +474,26 @@ pub function decoder(block_size: i32, channels: i32): Result[Decoder, string] {
     plans = plans.append(packed_transform.plan(block_size >> shift));
   }
   let zeros = transform.zeros(block_size * channels);
-  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32, plans: plans, work: packed_transform.scratch(block_size), lap_zero: true, output: zeros, zero_samples: zeros, lap_scratch: transform.zeros(block_size / 2) });
+  return Ok(Decoder { block_size: block_size, channels: channels, last_size: 0, lap: transform.zeros(channels * block_size / 2), seed: 1234567u32, plans: plans, work: packed_transform.scratch(block_size), lap_zero: true, output: zeros, zero_samples: zeros, lap_scratch: transform.zeros(block_size / 2), coefs: transform.zeros(block_size) });
 }
 
 // Blocks in the file container start on byte boundaries. Output is interleaved.
+@inline
+function store_sample(address: usize, sample: i32, channels: i32, channel: i32, value: f64): void {
+  unsafe {
+    let at = address + (8 * (sample * channels + channel)) as usize;
+    if ((channel & 1) != 0) {
+      let mid = f64_from_bits(__load_i64(at - 8 as usize));
+      __store_i64(at - 8 as usize, f64_bits(mid + value));
+      __store_i64(at, f64_bits(mid - value));
+    } else {
+      __store_i64(at, f64_bits(value));
+    }
+  }
+}
+
 pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
-  if (!valid_config(state.block_size, state.channels) || state.lap.len() != state.channels * state.block_size / 2 || state.lap_scratch.len() != state.block_size / 2 || state.output.len() != state.block_size * state.channels || state.zero_samples.len() != state.block_size * state.channels || state.last_size < 0 || state.last_size > state.block_size) {
+  if (!valid_config(state.block_size, state.channels) || state.coefs.len() != state.block_size || state.lap.len() != state.channels * state.block_size / 2 || state.lap_scratch.len() != state.block_size / 2 || state.output.len() != state.block_size * state.channels || state.zero_samples.len() != state.block_size * state.channels || state.last_size < 0 || state.last_size > state.block_size) {
     return Err("invalid decoder state");
   }
   if (offset < 0 || offset >= data.len() || data.len() > 1073741823) {
@@ -437,7 +505,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       return Ok(Block { state: Decoder { ...state, last_size: parsed.last_size }, samples: state.zero_samples, next_byte: parsed.next_byte, silent: true });
     }
   }
-  let Decoder { block_size: n, channels, last_size: previous_size, lap: all_lap, seed, plans, work, lap_zero: _, output, zero_samples, lap_scratch: lap } = state;
+  let Decoder { block_size: n, channels, last_size: previous_size, lap: all_lap, seed, plans, work, lap_zero: _, output, zero_samples, lap_scratch: lap, coefs } = state;
   let output_address = 0 as usize;
   unsafe {
     // The validated output spans n * channels doubles. Preserve retained blocks.
@@ -476,7 +544,8 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
     let at = 0;
     while (pattern != 0) {
       let subsize = n >> (pattern & 7);
-      let decoded = coefficients(r, subsize)?;
+      let decoded = coefficients_into(r, subsize, coefs, true)?;
+      coefs = decoded.values;
       r = decoded.reader;
       silent = silent && decoded.silent;
       let overlap = subsize;
@@ -493,7 +562,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       if (subsize == n) {
         for i in 0..n {
           unsafe {
-            __store_i64(output_address + (8 * (i * channels + channel)) as usize, f64_bits(work.samples[i]));
+            store_sample(output_address, i, channels, channel, work.samples[i]);
           }
         }
       } else {
@@ -505,7 +574,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
           for i in 0..subsize {
             src -= 1;
             unsafe {
-              __store_i64(output_address + (8 * ((at + i) * channels + channel)) as usize, f64_bits(lap[src]));
+              store_sample(output_address, at + i, channels, channel, lap[src]);
             }
           }
           for i in subsize..available {
@@ -521,12 +590,12 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
           for i in 0..available {
             src -= 1;
             unsafe {
-              __store_i64(output_address + (8 * ((at + i) * channels + channel)) as usize, f64_bits(lap[src]));
+              store_sample(output_address, at + i, channels, channel, lap[src]);
             }
           }
           for i in available..subsize {
             unsafe {
-              __store_i64(output_address + (8 * ((at + i) * channels + channel)) as usize, f64_bits(work.samples[j]));
+              store_sample(output_address, at + i, channels, channel, work.samples[j]);
             }
             j += 1;
           }
@@ -544,21 +613,6 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       __memcpy(all_lap as usize + 8 as usize + (channel * n * 4) as usize, lap as usize + 8 as usize, n * 4);
     }
   }
-  let ch = 1;
-  while (ch < channels) {
-    for i in 0..n {
-      let at = i * channels + ch;
-      let a = output[at - 1];
-      let b = output[at];
-      unsafe {
-        __store_i64(output_address + (8 * (at - 1)) as usize, f64_bits(a + b));
-      }
-      unsafe {
-        __store_i64(output_address + (8 * at) as usize, f64_bits(a - b));
-      }
-    }
-    ch += 2;
-  }
   let next = (r.pos + 1) / 2;
-  return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, lap: all_lap, seed: r.seed, plans: plans, work: work, lap_zero: silent, output: output, zero_samples: zero_samples, lap_scratch: lap }, samples: output, next_byte: next, silent: false });
+  return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, lap: all_lap, seed: r.seed, plans: plans, work: work, lap_zero: silent, output: output, zero_samples: zero_samples, lap_scratch: lap, coefs: coefs }, samples: output, next_byte: next, silent: false });
 }

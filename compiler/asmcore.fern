@@ -4156,6 +4156,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__alloc_i64") {
     return ty_array_i64();
   }
+  if (id.name == "__alloc_f64") {
+    return ty_array();
+  }
   if (id.name == "random_bytes") {
     return ty_array_i32();
   }
