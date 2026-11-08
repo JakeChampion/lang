@@ -22,6 +22,7 @@ var sandboxValueRules = map[string][]sandboxArgValues{
 		{16, 1, []int64{21505, 21506, 21507, 21508, 21521, 21523, 21524, 1074041865}},
 		{41, 0, []int64{1, 2, 10}},
 		{54, 1, []int64{1, 6, 41, 282}},
+		{54, 2, []int64{1, 2, 6, 9, 15, 26, 31, 51}},
 		{72, 1, []int64{0, 3, 4, 1031, 1032}},
 		{157, 0, []int64{1, 4, 56, 61}},
 	},
@@ -31,6 +32,7 @@ var sandboxValueRules = map[string][]sandboxArgValues{
 		{167, 0, []int64{1, 4, 56, 61}},
 		{198, 0, []int64{1, 2, 10}},
 		{208, 1, []int64{1, 6, 41, 282}},
+		{208, 2, []int64{1, 2, 6, 9, 15, 26, 31, 51}},
 		{220, 0, []int64{17}},
 	},
 }
@@ -42,6 +44,7 @@ var sandboxArgExpressions = map[string][]int64{
 	"af as i64":            {2, 10},
 	"(21506 + act) as i64": {21506, 21507, 21508},
 	"option as i64":        {56, 61},
+	"(op - 1) as i64":      {1, 2},
 }
 
 var sandboxRawSyscallRe = regexp.MustCompile(`__syscall[3-6]\((\d+),`)

@@ -362,6 +362,7 @@ func TestSeccompDeniesArguments(t *testing.T) {
 			{"prctl option", 167, []uint64{4, 1, 0}, []uint64{35, 0, 0}},
 			{"fcntl command", 25, []uint64{0, 3, 0}, []uint64{0, 6, 0}},
 			{"setsockopt level", 208, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
+			{"setsockopt option", 208, nil, []uint64{minusOne, 1, 25, 0, 0}},
 			{"clone flags", 220, nil, []uint64{0x10000000 | 0x200 | 17, 0, 0, 0, 0}},
 		}
 	} else {
@@ -372,6 +373,7 @@ func TestSeccompDeniesArguments(t *testing.T) {
 			{"prctl option", 157, []uint64{4, 1, 0}, []uint64{35, 0, 0}},
 			{"fcntl command", 72, []uint64{0, 3, 0}, []uint64{0, 6, 0}},
 			{"setsockopt level", 54, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
+			{"setsockopt option", 54, nil, []uint64{minusOne, 1, 25, 0, 0}},
 		}
 	}
 	for _, p := range probes {
