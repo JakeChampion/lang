@@ -456,12 +456,6 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 		return true
 	})
-	fieldOwner := func(name string) bool {
-		if isParam[name] {
-			return ownParam[name] && declCount[name] == 0
-		}
-		return (freshInitLocal[name] || unpackInitLocal[name]) && declCount[name] == 1 || bound[name] && declCount[name] == 0
-	}
 	aliasInitLocal := map[string]bool{}
 	for name, root := range RenameRoots(body) {
 		if ownParam[root] || freshInitLocal[root] || unpackInitLocal[root] {
@@ -470,6 +464,12 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	}
 	for name := range ownedAliases(body, ownParam, declCount, order, freshInitLocal, staleAssign, payloadOwned) {
 		aliasInitLocal[name] = true
+	}
+	fieldOwner := func(name string) bool {
+		if isParam[name] {
+			return ownParam[name] && declCount[name] == 0
+		}
+		return (freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]) && declCount[name] == 1 || bound[name] && declCount[name] == 0
 	}
 	admitted := func(name string) bool {
 		return isParam[name] || freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
@@ -1400,7 +1400,11 @@ func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[strin
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
-			if sole(x.Name) && ownedAtLastUse(x.Init) {
+			source := x.Init
+			if base, ok := spreadSource(source); ok {
+				source = base
+			}
+			if sole(x.Name) && (ownedAtLastUse(source) || freshAtLastUse(source)) {
 				out[x.Name] = true
 			}
 		case *ast.Destructure:
