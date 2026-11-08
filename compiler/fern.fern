@@ -2657,7 +2657,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
       sub_flag("-jni-java", "DIR", ["-shared"], "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       sub_flag("-jni-dex", "FILE", ["-shared"], "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
-      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
+      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT; the [android] table of the fern.toml of FILE gives the -apk- settings that no flag gives"),
       sub_flag("-apk-package", "NAME", ["-apk"], "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
       sub_flag("-apk-permission", "NAMES", ["-apk"], "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
@@ -3226,7 +3226,7 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
   let no_excl: string[] = [];
   return fern_toml.Manifest {
     name: "", lib: "lib.fern", index: "", index_key: "", deps: no_deps, members: no_members,
-    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, err: "", err_line: 0,
+    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, android_keys: no_excl, android_vals: no_excl, err: "", err_line: 0,
   };
 }
 
@@ -6803,12 +6803,75 @@ function apk_icon(path: string): (u8[], string) {
   }
 }
 
+// The -apk options with the [android] settings of the fern.toml that
+// governs the entry file. A flag on the command line takes priority, and a
+// path in the file is relative to the directory of the file.
+function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
+  let dir = util.dir_of(entry_path);
+  if (dir.len() > 0) {
+    dir += "/";
+  }
+  let g = governing_manifest(dir);
+  if (!g.found) {
+    return (o, "");
+  }
+  if (g.man.err.len() > 0) {
+    return (o, fern_toml.diagnostic(g.dir + "fern.toml", g.man));
+  }
+  let m = g.man;
+  let assets = o.assets;
+  if (assets.len() == 0) {
+    let paths: string[] = [];
+    for a in util.split_char(fern_toml.android(m, "assets"), b',') {
+      if (a.len() > 0) {
+        paths = paths.append(android_path(g.dir, a));
+      }
+    }
+    assets = paths.join(",");
+  }
+  return (ApkOpts {
+    ...o,
+    package: or_text(o.package, fern_toml.android(m, "package")),
+    label: or_text(o.label, fern_toml.android(m, "label")),
+    icon: or_text(o.icon, android_path(g.dir, fern_toml.android(m, "icon"))),
+    key: or_text(o.key, android_path(g.dir, fern_toml.android(m, "key"))),
+    permissions: or_text(o.permissions, fern_toml.android(m, "permissions")),
+    min_sdk: or_text(o.min_sdk, fern_toml.android(m, "min_sdk")),
+    compress: o.compress || fern_toml.android(m, "compress") == "true",
+    cleartext: o.cleartext || fern_toml.android(m, "cleartext") == "true",
+    debuggable: o.debuggable || fern_toml.android(m, "debuggable") == "true",
+    home: o.home || fern_toml.android(m, "home") == "true",
+    assets: assets,
+  }, "");
+}
+
+function or_text(flag: string, file: string): string {
+  if (flag.len() > 0) {
+    return flag;
+  }
+  return file;
+}
+
+// `path` from a manifest in the directory `dir`, which is "" or ends in a
+// slash.
+function android_path(dir: string, path: string): string {
+  if (path.len() == 0 || path[0] == b'/') {
+    return path;
+  }
+  return dir + path;
+}
+
 // fern -apk: builds the library of the app for each Android ABI, then
 // writes the signed APK.
-function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
+function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
   let (rest, bad) = apk_build_args(av);
   if (bad.len() > 0) {
     eprint(bad);
+    return 2;
+  }
+  let (o, manifest_bad) = apk_with_manifest(flags, entry_path);
+  if (manifest_bad.len() > 0) {
+    eprint(manifest_bad);
     return 2;
   }
   if (o.min_sdk.len() > 0 && !apk_level_ok(size_bytes(o.min_sdk))) {

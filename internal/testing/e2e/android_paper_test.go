@@ -63,20 +63,14 @@ func TestAndroidPaperControl(t *testing.T) {
 	runPaperSuite(t, "control_test.fern")
 }
 
-// fern -apk builds Paper as a home screen: the home categories, the
-// wallpaper theme, the notification listener service, the fonts and the
-// wallpaper under assets/, and the native methods of its three classes.
+// fern -apk builds Paper as a home screen from the [android] table of its
+// fern.toml, with no -apk- flag: the home categories, the wallpaper theme,
+// the notification listener service, the fonts and the wallpaper under
+// assets/, and the native methods of its three classes.
 func TestAndroidPaperApk(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "paper.apk")
-	assets := []string{}
-	for _, a := range paperAssets {
-		assets = append(assets, e2eharness.RepoPath(paperApp, "assets", a))
-	}
-	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.paper", "-apk-label", "Paper",
-		"-apk-icon", e2eharness.RepoPath(paperApp, "icon.png"), "-apk-min-sdk", "26", "-apk-home",
-		"-apk-permission", "INTERNET,ACCESS_COARSE_LOCATION,EXPAND_STATUS_BAR,REQUEST_DELETE_PACKAGES,QUERY_ALL_PACKAGES",
-		"-apk-asset", strings.Join(assets, ","),
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out,
 		e2eharness.RepoPath(paperApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = e2eharness.ChildEnv()
 	if o, err := cmd.CombinedOutput(); err != nil {

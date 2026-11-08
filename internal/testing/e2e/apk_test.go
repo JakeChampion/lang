@@ -772,3 +772,59 @@ func TestApkAsset(t *testing.T) {
 		}
 	}
 }
+
+// fern -apk takes the settings that no flag gives from the [android] table
+// of the fern.toml of the app, with each path relative to that file. A
+// flag takes priority over the table, and a bad table is refused.
+func TestApkManifest(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.ReadFile(e2eharness.RepoPath(nativeApp, "app.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	face, err := os.ReadFile(e2eharness.RepoPath(nativeApp, "face.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("app.fern", string(src))
+	write("face.fern", string(face))
+	write("data.txt", "fern")
+	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\n")
+	build := func(extra ...string) ([]byte, error) {
+		out := filepath.Join(dir, "app.apk")
+		args := append([]string{"-apk", out}, extra...)
+		args = append(args, filepath.Join(dir, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err != nil {
+			return o, err
+		}
+		return os.ReadFile(out)
+	}
+	raw, err := build("-apk-package", "dev.fern.flag")
+	if err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, raw)
+	}
+	zr := zipOf(t, raw)
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("dev.fern.flag")) || bytes.Contains(man, utf16le("dev.fern.fromfile")) {
+		t.Error("the -apk-package flag did not take priority over the package of fern.toml")
+	}
+	if !bytes.Contains(man, utf16le("android.intent.category.HOME")) {
+		t.Error("home = true in fern.toml did not make a home screen")
+	}
+	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
+		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
+	}
+	write("fern.toml", "[package]\nname = \"native\"\n\n[android]\nhome = \"yes\"\n")
+	o, err := build()
+	if err == nil || !strings.Contains(string(o), "error[E088]: [android] home: expected true or false") {
+		t.Errorf("a bad [android] table: err = %v, output:\n%s", err, o)
+	}
+}

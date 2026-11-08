@@ -57,19 +57,13 @@ Paper also does these things:
 
 ```sh
 make build
-A=examples/android/paper/assets
-./bin/fern -apk paper.apk -apk-package dev.fern.paper -apk-label Paper \
-     -apk-icon examples/android/paper/icon.png -apk-min-sdk 26 -apk-home \
-     -apk-permission INTERNET,ACCESS_COARSE_LOCATION,EXPAND_STATUS_BAR,REQUEST_DELETE_PACKAGES,QUERY_ALL_PACKAGES \
-     -apk-asset $A/wallpaper.jpg,$A/Roboto-Regular.ttf,$A/Roboto-Medium.ttf,$A/Roboto-SemiBold.ttf,$A/Roboto-Bold.ttf,$A/Roboto-ExtraBold.ttf \
-     examples/android/paper/app.fern
+./bin/fern -apk paper.apk examples/android/paper/app.fern
 adb install -r paper.apk
 ```
 
 Then open Settings > Apps > Default apps > Home app, and select Paper.
 
-`-apk-home` makes the activity a home screen. `-apk-asset` puts the
-wallpaper and the fonts in the APK, where `android.asset` reads them.
+The `[android]` table of `fern.toml` gives the settings of the APK. `home = true` makes the activity a home screen. `assets` puts the wallpaper and the fonts in the APK, where `android.asset` reads them.
 
 ## Tests
 
