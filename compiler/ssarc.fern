@@ -5836,6 +5836,9 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "tcp_accept") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_accept()) };
   }
+  if (ins.str == "tcp_accept_with") {
+    return Lowered { found: true, r: emit(r, ir.op_tcp_accept_with()) };
+  }
   if (ins.str == "tcp_local_port") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_local_port()) };
   }

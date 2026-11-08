@@ -3156,6 +3156,13 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
   if (name == "tcp_accept") {
     return socket_number(tcp_accept(sock));
   }
+  if (name == "tcp_accept_with") {
+    let accepted = tcp_accept(sock);
+    if (accepted.fd >= 0 && arg_bool(args, 1)) {
+      tcp_socket_ctl(accepted, 3, 1);
+    }
+    return socket_number(accepted);
+  }
   if (util.has_str(["tcp_close", "__tcp_close_unchecked", "__fd_close"], name)) {
     unsafe {
       return v_int(__tcp_close_unchecked(sock));

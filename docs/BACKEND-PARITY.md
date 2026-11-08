@@ -112,7 +112,7 @@ file at a nonzero offset, reads distinct bytes back, unmaps and closes, pins
 the errno of a bad descriptor, and round-trips bytes through the byte store.
 The Darwin legs run in the Apple Silicon lane.
 
-`tcp_listen`, `tcp_listen_with`, `tcp_connect_with`, `tcp_accept`,
+`tcp_listen`, `tcp_listen_with`, `tcp_connect_with`, `tcp_accept`, `tcp_accept_with`,
 `tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_addr_into`, `tcp_recv_into`,
 `tcp_send_bytes`, `udp_bind`, `udp_bind_with`, `udp_connect`, `udp_sendto`
 and `udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
@@ -308,6 +308,7 @@ of these at check time there.
 | Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | `fern-oracle -interp` |
 | --- | --- | --- | --- | --- | --- |
 | `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 20-byte record (a datagram socket's is 16 bytes) | E066 | net package |
+| `tcp_accept_with(sock, nonblocking)` | Fern body: one `accept4(2)` with `SOCK_CLOEXEC`, and `SOCK_NONBLOCK` when asked | Fern body: `accept(2)`, then `fcntl(2)` for `FD_CLOEXEC` and, when asked, `O_NONBLOCK` | the `tcp_accept` body with the record's blocking flag set from the argument | E066 | net package; the connection is marked non-blocking when asked |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
 | `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5 and 7 through wasi:sockets, op 3 a flag in the record; 1 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket |
 | `tcp_addr_into` | Fern body: one `getsockname(2)` or `getpeername(2)` | Fern body | `local-address` or `remote-address` of the tcp or udp socket, -EINVAL as 28 | E066 | `getsockname` or `getpeername` on the descriptor |

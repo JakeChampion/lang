@@ -355,7 +355,11 @@ listener on Linux, no-delay and keep-alive, a non-blocking read that
 answers empty, a write-side shutdown the peer reads as EOF, the `-EINVAL`
 of an unknown op, the wasm `-ENOTSUP` answers, and op 8's CPU steering of
 a `SO_REUSEPORT` group: attached on Linux, `-ENOPROTOOPT` where the host
-lacks the option, as qemu-user does, `-ENOTSUP` on Darwin and wasm), and
+lacks the option, as qemu-user does, `-ENOTSUP` on Darwin and wasm, and
+`tcp_accept_with` handing back a connection that is non-blocking when
+asked), `e2eharness.AcceptWithCloexecProbe` on the compiled Linux targets
+(the flags of an accepted descriptor read from `/proc/self/fdinfo`:
+close-on-exec on both forms, non-blocking only when asked), and
 `e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
 `set_nodelay`, `set_keepalive`, `set_nonblocking`, `read` (the
 `WouldBlock` of an empty non-blocking socket, the bytes written, then

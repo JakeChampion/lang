@@ -3764,6 +3764,7 @@ function builtin_i32_names(): string[] {
     "wasm_poll",
     "tcp_listen",
     "tcp_accept",
+    "tcp_accept_with",
     "tcp_local_port",
     "tcp_listen_with",
     "tcp_socket_ctl",
