@@ -4085,7 +4085,7 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
     return failed("no blocks");
   }
   let f = ended_at_exit(f0);
-  let at = ssadeps.position_of(f);
+  let at = ssa.block_positions(f);
   if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
     return failed("no entry block");
   }

@@ -94,7 +94,7 @@ struct Seen { at: i32[], defs: ssa.SInst[], uses: i32[], facts: Facts, head: i32
 function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
   let n = g.blocks.len();
   let none = util.minus_ones(n);
-  let s = Seen { at: ssadeps.position_of(g), defs: definitions(g), uses: ssa.use_counts(g), facts: no_facts(), head: none, on_t: none, on_f: none };
+  let s = Seen { at: ssa.block_positions(g), defs: definitions(g), uses: ssa.use_counts(g), facts: no_facts(), head: none, on_t: none, on_f: none };
   s = block_facts(f, g, s);
   let blocks = g.blocks;
   let changed = 0;
@@ -487,7 +487,7 @@ function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded
   let g = g0;
   let changed = 0;
   for round in 0..64 {
-    let at = ssadeps.position_of(g);
+    let at = ssa.block_positions(g);
     let yi = first_forwardable(g, at, ssa.use_counts(g), stack_phi_joins);
     if (yi < 0) {
       break;
@@ -670,7 +670,7 @@ function operand_on_edge(y: ssa.SBlock, v: i32, qk: i32): i32 {
 function merge_branch_chains(g0: ssa.SFunc): Forwarded {
   let g = g0;
   let changed = 0;
-  let at = ssadeps.position_of(g);
+  let at = ssa.block_positions(g);
   for ji in 0..g.blocks.len() {
     let bi = chained_branch(g, at, ji);
     if (bi >= 0) {
@@ -746,7 +746,7 @@ function returns_in_predecessors(f: ssasem.Func): Forwarded {
   let g = f.graph;
   let changed = 0;
   for round in 0..64 {
-    let at = ssadeps.position_of(g);
+    let at = ssa.block_positions(g);
     let ri = first_returning_join(f, g, at);
     if (ri < 0) {
       break;
@@ -852,7 +852,7 @@ function no_join(ji: i32): Join {
 
 function split_round(f: ssasem.Func): Joined {
   let g = f.graph;
-  let at = ssadeps.position_of(g);
+  let at = ssa.block_positions(g);
   let uses = ssa.use_counts(g);
   let defs = definitions(g);
   let dom = ssadeps.dominates(g);

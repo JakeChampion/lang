@@ -161,7 +161,7 @@ function graph_of(f: ssasem.Func): Graph {
     }
     b += 1;
   }
-  let at = ssadeps.position_of(f.graph);
+  let at = ssa.block_positions(f.graph);
   let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   b = 0;
   while (b < nb) {

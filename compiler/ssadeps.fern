@@ -11,24 +11,8 @@ function contains(values: i32[], value: i32): boolean {
   return false;
 }
 
-pub function position_of(f: ssa.SFunc): i32[] {
-  let top = 0;
-  for b in f.blocks {
-    if (b.id > top) {
-      top = b.id;
-    }
-  }
-  let out = util.minus_ones(top + 1);
-  let i = 0;
-  while (i < f.blocks.len()) {
-    out = out.with(f.blocks[i].id, i);
-    i += 1;
-  }
-  return out;
-}
-
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
-  let at = position_of(f);
+  let at = ssa.block_positions(f);
   let reachable = __alloc_bool(f.blocks.len());
   let entry = at[f.entry];
   reachable = reachable.with(entry, true);
@@ -61,7 +45,7 @@ pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
 }
 
 pub function dominates(f: ssa.SFunc): Dom {
-  return dominates_at(f, position_of(f));
+  return dominates_at(f, ssa.block_positions(f));
 }
 
 // The positions must describe the same graph as f.
@@ -294,7 +278,7 @@ pub function check_graph(f: ssa.SFunc): Facts {
   if (f.nparams < 0 || f.nparams > f.nvals) {
     return refused("parameter dimensions");
   }
-  let at = position_of(f);
+  let at = ssa.block_positions(f);
   if (f.blocks[at[f.entry]].preds.len() > 0) {
     return refused("entry has predecessors");
   }

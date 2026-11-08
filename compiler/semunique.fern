@@ -13,7 +13,7 @@ import "./rtbytecopy";
 pub struct Hoisted { func: ssasem.Func, changed: boolean }
 
 pub function hoisted(f: ssasem.Func, modes: i32[]): Hoisted {
-  let at = positions(f.graph);
+  let at = ssa.block_positions(f.graph);
   let blocks = f.graph.blocks;
   let values = f.values;
   let calls = f.calls;
@@ -52,20 +52,6 @@ pub function hoisted(f: ssasem.Func, modes: i32[]): Hoisted {
   }
   let graph = ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() };
   return Hoisted { func: ssasem.Func { ...f, values: values, calls: calls, graph: graph, source_positions: padded(f.source_positions, values.len()) }, changed: true };
-}
-
-function positions(g: ssa.SFunc): i32[] {
-  let top = 0;
-  for b in g.blocks {
-    if (b.id > top) {
-      top = b.id;
-    }
-  }
-  let at = __alloc_i32(top + 1);
-  for i in 0..g.blocks.len() {
-    at = at.with(g.blocks[i].id, i);
-  }
-  return at;
 }
 
 // The one predecessor placed before a loop header, when every other

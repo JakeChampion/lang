@@ -3573,7 +3573,7 @@ function guards_of(f: Func): Guards {
     }
     pi += 1;
   }
-  return Guards { dom: ssadeps.dominates(f.graph), at: ssadeps.position_of(f.graph), defs: defs, tests: tests, same: twins(defs) };
+  return Guards { dom: ssadeps.dominates(f.graph), at: ssa.block_positions(f.graph), defs: defs, tests: tests, same: twins(defs) };
 }
 
 function has_guarded_projection(f: Func): boolean {
@@ -4173,7 +4173,7 @@ function quiet_region(g: ssa.SFunc, at: i32[], own limit: i32[], bi: i32): i32[]
 
 function quiet_cell_read(g: ssa.SFunc, ri: i32, rpos: i32, v: i32): boolean {
   let off = projections_off(g, v);
-  let at = ssadeps.position_of(g);
+  let at = ssa.block_positions(g);
   let limit = util.minus_ones(g.blocks.len()).with(ri, hazard_after(g.blocks[ri], rpos));
   limit = quiet_region(g, at, limit, ri);
   for xi in 0..g.blocks.len() {
@@ -4976,7 +4976,7 @@ pub function merge_copies(f: Func): MergePlan {
   }
   let none = __alloc_bool(f.values.len());
   let defs = definitions(f);
-  let m = MergeScan { at: ssadeps.position_of(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
+  let m = MergeScan { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
     for ins in f.graph.blocks[bi].insts {
