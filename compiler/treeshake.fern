@@ -217,13 +217,13 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 
 // The roots of a call of the method `fa.field` with `arity` arguments. A
 // method of that name reaches only methods with that many parameters, and
-// `ts_call_root` reaches free functions of that name.
+// An unknown receiver can also name a module with a free function.
 function ts_called_method(fa: ast.ExprFieldAccess, arity: i32, own acc: string[]): string[] {
   let tag = ts_recv_tag(fa.obj);
   let ft = util.base_type_name(tag);
   let m = ts_arity_root(fa.field, arity);
   if (ts_named_tag(ft) && !util.str_has_suffix(tag, "[]")) {
-    return acc.append(ts_qualified_root(ft, m)).append(ts_any_root(m)).append(ts_call_root(fa.field));
+    return acc.append(ts_qualified_root(ft, m)).append(ts_any_root(m));
   }
   return acc.append(m).append(ts_call_root(fa.field));
 }
@@ -233,7 +233,7 @@ function ts_arity_root(name: string, arity: i32): string {
   return name + "/" + util.i32_to_string(arity);
 }
 
-// The root of a free function `name` that method syntax can call.
+// The root of a free function `name` on an unresolved module receiver.
 function ts_call_root(name: string): string {
   return "call " + name;
 }
@@ -526,7 +526,7 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, arity: i32, lt: LocalType
       }
       let base = util.base_type_name(spelled);
       if (ts_named_tag(base) && !util.str_has_suffix(spelled, "[]")) {
-        return acc.append(ts_qualified_root(base, m)).append(ts_any_root(m)).append(ts_call_root(fa.field));
+        return acc.append(ts_qualified_root(base, m)).append(ts_any_root(m));
       }
     }
   }
@@ -629,7 +629,7 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   // Unknown generic receivers contribute the bare method root until bound.
   if (fd.receiver_type.len() == 0 && util.str_has_prefix(fd.name, "__primitive_") && util.str_has_suffix(fd.name, "_to_string")) {
     let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
-    if (refset_has(refs, ts_call_root("to_string")) || refset_has(refs, ts_qualified_root(owner, ts_arity_root("to_string", 0)))) {
+    if (refset_has(refs, ts_arity_root("to_string", 0)) || refset_has(refs, ts_qualified_root(owner, ts_arity_root("to_string", 0)))) {
       return true;
     }
   }
