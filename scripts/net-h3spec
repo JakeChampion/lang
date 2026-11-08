@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# net-h3spec — h3spec's conformance cases against the Fern HTTP/3 server
+# (docs/NET-P8-HTTP3-PLAN.md slice 8, #12511): every case of h3spec, the
+# QUIC transport and TLS cases and the HTTP/3 and QPACK cases, against
+# scripts/net-h3spec.d/server.fern, std/serve with TLS and HTTP/3 on,
+# built by bin/fern for the host.
+#
+# Usage: net-h3spec [REPORT]
+#
+#   REPORT  where the `metric<TAB>value` rows go ("-" or nothing for
+#           stdout), the format scripts/perf-history records:
+#           h3spec/passed, h3spec/failed, h3spec/pending.
+#
+# h3spec is the pinned release below, fetched into $FERN_H3SPEC_TOOLS
+# (default ~/.cache/fern-h3spec) and checked against its SHA-256. The
+# certificate is a P-256 leaf openssl makes for the run, which h3spec
+# does not validate (-n). A case h3spec reports pending is one it cannot
+# decide against this server: the 0-RTT case, until the server accepts
+# early data (#12514). Any failed case fails the script.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+for tool in curl sha256sum openssl python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-h3spec: $tool not found" >&2
+    exit 2
+  fi
+done
+. scripts/net-lib
+
+H3SPEC_VERSION=0.1.15
+case "$ARCH" in
+  x86_64) H3SPEC_ASSET=h3spec-linux-x86_64; H3SPEC_SHA256=c3c5f497153f4ba81f82023791ba7f9a4bc46d4141211e614196f141c5996830 ;;
+  aarch64) H3SPEC_ASSET=; H3SPEC_SHA256= ;;
+esac
+if [ -z "$H3SPEC_SHA256" ]; then
+  echo "net-h3spec: no pinned h3spec for $ARCH" >&2
+  exit 2
+fi
+
+report="${1:--}"
+tools="${FERN_H3SPEC_TOOLS:-$HOME/.cache/fern-h3spec}"
+h3spec="$tools/h3spec-$H3SPEC_VERSION-$ARCH/h3spec"
+if [ ! -x "$h3spec" ]; then
+  echo "net-h3spec: fetching h3spec $H3SPEC_VERSION" >&2
+  mkdir -p "$(dirname "$h3spec")"
+  curl -sSL -o "$work/h3spec" "https://github.com/kazu-yamamoto/h3spec/releases/download/v$H3SPEC_VERSION/$H3SPEC_ASSET"
+  echo "$H3SPEC_SHA256  $work/h3spec" | sha256sum -c - >/dev/null
+  install -m 755 "$work/h3spec" "$h3spec"
+fi
+
+certs="$work/certs"
+mkdir -p "$certs"
+tls_certificate leaf prime256v1 "/CN=localhost" "" "subjectAltName=DNS:localhost,IP:127.0.0.1" "extendedKeyUsage=serverAuth" "keyUsage=digitalSignature" "basicConstraints=CA:FALSE"
+
+port="$(free_port)"
+bin/fern -target "$TARGET" -o "$work/server" scripts/net-h3spec.d/server.fern
+TLS_CERT="$certs/leaf.pem" TLS_KEY="$certs/leaf.key" PORT="$port" start_server "$work/server.log" "$work/server"
+await_port fern "$port" "$work/server.log"
+
+echo "== h3spec $H3SPEC_VERSION, $ARCH, HTTP/3 on port $port"
+status=0
+"$h3spec" -n -t 5000 localhost "$port" > "$work/h3spec.log" 2>&1 || status=$?
+cat "$work/h3spec.log"
+summary="$(grep -E '^[0-9]+ examples?, [0-9]+ failures?' "$work/h3spec.log" | tail -1)"
+examples="$(echo "$summary" | sed -n 's/^\([0-9]*\) example.*/\1/p')"
+failed="$(echo "$summary" | sed -n 's/.* \([0-9]*\) failure.*/\1/p')"
+pending="$(echo "$summary" | sed -n 's/.* \([0-9]*\) pending.*/\1/p')"
+if [ -z "$examples" ] || [ -z "$failed" ]; then
+  echo "net-h3spec: no summary from h3spec" >&2
+  cat "$work/server.log" >&2
+  exit 1
+fi
+pending="${pending:-0}"
+passed=$((examples - failed - pending))
+rows="h3spec/passed	$passed
+h3spec/failed	$failed
+h3spec/pending	$pending"
+if [ "$report" = "-" ]; then
+  echo "$rows"
+else
+  echo "$rows" > "$report"
+fi
+if [ "$status" -ne 0 ] || [ "$failed" != "0" ]; then
+  echo "net-h3spec: $failed case(s) failed" >&2
+  cat "$work/server.log" >&2
+  exit 1
+fi

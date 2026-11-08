@@ -1,6 +1,6 @@
 # Net P8: QUIC and HTTP/3 — the plan
 
-Status: [plan] in progress; slices 1 to 7 have landed, and 4b, 8 (interop nightly), 9 (the client), the rest of 10 (speed) and 0-RTT are open.
+Status: [plan] in progress. Slices 1 to 7 and the h3spec half of 8 landed. Open: 4b, the rest of 8 (more interop peers), 9 (the client), the rest of 10 (speed) and 0-RTT.
 
 How QUIC (RFC 9000, 9001, 9002) and HTTP/3 (RFC 9114, with QPACK, RFC 9204)
 are built into the standard library, in the order they land. One PR per
@@ -176,9 +176,10 @@ Each is a bound with a test that crosses it.
    missing/invalid/empty files, bodyless statuses and trailers. The x86-64
    transfer exceeds three times the cap and compares every byte by SHA-256.
    ARM64 under QEMU is correctness coverage, not native performance.
-8. **Interop nightly.** h3spec, and more HTTP/3 peers beside aioquic
-   (`scripts/net-quic-interop` has carried HTTP/3 both ways since 7a).
-   Gate: the nightly job.
+8. **Interop nightly.** h3spec on `scripts/net-h3spec`, every case
+   against `std/serve` with HTTP/3 on, landed (#12511). More HTTP/3 peers
+   beside aioquic (`scripts/net-quic-interop` has carried HTTP/3 both ways
+   since 7a) are open. Gate: the nightly jobs.
 9. **Client.** `std/fetch` speaks HTTP/3 to an origin that offers it by
    Alt-Svc, and `std/sim_fetch` scripts datagrams. Gate: fetch against
    aioquic's server, and the simulated network.
