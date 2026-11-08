@@ -99,7 +99,7 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 
 ## Remaining limits
 
-- `erase` takes an array of an element type with a zero. A secret held in a string, in a struct field, or in an array of records has no erasure call.
+- `erase` takes an array of an element type with a zero. A secret held in a string or in an array of records has no erasure call. A struct that holds a secret array offers one only where its module wrote it: `aes_gcm.Key`, `ed25519.PrivateKey` and `ecdsa.PrivateKey` have `erase()`, and a struct dropped without it keeps its bytes.
 - A quota per allocation site, per package, or per request is not defined. The arena quota is one number per executable.
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
 - The Go oracle and the self-host interpreter run `erase` on their own heaps and ignore `-heap-limit`, which is a compile flag of the native backends.
