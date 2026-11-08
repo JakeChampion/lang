@@ -1,0 +1,59 @@
+import "std/audio/flac/input";
+import "std/audio/source";
+import "std/hex";
+import "std/audio/pcm";
+import "audio_vectors";
+import "flac_input_check";
+
+function event(own state: input.Input, reader: Reader, cooperative: boolean): Result[(input.Input, input.ReadEvent), source.ReadError] {
+  if (cooperative) {
+    return state.step(reader);
+  }
+  let (next, value) = state.next(reader)?;
+  return Ok((next, match (value) { Some(value) => input.Output(value), None => input.Finished }));
+}
+
+function decode(reader: Reader, ref: pcm.Block, bytes: i32, cooperative: boolean): Result[void, string] {
+  let state = match (input.create(input.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let progress = flac_input_check.Progress { stage: 0, frames: 0i64 };
+  while (true) {
+    let (next, value) = match (event(state, reader, cooperative)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    state = next;
+    let finished = match (value) { input.Finished => true, _ => false };
+    progress = flac_input_check.event(value, ref, progress, bytes)?;
+    if (finished) {
+      break;
+    }
+  }
+  let offset = match (reader.seek(0i64, 1)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (progress.stage != 2 || offset != bytes as i64) {
+    return Err("file position or complete reference PCM");
+  }
+  return Ok(());
+}
+
+function read_file(path: string, ref: pcm.Block, bytes: i32, cooperative: boolean): Result[void, string] {
+  let reader = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let result = decode(reader, ref, bytes, cooperative);
+  let closed = reader.close();
+  result?;
+  return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[9].bytes) else {
+    return 3;
+  };
+  let ref = flac_input_check.smoke_reference();
+  for cooperative in [false, true] {
+    if let Err(message) = read_file(argv[1], ref, bytes.len(), cooperative) {
+      eprint(message);
+      return 1;
+    }
+  }
+  return 0;
+}

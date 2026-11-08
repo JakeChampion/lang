@@ -1,0 +1,17 @@
+import "std/hex";
+import "std/test";
+import "audio_vectors";
+import "flac_input_check";
+
+function independent(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[9].bytes) else {
+    return test.fail("reference input");
+  };
+  return match (flac_input_check.run(bytes, flac_input_check.smoke_reference(), 1, false, 64)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}
+
+function main(): i32 {
+  let runner = test.new("Native FLAC byte-source interpreter smoke");
+  runner = runner.it("independent constant PCM and MD5 through one-byte reads", independent);
+  return runner.finish();
+}

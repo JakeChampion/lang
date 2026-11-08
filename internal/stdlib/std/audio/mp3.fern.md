@@ -19,6 +19,8 @@ The frame API requires a complete frame at a known byte offset. It does not scan
 
 `decode_raw` retains all coded samples and codec delay. `decode` skips a Xing or Info frame and applies recognized LAME delay and padding.
 `inspect_track` exposes those boundaries. Both whole-file calls require a constant output format.
+`inspect_first_frame` reads identification metadata from one complete initial frame at a known offset.
+It does not interpret bytes inside that frame as trailing tags.
 The decoder skips ID3v2.2 through ID3v2.4, ID3v1, and bounded trailing APE tags.
 It does not expose tag contents or build a seek index.
 
@@ -43,6 +45,7 @@ The module executes Fern code and needs no external codec library.
 import "std/audio/pcm";
 import "std/audio/wire";
 import "std/audio/mp3/header";
+import "std/audio/mp3/metadata";
 import "std/audio/mp3/bits";
 import "std/audio/mp3/spectral";
 import "std/audio/mp3/synthesis";
@@ -205,57 +208,8 @@ pub function (own d: Decoder) decode_frame(input: [u8], at: i32, limits: pcm.Lim
   return d.decode_frame_into(input, at, spectral.zeros(count), limits);
 }
 
-function id3_footer(input: [u8], at: i32, size: i32): Result[void, pcm.AudioError] {
-  let f = at + 10 + size;
-  if (!wire.tag(input, f, "3DI")) {
-    return Err(pcm.Header);
-  }
-  for i in 3..10 {
-    if (input[at + i] != input[f + i]) {
-      return Err(pcm.Header);
-    }
-  }
-  return Ok(());
-}
-
-function id3_size(input: [u8], at: i32): Result[(i32, boolean), pcm.AudioError] {
-  let version = input[at + 3] as i32;
-  let flags = input[at + 5] as i32;
-  if (version < 2 || version > 4 || input[at + 4] == 255) {
-    return Err(pcm.Unsupported);
-  }
-  let reserved = if (version == 2) { 63 } else if (version == 3) { 31 } else { 15 };
-  if ((flags & reserved) != 0) {
-    return Err(pcm.Header);
-  }
-  let size = 0;
-  for i in 6..10 {
-    if (input[at + i] > 127) {
-      return Err(pcm.Header);
-    }
-    size = size << 7 | input[at + i] as i32;
-  }
-  return Ok((size, version == 4 && (flags & 16) != 0));
-}
-
 pub function audio_start(input: [u8], limits: pcm.Limits): Result[i32, pcm.AudioError] {
-  pcm.check_input(input, limits)?;
-  let at = 0;
-  while (wire.tag(input, at, "ID3")) {
-    if (input.len() - at < 10) {
-      return Err(pcm.Truncated);
-    }
-    let (size, footer) = id3_size(input, at)?;
-    let total = 10 + size + (if (footer) { 10 } else { 0 });
-    if (total > input.len() - at) {
-      return Err(pcm.Truncated);
-    }
-    if (footer) {
-      id3_footer(input, at, size)?;
-    }
-    at += total;
-  }
-  return Ok(at);
+  return metadata.audio_start(input, limits);
 }
 
 // Raw stream decode checks format and cumulative limits at each frame boundary.
@@ -404,6 +358,18 @@ function track_header(input: [u8], at: i32, end: i32, limits: pcm.Limits): Resul
 pub function inspect_track(input: [u8], limits: pcm.Limits): Result[Track, pcm.AudioError] {
   let at = audio_start(input, limits)?;
   let end = audio_end(input)?;
+  return track_at(input, at, end, limits);
+}
+
+pub function inspect_first_frame(input: [u8], at: i32, limits: pcm.Limits): Result[Track, pcm.AudioError] {
+  let h = inspect(input, at, limits)?;
+  if (h.bytes > input.len() - at) {
+    return Err(pcm.Truncated);
+  }
+  return track_at(input, at, at + h.bytes, limits);
+}
+
+function track_at(input: [u8], at: i32, end: i32, limits: pcm.Limits): Result[Track, pcm.AudioError] {
   let (h, tag) = track_header(input, at, end, limits)?;
   let declared = 0u32;
   let skip = 0;
