@@ -12,6 +12,10 @@ const W: i32 = 1080;
 
 const H: i32 = 2400;
 
+pub function frame_of(w: i32, h: i32): draw.Frame {
+  return frame(w, h);
+}
+
 function frame(w: i32, h: i32): draw.Frame {
   unsafe {
     let bits = __alloc(w * h * 4);
@@ -75,14 +79,16 @@ pub function home_view(): ui.View {
       favs = favs.append(a);
     }
   }
-  return ui.View { m: metrics(), layer: ui.HOME, date: "Thursday, August 21", time: "9:06", weather: Some(paper.Weather { temp: 77.0, high: 82.0, low: 74.0, code: 3 }), weather_note: "", favourites: favs, fav_scroll: 0, held: 3, hint: true, query: "", typing: false, results: apps, dim: [], list_scroll: 0, shift: 0, sheet: None, pause: ui.no_pause(), note: "" };
+  return ui.View { m: metrics(), layer: ui.HOME, date: "Thursday, August 21", time: "9:06", weather: Some(paper.Weather { temp: 77.0, high: 82.0, low: 74.0, code: 3 }), weather_note: "", favourites: favs, fav_scroll: 0, held: 3, hint: true, query: "", typing: false, results: apps, dim: [], list_scroll: 0, sheet: None, pause: ui.no_pause(), note: "" };
 }
 
 function draw_view(v: ui.View, name: string): draw.Frame {
   let f = frame(W, H);
   let fs = fonts();
   let ns = ui.nodes(fs, v);
-  ui.render(f, fs, ns, wallpaper(W), v.m.d);
+  let wall = ui.wallpaper_layer(wallpaper(W));
+  let c = ui.render(f, fs, face.new_cache(), ns, wall, v.m.d);
+  draw.release(wall);
   if let Some(out) = env("PAPER_UI_PNG") {
     save(f, out + "/" + name + ".png");
   }

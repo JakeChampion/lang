@@ -7,6 +7,7 @@
 // bars, and the notification listener of the notification filter.
 import "std/android";
 import "std/android/draw";
+import "std/android/layer";
 import "std/fetch";
 import "std/jni";
 import "std/log";
@@ -772,7 +773,22 @@ function device(ctx: usize, wall: u8[]): control.Device {
     listener_on: (): boolean => listener_on(ctx),
     default_allowed: (): string[] => default_allowed(ctx),
     open_held: (pkg: string, key: string): void => open_held(ctx, pkg, key),
+    request_frame: (): void => android.request_frame(ctx),
+    layer_new: (window: usize, w: i32, h: i32): Option[layer.Layer] => new_layer(ctx, window, w, h),
+    layer_fill: (l: layer.Layer, f: draw.Frame): layer.Layer => l.fill(f),
+    layer_show: (l: layer.Layer, x: i32, y: i32, alpha: f32): void => l.show(x, y, alpha),
+    layer_hide: (l: layer.Layer): void => l.hide(),
+    layer_free: (l: layer.Layer): void => layer.release(l),
   };
+}
+
+// A layer above the window for the app list to slide on, on Android 10 and
+// later.
+function new_layer(ctx: usize, window: usize, w: i32, h: i32): Option[layer.Layer] {
+  if (!layer.supported(ctx)) {
+    return None;
+  }
+  return layer.create(android.Window { ptr: window }, "paper-list", w, h);
 }
 
 // One step of the app, with a log line for each change that the emulator

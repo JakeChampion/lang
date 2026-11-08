@@ -4,6 +4,7 @@
 // the screens of the system it starts to a log file.
 import "std/android";
 import "std/android/draw";
+import "std/android/layer";
 import "std/test";
 import "std/worker";
 import "./control";
@@ -89,25 +90,61 @@ function fake(dir: string, now: i64, f: draw.Frame): control.Device {
     listener_on: (): boolean => false,
     default_allowed: (): string[] => ["com.android.dialer"],
     open_held: (pkg: string, key: string): void => log_line(dir, "held " + key),
+    request_frame: (): void => {},
+    layer_new: (window: usize, w: i32, h: i32): Option[layer.Layer] => None,
+    layer_fill: (l: layer.Layer, f: draw.Frame): layer.Layer => l,
+    layer_show: (l: layer.Layer, x: i32, y: i32, alpha: f32): void => {},
+    layer_hide: (l: layer.Layer): void => {},
+    layer_free: (l: layer.Layer): void => {},
   };
 }
 
-struct Run { s: control.App, dir: string, f: draw.Frame, now: i64 }
+// The fake device of a display with layers, which logs what the app does
+// with its layer.
+function fake_hw(dir: string, now: i64, f: draw.Frame): control.Device {
+  return control.Device {
+    ...fake(dir, now, f),
+    layer_new: (window: usize, w: i32, h: i32): Option[layer.Layer] => Some(layer.Layer { control: 1 as usize, buffer: 0 as usize, width: w, height: h }),
+    layer_fill: (l: layer.Layer, f: draw.Frame): layer.Layer => {
+      log_line(dir, "fill");
+      return l;
+    },
+    layer_show: (l: layer.Layer, x: i32, y: i32, alpha: f32): void => log_line(dir, "show"),
+    layer_hide: (l: layer.Layer): void => log_line(dir, "hide"),
+  };
+}
 
+function device(dir: string, now: i64, f: draw.Frame, hw: boolean): control.Device {
+  if (hw) {
+    return fake_hw(dir, now, f);
+  }
+  return fake(dir, now, f);
+}
+
+struct Run { s: control.App, dir: string, f: draw.Frame, now: i64, hw: boolean }
+
+// The app after event `e` at `dt` ms after the last one, and the vsync
+// after it, as the display gives it.
 function at(own r: Run, dt: i64, e: android.Event): Run {
   let now = r.now + dt;
-  let s = control.step(control.App { ...r.s, dev: fake(r.dir, now, r.f) }, e);
-  return Run { s: s, dir: r.dir, f: r.f, now: now };
+  let s = control.step(control.App { ...r.s, dev: device(r.dir, now, r.f, r.hw) }, e);
+  s = control.step(s, android.Vsync(now * 1000000i64));
+  return Run { s: s, dir: r.dir, f: r.f, now: now, hw: r.hw };
 }
 
 // Paper with its window shown, a status bar of 66 pixels and a navigation
 // bar of 132, and its files in a new directory.
 function shown(name: string): Run {
+  return shown_on(name, false);
+}
+
+// As `shown`, on a display with layers when `hw` is true.
+function shown_on(name: string, hw: boolean): Run {
   let dir = "/tmp/paper-control-" + name + "-" + now_unix_ms().to_string();
   let made = create_dir_all(dir);
   let f = frame();
-  let s = control.with_density(control.new(fake(dir, 0, f), dir, ui_test.fonts()), 440);
-  let r = Run { s: s, dir: dir, f: f, now: 0 };
+  let s = control.with_density(control.new(device(dir, 0, f, hw), dir, ui_test.fonts()), 440);
+  let r = Run { s: s, dir: dir, f: f, now: 0, hw: hw };
   r = at(r, 0, android.Start);
   r = at(r, 0, android.WindowCreated(android.Window { ptr: 1 as usize }));
   return at(r, 0, android.ContentRect(0, 66, W, H - 132));
@@ -148,8 +185,9 @@ function swipe(own r: Run, y0: i32, y1: i32): Run {
   t = at(t, 30, android.Touch(2, (W / 2) as f32, ((y0 + y1) / 2) as f32));
   t = at(t, 30, android.Touch(2, (W / 2) as f32, y1 as f32));
   t = at(t, 10, android.Touch(1, (W / 2) as f32, y1 as f32));
-  // The app list slides in for 180 ms.
-  return at(t, 250, android.Tick);
+  // The app list slides for 180 ms.
+  t = at(t, 100, android.Tick);
+  return at(t, 200, android.Tick);
 }
 
 function type_text(own r: Run, text: string): Run {
@@ -188,6 +226,8 @@ function test_enter_opens_first_match(): test.TestOutcome {
 // Turns off the opening of a single match, through the settings sheet.
 function control_off_auto(own r: Run): Run {
   let t = at(r, 20, android.Key(4, 1));
+  t = at(t, 100, android.Tick);
+  t = at(t, 200, android.Tick);
   t = long_at(t, W / 2, 1300);
   t = tap(t, "auto");
   return swipe(t, 2000, 900);
@@ -201,7 +241,9 @@ function add_home(own r: Run, key: string): Run {
   let t = swipe(r, 2000, 900);
   t = long(t, "menu:" + key);
   t = tap(t, "toggle-fav");
-  return at(t, 20, android.Key(4, 1));
+  t = at(t, 20, android.Key(4, 1));
+  t = at(t, 100, android.Tick);
+  return at(t, 200, android.Tick);
 }
 
 function test_unlimited_home_apps(): test.TestOutcome {
@@ -269,10 +311,43 @@ function test_back_and_home_key(): test.TestOutcome {
   let r = swipe(shown("back"), 2000, 900);
   let opened = r.s.layer;
   r = at(r, 20, android.Key(4, 1));
+  r = at(r, 100, android.Tick);
+  r = at(r, 200, android.Tick);
   let after_back = r.s.layer;
   r = swipe(r, 2000, 900);
   r = at(r, 20, android.Posted(control.KIND_HOME, 0 as usize));
   return test.assert_eq(opened.to_string() + after_back.to_string() + r.s.layer.to_string(), "100");
+}
+
+// The log with each run of the same line as one line.
+function runs(text: string): string {
+  let out = "";
+  let last = "";
+  for line in text.split("\n") {
+    if (line != last) {
+      out = out + line + " ";
+      last = line.to_owned();
+    }
+  }
+  return out.trim();
+}
+
+// On a display with layers, the app list gets its layer while home is
+// idle, slides in and out on it without a second fill, and the layer
+// hides when each slide ends.
+function test_slide_on_layer(): test.TestOutcome {
+  let r = at(shown_on("layer", true), 16, android.Tick);
+  let before = runs(logged(r));
+  r = swipe(r, 2000, 900);
+  r = at(r, 16, android.Tick);
+  r = at(r, 16, android.Tick);
+  let opened = r.s.layer;
+  r = at(r, 20, android.Key(4, 1));
+  r = at(r, 100, android.Tick);
+  r = at(r, 200, android.Tick);
+  r = at(r, 16, android.Tick);
+  let got = before + " | " + opened.to_string() + r.s.layer.to_string() + " | " + runs(logged(r));
+  return test.assert_eq(got, "fill | 10 | fill show hide show hide");
 }
 
 function test_pick_home_apps(): test.TestOutcome {
@@ -307,6 +382,7 @@ function main(): i32 {
   r = r.it("a mindful app opens after the pause", test_mindful_pause);
   r = r.it("back and the home key go home", test_back_and_home_key);
   r = r.it("choose home apps", test_pick_home_apps);
+  r = r.it("the app list slides on a layer", test_slide_on_layer);
   r = r.it("open a held notification", test_held_notifications);
   return r.finish();
 }

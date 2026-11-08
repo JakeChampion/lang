@@ -4,9 +4,11 @@
 // the phone, and control_test.fern gives one that records what the app does.
 import "std/android";
 import "std/android/draw";
+import "std/android/layer";
 import "std/option";
 import "std/worker";
 import "./face";
+import "./motion";
 import "./paper";
 import "./ui";
 
@@ -26,11 +28,18 @@ const LONG_PRESS_MS: i64 = 450;
 
 const PAUSE_MS: i64 = 5000;
 
-const DRAWER_MS: i64 = 180;
+// The animations of the app list, as Paper's Java views ran them: in over
+// 180 ms and out over 150 ms.
+const OPEN_MS: i64 = 180;
+
+const CLOSE_MS: i64 = 150;
 
 const WEATHER_MAX_AGE_MS: i64 = 1800000;
 
-// The input and output of the app. `wallpaper` decodes the wallpaper at a
+// The input and output of the app. `layer_new` gives a layer above the
+// window, which the display compositor moves and fades, or None on a device
+// without them; the app list slides on it. `wallpaper` decodes the
+// wallpaper at a
 // width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
@@ -63,14 +72,27 @@ pub struct Device {
   listener_on: () => boolean,
   default_allowed: () => string[],
   open_held: (string, string) => void,
+  request_frame: () => void,
+  layer_new: (usize, i32, i32) => Option[layer.Layer],
+  layer_fill: (layer.Layer, draw.Frame) => layer.Layer,
+  layer_show: (layer.Layer, i32, i32, f32) => void,
+  layer_hide: (layer.Layer) => void,
+  layer_free: (layer.Layer) => void,
 }
 
-// A touch from its down event to its up event. `vy` is the speed of the
-// finger in pixels per millisecond.
-struct Press { active: boolean, x0: f32, y0: f32, x: f32, y: f32, at: i64, moved: boolean, fired: boolean, group: string, scroll0: i32, vy: f64, last_y: f32, last_at: i64 }
+// A touch from its down event to its up event. `samples` are the last
+// positions of the finger, for its speed.
+struct Press { active: boolean, x0: f32, y0: f32, x: f32, y: f32, at: i64, moved: boolean, fired: boolean, group: string, scroll0: i32, samples: motion.Sample[] }
 
-// A list that keeps scrolling after a flick, at `v` pixels per millisecond.
-struct Fling { group: string, v: f64, at: i64 }
+// A list that keeps scrolling after a flick.
+struct Fling { group: string, f: motion.Fling }
+
+// The app list sliding in or out: it starts at the first frame after it is
+// asked for, when `t0` is 0.
+struct Slide { active: boolean, opening: boolean, t0: i64 }
+
+// A layer in memory and the key of what it holds.
+struct Layer { f: draw.Frame, key: string }
 
 pub struct App {
   dev: Device,
@@ -82,7 +104,20 @@ pub struct App {
   d: f64,
   top: i32,
   bottom: i32,
-  wallpaper: draw.Image,
+  wall: draw.Frame,
+  cache: face.Cache,
+  base: Layer,
+  under: Layer,
+  over: Layer,
+  slide: Slide,
+  frame_ns: i64,
+  // The layer of the app list above the window, the key of what it holds,
+  // the key of what the window shows, and the frames to wait before the
+  // layer hides once the list has slid in.
+  hw: Option[layer.Layer],
+  hw_key: string,
+  shown_key: string,
+  settle: i32,
   settings: paper.Settings,
   installed: paper.Entry[],
   apps: paper.Entry[],
@@ -98,7 +133,6 @@ pub struct App {
   pick_keys: string[],
   pause_key: string,
   pause_at: i64,
-  drawer_at: i64,
   press: Press,
   fling: Fling,
   weather: Option[paper.Weather],
@@ -114,11 +148,19 @@ pub struct App {
 }
 
 function no_press(): Press {
-  return Press { active: false, x0: 0.0, y0: 0.0, x: 0.0, y: 0.0, at: 0i64, moved: false, fired: false, group: "", scroll0: 0, vy: 0.0, last_y: 0.0, last_at: 0i64 };
+  return Press { active: false, x0: 0.0, y0: 0.0, x: 0.0, y: 0.0, at: 0i64, moved: false, fired: false, group: "", scroll0: 0, samples: [] };
 }
 
 function no_fling(): Fling {
-  return Fling { group: "", v: 0.0, at: 0i64 };
+  return Fling { group: "", f: motion.no_fling() };
+}
+
+function no_layer(): Layer {
+  return Layer { f: draw.offscreen(0, 0), key: "" };
+}
+
+function no_slide(): Slide {
+  return Slide { active: false, opening: false, t0: 0i64 };
 }
 
 function path(s: App, name: string): string {
@@ -129,7 +171,7 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, wallpaper: draw.Image { width: 0, height: 0, pixels: [] }, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, drawer_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, wall: draw.offscreen(0, 0), cache: face.new_cache(), base: no_layer(), under: no_layer(), over: no_layer(), slide: no_slide(), frame_ns: 0i64, hw: None, hw_key: "", shown_key: "", settle: 0, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
@@ -256,16 +298,26 @@ function launch(own s: App, a: paper.Entry, n: Option[ui.Node]): App {
 
 // --- layers
 
+// The home screen at once, with the app list and any sheet closed.
 function home(own s: App): App {
   if (s.typing) {
     s.dev.keyboard(false);
   }
-  return App { ...s, layer: ui.HOME, sheet: None, typing: false, query: "", list_scroll: 0, drawer_at: 0i64, press: no_press(), fling: no_fling(), dirty: true };
+  return App { ...s, layer: ui.HOME, sheet: None, typing: false, query: "", list_scroll: 0, slide: no_slide(), press: no_press(), fling: no_fling(), dirty: true };
 }
 
 function open_drawer(own s: App): App {
   s.dev.keyboard(true);
-  return App { ...s, layer: ui.DRAWER, query: "", typing: true, list_scroll: 0, drawer_at: now_ms(s), fling: no_fling(), dirty: true };
+  return App { ...s, layer: ui.DRAWER, query: "", typing: true, list_scroll: 0, slide: Slide { active: true, opening: true, t0: 0i64 }, settle: 0, fling: no_fling(), dirty: true };
+}
+
+// The app list slides out, then the home screen shows. The list keeps its
+// look while it slides, and `home` ends the typing.
+function close_drawer(own s: App): App {
+  if (s.typing) {
+    s.dev.keyboard(false);
+  }
+  return App { ...s, slide: Slide { active: true, opening: false, t0: 0i64 }, settle: 0, fling: no_fling(), dirty: true };
 }
 
 function close_sheet(own s: App): App {
@@ -280,6 +332,9 @@ function close_sheet(own s: App): App {
 function back(own s: App): App {
   if let Some(_) = s.sheet {
     return close_sheet(s);
+  }
+  if (s.layer == ui.DRAWER) {
+    return close_drawer(s);
   }
   if (s.layer != ui.HOME) {
     return home(s);
@@ -771,7 +826,7 @@ function scroll_of(s: App, group: string): i32 {
 function scroll_limit(s: App, group: string): i32 {
   let m = metrics(s);
   if (group == "fav") {
-    return ui.fav_scroll_limit(m, s.fonts, view(s));
+    return ui.fav_scroll_limit(m, s.fonts, view(s, s.frame_ns));
   }
   if (group == "list") {
     return ui.list_scroll_limit(m, s.fonts, results(s).len());
@@ -805,24 +860,36 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   let slop = ui.dp(m, 8.0) as f32;
   let now = now_ms(s);
   let p = s.press;
+  if (s.slide.active) {
+    return s;
+  }
+  let sample = motion.Sample { t: now * 1000000i64, y: y as f64 };
   if (action == 0) {
     let group = ui.group_at(s.nodes, x as i32, y as i32);
-    return App { ...s, fling: no_fling(), press: Press { active: true, x0: x, y0: y, x: x, y: y, at: now, moved: false, fired: false, group: group, scroll0: scroll_of(s, group), vy: 0.0, last_y: y, last_at: now } };
+    return App { ...s, fling: no_fling(), press: Press { active: true, x0: x, y0: y, x: x, y: y, at: now, moved: false, fired: false, group: group, scroll0: scroll_of(s, group), samples: [sample] } };
   }
   if (!p.active) {
     return s;
   }
   if (action == 2) {
-    let moved = p.moved || abs_f(x - p.x0) > slop || abs_f(y - p.y0) > slop;
-    let dt = now - p.last_at;
-    let vy = p.vy;
-    if (dt > 0i64) {
-      vy = 0.6 * ((y - p.last_y) as f64 / (dt as f64)) + 0.4 * p.vy;
+    let y0 = p.y0;
+    let moved = p.moved;
+    if (!moved && (abs_f(x - p.x0) > slop || abs_f(y - p.y0) > slop)) {
+      moved = true;
+      // As Android's lists do, the drag starts at the edge of the slop, so
+      // the list does not jump.
+      if (abs_f(y - p.y0) > slop) {
+        if (y > p.y0) {
+          y0 = p.y0 + slop;
+        } else {
+          y0 = p.y0 - slop;
+        }
+      }
     }
     let group = p.group + "";
-    let to = p.scroll0 - (y - p.y0) as i32;
+    let to = p.scroll0 - (y - y0) as i32;
     let fired = p.fired;
-    let pressed = Press { active: true, x0: p.x0, y0: p.y0, x: x, y: y, at: p.at, moved: moved, fired: fired, group: p.group + "", scroll0: p.scroll0, vy: vy, last_y: y, last_at: now };
+    let pressed = Press { active: true, x0: p.x0, y0: y0, x: x, y: y, at: p.at, moved: moved, fired: fired, group: p.group + "", scroll0: p.scroll0, samples: motion.track(p.samples, sample) };
     let t = App { ...s, press: pressed };
     if (moved && !fired && group.len() > 0) {
       return with_scroll(t, group, to);
@@ -839,7 +906,7 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     };
     return act(t, n.act, n);
   }
-  return swiped(t, p, x, y);
+  return swiped(t, p, x, y, motion.velocity(motion.track(p.samples, sample)));
 }
 
 // A tap on no node: it ends typing in the app list.
@@ -849,7 +916,8 @@ function tapped_empty(own s: App): App {
 
 // The end of a drag: a flick keeps a list scrolling, and on the home screen
 // a swipe up opens the app list and a swipe down opens the notifications.
-function swiped(own s: App, p: Press, x: f32, y: f32): App {
+// `v` is the speed of the finger in pixels per second.
+function swiped(own s: App, p: Press, x: f32, y: f32, v: f64): App {
   let m = metrics(s);
   let dy = y - p.y0;
   let dx = x - p.x0;
@@ -866,10 +934,13 @@ function swiped(own s: App, p: Press, x: f32, y: f32): App {
     }
   }
   if (s.sheet.is_none() && s.layer == ui.DRAWER && vertical && dy > ui.dp(m, 72.0) as f32 && p.scroll0 == 0) {
-    return home(s);
+    return close_drawer(s);
   }
-  if (p.group.len() > 0 && vertical && abs_f(p.vy as f32) > 0.3) {
-    return App { ...s, fling: Fling { group: p.group, v: 0.0 - p.vy, at: now_ms(s) } };
+  if (p.group.len() > 0 && vertical) {
+    let f = motion.fling(scroll_of(s, p.group), 0.0 - v, s.d, s.frame_ns);
+    if (motion.moving(f)) {
+      return App { ...s, fling: Fling { group: p.group, f: f }, dirty: true };
+    }
   }
   return s;
 }
@@ -894,23 +965,62 @@ function long_press(own s: App, now: i64): App {
   return t;
 }
 
-function fling_tick(own s: App, now: i64): App {
-  let f = s.fling;
-  if (f.group.len() == 0) {
+// Moves a flung list to its place at the frame time `ns`. The fling starts
+// at the first frame after the finger leaves.
+function fling_frame(own s: App, ns: i64): App {
+  let fl = s.fling;
+  if (fl.group.len() == 0) {
     return s;
   }
-  let dt = now - f.at;
-  if (dt <= 0i64) {
-    return s;
+  let f = fl.f;
+  if (f.t0 == 0i64) {
+    f = motion.Fling { ...f, t0: ns };
   }
-  let v = f.v * 0.996.pow(dt as f64);
-  let before = scroll_of(s, f.group);
-  let t = with_scroll(s, f.group, before + (f.v * (dt as f64)) as i32);
-  let after = scroll_of(t, f.group);
-  if (v.abs() < 0.05 || after == before) {
+  let (pos, done) = motion.position(f, ns);
+  let before = scroll_of(s, fl.group);
+  let t = with_scroll(s, fl.group, pos as i32);
+  let after = scroll_of(t, fl.group);
+  let stuck = after == before && (after == 0 || after == scroll_limit(t, fl.group)) && ns > f.t0;
+  if (done || stuck) {
     return App { ...t, fling: no_fling() };
   }
-  return App { ...t, fling: Fling { ...f, v: v, at: now } };
+  return App { ...t, fling: Fling { group: fl.group, f: f } };
+}
+
+// The part of the slide of the app list that is done at `ns`, from 0 to 1.
+function slide_part(s: App, ns: i64): f64 {
+  if (!s.slide.active || s.slide.t0 == 0i64) {
+    return 0.0;
+  }
+  let length = OPEN_MS;
+  if (!s.slide.opening) {
+    length = CLOSE_MS;
+  }
+  return (ns - s.slide.t0) as f64 / (length as f64 * 1.0e6);
+}
+
+// Advances the slide of the app list to `ns`. An open ends with the list
+// shown, and a close with the home screen.
+function slide_frame(own s: App, ns: i64): App {
+  if (!s.slide.active) {
+    return s;
+  }
+  if (s.slide.t0 == 0i64) {
+    return App { ...s, slide: Slide { ...s.slide, t0: ns }, dirty: true };
+  }
+  if (slide_part(s, ns) < 1.0) {
+    return App { ...s, dirty: true };
+  }
+  if (s.slide.opening) {
+    // The window draws the list under the layer, and the layer hides at the
+    // frame after, so the list never flickers.
+    return App { ...s, slide: no_slide(), settle: 2, dirty: true };
+  }
+  let t = home(s);
+  if let Some(l) = t.hw {
+    t.dev.layer_hide(l);
+  }
+  return t;
 }
 
 // --- keys and typing
@@ -919,7 +1029,7 @@ function key(own s: App, code: i32, action: i32): App {
   if (code == 4 && action == 1) {
     return back(s);
   }
-  if (action != 0 || !s.typing) {
+  if (action != 0 || !takes_text(s)) {
     return s;
   }
   if (code == 67) {
@@ -950,8 +1060,13 @@ function drop_last(q: string): string {
   return cs.take(cs.len() - 1).join("");
 }
 
+// The app list takes no typing while it slides out.
+function takes_text(s: App): boolean {
+  return s.typing && !(s.slide.active && !s.slide.opening);
+}
+
 function typed(own s: App, c: i32): App {
-  if (!s.typing || c < 32 || c == 127) {
+  if (!takes_text(s) || c < 32 || c == 127) {
     return s;
   }
   let text = text_of(s) + (c as char).to_string();
@@ -1082,11 +1197,22 @@ function started(own s: App): App {
 
 function placed(own s: App, window: usize): App {
   let (w, h) = s.dev.size(window);
-  let t = App { ...s, window: window, dirty: true };
-  if (w == s.w && h == s.h && s.wallpaper.width == w) {
-    return t;
+  if (w == s.w && h == s.h && s.wall.width == w && s.hw.is_some()) {
+    return App { ...s, window: window, dirty: true };
   }
-  return App { ...t, w: w, h: h, wallpaper: t.dev.wallpaper(w) };
+  let u = drop_layer(App { ...s, window: window, dirty: true });
+  draw.release(u.wall);
+  let wall = ui.wallpaper_layer(u.dev.wallpaper(w));
+  let hw = u.dev.layer_new(window, w, h);
+  return App { ...u, w: w, h: h, wall: wall, hw: hw, hw_key: "", shown_key: "" };
+}
+
+// The app with no layer above its window.
+function drop_layer(own s: App): App {
+  if let Some(l) = s.hw {
+    s.dev.layer_free(l);
+  }
+  return App { ...s, hw: None, hw_key: "", shown_key: "" };
 }
 
 function event(own s: App, e: android.Event): App {
@@ -1101,16 +1227,16 @@ function event(own s: App, e: android.Event): App {
       return home(App { ...s, shown: false });
     },
     android.WindowCreated(w) => {
-      return placed(s, w.ptr);
+      return draw_now(placed(s, w.ptr));
     },
     android.WindowResized(w) => {
-      return placed(s, w.ptr);
+      return draw_now(placed(s, w.ptr));
     },
     android.WindowRedraw(w) => {
-      return App { ...s, window: w.ptr, dirty: true };
+      return draw_now(App { ...s, window: w.ptr, dirty: true });
     },
     android.WindowDestroyed(_) => {
-      return App { ...s, window: 0 as usize };
+      return App { ...drop_layer(s), window: 0 as usize };
     },
     android.ContentRect(_, top, _, bottom) => {
       let b = s.h - bottom;
@@ -1118,6 +1244,9 @@ function event(own s: App, e: android.Event): App {
         b = 0;
       }
       return App { ...s, top: top, bottom: b, dirty: true };
+    },
+    android.Vsync(ns) => {
+      return frame(s, ns);
     },
     android.Touch(action, x, y) => {
       return touch(s, action, x, y);
@@ -1144,7 +1273,7 @@ function event(own s: App, e: android.Event): App {
 }
 
 function timers(own s: App, now: i64): App {
-  let t = fling_tick(long_press(s, now), now);
+  let t = long_press(s, now);
   if (t.note_until > 0i64 && now >= t.note_until) {
     t = App { ...t, note: "", note_until: 0i64, dirty: true };
   }
@@ -1152,19 +1281,18 @@ function timers(own s: App, now: i64): App {
   if (minute != t.minute) {
     t = App { ...t, minute: minute, dirty: true };
   }
-  if (t.layer == ui.PAUSE || t.drawer_at > 0i64 && now - t.drawer_at <= DRAWER_MS + 16i64) {
-    t = App { ...t, dirty: true };
-  }
-  if (t.drawer_at > 0i64 && now - t.drawer_at > DRAWER_MS + 16i64) {
-    t = App { ...t, drawer_at: 0i64 };
-  }
   if (t.layer == ui.BLOCKED && t.dev.wall_ms() >= t.pause_at) {
     t = home(t);
   }
   return t;
 }
 
-function pause_view(s: App, now: i64): ui.Pause {
+// Something moves on the screen, so each frame draws.
+function animating(s: App): boolean {
+  return s.slide.active || s.fling.group.len() > 0 || s.layer == ui.PAUSE || s.settle > 0;
+}
+
+function pause_view(s: App, ns: i64): ui.Pause {
   let label = "";
   if let Some(a) = paper.find(s.apps, s.pause_key) {
     label = a.label;
@@ -1173,38 +1301,32 @@ function pause_view(s: App, now: i64): ui.Pause {
     let until = paper.time_text(s.pause_at + local_offset(s, s.pause_at) as i64, s.dev.is_24h());
     return ui.Pause { title: "Blocked.", lines: [label + " is blocked", "until " + until + "."], open: "", ready: false, breath: 1.0 };
   }
+  let now = ns / 1000000i64;
   let left = (PAUSE_MS - (now - s.pause_at) + 999i64) / 1000i64;
   let open = "Open " + label;
   let ready = left <= 0i64;
   if (!ready) {
     open = "Open in " + left.to_string();
   }
-  // A breath in and out takes 5 seconds.
-  let phase = ((now - s.pause_at) % 5000i64) as f64 / 5000.0;
-  let wave = 0.5 - 0.5 * (phase * 6.2831853).cos();
+  // The circle grows over 2.5 s and shrinks over 2.5 s, with Android's
+  // default curve, as the Java version's animator ran it.
+  let phase = ((now - s.pause_at) % 5000i64) as f64 / 2500.0;
+  let wave = motion.ease(phase);
+  if (phase > 1.0) {
+    wave = 1.0 - motion.ease(phase - 1.0);
+  }
   return ui.Pause { title: "Take a breath.", lines: ["Do you need " + label, "right now?"], open: open, ready: ready, breath: 0.65 + 0.35 * wave };
 }
 
-pub function view(s: App): ui.View {
-  let now = now_ms(s);
+// What the screen shows at the frame time `ns`.
+pub function view(s: App, ns: i64): ui.View {
   let wall = s.dev.wall_ms();
   let local = wall + local_offset(s, wall) as i64;
-  let shift = 0;
-  if (s.layer == ui.DRAWER && s.drawer_at > 0i64) {
-    let t = (now - s.drawer_at) as f64 / (DRAWER_MS as f64);
-    if (t < 1.0) {
-      shift = ((1.0 - t) * (1.0 - t) * (s.h as f64) * 0.08) as i32;
-    }
-  }
-  let note = "";
-  if (!s.dev.has_location() && s.weather.is_none()) {
-    note = "Tap for";
-  }
   let weather_note = "";
   if (s.weather.is_none() && s.dev.has_location()) {
     weather_note = "Loading…";
   }
-  return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, shift: shift, sheet: s.sheet, pause: pause_view(s, now), note: s.note };
+  return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, sheet: s.sheet, pause: pause_view(s, ns), note: s.note };
 }
 
 // Dark icons on a bar over a light part of the screen.
@@ -1225,33 +1347,202 @@ function sync_bars(own s: App): App {
   return App { ...s, bars: code };
 }
 
-function draw_screen(own s: App): App {
-  if (!s.dirty || s.window == 0 as usize || s.w == 0) {
+// `l` holding a frame of w by h, with its old content when the size is the
+// same.
+function sized(own l: Layer, w: i32, h: i32): Layer {
+  if (l.f.width == w && l.f.height == h) {
+    return l;
+  }
+  draw.release(l.f);
+  return Layer { f: draw.offscreen(w, h), key: "" };
+}
+
+// What a layer draws with: its size, the fonts, the wallpaper and the
+// density.
+struct Paint { w: i32, h: i32, fonts: face.Fonts, wall: draw.Frame, d: f64 }
+
+function paint_of(s: App): Paint {
+  return Paint { w: s.w, h: s.h, fonts: s.fonts, wall: s.wall, d: s.d };
+}
+
+// The layer `l` with the nodes `ns` drawn into it, when its key is not
+// `key` already. It gives the cache with the sprites it made.
+function fill_layer(own l: Layer, own c: face.Cache, p: Paint, key: string, ns: ui.Node[]): (Layer, face.Cache) {
+  let layer = sized(l, p.w, p.h);
+  if (layer.key == key) {
+    return (layer, c);
+  }
+  let cache = ui.render(layer.f, p.fonts, c, ns, p.wall, p.d);
+  return (Layer { f: layer.f, key: key }, cache);
+}
+
+// Draws the frame at the time `ns`. While the app list slides, the frame is
+// the home screen with the app list over it, both drawn once into layers.
+// Otherwise it is the base of the screen, kept in a layer while its key
+// stays the same, with its top drawn over it.
+function draw_frame(own s: App, ns: i64): App {
+  if (s.window == 0 as usize || s.w == 0) {
     return s;
   }
-  let ns = ui.nodes(s.fonts, view(s));
+  let v = view(s, ns);
+  let p = paint_of(s);
   let f = s.dev.lock(s.window);
-  if (f.width > 0) {
-    ui.render(f, s.fonts, ns, s.wallpaper, s.d);
+  if (s.slide.active && s.hw.is_some()) {
+    s.dev.post(f);
+    return slide_layer(s, ns, v, p);
   }
-  s.dev.post(f);
-  return App { ...s, nodes: ns, dirty: false };
+  if (s.slide.active) {
+    return draw_slide(s, ns, v, p, f);
+  }
+  let sp = ui.split(p.fonts, v);
+  let (base, c1) = fill_layer(s.base, s.cache, p, sp.key, sp.base);
+  let cache = c1;
+  if (f.width > 0) {
+    f.blit(base.f, 0, 0);
+    cache = ui.render(f, p.fonts, c1, sp.top, p.wall, p.d);
+  }
+  let shown = "";
+  if (s.layer == ui.HOME && s.sheet.is_none()) {
+    shown = ui.full_key(v);
+  }
+  let t = App { ...s, base: base, cache: cache, nodes: ui.cat_nodes(sp.base, sp.top), shown_key: shown, dirty: false };
+  t.dev.post(f);
+  return t;
 }
 
-// The state after event `e`: the app handles it, runs its timers, polls the
-// weather and draws the screen when it changed.
+// The frame of the app list sliding over the home screen: both drawn once
+// into layers, then the list blended over the home screen by the part of
+// the slide that is done.
+function draw_slide(own s: App, ns: i64, v: ui.View, p: Paint, f: draw.Frame): App {
+  let part = motion.ease(slide_part(s, ns));
+  if (!s.slide.opening) {
+    part = 1.0 - part;
+  }
+  let home_view = ui.View { ...v, layer: ui.HOME, sheet: None };
+  let list_view = ui.View { ...v, layer: ui.DRAWER, sheet: None };
+  let hs = ui.split(p.fonts, home_view);
+  let ls = ui.split(p.fonts, list_view);
+  let (under, c1) = fill_layer(s.under, s.cache, p, ui.full_key(home_view), ui.cat_nodes(hs.base, hs.top));
+  let (over, c2) = fill_layer(s.over, c1, p, ui.full_key(list_view), ui.cat_nodes(ls.base, ls.top));
+  if (f.width > 0) {
+    f.blit(under.f, 0, 0);
+    f.blend_frame(over.f, 0, ((1.0 - part) * (p.h as f64) * 0.08) as i32, (part * 255.0) as i32);
+  }
+  let t = App { ...s, under: under, over: over, cache: c2, nodes: [], dirty: false };
+  t.dev.post(f);
+  return t;
+}
+
+// The view of the app list as it opens: no query, at the top.
+function list_view(v: ui.View): ui.View {
+  return ui.View { ...v, layer: ui.DRAWER, sheet: None, query: "", typing: true, list_scroll: 0 };
+}
+
+// The frame of the app list sliding over the home screen on the layer: the
+// compositor moves and fades the layer, so the frame draws nothing unless
+// the layer or the window does not hold its screen yet. At the first frame
+// of a close, the layer covers the list before the window draws home.
+function slide_layer(own s: App, ns: i64, v: ui.View, p: Paint): App {
+  let Some(hw) = s.hw else {
+    return s;
+  };
+  let part = motion.ease(slide_part(s, ns));
+  if (!s.slide.opening) {
+    part = 1.0 - part;
+  }
+  let lv = ui.View { ...v, layer: ui.DRAWER, sheet: None };
+  if (s.slide.opening) {
+    lv = list_view(v);
+  }
+  let ls = ui.split(p.fonts, lv);
+  let (over, c1) = fill_layer(s.over, s.cache, p, ui.full_key(lv), ui.cat_nodes(ls.base, ls.top));
+  let l = hw;
+  let held = s.hw_key;
+  if (held != over.key) {
+    l = s.dev.layer_fill(hw, over.f);
+    held = over.key;
+  }
+  s.dev.layer_show(l, 0, ((1.0 - part) * (p.h as f64) * 0.08) as i32, part as f32);
+  let t = App { ...s, over: over, cache: c1, hw: Some(l), hw_key: held, nodes: [], dirty: false };
+  let home_view = ui.View { ...v, layer: ui.HOME, sheet: None };
+  let home_key = ui.full_key(home_view);
+  if (t.shown_key == home_key || !t.slide.opening && t.slide.t0 == ns) {
+    return t;
+  }
+  let hs = ui.split(p.fonts, home_view);
+  let (under, c2) = fill_layer(t.under, t.cache, p, home_key, ui.cat_nodes(hs.base, hs.top));
+  let f = t.dev.lock(t.window);
+  if (f.width > 0) {
+    f.blit(under.f, 0, 0);
+  }
+  let u = App { ...t, under: under, cache: c2, shown_key: home_key };
+  u.dev.post(f);
+  return u;
+}
+
+// While home shows and nothing moves, the layer of the app list gets its
+// screen ahead of time, so the first frame of its slide draws nothing.
+function prepare_layer(own s: App): App {
+  let Some(hw) = s.hw else {
+    return s;
+  };
+  if (s.layer != ui.HOME || s.sheet.is_some() || animating(s) || s.window == 0 as usize || s.w == 0) {
+    return s;
+  }
+  let p = paint_of(s);
+  let lv = list_view(view(s, s.frame_ns));
+  let key = ui.full_key(lv);
+  if (s.hw_key == key) {
+    return s;
+  }
+  let ls = ui.split(p.fonts, lv);
+  let (over, c1) = fill_layer(s.over, s.cache, p, key, ui.cat_nodes(ls.base, ls.top));
+  let l = s.dev.layer_fill(hw, over.f);
+  return App { ...s, over: over, cache: c1, hw: Some(l), hw_key: key };
+}
+
+// Draws at once: the window needs its pixels before the call returns.
+function draw_now(own s: App): App {
+  let ns = now_ms(s) * 1000000i64;
+  return draw_frame(s, ns);
+}
+
+// The frame at the vsync `ns`: the animations move to that time, and the
+// screen draws when it changed.
+function frame(own s: App, ns: i64): App {
+  let t = slide_frame(fling_frame(App { ...s, frame_ns: ns }, ns), ns);
+  if (!t.dirty && !animating(t)) {
+    return prepare_layer(t);
+  }
+  let u = draw_frame(t, ns);
+  if (u.settle > 0) {
+    u = App { ...u, settle: u.settle - 1 };
+    if (u.settle == 0) {
+      if let Some(l) = u.hw {
+        u.dev.layer_hide(l);
+      }
+      // A frame with nothing to draw fills the layer for the next slide.
+      u.dev.request_frame();
+    }
+  }
+  return u;
+}
+
+// The state after event `e`: the app handles it, runs its timers and polls
+// the weather. It draws only at a vsync, so it asks for the next one when
+// the screen changed or moves.
 pub function step(own s: App, e: android.Event): App {
   let now = now_ms(s);
-  let t = timers(event(s, e), now);
-  t = poll_weather(t);
-  return draw_screen(sync_bars(t));
+  let t = sync_bars(poll_weather(timers(event(s, e), now)));
+  if (t.dirty || animating(t)) {
+    t.dev.request_frame();
+  }
+  return t;
 }
 
-// The milliseconds to wait for the next event before a Tick.
+// The milliseconds to wait for the next event before a Tick. The frames of
+// an animation come from the vsync, not from a Tick.
 pub function timeout(s: App, now: i64): i32 {
-  if (s.fling.group.len() > 0 || s.layer == ui.PAUSE || s.drawer_at > 0i64) {
-    return 16;
-  }
   if (s.press.active && !s.press.moved && !s.press.fired) {
     return clamp((LONG_PRESS_MS - (now - s.press.at)) as i32, 1, 500);
   }
@@ -1263,6 +1554,12 @@ pub function timeout(s: App, now: i64): i32 {
     let n = (s.note_until - now) as i32;
     if (n < wait) {
       wait = n;
+    }
+  }
+  if (s.layer == ui.BLOCKED) {
+    let b = (s.pause_at - s.dev.wall_ms()) as i32;
+    if (b < wait) {
+      wait = b;
     }
   }
   return clamp(wait, 1, 60050);

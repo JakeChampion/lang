@@ -1,6 +1,9 @@
 // The text of Paper: Roboto, the sans-serif face of Android, in the five
-// weights that the screens use, drawn with std/truetype at the exact size
-// of each piece of text.
+// weights that the screens use. std/truetype draws each glyph once for each
+// size, weight and quarter of a pixel, and each label once into a sprite,
+// a coverage map that `draw.Frame.mask` puts on a frame. A Cache keeps both,
+// so a frame draws its text with no rasterizing.
+import "core/map";
 import "std/android/draw";
 import "std/truetype";
 import "std/utf8";
@@ -36,7 +39,7 @@ pub function load(data: u8[][]): Fonts {
   return Fonts { faces: faces };
 }
 
-function has(fs: Fonts, w: i32): boolean {
+function has(fs: Fonts): boolean {
   return fs.faces.len() > 0;
 }
 
@@ -50,7 +53,7 @@ function font(fs: Fonts, w: i32): truetype.Font {
 // The ascent above the baseline and the descent below it, in pixels, for
 // text of `px` pixels to the em.
 pub function ascent(fs: Fonts, w: i32, px: i32): i32 {
-  if (!has(fs, w)) {
+  if (!has(fs)) {
     return px;
   }
   let f = font(fs, w);
@@ -58,7 +61,7 @@ pub function ascent(fs: Fonts, w: i32, px: i32): i32 {
 }
 
 pub function descent(fs: Fonts, w: i32, px: i32): i32 {
-  if (!has(fs, w)) {
+  if (!has(fs)) {
     return px / 4;
   }
   let f = font(fs, w);
@@ -70,9 +73,9 @@ pub function line(fs: Fonts, w: i32, px: i32): i32 {
   return ascent(fs, w, px) + descent(fs, w, px);
 }
 
-// The pen positions of the characters of `s`, in pixels, then the end of
-// the text. `track` adds space between the characters, in thousandths of
-// the em, as Android's letterSpacing does.
+// The glyphs of `s`, their pen positions in pixels, then the end of the
+// text. `track` adds space between the characters, in thousandths of the
+// em, as Android's letterSpacing does.
 function pens(f: truetype.Font, px: i32, track: i32, s: string): (i32[], f64[]) {
   let glyphs: i32[] = [];
   let out: f64[] = [];
@@ -98,7 +101,7 @@ pub function width(fs: Fonts, w: i32, px: i32, s: string): i32 {
 }
 
 pub function spaced_width(fs: Fonts, w: i32, px: i32, track: i32, s: string): i32 {
-  if (!has(fs, w) || s.len() == 0) {
+  if (!has(fs) || s.len() == 0) {
     return 0;
   }
   let (_, p) = pens(font(fs, w), px, track, s);
@@ -146,70 +149,181 @@ pub function fit_end(fs: Fonts, w: i32, px: i32, s: string, room: i32): string {
   return "";
 }
 
-// Draws `s` with its first pen at x and its baseline at y.
-pub function text(fr: draw.Frame, fs: Fonts, w: i32, px: i32, x: i32, y: i32, s: string, color: i32): void {
-  spaced(fr, fs, w, px, 0, x, y, s, color);
+// --- sprites
+
+// The coverage of a text, w by h. Its first pen is `left` pixels from the
+// left edge, and its baseline is row `base`.
+pub struct Sprite { w: i32, h: i32, left: i32, base: i32, cov: u8[] }
+
+pub struct Cache { glyphs: Map[i64, truetype.Bitmap], sprites: Map[string, Sprite] }
+
+pub function new_cache(): Cache {
+  return Cache { glyphs: map_new(512), sprites: map_new(256) };
 }
 
-pub function spaced(fr: draw.Frame, fs: Fonts, w: i32, px: i32, track: i32, x: i32, y: i32, s: string, color: i32): void {
-  if (!has(fs, w)) {
-    return;
+function no_sprite(): Sprite {
+  return Sprite { w: 0, h: 0, left: 0, base: 0, cov: [] };
+}
+
+// The bitmap of glyph `g` of weight `w` at `px`, with its pen `sub`
+// quarters of a pixel right of a pixel edge.
+function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cache, truetype.Bitmap) {
+  let key = (w as i64 * 4096i64 + px as i64) * 4i64 + sub as i64 << 32 | g as i64;
+  if let Some(bm) = c.glyphs.get(key) {
+    return (c, bm);
   }
-  let f = font(fs, w);
-  let (glyphs, p) = pens(f, px, track, s);
+  let bm = font(fs, w).render(g, px as f64, sub as f64 / 4.0);
+  return (Cache { glyphs: c.glyphs.insert(key, bm), sprites: c.sprites }, bm);
+}
+
+// The sprite of `s` in weight `w` at `px`, with the letter spacing `track`.
+pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: string): (Cache, Sprite) {
+  let key = w.to_string() + "|" + px.to_string() + "|" + track.to_string() + "|" + s;
+  if let Some(sp) = c.sprites.get(key) {
+    return (c, sp);
+  }
+  if (!has(fs) || s.len() == 0) {
+    return (c, no_sprite());
+  }
+  let (glyphs, p) = pens(font(fs, w), px, track, s);
+  let cache = c;
+  let bms: truetype.Bitmap[] = [];
+  let xs: i32[] = [];
+  let (x0, x1, y0, y1) = (1 << 20, 0 - (1 << 20), 1 << 20, 0 - (1 << 20));
   for i in 0..glyphs.len() {
-    let pen = x as f64 + p[i];
-    let fx = pen.floor();
-    let bm = f.render(glyphs[i], px as f64, pen - fx);
-    let ox = fx as i32 + bm.left;
-    let oy = y + bm.top;
+    let q = (p[i] * 4.0 + 0.5).floor() as i32;
+    let (next, bm) = glyph(cache, fs, w, px, glyphs[i], q & 3);
+    cache = next;
+    let gx = (q >> 2) + bm.left;
+    bms = bms.append(bm);
+    xs = xs.append(gx);
+    if (bm.width > 0) {
+      x0 = min(x0, gx);
+      x1 = max(x1, gx + bm.width);
+      y0 = min(y0, bm.top);
+      y1 = max(y1, bm.top + bm.height);
+    }
+  }
+  if (x1 <= x0) {
+    return (cache, no_sprite());
+  }
+  let sw = x1 - x0;
+  let sh = y1 - y0;
+  let cov: u8[] = [];
+  for i in 0..sw * sh {
+    cov = cov.append(0u8);
+  }
+  for i in 0..bms.len() {
+    let bm = bms[i];
     for row in 0..bm.height {
-      let at = row * bm.width;
+      let to = (bm.top - y0 + row) * sw + xs[i] - x0;
+      let from = row * bm.width;
       for col in 0..bm.width {
-        let a = bm.coverage[at + col] as i32;
+        let a = bm.coverage[from + col] as i32;
         if (a > 0) {
-          fr.cover(ox + col, oy + row, color, a);
+          let v = cov[to + col] as i32 + a;
+          cov = cov.with(to + col, min(v, 255) as u8);
         }
       }
     }
+  }
+  let sp = Sprite { w: sw, h: sh, left: 0 - x0, base: 0 - y0, cov: cov };
+  return (Cache { glyphs: cache.glyphs, sprites: cache.sprites.insert(key, sp) }, sp);
+}
+
+// The soft shadow of `s`: its sprite blurred three times by a box of radius
+// `r` along the rows and then the columns, which is close to the Gaussian
+// blur of Android's text shadows.
+pub function shadow(own c: Cache, fs: Fonts, w: i32, px: i32, s: string, r: i32): (Cache, Sprite) {
+  let key = "shadow|" + r.to_string() + "|" + w.to_string() + "|" + px.to_string() + "|" + s;
+  if let Some(sp) = c.sprites.get(key) {
+    return (c, sp);
+  }
+  let (cache, text) = sprite(c, fs, w, px, 0, s);
+  if (text.w == 0) {
+    return (cache, text);
+  }
+  let pad = 3 * r + 1;
+  let sw = text.w + 2 * pad;
+  let sh = text.h + 2 * pad;
+  let buf: i32[] = [];
+  for i in 0..sw * sh {
+    buf = buf.append(0);
+  }
+  for row in 0..text.h {
+    for col in 0..text.w {
+      buf = buf.with((row + pad) * sw + col + pad, text.cov[row * text.w + col] as i32);
+    }
+  }
+  for pass in 0..3 {
+    buf = box_blur(buf, sw, sh, r, true);
+    buf = box_blur(buf, sw, sh, r, false);
+  }
+  let cov: u8[] = [];
+  for v in buf {
+    cov = cov.append(min(v, 255) as u8);
+  }
+  let sp = Sprite { w: sw, h: sh, left: text.left + pad, base: text.base + pad, cov: cov };
+  return (Cache { glyphs: cache.glyphs, sprites: cache.sprites.insert(key, sp) }, sp);
+}
+
+// A box blur of radius r along the rows, or along the columns.
+function box_blur(src: i32[], w: i32, h: i32, r: i32, rows: boolean): i32[] {
+  let out: i32[] = [];
+  for i in 0..w * h {
+    out = out.append(0);
+  }
+  let n = 2 * r + 1;
+  let (lines, len, step, stride) = (h, w, 1, w);
+  if (!rows) {
+    lines = w;
+    len = h;
+    step = w;
+    stride = 1;
+  }
+  for l in 0..lines {
+    let start = l * stride;
+    let sum = 0;
+    for k in 0..min(r + 1, len) {
+      sum = sum + src[start + k * step];
+    }
+    for i in 0..len {
+      out = out.with(start + i * step, sum / n);
+      if (i + r + 1 < len) {
+        sum = sum + src[start + (i + r + 1) * step];
+      }
+      if (i - r >= 0) {
+        sum = sum - src[start + (i - r) * step];
+      }
+    }
+  }
+  return out;
+}
+
+function min(a: i32, b: i32): i32 {
+  if (a < b) {
+    return a;
+  }
+  return b;
+}
+
+function max(a: i32, b: i32): i32 {
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+// Draws `sp` in `color` with its first pen at x and its baseline at y.
+pub function put(fr: draw.Frame, sp: Sprite, x: i32, y: i32, color: i32): void {
+  if (sp.w > 0) {
+    fr.mask(x - sp.left, y - sp.base, sp.w, sp.h, sp.cov, color);
   }
 }
 
-// The coverage of the text `s`, with `pad` pixels on each side, and the
-// offset of its first pen and its baseline in the map.
-pub struct Mask { width: i32, height: i32, x: i32, base: i32, coverage: f64[] }
-
-pub function mask(fs: Fonts, w: i32, px: i32, s: string, pad: i32): Mask {
-  let tw = width(fs, w, px, s) + 2 * pad + 2;
-  let th = line(fs, w, px) + 2 * pad;
-  let cov: f64[] = [];
-  for i in 0..tw * th {
-    cov = cov.append(0.0);
-  }
-  if (!has(fs, w)) {
-    return Mask { width: tw, height: th, x: pad, base: pad, coverage: cov };
-  }
-  let f = font(fs, w);
-  let base = pad + ascent(fs, w, px);
-  let (glyphs, p) = pens(f, px, 0, s);
-  for i in 0..glyphs.len() {
-    let pen = pad as f64 + p[i];
-    let fx = pen.floor();
-    let bm = f.render(glyphs[i], px as f64, pen - fx);
-    for row in 0..bm.height {
-      for col in 0..bm.width {
-        let x = fx as i32 + bm.left + col;
-        let y = base + bm.top + row;
-        if (x >= 0 && x < tw && y >= 0 && y < th) {
-          let at = y * tw + x;
-          let v = cov[at] + bm.coverage[row * bm.width + col] as f64 / 255.0;
-          if (v > 1.0) {
-            v = 1.0;
-          }
-          cov = cov.with(at, v);
-        }
-      }
-    }
-  }
-  return Mask { width: tw, height: th, x: pad, base: base, coverage: cov };
+// Draws `s` with its first pen at x and its baseline at y.
+pub function text(own c: Cache, fr: draw.Frame, fs: Fonts, w: i32, px: i32, track: i32, x: i32, y: i32, s: string, color: i32): Cache {
+  let (next, sp) = sprite(c, fs, w, px, track, s);
+  put(fr, sp, x, y, color);
+  return next;
 }

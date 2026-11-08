@@ -78,7 +78,16 @@ pub function dp(m: Metrics, v: f64): i32 {
 
 // --- the wallpaper
 
-// The wallpaper in the JPEG `bytes`, at the width `w`.
+// The wallpaper in the JPEG `bytes`, at the width `w`, as an image. The app
+// copies it once into a layer, which each frame copies to the window.
+pub function wallpaper_layer(img: draw.Image): draw.Frame {
+  let f = draw.offscreen(img.width, img.height);
+  if (f.width > 0) {
+    f.image(0, 0, img.width, img.height, img);
+  }
+  return f;
+}
+
 pub function wallpaper(bytes: [u8], w: i32): draw.Image {
   match (jpeg.decode_image(bytes)) {
     Ok(img) => {
@@ -119,7 +128,6 @@ pub struct View {
   results: paper.Entry[],
   dim: string[],
   list_scroll: i32,
-  shift: i32,
   sheet: Option[Sheet],
   pause: Pause,
   note: string,
@@ -179,17 +187,6 @@ function cat(a: Node[], b: Node[]): Node[] {
   let out = a;
   for n in b {
     out = out.append(n);
-  }
-  return out;
-}
-
-function shifted(ns: Node[], dy: i32): Node[] {
-  if (dy == 0) {
-    return ns;
-  }
-  let out: Node[] = [];
-  for n in ns {
-    out = out.append(Node { ...n, y: n.y + dy, clip0: n.clip0 + dy, clip1: n.clip1 + dy });
   }
   return out;
 }
@@ -282,7 +279,7 @@ pub function fav_scroll_limit(m: Metrics, f: face.Fonts, v: View): i32 {
   return over;
 }
 
-function home(m: Metrics, f: face.Fonts, v: View): Node[] {
+function home_base(m: Metrics, f: face.Fonts, v: View): Node[] {
   let ns: Node[] = [node(0, 0, m.w, m.h, Wallpaper)];
   let date_px = dp(m, 21.0);
   let dw = face.spaced_width(f, face.BOLD, date_px, -10, v.date);
@@ -291,8 +288,20 @@ function home(m: Metrics, f: face.Fonts, v: View): Node[] {
   let cw = face.spaced_width(f, face.EXTRABOLD, cpx, -35, v.time);
   ns = ns.append(tap(node((m.w - cw) / 2, clock_y(m, f), cw, face.line(f, face.EXTRABOLD, cpx), Label(v.time, cpx, face.EXTRABOLD, -35, ink())), "alarms"));
   ns = cat(ns, widgets(m, f, v, row_y(m, f)));
-  ns = cat(ns, favourites(m, f, v));
-  return ns;
+  return cat(ns, hint(m, f, v));
+}
+
+// The hint of a home screen with no apps on it.
+function hint(m: Metrics, f: face.Fonts, v: View): Node[] {
+  if (!v.hint || v.favourites.len() > 0) {
+    return [];
+  }
+  let x = dp(m, 36.0);
+  let top = favourites_top(m, f);
+  let spx = dp(m, 16.0);
+  let lh = face.line(f, face.MEDIUM, spx) + dp(m, 4.0);
+  let soft = draw.rgba(255, 244, 230, 204);
+  return [node(x, top + dp(m, 8.0), m.w - 2 * x, lh, Shadowed("Swipe up for all apps.", spx, face.MEDIUM, soft, dp(m, 6.0))), node(x, top + dp(m, 8.0) + lh, m.w - 2 * x, lh, Shadowed("Long-press anywhere to pick home apps.", spx, face.MEDIUM, soft, dp(m, 6.0)))];
 }
 
 function widgets(m: Metrics, f: face.Fonts, v: View, y: i32): Node[] {
@@ -375,13 +384,6 @@ function favourites(m: Metrics, f: face.Fonts, v: View): Node[] {
     let n = node(x, y + dp(m, 14.0), face.width(f, face.SEMIBOLD, spx, text), held_h(m, f) - dp(m, 14.0), Shadowed(text, spx, face.SEMIBOLD, draw.rgba(255, 244, 230, 204), dp(m, 6.0)));
     ns = ns.append(in_list(tap(n, "held"), "fav", top, bottom));
   }
-  if (v.hint && v.favourites.len() == 0) {
-    let spx = dp(m, 16.0);
-    let lh = face.line(f, face.MEDIUM, spx) + dp(m, 4.0);
-    let soft = draw.rgba(255, 244, 230, 204);
-    ns = ns.append(node(x, top + dp(m, 8.0), width, lh, Shadowed("Swipe up for all apps.", spx, face.MEDIUM, soft, dp(m, 6.0))));
-    ns = ns.append(node(x, top + dp(m, 8.0) + lh, width, lh, Shadowed("Long-press anywhere to pick home apps.", spx, face.MEDIUM, soft, dp(m, 6.0))));
-  }
   if (ns.len() == 0) {
     return ns;
   }
@@ -430,7 +432,8 @@ pub function list_scroll_limit(m: Metrics, f: face.Fonts, n: i32): i32 {
   return over;
 }
 
-function drawer(m: Metrics, f: face.Fonts, v: View): Node[] {
+// The top of the app list: the search field and the ridge.
+function drawer_head(m: Metrics, f: face.Fonts, v: View): Node[] {
   let ns: Node[] = [fill(0, 0, m.w, m.h, paper_color(), 0)];
   let x = dp(m, 32.0);
   let spx = search_px(m);
@@ -451,7 +454,13 @@ function drawer(m: Metrics, f: face.Fonts, v: View): Node[] {
   }
   ns = ns.append(tap(node(0, m.top, m.w, sy + face.line(f, face.EXTRABOLD, spx) - m.top, Blank), "type"));
   let ridge_y = sy + face.line(f, face.EXTRABOLD, spx) + dp(m, 6.0);
-  ns = ns.append(node(0, ridge_y, m.w, dp(m, 22.0), Ridge));
+  return ns.append(node(0, ridge_y, m.w, dp(m, 22.0), Ridge));
+}
+
+// The rows of the app list.
+function drawer_rows(m: Metrics, f: face.Fonts, v: View): Node[] {
+  let x = dp(m, 32.0);
+  let ns: Node[] = [];
   let top = list_top(m, f);
   let bottom = list_bottom(m);
   let row = list_row(m, f);
@@ -701,23 +710,101 @@ function note(m: Metrics, f: face.Fonts, text: string): Node[] {
   return [fill((m.w - w) / 2, y, w, h, draw.rgba(50, 50, 50, 235), h / 2), label(f, (m.w - w) / 2 + dp(m, 16.0), y + dp(m, 12.0), shown, px, face.REGULAR, draw.rgb(255, 255, 255))];
 }
 
-pub function nodes(f: face.Fonts, v: View): Node[] {
-  let m = v.m;
-  let ns: Node[] = [];
-  if (v.layer == PAUSE || v.layer == BLOCKED) {
-    ns = pause(m, f, v.pause, v.layer == BLOCKED);
-  } else if (v.layer == DRAWER && v.shift == 0) {
-    ns = drawer(m, f, v);
-  } else {
-    ns = home(m, f, v);
-    if (v.layer == DRAWER) {
-      ns = cat(ns, shifted(drawer(m, f, v), v.shift));
+// Each screen in two parts: a base that changes seldom, which the app keeps
+// as a layer and copies to each frame, and a top that it draws on each
+// frame. The key names what the base shows, so a new key means a new base.
+pub struct Split { key: string, base: Node[], top: Node[] }
+
+function metrics_key(m: Metrics): string {
+  return m.w.to_string() + "x" + m.h.to_string() + "+" + m.top.to_string() + "+" + m.bottom.to_string() + "@" + m.d.to_string();
+}
+
+function weather_key(w: Option[paper.Weather]): string {
+  if let Some(x) = w {
+    return paper.degrees(x.temp) + "/" + paper.degrees(x.high) + "/" + paper.degrees(x.low) + "/" + x.code.to_string();
+  }
+  return "-";
+}
+
+// The key of what the top of a screen shows, for a dialog over it.
+function top_key(v: View): string {
+  let out = v.layer.to_string() + "|" + v.fav_scroll.to_string() + "|" + v.held.to_string() + "|" + v.list_scroll.to_string() + "|" + v.query + "|";
+  for a in v.favourites {
+    out = out + a.label + "\t";
+  }
+  if (v.layer == DRAWER) {
+    for a in v.results {
+      out = out + a.key + "\t" + a.label + "\t";
     }
+    out = out + v.dim.join(",");
   }
+  return out;
+}
+
+function screen_split(f: face.Fonts, v: View): Split {
+  let m = v.m;
+  if (v.layer == PAUSE || v.layer == BLOCKED) {
+    let p = v.pause;
+    let key = "pause|" + metrics_key(m) + "|" + p.title + "|" + p.lines.join("|") + "|" + p.open + "|" + p.ready.to_string();
+    let all = pause(m, f, p, v.layer == BLOCKED);
+    let base: Node[] = [];
+    let top: Node[] = [];
+    for n in all {
+      match (n.paint) {
+        Breath(_) => {
+          top = top.append(n);
+        },
+        _ => {
+          base = base.append(n);
+        }
+      }
+    }
+    return Split { key: key, base: base, top: top };
+  }
+  if (v.layer == DRAWER) {
+    let key = "drawer|" + metrics_key(m) + "|" + v.query + "|" + v.typing.to_string();
+    return Split { key: key, base: drawer_head(m, f, v), top: drawer_rows(m, f, v) };
+  }
+  let key = "home|" + metrics_key(m) + "|" + v.date + "|" + v.time + "|" + weather_key(v.weather) + "|" + v.weather_note + "|" + (v.hint && v.favourites.len() == 0).to_string();
+  return Split { key: key, base: home_base(m, f, v), top: favourites(m, f, v) };
+}
+
+pub function split(f: face.Fonts, v: View): Split {
+  let sc = screen_split(f, v);
+  let top = sc.top;
+  let key = sc.key;
+  let base = sc.base;
   if let Some(s) = v.sheet {
-    ns = cat(ns, dialog(m, f, s));
+    let d = dialog(v.m, f, s);
+    // The scrim goes into the base, over the whole screen under it.
+    key = key + "|" + top_key(v) + "|dialog";
+    base = cat(cat(base, top), [d[0]]);
+    top = d.drop(1);
   }
-  return cat(ns, note(m, f, v.note));
+  return Split { key: key, base: base, top: cat(top, note(v.m, f, v.note)) };
+}
+
+// The key of all that a screen shows, base and top.
+pub function full_key(v: View): string {
+  return split_key(v) + "|" + top_key(v) + "|" + v.note;
+}
+
+function split_key(v: View): string {
+  let m = v.m;
+  if (v.layer == DRAWER) {
+    return "drawer|" + metrics_key(m) + "|" + v.query + "|" + v.typing.to_string();
+  }
+  return "home|" + metrics_key(m) + "|" + v.date + "|" + v.time + "|" + weather_key(v.weather) + "|" + v.weather_note + "|" + (v.hint && v.favourites.len() == 0).to_string();
+}
+
+pub function cat_nodes(a: Node[], b: Node[]): Node[] {
+  return cat(a, b);
+}
+
+// The nodes of the screen, base and top, in the order they draw.
+pub function nodes(f: face.Fonts, v: View): Node[] {
+  let sp = split(f, v);
+  return cat(sp.base, sp.top);
 }
 
 // The topmost node under x and y with an action.
@@ -767,8 +854,10 @@ function band(fr: draw.Frame, y0: i32, y1: i32): draw.Frame {
   return draw.Frame { ...fr, bits: fr.bits + (a * fr.stride * 4) as usize, height: b - a };
 }
 
-// Draws the nodes. `wallpaper` is the wallpaper at the width of the frame.
-pub function render(fr: draw.Frame, f: face.Fonts, ns: Node[], wallpaper: draw.Image, d: f64): void {
+// Draws the nodes. `wall` is the layer of the wallpaper at the width of the
+// frame. It gives the cache with the sprites it made.
+pub function render(fr: draw.Frame, f: face.Fonts, own c: face.Cache, ns: Node[], wall: draw.Frame, d: f64): face.Cache {
+  let cache = c;
   for n in ns {
     if (n.clip0 > 0 || n.clip1 < fr.height) {
       let top = n.clip0;
@@ -777,16 +866,35 @@ pub function render(fr: draw.Frame, f: face.Fonts, ns: Node[], wallpaper: draw.I
       }
       let b = band(fr, top, n.clip1);
       if (b.height > 0) {
-        paint(b, f, Node { ...n, y: n.y - top }, wallpaper, d, top);
+        cache = paint(b, f, cache, Node { ...n, y: n.y - top }, wall, d, top);
       }
     } else {
-      paint(fr, f, n, wallpaper, d, 0);
+      cache = paint(fr, f, cache, n, wall, d, 0);
+    }
+  }
+  return cache;
+}
+
+// `y0` is the row of the window where the frame `fr` starts.
+function paint(fr: draw.Frame, f: face.Fonts, own c: face.Cache, n: Node, wall: draw.Frame, d: f64, y0: i32): face.Cache {
+  match (n.paint) {
+    Label(s, px, weight, track, color) => {
+      return face.text(c, fr, f, weight, px, track, n.x, n.y + face.ascent(f, weight, px), s, color);
+    },
+    Shadowed(s, px, weight, color, blur) => {
+      return shadowed(c, fr, f, n, s, px, weight, color, blur, d);
+    },
+    Gauge(now, range, frac) => {
+      return paint_gauge(c, fr, f, n, now, range, frac);
+    },
+    _ => {
+      paint_shape(fr, n, wall, d, y0);
+      return c;
     }
   }
 }
 
-// `y0` is the row of the window where the frame `fr` starts.
-function paint(fr: draw.Frame, f: face.Fonts, n: Node, wallpaper: draw.Image, d: f64, y0: i32): void {
+function paint_shape(fr: draw.Frame, n: Node, wall: draw.Frame, d: f64, y0: i32): void {
   match (n.paint) {
     Fill(color, r) => {
       if (r > 0) {
@@ -798,23 +906,15 @@ function paint(fr: draw.Frame, f: face.Fonts, n: Node, wallpaper: draw.Image, d:
     Outline(color, r, width) => {
       outline(fr, n, color, r, width);
     },
-    Label(s, px, weight, track, color) => {
-      face.spaced(fr, f, weight, px, track, n.x, n.y + face.ascent(f, weight, px), s, color);
-    },
-    Shadowed(s, px, weight, color, blur) => {
-      shadowed(fr, f, n, s, px, weight, color, blur, d);
-    },
     Wallpaper => {
-      paint_wallpaper(fr, wallpaper);
+      fr.store(0, 0, fr.width, fr.height, paper_color());
+      fr.blit(wall, 0, fr.height - wall.height);
     },
     Fade(top) => {
-      fade(fr, n, wallpaper, top, y0);
+      fade(fr, n, wall, top, y0);
     },
     Weather(sky) => {
       paint_sky(fr, n, sky);
-    },
-    Gauge(now, range, frac) => {
-      paint_gauge(fr, f, n, now, range, frac);
     },
     Music => {
       paint_music(fr, n);
@@ -831,26 +931,18 @@ function paint(fr: draw.Frame, f: face.Fonts, n: Node, wallpaper: draw.Image, d:
     Underline(color) => {
       fr.fill(n.x, n.y, n.w, n.h, color);
     },
-    Blank => {}
+    _ => {}
   }
-}
-
-function paint_wallpaper(fr: draw.Frame, img: draw.Image): void {
-  fr.store(0, 0, fr.width, fr.height, paper_color());
-  if (img.width <= 0) {
-    return;
-  }
-  fr.image(0, fr.height - img.height, img.width, img.height, img);
 }
 
 // The wallpaper drawn back over the edge of a list, from all of it at the
 // edge to none of it `n.h` pixels in. The frame starts at row `y0` of the
 // window, where the wallpaper sits on the bottom edge.
-function fade(fr: draw.Frame, n: Node, img: draw.Image, top: boolean, y0: i32): void {
-  if (img.width <= 0) {
+function fade(fr: draw.Frame, n: Node, wall: draw.Frame, top: boolean, y0: i32): void {
+  if (wall.width <= 0) {
     return;
   }
-  let wall_top = fr.height + y0 - img.height;
+  let wall_top = fr.height + y0 - wall.height;
   for row in 0..n.h {
     let y = n.y + row;
     if (y < 0 || y >= fr.height) {
@@ -864,11 +956,11 @@ function fade(fr: draw.Frame, n: Node, img: draw.Image, top: boolean, y0: i32): 
     let iy = y + y0 - wall_top;
     for x in n.x..n.x + n.w {
       if (x >= 0 && x < fr.width) {
-        let c = paper_color();
-        if (iy >= 0 && iy < img.height && x < img.width) {
-          c = img.pixel(x, iy);
+        let color = paper_color();
+        if (iy >= 0 && iy < wall.height && x < wall.width) {
+          color = wall.pixel(x, iy);
         }
-        fr.cover(x, y, c, a);
+        fr.cover(x, y, color, a);
       }
     }
   }
@@ -884,74 +976,17 @@ function outline(fr: draw.Frame, n: Node, color: i32, r: i32, width: i32): void 
   fr.round_rect(n.x + width, n.y + width, n.w - 2 * width, n.h - 2 * width, inner, night());
 }
 
-// Text with a soft shadow below it: its coverage, blurred three times by a
-// box of the blur radius, at 67% black and 1 dp down.
-function shadowed(fr: draw.Frame, f: face.Fonts, n: Node, s: string, px: i32, weight: i32, color: i32, blur: i32, d: f64): void {
+// Text with a soft shadow below it, at 67% black and 1 dp down: the blur of
+// Android's text shadows of radius `blur`.
+function shadowed(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, s: string, px: i32, weight: i32, color: i32, blur: i32, d: f64): face.Cache {
   let r = (blur as f64 * 0.577 / 1.5 + 0.5) as i32;
   if (r < 1) {
     r = 1;
   }
-  let pad = 3 * r + 1;
-  let mk = face.mask(f, weight, px, s, pad);
-  let cov = mk.coverage;
-  for pass in 0..3 {
-    cov = box_blur(cov, mk.width, mk.height, r, true);
-    cov = box_blur(cov, mk.width, mk.height, r, false);
-  }
   let base = n.y + (n.h - face.line(f, weight, px)) / 2 + face.ascent(f, weight, px);
-  let ox = n.x - mk.x;
-  let oy = base - mk.base + (d + 0.5) as i32;
-  for y in 0..mk.height {
-    for x in 0..mk.width {
-      let a = cov[y * mk.width + x];
-      if (a > 0.004) {
-        fr.cover(ox + x, oy + y, draw.rgba(0, 0, 0, 170), (a * 255.0) as i32);
-      }
-    }
-  }
-  face.text(fr, f, weight, px, n.x, base, s, color);
-}
-
-// A box blur of radius r along the rows, or along the columns.
-function box_blur(src: f64[], w: i32, h: i32, r: i32, rows: boolean): f64[] {
-  let out: f64[] = [];
-  for i in 0..w * h {
-    out = out.append(0.0);
-  }
-  let n = (2 * r + 1) as f64;
-  let lines = h;
-  let len = w;
-  if (!rows) {
-    lines = w;
-    len = h;
-  }
-  for l in 0..lines {
-    let sum = 0.0;
-    for k in 0 - r..r + 1 {
-      if (k >= 0 && k < len) {
-        sum = sum + src[at(l, k, w, rows)];
-      }
-    }
-    for i in 0..len {
-      out = out.with(at(l, i, w, rows), sum / n);
-      let add = i + r + 1;
-      let drop = i - r;
-      if (add < len) {
-        sum = sum + src[at(l, add, w, rows)];
-      }
-      if (drop >= 0) {
-        sum = sum - src[at(l, drop, w, rows)];
-      }
-    }
-  }
-  return out;
-}
-
-function at(line: i32, i: i32, w: i32, rows: boolean): i32 {
-  if (rows) {
-    return line * w + i;
-  }
-  return i * w + line;
+  let (c1, sh) = face.shadow(c, f, weight, px, s, r);
+  face.put(fr, sh, n.x, base + (d + 0.5) as i32, draw.rgba(0, 0, 0, 170));
+  return face.text(c1, fr, f, weight, px, 0, n.x, base, s, color);
 }
 
 // A thick line from (x0, y0) to (x1, y1), as discs along it.
@@ -1057,7 +1092,7 @@ function arc(fr: draw.Frame, cx: f64, cy: f64, r: f64, a0: f64, a1: f64, half: f
 
 // Today's temperature as a knob on the arc from the low to the high, with
 // the temperature in the middle and the range in the gap at the bottom.
-function paint_gauge(fr: draw.Frame, f: face.Fonts, n: Node, now: string, range: string, frac: f64): void {
+function paint_gauge(own c: face.Cache, fr: draw.Frame, f: face.Fonts, n: Node, now: string, range: string, frac: f64): face.Cache {
   let w = n.w as f64;
   let s = w * 0.06;
   let r = w / 2.0 - s;
@@ -1066,9 +1101,9 @@ function paint_gauge(fr: draw.Frame, f: face.Fonts, n: Node, now: string, range:
   arc(fr, cx, cy, r, 135.0, 405.0, s / 2.0, ink());
   let big = (w * 0.42) as i32;
   let bw = face.width(f, face.EXTRABOLD, big, now);
-  face.text(fr, f, face.EXTRABOLD, big, (cx - bw as f64 / 2.0) as i32, (cy + big as f64 * 0.36) as i32, now, ink());
+  let cache = face.text(c, fr, f, face.EXTRABOLD, big, 0, (cx - bw as f64 / 2.0) as i32, (cy + big as f64 * 0.36) as i32, now, ink());
   if (frac < 0.0) {
-    return;
+    return cache;
   }
   let t = frac;
   if (t > 1.0) {
@@ -1081,7 +1116,7 @@ function paint_gauge(fr: draw.Frame, f: face.Fonts, n: Node, now: string, range:
   disc(fr, kx, ky, s * 0.85, ink());
   let small = (w * 0.22) as i32;
   let rw = face.width(f, face.BOLD, small, range);
-  face.text(fr, f, face.BOLD, small, (cx - rw as f64 / 2.0) as i32, (cy + r + small as f64 * 0.35) as i32, range, ink());
+  return face.text(cache, fr, f, face.BOLD, small, 0, (cx - rw as f64 / 2.0) as i32, (cy + r + small as f64 * 0.35) as i32, range, ink());
 }
 
 // A round ink button with three sound-wave arcs.
