@@ -8,7 +8,8 @@ The index preserves decode order, decode times, composition times, durations, sa
 Packet times use the track clock's ticks. Composition times can be negative.
 Edit lists retain movie-duration and media-time units. The index does not apply edits to packet times.
 The caller must apply edits for presentation on the movie timeline.
-Container color, HDR, and sample-group metadata do not yet have typed fields.
+
+The index does not expose container color, HDR, or sample-group metadata.
 
 `avc1`, `avc3`, `hvc1`, and `hev1` descriptions carry validated NAL configuration framing.
 The configuration parser does not validate coded parameter-set syntax or establish decoder support.
