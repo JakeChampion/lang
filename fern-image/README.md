@@ -47,6 +47,8 @@ The [JPEG XL precision prerequisite](../docs/contexts/image/specs/jxl-sample-dep
 
 The [JPEG XL finite metadata prerequisite](../docs/contexts/image/specs/jxl-f16-fields.md) reads exact F16 values and writes the original metadata coder's finite truncation form.
 
+The [JPEG XL tone descriptor](../docs/contexts/image/specs/jxl-tone-metadata.md) checks complete luminance metadata, exact converted defaults and safe finite output.
+
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.
