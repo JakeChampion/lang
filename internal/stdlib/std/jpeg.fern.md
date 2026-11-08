@@ -113,14 +113,14 @@ function huffman(counts: i32[], symbols: i32[]): Huffman {
   for len in 0..16 {
     let n = counts[len];
     offset = offset.append(k - code);
-    code = code + n;
-    k = k + n;
+    code += n;
+    k += n;
     if (n > 0) {
       maxcode = maxcode.append(code - 1);
     } else {
       maxcode = maxcode.append(-1);
     }
-    code = code << 1;
+    code <<= 1;
   }
   return Huffman { maxcode: maxcode, offset: offset, symbols: symbols, ok: true };
 }
@@ -346,7 +346,7 @@ function zeros(n: i32): i32[] {
 function total_blocks(d: Decoder): i32 {
   let n = 0;
   for c in d.comps {
-    n = n + c.bw * c.bh;
+    n += c.bw * c.bh;
   }
   return n;
 }
@@ -459,7 +459,7 @@ function components(b: [u8], seg: i32, n: i32, mcux: i32, mcuy: i32): Option[Com
       return None;
     }
     comps = comps.append(Component { id: b[c] as i32, h: h, v: v, tq: b[c + 2] as i32 & 3, bw: mcux * h, bh: mcuy * v, off: off });
-    off = off + mcux * h * mcuy * v * 64;
+    off += mcux * h * mcuy * v * 64;
   }
   return Some(comps);
 }
@@ -590,7 +590,7 @@ function block(d: Decoder, sc: Scan, k: i32, base: i32, own coef: i32[], own s: 
       let (s1, t) = decode(b, st, dct);
       let (s2, v) = bits(b, s1, t);
       st = s2;
-      dc = dc + extend(v, t);
+      dc += extend(v, t);
       c = c.with(base, dc << sc.al);
     } else {
       let (s1, bit) = bits(b, st, 1);
@@ -642,7 +642,7 @@ function ac_first(b: [u8], own s: Bits, t: Huffman, own coef: i32[], base: i32, 
         if (r > 0) {
           let (s2, extra) = bits(b, st, r);
           st = s2;
-          run = run + extra;
+          run += extra;
         }
         break;
       }
@@ -773,7 +773,7 @@ function idct_rows(coef: [i32], base: i32, q: [i32], t: [f64]): f64[] {
         let k = v * 8 + u;
         let cv = coef[base + k];
         if (cv != 0) {
-          sum = sum + (cv * q[k]) as f64 * t[x * 8 + u];
+          sum += (cv * q[k]) as f64 * t[x * 8 + u];
         }
       }
       tmp = tmp.append(sum);
@@ -789,7 +789,7 @@ function idct_columns(tmp: [f64], t: [f64]): u8[] {
     for x in 0..8 {
       let sum = 128.5;
       for v in 0..8 {
-        sum = sum + tmp[v * 8 + x] * t[y * 8 + v];
+        sum += tmp[v * 8 + x] * t[y * 8 + v];
       }
       out = out.append(clamp255(sum.floor() as i32));
     }

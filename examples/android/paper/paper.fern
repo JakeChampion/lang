@@ -635,11 +635,11 @@ pub function civil(days: i64): (i64, i32, i32) {
   let d = (doy - (153i64 * mp + 2i64) / 5i64 + 1i64) as i32;
   let m = mp + 3i64;
   if (m > 12i64) {
-    m = m - 12i64;
+    m -= 12i64;
   }
   let y = yoe + era * 400i64;
   if (m <= 2i64) {
-    y = y + 1i64;
+    y += 1i64;
   }
   return (y, m as i32, d);
 }
@@ -663,7 +663,7 @@ pub function time_text(local_ms: i64, h24: boolean): string {
   let h = (mins / 60i64) as i32;
   let m = (mins % 60i64) as i32;
   if (!h24) {
-    h = h % 12;
+    h %= 12;
     if (h == 0) {
       h = 12;
     }
