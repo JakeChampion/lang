@@ -364,6 +364,10 @@ function __serve_listener(port: i32, opts: Config): __Listen {
 // the tokens any of them issued.
 struct __Listen { sock: Socket, inherited: boolean, h3_key: u8[] }
 
+function __listen(sock: Socket, inherited: boolean): __Listen {
+  return __Listen { sock: sock, inherited: inherited, h3_key: random_bytes(32) };
+}
+
 // __listen_release closes a listener serve bound itself. An inherited
 // LISTEN_FDS listener stays open, so a caller can retry on it.
 function __listen_release(l: __Listen): void {
@@ -432,7 +436,7 @@ function __listener_of(port: i32, opts: Config): __Listen {
       match (i32.parse_i32_radix(n, 10)) {
         Ok(count) => {
           if (count >= 1) {
-            return __Listen { sock: __adopt(3), inherited: true, h3_key: random_bytes(32) };
+            return __listen(__adopt(3), true);
           }
         },
         Err(_) => {}
@@ -443,10 +447,10 @@ function __listener_of(port: i32, opts: Config): __Listen {
   if (target_os() != "wasi") {
     let both = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
     if (both.fd >= 0 || !net.error_from_host(both.fd).ipv6_unavailable()) {
-      return __Listen { sock: both, inherited: false, h3_key: random_bytes(32) };
+      return __listen(both, false);
     }
   }
-  return __Listen { sock: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), inherited: false, h3_key: random_bytes(32) };
+  return __listen(tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), false);
 }
 ```
 
@@ -5340,7 +5344,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     workers = 1;
   }
   let resolved = Config { ...opts, workers: workers };
-  let shared = __Listen { sock: __adopt(-1), inherited: false, h3_key: random_bytes(32) };
+  let shared = __listen(__adopt(-1), false);
   let pool: i32[] = [];
   if (__per_worker_listeners(resolved)) {
     match (__worker_pool(port, resolved)) {
@@ -6267,7 +6271,10 @@ function __h3_accept(c: __Conns, h: packet.Header, d: [u8], path: [u8], opts: Co
   if (opts.max_connections_per_ip > 0 && __h3_from_ip(q, from.ip) >= opts.max_connections_per_ip) {
     return (c, -1);
   }
-  let Ok(made) = __h3_admitted(q, h, path, from, opts) else {
+  let Ok(odcid) = __h3_admitted(q, h, path, from, opts) else {
+    return (c, -1);
+  };
+  let Ok(made) = __h3_opened(q, h, odcid) else {
     return (c, -1);
   };
   let conn = h3q.server(made, h3.config()).with_max_body(opts.limits.body as i64);
@@ -6304,13 +6311,13 @@ function __h3_initial(h: packet.Header): boolean {
   }
 }
 
-// __h3_admitted opens the connection for an Initial the server admits.
-// Without a token, a client the server wants validated first is answered
-// with a Retry and nothing is kept for it. With one, the token must be one
-// a Retry issued for this address and connection ID, and the connection
-// continues the client's first Initial; any other token is answered with
-// INVALID_TOKEN.
-function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.SocketAddr, opts: Config): Result[quic.Conn, string] {
+// __h3_admitted decides whether the server opens a connection for an
+// Initial, and answers it when not. Without a token, a client the server
+// wants validated first gets a Retry and nothing is kept for it. With one,
+// the token must be one a Retry issued for this address and connection ID,
+// or the client gets INVALID_TOKEN. Ok carries the connection ID the
+// client's first Initial named.
+function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.SocketAddr, opts: Config): Result[u8[], string] {
   let Some(sock) = q.sock else {
     return Err("no socket");
   };
@@ -6319,13 +6326,23 @@ function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.Socket
       __h3_sent(sock, [quic.retry(q.cfg, q.key, random_bytes(quic.retry_entropy(q.cfg)), h, path, clock.now())], from);
       return Err("retry sent");
     }
-    return quic.accept(q.cfg, random_bytes(quic.server_entropy(q.cfg)), h, clock.instant());
+    return Ok(h.dcid);
   }
   let Some(odcid) = quic.validated(q.key, h, path, clock.now()) else {
     __h3_sent(sock, [quic.invalid_token(h)], from);
     return Err("token refused");
   };
-  return quic.accept_validated(q.cfg, random_bytes(quic.server_entropy(q.cfg)), h, odcid, clock.instant());
+  return Ok(odcid);
+}
+
+// __h3_opened opens the connection for an admitted Initial: one that
+// carries a token continues the client's first Initial, which named odcid.
+function __h3_opened(q: __Quic, h: packet.Header, odcid: u8[]): Result[quic.Conn, string] {
+  let entropy = random_bytes(quic.server_entropy(q.cfg));
+  if (h.token.len() > 0) {
+    return quic.accept_validated(q.cfg, entropy, h, odcid, clock.instant());
+  }
+  return quic.accept(q.cfg, entropy, h, clock.instant());
 }
 
 function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst) {

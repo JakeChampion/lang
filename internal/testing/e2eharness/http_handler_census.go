@@ -37,7 +37,7 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	// The fixture is a user program, so the std/time conversions std/serve
 	// may use as a stdlib module are given local copies, and its entropy
 	// goes through std/rand rather than the stdlib-only builtin.
-	if strings.Count(src, "random_bytes(") != 2 {
+	if strings.Count(src, "random_bytes(") != 4 {
 		t.Fatal("std/serve's entropy reads changed; update its bounded census fixture")
 	}
 	src = strings.ReplaceAll(src, "random_bytes(", "rand.bytes(")
