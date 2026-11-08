@@ -701,7 +701,7 @@ pub function intent_extra(ctx: usize, name: string): string {
     let cleared: usize = jni.exception_clear(e);
     value = 0 as usize;
   }
-  let out: string = "";
+  let out = "";
   if (value != 0 as usize) {
     out = jni.string_of(e, value);
     let a: usize = jni.delete_local_ref(e, value);
