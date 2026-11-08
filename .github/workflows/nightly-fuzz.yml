@@ -426,6 +426,11 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: irverify, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostIRVerify,       wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-x86,  pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostX86Assembler,   wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: asm-arm64, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArm64Assembler, wasmtime: "false" }
+          # The package layer's readers: a manifest, a lock, an index and an archive are inputs an attacker controls.
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: toml,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostToml,            wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: lock,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostLock,            wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: index,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostIndex,           wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: archive,  pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostArchive,         wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
