@@ -15,8 +15,9 @@ function near(a: i32, b: i32): boolean {
 }
 
 // Each check is a digit of the result: the clear colour, a premultiplied
-// texture over it, a stretched part, the alpha ramp, the row clip, and the
-// layer at half alpha.
+// texture over it, a stretched part, the alpha ramp, the row clip, the
+// layer at half alpha, the texture drawn again on a new surface after the
+// canvas left the first one, and glyphs from two pages of an atlas.
 pub function check(): i32 {
   let Some(c) = gl.open_offscreen(64, 64) else {
     return 1;
@@ -59,9 +60,46 @@ pub function check(): i32 {
     n += 100000;
   }
   draw.release(f);
+  let off = c.detach();
+  let k = off.attach_offscreen(16, 8);
+  k.clear(bg);
+  k.draw(t, 0, 0, 1.0, 0, 8);
+  let g = k.read();
+  if (!off.attached() && k.attached() && g.width == 16 && near(g.pixel(1, 1), draw.rgb(0, 0, 255)) && near(g.pixel(5, 1), bg)) {
+    n += 1000000;
+  }
+  draw.release(g);
+  n += glyphs(k, bg);
   gl.free(t);
-  gl.close(c);
+  gl.close(k);
   return n;
+}
+
+// 10000000 when a full glyph and a glyph at half coverage, which does not
+// fit on the first page of the atlas, draw in their colours.
+function glyphs(c: gl.Canvas, bg: i32): i32 {
+  let full: u8[] = [];
+  for i in 0..16 {
+    full = full.append(255u8);
+  }
+  let half: u8[] = [];
+  for i in 0..100 {
+    half = half.append(128u8);
+  }
+  let (a1, s1) = gl.atlas(16).add(4, 4, full);
+  let (a2, s2) = a1.add(10, 10, half);
+  let c2 = c.attach_offscreen(16, 16);
+  c2.clear(bg);
+  c2.draw_glyphs(a2, [gl.Glyph { slot: s1, x: 1, y: 1 }], draw.rgb(255, 0, 0), 1.0, 0, 16);
+  c2.draw_glyphs(a2, [gl.Glyph { slot: s2, x: 5, y: 5 }], draw.rgb(0, 255, 0), 1.0, 0, 16);
+  let f = c2.read();
+  let ok = a2.pages.len() == 2 && s2.page == 1 && near(f.pixel(1, 1), draw.rgb(255, 0, 0)) && near(f.pixel(4, 4), draw.rgb(255, 0, 0)) && near(f.pixel(5, 0), bg) && near(f.pixel(8, 8), draw.over(draw.rgba(0, 255, 0, 128), bg)) && near(f.pixel(15, 15), bg);
+  draw.release(f);
+  gl.free_atlas(a2);
+  if (ok) {
+    return 10000000;
+  }
+  return 0;
 }
 
 function main(): i32 {

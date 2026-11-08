@@ -46,7 +46,6 @@ Paper also does these things:
 | `face.fern` | The text: Roboto in five weights, which `std/truetype` draws at the size of each piece of text. |
 | `ui.fern` | The look of each screen, with the sizes of Android views in dp and sp. `nodes` lays out a screen, `raster` draws one node into an image, `render` draws a screen on the CPU, and `hit` finds the node under a touch. |
 | `gpu.fern` | The pixels on the GPU, through `std/android/gl`. Each node becomes an image once, and each frame draws the images at their places. |
-| `motion.fern` | The speed of a finger, and the fling and easing curves of Android. |
 | `control.fern` | The behaviour on each event: the touches, the keys, the timers and the files. Each input and output goes through a `Device`. |
 | `app.fern` | The NativeActivity, the `Device` of the phone through JNI, and the three Java classes of the app: the activity, a task that sets the system bars, and the notification listener. |
 | `paper_test.fern`, `ui_test.fern`, `control_test.fern` | The tests of the rules, of each screen and of the behaviour, on the host. |
@@ -58,19 +57,13 @@ Paper also does these things:
 
 ```sh
 make build
-A=examples/android/paper/assets
-./bin/fern -apk paper.apk -apk-package dev.fern.paper -apk-label Paper \
-     -apk-icon examples/android/paper/icon.png -apk-min-sdk 26 -apk-home \
-     -apk-permission INTERNET,ACCESS_COARSE_LOCATION,EXPAND_STATUS_BAR,REQUEST_DELETE_PACKAGES,QUERY_ALL_PACKAGES \
-     -apk-asset $A/wallpaper.jpg,$A/Roboto-Regular.ttf,$A/Roboto-Medium.ttf,$A/Roboto-SemiBold.ttf,$A/Roboto-Bold.ttf,$A/Roboto-ExtraBold.ttf \
-     examples/android/paper/app.fern
+./bin/fern -apk paper.apk examples/android/paper/app.fern
 adb install -r paper.apk
 ```
 
 Then open Settings > Apps > Default apps > Home app, and select Paper.
 
-`-apk-home` makes the activity a home screen. `-apk-asset` puts the
-wallpaper and the fonts in the APK, where `android.asset` reads them.
+The `[android]` table of `fern.toml` gives the settings of the APK. `home = true` makes the activity a home screen. `assets` puts the wallpaper and the fonts in the APK, where `android.asset` reads them.
 
 ## Tests
 

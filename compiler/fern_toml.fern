@@ -27,6 +27,10 @@ pub struct Manifest {
   excl_ver: string[],
   lint_keys: string[],
   lint_vals: string[],
+  // The keys of [android] and their values. An array is its items joined
+  // by commas, and a switch is "true" or "false".
+  android_keys: string[],
+  android_vals: string[],
   err: string,
   err_line: i32,
 }
@@ -84,7 +88,7 @@ function is_integer_text(s: string): boolean {
 pub function parse(src: string): Manifest {
   let m: Manifest = Manifest {
     name: "", lib: "lib.fern", index: "", index_key: "", deps: [], members: [],
-    excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], err: "", err_line: 0,
+    excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], android_keys: [], android_vals: [], err: "", err_line: 0,
   };
   let package_line = 1;
   let workspace = false;
@@ -129,9 +133,9 @@ pub function diagnostic(path: string, m: Manifest): string {
 }
 
 function section_error(section: string, seen: string[]): string {
-  let known: string[] = ["package", "dependencies", "workspace", "exclude", "lint", "lint.options"];
+  let known: string[] = ["package", "dependencies", "workspace", "exclude", "lint", "lint.options", "android"];
   if (!util.has_str(known, section)) {
-    return "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])";
+    return "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options], [android])";
   }
   if (util.has_str(seen, "[" + section + "]")) {
     return "duplicate section [" + section + "]";
@@ -175,6 +179,9 @@ function with_entry(m: Manifest, section: string, line: string, at: i32, seen: s
   }
   if (section == "exclude") {
     return with_exclude(m, key, val);
+  }
+  if (section == "android") {
+    return with_android(m, key, val);
   }
   return failed(m, docsummary.quote(key) + " outside a section (start with [package], [dependencies], or [workspace])");
 }
@@ -245,6 +252,55 @@ function with_lint(m: Manifest, section: string, key: string, val: string): Mani
       return failed(m, "[" + section + "] " + key + ": " + message);
     }
   }
+}
+
+// The keys of [android], each the name of an -apk flag with no prefix.
+const ANDROID_TEXT: string[] = ["package", "label", "icon", "key"];
+
+const ANDROID_SWITCHES: string[] = ["home", "compress", "cleartext", "debuggable"];
+
+const ANDROID_LISTS: string[] = ["permissions", "assets"];
+
+function with_android(m: Manifest, key: string, val: string): Manifest {
+  match (android_value(key, val)) {
+    Ok(value) => {
+      return Manifest { ...m, android_keys: m.android_keys.append(key), android_vals: m.android_vals.append(value) };
+    },
+    Err(message) => {
+      return failed(m, "[android] " + key + ": " + message);
+    }
+  }
+}
+
+function android_value(key: string, val: string): Result[string, string] {
+  if (util.has_str(ANDROID_TEXT, key)) {
+    return parse_string(val);
+  }
+  if (util.has_str(ANDROID_SWITCHES, key)) {
+    if (val == "true" || val == "false") {
+      return Ok(val);
+    }
+    return Err("expected true or false, got " + docsummary.quote(val));
+  }
+  if (util.has_str(ANDROID_LISTS, key)) {
+    return match (parse_str_array(val)) { Ok(items) => Ok(items.join(",")), Err(message) => Err(message) };
+  }
+  if (key == "min_sdk") {
+    if (val.len() > 0 && is_integer_text(val)) {
+      return Ok(val);
+    }
+    return Err("expected an API level, got " + docsummary.quote(val));
+  }
+  return Err("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets)");
+}
+
+// The value of `key` in [android], or "".
+pub function android(m: Manifest, key: string): string {
+  let i = util.index_of_str(m.android_keys, key);
+  if (i < 0) {
+    return "";
+  }
+  return m.android_vals[i];
 }
 
 function with_exclude(m: Manifest, key: string, val: string): Manifest {

@@ -772,3 +772,126 @@ func TestApkAsset(t *testing.T) {
 		}
 	}
 }
+
+// fern -apk takes the settings that no flag gives from the [android] table
+// of the fern.toml of the app, with each path relative to that file. A
+// flag takes priority over the table, and a bad table is refused.
+func TestApkManifest(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.ReadFile(e2eharness.RepoPath(nativeApp, "app.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	face, err := os.ReadFile(e2eharness.RepoPath(nativeApp, "face.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("app.fern", string(src))
+	write("face.fern", string(face))
+	write("data.txt", "fern")
+	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\n")
+	build := func(extra ...string) ([]byte, error) {
+		out := filepath.Join(dir, "app.apk")
+		args := append([]string{"-apk", out}, extra...)
+		args = append(args, filepath.Join(dir, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err != nil {
+			return o, err
+		}
+		return os.ReadFile(out)
+	}
+	raw, err := build("-apk-package", "dev.fern.flag")
+	if err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, raw)
+	}
+	zr := zipOf(t, raw)
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("dev.fern.flag")) || bytes.Contains(man, utf16le("dev.fern.fromfile")) {
+		t.Error("the -apk-package flag did not take priority over the package of fern.toml")
+	}
+	if !bytes.Contains(man, utf16le("android.intent.category.HOME")) {
+		t.Error("home = true in fern.toml did not make a home screen")
+	}
+	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
+		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
+	}
+	write("fern.toml", "[package]\nname = \"native\"\n\n[android]\nhome = \"yes\"\n")
+	o, err := build()
+	if err == nil || !strings.Contains(string(o), "error[E088]: [android] home: expected true or false") {
+		t.Errorf("a bad [android] table: err = %v, output:\n%s", err, o)
+	}
+}
+
+// fakeAdb records each call in $FAKE_ADB_LOG and answers as a device with
+// the ABI x86_64 and an app with the process 4242.
+const fakeAdb = `#!/bin/sh
+echo "$@" >> "$FAKE_ADB_LOG"
+case "$*" in
+  "shell getprop ro.product.cpu.abi") echo x86_64 ;;
+  install*) echo Success ;;
+  "shell am start"*) echo "Status: ok" ;;
+  "shell pidof"*) echo 4242 ;;
+  "shell logcat"*) echo "I/fern    ( 4242): hello from the app" ;;
+esac
+`
+
+// fern -apk -apk-run builds the library for the ABI of the device only,
+// installs the APK, starts its activity, and shows the log of its process
+// through the shell of the device.
+func TestApkRun(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "adb"), []byte(fakeAdb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "adb.log")
+	out := filepath.Join(dir, "app.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-run", "-apk-package", "dev.fern.runtest",
+		e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_ADB_LOG="+logPath)
+	o, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fern -apk -apk-run: %v\n%s", err, o)
+	}
+	if !strings.Contains(string(o), "hello from the app") {
+		t.Errorf("the output has no log line of the app:\n%s", o)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	want := []string{
+		"shell getprop ro.product.cpu.abi",
+		"install -r " + out,
+		"shell am start -W -n dev.fern.runtest/android.app.NativeActivity",
+		"shell pidof dev.fern.runtest",
+		"shell logcat -v brief --pid=4242 & L=$!; while [ -d /proc/4242 ]; do sleep 1; done; kill $L",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("adb calls:\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var libs []string
+	for _, f := range zipOf(t, raw).File {
+		if strings.HasPrefix(f.Name, "lib/") {
+			libs = append(libs, f.Name)
+		}
+	}
+	if strings.Join(libs, " ") != "lib/x86_64/libapp.so" {
+		t.Errorf("libraries = %v, want only the one of the device ABI", libs)
+	}
+}

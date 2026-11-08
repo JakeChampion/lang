@@ -1,0 +1,11 @@
+# The settings of `fern -apk` for the Plex client.
+[package]
+name = "plex"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.plex"
+label = "Fern for Plex"
+min_sdk = 30
+cleartext = true
+permissions = ["INTERNET"]

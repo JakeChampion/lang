@@ -168,7 +168,7 @@ function no_sprite(): Sprite {
 // The bitmap of glyph `g` of weight `w` at `px`, with its pen `sub`
 // quarters of a pixel right of a pixel edge.
 function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cache, truetype.Bitmap) {
-  let key = (w as i64 * 4096i64 + px as i64) * 4i64 + sub as i64 << 32 | g as i64;
+  let key = glyph_key(w, px, g, sub);
   if let Some(bm) = c.glyphs.get(key) {
     return (c, bm);
   }
@@ -176,32 +176,49 @@ function glyph(own c: Cache, fs: Fonts, w: i32, px: i32, g: i32, sub: i32): (Cac
   return (Cache { glyphs: c.glyphs.insert(key, bm), sprites: c.sprites }, bm);
 }
 
+// A glyph of a text: `key` names its bitmap at its size and its part of a
+// pixel, and its bitmap has its left column `x` pixels right of the first
+// pen. Its top row is `bm.top` rows below the baseline.
+pub struct Placed { key: i64, bm: truetype.Bitmap, x: i32 }
+
+// The glyphs of `s` in weight `w` at `px`, with the letter spacing `track`,
+// each on a quarter of a pixel.
+pub function layout(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: string): (Cache, Placed[]) {
+  if (!has(fs) || s.len() == 0) {
+    return (c, []);
+  }
+  let (glyphs, p) = pens(font(fs, w), px, track, s);
+  let cache = c;
+  let out: Placed[] = [];
+  for i in 0..glyphs.len() {
+    let q = (p[i] * 4.0 + 0.5).floor() as i32;
+    let (next, bm) = glyph(cache, fs, w, px, glyphs[i], q & 3);
+    cache = next;
+    out = out.append(Placed { key: glyph_key(w, px, glyphs[i], q & 3), bm: bm, x: (q >> 2) + bm.left });
+  }
+  return (cache, out);
+}
+
+function glyph_key(w: i32, px: i32, g: i32, sub: i32): i64 {
+  return (w as i64 * 4096i64 + px as i64) * 4i64 + sub as i64 << 32 | g as i64;
+}
+
 // The sprite of `s` in weight `w` at `px`, with the letter spacing `track`.
+// Where two glyphs share a pixel, the second one goes over the first, as
+// Android draws text one glyph at a time.
 pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: string): (Cache, Sprite) {
   let key = w.to_string() + "|" + px.to_string() + "|" + track.to_string() + "|" + s;
   if let Some(sp) = c.sprites.get(key) {
     return (c, sp);
   }
-  if (!has(fs) || s.len() == 0) {
-    return (c, no_sprite());
-  }
-  let (glyphs, p) = pens(font(fs, w), px, track, s);
-  let cache = c;
-  let bms: truetype.Bitmap[] = [];
-  let xs: i32[] = [];
+  let (cache, placed) = layout(c, fs, w, px, track, s);
   let (x0, x1, y0, y1) = (1 << 20, -(1 << 20), 1 << 20, -(1 << 20));
-  for i in 0..glyphs.len() {
-    let q = (p[i] * 4.0 + 0.5).floor() as i32;
-    let (next, bm) = glyph(cache, fs, w, px, glyphs[i], q & 3);
-    cache = next;
-    let gx = (q >> 2) + bm.left;
-    bms = bms.append(bm);
-    xs = xs.append(gx);
-    if (bm.width > 0) {
-      x0 = min(x0, gx);
-      x1 = max(x1, gx + bm.width);
-      y0 = min(y0, bm.top);
-      y1 = max(y1, bm.top + bm.height);
+  for pl in placed {
+    if (pl.bm.width > 0) {
+      x0 = min(x0, pl.x);
+      x1 = max(x1, pl.x + pl.bm.width);
+      y0 = min(y0, pl.bm.top);
+      y1 = max(y1, pl.bm.top + pl.bm.height);
     }
   }
   if (x1 <= x0) {
@@ -213,16 +230,16 @@ pub function sprite(own c: Cache, fs: Fonts, w: i32, px: i32, track: i32, s: str
   for i in 0..sw * sh {
     cov = cov.append(0u8);
   }
-  for i in 0..bms.len() {
-    let bm = bms[i];
+  for pl in placed {
+    let bm = pl.bm;
     for row in 0..bm.height {
-      let to = (bm.top - y0 + row) * sw + xs[i] - x0;
+      let to = (bm.top - y0 + row) * sw + pl.x - x0;
       let from = row * bm.width;
       for col in 0..bm.width {
         let a = bm.coverage[from + col] as i32;
         if (a > 0) {
-          let v = cov[to + col] as i32 + a;
-          cov = cov.with(to + col, min(v, 255) as u8);
+          let b = cov[to + col] as i32;
+          cov = cov.with(to + col, (a + b - (a * b + 127) / 255) as u8);
         }
       }
     }

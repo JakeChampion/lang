@@ -36,6 +36,9 @@ type Manifest struct {
 	Deps     map[string]Dep
 	Members  []string
 	Excludes map[string][]string
+	// Android holds the [android] settings of fern -apk by key. An array
+	// is its items joined by commas, and a switch is "true" or "false".
+	Android map[string]string
 }
 
 func (m *Manifest) VersionDeps() map[string]string {
@@ -189,13 +192,13 @@ func Parse(src string) (*Manifest, error) {
 				pkgLine = ln + 1
 			}
 			switch section {
-			case "package", "dependencies", "exclude", "lint", "lint.options":
+			case "package", "dependencies", "exclude", "lint", "lint.options", "android":
 			case "workspace":
 				if m.Members == nil {
 					m.Members = []string{}
 				}
 			default:
-				return nil, lineError(ln+1, "unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])", section)
+				return nil, lineError(ln+1, "unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options], [android])", section)
 			}
 			if seenSections[section] {
 				return nil, lineError(ln+1, "duplicate section [%s]", section)
@@ -262,6 +265,15 @@ func Parse(src string) (*Manifest, error) {
 			if section == "lint.options" && !strings.Contains(key, ".") {
 				return nil, lineError(ln+1, "[lint.options] key %q must be spelled <rule>.<option>", key)
 			}
+		case "android":
+			v, err := androidValue(key, val)
+			if err != nil {
+				return nil, lineError(ln+1, "[android] %s: %w", key, err)
+			}
+			if m.Android == nil {
+				m.Android = map[string]string{}
+			}
+			m.Android[key] = v
 		case "exclude":
 			if !validDepName(key) {
 				return nil, lineError(ln+1, "invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", key)
@@ -533,4 +545,30 @@ func validDepName(s string) bool {
 		}
 	}
 	return true
+}
+
+// androidValue checks the value of the [android] key `key`, which names an
+// -apk flag with no prefix, and gives it as compiler/fern_toml.fern stores it.
+func androidValue(key, val string) (string, error) {
+	switch key {
+	case "package", "label", "icon", "key":
+		return parseString(val)
+	case "home", "compress", "cleartext", "debuggable":
+		if val == "true" || val == "false" {
+			return val, nil
+		}
+		return "", fmt.Errorf("expected true or false, got %q", val)
+	case "permissions", "assets":
+		items, err := parseStringArray(val)
+		if err != nil {
+			return "", err
+		}
+		return strings.Join(items, ","), nil
+	case "min_sdk":
+		if _, err := parseScalar(val); err != nil || strings.HasPrefix(val, "\"") {
+			return "", fmt.Errorf("expected an API level, got %q", val)
+		}
+		return val, nil
+	}
+	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets)")
 }
