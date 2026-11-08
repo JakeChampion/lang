@@ -3953,6 +3953,37 @@ function ssa_shared_environ(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState)
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// Under -sanitize the user `__alloc` goes through the wrapper that adds the
+// redzone.
+function raw_alloc_sym(s: asmcore.EmitState): string {
+  if (s.rc_free_debug) {
+    return "__fern_raw_alloc_san";
+  }
+  return "__fern_alloc";
+}
+
+// The owned-allocation census takes the request of a user `__alloc` in x0,
+// the redzone included.
+function lc_rt_req_alloc(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check || !s.rt_owned_allocs) {
+    return s;
+  }
+  s = s.write("    adrp x1, __fern_lc_rt_req\n    add x1, x1, :lo12:__fern_lc_rt_req\n");
+  if (s.rc_free_debug) {
+    return s.write("    add x9, x0, #16\n    str x9, [x1]\n");
+  }
+  return s.write("    str x0, [x1]\n");
+}
+
+// The census takes the size of a user `__free` in x1, the redzone included.
+function lc_rt_req_free(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    adrp x2, __fern_lc_rt_req\n    add x2, x2, :lo12:__fern_lc_rt_req\n");
+  if (s.rc_free_debug) {
+    return s.write("    add x9, x1, #16\n    str x9, [x2]\n");
+  }
+  return s.write("    str x1, [x2]\n");
+}
+
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.need("heap");
@@ -3988,17 +4019,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = s.write("    tbz w0, #31, 1f\n    b __fern_alloc_size_abort\n1:\n");
     s = s.write("    add x0, x0, #24\n");
   }
-  if (ins.str == "alloc" && s.rc_free_debug) {
-    sym = "__fern_raw_alloc_san";
-  }
-  if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
-    s = s.write("    adrp x1, __fern_lc_rt_req\n");
-    s = s.write("    add x1, x1, :lo12:__fern_lc_rt_req\n");
-    if (s.rc_free_debug) {
-      s = s.write("    add x9, x0, #16\n    str x9, [x1]\n");
-    } else {
-      s = s.write("    str x0, [x1]\n");
-    }
+  if (ins.str == "alloc") {
+    sym = raw_alloc_sym(s);
+    s = lc_rt_req_alloc(s);
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
@@ -5458,13 +5481,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     let owned = s.leak_check && s.rt_owned_allocs;
     if (owned) {
-      s = s.write("    adrp x2, __fern_lc_rt_req\n");
-      s = s.write("    add x2, x2, :lo12:__fern_lc_rt_req\n");
-      if (s.rc_free_debug) {
-        s = s.write("    add x9, x1, #16\n    str x9, [x2]\n");
-      } else {
-        s = s.write("    str x1, [x2]\n");
-      }
+      s = lc_rt_req_free(s);
     }
     s = s.write("    bl __fern_raw_free\n");
     if (owned) {

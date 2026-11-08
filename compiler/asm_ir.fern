@@ -8981,6 +8981,35 @@ function ssa_shared_environ(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState)
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// Under -sanitize the user `__alloc` goes through the wrapper that adds the
+// redzone.
+function raw_alloc_sym(s: asmcore.EmitState): string {
+  if (s.rc_free_debug) {
+    return "__fern_raw_alloc_san";
+  }
+  return "__fern_alloc";
+}
+
+// The owned-allocation census takes the request of a user `__alloc` in %rdi,
+// the redzone included.
+function lc_rt_req_alloc(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check || !s.rt_owned_allocs) {
+    return s;
+  }
+  if (s.rc_free_debug) {
+    return s.write("    leaq 16(%rdi), %rax\n    movq %rax, __fern_lc_rt_req(%rip)\n");
+  }
+  return s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
+}
+
+// The census takes the size of a user `__free` in %rsi, the redzone included.
+function lc_rt_req_free(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.rc_free_debug) {
+    return s.write("    leaq 16(%rsi), %rax\n    movq %rax, __fern_lc_rt_req(%rip)\n");
+  }
+  return s.write("    movq %rsi, __fern_lc_rt_req(%rip)\n");
+}
+
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.need("heap");
@@ -9025,15 +9054,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = ssa_trap_need(s, "__fern_alloc_size_abort").write("    testl %edi, %edi\n    js " + ssa_trap(s, "__fern_alloc_size_abort") + "\n");
     s = s.write("    addq $24, %rdi\n");
   }
-  if (ins.str == "alloc" && s.rc_free_debug) {
-    sym = "__fern_raw_alloc_san";
-  }
-  if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
-    if (s.rc_free_debug) {
-      s = s.write("    leaq 16(%rdi), %rax\n    movq %rax, __fern_lc_rt_req(%rip)\n");
-    } else {
-      s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
-    }
+  if (ins.str == "alloc") {
+    sym = raw_alloc_sym(s);
+    s = lc_rt_req_alloc(s);
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
@@ -10883,10 +10906,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 78) {
     s = s.write("    popq %rsi\n    popq %rdi\n");
     let owned = s.leak_check && s.rt_owned_allocs;
-    if (owned && s.rc_free_debug) {
-      s = s.write("    leaq 16(%rsi), %rax\n    movq %rax, __fern_lc_rt_req(%rip)\n");
-    } else if (owned) {
-      s = s.write("    movq %rsi, __fern_lc_rt_req(%rip)\n");
+    if (owned) {
+      s = lc_rt_req_free(s);
     }
     s = s.write("    call __fern_raw_free\n");
     if (owned) {
