@@ -348,6 +348,8 @@ selfhost/arm64-linux/perceus_rbtree_ck.emit	3218
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
-selfhost/x86-64-linux/video_qtrle.emit 5738
+# 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.
+# No performance limit increases.
+selfhost/x86-64-linux/video_qtrle.emit 5680
 selfhost/arm64-linux/video_qtrle.emit 6080
 selfhost/wasm32-wasi/video_qtrle.emit 6837
