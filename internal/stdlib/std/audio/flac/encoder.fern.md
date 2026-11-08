@@ -123,14 +123,20 @@ function select(input: [i32], format: pcm.Format, options: Options): Result[Sele
   for assignment in assignments {
     let channels: plan.Channel[] = [];
     let bits = 0i64;
+    let constant = true;
     for channel in 0..format.channels {
       let (chosen, next) = plan.choose(input, format.channels, channel, assignment, format.bits_per_sample, options.max_fixed_order, options.max_partition_order, scratch)?;
       scratch = next;
       bits += chosen.bit_count();
+      constant = constant && chosen.is_constant();
       channels = channels.append(chosen);
     }
     if (bits < selected.bits) {
       selected = Selection { assignment: assignment, channels: channels, bits: bits };
+    }
+    // Constant stereo transforms add one side bit and cannot beat independent channels.
+    if (constant) {
+      return Ok(selected);
     }
   }
   return Ok(selected);

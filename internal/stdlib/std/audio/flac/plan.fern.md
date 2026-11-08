@@ -4,6 +4,17 @@ This module selects constant, verbatim, or fixed-predictor subframes by their ex
 It compares Rice and Rice2 partitions with optional raw residual escape codes.
 Residuals obey the signed 32-bit limit that excludes the most negative integer.
 Verbatim coding remains available when a predictor exceeds that limit.
+Fixed predictors reuse successive wide integer differences instead of repeated source predictions.
+The temporary difference array uses eight bytes per frame, up to 524,280 bytes.
+
+For folded residuals, the Rice cost at parameter `k` is `n*(k+1) + sum(value >> k)`.
+Its adjacent difference is `n - sum(ceil((value >> k)/2))`.
+If `s` is the base-two integer logarithm of the mean, the minimum lies between `s-1` and `s+1`.
+Below that range the adjacent difference is negative. Above it the difference is positive.
+A zero integer mean uses parameter zero.
+
+The encoder compares those exact costs and the Rice-one parameter cap in one scan.
+The complete search also checks raw escapes and every permitted partition order.
 
 Source samples must fit the declared PCM depth before plan selection.
 The public encoder validates that range before it constructs any plan.
@@ -64,18 +75,26 @@ function folded(value: i64): u32 {
   return (value << 1i64 ^ value >> 63i64) as u32;
 }
 
-function statistics(values: [u32], start: i32, end: i32, k: i32): (i64, i64) {
-  let quotient = 0i64;
-  let half = 0i64;
+struct Quotients { lower: i64, center: i64, upper: i64, limited: i64 }
+
+function quotients(values: [u32], start: i32, end: i32, k: i32): Quotients {
+  let lower = 0i64;
+  let center = 0i64;
+  let upper = 0i64;
+  let limited = 0i64;
+  let low = if (k > 0) { k - 1 } else { 0 };
   for i in start..end {
-    let q = (values[i] >> k as u32) as i64;
-    quotient += q;
-    half += q + 1i64 >> 1i64;
+    let value = values[i];
+    let q = value >> k as u32;
+    lower += (value >> low as u32) as i64;
+    center += q as i64;
+    upper += (q >> 1u32) as i64;
+    limited += (value >> 14u32) as i64;
   }
-  return (quotient, half);
+  return Quotients { lower: lower, center: center, upper: upper, limited: limited };
 }
 
-// The discrete Rice cost is convex. Its adjacent difference selects the exact minimum.
+// Exact Rice minima lie within one bit of floor(log2(mean)). Ties select the lower parameter.
 // fern-lint: allow cyclomatic-complexity
 function rice(values: [u32], start: i32, end: i32): Rice {
   let count = (end - start) as i64;
@@ -91,32 +110,25 @@ function rice(values: [u32], start: i32, end: i32): Rice {
     }
   }
   let average = (sum / count) as u32;
-  let k = if (average == 0u32) { 0 } else { 31 - average.leading_zeros() };
-  if (k > 30) {
-    k = 30;
+  let seed = if (average == 0u32) { 0 } else { 31 - average.leading_zeros() };
+  if (seed > 30) {
+    seed = 30;
   }
-  let (quotient, half) = statistics(values, start, end, k);
-  while (k > 0) {
-    let (before, delta) = statistics(values, start, end, k - 1);
-    if (delta > count) {
-      break;
-    }
-    k -= 1;
-    quotient = before;
-    half = delta;
+  let q = quotients(values, start, end, seed);
+  let k = seed;
+  let quotient = q.center;
+  let cost = count * ((seed + 1) as i64) + quotient;
+  if (seed > 0 && count * (seed as i64) + q.lower <= cost) {
+    k = seed - 1;
+    quotient = q.lower;
+    cost = count * (seed as i64) + quotient;
   }
-  while (k < 30 && half > count) {
-    k += 1;
-    let (next, delta) = statistics(values, start, end, k);
-    quotient = next;
-    half = delta;
+  if (seed < 30 && count * ((seed + 2) as i64) + q.upper < cost) {
+    k = seed + 1;
+    quotient = q.upper;
   }
   let first_k = if (k < 15) { k } else { 14 };
-  let first_q = quotient;
-  if (first_k != k) {
-    let (q, _) = statistics(values, start, end, first_k);
-    first_q = q;
-  }
+  let first_q = if (first_k == k) { quotient } else { q.limited };
   let first_cost = 4i64 + count * ((first_k + 1) as i64) + first_q;
   let second_cost = 5i64 + count * ((k + 1) as i64) + quotient;
   let first = first_k;
@@ -168,13 +180,29 @@ function partitions(values: [u32], base: Channel, order: i32, maximum: i32): Cha
   return best;
 }
 
+function differences(own values: i64[], order: i32): i64[] {
+  let at = values.len() - 1;
+  while (at >= order) {
+    values = values.with(at, values[at] - values[at - 1]);
+    at -= 1;
+  }
+  return values;
+}
+
 function predictors(input: [i32], base: Channel, max_order: i32, max_partition: i32, own scratch: u32[]): (Channel, u32[]) {
+  let values = __alloc_i64(base.frames);
+  for at in 0..base.frames {
+    values = values.with(at, sample(input, base.channels, at, base.channel, base.assignment) >> base.wasted as i64);
+  }
   let best = base;
   let order = 0;
   while (order <= max_order && order < base.frames) {
+    if (order > 0) {
+      values = differences(values, order);
+    }
     let valid = true;
     for at in order..base.frames {
-      let value = residual(input, base.channels, at, base.channel, base.assignment, order, base.wasted);
+      let value = values[at];
       if (value <= -2147483648i64 || value >= 2147483648i64) {
         valid = false;
         break;
@@ -240,6 +268,10 @@ pub function choose(input: [i32], channels: i32, channel: i32, assignment: i32, 
 
 pub function (plan: Channel) bit_count(): i64 {
   return plan.cost;
+}
+
+pub function (plan: Channel) is_constant(): boolean {
+  return plan.kind == 0;
 }
 
 // Emit the selected subframe, warm-up samples, and bounded residual partitions.

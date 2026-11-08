@@ -190,8 +190,61 @@ function writer(): test.TestOutcome {
   return test.pass();
 }
 
+function residual_recovery(): test.TestOutcome {
+  let wide = pcm.Format { ...format(), bits_per_sample: 32 };
+  for input in [[-2147483648, 0, 2147483647], [-2147483648, 2147483647, 2147483647, -2147483648], [-2147483647, 2147483647, 0, -2147483647, 2147483647]] {
+    let Ok(encoded) = flac.encode(input, wide, pcm.default_limits()) else {
+      return test.fail("wide prediction encode");
+    };
+    let Ok(decoded) = flac.decode(encoded, pcm.default_limits()) else {
+      return test.fail("wide prediction decode or MD5");
+    };
+    if (decoded.samples.len() != input.len()) {
+      return test.fail("wide prediction extent");
+    }
+    for i in 0..input.len() {
+      if (decoded.samples[i] != input[i]) {
+        return test.fail("wide prediction sample");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function constant_stereo(): test.TestOutcome {
+  for depth in [4, 16, 24, 32] {
+    let wide = pcm.Format { ...format(), channels: 2, bits_per_sample: depth };
+    let low = (0i64 - (1i64 << (depth - 1) as i64)) as i32;
+    let high = ((1i64 << (depth - 1) as i64) - 1i64) as i32;
+    let input: i32[] = [];
+    for _ in 0..17 {
+      input = input.append(low).append(high);
+    }
+    let Ok(frame) = encoder.encode_frame(input, wide, encoder.FrameNumber(0u32), encoder.default_options(), pcm.default_limits()) else {
+      return test.fail("constant frame");
+    };
+    if (frame.assignment != 1) {
+      return test.fail("constant stereo dominance");
+    }
+    let Ok(encoded) = flac.encode(input, wide, pcm.default_limits()) else {
+      return test.fail("constant stream");
+    };
+    let Ok(decoded) = flac.decode(encoded, pcm.default_limits()) else {
+      return test.fail("constant decode or MD5");
+    };
+    for i in 0..input.len() {
+      if (decoded.samples[i] != input[i]) {
+        return test.fail("constant stereo PCM");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("FLAC encoder boundaries");
+  runner = runner.it("independent constant stereo preserves every bit at both extrema", constant_stereo);
+  runner = runner.it("higher predictors remain available after lower-order residual overflow", residual_recovery);
   runner = runner.it("STREAMINFO unknown totals, maximum totals, and metadata budgets", streaminfo);
   runner = runner.it("formats, samples, options, and configured limits", invalid);
   runner = runner.it("exact budgets, immutable aliases, CRCs, and PCM MD5", budgets);
