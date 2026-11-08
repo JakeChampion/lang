@@ -8,6 +8,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | Format | Decode | Encode | Current scope |
 | --- | --- | --- | --- |
 | WAVE | Yes | Yes | Integer PCM, 8/16/24/32 bits, one through eight channels. Extensible PCM uses standard channel masks and matching valid and container depths. |
+| AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
+| AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
@@ -94,6 +96,40 @@ The WAVE range API borrows a complete WAVE byte view and decodes only the reques
 QOA verifies static frame lengths, byte counts, format consistency, and total samples.
 FLAC verifies CRC-8, CRC-16, sample bounds, frame sequence, and alignment bits.
 Whole-stream FLAC decode verifies a supplied MD5. Individual frame calls cannot verify a complete stream digest.
+
+## AIFF, AIFF-C, and AU
+
+`std/audio/aiff.inspect` and `std/audio/au.inspect` return an opaque `std/audio/linear.Index`.
+The index retains scalar format and range metadata. It retains no encoded input or PCM.
+The caller must preserve the input bytes after inspection.
+Frame ranges permit exact seeks without earlier decode.
+Multichannel samples retain their stored order.
+
+`read_integer_into` consumes reusable `i32[]` storage and preserves its suffix after the valid sample prefix.
+Integer samples retain their declared right-aligned depth. G.711 expands to signed 16-bit PCM.
+Float input returns `Unsupported` through integer APIs.
+
+`read_float_into` consumes reusable `f64[]` storage and preserves finite float values without clipping.
+It normalizes integer samples to their signed full scale.
+Non-finite float input returns `Sample`.
+
+`information` supplies the sample format and frame count.
+Each read checks the selected frame range, input extent, output capacity, and sample budget.
+Inspection permits tracks longer than the output budget because each range has its own limit.
+AIFF inspection also checks a chunk budget, sound offsets, and integral 80-bit sample rates.
+Nonzero AIFF sound block sizes and other compression tags remain unsupported.
+
+The 58 independent FFmpeg references cover every channel count from one through eight, byte order, partial sample bytes, and sample depths.
+They include float values outside unity and every G.711 code word.
+Tests compare all integer samples and normalized float bit patterns exactly.
+Repeated frame ranges check suffix preservation and live buffer aliases.
+The generator records the reference version and SHA-256 values for encoded bytes and both PCM representations.
+
+```sh
+python3 scripts/gen-linear-audio-vectors.py --check
+```
+
+The codecs perform no file I/O. Reader integration, CAF PCM, floating-point WAVE, and container encoders remain open under #14687.
 
 ## ALAC
 
