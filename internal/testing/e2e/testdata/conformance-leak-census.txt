@@ -1,3 +1,4 @@
+# 2026-11-08: must_consume_sibling_bindings_share_a_name is clean under RC trace.
 # 2026-11-08: Three generic and must_consume fixtures measured with RC trace; all clean.
 # 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
 # The handler fan-out retains two task-pool blocks. The task deadline case
@@ -610,6 +611,7 @@ must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0
 must_consume_own_sink                                0
+must_consume_sibling_bindings_share_a_name           0
 mutual_recursion                                     0
 named_args                                           0
 narrowing_cast_of_expression                         0
