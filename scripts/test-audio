@@ -14,7 +14,7 @@ case "$(uname -sm)" in
   *) echo 'unsupported host' >&2; exit 1 ;;
 esac
 mkdir -p build/audio
-for suite in audio audio_ogg opus mp3 mp3_seek mp3_seek_smoke flac_seek opus_silk_math opus_silk_predict opus_silk_entropy opus_silk opus_silk_resample opus_silk_output opus_silk_loss opus_silk_recovery opus_silk_fec opus_playback opus_celt opus_mdct opus_vq opus_bands opus_celt_encoder opus_delimited opus_headers opus_multistream opus_multistream_smoke opus_file opus_file_smoke opus_timing; do
+for suite in audio audio_ogg opus mp3 mp3_seek mp3_seek_smoke flac_seek opus_silk_math opus_silk_predict opus_silk_entropy opus_silk opus_silk_resample opus_silk_output opus_silk_loss opus_silk_recovery opus_silk_fec opus_playback opus_celt opus_mdct opus_vq opus_bands opus_celt_encoder opus_celt_frame opus_band_analysis opus_delimited opus_headers opus_multistream opus_multistream_smoke opus_file opus_file_smoke opus_timing; do
   source="tests/stdlib/${suite}_test.fern"
   "$fern_audio_compiler" -check "$source" internal/stdlib
   "$fern_audio_compiler" -target "$target" -sanitize -o "build/audio/$suite" "$source" internal/stdlib

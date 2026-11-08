@@ -4,6 +4,7 @@ import "std/opus/celt_encoder";
 import "std/opus/energy";
 import "std/opus/modes";
 import "std/test";
+import "opus_encoder_vectors";
 
 // Each case runs the band analysis of the encoder on random values: the
 // MDCT, the band energies, the normalisation and the log energies of a
@@ -175,17 +176,17 @@ function trace(seed: u32, cases: i32): u32 {
 }
 
 function test_short_trace(): test.TestOutcome {
-  return test.assert_eq(trace(2u32, 12), 4182035906u32);
+  return test.assert_eq(trace(2u32, 12), opus_encoder_vectors.ANALYSIS_SHORT);
 }
 
 function test_long_trace(): test.TestOutcome {
-  return test.assert_eq(trace(41u32, 900), 3524475380u32);
+  return test.assert_eq(trace(41u32, 900), opus_encoder_vectors.ANALYSIS_LONG);
 }
 
 // In this trace, one spreading decision has the average of 80, so the
 // limit of the aggressive spreading changes the decision.
 function test_spread_limit_trace(): test.TestOutcome {
-  return test.assert_eq(trace(5u32, 900), 3040322468u32);
+  return test.assert_eq(trace(5u32, 900), opus_encoder_vectors.ANALYSIS_LIMIT);
 }
 
 function main(): i32 {

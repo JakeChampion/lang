@@ -245,6 +245,19 @@ Every final entropy range matches. Sample differences must not exceed 0.000001.
 An independent six-step subset also checks the self-host interpreter.
 Regenerate both corpora with `scripts/gen-opus-multistream-vectors.py`.
 
+The whole-frame CELT encoder retains its libopus 1.4 reference at `82ac57d9f1aaf575800cf17373348e45b7ce6c0d`.
+Its transform tables, rotation angle, and stereo-energy epsilon stay separate from the current decoder reference.
+An unmodified scalar C helper reproduces the six existing encoder-frame and band-analysis trace checksums.
+The default MDCT and VQ kernel tests continue to check the current reference.
+The additional encoder table data contains 7,240 logical bytes, before array and allocator overhead.
+
+Regenerate the encoder tables and trace fixtures with these commands:
+
+```sh
+python3 scripts/gen-opus-encoder-modes.py
+python3 scripts/gen-opus-encoder-vectors.py
+```
+
 `std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
 `std/opus/silk/entropy` decodes frame parameters. `std/opus/silk/core` reconstructs integer PCM for one coded channel.
 
