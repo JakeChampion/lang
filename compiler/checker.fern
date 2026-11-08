@@ -31095,9 +31095,7 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     ast.ExprFieldAccess(fa) => {
       callee = qualify_expr(c.callee, none, s, coll);
       if (args_name_shared(c.args, coll) && qual_enum_name(fa.obj, s).len() == 0) {
-        if let Some(ms) = s.lookup_method(fa.field, cmp_method_receiver(check_expr(fa.obj, s))) {
-          dests = ms.param_types;
-        }
+        dests = method_arg_dests(fa.field, check_expr(fa.obj, s), s);
       }
     },
     _ => {
@@ -31109,6 +31107,25 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
   }
   return ast.ExprCall { ...c, callee: callee, args: args };
+}
+
+// method_arg_dests is the types a method call's arguments are expected to
+// have: a declared method's parameters, or the element an array's builtin
+// `append` and `with` take.
+function method_arg_dests(method: string, recv: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  if let typeinfo.TypeArray(ar) = recv {
+    if (!ar.view && method == "append") {
+      return [ar.elem];
+    }
+    if (!ar.view && method == "with") {
+      return [t_i32(), ar.elem];
+    }
+    return [];
+  }
+  if let Some(ms) = s.lookup_method(method, cmp_method_receiver(recv)) {
+    return ms.param_types;
+  }
+  return [];
 }
 
 function args_name_shared(args: ast.Expr[], coll: util.NameIndex): boolean {
