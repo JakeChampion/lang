@@ -121,6 +121,26 @@ The frame API does not scan damaged input for synchronization.
 `std/opus` provides stateful CELT packet encode and decode.
 The packet API handles multi-frame packets and padding.
 It returns `Unsupported` for SILK and hybrid packets.
+
+The SILK implementation is in progress under [#14510](https://github.com/JakeChampion/lang/issues/14510).
+`std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
+The entropy and predictor tables come from pinned Pion Opus sources.
+These modules do not yet provide packet decoding.
+
+The reference tests cover signed arithmetic boundaries, division, saturation, filter stability, and spectral frequency spacing.
+They compare exact integer results with Pion Opus revision `e7b8aa55508cfd30a968dbc695d4272a8e04f2f2`.
+The prediction corpus includes 64 narrowband and wideband filters and nine separate stability cases.
+Regenerate the tables and vectors with a clone of that revision:
+
+```sh
+make selfhost-cli
+python3 scripts/gen-silk-tables.py --source-dir /path/to/pion-opus/internal/silk
+python3 scripts/gen-silk-math-vectors.py --source-dir /path/to/pion-opus/internal/silk
+python3 scripts/gen-silk-predict-vectors.py --source-dir /path/to/pion-opus
+```
+
+The table and arithmetic generators verify source hashes. The prediction generator reads the pinned Git objects.
+The generated test vectors need no Go runtime or network access when tests run.
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
 
