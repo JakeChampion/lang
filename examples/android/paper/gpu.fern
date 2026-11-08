@@ -12,7 +12,8 @@ import "./ui";
 // An image on the GPU, with the margin of pixels around its node.
 struct Image { t: gl.Texture, m: i32 }
 
-// The canvas, while the app has a window. `images` holds the image of each
+// The canvas, from the first window to `close`. It keeps its context and
+// its images while the app has no window. `images` holds the image of each
 // node by its key, and `bytes` their size. `backdrop` is the screen of the
 // wallpaper below the paper colour, for the wallpaper and for the fades at
 // the edges of a list.
@@ -30,23 +31,43 @@ function no_texture(): gl.Texture {
   return gl.Texture { id: 0, width: 0, height: 0 };
 }
 
+// The painter draws on a window or on an image.
 pub function attached(p: Painter): boolean {
-  return p.canvas.is_some();
+  if let Some(c) = p.canvas {
+    return c.attached();
+  }
+  return false;
 }
 
-// The painter on the window `window`, which it draws on from now on.
+// The painter on the window `window`, which it draws on from now on. It
+// keeps the context and the images of the window before.
 pub function attach(p: Painter, window: usize): Painter {
-  return on_canvas(p, gl.open(android.Window { ptr: window }));
+  let w = android.Window { ptr: window };
+  if let Some(c) = p.canvas {
+    return Painter { ...p, canvas: Some(c.attach(w)) };
+  }
+  if let Some(c) = gl.open_context() {
+    return Painter { ...p, canvas: Some(c.attach(w)) };
+  }
+  return p;
 }
 
 // The painter on the canvas `c`, which it draws on from now on.
 pub function on_canvas(p: Painter, c: Option[gl.Canvas]): Painter {
-  let q = detach(p);
+  let q = close(p);
   return Painter { ...q, canvas: c };
 }
 
-// The painter with no canvas: it frees each image and closes the canvas.
+// The painter off its window. Its context and its images stay.
 pub function detach(p: Painter): Painter {
+  if let Some(c) = p.canvas {
+    return Painter { ...p, canvas: Some(c.detach()) };
+  }
+  return p;
+}
+
+// The painter with no canvas: it frees each image and closes the canvas.
+pub function close(p: Painter): Painter {
   let Some(c) = p.canvas else {
     return p;
   };
@@ -56,6 +77,12 @@ pub function detach(p: Painter): Painter {
   }
   gl.free(p.backdrop);
   gl.close(c);
+  return forget(p);
+}
+
+// The painter with no canvas and no images, which it does not free: the
+// device lost them with the context.
+function forget(p: Painter): Painter {
   return Painter { ...p, canvas: None, images: map_new(256), bytes: 0i64, backdrop: no_texture(), backdrop_key: "" };
 }
 
@@ -77,6 +104,9 @@ pub function present(p: Painter, passes: ui.Pass[]): Painter {
   let Some(c0) = p.canvas else {
     return p;
   };
+  if (!c0.attached()) {
+    return p;
+  }
   let c = c0.sized(p.w, p.h);
   let q = backdrop(Painter { ...p, canvas: Some(c) }, c);
   c.clear(ui.paper_color());
@@ -90,8 +120,17 @@ pub function present(p: Painter, passes: ui.Pass[]): Painter {
       q = draw_nodes(q, c, pass.nodes, pass.dy);
     }
   }
-  let shown = c.present();
-  return evict(q, passes);
+  match (c.present()) {
+    gl.Lost => {
+      // The textures went with the context: a new context draws the next
+      // frame on the same window.
+      gl.close(c);
+      return attach(forget(q), c.window);
+    },
+    _ => {
+      return evict(q, passes);
+    }
+  }
 }
 
 // The painter with the backdrop of its screen and wallpaper.

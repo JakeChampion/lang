@@ -46,6 +46,11 @@ function read_text(path: string): string {
   return "";
 }
 
+// The GPU calls of the app go to a log of their own.
+function gpu_line(dir: string, line: string): void {
+  let ok = write_file(dir + "/gpu", read_text(dir + "/gpu") + line + "\n");
+}
+
 function log_line(dir: string, line: string): void {
   let ok = write_file(dir + "/log", read_text(dir + "/log") + line + "\n");
 }
@@ -101,12 +106,22 @@ function fake(dir: string, now: i64): control.Device {
     default_allowed: (): string[] => ["com.android.dialer"],
     open_held: (pkg: string, key: string): void => log_line(dir, "held " + key),
     request_frame: (): void => {},
-    open_gpu: (p: gpu.Painter, window: usize): gpu.Painter => p,
+    attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => {
+      gpu_line(dir, "attach");
+      return p;
+    },
     present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
       let ok = write_file(dir + "/frames", read_text(dir + "/frames") + frame_line(passes) + "\n");
       return p;
     },
-    close_gpu: (p: gpu.Painter): gpu.Painter => p,
+    detach_gpu: (p: gpu.Painter): gpu.Painter => {
+      gpu_line(dir, "detach");
+      return p;
+    },
+    close_gpu: (p: gpu.Painter): gpu.Painter => {
+      gpu_line(dir, "close");
+      return p;
+    },
   };
 }
 
@@ -326,6 +341,17 @@ function test_slide_passes(): test.TestOutcome {
   return test.assert_eq(runs(read_text(r.dir + "/frames").trim()), "1 2 none 2 mid 1 2 full 2 mid 1");
 }
 
+// The painter leaves the window when the window goes, with its images
+// kept, and is freed only when the app closes.
+function test_gpu_kept_without_window(): test.TestOutcome {
+  let r = shown("gpu");
+  r = at(r, 16, android.WindowDestroyed(android.Window { ptr: 1 as usize }));
+  r = at(r, 500, android.WindowCreated(android.Window { ptr: 2 as usize }));
+  let dir = r.dir;
+  control.close(r.s);
+  return test.assert_eq(runs(read_text(dir + "/gpu").trim()), "attach detach attach close");
+}
+
 function test_pick_home_apps(): test.TestOutcome {
   let r = long_at(shown("pick"), W / 2, 1300);
   r = tap(r, "pick-home");
@@ -359,6 +385,7 @@ function main(): i32 {
   r = r.it("back and the home key go home", test_back_and_home_key);
   r = r.it("choose home apps", test_pick_home_apps);
   r = r.it("the app list slides over home as a second pass", test_slide_passes);
+  r = r.it("the painter keeps its images while the window is away", test_gpu_kept_without_window);
   r = r.it("open a held notification", test_held_notifications);
   return r.finish();
 }

@@ -20,10 +20,19 @@ var hostGLLibs = [][2]string{
 	{"libc.so", "libc.so.6"},
 }
 
+// hostWindowStub is libandroid.so for a host with no Android windows. Its
+// window functions report a window that takes no surface, so a canvas that
+// tries to attach to one stays detached.
+const hostWindowStub = `int ANativeWindow_setBuffersGeometry(void* w, int width, int height, int format) { return -1; }
+int ANativeWindow_getWidth(void* w) { return 0; }
+int ANativeWindow_getHeight(void* w) { return 0; }
+`
+
 // HostGL gives a directory to put on LD_LIBRARY_PATH so that a Fern shared
 // object for std/android/gl loads on this Linux host, with Mesa's EGL and
-// OpenGL ES 2 under their Android names. It skips the test when Mesa is
-// not installed, and fails it when FERN_REQUIRE_HOST_GL is set.
+// OpenGL ES 2 under their Android names, and a stub libandroid.so. It skips
+// the test when Mesa or gcc is not installed, and fails it when
+// FERN_REQUIRE_HOST_GL is set.
 func HostGL(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -44,8 +53,19 @@ func HostGL(t *testing.T) string {
 	if findSystemLib("libEGL_mesa.so.0") == "" {
 		missing = append(missing, "libEGL_mesa.so.0")
 	}
+	if cc, err := exec.LookPath("gcc"); err != nil {
+		missing = append(missing, "gcc")
+	} else {
+		src := filepath.Join(dir, "android_stub.c")
+		if err := os.WriteFile(src, []byte(hostWindowStub), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", filepath.Join(dir, "libandroid.so"), src).CombinedOutput(); err != nil {
+			t.Fatalf("build the libandroid.so stub: %v\n%s", err, out)
+		}
+	}
 	if len(missing) > 0 {
-		msg := "no Mesa EGL and OpenGL ES 2 on this host (" + strings.Join(missing, ", ") + "): install libegl1, libgles2 and libegl-mesa0"
+		msg := "no Mesa EGL and OpenGL ES 2 on this host (" + strings.Join(missing, ", ") + "): install gcc, libegl1, libgles2 and libegl-mesa0"
 		if envflag.On("FERN_REQUIRE_HOST_GL") {
 			t.Fatalf("%s, and FERN_REQUIRE_HOST_GL=1", msg)
 		}

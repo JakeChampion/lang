@@ -63,9 +63,10 @@ func runGLCheck(t *testing.T, src, want string) {
 
 // std/android/gl clears, draws a premultiplied texture, a stretched part,
 // an alpha ramp, a band of rows, and a layer at half alpha, and reads back
-// the pixels that OpenGL ES 2 drew.
+// the pixels that OpenGL ES 2 drew. The texture stays when the canvas moves
+// to a new surface.
 func TestAndroidGLCanvas(t *testing.T) {
-	runGLCheck(t, "tests/android/gl/check.fern", "111111")
+	runGLCheck(t, "tests/android/gl/check.fern", "1111111")
 }
 
 // The GPU painter of Paper draws home, the app list sliding in over home,

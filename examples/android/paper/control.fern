@@ -36,9 +36,9 @@ const CLOSE_MS: i64 = 150;
 
 const WEATHER_MAX_AGE_MS: i64 = 1800000;
 
-// The input and output of the app. `open_gpu` puts the painter on a
-// window, `present` draws a frame of passes with it, and `close_gpu` takes
-// it off the window. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
+// The input and output of the app. `attach_gpu` puts the painter on a
+// window, `present` draws a frame of passes with it, `detach_gpu` takes it
+// off the window with its images kept, and `close_gpu` frees it. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
 // the rectangle of its label.
 // `open` starts a screen of the system: "alarms", "calendar", "search" (with
@@ -69,8 +69,9 @@ pub struct Device {
   default_allowed: () => string[],
   open_held: (string, string) => void,
   request_frame: () => void,
-  open_gpu: (gpu.Painter, usize) => gpu.Painter,
+  attach_gpu: (gpu.Painter, usize) => gpu.Painter,
   present: (gpu.Painter, ui.Pass[]) => gpu.Painter,
+  detach_gpu: (gpu.Painter) => gpu.Painter,
   close_gpu: (gpu.Painter) => gpu.Painter,
 }
 
@@ -1171,7 +1172,7 @@ function placed(own s: App, window: usize): App {
   let (w, h) = s.dev.size(window);
   let p = s.painter;
   if (window != s.window || !gpu.attached(p)) {
-    p = s.dev.open_gpu(p, window);
+    p = s.dev.attach_gpu(p, window);
   }
   if (w != s.w || h != s.h || gpu.wall_width(p) != w) {
     p = gpu.with_screen(p, ui.wallpaper_layer(s.dev.wallpaper(w)), w, h, s.d);
@@ -1200,7 +1201,7 @@ function event(own s: App, e: android.Event): App {
       return draw_now(App { ...s, window: w.ptr, dirty: true });
     },
     android.WindowDestroyed(_) => {
-      let p = s.dev.close_gpu(s.painter);
+      let p = s.dev.detach_gpu(s.painter);
       return App { ...s, painter: p, window: 0 as usize };
     },
     android.ContentRect(_, top, _, bottom) => {
@@ -1389,9 +1390,10 @@ pub function timeout(s: App, now: i64): i32 {
   return clamp(wait, 1, 60050);
 }
 
-// Waits for the weather request, if one runs.
+// Waits for the weather request, if one runs, and frees the painter.
 pub function close(own s: App): void {
   if let Some(w) = s.job {
     let body = w.join();
   }
+  let p = s.dev.close_gpu(s.painter);
 }

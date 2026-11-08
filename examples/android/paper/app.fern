@@ -767,13 +767,14 @@ function device(ctx: usize, wall: u8[]): control.Device {
     default_allowed: (): string[] => default_allowed(ctx),
     open_held: (pkg: string, key: string): void => open_held(ctx, pkg, key),
     request_frame: (): void => android.request_frame(ctx),
-    open_gpu: (p: gpu.Painter, window: usize): gpu.Painter => open_gpu(p, window),
+    attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => attach_gpu(p, window),
     present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => gpu.present(p, passes),
-    close_gpu: (p: gpu.Painter): gpu.Painter => gpu.detach(p),
+    detach_gpu: (p: gpu.Painter): gpu.Painter => gpu.detach(p),
+    close_gpu: (p: gpu.Painter): gpu.Painter => gpu.close(p),
   };
 }
 
-function open_gpu(p: gpu.Painter, window: usize): gpu.Painter {
+function attach_gpu(p: gpu.Painter, window: usize): gpu.Painter {
   let q = gpu.attach(p, window);
   if (!gpu.attached(q)) {
     log.error("paper: the window has no OpenGL ES 2 canvas");

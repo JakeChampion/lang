@@ -15,8 +15,9 @@ function near(a: i32, b: i32): boolean {
 }
 
 // Each check is a digit of the result: the clear colour, a premultiplied
-// texture over it, a stretched part, the alpha ramp, the row clip, and the
-// layer at half alpha.
+// texture over it, a stretched part, the alpha ramp, the row clip, the
+// layer at half alpha, and the texture drawn again on a new surface after
+// the canvas left the first one.
 pub function check(): i32 {
   let Some(c) = gl.open_offscreen(64, 64) else {
     return 1;
@@ -59,8 +60,17 @@ pub function check(): i32 {
     n += 100000;
   }
   draw.release(f);
+  let off = c.detach();
+  let k = off.attach_offscreen(16, 8);
+  k.clear(bg);
+  k.draw(t, 0, 0, 1.0, 0, 8);
+  let g = k.read();
+  if (!off.attached() && k.attached() && g.width == 16 && near(g.pixel(1, 1), draw.rgb(0, 0, 255)) && near(g.pixel(5, 1), bg)) {
+    n += 1000000;
+  }
+  draw.release(g);
   gl.free(t);
-  gl.close(c);
+  gl.close(k);
   return n;
 }
 
