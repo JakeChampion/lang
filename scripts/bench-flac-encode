@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Compare native Fern and libFLAC fixed-predictor encoding on identical PCM."""
+import argparse
+import ctypes
+import ctypes.util
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import random
+import runpy
+import shutil
+import statistics
+import struct
+import subprocess
+import tempfile
+from urllib.request import urlopen
+
+ROOT = Path(__file__).resolve().parent.parent
+HEADERS = {
+    'export.h': '0020243b53cafd9a9f7f5185c02984e450b74d9318a02e717f8071cebb240a26',
+    'format.h': '7311a9c8e5be7aa44b3f48c0d98c96a6fde937a009ac9d4311d82f01b1b6d512',
+    'ordinals.h': '206c45b8573fd50fec359028e4d69c626a5dfbeb75a53027195704d5f9a60c63',
+    'stream_encoder.h': '5aedffc9654871ed89055155b92ce3e784f3d059837b6d4d972a489d85f8dbb7',
+    'stream_decoder.h': '375f08a6983ce0f75a00169b114d753965d0176fd95c620ecf265244e61be5f3',
+}
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def fields(output):
+    return {key: int(value) for key, value in (line.split('=', 1) for line in output.splitlines())}
+
+
+def frame_bytes(encoded):
+    assert encoded[:4] == b'fLaC'
+    at = 4
+    while True:
+        last = encoded[at] & 128
+        size = int.from_bytes(encoded[at + 1:at + 4], 'big')
+        at += 4 + size
+        assert at < len(encoded)
+        if last:
+            return len(encoded) - at
+
+
+def signal(name, bits, channels):
+    rng = random.Random(14515)
+    values = []
+    for at in range(48000):
+        for ch in range(channels):
+            if name.startswith('music'):
+                value = int((math.sin(at * (0.021 + 0.003 * ch)) + 0.2 * math.sin(at * 0.073)) * ((1 << (bits - 2)) - 1))
+            elif name.startswith('noise'):
+                value = rng.randint(-32768, 32767)
+            else:
+                value = 0
+            values.append(value)
+    return values
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--compiler', required=True, type=Path)
+    parser.add_argument('--baseline-compiler', type=Path)
+    parser.add_argument('--rounds', type=int, default=16)
+    parser.add_argument('--trials', type=int, default=7)
+    parser.add_argument('--headers', type=Path, default=ROOT / 'build/audio/flac-headers')
+    parser.add_argument('--output', required=True, type=Path)
+    args = parser.parse_args()
+    if args.rounds < 1 or args.trials < 3:
+        parser.error('use positive rounds and at least three trials')
+    if platform.system() != 'Linux' or platform.machine() not in ['x86_64', 'aarch64']:
+        parser.error('this comparison requires native x86-64 or ARM64 Linux')
+    library_name = ctypes.util.find_library('FLAC')
+    if not library_name:
+        parser.error('install libFLAC 1.5.0 and a C compiler')
+    library = ctypes.CDLL(library_name)
+    version = ctypes.c_char_p.in_dll(library, 'FLAC__VERSION_STRING').value.decode()
+    if version != '1.5.0':
+        parser.error('libFLAC must be version 1.5.0, found ' + version)
+    header_root = args.headers.resolve() / 'FLAC'
+    header_root.mkdir(parents=True, exist_ok=True)
+    for name, expected in HEADERS.items():
+        path = header_root / name
+        if not path.exists():
+            path.write_bytes(urlopen('https://raw.githubusercontent.com/xiph/flac/1.5.0/include/FLAC/' + name, timeout=30).read())
+        assert sha(path) == expected, str(path) + ' header hash mismatch'
+    allowed = sorted(os.sched_getaffinity(0))
+    os.sched_setaffinity(0, {allowed[0]})
+    env = dict(os.environ)
+    env.pop('FERN_PROFILE', None)
+    env.pop('FERN_PROFILE_FILE', None)
+    target = 'x86-64-linux' if platform.machine() == 'x86_64' else 'arm64-linux'
+    sources = [ROOT / 'compiler/semscalarreturn.fern', ROOT / 'bench/audio/flac_encode.fern',
+               ROOT / 'scripts/audio-reference/flac_bench.c', ROOT / 'scripts/bench-flac-encode']
+    sources += sorted((ROOT / 'internal/stdlib/std/audio/flac').glob('*.fern.md'))
+    result = {'schema': 1, 'platform': platform.platform(), 'target': target,
+              'cpu': allowed[0], 'allowed_affinity': allowed, 'libFLAC': version,
+              'cpu_model': next((x.split(':', 1)[1].strip() for x in Path('/proc/cpuinfo').read_text().splitlines() if x.startswith('model name')), platform.machine()),
+              'cpu_max': Path('/sys/fs/cgroup/cpu.max').read_text().strip(),
+              'python': platform.python_version(),
+              'libFLAC_sha256': sha(Path(next(line.split()[-1] for line in Path('/proc/self/maps').read_text().splitlines() if library_name in line))),
+              'rounds': args.rounds, 'trials': args.trials,
+              'measurement': 'whole-stream encode, PCM MD5, frame CRCs, and checksum of every output byte; input loading and two warmups excluded',
+              'settings': {'bits': [16, 24], 'channels': [2, 8], 'rate': 48000, 'block': 4096, 'fixed_order': '0 through 4', 'max_lpc_order': 0, 'max_residual_partition': 6, 'stereo': 'full search'},
+              'rss': 'native Linux VmHWM including input loading and warmup; excludes the Python launcher',
+              'fresh_bytes': 'new runtime heap storage, not total allocation traffic',
+              'source_sha256': {str(p.relative_to(ROOT)): sha(p) for p in sources},
+              'compiler_sha256': {}, 'cases': {}}
+    decode = runpy.run_path(str(ROOT / 'scripts/audio-reference/flac-independent.py'))['decode']
+    with tempfile.TemporaryDirectory() as directory:
+        temp = Path(directory)
+        modes = {'fern': args.compiler.resolve()}
+        if args.baseline_compiler:
+            modes['baseline'] = args.baseline_compiler.resolve()
+        binaries = {}
+        for mode, compiler in modes.items():
+            result['compiler_sha256'][mode] = sha(compiler)
+            result.setdefault('core_sha256', {})[mode] = sha(compiler.parent / 'fern-selfhost')
+            binary = temp / mode
+            subprocess.run([str(compiler), '-stdlib', str(ROOT / 'internal/stdlib'), '-target', target, '-O',
+                            '-o', str(binary), str(ROOT / 'bench/audio/flac_encode.fern')], cwd=ROOT, env=env, check=True)
+            binaries[mode] = binary
+        reference = temp / 'libflac'
+        cc = shutil.which('cc')
+        if not cc:
+            parser.error('install a native C compiler')
+        subprocess.run([cc, '-O3', '-Wall', '-Wextra', '-Werror', '-I', str(header_root.parent),
+                        '-o', str(reference), str(ROOT / 'scripts/audio-reference/flac_bench.c'), '-l:' + library_name], check=True)
+        result['cc'] = subprocess.check_output([cc, '--version'], text=True).splitlines()[0]
+        result['reference_binary_sha256'] = sha(reference)
+        binaries['libflac'] = reference
+        for name, bits, channels in [('music-2ch', 24, 2), ('music-8ch', 24, 8), ('noise-2ch', 16, 2), ('silence-2ch', 24, 2)]:
+            values = signal(name, bits, channels)
+            raw = struct.pack('<' + 'i' * len(values), *values)
+            path = temp / 'input.s32le'
+            path.write_bytes(raw)
+            row = {'input_sha256': hashlib.sha256(raw).hexdigest(), 'frames': 48000, 'channels': channels, 'bits': bits, 'modes': {}}
+            for trial in range(args.trials):
+                order = list(binaries)
+                if trial % 2:
+                    order.reverse()
+                for mode in order:
+                    encoded_path = temp / (mode + '.flac')
+                    run = subprocess.run([str(binaries[mode]), str(path), str(encoded_path), str(bits), str(channels), str(args.rounds), 'fixed'],
+                                         env=env, check=True, capture_output=True, text=True, timeout=300)
+                    sample = fields(run.stdout)
+                    record = row['modes'].setdefault(mode, {'trials': []})
+                    record['trials'].append(sample)
+                    if trial == 0:
+                        encoded = encoded_path.read_bytes()
+                        decoded, _ = decode(encoded_path, channels, bits, 48000)
+                        assert decoded == values, (name, mode, 'exact PCM or MD5')
+                        ffmpeg = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(encoded_path), '-f', 's32le', '-'])
+                        assert ffmpeg == struct.pack('<' + 'i' * len(values), *(v << (32 - bits) for v in values)), (name, mode, 'FFmpeg PCM')
+                        record.update(encoded_bytes=len(encoded), frame_bytes=frame_bytes(encoded), encoded_sha256=hashlib.sha256(encoded).hexdigest())
+                    assert sample['encoded_bytes'] == record['encoded_bytes'] * args.rounds
+                    assert sample['checksum'] == record['trials'][0]['checksum']
+            for mode, record in row['modes'].items():
+                record['median'] = {key: statistics.median(s[key] for s in record['trials']) for key in record['trials'][0]}
+            if 'baseline' in row['modes']:
+                assert row['modes']['baseline']['encoded_sha256'] == row['modes']['fern']['encoded_sha256'], (name, 'compiler changed bitstream')
+            result['cases'][name] = row
+            print(name + ': ' + ', '.join(mode + '=' + str(record['median']['wall_ns']) + ' ns' for mode, record in row['modes'].items()), flush=True)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(result, indent=2) + '\n')
+
+
+if __name__ == '__main__':
+    main()
