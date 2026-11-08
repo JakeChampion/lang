@@ -325,7 +325,7 @@ func injectSyscall(nr int, args ...uint64) func(string) string {
 // sandboxArgProg reaches every call the filter checks an argument of: socket
 // and setsockopt through tcp_listen, ioctl through isatty, prctl through
 // disable_core_dumps, fcntl through a pipe's non-blocking flag, openat through
-// read_file, and on arm64 clone through proc_fork.
+// read_file, and clone through proc_fork.
 const sandboxArgProg = `function main(): i32 {
     let fd: Socket = tcp_listen(0);
     if (fd.fd < 0) { return 1; }
@@ -379,6 +379,7 @@ func TestSeccompDeniesArguments(t *testing.T) {
 			{"setsockopt level", 54, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
 			{"setsockopt option", 54, nil, []uint64{minusOne, 1, 25, 0, 0}},
 			{"openat flags", 257, []uint64{atFdCwd, 0, 0, 0}, []uint64{atFdCwd, 0, 0x200000, 0}},
+			{"clone flags", 56, nil, []uint64{0x10000000 | 0x200 | 17, 0, 0, 0, 0}},
 		}
 	}
 	for _, p := range probes {

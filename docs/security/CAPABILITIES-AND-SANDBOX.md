@@ -17,7 +17,7 @@ A governed dependency can grant its own dependencies at most what it holds, and 
 The sandbox is a run-time rule about a process.
 `FERN_SANDBOX=1` installs a seccomp allowlist of the system call numbers the program contains, after `no_new_privs`, and a denied call ends the process with `SIGSYS`.
 
-The filter also checks nine arguments of eight calls. An executable mapping and a socket outside `AF_UNIX`, `AF_INET` and `AF_INET6` are killed. So is a foreign `ioctl` request, `setsockopt` level or option, `prctl` option or `fcntl` command. An `openat` with `O_PATH`, `O_TMPFILE` or `O_ASYNC` is killed. On arm64 a `clone` that makes a namespace is killed.
+The filter also checks nine arguments of eight calls. An executable mapping and a socket outside `AF_UNIX`, `AF_INET` and `AF_INET6` are killed. So is a foreign `ioctl` request, `setsockopt` level or option, `prctl` option or `fcntl` command. An `openat` with `O_PATH`, `O_TMPFILE` or `O_ASYNC` is killed. A `clone` that makes a namespace is killed.
 `-heap-limit` bounds the arena, `rlimit_nofile` reads the descriptor ceiling, and `setuid`, `setgid` and `setgroups` drop privilege.
 
 The two compose.

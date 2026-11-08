@@ -76,7 +76,7 @@ var sandboxTargets = []sandboxTarget{
 		name:      e2eharness.TargetX86_64Linux,
 		arch:      0xC000003E,
 		installer: []uint32{317},
-		program:   []uint32{3, 49, 50, 57, 231},
+		program:   []uint32{3, 49, 50, 231},
 		denied:    []uint32{59, 101},
 		rules: []sandboxRule{
 			{nr: 9, arg: 2, good: 3, bad: []uint64{7, 4}},
@@ -86,6 +86,7 @@ var sandboxTargets = []sandboxTarget{
 			{nr: 41, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
 			{nr: 54, arg: 1, good: 1, bad: []uint64{270, 0}},
 			{nr: 54, arg: 2, good: 2, bad: []uint64{25, 0, 1<<32 | 2}},
+			{nr: 56, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
 			{nr: 72, arg: 1, good: 3, bad: []uint64{6, 8, 1030, 1<<32 | 3}},
 			{nr: 157, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
 			{nr: 257, arg: 2, good: 577, bad: []uint64{0x200000, 0x400000 | 0x10000, 0x2000, 0x8000}},
