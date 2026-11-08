@@ -217,7 +217,7 @@ function is_table(entry: i64): boolean {
 // The attributes of a block, without its address and without the bit that
 // makes it a block.
 function block_attr(entry: i64): i64 {
-  let attr = entry & (0xffff000000000fffu64 as i64);
+  let attr = entry & 0xffff000000000fffu64 as i64;
   if (target_arch() == "arm64") {
     return attr;
   }
