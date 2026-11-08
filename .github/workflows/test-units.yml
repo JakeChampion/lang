@@ -124,10 +124,10 @@ jobs:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
       - name: Video codecs and Android MediaCodec ABI
-        if: matrix.group == 'rest'
+        if: matrix.group == 'rest' && inputs.repository-only != true
         run: scripts/test-video
       - name: Android media player events and JNI lifecycle
-        if: matrix.group == 'rest'
+        if: matrix.group == 'rest' && inputs.repository-only != true
         run: scripts/test-android-player
       # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages, plus
       # the aarch64 binutils/gcc that internal/testing/e2eharness's native-linker

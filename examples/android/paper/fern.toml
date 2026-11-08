@@ -1,0 +1,14 @@
+# The settings of `fern -apk` for Paper. Build it with
+#   fern -apk paper.apk examples/android/paper/app.fern
+[package]
+name = "paper"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.paper"
+label = "Paper"
+icon = "icon.png"
+min_sdk = 26
+home = true
+permissions = ["INTERNET", "ACCESS_COARSE_LOCATION", "EXPAND_STATUS_BAR", "REQUEST_DELETE_PACKAGES", "QUERY_ALL_PACKAGES"]
+assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf", "assets/Roboto-Medium.ttf", "assets/Roboto-SemiBold.ttf", "assets/Roboto-Bold.ttf", "assets/Roboto-ExtraBold.ttf"]

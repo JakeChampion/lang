@@ -1,0 +1,10 @@
+# The settings of `fern -apk` for the walkie-talkie.
+[package]
+name = "walkie"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.walkie"
+label = "Fern Walkie"
+min_sdk = 28
+permissions = ["RECORD_AUDIO", "INTERNET", "ACCESS_WIFI_STATE", "ACCESS_NETWORK_STATE", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MICROPHONE", "POST_NOTIFICATIONS", "CHANGE_WIFI_STATE", "NEARBY_WIFI_DEVICES", "ACCESS_FINE_LOCATION", "WAKE_LOCK"]

@@ -1,0 +1,440 @@
+// The behaviour of Paper on sequences of events, on the host. A fake device
+// gives each step the time the test chooses, a window of W by H, a frame in
+// memory and seven apps, Paper among them. It writes the apps it opens and
+// the screens of the system it starts to a log file.
+import "std/android";
+import "std/android/draw";
+import "std/test";
+import "std/worker";
+import "./control";
+import "./gpu";
+import "./paper";
+import "./ui";
+import "./ui_test";
+
+const W: i32 = 1080;
+
+const H: i32 = 2400;
+
+// 2025-08-21 21:06 UTC.
+const EPOCH: i64 = 1755810360000;
+
+function installed(): paper.Entry[] {
+  return [
+    paper.entry("com.android.chrome", "Main", "Chrome", ""),
+    paper.entry("com.google.android.gm", "Main", "Gmail", ""),
+    paper.entry("com.whatsapp", "Main", "WhatsApp", ""),
+    paper.entry("dev.fern.paper", "dev.fern.paper.Home", "Paper", ""),
+    paper.entry("com.spotify.music", "Main", "Spotify", ""),
+    paper.entry("com.google.android.apps.maps", "Main", "Maps", ""),
+    paper.entry("com.instagram.android", "Main", "Instagram", ""),
+  ];
+}
+
+function keys(): string[] {
+  let out: string[] = [];
+  for a in installed() {
+    out = out.append(a.key);
+  }
+  return out;
+}
+
+function read_text(path: string): string {
+  if let Ok(b) = read_file_bytes(path) {
+    return unsafe { string_from_bytes_unchecked(b) };
+  }
+  return "";
+}
+
+// The value of the property `name` in the file `props` of the test, which
+// holds a line "name=value" for each property.
+function prop(dir: string, name: string): string {
+  for line in read_text(dir + "/props").split("\n") {
+    if (line.starts_with(name + "=")) {
+      return line.drop(name.len() + 1).to_owned();
+    }
+  }
+  return "";
+}
+
+// The GPU calls of the app go to a log of their own.
+function gpu_line(dir: string, line: string): void {
+  let ok = write_file(dir + "/gpu", read_text(dir + "/gpu") + line + "\n");
+}
+
+function log_line(dir: string, line: string): void {
+  let ok = write_file(dir + "/log", read_text(dir + "/log") + line + "\n");
+}
+
+// A frame that the fake device presents, as a line of its frame log: the
+// number of passes, and how much of the top pass shows.
+function frame_line(passes: ui.Pass[]): string {
+  let top = passes[passes.len() - 1];
+  if (passes.len() == 1) {
+    return "1";
+  }
+  if (top.alpha <= 0.0) {
+    return "2 none";
+  }
+  if (top.alpha >= 1.0) {
+    return "2 full";
+  }
+  if (top.dy > 0) {
+    return "2 mid";
+  }
+  return "2 mid, not moved";
+}
+
+function fake(dir: string, now: i64): control.Device {
+  return control.Device {
+    mono_ms: (): i64 => now,
+    wall_ms: (): i64 => EPOCH + now,
+    utc_offset_ms: (unix_ms: i64): i32 => 0,
+    is_24h: (): boolean => false,
+    country: (): string => "US",
+    read: (path: string): string => read_text(path),
+    write: (path: string, text: string): void => { let ok = write_file(path, text); },
+    size: (window: usize): (i32, i32) => (W, H),
+    wallpaper: (w: i32): draw.Image => ui_test.wallpaper(w),
+    apps: (): paper.Entry[] => installed(),
+    app_keys: (): string[] => keys(),
+    launch: (key: string, x: i32, y: i32, w: i32, h: i32): boolean => {
+      log_line(dir, "launch " + key);
+      return true;
+    },
+    open: (what: string, arg: string): boolean => {
+      log_line(dir, "open " + what + " " + arg);
+      return true;
+    },
+    notifications: (): void => log_line(dir, "notifications"),
+    keyboard: (show: boolean): void => {},
+    bars: (top: boolean, bottom: boolean): void => {},
+    has_location: (): boolean => false,
+    ask_location: (): void => {},
+    location: (): Option[(f64, f64)] => None,
+    fetch: (url: string): worker.Worker[string] => worker.spawn((): string => ""),
+    listener_on: (): boolean => false,
+    default_allowed: (): string[] => ["com.android.dialer"],
+    open_held: (pkg: string, key: string): void => log_line(dir, "held " + key),
+    request_frame: (): void => {},
+    property: (name: string): string => prop(dir, name),
+    attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => {
+      gpu_line(dir, "attach");
+      return p;
+    },
+    present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
+      let ok = write_file(dir + "/frames", read_text(dir + "/frames") + frame_line(passes) + "\n");
+      return p;
+    },
+    detach_gpu: (p: gpu.Painter): gpu.Painter => {
+      gpu_line(dir, "detach");
+      return p;
+    },
+    close_gpu: (p: gpu.Painter): gpu.Painter => {
+      gpu_line(dir, "close");
+      return p;
+    },
+  };
+}
+
+struct Run { s: control.App, dir: string, now: i64 }
+
+// The app after event `e` at `dt` ms after the last one, and the vsync
+// after it, as the display gives it.
+function at(own r: Run, dt: i64, e: android.Event): Run {
+  let now = r.now + dt;
+  let s = control.step(control.App { ...r.s, dev: fake(r.dir, now) }, e);
+  s = control.step(s, android.Vsync(now * 1000000i64));
+  return Run { s: s, dir: r.dir, now: now };
+}
+
+// Paper with its window shown, a status bar of 66 pixels and a navigation
+// bar of 132, and its files in a new directory.
+function shown(name: string): Run {
+  return shown_with(name, "");
+}
+
+// As `shown`, with the system properties in `props`, one "name=value" on
+// each line.
+function shown_with(name: string, props: string): Run {
+  let dir = "/tmp/paper-control-" + name + "-" + now_unix_ms().to_string();
+  let made = create_dir_all(dir);
+  let wrote = write_file(dir + "/props", props);
+  let s = control.with_density(control.new(fake(dir, 0), dir, ui_test.fonts()), 440);
+  let r = Run { s: s, dir: dir, now: 0 };
+  r = at(r, 0, android.Start);
+  r = at(r, 0, android.WindowCreated(android.Window { ptr: 1 as usize }));
+  return at(r, 0, android.ContentRect(0, 66, W, H - 132));
+}
+
+function find(r: Run, act: string): ui.Node {
+  for n in r.s.nodes {
+    if (n.act == act || n.long == act) {
+      return n;
+    }
+  }
+  return ui.Node { x: -100, y: -100, w: 0, h: 0, paint: ui.Blank, act: "", long: "", group: "", clip0: 0, clip1: 0 };
+}
+
+function tap_at(own r: Run, x: i32, y: i32): Run {
+  let t = at(r, 100, android.Touch(0, x as f32, y as f32));
+  return at(t, 50, android.Touch(1, x as f32, y as f32));
+}
+
+function tap(own r: Run, act: string): Run {
+  let n = find(r, act);
+  return tap_at(r, n.x + n.w / 2, n.y + n.h / 2);
+}
+
+function long_at(own r: Run, x: i32, y: i32): Run {
+  let t = at(r, 100, android.Touch(0, x as f32, y as f32));
+  t = at(t, 500, android.Tick);
+  return at(t, 50, android.Touch(1, x as f32, y as f32));
+}
+
+function long(own r: Run, act: string): Run {
+  let n = find(r, act);
+  return long_at(r, n.x + n.w / 2, n.y + n.h / 2);
+}
+
+function swipe(own r: Run, y0: i32, y1: i32): Run {
+  let t = at(r, 100, android.Touch(0, (W / 2) as f32, y0 as f32));
+  t = at(t, 30, android.Touch(2, (W / 2) as f32, ((y0 + y1) / 2) as f32));
+  t = at(t, 30, android.Touch(2, (W / 2) as f32, y1 as f32));
+  t = at(t, 10, android.Touch(1, (W / 2) as f32, y1 as f32));
+  // The app list slides for 180 ms.
+  t = at(t, 100, android.Tick);
+  return at(t, 200, android.Tick);
+}
+
+function type_text(own r: Run, text: string): Run {
+  let t = r;
+  for c in text.chars() {
+    t = at(t, 20, android.Char(c as i32));
+  }
+  return t;
+}
+
+function logged(r: Run): string {
+  return read_text(r.dir + "/log").trim();
+}
+
+const PAPER_KEY: string = "dev.fern.paper/dev.fern.paper.Home";
+
+function test_swipe_up_opens_list_with_paper(): test.TestOutcome {
+  let r = swipe(shown("swipe"), 2000, 900);
+  let listed = find(r, "open:" + PAPER_KEY).y > 0;
+  return test.assert_eq(r.s.layer.to_string() + " " + listed.to_string(), "1 true");
+}
+
+function test_search_opens_single_match(): test.TestOutcome {
+  let r = type_text(swipe(shown("search"), 2000, 900), "pap");
+  return test.assert_eq(logged(r), "launch " + PAPER_KEY);
+}
+
+function test_enter_opens_first_match(): test.TestOutcome {
+  let r = swipe(shown("enter"), 2000, 900);
+  r = control_off_auto(r);
+  r = type_text(r, "m");
+  r = at(r, 20, android.Key(66, 0));
+  return test.assert_eq(logged(r), "launch com.google.android.apps.maps/Main");
+}
+
+// Turns off the opening of a single match, through the settings sheet.
+function control_off_auto(own r: Run): Run {
+  let t = at(r, 20, android.Key(4, 1));
+  t = at(t, 100, android.Tick);
+  t = at(t, 200, android.Tick);
+  t = long_at(t, W / 2, 1300);
+  t = tap(t, "auto");
+  return swipe(t, 2000, 900);
+}
+
+function test_swipe_down_opens_notifications(): test.TestOutcome {
+  return test.assert_eq(logged(swipe(shown("shade"), 800, 1800)), "notifications");
+}
+
+function add_home(own r: Run, key: string): Run {
+  let t = swipe(r, 2000, 900);
+  t = long(t, "menu:" + key);
+  t = tap(t, "toggle-fav");
+  t = at(t, 20, android.Key(4, 1));
+  t = at(t, 100, android.Tick);
+  return at(t, 200, android.Tick);
+}
+
+function test_unlimited_home_apps(): test.TestOutcome {
+  let r = shown("home");
+  for k in keys() {
+    r = add_home(r, k);
+  }
+  let shown_all = true;
+  for k in keys() {
+    if (find(r, "open:" + k).y == -100) {
+      shown_all = false;
+    }
+  }
+  return test.assert_eq(r.s.settings.favourites.len().to_string() + " " + r.s.layer.to_string() + " " + shown_all.to_string(), "7 0 true");
+}
+
+function test_home_app_opens(): test.TestOutcome {
+  let r = tap(add_home(shown("open"), "com.whatsapp/Main"), "open:com.whatsapp/Main");
+  return test.assert_eq(logged(r), "launch com.whatsapp/Main");
+}
+
+function test_rename(): test.TestOutcome {
+  let r = add_home(shown("rename"), "com.android.chrome/Main");
+  r = long(r, "menu:com.android.chrome/Main");
+  r = tap(r, "rename");
+  for i in 0..6 {
+    r = at(r, 20, android.Key(67, 0));
+  }
+  r = type_text(r, "Web browser");
+  r = at(r, 20, android.Key(66, 0));
+  let saved = paper.parse_settings(read_text(r.dir + "/settings"));
+  let name = paper.name_of(saved, "com.android.chrome/Main");
+  r = swipe(r, 2000, 900);
+  r = control_off_auto(r);
+  r = type_text(r, "chrome");
+  let found = find(r, "open:com.android.chrome/Main").y > 0;
+  return test.assert_eq(name + " " + found.to_string(), "Web browser true");
+}
+
+function test_block(): test.TestOutcome {
+  let r = swipe(shown("block"), 2000, 900);
+  r = long(r, "menu:com.instagram.android/Main");
+  r = tap(r, "block");
+  r = tap(r, "for:15");
+  r = tap(r, "open:com.instagram.android/Main");
+  let blocked = r.s.layer;
+  r = tap(r, "pause-cancel");
+  return test.assert_eq(blocked.to_string() + " " + r.s.layer.to_string() + " [" + logged(r) + "]", "3 0 []");
+}
+
+function test_mindful_pause(): test.TestOutcome {
+  let r = swipe(shown("mindful"), 2000, 900);
+  r = long(r, "menu:com.instagram.android/Main");
+  r = tap(r, "mindful");
+  r = tap(r, "open:com.instagram.android/Main");
+  let paused = r.s.layer;
+  r = tap(r, "pause-open");
+  let early = logged(r);
+  r = at(r, 5000, android.Tick);
+  r = tap(r, "pause-open");
+  return test.assert_eq(paused.to_string() + " [" + early + "] " + logged(r), "2 [] launch com.instagram.android/Main");
+}
+
+function test_back_and_home_key(): test.TestOutcome {
+  let r = swipe(shown("back"), 2000, 900);
+  let opened = r.s.layer;
+  r = at(r, 20, android.Key(4, 1));
+  r = at(r, 100, android.Tick);
+  r = at(r, 200, android.Tick);
+  let after_back = r.s.layer;
+  r = swipe(r, 2000, 900);
+  r = at(r, 20, android.Posted(control.KIND_HOME, 0 as usize));
+  return test.assert_eq(opened.to_string() + after_back.to_string() + r.s.layer.to_string(), "100");
+}
+
+// The log with each run of the same line as one line.
+function runs(text: string): string {
+  let out = "";
+  let last = "";
+  for line in text.split("\n") {
+    if (line != last) {
+      out = out + line + " ";
+      last = line.to_owned();
+    }
+  }
+  return out.trim();
+}
+
+// The app list slides over home as a second pass, which shows from none of
+// it to all of it as the list opens, moves down less as it shows, and goes
+// the other way as the list closes.
+function test_slide_passes(): test.TestOutcome {
+  let r = swipe(shown("slide"), 2000, 900);
+  r = at(r, 20, android.Key(4, 1));
+  r = at(r, 100, android.Tick);
+  r = at(r, 200, android.Tick);
+  return test.assert_eq(runs(read_text(r.dir + "/frames").trim()), "1 2 none 2 mid 1 2 full 2 mid 1");
+}
+
+// The painter leaves the window when the window goes, with its images
+// kept, and is freed only when the app closes.
+function test_gpu_kept_without_window(): test.TestOutcome {
+  let r = shown("gpu");
+  r = at(r, 16, android.WindowDestroyed(android.Window { ptr: 1 as usize }));
+  r = at(r, 500, android.WindowCreated(android.Window { ptr: 2 as usize }));
+  let dir = r.dir;
+  control.close(r.s);
+  return test.assert_eq(runs(read_text(dir + "/gpu").trim()), "attach detach attach close");
+}
+
+// With the property debug.fern.frames at 1, the frames of the slide record
+// the gaps between them, and each frame draws the overlay as its last
+// pass. Without it, there is no overlay.
+function test_frame_overlay(): test.TestOutcome {
+  let r = slide_at_60hz(shown_with("overlay", "debug.fern.frames=1"));
+  let plain = slide_at_60hz(shown("no-overlay"));
+  let sixty = 0;
+  for t in r.s.frames.times {
+    if (t == 16000000i64) {
+      sixty += 1;
+    }
+  }
+  let last = read_text(r.dir + "/frames").trim().split("\n");
+  let got = r.s.overlay.to_string() + " " + (sixty >= 8).to_string() + " " + last[last.len() - 1] + " " + plain.s.overlay.to_string() + " " + plain.s.frames.times.len().to_string();
+  return test.assert_eq(got, "true true 2 full false 0");
+}
+
+// A swipe up that opens the app list, and a frame every 16 ms while it
+// slides in.
+function slide_at_60hz(own r: Run): Run {
+  let t = at(r, 100, android.Touch(0, (W / 2) as f32, 2000.0));
+  t = at(t, 16, android.Touch(2, (W / 2) as f32, 1400.0));
+  t = at(t, 16, android.Touch(1, (W / 2) as f32, 900.0));
+  for i in 0..12 {
+    t = at(t, 16, android.Tick);
+  }
+  return t;
+}
+
+function test_pick_home_apps(): test.TestOutcome {
+  let r = long_at(shown("pick"), W / 2, 1300);
+  r = tap(r, "pick-home");
+  r = tap(r, "check:0");
+  r = tap(r, "check:3");
+  r = tap(r, "done");
+  return test.assert_eq(r.s.settings.favourites.len().to_string() + " " + r.s.sheet.is_none().to_string(), "2 true");
+}
+
+function test_held_notifications(): test.TestOutcome {
+  let r = shown("held");
+  let h = paper.Held { pkg: "com.whatsapp", app: "WhatsApp", title: "Ana", text: "Lunch?", posted: EPOCH, key: "0|com.whatsapp|7" };
+  let ok = write_file(r.dir + "/held", paper.format_held([h]));
+  r = at(r, 20, android.Posted(control.KIND_HELD, 0 as usize));
+  r = tap(r, "held");
+  r = tap(r, "held:0");
+  return test.assert_eq(logged(r) + " " + r.s.held.len().to_string(), "held 0|com.whatsapp|7 0");
+}
+
+function main(): i32 {
+  let r = test.new("android paper control");
+  r = r.it("a swipe up opens the app list, which lists Paper", test_swipe_up_opens_list_with_paper);
+  r = r.it("a search with one match opens it", test_search_opens_single_match);
+  r = r.it("enter opens the first match", test_enter_opens_first_match);
+  r = r.it("a swipe down opens the notifications", test_swipe_down_opens_notifications);
+  r = r.it("home holds any number of apps", test_unlimited_home_apps);
+  r = r.it("a home app opens", test_home_app_opens);
+  r = r.it("rename an app", test_rename);
+  r = r.it("a blocked app does not open", test_block);
+  r = r.it("a mindful app opens after the pause", test_mindful_pause);
+  r = r.it("back and the home key go home", test_back_and_home_key);
+  r = r.it("choose home apps", test_pick_home_apps);
+  r = r.it("the app list slides over home as a second pass", test_slide_passes);
+  r = r.it("the painter keeps its images while the window is away", test_gpu_kept_without_window);
+  r = r.it("the frame overlay shows the gaps between frames", test_frame_overlay);
+  r = r.it("open a held notification", test_held_notifications);
+  return r.finish();
+}

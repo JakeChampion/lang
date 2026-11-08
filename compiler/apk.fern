@@ -22,12 +22,31 @@ import "./util";
 // of the app, or is empty.
 // `permissions` are the full names of the permissions the app uses, and
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
-// launcher icon, or is empty. `compress` deflates the libraries.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean }
+// launcher icon, or is empty. `compress` deflates the libraries. `home`
+// makes the activity a home screen, and `assets` go under assets/.
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: Asset[] }
 
 // A service of the app: its Java class, and its foreground service types as
-// the flags of android:foregroundServiceType, or 0.
-pub struct Service { name: string, types: i32 }
+// the flags of android:foregroundServiceType, or 0. A service that only the
+// system binds names the permission that the binder needs and the action of
+// its intent filter, or has "" for both.
+pub struct Service { name: string, types: i32, permission: string, action: string }
+
+// A file of the APK under assets/, which AAssetManager reads.
+pub struct Asset { name: string, data: u8[] }
+
+// The permission and the action of a notification listener service.
+pub const LISTENER_PERMISSION: string = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE";
+
+pub const LISTENER_ACTION: string = "android.service.notification.NotificationListenerService";
+
+// The theme of a home screen, Theme.DeviceDefault.Wallpaper.NoTitleBar: the
+// status bar shows, and the wallpaper is behind the window, so Android uses
+// the transitions of a home screen.
+const HOME_THEME: i32 = 16974141;
+
+// The theme of other apps, Theme.NoTitleBar.Fullscreen.
+const APP_THEME: i32 = 16973834;
 
 // The flags of android:foregroundServiceType that `permissions` allow: each
 // FOREGROUND_SERVICE_<TYPE> permission gives the flag of its type.
@@ -95,12 +114,16 @@ function prefixed(b: [u8]): u8[] {
 // attributes, in the order of their resource IDs, and the resource map
 // gives those IDs. The rest of the pool follows `pool_strings`.
 
-// android:theme, label, icon, name, hasCode, debuggable, exported,
+// android:theme, label, icon, name, permission, hasCode, debuggable,
+// exported, taskAffinity, clearTaskOnLaunch, stateNotNeeded,
+// excludeFromRecents, launchMode,
 // configChanges, value, minSdkVersion, versionCode, versionName,
-// targetSdkVersion, extractNativeLibs, usesCleartextTraffic and
-// foregroundServiceType.
+// windowSoftInputMode, targetSdkVersion, resumeWhilePausing,
+// extractNativeLibs, usesCleartextTraffic and foregroundServiceType. Android
+// finds the attributes of an element by a search in the order of their IDs,
+// so each element lists its attributes in that order too.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842767, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844010, 16844012, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16843276, 16843291, 16843292, 16843307, 16843376, 16843954, 16844010, 16844012, 16844185];
 }
 
 const S_THEME: i32 = 0;
@@ -111,39 +134,55 @@ const S_ICON: i32 = 2;
 
 const S_NAME: i32 = 3;
 
-const S_HAS_CODE: i32 = 4;
+const S_PERMISSION: i32 = 4;
 
-const S_DEBUGGABLE: i32 = 5;
+const S_HAS_CODE: i32 = 5;
 
-const S_EXPORTED: i32 = 6;
+const S_DEBUGGABLE: i32 = 6;
 
-const S_CONFIG_CHANGES: i32 = 7;
+const S_EXPORTED: i32 = 7;
 
-const S_VALUE: i32 = 8;
+const S_TASK_AFFINITY: i32 = 8;
 
-const S_MIN_SDK: i32 = 9;
+const S_CLEAR_TASK: i32 = 9;
 
-const S_VERSION_CODE: i32 = 10;
+const S_STATE_NOT_NEEDED: i32 = 10;
 
-const S_VERSION_NAME: i32 = 11;
+const S_EXCLUDE_RECENTS: i32 = 11;
 
-const S_TARGET_SDK: i32 = 12;
+const S_LAUNCH_MODE: i32 = 12;
 
-const S_EXTRACT_NATIVE_LIBS: i32 = 13;
+const S_CONFIG_CHANGES: i32 = 13;
 
-const S_CLEARTEXT: i32 = 14;
+const S_VALUE: i32 = 14;
 
-const S_FOREGROUND_TYPE: i32 = 15;
+const S_MIN_SDK: i32 = 15;
 
-const S_PREFIX: i32 = 16;
+const S_VERSION_CODE: i32 = 16;
 
-const S_URI: i32 = 17;
+const S_VERSION_NAME: i32 = 17;
 
-const S_PACKAGE: i32 = 18;
+const S_SOFT_INPUT: i32 = 18;
+
+const S_TARGET_SDK: i32 = 19;
+
+const S_RESUME_WHILE_PAUSING: i32 = 20;
+
+const S_EXTRACT_NATIVE_LIBS: i32 = 21;
+
+const S_CLEARTEXT: i32 = 22;
+
+const S_FOREGROUND_TYPE: i32 = 23;
+
+const S_PREFIX: i32 = 24;
+
+const S_URI: i32 = 25;
+
+const S_PACKAGE: i32 = 26;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "hasCode", "debuggable", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
+    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -154,6 +193,12 @@ function pool_strings(app: App): string[] {
   }
   for sv in app.services {
     out = out.append(sv.name);
+    if (sv.permission.len() > 0) {
+      out = out.append(sv.permission).append(sv.action);
+    }
+  }
+  if (app.home) {
+    out = out.append("android.intent.category.HOME").append("android.intent.category.DEFAULT").append("");
   }
   return out;
 }
@@ -164,12 +209,34 @@ function at(pool: string[], v: string): i32 {
 }
 
 function service_element(out: u8[], line: i32, pool: string[], sv: Service): u8[] {
-  let attrs: Attr[] = [attr_str(S_NAME, at(pool, sv.name)), attr_int(S_EXPORTED, 18, 0)];
+  let attrs: Attr[] = [attr_str(S_NAME, at(pool, sv.name))];
+  if (sv.permission.len() > 0) {
+    attrs = attrs.append(attr_str(S_PERMISSION, at(pool, sv.permission)));
+  }
+  attrs = attrs.append(attr_int(S_EXPORTED, 18, 0));
   if (sv.types != 0) {
     attrs = attrs.append(attr_int(S_FOREGROUND_TYPE, 17, sv.types));
   }
   let tag = at(pool, "service");
-  return end(start(out, line, tag, attrs), line, tag);
+  out = start(out, line, tag, attrs);
+  if (sv.action.len() > 0) {
+    let filter = at(pool, "intent-filter");
+    out = start(out, line, filter, []);
+    out = end(start(out, line, at(pool, "action"), [attr_str(S_NAME, at(pool, sv.action))]), line, at(pool, "action"));
+    out = end(out, line, filter);
+  }
+  return end(out, line, tag);
+}
+
+// The attributes of the activity of a home screen, after its name and before
+// its configChanges: one task, which Android does not keep in the recents
+// and starts again with no saved state.
+function home_activity_attrs(pool: string[]): Attr[] {
+  return [attr_str(S_TASK_AFFINITY, at(pool, "")), attr_int(S_CLEAR_TASK, 18, -1), attr_int(S_STATE_NOT_NEEDED, 18, -1), attr_int(S_EXCLUDE_RECENTS, 18, -1), attr_int(S_LAUNCH_MODE, 16, 2)];
+}
+
+function category(out: u8[], line: i32, pool: string[], name: string): u8[] {
+  return end(start(out, line, at(pool, "category"), [attr_str(S_NAME, at(pool, name))]), line, at(pool, "category"));
 }
 
 // The UTF-16 code units of `s`.
@@ -272,7 +339,8 @@ function end(out: u8[], line: i32, name: i32): u8[] {
 }
 
 // The binary AndroidManifest.xml of `app`: one NativeActivity that loads
-// lib<app.lib>.so, with the launcher intent filter.
+// lib<app.lib>.so, with the launcher intent filter. A home screen also has
+// the home categories, so Android offers it as the home app.
 pub function manifest(app: App): u8[] {
   let s = pool_strings(app);
   let body = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
@@ -290,7 +358,11 @@ pub function manifest(app: App): u8[] {
   }
   let application = at(s, "application");
   let activity = at(s, "activity");
-  let app_attrs: Attr[] = [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, at(s, app.label))];
+  let theme = APP_THEME;
+  if (app.home) {
+    theme = HOME_THEME;
+  }
+  let app_attrs: Attr[] = [attr_int(S_THEME, 1, theme), attr_str(S_LABEL, at(s, app.label))];
   let activity_attrs: Attr[] = [attr_str(S_LABEL, at(s, app.label))];
   if (app.icon.len() > 0) {
     app_attrs = app_attrs.append(attr_int(S_ICON, 1, ICON_ID));
@@ -309,12 +381,26 @@ pub function manifest(app: App): u8[] {
     app_attrs = app_attrs.append(attr_int(S_CLEARTEXT, 18, -1));
   }
   body = start(body, 3, application, app_attrs);
-  activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1)).append(attr_int(S_CONFIG_CHANGES, 17, 1184));
+  activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1));
+  if (app.home) {
+    for a in home_activity_attrs(s) {
+      activity_attrs = activity_attrs.append(a);
+    }
+  }
+  activity_attrs = activity_attrs.append(attr_int(S_CONFIG_CHANGES, 17, 1184));
+  if (app.home) {
+    // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
+    // keyboard, and resumeWhilePausing, so home shows at once.
+    activity_attrs = activity_attrs.append(attr_int(S_SOFT_INPUT, 17, 16)).append(attr_int(S_RESUME_WHILE_PAUSING, 18, -1));
+  }
   body = start(body, 4, activity, activity_attrs);
   body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));
   body = start(body, 6, at(s, "intent-filter"), []);
   body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
-  body = end(start(body, 8, at(s, "category"), [attr_str(S_NAME, at(s, "android.intent.category.LAUNCHER"))]), 8, at(s, "category"));
+  body = category(body, 8, s, "android.intent.category.LAUNCHER");
+  if (app.home) {
+    body = category(category(body, 8, s, "android.intent.category.HOME"), 8, s, "android.intent.category.DEFAULT");
+  }
   body = end(end(body, 9, at(s, "intent-filter")), 10, activity);
   for sv in app.services {
     body = service_element(body, 11, s, sv);
@@ -674,6 +760,9 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   }
   if (app.icon.len() > 0) {
     entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app.package), deflated: false }).append(Entry { name: ICON_PATH, data: app.icon, deflated: false });
+  }
+  for a in app.assets {
+    entries = entries.append(Entry { name: "assets/" + a.name, data: a.data, deflated: false });
   }
   for l in libs {
     entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image, deflated: app.compress });

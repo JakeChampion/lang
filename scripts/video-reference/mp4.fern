@@ -1,0 +1,31 @@
+// Emit indexed MP4 packet metadata and Annex B bytes for an independent decoder.
+import "std/video/mp4";
+import "std/video/nal";
+import "std/video/frame";
+import "std/io";
+import "std/hex";
+
+function main(): i32 {
+  let a = args();
+  if (a.len() != 2) {
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(a[1]) else {
+    return 2;
+  };
+  let Ok(index) = mp4.inspect(input, mp4.default_limits()) else {
+    return 3;
+  };
+  for track in index.tracks {
+    let config = track.descriptions[0];
+    print("T " + track.clock.scale.to_string() + " " + config.codec.to_debug() + " " + config.format.width.to_string() + " " + config.format.height.to_string());
+    print("C " + hex.encode(config.config.csd0) + hex.encode(config.config.csd1));
+    for p in track.packets {
+      let Ok(data) = nal.to_annex_b(input[p.offset as i32:p.offset as i32 + p.bytes], config.config.length_size, frame.default_limits()) else {
+        return 4;
+      };
+      print("P " + p.offset.to_string() + " " + p.bytes.to_string() + " " + p.decode_time.to_string() + " " + p.presentation_time.to_string() + " " + p.duration.to_string() + " " + p.sync.to_string() + " " + hex.encode(data));
+    }
+  }
+  return 0;
+}

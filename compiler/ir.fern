@@ -1055,6 +1055,10 @@ pub function op_udp_sendmmsg(): Op {
   return op0(K_UDP_SENDMMSG);
 }
 
+pub function op_udp_recvmmsg(): Op {
+  return op0(K_UDP_RECVMMSG);
+}
+
 pub function op_tcp_local_port(): Op {
   return op0(K_TCP_LOCAL_PORT);
 }
@@ -2918,6 +2922,8 @@ pub const K_UDP_SENDTO_BYTES: i32 = 355;
 
 pub const K_UDP_SENDMMSG: i32 = 516;
 
+pub const K_UDP_RECVMMSG: i32 = 517;
+
 pub const K_RENAME_NOREPLACE: i32 = 356;
 
 pub const K_RENAME_EXCHANGE: i32 = 357;
@@ -4355,6 +4361,9 @@ function kind_id_len12(name: string): i32 {
   if (c == b'u' && name == "udp_sendmmsg") {
     return 516;
   }
+  if (c == b'u' && name == "udp_recvmmsg") {
+    return 517;
+  }
   if (c == b'u' && name == "unix_connect") {
     return 340;
   }
@@ -5316,6 +5325,9 @@ function kind_name_4a(id: i32): string {
   }
   if (id == 516) {
     return "udp_sendmmsg";
+  }
+  if (id == 517) {
+    return "udp_recvmmsg";
   }
   if (id == 320) {
     return "tcp_local_port";
@@ -6303,7 +6315,7 @@ function kind_pops(t: i32): i32 {
   if (t == 332) {
     return 4;
   }
-  if (t == 336 || t == 355 || t == 516) {
+  if (t == 336 || t == 355 || t == 516 || t == 517) {
     return 4;
   }
   if (t == 342 || t == 435 || t == 437 || t == 439) {

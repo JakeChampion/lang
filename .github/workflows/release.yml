@@ -239,9 +239,10 @@ jobs:
           set -euo pipefail
           key="$RUNNER_TEMP/keys/apk.key.pem"
           mkdir -p dist/apk
-          ./bin/fern -apk dist/apk/fern-stopwatch.apk -apk-key "$key" -apk-package dev.fern.stopwatch -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png -apk-min-sdk 28 examples/android/stopwatch/app.fern
+          ./bin/fern -apk dist/apk/fern-stopwatch.apk -apk-key "$key" examples/android/stopwatch/app.fern
+          ./bin/fern -apk dist/apk/fern-paper.apk -apk-key "$key" examples/android/paper/app.fern
           ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
-          ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
+          ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" examples/android/walkie/app.fern
 
       # apksigner is the check Android itself applies at install. The
       # certificate digests in the log let a user compare the signer of an
@@ -350,6 +351,7 @@ jobs:
             |------------------------------|----------------------|
             | Walkie-talkie on the LAN     | `fern-walkie.apk`    |
             | Stopwatch                    | `fern-stopwatch.apk` |
+            | Paper, a minimal home screen | `fern-paper.apk`     |
             | The smallest NativeActivity  | `fern-native.apk`    |
 
             Each `fern` archive ships a single self-contained binary:

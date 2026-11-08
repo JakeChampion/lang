@@ -66,6 +66,38 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   return s;
 }
 
+// The shim of a C call with float arguments: __c_callv(fn, ints, floats,
+// kind) loads the eight integer argument registers from `ints` and the eight
+// vector argument registers from `floats`, as the System V ABI assigns them,
+// and calls fn. Unused registers get values the callee ignores. `kind` says
+// which register holds the result: 0 rax, 1 the f32 in xmm0, 2 the f64.
+function emit_ccallv_shim(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("\n__fn___c_callv:\n    pushq %rbp\n    movq %rsp, %rbp\n");
+  s = s.write("    movq 16(%rbp), %r11\n    movq 24(%rbp), %rax\n    movq 32(%rbp), %r10\n");
+  for i in 0..8 {
+    s = s.write("    movq " + util.i32_to_string(8 * i) + "(%r10), %xmm" + util.i32_to_string(i) + "\n");
+  }
+  // Integers 6 to 13 go on the stack, in the order of the arguments.
+  s = s.write("    andq $-16, %rsp\n    subq $64, %rsp\n");
+  for i in 0..8 {
+    s = s.write("    movq " + util.i32_to_string(48 + 8 * i) + "(%rax), %r10\n    movq %r10, " + util.i32_to_string(8 * i) + "(%rsp)\n");
+  }
+  let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+  for i in 0..6 {
+    s = s.write("    movq " + util.i32_to_string(8 * i) + "(%rax), " + regs[i] + "\n");
+  }
+  if (s.shared) {
+    s = s.write(busy_give_x86());
+  }
+  s = s.write("    movl $8, %eax\n    call *%r11\n");
+  if (s.shared) {
+    s = s.write(busy_take_x86());
+  }
+  s = s.write("    movl 40(%rbp), %ecx\n    cmpl $1, %ecx\n    jne .Lfern_ccallv_f64\n    movd %xmm0, %eax\n    jmp .Lfern_ccallv_done\n");
+  s = s.write(".Lfern_ccallv_f64:\n    cmpl $2, %ecx\n    jne .Lfern_ccallv_done\n    movq %xmm0, %rax\n");
+  return s.write(".Lfern_ccallv_done:\n    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
+}
+
 function envp_wanted(s: asmcore.EmitState): boolean {
   return s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"]);
 }
@@ -129,6 +161,9 @@ function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
     }
     arity += 1;
   }
+  if (s.has_need("ccall:__c_callv")) {
+    s = emit_ccallv_shim(s);
+  }
   return s;
 }
 
@@ -147,7 +182,7 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
     }
     arity += 1;
   }
-  return false;
+  return s.has_need("ccall:__c_callv");
 }
 
 function rc_trace_on(): boolean {
@@ -11101,7 +11136,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == ir.K_TCP_LISTEN_WITH || o.kind_tag >= ir.K_UDP_BIND && o.kind_tag <= ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SENDFILE || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_TCP_SEND_BUF || o.kind_tag >= ir.K_RING_NEW && o.kind_tag <= ir.K_RING_SEND_ZC || o.kind_tag == ir.K_UDP_BIND_WITH || o.kind_tag == ir.K_TCP_ADDR_INTO || o.kind_tag == ir.K_TCP_ACCEPT_WITH || o.kind_tag == ir.K_UDP_SENDMMSG) {
+  } else if (o.kind_tag == ir.K_TCP_LISTEN_WITH || o.kind_tag >= ir.K_UDP_BIND && o.kind_tag <= ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SENDFILE || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_TCP_SEND_BUF || o.kind_tag >= ir.K_RING_NEW && o.kind_tag <= ir.K_RING_SEND_ZC || o.kind_tag == ir.K_UDP_BIND_WITH || o.kind_tag == ir.K_TCP_ADDR_INTO || o.kind_tag == ir.K_TCP_ACCEPT_WITH || o.kind_tag == ir.K_UDP_SENDMMSG || o.kind_tag == ir.K_UDP_RECVMMSG) {
     let udp_name = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc = ir.op_pops(o);
     let udp_regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx"];
@@ -11116,7 +11151,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
       k -= 1;
     }
     s = s.write("    call __fn___fern_" + udp_name + "\n    addq $" + util.i32_to_string(8 * udp_argc) + ", %rsp\n    pushq %rax\n");
-    if (o.kind_tag == ir.K_UDP_RECVFROM || o.kind_tag == ir.K_REACTOR_WAIT || o.kind_tag == ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_UDP_SENDMMSG || o.kind_tag >= ir.K_RING_WAIT && o.kind_tag <= ir.K_RING_RECV) {
+    if (o.kind_tag == ir.K_UDP_RECVFROM || o.kind_tag == ir.K_REACTOR_WAIT || o.kind_tag == ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_UDP_SENDMMSG || o.kind_tag == ir.K_UDP_RECVMMSG || o.kind_tag >= ir.K_RING_WAIT && o.kind_tag <= ir.K_RING_RECV) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
@@ -12813,7 +12848,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "sleep_ns", "set_file_times", "writer_set_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
-    "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8",
+    "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8", "udp_recvmmsg", "udp_recvmmsg_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8", "tcp_addr_into_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe",
@@ -13351,6 +13386,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("udp_sendmmsg_u8")) {
     s = emit_runtime("__fern_udp_sendmmsg_u8", s);
+  }
+  if (s.has_need("udp_recvmmsg")) {
+    s = emit_runtime("__fern_udp_recvmmsg", s);
+  }
+  if (s.has_need("udp_recvmmsg_u8")) {
+    s = emit_runtime("__fern_udp_recvmmsg_u8", s);
   }
   if (s.has_need("tcp_listen")) {
     s = s.write("    .text\n");

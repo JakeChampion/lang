@@ -138,7 +138,6 @@ import "std/time";
 import "std/async";
 import "std/option";
 import "core/cmp";
-import "core/mem";
 ```
 
 ### `3 pub enum IpAddr`
@@ -1593,6 +1592,30 @@ pub function set_broadcast(sock: Socket, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 9, on);
 }
 
+// Lets the kernel hand a run of datagrams of one size from one peer to an
+// Inbox as one message that reports the size of its segments (Linux's
+// UDP_GRO). Other hosts refuse it, and an Inbox then brings each datagram
+// on its own.
+pub function set_udp_gro(sock: Socket, on: boolean): Result[void, NetError] {
+  return __socket_ctl(sock, 10, on);
+}
+
+// Asks for the TOS byte of each datagram an Inbox receives, whose low two
+// bits are the ECN mark (Linux's IP_RECVTOS and IPV6_RECVTCLASS). The
+// socket's own family decides which of the two options takes.
+pub function set_recv_tos(sock: Socket, on: boolean): Result[void, NetError] {
+  let arg = 0;
+  if (on) {
+    arg = 1;
+  }
+  let v4 = tcp_socket_ctl(sock, 11, arg);
+  let v6 = tcp_socket_ctl(sock, 12, arg);
+  if (v4 < 0 && v6 < 0) {
+    return Err(error_from_host(v4));
+  }
+  return Ok(());
+}
+
 pub function send_queue(sock: Socket): Result[i32, NetError] {
   return __socket_count(tcp_socket_ctl(sock, 6, 0));
 }
@@ -1682,18 +1705,12 @@ pub function send_many(sock: Socket, to: [u8], datagrams: u8[][]): Result[i32, N
 // segment size (0 for a single datagram), and every message's bytes in
 // order. On Linux and Android the call is one `sendmmsg`, and a message
 // whose segment size is set is one `UDP_SEGMENT` message the kernel splits.
-pub struct Batch { addrs: u8[], lens: i32[], bytes: __Bytes, messages: i32 }
-
-struct __Bytes { h: usize }
-
-impl mem.Drop for __Bytes {
-  function drop(self: __Bytes): void {
-    buf_free(self.h);
-  }
-}
+// A sent batch keeps the room of its arrays, so a batch that is sent once
+// per wake allocates nothing once it has reached its size.
+pub struct Batch { addrs: u8[], lens: i32[], bytes: u8[], messages: i32 }
 
 pub function batch(): Batch {
-  return Batch { addrs: [], lens: [], bytes: __Bytes { h: buf_new(4096) }, messages: 0 };
+  return Batch { addrs: [], lens: [], bytes: [], messages: 0 };
 }
 
 // len is the messages the batch holds.
@@ -1725,16 +1742,17 @@ pub function (b: Batch) add(to: [u8], datagrams: u8[][]): Batch {
         break;
       }
     }
+    let bytes = out.bytes;
     let k = i;
     while (k < j) {
-      buf_push_bytes_range(out.bytes.h, datagrams[k], 0, datagrams[k].len());
+      bytes = bytes.concat(datagrams[k]);
       k += 1;
     }
     let segment = 0;
     if (j - i > 1) {
       segment = size;
     }
-    out = Batch { ...out, addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment), messages: out.messages + 1 };
+    out = Batch { addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment), bytes: bytes, messages: out.messages + 1 };
     i = j;
   }
   return out;
@@ -1748,12 +1766,15 @@ pub function (b: Batch) send(sock: Socket): (Batch, Result[i32, NetError]) {
   if (b.messages == 0) {
     return (b, Ok(0));
   }
-  let data = buf_take_bytes(b.bytes.h);
-  let empty = Batch { ...b, addrs: [], lens: [], messages: 0 };
+  let r = __batch_sent(sock, b.addrs, b.bytes, b.lens);
+  return (Batch { addrs: b.addrs.truncate(0), lens: b.lens.truncate(0), bytes: b.bytes.truncate(0), messages: 0 }, r);
+}
+
+function __batch_sent(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
   if (target_os() == "linux" || target_os() == "android") {
-    return (empty, __socket_count(udp_sendmmsg(sock, b.addrs, data, b.lens)));
+    return __socket_count(udp_sendmmsg(sock, addrs, data, lens));
   }
-  return (empty, __sent_one_by_one(sock, b.addrs, data, b.lens));
+  return __sent_one_by_one(sock, addrs, data, lens);
 }
 
 function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
@@ -1783,6 +1804,97 @@ function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): 
     m += 1;
   }
   return Ok(n);
+}
+
+// An Inbox receives several datagrams in one call: up to `slots` messages,
+// each in its own `bytes` of the buffer. On Linux and Android the call is
+// one `recvmmsg`, and a run of datagrams of one size from one peer that the
+// kernel coalesced under UDP_GRO (set_udp_gro) arrives as one message that
+// reports the size of its segments. Elsewhere a call brings one message.
+pub struct Inbox { buf: u8[], froms: u8[], lens: i32[], slots: i32, bytes: i32, messages: i32 }
+
+pub function inbox(slots: i32, bytes: i32): Inbox {
+  return Inbox { buf: __alloc_u8(slots * bytes), froms: __alloc_u8(slots * SENDER_BYTES), lens: __alloc_i32(3 * slots), slots: slots, bytes: bytes, messages: 0 };
+}
+
+// receive fills the inbox from sock and returns it with the messages it
+// holds, at least one. Err carries the host's error, would-block included
+// when a nonblocking socket has nothing.
+pub function (b: Inbox) receive(sock: Socket): (Inbox, Result[i32, NetError]) {
+  if (target_os() == "linux" || target_os() == "android") {
+    let n = udp_recvmmsg(sock, b.buf, b.froms, b.lens);
+    if (n < 0) {
+      return (Inbox { ...b, messages: 0 }, Err(error_from_host(n)));
+    }
+    return (Inbox { ...b, messages: n }, Ok(n));
+  }
+  return __received_one(b, sock);
+}
+
+function __received_one(b: Inbox, sock: Socket): (Inbox, Result[i32, NetError]) {
+  if (b.slots == 0 || b.bytes == 0) {
+    return (b, Err(error_from_host(-22)));
+  }
+  let n = udp_recvfrom(sock, b.buf, b.froms);
+  if (n < 0) {
+    return (Inbox { ...b, messages: 0 }, Err(error_from_host(n)));
+  }
+  if (n > b.bytes) {
+    n = b.bytes;
+  }
+  return (Inbox { ...b, lens: b.lens.with(0, n).with(1, 0).with(2, 0), messages: 1 }, Ok(1));
+}
+
+// len is the messages the last receive brought.
+pub function (b: Inbox) len(): i32 {
+  return b.messages;
+}
+
+// bytes_of is the byte count of message i.
+pub function (b: Inbox) bytes_of(i: i32): i32 {
+  return b.lens[3 * i];
+}
+
+// segment_of is the size of the segments of message i, 0 for one datagram.
+pub function (b: Inbox) segment_of(i: i32): i32 {
+  return b.lens[3 * i + 1];
+}
+
+// tos_of is the TOS byte of message i, 0 unless set_recv_tos asked for it.
+pub function (b: Inbox) tos_of(i: i32): i32 {
+  return b.lens[3 * i + 2];
+}
+
+// segments is the datagrams message i holds: one, or the count its segment
+// size splits it into, the last one shorter.
+pub function (b: Inbox) segments(i: i32): i32 {
+  let total = b.lens[3 * i];
+  let seg = b.lens[3 * i + 1];
+  if (seg <= 0 || total <= seg) {
+    return 1;
+  }
+  return (total + seg - 1) / seg;
+}
+
+// segment is the offset into buf and the length of datagram k of message i.
+pub function (b: Inbox) segment(i: i32, k: i32): (i32, i32) {
+  let total = b.lens[3 * i];
+  let seg = b.lens[3 * i + 1];
+  if (seg <= 0 || total <= seg) {
+    return (i * b.bytes, total);
+  }
+  let at = k * seg;
+  let len = seg;
+  if (at + len > total) {
+    len = total - at;
+  }
+  return (i * b.bytes + at, len);
+}
+
+// sender_at is the offset into froms of the SENDER_BYTES address of message
+// i, for sender to read.
+pub function (b: Inbox) sender_at(i: i32): i32 {
+  return i * SENDER_BYTES;
 }
 ```
 

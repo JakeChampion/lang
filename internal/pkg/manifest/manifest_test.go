@@ -364,3 +364,51 @@ func TestIndexKey(t *testing.T) {
 		}
 	}
 }
+
+// [android] holds the -apk settings of an app, with each array joined by
+// commas and each switch as true or false.
+func TestParseAndroid(t *testing.T) {
+	m, err := Parse(`[package]
+name = "paper"
+
+[android]
+package = "dev.fern.paper"
+label = "Paper"
+icon = "icon.png"
+min_sdk = 26
+home = true
+permissions = ["INTERNET", "ACCESS_COARSE_LOCATION"]
+assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"package":     "dev.fern.paper",
+		"label":       "Paper",
+		"icon":        "icon.png",
+		"min_sdk":     "26",
+		"home":        "true",
+		"permissions": "INTERNET,ACCESS_COARSE_LOCATION",
+		"assets":      "assets/wallpaper.jpg,assets/Roboto-Regular.ttf",
+	}
+	for k, v := range want {
+		if m.Android[k] != v {
+			t.Errorf("Android[%q] = %q, want %q", k, m.Android[k], v)
+		}
+	}
+}
+
+func TestParseAndroidRefusals(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{`home = "yes"`, "[android] home: expected true or false"},
+		{`min_sdk = "26"`, "[android] min_sdk: expected an API level"},
+		{`assets = "a.png"`, "[android] assets: expected an array"},
+		{`colour = "red"`, "[android] colour: unknown key"},
+	} {
+		_, err := Parse("[package]\nname = \"x\"\n[android]\n" + tc.line + "\n")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to contain %q", tc.line, err, tc.want)
+		}
+	}
+}

@@ -32,7 +32,8 @@ function member(active: boolean[], v: i32): boolean {
 }
 
 function local_origin(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.variant_new() || ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI;
+  return ins.kind_tag == ssasem.variant_new() || ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI
+    || ins.kind_tag == ssa.BINARY && ssasem.checked_arith(ins.str);
 }
 
 function local_read(ins: ssa.SInst, active: boolean[]): boolean {
@@ -108,7 +109,10 @@ function candidates(f: ssasem.Func): boolean[] {
 function pair(ins: ssa.SInst, payloads: i32[]): ssa.SInst[] {
   let tag = ins;
   let payload = ssa.SInst { ...ins, result: payloads[ins.result] };
-  if (ins.kind_tag == ssasem.variant_new()) {
+  if (ins.kind_tag == ssa.BINARY && ssasem.checked_arith(ins.str)) {
+    tag = ssa.SInst { ...tag, kind_tag: ssasem.checked_present() };
+    payload = ssa.SInst { ...payload, kind_tag: ssasem.checked_value(), args: ins.args.append(ins.result) };
+  } else if (ins.kind_tag == ssasem.variant_new()) {
     let present = 0;
     if (ins.str == "Some") {
       present = 1;

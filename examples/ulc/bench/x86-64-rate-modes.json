@@ -1,0 +1,1830 @@
+{
+  "summarized_date_utc": "2026-11-08",
+  "summary": {
+    "cases": 32,
+    "fern_lower_medians": 31,
+    "geometric_mean_ratio": 1.3762900569204635,
+    "geometric_mean_without_silence": 1.3908336773301508,
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 417,
+    "interval_scope": "paired repetitions within each fixed case",
+    "geometric_mean_95_percent_interval": [
+      1.356214357807132,
+      1.39488562990558
+    ]
+  },
+  "reports": [
+    {
+      "threads": 1,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0
+      ],
+      "seconds": 10.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "abr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "59a6466ca2844d2aab8e0fb04f5dc71cf1104f04b254cf2280db08a944560bf7",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.068508832,
+              0.068992517,
+              0.071078018,
+              0.066491873,
+              0.072415885,
+              0.089021945,
+              0.067849878,
+              0.065009075,
+              0.063874838,
+              0.071432998,
+              0.070359562
+            ],
+            "Fern": [
+              0.049383108,
+              0.050865868,
+              0.055301741,
+              0.051110339,
+              0.045356866,
+              0.052588116,
+              0.05198804,
+              0.052739957,
+              0.050154032,
+              0.044551665,
+              0.04914161
+            ]
+          },
+          "median_seconds": {
+            "C": 0.068992517,
+            "Fern": 0.050865868
+          },
+          "fern_speed_ratio": 1.3563617355355069,
+          "encoded_bytes": {
+            "C": 678,
+            "Fern": 678
+          },
+          "average_complexity": 1.0,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.5424,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.5424
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "1aa6a4afe68b6077a117aef1be6901f3b914b1779f8171d19d4fd51c29afe6e8",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.273682916,
+              0.274360718,
+              0.265271119,
+              0.245194746,
+              0.237104164,
+              0.271991861,
+              0.249479615,
+              0.252358237,
+              0.250238888,
+              0.246962591,
+              0.240677744
+            ],
+            "Fern": [
+              0.273498901,
+              0.277245197,
+              0.229593928,
+              0.246169491,
+              0.23453093,
+              0.255058022,
+              0.279443109,
+              0.248362922,
+              0.255722586,
+              0.249046009,
+              0.270421905
+            ]
+          },
+          "median_seconds": {
+            "C": 0.250238888,
+            "Fern": 0.255058022
+          },
+          "fern_speed_ratio": 0.9811057344434357,
+          "encoded_bytes": {
+            "C": 121226,
+            "Fern": 121300
+          },
+          "average_complexity": 0.30819,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.0170066650907933,
+          "c_snr_db": 20.980333169137367,
+          "c_file_kbps": 96.9808,
+          "fern_rms_error": 0.017006664085205184,
+          "fern_snr_db": 20.980333682725867,
+          "fern_file_kbps": 97.04
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "e6d2aec659ee7df9cfe7405ebdd3a206f1d3f330650d0e9a72236e686d6ee477",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.279427864,
+              0.256823893,
+              0.266691808,
+              0.259169313,
+              0.277044451,
+              0.26047092,
+              0.287074272,
+              0.255982306,
+              0.267860318,
+              0.249561678,
+              0.282636283
+            ],
+            "Fern": [
+              0.238998686,
+              0.234622688,
+              0.243506185,
+              0.247654954,
+              0.241646988,
+              0.284604476,
+              0.244610517,
+              0.242301715,
+              0.231631887,
+              0.250762154,
+              0.231215108
+            ]
+          },
+          "median_seconds": {
+            "C": 0.266691808,
+            "Fern": 0.242301715
+          },
+          "fern_speed_ratio": 1.100660009773352,
+          "encoded_bytes": {
+            "C": 121266,
+            "Fern": 121332
+          },
+          "average_complexity": 0.99075,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.27036203895182215,
+          "c_snr_db": 0.5670262150249482,
+          "c_file_kbps": 97.0128,
+          "fern_rms_error": 0.27027789373030403,
+          "fern_snr_db": 0.5697299594929253,
+          "fern_file_kbps": 97.0656
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "159ab1f3757ace8857f392281802beed6e2aa2fe92ec010bb7d8656e06903d83",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.244829773,
+              0.271878676,
+              0.254826376,
+              0.253337372,
+              0.249465767,
+              0.267638584,
+              0.250313368,
+              0.253345501,
+              0.260628784,
+              0.25526688,
+              0.256457272
+            ],
+            "Fern": [
+              0.231453543,
+              0.230092601,
+              0.22990923,
+              0.248106273,
+              0.234821957,
+              0.23665213,
+              0.228285027,
+              0.24214006,
+              0.228401961,
+              0.24689381,
+              0.228300943
+            ]
+          },
+          "median_seconds": {
+            "C": 0.254826376,
+            "Fern": 0.231453543
+          },
+          "fern_speed_ratio": 1.1009828266055102,
+          "encoded_bytes": {
+            "C": 121239,
+            "Fern": 121302
+          },
+          "average_complexity": 0.44459,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.021404884182750692,
+          "c_snr_db": 18.698109682545365,
+          "c_file_kbps": 96.99119999999999,
+          "fern_rms_error": 0.021391792288496192,
+          "fern_snr_db": 18.703423868672473,
+          "fern_file_kbps": 97.0416
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 1,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0
+      ],
+      "seconds": 10.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "cbr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "59a6466ca2844d2aab8e0fb04f5dc71cf1104f04b254cf2280db08a944560bf7",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.063776122,
+              0.070951062,
+              0.061677331,
+              0.075596698,
+              0.070060555,
+              0.069976969,
+              0.084824891,
+              0.069674372,
+              0.063305159,
+              0.067285408,
+              0.070621573
+            ],
+            "Fern": [
+              0.103005982,
+              0.082187468,
+              0.056175949,
+              0.051744668,
+              0.043844901,
+              0.058422384,
+              0.070514779,
+              0.048308134,
+              0.045586894,
+              0.051856427,
+              0.043775277
+            ]
+          },
+          "median_seconds": {
+            "C": 0.069976969,
+            "Fern": 0.051856427
+          },
+          "fern_speed_ratio": 1.3494367631614883,
+          "encoded_bytes": {
+            "C": 678,
+            "Fern": 678
+          },
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.5424,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.5424
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "1aa6a4afe68b6077a117aef1be6901f3b914b1779f8171d19d4fd51c29afe6e8",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.268924262,
+              0.276941181,
+              0.262966923,
+              0.260277888,
+              0.249615006,
+              0.278831044,
+              0.248412058,
+              0.298563767,
+              0.258067346,
+              0.378203348,
+              0.236517719
+            ],
+            "Fern": [
+              0.234750246,
+              0.242686172,
+              0.232507143,
+              0.250759517,
+              0.234042949,
+              0.239518465,
+              0.274943203,
+              0.30839471,
+              0.229788597,
+              0.243225299,
+              0.257916425
+            ]
+          },
+          "median_seconds": {
+            "C": 0.262966923,
+            "Fern": 0.242686172
+          },
+          "fern_speed_ratio": 1.0835678062448486,
+          "encoded_bytes": {
+            "C": 120125,
+            "Fern": 120226
+          },
+          "c_rms_error": 0.017006681755294618,
+          "c_snr_db": 20.980324658006722,
+          "c_file_kbps": 96.1,
+          "fern_rms_error": 0.0170066829138151,
+          "fern_snr_db": 20.980324066311006,
+          "fern_file_kbps": 96.1808
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "e6d2aec659ee7df9cfe7405ebdd3a206f1d3f330650d0e9a72236e686d6ee477",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.250211561,
+              0.25340239,
+              0.267642674,
+              0.278567462,
+              0.275181467,
+              0.279761858,
+              0.288029887,
+              0.260693867,
+              0.288225596,
+              0.492779449,
+              0.588212281
+            ],
+            "Fern": [
+              0.258853418,
+              0.246676421,
+              0.251402457,
+              0.249608844,
+              0.259564697,
+              0.257423783,
+              0.261172404,
+              0.241327986,
+              0.302014936,
+              0.279447723,
+              0.285022076
+            ]
+          },
+          "median_seconds": {
+            "C": 0.278567462,
+            "Fern": 0.258853418
+          },
+          "fern_speed_ratio": 1.0761591025234212,
+          "encoded_bytes": {
+            "C": 120204,
+            "Fern": 120269
+          },
+          "c_rms_error": 0.27124663848425173,
+          "c_snr_db": 0.5386531808956838,
+          "c_file_kbps": 96.1632,
+          "fern_rms_error": 0.27105621869627794,
+          "fern_snr_db": 0.5447529655799008,
+          "fern_file_kbps": 96.2152
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "159ab1f3757ace8857f392281802beed6e2aa2fe92ec010bb7d8656e06903d83",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.281164984,
+              0.249579952,
+              0.281448527,
+              0.251506972,
+              0.26798907,
+              0.268007812,
+              0.259288783,
+              0.272726555,
+              0.251998742,
+              0.281653463,
+              0.277143043
+            ],
+            "Fern": [
+              0.273103602,
+              0.273558969,
+              0.36097999,
+              0.239200124,
+              0.239740797,
+              0.238636043,
+              0.23998335,
+              0.262125573,
+              0.251155839,
+              0.238146086,
+              0.246717795
+            ]
+          },
+          "median_seconds": {
+            "C": 0.268007812,
+            "Fern": 0.246717795
+          },
+          "fern_speed_ratio": 1.0862929931746512,
+          "encoded_bytes": {
+            "C": 120731,
+            "Fern": 120801
+          },
+          "c_rms_error": 0.03340856288755607,
+          "c_snr_db": 14.83121144254106,
+          "c_file_kbps": 96.5848,
+          "fern_rms_error": 0.03331508721949248,
+          "fern_snr_db": 14.855548236661509,
+          "fern_file_kbps": 96.6408
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 4,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 10.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "abr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "59a6466ca2844d2aab8e0fb04f5dc71cf1104f04b254cf2280db08a944560bf7",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.065491777,
+              0.062918306,
+              0.070984867,
+              0.06666639,
+              0.065758723,
+              0.066846101,
+              0.065074215,
+              0.06089986,
+              0.065975806,
+              0.06602134,
+              0.060166198
+            ],
+            "Fern": [
+              0.049531858,
+              0.063046628,
+              0.046660516,
+              0.048173727,
+              0.052752741,
+              0.050199287,
+              0.051079727,
+              0.043902773,
+              0.046696047,
+              0.044615436,
+              0.048087533
+            ]
+          },
+          "median_seconds": {
+            "C": 0.065758723,
+            "Fern": 0.048173727
+          },
+          "fern_speed_ratio": 1.3650329151406535,
+          "encoded_bytes": {
+            "C": 678,
+            "Fern": 678
+          },
+          "average_complexity": 1.0,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.5424,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.5424
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "1aa6a4afe68b6077a117aef1be6901f3b914b1779f8171d19d4fd51c29afe6e8",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.226386473,
+              0.251303629,
+              0.215348717,
+              0.242364346,
+              0.271059772,
+              0.256746985,
+              0.257175232,
+              0.24336485,
+              0.2315782,
+              0.222185809,
+              0.233753129
+            ],
+            "Fern": [
+              0.140452871,
+              0.127474767,
+              0.129534346,
+              0.127699477,
+              0.119888469,
+              0.12417885,
+              0.135913766,
+              0.127516907,
+              0.128771307,
+              0.150202079,
+              0.121486012
+            ]
+          },
+          "median_seconds": {
+            "C": 0.242364346,
+            "Fern": 0.127699477
+          },
+          "fern_speed_ratio": 1.8979274754586504,
+          "encoded_bytes": {
+            "C": 121226,
+            "Fern": 121300
+          },
+          "average_complexity": 0.30819,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.0170066650907933,
+          "c_snr_db": 20.980333169137367,
+          "c_file_kbps": 96.9808,
+          "fern_rms_error": 0.017006664085205184,
+          "fern_snr_db": 20.980333682725867,
+          "fern_file_kbps": 97.04
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "e6d2aec659ee7df9cfe7405ebdd3a206f1d3f330650d0e9a72236e686d6ee477",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.279220042,
+              0.294819981,
+              0.297484345,
+              0.265738516,
+              0.27238939,
+              0.365006044,
+              0.287853426,
+              0.269775494,
+              0.325161717,
+              0.274505895,
+              0.27086051
+            ],
+            "Fern": [
+              0.165397387,
+              0.134435647,
+              0.135558923,
+              0.132318345,
+              0.130612465,
+              0.254118256,
+              0.18255185,
+              0.132121679,
+              0.146822298,
+              0.127823098,
+              0.14027804
+            ]
+          },
+          "median_seconds": {
+            "C": 0.279220042,
+            "Fern": 0.135558923
+          },
+          "fern_speed_ratio": 2.059768813595546,
+          "encoded_bytes": {
+            "C": 121266,
+            "Fern": 121332
+          },
+          "average_complexity": 0.99075,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.27036203895182215,
+          "c_snr_db": 0.5670262150249482,
+          "c_file_kbps": 97.0128,
+          "fern_rms_error": 0.27027789373030403,
+          "fern_snr_db": 0.5697299594929253,
+          "fern_file_kbps": 97.0656
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "159ab1f3757ace8857f392281802beed6e2aa2fe92ec010bb7d8656e06903d83",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.253454434,
+              0.266342632,
+              0.241757059,
+              0.271687327,
+              0.244962703,
+              0.252567148,
+              0.256443823,
+              0.252577087,
+              0.263855589,
+              0.266743083,
+              0.256642247
+            ],
+            "Fern": [
+              0.128242409,
+              0.138634091,
+              0.131297585,
+              0.123196123,
+              0.133940317,
+              0.133324325,
+              0.141645247,
+              0.146432281,
+              0.132379922,
+              0.130732332,
+              0.130977198
+            ]
+          },
+          "median_seconds": {
+            "C": 0.256443823,
+            "Fern": 0.132379922
+          },
+          "fern_speed_ratio": 1.9371806473794417,
+          "encoded_bytes": {
+            "C": 121239,
+            "Fern": 121302
+          },
+          "average_complexity": 0.44459,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.021404884182750692,
+          "c_snr_db": 18.698109682545365,
+          "c_file_kbps": 96.99119999999999,
+          "fern_rms_error": 0.021391792288496192,
+          "fern_snr_db": 18.703423868672473,
+          "fern_file_kbps": 97.0416
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 4,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 10.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "cbr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "59a6466ca2844d2aab8e0fb04f5dc71cf1104f04b254cf2280db08a944560bf7",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.068935383,
+              0.06131648,
+              0.063571546,
+              0.062627021,
+              0.058373061,
+              0.067192182,
+              0.058813566,
+              0.06393604,
+              0.069405959,
+              0.057490449,
+              0.062966484
+            ],
+            "Fern": [
+              0.056662484,
+              0.074025744,
+              0.047863982,
+              0.04254611,
+              0.051032145,
+              0.042108881,
+              0.044058372,
+              0.054203668,
+              0.047892732,
+              0.056458741,
+              0.044586488
+            ]
+          },
+          "median_seconds": {
+            "C": 0.062966484,
+            "Fern": 0.047892732
+          },
+          "fern_speed_ratio": 1.3147398649131146,
+          "encoded_bytes": {
+            "C": 678,
+            "Fern": 678
+          },
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.5424,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.5424
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "1aa6a4afe68b6077a117aef1be6901f3b914b1779f8171d19d4fd51c29afe6e8",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.223642363,
+              0.229454819,
+              0.245036274,
+              0.236758338,
+              0.25732221,
+              0.243010264,
+              0.235665548,
+              0.219905708,
+              0.251848911,
+              0.219281594,
+              0.249901915
+            ],
+            "Fern": [
+              0.126769788,
+              0.132514892,
+              0.126529542,
+              0.140184988,
+              0.132403605,
+              0.133521627,
+              0.155419332,
+              0.122763547,
+              0.127947239,
+              0.130290715,
+              0.122385859
+            ]
+          },
+          "median_seconds": {
+            "C": 0.236758338,
+            "Fern": 0.130290715
+          },
+          "fern_speed_ratio": 1.8171543382811277,
+          "encoded_bytes": {
+            "C": 120125,
+            "Fern": 120226
+          },
+          "c_rms_error": 0.017006681755294618,
+          "c_snr_db": 20.980324658006722,
+          "c_file_kbps": 96.1,
+          "fern_rms_error": 0.0170066829138151,
+          "fern_snr_db": 20.980324066311006,
+          "fern_file_kbps": 96.1808
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "e6d2aec659ee7df9cfe7405ebdd3a206f1d3f330650d0e9a72236e686d6ee477",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.268966205,
+              0.239141271,
+              0.2698038,
+              0.228427645,
+              0.264984156,
+              0.228132355,
+              0.276568651,
+              0.236989353,
+              0.254023019,
+              0.231052649,
+              0.246700439
+            ],
+            "Fern": [
+              0.135639202,
+              0.127181838,
+              0.131425169,
+              0.124534913,
+              0.141122636,
+              0.132636695,
+              0.136178699,
+              0.124032229,
+              0.133811088,
+              0.125135189,
+              0.128791623
+            ]
+          },
+          "median_seconds": {
+            "C": 0.246700439,
+            "Fern": 0.131425169
+          },
+          "fern_speed_ratio": 1.8771171524991532,
+          "encoded_bytes": {
+            "C": 120204,
+            "Fern": 120269
+          },
+          "c_rms_error": 0.27124663848425173,
+          "c_snr_db": 0.5386531808956838,
+          "c_file_kbps": 96.1632,
+          "fern_rms_error": 0.27105621869627794,
+          "fern_snr_db": 0.5447529655799008,
+          "fern_file_kbps": 96.2152
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "159ab1f3757ace8857f392281802beed6e2aa2fe92ec010bb7d8656e06903d83",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.251921572,
+              0.273099352,
+              0.22539816,
+              0.218293719,
+              0.244046086,
+              0.22468628,
+              0.254599031,
+              0.229918428,
+              0.260661571,
+              0.234099814,
+              0.246516961
+            ],
+            "Fern": [
+              0.129798354,
+              0.137203147,
+              0.125335218,
+              0.144682041,
+              0.131344491,
+              0.124870706,
+              0.122494982,
+              0.126462051,
+              0.128535096,
+              0.132953969,
+              0.144473892
+            ]
+          },
+          "median_seconds": {
+            "C": 0.244046086,
+            "Fern": 0.129798354
+          },
+          "fern_speed_ratio": 1.8801939969130887,
+          "encoded_bytes": {
+            "C": 120731,
+            "Fern": 120801
+          },
+          "c_rms_error": 0.03340856288755607,
+          "c_snr_db": 14.83121144254106,
+          "c_file_kbps": 96.5848,
+          "fern_rms_error": 0.03331508721949248,
+          "fern_snr_db": 14.855548236661509,
+          "fern_file_kbps": 96.6408
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 1,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0
+      ],
+      "seconds": 100.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "abr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "3fd770663c1963ba43520e20275d166a01657ad435ad8d4b0bfa13eadaae1d02",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.701785746,
+              0.680004882,
+              0.742687905,
+              0.674330449,
+              0.705876815,
+              0.69029636,
+              0.742045652,
+              0.682183356,
+              0.686355805,
+              0.659661514,
+              0.675418011
+            ],
+            "Fern": [
+              0.524619647,
+              0.541675165,
+              0.517915327,
+              0.518565127,
+              0.508430869,
+              0.529552244,
+              0.580168192,
+              0.555732106,
+              0.501866608,
+              0.525525879,
+              0.531981908
+            ]
+          },
+          "median_seconds": {
+            "C": 0.686355805,
+            "Fern": 0.525525879
+          },
+          "fern_speed_ratio": 1.3060361676308618,
+          "encoded_bytes": {
+            "C": 6492,
+            "Fern": 6492
+          },
+          "average_complexity": 1.0,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.51936,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.51936
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "b4e07376024f4b3c09234345fc1d5ac517a1bf866c9903b930a6982434ed77f4",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.584895545,
+              3.045551388,
+              3.260619498,
+              2.517321891,
+              2.543989456,
+              3.571348652,
+              2.594659738,
+              2.440942132,
+              2.533397586,
+              2.446898034,
+              2.693775261
+            ],
+            "Fern": [
+              2.582982405,
+              2.510603068,
+              2.532780258,
+              2.614741854,
+              2.462838546,
+              2.448692971,
+              2.765913187,
+              2.509219545,
+              2.65838592,
+              2.543226391,
+              3.048596902
+            ]
+          },
+          "median_seconds": {
+            "C": 2.584895545,
+            "Fern": 2.543226391
+          },
+          "fern_speed_ratio": 1.0163843667820762,
+          "encoded_bytes": {
+            "C": 1198395,
+            "Fern": 1199250
+          },
+          "average_complexity": 0.30904,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.017210516614630668,
+          "c_snr_db": 20.8769682725193,
+          "c_file_kbps": 95.8716,
+          "fern_rms_error": 0.0172105166474807,
+          "fern_snr_db": 20.876968255940376,
+          "fern_file_kbps": 95.94
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "85dd0bfae64ad61fbc9403772a0f29508a7260475f59d45472f77d026e375265",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.694117649,
+              2.614215589,
+              2.686822359,
+              2.694417992,
+              2.792013262,
+              2.952844555,
+              2.775333252,
+              2.670765179,
+              2.631205506,
+              2.571499548,
+              2.602597657
+            ],
+            "Fern": [
+              2.4948742,
+              2.468318896,
+              2.718543945,
+              2.445937966,
+              2.675170669,
+              4.358211195,
+              2.553607366,
+              2.874583931,
+              2.601752156,
+              2.624468776,
+              2.545143307
+            ]
+          },
+          "median_seconds": {
+            "C": 2.686822359,
+            "Fern": 2.601752156
+          },
+          "fern_speed_ratio": 1.0326972739520237,
+          "encoded_bytes": {
+            "C": 1198269,
+            "Fern": 1199022
+          },
+          "average_complexity": 0.99906,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.2716808378226435,
+          "c_snr_db": 0.5290121062104585,
+          "c_file_kbps": 95.86152,
+          "fern_rms_error": 0.2715841565755943,
+          "fern_snr_db": 0.5321036459174684,
+          "fern_file_kbps": 95.92175999999999
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "d911303f9353ca853c9ac3a6fd8a11860e5f08bb926bfe1abbe5df1edeb9d3af",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.681257312,
+              2.562150978,
+              2.534009455,
+              2.645875335,
+              2.555505673,
+              2.595956283,
+              2.843983662,
+              2.48555225,
+              2.497300122,
+              2.477710593,
+              2.446674623
+            ],
+            "Fern": [
+              2.531642671,
+              2.426954474,
+              2.704121066,
+              2.631817598,
+              2.737121222,
+              2.565928835,
+              2.478983913,
+              2.481807267,
+              2.445167657,
+              2.544423428,
+              2.453998275
+            ]
+          },
+          "median_seconds": {
+            "C": 2.555505673,
+            "Fern": 2.531642671
+          },
+          "fern_speed_ratio": 1.0094258965822274,
+          "encoded_bytes": {
+            "C": 1198660,
+            "Fern": 1199311
+          },
+          "average_complexity": 0.44367,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.02175292872101695,
+          "c_snr_db": 18.552067046670825,
+          "c_file_kbps": 95.89280000000001,
+          "fern_rms_error": 0.021736541723915613,
+          "fern_snr_db": 18.558612799176046,
+          "fern_file_kbps": 95.94488
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 1,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0
+      ],
+      "seconds": 100.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "cbr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "3fd770663c1963ba43520e20275d166a01657ad435ad8d4b0bfa13eadaae1d02",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.652975963,
+              0.656167782,
+              0.672555344,
+              0.64855077,
+              0.649912312,
+              0.639955661,
+              0.67200626,
+              0.653803708,
+              0.658388329,
+              0.719785789,
+              0.716800818
+            ],
+            "Fern": [
+              0.520711838,
+              0.512513599,
+              0.630660741,
+              0.538895752,
+              0.490528123,
+              0.505024596,
+              0.500410321,
+              0.498713185,
+              0.505942686,
+              0.487711871,
+              0.502326665
+            ]
+          },
+          "median_seconds": {
+            "C": 0.656167782,
+            "Fern": 0.505024596
+          },
+          "fern_speed_ratio": 1.2992788612616404,
+          "encoded_bytes": {
+            "C": 6492,
+            "Fern": 6492
+          },
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.51936,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.51936
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "b4e07376024f4b3c09234345fc1d5ac517a1bf866c9903b930a6982434ed77f4",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.447899528,
+              2.483395385,
+              2.44825928,
+              2.429367583,
+              2.446743327,
+              2.605896765,
+              2.534267204,
+              2.492521046,
+              2.501602857,
+              2.744574142,
+              2.499830203
+            ],
+            "Fern": [
+              2.367775599,
+              2.338515553,
+              2.498398687,
+              2.320828616,
+              2.398656419,
+              2.414265947,
+              2.423598124,
+              2.315489302,
+              2.415639058,
+              2.685861926,
+              2.834152889
+            ]
+          },
+          "median_seconds": {
+            "C": 2.492521046,
+            "Fern": 2.414265947
+          },
+          "fern_speed_ratio": 1.0324136200062137,
+          "encoded_bytes": {
+            "C": 1197863,
+            "Fern": 1198721
+          },
+          "c_rms_error": 0.017210519125147726,
+          "c_snr_db": 20.876967005499083,
+          "c_file_kbps": 95.82903999999999,
+          "fern_rms_error": 0.01721051924488269,
+          "fern_snr_db": 20.876966945070645,
+          "fern_file_kbps": 95.89768
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "85dd0bfae64ad61fbc9403772a0f29508a7260475f59d45472f77d026e375265",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.87462778,
+              2.619503204,
+              2.561805287,
+              2.648738541,
+              2.631784274,
+              2.67619072,
+              2.60807664,
+              2.601883175,
+              2.578559524,
+              2.603006203,
+              2.668847374
+            ],
+            "Fern": [
+              2.511537417,
+              2.458480324,
+              2.468433127,
+              2.514081385,
+              2.567655145,
+              2.644056012,
+              2.448807955,
+              2.568370618,
+              2.603882032,
+              2.499651406,
+              2.514083214
+            ]
+          },
+          "median_seconds": {
+            "C": 2.619503204,
+            "Fern": 2.514081385
+          },
+          "fern_speed_ratio": 1.0419325403023896,
+          "encoded_bytes": {
+            "C": 1198278,
+            "Fern": 1199031
+          },
+          "c_rms_error": 0.27164273334294503,
+          "c_snr_db": 0.5302304273858484,
+          "c_file_kbps": 95.86224,
+          "fern_rms_error": 0.27147615341127834,
+          "fern_snr_db": 0.53555852398875,
+          "fern_file_kbps": 95.92248
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "d911303f9353ca853c9ac3a6fd8a11860e5f08bb926bfe1abbe5df1edeb9d3af",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              3.236934508,
+              2.538963102,
+              2.643441824,
+              2.509661265,
+              2.553381936,
+              2.461004428,
+              2.582565313,
+              2.565895036,
+              2.625298438,
+              2.582573671,
+              2.521263816
+            ],
+            "Fern": [
+              2.739864621,
+              3.037792839,
+              2.561380471,
+              2.464981017,
+              2.636219212,
+              2.527531331,
+              2.646616261,
+              2.530589254,
+              2.599821279,
+              2.465895587,
+              2.40572917
+            ]
+          },
+          "median_seconds": {
+            "C": 2.565895036,
+            "Fern": 2.561380471
+          },
+          "fern_speed_ratio": 1.0017625515034232,
+          "encoded_bytes": {
+            "C": 1198737,
+            "Fern": 1199415
+          },
+          "c_rms_error": 0.03332488664049812,
+          "c_snr_db": 14.847048166701153,
+          "c_file_kbps": 95.89896,
+          "fern_rms_error": 0.03331845001513465,
+          "fern_snr_db": 14.848725988386807,
+          "fern_file_kbps": 95.9532
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 4,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 100.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "abr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "3fd770663c1963ba43520e20275d166a01657ad435ad8d4b0bfa13eadaae1d02",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.707662546,
+              0.656418387,
+              0.654042794,
+              0.65216386,
+              0.637051314,
+              0.640111867,
+              0.671904834,
+              0.557499448,
+              0.673752946,
+              0.701953755,
+              0.67460184
+            ],
+            "Fern": [
+              0.496025266,
+              0.51484911,
+              0.550183134,
+              0.486257487,
+              0.500112537,
+              0.472223634,
+              0.463441253,
+              0.474456277,
+              0.539341206,
+              0.542287343,
+              0.485258441
+            ]
+          },
+          "median_seconds": {
+            "C": 0.656418387,
+            "Fern": 0.496025266
+          },
+          "fern_speed_ratio": 1.3233567561858834,
+          "encoded_bytes": {
+            "C": 6492,
+            "Fern": 6492
+          },
+          "average_complexity": 1.0,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.51936,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.51936
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "b4e07376024f4b3c09234345fc1d5ac517a1bf866c9903b930a6982434ed77f4",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.456969883,
+              2.896925257,
+              2.532670078,
+              2.487011752,
+              2.509529594,
+              2.640217791,
+              2.578729278,
+              2.483048138,
+              2.614039801,
+              2.491949826,
+              2.088165722
+            ],
+            "Fern": [
+              1.345970453,
+              1.349581957,
+              1.335423426,
+              1.33236139,
+              1.376322605,
+              1.278497086,
+              1.336043164,
+              1.344580013,
+              1.367334793,
+              1.292722756,
+              1.30161934
+            ]
+          },
+          "median_seconds": {
+            "C": 2.509529594,
+            "Fern": 1.336043164
+          },
+          "fern_speed_ratio": 1.8783297288739393,
+          "encoded_bytes": {
+            "C": 1198395,
+            "Fern": 1199250
+          },
+          "average_complexity": 0.30904,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.017210516614630668,
+          "c_snr_db": 20.8769682725193,
+          "c_file_kbps": 95.8716,
+          "fern_rms_error": 0.0172105166474807,
+          "fern_snr_db": 20.876968255940376,
+          "fern_file_kbps": 95.94
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "85dd0bfae64ad61fbc9403772a0f29508a7260475f59d45472f77d026e375265",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.89007394,
+              2.581162304,
+              2.183888236,
+              2.188449799,
+              2.212028206,
+              3.028394067,
+              3.225023786,
+              2.342728648,
+              2.224259217,
+              2.22034691,
+              2.232363162
+            ],
+            "Fern": [
+              1.369066136,
+              1.295082907,
+              1.339382953,
+              1.289509269,
+              1.561457817,
+              1.979388368,
+              1.460294799,
+              1.466204278,
+              1.350248489,
+              1.259618349,
+              1.369849989
+            ]
+          },
+          "median_seconds": {
+            "C": 2.232363162,
+            "Fern": 1.369066136
+          },
+          "fern_speed_ratio": 1.630573646735792,
+          "encoded_bytes": {
+            "C": 1198269,
+            "Fern": 1199022
+          },
+          "average_complexity": 0.99906,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.2716808378226435,
+          "c_snr_db": 0.5290121062104585,
+          "c_file_kbps": 95.86152,
+          "fern_rms_error": 0.2715841565755943,
+          "fern_snr_db": 0.5321036459174684,
+          "fern_file_kbps": 95.92175999999999
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "d911303f9353ca853c9ac3a6fd8a11860e5f08bb926bfe1abbe5df1edeb9d3af",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              3.017944332,
+              2.156700624,
+              2.104999789,
+              2.107026436,
+              2.119990423,
+              2.163994943,
+              2.102598692,
+              2.089376645,
+              2.152654447,
+              2.0964493,
+              2.09655693
+            ],
+            "Fern": [
+              1.488224495,
+              1.338288522,
+              1.249473077,
+              1.244246726,
+              1.25142368,
+              1.239672763,
+              1.313243556,
+              1.28542276,
+              1.257350131,
+              1.331825756,
+              1.245499164
+            ]
+          },
+          "median_seconds": {
+            "C": 2.107026436,
+            "Fern": 1.257350131
+          },
+          "fern_speed_ratio": 1.675767460511761,
+          "encoded_bytes": {
+            "C": 1198660,
+            "Fern": 1199311
+          },
+          "average_complexity": 0.44367,
+          "complexity_source": "C VBR 75 analysis outside timing",
+          "c_rms_error": 0.02175292872101695,
+          "c_snr_db": 18.552067046670825,
+          "c_file_kbps": 95.89280000000001,
+          "fern_rms_error": 0.021736541723915613,
+          "fern_snr_db": 18.558612799176046,
+          "fern_file_kbps": 95.94488
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    },
+    {
+      "threads": 4,
+      "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "seconds": 100.0,
+      "repetitions": 11,
+      "reference_label": "GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)",
+      "quality": null,
+      "rate_mode": "cbr",
+      "bitrate_kbps": 96.0,
+      "block_size": 2048,
+      "channels": 2,
+      "sample_rate": 44100,
+      "output_format": "FLOAT32",
+      "direction": "encode",
+      "fern_binary_sha256": "292f7db56ab627ae7a9ebc1973209aee39ce20db286592d19f479e1cc340604a",
+      "reference_encoder_sha256": "f04c35521422d6236743503584565f163cff22739b787906d0d63fe247ecb74e",
+      "reference_decoder_sha256": "454de63bfa6e1fcb0833775c96bbeb2ba1c35f2af9b85a6109f320686ef0c161",
+      "source_commit": "7c91179ef43de2ac1622d06d0f7885fea9095fb2",
+      "benchmark_script_sha256": "ba86a72a8093992e7f0a83ad0290d0e7765deba8f3ff93f520b2068258c1630e",
+      "results": [
+        {
+          "fixture": "silence",
+          "input_sha256": "3fd770663c1963ba43520e20275d166a01657ad435ad8d4b0bfa13eadaae1d02",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              0.647220938,
+              0.703765713,
+              0.76278138,
+              0.720023714,
+              0.643613378,
+              0.656692361,
+              0.679826002,
+              0.657283446,
+              0.667401232,
+              0.674603672,
+              0.686533468
+            ],
+            "Fern": [
+              0.497484871,
+              0.477672217,
+              0.519059093,
+              0.506701167,
+              0.510363261,
+              0.486662185,
+              0.48832716,
+              0.482713555,
+              0.508821661,
+              0.47669188,
+              0.606245795
+            ]
+          },
+          "median_seconds": {
+            "C": 0.674603672,
+            "Fern": 0.497484871
+          },
+          "fern_speed_ratio": 1.3560285172973634,
+          "encoded_bytes": {
+            "C": 6492,
+            "Fern": 6492
+          },
+          "c_rms_error": 0.0,
+          "c_snr_db": null,
+          "c_file_kbps": 0.51936,
+          "fern_rms_error": 0.0,
+          "fern_snr_db": null,
+          "fern_file_kbps": 0.51936
+        },
+        {
+          "fixture": "tone",
+          "input_sha256": "b4e07376024f4b3c09234345fc1d5ac517a1bf866c9903b930a6982434ed77f4",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.274423356,
+              2.596082373,
+              2.579183176,
+              2.523745163,
+              2.63351563,
+              2.520414676,
+              2.494951528,
+              3.159071132,
+              2.435367608,
+              2.629412252,
+              2.501146553
+            ],
+            "Fern": [
+              1.473256195,
+              1.461483243,
+              1.369318106,
+              1.342827073,
+              1.362502901,
+              1.338224743,
+              1.382852248,
+              1.306101163,
+              1.432461024,
+              1.353651236,
+              1.360217276
+            ]
+          },
+          "median_seconds": {
+            "C": 2.523745163,
+            "Fern": 1.362502901
+          },
+          "fern_speed_ratio": 1.8522860840499598,
+          "encoded_bytes": {
+            "C": 1197863,
+            "Fern": 1198721
+          },
+          "c_rms_error": 0.017210519125147726,
+          "c_snr_db": 20.876967005499083,
+          "c_file_kbps": 95.82903999999999,
+          "fern_rms_error": 0.01721051924488269,
+          "fern_snr_db": 20.876966945070645,
+          "fern_file_kbps": 95.89768
+        },
+        {
+          "fixture": "noise",
+          "input_sha256": "85dd0bfae64ad61fbc9403772a0f29508a7260475f59d45472f77d026e375265",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.663665035,
+              2.770185066,
+              2.655710621,
+              2.658108238,
+              2.691065634,
+              2.677771621,
+              3.098361363,
+              2.632793878,
+              2.697927542,
+              2.641872031,
+              2.634741452
+            ],
+            "Fern": [
+              1.323738436,
+              1.325692718,
+              1.449956785,
+              1.427527768,
+              1.43890821,
+              1.348094275,
+              1.461319369,
+              1.355605861,
+              1.559357466,
+              1.312725845,
+              1.432985639
+            ]
+          },
+          "median_seconds": {
+            "C": 2.663665035,
+            "Fern": 1.427527768
+          },
+          "fern_speed_ratio": 1.865928701850653,
+          "encoded_bytes": {
+            "C": 1198278,
+            "Fern": 1199031
+          },
+          "c_rms_error": 0.27164273334294503,
+          "c_snr_db": 0.5302304273858484,
+          "c_file_kbps": 95.86224,
+          "fern_rms_error": 0.27147615341127834,
+          "fern_snr_db": 0.53555852398875,
+          "fern_file_kbps": 95.92248
+        },
+        {
+          "fixture": "transients",
+          "input_sha256": "d911303f9353ca853c9ac3a6fd8a11860e5f08bb926bfe1abbe5df1edeb9d3af",
+          "direction": "encode",
+          "seconds": {
+            "C": [
+              2.611077417,
+              2.588873453,
+              2.539355023,
+              2.575417765,
+              2.540323667,
+              2.615621319,
+              2.564620823,
+              2.591462278,
+              2.683922016,
+              2.552900738,
+              2.527050068
+            ],
+            "Fern": [
+              1.572518698,
+              1.425464485,
+              1.435597221,
+              1.441377093,
+              1.38484812,
+              1.389692731,
+              1.456704011,
+              1.360469503,
+              1.31804405,
+              1.363023181,
+              1.310369376
+            ]
+          },
+          "median_seconds": {
+            "C": 2.575417765,
+            "Fern": 1.389692731
+          },
+          "fern_speed_ratio": 1.8532282047318271,
+          "encoded_bytes": {
+            "C": 1198737,
+            "Fern": 1199415
+          },
+          "c_rms_error": 0.03332488664049812,
+          "c_snr_db": 14.847048166701153,
+          "c_file_kbps": 95.89896,
+          "fern_rms_error": 0.03331845001513465,
+          "fern_snr_db": 14.848725988386807,
+          "fern_file_kbps": 95.9532
+        }
+      ],
+      "compiler_version": "fern 7c91179ef43d\nbuilt for x86-64-linux",
+      "compiler_sha256": "2acc8da97e639e8a30c472ab39a4e25c3fbba676dfc441534b90916b081eaf42",
+      "oracle_sha256": "039b597fbd1fbed038932f6d079cfc6cd6f06069e2c45abf2cc47d1627f94b14"
+    }
+  ]
+}

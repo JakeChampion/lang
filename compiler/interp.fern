@@ -2265,7 +2265,7 @@ function is_raw_floor(name: string): boolean {
   return util.has_str(["__syscall3", "__syscall4", "__syscall5", "__syscall6"], name)
     || util.has_str(["__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64"], name)
     || util.has_str(["__c_call3", "__c_call3_f32", "__c_call3_f64", "__c_call4", "__c_call4_f32", "__c_call4_f64"], name)
-    || util.has_str(["__c_call5", "__c_call5_f32", "__c_call5_f64", "__c_call6", "__c_call6_f32", "__c_call6_f64"], name)
+    || util.has_str(["__c_call5", "__c_call5_f32", "__c_call5_f64", "__c_call6", "__c_call6_f32", "__c_call6_f64", "__c_callv"], name)
     || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
 }
 
@@ -3037,7 +3037,7 @@ function call_host_net(name: string, args: Value[]): Value {
   if (util.has_str(["udp_sendto", "udp_sendto_bytes", "udp_sendmmsg"], name)) {
     return call_host_udp_send(name, args);
   }
-  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom"], name)) {
+  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_recvmmsg"], name)) {
     return call_host_udp(name, args);
   }
   if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
@@ -3057,6 +3057,37 @@ function call_host_udp_send(name: string, args: Value[]): Value {
     return v_int(udp_sendmmsg_by_sendto(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3)));
   }
   return v_int(udp_sendto_bytes(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
+}
+
+// udp_recvmmsg_by_recvfrom answers udp_recvmmsg with one message, read by
+// udp_recvfrom into the first slot of the buffer, because the pinned stage0
+// compiler that builds this interpreter does not know the builtin.
+function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i32[]): (i32, u8[], u8[], i32[]) {
+  let n = lens.len() / 3;
+  if (n == 0) {
+    return (0, buf, froms, lens);
+  }
+  let stride = buf.len() / n;
+  if (stride == 0) {
+    return (-22, buf, froms, lens);
+  }
+  let from = __alloc_u8(19);
+  let got = udp_recvfrom(sock, buf, from);
+  if (got < 0) {
+    return (got, buf, froms, lens);
+  }
+  if (got > stride) {
+    got = stride;
+  }
+  let out_froms = froms;
+  if (froms.len() >= 19) {
+    let k = 0;
+    while (k < 19) {
+      out_froms = out_froms.with(k, from[k]);
+      k += 1;
+    }
+  }
+  return (1, buf, out_froms, lens.with(0, got).with(1, 0).with(2, 0));
 }
 
 // udp_sendmmsg_by_sendto answers udp_sendmmsg with one udp_sendto_bytes per
@@ -3129,6 +3160,13 @@ function call_host_udp(name: string, args: Value[]): Value {
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
     arr_fill(arg_at(args, 2), bytes_as_i64s(from));
     return v_int(n);
+  }
+  if (name == "udp_recvmmsg") {
+    let r = udp_recvmmsg_by_recvfrom(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3));
+    arr_fill(arg_at(args, 1), bytes_as_i64s(r.1));
+    arr_fill(arg_at(args, 2), bytes_as_i64s(r.2));
+    arr_fill(arg_at(args, 3), i32s_as_i64s(r.3));
+    return v_int(r.0);
   }
   return v_int(udp_connect(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
 }
@@ -5338,7 +5376,7 @@ function eval_pinned_arg(c: ast.ExprCall, i: i32, fd: parser.FuncDecl, known: bo
 }
 
 function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
-  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let none = parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
   if (is_closure) {
     return (none, false);
   }

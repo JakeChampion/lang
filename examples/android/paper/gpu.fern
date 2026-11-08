@@ -1,0 +1,303 @@
+// The pixels of Paper on the GPU. Each node becomes an image once, and each
+// frame draws those images at their places, so a scroll, a fling or a slide
+// costs the CPU almost nothing. Text draws from a glyph atlas, so a new
+// label costs only the glyphs that the atlas does not hold yet.
+import "core/map";
+import "std/android";
+import "std/android/draw";
+import "std/android/gl";
+import "std/option";
+import "./face";
+import "./ui";
+
+// An image on the GPU, with the margin of pixels around its node.
+struct Image { t: gl.Texture, m: i32 }
+
+// The canvas, from the first window to `close`. It keeps its context and
+// its images while the app has no window. `images` holds the image of each
+// node by its key, and `bytes` their size. `backdrop` is the screen of the
+// wallpaper below the paper colour, for the wallpaper and for the fades at
+// the edges of a list. `atlas` holds the glyphs, and `slots` the slot of
+// each glyph by its key.
+pub struct Painter { canvas: Option[gl.Canvas], images: Map[string, Image], bytes: i64, atlas: gl.Atlas, slots: Map[i64, gl.Slot], cache: face.Cache, fonts: face.Fonts, wall: draw.Frame, d: f64, w: i32, h: i32, backdrop: gl.Texture, backdrop_key: string }
+
+// The size of the images, in bytes, above which a frame frees the images
+// that it did not draw.
+const BUDGET: i64 = 100663296i64;
+
+// The side of a page of the glyph atlas, in texels.
+const ATLAS_SIZE: i32 = 1024;
+
+pub function painter(fonts: face.Fonts): Painter {
+  return Painter { canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), cache: face.new_cache(), fonts: fonts, wall: draw.offscreen(0, 0), d: 2.0, w: 0, h: 0, backdrop: no_texture(), backdrop_key: "" };
+}
+
+function no_texture(): gl.Texture {
+  return gl.Texture { id: 0, width: 0, height: 0 };
+}
+
+// The painter draws on a window or on an image.
+pub function attached(p: Painter): boolean {
+  if let Some(c) = p.canvas {
+    return c.attached();
+  }
+  return false;
+}
+
+// The painter on the window `window`, which it draws on from now on. It
+// keeps the context and the images of the window before.
+pub function attach(p: Painter, window: usize): Painter {
+  let w = android.Window { ptr: window };
+  if let Some(c) = p.canvas {
+    return Painter { ...p, canvas: Some(c.attach(w)) };
+  }
+  if let Some(c) = gl.open_context() {
+    return Painter { ...p, canvas: Some(c.attach(w)) };
+  }
+  return p;
+}
+
+// The painter on the canvas `c`, which it draws on from now on.
+pub function on_canvas(p: Painter, c: Option[gl.Canvas]): Painter {
+  let q = close(p);
+  return Painter { ...q, canvas: c };
+}
+
+// The painter off its window. Its context and its images stay.
+pub function detach(p: Painter): Painter {
+  if let Some(c) = p.canvas {
+    return Painter { ...p, canvas: Some(c.detach()) };
+  }
+  return p;
+}
+
+// The painter with no canvas: it frees each image and closes the canvas.
+pub function close(p: Painter): Painter {
+  let Some(c) = p.canvas else {
+    return p;
+  };
+  for e in p.images.entries() {
+    let (_, img) = e;
+    gl.free(img.t);
+  }
+  gl.free(p.backdrop);
+  gl.free_atlas(p.atlas);
+  gl.close(c);
+  return forget(p);
+}
+
+// The painter with no canvas and no images, which it does not free: the
+// device lost them with the context.
+function forget(p: Painter): Painter {
+  return Painter { ...p, canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), backdrop: no_texture(), backdrop_key: "" };
+}
+
+// The painter for a screen of w by h at the density `d`, with the wallpaper
+// `wall` at the width of the screen. It takes `wall` and releases the one
+// before it.
+pub function with_screen(p: Painter, wall: draw.Frame, w: i32, h: i32, d: f64): Painter {
+  draw.release(p.wall);
+  return Painter { ...p, wall: wall, w: w, h: h, d: d };
+}
+
+// The width of the wallpaper that the painter holds.
+pub function wall_width(p: Painter): i32 {
+  return p.wall.width;
+}
+
+// Draws the passes in their order and shows the frame.
+pub function present(p: Painter, passes: ui.Pass[]): Painter {
+  let Some(c0) = p.canvas else {
+    return p;
+  };
+  if (!c0.attached()) {
+    return p;
+  }
+  let c = c0.sized(p.w, p.h);
+  let q = backdrop(Painter { ...p, canvas: Some(c) }, c);
+  c.clear(ui.paper_color());
+  for pass in passes {
+    if (pass.alpha < 1.0) {
+      c.begin_layer();
+      q = draw_nodes(q, c, pass.nodes, 0);
+      c.end_layer();
+      c.draw_layer(0, pass.dy, pass.alpha);
+    } else {
+      q = draw_nodes(q, c, pass.nodes, pass.dy);
+    }
+  }
+  match (c.present()) {
+    gl.Lost => {
+      // The textures went with the context: a new context draws the next
+      // frame on the same window.
+      gl.close(c);
+      return attach(forget(q), c.window);
+    },
+    _ => {
+      return evict(q, passes);
+    }
+  }
+}
+
+// The painter with the backdrop of its screen and wallpaper.
+function backdrop(own p: Painter, c: gl.Canvas): Painter {
+  let key = p.w.to_string() + "x" + p.h.to_string() + "|" + p.wall.width.to_string() + "x" + p.wall.height.to_string();
+  if (key == p.backdrop_key) {
+    return p;
+  }
+  gl.free(p.backdrop);
+  let fr = draw.offscreen(p.w, p.h);
+  let n = ui.Node { x: 0, y: 0, w: p.w, h: p.h, paint: ui.Wallpaper, act: "", long: "", group: "", clip0: 0, clip1: p.h };
+  let cache = ui.raster(fr, p.fonts, p.cache, n, 0, p.wall, p.d);
+  let t = gl.texture(fr);
+  draw.release(fr);
+  return Painter { ...p, cache: cache, backdrop: t, backdrop_key: key };
+}
+
+function draw_nodes(own p: Painter, c: gl.Canvas, ns: ui.Node[], dy: i32): Painter {
+  let q = p;
+  for n in ns {
+    q = draw_node(q, c, n, dy);
+  }
+  return q;
+}
+
+function draw_node(own p: Painter, c: gl.Canvas, n: ui.Node, dy: i32): Painter {
+  let clip0 = n.clip0 + dy;
+  let clip1 = n.clip1 + dy;
+  let pad = (8.0 * p.d) as i32;
+  if (n.y + dy + n.h + pad <= clip0.max(0) || n.y + dy - pad >= clip1.min(p.h)) {
+    return p;
+  }
+  match (n.paint) {
+    ui.Blank => {
+      return p;
+    },
+    ui.Wallpaper => {
+      c.draw(p.backdrop, 0, dy, 1.0, clip0, clip1);
+      return p;
+    },
+    ui.Fade(top) => {
+      let a0 = 0.0;
+      if (top) {
+        a0 = 1.0;
+      }
+      let fade = gl.Fade { y0: n.y + dy, y1: n.y + dy + n.h, a0: a0, a1: 1.0 - a0 };
+      c.draw_part(p.backdrop, gl.Part { x: n.x, y: n.y, w: n.w, h: n.h }, gl.Part { x: n.x, y: n.y + dy, w: n.w, h: n.h }, 1.0, fade, clip0, clip1);
+      return p;
+    },
+    ui.Fill(color, r) => {
+      if (r == 0) {
+        return solid(p, c, n, color, dy);
+      }
+      return draw_image(p, c, n, dy);
+    },
+    ui.Underline(color) => {
+      return solid(p, c, n, color, dy);
+    },
+    ui.Label(text, px, weight, track, color) => {
+      return draw_text(p, c, n, Text { s: text, px: px, weight: weight, track: track, color: color }, dy);
+    },
+    _ => {
+      return draw_image(p, c, n, dy);
+    }
+  }
+}
+
+// A label: its text, size, weight, letter spacing and colour.
+struct Text { s: string, px: i32, weight: i32, track: i32, color: i32 }
+
+// Draws the label `t` of node `n` from the glyph atlas, with its first pen
+// at the left of the node and its baseline at the ascent below the top.
+function draw_text(own p: Painter, c: gl.Canvas, n: ui.Node, t: Text, dy: i32): Painter {
+  let (cache, placed) = face.layout(p.cache, p.fonts, t.weight, t.px, t.track, t.s);
+  let q = Painter { ...p, cache: cache };
+  let base = n.y + dy + face.ascent(p.fonts, t.weight, t.px);
+  let glyphs: gl.Glyph[] = [];
+  for pl in placed {
+    if (pl.bm.width > 0) {
+      if (q.slots.get(pl.key).is_none()) {
+        let (a, slot) = q.atlas.add(pl.bm.width, pl.bm.height, pl.bm.coverage);
+        q = Painter { ...q, atlas: a, slots: q.slots.insert(pl.key, slot) };
+      }
+      if let Some(slot) = q.slots.get(pl.key) {
+        glyphs = glyphs.append(gl.Glyph { slot: slot, x: n.x + pl.x, y: base + pl.bm.top });
+      }
+    }
+  }
+  c.draw_glyphs(q.atlas, glyphs, t.color, 1.0, n.clip0 + dy, n.clip1 + dy);
+  return q;
+}
+
+// A rectangle of one colour: an image of one pixel, on the whole node.
+function solid(own p: Painter, c: gl.Canvas, n: ui.Node, color: i32, dy: i32): Painter {
+  let key = "solid|" + color.to_string();
+  let q = p;
+  if (q.images.get(key).is_none()) {
+    let fr = draw.offscreen(1, 1);
+    fr.store(0, 0, 1, 1, 0);
+    fr.fill(0, 0, 1, 1, color);
+    q = keep(q, key, Image { t: gl.texture(fr), m: 0 });
+    draw.release(fr);
+  }
+  if let Some(img) = q.images.get(key) {
+    c.draw_part(img.t, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: n.x, y: n.y + dy, w: n.w, h: n.h }, 1.0, gl.no_fade(), n.clip0 + dy, n.clip1 + dy);
+  }
+  return q;
+}
+
+// Draws the image of node `n`, which it makes the first time.
+function draw_image(own p: Painter, c: gl.Canvas, n: ui.Node, dy: i32): Painter {
+  let key = ui.paint_key(n);
+  if (key.len() == 0 || n.w <= 0 || n.h <= 0) {
+    return p;
+  }
+  let q = p;
+  if (q.images.get(key).is_none()) {
+    q = make_image(q, n, key);
+  }
+  if let Some(img) = q.images.get(key) {
+    c.draw(img.t, n.x - img.m, n.y - img.m + dy, 1.0, n.clip0 + dy, n.clip1 + dy);
+  }
+  return q;
+}
+
+function make_image(own p: Painter, n: ui.Node, key: string): Painter {
+  let m = ui.margin(n, p.d);
+  let fr = draw.offscreen(n.w + 2 * m, n.h + 2 * m);
+  let cache = ui.raster(fr, p.fonts, p.cache, n, m, p.wall, p.d);
+  let t = gl.texture(fr);
+  draw.release(fr);
+  return keep(Painter { ...p, cache: cache }, key, Image { t: t, m: m });
+}
+
+function keep(own p: Painter, key: string, img: Image): Painter {
+  let size = img.t.width as i64 * (img.t.height as i64) * 4i64;
+  return Painter { ...p, images: p.images.insert(key, img), bytes: p.bytes + size };
+}
+
+// When the images pass the budget, frees each one that the passes do not
+// draw.
+function evict(own p: Painter, passes: ui.Pass[]): Painter {
+  if (p.bytes <= BUDGET) {
+    return p;
+  }
+  let used: Map[string, boolean] = map_new(256);
+  for pass in passes {
+    for n in pass.nodes {
+      used = used.insert(ui.paint_key(n), true);
+    }
+  }
+  let kept: Map[string, Image] = map_new(256);
+  let bytes = 0i64;
+  for e in p.images.entries() {
+    let (key, img) = e;
+    if (used.get(key).is_some() || key.starts_with("solid|")) {
+      kept = kept.insert(key, img);
+      bytes += img.t.width as i64 * (img.t.height as i64) * 4i64;
+    } else {
+      gl.free(img.t);
+    }
+  }
+  return Painter { ...p, images: kept, bytes: bytes };
+}

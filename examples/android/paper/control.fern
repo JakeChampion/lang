@@ -1,0 +1,1441 @@
+// The behaviour of Paper on its events: the touches, the keys, the timers,
+// the files and the window. paper.fern holds the rules and ui.fern the look.
+// Each input and output goes through a Device: app.fern gives the device of
+// the phone, and control_test.fern gives one that records what the app does.
+import "std/android";
+import "std/android/draw";
+import "std/android/motion";
+import "std/android/trace";
+import "std/option";
+import "std/worker";
+import "./face";
+import "./gpu";
+import "./paper";
+import "./ui";
+
+// The kinds of the messages that the activity and the notification service
+// send to the loop thread.
+pub const KIND_HOME: i32 = 100;
+
+pub const KIND_HELD: i32 = 101;
+
+pub const SETTINGS_FILE: string = "settings";
+
+pub const HELD_FILE: string = "held";
+
+pub const WEATHER_FILE: string = "weather";
+
+const LONG_PRESS_MS: i64 = 450;
+
+const PAUSE_MS: i64 = 5000;
+
+// The animations of the app list, as Paper's Java views ran them: in over
+// 180 ms and out over 150 ms.
+const OPEN_MS: i64 = 180;
+
+const CLOSE_MS: i64 = 150;
+
+const WEATHER_MAX_AGE_MS: i64 = 1800000;
+
+// The input and output of the app. `property` gives the value of a system
+// property, or "". `attach_gpu` puts the painter on a
+// window, `present` draws a frame of passes with it, `detach_gpu` takes it
+// off the window with its images kept, and `close_gpu` frees it. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
+// only their keys, which is faster. `launch` opens an app by its key from
+// the rectangle of its label.
+// `open` starts a screen of the system: "alarms", "calendar", "search" (with
+// the text), "info" and "uninstall" (with a package), "music",
+// "home-settings" and "listener-settings".
+pub struct Device {
+  mono_ms: () => i64,
+  wall_ms: () => i64,
+  utc_offset_ms: (i64) => i32,
+  is_24h: () => boolean,
+  country: () => string,
+  read: (string) => string,
+  write: (string, string) => void,
+  size: (usize) => (i32, i32),
+  wallpaper: (i32) => draw.Image,
+  apps: () => paper.Entry[],
+  app_keys: () => string[],
+  launch: (string, i32, i32, i32, i32) => boolean,
+  open: (string, string) => boolean,
+  notifications: () => void,
+  keyboard: (boolean) => void,
+  bars: (boolean, boolean) => void,
+  has_location: () => boolean,
+  ask_location: () => void,
+  location: () => Option[(f64, f64)],
+  fetch: (string) => worker.Worker[string],
+  listener_on: () => boolean,
+  default_allowed: () => string[],
+  open_held: (string, string) => void,
+  request_frame: () => void,
+  property: (string) => string,
+  attach_gpu: (gpu.Painter, usize) => gpu.Painter,
+  present: (gpu.Painter, ui.Pass[]) => gpu.Painter,
+  detach_gpu: (gpu.Painter) => gpu.Painter,
+  close_gpu: (gpu.Painter) => gpu.Painter,
+}
+
+// A touch from its down event to its up event. `samples` are the last
+// positions of the finger, for its speed.
+struct Press { active: boolean, x0: f32, y0: f32, x: f32, y: f32, at: i64, moved: boolean, fired: boolean, group: string, scroll0: i32, samples: motion.Sample[] }
+
+// A list that keeps scrolling after a flick.
+struct Fling { group: string, f: motion.Fling }
+
+// The app list sliding in or out: it starts at the first frame after it is
+// asked for, when `t0` is 0.
+struct Slide { active: boolean, opening: boolean, t0: i64 }
+
+pub struct App {
+  dev: Device,
+  dir: string,
+  fonts: face.Fonts,
+  window: usize,
+  w: i32,
+  h: i32,
+  d: f64,
+  top: i32,
+  bottom: i32,
+  painter: gpu.Painter,
+  slide: Slide,
+  frame_ns: i64,
+  // The gaps between the frames that drew, the time of the last one, and
+  // whether the overlay shows them: the property debug.fern.frames is 1.
+  frames: trace.Frames,
+  drawn_ns: i64,
+  overlay: boolean,
+  settings: paper.Settings,
+  installed: paper.Entry[],
+  apps: paper.Entry[],
+  held: paper.Held[],
+  layer: i32,
+  query: string,
+  typing: boolean,
+  list_scroll: i32,
+  fav_scroll: i32,
+  sheet: Option[ui.Sheet],
+  sheet_kind: string,
+  sheet_key: string,
+  pick_keys: string[],
+  pause_key: string,
+  pause_at: i64,
+  press: Press,
+  fling: Fling,
+  weather: Option[paper.Weather],
+  weather_at: i64,
+  job: Option[worker.Worker[string]],
+  note: string,
+  note_until: i64,
+  shown: boolean,
+  minute: i64,
+  nodes: ui.Node[],
+  dirty: boolean,
+  bars: i32,
+}
+
+function no_press(): Press {
+  return Press { active: false, x0: 0.0, y0: 0.0, x: 0.0, y: 0.0, at: 0i64, moved: false, fired: false, group: "", scroll0: 0, samples: [] };
+}
+
+function no_fling(): Fling {
+  return Fling { group: "", f: motion.no_fling() };
+}
+
+function no_slide(): Slide {
+  return Slide { active: false, opening: false, t0: 0i64 };
+}
+
+function path(s: App, name: string): string {
+  return s.dir + "/" + name;
+}
+
+// The app before its first event, with its files in the directory `dir`.
+pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
+  let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
+  let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
+}
+
+pub function with_density(own s: App, dpi: i32): App {
+  return App { ...s, d: dpi as f64 / 160.0 };
+}
+
+function load_weather(own s: App): App {
+  let text = s.dev.read(path(s, WEATHER_FILE));
+  let f = text.split("\t");
+  if (f.len() < 2) {
+    return s;
+  }
+  let at = paper.digits(f[0]);
+  return App { ...s, weather: paper.parse_weather(f[1]), weather_at: at };
+}
+
+function save(own s: App): App {
+  s.dev.write(path(s, SETTINGS_FILE), paper.format_settings(s.settings));
+  return s;
+}
+
+function set(own s: App, settings: paper.Settings): App {
+  return save(App { ...s, settings: settings, apps: paper.named(s.installed, settings), dirty: true });
+}
+
+function metrics(s: App): ui.Metrics {
+  return ui.Metrics { w: s.w, h: s.h, d: s.d, top: s.top, bottom: s.bottom };
+}
+
+function now_ms(s: App): i64 {
+  return s.dev.mono_ms();
+}
+
+function show_note(own s: App, text: string): App {
+  return App { ...s, note: text, note_until: now_ms(s) + 2500i64, dirty: true };
+}
+
+// --- apps
+
+// Loads the apps again when the keys of the apps changed. Loading the
+// labels is the slow part, so the keys come first.
+function reload_apps(own s: App, force: boolean): App {
+  if (!force && s.installed.len() > 0 && same_keys(s.installed, s.dev.app_keys())) {
+    return s;
+  }
+  let installed = s.dev.apps();
+  return App { ...s, installed: installed, apps: paper.named(installed, s.settings), dirty: true };
+}
+
+function same_keys(apps: paper.Entry[], keys: string[]): boolean {
+  if (apps.len() != keys.len()) {
+    return false;
+  }
+  for a in apps {
+    if (!paper.has(keys, a.key)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function favourites(s: App): paper.Entry[] {
+  let out: paper.Entry[] = [];
+  for k in s.settings.favourites {
+    if let Some(a) = paper.find(s.apps, k) {
+      out = out.append(a);
+    }
+  }
+  return out;
+}
+
+function results(s: App): paper.Entry[] {
+  return paper.search(s.apps, s.query, s.settings.hidden);
+}
+
+// The keys to show dimmed in the app list: the hidden apps, and the blocked
+// apps with a "blocked:" key beside them.
+function dimmed(s: App): string[] {
+  let out = s.settings.hidden;
+  let now = s.dev.wall_ms();
+  for b in s.settings.blocks {
+    if (b.until > now) {
+      out = out.append(b.key).append("blocked:" + b.key);
+    }
+  }
+  return out;
+}
+
+// Opens app `key`, from the rectangle of its label when there is one. A
+// blocked app shows the block, and a mindful app the pause.
+function open_app(own s: App, key: string, n: Option[ui.Node]): App {
+  let Some(a) = paper.find(s.apps, key) else {
+    return s;
+  };
+  let until = paper.blocked_until(s.settings, key, s.dev.wall_ms());
+  if (until > 0i64) {
+    s.dev.keyboard(false);
+    return App { ...s, layer: ui.BLOCKED, pause_key: key, pause_at: until, typing: false, sheet: None, dirty: true };
+  }
+  if (paper.has(s.settings.mindful, key)) {
+    s.dev.keyboard(false);
+    return App { ...s, layer: ui.PAUSE, pause_key: key, pause_at: now_ms(s), typing: false, sheet: None, dirty: true };
+  }
+  return launch(s, a, n);
+}
+
+function launch(own s: App, a: paper.Entry, n: Option[ui.Node]): App {
+  let (x, y, w, h) = (0, 0, 0, 0);
+  if let Some(r) = n {
+    x = r.x;
+    y = r.y;
+    w = r.w;
+    h = r.h;
+  }
+  if (!s.dev.launch(a.key, x, y, w, h)) {
+    return show_note(reload_apps(s, true), "Cannot open " + a.label);
+  }
+  // The app list stays while the app opens, and takes no more typing.
+  if (s.typing) {
+    s.dev.keyboard(false);
+  }
+  return App { ...s, typing: false, dirty: true };
+}
+
+// --- layers
+
+// The home screen at once, with the app list and any sheet closed.
+function home(own s: App): App {
+  if (s.typing) {
+    s.dev.keyboard(false);
+  }
+  return App { ...s, layer: ui.HOME, sheet: None, typing: false, query: "", list_scroll: 0, slide: no_slide(), press: no_press(), fling: no_fling(), dirty: true };
+}
+
+function open_drawer(own s: App): App {
+  s.dev.keyboard(true);
+  return App { ...s, layer: ui.DRAWER, query: "", typing: true, list_scroll: 0, slide: Slide { active: true, opening: true, t0: 0i64 }, fling: no_fling(), dirty: true };
+}
+
+// The app list slides out, then the home screen shows. The list keeps its
+// look while it slides, and `home` ends the typing.
+function close_drawer(own s: App): App {
+  if (s.typing) {
+    s.dev.keyboard(false);
+  }
+  return App { ...s, slide: Slide { active: true, opening: false, t0: 0i64 }, fling: no_fling(), dirty: true };
+}
+
+function close_sheet(own s: App): App {
+  if (s.typing && s.layer != ui.DRAWER) {
+    s.dev.keyboard(false);
+    return App { ...s, sheet: None, typing: false, dirty: true };
+  }
+  return App { ...s, sheet: None, dirty: true };
+}
+
+// Goes back one step: the sheet, the pause, then the app list.
+function back(own s: App): App {
+  if let Some(_) = s.sheet {
+    return close_sheet(s);
+  }
+  if (s.layer == ui.DRAWER) {
+    return close_drawer(s);
+  }
+  if (s.layer != ui.HOME) {
+    return home(s);
+  }
+  return s;
+}
+
+// --- sheets
+
+function row(text: string, act: string): ui.Row {
+  return ui.Row { text: text, sub: "", check: -1, act: act };
+}
+
+function show_sheet(own s: App, kind: string, key: string, sh: ui.Sheet): App {
+  return App { ...s, sheet: Some(sh), sheet_kind: kind, sheet_key: key, press: no_press(), dirty: true };
+}
+
+function sheet_of(title: string, rows: ui.Row[], buttons: ui.Row[]): ui.Sheet {
+  return ui.Sheet { title: title, rows: rows, buttons: buttons, field: false, text: "", hint: "", scroll: 0 };
+}
+
+function app_menu(own s: App, key: string, on_home: boolean): App {
+  let Some(a) = paper.find(s.apps, key) else {
+    return s;
+  };
+  let st = s.settings;
+  let rows: ui.Row[] = [];
+  let fav = paper.has(st.favourites, key);
+  if (fav) {
+    rows = rows.append(row("Remove from home", "toggle-fav"));
+  } else {
+    rows = rows.append(row("Add to home", "toggle-fav"));
+  }
+  if (on_home && fav) {
+    rows = rows.append(row("Move up", "up")).append(row("Move down", "down"));
+  }
+  rows = rows.append(row("Rename", "rename"));
+  let until = paper.blocked_until(st, key, s.dev.wall_ms());
+  if (until > 0i64) {
+    rows = rows.append(row("Unblock (blocked until " + paper.time_text(until + local_offset(s, until), s.dev.is_24h()) + ")", "unblock"));
+  } else {
+    rows = rows.append(row("Block for a while", "block"));
+  }
+  if (paper.has(st.mindful, key)) {
+    rows = rows.append(row("Open without a pause", "mindful"));
+  } else {
+    rows = rows.append(row("Pause before opening", "mindful"));
+  }
+  if (!on_home) {
+    if (paper.has(st.hidden, key)) {
+      rows = rows.append(row("Show in the app list", "hide"));
+    } else {
+      rows = rows.append(row("Hide from the app list", "hide"));
+    }
+  }
+  rows = rows.append(row("App info", "info")).append(row("Uninstall", "uninstall"));
+  return show_sheet(s, "app", key, sheet_of(a.label, rows, []));
+}
+
+function settings_menu(own s: App): App {
+  let st = s.settings;
+  let music = "not set";
+  if let Some(a) = paper.find_package(s.apps, st.music) {
+    music = a.label;
+  }
+  let filter = "off";
+  if (st.filter_on && s.dev.listener_on()) {
+    filter = "on";
+  }
+  let units = "°C";
+  if (paper.fahrenheit(st, s.dev.country())) {
+    units = "°F";
+  }
+  let auto = "off";
+  if (st.auto_open) {
+    auto = "on";
+  }
+  let rows = [
+    row("Choose home apps", "pick-home"),
+    row("Music button: " + music, "pick-music"),
+    row("Notification filter: " + filter, "filter"),
+    row("Apps that can notify (" + st.allowed.len().to_string() + ")", "pick-allow"),
+    row("Temperature: " + units, "units"),
+    row("Open a single search match: " + auto, "auto"),
+    row("Hidden apps (" + st.hidden.len().to_string() + ")", "hidden"),
+    row("Make Paper the home app", "home-settings"),
+  ];
+  return show_sheet(s, "settings", "", sheet_of("Paper", rows, []));
+}
+
+function app_list_sheet(own s: App, kind: string, title: string, keys: string[], prefix: string): App {
+  let rows: ui.Row[] = [];
+  for k in keys {
+    if let Some(a) = paper.find(s.apps, k) {
+      rows = rows.append(row(a.label, prefix + k));
+    }
+  }
+  return show_sheet(s, kind, "", sheet_of(title, rows, []));
+}
+
+// A list of every app (or each package once, with `packages`) with a check
+// box, `chosen` checked, and Done and Cancel.
+function pick_sheet(own s: App, kind: string, title: string, chosen: string[], packages: boolean): App {
+  let rows: ui.Row[] = [];
+  let keys: string[] = [];
+  for a in s.apps {
+    let k = a.key;
+    if (packages) {
+      k = a.pkg;
+    }
+    if (!paper.has(keys, k)) {
+      let on = 0;
+      if (paper.has(chosen, k)) {
+        on = 1;
+      }
+      rows = rows.append(ui.Row { text: a.label, sub: "", check: on, act: "check:" + keys.len().to_string() });
+      keys = keys.append(k);
+    }
+  }
+  let sh = sheet_of(title, rows, [row("Cancel", "cancel"), row("Done", "done")]);
+  return App { ...show_sheet(s, kind, "", sh), pick_keys: keys };
+}
+
+function rename_sheet(own s: App, key: string): App {
+  let Some(a) = paper.find(s.apps, key) else {
+    return s;
+  };
+  let buttons = [row("Cancel", "cancel"), row("Save", "save")];
+  if (paper.renamed(a)) {
+    buttons = [row("Use " + a.original, "reset"), row("Cancel", "cancel"), row("Save", "save")];
+  }
+  let sh = ui.Sheet { title: "Rename " + a.original, rows: [], buttons: buttons, field: true, text: a.label, hint: a.original, scroll: 0 };
+  s.dev.keyboard(true);
+  return App { ...show_sheet(s, "rename", key, sh), typing: true };
+}
+
+function held_sheet(own s: App): App {
+  let rows: ui.Row[] = [];
+  let offset = local_offset(s, s.dev.wall_ms());
+  for i in 0..s.held.len() {
+    let h = s.held[i];
+    let stamp = paper.time_text(h.posted + offset as i64, s.dev.is_24h());
+    rows = rows.append(ui.Row { text: h.app + " · " + stamp + "\n" + paper.held_body(h), sub: "", check: -1, act: "held:" + i.to_string() });
+  }
+  return show_sheet(s, "held", "", sheet_of("Held notifications", rows, [row("Clear all", "clear"), row("Close", "cancel")]));
+}
+
+function block_sheet(own s: App, key: string): App {
+  let Some(a) = paper.find(s.apps, key) else {
+    return s;
+  };
+  let rows = [row("15 minutes", "for:15"), row("1 hour", "for:60"), row("4 hours", "for:240"), row("Rest of today", "for:day")];
+  return show_sheet(s, "block", key, sheet_of("Block " + a.label + " for", rows, []));
+}
+
+function music_sheet(own s: App): App {
+  let rows: ui.Row[] = [];
+  let seen: string[] = [];
+  for a in s.apps {
+    if (!paper.has(seen, a.pkg)) {
+      rows = rows.append(row(a.label, "music:" + a.pkg));
+      seen = seen.append(a.pkg);
+    }
+  }
+  return show_sheet(s, "music", "", sheet_of("Music button opens", rows, []));
+}
+
+function suffix(a: string, prefix: string): string {
+  return a.split_at(prefix.len()).1;
+}
+
+// Runs the action `a` of a row or a button of the sheet.
+function sheet_act(own s: App, a: string): App {
+  let kind = s.sheet_kind;
+  let key = s.sheet_key;
+  let st = s.settings;
+  let now = s.dev.wall_ms();
+  if (a == "cancel") {
+    return close_sheet(s);
+  }
+  if (kind == "app") {
+    let t = close_sheet(s);
+    if (a == "toggle-fav") {
+      return set(t, paper.Settings { ...st, favourites: paper.toggle(st.favourites, key) });
+    }
+    if (a == "up" || a == "down") {
+      let delta = 1;
+      if (a == "up") {
+        delta = -1;
+      }
+      return set(t, paper.Settings { ...st, favourites: paper.moved(st.favourites, key, delta) });
+    }
+    if (a == "rename") {
+      return rename_sheet(t, key);
+    }
+    if (a == "block") {
+      return block_sheet(t, key);
+    }
+    if (a == "unblock") {
+      return set(t, paper.with_block(st, key, 0i64, now));
+    }
+    if (a == "mindful") {
+      return set(t, paper.Settings { ...st, mindful: paper.toggle(st.mindful, key) });
+    }
+    if (a == "hide") {
+      return set(t, paper.Settings { ...st, hidden: paper.toggle(st.hidden, key) });
+    }
+    if let Some(e) = paper.find(t.apps, key) {
+      if (a == "info") {
+        let opened = t.dev.open("info", e.pkg);
+      } else if (a == "uninstall") {
+        let opened = t.dev.open("uninstall", e.pkg);
+      }
+    }
+    return t;
+  }
+  if (kind == "block" && a.starts_with("for:")) {
+    let until = now + paper.digits(suffix(a, "for:")) * 60000i64;
+    if (a == "for:day") {
+      until = paper.next_midnight(now, local_offset(s, now) as i64);
+    }
+    return set(close_sheet(s), paper.with_block(st, key, until, now));
+  }
+  if (kind == "rename") {
+    if (a == "save" || a == "reset") {
+      let text = "";
+      if (a == "save") {
+        if let Some(sh) = s.sheet {
+          text = sh.text;
+        }
+      }
+      let t = close_sheet(s);
+      let original = "";
+      if let Some(e) = paper.find(t.apps, key) {
+        original = e.original;
+      }
+      if (text.trim() == original) {
+        text = "";
+      }
+      return set(t, paper.with_name(st, key, text));
+    }
+    return s;
+  }
+  if (kind == "settings") {
+    return settings_act(close_sheet(s), a);
+  }
+  if (kind == "music" && a.starts_with("music:")) {
+    return set(close_sheet(s), paper.Settings { ...st, music: suffix(a, "music:") });
+  }
+  if (kind == "hidden" && a.starts_with("unhide:")) {
+    let t = set(s, paper.Settings { ...st, hidden: paper.without(st.hidden, suffix(a, "unhide:")) });
+    if (t.settings.hidden.len() == 0) {
+      return close_sheet(t);
+    }
+    let hidden = t.settings.hidden;
+    return app_list_sheet(t, "hidden", "Tap to show again", hidden, "unhide:");
+  }
+  if (kind == "held") {
+    if (a == "clear") {
+      return held_changed(close_sheet(s), []);
+    }
+    if (a.starts_with("held:")) {
+      let i = paper.digits(suffix(a, "held:")) as i32;
+      if (i < s.held.len()) {
+        let h = s.held[i];
+        let rest = paper.without_held(s.held, h.key);
+        let t = held_changed(close_sheet(s), rest);
+        t.dev.open_held(h.pkg, h.key);
+        return t;
+      }
+    }
+    return s;
+  }
+  if (kind == "pick-home" || kind == "pick-allow") {
+    return pick_act(s, a);
+  }
+  return s;
+}
+
+function settings_act(own s: App, a: string): App {
+  let st = s.settings;
+  if (a == "pick-home") {
+    return pick_sheet(s, "pick-home", "Home apps", st.favourites, false);
+  }
+  if (a == "pick-music") {
+    return music_sheet(s);
+  }
+  if (a == "pick-allow") {
+    let allowed = st.allowed;
+    if (!st.allowed_set) {
+      allowed = s.dev.default_allowed();
+    }
+    return pick_sheet(s, "pick-allow", "Apps that can notify", allowed, true);
+  }
+  if (a == "filter") {
+    let on = !(st.filter_on && s.dev.listener_on());
+    let next = paper.Settings { ...st, filter_on: on };
+    if (on && !st.allowed_set) {
+      next = paper.Settings { ...next, allowed: s.dev.default_allowed(), allowed_set: true };
+    }
+    let t = set(s, next);
+    if (on && !t.dev.listener_on()) {
+      let opened = t.dev.open("listener-settings", "");
+      return show_note(t, "Allow Paper to read notifications");
+    }
+    return t;
+  }
+  if (a == "units") {
+    let units = "f";
+    if (paper.fahrenheit(st, s.dev.country())) {
+      units = "c";
+    }
+    let t = set(s, paper.Settings { ...st, units: units });
+    return refresh_weather(App { ...t, weather: None }, true);
+  }
+  if (a == "auto") {
+    return set(s, paper.Settings { ...st, auto_open: !st.auto_open });
+  }
+  if (a == "hidden") {
+    if (st.hidden.len() == 0) {
+      return show_note(s, "No hidden apps");
+    }
+    return app_list_sheet(s, "hidden", "Tap to show again", st.hidden, "unhide:");
+  }
+  if (a == "home-settings") {
+    let opened = s.dev.open("home-settings", "");
+  }
+  return s;
+}
+
+function pick_act(own s: App, a: string): App {
+  let Some(sh) = s.sheet else {
+    return s;
+  };
+  if (a.starts_with("check:")) {
+    let i = paper.digits(suffix(a, "check:")) as i32;
+    let rows: ui.Row[] = [];
+    for k in 0..sh.rows.len() {
+      let r = sh.rows[k];
+      if (k == i) {
+        rows = rows.append(ui.Row { ...r, check: 1 - r.check });
+      } else {
+        rows = rows.append(r);
+      }
+    }
+    return App { ...s, sheet: Some(ui.Sheet { ...sh, rows: rows }), dirty: true };
+  }
+  if (a != "done") {
+    return s;
+  }
+  let chosen: string[] = [];
+  for k in 0..sh.rows.len() {
+    if (sh.rows[k].check == 1 && k < s.pick_keys.len()) {
+      chosen = chosen.append(s.pick_keys[k]);
+    }
+  }
+  let st = s.settings;
+  if (s.sheet_kind == "pick-allow") {
+    return set(close_sheet(s), paper.Settings { ...st, allowed: chosen, allowed_set: true });
+  }
+  // The home apps keep their order, and new ones go at the end.
+  let favs: string[] = [];
+  for k in st.favourites {
+    if (paper.has(chosen, k)) {
+      favs = favs.append(k);
+    }
+  }
+  for k in chosen {
+    if (!paper.has(favs, k)) {
+      favs = favs.append(k);
+    }
+  }
+  return set(close_sheet(s), paper.Settings { ...st, favourites: favs });
+}
+
+// --- held notifications
+
+function held_changed(own s: App, items: paper.Held[]): App {
+  s.dev.write(path(s, HELD_FILE), paper.format_held(items));
+  return App { ...s, held: items, dirty: true };
+}
+
+function reload_held(own s: App): App {
+  return App { ...s, held: paper.parse_held(s.dev.read(path(s, HELD_FILE))), dirty: true };
+}
+
+// --- actions of a tap and a long press
+
+function act(own s: App, a: string, n: ui.Node): App {
+  if (a.len() == 0 || a == "none") {
+    return s;
+  }
+  if let Some(_) = s.sheet {
+    if (a == "dismiss") {
+      return close_sheet(s);
+    }
+    if (a == "type") {
+      s.dev.keyboard(true);
+      return App { ...s, typing: true };
+    }
+    return sheet_act(s, a);
+  }
+  if (a.starts_with("open:")) {
+    return open_app(s, suffix(a, "open:"), Some(n));
+  }
+  if (a.starts_with("menu:")) {
+    let on_home = s.layer == ui.HOME;
+    return app_menu(s, suffix(a, "menu:"), on_home);
+  }
+  if (a == "type") {
+    s.dev.keyboard(true);
+    return App { ...s, typing: true, dirty: true };
+  }
+  if (a == "calendar" || a == "alarms") {
+    let opened = s.dev.open(a, "");
+    return s;
+  }
+  if (a == "weather") {
+    return weather_tap(s);
+  }
+  if (a == "music") {
+    return open_music(s, n);
+  }
+  if (a == "pick-music") {
+    return music_sheet(s);
+  }
+  if (a == "held") {
+    return held_sheet(s);
+  }
+  if (a == "pause-cancel") {
+    return home(s);
+  }
+  if (a == "pause-open") {
+    if (s.layer == ui.PAUSE && now_ms(s) - s.pause_at >= PAUSE_MS) {
+      if let Some(e) = paper.find(s.apps, s.pause_key) {
+        let t = launch(s, e, Some(n));
+        return t;
+      }
+    }
+    return s;
+  }
+  return s;
+}
+
+function open_music(own s: App, n: ui.Node): App {
+  if let Some(a) = paper.find_package(s.apps, s.settings.music) {
+    return open_app(s, a.key, Some(n));
+  }
+  if (!s.dev.open("music", "")) {
+    return music_sheet(s);
+  }
+  return s;
+}
+
+// --- touches
+
+function abs_f(v: f32): f32 {
+  if (v < 0.0) {
+    return 0.0 - v;
+  }
+  return v;
+}
+
+function clamp(v: i32, lo: i32, hi: i32): i32 {
+  if (v < lo) {
+    return lo;
+  }
+  if (v > hi) {
+    return hi;
+  }
+  return v;
+}
+
+function scroll_of(s: App, group: string): i32 {
+  if (group == "fav") {
+    return s.fav_scroll;
+  }
+  if (group == "list") {
+    return s.list_scroll;
+  }
+  if (group == "sheet") {
+    if let Some(sh) = s.sheet {
+      return sh.scroll;
+    }
+  }
+  return 0;
+}
+
+function scroll_limit(s: App, group: string): i32 {
+  let m = metrics(s);
+  if (group == "fav") {
+    return ui.fav_scroll_limit(m, s.fonts, view(s, s.frame_ns));
+  }
+  if (group == "list") {
+    return ui.list_scroll_limit(m, s.fonts, results(s).len());
+  }
+  if (group == "sheet") {
+    if let Some(sh) = s.sheet {
+      return ui.sheet_scroll_limit(m, s.fonts, sh);
+    }
+  }
+  return 0;
+}
+
+function with_scroll(s: App, group: string, v: i32): App {
+  let to = clamp(v, 0, scroll_limit(s, group));
+  if (group == "fav") {
+    return App { ...s, fav_scroll: to, dirty: true };
+  }
+  if (group == "list") {
+    return App { ...s, list_scroll: to, dirty: true };
+  }
+  if (group == "sheet") {
+    if let Some(sh) = s.sheet {
+      return App { ...s, sheet: Some(ui.Sheet { ...sh, scroll: to }), dirty: true };
+    }
+  }
+  return s;
+}
+
+function touch(own s: App, action: i32, x: f32, y: f32): App {
+  let m = metrics(s);
+  let slop = ui.dp(m, 8.0) as f32;
+  let now = now_ms(s);
+  let p = s.press;
+  if (s.slide.active) {
+    return s;
+  }
+  let sample = motion.Sample { t: now * 1000000i64, y: y as f64 };
+  if (action == 0) {
+    let group = ui.group_at(s.nodes, x as i32, y as i32);
+    return App { ...s, fling: no_fling(), press: Press { active: true, x0: x, y0: y, x: x, y: y, at: now, moved: false, fired: false, group: group, scroll0: scroll_of(s, group), samples: [sample] } };
+  }
+  if (!p.active) {
+    return s;
+  }
+  if (action == 2) {
+    let y0 = p.y0;
+    let moved = p.moved;
+    if (!moved && (abs_f(x - p.x0) > slop || abs_f(y - p.y0) > slop)) {
+      moved = true;
+      // As Android's lists do, the drag starts at the edge of the slop, so
+      // the list does not jump.
+      if (abs_f(y - p.y0) > slop) {
+        if (y > p.y0) {
+          y0 = p.y0 + slop;
+        } else {
+          y0 = p.y0 - slop;
+        }
+      }
+    }
+    let group = p.group + "";
+    let to = p.scroll0 - (y - y0) as i32;
+    let fired = p.fired;
+    let pressed = Press { active: true, x0: p.x0, y0: y0, x: x, y: y, at: p.at, moved: moved, fired: fired, group: p.group + "", scroll0: p.scroll0, samples: motion.track(p.samples, sample) };
+    let t = App { ...s, press: pressed };
+    if (moved && !fired && group.len() > 0) {
+      return with_scroll(t, group, to);
+    }
+    return t;
+  }
+  let t = App { ...s, press: no_press() };
+  if (action != 1 || p.fired) {
+    return t;
+  }
+  if (!p.moved) {
+    let Some(n) = ui.hit(t.nodes, x as i32, y as i32) else {
+      return tapped_empty(t);
+    };
+    return act(t, n.act, n);
+  }
+  return swiped(t, p, x, y, motion.velocity(motion.track(p.samples, sample)));
+}
+
+// A tap on no node: it ends typing in the app list.
+function tapped_empty(own s: App): App {
+  return s;
+}
+
+// The end of a drag: a flick keeps a list scrolling, and on the home screen
+// a swipe up opens the app list and a swipe down opens the notifications.
+// `v` is the speed of the finger in pixels per second.
+function swiped(own s: App, p: Press, x: f32, y: f32, v: f64): App {
+  let m = metrics(s);
+  let dy = y - p.y0;
+  let dx = x - p.x0;
+  let far = ui.dp(m, 64.0) as f32;
+  let vertical = abs_f(dy) > abs_f(dx);
+  if (s.sheet.is_none() && s.layer == ui.HOME && vertical && abs_f(dy) > far) {
+    let scrolled = p.group == "fav" && scroll_limit(s, "fav") > 0 && (dy < 0.0 && p.scroll0 < scroll_limit(s, "fav") || dy > 0.0 && p.scroll0 > 0);
+    if (!scrolled) {
+      if (dy < 0.0) {
+        return open_drawer(s);
+      }
+      s.dev.notifications();
+      return s;
+    }
+  }
+  if (s.sheet.is_none() && s.layer == ui.DRAWER && vertical && dy > ui.dp(m, 72.0) as f32 && p.scroll0 == 0) {
+    return close_drawer(s);
+  }
+  if (p.group.len() > 0 && vertical) {
+    let f = motion.fling(scroll_of(s, p.group), 0.0 - v, s.d, s.frame_ns);
+    if (motion.moving(f)) {
+      return App { ...s, fling: Fling { group: p.group, f: f }, dirty: true };
+    }
+  }
+  return s;
+}
+
+// A press that stays still for LONG_PRESS_MS runs the long action of its
+// node, or opens the settings on the home screen.
+function long_press(own s: App, now: i64): App {
+  let p = s.press;
+  if (!p.active || p.moved || p.fired || now - p.at < LONG_PRESS_MS) {
+    return s;
+  }
+  let t = App { ...s, press: Press { ...p, fired: true } };
+  if let Some(n) = ui.hit(t.nodes, p.x as i32, p.y as i32) {
+    if (n.long.len() > 0) {
+      return act(t, n.long, n);
+    }
+    return t;
+  }
+  if (t.layer == ui.HOME && t.sheet.is_none()) {
+    return settings_menu(t);
+  }
+  return t;
+}
+
+// Moves a flung list to its place at the frame time `ns`. The fling starts
+// at the first frame after the finger leaves.
+function fling_frame(own s: App, ns: i64): App {
+  let fl = s.fling;
+  if (fl.group.len() == 0) {
+    return s;
+  }
+  let f = fl.f;
+  if (f.t0 == 0i64) {
+    f = motion.Fling { ...f, t0: ns };
+  }
+  let (pos, done) = motion.position(f, ns);
+  let before = scroll_of(s, fl.group);
+  let t = with_scroll(s, fl.group, pos as i32);
+  let after = scroll_of(t, fl.group);
+  let stuck = after == before && (after == 0 || after == scroll_limit(t, fl.group)) && ns > f.t0;
+  if (done || stuck) {
+    return App { ...t, fling: no_fling() };
+  }
+  return App { ...t, fling: Fling { group: fl.group, f: f } };
+}
+
+// The part of the slide of the app list that is done at `ns`, from 0 to 1.
+function slide_part(s: App, ns: i64): f64 {
+  if (!s.slide.active || s.slide.t0 == 0i64) {
+    return 0.0;
+  }
+  let length = OPEN_MS;
+  if (!s.slide.opening) {
+    length = CLOSE_MS;
+  }
+  return (ns - s.slide.t0) as f64 / (length as f64 * 1.0e6);
+}
+
+// Advances the slide of the app list to `ns`. An open ends with the list
+// shown, and a close with the home screen.
+function slide_frame(own s: App, ns: i64): App {
+  if (!s.slide.active) {
+    return s;
+  }
+  if (s.slide.t0 == 0i64) {
+    return App { ...s, slide: Slide { ...s.slide, t0: ns }, dirty: true };
+  }
+  if (slide_part(s, ns) < 1.0) {
+    return App { ...s, dirty: true };
+  }
+  if (s.slide.opening) {
+    return App { ...s, slide: no_slide(), dirty: true };
+  }
+  return home(s);
+}
+
+// --- keys and typing
+
+function key(own s: App, code: i32, action: i32): App {
+  if (code == 4 && action == 1) {
+    return back(s);
+  }
+  if (action != 0 || !takes_text(s)) {
+    return s;
+  }
+  if (code == 67) {
+    let text = drop_last(text_of(s));
+    return edit(s, text);
+  }
+  if (code == 66 || code == 160) {
+    return enter(s);
+  }
+  return s;
+}
+
+function text_of(s: App): string {
+  if let Some(sh) = s.sheet {
+    return sh.text;
+  }
+  return s.query;
+}
+
+function drop_last(q: string): string {
+  let cs: string[] = [];
+  for c in q.chars() {
+    cs = cs.append(c.to_string());
+  }
+  if (cs.len() == 0) {
+    return "";
+  }
+  return cs.take(cs.len() - 1).join("");
+}
+
+// The app list takes no typing while it slides out.
+function takes_text(s: App): boolean {
+  return s.typing && !(s.slide.active && !s.slide.opening);
+}
+
+function typed(own s: App, c: i32): App {
+  if (!takes_text(s) || c < 32 || c == 127) {
+    return s;
+  }
+  let text = text_of(s) + (c as char).to_string();
+  return edit(s, text);
+}
+
+function edit(own s: App, text: string): App {
+  if let Some(sh) = s.sheet {
+    if (sh.field) {
+      return App { ...s, sheet: Some(ui.Sheet { ...sh, text: text }), dirty: true };
+    }
+    return s;
+  }
+  if (s.layer != ui.DRAWER) {
+    return s;
+  }
+  let t = App { ...s, query: text, list_scroll: 0, dirty: true };
+  let found = results(t);
+  if (t.settings.auto_open && text.trim().len() > 0 && found.len() == 1) {
+    return open_app(t, found[0].key, None);
+  }
+  return t;
+}
+
+function enter(own s: App): App {
+  if let Some(sh) = s.sheet {
+    if (sh.field) {
+      return sheet_act(s, "save");
+    }
+    return s;
+  }
+  if (s.layer != ui.DRAWER) {
+    return s;
+  }
+  let found = results(s);
+  if (found.len() > 0) {
+    return open_app(s, found[0].key, None);
+  }
+  if (s.query.trim().len() > 0) {
+    let opened = s.dev.open("search", s.query.trim());
+  }
+  return s;
+}
+
+// --- weather
+
+function local_offset(s: App, unix_ms: i64): i32 {
+  return s.dev.utc_offset_ms(unix_ms);
+}
+
+function weather_tap(own s: App): App {
+  if (!s.dev.has_location()) {
+    s.dev.ask_location();
+    return s;
+  }
+  return refresh_weather(show_note(s, "Updating the weather"), true);
+}
+
+function job_running(s: App): boolean {
+  match (s.job) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+function refresh_weather(own s: App, force: boolean): App {
+  if (job_running(s) || !s.dev.has_location()) {
+    return s;
+  }
+  let fresh = s.dev.wall_ms() - s.weather_at < WEATHER_MAX_AGE_MS;
+  if (!force && fresh && s.weather.is_some()) {
+    return s;
+  }
+  let Some(loc) = s.dev.location() else {
+    return s;
+  };
+  let url = paper.weather_url(loc.0, loc.1, paper.fahrenheit(s.settings, s.dev.country()));
+  return App { ...s, job: Some(s.dev.fetch(url)) };
+}
+
+function poll_job(own j: Option[worker.Worker[string]]): (Option[worker.Worker[string]], Option[string]) {
+  match (j) {
+    Some(w) => {
+      match (w.poll()) {
+        worker.Finished(body) => {
+          return (None, Some(body));
+        },
+        worker.Running(again) => {
+          return (Some(again), None);
+        }
+      }
+    },
+    None => {
+      return (None, None);
+    }
+  }
+}
+
+function poll_weather(own s: App): App {
+  let (job, done) = poll_job(s.job);
+  let t = App { ...s, job: job };
+  let Some(body) = done else {
+    return t;
+  };
+  let Some(got) = paper.parse_weather(body) else {
+    return t;
+  };
+  let at = t.dev.wall_ms();
+  t.dev.write(path(t, WEATHER_FILE), at.to_string() + "\t" + paper.flat(body));
+  return App { ...t, weather: Some(got), weather_at: at, dirty: true };
+}
+
+// --- the window and the timers
+
+function started(own s: App): App {
+  let overlay = s.dev.property("debug.fern.frames") == "1";
+  let t = reload_held(reload_apps(App { ...s, shown: true, overlay: overlay, dirty: true }, false));
+  if (!t.settings.asked_location && !t.dev.has_location()) {
+    t.dev.ask_location();
+    let next = paper.Settings { ...t.settings, asked_location: true };
+    t = set(t, next);
+  }
+  return refresh_weather(t, false);
+}
+
+// The app on the window `window`: the painter draws on it, with the
+// wallpaper at its width.
+function placed(own s: App, window: usize): App {
+  let (w, h) = s.dev.size(window);
+  let p = s.painter;
+  if (window != s.window || !gpu.attached(p)) {
+    p = s.dev.attach_gpu(p, window);
+  }
+  if (w != s.w || h != s.h || gpu.wall_width(p) != w) {
+    p = gpu.with_screen(p, ui.wallpaper_layer(s.dev.wallpaper(w)), w, h, s.d);
+  }
+  return App { ...s, window: window, w: w, h: h, painter: p, dirty: true };
+}
+
+function event(own s: App, e: android.Event): App {
+  match (e) {
+    android.Start => {
+      return started(s);
+    },
+    android.Resume => {
+      return refresh_weather(reload_apps(s, false), false);
+    },
+    android.Stop => {
+      return home(App { ...s, shown: false });
+    },
+    android.WindowCreated(w) => {
+      return draw_now(placed(s, w.ptr));
+    },
+    android.WindowResized(w) => {
+      return draw_now(placed(s, w.ptr));
+    },
+    android.WindowRedraw(w) => {
+      return draw_now(App { ...s, window: w.ptr, dirty: true });
+    },
+    android.WindowDestroyed(_) => {
+      let p = s.dev.detach_gpu(s.painter);
+      return App { ...s, painter: p, window: 0 as usize };
+    },
+    android.ContentRect(_, top, _, bottom) => {
+      let b = s.h - bottom;
+      if (b < 0 || s.h == 0) {
+        b = 0;
+      }
+      return App { ...s, top: top, bottom: b, dirty: true };
+    },
+    android.Vsync(ns) => {
+      return frame(s, ns);
+    },
+    android.Touch(action, x, y) => {
+      return touch(s, action, x, y);
+    },
+    android.Key(code, action) => {
+      return key(s, code, action);
+    },
+    android.Char(c) => {
+      return typed(s, c);
+    },
+    android.Posted(kind, _) => {
+      if (kind == KIND_HOME) {
+        return home(s);
+      }
+      if (kind == KIND_HELD) {
+        return reload_held(s);
+      }
+      return s;
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+function timers(own s: App, now: i64): App {
+  let t = long_press(s, now);
+  if (t.note_until > 0i64 && now >= t.note_until) {
+    t = App { ...t, note: "", note_until: 0i64, dirty: true };
+  }
+  let minute = t.dev.wall_ms() / 60000i64;
+  if (minute != t.minute) {
+    t = App { ...t, minute: minute, dirty: true };
+  }
+  if (t.layer == ui.BLOCKED && t.dev.wall_ms() >= t.pause_at) {
+    t = home(t);
+  }
+  return t;
+}
+
+// Something moves on the screen, so each frame draws.
+function animating(s: App): boolean {
+  return s.slide.active || s.fling.group.len() > 0 || s.layer == ui.PAUSE;
+}
+
+function pause_view(s: App, ns: i64): ui.Pause {
+  let label = "";
+  if let Some(a) = paper.find(s.apps, s.pause_key) {
+    label = a.label;
+  }
+  if (s.layer == ui.BLOCKED) {
+    let until = paper.time_text(s.pause_at + local_offset(s, s.pause_at) as i64, s.dev.is_24h());
+    return ui.Pause { title: "Blocked.", lines: [label + " is blocked", "until " + until + "."], open: "", ready: false, breath: 1.0 };
+  }
+  let now = ns / 1000000i64;
+  let left = (PAUSE_MS - (now - s.pause_at) + 999i64) / 1000i64;
+  let open = "Open " + label;
+  let ready = left <= 0i64;
+  if (!ready) {
+    open = "Open in " + left.to_string();
+  }
+  // The circle grows over 2.5 s and shrinks over 2.5 s, with Android's
+  // default curve, as the Java version's animator ran it.
+  let phase = ((now - s.pause_at) % 5000i64) as f64 / 2500.0;
+  let wave = motion.ease(phase);
+  if (phase > 1.0) {
+    wave = 1.0 - motion.ease(phase - 1.0);
+  }
+  return ui.Pause { title: "Take a breath.", lines: ["Do you need " + label, "right now?"], open: open, ready: ready, breath: 0.65 + 0.35 * wave };
+}
+
+// What the screen shows at the frame time `ns`.
+pub function view(s: App, ns: i64): ui.View {
+  let wall = s.dev.wall_ms();
+  let local = wall + local_offset(s, wall) as i64;
+  let weather_note = "";
+  if (s.weather.is_none() && s.dev.has_location()) {
+    weather_note = "Loading…";
+  }
+  return ui.View { m: metrics(s), layer: s.layer, date: paper.date_text(local), time: paper.time_text(local, s.dev.is_24h()), weather: s.weather, weather_note: weather_note, favourites: favourites(s), fav_scroll: s.fav_scroll, held: s.held.len(), hint: s.installed.len() > 0, query: s.query, typing: s.typing, results: results(s), dim: dimmed(s), list_scroll: s.list_scroll, sheet: s.sheet, pause: pause_view(s, ns), note: s.note };
+}
+
+// Dark icons on a bar over a light part of the screen.
+function sync_bars(own s: App): App {
+  let light_top = s.layer == ui.HOME || s.layer == ui.DRAWER;
+  let light_bottom = s.layer == ui.DRAWER || s.sheet.is_some();
+  let code = 0;
+  if (light_top) {
+    code |= 1;
+  }
+  if (light_bottom) {
+    code |= 2;
+  }
+  if (code == s.bars) {
+    return s;
+  }
+  s.dev.bars(light_top, light_bottom);
+  return App { ...s, bars: code };
+}
+
+// Draws the frame at the time `ns`. While the app list slides, the frame is
+// the home screen with the app list over it, which fades in or out as one
+// image.
+function draw_frame(own s: App, ns: i64): App {
+  if (s.window == 0 as usize || s.w == 0) {
+    return s;
+  }
+  let v = view(s, ns);
+  if (s.slide.active) {
+    let part = motion.ease(slide_part(s, ns));
+    if (!s.slide.opening) {
+      part = 1.0 - part;
+    }
+    let home_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.HOME, sheet: None });
+    let list_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.DRAWER, sheet: None });
+    let shift = ((1.0 - part) * (s.h as f64) * 0.08) as i32;
+    let slid = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }]));
+    return App { ...s, painter: slid, nodes: [], dirty: false };
+  }
+  let shown = ui.nodes(s.fonts, v);
+  let p = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }]));
+  return App { ...s, painter: p, nodes: shown, dirty: false };
+}
+
+// The passes with the frame overlay over them, when it shows: a bar for
+// the gap before each frame that drew, above the navigation bar. A bar is
+// red when its frame came late.
+function with_overlay(s: App, passes: ui.Pass[]): ui.Pass[] {
+  if (!s.overlay) {
+    return passes;
+  }
+  let period = 16666667i64;
+  if (s.frames.times.len() > 0) {
+    period = s.frames.times[0];
+    for t in s.frames.times {
+      period = period.min(t);
+    }
+  }
+  let h = (80.0 * s.d) as i32;
+  let top = s.h - s.bottom - h;
+  let nodes: ui.Node[] = [];
+  for b in trace.bars(s.frames, s.w, h, period) {
+    let color = draw.rgba(40, 160, 90, 200);
+    if (b.late) {
+      color = draw.rgba(220, 50, 40, 220);
+    }
+    nodes = nodes.append(ui.Node { x: b.x, y: top + b.y, w: b.w, h: b.h, paint: ui.Fill(color, 0), act: "", long: "", group: "", clip0: 0, clip1: s.h });
+  }
+  return passes.append(ui.Pass { nodes: nodes, dy: 0, alpha: 1.0 });
+}
+
+// Draws at once: the window needs its pixels before the call returns.
+function draw_now(own s: App): App {
+  let ns = now_ms(s) * 1000000i64;
+  return draw_frame(s, ns);
+}
+
+// The frame at the vsync `ns`: the animations move to that time, and the
+// screen draws when it changed.
+function frame(own s: App, ns: i64): App {
+  let t = slide_frame(fling_frame(App { ...s, frame_ns: ns }, ns), ns);
+  if (!t.dirty && !animating(t)) {
+    return t;
+  }
+  let u = draw_frame(t, ns);
+  let gap = ns - u.drawn_ns;
+  // A gap of more than 200 ms is a pause between animations, not a frame.
+  if (u.overlay && u.drawn_ns > 0i64 && gap < 200000000i64) {
+    u = App { ...u, frames: trace.record(u.frames, gap) };
+  }
+  return App { ...u, drawn_ns: ns };
+}
+
+// The state after event `e`: the app handles it, runs its timers and polls
+// the weather. It draws only at a vsync, so it asks for the next one when
+// the screen changed or moves.
+pub function step(own s: App, e: android.Event): App {
+  let now = now_ms(s);
+  let t = sync_bars(poll_weather(timers(event(s, e), now)));
+  if (t.dirty || animating(t)) {
+    t.dev.request_frame();
+  }
+  return t;
+}
+
+// The milliseconds to wait for the next event before a Tick. The frames of
+// an animation come from the vsync, not from a Tick.
+pub function timeout(s: App, now: i64): i32 {
+  if (s.press.active && !s.press.moved && !s.press.fired) {
+    return clamp((LONG_PRESS_MS - (now - s.press.at)) as i32, 1, 500);
+  }
+  if (job_running(s)) {
+    return 200;
+  }
+  let wait = paper.to_next_minute(s.dev.wall_ms()) as i32 + 50;
+  if (s.note_until > 0i64) {
+    let n = (s.note_until - now) as i32;
+    if (n < wait) {
+      wait = n;
+    }
+  }
+  if (s.layer == ui.BLOCKED) {
+    let b = (s.pause_at - s.dev.wall_ms()) as i32;
+    if (b < wait) {
+      wait = b;
+    }
+  }
+  return clamp(wait, 1, 60050);
+}
+
+// Waits for the weather request, if one runs, and frees the painter.
+pub function close(own s: App): void {
+  if let Some(w) = s.job {
+    let body = w.join();
+  }
+  let p = s.dev.close_gpu(s.painter);
+}

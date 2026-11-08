@@ -1047,14 +1047,30 @@ function c_import_int(t: string): boolean {
   return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
 }
 
+function c_import_float(t: string): boolean {
+  return t == "f32" || t == "f64";
+}
+
+function c_import_floats(f: parser.FuncDecl): i32 {
+  let n = 0;
+  for p in f.params {
+    if (c_import_float(p.type_name)) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function c_import_refusal(f: parser.FuncDecl): string {
   let what = "@import " + f.name + ": ";
-  if (f.params.len() > 6) {
-    return what + "a C import takes at most 6 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  let floats = c_import_floats(f);
+  let ints = f.params.len() - floats;
+  if (ints > 14 || floats > 8) {
+    return what + "a C import takes at most 14 integer parameters and 8 float parameters (it has " + util.i32_to_string(ints) + " and " + util.i32_to_string(floats) + ")";
   }
   for p in f.params {
-    if (!c_import_int(p.type_name)) {
-      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer and usize parameters";
+    if (!c_import_int(p.type_name) && !c_import_float(p.type_name)) {
+      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer, usize, f32 and f64 parameters";
     }
   }
   if (f.ret_type != "" && f.ret_type != "void" && f.ret_type != "f32" && f.ret_type != "f64" && !c_import_int(f.ret_type)) {
@@ -1186,7 +1202,7 @@ function so_imports(merged: parser.Module): elf.SoImports {
   let imp = elf.no_so_imports();
   for f in merged.funcs {
     if (is_c_library(f.import_iface)) {
-      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0), data: imp.data.append(false) };
+      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0), data: imp.data.append(false), weak: imp.weak.append(f.import_weak) };
     }
   }
   return imp;
@@ -1197,7 +1213,7 @@ function shared_environ_import(imp: elf.SoImports, slot: i32, target: string): e
   if (asmcore.is_android(target)) {
     libc = "libc.so";
   }
-  return elf.SoImports { libs: imp.libs.append(libc), syms: imp.syms.append("environ"), slots: imp.slots.append(slot), data: imp.data.append(true) };
+  return elf.SoImports { libs: imp.libs.append(libc), syms: imp.syms.append("environ"), slots: imp.slots.append(slot), data: imp.data.append(true), weak: imp.weak.append(false) };
 }
 
 function import_stub_names(merged: parser.Module): string[] {
@@ -1210,8 +1226,21 @@ function import_stub_names(merged: parser.Module): string[] {
   return out;
 }
 
+// The declaration of stub `k`, which keeps the @import of `f`.
+function stub_decl(f: parser.FuncDecl, k: i32): string {
+  let weak = "";
+  if (f.import_weak) {
+    weak = ", weak";
+  }
+  return "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\"" + weak + ")\nfunction " + import_stub(k) + "(): usize;\n";
+}
+
 // The source of the body that calls C import `f` through stub `k`.
 function c_import_body(f: parser.FuncDecl, k: i32): string {
+  let floats = c_import_floats(f);
+  if (floats > 0 || f.params.len() - floats > 6) {
+    return c_import_body_mem(f, k);
+  }
   let args = import_stub(k) + "()";
   let params = "";
   for p in f.params {
@@ -1233,7 +1262,52 @@ function c_import_body(f: parser.FuncDecl, k: i32): string {
     stmt = "return " + call + " as " + f.ret_type + ";";
   }
   return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n    " + stmt + "\n  }\n}\n"
-    + "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\")\nfunction " + import_stub(k) + "(): usize;\n";
+    + stub_decl(f, k);
+}
+
+// The body of a C import with float parameters or more than 6 integer
+// parameters. The integer arguments go in one block of memory and the bits
+// of the float arguments in another, each in the order of its kind.
+// __c_callv loads each into the argument register that the ABI gives it,
+// and puts the integers after the last register on the stack.
+function c_import_body_mem(f: parser.FuncDecl, k: i32): string {
+  let params = "";
+  let stores = "";
+  let ni = 0;
+  let nf = 0;
+  for p in f.params {
+    if (params.len() > 0) {
+      params += ", ";
+    }
+    params = params + p.name + ": " + p.type_name;
+    if (c_import_float(p.type_name)) {
+      stores = stores + "    __store_i64(floats + " + util.i32_to_string(8 * nf) + " as usize, " + p.type_name + "_bits(" + p.name + ") as i64);\n";
+      nf += 1;
+    } else {
+      stores = stores + "    __store_i64(ints + " + util.i32_to_string(8 * ni) + " as usize, " + p.name + " as i64);\n";
+      ni += 1;
+    }
+  }
+  let kind = "0";
+  let ret = "";
+  let result = "";
+  if (f.ret_type == "f32") {
+    kind = "1";
+    ret = ": f32";
+    result = "    return f32_from_bits(r as i32);\n";
+  } else if (f.ret_type == "f64") {
+    kind = "2";
+    ret = ": f64";
+    result = "    return f64_from_bits(r as i64);\n";
+  } else if (f.ret_type != "" && f.ret_type != "void") {
+    ret = ": " + f.ret_type;
+    result = "    return r as " + f.ret_type + ";\n";
+  }
+  let body = "    let ints: usize = __alloc(128);\n    let floats: usize = __alloc(64);\n" + stores
+    + "    let r: usize = __c_callv(" + import_stub(k) + "(), ints, floats, " + kind + ");\n"
+    + "    __free(ints, 128);\n    __free(floats, 64);\n" + result;
+  return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n" + body + "  }\n}\n"
+    + stub_decl(f, k);
 }
 
 function has_c_imports(m: parser.Module): boolean {
@@ -1258,7 +1332,7 @@ pub function native_imports(m: parser.Module, target: string, shared: boolean): 
       let gen = parser.parse_module(lexer.tokenize(c_import_body(f, k)));
       let body = gen.funcs[0];
       let stub = gen.funcs[1];
-      funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "" });
+      funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "", import_weak: false });
       funcs = funcs.append(parser.FuncDecl { ...stub, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
     }
   }
@@ -2583,7 +2657,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
       sub_flag("-jni-java", "DIR", ["-shared"], "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       sub_flag("-jni-dex", "FILE", ["-shared"], "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
-      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
+      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT; the [android] table of the fern.toml of FILE gives the -apk- settings that no flag gives"),
       sub_flag("-apk-package", "NAME", ["-apk"], "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
       sub_flag("-apk-permission", "NAMES", ["-apk"], "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
@@ -2593,6 +2667,9 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-cleartext", "", ["-apk"], "with -apk: let the app's Java networking, such as the media player, use http:// with no TLS (android:usesCleartextTraffic); the Fern sockets of the app do not need it"),
       sub_flag("-apk-debuggable", "", ["-apk"], "with -apk: mark the app debuggable (android:debuggable), so adb run-as can read its files; do not ship such an APK"),
       sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
+      sub_flag("-apk-home", "", ["-apk"], "with -apk: make the app a home screen: Android offers it as the home app, keeps one task of it, and shows the wallpaper behind it"),
+      sub_flag("-apk-run", "", ["-apk"], "with -apk: install the APK with adb on the device that adb sees, start it, and show the log lines of its process until it stops; the APK holds the library of the ABI of that device only"),
+      sub_flag("-apk-asset", "FILES", ["-apk"], "with -apk: the comma-separated files to put under assets/ in the APK, each with its own file name, for AAssetManager"),
       cli_flag("-harden", "", "Linux and Android executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-ram", "BASE,SIZE", "arm64-kernel and x86-64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
@@ -3150,7 +3227,7 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
   let no_excl: string[] = [];
   return fern_toml.Manifest {
     name: "", lib: "lib.fern", index: "", index_key: "", deps: no_deps, members: no_members,
-    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, err: "", err_line: 0,
+    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, android_keys: no_excl, android_vals: no_excl, err: "", err_line: 0,
   };
 }
 
@@ -6399,10 +6476,15 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: string, run: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-asset", "-apk-run"], name);
+}
+
+// The -apk flags that take no value.
+function apk_switch(name: string): boolean {
+  return util.has_str(["-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-run"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
@@ -6442,6 +6524,15 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   if (f.name == "-apk-debuggable") {
     return ApkOpts { ...o, debuggable: true };
   }
+  if (f.name == "-apk-home") {
+    return ApkOpts { ...o, home: true };
+  }
+  if (f.name == "-apk-asset") {
+    return ApkOpts { ...o, assets: f.value };
+  }
+  if (f.name == "-apk-run") {
+    return ApkOpts { ...o, run: true };
+  }
   return o;
 }
 
@@ -6456,7 +6547,7 @@ function apk_build_args(av: string[]): (string[], string) {
     } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java", "-jni-dex"], name)) {
       return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
     } else if (util.str_has_prefix(name, "-apk")) {
-      value_next = name != "-apk-compress" && name != "-apk-cleartext" && name != "-apk-debuggable" && !a.contains("=");
+      value_next = !apk_switch(name) && !a.contains("=");
     } else {
       out = out.append(a);
     }
@@ -6550,12 +6641,17 @@ function apk_key(path: string): (u8[], string) {
 // name lib<lib>.so, which is also its SONAME.
 // The arm64 build also writes the DEX file of the @jni classes, which is
 // empty when there is none.
-function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], u8[], i32) {
+// The Android ABIs that -apk builds, each with its -target.
+function apk_abis(): (string, string)[] {
+  return [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")];
+}
+
+function apk_libs(fern: string, rest: string[], dir: string, lib: string, abis: (string, string)[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], u8[], i32) {
   let libs: apk.Lib[] = [];
   let status = 0;
   let dex_path = dir + "/classes.dex";
   let flags: string[] = ["-jni-dex", dex_path];
-  for abi in [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")] {
+  for abi in abis {
     let so = dir + "/" + abi.0 + "/lib" + lib + ".so";
     if let Err(e) = create_dir_all(dir + "/" + abi.0) {
       if (status == 0) {
@@ -6631,7 +6727,8 @@ function apk_permissions(list: string): string[] {
 // The app of the APK. A @jni class that extends NativeActivity is the
 // activity, and NativeActivity itself is the activity otherwise. Each @jni
 // class that extends Service is a service, with the foreground service
-// types that the permissions allow.
+// types that the permissions allow. Each @jni class that extends
+// NotificationListenerService is a service that only the system binds.
 function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let activity = dex.subclass_of(classes, "android.app.NativeActivity");
   if (activity.len() == 0) {
@@ -6640,9 +6737,12 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let permissions = apk_permissions(o.permissions);
   let services: apk.Service[] = [];
   for name in dex.subclasses_of(classes, "android.app.Service") {
-    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions) });
+    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions), permission: "", action: "" });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable };
+  for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
+    services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
+  }
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, assets: [] };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6653,6 +6753,37 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
     app = apk.App { ...app, label: o.label };
   }
   return app;
+}
+
+// The files of the -apk-asset list, each under its own file name. The second
+// value is the error when a file cannot be read, or when two files have one
+// name.
+function apk_assets(list: string): (apk.Asset[], string) {
+  let out: apk.Asset[] = [];
+  if (list.len() == 0) {
+    return (out, "");
+  }
+  let names: string[] = [];
+  for item in list.split(",") {
+    let path = item.trim();
+    let name = path;
+    if let Some(slash) = path.last_index_of("/") {
+      name = slice_unchecked(path, slash + 1, path.len()).to_owned();
+    }
+    if (name.len() == 0 || util.has_str(names, name)) {
+      return (out, "fern: -apk-asset takes files with different names, and " + path + " is not one");
+    }
+    match (read_file_bytes(path)) {
+      Ok(data) => {
+        out = out.append(apk.Asset { name: name, data: data });
+        names = names.append(name);
+      },
+      Err(e) => {
+        return (out, "fern: cannot read the -apk-asset file " + path + ": " + e.message());
+      }
+    }
+  }
+  return (out, "");
 }
 
 // The PNG at `path`, or no bytes when `path` is "". The second value is the
@@ -6681,12 +6812,75 @@ function apk_icon(path: string): (u8[], string) {
   }
 }
 
+// The -apk options with the [android] settings of the fern.toml that
+// governs the entry file. A flag on the command line takes priority, and a
+// path in the file is relative to the directory of the file.
+function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
+  let dir = util.dir_of(entry_path);
+  if (dir.len() > 0) {
+    dir += "/";
+  }
+  let g = governing_manifest(dir);
+  if (!g.found) {
+    return (o, "");
+  }
+  if (g.man.err.len() > 0) {
+    return (o, fern_toml.diagnostic(g.dir + "fern.toml", g.man));
+  }
+  let m = g.man;
+  let assets = o.assets;
+  if (assets.len() == 0) {
+    let paths: string[] = [];
+    for a in util.split_char(fern_toml.android(m, "assets"), b',') {
+      if (a.len() > 0) {
+        paths = paths.append(android_path(g.dir, a));
+      }
+    }
+    assets = paths.join(",");
+  }
+  return (ApkOpts {
+    ...o,
+    package: or_text(o.package, fern_toml.android(m, "package")),
+    label: or_text(o.label, fern_toml.android(m, "label")),
+    icon: or_text(o.icon, android_path(g.dir, fern_toml.android(m, "icon"))),
+    key: or_text(o.key, android_path(g.dir, fern_toml.android(m, "key"))),
+    permissions: or_text(o.permissions, fern_toml.android(m, "permissions")),
+    min_sdk: or_text(o.min_sdk, fern_toml.android(m, "min_sdk")),
+    compress: o.compress || fern_toml.android(m, "compress") == "true",
+    cleartext: o.cleartext || fern_toml.android(m, "cleartext") == "true",
+    debuggable: o.debuggable || fern_toml.android(m, "debuggable") == "true",
+    home: o.home || fern_toml.android(m, "home") == "true",
+    assets: assets,
+  }, "");
+}
+
+function or_text(flag: string, file: string): string {
+  if (flag.len() > 0) {
+    return flag;
+  }
+  return file;
+}
+
+// `path` from a manifest in the directory `dir`, which is "" or ends in a
+// slash.
+function android_path(dir: string, path: string): string {
+  if (path.len() == 0 || path[0] == b'/') {
+    return path;
+  }
+  return dir + path;
+}
+
 // fern -apk: builds the library of the app for each Android ABI, then
 // writes the signed APK.
-function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
+function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
   let (rest, bad) = apk_build_args(av);
   if (bad.len() > 0) {
     eprint(bad);
+    return 2;
+  }
+  let (o, manifest_bad) = apk_with_manifest(flags, entry_path);
+  if (manifest_bad.len() > 0) {
+    eprint(manifest_bad);
     return 2;
   }
   if (o.min_sdk.len() > 0 && !apk_level_ok(size_bytes(o.min_sdk))) {
@@ -6698,8 +6892,28 @@ function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: st
     eprint(icon_bad);
     return 2;
   }
+  let (assets, assets_bad) = apk_assets(o.assets);
+  if (assets_bad.len() > 0) {
+    eprint(assets_bad);
+    return 2;
+  }
   let lib = apk_lib_name(entry_path);
-  let (libs, classes, status) = apk_libs(av[0], rest, o.out + ".lib", lib, embedded_root, fetcher, gate);
+  let abis = apk_abis();
+  let adb = "";
+  if (o.run) {
+    adb = find_on_path("adb");
+    if (adb.len() == 0) {
+      eprint("fern: -apk-run: adb is not on PATH");
+      return 1;
+    }
+    let (device, abi_bad) = device_abi(adb);
+    if (abi_bad.len() > 0) {
+      eprint(abi_bad);
+      return 1;
+    }
+    abis = [device];
+  }
+  let (libs, classes, status) = apk_libs(av[0], rest, o.out + ".lib", lib, abis, embedded_root, fetcher, gate);
   if (status != 0) {
     return status;
   }
@@ -6708,15 +6922,62 @@ function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: st
     eprint(key_bad);
     return 1;
   }
-  match (write_file_bytes(o.out, apk.write(apk.App { ...apk_app(o, lib, classes), icon: icon }, libs, d))) {
-    Ok(_) => {
-      return 0;
-    },
-    Err(e) => {
-      eprint("fern: cannot write " + o.out + ": " + e.message());
-      return 1;
+  let app = apk.App { ...apk_app(o, lib, classes), icon: icon, assets: assets };
+  if let Err(e) = write_file_bytes(o.out, apk.write(app, libs, d)) {
+    eprint("fern: cannot write " + o.out + ": " + e.message());
+    return 1;
+  }
+  if (o.run) {
+    return apk_launch(adb, o.out, app);
+  }
+  return 0;
+}
+
+// The ABI of the device that adb sees, with its -target.
+function device_abi(adb: string): ((string, string), string) {
+  let r = subprocess(adb, ["shell", "getprop", "ro.product.cpu.abi"], "");
+  let abi = strip_lines(r.stdout);
+  for a in apk_abis() {
+    if (a.0 == abi) {
+      return (a, "");
     }
   }
+  if (r.exit_code != 0) {
+    return (("", ""), "fern: -apk-run: adb found no device: " + strip_lines(r.stderr));
+  }
+  return (("", ""), "fern: -apk-run: the device ABI " + abi + " is not arm64-v8a or x86_64");
+}
+
+// Installs the APK at `path`, starts its activity, and shows the log lines
+// of its process until the process stops. The shell of the device waits
+// for the process, so adb ends when the app does.
+function apk_launch(adb: string, path: string, app: apk.App): i32 {
+  let installed = subprocess(adb, ["install", "-r", path], "");
+  if (installed.exit_code != 0) {
+    eprint("fern: -apk-run: adb install failed: " + strip_lines(installed.stdout + installed.stderr));
+    return 1;
+  }
+  let component = app.package + "/" + app.activity;
+  let started = subprocess(adb, ["shell", "am", "start", "-W", "-n", component], "");
+  if (started.exit_code != 0 || started.stdout.contains("Error")) {
+    eprint("fern: -apk-run: cannot start " + component + ": " + strip_lines(started.stdout + started.stderr));
+    return 1;
+  }
+  let pid = "";
+  let tries = 0;
+  while (pid.len() == 0 && tries < 50) {
+    pid = strip_lines(subprocess(adb, ["shell", "pidof", app.package], "").stdout);
+    if (pid.len() == 0) {
+      sleep_ms(100i64);
+    }
+    tries += 1;
+  }
+  if (pid.len() == 0) {
+    eprint("fern: -apk-run: " + app.package + " started, but its process is gone");
+    return 1;
+  }
+  let script = "logcat -v brief --pid=" + pid + " & L=$!; while [ -d /proc/" + pid + " ]; do sleep 1; done; kill $L";
+  return exec_and_wait(adb, [adb, "shell", script]);
 }
 
 function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
@@ -6761,7 +7022,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag = false;
   let shared = false;
   let export_list = "";
-  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false };
+  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", run: false };
   let harden = false;
   let heap_limit_text = "";
   let ram_text = "";

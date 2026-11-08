@@ -33,6 +33,12 @@ The platform selects codecs and controls synchronization.
 Hardware use, format support, and stream support depend on the device.
 This path is available for an app that needs audio and video together.
 
+The platform player opens paths, file URIs, HTTP streams, and granted content URIs.
+Content sources use the activity context and Android's content resolver.
+The app must hold the URI read grant from the document picker or MediaStore.
+This avoids a dependency on unrestricted filesystem paths or broad storage permission.
+The caller must preserve the read grant for later source opens.
+
 `std/android/video/player` provides explicit video codec policies and buffer control.
 It controls one video track and does not synchronize an audio track.
 The native Fern packet codecs remain independent of both platform players.
@@ -44,6 +50,27 @@ The anchor is a platform estimate, without the clock rate or a physical output l
 Each operation bounds its JNI references, so repeated position queries do not retain local Java references.
 A failed construction releases partial resources.
 Seek requests use the closest-frame mode and reject values above Android's signed 32-bit millisecond limit.
+
+## Native MP4 video packets
+
+`std/video/mp4` indexes self-contained AVC and HEVC video tracks without Android or an external codec library.
+It reuses the existing ISO box, sample-table, clock, and data-reference readers.
+It preserves packet ranges, descriptions, decode order, decode times, composition times, durations, and sync-sample flags.
+Each packet range refers to the original byte view, without a payload copy.
+
+AVC and HEVC descriptions use the existing NAL configuration readers.
+The index validates configuration framing and dimensions. It does not decode pixels or validate coded parameter-set syntax.
+The native decode and encode columns above remain unchanged.
+
+Times use the track clock's ticks. Version-one composition offsets can produce negative presentation times.
+The index preserves edit lists in their original movie-duration and media-time units.
+An application must apply these edits to construct the movie presentation timeline.
+Fragmented media, encryption, and external data references return `Unsupported`.
+
+The input must be a complete byte view, within an explicit input limit.
+Separate budgets bound boxes, tracks, descriptions, edits, packets, dimensions, and each packet's size.
+The packet budget is cumulative across video tracks. The track budget includes audio and other non-video tracks.
+This API does not stream a large file or define an exact process-memory bound.
 
 ## Android packet path
 
@@ -124,6 +151,14 @@ Container codec restrictions and sample order still apply.
 
 `std/android/video/extractor` reads platform-supported containers from an explicit file range.
 Its API 28 sample-size query checks limits before a write into a decoder input buffer.
+`std/android/video/source` opens a granted content URI for this packet path.
+It duplicates the asset descriptor and preserves the provider's offset and length.
+An unknown length resolves from the seekable file's end. Non-seekable sources return `Unsupported`.
+A caller-supplied 64-bit limit bounds the source range, separately from packet limits.
+The adapter does not buffer the complete source or retain Java global references.
+Close the extractor or player before source close. Each source has one owner.
+The app needs a URI read grant, without broad storage permission.
+
 The extractor preserves the complete native track format, including codec and color metadata.
 It rejects encrypted and partial samples.
 
@@ -237,16 +272,25 @@ It also builds ARM64 Android shared libraries.
 On Linux, it executes the MediaCodec ABI test through a shared library for the host architecture.
 The unit workflow runs this script on x86-64 and ARM64 hosts.
 
-The compiler differential suite includes the native video and codec-policy tests.
+The compiler differential suite includes the native video, MP4 packet, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
+The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
 These mocks do not decode video.
 
 The Android workflow builds `tests/android/video/app.fern` and runs it on the API 34 emulator.
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.
+The workflow also copies the byte-buffer export into MediaStore and grants the video APK access to that item.
+The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
+
+The APK build lane also runs `scripts/check-video-mp4-interop` on fresh FFmpeg fixtures.
+It compares native packet ranges, timestamps, durations, and sync flags with FFprobe.
+It extracts AVC and HEVC Annex B streams through Fern and compares every FFmpeg-decoded RGB sample with the original MP4 decode.
+Fixtures cover reordered frames, signed composition offsets, fast-start layout, interleaved AAC, multiple video tracks, compact sample sizes, and 64-bit offsets.
+Normal native and WASI tests use checked-in reference bytes and require no FFmpeg installation.
 
 Emulator results do not establish physical hardware throughput or battery consumption.
 
@@ -263,11 +307,15 @@ A hardware codec can reject a particular format or fail under resource pressure.
 Record the selected codec attributes and the exact media request with each result.
 
 The Android lane also runs `tests/android/player/app.fern` with an AVC and stereo AAC clip.
+It checks both an HTTP source and the same clip in MediaStore through a granted content URI.
 It requires video output, stable pause position, accurate seek, timeline anchors, completion, repeated playback, and error callbacks.
 
 The error callback for a missing HTTP source comes after the retries of the platform, about 30 seconds after the request.
 The fixture contains four seconds of 320 by 240 video and 48 kHz stereo audio.
-Artifacts include the fixture, its independent FFprobe metadata, logs, a screenshot, and Android media diagnostics.
+
+The runner verifies that MediaStore returns the exact fixture bytes before playback.
+It removes only the temporary MediaStore entry that it creates.
+Artifacts include the fixture, independent FFprobe metadata, and separate HTTP and content playback diagnostics.
 The test delegates A/V synchronization to Android. It does not measure acoustic lip-sync error or physical device power.
 
 ```sh

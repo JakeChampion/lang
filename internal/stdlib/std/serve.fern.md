@@ -5947,7 +5947,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
 // keys[i] is every connection ID connection i answers to, read again when
 // its cids_version moves; paths[i] is the address it is sent to, as the
 // socket reported it, and peers[i] the same address parsed.
-struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, key: u8[], conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[], out: net.Batch }
+struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, key: u8[], conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, inbox: net.Inbox, out: net.Batch }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5964,8 +5964,14 @@ function __h3_burst(): i32 {
   return 64;
 }
 
+// __h3_slots is the messages one receive may bring. Each slot holds the
+// largest datagram, or the largest run the kernel coalesces under UDP_GRO.
+function __h3_slots(): i32 {
+  return 16;
+}
+
 function __quic_none(): __Quic {
-  return __Quic { sock: None, port: 0, cfg: quic.config([]), key: [], conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [], out: net.batch() };
+  return __Quic { sock: None, port: 0, cfg: quic.config([]), key: [], conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, inbox: net.inbox(0, 0), out: net.batch() };
 }
 
 function __quic_socket(port: i32): Socket {
@@ -6031,11 +6037,12 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
     return __quic_none();
   }
   let nb = net.set_nonblocking(sock, true);
+  let gro = net.set_udp_gro(sock, true);
   if (drv.watch(sock.fd, LISTENER_INTEREST) < 0) {
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), key: l.h3_key, buf: __alloc_u8(65536), from: __alloc_u8(net.SENDER_BYTES) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
 }
 
 function __quic_on(c: __Conns): boolean {
@@ -6123,6 +6130,9 @@ function __h3_touched(b: __H3Burst, serial: i32): __H3Burst {
   return __H3Burst { ...b, touched: b.touched.append(serial) };
 }
 
+// __h3_event receives every datagram the socket holds, as many messages per
+// call as the inbox has slots, until a call brings fewer than that, the
+// socket has nothing more, or the burst is spent.
 function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flights, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flights, __H3Burst) {
   let cur = c;
   let fs = fls;
@@ -6132,16 +6142,45 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flights, opts: C
     let Some(sock) = cur.quic.sock else {
       return (cur, fs, burst);
     };
-    let Ok(got) = net.recv_into(sock, cur.quic.buf, cur.quic.from) else {
+    let q = cur.quic;
+    let r = q.inbox.receive(sock);
+    cur = __Conns { ...cur, quic: __Quic { ...q, inbox: r.0 } };
+    let Ok(got) = r.1 else {
       return (cur, fs, burst);
     };
-    let r = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got], cur.quic.from, burst, opts, stop, host_for);
-    cur = r.0;
-    fs = r.1;
-    burst = r.2;
-    n += 1;
+    let i = 0;
+    while (i < got) {
+      let m = __h3_message(drv, cur, fs, i, burst, opts, stop, host_for);
+      cur = m.0;
+      fs = m.1;
+      burst = m.2;
+      i += 1;
+    }
+    n += got;
+    if (got < cur.quic.inbox.slots) {
+      return (cur, fs, burst);
+    }
   }
   return (cur, fs, burst);
+}
+
+// __h3_message hands each datagram of message i of the inbox to the
+// connection it is for.
+function __h3_message[D: async.Driver](drv: D, c: __Conns, fls: __Flights, i: i32, burst: __H3Burst, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flights, __H3Burst) {
+  let cur = c;
+  let fs = fls;
+  let b = burst;
+  let from = cur.quic.inbox.sender_at(i);
+  let k = 0;
+  while (k < cur.quic.inbox.segments(i)) {
+    let (at, len) = cur.quic.inbox.segment(i, k);
+    let r = __h3_datagram(drv, cur, fs, cur.quic.inbox.buf[at:at + len], cur.quic.inbox.froms[from:from + net.SENDER_BYTES], b, opts, stop, host_for);
+    cur = r.0;
+    fs = r.1;
+    b = r.2;
+    k += 1;
+  }
+  return (cur, fs, b);
 }
 
 function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flights, d: [u8], from: [u8], burst: __H3Burst, opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flights, __H3Burst) {
