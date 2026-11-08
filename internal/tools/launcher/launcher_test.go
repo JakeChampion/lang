@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStdlibRootWritesTheEmbeddedTreeOnce(t *testing.T) {
@@ -115,6 +116,38 @@ func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Errorf("404 was requested %d times, want 1", hits)
+	}
+}
+
+// A run of 504s as long as the one bootstrap.sh's curl rides out still ends
+// in the asset; after the last retry the status is the error.
+func TestDownloadRidesOutARunOfGatewayTimeouts(t *testing.T) {
+	defer func(w time.Duration) { downloadFirstWait = w }(downloadFirstWait)
+	downloadFirstWait = time.Millisecond
+	var hits, failures int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits <= failures {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			return
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+
+	failures = downloadRetries
+	resp, err := download(srv.URL + "/asset")
+	if err != nil {
+		t.Fatalf("after %d 504s: %v", failures, err)
+	}
+	resp.Body.Close()
+	if hits != downloadRetries+1 {
+		t.Errorf("%d requests, want %d", hits, downloadRetries+1)
+	}
+
+	hits, failures = 0, downloadRetries+1
+	if _, err := download(srv.URL + "/asset"); err == nil || !strings.Contains(err.Error(), "504") {
+		t.Errorf("past the retries: err = %v, want the 504", err)
 	}
 }
 

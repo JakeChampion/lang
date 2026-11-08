@@ -210,12 +210,28 @@ func fetchStage0(dir, host string) (string, error) {
 	return path, os.Rename(tmp, path)
 }
 
+// The retry budget is the one bootstrap/bootstrap.sh gives curl: 7 retries,
+// the wait doubling from 1 s, within 300 s. A 504 from the release server can
+// last longer than a few seconds.
+const (
+	downloadRetries  = 7
+	downloadRetryMax = 300 * time.Second
+)
+
+var downloadFirstWait = time.Second
+
 func download(url string) (*http.Response, error) {
 	client := &http.Client{Timeout: 5 * time.Minute}
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	start := time.Now()
+	wait := downloadFirstWait
+	for attempt := 0; attempt <= downloadRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			if time.Since(start)+wait > downloadRetryMax {
+				break
+			}
+			time.Sleep(wait)
+			wait *= 2
 		}
 		var resp *http.Response
 		resp, err = client.Get(url)
