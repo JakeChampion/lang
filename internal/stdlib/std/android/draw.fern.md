@@ -119,6 +119,18 @@ pub function (f: Frame) store(x: i32, y: i32, w: i32, h: i32, color: i32): void 
   }
 }
 
+// Blends `color` over the pixel at x and y, which it covers by `a`, from 0
+// for none to 255 for all of it. A pixel outside the frame is not drawn.
+pub function (f: Frame) cover(x: i32, y: i32, color: i32, a: i32): void {
+  if (a <= 0 || x < 0 || y < 0 || x >= f.width || y >= f.height) {
+    return;
+  }
+  unsafe {
+    let at = f.bits + ((y * f.stride + x) * 4) as usize;
+    __store_i32(at, blend(color, __load_i32(at), clamp(a, 0, 255) * alpha_of(color) / 255));
+  }
+}
+
 // The pixel word at x and y, or 0 outside the frame.
 pub function (f: Frame) pixel(x: i32, y: i32): i32 {
   if (x < 0 || y < 0 || x >= f.width || y >= f.height) {
@@ -229,6 +241,46 @@ pub function (img: Image) pixel(x: i32, y: i32): i32 {
   }
   let at = (y * img.width + x) * 4;
   return rgba(img.pixels[at] as i32, img.pixels[at + 1] as i32, img.pixels[at + 2] as i32, img.pixels[at + 3] as i32);
+}
+
+// `img` at w by h pixels. Each pixel takes the four pixels of `img` nearest
+// to its centre, weighed by how near they are.
+pub function (img: Image) scaled(w: i32, h: i32): Image {
+  if (w <= 0 || h <= 0 || img.width <= 0 || img.height <= 0 || img.pixels.len() < img.width * img.height * 4) {
+    return Image { width: 0, height: 0, pixels: [] };
+  }
+  let px = img.pixels;
+  let sx = img.width as f64 / (w as f64);
+  let sy = img.height as f64 / (h as f64);
+  let out: u8[] = [];
+  for y in 0..h {
+    let fy = (y as f64 + 0.5) * sy - 0.5;
+    let y0 = clamp(fy.floor() as i32, 0, img.height - 1);
+    let y1 = clamp(y0 + 1, 0, img.height - 1);
+    let ty = fy - y0 as f64;
+    if (ty < 0.0) {
+      ty = 0.0;
+    }
+    for x in 0..w {
+      let fx = (x as f64 + 0.5) * sx - 0.5;
+      let x0 = clamp(fx.floor() as i32, 0, img.width - 1);
+      let x1 = clamp(x0 + 1, 0, img.width - 1);
+      let tx = fx - x0 as f64;
+      if (tx < 0.0) {
+        tx = 0.0;
+      }
+      let a = (y0 * img.width + x0) * 4;
+      let b = (y0 * img.width + x1) * 4;
+      let c = (y1 * img.width + x0) * 4;
+      let d = (y1 * img.width + x1) * 4;
+      for k in 0..4 {
+        let top = px[a + k] as f64 + (px[b + k] as f64 - px[a + k] as f64) * tx;
+        let bottom = px[c + k] as f64 + (px[d + k] as f64 - px[c + k] as f64) * tx;
+        out = out.append((top + (bottom - top) * ty + 0.5) as u8);
+      }
+    }
+  }
+  return Image { width: w, height: h, pixels: out };
 }
 
 // The size of an image of w0 by h0 scaled to cover a box of w by h, with its

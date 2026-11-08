@@ -271,6 +271,29 @@ function test_clip_corners(): test.TestOutcome {
   return test.assert_eq((n < 850 && n > 790).to_string() + " " + n.to_string(), "true " + n.to_string());
 }
 
+function test_cover(): test.TestOutcome {
+  let f = frame(3, 1);
+  f.cover(0, 0, draw.rgb(255, 255, 255), 255);
+  f.cover(1, 0, draw.rgb(255, 255, 255), 128);
+  f.cover(2, 0, draw.rgba(255, 255, 255, 128), 255);
+  f.cover(5, 0, draw.rgb(255, 255, 255), 255);
+  let got = [f.pixel(0, 0) & 255, f.pixel(1, 0) & 255, f.pixel(2, 0) & 255];
+  free_frame(f);
+  return test.assert_eq(got[0].to_string() + " " + got[1].to_string() + " " + got[2].to_string(), "255 128 128");
+}
+
+function test_scaled(): test.TestOutcome {
+  // Two pixels, black and white, scaled to four: the ends keep their
+  // colour and the middle two blend.
+  let img = draw.Image { width: 2, height: 1, pixels: [0 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8] };
+  let big = img.scaled(4, 2);
+  let reds: string[] = [];
+  for x in 0..4 {
+    reds = reds.append((big.pixel(x, 1) & 255).to_string());
+  }
+  return test.assert_eq(big.width.to_string() + "x" + big.height.to_string() + " " + reds.join(" "), "4x2 0 64 191 255");
+}
+
 function main(): i32 {
   let r = test.new("std/android/draw");
   r = r.it("rgb packs red, green and blue", test_rgb);
@@ -291,5 +314,7 @@ function main(): i32 {
   r = r.it("cover_size keeps the shape of an image", test_cover_size_keeps_the_shape);
   r = r.it("an image shows its middle in its box", test_image_copies_the_middle);
   r = r.it("clip_corners rounds the corners of a box", test_clip_corners);
+  r = r.it("cover blends a colour by the part of a pixel it covers", test_cover);
+  r = r.it("scaled blends the four nearest pixels", test_scaled);
   return r.finish();
 }

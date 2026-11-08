@@ -8,7 +8,7 @@ NativeActivity loads the app library and calls its `ANativeActivity_onCreate` ex
 
 The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`. The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
 
-The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it.
+The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
 Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
 
@@ -127,6 +127,30 @@ function c_activity_show_input(activity: usize, flags: i32): void;
 @import("libandroid.so", "ANativeActivity_hideSoftInput")
 function c_activity_hide_input(activity: usize, flags: i32): void;
 
+@import("libandroid.so", "AAssetManager_open")
+function c_asset_open(manager: usize, name: usize, mode: i32): usize;
+
+@import("libandroid.so", "AAsset_getLength64")
+function c_asset_length(asset: usize): i64;
+
+@import("libandroid.so", "AAsset_read")
+function c_asset_read(asset: usize, buf: usize, n: usize): i32;
+
+@import("libandroid.so", "AAsset_close")
+function c_asset_close(asset: usize): void;
+
+@import("libandroid.so", "AConfiguration_new")
+function c_config_new(): usize;
+
+@import("libandroid.so", "AConfiguration_fromAssetManager")
+function c_config_from_assets(config: usize, manager: usize): void;
+
+@import("libandroid.so", "AConfiguration_getDensity")
+function c_config_density(config: usize): i32;
+
+@import("libandroid.so", "AConfiguration_delete")
+function c_config_delete(config: usize): void;
+
 @import("libc.so", "pipe2")
 function c_pipe2(fds: usize, flags: i32): i32;
 
@@ -152,7 +176,9 @@ function c_pthread_detach(thread: usize): i32;
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. The keyboard of the system types through these events, because the activity has no text field.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 belong to this module, and the kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
+`ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk -apk-home` sets it.
+
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and 24 belong to this module, and the kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=
@@ -169,6 +195,7 @@ pub enum Event {
   WindowResized(Window),
   WindowRedraw(Window),
   WindowDestroyed(Window),
+  ContentRect(i32, i32, i32, i32),
   Touch(i32, f32, f32),
   Key(i32, i32),
   Char(i32),
@@ -200,6 +227,8 @@ const INPUT_CREATED: i32 = 11;
 
 const INPUT_DESTROYED: i32 = 12;
 
+const CONTENT_RECT: i32 = 24;
+
 function lifecycle_event(kind: i32): Event {
   if (kind == START) {
     return Start;
@@ -229,10 +258,16 @@ function window_event(kind: i32, w: Window): Event {
   return WindowDestroyed(w);
 }
 
-// The event of a message from the UI thread.
+// The event of a message from the UI thread. For CONTENT_RECT, `arg` is the
+// ARect of the UI thread, which waits for the reply.
 function message_event(kind: i32, arg: usize): Event {
   if (kind == FOCUS) {
     return Focus(arg != 0 as usize);
+  }
+  if (kind == CONTENT_RECT) {
+    unsafe {
+      return ContentRect(__load_i32(arg), __load_i32(arg + 4 as usize), __load_i32(arg + 8 as usize), __load_i32(arg + 12 as usize));
+    }
   }
   if (kind >= WINDOW_CREATED && kind <= WINDOW_DESTROYED) {
     return window_event(kind, Window { ptr: arg });
@@ -250,7 +285,7 @@ The context block that `start` hangs off `ANativeActivity.instance` holds the tw
 
 Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread at 16 of the activity. The window gets the focus after it shows, and again each time the user returns to it.
 
-The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
+The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0, the internal data path at 32, the API level at 48, the instance at 56 and the asset manager at 64. The callbacks follow the order of `ANativeActivityCallbacks`.
 
 ```fern
 <<the UI thread>>=
@@ -299,6 +334,9 @@ function on_input_created_entry(): usize;
 
 @callback("on_input_destroyed")
 function on_input_destroyed_entry(): usize;
+
+@callback("on_content_rect")
+function on_content_rect_entry(): usize;
 
 // The system property that names the live ANativeActivity of the process.
 // A component that can outlive the activity, such as a service, reads it,
@@ -376,6 +414,7 @@ pub function start(activity: usize, thread_main: usize): void {
     __store_ptr(cb + 80 as usize, on_window_destroyed_entry());
     __store_ptr(cb + 88 as usize, on_input_created_entry());
     __store_ptr(cb + 96 as usize, on_input_destroyed_entry());
+    __store_ptr(cb + 104 as usize, on_content_rect_entry());
     if (c_pthread_create(ctx + 24 as usize, 0 as usize, thread_main, ctx) == 0) {
       let ignored: i32 = c_pthread_detach(__load_ptr(ctx + 24 as usize));
     }
@@ -497,6 +536,10 @@ function on_input_created(activity: usize, queue: usize): void {
 
 function on_input_destroyed(activity: usize, queue: usize): void {
   send(activity, INPUT_DESTROYED, queue);
+}
+
+function on_content_rect(activity: usize, rect: usize): void {
+  send(activity, CONTENT_RECT, rect);
 }
 ```
 
@@ -846,6 +889,61 @@ pub function utc_offset_ms(ctx: usize, unix_ms: i64): i32 {
   let a: usize = jni.delete_local_ref(e, zone);
   let b: usize = jni.delete_local_ref(e, class);
   return offset;
+}
+
+// The file `name` under assets/ in the APK, or None when the APK has no
+// such file.
+pub function asset(ctx: usize, name: string): Option[u8[]] {
+  unsafe {
+    let manager: usize = __load_ptr(__load_ptr(ctx + 16 as usize) + 64 as usize);
+    let path: usize = jni.cstr(name);
+    // AASSET_MODE_BUFFER
+    let a: usize = c_asset_open(manager, path, 3);
+    jni.free_buffer(path);
+    if (a == 0 as usize) {
+      return None;
+    }
+    let n: i64 = c_asset_length(a);
+    if (n < 0i64 || n > 268435456i64) {
+      c_asset_close(a);
+      return None;
+    }
+    let size = n as i32;
+    let buf: usize = __alloc(size + 1);
+    let got = 0;
+    while (got < size) {
+      let r: i32 = c_asset_read(a, buf + got as usize, (size - got) as usize);
+      if (r <= 0) {
+        break;
+      }
+      got += r;
+    }
+    c_asset_close(a);
+    let out: u8[] = [];
+    for i in 0..got {
+      out = out.append(__load_u8(buf + i as usize) as u8);
+    }
+    __free(buf, size + 1);
+    if (got < size) {
+      return None;
+    }
+    return Some(out);
+  }
+}
+
+// The density of the screen in dots per inch: 160 is one pixel for each
+// density-independent pixel.
+pub function density(ctx: usize): i32 {
+  unsafe {
+    let config: usize = c_config_new();
+    c_config_from_assets(config, __load_ptr(__load_ptr(ctx + 16 as usize) + 64 as usize));
+    let dpi: i32 = c_config_density(config);
+    c_config_delete(config);
+    if (dpi <= 0 || dpi == 65534 || dpi == 65535) {
+      return 160;
+    }
+    return dpi;
+  }
 }
 
 // Moves the task of the activity behind the other apps, as the home key
