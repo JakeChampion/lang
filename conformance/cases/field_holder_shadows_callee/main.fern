@@ -1,0 +1,14 @@
+// spec: RH-38
+// A global callee and a local holder keep separate identities.
+
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Pair { a: Handle, b: Handle }
+function pair(): Pair { return Pair { a: Handle { fd: 3 }, b: Handle { fd: 7 } }; }
+function value(): i32 {
+  let pair = pair();
+  let a = pair.a;
+  let b = pair.b;
+  return a.close() + b.close();
+}
+function main(): i32 { return value() - 10; }
