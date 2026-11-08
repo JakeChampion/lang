@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Decode Fern QTRLE packets through FFmpeg and compare every source pixel."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('video_fixtures', ROOT / 'scripts/gen-video-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+binary = ROOT / 'build/video/qtrle-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+subprocess.run([compiler, '-target', target, '-o', str(binary), 'scripts/video-reference/qtrle.fern', 'internal/stdlib'], check=True)
+lines = subprocess.check_output([str(binary)], text=True).splitlines()
+assert len(lines) == 26
+
+
+def atoms(data):
+    at = 0
+    while at < len(data):
+        size, tag = struct.unpack_from('>I4s', data, at)
+        assert size >= 8 and at + size <= len(data)
+        yield tag, data[at + 8:at + size]
+        at += size
+
+
+def atom(tag, data):
+    return struct.pack('>I4s', len(data) + 8, tag) + data
+
+
+def patch_tables(data, sizes, offset):
+    result = bytearray()
+    for tag, body in atoms(data):
+        if tag in (b'moov', b'trak', b'mdia', b'minf', b'stbl'):
+            body = patch_tables(body, sizes, offset)
+        elif tag == b'stsz':
+            assert struct.unpack_from('>I', body, 8)[0] == len(sizes)
+            body = body[:4] + struct.pack('>II', 0, len(sizes)) + struct.pack('>' + 'I' * len(sizes), *sizes)
+        elif tag == b'stco':
+            # The video-only fixture has one contiguous chunk.
+            assert struct.unpack_from('>I', body, 4)[0] == 1
+            body = body[:8] + struct.pack('>I', offset)
+        result.extend(atom(tag, body))
+    return bytes(result)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    for case in range(6):
+        group = [line.split() for line in lines[case * 4:case * 4 + 4]]
+        width, height, depth = map(int, group[0][:3])
+        packets = [bytes.fromhex(parts[3]) for parts in group]
+        originals = b''.join(fixtures.frames(width, height, depth))
+        source = tmp / 'input.argb'
+        source.write_bytes(originals)
+        template = tmp / 'template.mov'
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'rawvideo', '-pixel_format', 'argb',
+                        '-video_size', f'{width}x{height}', '-framerate', '25', '-i', str(source),
+                        '-c:v', 'qtrle', '-pix_fmt', 'rgb24' if depth == 24 else 'argb', '-g', '30', str(template)], check=True)
+        info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_packets',
+                                                  '-show_entries', 'packet=pos,size', '-of', 'json', str(template)]))
+        positions = [int(p['pos']) for p in info['packets']]
+        sizes = [int(p['size']) for p in info['packets']]
+        assert all(positions[i] == positions[0] + sum(sizes[:i]) for i in range(4))
+        result = bytearray()
+        for tag, body in atoms(template.read_bytes()):
+            if tag == b'mdat':
+                assert sum(sizes) == len(body)
+                offset = len(result) + 8
+                body = b''.join(packets)
+            result.extend(atom(tag, body))
+        result = patch_tables(result, [len(p) for p in packets], offset)
+        candidate = tmp / 'fern.mov'
+        candidate.write_bytes(result)
+        decoded = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(candidate), '-f', 'rawvideo', '-pix_fmt', 'argb', '-'])
+        assert decoded == originals, (width, height, depth)
+    for line in lines[24:]:
+        codec, expected_argb, stream = line.split()
+        candidate = tmp / f'fern.{codec}'
+        candidate.write_bytes(bytes.fromhex(stream))
+        decoded = subprocess.check_output(['ffmpeg', '-v', 'error', '-f', codec, '-i', str(candidate),
+                                           '-f', 'rawvideo', '-pix_fmt', 'argb', '-'])
+        assert len(decoded) == 16 * 16 * 4
+        assert decoded == bytes.fromhex(expected_argb), codec
+print('24 Fern QTRLE packets decode in FFmpeg with exact ARGB equality')
+print('AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels')

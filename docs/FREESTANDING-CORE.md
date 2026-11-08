@@ -82,7 +82,7 @@ costs a silent failure on the first target that lacks it.
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
-| `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption |
+| `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption. The `kernel` profile grants it too, so a kernel can put the heap on frames of its own (`std/frames`) |
 | `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
 | `privileged` | `__wfi`, `__hvc`, `__smc`, `__boot_info`, `__sysreg_read`, `__sysreg_write`, `__cache_clean`, `__cache_flush`, `__tlb_flush`, `__tlb_flush_all`, `__breakpoint`, `__irq_mask`, `__irq_unmask`, `__irq_wait`, `__irq_pending`, `__port_in8` … `__port_out32` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
 | `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |

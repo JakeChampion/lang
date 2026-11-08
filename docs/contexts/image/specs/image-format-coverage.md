@@ -50,6 +50,9 @@ Sample-precision preparation covers exact integer and floating-point declaration
 Finite F16 metadata preparation preserves exact read values and the original writer's truncation rules.
 These internal fields do not set the numeric policy for raw image samples.
 
+Complete tone descriptors add luminance bounds and display-relative threshold metadata.
+Their writer preserves finite explicit values and rejects unreadable zero-intensity output.
+
 Pixel coding and complete container semantics remain unfinished.
 
 The inventory includes Modular and VarDCT, lossless and lossy operation, color and extra channels, and progressive groups.
