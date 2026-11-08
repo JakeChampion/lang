@@ -1,0 +1,72 @@
+import "std/audio/vorbisfile";
+import "std/audio/vorbisfile/input";
+import "vorbis_file_check";
+
+function copied(bytes: [u8], first: i32, count: i32): u8[] {
+  let result: u8[] = [];
+  for i in first..first + count {
+    result = result.append(bytes[i]);
+  }
+  return result;
+}
+
+function source(bytes: [u8], position: Cell[i32], calls: Cell[i32], partial: boolean): (i32) => Result[u8[], IoError] {
+  let storage: u8[] = copied(bytes, 0, bytes.len());
+  return (requested: i32): Result[u8[], IoError] => {
+    let sizes = [1, 3, 27, 255, 4096];
+    let count = if (partial && requested > sizes[calls.get() % sizes.len()]) { sizes[calls.get() % sizes.len()] } else { requested };
+    let remaining = storage.len() - position.get();
+    count = if (count > remaining) { remaining } else { count };
+    let result = copied(storage, position.get(), count);
+    position.set(position.get() + count);
+    calls.set(calls.get() + 1);
+    return Ok(result);
+  };
+}
+
+function no_more_reads(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+pub function run(bytes: [u8], formats: [u8], expected: [u8], chunk: i32, cooperative: boolean): Result[void, string] {
+  let state = match (input.create(vorbisfile.default_limits(), chunk)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let read = source(bytes, position, calls, cooperative);
+  let progress = vorbis_file_check.create();
+  let turns = 0;
+  while (true) {
+    let before = calls.get();
+    let (next, value) = if (cooperative) { match (state.step_with(read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } } } else { let (next, event) = match (state.next_with(read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } }; (next, match (event) { Some(value) => input.Output(value), None => input.Finished }) };
+    state = next;
+    if (cooperative && calls.get() - before > 1) {
+      return Err("one source read per step");
+    }
+    match (value) {
+      input.Pending => {},
+      input.Output(value) => {
+        progress = vorbis_file_check.event(value, formats, expected, progress)?;
+      },
+      input.Finished => {
+        break;
+      }
+    }
+    turns += 1;
+    if (turns > bytes.len() * 3 + 128) {
+      return Err("input does not advance");
+    }
+  }
+  if (position.get() != bytes.len()) {
+    return Err("complete input");
+  }
+  vorbis_file_check.finish(progress, formats, expected)?;
+  let (done, event) = match (state.step_with(no_more_reads)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if let input.Finished = event {} else {
+    return Err("completion state");
+  }
+  let (_, end) = match (done.next_with(no_more_reads)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if let None = end {} else {
+    return Err("completed source read again");
+  }
+  return Ok(());
+}

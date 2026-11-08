@@ -1,0 +1,147 @@
+import "std/audio/vorbisfile";
+import "std/audio/vorbisfile/input";
+import "std/audio/source";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_input_check";
+import "vorbis_file_vectors";
+import "vorbis_file_smoke_vectors";
+
+function references(): test.TestOutcome {
+  for value in vorbis_file_vectors.vectors() {
+    let Ok(encoded) = ref.unpack(value.encoded) else {
+      return test.fail("fixture");
+    };
+    let Ok(formats) = ref.unpack(value.formats) else {
+      return test.fail("formats");
+    };
+    let Ok(expected) = ref.unpack(value.pcm) else {
+      return test.fail("PCM");
+    };
+    if let Err(e) = vorbis_input_check.run(encoded, formats, expected, 16384, true) {
+      return test.fail(value.name + ": " + e);
+    }
+  }
+  return test.pass();
+}
+
+function no_input(_: i32): Result[u8[], IoError] {
+  return Ok([]);
+}
+
+function failed(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function oversized(_: i32): Result[u8[], IoError] {
+  return Ok([0u8, 1u8]);
+}
+
+function errors(): test.TestOutcome {
+  for size in [-1, 0, 1048577] {
+    if let Err(source.ReadSize) = input.create(vorbisfile.default_limits(), size) {} else {
+      return test.fail("chunk size");
+    }
+  }
+  let Ok(empty) = input.create(vorbisfile.default_limits(), 1) else {
+    return test.fail("create");
+  };
+  if let Err(source.ReadAudio(pcm.Header)) = empty.next_with(no_input) {} else {
+    return test.fail("empty input");
+  }
+  let Ok(error) = input.create(vorbisfile.default_limits(), 1) else {
+    return test.fail("create");
+  };
+  if let Err(source.ReadIo(Interrupted())) = error.step_with(failed) {} else {
+    return test.fail("I/O error category");
+  }
+  let Ok(large) = input.create(vorbisfile.default_limits(), 1) else {
+    return test.fail("create");
+  };
+  if let Err(source.ReadSize) = large.step_with(oversized) {} else {
+    return test.fail("source over-return");
+  }
+  return test.pass();
+}
+
+function late_error(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(vorbis_file_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let calls = cell_new(0);
+  let read = (_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return if (calls.get() == 1) { Ok(encoded) } else { Err(IoError.Interrupted) };
+  };
+  let Ok(state) = input.create(vorbisfile.default_limits(), encoded.len()) else {
+    return test.fail("create");
+  };
+  let ended = false;
+  let frames = 0;
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(event))) => {
+        state = next;
+        if (calls.get() != 1) {
+          return test.fail("source read before pending output");
+        }
+        match (event) {
+          vorbisfile.End(_) => {
+            ended = true;
+          },
+          vorbisfile.Samples(audio) => {
+            frames += audio.frames;
+          },
+          _ => {}
+        }
+      },
+      Err(source.ReadIo(Interrupted())) => {
+        return test.assert_true(ended && frames == 95 && calls.get() == 2);
+      },
+      _ => {
+        return test.fail("late I/O error after complete output");
+      }
+    }
+  }
+}
+
+function truncation(): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(vorbis_file_smoke_vectors.vector().encoded) else {
+    return test.fail("fixture");
+  };
+  let partial: u8[] = [];
+  for i in 0..encoded.len() - 1 {
+    partial = partial.append(encoded[i]);
+  }
+  let calls = cell_new(0);
+  let read = (_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return if (calls.get() == 1) { Ok(partial) } else { Ok([]) };
+  };
+  let Ok(state) = input.create(vorbisfile.default_limits(), encoded.len()) else {
+    return test.fail("create");
+  };
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(_))) => {
+        state = next;
+      },
+      Err(source.ReadAudio(pcm.Truncated)) => {
+        return test.pass();
+      },
+      _ => {
+        return test.fail("physical EOF must validate the final page");
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let runner = test.new("Bounded Ogg Vorbis byte sources");
+  runner = runner.it("all independent PCM through partial source reads", references);
+  runner = runner.it("invalid sizes, I/O failures, and source over-return", errors);
+  runner = runner.it("pending output drains before the next source read", late_error);
+  runner = runner.it("physical EOF validates the final page", truncation);
+  return runner.finish();
+}

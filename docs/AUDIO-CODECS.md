@@ -12,11 +12,11 @@ The Opus packet API reuses the Fern CELT implementation.
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
-| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus layer supplies file playback. |
+| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
-| Vorbis | Packets | No | Version one, one through eight channels, all standard block sizes, both floor types, all residue types, submaps, and channel coupling. Container playback remains separate work. |
+| Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | HE-AAC, ALAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
@@ -104,7 +104,20 @@ The single-entry codebook rule follows Vorbis Errata 20150226.
 The first packet primes overlap storage and returns zero frames.
 Later packets produce one quarter of the sum of the previous and current block lengths.
 Container code must use granule positions to trim initial and final PCM.
-Ogg Vorbis playback, seeking, and reader integration remain open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
+
+`std/audio/vorbisfile` decodes incremental Ogg files, including sequential chains and changes of rate or channel count.
+It validates page checksums, sequence numbers, continuation flags, header placement, and granule progression.
+The first nonfinal audio page can trim initial samples or establish a timestamp offset.
+The final page can trim trailing samples. Positions count playable frames within each logical stream.
+
+A sample event contains at most one packet of PCM. Complete-file PCM budgets belong to the caller.
+
+`std/audio/vorbisfile/input` connects this decoder to a borrowed `Reader` or a byte-source callback.
+Each cooperative step performs at most one source read and one decoder feed.
+Pending events drain before another source read. Empty successful reads mean permanent EOF.
+The caller retains and closes the reader. The adapter retains one bounded input chunk and codec state.
+
+Seeking remains open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
 
 `decode_packet_into` consumes a reusable PCM buffer. Entries after the valid prefix retain their values.
 `packet_frames` checks the mode and computes the required output frame count without decode.
@@ -120,6 +133,7 @@ The API does not promise an allocation-free audio callback.
 
 Independent float PCM fixtures use the public synthesis API from Xiph libvorbis 1.3.7.
 They cover rate and channel changes between streams, quality settings, transients, and synthetic type-zero floors.
+Complete-file fixtures use libvorbisfile's seekable public float API and include split headers, continued comments, both trim boundaries, timestamp offsets, and chains.
 Separate transform fixtures use the defining cosine equation and whole-timeline overlap accumulation in binary64 C.
 The native implementation derives from pinned Symphonia source under MPL-2.0.
 See [the notice](../licenses/vorbis/NOTICE.txt) for attribution, reference scope, and license terms.

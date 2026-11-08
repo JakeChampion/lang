@@ -1,0 +1,96 @@
+import "std/audio/vorbisfile";
+import "std/audio/pcm";
+import "std/f64";
+import "aac_kernel_check" as ref;
+
+pub struct Progress { link: i32, position: i32, sample: i32, tags: i32, ended: i32 }
+
+pub function create(): Progress {
+  return Progress { link: -1, position: 0, sample: 0, tags: 0, ended: 0 };
+}
+
+pub function event(value: vorbisfile.Event, formats: [u8], expected: [u8], progress: Progress): Result[Progress, string] {
+  let Progress { link, position, sample, tags, ended } = progress;
+  match (value) {
+    vorbisfile.Begin(info) => {
+      link += 1;
+      if (12 * link + 12 > formats.len() || info.index != link || info.audio.sample_rate != ref.word(formats, 12 * link) || info.audio.channels != ref.word(formats, 12 * link + 4)) {
+        return Err("link format");
+      }
+      position = 0;
+    },
+    vorbisfile.Tags(_) => {
+      tags += 1;
+    },
+    vorbisfile.Samples(audio) => {
+      if (audio.info.index != link || audio.frames < 0 || audio.samples.len() != audio.frames * audio.info.audio.channels || audio.packet_offset < audio.page_offset) {
+        return Err("sample metadata");
+      }
+      if (audio.frames > 0 && audio.position != position as i64) {
+        return Err("sample position");
+      }
+      for value in audio.samples {
+        if (4 * sample + 4 > expected.len()) {
+          return Err("too much PCM");
+        }
+        let golden = f32_from_bits(ref.word(expected, 4 * sample));
+        let error = value - golden;
+        if (!value.is_finite() || error > 0.000001f32 || error < -0.000001f32) {
+          return Err("PCM sample " + sample.to_string() + ": actual " + value.to_string() + ", expected " + golden.to_string());
+        }
+        sample += 1;
+      }
+      position += audio.frames;
+    },
+    vorbisfile.End(summary) => {
+      if (summary.info.index != link || summary.frames != position as i64 || position != ref.word(formats, 12 * link + 8)) {
+        return Err("final length");
+      }
+      ended += 1;
+    }
+  }
+  return Ok(Progress { link: link, position: position, sample: sample, tags: tags, ended: ended });
+}
+
+pub function finish(progress: Progress, formats: [u8], expected: [u8]): Result[void, string] {
+  if (progress.tags != progress.ended || progress.ended != formats.len() / 12 || progress.sample * 4 != expected.len()) {
+    return Err("incomplete stream events");
+  }
+  return Ok(());
+}
+
+pub function run(encoded: [u8], formats: [u8], expected: [u8], chunk: i32): Result[void, string] {
+  let decoder = match (vorbisfile.decoder(vorbisfile.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let at = 0;
+  let progress = create();
+  while (true) {
+    let eof = at == encoded.len();
+    let end = if (encoded.len() - at < chunk) { encoded.len() } else { at + chunk };
+    let (next, used, value) = match (decoder.feed(encoded[at:end])) { Ok(value) => value, Err(e) => { return Err("at " + at.to_string() + ": " + e.message()); } };
+    decoder = next;
+    if (used < 0 || used > end - at) {
+      return Err("input consumption");
+    }
+    at += used;
+    match (value) {
+      Some(value) => {
+        progress = event(value, formats, expected, progress)?;
+      },
+      None => {
+        if (eof) {
+          break;
+        }
+        if (used == 0 && at < encoded.len()) {
+          return Err("stalled input");
+        }
+      }
+    }
+  }
+  match (decoder.finish()) {
+    Ok(_) => {},
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+  return finish(progress, formats, expected);
+}
