@@ -1,0 +1,917 @@
+// The look of Fern for Plex. `nodes` lays out a screen as a list of nodes:
+// a rectangle, what it shows, and the action that a tap on it starts.
+// `render` draws the nodes on a frame and `hit` finds the node under a
+// touch, so the drawing and the touches use one layout. Every function is
+// pure except `render`, which writes only into the frame.
+import "std/android/draw";
+import "std/string";
+import "std/textwrap";
+import "./plex";
+
+pub const LOGIN: i32 = 0;
+
+pub const SERVERS: i32 = 1;
+
+pub const HOME: i32 = 2;
+
+pub const SECTIONS: i32 = 3;
+
+pub const LIBRARY: i32 = 4;
+
+pub const DETAIL: i32 = 5;
+
+pub const SEARCH: i32 = 6;
+
+pub const SETTINGS: i32 = 7;
+
+pub const PLAYER: i32 = 8;
+
+// The tabs of the bar at the bottom, and the screen of each.
+pub function tab_names(): string[] {
+  return ["Home", "Libraries", "Search", "Settings"];
+}
+
+pub function tab_screens(): i32[] {
+  return [HOME, SECTIONS, SEARCH, SETTINGS];
+}
+
+// --- colors
+
+pub function bg(): i32 {
+  return draw.rgb(14, 14, 17);
+}
+
+pub function surface(): i32 {
+  return draw.rgb(30, 30, 36);
+}
+
+pub function raised(): i32 {
+  return draw.rgb(44, 44, 52);
+}
+
+pub function accent(): i32 {
+  return draw.rgb(229, 160, 13);
+}
+
+pub function text_color(): i32 {
+  return draw.rgb(240, 240, 242);
+}
+
+pub function muted(): i32 {
+  return draw.rgb(150, 150, 160);
+}
+
+pub function danger(): i32 {
+  return draw.rgb(232, 86, 72);
+}
+
+// --- what a screen shows
+
+pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, art: string, audio: boolean, status: string }
+
+pub function no_player(): PlayerView {
+  return PlayerView { title: "", subtitle: "", position_ms: 0i64, duration_ms: 0i64, paused: false, buffering: false, overlay: false, art: "", audio: false, status: "" };
+}
+
+pub struct View {
+  w: i32,
+  h: i32,
+  screen: i32,
+  tab: i32,
+  title: string,
+  scroll: i32,
+  rows: i32[],
+  hubs: plex.Hub[],
+  sections: plex.Section[],
+  items: plex.Item[],
+  total: i32,
+  item: plex.Item,
+  children: plex.Item[],
+  pin_code: string,
+  status: string,
+  error: string,
+  servers: plex.Server[],
+  server_states: string[],
+  query: string,
+  typing: boolean,
+  account: string,
+  server_name: string,
+  quality: string,
+  player: PlayerView,
+  base: plex.Base,
+  loading: boolean,
+}
+
+pub function empty_view(w: i32, h: i32): View {
+  return View { w: w, h: h, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false };
+}
+
+// --- metrics
+
+// `u` is the size of a density-independent pixel, and `ts` the scale of the
+// text, for a window of w by h.
+pub struct Metrics { w: i32, h: i32, u: i32, ts: i32, cw: i32, th: i32 }
+
+pub function metrics(w: i32, h: i32): Metrics {
+  let short = w;
+  if (h < short) {
+    short = h;
+  }
+  let u = short / 360;
+  if (u < 2) {
+    u = 2;
+  }
+  let ts = (u + 1) / 3;
+  if (ts < 1) {
+    ts = 1;
+  }
+  return Metrics { w: w, h: h, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts) };
+}
+
+pub function top_height(m: Metrics): i32 {
+  return 56 * m.u;
+}
+
+pub function bottom_height(m: Metrics): i32 {
+  return 64 * m.u;
+}
+
+pub function has_tabs(screen: i32): boolean {
+  return screen != LOGIN && screen != SERVERS && screen != PLAYER;
+}
+
+// A card of a poster: the width of the image, and the height of the image
+// and its two lines of text.
+pub function card_width(m: Metrics): i32 {
+  return 112 * m.u;
+}
+
+pub function card_height(m: Metrics, w: i32): i32 {
+  return w * 3 / 2 + 2 * m.th + 10 * m.u;
+}
+
+// --- nodes
+
+pub enum Paint {
+  Fill(i32, i32),
+  Text(string, i32, i32),
+  Img(string, i32),
+  Bar(i32, i32, i32),
+  Blank,
+}
+
+// A rectangle of the screen, what it shows, and its action: "" for none.
+// `group` names a row that scrolls across, or is "".
+pub struct Node { x: i32, y: i32, w: i32, h: i32, paint: Paint, act: string, group: string }
+
+function fill(x: i32, y: i32, w: i32, h: i32, color: i32, r: i32): Node {
+  return Node { x: x, y: y, w: w, h: h, paint: Fill(color, r), act: "", group: "" };
+}
+
+function label(m: Metrics, x: i32, y: i32, s: string, scale: i32, color: i32): Node {
+  return Node { x: x, y: y, w: draw.text_width(s, scale), h: draw.text_height(scale), paint: Text(s, scale, color), act: "", group: "" };
+}
+
+function tap(n: Node, act: string): Node {
+  return Node { ...n, act: act };
+}
+
+// `s` cut to `cells` cells, with an ellipsis when it is longer.
+pub function fit(s: string, cells: i32): string {
+  if (cells <= 0) {
+    return "";
+  }
+  if (draw.text_cells(s) <= cells) {
+    return s;
+  }
+  let out = "";
+  let n = 0;
+  for c in s.chars() {
+    if (n >= cells - 1) {
+      break;
+    }
+    out += c.to_string();
+    n += 1;
+  }
+  return out.trim() + "…";
+}
+
+// A button: a pill with its label in the middle.
+function button(m: Metrics, x: i32, y: i32, text: string, color: i32, fg: i32, act: string): Node[] {
+  let w = draw.text_width(text, m.ts) + 32 * m.u;
+  let h = 44 * m.u;
+  return [tap(fill(x, y, w, h, color, h / 2), act), label(m, x + 16 * m.u, y + (h - m.th) / 2, text, m.ts, fg)];
+}
+
+function button_width(m: Metrics, text: string): i32 {
+  return draw.text_width(text, m.ts) + 32 * m.u;
+}
+
+// The size in pixels at which a card asks the server for its image.
+pub function image_key(base: plex.Base, path: string, w: i32, h: i32): string {
+  if (path.len() == 0 || base.uri.len() == 0) {
+    return "";
+  }
+  return plex.image_url(base, path, w, h);
+}
+
+// A card of an item: the poster, its progress, a mark when watched, and two
+// lines of text.
+function card(m: Metrics, v: View, x: i32, y: i32, w: i32, it: plex.Item, act: string, group: string): Node[] {
+  let ih = w * 3 / 2;
+  let r = 6 * m.u;
+  let out: Node[] = [Node { x: x, y: y, w: w, h: ih, paint: Img(image_key(v.base, plex.poster(it), w, ih), r), act: act, group: group }];
+  let p = plex.progress(it);
+  if (p > 0) {
+    out = out.append(Node { x: x + 6 * m.u, y: y + ih - 10 * m.u, w: w - 12 * m.u, h: 4 * m.u, paint: Bar(p, accent(), draw.rgba(0, 0, 0, 170)), act: "", group: "" });
+  } else if (plex.watched(it)) {
+    out = out.append(fill(x + w - 22 * m.u, y + 6 * m.u, 16 * m.u, 16 * m.u, accent(), 8 * m.u));
+  }
+  let cells = w / m.cw;
+  out = out.append(label(m, x, y + ih + 6 * m.u, fit(plex.card_title(it), cells), m.ts, text_color()));
+  out = out.append(label(m, x, y + ih + 6 * m.u + m.th, fit(plex.card_subtitle(it), cells), m.ts, muted()));
+  return out;
+}
+
+function top_bar(m: Metrics, v: View, back: boolean): Node[] {
+  let h = top_height(m);
+  let out: Node[] = [fill(0, 0, m.w, h, bg(), 0)];
+  let x = 16 * m.u;
+  if (back) {
+    out = out.append(tap(fill(0, 0, 48 * m.u, h, bg(), 0), "back"));
+    out = out.append(label(m, 16 * m.u, (h - m.th) / 2, "<", m.ts, text_color()));
+    x = 48 * m.u;
+  }
+  let cells = (m.w - x - 16 * m.u) / m.cw;
+  out = out.append(label(m, x, (h - m.th) / 2, fit(v.title, cells), m.ts, text_color()));
+  if (v.loading) {
+    out = out.append(fill(m.w - 24 * m.u, h / 2 - 4 * m.u, 8 * m.u, 8 * m.u, accent(), 4 * m.u));
+  }
+  return out;
+}
+
+function bottom_bar(m: Metrics, v: View): Node[] {
+  let h = bottom_height(m);
+  let y = m.h - h;
+  let out: Node[] = [fill(0, y, m.w, h, surface(), 0)];
+  let names = tab_names();
+  let cell = m.w / names.len();
+  for i in 0..names.len() {
+    let color = muted();
+    if (i == v.tab) {
+      color = accent();
+      out = out.append(fill(i * cell + cell / 2 - 16 * m.u, y + 10 * m.u, 32 * m.u, 4 * m.u, accent(), 2 * m.u));
+    }
+    out = out.append(tap(fill(i * cell, y, cell, h, surface(), 0), "tab:" + i.to_string()));
+    let tw = draw.text_width(names[i], m.ts);
+    out = out.append(label(m, i * cell + (cell - tw) / 2, y + (h - m.th) / 2 + 4 * m.u, names[i], m.ts, color));
+  }
+  return out;
+}
+
+// The top of the content of a screen, and its bottom.
+pub function content_top(m: Metrics): i32 {
+  return top_height(m);
+}
+
+pub function content_bottom(m: Metrics, screen: i32): i32 {
+  if (has_tabs(screen)) {
+    return m.h - bottom_height(m);
+  }
+  return m.h;
+}
+
+// --- the screens
+
+function login(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let big = m.ts * 2;
+  let cy = m.h / 3;
+  let title = "Fern for Plex";
+  out = out.append(label(m, (m.w - draw.text_width(title, big)) / 2, cy, title, big, text_color()));
+  let sub = "Your Plex libraries, in Fern";
+  out = out.append(label(m, (m.w - draw.text_width(sub, m.ts)) / 2, cy + draw.text_height(big) + 8 * m.u, sub, m.ts, muted()));
+  let y = cy + draw.text_height(big) + m.th + 48 * m.u;
+  if (v.pin_code.len() == 0) {
+    let text = "Sign in with Plex";
+    out = util_append(out, button(m, (m.w - button_width(m, text)) / 2, y, text, accent(), bg(), "signin"));
+  } else {
+    let hint = "Go to " + plex.LINK_PAGE + " and enter";
+    out = out.append(label(m, (m.w - draw.text_width(hint, m.ts)) / 2, y, hint, m.ts, text_color()));
+    let code_scale = m.ts * 4;
+    let code = spaced(v.pin_code);
+    out = out.append(label(m, (m.w - draw.text_width(code, code_scale)) / 2, y + m.th + 16 * m.u, code, code_scale, accent()));
+    let wait = "Waiting for plex.tv";
+    let wy = y + m.th + 32 * m.u + draw.text_height(code_scale);
+    out = out.append(label(m, (m.w - draw.text_width(wait, m.ts)) / 2, wy, wait, m.ts, muted()));
+    out = util_append(out, button(m, (m.w - button_width(m, "Cancel")) / 2, wy + m.th + 24 * m.u, "Cancel", raised(), text_color(), "cancel"));
+  }
+  if (v.error.len() > 0) {
+    out = util_append(out, wrapped(m, 24 * m.u, m.h - 120 * m.u, m.w - 48 * m.u, v.error, danger()));
+  }
+  return out;
+}
+
+function spaced(code: string): string {
+  let parts: string[] = [];
+  for c in code.chars() {
+    parts = parts.append(c.to_string());
+  }
+  return parts.join(" ");
+}
+
+function util_append(a: Node[], b: Node[]): Node[] {
+  let out = a;
+  for n in b {
+    out = out.append(n);
+  }
+  return out;
+}
+
+// The lines of `text` wrapped to `w` pixels, from y down.
+function wrapped(m: Metrics, x: i32, y: i32, w: i32, text: string, color: i32): Node[] {
+  let out: Node[] = [];
+  let cells = w / m.cw;
+  let at = y;
+  for line in textwrap.word_wrap(text, cells).split("\n") {
+    out = out.append(label(m, x, at, fit(line, cells), m.ts, color));
+    at += m.th + 2 * m.u;
+  }
+  return out;
+}
+
+pub function wrapped_height(m: Metrics, w: i32, text: string): i32 {
+  if (text.len() == 0) {
+    return 0;
+  }
+  return textwrap.word_wrap(text, w / m.cw).split("\n").len() * (m.th + 2 * m.u);
+}
+
+function servers(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let y = top_height(m) + 8 * m.u - v.scroll;
+  let row = 72 * m.u;
+  let i = 0;
+  while (i < v.servers.len()) {
+    let s = v.servers[i];
+    out = out.append(tap(fill(16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u, surface(), 8 * m.u), "server:" + i.to_string()));
+    out = out.append(label(m, 32 * m.u, y + 12 * m.u, fit(s.name, (m.w - 64 * m.u) / m.cw), m.ts, text_color()));
+    let state = "";
+    if (i < v.server_states.len()) {
+      state = v.server_states[i];
+    }
+    if (!s.owned) {
+      state = "shared · " + state;
+    }
+    out = out.append(label(m, 32 * m.u, y + 16 * m.u + m.th, state, m.ts, muted()));
+    y += row;
+    i += 1;
+  }
+  if (v.servers.len() == 0 && !v.loading) {
+    out = out.append(label(m, 16 * m.u, y, "No servers on this account", m.ts, muted()));
+    y += m.th + 16 * m.u;
+  }
+  out = util_append(out, button(m, 16 * m.u, y + 8 * m.u, "Refresh", raised(), text_color(), "refresh"));
+  if (v.error.len() > 0) {
+    out = util_append(out, wrapped(m, 16 * m.u, y + 64 * m.u, m.w - 32 * m.u, v.error, danger()));
+  }
+  return util_append(out, top_bar(m, View { ...v, title: "Choose a server" }, false));
+}
+
+// The height of one row of hub cards, with its title.
+pub function hub_row_height(m: Metrics): i32 {
+  return m.th + 12 * m.u + card_height(m, card_width(m)) + 16 * m.u;
+}
+
+// The width of all the cards of a hub, for the limit of its scroll.
+pub function hub_row_width(m: Metrics, n: i32): i32 {
+  return 32 * m.u + n * (card_width(m) + 10 * m.u) - 10 * m.u;
+}
+
+function hubs(m: Metrics, v: View, top: i32): Node[] {
+  let out: Node[] = [];
+  let row_h = hub_row_height(m);
+  let cw = card_width(m);
+  let bottom = content_bottom(m, v.screen);
+  let i = 0;
+  while (i < v.hubs.len()) {
+    let y0 = top + i * row_h - v.scroll;
+    if (y0 + row_h >= content_top(m) && y0 < bottom) {
+      let hub = v.hubs[i];
+      out = out.append(label(m, 16 * m.u, y0, fit(hub.title, (m.w - 32 * m.u) / m.cw), m.ts, text_color()));
+      let dx = 0;
+      if (i < v.rows.len()) {
+        dx = v.rows[i];
+      }
+      let group = "row:" + i.to_string();
+      let cy = y0 + m.th + 12 * m.u;
+      out = out.append(Node { x: 0, y: cy, w: m.w, h: card_height(m, cw), paint: Blank, act: "", group: group });
+      let j = 0;
+      while (j < hub.items.len()) {
+        let x = 16 * m.u + j * (cw + 10 * m.u) - dx;
+        if (x + cw > 0 && x < m.w) {
+          out = util_append(out, card(m, v, x, cy, cw, hub.items[j], "hub:" + i.to_string() + ":" + j.to_string(), group));
+        }
+        j += 1;
+      }
+    }
+    i += 1;
+  }
+  return out;
+}
+
+pub function home_height(m: Metrics, v: View): i32 {
+  return v.hubs.len() * hub_row_height(m) + 16 * m.u;
+}
+
+function home(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  out = util_append(out, hubs(m, v, top_height(m) + 12 * m.u));
+  if (v.hubs.len() == 0) {
+    let msg = "Nothing here yet";
+    if (v.loading) {
+      msg = "Loading";
+    }
+    out = out.append(label(m, 16 * m.u, top_height(m) + 24 * m.u, msg, m.ts, muted()));
+  }
+  if (v.error.len() > 0) {
+    out = util_append(out, wrapped(m, 16 * m.u, content_bottom(m, v.screen) - 80 * m.u, m.w - 32 * m.u, v.error, danger()));
+  }
+  return out;
+}
+
+function sections(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let y = top_height(m) + 8 * m.u - v.scroll;
+  let row = 64 * m.u;
+  let i = 0;
+  while (i < v.sections.len()) {
+    let s = v.sections[i];
+    out = out.append(tap(fill(16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u, surface(), 8 * m.u), "section:" + i.to_string()));
+    out = out.append(fill(28 * m.u, y + (row - 8 * m.u) / 2 - 6 * m.u, 12 * m.u, 12 * m.u, kind_color(s.kind), 6 * m.u));
+    out = out.append(label(m, 52 * m.u, y + (row - 8 * m.u - m.th) / 2, fit(s.title, (m.w - 80 * m.u) / m.cw), m.ts, text_color()));
+    y += row;
+    i += 1;
+  }
+  if (v.sections.len() == 0) {
+    let msg = "No libraries";
+    if (v.loading) {
+      msg = "Loading";
+    }
+    out = out.append(label(m, 16 * m.u, y, msg, m.ts, muted()));
+  }
+  return out;
+}
+
+function kind_color(kind: string): i32 {
+  if (kind == "movie") {
+    return accent();
+  }
+  if (kind == "show") {
+    return draw.rgb(90, 160, 230);
+  }
+  return draw.rgb(120, 200, 120);
+}
+
+// The columns of a grid of cards, and the width of each card.
+pub function grid(m: Metrics): (i32, i32) {
+  let cols = (m.w - 32 * m.u + 10 * m.u) / (card_width(m) + 10 * m.u);
+  if (cols < 3) {
+    cols = 3;
+  }
+  let w = (m.w - 32 * m.u - (cols - 1) * 10 * m.u) / cols;
+  return (cols, w);
+}
+
+pub function grid_height(m: Metrics, n: i32): i32 {
+  let (cols, w) = grid(m);
+  let rows = (n + cols - 1) / cols;
+  return rows * (card_height(m, w) + 12 * m.u) + 16 * m.u;
+}
+
+function grid_nodes(m: Metrics, v: View, items: plex.Item[], top: i32, prefix: string): Node[] {
+  let out: Node[] = [];
+  let (cols, w) = grid(m);
+  let ch = card_height(m, w) + 12 * m.u;
+  let bottom = content_bottom(m, v.screen);
+  let i = 0;
+  while (i < items.len()) {
+    let x = 16 * m.u + i % cols * (w + 10 * m.u);
+    let y = top + i / cols * ch - v.scroll;
+    if (y + ch >= content_top(m) && y < bottom) {
+      out = util_append(out, card(m, v, x, y, w, items[i], prefix + i.to_string(), ""));
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function library(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  out = util_append(out, grid_nodes(m, v, v.items, top_height(m) + 12 * m.u, "grid:"));
+  if (v.items.len() == 0) {
+    let msg = "This library is empty";
+    if (v.loading) {
+      msg = "Loading";
+    }
+    out = out.append(label(m, 16 * m.u, top_height(m) + 24 * m.u, msg, m.ts, muted()));
+  }
+  return out;
+}
+
+// The height of the backdrop of the detail screen.
+pub function backdrop_height(m: Metrics): i32 {
+  let h = m.w * 9 / 16;
+  if (h > m.h * 2 / 5) {
+    h = m.h * 2 / 5;
+  }
+  return h;
+}
+
+// The label of the play button of an item.
+pub function play_label(it: plex.Item): string {
+  if (it.offset_ms > 0i64 && plex.playable_kind(it.kind)) {
+    return "Resume " + plex.clock_text(it.offset_ms);
+  }
+  return "Play";
+}
+
+function detail(m: Metrics, v: View): Node[] {
+  let it = v.item;
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let s = v.scroll;
+  let bh = backdrop_height(m);
+  let art = it.art;
+  if (art.len() == 0) {
+    art = plex.poster(it);
+  }
+  out = out.append(Node { x: 0, y: top_height(m) - s, w: m.w, h: bh, paint: Img(image_key(v.base, art, m.w, bh), 0), act: "", group: "" });
+  out = out.append(fill(0, top_height(m) - s + bh / 2, m.w, bh / 2, draw.rgba(14, 14, 17, 150), 0));
+  let pw = 100 * m.u;
+  let ph = pw * 3 / 2;
+  let py = top_height(m) - s + bh - ph / 2;
+  out = out.append(Node { x: 16 * m.u, y: py, w: pw, h: ph, paint: Img(image_key(v.base, plex.poster(it), pw, ph), 6 * m.u), act: "", group: "" });
+  let tx = 16 * m.u + pw + 16 * m.u;
+  let tcells = (m.w - tx - 16 * m.u) / m.cw;
+  let ty = top_height(m) - s + bh + 8 * m.u;
+  let title = it.title;
+  if (it.kind == "episode" && it.grandparent.len() > 0) {
+    out = out.append(label(m, tx, ty, fit(it.grandparent, tcells), m.ts, muted()));
+    ty += m.th + 2 * m.u;
+  }
+  let big = m.ts * 2;
+  if (draw.text_width(title, big) > m.w - tx - 16 * m.u) {
+    big = m.ts;
+  }
+  out = out.append(label(m, tx, ty, fit(title, (m.w - tx - 16 * m.u) / draw.text_width("x", big)), big, text_color()));
+  ty += draw.text_height(big) + 4 * m.u;
+  out = out.append(label(m, tx, ty, fit(plex.facts(it), tcells), m.ts, muted()));
+  ty += m.th + 2 * m.u;
+  if (it.genres.len() > 0) {
+    out = out.append(label(m, tx, ty, fit(it.genres.join(", "), tcells), m.ts, muted()));
+  }
+  let y = top_height(m) - s + bh + ph / 2 + 20 * m.u;
+  let play = play_label(it);
+  if (plex.playable_kind(it.kind) || v.children.len() > 0) {
+    out = util_append(out, button(m, 16 * m.u, y, play, accent(), bg(), "play"));
+  }
+  let mark = "Mark watched";
+  if (plex.watched(it)) {
+    mark = "Mark unwatched";
+  }
+  out = util_append(out, button(m, 16 * m.u + button_width(m, play) + 12 * m.u, y, mark, raised(), text_color(), "watched"));
+  y += 64 * m.u;
+  if (it.summary.len() > 0) {
+    out = util_append(out, wrapped(m, 16 * m.u, y, m.w - 32 * m.u, it.summary, text_color()));
+    y += wrapped_height(m, m.w - 32 * m.u, it.summary) + 16 * m.u;
+  }
+  if (v.children.len() > 0) {
+    if (it.kind == "show" || it.kind == "artist") {
+      let heading = "Seasons";
+      if (it.kind == "artist") {
+        heading = "Albums";
+      }
+      out = out.append(label(m, 16 * m.u, y, heading, m.ts, text_color()));
+      out = util_append(out, grid_nodes(m, View { ...v, scroll: 0 }, v.children, y + m.th + 12 * m.u, "child:"));
+    } else {
+      out = util_append(out, episode_rows(m, v, y));
+    }
+  }
+  return out;
+}
+
+// The height of the content of the detail screen, for the limit of its
+// scroll.
+pub function detail_height(m: Metrics, v: View): i32 {
+  let bh = backdrop_height(m);
+  let ph = 150 * m.u;
+  let h = bh + ph / 2 + 84 * m.u + wrapped_height(m, m.w - 32 * m.u, v.item.summary) + 16 * m.u;
+  if (v.item.kind == "show" || v.item.kind == "artist") {
+    return h + m.th + 12 * m.u + grid_height(m, v.children.len());
+  }
+  return h + v.children.len() * episode_row_height(m) + 16 * m.u;
+}
+
+pub function episode_row_height(m: Metrics): i32 {
+  return 84 * m.u;
+}
+
+function episode_rows(m: Metrics, v: View, top: i32): Node[] {
+  let out: Node[] = [];
+  let rh = episode_row_height(m);
+  let tw = 128 * m.u;
+  let th = tw * 9 / 16;
+  let i = 0;
+  while (i < v.children.len()) {
+    let e = v.children[i];
+    let y = top + i * rh;
+    if (y + rh >= 0 && y < m.h) {
+      out = out.append(tap(fill(16 * m.u, y, m.w - 32 * m.u, rh - 8 * m.u, surface(), 6 * m.u), "child:" + i.to_string()));
+      let thumb = e.thumb;
+      if (e.kind == "track") {
+        thumb = "";
+      }
+      if (thumb.len() > 0) {
+        out = out.append(Node { x: 16 * m.u, y: y, w: tw, h: th, paint: Img(image_key(v.base, thumb, tw, th), 6 * m.u), act: "", group: "" });
+      }
+      let x = 16 * m.u + 12 * m.u;
+      if (thumb.len() > 0) {
+        x = 16 * m.u + tw + 12 * m.u;
+      }
+      let cells = (m.w - x - 24 * m.u) / m.cw;
+      let name = e.title;
+      if (e.kind == "episode") {
+        name = e.index.to_string() + ". " + e.title;
+      } else if (e.kind == "track" && e.index > 0) {
+        name = e.index.to_string() + ". " + e.title;
+      }
+      out = out.append(label(m, x, y + 10 * m.u, fit(name, cells), m.ts, text_color()));
+      let line = plex.duration_text(e.duration_ms);
+      if (plex.watched(e)) {
+        line += " · watched";
+      }
+      out = out.append(label(m, x, y + 14 * m.u + m.th, fit(line, cells), m.ts, muted()));
+      let p = plex.progress(e);
+      if (p > 0) {
+        out = out.append(Node { x: x, y: y + rh - 18 * m.u, w: m.w - x - 32 * m.u, h: 4 * m.u, paint: Bar(p, accent(), raised()), act: "", group: "" });
+      }
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function search(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let fy = top_height(m) + 8 * m.u;
+  let fh = 48 * m.u;
+  let border = surface();
+  if (v.typing) {
+    border = accent();
+  }
+  out = out.append(tap(fill(16 * m.u, fy, m.w - 32 * m.u, fh, border, 8 * m.u), "type"));
+  out = out.append(fill(18 * m.u, fy + 2 * m.u, m.w - 36 * m.u, fh - 4 * m.u, surface(), 7 * m.u));
+  let cells = (m.w - 64 * m.u) / m.cw;
+  if (v.query.len() == 0) {
+    out = out.append(label(m, 32 * m.u, fy + (fh - m.th) / 2, "Search movies, shows and music", m.ts, muted()));
+  } else {
+    let shown = v.query;
+    if (draw.text_cells(shown) > cells - 1) {
+      shown = "…" + tail(shown, cells - 2);
+    }
+    if (v.typing) {
+      shown += "|";
+    }
+    out = out.append(label(m, 32 * m.u, fy + (fh - m.th) / 2, shown, m.ts, text_color()));
+  }
+  out = util_append(out, hubs(m, v, fy + fh + 16 * m.u));
+  if (v.hubs.len() == 0 && v.query.len() > 0 && !v.loading && !v.typing) {
+    out = out.append(label(m, 16 * m.u, fy + fh + 24 * m.u, "No results", m.ts, muted()));
+  }
+  return out;
+}
+
+function tail(s: string, cells: i32): string {
+  let cs: string[] = [];
+  for c in s.chars() {
+    cs = cs.append(c.to_string());
+  }
+  let from = cs.len() - cells;
+  if (from < 0) {
+    from = 0;
+  }
+  let out = "";
+  for i in from..cs.len() {
+    out += cs[i];
+  }
+  return out;
+}
+
+function settings(m: Metrics, v: View): Node[] {
+  let out: Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let y = top_height(m) + 8 * m.u - v.scroll;
+  let rows: (string, string, string)[] = [
+    ("Account", v.account, ""),
+    ("Server", v.server_name, "servers"),
+    ("Quality", v.quality, "quality"),
+    ("Sign out", "", "signout"),
+  ];
+  let row = 72 * m.u;
+  for r in rows {
+    let n = fill(16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u, surface(), 8 * m.u);
+    if (r.2.len() > 0) {
+      n = tap(n, r.2);
+    }
+    out = out.append(n);
+    let color = text_color();
+    if (r.2 == "signout") {
+      color = danger();
+    }
+    let ty = y + 12 * m.u;
+    if (r.1.len() == 0) {
+      ty = y + (row - 8 * m.u - m.th) / 2;
+    }
+    out = out.append(label(m, 32 * m.u, ty, r.0, m.ts, color));
+    if (r.1.len() > 0) {
+      out = out.append(label(m, 32 * m.u, y + 16 * m.u + m.th, fit(r.1, (m.w - 64 * m.u) / m.cw), m.ts, muted()));
+    }
+    y += row;
+  }
+  let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern, with no Java code: the screens, the network, TLS and JSON are Fern, and the video plays through the media player of Android.";
+  out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, muted()));
+  return out;
+}
+
+// The progress bar of the player, as a node whose tap seeks.
+pub function seek_bar(m: Metrics): Node {
+  return Node { x: 24 * m.u, y: m.h - 72 * m.u, w: m.w - 48 * m.u, h: 24 * m.u, paint: Blank, act: "seek", group: "" };
+}
+
+function player(m: Metrics, v: View): Node[] {
+  let p = v.player;
+  if (!p.overlay) {
+    return [Node { x: 0, y: 0, w: m.w, h: m.h, paint: Blank, act: "overlay", group: "" }];
+  }
+  let out: Node[] = [fill(0, 0, m.w, m.h, draw.rgb(0, 0, 0), 0)];
+  if (p.art.len() > 0) {
+    out = out.append(Node { x: 0, y: 0, w: m.w, h: m.h, paint: Img(image_key(v.base, p.art, m.w, m.h), 0), act: "", group: "" });
+    out = out.append(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 150), 0));
+  }
+  out = out.append(Node { x: 0, y: 0, w: m.w, h: m.h, paint: Blank, act: "toggle", group: "" });
+  out = out.append(tap(fill(0, 0, 64 * m.u, 56 * m.u, draw.rgba(0, 0, 0, 0), 0), "back"));
+  out = out.append(label(m, 16 * m.u, 16 * m.u, "<", m.ts, text_color()));
+  let cells = (m.w - 64 * m.u) / m.cw;
+  out = out.append(label(m, 48 * m.u, 16 * m.u, fit(p.title, cells), m.ts, text_color()));
+  if (p.subtitle.len() > 0) {
+    out = out.append(label(m, 48 * m.u, 20 * m.u + m.th, fit(p.subtitle, cells), m.ts, muted()));
+  }
+  let cy = m.h / 2;
+  let r = 36 * m.u;
+  let small = 26 * m.u;
+  let gap = 96 * m.u;
+  out = out.append(tap(fill(m.w / 2 - gap - small, cy - small, 2 * small, 2 * small, draw.rgba(255, 255, 255, 40), small), "rew"));
+  out = out.append(label(m, m.w / 2 - gap - draw.text_width("-10", m.ts) / 2, cy - m.th / 2, "-10", m.ts, text_color()));
+  out = out.append(tap(fill(m.w / 2 - r, cy - r, 2 * r, 2 * r, accent(), r), "toggle"));
+  let icon = "||";
+  if (p.paused) {
+    icon = ">";
+  }
+  let big = m.ts * 2;
+  out = out.append(label(m, m.w / 2 - draw.text_width(icon, big) / 2, cy - draw.text_height(big) / 2, icon, big, bg()));
+  out = out.append(tap(fill(m.w / 2 + gap - small, cy - small, 2 * small, 2 * small, draw.rgba(255, 255, 255, 40), small), "ffw"));
+  out = out.append(label(m, m.w / 2 + gap - draw.text_width("+30", m.ts) / 2, cy - m.th / 2, "+30", m.ts, text_color()));
+  if (p.status.len() > 0) {
+    out = out.append(label(m, (m.w - draw.text_width(p.status, m.ts)) / 2, cy + r + 16 * m.u, fit(p.status, m.w / m.cw), m.ts, muted()));
+  }
+  let bar = seek_bar(m);
+  let permille = 0;
+  if (p.duration_ms > 0i64) {
+    permille = (p.position_ms * 1000i64 / p.duration_ms) as i32;
+  }
+  out = out.append(bar);
+  out = out.append(Node { x: bar.x, y: bar.y + bar.h / 2 - 2 * m.u, w: bar.w, h: 4 * m.u, paint: Bar(permille, accent(), draw.rgba(255, 255, 255, 70)), act: "", group: "" });
+  out = out.append(label(m, bar.x, bar.y + bar.h + 4 * m.u, plex.clock_text(p.position_ms), m.ts, text_color()));
+  let total = plex.clock_text(p.duration_ms);
+  out = out.append(label(m, bar.x + bar.w - draw.text_width(total, m.ts), bar.y + bar.h + 4 * m.u, total, m.ts, text_color()));
+  return out;
+}
+
+// The nodes of the screen of `v`, in the order to draw them.
+pub function nodes(v: View): Node[] {
+  let m = metrics(v.w, v.h);
+  if (v.screen == LOGIN) {
+    return login(m, v);
+  }
+  if (v.screen == SERVERS) {
+    return servers(m, v);
+  }
+  if (v.screen == PLAYER) {
+    return player(m, v);
+  }
+  let body: Node[] = [];
+  if (v.screen == HOME) {
+    body = home(m, v);
+  } else if (v.screen == SECTIONS) {
+    body = sections(m, v);
+  } else if (v.screen == LIBRARY) {
+    body = library(m, v);
+  } else if (v.screen == DETAIL) {
+    body = detail(m, v);
+  } else if (v.screen == SEARCH) {
+    body = search(m, v);
+  } else {
+    body = settings(m, v);
+  }
+  let back = v.screen == LIBRARY || v.screen == DETAIL;
+  return util_append(util_append(body, top_bar(m, v, back)), bottom_bar(m, v));
+}
+
+// The keys of the images that the nodes show, each once.
+pub function images(ns: Node[]): string[] {
+  let out: string[] = [];
+  for n in ns {
+    if let Img(key, _) = n.paint {
+      if (key.len() > 0 && !out.contains(key)) {
+        out = out.append(key);
+      }
+    }
+  }
+  return out;
+}
+
+// The size of the image that a node with `key` shows.
+pub function image_size(ns: Node[], key: string): (i32, i32) {
+  for n in ns {
+    if let Img(k, _) = n.paint {
+      if (k == key) {
+        return (n.w, n.h);
+      }
+    }
+  }
+  return (0, 0);
+}
+
+// The topmost node under x, y with an action, or None.
+pub function hit(ns: Node[], x: i32, y: i32): Option[Node] {
+  let i = ns.len();
+  while (i > 0) {
+    i -= 1;
+    let n = ns[i];
+    if (n.act.len() > 0 && x >= n.x && y >= n.y && x < n.x + n.w && y < n.y + n.h) {
+      return Some(n);
+    }
+  }
+  return None;
+}
+
+// The row that scrolls across under x, y, or "".
+pub function group_at(ns: Node[], x: i32, y: i32): string {
+  let i = ns.len();
+  while (i > 0) {
+    i -= 1;
+    let n = ns[i];
+    if (n.group.len() > 0 && x >= n.x && y >= n.y && x < n.x + n.w && y < n.y + n.h) {
+      return n.group;
+    }
+  }
+  return "";
+}
+
+// --- drawing
+
+function paint_image(f: draw.Frame, n: Node, key: string, r: i32, cache: Map[string, draw.Image]): void {
+  if let Some(img) = cache.get(key) {
+    f.image(n.x, n.y, n.w, n.h, img);
+    if (r > 0) {
+      f.clip_corners(n.x, n.y, n.w, n.h, r, bg());
+    }
+    return;
+  }
+  f.round_rect(n.x, n.y, n.w, n.h, r, surface());
+}
+
+// Draws the nodes on `f`, with the images in `cache`.
+pub function render(f: draw.Frame, ns: Node[], cache: Map[string, draw.Image]): void {
+  for n in ns {
+    match (n.paint) {
+      Fill(color, r) => {
+        if (r > 0) {
+          f.round_rect(n.x, n.y, n.w, n.h, r, color);
+        } else {
+          f.fill(n.x, n.y, n.w, n.h, color);
+        }
+      },
+      Text(s, scale, color) => {
+        f.text(n.x, n.y, s, scale, color);
+      },
+      Img(key, r) => {
+        paint_image(f, n, key, r, cache);
+      },
+      Bar(permille, fg, back) => {
+        f.fill(n.x, n.y, n.w, n.h, back);
+        f.fill(n.x, n.y, n.w * permille / 1000, n.h, fg);
+      },
+      Blank => {}
+    }
+  }
+}

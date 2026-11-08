@@ -1,0 +1,196 @@
+// The Fern for Plex app: a NativeActivity with no Java code of its own.
+// control.fern holds its behaviour. This file gives it the device of the
+// phone: the clock, the files of the app, the window, the network through
+// workers, the image decoder and the media player.
+import "std/android";
+import "std/android/draw";
+import "std/android/image";
+import "std/android/player";
+import "std/fetch";
+import "std/log";
+import "std/rand";
+import "std/worker";
+import "./control";
+import "./plex";
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+// The listener of the media player. Each method runs on the main thread and
+// sends its event to the loop thread.
+@jni("dev.fern.plex.Media implements android.media.MediaPlayer$OnPreparedListener, android.media.MediaPlayer$OnCompletionListener, android.media.MediaPlayer$OnErrorListener, android.media.MediaPlayer$OnInfoListener, android.media.MediaPlayer$OnSeekCompleteListener", "void onPrepared(android.media.MediaPlayer)")
+pub function on_prepared(env: usize, thiz: usize, mp: usize): void {
+  player.prepared(env, thiz, mp);
+}
+
+@jni("dev.fern.plex.Media", "void onCompletion(android.media.MediaPlayer)")
+pub function on_completion(env: usize, thiz: usize, mp: usize): void {
+  player.completed(env, thiz, mp);
+}
+
+@jni("dev.fern.plex.Media", "boolean onError(android.media.MediaPlayer, int, int)")
+pub function on_error(env: usize, thiz: usize, mp: usize, what: i32, extra: i32): u8 {
+  return player.failed(env, thiz, mp, what, extra);
+}
+
+@jni("dev.fern.plex.Media", "boolean onInfo(android.media.MediaPlayer, int, int)")
+pub function on_info(env: usize, thiz: usize, mp: usize, what: i32, extra: i32): u8 {
+  return player.info(env, thiz, mp, what, extra);
+}
+
+@jni("dev.fern.plex.Media", "void onSeekComplete(android.media.MediaPlayer)")
+pub function on_seek_complete(env: usize, thiz: usize, mp: usize): void {
+  player.seeked(env, thiz, mp);
+}
+
+function mono_ms(): i64 {
+  return monotonic_ns() / 1000000i64;
+}
+
+function read_text(path: string): string {
+  if let Ok(b) = read_file_bytes(path) {
+    return unsafe { string_from_bytes_unchecked(b) };
+  }
+  return "";
+}
+
+function write_text(path: string, text: string): void {
+  let written = write_file(path, text);
+}
+
+// Sends one request. It runs in a worker, so it can wait for the network.
+function send_one(r: plex.Request): plex.Reply {
+  let req = fetch.request(r.method, r.url);
+  for h in r.headers {
+    req = req.with_header(h.0, h.1);
+  }
+  if (r.method == "POST") {
+    req = req.with_text(r.body);
+  }
+  match (fetch.send(req)) {
+    Ok(resp) => {
+      return plex.Reply { status: resp.status, body: resp.body.bytes(), error: "" };
+    },
+    Err(e) => {
+      return plex.Reply { status: 0, body: [], error: e.message() };
+    }
+  }
+}
+
+function send_all(rs: plex.Request[]): plex.Reply[] {
+  let out: plex.Reply[] = [];
+  for r in rs {
+    out = out.append(send_one(r));
+  }
+  return out;
+}
+
+function fetch_all(rs: plex.Request[]): worker.Worker[plex.Reply[]] {
+  return worker.spawn((): plex.Reply[] => send_all(rs));
+}
+
+function window_size(window: usize): (i32, i32) {
+  let w = android.Window { ptr: window };
+  return (w.width(), w.height());
+}
+
+function lock(window: usize): draw.Frame {
+  let w = android.Window { ptr: window };
+  return w.lock();
+}
+
+// The device of the phone. `p` is the media player, or one with no object
+// when Android gave none, and then nothing plays.
+function device(ctx: usize, p: player.Player): control.Device {
+  let has = p.obj != 0 as usize;
+  return control.Device {
+    mono_ms: (): i64 => mono_ms(),
+    read: (path: string): string => read_text(path),
+    write: (path: string, text: string): void => write_text(path, text),
+    size: (window: usize): (i32, i32) => window_size(window),
+    lock: (window: usize): draw.Frame => lock(window),
+    post: (f: draw.Frame): void => android.post(f),
+    finish: (): void => android.finish(ctx),
+    keep_screen_on: (on: boolean): void => android.keep_screen_on(ctx, on),
+    immersive: (on: boolean): void => android.immersive(ctx, on),
+    keyboard: (on: boolean): void => android.show_keyboard(ctx, on),
+    fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch_all(rs),
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
+    play: (uri: string): boolean => has && player.open(ctx, p, uri),
+    show_video: (window: usize): boolean => has && player.show(ctx, p, android.Window { ptr: window }),
+    hide_video: (): void => hide(ctx, p, has),
+    start: (): void => start(ctx, p, has),
+    pause: (): void => pause(ctx, p, has),
+    seek: (ms: i64): void => seek(ctx, p, has, ms),
+    position: (): i64 => position(ctx, p, has),
+    duration: (): i64 => duration(ctx, p, has),
+    stop: (): void => stop(ctx, p, has),
+    random: (): i32 => rand.next_i32() & 2147483647,
+  };
+}
+
+function hide(ctx: usize, p: player.Player, has: boolean): void {
+  if (has) {
+    player.hide(ctx, p);
+  }
+}
+
+function start(ctx: usize, p: player.Player, has: boolean): void {
+  if (has) {
+    let ok = player.start(ctx, p);
+  }
+}
+
+function pause(ctx: usize, p: player.Player, has: boolean): void {
+  if (has) {
+    let ok = player.pause(ctx, p);
+  }
+}
+
+function seek(ctx: usize, p: player.Player, has: boolean, ms: i64): void {
+  if (has) {
+    let ok = player.seek(ctx, p, ms);
+  }
+}
+
+function position(ctx: usize, p: player.Player, has: boolean): i64 {
+  if (has) {
+    return player.position_ms(ctx, p);
+  }
+  return 0i64;
+}
+
+function duration(ctx: usize, p: player.Player, has: boolean): i64 {
+  if (has) {
+    return player.duration_ms(ctx, p);
+  }
+  return 0i64;
+}
+
+function stop(ctx: usize, p: player.Player, has: boolean): void {
+  if (has) {
+    player.stop(ctx, p);
+  }
+}
+
+function app_main(ctx: usize): usize {
+  let p = player.Player { obj: 0 as usize, listener: 0 as usize };
+  if let Some(made) = player.new(ctx, "dev.fern.plex.Media") {
+    p = made;
+  } else {
+    log.warn("plex: no media player");
+  }
+  let first = control.new(device(ctx, p), android.data_dir(ctx), android.intent_extra(ctx, "server"), android.intent_extra(ctx, "token"), android.intent_extra(ctx, "play"));
+  log.info("plex: started");
+  let last = android.run(ctx, first, (own s: control.App, e: android.Event): control.App => control.step(s, e), (s: control.App): i32 => control.timeout(s, mono_ms()));
+  control.close(last);
+  if (p.obj != 0 as usize) {
+    player.close(ctx, p);
+  }
+  log.info("plex: destroyed");
+  return 0 as usize;
+}

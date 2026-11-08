@@ -1,0 +1,1617 @@
+// The behaviour of Fern for Plex on its events. plex.fern holds the model and
+// ui.fern the look. Each input and output goes through a Device: app.fern
+// gives the device of the phone, and control_test.fern gives one with a
+// fake server.
+//
+// The app sends at most one request to the API at a time, one batch of
+// images, and one report of playback. Each runs in a worker of std/worker,
+// so the loop thread never waits for the network. The loop polls the
+// workers on its timeouts.
+import "std/android";
+import "std/android/draw";
+import "std/android/player";
+import "std/log";
+import "std/string";
+import "std/utf8";
+import "std/worker";
+import "./plex";
+import "./ui";
+
+// The input and output of the app. `read` gives "" for a file that does not
+// exist. `fetch` starts a worker that sends the requests in turn. The player
+// functions drive the one media player of the app.
+pub struct Device {
+  mono_ms: () => i64,
+  read: (string) => string,
+  write: (string, string) => void,
+  size: (usize) => (i32, i32),
+  lock: (usize) => draw.Frame,
+  post: (draw.Frame) => void,
+  finish: () => void,
+  keep_screen_on: (boolean) => void,
+  immersive: (boolean) => void,
+  keyboard: (boolean) => void,
+  fetch: (plex.Request[]) => worker.Worker[plex.Reply[]],
+  decode: (u8[], i32, i32) => Option[draw.Image],
+  play: (string) => boolean,
+  show_video: (usize) => boolean,
+  hide_video: () => void,
+  start: () => void,
+  pause: () => void,
+  seek: (i64) => void,
+  position: () => i64,
+  duration: () => i64,
+  stop: () => void,
+  random: () => i32,
+}
+
+// A request to the API that waits for its turn. `purpose` says what to do
+// with the reply.
+struct Ask { purpose: string, req: plex.Request }
+
+// The request to the API that a worker sends now.
+struct Call { purpose: string, w: worker.Worker[plex.Reply[]] }
+
+// The batch of images that a worker fetches now.
+struct Batch { keys: string[], w: worker.Worker[plex.Reply[]] }
+
+// A screen on the back stack, as the user left it.
+struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.Item[], total: i32, section: plex.Section, item: plex.Item, children: plex.Item[] }
+
+// A touch from its down event to its up event. `group` is the row that the
+// touch scrolls across, or "", and `axis` is 0 until the touch moves, then
+// 1 across and 2 down.
+struct Press { active: boolean, x0: f32, y0: f32, x: f32, y: f32, axis: i32, group: string, scroll0: i32, row0: i32 }
+
+// The playback of an item. `video` is true while the video is on the
+// window, and then the app does not lock the window.
+struct Play {
+  active: boolean,
+  item: plex.Item,
+  stream: plex.Stream,
+  session: string,
+  prepared: boolean,
+  paused: boolean,
+  video: boolean,
+  overlay: boolean,
+  buffering: boolean,
+  position: i64,
+  duration: i64,
+  reported_at: i64,
+  updated_at: i64,
+  retried: boolean,
+  status: string,
+  queue: plex.Item[],
+}
+
+pub struct App {
+  dev: Device,
+  dir: string,
+  window: usize,
+  w: i32,
+  h: i32,
+  shown: boolean,
+  client: plex.Client,
+  server: plex.Server,
+  base: plex.Base,
+  servers: plex.Server[],
+  states: string[],
+  conn: i32,
+  pin: plex.Pin,
+  pin_at: i64,
+  account: string,
+  quality: i32,
+  screen: i32,
+  tab: i32,
+  title: string,
+  scroll: i32,
+  rows: i32[],
+  stack: Page[],
+  hubs: plex.Hub[],
+  results: plex.Hub[],
+  sections: plex.Section[],
+  section: plex.Section,
+  items: plex.Item[],
+  total: i32,
+  item: plex.Item,
+  children: plex.Item[],
+  query: string,
+  typing: boolean,
+  search_at: i64,
+  error: string,
+  api: Option[Call],
+  asks: Ask[],
+  img: Option[Batch],
+  cache: Map[string, draw.Image],
+  cached: string[],
+  failed: string[],
+  report: Option[Call],
+  reports: plex.Request[],
+  play: Play,
+  press: Press,
+  nodes: ui.Node[],
+  dirty: boolean,
+}
+
+// The images that the app keeps decoded, and the most that one batch fetches.
+const CACHE_SIZE: i32 = 160;
+
+const BATCH: i32 = 6;
+
+const PAGE_SIZE: i32 = 60;
+
+// The time between two checks of a PIN, and between two reports of the
+// position of the playback.
+const PIN_MS: i64 = 2000i64;
+
+const REPORT_MS: i64 = 10000i64;
+
+// The time after the last key before a search starts.
+const SEARCH_MS: i64 = 700i64;
+
+// --- settings
+
+function no_section(): plex.Section {
+  return plex.Section { key: "", kind: "", title: "" };
+}
+
+function no_server(): plex.Server {
+  return plex.Server { name: "", id: "", token: "", owned: false, connections: [] };
+}
+
+function no_play(): Play {
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [] };
+}
+
+function no_press(): Press {
+  return Press { active: false, x0: 0.0, y0: 0.0, x: 0.0, y: 0.0, axis: 0, group: "", scroll0: 0, row0: 0 };
+}
+
+// The value of `key` in the lines of `key=value` of `text`, or "".
+pub function setting(text: string, key: string): string {
+  for line in text.split("\n") {
+    if (line.starts_with(key + "=")) {
+      return line.split_at(key.len() + 1).1;
+    }
+  }
+  return "";
+}
+
+pub function num(s: string): i32 {
+  let v = 0;
+  for c in s.bytes() {
+    if (c < 48u8 || c > 57u8) {
+      return v;
+    }
+    v = v * 10 + (c - 48u8) as i32;
+  }
+  return v;
+}
+
+function hex_id(dev: Device): string {
+  let digits = "0123456789abcdef";
+  let out = "";
+  for i in 0..32 {
+    let d = dev.random() % 16;
+    out += digits.split_at(d).1.split_at(1).0;
+  }
+  return out;
+}
+
+function settings_path(s: App): string {
+  return s.dir + "/settings";
+}
+
+function save(s: App): void {
+  if (s.dir.len() == 0) {
+    return;
+  }
+  let lines = [
+    "id=" + s.client.id,
+    "token=" + s.client.token,
+    "account=" + s.account,
+    "server_name=" + s.server.name,
+    "server_id=" + s.server.id,
+    "server_token=" + s.base.token,
+    "server_uri=" + s.base.uri,
+    "quality=" + s.quality.to_string(),
+  ];
+  s.dev.write(settings_path(s), lines.join("\n") + "\n");
+}
+
+// The app before its first event, with its files in `dir`. `server` and
+// `token` name a server to use with no sign-in at plex.tv, or are "".
+// `play` is the key of an item to open and play at once, or "", as a link
+// into the app gives it.
+pub function new(dev: Device, dir: string, server: string, token: string, play: string): App {
+  let s = first_screen(dev, dir, server, token);
+  if (play.len() == 0 || s.screen == ui.LOGIN || s.screen == ui.SERVERS) {
+    return s;
+  }
+  return ask(s, "autoplay:" + play, Meta(play));
+}
+
+function first_screen(dev: Device, dir: string, server: string, token: string): App {
+  let text = "";
+  if (dir.len() > 0) {
+    text = dev.read(dir + "/settings");
+  }
+  let id = setting(text, "id");
+  if (id.len() == 0) {
+    id = hex_id(dev);
+  }
+  let none: plex.Hub[] = [];
+  let s = App {
+    dev: dev, dir: dir, window: 0 as usize, w: 0, h: 0, shown: false,
+    client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
+    server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
+    servers: [], states: [], conn: 0, pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
+    account: setting(text, "account"), quality: num(setting(text, "quality")),
+    screen: ui.LOGIN, tab: 0, title: "", scroll: 0, rows: [], stack: [],
+    hubs: none, results: none, sections: [], section: no_section(), items: [], total: 0, item: plex.no_item(), children: [],
+    query: "", typing: false, search_at: 0i64, error: "",
+    api: None, asks: [], img: None, cache: map_new(64), cached: [], failed: [], report: None, reports: [],
+    play: no_play(), press: no_press(), nodes: [], dirty: true,
+  };
+  s = App { ...s, server: plex.Server { ...no_server(), name: setting(text, "server_name"), id: setting(text, "server_id"), token: s.base.token } };
+  if (s.quality < 0 || s.quality >= plex.qualities().len()) {
+    s = App { ...s, quality: 0 };
+  }
+  if (server.len() > 0) {
+    let manual = plex.manual_server(server, token);
+    s = App { ...s, server: manual, base: plex.Base { uri: plex.connection_order(manual)[0], token: token } };
+    save(s);
+    return open_home(s);
+  }
+  save(s);
+  if (s.base.uri.len() > 0) {
+    return open_home(s);
+  }
+  if (s.client.token.len() > 0) {
+    return open_servers(s);
+  }
+  return s;
+}
+
+// --- requests
+
+// A request that the app asks for. `ask` makes it from the client and the
+// server of the state, so a caller gives a value that borrows nothing.
+enum Want {
+  NewPin,
+  CheckPin(i64),
+  User,
+  Resources,
+  Identity(string, string),
+  Sections,
+  Hubs,
+  Items(string, i32),
+  Meta(string),
+  Children(string),
+  Leaves(string),
+  Search(string),
+  Scrobble(string, boolean),
+  Timeline(string, string, i64, i64),
+  StopTranscode(string),
+}
+
+function request_of(c: plex.Client, b: plex.Base, w: Want): plex.Request {
+  match (w) {
+    NewPin => {
+      return plex.pin_request(c);
+    },
+    CheckPin(id) => {
+      return plex.pin_check(c, id);
+    },
+    User => {
+      return plex.user_request(c);
+    },
+    Resources => {
+      return plex.resources_request(c);
+    },
+    Identity(uri, token) => {
+      return plex.identity(c, plex.Base { uri: uri, token: token });
+    },
+    Sections => {
+      return plex.sections(c, b);
+    },
+    Hubs => {
+      return plex.hubs(c, b);
+    },
+    Items(key, start) => {
+      return plex.section_items(c, b, key, start, PAGE_SIZE, "titleSort");
+    },
+    Meta(key) => {
+      return plex.metadata(c, b, key);
+    },
+    Children(key) => {
+      return plex.children(c, b, key);
+    },
+    Leaves(key) => {
+      return plex.Request { ...plex.children(c, b, key), url: b.uri + "/library/metadata/" + key + "/allLeaves" };
+    },
+    Search(q) => {
+      return plex.search(c, b, q);
+    },
+    Scrobble(key, seen) => {
+      return plex.scrobble(c, b, key, seen);
+    },
+    Timeline(key, state, at, total) => {
+      return plex.timeline(c, b, key, state, at, total);
+    },
+    StopTranscode(session) => {
+      return plex.stop_transcode(c, b, session);
+    }
+  }
+}
+
+function ask(own s: App, purpose: string, w: Want): App {
+  let req = request_of(s.client, s.base, w);
+  return App { ...s, asks: s.asks.append(Ask { purpose: purpose, req: req }) };
+}
+
+// Starts the next request when no worker sends one.
+function start_call(own c: Option[Call], dev: Device, next: Ask): (Option[Call], boolean) {
+  match (c) {
+    Some(call) => {
+      return (Some(call), false);
+    },
+    None => {
+      return (Some(Call { purpose: next.purpose, w: dev.fetch([next.req]) }), true);
+    }
+  }
+}
+
+function start_api(own s: App): App {
+  if (s.asks.len() == 0) {
+    return s;
+  }
+  let (api, started) = start_call(s.api, s.dev, s.asks[0]);
+  if (!started) {
+    return App { ...s, api: api };
+  }
+  return App { ...s, api: api, asks: s.asks.drop(1) };
+}
+
+struct Done { purpose: string, reply: plex.Reply }
+
+function first_reply(rs: plex.Reply[]): plex.Reply {
+  if (rs.len() == 0) {
+    return plex.Reply { status: 0, body: [], error: "no reply" };
+  }
+  return rs[0];
+}
+
+function poll_call(own c: Option[Call]): (Option[Call], Option[Done]) {
+  match (c) {
+    Some(call) => {
+      let purpose = call.purpose;
+      match (call.w.poll()) {
+        worker.Finished(rs) => {
+          return (None, Some(Done { purpose: purpose, reply: first_reply(rs) }));
+        },
+        worker.Running(again) => {
+          return (Some(Call { purpose: purpose, w: again }), None);
+        }
+      }
+    },
+    None => {
+      return (None, None);
+    }
+  }
+}
+
+function poll_api(own s: App): App {
+  let (api, done) = poll_call(s.api);
+  let next = App { ...s, api: api };
+  if let Some(d) = done {
+    return start_api(answer(next, d.purpose, d.reply));
+  }
+  return start_api(next);
+}
+
+// Reports of playback go in a line of their own, so a slow report does not
+// hold up the screens.
+function report(own s: App, w: Want): App {
+  let req = request_of(s.client, s.base, w);
+  return start_report(App { ...s, reports: s.reports.append(req) });
+}
+
+function start_report(own s: App): App {
+  if (s.reports.len() == 0) {
+    return s;
+  }
+  let (r, started) = start_call(s.report, s.dev, Ask { purpose: "report", req: s.reports[0] });
+  if (!started) {
+    return App { ...s, report: r };
+  }
+  return App { ...s, report: r, reports: s.reports.drop(1) };
+}
+
+function poll_report(own s: App): App {
+  let (r, done) = poll_call(s.report);
+  let next = App { ...s, report: r };
+  if let Some(d) = done {
+    if (!d.reply.ok()) {
+      log.warn("plex: a report failed: " + d.reply.problem());
+    }
+  }
+  return start_report(next);
+}
+
+// --- images
+
+function image_request(key: string): plex.Request {
+  return plex.Request { method: "GET", url: key, headers: [("Accept", "image/jpeg, image/png, image/webp")], body: "" };
+}
+
+function in_flight(b: Option[Batch], key: string): boolean {
+  match (b) {
+    Some(batch) => {
+      return batch.keys.contains(key);
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// Starts a batch of the images that the screen shows and the cache lacks.
+function start_batch(own b: Option[Batch], dev: Device, keys: string[]): Option[Batch] {
+  match (b) {
+    Some(batch) => {
+      return Some(batch);
+    },
+    None => {
+      if (keys.len() == 0) {
+        return None;
+      }
+      let reqs: plex.Request[] = [];
+      for k in keys {
+        reqs = reqs.append(image_request(k));
+      }
+      return Some(Batch { keys: keys, w: dev.fetch(reqs) });
+    }
+  }
+}
+
+function wanted(s: App): string[] {
+  let out: string[] = [];
+  for k in ui.images(s.nodes) {
+    if (out.len() < BATCH && !s.cache.contains(k) && !s.failed.contains(k)) {
+      out = out.append(k);
+    }
+  }
+  return out;
+}
+
+function start_images(own s: App): App {
+  let keys = wanted(s);
+  return App { ...s, img: start_batch(s.img, s.dev, keys) };
+}
+
+struct Fetched { keys: string[], replies: plex.Reply[] }
+
+function poll_batch(own b: Option[Batch]): (Option[Batch], Option[Fetched]) {
+  match (b) {
+    Some(batch) => {
+      let keys = batch.keys;
+      match (batch.w.poll()) {
+        worker.Finished(rs) => {
+          return (None, Some(Fetched { keys: keys, replies: rs }));
+        },
+        worker.Running(again) => {
+          return (Some(Batch { keys: keys, w: again }), None);
+        }
+      }
+    },
+    None => {
+      return (None, None);
+    }
+  }
+}
+
+// Keeps a decoded image, and drops the oldest when the cache is full.
+function remember(own s: App, key: string, img: draw.Image): App {
+  let cache = s.cache.insert(key, img);
+  let order = s.cached.append(key);
+  while (order.len() > CACHE_SIZE) {
+    cache = cache.remove(order[0]);
+    order = order.drop(1);
+  }
+  return App { ...s, cache: cache, cached: order };
+}
+
+function poll_images(own s: App): App {
+  let (b, done) = poll_batch(s.img);
+  let next = App { ...s, img: b };
+  let Some(f) = done else {
+    return next;
+  };
+  let i = 0;
+  while (i < f.keys.len()) {
+    let key = f.keys[i];
+    let got: Option[draw.Image] = None;
+    if (i < f.replies.len() && f.replies[i].ok()) {
+      let (w, h) = ui.image_size(next.nodes, key);
+      if (w > 0 && h > 0) {
+        got = next.dev.decode(f.replies[i].body, w, h);
+      }
+    }
+    match (got) {
+      Some(img) => {
+        next = remember(next, key, img);
+      },
+      None => {
+        next = App { ...next, failed: next.failed.append(key) };
+      }
+    }
+    i += 1;
+  }
+  return App { ...next, dirty: true };
+}
+
+// --- replies
+
+function failed(own s: App, what: string, r: plex.Reply): App {
+  log.warn("plex: " + what + " failed: " + r.problem());
+  return App { ...s, error: what + ": " + r.problem(), dirty: true };
+}
+
+// Handles the reply to a request with `purpose`: the word before the first
+// colon says what the request was, and the rest names its item.
+function answer(own s: App, purpose: string, r: plex.Reply): App {
+  let (verb, rest) = split_purpose(purpose);
+  let t = App { ...s, dirty: true };
+  if (verb == "pin") {
+    return got_pin(t, r);
+  }
+  if (verb == "pincheck") {
+    return got_pin_check(t, r);
+  }
+  if (verb == "user") {
+    if (r.ok()) {
+      let a = plex.parse_account(r.text());
+      let u = App { ...t, account: a.name };
+      save(u);
+      return u;
+    }
+    return t;
+  }
+  if (verb == "resources") {
+    return got_servers(t, r);
+  }
+  if (verb == "identity") {
+    return got_identity(t, num(rest), r);
+  }
+  if (r.status == 401 && t.client.token.len() > 0 && t.screen != ui.SERVERS) {
+    return open_servers(App { ...t, error: "The server refused the sign-in. Choose a server again." });
+  }
+  if (!r.ok()) {
+    return failed(t, verb, r);
+  }
+  return got_media(t, verb, rest, r);
+}
+
+function got_media(own t: App, verb: string, rest: string, r: plex.Reply): App {
+  if (verb == "sections") {
+    return App { ...t, sections: plex.parse_sections(r.text()), error: "" };
+  }
+  if (verb == "hubs") {
+    return App { ...t, hubs: plex.parse_hubs(r.text()), error: "" };
+  }
+  if (verb == "items") {
+    return got_items(t, rest, r);
+  }
+  if (verb == "meta") {
+    if (t.screen == ui.DETAIL && t.item.key == rest) {
+      if let Some(it) = plex.parse_item(r.text()) {
+        return App { ...t, item: it };
+      }
+    }
+    return t;
+  }
+  if (verb == "children") {
+    if (t.screen == ui.DETAIL && t.item.key == rest) {
+      return App { ...t, children: plex.parse_items(r.text()).items };
+    }
+    return t;
+  }
+  if (verb == "autoplay") {
+    if let Some(it) = plex.parse_item(r.text()) {
+      return play_detail(open_item(t, it));
+    }
+    return t;
+  }
+  if (verb == "leaves") {
+    return play_first(t, plex.parse_items(r.text()).items);
+  }
+  if (verb == "search") {
+    if (rest == t.query) {
+      return App { ...t, results: plex.parse_hubs(r.text()), rows: [], error: "" };
+    }
+    return t;
+  }
+  return t;
+}
+
+function split_purpose(p: string): (string, string) {
+  if let Some(i) = p.index_of(":") {
+    return (p.split_at(i).0, p.split_at(i + 1).1);
+  }
+  return (p, "");
+}
+
+function got_items(own t: App, rest: string, r: plex.Reply): App {
+  if (t.screen != ui.LIBRARY || !rest.starts_with(t.section.key + ":")) {
+    return t;
+  }
+  let page = plex.parse_items(r.text());
+  let items = t.items;
+  for it in page.items {
+    items = items.append(it);
+  }
+  return App { ...t, items: items, total: page.total };
+}
+
+// --- sign-in and servers
+
+function got_pin(own t: App, r: plex.Reply): App {
+  if (!r.ok()) {
+    return failed(t, "sign-in", r);
+  }
+  let Some(pin) = plex.parse_pin(r.text()) else {
+    return App { ...t, error: "plex.tv sent no PIN" };
+  };
+  return App { ...t, pin: pin, pin_at: t.dev.mono_ms() + PIN_MS, error: "" };
+}
+
+function got_pin_check(own t: App, r: plex.Reply): App {
+  if (t.pin.id == 0i64) {
+    return t;
+  }
+  if (!r.ok()) {
+    if (r.status == 404) {
+      return App { ...t, pin: plex.Pin { id: 0i64, code: "", token: "" }, error: "The code ran out. Sign in again." };
+    }
+    return App { ...t, pin_at: t.dev.mono_ms() + PIN_MS };
+  }
+  let Some(pin) = plex.parse_pin(r.text()) else {
+    return App { ...t, pin_at: t.dev.mono_ms() + PIN_MS };
+  };
+  if (pin.token.len() == 0) {
+    return App { ...t, pin_at: t.dev.mono_ms() + PIN_MS };
+  }
+  let client = t.client.with_token(pin.token);
+  let u = App { ...t, client: client, pin: plex.Pin { id: 0i64, code: "", token: "" }, error: "" };
+  save(u);
+  log.info("plex: signed in");
+  return ask(open_servers(u), "user", User);
+}
+
+function open_servers(own s: App): App {
+  let t = App { ...s, screen: ui.SERVERS, title: "Choose a server", scroll: 0, stack: [], dirty: true };
+  return ask(t, "resources", Resources);
+}
+
+function got_servers(own t: App, r: plex.Reply): App {
+  if (!r.ok()) {
+    return failed(t, "the server list", r);
+  }
+  let list = plex.parse_servers(r.text());
+  let states: string[] = [];
+  for sv in list {
+    states = states.append("");
+  }
+  let u = App { ...t, servers: list, states: states };
+  if (list.len() == 1) {
+    return connect(u, 0);
+  }
+  return u;
+}
+
+// Tries the connections of server `i` in turn, from the first.
+function connect(own s: App, i: i32): App {
+  if (i < 0 || i >= s.servers.len()) {
+    return s;
+  }
+  let states = s.states.with(i, "connecting");
+  let t = App { ...s, conn: 0, states: states, dirty: true };
+  return try_connection(t, i);
+}
+
+function try_connection(own s: App, i: i32): App {
+  let order = plex.connection_order(s.servers[i]);
+  if (s.conn >= order.len()) {
+    return App { ...s, states: s.states.with(i, "unreachable") };
+  }
+  let uri = order[s.conn];
+  let token = s.servers[i].token;
+  return ask(s, "identity:" + i.to_string(), Identity(uri, token));
+}
+
+function got_identity(own t: App, i: i32, r: plex.Reply): App {
+  if (i < 0 || i >= t.servers.len()) {
+    return t;
+  }
+  let order = plex.connection_order(t.servers[i]);
+  if (!r.ok() || t.conn >= order.len()) {
+    log.info("plex: no answer from " + t.servers[i].name + " at connection " + t.conn.to_string());
+    return try_connection(App { ...t, conn: t.conn + 1 }, i);
+  }
+  let sv = t.servers[i];
+  let base = plex.Base { uri: order[t.conn], token: sv.token };
+  let states = t.states.with(i, "connected");
+  let u = App { ...t, server: sv, base: base, states: states, error: "" };
+  save(u);
+  log.info("plex: connected to " + sv.name);
+  return open_home(u);
+}
+
+// --- navigation
+
+function open_home(own s: App): App {
+  let title = s.server.name;
+  let t = App { ...s, screen: ui.HOME, tab: 0, title: title, scroll: 0, rows: [], stack: [], items: [], children: [], dirty: true };
+  return ask(ask(t, "hubs", Hubs), "sections", Sections);
+}
+
+function page_of(s: App): Page {
+  return Page { screen: s.screen, title: s.title, scroll: s.scroll, rows: s.rows, items: s.items, total: s.total, section: s.section, item: s.item, children: s.children };
+}
+
+function push(own s: App): App {
+  let stack = s.stack.append(page_of(s));
+  return App { ...s, stack: stack };
+}
+
+function restore(own s: App, p: Page): App {
+  return App { ...s, screen: p.screen, title: p.title, scroll: p.scroll, rows: p.rows, items: p.items, total: p.total, section: p.section, item: p.item, children: p.children, dirty: true };
+}
+
+function pop(own s: App): App {
+  if (s.stack.len() == 0) {
+    return s;
+  }
+  let p = s.stack[s.stack.len() - 1];
+  let stack = s.stack.take(s.stack.len() - 1);
+  return restore(App { ...s, stack: stack }, p);
+}
+
+function open_tab(own s: App, tab: i32): App {
+  if (tab < 0 || tab >= ui.tab_screens().len()) {
+    return s;
+  }
+  let screen = ui.tab_screens()[tab];
+  s.dev.keyboard(false);
+  let title = [s.server.name, "Libraries", "Search", "Settings"][tab];
+  let need_hubs = screen == ui.HOME && s.hubs.len() == 0;
+  let need_sections = screen == ui.SECTIONS && s.sections.len() == 0;
+  let t = App { ...s, screen: screen, tab: tab, title: title, scroll: 0, rows: [], stack: [], typing: false, dirty: true };
+  if (need_hubs) {
+    return ask(t, "hubs", Hubs);
+  }
+  if (need_sections) {
+    return ask(t, "sections", Sections);
+  }
+  return t;
+}
+
+function open_section(own s: App, i: i32): App {
+  if (i < 0 || i >= s.sections.len()) {
+    return s;
+  }
+  let sec = s.sections[i];
+  return more_items(App { ...push(s), screen: ui.LIBRARY, title: sec.title, section: sec, items: [], total: 0, scroll: 0, dirty: true });
+}
+
+// Asks for the next page of the library when the screen nears its end.
+function more_items(own s: App): App {
+  if (s.screen != ui.LIBRARY || s.total > 0 && s.items.len() >= s.total) {
+    return s;
+  }
+  let purpose = "items:" + s.section.key + ":" + s.items.len().to_string();
+  for a in s.asks {
+    if (a.purpose == purpose) {
+      return s;
+    }
+  }
+  if (has_call(s.api, purpose)) {
+    return s;
+  }
+  let key = s.section.key;
+  let start = s.items.len();
+  return ask(s, purpose, Items(key, start));
+}
+
+function has_call(c: Option[Call], purpose: string): boolean {
+  match (c) {
+    Some(call) => {
+      return call.purpose == purpose;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+function open_item(own s: App, it: plex.Item): App {
+  if (it.key.len() == 0) {
+    return s;
+  }
+  let u = ask(App { ...push(s), screen: ui.DETAIL, title: plex.card_title(it), item: it, children: [], scroll: 0, dirty: true }, "meta:" + it.key, Meta(it.key));
+  if (it.kind == "show" || it.kind == "season" || it.kind == "artist" || it.kind == "album") {
+    return ask(u, "children:" + it.key, Children(it.key));
+  }
+  return u;
+}
+
+function item_at(s: App, act: string): Option[plex.Item] {
+  let parts = act.split(":");
+  if (parts[0] == "hub" && parts.len() == 3) {
+    let hubs = s.hubs;
+    if (s.screen == ui.SEARCH) {
+      hubs = s.results;
+    }
+    let i = num(parts[1]);
+    let j = num(parts[2]);
+    if (i < hubs.len() && j < hubs[i].items.len()) {
+      return Some(hubs[i].items[j]);
+    }
+  }
+  if (parts[0] == "grid" && parts.len() == 2 && num(parts[1]) < s.items.len()) {
+    return Some(s.items[num(parts[1])]);
+  }
+  if (parts[0] == "child" && parts.len() == 2 && num(parts[1]) < s.children.len()) {
+    return Some(s.children[num(parts[1])]);
+  }
+  return None;
+}
+
+// Plays the item of the detail screen: the item itself, the first episode
+// of a season that the user has not seen, or that of a show.
+function play_detail(own s: App): App {
+  let it = s.item;
+  if (plex.playable_kind(it.kind)) {
+    return start_play(s, it, []);
+  }
+  if (it.kind == "show") {
+    return ask(s, "leaves:" + it.key, Leaves(it.key));
+  }
+  let children = s.children;
+  return play_first(s, children);
+}
+
+function play_first(own s: App, items: plex.Item[]): App {
+  let i = 0;
+  while (i < items.len()) {
+    if (plex.playable_kind(items[i].kind) && !plex.watched(items[i])) {
+      return start_play(s, items[i], items.drop(i + 1));
+    }
+    i += 1;
+  }
+  if (items.len() > 0 && plex.playable_kind(items[0].kind)) {
+    return start_play(s, items[0], items.drop(1));
+  }
+  return App { ...s, error: "Nothing to play" };
+}
+
+function toggle_watched(own s: App): App {
+  let it = s.item;
+  let now = !plex.watched(it);
+  let views = 0;
+  let offset = it.offset_ms;
+  let seen = 0;
+  if (now) {
+    views = 1;
+    offset = 0i64;
+    seen = it.leaves;
+  }
+  let changed = plex.Item { ...it, views: views, offset_ms: offset, viewed_leaves: seen };
+  return ask(App { ...s, item: changed, dirty: true }, "scrobble", Scrobble(it.key, now));
+}
+
+function sign_out(own s: App): App {
+  let client = s.client.with_token("");
+  let t = App { ...s, client: client, account: "", server: no_server(), base: plex.Base { uri: "", token: "" }, servers: [], hubs: [], sections: [], results: [], screen: ui.LOGIN, stack: [], dirty: true };
+  save(t);
+  return t;
+}
+
+function cycle_quality(own s: App): App {
+  let quality = (s.quality + 1) % plex.qualities().len();
+  let t = App { ...s, quality: quality, dirty: true };
+  save(t);
+  return t;
+}
+
+// --- playback
+
+function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
+  let session = hex_id(s.dev);
+  let q = plex.qualities()[s.quality];
+  let stream = plex.stream_for(s.client, s.base, it, q, it.offset_ms, session);
+  let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms };
+  let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
+  log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
+  if (!t.dev.play(stream.url)) {
+    return App { ...t, play: Play { ...t.play, status: "The player refused the stream" } };
+  }
+  return t;
+}
+
+function art_of(it: plex.Item): string {
+  if (it.art.len() > 0) {
+    return it.art;
+  }
+  return plex.poster(it);
+}
+
+function audio(p: Play): boolean {
+  return p.item.kind == "track";
+}
+
+function timeline(own s: App, state: string): App {
+  let p = s.play;
+  return report(s, Timeline(p.item.key, state, p.position, p.duration));
+}
+
+function prepared(own s: App): App {
+  log.info("plex: prepared " + s.play.item.key);
+  let d = s.dev.duration();
+  let p = Play { ...s.play, prepared: true, status: "" };
+  if (d > 0i64) {
+    p = Play { ...p, duration: d };
+  }
+  if (p.stream.offset_ms > 0i64) {
+    s.dev.seek(p.stream.offset_ms);
+  }
+  let t = App { ...s, play: p, dirty: true };
+  return resume(t);
+}
+
+// Shows the video on the window and plays.
+function resume(own s: App): App {
+  let p = s.play;
+  if (!p.prepared) {
+    return s;
+  }
+  let video = p.video;
+  if (!audio(p) && !video && s.window != 0 as usize) {
+    video = s.dev.show_video(s.window);
+    if (video) {
+      log.info("plex: video on the window");
+    }
+  }
+  s.dev.start();
+  s.dev.keep_screen_on(true);
+  if (video) {
+    s.dev.immersive(true);
+  }
+  let at = s.dev.mono_ms();
+  return timeline(App { ...s, play: Play { ...p, paused: false, video: video, overlay: !video, reported_at: at }, dirty: true }, "playing");
+}
+
+// Pauses and takes the video off the window, so the overlay can show.
+function pause_play(own s: App): App {
+  let p = s.play;
+  s.dev.pause();
+  if (p.video) {
+    s.dev.hide_video();
+  }
+  s.dev.keep_screen_on(false);
+  s.dev.immersive(false);
+  let pos = s.dev.position();
+  log.info("plex: paused at " + pos.to_string());
+  let t = App { ...s, play: Play { ...p, paused: true, video: false, overlay: true, position: pos }, dirty: true };
+  return timeline(t, "paused");
+}
+
+function seek_by(own s: App, delta: i64): App {
+  let target = s.dev.position() + delta;
+  if (target < 0i64) {
+    target = 0i64;
+  }
+  if (s.play.duration > 0i64 && target > s.play.duration) {
+    target = s.play.duration - 1000i64;
+  }
+  return seek_to(s, target);
+}
+
+function seek_to(own s: App, ms: i64): App {
+  if (s.play.stream.transcode) {
+    // A transcode starts at its offset, so a seek starts a new one there.
+    let it = plex.Item { ...s.play.item, offset_ms: ms };
+    let p = s.play;
+    s.dev.stop();
+    let t = report(App { ...s, play: Play { ...p, prepared: false, video: false, overlay: true, status: "Loading" } }, StopTranscode(p.session));
+    let q = plex.qualities()[t.quality];
+    let session = hex_id(t.dev);
+    let stream = plex.stream_for(t.client, t.base, it, q, ms, session);
+    let ok = t.dev.play(stream.url);
+    return App { ...t, play: Play { ...t.play, stream: stream, session: session, position: ms }, dirty: true };
+  }
+  s.dev.seek(ms);
+  return App { ...s, play: Play { ...s.play, position: ms }, dirty: true };
+}
+
+// Ends the playback and goes back. A watched item is marked so.
+function stop_play(own s: App, completed: boolean): App {
+  let p = s.play;
+  let pos = p.position;
+  if (p.prepared) {
+    pos = s.dev.position();
+  }
+  s.dev.stop();
+  s.dev.keep_screen_on(false);
+  s.dev.immersive(false);
+  if (completed) {
+    pos = p.duration;
+  }
+  let t = timeline(App { ...s, play: Play { ...p, position: pos } }, "stopped");
+  if (p.stream.transcode) {
+    t = report(t, StopTranscode(p.session));
+  }
+  if (completed || p.duration > 0i64 && pos * 10i64 >= p.duration * 9i64) {
+    t = report(t, Scrobble(p.item.key, true));
+  }
+  return refresh_detail(pop(App { ...t, play: no_play() }));
+}
+
+// Asks the server again for the item of a detail screen, for its new
+// position and its watched state.
+function refresh_detail(own s: App): App {
+  if (s.screen != ui.DETAIL) {
+    return s;
+  }
+  let key = s.item.key;
+  return ask(s, "meta:" + key, Meta(key));
+}
+
+function completed(own s: App): App {
+  let queue = s.play.queue;
+  let t = stop_play(s, true);
+  if (queue.len() > 0) {
+    return start_play(t, queue[0], queue.drop(1));
+  }
+  return t;
+}
+
+function play_failed(own s: App, what: i32, extra: i32): App {
+  let p = s.play;
+  log.warn("plex: playback failed: " + what.to_string() + " " + extra.to_string());
+  if (!p.stream.transcode && !p.retried) {
+    // The file did not play as it is, so the server transcodes it.
+    s.dev.stop();
+    let q = plex.qualities()[2];
+    let session = hex_id(s.dev);
+    let it = plex.Item { ...p.item, offset_ms: p.position };
+    let stream = plex.stream_for(s.client, s.base, it, q, p.position, session);
+    let ok = s.dev.play(stream.url);
+    return App { ...s, play: Play { ...p, stream: stream, session: session, retried: true, prepared: false, video: false, overlay: true, status: "Transcoding" }, dirty: true };
+  }
+  if (p.video) {
+    s.dev.hide_video();
+  }
+  return App { ...s, play: Play { ...p, video: false, overlay: true, paused: true, status: "This item does not play (" + what.to_string() + ", " + extra.to_string() + ")" }, dirty: true };
+}
+
+function player_event(own s: App, c: player.Change): App {
+  if (!s.play.active) {
+    return s;
+  }
+  match (c) {
+    player.Prepared => {
+      return prepared(s);
+    },
+    player.Completed => {
+      return completed(s);
+    },
+    player.Failed(what, extra) => {
+      return play_failed(s, what, extra);
+    },
+    player.Buffering(on) => {
+      let status = "";
+      if (on) {
+        status = "Buffering";
+      }
+      return App { ...s, play: Play { ...s.play, buffering: on, status: status }, dirty: true };
+    },
+    player.Rendering => {
+      return s;
+    },
+    player.Seeked => {
+      return App { ...s, play: Play { ...s.play, position: s.dev.position() }, dirty: true };
+    }
+  }
+}
+
+// Keeps the position on the overlay and the server up to date.
+function play_tick(own s: App, now: i64): App {
+  let p = s.play;
+  if (!p.active || !p.prepared || p.paused) {
+    return s;
+  }
+  let t = s;
+  if (now - p.updated_at >= 500i64) {
+    t = App { ...t, play: Play { ...t.play, position: t.dev.position(), updated_at: now }, dirty: t.play.overlay };
+  }
+  if (now - t.play.reported_at >= REPORT_MS) {
+    t = timeline(App { ...t, play: Play { ...t.play, reported_at: now } }, "playing");
+  }
+  return t;
+}
+
+function player_act(own s: App, act: string, n: ui.Node, x: i32): App {
+  let p = s.play;
+  if (act == "overlay") {
+    return pause_play(s);
+  }
+  if (act == "toggle") {
+    if (p.paused || !p.prepared) {
+      return resume(s);
+    }
+    return pause_play(s);
+  }
+  if (act == "rew") {
+    return seek_by(s, -10000i64);
+  }
+  if (act == "ffw") {
+    return seek_by(s, 30000i64);
+  }
+  if (act == "seek" && p.duration > 0i64 && n.w > 0) {
+    let f = (x - n.x) as i64 * 1000i64 / (n.w as i64);
+    return seek_to(s, p.duration * f / 1000i64);
+  }
+  if (act == "back") {
+    return stop_play(s, false);
+  }
+  return s;
+}
+
+// --- touches and keys
+
+function scroll_limit(s: App, m: ui.Metrics): i32 {
+  let v = view(s);
+  let visible = ui.content_bottom(m, s.screen) - ui.content_top(m);
+  let h = 0;
+  if (s.screen == ui.HOME) {
+    h = ui.home_height(m, v);
+  } else if (s.screen == ui.SEARCH) {
+    h = ui.home_height(m, v) + 72 * m.u;
+  } else if (s.screen == ui.LIBRARY) {
+    h = ui.grid_height(m, s.items.len());
+  } else if (s.screen == ui.DETAIL) {
+    h = ui.detail_height(m, v);
+  } else if (s.screen == ui.SECTIONS) {
+    h = s.sections.len() * 64 * m.u + 16 * m.u;
+  } else if (s.screen == ui.SERVERS) {
+    h = s.servers.len() * 72 * m.u + 160 * m.u;
+  }
+  if (h <= visible) {
+    return 0;
+  }
+  return h - visible;
+}
+
+function clamp(v: i32, lo: i32, hi: i32): i32 {
+  if (v < lo) {
+    return lo;
+  }
+  if (v > hi) {
+    return hi;
+  }
+  return v;
+}
+
+function row_index(group: string): i32 {
+  if (group.starts_with("row:")) {
+    return num(group.split_at(4).1);
+  }
+  return -1;
+}
+
+function row_offset(rows: i32[], i: i32): i32 {
+  if (i >= 0 && i < rows.len()) {
+    return rows[i];
+  }
+  return 0;
+}
+
+function set_row(rows: i32[], i: i32, v: i32): i32[] {
+  let out = rows;
+  while (out.len() <= i) {
+    out = out.append(0);
+  }
+  return out.with(i, v);
+}
+
+function row_items(s: App, i: i32): i32 {
+  let hubs = s.hubs;
+  if (s.screen == ui.SEARCH) {
+    hubs = s.results;
+  }
+  if (i >= 0 && i < hubs.len()) {
+    return hubs[i].items.len();
+  }
+  return 0;
+}
+
+function touch(own s: App, action: i32, x: f32, y: f32): App {
+  let m = ui.metrics(s.w, s.h);
+  let slop = (8 * m.u) as f32;
+  let p = s.press;
+  if (action == 0) {
+    let group = ui.group_at(s.nodes, x as i32, y as i32);
+    return App { ...s, press: Press { active: true, x0: x, y0: y, x: x, y: y, axis: 0, group: group, scroll0: s.scroll, row0: row_offset(s.rows, row_index(group)) } };
+  }
+  if (!p.active) {
+    return s;
+  }
+  if (action == 2) {
+    let dx = x - p.x0;
+    let dy = y - p.y0;
+    let axis = p.axis;
+    if (axis == 0 && (abs_f(dx) > slop || abs_f(dy) > slop)) {
+      axis = 2;
+      if (p.group.len() > 0 && abs_f(dx) > abs_f(dy)) {
+        axis = 1;
+      }
+    }
+    let t = App { ...s, press: Press { ...p, x: x, y: y, axis: axis } };
+    if (axis == 1) {
+      let i = row_index(p.group);
+      let max = ui.hub_row_width(m, row_items(t, i)) - m.w;
+      if (max < 0) {
+        max = 0;
+      }
+      return App { ...t, rows: set_row(t.rows, i, clamp(p.row0 - dx as i32, 0, max)), dirty: true };
+    }
+    if (axis == 2) {
+      let next = clamp(p.scroll0 - dy as i32, 0, scroll_limit(t, m));
+      return more_items(App { ...t, scroll: next, dirty: true });
+    }
+    return t;
+  }
+  let released = App { ...s, press: no_press() };
+  if (action == 1 && p.axis == 0) {
+    return tapped(released, x as i32, y as i32);
+  }
+  return released;
+}
+
+function abs_f(v: f32): f32 {
+  if (v < 0.0) {
+    return 0.0 - v;
+  }
+  return v;
+}
+
+function tapped(own s: App, x: i32, y: i32): App {
+  let Some(n) = ui.hit(s.nodes, x, y) else {
+    if (s.typing) {
+      s.dev.keyboard(false);
+      return App { ...s, typing: false, dirty: true };
+    }
+    return s;
+  };
+  return act(s, n.act, n, x);
+}
+
+// Runs the action of a tapped node.
+pub function act(own s: App, a: string, n: ui.Node, x: i32): App {
+  if (s.screen == ui.PLAYER) {
+    return player_act(s, a, n, x);
+  }
+  let t = App { ...s, error: "" };
+  if (a == "signin") {
+    return ask(t, "pin", NewPin);
+  }
+  if (a == "cancel") {
+    return App { ...t, pin: plex.Pin { id: 0i64, code: "", token: "" }, dirty: true };
+  }
+  if (a == "refresh") {
+    return open_servers(t);
+  }
+  if (a.starts_with("server:")) {
+    return connect(t, num(a.split_at(7).1));
+  }
+  if (a.starts_with("tab:")) {
+    return open_tab(t, num(a.split_at(4).1));
+  }
+  if (a.starts_with("section:")) {
+    return open_section(t, num(a.split_at(8).1));
+  }
+  if (a == "back") {
+    return pop(t);
+  }
+  if (a == "play") {
+    return play_detail(t);
+  }
+  if (a == "watched") {
+    return toggle_watched(t);
+  }
+  if (a == "type") {
+    t.dev.keyboard(true);
+    return App { ...t, typing: true, dirty: true };
+  }
+  if (a == "servers") {
+    return open_servers(push(t));
+  }
+  if (a == "quality") {
+    return cycle_quality(t);
+  }
+  if (a == "signout") {
+    return sign_out(t);
+  }
+  if let Some(it) = item_at(t, a) {
+    return open_item(t, it);
+  }
+  return t;
+}
+
+const KEY_BACK: i32 = 4;
+
+const KEY_ENTER: i32 = 66;
+
+const KEY_DEL: i32 = 67;
+
+function back(own s: App): App {
+  if (s.typing) {
+    s.dev.keyboard(false);
+    return App { ...s, typing: false, dirty: true };
+  }
+  if (s.screen == ui.PLAYER) {
+    return stop_play(s, false);
+  }
+  if (s.stack.len() > 0) {
+    return pop(s);
+  }
+  if (s.screen != ui.HOME && s.screen != ui.LOGIN && s.screen != ui.SERVERS) {
+    return open_tab(s, 0);
+  }
+  s.dev.finish();
+  return s;
+}
+
+function key(own s: App, code: i32, action: i32): App {
+  if (action != 1) {
+    return s;
+  }
+  if (code == KEY_BACK) {
+    return back(s);
+  }
+  if (!s.typing) {
+    return s;
+  }
+  if (code == KEY_DEL && s.query.len() > 0) {
+    let q = drop_last(s.query);
+    return query_changed(s, q);
+  }
+  if (code == KEY_ENTER) {
+    s.dev.keyboard(false);
+    return App { ...s, typing: false, search_at: s.dev.mono_ms(), dirty: true };
+  }
+  return s;
+}
+
+function drop_last(q: string): string {
+  let cs: string[] = [];
+  for c in q.chars() {
+    cs = cs.append(c.to_string());
+  }
+  return cs.take(cs.len() - 1).join("");
+}
+
+function typed(own s: App, c: i32): App {
+  if (!s.typing || c < 32 || c == 127) {
+    return s;
+  }
+  let q = s.query + char_string(c);
+  return query_changed(s, q);
+}
+
+function char_string(c: i32): string {
+  return utf8.encode(c as char);
+}
+
+function query_changed(own s: App, q: string): App {
+  return App { ...s, query: q, search_at: s.dev.mono_ms() + SEARCH_MS, dirty: true };
+}
+
+function search_tick(own s: App, now: i64): App {
+  if (s.search_at == 0i64 || now < s.search_at) {
+    return s;
+  }
+  let q = s.query;
+  if (q.trim().len() == 0) {
+    return App { ...s, search_at: 0i64, results: [], dirty: true };
+  }
+  return ask(App { ...s, search_at: 0i64 }, "search:" + q, Search(q));
+}
+
+function pin_tick(own s: App, now: i64): App {
+  if (s.pin.id == 0i64 || now < s.pin_at || s.screen != ui.LOGIN) {
+    return s;
+  }
+  for a in s.asks {
+    if (a.purpose == "pincheck") {
+      return s;
+    }
+  }
+  if (has_call(s.api, "pincheck")) {
+    return s;
+  }
+  return ask(App { ...s, pin_at: now + PIN_MS }, "pincheck", CheckPin(s.pin.id));
+}
+
+// --- the loop
+
+pub function view(s: App): ui.View {
+  let hubs = s.hubs;
+  if (s.screen == ui.SEARCH) {
+    hubs = s.results;
+  }
+  let p = s.play;
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, art: art_of(p.item), audio: audio(p), status: p.status };
+  return ui.View {
+    ...ui.empty_view(s.w, s.h),
+    screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
+    sections: s.sections, items: s.items, total: s.total, item: s.item, children: s.children,
+    pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
+    query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
+    quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
+    loading: busy(s),
+  };
+}
+
+function player_subtitle(it: plex.Item): string {
+  if (it.kind == "episode") {
+    return it.grandparent + " · " + plex.episode_code(it);
+  }
+  if (it.kind == "track") {
+    return it.grandparent;
+  }
+  if (it.year > 0) {
+    return it.year.to_string();
+  }
+  return "";
+}
+
+function busy(s: App): boolean {
+  return s.asks.len() > 0 || is_some_call(s.api);
+}
+
+function is_some_call(c: Option[Call]): boolean {
+  match (c) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+function is_some_batch(b: Option[Batch]): boolean {
+  match (b) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// The milliseconds to wait for the next event before a Tick.
+pub function timeout(s: App, now: i64): i32 {
+  if (is_some_call(s.api) || is_some_batch(s.img) || is_some_call(s.report) || s.asks.len() > 0 || s.reports.len() > 0) {
+    return 30;
+  }
+  if (s.play.active && s.play.prepared && !s.play.paused) {
+    return 500;
+  }
+  if (s.search_at > 0i64) {
+    return clamp((s.search_at - now) as i32, 1, 1000);
+  }
+  if (s.pin.id != 0i64) {
+    return clamp((s.pin_at - now) as i32, 1, 2000);
+  }
+  return -1;
+}
+
+function event(own s: App, e: android.Event): App {
+  if let Some(c) = player.event(e) {
+    return player_event(s, c);
+  }
+  match (e) {
+    android.Start => {
+      return App { ...s, shown: true, dirty: true };
+    },
+    android.Stop => {
+      return App { ...s, shown: false };
+    },
+    android.Pause => {
+      if (s.play.active && s.play.prepared && !s.play.paused) {
+        return pause_play(s);
+      }
+      return s;
+    },
+    android.WindowCreated(w) => {
+      let (ww, wh) = s.dev.size(w.ptr);
+      return App { ...s, window: w.ptr, w: ww, h: wh, dirty: true };
+    },
+    android.WindowResized(w) => {
+      let (ww, wh) = s.dev.size(w.ptr);
+      return App { ...s, window: w.ptr, w: ww, h: wh, dirty: true };
+    },
+    android.WindowRedraw(w) => {
+      return App { ...s, window: w.ptr, dirty: true };
+    },
+    android.WindowDestroyed(_) => {
+      if (s.play.video) {
+        s.dev.hide_video();
+        return App { ...pause_play(s), window: 0 as usize };
+      }
+      return App { ...s, window: 0 as usize };
+    },
+    android.Touch(action, x, y) => {
+      return touch(s, action, x, y);
+    },
+    android.Key(code, action) => {
+      return key(s, code, action);
+    },
+    android.Char(c) => {
+      return typed(s, c);
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+// Draws the screen when it changed. The window shows the video instead
+// while the player has it.
+function draw_screen(own s: App): App {
+  if (!s.dirty || s.window == 0 as usize || s.w == 0) {
+    return s;
+  }
+  let ns = ui.nodes(view(s));
+  if (s.play.video) {
+    return App { ...s, nodes: ns, dirty: false };
+  }
+  let f = s.dev.lock(s.window);
+  if (f.width > 0) {
+    ui.render(f, ns, s.cache);
+  }
+  s.dev.post(f);
+  return App { ...s, nodes: ns, dirty: false };
+}
+
+// The state after event `e`: the app handles it, polls its workers, starts
+// the next requests and draws the screen when it changed.
+pub function step(own s: App, e: android.Event): App {
+  let now = s.dev.mono_ms();
+  let t = search_tick(pin_tick(play_tick(event(s, e), now), now), now);
+  t = poll_report(poll_images(poll_api(t)));
+  t = start_report(start_api(t));
+  t = draw_screen(t);
+  return start_images(t);
+}
+
+// Joins the workers that still run, and stops the player.
+pub function close(own s: App): void {
+  if (s.play.active) {
+    s.dev.stop();
+  }
+  if let Some(c) = s.api {
+    let rs = c.w.join();
+  }
+  if let Some(b) = s.img {
+    let rs = b.w.join();
+  }
+  if let Some(r) = s.report {
+    let rs = r.w.join();
+  }
+}

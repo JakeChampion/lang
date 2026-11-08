@@ -1,0 +1,446 @@
+// The behaviour of Fern for Plex on sequences of events, on the host. A fake
+// device answers each request from a table in the shape that plex.tv and a
+// server send, records each request and each call of the player, and gives a
+// frame in memory. Its workers run on the inline scheduler, so each poll
+// finds the reply. With PLEX_CONTROL_PNG set to a directory, the test writes
+// the last frame of each case there as a PNG file.
+import "std/android";
+import "std/android/draw";
+import "std/png";
+import "std/test";
+import "std/worker";
+import "./control";
+import "./plex";
+import "./ui";
+
+const W: i32 = 540;
+
+const H: i32 = 1200;
+
+function frame(): draw.Frame {
+  unsafe {
+    let bits = __alloc(W * H * 4);
+    return draw.Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: W, height: H, stride: W };
+  }
+}
+
+function free_frame(own f: draw.Frame): void {
+  unsafe {
+    __free(f.bits, f.stride * f.height * 4);
+  }
+}
+
+const RESOURCES: string = "[{\"name\":\"Den\",\"provides\":\"server\",\"clientIdentifier\":\"abc\",\"accessToken\":\"srv\",\"owned\":true,\"connections\":[{\"uri\":\"https://down.example:32400\",\"local\":true,\"relay\":false},{\"uri\":\"https://up.example:32400\",\"local\":false,\"relay\":false}]}]";
+
+const HUBS: string = "{\"MediaContainer\":{\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentThumb\":\"/library/metadata/70/thumb\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"thumb\":\"/library/metadata/501/thumb\"},{\"ratingKey\":\"502\",\"type\":\"movie\",\"title\":\"Amélie\",\"year\":2001,\"thumb\":\"/library/metadata/502/thumb\"}]}]}}";
+
+const SECTIONS: string = "{\"MediaContainer\":{\"Directory\":[{\"key\":\"1\",\"type\":\"movie\",\"title\":\"Movies\"},{\"key\":\"2\",\"type\":\"show\",\"title\":\"TV Shows\"}]}}";
+
+const MOVIE: string = "{\"MediaContainer\":{\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010,\"summary\":\"A thief who steals corporate secrets through the use of dream-sharing technology.\",\"thumb\":\"/library/metadata/501/thumb\",\"art\":\"/library/metadata/501/art\",\"duration\":8880000,\"viewOffset\":60000,\"Media\":[{\"container\":\"mp4\",\"videoCodec\":\"h264\",\"audioCodec\":\"aac\",\"videoResolution\":\"1080\",\"Part\":[{\"key\":\"/library/parts/11/file.mp4\"}]}]}]}}";
+
+// A page of a library of 63 movies from `start`.
+function page(start: i32): string {
+  let n = 60;
+  if (start >= 60) {
+    n = 3;
+  }
+  let items: string[] = [];
+  for i in 0..n {
+    let k = (1000 + start + i).to_string();
+    items = items.append("{\"ratingKey\":\"" + k + "\",\"type\":\"movie\",\"title\":\"Movie " + k + "\",\"year\":1999}");
+  }
+  return "{\"MediaContainer\":{\"size\":" + n.to_string() + ",\"totalSize\":63,\"Metadata\":[" + items.join(",") + "]}}";
+}
+
+function ok(body: string): plex.Reply {
+  return plex.Reply { status: 200, body: body.bytes(), error: "" };
+}
+
+function query_value(u: string, key: string): string {
+  for part in u.split("?") {
+    for pair in part.split("&") {
+      if (pair.starts_with(key + "=")) {
+        return pair.split_at(key.len() + 1).1;
+      }
+    }
+  }
+  return "";
+}
+
+// The reply of the fake plex.tv and of the fake server. Its first address
+// does not answer, so the app tries the second.
+function reply_to(r: plex.Request): plex.Reply {
+  let u = r.url;
+  if (u.starts_with("https://down.example")) {
+    return plex.Reply { status: 0, body: [], error: "connect: refused" };
+  }
+  if (u.contains("/api/v2/pins/")) {
+    return ok("{\"id\":7,\"code\":\"ABCD\",\"authToken\":\"tok-1\"}");
+  }
+  if (u.contains("/api/v2/pins")) {
+    return ok("{\"id\":7,\"code\":\"ABCD\",\"authToken\":null}");
+  }
+  if (u.contains("/api/v2/user")) {
+    return ok("{\"friendlyName\":\"Ada\"}");
+  }
+  if (u.contains("/api/v2/resources")) {
+    return ok(RESOURCES);
+  }
+  if (u.contains("/identity")) {
+    return ok("{\"MediaContainer\":{\"machineIdentifier\":\"abc\"}}");
+  }
+  if (u.contains("/hubs/search")) {
+    return ok(HUBS);
+  }
+  if (u.contains("/hubs")) {
+    return ok(HUBS);
+  }
+  if (u.contains("/library/sections/1/all")) {
+    return ok(page(control.num(query_value(u, "X-Plex-Container-Start"))));
+  }
+  if (u.contains("/library/sections")) {
+    return ok(SECTIONS);
+  }
+  if (u.contains("/library/metadata/501")) {
+    return ok(MOVIE);
+  }
+  if (u.contains("/photo/:/transcode")) {
+    return ok("img");
+  }
+  if (u.contains("/:/timeline") || u.contains("/:/scrobble") || u.contains("/transcode/universal/stop")) {
+    return ok("");
+  }
+  return plex.Reply { status: 404, body: [], error: "" };
+}
+
+function reply_all(rs: plex.Request[]): plex.Reply[] {
+  let out: plex.Reply[] = [];
+  for r in rs {
+    out = out.append(reply_to(r));
+  }
+  return out;
+}
+
+// What the fake device saw: the requests, the calls of the player and the
+// files.
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]] }
+
+function new_log(): Log {
+  let none: string[] = [];
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none) };
+}
+
+function note(c: Cell[string[]], s: string): void {
+  c.set(c.get().append(s));
+}
+
+function fetch(log: Log, rs: plex.Request[]): worker.Worker[plex.Reply[]] {
+  for r in rs {
+    note(log.urls, r.method + " " + r.url);
+  }
+  return worker.spawn_on(worker.inline(), (): plex.Reply[] => reply_all(rs));
+}
+
+function fake_image(w: i32, h: i32): Option[draw.Image] {
+  let px: u8[] = [];
+  for i in 0..w * h {
+    px = px.append(200u8).append(60u8).append(40u8).append(255u8);
+  }
+  return Some(draw.Image { width: w, height: h, pixels: px });
+}
+
+function file_of(log: Log, path: string): string {
+  let prefix = path + "=";
+  let found = "";
+  for f in log.files.get() {
+    if (f.starts_with(prefix)) {
+      found = f.split_at(prefix.len()).1;
+    }
+  }
+  return found;
+}
+
+// A device at monotonic time `now` that draws on `f`.
+function fake(log: Log, now: i64, f: draw.Frame): control.Device {
+  return control.Device {
+    mono_ms: (): i64 => now,
+    read: (path: string): string => file_of(log, path),
+    write: (path: string, text: string): void => note(log.files, path + "=" + text),
+    size: (window: usize): (i32, i32) => (W, H),
+    lock: (window: usize): draw.Frame => f,
+    post: (g: draw.Frame): void => {},
+    finish: (): void => note(log.calls, "finish"),
+    keep_screen_on: (on: boolean): void => {},
+    immersive: (on: boolean): void => {},
+    keyboard: (on: boolean): void => note(log.calls, "keyboard " + on.to_string()),
+    fetch: (rs: plex.Request[]): worker.Worker[plex.Reply[]] => fetch(log, rs),
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => fake_image(w, h),
+    play: (uri: string): boolean => {
+      note(log.calls, "play " + uri);
+      return true;
+    },
+    show_video: (window: usize): boolean => {
+      note(log.calls, "show");
+      return true;
+    },
+    hide_video: (): void => note(log.calls, "hide"),
+    start: (): void => note(log.calls, "start"),
+    pause: (): void => note(log.calls, "pause"),
+    seek: (ms: i64): void => note(log.calls, "seek " + ms.to_string()),
+    position: (): i64 => 120000i64,
+    duration: (): i64 => 8880000i64,
+    stop: (): void => note(log.calls, "stop"),
+    random: (): i32 => 5,
+  };
+}
+
+// The app after event `e` at monotonic time `now`.
+function at(own s: control.App, log: Log, now: i64, f: draw.Frame, e: android.Event): control.App {
+  return control.step(control.App { ...s, dev: fake(log, now, f) }, e);
+}
+
+// Ticks until no request waits, from `now`.
+function settle(own s: control.App, log: Log, now: i64, f: draw.Frame): control.App {
+  let t = s;
+  for i in 0..30 {
+    t = at(t, log, now, f, android.Tick);
+  }
+  return t;
+}
+
+// The app after its window shows at time 0, with no files and no extras.
+function shown(log: Log, f: draw.Frame, server: string, token: string): control.App {
+  let s = at(control.new(fake(log, 0i64, f), "/data", server, token, ""), log, 0i64, f, android.Start);
+  return settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+}
+
+function centre(n: ui.Node): (i32, i32) {
+  return (n.x + n.w / 2, n.y + n.h / 2);
+}
+
+function node(s: control.App, act: string): Option[ui.Node] {
+  for n in s.nodes {
+    if (n.act == act) {
+      return Some(n);
+    }
+  }
+  return None;
+}
+
+// A tap on the node with action `act`, then ticks.
+function tap(own s: control.App, log: Log, now: i64, f: draw.Frame, act: string): control.App {
+  let Some(n) = node(s, act) else {
+    return s;
+  };
+  let (x, y) = centre(n);
+  let t = at(s, log, now, f, android.Touch(0, x as f32, y as f32));
+  return settle(at(t, log, now + 50i64, f, android.Touch(1, x as f32, y as f32)), log, now + 50i64, f);
+}
+
+function has_url(log: Log, part: string): boolean {
+  for u in log.urls.get() {
+    if (u.contains(part)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function has_call(log: Log, part: string): boolean {
+  for c in log.calls.get() {
+    if (c.contains(part)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function save_png(f: draw.Frame, name: string): void {
+  let Some(dir) = env("PLEX_CONTROL_PNG") else {
+    return;
+  };
+  let rgb: u8[] = [];
+  for y in 0..f.height {
+    for x in 0..f.width {
+      let p = f.pixel(x, y);
+      rgb = rgb.append((p & 255) as u8).append((p >> 8 & 255) as u8).append((p >> 16 & 255) as u8);
+    }
+  }
+  if let Ok(bytes) = png.encode_rgb8(f.width, f.height, rgb) {
+    let written = write_file_bytes(dir + "/" + name + ".png", bytes);
+  }
+}
+
+// Signs in with a PIN, finds the one server, tries its connections and opens
+// the home screen.
+function signed_in(log: Log, f: draw.Frame): control.App {
+  let s = shown(log, f, "", "");
+  let t = tap(s, log, 100i64, f, "signin");
+  return settle(at(t, log, 2200i64, f, android.Tick), log, 2200i64, f);
+}
+
+function test_sign_in_reaches_home(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let first = shown(log, f, "", "");
+  if (node(first, "signin").is_none()) {
+    return test.fail("no sign-in button");
+  }
+  let waiting = tap(first, log, 100i64, f, "signin");
+  if (!has_url(log, "POST https://plex.tv/api/v2/pins") || node(waiting, "cancel").is_none()) {
+    return test.fail("no PIN on the screen");
+  }
+  let s = settle(at(waiting, log, 2200i64, f, android.Tick), log, 2200i64, f);
+  save_png(f, "home");
+  if (!has_url(log, "https://plex.tv/api/v2/pins/7") || !has_url(log, "https://clients.plex.tv/api/v2/resources")) {
+    return test.fail("no check of the PIN or no server list");
+  }
+  if (!has_url(log, "https://down.example:32400/identity") || !has_url(log, "https://up.example:32400/identity")) {
+    return test.fail("the connections were not tried in turn");
+  }
+  if (!has_url(log, "https://up.example:32400/hubs") || node(s, "hub:1:1").is_none()) {
+    return test.fail("no hubs on the home screen");
+  }
+  if (!has_url(log, "/photo/:/transcode?width=")) {
+    return test.fail("no posters asked for");
+  }
+  let settings = file_of(log, "/data/settings");
+  if (control.setting(settings, "token") != "tok-1" || control.setting(settings, "server_uri") != "https://up.example:32400") {
+    return test.fail("settings: " + settings);
+  }
+  return test.assert_eq(control.setting(settings, "account"), "Ada");
+}
+
+function test_saved_server_opens_home(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_uri=https://up.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = shown(log, f, "", "");
+  if (has_url(log, "plex.tv")) {
+    return test.fail("a saved server went to plex.tv");
+  }
+  return test.assert_eq((node(s, "hub:0:0").is_some() && node(s, "tab:3").is_some()).to_string(), "true");
+}
+
+function test_play_pause_and_stop(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let detail = tap(home, log, 100i64, f, "hub:1:0");
+  if (node(detail, "play").is_none() || !has_url(log, "GET https://up.example:32400/library/metadata/501")) {
+    return test.fail("no detail screen");
+  }
+  save_png(f, "detail");
+  let playing = tap(detail, log, 200i64, f, "play");
+  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4?X-Plex-Token=srv")) {
+    return test.fail("the file did not play as it is: " + log.calls.get().join(" | "));
+  }
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "seek 60000") || !has_call(log, "show") || !has_call(log, "start") || !has_url(log, "state=playing")) {
+    return test.fail("no resume at the offset: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(ready, log, 400i64, f, "overlay");
+  save_png(f, "paused");
+  if (!has_call(log, "pause") || !has_call(log, "hide") || !has_url(log, "state=paused") || node(paused, "toggle").is_none()) {
+    return test.fail("no pause with the overlay");
+  }
+  let back = tap(paused, log, 500i64, f, "back");
+  if (!has_call(log, "stop") || !has_url(log, "state=stopped") || node(back, "play").is_none()) {
+    return test.fail("no stop and return");
+  }
+  return test.assert_eq(has_url(log, "/:/scrobble").to_string(), "false");
+}
+
+function test_library_pages(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let sections = tap(home, log, 100i64, f, "tab:1");
+  let lib = tap(sections, log, 200i64, f, "section:0");
+  if (node(lib, "grid:0").is_none() || !has_url(log, "/library/sections/1/all?X-Plex-Container-Start=0&X-Plex-Container-Size=60")) {
+    return test.fail("no first page");
+  }
+  save_png(f, "library");
+  // Drag up far, to the end of the grid.
+  let t = at(lib, log, 300i64, f, android.Touch(0, 270.0, 900.0));
+  let i = 0;
+  while (i < 40) {
+    t = at(t, log, 300i64 + i as i64, f, android.Touch(2, 270.0, 900.0 - (i * 400) as f32));
+    i += 1;
+  }
+  t = settle(at(t, log, 400i64, f, android.Touch(1, 270.0, -15000.0)), log, 400i64, f);
+  return test.assert_eq(has_url(log, "X-Plex-Container-Start=60&").to_string(), "true");
+}
+
+function test_search_types_and_asks(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let search = tap(tap(home, log, 100i64, f, "tab:2"), log, 200i64, f, "type");
+  if (!has_call(log, "keyboard true")) {
+    return test.fail("no keyboard");
+  }
+  let t = search;
+  for c in [105, 110, 99, 233] {
+    t = at(t, log, 300i64, f, android.Char(c));
+  }
+  t = at(t, log, 300i64, f, android.Key(67, 0));
+  t = at(t, log, 300i64, f, android.Key(67, 1));
+  if (has_url(log, "/hubs/search")) {
+    return test.fail("a search before the pause in typing");
+  }
+  t = settle(at(t, log, 1100i64, f, android.Tick), log, 1100i64, f);
+  save_png(f, "search");
+  if (!has_url(log, "/hubs/search?query=inc&")) {
+    return test.fail("no search for inc: " + log.urls.get().join(" | "));
+  }
+  return test.assert_eq(node(t, "hub:0:0").is_some().to_string(), "true");
+}
+
+function test_back_and_sign_out(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = signed_in(log, f);
+  let settings = tap(s, log, 3000i64, f, "tab:3");
+  save_png(f, "settings");
+  let out = tap(settings, log, 3100i64, f, "signout");
+  if (node(out, "signin").is_none()) {
+    return test.fail("no sign-in screen after the sign-out");
+  }
+  if (control.setting(file_of(log, "/data/settings"), "token").len() != 0) {
+    return test.fail("the token stayed");
+  }
+  let gone = at(at(out, log, 3200i64, f, android.Key(4, 0)), log, 3200i64, f, android.Key(4, 1));
+  return test.assert_eq(has_call(log, "finish").to_string(), "true");
+}
+
+function test_link_plays_an_item(): test.TestOutcome {
+  let log = new_log();
+  let f = frame();
+  defer free_frame(f);
+  let s = at(control.new(fake(log, 0i64, f), "/data", "https://up.example:32400", "srv", "501"), log, 0i64, f, android.Start);
+  let t = settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
+  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4")) {
+    return test.fail("the link did not play the item: " + log.calls.get().join(" | "));
+  }
+  let back = settle(at(at(t, log, 100i64, f, android.Key(4, 0)), log, 100i64, f, android.Key(4, 1)), log, 100i64, f);
+  return test.assert_eq(node(back, "play").is_some().to_string(), "true");
+}
+
+function main(): i32 {
+  let r = test.new("plex control");
+  r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
+  r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
+  r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
+  r = r.it("a library loads its next page at its end", test_library_pages);
+  r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
+  r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);
+  r = r.it("a link plays an item at once", test_link_plays_an_item);
+  return r.finish();
+}
