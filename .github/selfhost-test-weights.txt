@@ -928,7 +928,6 @@ TestSelfHostDynStructReclaimWasmIR 2
 TestSelfHostDynTraitArgsCheck 4
 TestSelfHostDynTraitIR 6
 TestSelfHostECDSASuite 27
-TestSelfHostELF 3
 TestSelfHostELFSymtab 6
 TestSelfHostEarlyReturnConsumingDropIRArm64 3
 TestSelfHostEarlyReturnConsumingDropWasmIR 3

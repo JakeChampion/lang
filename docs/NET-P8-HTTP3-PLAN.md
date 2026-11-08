@@ -302,6 +302,19 @@ Each is a bound with a test that crosses it.
       compiler change that every program gains from.
     - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
       four classifications each, reported Unsupported on Darwin and WASI.
+      The send side landed with #12516: `udp_sendmmsg(sock, addrs, data,
+      lens)` sends many messages in one call, a message whose segment size
+      is set carrying `UDP_SEGMENT`, under the `mmsg` capability that
+      `hosted-linux` and `hosted-android` grant. `net.send_many` groups a
+      flight into those messages (a run of datagrams of one size, a shorter
+      one as its last segment, at most 64 segments and 65,535 bytes per
+      message) and sends each datagram on its own elsewhere. `std/serve`
+      gathers every flight of one wake of its loop and sends them in one
+      call before it waits again. With 64 connections that is 57 times fewer
+      sends and 41 percent less server CPU per request
+      (`docs/benchmarks/net-sendmmsg-2026-11-08.md`). Gates:
+      `TestSelfHostUDPSendmmsg` and `TestNetSendManyX86_64`. GRO on receive
+      and ECN remain.
 
 0-RTT waits on early data in `std/tls/handshake`, which does not derive
 an early traffic secret yet.
