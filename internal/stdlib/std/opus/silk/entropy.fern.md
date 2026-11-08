@@ -160,7 +160,7 @@ function lsf_interpolate(own decoder: range.Decoder, previous: [i32], current: [
   }
   let (next, factor) = decoder.icdf(tables.ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX, 8);
   if (factor == 4 || !decoded || previous.len() != current.len()) {
-    return (next, factor, []);
+    return (next, 4, []);
   }
   let output: i32[] = [];
   for i in 0..current.len() {

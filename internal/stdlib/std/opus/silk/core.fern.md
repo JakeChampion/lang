@@ -103,7 +103,7 @@ function valid_state(previous: State): boolean {
     && previous.pitch_q15.len() == 640 && previous.residual.len() == 80 && previous.lpc_scratch.len() == 96 && previous.output.len() == 320;
 }
 
-function analysis_filter(own output: i32[], input: [i32], coefficients: [i32], start: i32, offset: i32, length: i32): i32[] {
+pub function analysis_filter(own output: i32[], input: [i32], coefficients: [i32], start: i32, offset: i32, length: i32): i32[] {
   let order = coefficients.len();
   for i in order..length {
     let prediction = math.smulbb(input[start + offset + i - 1], coefficients[0]);
@@ -180,8 +180,7 @@ function adjust_gain(own scratch: i32[], previous: i32, gain: i32): (i32[], i32)
   return (scratch, adjustment);
 }
 
-function long_term(own history: i32[], own pitch_buffer: i32[], own pitch_q15: i32[], own residual: i32[], output: [i32], coefficients: [i32], control: entropy.Control, subframe: i32, length: i32, buffer_at: i32, adjustment: i32): (i32[], i32[], i32[], i32[]) {
-  let lag = control.pitch[subframe];
+function long_term(own history: i32[], own pitch_buffer: i32[], own pitch_q15: i32[], own residual: i32[], output: [i32], coefficients: [i32], control: entropy.Control, filters: [i32], lag: i32, subframe: i32, length: i32, buffer_at: i32, adjustment: i32): (i32[], i32[], i32[], i32[]) {
   if (subframe == 0 || subframe == 2 && control.interpolation < 4) {
     let (h, p, q) = rewhite(history, pitch_buffer, pitch_q15, output, coefficients, lag, subframe, length, buffer_at, control.gains[subframe], control.ltp_scale);
     history = h;
@@ -193,11 +192,11 @@ function long_term(own history: i32[], own pitch_buffer: i32[], own pitch_q15: i
       pitch_q15 = pitch_q15.with(at, math.smulww(adjustment, pitch_q15[at]));
     }
   }
-  let (r, q) = voiced_residual(residual, pitch_q15, control.excitation, control.ltp, subframe, length, lag, buffer_at);
+  let (r, q) = voiced_residual(residual, pitch_q15, control.excitation, filters, subframe, length, lag, buffer_at);
   return (history, pitch_buffer, q, r);
 }
 
-function retain(own history: i32[], output: [i32], frames: i32, memory: i32): i32[] {
+pub function retain(own history: i32[], output: [i32], frames: i32, memory: i32): i32[] {
   let retained = memory - frames;
   for i in 0..retained {
     history = history.with(i, history[frames + i]);
@@ -208,8 +207,28 @@ function retain(own history: i32[], output: [i32], frames: i32, memory: i32): i3
   return history;
 }
 
-pub function decode(own previous: State, control: entropy.Control, rate: i32, duration: i32): Result[(State, i32[]), pcm.AudioError] {
-  if (!valid_control(control, rate, duration) || !valid_state(previous)) {
+const RECOVERY_LTP: i32[] = [0, 0, 32, 0, 0, 0, 0, 32, 0, 0, 0, 0, 32, 0, 0, 0, 0, 32, 0, 0];
+
+function recovery_pitch(control: entropy.Control, subframe: i32, recovery_lag: i32): (i32, i32[]) {
+  if (control.signal == 3) {
+    return (control.pitch[subframe], control.ltp);
+  }
+  if (recovery_lag > 0 && subframe < 2) {
+    return (recovery_lag, RECOVERY_LTP);
+  }
+  return (0, []);
+}
+
+function valid_recovery_lag(lag: i32, rate: i32): boolean {
+  return lag == 0 || lag >= rate * 2 && lag <= rate * 18;
+}
+
+function valid_request(previous: State, control: entropy.Control, rate: i32, duration: i32, recovery_lag: i32): boolean {
+  return valid_control(control, rate, duration) && valid_state(previous) && valid_recovery_lag(recovery_lag, rate);
+}
+
+pub function decode_with_recovery(own previous: State, control: entropy.Control, rate: i32, duration: i32, recovery_lag: i32): Result[(State, i32[]), pcm.AudioError] {
+  if (!valid_request(previous, control, rate, duration, recovery_lag)) {
     return Err(pcm.Header);
   }
   previous = prepare(previous, rate);
@@ -235,8 +254,9 @@ pub function decode(own previous: State, control: entropy.Control, rate: i32, du
     let (scaled, adjustment) = adjust_gain(scratch, previous_gain, gain);
     scratch = scaled;
     previous_gain = gain;
-    if (control.signal == 3) {
-      let (h, p, q, r) = long_term(history, pitch_buffer, pitch_q15, residual, output, coefficients, control, subframe, length, buffer_at, adjustment);
+    let (lag, filters) = recovery_pitch(control, subframe, recovery_lag);
+    if (lag > 0) {
+      let (h, p, q, r) = long_term(history, pitch_buffer, pitch_q15, residual, output, coefficients, control, filters, lag, subframe, length, buffer_at, adjustment);
       history = h;
       pitch_buffer = p;
       pitch_q15 = q;
@@ -260,5 +280,9 @@ pub function decode(own previous: State, control: entropy.Control, rate: i32, du
     pitch_buffer: pitch_buffer, pitch_q15: pitch_q15, residual: residual, lpc_scratch: scratch, output: output,
   };
   return Ok((state, output));
+}
+
+pub function decode(own previous: State, control: entropy.Control, rate: i32, duration: i32): Result[(State, i32[]), pcm.AudioError] {
+  return decode_with_recovery(previous, control, rate, duration, 0);
 }
 ```

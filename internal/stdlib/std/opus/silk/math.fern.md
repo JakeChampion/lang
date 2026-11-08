@@ -190,4 +190,40 @@ pub function expand_lpc(own coefficients: i32[], chirp_q16: i32): i32[] {
   }
   return coefficients;
 }
+
+pub function expand_lpc16(own coefficients: i32[], own chirp_q16: i32): i32[] {
+  let delta = chirp_q16 - 65536;
+  for i in 0..coefficients.len() {
+    coefficients = coefficients.with(i, s16(rshift_round32(chirp_q16 * coefficients[i], 16)));
+    chirp_q16 += rshift_round32(chirp_q16 * delta, 16);
+  }
+  return coefficients;
+}
+
+function squared_energy(samples: [i32], shift: i32, initial: u32): u32 {
+  let energy = initial;
+  let i = 0;
+  while (i + 1 < samples.len()) {
+    let pair = smulbb(samples[i], samples[i]) as u32 + smulbb(samples[i + 1], samples[i + 1]) as u32;
+    energy += pair >> shift as u32;
+    i += 2;
+  }
+  if (i < samples.len()) {
+    energy += smulbb(samples[i], samples[i]) as u32 >> shift as u32;
+  }
+  return energy;
+}
+
+pub function sum_squares(samples: [i32]): (i32, i32) {
+  if (samples.len() == 0) {
+    return (0, 0);
+  }
+  let shift = 31 - clz32(samples.len());
+  let energy = squared_energy(samples, shift, samples.len() as u32);
+  shift += 3 - clz32(energy as i32);
+  if (shift < 0) {
+    shift = 0;
+  }
+  return (squared_energy(samples, shift, 0u32) as i32, shift);
+}
 ```

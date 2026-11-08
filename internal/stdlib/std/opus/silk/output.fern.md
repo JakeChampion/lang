@@ -127,4 +127,19 @@ pub function decode_frame(own previous: State, own range: range.Decoder, duratio
   let (state, output) = convert(current, samples, duration, decoded_channels)?;
   return Ok((state, last, output));
 }
+
+pub function decode_lost(own previous: State, duration: i32): Result[(State, f32[]), pcm.AudioError] {
+  let rate = previous.input_rate;
+  let channels = previous.stream_channels;
+  previous = begin_packet(previous, rate, channels)?;
+  let State { decoder, filters, input_rate, output_rate, output_channels, stream_channels, filter_channels, input_buffer, output_buffer } = previous;
+  let decoded_channels = if (stream_channels == 2 && output_channels == 2) { 2 } else { 1 };
+  let (next, samples) = silk.decode_lost(decoder, input_rate, duration, stream_channels, decoded_channels)?;
+  let current = State {
+    decoder: next, filters: filters, input_rate: input_rate, output_rate: output_rate,
+    output_channels: output_channels, stream_channels: stream_channels, filter_channels: filter_channels,
+    input_buffer: input_buffer, output_buffer: output_buffer,
+  };
+  return convert(current, samples, duration, decoded_channels);
+}
 ```

@@ -19,15 +19,16 @@ import "std/audio/pcm";
 import "std/opus/range";
 import "std/opus/silk/core";
 import "std/opus/silk/entropy";
+import "std/opus/silk/loss";
 import "std/opus/silk/stereo";
 import "std/opus/silk/tables";
 
-pub struct Channel { history: entropy.History, core: core.State }
+pub struct Channel { history: entropy.History, state: core.State, recovery: loss.State }
 
 pub struct Decoder { mid: Channel, side: Channel, stereo: stereo.State, was_stereo: boolean, only_mid: boolean }
 
 function channel(): Channel {
-  return Channel { history: entropy.history(), core: core.state() };
+  return Channel { history: entropy.history(), state: core.state(), recovery: loss.state() };
 }
 
 pub function decoder(): Decoder {
@@ -35,16 +36,28 @@ pub function decoder(): Decoder {
 }
 
 function reset(own previous: Channel): Channel {
-  return Channel { history: entropy.history(), core: core.reset(previous.core) };
+  let Channel { history, state, recovery } = previous;
+  return Channel { history: entropy.history(), state: core.reset(state), recovery: loss.reset_prediction(recovery) };
 }
 
 function decode_channel(own previous: Channel, own range: range.Decoder, rate: i32, duration: i32, active: boolean, independent: boolean, skip_scale: boolean): Result[(Channel, range.Decoder, i32[]), pcm.AudioError] {
-  if (previous.core.rate != 0 && previous.core.rate != rate) {
-    previous = Channel { ...previous, history: entropy.history() };
+  let Channel { history, state, recovery } = previous;
+  if (state.rate != 0 && state.rate != rate) {
+    history = entropy.history();
+    recovery = loss.reset_prediction(recovery);
   }
-  let (next, history, control) = entropy.decode(range, previous.history, rate, duration, active, independent, skip_scale)?;
-  let (state, output) = core.decode(previous.core, control, rate, duration)?;
-  return Ok((Channel { history: history, core: state }, next, output));
+  let recovery_lag = if (recovery.count > 0 && history.voiced) { history.lag } else { 0 };
+  let (next, next_history, parameters) = entropy.decode(range, history, rate, duration, active, independent, skip_scale)?;
+  let control = loss.recovery(parameters, recovery.count);
+  let (next_state, _) = core.decode_with_recovery(state, control, rate, duration, recovery_lag)?;
+  let (next_recovery, synthesis, output) = loss.received(recovery, next_state, control, rate, duration);
+  return Ok((Channel { history: next_history, state: synthesis, recovery: next_recovery }, next, output));
+}
+
+function conceal_channel(own previous: Channel, rate: i32, duration: i32): Result[(Channel, i32[]), pcm.AudioError] {
+  let Channel { history, state, recovery } = previous;
+  let (next, synthesis, output, lag) = loss.conceal(recovery, state, history.voiced, rate, duration)?;
+  return Ok((Channel { history: entropy.History { ...history, lag: lag, gain: 10 }, state: synthesis, recovery: next }, output));
 }
 
 function header(own range: range.Decoder, count: i32): (range.Decoder, boolean[], boolean) {
@@ -215,5 +228,44 @@ pub function decode_range(own previous: Decoder, own range: range.Decoder, rate:
     return mono(previous, range, mid_activity, rate, internal_duration, output_channels);
   }
   return stereo_frames(previous, range, mid_activity, side_activity, rate, internal_duration, output_channels);
+}
+
+function valid_packet_parameters(rate: i32, duration: i32, stream_channels: i32, output_channels: i32): boolean {
+  let internal_duration = if (duration > 20) { 20 } else { duration };
+  return entropy.valid_frame(rate, internal_duration) && valid_duration(duration) && valid_channels(stream_channels, output_channels);
+}
+
+function mix_lost(previous: stereo.State, mid: [i32], side: [i32], rate: i32, duration: i32, stream: i32, channels: i32): (stereo.State, i32[]) {
+  if (stream == 2 && channels == 2) {
+    return stereo.unmix(previous, mid, side, rate * duration, rate, previous.prediction0, previous.prediction1);
+  }
+  return stereo.mono(previous, mid, rate * duration, channels);
+}
+
+pub function decode_lost(own previous: Decoder, rate: i32, duration: i32, stream_channels: i32, output_channels: i32): Result[(Decoder, i32[]), pcm.AudioError] {
+  let internal_duration = if (duration > 20) { 20 } else { duration };
+  if (!valid_packet_parameters(rate, duration, stream_channels, output_channels)) {
+    return Err(pcm.Header);
+  }
+  let mid = previous.mid;
+  let side = previous.side;
+  let mixed = previous.stereo;
+  let output: i32[] = [];
+  for _ in 0..duration / internal_duration {
+    let (next_mid, mid_samples) = conceal_channel(mid, rate, internal_duration)?;
+    mid = next_mid;
+    let side_samples = pcm.zeros(rate * internal_duration);
+    if (stream_channels == 2 && !previous.only_mid) {
+      let (next_side, samples) = conceal_channel(side, rate, internal_duration)?;
+      side = next_side;
+      side_samples = samples;
+    }
+    let (next_mixed, samples) = mix_lost(mixed, mid_samples, side_samples, rate, internal_duration, stream_channels, output_channels);
+    mixed = next_mixed;
+    for sample in samples {
+      output = output.append(sample);
+    }
+  }
+  return Ok((Decoder { ...previous, mid: mid, side: side, stereo: mixed, was_stereo: stream_channels == 2 }, output));
 }
 ```

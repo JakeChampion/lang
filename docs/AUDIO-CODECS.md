@@ -130,6 +130,7 @@ The entropy and predictor tables come from pinned Pion Opus sources.
 `std/opus/silk` decodes internal-rate packets, including stereo and redundant frames.
 `std/opus/silk/resample` converts one channel to each Opus output rate and retains the reference input delay.
 `std/opus/silk/output` combines internal-rate packets, persistent resamplers, and output channel conversion.
+`silk.decode_lost` and `output.decode_lost` retain fixed-point concealment and comfort noise state across missing packets.
 The public Opus facade does not yet call these modules.
 
 SILK reads implicit zero bits at the end of the entropy stream, as the reference decoder requires.
@@ -149,6 +150,9 @@ python3 scripts/gen-silk-frame-vectors.py --source-dir /path/to/pion-opus
 python3 scripts/gen-silk-packet-vectors.py --source-dir /path/to/pion-opus
 python3 scripts/gen-silk-resample-vectors.py --source-dir /path/to/pion-opus
 python3 scripts/gen-silk-output-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-output-vectors.py --source-dir /path/to/pion-opus --loss
+# Requires cc, CMake, and the pinned archive or network access.
+python3 scripts/gen-silk-loss-vectors.py
 ```
 
 The table and arithmetic generators verify source hashes. The prediction generator reads the pinned Git objects.
@@ -167,6 +171,12 @@ A separate libopus frame verifies the input delay.
 The complete output path matches PCM checksums, boundary samples, and final range for 150 received libopus packets.
 These are prefixes before packet loss from 50 review-corpus cases, with all output rates and mono/stereo channels.
 They do not establish packet loss recovery or mode-transition conformance.
+
+The loss path matches PCM checksums, boundary samples, and entropy range for all 600 steps of those 50 cases.
+The cases include loss bursts, recovery, comfort noise, output-rate conversion, and internal-rate changes.
+A separate 54-step corpus uses an unmodified C decoder with an observation-only resampler wrapper.
+It covers startup loss, 10/20 ms duration changes, stereo changes, and mediumband excitation history.
+The generator verifies the pinned libopus archive before it builds the reference.
 
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
