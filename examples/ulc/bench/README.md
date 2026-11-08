@@ -1,11 +1,51 @@
 # ULC benchmarks
 
 Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
-The default-block measurements below give Fern lower median elapsed time in all 32 rows against the tuned upstream C tools.
-The narrowest lead is 1.039× for long, single-worker noise decoding.
-These results cover the configurations below and do not establish a universal performance ranking.
+The complete block-size sweep records 112 lower Fern medians across 128 comparisons against tuned upstream C.
+Several cases still favor C, particularly large-block noise decode.
+These results cover the stated configurations and do not establish a universal performance ranking.
 
-## Method
+## Complete block-size sweep
+
+This sweep records compiler and codec source `e2e09fc33263227ad1b7701be72a390bc6167575`.
+It includes faster plan construction, deferred serial decoder plans, and the serial encoder plan reuse.
+Each fixture lasts ten seconds, with stereo PCM16 at 44.1 kHz and VBR quality 75.
+Each row has eleven alternating repetitions, including process startup and file I/O.
+No other local builds or tests run during measurement.
+
+The single-worker runs use CPU 0.
+The four-worker runs allow CPUs 0–3 for both implementations.
+Upstream C remains single-threaded.
+The Fern worker count is a maximum, because short files can take a serial path.
+The C source, libfourier source, and compiler flags match the earlier method below.
+
+A win means a lower median elapsed time.
+Each block-size configuration includes four inputs and both operations, for eight comparisons.
+A C/Fern ratio above 1 means Fern is faster.
+The table gives the minimum and maximum ratios across those eight comparisons.
+
+| Block size | One-worker wins | One-worker C/Fern range | Four-worker wins | Four-worker C/Fern range |
+| ---: | ---: | ---: | ---: | ---: |
+| 256 | 5/8 | 0.936–2.620 | 8/8 | 1.185–2.339 |
+| 512 | 7/8 | 0.999–2.644 | 5/8 | 0.761–2.543 |
+| 1024 | 8/8 | 1.094–2.291 | 7/8 | 0.799–2.145 |
+| 2048 | 8/8 | 1.111–3.063 | 8/8 | 1.124–2.316 |
+| 4096 | 8/8 | 1.001–2.390 | 7/8 | 0.905–1.993 |
+| 8192 | 8/8 | 1.097–2.199 | 8/8 | 1.085–2.110 |
+| 16384 | 7/8 | 0.900–2.851 | 7/8 | 0.827–2.253 |
+| 32768 | 6/8 | 0.809–2.199 | 5/8 | 0.781–2.139 |
+
+[All sixteen raw reports](x86-64-block-sweep-e2e09fc.json) retain individual times, input hashes, executable hashes, and compiler hashes.
+Fern wins 57 of 64 single-worker comparisons and 55 of 64 four-worker comparisons.
+The oracle checks both decoder outputs outside the timed repetitions.
+The maximum Fern error against the double-precision FFT is below `1e-5` in every case.
+The records include C errors separately, without a wider Fern tolerance.
+
+## Earlier default-block method
+
+The next four result tables record source `15212d32dc49807e204a9767467ff574a3f3fd98`.
+Fern has lower median elapsed time in all 32 comparisons in those tables.
+Their narrowest lead is 1.039× for long, single-worker noise decode.
 
 - Fern compiler and codec source: `15212d32dc49807e204a9767467ff574a3f3fd98`.
 - C source: `b47df8d50c2ef2d765e5dbec0bf567b5e558173a`.
