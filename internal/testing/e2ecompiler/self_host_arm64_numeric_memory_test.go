@@ -26,10 +26,10 @@ func TestSelfHostArm64NumericLabelMemory(t *testing.T) {
 
 func TestSelfHostArm64NumericLabelsIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	source := arm64NativeSrc(t) + "\n" + arm64NumericLabelSelfTestMain
+	source := arm64NativeModuleProgram(t, arm64NumericLabelSelfTestMain)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			stderr, code := cli.exitOf(t, source, target, "FERN_STRICT_IR=1")
+			stderr, code := cli.exitOfFile(t, source, target, nil, "FERN_STRICT_IR=1")
 			if code != 0 {
 				t.Fatalf("numeric labels: exit %d\n%s", code, stderr)
 			}

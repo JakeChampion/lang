@@ -355,6 +355,8 @@ function abs(v: i32): i32 {
 
 // The period of `x` in `y`, from `len` values of `x[xa]` and
 // `len + max_pitch` values of `y`.
+// fern-lint: allow cyclomatic-complexity
+// One loop per stage of the reference search.
 pub function pitch_search(x: [f32], xa: i32, y: [f32], len: i32, max_pitch: i32): i32 {
   let lag = len + max_pitch;
   let x4: f32[] = [];

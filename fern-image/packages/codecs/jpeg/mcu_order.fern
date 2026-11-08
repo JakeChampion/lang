@@ -1,0 +1,95 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum OrderError { Dimensions, Components, Sampling, Limit, Cancelled }
+
+pub enum FoldError[E] { Order(OrderError), Consumer(E) }
+
+pub struct Sampling { horizontal: i32, vertical: i32 }
+
+pub struct Plan { columns: i32, rows: i32, mcus: i32, units: i32, blocks: i32, max_horizontal: i32, max_vertical: i32 }
+
+pub struct Address { mcu: i32, unit: i32, component: i32, x: i32, y: i32, width: i32, height: i32, dummy: boolean }
+
+pub struct Fold[S] { value: S, plan: Plan }
+
+function valid(item: Sampling): boolean {
+  return item.horizontal >= 1 && item.horizontal <= 4 && item.vertical >= 1 && item.vertical <= 4;
+}
+
+function factors(sampling: [Sampling]): Result[(i32, i32, i32), OrderError] {
+  if (sampling.len() < 1 || sampling.len() > 4) {
+    return Err(OrderError.Components);
+  }
+  let horizontal = 1;
+  let vertical = 1;
+  let units = 0;
+  for item in sampling {
+    if (!valid(item)) {
+      return Err(OrderError.Sampling);
+    }
+    horizontal = if (item.horizontal > horizontal) { item.horizontal } else { horizontal };
+    vertical = if (item.vertical > vertical) { item.vertical } else { vertical };
+    units += item.horizontal * item.vertical;
+  }
+  if (sampling.len() > 1 && units > 10) {
+    return Err(OrderError.Sampling);
+  }
+  return Ok((horizontal, vertical, if (sampling.len() == 1) { 1 } else { units }));
+}
+
+pub function inspect(width: i32, height: i32, sampling: [Sampling], max_blocks: i32): Result[Plan, OrderError] {
+  if (width < 1 || width > 65535 || height < 1 || height > 65535) {
+    return Err(OrderError.Dimensions);
+  }
+  let (horizontal, vertical, units) = factors(sampling)?;
+  let span_x = if (sampling.len() == 1) { 8 } else { horizontal * 8 };
+  let span_y = if (sampling.len() == 1) { 8 } else { vertical * 8 };
+  let columns = (width + span_x - 1) / span_x;
+  let rows = (height + span_y - 1) / span_y;
+  let blocks = columns as i64 * (rows as i64) * (units as i64);
+  if (max_blocks < 0 || blocks > max_blocks as i64) {
+    return Err(OrderError.Limit);
+  }
+  return Ok(Plan { columns: columns, rows: rows, mcus: columns * rows, units: units, blocks: blocks as i32, max_horizontal: horizontal, max_vertical: vertical });
+}
+
+function visit[S, E](width: i32, height: i32, item: Sampling, plan: Plan, mcu: i32, component: i32, first: i32, interleaved: boolean, cancelled: () => boolean, value: S, consume: (S, Address) => Result[S, E]): Result[S, FoldError[E]] {
+  let columns = if (interleaved) { item.horizontal } else { 1 };
+  let rows = if (interleaved) { item.vertical } else { 1 };
+  let component_width = (width * item.horizontal + plan.max_horizontal - 1) / plan.max_horizontal;
+  let component_height = (height * item.vertical + plan.max_vertical - 1) / plan.max_vertical;
+  for y in 0..rows {
+    for x in 0..columns {
+      if (cancelled()) {
+        return Err(Order(OrderError.Cancelled));
+      }
+      let bx = mcu % plan.columns * columns + x;
+      let by = mcu / plan.columns * rows + y;
+      let address = Address { mcu: mcu, unit: first + y * columns + x, component: component, x: bx, y: by, width: component_width, height: component_height, dummy: bx * 8 >= component_width || by * 8 >= component_height };
+      value = match (consume(value, address)) { Ok(v) => v, Err(e) => { return Err(Consumer(e)); } };
+    }
+  }
+  return Ok(value);
+}
+
+// The complete frame forms one scan. Component order follows its frame header.
+pub function fold_blocks[S, E](width: i32, height: i32, sampling: [Sampling], max_blocks: i32, cancelled: () => boolean, value: S, consume: (S, Address) => Result[S, E]): Result[Fold[S], FoldError[E]] {
+  let plan = match (inspect(width, height, sampling, max_blocks)) { Ok(v) => v, Err(e) => { return Err(Order(e)); } };
+  if (cancelled()) {
+    return Err(Order(OrderError.Cancelled));
+  }
+  let interleaved = sampling.len() > 1;
+  for mcu in 0..plan.mcus {
+    let first = 0;
+    for component in 0..sampling.len() {
+      let item = sampling[component];
+      value = visit(width, height, item, plan, mcu, component, first, interleaved, cancelled, value, consume)?;
+      first += if (interleaved) { item.horizontal * item.vertical } else { 1 };
+    }
+  }
+  if (cancelled()) {
+    return Err(Order(OrderError.Cancelled));
+  }
+  return Ok(Fold[S] { value: value, plan: plan });
+}
