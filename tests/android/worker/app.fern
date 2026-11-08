@@ -63,11 +63,11 @@ function step(ctx: usize, own s: App, e: android.Event): App {
       let App { started, sum, name, polls } = s;
       let now = polls + 1;
       let next_sum = match (sum) {
-        Some(w) => poll_sum(w, now),
+        Some(adder) => poll_sum(adder, now),
         None => None,
       };
       let next_name = match (name) {
-        Some(w) => poll_name(w),
+        Some(lookup) => poll_name(lookup),
         None => None,
       };
       return finish_when_done(ctx, App { started: started, sum: next_sum, name: next_name, polls: now });
