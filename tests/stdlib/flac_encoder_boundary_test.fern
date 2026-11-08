@@ -1,0 +1,201 @@
+import "std/audio/flac";
+import "std/audio/flac/encoder";
+import "std/audio/flac/bitwriter";
+import "std/audio/flac/checksum";
+import "std/audio/pcm";
+import "std/test";
+
+function format(): pcm.Format {
+  return pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+}
+
+function streaminfo(): test.TestOutcome {
+  let digest: u8[] = [];
+  for _ in 0..16 {
+    digest = digest.append(0u8);
+  }
+  let info = encoder.StreamInfo { format: format(), frames: 0u64, min_block: 16, max_block: 65535, md5: digest };
+  for frames in [0u64, 68719476735u64] {
+    let Ok(header) = encoder.stream_header(encoder.StreamInfo { ...info, frames: frames }, pcm.Limits { max_input_bytes: 42, max_samples: 0 }) else {
+      return test.fail("valid STREAMINFO bounds");
+    };
+    if (header.len() != 42 || header[4] != 128u8 || header[7] != 34u8) {
+      return test.fail("STREAMINFO extent");
+    }
+  }
+  for changed in [encoder.StreamInfo { ...info, frames: 68719476736u64 }, encoder.StreamInfo { ...info, min_block: 15 }, encoder.StreamInfo { ...info, max_block: 65536 }, encoder.StreamInfo { ...info, max_block: 15 }, encoder.StreamInfo { ...info, md5: [] }, encoder.StreamInfo { ...info, md5: digest.append(0u8) }] {
+    if let Err(pcm.Header) = encoder.stream_header(changed, pcm.default_limits()) {} else {
+      return test.fail("invalid STREAMINFO");
+    }
+  }
+  if let Err(pcm.Limit) = encoder.stream_header(info, pcm.Limits { max_input_bytes: 41, max_samples: 0 }) {} else {
+    return test.fail("STREAMINFO budget");
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  let defaults = encoder.default_options();
+  let limits = pcm.default_limits();
+  for changed in [pcm.Format { ...format(), sample_rate: 0 }, pcm.Format { ...format(), sample_rate: 1048576 }, pcm.Format { ...format(), channels: 0 }, pcm.Format { ...format(), channels: 9 }, pcm.Format { ...format(), bits_per_sample: 3 }, pcm.Format { ...format(), bits_per_sample: 33 }] {
+    if let Err(pcm.Header) = encoder.encode([0], changed, defaults, limits) {} else {
+      return test.fail("invalid format");
+    }
+  }
+  for options in [encoder.Options { ...defaults, block_frames: 15 }, encoder.Options { ...defaults, block_frames: 65536 }, encoder.Options { ...defaults, max_fixed_order: -1 }, encoder.Options { ...defaults, max_fixed_order: 5 }, encoder.Options { ...defaults, max_partition_order: -1 }, encoder.Options { ...defaults, max_partition_order: 16 }] {
+    if let Err(pcm.Header) = encoder.encode([0], format(), options, limits) {} else {
+      return test.fail("invalid options");
+    }
+  }
+  if let Err(pcm.Header) = encoder.encode([], format(), defaults, limits) {} else {
+    return test.fail("empty stream");
+  }
+  if let Err(pcm.Sample) = encoder.encode([32768], format(), defaults, limits) {} else {
+    return test.fail("sample range");
+  }
+  if let Err(pcm.Header) = encoder.encode([0], pcm.Format { ...format(), channels: 2 }, defaults, limits) {} else {
+    return test.fail("incomplete frame");
+  }
+  for small in [pcm.Limits { ...limits, max_input_bytes: -1 }, pcm.Limits { ...limits, max_samples: -1 }, pcm.Limits { ...limits, max_samples: 0 }, pcm.Limits { ...limits, max_input_bytes: 41 }] {
+    if let Err(pcm.Limit) = encoder.encode([0], format(), defaults, small) {} else {
+      return test.fail("configured limit");
+    }
+  }
+  return test.pass();
+}
+
+// Verify each field in one bounded conformance campaign.
+// fern-lint: allow cyclomatic-complexity
+function budgets(): test.TestOutcome {
+  let input = [-32768, 32767, 0, 17, -19];
+  let alias = input;
+  let options = encoder.default_options();
+  let limits = pcm.default_limits();
+  let Ok(encoded) = encoder.encode(input, format(), options, limits) else {
+    return test.fail("encode");
+  };
+  let Ok(exact) = encoder.encode(input, format(), options, pcm.Limits { ...limits, max_input_bytes: encoded.len(), max_samples: input.len() }) else {
+    return test.fail("exact budget");
+  };
+  for i in 0..encoded.len() {
+    if (exact[i] != encoded[i]) {
+      return test.fail("deterministic output");
+    }
+  }
+  for i in 0..input.len() {
+    if (input[i] != alias[i]) {
+      return test.fail("caller alias");
+    }
+  }
+  if let Err(pcm.Limit) = encoder.encode(input, format(), options, pcm.Limits { ...limits, max_input_bytes: encoded.len() - 1 }) {} else {
+    return test.fail("one byte short");
+  }
+  let Ok(frame) = encoder.encode_frame(input, format(), encoder.FrameNumber(0u32), options, limits) else {
+    return test.fail("frame encode");
+  };
+  if let Ok(_) = encoder.encode_frame(input, format(), encoder.FrameNumber(0u32), options, pcm.Limits { ...limits, max_input_bytes: frame.bytes.len() }) {} else {
+    return test.fail("exact frame budget");
+  }
+  if let Err(pcm.Limit) = encoder.encode_frame(input, format(), encoder.FrameNumber(0u32), options, pcm.Limits { ...limits, max_input_bytes: frame.bytes.len() - 1 }) {} else {
+    return test.fail("frame budget");
+  }
+  for changed in [encoded.with(encoded.len() - 1, encoded[encoded.len() - 1] ^ 1u8), encoded.with(26, encoded[26] ^ 1u8), encoded.with(48, encoded[48] ^ 1u8)] {
+    if let Err(pcm.Checksum) = flac.decode(changed, limits) {} else {
+      return test.fail("checksum or MD5 mutation");
+    }
+  }
+  return test.pass();
+}
+
+// Verify each field in one bounded conformance campaign.
+// fern-lint: allow cyclomatic-complexity
+function counters(): test.TestOutcome {
+  let options = encoder.default_options();
+  let limits = pcm.default_limits();
+  let values: u64[] = [0u64, 127u64, 128u64, 2047u64, 2048u64, 65535u64, 65536u64, 2097151u64, 2097152u64, 67108863u64, 67108864u64, 2147483647u64, 2147483648u64, 68719476734u64];
+  let lengths = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7];
+  for i in 0..values.len() {
+    let Ok(frame) = encoder.encode_frame([0], format(), encoder.SampleNumber(values[i]), options, limits) else {
+      return test.fail("valid sample position");
+    };
+    let header = frame.bytes;
+    if (header[1] != 249u8 || frame.number != values[i] || !frame.variable) {
+      return test.fail("variable strategy");
+    }
+    let decoded = if (lengths[i] == 1) { header[4] as u64 } else { (header[4] & (1u8 << (7 - lengths[i]) as u8) - 1u8) as u64 };
+    for j in 1..lengths[i] {
+      if ((header[4 + j] & 192u8) != 128u8) {
+        return test.fail("continuation prefix");
+      }
+      decoded = decoded << 6u64 | (header[4 + j] & 63u8) as u64;
+    }
+    if (decoded != values[i] || checksum.crc(header[:6 + lengths[i]], false) != 0) {
+      return test.fail("position encoding or header CRC");
+    }
+  }
+  for at in [encoder.FrameNumber(2147483648u32), encoder.SampleNumber(68719476735u64), encoder.SampleNumber(68719476736u64)] {
+    if let Err(pcm.Header) = encoder.encode_frame([0], format(), at, options, limits) {} else {
+      return test.fail("position overflow");
+    }
+  }
+  let Ok(last) = encoder.encode_frame([0], format(), encoder.FrameNumber(2147483647u32), options, limits) else {
+    return test.fail("last fixed frame");
+  };
+  if (last.variable || last.bytes[1] != 248u8) {
+    return test.fail("fixed strategy");
+  }
+  return test.pass();
+}
+
+// Verify each field in one bounded conformance campaign.
+// fern-lint: allow cyclomatic-complexity
+function writer(): test.TestOutcome {
+  if let Err(pcm.Limit) = bitwriter.create(4194305, []) {} else {
+    return test.fail("writer allocation limit");
+  }
+  for bytes in [-1, 0, 1, 2] {
+    if let Err(pcm.Header) = bitwriter.create(bytes, [0u8]) {} else {
+      return test.fail("invalid writer extent");
+    }
+  }
+  let Ok(output) = bitwriter.create(8, [171u8]) else {
+    return test.fail("writer allocation");
+  };
+  let Ok(bytes) = output.put(8589934591u64, 33).zeros(7u64).finish() else {
+    return test.fail("33-bit unaligned field");
+  };
+  if (bytes[0] != 171u8 || bytes[1] != 255u8 || bytes[4] != 255u8 || bytes[5] != 128u8 || checksum.crc(bytes, true) != 0) {
+    return test.fail("33-bit field and footer");
+  }
+  for count in [-1, 34, 1] {
+    let Ok(empty) = bitwriter.create(2, []) else {
+      return test.fail("empty writer");
+    };
+    if let Err(pcm.Header) = empty.put(0u64, count).finish() {} else {
+      return test.fail("field overflow");
+    }
+  }
+  let Ok(empty) = bitwriter.create(2, []) else {
+    return test.fail("empty writer");
+  };
+  if let Err(pcm.Header) = empty.zeros(18446744073709551615u64).finish() {} else {
+    return test.fail("zero-run overflow");
+  }
+  let Ok(short) = bitwriter.create(3, []) else {
+    return test.fail("short writer");
+  };
+  if let Err(pcm.Header) = short.finish() {} else {
+    return test.fail("underfilled writer");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("FLAC encoder boundaries");
+  runner = runner.it("STREAMINFO unknown totals, maximum totals, and metadata budgets", streaminfo);
+  runner = runner.it("formats, samples, options, and configured limits", invalid);
+  runner = runner.it("exact budgets, immutable aliases, CRCs, and PCM MD5", budgets);
+  runner = runner.it("UTF-8 counters through 36 bits and position overflow", counters);
+  runner = runner.it("bounded bit fields, zero runs, and frame CRC", writer);
+  return runner.finish();
+}
