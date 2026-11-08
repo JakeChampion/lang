@@ -18,6 +18,26 @@ function ts_op_method(op: string): string {
   return "";
 }
 
+// The root of an operator. Qualified by the type of its operand, or bare
+// on an operand of unknown type, it reaches only the methods of its name
+// with the shape of an operator. Bare, it also reaches the free functions
+// of its name.
+function ts_op_root(method: string): string {
+  return "op " + method;
+}
+
+// `fd` can be the method of an operator: unary minus takes no argument, and
+// each other operator takes one.
+function ts_operator_shaped(fd: parser.FuncDecl): boolean {
+  if (fd.receiver_type.len() == 0) {
+    return true;
+  }
+  if (fd.name == "neg") {
+    return fd.params.len() == 0;
+  }
+  return fd.params.len() == 1;
+}
+
 function ts_op_overloads(op: string): boolean {
   return ast.operator_method(op) != "";
 }
@@ -126,10 +146,10 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       if (ts_op_overloads(b.op)) {
         let bt = ts_recv_tag(b.left);
         if (bt.len() > 0) {
-          return acc.append(ts_qualified_root(bt, m));
+          return acc.append(ts_qualified_root(bt, ts_op_root(m)));
         }
       }
-      return acc.append(m);
+      return acc.append(ts_op_root(m));
     },
     ast.ExprUnary(u) => {
       if (u.op == "try_") {
@@ -140,13 +160,13 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       }
       let ut = ts_recv_tag(u.operand);
       if (ut.len() > 0) {
-        return acc.append(ts_qualified_root(ut, "neg"));
+        return acc.append(ts_qualified_root(ut, ts_op_root("neg")));
       }
-      return acc.append("neg");
+      return acc.append(ts_op_root("neg"));
     },
     ast.ExprCall(c) => {
       if let ast.ExprFieldAccess(fa) = c.callee {
-        return ts_called_method(fa, acc);
+        return ts_called_method(fa, c.args.len(), acc);
       }
       return acc;
     },
@@ -195,13 +215,27 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   }
 }
 
-function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
+// The roots of a call of the method `fa.field` with `arity` arguments. A
+// method of that name reaches only methods with that many parameters, and
+// `ts_call_root` reaches free functions of that name.
+function ts_called_method(fa: ast.ExprFieldAccess, arity: i32, own acc: string[]): string[] {
   let tag = ts_recv_tag(fa.obj);
   let ft = util.base_type_name(tag);
+  let m = ts_arity_root(fa.field, arity);
   if (ts_named_tag(ft) && !util.str_has_suffix(tag, "[]")) {
-    return acc.append(ts_qualified_root(ft, fa.field)).append(ts_any_root(fa.field));
+    return acc.append(ts_qualified_root(ft, m)).append(ts_any_root(m)).append(ts_call_root(fa.field));
   }
-  return acc.append(fa.field);
+  return acc.append(m).append(ts_call_root(fa.field));
+}
+
+// The root of a method `name` called with `arity` arguments.
+function ts_arity_root(name: string, arity: i32): string {
+  return name + "/" + util.i32_to_string(arity);
+}
+
+// The root of a free function `name` that method syntax can call.
+function ts_call_root(name: string): string {
+  return "call " + name;
 }
 
 function ts_any_root(method: string): string {
@@ -251,7 +285,7 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
   function name_of(e: ast.Expr, own names: string[]): string[] {
     if let ast.ExprCall(c) = e {
       if let ast.ExprFieldAccess(fa) = c.callee {
-        return typed_method_name_of(fa, lt, names);
+        return typed_method_name_of(fa, c.args.len(), lt, names);
       }
       // Drivers may prune before the checker rewrites display arguments.
       // Keep the same receiver-qualified method that rewrite will call.
@@ -259,7 +293,7 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
         if (id.name == "print" || id.name == "write" || id.name == "eprint") {
           for arg in c.args {
             let display = ast.ExprFieldAccess { obj: arg, field: "to_string", line: c.line, col: c.col, ty: "", const_read: false };
-            names = typed_method_name_of(display, lt, names);
+            names = typed_method_name_of(display, 0, lt, names);
           }
         }
       }
@@ -305,13 +339,31 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (im.len() > 0) {
     name = im;
   }
+  if (ts_recv_kept_as(fd, refs, base, ts_arity_root(name, fd.params.len())) || name != fd.name && ts_recv_kept_as(fd, refs, base, ts_arity_root(fd.name, fd.params.len()))) {
+    return true;
+  }
   if (util.has_str(fd.type_params, base)) {
     return refset_has(refs, ts_any_root(name)) || name != fd.name && refset_has(refs, ts_any_root(fd.name));
+  }
+  if (ts_operator_shaped(fd) && (refset_has(refs, ts_qualified_root(base, ts_op_root(fd.name))) || fd.impl_trait.len() > 0 && refset_has(refs, ts_qualified_root(ts_impl_tag(fd.impl_trait), ts_op_root(fd.name))))) {
+    return true;
   }
   if (fd.impl_trait.len() > 0 && (refset_has(refs, ts_qualified_root(ts_impl_tag(fd.impl_trait), name)) || name != fd.name && refset_has(refs, ts_qualified_root(ts_impl_tag(fd.impl_trait), fd.name)))) {
     return true;
   }
   return refset_has(refs, ts_qualified_root(base, name)) || name != fd.name && refset_has(refs, ts_qualified_root(base, fd.name));
+}
+
+// `fd` is kept by the root of a call by the name `called`, on a type
+// parameter, on the receiver type `base`, or on the trait it implements.
+function ts_recv_kept_as(fd: parser.FuncDecl, refs: RefSet, base: string, called: string): boolean {
+  if (util.has_str(fd.type_params, base)) {
+    return refset_has(refs, ts_any_root(called));
+  }
+  if (fd.impl_trait.len() > 0 && refset_has(refs, ts_qualified_root(ts_impl_tag(fd.impl_trait), called))) {
+    return true;
+  }
+  return refset_has(refs, ts_qualified_root(base, called));
 }
 
 pub struct RefSet { names: string[], head: i32[], next: i32[] }
@@ -453,31 +505,32 @@ function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[
       if (builtin_len(body_recv_tag(fa.obj, lt), fa.field)) {
         return acc;
       }
-      acc = typed_method_name_of(fa, lt, acc);
+      acc = typed_method_name_of(fa, c.args.len(), lt, acc);
     }
     return acc;
   }
   return ts_method_name_of(e, acc);
 }
 
-function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: string[]): string[] {
+function typed_method_name_of(fa: ast.ExprFieldAccess, arity: i32, lt: LocalTypes, own acc: string[]): string[] {
+  let m = ts_arity_root(fa.field, arity);
   if let ast.ExprIdent(id) = fa.obj {
     let k = util.index_of_str(lt.names, id.name);
     if (k >= 0) {
       let spelled = lt.types[k];
       if (util.str_has_prefix(spelled, "impl ")) {
         for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
-          acc = acc.append(ts_qualified_root(ts_impl_tag(b), fa.field));
+          acc = acc.append(ts_qualified_root(ts_impl_tag(b), m));
         }
         return acc;
       }
       let base = util.base_type_name(spelled);
       if (ts_named_tag(base) && !util.str_has_suffix(spelled, "[]")) {
-        return acc.append(ts_qualified_root(base, fa.field)).append(ts_any_root(fa.field));
+        return acc.append(ts_qualified_root(base, m)).append(ts_any_root(m)).append(ts_call_root(fa.field));
       }
     }
   }
-  return ts_called_method(fa, acc);
+  return ts_called_method(fa, arity, acc);
 }
 
 pub function free_names(br: BodyRefs): string[] {
@@ -502,14 +555,12 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
     if (fd.impl_trait.len() > 0 && refset_has(br.methods, ts_qualified_root(ts_impl_tag(fd.impl_trait), fd.name))) {
       return true;
     }
-    let im = ts_interposed_method_name(fd.name);
-    return im.len() > 0 && refset_has(br.any, im);
+    return ts_interposed_kept(fd, br.any);
   }
   if (refset_has(br.any, ts_free_root(fd.name))) {
     return true;
   }
-  let im = ts_interposed_method_name(fd.name);
-  return im.len() > 0 && refset_has(br.any, im);
+  return ts_interposed_kept(fd, br.any);
 }
 
 function ts_method_name_of(e: ast.Expr, own acc: string[]): string[] {
@@ -565,22 +616,34 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (refset_has(refs, fd.name)) {
     return true;
   }
-  if (fd.receiver_type.len() == 0 && refset_has(refs, ts_free_root(fd.name))) {
+  if (refset_has(refs, ts_op_root(fd.name)) && ts_operator_shaped(fd)) {
+    return true;
+  }
+  if (fd.receiver_type.len() > 0 && refset_has(refs, ts_arity_root(fd.name, fd.params.len()))) {
+    return true;
+  }
+  if (fd.receiver_type.len() == 0 && (refset_has(refs, ts_free_root(fd.name)) || refset_has(refs, ts_call_root(fd.name)))) {
     return true;
   }
   // Primitive method syntax can dispatch to a private free runtime body.
   // Unknown generic receivers contribute the bare method root until bound.
   if (fd.receiver_type.len() == 0 && util.str_has_prefix(fd.name, "__primitive_") && util.str_has_suffix(fd.name, "_to_string")) {
     let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
-    if (refset_has(refs, "to_string") || refset_has(refs, ts_qualified_root(owner, "to_string"))) {
+    if (refset_has(refs, ts_call_root("to_string")) || refset_has(refs, ts_qualified_root(owner, ts_arity_root("to_string", 0)))) {
       return true;
     }
   }
-  let im = ts_interposed_method_name(fd.name);
-  if (im.len() > 0 && refset_has(refs, im)) {
+  if (ts_interposed_kept(fd, refs)) {
     return true;
   }
   return ts_recv_kept(fd, refs);
+}
+
+// `fd` has an interposed name, such as `P.B.scale` for the method `scale`
+// of trait B on P, and a root keeps the method part of that name.
+function ts_interposed_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
+  let im = ts_interposed_method_name(fd.name);
+  return im.len() > 0 && (refset_has(refs, im) || refset_has(refs, ts_call_root(im)) || refset_has(refs, ts_arity_root(im, fd.params.len())));
 }
 
 struct TsGrown { rs: RefSet, pending: i32[] }
