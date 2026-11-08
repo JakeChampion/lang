@@ -23,8 +23,11 @@ function number(s: string): Result[f64, string] {
 }
 
 function selected_threads(): Result[i32, string] {
-  let available = cpu_count();
-  let threads = if (target_os() != "linux") { 1 } else if (available >= 4) { 4 } else if (available >= 2) { 2 } else { 1 };
+  let threads = 1;
+  if (target_os() == "linux") {
+    let available = cpu_count();
+    threads = if (available >= 4) { 4 } else if (available >= 2) { 2 } else { 1 };
+  }
   if let Some(value) = env("ULC_THREADS") {
     threads = integer(value)?;
   }

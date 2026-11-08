@@ -176,7 +176,8 @@ Python 3 is necessary for the CLI tests.
 The example CI entry point is `examples/tests/ulc_codec.fern`.
 
 Validation used x86-64 Linux and the compiler from this checkout.
-It also used Fern nightly `e8033eacb25d`.
+WASI unit and CLI tests also pass.
+ARM64 Linux and Darwin builds pass.
 
 The reference version is ulc-codec `b47df8d50c2ef2d765e5dbec0bf567b5e558173a`.
 The reference checkout used its pinned libfourier submodule.

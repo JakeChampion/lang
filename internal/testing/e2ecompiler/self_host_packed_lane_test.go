@@ -68,13 +68,13 @@ func TestSelfHostRawLaneStores(t *testing.T) {
    __store_u8(p, 37);
    __store_u8(p + 33 as usize, 19);
    __f32x4_store(p + 1 as usize, __f32x4_of(1.0 as f32, 2.0 as f32, 3.0 as f32, 4.0 as f32));
-   let f32 = __f32x4_load_ptr(p + 1 as usize);
-   let a = f32_bits(__f32x4_lane(f32, 0));
+   let narrow = __f32x4_load_ptr(p + 1 as usize);
+   let a = f32_bits(__f32x4_lane(narrow, 0));
    let last = __load_i32(p + 13 as usize);
    __f64x2_store(p + 17 as usize, __f64x2_of(1.0, -0.0));
-   let f64 = __f64x2_load_ptr(p + 17 as usize);
-   let b = f64_bits(__f64x2_lane(f64, 0));
-   let sign = f64_bits(__f64x2_lane(f64, 1));
+   let wide = __f64x2_load_ptr(p + 17 as usize);
+   let b = f64_bits(__f64x2_lane(wide, 0));
+   let sign = f64_bits(__f64x2_lane(wide, 1));
    let first_guard = __load_u8(p);
    let last_guard = __load_u8(p + 33 as usize);
    __free(p, 40);

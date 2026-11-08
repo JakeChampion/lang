@@ -209,6 +209,13 @@ function shared_work(data: u8[], h: audio.Header, ix: Index, template: codec.Dec
 
 // The mapping stays live until every worker joins and the file write ends.
 pub function write(data: u8[], bits: i32, threads: i32, path: string): Result[void, string] {
+  if (target_os() == "linux") {
+    return write_linux(data, bits, threads, path);
+  }
+  return save(path, decode(data, bits, threads)?);
+}
+
+function write_linux(data: u8[], bits: i32, threads: i32, path: string): Result[void, string] {
   if (threads != 1 && threads != 2 && threads != 4) {
     return Err("decoder threads must be 1, 2, or 4");
   }
@@ -222,7 +229,7 @@ pub function write(data: u8[], bits: i32, threads: i32, path: string): Result[vo
   if (size > 1073741760u64) {
     return Err("WAV output is too large");
   }
-  if (target_os() != "linux" || threads == 1 || h.blocks < 4 || count < 65536u64) {
+  if (threads == 1 || h.blocks < 4 || count < 65536u64) {
     return save(path, decode(data, bits, threads)?);
   }
   let ix = index(data, h)?;
