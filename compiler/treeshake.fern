@@ -629,7 +629,7 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   // Unknown generic receivers contribute the bare method root until bound.
   if (fd.receiver_type.len() == 0 && util.str_has_prefix(fd.name, "__primitive_") && util.str_has_suffix(fd.name, "_to_string")) {
     let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
-    if (refset_has(refs, ts_call_root("to_string")) || refset_has(refs, ts_qualified_root(owner, ts_arity_root("to_string", 0)))) {
+    if (refset_has(refs, ts_arity_root("to_string", 0)) || refset_has(refs, ts_qualified_root(owner, ts_arity_root("to_string", 0)))) {
       return true;
     }
   }
