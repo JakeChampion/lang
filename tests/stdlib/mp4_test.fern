@@ -1,0 +1,42 @@
+import "std/audio/mp4";
+import "std/f64";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_vectors";
+
+function reference(v: mp4_vectors.Vector): Result[void, string] {
+  let input = ref.unpack(v.bytes)?;
+  let expected = ref.unpack(v.pcm)?;
+  let limits = mp4.default_limits();
+  let index = match (mp4.inspect(input, limits)) { Ok(value) => value, Err(e) => { return Err(v.name + " index: " + e.message()); } };
+  if (index.tracks[0].packets.len() != v.packets) {
+    return Err(v.name + " packet count");
+  }
+  let value = match (mp4.decode_track(input, index, 0, limits)) { Ok(value) => value, Err(e) => { return Err(v.name + " decode: " + e.message()); } };
+  if (value.sample_rate != v.rate || value.channels != v.channels || value.frames != v.frames as i64 || value.samples.len() != v.frames * v.channels) {
+    return Err(v.name + " format or frame count: " + value.frames.to_string());
+  }
+  for i in 0..value.samples.len() {
+    let sample = f32_from_bits(ref.word(expected, 4 * i));
+    let error = value.samples[i] - sample;
+    if (!value.samples[i].is_finite() || error > 0.000001f32 || error < -0.000001f32) {
+      return Err(v.name + " sample " + i.to_string() + ": actual " + value.samples[i].to_string() + ", expected " + sample.to_string());
+    }
+  }
+  return Ok(());
+}
+
+function complete(): test.TestOutcome {
+  for v in mp4_vectors.vectors() {
+    if let Err(message) = reference(v) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MP4 and M4A independent AAC playback");
+  runner = runner.it("packet tables, track clocks, and trimmed PCM against FFmpeg", complete);
+  return runner.finish();
+}

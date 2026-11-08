@@ -1,0 +1,22 @@
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_file_check";
+import "vorbis_file_vectors";
+
+function complete(): test.TestOutcome {
+  for value in vorbis_file_vectors.vectors() {
+    let encoded = match (ref.unpack(value.encoded)) { Ok(v) => v, Err(e) => { return test.fail(e); } };
+    let formats = match (ref.unpack(value.formats)) { Ok(v) => v, Err(e) => { return test.fail(e); } };
+    let expected = match (ref.unpack(value.pcm)) { Ok(v) => v, Err(e) => { return test.fail(e); } };
+    if let Err(e) = vorbis_file_check.run(encoded, formats, expected, 137) {
+      return test.fail(value.name + ": " + e);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Vorbis independent complete-file PCM");
+  runner = runner.it("all samples and final lengths against libvorbisfile", complete);
+  return runner.finish();
+}

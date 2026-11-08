@@ -1,0 +1,25 @@
+import "std/audio/aac";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "aac_smoke_vectors";
+
+function independent(): test.TestOutcome {
+  let v = aac_smoke_vectors.vector();
+  let Ok(input) = ref.unpack(v.bytes) else {
+    return test.fail("independent packet");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("independent PCM");
+  };
+  let Ok(value) = aac.decode(input, pcm.default_limits()) else {
+    return test.fail("AAC-LC decode");
+  };
+  return test.assert_true(value.sample_rate == v.rate && value.channels == v.channels && value.samples.len() == v.count && ref.compare(value.samples, v.count, expected, 0));
+}
+
+function main(): i32 {
+  let runner = test.new("AAC-LC independent interpreter smoke");
+  runner = runner.it("all samples of a signed spectral frame against FFmpeg", independent);
+  return runner.finish();
+}

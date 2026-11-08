@@ -1,0 +1,228 @@
+import "std/audio/vorbis/bits";
+import "std/audio/vorbis/codebook";
+import "std/audio/vorbis/types";
+import "std/audio/pcm";
+import "std/hex";
+import "std/test";
+
+function packed(text: string): u8[] {
+  let output: u8[] = [];
+  let value = 0u8;
+  let width = 0;
+  for byte in text.as_bytes() {
+    if (byte == 49u8) {
+      value |= 1u8 << width as u8;
+    }
+    width += 1;
+    if (width == 8) {
+      output = output.append(value);
+      value = 0u8;
+      width = 0;
+    }
+  }
+  if (width != 0) {
+    output = output.append(value);
+  }
+  return output;
+}
+
+function book(value: string): Result[codebook.Book, pcm.AudioError] {
+  let bytes = match (hex.decode(value)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let (_, decoded, _) = codebook.read(bytes, bits.create(), types.budget(), types.default_limits())?;
+  return Ok(decoded);
+}
+
+// The length list and codewords are the example in Vorbis I section 3.2.1.
+function canonical(): test.TestOutcome {
+  let Ok(value) = book("42435601000800008431c6084200") else {
+    return test.fail("canonical setup");
+  };
+  let words = ["00", "0100", "0101", "0110", "0111", "10", "110", "111"];
+  for symbol in 0..words.len() {
+    let bytes = packed(words[symbol]);
+    let Ok((end, actual)) = codebook.scalar(bytes, bits.create(), value) else {
+      return test.fail("canonical symbol " + symbol.to_string());
+    };
+    if (actual != symbol || end.at * 8 + end.bit != words[symbol].len()) {
+      return test.fail("canonical value or width");
+    }
+  }
+  return test.pass();
+}
+
+function sparse_and_single(): test.TestOutcome {
+  let Ok(sparse) = book("42435601000600000a0c0300") else {
+    return test.fail("sparse setup");
+  };
+  let Ok((b1, a)) = codebook.scalar(packed("01011"), bits.create(), sparse) else {
+    return test.fail("first sparse word");
+  };
+  let Ok((b2, b)) = codebook.scalar(packed("01011"), b1, sparse) else {
+    return test.fail("second sparse word");
+  };
+  let Ok((b3, c)) = codebook.scalar(packed("01011"), b2, sparse) else {
+    return test.fail("third sparse word");
+  };
+  if (a != 1 || b != 3 || c != 4 || b3.bit != 5) {
+    return test.fail("unused sparse entries received a codeword");
+  }
+  let Ok(single) = book("42435601000400001200") else {
+    return test.fail("single setup");
+  };
+  for bit in [0u8, 1u8] {
+    let Ok((end, symbol)) = codebook.scalar([bit], bits.create(), single) else {
+      return test.fail("single-entry bit value");
+    };
+    if (symbol != 2 || end.bit != 1) {
+      return test.fail("single-entry erratum consumes one bit");
+    }
+  }
+  return test.pass();
+}
+
+function ordered_and_invalid(): test.TestOutcome {
+  let Ok(ordered) = book("42435601000400000108") else {
+    return test.fail("ordered book with an empty first length run");
+  };
+  for symbol in 0..4 {
+    let bytes = packed(if (symbol == 0) { "00" } else if (symbol == 1) { "01" } else if (symbol == 2) { "10" } else { "11" });
+    let Ok((end, value)) = codebook.scalar(bytes, bits.create(), ordered) else {
+      return test.fail("ordered symbol");
+    };
+    if (value != symbol || end.bit != 2) {
+      return test.fail("ordered codeword");
+    }
+  }
+  for invalid in ["4243560100030000064100", "42435601000200000e0300", "42435601000100000e00", "424356010002000002"] {
+    if let Err(pcm.Header) = book(invalid) {} else {
+      return test.fail("overspecified, incomplete, single-long, or unused book");
+    }
+  }
+  return test.pass();
+}
+
+function longest(): test.TestOutcome {
+  let Ok(value) = book("424356010021000080200629e6a0a4166beec12827adf6e2ac37effe7f00") else {
+    return test.fail("32-bit tree");
+  };
+  for symbol in 0..33 {
+    let text = "";
+    for _ in 0..if (symbol == 32) { 32 } else { symbol } {
+      text += "1";
+    }
+    if (symbol != 32) {
+      text += "0";
+    }
+    let bytes = packed(text);
+    let Ok((end, actual)) = codebook.scalar(bytes, bits.create(), value) else {
+      return test.fail("long codeword " + symbol.to_string());
+    };
+    if (actual != symbol || end.at * 8 + end.bit != text.len()) {
+      return test.fail("long codeword value or width");
+    }
+    for cut in 0..bytes.len() {
+      if let Err(pcm.Truncated) = codebook.scalar(bytes[:cut], bits.create(), value) {} else {
+        return test.fail("long codeword byte prefix");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function vectors(): test.TestOutcome {
+  let Ok(first) = book("42435602000400008410420000c07f0300407f8d18") else {
+    return test.fail("lookup-one setup");
+  };
+  let Ok(second) = book("42435602000400008410820000c07f0300407fcd90a1b243") else {
+    return test.fail("lookup-two setup");
+  };
+  let expected1: f32[] = [-0.25f32, -0.25f32, 0.25f32, -0.25f32, -0.25f32, 0.25f32, 0.25f32, 0.25f32];
+  let expected2: f32[] = [-0.25f32, -0.25f32, 0.25f32, 0.75f32, 0.75f32, 1.75f32, 1.25f32, 2.75f32];
+  if (first.dimensions != 2 || first.entries != 4 || first.lookup != 1 || first.vectors != expected1 || second.lookup != 2 || second.vectors != expected2) {
+    return test.fail("VQ values, sequence accumulation, or lookup ordering");
+  }
+  for input in [(4, 2, 2), (8, 3, 2), (15, 2, 3), (16, 2, 4), (16777215, 65535, 1)] {
+    let (entries, dimensions, expected) = input;
+    if let Ok(actual) = codebook.lookup_count(entries, dimensions) {
+      if (actual != expected) {
+        return test.fail("integer lookup-one root");
+      }
+    } else {
+      return test.fail("lookup-one dimensions");
+    }
+  }
+  return test.pass();
+}
+
+function bit_input(): test.TestOutcome {
+  let bytes: u8[] = [120u8, 86u8, 52u8, 18u8, 255u8];
+  let Ok((end, actual)) = bits.read(bytes, bits.create(), 32) else {
+    return test.fail("full-width LSB read");
+  };
+  if (actual != 305419896u32 || end.at != 4 || end.bit != 0) {
+    return test.fail("LSB field value");
+  }
+  let Ok((same, zero)) = bits.read(bytes, end, 0) else {
+    return test.fail("zero-width read");
+  };
+  if (same.at != 4 || same.bit != 0 || zero != 0u32) {
+    return test.fail("zero-width cursor");
+  }
+  if let Err(pcm.Truncated) = bits.read(bytes, end, 9) {} else {
+    return test.fail("short LSB input");
+  }
+  if let Err(pcm.Header) = bits.read(bytes, bits.Reader { at: -1, bit: 0 }, 1) {} else {
+    return test.fail("negative cursor");
+  }
+  if let Err(pcm.Header) = bits.skip(bytes, bits.create(), -1) {} else {
+    return test.fail("negative bit count");
+  }
+  return test.pass();
+}
+
+function limits_and_truncation(): test.TestOutcome {
+  let Ok(bytes) = hex.decode("42435602000400008410420000c07f0300407f8d18") else {
+    return test.fail("reference setup");
+  };
+  for cut in 0..bytes.len() {
+    if let Err(pcm.Truncated) = codebook.read(bytes[:cut], bits.create(), types.budget(), types.default_limits()) {} else {
+      return test.fail("setup byte prefix " + cut.to_string());
+    }
+  }
+  let limits = types.default_limits();
+  for reduced in [types.Limits { ...limits, max_entries: 3 }, types.Limits { ...limits, max_vectors: 7 }, types.Limits { ...limits, max_nodes: 2 }] {
+    if let Err(pcm.Limit) = codebook.read(bytes, bits.create(), types.budget(), reduced) {} else {
+      return test.fail("aggregate setup budget");
+    }
+  }
+  let Ok((_, value, budget)) = codebook.read(bytes, bits.create(), types.budget(), limits) else {
+    return test.fail("setup accounting");
+  };
+  return test.assert_true(budget.entries == 4 && budget.vectors == 8 && budget.nodes == 3 && value.vectors.len() == 8);
+}
+
+function packed_float(): test.TestOutcome {
+  if let Ok(0.0f32) = codebook.unpack_float(2145386496u32) {} else {
+    return test.fail("zero mantissa with a large exponent");
+  }
+  if let Ok(-0.5f32) = codebook.unpack_float(3757047808u32) {} else {
+    return test.fail("signed packed float");
+  }
+  if let Err(pcm.Header) = codebook.unpack_float(2147483647u32) {} else {
+    return test.fail("non-finite packed float");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis dynamic codebooks and bounded LSB input");
+  runner = runner.it("published Vorbis canonical codeword example", canonical);
+  runner = runner.it("sparse trees and both single-entry bit values", sparse_and_single);
+  runner = runner.it("ordered zero runs and malformed prefix trees", ordered_and_invalid);
+  runner = runner.it("all tree depths through 32 bits and byte prefixes", longest);
+  runner = runner.it("lookup-one, lookup-two, and sequence vector values", vectors);
+  runner = runner.it("LSB fields, zero-bit reads, and cursor bounds", bit_input);
+  runner = runner.it("incomplete setup input and aggregate allocation limits", limits_and_truncation);
+  runner = runner.it("packed float signs, zero, and finite output", packed_float);
+  return runner.finish();
+}

@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--fern", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True, help="C release directory")
     parser.add_argument("--compiler", type=Path, help="Fern compiler used for the executable")
+    parser.add_argument("--oracle", type=Path, help="reference64 decoder for independent float64 accuracy checks")
     parser.add_argument("--reference-label", default="C default")
     parser.add_argument("--source-commit", help="Git commit used for the Fern compiler and codec")
     parser.add_argument("--seconds", type=float, default=10)
@@ -104,6 +105,9 @@ def main():
         compiler = args.compiler.resolve()
         report["compiler_version"] = run([compiler, "-version"]).stdout.decode().strip()
         report["compiler_sha256"] = hashlib.sha256(compiler.read_bytes()).hexdigest()
+    oracle = args.oracle.resolve() if args.oracle else None
+    if oracle:
+        report["oracle_sha256"] = hashlib.sha256(oracle.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="ulc-benchmark-") as temp:
         root = Path(temp)
         for kind in ("silence", "tone", "noise", "transients"):
@@ -136,8 +140,19 @@ def main():
                     a, b = samples(outputs["C"]), samples(outputs["Fern"])
                     assert len(a) == len(b)
                     error = max((abs(x - y) for x, y in zip(a, b)), default=0)
-                    assert error < 0.00002, error
                     result["max_sample_error"] = error
+                    if oracle:
+                        expected = root / "oracle.wav"
+                        run([oracle, encoded["C"], expected])
+                        truth = samples(expected)
+                        assert len(truth) == len(b)
+                        for name, values in (("C", a), ("Fern", b)):
+                            errors = [abs(x - y) for x, y in zip(values, truth)]
+                            result[f"{name.lower()}_oracle_max_error"] = max(errors, default=0)
+                            result[f"{name.lower()}_oracle_rms_error"] = (sum(x * x for x in errors) / max(1, len(errors))) ** 0.5
+                        assert result["fern_oracle_max_error"] < 0.00001, result["fern_oracle_max_error"]
+                    else:
+                        assert error < 0.00002, error
                 report["results"].append(result)
                 print(f"{kind:10} {direction:6} C={medians['C']:.4f}s Fern={medians['Fern']:.4f}s "
                       f"C/Fern={result['fern_speed_ratio']:.3f}", flush=True)

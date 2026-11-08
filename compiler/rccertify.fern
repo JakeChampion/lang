@@ -199,36 +199,14 @@ function meet(a: i32, b: i32): i32 {
   return maybe();
 }
 
-struct Defs { block: i32[], at: i32[] }
-
-function definitions(f: ssa.SFunc): Defs {
-  let block = util.minus_ones(f.nvals);
-  let at = util.minus_ones(f.nvals);
-  let bi = 0;
-  while (bi < f.blocks.len()) {
-    let insts = f.blocks[bi].insts;
-    let i = 0;
-    while (i < insts.len()) {
-      let r = insts[i].result;
-      if (r >= 0 && r < f.nvals) {
-        block = block.with(r, bi);
-        at = at.with(r, i);
-      }
-      i += 1;
-    }
-    bi += 1;
-  }
-  return Defs { block: block, at: at };
-}
-
-function def_of(f: ssa.SFunc, d: Defs, v: i32): ssa.SInst {
+function def_of(f: ssa.SFunc, d: ssa.DefSites, v: i32): ssa.SInst {
   if (v < 0 || v >= d.block.len() || d.block[v] < 0) {
     return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   }
   return f.blocks[d.block[v]].insts[d.at[v]];
 }
 
-function is_zero(f: ssa.SFunc, d: Defs, v: i32): boolean {
+function is_zero(f: ssa.SFunc, d: ssa.DefSites, v: i32): boolean {
   let ins = def_of(f, d, v);
   return ins.kind_tag == ssa.CONST_INT && ins.imm == 0;
 }
@@ -273,7 +251,7 @@ function is_named_op(k: i32): boolean {
 
 struct Walk {
   f: ssa.SFunc,
-  defs: Defs,
+  defs: ssa.DefSites,
   at: i32[],
   root: i32[],
   origin: i32[],
@@ -361,7 +339,7 @@ struct Roots { root: i32[], derived: boolean[] }
 
 struct Alias { of: i32, derived: boolean }
 
-function arith_alias(f: ssa.SFunc, defs: Defs, ins: ssa.SInst): Alias {
+function arith_alias(f: ssa.SFunc, defs: ssa.DefSites, ins: ssa.SInst): Alias {
   if (ins.args.len() != 2 || ins.str != "add" && ins.str != "sub") {
     return Alias { of: -1, derived: false };
   }
@@ -380,7 +358,7 @@ function cursor_step(c: i32): boolean {
   return c % 8 == 0;
 }
 
-function alias_of(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, ins: ssa.SInst): Alias {
+function alias_of(f: ssa.SFunc, defs: ssa.DefSites, sigs: rcsigs.Table, ins: ssa.SInst): Alias {
   if (ins.kind_tag == ssa.COPY && ins.args.len() == 1) {
     return Alias { of: 0, derived: false };
   }
@@ -400,7 +378,7 @@ function is_zero_const(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssa.CONST_INT && ins.imm == 0 && ins.str == "";
 }
 
-function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
+function roots(f: ssa.SFunc, defs: ssa.DefSites, sigs: rcsigs.Table): Roots {
   return roots_over(f, defs, sigs, own_roots(f.nvals));
 }
 
@@ -414,7 +392,7 @@ function own_roots(n: i32): Roots {
   return Roots { root: root, derived: __alloc_bool(n) };
 }
 
-function roots_over(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, start: Roots): Roots {
+function roots_over(f: ssa.SFunc, defs: ssa.DefSites, sigs: rcsigs.Table, start: Roots): Roots {
   let derived = start.derived;
   let root = start.root;
   let zero = -1;
@@ -3051,7 +3029,7 @@ function resumes(f: ssa.SFunc): boolean {
 }
 
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
-  let defs = definitions(f);
+  let defs = ssa.def_sites_of(f);
   let local = region_values(f, base.on);
   let rt = roots_over(f, defs, sigs, starting_roots(f, local, base));
   let uses = base.uses;
@@ -3080,17 +3058,17 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   return Walk { ...w, tracked: tracked };
 }
 
-struct Base { on: boolean, at: i32[], root: i32[], derived: boolean[], origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], pair_words: i32[], children: boolean[], regions: i32[][], openers: i32[][], uses: i32[], paired: boolean, takes: Takes, defs: Defs, f: ssa.SFunc, phis: i32[] }
+struct Base { on: boolean, at: i32[], root: i32[], derived: boolean[], origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], pair_words: i32[], children: boolean[], regions: i32[][], openers: i32[][], uses: i32[], paired: boolean, takes: Takes, defs: ssa.DefSites, f: ssa.SFunc, phis: i32[] }
 
 function no_base(): Base {
-  return Base { on: false, at: [], root: [], derived: [], origin: [], why: [], opened: [], pair_tag: [], pair_mask: [], pair_words: [], children: [], regions: [], openers: [], uses: [], paired: false, takes: no_takes(), defs: Defs { block: [], at: [] }, f: ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false }, phis: [] };
+  return Base { on: false, at: [], root: [], derived: [], origin: [], why: [], opened: [], pair_tag: [], pair_mask: [], pair_words: [], children: [], regions: [], openers: [], uses: [], paired: false, takes: no_takes(), defs: ssa.DefSites { block: [], at: [] }, f: ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false }, phis: [] };
 }
 
 function base_of(w: Walk): Base {
   return Base { on: true, at: w.at, root: w.root, derived: w.derived, origin: w.origin, why: w.why, opened: w.opened, pair_tag: w.pair_tag, pair_mask: w.pair_mask, pair_words: w.pair_words, children: w.children, regions: w.regions, openers: w.openers, uses: w.uses, paired: w.paired, takes: w.takes, defs: w.defs, f: w.f, phis: w.phis };
 }
 
-struct Outer { on: boolean, f: ssa.SFunc, defs: Defs, root: i32[], derived: boolean[], phis: i32[] }
+struct Outer { on: boolean, f: ssa.SFunc, defs: ssa.DefSites, root: i32[], derived: boolean[], phis: i32[] }
 
 function outer_of(base: Base): Outer {
   return Outer { on: base.on, f: base.f, defs: base.defs, root: base.root, derived: base.derived, phis: base.phis };
@@ -3108,7 +3086,7 @@ function phis_of(f: ssa.SFunc): i32[] {
   return out;
 }
 
-function outside(f: ssa.SFunc, defs: Defs, v: i32): boolean {
+function outside(f: ssa.SFunc, defs: ssa.DefSites, v: i32): boolean {
   return v >= f.nparams && v < defs.block.len() && defs.block[v] < 0;
 }
 
@@ -3184,7 +3162,7 @@ function inherited_children(local_children: boolean[], local: i32[], base: Base)
   return out;
 }
 
-function inherited_origins(o: Origins, f: ssa.SFunc, defs: Defs, base: Base, local: i32[]): Origins {
+function inherited_origins(o: Origins, f: ssa.SFunc, defs: ssa.DefSites, base: Base, local: i32[]): Origins {
   if (!base.on) {
     return o;
   }
@@ -3209,7 +3187,7 @@ function inherited_origins(o: Origins, f: ssa.SFunc, defs: Defs, base: Base, loc
   return inherited_pair_words(out, f, defs, base);
 }
 
-function inherited_pair_words(own o: Origins, f: ssa.SFunc, defs: Defs, base: Base): Origins {
+function inherited_pair_words(own o: Origins, f: ssa.SFunc, defs: ssa.DefSites, base: Base): Origins {
   if (base.pair_words.len() == 0) {
     return o;
   }
@@ -4085,7 +4063,7 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
     return failed("no blocks");
   }
   let f = ended_at_exit(f0);
-  let at = ssadeps.position_of(f);
+  let at = ssa.block_positions(f);
   if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
     return failed("no entry block");
   }

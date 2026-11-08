@@ -1,0 +1,30 @@
+import "std/audio/mp4";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_smoke_vectors";
+
+function independent(): test.TestOutcome {
+  let v = mp4_smoke_vectors.vector();
+  let Ok(input) = ref.unpack(v.bytes) else {
+    return test.fail("independent M4A bytes");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("independent trimmed PCM");
+  };
+  let Ok(index) = mp4.inspect(input, mp4.default_limits()) else {
+    return test.fail("independent sample tables");
+  };
+  if (index.tracks.len() != 1 || index.tracks[0].packets.len() != v.packets) {
+    return test.fail("independent track and packet counts");
+  }
+  let Ok(value) = mp4.decode_track(input, index, 0, mp4.default_limits()) else {
+    return test.fail("M4A decode");
+  };
+  return test.assert_true(value.sample_rate == v.rate && value.channels == v.channels && value.frames == v.frames as i64 && value.samples.len() == v.frames * v.channels && ref.compare(value.samples, value.samples.len(), expected, 0));
+}
+
+function main(): i32 {
+  let runner = test.new("Independent M4A interpreter smoke");
+  runner = runner.it("sample tables and every trimmed sample against FFmpeg", independent);
+  return runner.finish();
+}

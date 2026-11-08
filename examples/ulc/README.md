@@ -67,6 +67,11 @@ The transform cost is `O(N log N)`.
 Each decoder owns its xorshift seed and overlap buffers.
 Packed float SIMD computes the FFT.
 The block API retains double precision for window and overlap operations.
+`codec.decode_block_precise` also uses a double-precision FFT.
+This API provides a numerical reference for the faster packed transform.
+
+Serial file decode creates each transform plan when its block size first occurs.
+Silent blocks need no transform plan.
 File decode uses packed float buffers and cached float windows.
 
 The file decoder stores coefficients and overlap samples at a scale of `2^96`.
@@ -101,7 +106,7 @@ The encoder adds two blocks to the input length after rounding to a complete blo
 The reconstructed input starts two blocks into the decoded audio.
 
 On Linux, the encoder uses up to four workers for files with at least 32 blocks.
-File decode uses workers for at least four blocks and 65,536 samples.
+File decode uses workers for at least 32 blocks and 65,536 samples.
 The CPU affinity limits the default worker count.
 Set `ULC_THREADS=1`, `2`, or `4` to select it explicitly.
 The final decode argument also accepts this count after the output format.
@@ -139,6 +144,7 @@ function example(input: u8[]): Result[f64[], string] {
 Save `block.state` for the next call.
 Advance the input offset to `block.next_byte`.
 Output samples are interleaved.
+Use `codec.decode_block_precise` for a double-precision FFT with the same state and offset contract.
 
 `encoder.create(block_size, channels, rate, mode)` creates an encoder state.
 Modes are `encoder.Vbr(quality)`, `encoder.Cbr(kbps)`, and `encoder.Abr(kbps, average_complexity)`.
@@ -184,6 +190,7 @@ Python 3 is necessary for the CLI tests.
 
 The example CI entry point is `examples/tests/ulc_codec.fern`.
 `TestSelfHostULCNativeCLI` runs the CLI integration suite on native CI.
+`TestSelfHostULCAccuracy` compares file output with the double-precision FFT at both block-size limits.
 `TestSelfHostULCCLIWASI` checks the portable CLI build and entry point.
 `TestSelfHostULCUnit` and `TestSelfHostULCUnitWASI` run the full codec unit suite.
 

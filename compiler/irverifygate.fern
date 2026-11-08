@@ -212,17 +212,7 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
 // The graph with each branch on a comparison of two constants sent to the
 // side it takes, so the certifier walks no edge the program cannot take.
 function decided(f: ssa.SFunc): ssa.SFunc {
-  let defs: ssa.SInst[] = [];
-  for v in 0..f.nvals {
-    defs = defs.append(ssa.SInst { kind_tag: 0, result: v, args: [], imm: 0, str: "" });
-  }
-  for b in f.blocks {
-    for ins in b.insts {
-      if (ins.result >= 0 && ins.result < f.nvals) {
-        defs = defs.with(ins.result, ins);
-      }
-    }
-  }
+  let defs = ssa.inst_defs(f);
   let blocks: ssa.SBlock[] = [];
   let changed = false;
   for b in f.blocks {

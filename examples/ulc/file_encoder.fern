@@ -8,23 +8,7 @@ import "./transform";
 
 struct Part { bytes: u8[], maximum: i32 }
 
-function planar(samples: [f64], n: i32, channels: i32): f64[] {
-  let next = transform.zeros(n * channels);
-  for ch in 0..channels {
-    for i in 0..n {
-      let value = samples[i * channels + ch];
-      if ((ch & 1) == 0 && ch + 1 < channels) {
-        value = 0.5 * (value + samples[i * channels + ch + 1]);
-      } else if ((ch & 1) != 0) {
-        value = 0.5 * (samples[i * channels + ch - 1] - value);
-      }
-      next = next.with(ch * n + i, value);
-    }
-  }
-  return next;
-}
-
-function checkpoints(source: audio.Audio, template: encoder.Encoder, begins: [i32]): encoder.Encoder[] {
+function checkpoints(source: audio.Audio, template: encoder.Encoder, begins: [i32]): Result[encoder.Encoder[], string] {
   let states: encoder.Encoder[] = [];
   let old = template.pending;
   let detector = template.detector;
@@ -38,13 +22,13 @@ function checkpoints(source: audio.Audio, template: encoder.Encoder, begins: [i3
       next_checkpoint += 1;
       continue;
     }
-    let next = planar(audio.sample_block(source, cursor, template.block_size), template.block_size, template.channels);
+    let next = encoder.planar(audio.sample_block(source, cursor, template.block_size), template.block_size, template.channels)?;
     detector = windows.detect(detector, old, next, template.block_size, template.channels, template.rate);
     old = next;
     control = detector.control;
     cursor += 1;
   }
-  return states;
+  return Ok(states);
 }
 
 function part(source: audio.Audio, state0: encoder.Encoder, begin: i32, end: i32): Result[Part, string] {
@@ -101,18 +85,19 @@ pub function encode(source: audio.Audio, mode: encoder.Mode, n: i32, threads: i3
   let frames = source.samples.len() / source.channels;
   let blocks = (frames + n - 1) / n + 2;
   if (threads == 1 || blocks < 32 || target_os() != "linux") {
-    return audio.encode_mode(source, mode, n);
+    let encoded = part(source, template, 0, blocks)?;
+    return finish([encoded], source, n, blocks);
   }
   let half = blocks / 2;
   if (threads == 2) {
-    let states = checkpoints(source, template, [0, half]);
+    let states = checkpoints(source, template, [0, half])?;
     let left = worker.spawn((): Result[Part, string] => part(source, states[0], 0, half));
     let right = part(source, states[1], half, blocks);
     let first = left.join();
     return finish([first?, right?], source, n, blocks);
   }
   let q = blocks / 4;
-  let states = checkpoints(source, template, [0, q, half, half + q]);
+  let states = checkpoints(source, template, [0, q, half, half + q])?;
   let a = worker.spawn((): Result[Part, string] => part(source, states[0], 0, q));
   let b = worker.spawn((): Result[Part, string] => part(source, states[1], q, half));
   let c = worker.spawn((): Result[Part, string] => part(source, states[2], half, half + q));

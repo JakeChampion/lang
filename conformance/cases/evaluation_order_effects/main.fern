@@ -1,0 +1,56 @@
+// spec: EO-01
+// spec: EO-02
+// spec: EO-03
+// spec: EO-04
+
+import "core/cmp";
+import "core/map";
+function mark(n: i32): i32 { print(n.to_string()); return n; }
+function yes(n: i32, value: boolean): boolean { print(n.to_string()); return value; }
+function combine(a: i32, b: i32): i32 { print("body"); return a + b; }
+function callable(): (i32, i32) => i32 { print("callee"); return combine; }
+enum Choice { Both(i32, i32), Empty }
+trait TraceAction { function add(self: Self, n: i32): i32; }
+struct Dynamic { n: i32 }
+impl TraceAction for Dynamic { function add(self: Self, n: i32): i32 { return self.n + n; } }
+function dyn_receiver(): dyn TraceAction { print("dynamic receiver"); return Dynamic { n: 0 }; }
+struct Pair { a: i32, b: i32 }
+function receiver(): Pair { print("receiver"); return Pair { a: 0, b: 0 }; }
+function (p: Pair) add(a: i32, b: i32): i32 { return p.a + a + b; }
+function defaults(a: i32 = 51, b: i32 = 52): i32 { return a + b; }
+function one(n: i32): i32 { return 1; }
+function two(n: i32): i32 { return 2; }
+function first(): (i32) => i32 { return one; }
+function second(): (i32) => i32 { return two; }
+function main(): i32 {
+  let binary = mark(1) + mark(2);
+  let direct = combine(mark(3), mark(4));
+  let indirect = callable()(mark(5), mark(6));
+  let method = receiver().add(mark(7), mark(8));
+  let named = combine(b = mark(10), a = mark(9));
+  let record = Pair { b: mark(12), a: mark(11) };
+  let updated = Pair { ...receiver(), b: mark(13), a: mark(14) };
+  let tuple = (mark(15), mark(16));
+  let arr = [mark(17), mark(18)];
+  let map = Map { mark(19): mark(20), mark(21): mark(22) };
+  let short_a = yes(23, false) && yes(24, true);
+  let short_b = yes(25, true) || yes(26, false);
+  let short_c = yes(27, true) && yes(28, true);
+  let short_d = yes(29, false) || yes(30, true);
+  let def = defaults(b = mark(53));
+  let dynamic = dyn_receiver().add(mark(54));
+  let mixed = combine(mark(55), b = mark(56));
+  let choice = Both(mark(57), mark(58));
+  let branch = if (yes(59, true)) { mark(60) } else { mark(61) };
+  let selected = match (choice) { Both(a, b) => mark(62), Empty => mark(63) };
+  let source = (): i32[] => { print("source"); return [7, 8, 9]; };
+  let index = source()[mark(0)];
+  let slice = source()[mark(0):mark(2)];
+  if (def != 104 || binary != 3 || direct != 7 || indirect != 11 || method != 15 || named != 19) { return 1; }
+  if (record.a != 11 || record.b != 12 || updated.a != 14 || updated.b != 13) { return 2; }
+  if (tuple.0 != 15 || arr[0] != 17 || map.len() != 2 || dynamic != 54 || mixed != 111) { return 3; }
+  if (short_a || !short_b || !short_c || !short_d || branch != 60 || selected != 62 || index != 7 || slice.len() != 2) { return 4; }
+  let f = first();
+  if (f({ f = second(); 0 }) != 1) { return 5; }
+  return 0;
+}

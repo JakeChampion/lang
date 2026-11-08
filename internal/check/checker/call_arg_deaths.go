@@ -1075,6 +1075,11 @@ func UpdateBases(body ast.Node) map[*ast.Ident]map[string]bool {
 // freshInit reports an initialiser whose value no other name holds. A plain
 // named call qualifies unless its result can borrow from an argument.
 func freshInit(info *Info, init ast.Expr) bool {
+	if info != nil {
+		if value, ok := info.EnumConstructions[init]; ok && len(value.Payloads) == 0 {
+			return true
+		}
+	}
 	switch init := init.(type) {
 	case *ast.TryOp:
 		return freshInit(info, init.Inner)
@@ -1099,9 +1104,72 @@ func freshInit(info *Info, init ast.Expr) bool {
 	case *ast.IfExpr:
 		return freshInit(info, init.Then) && freshInit(info, init.Else)
 	case *ast.BlockExpr:
-		return init.Tail != nil && freshInit(info, init.Tail)
+		return init.Tail != nil && (freshInit(info, init.Tail) || freshScopedValue(info, init, init.Tail))
+	case *ast.TupleLit:
+		return freshScopedValue(info, nil, init)
 	}
 	return false
+}
+
+// A compound block result can take unmodified local payloads from fresh values.
+func freshScopedValue(info *Info, block *ast.BlockExpr, value ast.Expr) bool {
+	switch x := value.(type) {
+	case *ast.TupleLit:
+		for _, element := range x.Elems {
+			if !freshScopedValue(info, block, element) {
+				return false
+			}
+		}
+		return true
+	case *ast.NumberLit, *ast.BoolLit:
+		return true
+	case *ast.Call:
+		if info != nil {
+			if constructor, ok := info.EnumConstructions[x]; ok && len(constructor.Payloads) == len(x.Args) {
+				for i, argument := range x.Args {
+					if (info.TypeHoldsNoHandle == nil || !info.TypeHoldsNoHandle(constructor.Payloads[i])) && !freshScopedValue(info, block, argument) {
+						return false
+					}
+				}
+				return true
+			}
+		}
+		return freshInit(info, value) && (info == nil || info.CallSignatureBorrows == nil || !info.CallSignatureBorrows(x))
+	case *ast.Ident:
+		if block == nil {
+			return freshInit(info, value)
+		}
+		body := &ast.Block{Stmts: append(slices.Clone(block.Stmts), &ast.ExprStmt{Expr: block.Tail})}
+		reads := 0
+		ast.Walk(body, func(node ast.Node) bool {
+			if id, ok := node.(*ast.Ident); ok && id.Name == x.Name {
+				reads++
+			}
+			if assign, ok := node.(*ast.Assign); ok && StmtReferencesName(assign.Target, x.Name) {
+				reads += 2
+			}
+			return true
+		})
+		if reads != 1 || DeferOrLambdaNames(body)[x.Name] {
+			return false
+		}
+		for i := len(block.Stmts) - 1; i >= 0; i-- {
+			if !bindsName(block.Stmts[i], x.Name) {
+				continue
+			}
+			switch binding := block.Stmts[i].(type) {
+			case *ast.Var:
+				return freshScopedValue(info, nil, binding.Init)
+			case *ast.Destructure:
+				return binding.AtName == "" && freshScopedValue(info, nil, binding.Init)
+			}
+			return false
+		}
+		return freshInit(info, value)
+	case *ast.MatchExpr:
+		return ownedMatchValue(info, x, func(e ast.Expr) bool { return freshScopedValue(info, block, e) }, func(ast.Expr) bool { return false })
+	}
+	return freshInit(info, value)
 }
 
 // freshMatchValue reports a match on a fresh value whose each variant arm
@@ -1134,7 +1202,7 @@ func armYieldsFresh(info *Info, arm *ast.MatchExprArm) bool {
 	if id, ok := value.(*ast.Ident); ok && (slices.Contains(arm.Binders(), id.Name) || block != nil && slices.ContainsFunc(block.Stmts, func(st ast.Stmt) bool { return bindsName(st, id.Name) })) {
 		return freshArmPayload(info, block, id)
 	}
-	return freshInit(info, value)
+	return freshScopedValue(info, block, value)
 }
 
 // freshArmPayload checks the binding that the arm returns: its payload, or a
@@ -2146,6 +2214,14 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 	later := false
 	var visit func(ast.Node) bool
 	visit = func(m ast.Node) bool {
+		if branch, ok := m.(*ast.MatchExpr); ok {
+			for _, arm := range branch.Arms {
+				if nodeHolds(arm.Body, aid) {
+					ast.Walk(arm.Body, visit)
+					return false
+				}
+			}
+		}
 		if branch, ok := m.(*ast.IfExpr); ok {
 			if nodeHolds(branch.Then, aid) {
 				ast.Walk(branch.Then, visit)

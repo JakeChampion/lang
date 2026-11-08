@@ -605,7 +605,7 @@ function read_lo(o: ir.Op): i32 {
 }
 
 function read_count(o: ir.Op): i32 {
-  if (o.kind_tag == 18) {
+  if (o.kind_tag == ir.K_LOAD_LOCAL) {
     return 1;
   }
   if (o.kind_tag == 147) {
@@ -658,7 +658,7 @@ function live_in(ops: ir.Op[], else_of: i32[], end_of: i32[], n_slots: i32): i32
 
 function live_word(o: ir.Op, j: i32, after: i32): i32 {
   let v = after;
-  if ((o.kind_tag == 19 || o.kind_tag == 20) && o.i32_imm / 32 == j) {
+  if ((o.kind_tag == ir.K_STORE_LOCAL || o.kind_tag == ir.K_TEE_LOCAL) && o.i32_imm / 32 == j) {
     v = v & (-1 ^ 1 << o.i32_imm % 32);
   }
   let s = read_lo(o);
@@ -749,7 +749,7 @@ function carry_out(t: Tx, r: irtables.LowerState, set: Set, hi: i32, body: ir.Op
     let chain = sub_ops(t.seg, s, end);
     let pure = true;
     for o in chain {
-      if (!ir.pure_value_op(o) || o.kind_tag == 18 && stores_slot(body, o.i32_imm)) {
+      if (!ir.pure_value_op(o) || o.kind_tag == ir.K_LOAD_LOCAL && stores_slot(body, o.i32_imm)) {
         pure = false;
       }
     }
@@ -792,7 +792,7 @@ function producer_of(chain: ir.Op[]): i32 {
 }
 
 function value_class(t: Tx, r: irtables.LowerState, set: Set, o: ir.Op): string {
-  if (o.kind_tag == 18) {
+  if (o.kind_tag == ir.K_LOAD_LOCAL) {
     return slot_class(t, r, o.i32_imm);
   }
   if (o.kind_tag == 149) {
@@ -802,7 +802,7 @@ function value_class(t: Tx, r: irtables.LowerState, set: Set, o: ir.Op): string 
     }
     return "";
   }
-  if (o.kind_tag == 87 || o.kind_tag == 138 || o.kind_tag == 142 || o.kind_tag == 98) {
+  if (o.kind_tag == ir.K_ARR_MAKE || o.kind_tag == 138 || o.kind_tag == 142 || o.kind_tag == ir.K_STR_CONCAT) {
     return "w";
   }
   return "";
@@ -866,7 +866,7 @@ function sub_carry(xs: ir.Op[][], n: i32): ir.Op[][] {
 
 function stores_slot(ops: ir.Op[], slot: i32): boolean {
   for o in ops {
-    if ((o.kind_tag == 19 || o.kind_tag == 20) && o.i32_imm == slot) {
+    if ((o.kind_tag == ir.K_STORE_LOCAL || o.kind_tag == ir.K_TEE_LOCAL) && o.i32_imm == slot) {
       return true;
     }
   }

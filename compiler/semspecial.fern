@@ -126,7 +126,7 @@ function unread_closures_dropped(g: ssa.SFunc, blocks: ssa.SBlock[]): ssa.SBlock
 struct Cloned { r: Round, at: i32, contract: ssasem.Contract }
 
 function refused(r: Round): Cloned {
-  return Cloned { r: r, at: 0 - 1, contract: ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.TypeVoid { tag: 0 } } };
+  return Cloned { r: r, at: -1, contract: ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.TypeVoid { tag: 0 } } };
 }
 
 // The clone of callee with each parameter js[i] bound to targets[i], made

@@ -222,7 +222,7 @@ function mutation_checks(form: ssa.SFunc, phi_form: ssa.SFunc, reasons: string[]
 struct Exits { zero: i32, blocks: i32[], results: i32[] }
 
 function exits_of(f: ssa.SFunc): Exits {
-  let ex = Exits { zero: 0 - 1, blocks: [], results: [] };
+  let ex = Exits { zero: -1, blocks: [], results: [] };
   for b in f.blocks {
     for op in b.insts {
       if (b.id == f.entry && op.kind_tag == 1 && op.imm == 0) {

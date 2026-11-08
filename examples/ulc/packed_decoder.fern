@@ -13,13 +13,13 @@ pub struct Decoder { block_size: i32, channels: i32, last_size: i32, seed: u32, 
 
 pub struct Block { state: Decoder, samples: u8[], next_byte: i32, silent: boolean }
 
-pub function decoder(n: i32, channels: i32): Result[Decoder, string] {
+pub function decoder(n: i32, channels: i32, defer_plans: boolean = false): Result[Decoder, string] {
   if (!codec.valid_config(n, channels)) {
     return Err("invalid decoder configuration");
   }
   let plans: packed_transform.Plan[] = [];
   for shift in 0..4 {
-    plans = plans.append(packed_transform.plan(n >> shift));
+    plans = plans.append(if (defer_plans) { packed_transform.deferred(n >> shift) } else { packed_transform.plan(n >> shift) });
   }
   let output = __alloc_u8(4 * n * channels);
   return Ok(Decoder { block_size: n, channels: channels, last_size: 0, seed: 1234567u32, plans: plans, lap: __alloc_u8(2 * n * channels), coefs: __alloc_u8(4 * n), re: __alloc_u8(2 * n), im: __alloc_u8(2 * n), temp: __alloc_u8(4 * n), samples: __alloc_u8(4 * n), output: output, zero_samples: output, lap_zero: true });
@@ -163,7 +163,16 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       while (pattern != 0) {
         let shift = pattern & 7;
         let size = n >> shift;
-        if (shift > 3 || plans[shift].shape.n != size || plans[shift].window_cos.len() < 4 * size || plans[shift].window_sin.len() < 4 * size) {
+        if (shift > 3 || plans[shift].shape.n != size) {
+          return Err("invalid packed transform plan");
+        }
+        if (!plans[shift].prepared) {
+          if (!packed_transform.is_deferred(plans[shift])) {
+            return Err("invalid deferred transform plan");
+          }
+          plans = plans.with(shift, packed_transform.plan(size));
+        }
+        if (plans[shift].window_cos.len() < 4 * size || plans[shift].window_sin.len() < 4 * size) {
           return Err("invalid packed transform plan");
         }
         __memset(coefficient_address, 0, 4 * size);
@@ -202,18 +211,6 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
   return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, seed: r.seed, plans: plans, lap: lap, coefs: coefs, re: re, im: im, temp: temp, samples: samples, output: output, zero_samples: zero_samples, lap_zero: silent }, samples: output, next_byte: (r.pos + 1) / 2, silent: false });
 }
 
-@inline
-function store_vector(destination: usize, value: f32x4): Result[void, string] {
-  let infinity = __f32x4_splat(f32_from_bits(2139095040));
-  if (__f32x4_bitmask(__f32x4_lt(__f32x4_abs(value), infinity)) != 15) {
-    return Err("nonfinite output sample");
-  }
-  unsafe {
-    __f32x4_store(destination, value);
-  }
-  return Ok(());
-}
-
 // The destination has samples.len() writable bytes. The input contains scaled planar floats.
 pub unsafe function store_float_samples(destination: usize, samples: u8[], channels: i32): Result[void, string] {
   if (channels < 1 || channels > 255 || samples.len() % (4 * channels) != 0) {
@@ -224,18 +221,37 @@ pub unsafe function store_float_samples(destination: usize, samples: u8[], chann
   unsafe {
     let source = samples as usize + 8 as usize;
     if ((channels == 1 || channels == 2) && n % 4 == 0) {
-      for group in 0..n / 4 {
-        let i = 4 * group;
-        let a = __f32x4_load_ptr(source + (4 * i) as usize);
-        if (channels == 1) {
-          store_vector(destination + (4 * i) as usize, a * scale)?;
-        } else {
-          let b = __f32x4_load_ptr(source + (4 * (n + i)) as usize);
+      let infinity = __f32x4_splat(f32_from_bits(2139095040));
+      let valid = 15;
+      let input_at = source;
+      let output_at = destination;
+      let end = source + (4 * n) as usize;
+      if (channels == 1) {
+        while (input_at < end) {
+          let value = __f32x4_load_ptr(input_at) * scale;
+          valid &= __f32x4_bitmask(__f32x4_lt(__f32x4_abs(value), infinity));
+          __f32x4_store(output_at, value);
+          input_at += 16 as usize;
+          output_at += 16 as usize;
+        }
+      } else {
+        let second_at = source + (4 * n) as usize;
+        while (input_at < end) {
+          let a = __f32x4_load_ptr(input_at);
+          let b = __f32x4_load_ptr(second_at);
           let left = (a + b) * scale;
           let right = (a - b) * scale;
-          store_vector(destination + (8 * i) as usize, __f32x4_zip_lo(left, right))?;
-          store_vector(destination + (8 * i + 16) as usize, __f32x4_zip_hi(left, right))?;
+          valid &= __f32x4_bitmask(__f32x4_lt(__f32x4_abs(left), infinity));
+          valid &= __f32x4_bitmask(__f32x4_lt(__f32x4_abs(right), infinity));
+          __f32x4_store(output_at, __f32x4_zip_lo(left, right));
+          __f32x4_store(output_at + 16 as usize, __f32x4_zip_hi(left, right));
+          input_at += 16 as usize;
+          second_at += 16 as usize;
+          output_at += 32 as usize;
         }
+      }
+      if (valid != 15) {
+        return Err("nonfinite output sample");
       }
     } else {
       for i in 0..n {

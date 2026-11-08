@@ -80,6 +80,8 @@ QEMU establishes emulated behaviour only.
 | Hostile source text | `FuzzParse`, `FuzzCheck`, `FuzzSelfHostFrontEnd` | a diagnostic, never a signal or a hang | host, x86 |
 | A hostile op stream | `FuzzSelfHostIRVerify` | a problem list from every verifier | x86 |
 | Hostile assembly text | `FuzzSelfHostX86Assembler`, `FuzzSelfHostArm64Assembler` | a summary or an abort with a cause | x86 |
+| A hostile `fern.toml`, `fern.lock` or registry index | `FuzzSelfHostToml`, `FuzzSelfHostLock`, `FuzzSelfHostIndex` | a summary or a refusal, never a signal or a hang | x86 |
+| A hostile package archive | `FuzzSelfHostArchive` | a refusal or an unpack into the package directory alone, never a signal or a hang | x86 |
 | An ELF file supplied as source | the probes in `ELF-INPUTS.md` | `P001` | x86 |
 | A malformed attribute in a format directive | `TestSelfHostFmtWriteRefusesMalformedAttribute` | refusal | x86 |
 | An unsafe function reached without an unsafe block | `conformance/cases/diag_e095`, `conformance/cases/diag_e095_unsafe_function_as_a_value`, `conformance/cases/diag_e095_import_conceals_unsafe_function`, `conformance/cases/diag_e095_safe_trait_method_unsafe_impl` | `E095` | both checkers |

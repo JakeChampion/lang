@@ -1,19 +1,38 @@
 # The mode lattice — own / fip / views / @must_consume as one system
 
-Status: [research] design note (research issue **#5365**). **No surface change** —
-every existing spelling stays exactly as it is; no new syntax is
-proposed here. Thesis: Fern's four shipped ownership-adjacent
-surfaces — `own` consuming params (E050/E051), `fip` functions
-(E053/E068), the `T[]`-owned vs `[T]`/`str` view spelling
-(E063/E065), and `@must_consume` (E067) — are four points in one
-two-axis mode lattice (borrowed ≤ owned ≤ unique on the access
-axis; droppable vs must-consume on the orthogonal disposal axis),
-and their checkers are four spellings of one per-binding mode
-state machine. Writing the lattice down now means the goal-2
-Perceus/checker consolidation maintains ONE analysis with four
-reporting surfaces instead of four parallel analyses that drift.
+Status: [reference] the current contract below is normative.
+The historical study after it records research issue #5365.
 
-This study names historical or proposed source paths. The reference documentation identifies current files.
+## Current contract
+
+
+- Parameters borrow by default. An `own` parameter accepts an ownership transfer under E051.
+  E050 rejects use of that parameter after consumption.
+
+- A local `T[]` can initialize a local `[T]` when the element types match exactly.
+  This includes literals and temporary arrays. The view keeps the source storage alive.
+  Copy-on-write preserves the view contents when the owner changes.
+
+- An owned array can also lend a full-range view to a borrowed `[T]` parameter.
+  These rules do not permit a view to initialize an owned array.
+
+- E063 rejects a returned array view of function-local storage, including a view inside an aggregate.
+  E065 applies the corresponding rule to string views. E082 rejects closure captures that contain views.
+
+- `fip` and `fbip` impose allocation and reuse requirements under E053 and E068.
+
+- E067 requires at least one consumption on each checked path for a binding of a marked type.
+  An `own` parameter is an exempt sink. E050 restricts its later uses but does not require consumption inside the sink.
+  E067 alone does not prove exactly-once resource use.
+
+The case `local_array_views_keep_their_storage` covers local views and copy-on-write.
+[STR-VIEW-CONTRACT.md](STR-VIEW-CONTRACT.md) records the local-view decision.
+[MUST-CONSUME.md](MUST-CONSUME.md) defines the E067 checks and limits.
+
+## Historical study
+
+The remaining sections retain the earlier design analysis and implementation references.
+The current contract above takes precedence when an older implementation description differs.
 
 Reference design: Jane Street's OCaml mode extensions
 ("Oxidizing OCaml" — modes on bindings, orthogonal to types;
@@ -68,14 +87,10 @@ original "exactly-once obligations" — corrected there).
 The ordering is a submoding order read exactly as OxCaml's: a
 binding at a stronger mode can be *used* where a weaker one is
 expected, never the reverse (borrowed → owned is E051). The
-owned→borrowed direction is spelt out per surface: an owned
-`string` borrows into a `str` anywhere (`assignable`), and an
-owned `T[]` lends into a `[T]` at a PARAMETER (`argAssignable`
-/ `argOK`, #6798) — parameters are borrowed by default, so the
-callee never frees what it was lent, while an owning sink (let
-init, struct field, array element, return) keeps the strict
-rule because it would outlive the lend. `own` params are
-excluded from both: they consume.
+owned→borrowed direction permits an owned `string` as a `str`.
+An owned `T[]` also lends to a `[T]` parameter or local initializer.
+The element types must match exactly. The checker creates a full-range view.
+`own` parameters consume their arguments and do not use this borrowed-argument conversion.
 
 **Axis 2 — disposal obligation, per type, applied to owned
 values:**
@@ -108,7 +123,7 @@ an axis; everything else is RC-counted and lifetime-free.
 ### 2.1 `own` consuming params — E050 / E051
 
 Surface: `own xs: T` on parameters and receivers (`own self`),
-contextual keyword (`internal/syntax/parser/parser.go:887,1422,1483`;
+contextual keyword (`internal/syntax/parser/parser.go`;
 `ast.Param.Own`, `internal/syntax/ast/ast.go:2497`).
 
 Native analysis: `checkOwnedParams`
@@ -171,10 +186,8 @@ Constructor shapes — struct / tuple literals and payload-carrying
 variant construction — are admitted in EVERY tier, `fip` included
 (#9602). The checker cannot tell a rebuild that reuses a dead
 donor's box from one that allocates a fresh box, so the IR decides:
-`verifyFipAllocs` (`internal/oracle/ir/fip_verify.go`) counts the sites
-that lowered to a real `OpAlloc` rather than to `__alloc_reuse` and
-reports E068 when they exceed the allowance, which for a bare `fip`
-is zero. Rejecting the shape in the checker instead left `fip`
+The historical Go verifier counted real allocation sites and reported E068 above the allowance.
+The current verifier is `compiler/irfipverify.fern`. Rejecting the shape in the checker instead left `fip`
 unable to carry struct state at all: a field write is E048, whose
 remedy names the rebuild `T { ...old, f: v }`, and that rebuild was
 E053 — the two diagnostics forbidding each other. On this axis
@@ -290,12 +303,10 @@ its source's storage on every target and in both interpreters: a lent
 `T[]` box, or a `{data,len}` descriptor that points into the source
 (`ssabytes`, RC-DESIGN §1.5), so a write `reactor_wait` or
 `tcp_recv_into` makes into the array afterwards shows through it
-(#13188). A slice and `.as_bytes()` are views; a view
-and an owned `T[]` convert in neither direction (E003 / E002 /
-E043 / E038) except the owned-into-`[T]` argument lend, as in
-native (#9944). Still looser than native: method resolution does
-not separate the `slice` namespace from `Array`, and a generic
-`[T]` result that goes through substitution comes back owned.
+(#13188). A slice and `.as_bytes()` are views.
+An owned `T[]` can lend to a `[T]` parameter or local initializer.
+A view does not implicitly convert to an owned `T[]`.
+The earlier native/self-host distinction in this study is historical.
 
 ### 2.4 `@must_consume` — E067
 
@@ -315,9 +326,9 @@ the obligation — violations at the store site; loop bodies are
 opaque (mustconsume.go:27-32); overwriting an unconsumed
 binding violates (139). `own` params are exempt
 (mustconsume.go:53-55): an own-marked param declares the
-function the value's SINK — E067's caller-side at-least-once
-plus E050's sink-side at-most-once compose to exactly-once
-across the boundary (mustconsume.go:46-52).
+function the value's sink. E050 rejects use after consumption.
+The sink can leave the parameter unconsumed, so this boundary does not
+prove that the resource operation occurs exactly once.
 
 Guarantee: the forgotten-obligation bug class (unsent response,
 unclosed socket) is a compile error; RC still does all freeing —
@@ -325,9 +336,8 @@ zero runtime cost.
 
 **Discrepancy (reported):** `PLT-LANDSCAPE-2026.md` §2.2 calls
 this "exactly-once obligations". As implemented E067 is
-**at-least-once** (mustconsume.go:21-22, MUST-CONSUME.md
-"Deliberately deferred"); exactly-once exists only as the
-composition with `own` at a sink boundary.
+**at-least-once**. The `own` sink exemption also prevents an
+exactly-once guarantee across that boundary.
 
 Self-host status: **ported.** `must_consume_diags` + the `mc_*`
 family (checker.fern:2798-3277; reports at 2972, 3009, 3037,
@@ -338,12 +348,10 @@ differential gate (MUST-CONSUME.md "Self-host parity").
 
 Derived placements (all existing spellings, no new ones):
 
-- **default param** = borrowed. Borrow inference
-  (`inferParamEscapes`, `internal/oracle/ir/rc_analysis.go:344`;
-  consumed as `paramBorrowable`, ir.go:5187) silently promotes
-  non-escaping params back to borrowed under owned-by-default —
-  the mode is inferred, never surfaced (the Roc stance,
-  OWNERSHIP-INFERENCE-PLAN.md §2).
+- **default param** = borrowed. The historical Go IR used
+  `inferParamEscapes` and `paramBorrowable` for borrow inference.
+  That IR is retired. See `docs/NATIVE-RETIREMENT.md` and
+  OWNERSHIP-INFERENCE-PLAN.md §2 for the implementation history.
 - **`own` param** = owned at the boundary, droppable, affine
   consume. E050 is the owned→dead transition enforced; E051 is
   the illegal borrowed→owned coercion.
@@ -477,15 +485,11 @@ surfaces are already ported (§2), the actionable order is:
    E050/E051 (the richest state). Each merge must keep the
    differential codes gate byte-stable per fixture — the merge
    is an internal refactor with zero diagnostic change.
-3. **Keep the IR ownership analyses keyed to the same
-   vocabulary**: native `inferParamEscapes`
-   (rc_analysis.go:344) / self-host
-   `borrowable_params_interproc` and
-   `consume_safe_params_interproc`
-   (`compiler/irlower.fern:32676` / `:32769`) are the
-   inference that assigns axis-1 modes to unannotated params;
-   they should be documented (and eventually named) as mode
-   inference, not as unrelated escape analyses.
+3. **Keep the IR ownership analyses keyed to the same vocabulary.**
+   The study proposed a common vocabulary for `inferParamEscapes`,
+   `borrowable_params_interproc`, and `consume_safe_params_interproc`.
+   The Go IR and the earlier self-hosted lowering are now retired.
+   `docs/SELFHOST-SEMANTIC-SOURCE.md` describes the replacement pipeline.
 
 **(b) For #5366 (share-nothing workers): sendable is a derived
 judgment, not new machinery.** With per-worker heaps and
@@ -601,9 +605,8 @@ mirrored secondary source rather than full-text fetches):
   axis, borrow inference (Slice 0/2d), `own`'s two jobs.
 - `docs/OWNERSHIP-TYPES-PLAN.md` — the four-value Ownership
   axis (Owned/Borrowed/View/Static), `str` (A1/A2), the
-  self-host CS slices. Note: it cites `inferParamEscapes` at
-  `ir.go:3173`; the function now lives at
-  `internal/oracle/ir/rc_analysis.go:344` (minor drift, reported here).
+  self-host CS slices. Its `inferParamEscapes` references describe
+  the retired Go IR, rather than the current compiler.
 - `docs/RC-PERCEUS-PLAN.md` — Phase 2d-borrow (the borrowed-
   parameter model) and the Perceus borrowed-parameter rule.
 - `docs/NICHE-LANGUAGE-RESEARCH.md` — Koka fip/fbip (ICFP 2023),

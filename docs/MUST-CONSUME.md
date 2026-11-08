@@ -2,17 +2,15 @@
 
 Status: [reference] shipped as E067 in the checker.
 
-Plan item **E1** of `docs/NICHE-BORROWS-PLAN.md`, from the
-niche-language research: Vale's "Higher RAII" and Austral's linear
-types show that a type which **forbids implicit drop** can carry
-compile-time obligations — respond to this request exactly once,
-close this socket, commit or roll back this transaction. Rust
-cannot express this (its types are mandatorily affine — everything
-is auto-droppable); it needs only a per-type undroppable marker,
-not a borrow checker. Fern is unusually well placed: the checker
-already runs an intra-procedural escape family (E063 slice-escape,
-E065 str-escape), and RC keeps doing the actual freeing — the
-marker is purely a checker-side obligation, zero runtime cost.
+E067 checks explicit consumption of bindings whose types forbid implicit drop.
+The check requires at least one consuming use on each checked path.
+It does not establish exactly-once resource use.
+Reference counting still manages memory, and the marker adds no runtime cost.
+
+An `own` parameter declares a sink and is exempt from E067.
+E050 rejects use of that parameter after consumption, but the sink can leave it unconsumed.
+A resource API must implement the operation that fulfills its obligation.
+The attribute alone does not prove that the implementation performs that operation.
 
 ## Surface
 
@@ -23,20 +21,14 @@ struct PendingResponse { status: i32, body: string }
 
 `@must_consume` applies to struct and enum declarations (the
 attribute slots into the existing `@derive`/`@import`/`@export`
-allow-list in `parseAttribute`). A VALUE of a marked type must be
-**consumed exactly once on every control-flow path** before its
-binding goes out of scope.
+allow-list in `parseAttribute`). A checked binding of a marked type requires
+**at least one consuming use on every checked control-flow path** before scope exit.
 
 **Consuming uses** (the value's obligation transfers or resolves):
-- passing it as a call argument (the obligation moves to the
-  callee: a non-`own` marked param is itself tracked in the
-  callee, while an **`own` param is the declared SINK** — exempt
-  from E067, with `checkOwnedParams`' affine rule providing the
-  at-most-once half, so own-boundaries get exactly-once. Note the
-  owned-argument rule means `own` params accept only fresh
-  constructions or other own params — local-held values discharge
-  by return / match / marked-container store / passing to non-own
-  params);
+- passing it as a call argument. A non-`own` marked parameter transfers
+  the obligation to the callee. An `own` parameter declares an exempt sink.
+  E051 still controls admission: a fresh construction, another `own`
+  parameter, or an eligible local at its last use can pass.
 - returning it (the caller inherits the obligation);
 - constructing another value with it (struct literal field, enum
   payload, array element, tuple element — the obligation rides
@@ -53,11 +45,9 @@ binding goes out of scope.
 - overwriting a binding that still holds an unconsumed marked
   value (`x = fresh();` while old `x` unconsumed — the old value
   is implicitly dropped);
-- consuming the same binding twice on one path is NOT an error
-  Fern can fully check without move tracking — slice 1 checks
-  at-least-once, not exactly-once; the RC runtime keeps
-  double-use memory-safe regardless (it's an obligation checker,
-  not a memory-safety checker).
+- repeated consumption is outside the E067 guarantee.
+  E050 separately checks uses after an `own` parameter moves.
+  Neither check proves exactly-once behavior for an external resource.
 - a DISCARDED call result of a marked type (`sink(t);` where sink
   returns the marked value and the result is dropped) is not
   tracked in slice 1 — only bindings are. E055-style
@@ -92,30 +82,17 @@ it claims:
 
 ## Self-host parity
 
-**Ported (both checkers).** The native walk landed first (#4933,
-with self-host parse-tolerance so marked programs compiled), and
-the `checker.fern` port followed as its own slice (the `mc_*`
-family, mirroring `internal/check/checker/mustconsume.go`; deviations in
-`SELFHOST-CHECKER-PORT.md`). Historical note: the port originally
-targeted the gate's per-code opt-in set
-(`selfHostImplementedCodes`), but that filter was DELETED the same
-day (freeze precondition 3, #4451) when the checker port reached
-full coverage — the differential gate now compares the raw,
-unfiltered code sets, with 21 `mc-*` fixtures covering E067.
-
-**Status: the self-host port has landed.** The parser stamps the
-attribute onto `StructDecl.must_consume` / `EnumDecl.must_consume`,
-`checker.fern`'s `mc_*` family mirrors the native walk, and `"E067"`
-is in `selfHostImplementedCodes` with an `mc-*` fixture corpus in the
-differential gate. See docs/SELFHOST-CHECKER-PORT.md (E067 entry) for
-the port's shape and its two self-host-specific mappings (variant
-constructor calls as EnumLit stores; the value-position match/if IIFE
-desugar treated as an inline block rather than a capture).
+Both checkers implement E067.
+The Go oracle uses `internal/check/checker/mustconsume.go`.
+The self-hosted compiler uses the `mc_*` functions in `compiler/checker.fern`.
+The checker differential compares unfiltered diagnostic codes.
+The `MC-*` entries in `spec/semantics.md` identify the portable conformance cases.
 
 ## First real users
 
-Ships with test types only, until a real API adopts it. Queued
-adopters, in order:
+`std/worker` uses the marker for `Worker` handles. See [WORKERS.md](WORKERS.md).
+
+The original adoption plan listed these candidates:
 1. `tcp_serve_supervised`'s worker lifecycle handle
    (`CRASH-ONLY-SERVE.md` D2') — "the child result must be waited";
 2. a future `HttpResponseWriter` ("respond exactly once") if the

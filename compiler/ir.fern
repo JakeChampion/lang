@@ -18,47 +18,47 @@ pub function width_ptr(): i32 {
 }
 
 function op0(tag: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: tag, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: tag, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_const_i32(v: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 1, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 1, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_const_i32_text(t: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 
 pub function op_const_ptr_text(t: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
+  return Op { source: 0, decl: -1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
 }
 
 pub function op_const_i64(v: i64): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 pub function op_int_extend(unsigned: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" };
 }
 
 pub function op_int_wrap(unsigned: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" };
 }
 
 pub function op_int_extend_ptr(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_int_wrap_ptr(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_const_i64_text(t: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: 3, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 pub function op_const_f64(v: f64): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
 }
 
 pub function const_i64_text(o: Op): string {
@@ -76,81 +76,81 @@ pub function const_f64_bits(o: Op): i64 {
 }
 
 pub function op_const_str(s: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
+  return Op { source: 0, decl: -1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
 }
 
 // The address of function `name`, with `cfi` the signature word its stub
 // carries under -harden (`cfi_sig_hash`).
 pub function op_const_func(cfi: i32, name: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 6, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: 6, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_load_local(idx: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 18, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 18, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_store_local(idx: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 19, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 19, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tee_local(idx: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 20, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 20, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
 
 pub function op_fbin(kind: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 pub function op_funary(kind: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 pub function op_int_to_f64(width: i32, unsigned: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_I32_TO_F64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_I32_TO_F64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
 
 pub function op_f64_to_i32(): Op {
-  return op0(12);
+  return op0(K_F64_TO_I32);
 }
 
 pub function op_f64_to_i64(): Op {
-  return op0(13);
+  return op0(K_F64_TO_I64);
 }
 
 pub function op_f64_to_u32(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_F64_TO_I32, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_F64_TO_I32, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
 }
 
 pub function op_f64_to_u64(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_F64_TO_I64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_F64_TO_I64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
 }
 
 pub function op_f64_to_ptr(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_F64_TO_I64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_F64_TO_I64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_ptr_to_f64(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_I32_TO_F64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_I32_TO_F64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_f64_bits(): Op {
-  return op0(16);
+  return op0(K_F64_BITS);
 }
 
 pub function op_f64_from_bits(): Op {
-  return op0(17);
+  return op0(K_F64_FROM_BITS);
 }
 
 pub function op_f32_bits(): Op {
-  return op0(14);
+  return op0(K_F32_BITS);
 }
 
 pub function op_f32_from_bits(): Op {
-  return op0(15);
+  return op0(K_F32_FROM_BITS);
 }
 
 pub const LANE_KIND_FIRST: i32 = 447;
@@ -209,43 +209,43 @@ function kind_id_lane(name: string): i32 {
 }
 
 pub function op_lane(kind: string, width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_lane_at(kind: string, width: i32, lane: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: lane, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: kind_id(kind), i32_imm: lane, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_const_f64_text(t: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 pub function op_load(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 67, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 67, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_store(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_alloc(): Op {
-  return op0(76);
+  return op0(K_ALLOC);
 }
 
 pub function op_ptr_width(): Op {
-  return op0(79);
+  return op0(K_PTR_WIDTH);
 }
 
 pub function op_arr_make(n: i32, width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_get(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_get_nc(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function check_only(op: Op): Op {
@@ -297,59 +297,59 @@ pub function is_lane_call(op: Op): boolean {
 }
 
 pub function op_arr_set(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_make_i64(n: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_get_i64(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_get_i64_nc(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_set_i64(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_len(): Op {
-  return op0(90);
+  return op0(K_ARR_LEN);
 }
 
 pub function op_arr_push(): Op {
-  return op0(92);
+  return op0(K_ARR_PUSH);
 }
 
 pub function op_arr_push_owned(): Op {
-  return op0(93);
+  return op0(K_ARR_PUSH_OWNED);
 }
 
 pub function op_arr_push_i64(): Op {
-  return op0(94);
+  return op0(K_ARR_PUSH_I64);
 }
 
 pub function op_arr_push_f64(): Op {
-  return op0(95);
+  return op0(K_ARR_PUSH_F64);
 }
 
 pub function op_arr_push_owned_i64(): Op {
-  return op0(302);
+  return op0(K_ARR_PUSH_OWNED_I64);
 }
 
 pub function op_arr_push_owned_f64(): Op {
-  return op0(303);
+  return op0(K_ARR_PUSH_OWNED_F64);
 }
 
 pub function op_alloc_u8(): Op {
-  return op0(77);
+  return op0(K_ALLOC_U8);
 }
 
 pub function op_alloc_uninit(): Op {
-  return Op { ...op0(515), width: 8 };
+  return Op { ...op0(K_ALLOC_UNINIT), width: 8 };
 }
 
 pub function op_alloc_slots(width: i32): Op {
@@ -369,63 +369,63 @@ pub function is_packed(o: Op): boolean {
 }
 
 pub function op_str_from_bytes(): Op {
-  return op0(103);
+  return op0(K_STR_FROM_BYTES);
 }
 
 pub function op_str_from_bytes_range(): Op {
-  return op0(380);
+  return op0(K_STR_FROM_BYTES_RANGE);
 }
 
 pub function op_memcpy(): Op {
-  return op0(74);
+  return op0(K_MEMCPY);
 }
 
 pub function op_memset(): Op {
-  return op0(75);
+  return op0(K_MEMSET);
 }
 
 pub function op_free(): Op {
-  return op0(78);
+  return op0(K_FREE);
 }
 
 pub function op_load_i32(): Op {
-  return op0(69);
+  return op0(K_LOAD_I32);
 }
 
 pub function op_load_i64(): Op {
-  return op0(70);
+  return op0(K_LOAD_I64);
 }
 
 pub function op_load_ptr(): Op {
-  return op0(71);
+  return op0(K_LOAD_PTR);
 }
 
 pub function op_store_i32(): Op {
-  return op0(72);
+  return op0(K_STORE_I32);
 }
 
 pub function op_store_i64(): Op {
-  return op0(199);
+  return op0(K_STORE_I64);
 }
 
 pub function op_store_ptr(): Op {
-  return op0(73);
+  return op0(K_STORE_PTR);
 }
 
 pub function op_int_cast(ty: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty };
+  return Op { source: 0, decl: -1, kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty };
 }
 
 pub function op_u32_wrap(): Op {
-  return op0(10);
+  return op0(K_U32_WRAP);
 }
 
 pub function op_str_len(): Op {
-  return op0(97);
+  return op0(K_STR_LEN);
 }
 
 pub function op_str_data(): Op {
-  return op0(345);
+  return op0(K_STR_DATA);
 }
 
 // A str_len or str_data read of a byte view's string arm. On wasm that
@@ -440,31 +440,31 @@ pub function is_view_string(o: Op): boolean {
 }
 
 pub function op_str_concat(): Op {
-  return op0(98);
+  return op0(K_STR_CONCAT);
 }
 
 pub function op_str_eq(): Op {
-  return op0(99);
+  return op0(K_STR_EQ);
 }
 
 pub function op_str_cmp(): Op {
-  return op0(100);
+  return op0(K_STR_CMP);
 }
 
 pub function op_str_index(): Op {
-  return op0(101);
+  return op0(K_STR_INDEX);
 }
 
 pub function op_str_slice(): Op {
-  return op0(102);
+  return op0(K_STR_SLICE);
 }
 
 pub function op_str_slice_frame(base: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_arr_slice(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_array_literal_copy(width: i32): Op {
@@ -472,40 +472,40 @@ pub function op_array_literal_copy(width: i32): Op {
 }
 
 pub function is_array_literal_copy(o: Op): boolean {
-  return o.kind_tag == 96 && o.i32_imm == 2;
+  return o.kind_tag == K_ARR_SLICE && o.i32_imm == 2;
 }
 
 pub function op_raw_alloc(): Op {
-  return op0(81);
+  return op0(K_RAW_ALLOC);
 }
 
 pub function op_raw_store8(): Op {
-  return op0(82);
+  return op0(K_RAW_STORE8);
 }
 
 pub function op_raw_load8(): Op {
-  return op0(83);
+  return op0(K_RAW_LOAD8);
 }
 
 pub function op_raw_store_ptr(): Op {
-  return op0(84);
+  return op0(K_RAW_STORE_PTR);
 }
 
 // The count word of the array on the stack.
 pub function op_arr_rc(): Op {
-  return op0(91);
+  return op0(K_ARR_RC);
 }
 
 pub function op_raw_load_ptr(): Op {
-  return op0(85);
+  return op0(K_RAW_LOAD_PTR);
 }
 
 pub function op_raw_string(): Op {
-  return op0(86);
+  return op0(K_RAW_STRING);
 }
 
 pub function op_raw_string_frame(base: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 86, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 86, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function frame_box_base(o: Op): i32 {
@@ -520,169 +520,169 @@ pub function placed_frame_box(o: Op, base: i32): Op {
 }
 
 pub function op_syscall3(): Op {
-  return op0(204);
+  return op0(K_SYSCALL3);
 }
 
 pub function op_raw_scratch(): Op {
-  return op0(205);
+  return op0(K_RAW_SCRATCH);
 }
 
 pub function op_syscall4(): Op {
-  return op0(206);
+  return op0(K_SYSCALL4);
 }
 
 pub function op_raw_environ(): Op {
-  return op0(207);
+  return op0(K_RAW_ENVIRON);
 }
 
 pub function op_raw_splice_pipe(): Op {
-  return op0(331);
+  return op0(K_RAW_SPLICE_PIPE);
 }
 
 pub function op_raw_task_state(): Op {
-  return op0(367);
+  return op0(K_RAW_TASK_STATE);
 }
 
 pub function op_raw_vdso(): Op {
-  return op0(443);
+  return op0(K_RAW_VDSO);
 }
 
 pub function op_raw_cover(): Op {
-  return op0(287);
+  return op0(K_RAW_COVER);
 }
 
 pub function op_line(line: i32, col: i32): Op {
-  return Op { ...op0(288), i32_imm: line, i64_imm: col as i64 };
+  return Op { ...op0(K_LINE), i32_imm: line, i64_imm: col as i64 };
 }
 
 pub function op_syscall5(): Op {
-  return op0(228);
+  return op0(K_SYSCALL5);
 }
 
 pub function op_syscall6(): Op {
-  return op0(323);
+  return op0(K_SYSCALL6);
 }
 
 pub function op_raw_addr(): Op {
-  return op0(223);
+  return op0(K_RAW_ADDR);
 }
 
 pub function op_raw_arr_box(): Op {
-  return op0(224);
+  return op0(K_RAW_ARR_BOX);
 }
 
 pub function op_memchr(): Op {
-  return op0(225);
+  return op0(K_MEMCHR);
 }
 
 pub function op_count_byte_bytes(): Op {
-  return op0(359);
+  return op0(K_COUNT_BYTE_BYTES);
 }
 
 // The number of words of a u64 array below a word, in unsigned order.
 pub function op_count_below_u64(): Op {
-  return op0(482);
+  return op0(K_COUNT_BELOW_U64);
 }
 
 // A read-only prctl query: the kernel's answer, or the negated errno.
 pub function op_prctl_query(): Op {
-  return op0(483);
+  return op0(K_PRCTL_QUERY);
 }
 
 pub function op_sum_bytes_array(): Op {
-  return op0(368);
+  return op0(K_SUM_BYTES_ARRAY);
 }
 
 pub function op_bsd_sum_bytes(): Op {
-  return op0(369);
+  return op0(K_BSD_SUM_BYTES);
 }
 
 pub function op_crc32_cksum_array(): Op {
-  return op0(373);
+  return op0(K_CRC32_CKSUM_ARRAY);
 }
 
 pub function op_crc32_ieee_array(): Op {
-  return op0(481);
+  return op0(K_CRC32_IEEE_ARRAY);
 }
 
 pub function op_memchr_bytes(): Op {
-  return op0(358);
+  return op0(K_MEMCHR_BYTES);
 }
 
 pub function op_rmemchr_bytes(): Op {
-  return op0(360);
+  return op0(K_RMEMCHR_BYTES);
 }
 
 pub function op_count_runs_bytes(): Op {
-  return op0(379);
+  return op0(K_COUNT_RUNS_BYTES);
 }
 
 pub function op_scan_set_bytes(): Op {
-  return op0(361);
+  return op0(K_SCAN_SET_BYTES);
 }
 
 pub function op_mismatch_bytes(): Op {
-  return op0(378);
+  return op0(K_MISMATCH_BYTES);
 }
 
 pub function op_mismatch_bytes_str(): Op {
-  return op0(446);
+  return op0(K_MISMATCH_BYTES_STR);
 }
 
 pub function op_rmemchr(): Op {
-  return op0(234);
+  return op0(K_RMEMCHR);
 }
 
 pub function op_count_byte(): Op {
-  return op0(235);
+  return op0(K_COUNT_BYTE);
 }
 
 pub function op_sum_bytes(): Op {
-  return op0(253);
+  return op0(K_SUM_BYTES);
 }
 
 pub function op_scan_set(): Op {
-  return op0(324);
+  return op0(K_SCAN_SET);
 }
 
 pub function is_block_scan_set(o: Op): boolean {
-  return (o.kind_tag == 324 || o.kind_tag == 361 && is_packed(o)) && o.str.len() == 256;
+  return (o.kind_tag == K_SCAN_SET || o.kind_tag == K_SCAN_SET_BYTES && is_packed(o)) && o.str.len() == 256;
 }
 
 pub function op_count_runs(): Op {
-  return op0(327);
+  return op0(K_COUNT_RUNS);
 }
 
 pub function op_bsd_sum(): Op {
-  return op0(329);
+  return op0(K_BSD_SUM);
 }
 
 pub function op_str_hash(): Op {
-  return op0(390);
+  return op0(K_STR_HASH);
 }
 
 pub function op_scale_f64(): Op {
-  return op0(322);
+  return op0(K_SCALE_F64);
 }
 
 pub function op_outer_mul_f64(): Op {
-  return op0(381);
+  return op0(K_OUTER_MUL_F64);
 }
 
 pub function op_inner_mul_add_f64(): Op {
-  return op0(382);
+  return op0(K_INNER_MUL_ADD_F64);
 }
 
 pub function op_arr_reserve(width: i32): Op {
-  return Op { ...op0(383), width: width };
+  return Op { ...op0(K_ARR_RESERVE), width: width };
 }
 
 pub function op_ret_word(): Op {
-  return op0(384);
+  return op0(K_RET_WORD);
 }
 
 pub function op_call_word(): Op {
-  return op0(385);
+  return op0(K_CALL_WORD);
 }
 
 pub function op_ret_pair_word(slot: i32): Op {
@@ -706,474 +706,488 @@ pub function op_scale_f64_in_place(): Op {
 }
 
 pub function op_crc32_cksum(): Op {
-  return op0(309);
+  return op0(K_CRC32_CKSUM);
 }
 
 pub function op_crc32_ieee(): Op {
-  return op0(480);
+  return op0(K_CRC32_IEEE);
 }
 
 pub function op_ascii_run(): Op {
-  return op0(227);
+  return op0(K_ASCII_RUN);
 }
 
 pub function op_mismatch(): Op {
-  return op0(245);
+  return op0(K_MISMATCH);
 }
 
 pub function op_random_bytes(): Op {
-  return op0(185);
+  return op0(K_RANDOM_BYTES);
 }
 
 pub function op_random_i32(): Op {
-  return op0(186);
+  return op0(K_RANDOM_I32);
 }
 
 pub function op_monotonic_ns(): Op {
-  return op0(182);
+  return op0(K_MONOTONIC_NS);
 }
 
 pub function op_now_unix_ms(): Op {
-  return op0(184);
+  return op0(K_NOW_UNIX_MS);
 }
 
 pub function op_now_ns(): Op {
-  return op0(183);
+  return op0(K_NOW_NS);
 }
 
 pub function op_clock_resolution(): Op {
-  return op0(389);
+  return op0(K_CLOCK_RESOLUTION);
 }
 
 pub function op_clock_set(): Op {
-  return op0(388);
+  return op0(K_CLOCK_SET);
 }
 
 pub function op_poll(): Op {
-  return op0(187);
+  return op0(K_POLL);
 }
 
 pub function op_timer_fd(): Op {
-  return op0(188);
+  return op0(K_TIMER_FD);
 }
 
 pub function op_isatty(): Op {
-  return op0(232);
+  return op0(K_ISATTY);
 }
 
 pub function op_window_size(): Op {
-  return op0(276);
+  return op0(K_WINDOW_SIZE);
 }
 
 pub function op_pipe(): Op {
-  return op0(408);
+  return op0(K_PIPE);
 }
+
+pub const K_OPEN_DIR: i32 = 420;
 
 pub function op_open_dir(): Op {
-  return op0(420);
+  return op0(K_OPEN_DIR);
 }
+
+pub const K_DIR_OPEN: i32 = 421;
 
 pub function op_dir_open(): Op {
-  return op0(421);
+  return op0(K_DIR_OPEN);
 }
 
+pub const K_DIR_ENTRIES: i32 = 422;
+
 pub function op_dir_entries(): Op {
-  return op0(422);
+  return op0(K_DIR_ENTRIES);
 }
 
 pub function op_dir_stat(follow: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+pub const K_DIR_ACCESS: i32 = 424;
+
 pub function op_dir_access(): Op {
-  return op0(424);
+  return op0(K_DIR_ACCESS);
 }
 
 pub function op_dir_unlink(dir: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 425, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 425, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+
+pub const K_DIR_CHMOD: i32 = 426;
 
 pub function op_dir_chmod(): Op {
-  return op0(426);
+  return op0(K_DIR_CHMOD);
 }
 
+pub const K_DIR_CHOWN: i32 = 427;
+
 pub function op_dir_chown(): Op {
-  return op0(427);
+  return op0(K_DIR_CHOWN);
 }
 
 pub function op_dir_open_file(write: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 428, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 428, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_termios_get(): Op {
-  return op0(312);
+  return op0(K_TERMIOS_GET);
 }
 
 pub function op_termios_set(): Op {
-  return op0(313);
+  return op0(K_TERMIOS_SET);
 }
 
 pub function op_set_window_size(): Op {
-  return op0(314);
+  return op0(K_SET_WINDOW_SIZE);
 }
 
 pub function op_set_extproc(): Op {
-  return op0(406);
+  return op0(K_SET_EXTPROC);
 }
 
 pub function op_access(): Op {
-  return op0(237);
+  return op0(K_ACCESS);
 }
 
 pub function op_geteuid(): Op {
-  return op0(238);
+  return op0(K_GETEUID);
 }
 
 pub function op_getegid(): Op {
-  return op0(239);
+  return op0(K_GETEGID);
 }
 
 pub function op_getuid(): Op {
-  return op0(246);
+  return op0(K_GETUID);
 }
 
 pub function op_getgid(): Op {
-  return op0(247);
+  return op0(K_GETGID);
 }
 
 pub function op_getgroups(): Op {
-  return op0(248);
+  return op0(K_GETGROUPS);
 }
 
 pub function op_environ(): Op {
-  return op0(249);
+  return op0(K_ENVIRON);
 }
 
 pub function op_create_dir(): Op {
-  return op0(260);
+  return op0(K_CREATE_DIR);
 }
 
 pub function op_remove_dir(): Op {
-  return op0(261);
+  return op0(K_REMOVE_DIR);
 }
 
 pub function op_create_link(): Op {
-  return op0(262);
+  return op0(K_CREATE_LINK);
 }
 
 pub function op_create_symlink(): Op {
-  return op0(263);
+  return op0(K_CREATE_SYMLINK);
 }
 
 pub function op_clone_file(): Op {
-  return op0(405);
+  return op0(K_CLONE_FILE);
 }
 
 pub function op_read_link(): Op {
-  return op0(264);
+  return op0(K_READ_LINK);
 }
 
 pub function op_rename(): Op {
-  return op0(267);
+  return op0(K_RENAME);
 }
 
 pub function op_getxattr(): Op {
-  return op0(362);
+  return op0(K_GETXATTR);
 }
 
 pub function op_lgetxattr(): Op {
-  return op0(363);
+  return op0(K_LGETXATTR);
 }
 
 pub function op_setxattr(): Op {
-  return op0(364);
+  return op0(K_SETXATTR);
 }
 
 pub function op_lsetxattr(): Op {
-  return op0(365);
+  return op0(K_LSETXATTR);
 }
 
 pub function op_getxattr_bytes(): Op {
-  return op0(374);
+  return op0(K_GETXATTR_BYTES);
 }
 
 pub function op_lgetxattr_bytes(): Op {
-  return op0(375);
+  return op0(K_LGETXATTR_BYTES);
 }
 
 pub function op_setxattr_bytes(): Op {
-  return op0(376);
+  return op0(K_SETXATTR_BYTES);
 }
 
 pub function op_lsetxattr_bytes(): Op {
-  return op0(377);
+  return op0(K_LSETXATTR_BYTES);
 }
 
 pub function op_rename_noreplace(): Op {
-  return op0(356);
+  return op0(K_RENAME_NOREPLACE);
 }
 
 pub function op_rename_exchange(): Op {
-  return op0(357);
+  return op0(K_RENAME_EXCHANGE);
 }
 
 pub function op_umask(): Op {
-  return op0(265);
+  return op0(K_UMASK);
 }
 
 pub function op_priority(): Op {
-  return op0(282);
+  return op0(K_PRIORITY);
 }
 
 pub function op_set_priority(): Op {
-  return op0(283);
+  return op0(K_SET_PRIORITY);
 }
 
 pub function op_chmod(): Op {
-  return op0(268);
+  return op0(K_CHMOD);
 }
 
 pub function op_truncate(): Op {
-  return op0(273);
+  return op0(K_TRUNCATE);
 }
 
 pub function op_mknod(): Op {
-  return op0(274);
+  return op0(K_MKNOD);
 }
 
 pub function op_chown_at(): Op {
-  return op0(275);
+  return op0(K_CHOWN_AT);
 }
 
 pub function op_chmod_at(): Op {
-  return op0(321);
+  return op0(K_CHMOD_AT);
 }
 
 pub function op_set_file_times(): Op {
-  return op0(269);
+  return op0(K_SET_FILE_TIMES);
 }
 
 pub function op_writer_set_times(): Op {
-  return op0(498);
+  return op0(K_WRITER_SET_TIMES);
 }
 
 pub function op_open_reader_with(): Op {
-  return op0(304);
+  return op0(K_OPEN_READER_WITH);
 }
 
 pub function op_open_writer_with(): Op {
-  return op0(305);
+  return op0(K_OPEN_WRITER_WITH);
 }
 
 pub function op_hostname(): Op {
-  return op0(240);
+  return op0(K_HOSTNAME);
 }
 
 pub function op_uname_field(): Op {
-  return op0(250);
+  return op0(K_UNAME_FIELD);
 }
 
 pub function op_getcwd(): Op {
-  return op0(251);
+  return op0(K_GETCWD);
 }
 
 pub function op_cpu_count(): Op {
-  return op0(252);
+  return op0(K_CPU_COUNT);
 }
 
 pub function op_process_alive(): Op {
-  return op0(271);
+  return op0(K_PROCESS_ALIVE);
 }
 
 pub function op_signal_send(): Op {
-  return op0(285);
+  return op0(K_SIGNAL_SEND);
 }
 
 pub function op_set_process_group(): Op {
-  return op0(284);
+  return op0(K_SET_PROCESS_GROUP);
 }
 
 pub function op_rlimit_nofile(): Op {
-  return op0(272);
+  return op0(K_RLIMIT_NOFILE);
 }
 
+pub const K_WASM_TIMER_POLLABLE: i32 = 148;
+
 pub function op_wasm_timer_pollable(): Op {
-  return op0(148);
+  return op0(K_WASM_TIMER_POLLABLE);
 }
 
 pub function op_wasm_pollable_drop(): Op {
-  return op0(161);
+  return op0(K_WASM_POLLABLE_DROP);
 }
 
 pub function op_wasm_block(): Op {
-  return op0(162);
+  return op0(K_WASM_BLOCK);
 }
 
 pub function op_wasm_poll(): Op {
-  return op0(167);
+  return op0(K_WASM_POLL);
 }
 
 pub function op_tcp_send_bytes(): Op {
-  return op0(353);
+  return op0(K_TCP_SEND_BYTES);
 }
 
 pub function op_tcp_close(): Op {
-  return op0(116);
+  return op0(K_TCP_CLOSE);
 }
 
 pub function op_tcp_pollable(): Op {
-  return op0(112);
+  return op0(K_TCP_POLLABLE);
 }
 
 pub function op_tcp_listen(): Op {
-  return op0(200);
+  return op0(K_TCP_LISTEN);
 }
 
 pub function op_tcp_accept(): Op {
-  return op0(201);
+  return op0(K_TCP_ACCEPT);
 }
 
 pub function op_tcp_accept_with(): Op {
-  return op0(511);
+  return op0(K_TCP_ACCEPT_WITH);
 }
 
 pub function op_udp_sendmmsg(): Op {
-  return op0(516);
+  return op0(K_UDP_SENDMMSG);
 }
 
 pub function op_udp_recvmmsg(): Op {
-  return op0(517);
+  return op0(K_UDP_RECVMMSG);
 }
 
 pub function op_tcp_local_port(): Op {
-  return op0(320);
+  return op0(K_TCP_LOCAL_PORT);
 }
 
 pub function op_tcp_listen_with(): Op {
-  return op0(332);
+  return op0(K_TCP_LISTEN_WITH);
 }
 
 pub function op_tcp_socket_ctl(): Op {
-  return op0(333);
+  return op0(K_TCP_SOCKET_CTL);
 }
 
 pub function op_udp_bind(): Op {
-  return op0(334);
+  return op0(K_UDP_BIND);
 }
 
 pub function op_udp_bind_with(): Op {
-  return op0(442);
+  return op0(K_UDP_BIND_WITH);
 }
 
 pub function op_udp_connect(): Op {
-  return op0(335);
+  return op0(K_UDP_CONNECT);
 }
 
 pub function op_udp_sendto(): Op {
-  return op0(336);
+  return op0(K_UDP_SENDTO);
 }
 
 pub function op_udp_sendto_bytes(): Op {
-  return op0(355);
+  return op0(K_UDP_SENDTO_BYTES);
 }
 
 pub function op_udp_recvfrom(): Op {
-  return op0(337);
+  return op0(K_UDP_RECVFROM);
 }
 
 pub function op_tcp_connect_with(): Op {
-  return op0(338);
+  return op0(K_TCP_CONNECT_WITH);
 }
 
 pub function op_unix_listen(): Op {
-  return op0(339);
+  return op0(K_UNIX_LISTEN);
 }
 
 pub function op_unix_connect(): Op {
-  return op0(340);
+  return op0(K_UNIX_CONNECT);
 }
 
 pub function op_reactor_new(): Op {
-  return op0(341);
+  return op0(K_REACTOR_NEW);
 }
 
 pub function op_reactor_ctl(): Op {
-  return op0(342);
+  return op0(K_REACTOR_CTL);
 }
 
 pub function op_reactor_wait(): Op {
-  return op0(343);
+  return op0(K_REACTOR_WAIT);
 }
 
 pub function op_ring_new(): Op {
-  return op0(434);
+  return op0(K_RING_NEW);
 }
 
 pub function op_ring_ctl(): Op {
-  return op0(435);
+  return op0(K_RING_CTL);
 }
 
 pub function op_ring_wait(): Op {
-  return op0(436);
+  return op0(K_RING_WAIT);
 }
 
 pub function op_ring_recv(): Op {
-  return op0(438);
+  return op0(K_RING_RECV);
 }
 
 pub function op_ring_send_zc(): Op {
-  return op0(439);
+  return op0(K_RING_SEND_ZC);
 }
 
 pub function op_tcp_recv_into(): Op {
-  return op0(344);
+  return op0(K_TCP_RECV_INTO);
 }
 
 // `tcp_addr_into` [fd, peer, out] -> 19, or -errno: one getsockname, or
 // getpeername when peer, written into out as the 19-byte sender record
 // udp_recvfrom fills.
 pub function op_tcp_addr_into(): Op {
-  return op0(486);
+  return op0(K_TCP_ADDR_INTO);
 }
 
 pub function op_tcp_ktls(): Op {
-  return op0(437);
+  return op0(K_TCP_KTLS);
 }
 
 pub function op_tcp_sendfile(): Op {
-  return op0(346);
+  return op0(K_TCP_SENDFILE);
 }
 
 pub function op_tcp_send_buf(): Op {
-  return op0(387);
+  return op0(K_TCP_SEND_BUF);
 }
 
 pub function op_writer_write(): Op {
-  return op0(202);
+  return op0(K_WRITER_WRITE);
 }
 
 pub function op_write_some(): Op {
-  return op0(308);
+  return op0(K_WRITE_SOME);
 }
 
 pub function op_open_file(flags: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_OPEN_FILE, i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPEN_FILE, i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_heap_bump_bytes(): Op {
-  return op0(80);
+  return op0(K_HEAP_BUMP_BYTES);
 }
 
 pub function op_heap_alloc_count(): Op {
-  return op0(315);
+  return op0(K_HEAP_ALLOC_COUNT);
 }
 
 pub function op_heap_mark(): Op {
-  return op0(229);
+  return op0(K_HEAP_MARK);
 }
 
 pub function op_heap_release_to(): Op {
-  return op0(230);
+  return op0(K_HEAP_RELEASE_TO);
 }
 
 // heap_adopt(start, end) makes [start, end) the heap: the cursor moves to
@@ -1183,7 +1197,7 @@ pub function op_heap_release_to(): Op {
 // under leak check it fixes the bounds of the process's census, so a free
 // outside them is not counted. A range inside the heap keeps both. Pushes 0.
 pub function op_heap_adopt(): Op {
-  return op0(491);
+  return op0(K_HEAP_ADOPT);
 }
 
 // A worker region is a shared anonymous mapping that a fork inherits at the
@@ -1197,36 +1211,38 @@ pub function op_heap_adopt(): Op {
 // worker_reap(region) adds the child's deltas to the counters and pushes
 // the root.
 pub function op_worker_region(): Op {
-  return op0(492);
+  return op0(K_WORKER_REGION);
 }
 
 pub function op_worker_exit(): Op {
-  return op0(493);
+  return op0(K_WORKER_EXIT);
 }
 
 pub function op_worker_reap(): Op {
-  return op0(494);
+  return op0(K_WORKER_REAP);
 }
 
 // worker_unmap(region, size, reaped) removes the mapping and returns errno.
 // A reaped region carries child deltas. Its live boxes leave the census
 // only after the kernel removes the mapping. An unused region carries none.
 pub function op_worker_unmap(): Op {
-  return op0(496);
+  return op0(K_WORKER_UNMAP);
 }
 
 // send_adopt marks the word under it as a box this process now owns. It
 // emits nothing: the word is a root another process handed over through a
 // worker region, and the mark is what the certifier counts.
 pub function op_send_adopt(): Op {
-  return counted(op0(495));
+  return counted(op0(K_SEND_ADOPT));
 }
 
 // send_root takes the box under it from its owner and leaves its address.
 // It emits nothing: the word is the box, and the move is what the certifier
 // counts.
+pub const K_SEND_ROOT: i32 = 497;
+
 pub function op_send_root(): Op {
-  return op0(497);
+  return op0(K_SEND_ROOT);
 }
 
 // The worker ops, 491 to 497, by name and by id.
@@ -1286,42 +1302,42 @@ function worker_pops2(t: i32): boolean {
 }
 
 pub function op_clz(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_CLZ, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CLZ, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_ctz(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_CTZ, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CTZ, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_popcount(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_POPCOUNT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_POPCOUNT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_bswap(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_BSWAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BSWAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 // A device register access of `width` bits. No pass removes, merges or moves
 // one, because a read or a write of the register has an effect on the device.
 pub function op_mmio_load(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_MMIO_LOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_MMIO_LOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_mmio_store(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_MMIO_STORE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_MMIO_STORE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 // A full barrier: every memory and device access before it completes before any
 // access after it starts.
 pub function op_fence(): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_FENCE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_FENCE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // A privileged op that only a kernel environment grants: wait for an
 // interrupt, or call the hypervisor or the secure monitor with four arguments
 // in the SMC calling convention.
 pub function op_privileged(kind: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // The privileged kinds are 415 to 417 and 499 to 510.
@@ -1346,17 +1362,17 @@ function privileged_pops(id: i32): i32 {
 // A read or a write of the system register `name`. The name is part of the op,
 // because an instruction encodes the register.
 pub function op_sysreg(kind: i32, name: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 // A port access of `width` bits: in reads the port, out writes it. Only x86-64
 // has an I/O port space.
 pub function op_port_in(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_PORT_IN, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_PORT_IN, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_port_out(width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: K_PORT_OUT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_PORT_OUT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function is_device_kind(id: i32): boolean {
@@ -1437,443 +1453,451 @@ function irq_kind_name(id: i32): string {
 }
 
 pub function op_arr_push_shared_count(): Op {
-  return op0(216);
+  return op0(K_ARR_PUSH_SHARED_COUNT);
 }
 
 pub function op_arr_push_shared_bytes(): Op {
-  return op0(217);
+  return op0(K_ARR_PUSH_SHARED_BYTES);
 }
 
 pub function op_map_hash_seed(): Op {
-  return op0(222);
+  return op0(K_MAP_HASH_SEED);
 }
 
 pub function op_str_bytes(): Op {
-  return op0(104);
+  return op0(K_STR_BYTES);
 }
 
 pub function op_str_to_upper(): Op {
-  return op0(106);
+  return op0(K_STR_TO_UPPER);
 }
 
 pub function op_str_to_lower(): Op {
-  return op0(107);
+  return op0(K_STR_TO_LOWER);
 }
 
 pub function op_str_repeat(): Op {
-  return op0(108);
+  return op0(K_STR_REPEAT);
 }
 
 pub function op_str_trim(): Op {
-  return op0(109);
+  return op0(K_STR_TRIM);
 }
 
 pub function op_str_replace(): Op {
-  return op0(111);
+  return op0(K_STR_REPLACE);
 }
 
 pub function op_str_lines(): Op {
-  return op0(113);
+  return op0(K_STR_LINES);
 }
 
 pub function op_str_split(): Op {
-  return op0(105);
+  return op0(K_STR_SPLIT);
 }
 
 pub function op_opt_make(tag: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
+
+pub const K_OPT_TAG: i32 = 122;
 
 pub function op_opt_tag(): Op {
-  return op0(122);
+  return op0(K_OPT_TAG);
 }
 
+pub const K_OPT_PAYLOAD: i32 = 123;
+
 pub function op_opt_payload(): Op {
-  return op0(123);
+  return op0(K_OPT_PAYLOAD);
 }
 
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
+pub const K_OPT_SET_PAYLOAD: i32 = 124;
+
 pub function op_opt_set_payload(): Op {
-  return op0(124);
+  return op0(K_OPT_SET_PAYLOAD);
 }
 
 pub function op_print_str(): Op {
-  return op0(163);
+  return op0(K_PRINT_STR);
 }
 
 pub function op_eprint_str(): Op {
-  return op0(164);
+  return op0(K_EPRINT_STR);
 }
 
 pub function op_exit(): Op {
-  return op0(166);
+  return op0(K_EXIT);
 }
 
 pub function op_read_file(): Op {
-  return op0(169);
+  return op0(K_READ_FILE);
 }
 
 pub function op_read_file_bytes(): Op {
-  return op0(233);
+  return op0(K_READ_FILE_BYTES);
 }
 
 pub function op_write_file(): Op {
-  return op0(170);
+  return op0(K_WRITE_FILE);
 }
 
 pub function op_write_file_bytes(): Op {
-  return op0(352);
+  return op0(K_WRITE_FILE_BYTES);
 }
 
 pub function op_write_file_exec(): Op {
-  return op0(226);
+  return op0(K_WRITE_FILE_EXEC);
 }
 
 pub function op_remove_dir_all(): Op {
-  return op0(172);
+  return op0(K_REMOVE_DIR_ALL);
 }
 
 pub function op_remove_file(): Op {
-  return op0(173);
+  return op0(K_REMOVE_FILE);
 }
 
 pub function op_temp_dir(): Op {
-  return op0(174);
+  return op0(K_TEMP_DIR);
 }
 
 pub function op_create_dir_all(): Op {
-  return op0(231);
+  return op0(K_CREATE_DIR_ALL);
 }
 
 pub function op_read_dir(): Op {
-  return op0(171);
+  return op0(K_READ_DIR);
 }
 
 pub function op_read_dir_all(): Op {
-  return op0(310);
+  return op0(K_READ_DIR_ALL);
 }
 
 pub function op_read_dir_ino(): Op {
-  return op0(391);
+  return op0(K_READ_DIR_INO);
 }
 
 pub function op_read_dir_ino_all(): Op {
-  return op0(432);
+  return op0(K_READ_DIR_INO_ALL);
 }
 
 pub function op_utf8_blocks(): Op {
-  return op0(433);
+  return op0(K_UTF8_BLOCKS);
 }
 
 pub function op_env(): Op {
-  return op0(176);
+  return op0(K_ENV);
 }
 
 pub function op_stat(): Op {
-  return op0(175);
+  return op0(K_STAT);
 }
 
 pub function op_lstat(): Op {
-  return op0(236);
+  return op0(K_LSTAT);
 }
 
 pub function op_statfs(): Op {
-  return op0(270);
+  return op0(K_STATFS);
 }
 
 pub function op_sysctl(): Op {
-  return op0(401);
+  return op0(K_SYSCTL);
 }
 
 pub function op_mounts(): Op {
-  return op0(398);
+  return op0(K_MOUNTS);
 }
 
 pub function op_subprocess(): Op {
-  return op0(177);
+  return op0(K_SUBPROCESS);
 }
 
 pub function op_read_chunk(): Op {
-  return op0(178);
+  return op0(K_READ_CHUNK);
 }
 
 pub function op_read_chunk_bytes(): Op {
-  return op0(348);
+  return op0(K_READ_CHUNK_BYTES);
 }
 
 pub function op_write_bytes(): Op {
-  return op0(349);
+  return op0(K_WRITE_BYTES);
 }
 
 pub function op_write_some_bytes(): Op {
-  return op0(350);
+  return op0(K_WRITE_SOME_BYTES);
 }
 
 pub function op_fd_stat(): Op {
-  return op0(241);
+  return op0(K_FD_STAT);
 }
 
 pub function op_fd_fsync(): Op {
-  return op0(299);
+  return op0(K_FD_FSYNC);
 }
 
 pub function op_fd_fdatasync(): Op {
-  return op0(300);
+  return op0(K_FD_FDATASYNC);
 }
 
 pub function op_fd_syncfs(): Op {
-  return op0(301);
+  return op0(K_FD_SYNCFS);
 }
 
 pub function op_fd_drop_cache(): Op {
-  return op0(366);
+  return op0(K_FD_DROP_CACHE);
 }
 
 pub function op_fd_dup_onto(): Op {
-  return op0(311);
+  return op0(K_FD_DUP_ONTO);
 }
 
 pub function op_writer_splice_forever(): Op {
-  return op0(431);
+  return op0(K_WRITER_SPLICE_FOREVER);
 }
 
 pub function op_sync(): Op {
-  return op0(298);
+  return op0(K_SYNC);
 }
 
 pub function op_reader_seek(): Op {
-  return op0(242);
+  return op0(K_READER_SEEK);
 }
 
 pub function op_reader_splice(): Op {
-  return op0(330);
+  return op0(K_READER_SPLICE);
 }
 
 pub function op_reader_copy_range(): Op {
-  return op0(407);
+  return op0(K_READER_COPY_RANGE);
 }
 
 pub function op_fd_flags(): Op {
-  return op0(307);
+  return op0(K_FD_FLAGS);
 }
 
 pub function op_writer_truncate(): Op {
-  return op0(281);
+  return op0(K_WRITER_TRUNCATE);
 }
 
 pub function op_writer_nonblocking(): Op {
-  return op0(490);
+  return op0(K_WRITER_NONBLOCKING);
 }
 
 pub function op_reader_close(): Op {
-  return op0(179);
+  return op0(K_READER_CLOSE);
 }
 
 pub function op_args(): Op {
-  return op0(180);
+  return op0(K_ARGS);
 }
 
 pub function op_putchar(): Op {
-  return op0(165);
+  return op0(K_PUTCHAR);
 }
 
 pub function op_chdir(): Op {
-  return op0(277);
+  return op0(K_CHDIR);
 }
 
 pub function op_chroot(): Op {
-  return op0(316);
+  return op0(K_CHROOT);
 }
 
 pub function op_setgroups(): Op {
-  return op0(319);
+  return op0(K_SETGROUPS);
 }
 
 pub function op_setgid(): Op {
-  return op0(318);
+  return op0(K_SETGID);
 }
 
 pub function op_setuid(): Op {
-  return op0(317);
+  return op0(K_SETUID);
 }
 
 pub function op_signal_mask(): Op {
-  return op0(278);
+  return op0(K_SIGNAL_MASK);
 }
 
 pub function op_signal_disposition(): Op {
-  return op0(279);
+  return op0(K_SIGNAL_DISPOSITION);
 }
 
 pub function op_signal_ignore(): Op {
-  return op0(243);
+  return op0(K_SIGNAL_IGNORE);
 }
 
 pub function op_signal_default(): Op {
-  return op0(244);
+  return op0(K_SIGNAL_DEFAULT);
 }
 
 pub function op_signal_catch(): Op {
-  return op0(392);
+  return op0(K_SIGNAL_CATCH);
 }
 
 pub function op_signal_taken(): Op {
-  return op0(393);
+  return op0(K_SIGNAL_TAKEN);
 }
 
 pub function op_signal_catch_interrupting(): Op {
-  return op0(394);
+  return op0(K_SIGNAL_CATCH_INTERRUPTING);
 }
 
 pub function op_signal_raise(): Op {
-  return op0(395);
+  return op0(K_SIGNAL_RAISE);
 }
 
 pub function op_buf_new(): Op {
-  return op0(291);
+  return op0(K_BUF_NEW);
 }
 
 pub function op_buf_push(): Op {
-  return op0(292);
+  return op0(K_BUF_PUSH);
 }
 
 pub function op_buf_push_range(): Op {
-  return op0(293);
+  return op0(K_BUF_PUSH_RANGE);
 }
 
 pub function op_buf_push_mapped(): Op {
-  return op0(325);
+  return op0(K_BUF_PUSH_MAPPED);
 }
 
 pub function op_buf_push_filtered(): Op {
-  return op0(326);
+  return op0(K_BUF_PUSH_FILTERED);
 }
 
 pub function op_buf_push_expanded(): Op {
-  return op0(328);
+  return op0(K_BUF_PUSH_EXPANDED);
 }
 
 pub function op_buf_push_bytes_mapped(): Op {
-  return op0(370);
+  return op0(K_BUF_PUSH_BYTES_MAPPED);
 }
 
 pub function op_buf_push_bytes_filtered(): Op {
-  return op0(371);
+  return op0(K_BUF_PUSH_BYTES_FILTERED);
 }
 
 pub function op_buf_push_bytes_expanded(): Op {
-  return op0(372);
+  return op0(K_BUF_PUSH_BYTES_EXPANDED);
 }
 
 pub function op_buf_push_byte(): Op {
-  return op0(294);
+  return op0(K_BUF_PUSH_BYTE);
 }
 
 pub function op_buf_push_u64(): Op {
-  return op0(306);
+  return op0(K_BUF_PUSH_U64);
 }
 
 pub function op_buf_push_decimal(): Op {
-  return op0(485);
+  return op0(K_BUF_PUSH_DECIMAL);
 }
 
 pub function op_buf_push_base64(): Op {
-  return op0(487);
+  return op0(K_BUF_PUSH_BASE64);
 }
 
 pub function op_buf_push_base32(): Op {
-  return op0(488);
+  return op0(K_BUF_PUSH_BASE32);
 }
 
 pub function op_buf_decode_base32(): Op {
-  return op0(489);
+  return op0(K_BUF_DECODE_BASE32);
 }
 
 pub function op_buf_len(): Op {
-  return op0(295);
+  return op0(K_BUF_LEN);
 }
 
 pub function op_buf_take(): Op {
-  return op0(296);
+  return op0(K_BUF_TAKE);
 }
 
 pub function op_buf_take_bytes(): Op {
-  return op0(347);
+  return op0(K_BUF_TAKE_BYTES);
 }
 
 pub function op_buf_push_bytes_range(): Op {
-  return op0(351);
+  return op0(K_BUF_PUSH_BYTES_RANGE);
 }
 
+pub const K_BUF_FREE: i32 = 297;
+
 pub function op_buf_free(): Op {
-  return op0(297);
+  return op0(K_BUF_FREE);
 }
 
 pub function op_buf_clear(): Op {
-  return op0(386);
+  return op0(K_BUF_CLEAR);
 }
 
 pub function op_sleep_ms(): Op {
-  return op0(181);
+  return op0(K_SLEEP_MS);
 }
 
 pub function op_sleep_ns(): Op {
-  return op0(266);
+  return op0(K_SLEEP_NS);
 }
 
 pub function op_proc_fork(): Op {
-  return op0(211);
+  return op0(K_PROC_FORK);
 }
 
 pub function op_proc_waitpid(): Op {
-  return op0(212);
+  return op0(K_PROC_WAITPID);
 }
 
 pub function op_proc_waitpid_nohang(): Op {
-  return op0(286);
+  return op0(K_PROC_WAITPID_NOHANG);
 }
 
 pub function op_proc_waitpid_status(): Op {
-  return op0(397);
+  return op0(K_PROC_WAITPID_STATUS);
 }
 
 pub function op_disable_core_dumps(): Op {
-  return op0(396);
+  return op0(K_DISABLE_CORE_DUMPS);
 }
 
 pub function op_ct_mark(declassify: i32): Op {
-  return Op { ...op0(399), i32_imm: declassify };
+  return Op { ...op0(K_CT_MARK), i32_imm: declassify };
 }
 
 pub function op_vg_request(): Op {
-  return op0(400);
+  return op0(K_VG_REQUEST);
 }
 
 pub function op_aes_expand_key(): Op {
-  return op0(402);
+  return op0(K_AES_EXPAND_KEY);
 }
 
 pub function op_aes_ctr32(): Op {
-  return op0(403);
+  return op0(K_AES_CTR32);
 }
 
 pub function op_ghash(): Op {
-  return op0(404);
+  return op0(K_GHASH);
 }
 
 pub function op_aes_gcm_seal_into(): Op {
-  return op0(444);
+  return op0(K_AES_GCM_SEAL_INTO);
 }
 
 pub function op_aes_gcm_open_into(): Op {
-  return op0(445);
+  return op0(K_AES_GCM_OPEN_INTO);
 }
 
 pub function is_aes_gcm_op(tag: i32): boolean {
@@ -1881,19 +1905,19 @@ pub function is_aes_gcm_op(tag: i32): boolean {
 }
 
 pub function op_sha256_hw(): Op {
-  return op0(409);
+  return op0(K_SHA256_HW);
 }
 
 pub function op_sha256_hw_blocks(): Op {
-  return op0(410);
+  return op0(K_SHA256_HW_BLOCKS);
 }
 
 pub function op_sha1_hw(): Op {
-  return op0(440);
+  return op0(K_SHA1_HW);
 }
 
 pub function op_sha1_hw_blocks(): Op {
-  return op0(441);
+  return op0(K_SHA1_HW_BLOCKS);
 }
 
 pub function is_sha_hw_op(tag: i32): boolean {
@@ -1939,11 +1963,11 @@ pub function sha_builtin_op(tag: i32): Op {
 }
 
 pub function op_proc_exec(): Op {
-  return op0(213);
+  return op0(K_PROC_EXEC);
 }
 
 pub function op_proc_exec_as(): Op {
-  return op0(280);
+  return op0(K_PROC_EXEC_AS);
 }
 
 pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): Op {
@@ -1951,7 +1975,7 @@ pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): O
 }
 
 pub function op_const_struct(type_name: string, nfields: i32, values: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
+  return Op { source: 0, decl: -1, kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
 }
 
 pub function const_struct_type(packed: string): string {
@@ -2118,55 +2142,55 @@ function const_struct_fn_hash_at(t: string): i32 {
 }
 
 pub function op_struct_get(field_index: i32, width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_struct_set(field_index: i32, width: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_struct_get_i64(field_index: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_struct_set_i64(field_index: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_struct_set_shape(type_name: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 141, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: -1, kind_tag: 141, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_tuple_make(n: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_make_k(n: i32, kinds: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
+  return Op { source: 0, decl: -1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
 }
 
 pub function op_tuple_get(idx: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_set(idx: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_set_w(idx: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub function op_variant_is(name: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 145, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: 145, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_call_direct(callee: string, argc: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 149, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
+  return Op { source: 0, decl: -1, kind_tag: 149, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
 }
 
 pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
@@ -2179,7 +2203,7 @@ pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
     tag += arms[i];
     i += 1;
   }
-  return Op { source: 0, decl: 0 - 1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
+  return Op { source: 0, decl: -1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
 
 pub function dyn_dispatch_arms(tag: string): string[] {
@@ -2199,18 +2223,18 @@ pub function dyn_dispatch_arms(tag: string): string[] {
 }
 
 pub function op_dyn_box(type_name: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: -1, kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_call_indirect(argc: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // `sig` is the width tag the wasm backend types the call with, and `cfi` is
 // the signature word a hardened native call compares with the callee's stub
 // (`cfi_sig_hash`). A raw call carries neither.
 pub function op_call_indirect_sig(argc: i32, sig: string, cfi: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+  return Op { source: 0, decl: -1, kind_tag: 150, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
 }
 
 // The 32-bit FNV-1a hash of a function's full width tag, the word a hardened
@@ -2231,39 +2255,39 @@ pub function cfi_sig_hash(tag: string): i32 {
 }
 
 pub function op_block(blocktype: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 152, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 152, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_loop(blocktype: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 153, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 153, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_if(blocktype: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_else(): Op {
-  return op0(155);
+  return op0(K_ELSE);
 }
 
 pub function op_end(): Op {
-  return op0(156);
+  return op0(K_END);
 }
 
 pub function op_br(depth: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_brif(depth: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_drop(): Op {
-  return op0(159);
+  return op0(K_DROP);
 }
 
 pub function op_return(): Op {
-  return op0(160);
+  return op0(K_RETURN);
 }
 
 pub const K_CONST_I32: i32 = 1;
@@ -2441,6 +2465,642 @@ pub const K_IRQ_UNMASK: i32 = 508;
 pub const K_IRQ_WAIT: i32 = 509;
 
 pub const K_IRQ_PENDING: i32 = 510;
+
+pub const K_F32_BITS: i32 = 14;
+
+pub const K_F32_FROM_BITS: i32 = 15;
+
+pub const K_F64_BITS: i32 = 16;
+
+pub const K_F64_FROM_BITS: i32 = 17;
+
+pub const K_LT_U: i32 = 41;
+
+pub const K_LE_U: i32 = 42;
+
+pub const K_GT_U: i32 = 43;
+
+pub const K_GE_U: i32 = 44;
+
+pub const K_FADD: i32 = 45;
+
+pub const K_FSUB: i32 = 46;
+
+pub const K_FMUL: i32 = 47;
+
+pub const K_FDIV: i32 = 48;
+
+pub const K_FEQ: i32 = 49;
+
+pub const K_FNE: i32 = 50;
+
+pub const K_FLT: i32 = 51;
+
+pub const K_FLE: i32 = 52;
+
+pub const K_FGT: i32 = 53;
+
+pub const K_FGE: i32 = 54;
+
+pub const K_FABS: i32 = 56;
+
+pub const K_FSQRT: i32 = 57;
+
+pub const K_FCEIL: i32 = 58;
+
+pub const K_FFLOOR: i32 = 59;
+
+pub const K_FTRUNC: i32 = 60;
+
+pub const K_FROUND: i32 = 61;
+
+pub const K_LOAD: i32 = 67;
+
+pub const K_STORE: i32 = 68;
+
+pub const K_LOAD_I32: i32 = 69;
+
+pub const K_LOAD_I64: i32 = 70;
+
+pub const K_LOAD_PTR: i32 = 71;
+
+pub const K_STORE_I32: i32 = 72;
+
+pub const K_STORE_PTR: i32 = 73;
+
+pub const K_MEMCPY: i32 = 74;
+
+pub const K_MEMSET: i32 = 75;
+
+pub const K_ALLOC: i32 = 76;
+
+pub const K_ALLOC_U8: i32 = 77;
+
+pub const K_FREE: i32 = 78;
+
+pub const K_HEAP_BUMP_BYTES: i32 = 80;
+
+pub const K_RAW_ALLOC: i32 = 81;
+
+pub const K_RAW_STORE8: i32 = 82;
+
+pub const K_RAW_LOAD8: i32 = 83;
+
+pub const K_RAW_LOAD_PTR: i32 = 85;
+
+pub const K_ARR_MAKE: i32 = 87;
+
+pub const K_ARR_GET: i32 = 88;
+
+pub const K_ARR_SET: i32 = 89;
+
+pub const K_ARR_LEN: i32 = 90;
+
+pub const K_ARR_RC: i32 = 91;
+
+pub const K_ARR_PUSH: i32 = 92;
+
+pub const K_ARR_PUSH_OWNED: i32 = 93;
+
+pub const K_ARR_PUSH_I64: i32 = 94;
+
+pub const K_ARR_PUSH_F64: i32 = 95;
+
+pub const K_ARR_SLICE: i32 = 96;
+
+pub const K_STR_CONCAT: i32 = 98;
+
+pub const K_STR_CMP: i32 = 100;
+
+pub const K_STR_INDEX: i32 = 101;
+
+pub const K_STR_FROM_BYTES: i32 = 103;
+
+pub const K_STR_BYTES: i32 = 104;
+
+pub const K_STR_SPLIT: i32 = 105;
+
+pub const K_STR_TO_UPPER: i32 = 106;
+
+pub const K_STR_TO_LOWER: i32 = 107;
+
+pub const K_STR_REPEAT: i32 = 108;
+
+pub const K_STR_TRIM: i32 = 109;
+
+pub const K_STR_REPLACE: i32 = 111;
+
+pub const K_TCP_POLLABLE: i32 = 112;
+
+pub const K_STR_LINES: i32 = 113;
+
+pub const K_TCP_CLOSE: i32 = 116;
+
+pub const K_OPT_MAKE: i32 = 120;
+
+pub const K_WASM_POLLABLE_DROP: i32 = 161;
+
+pub const K_WASM_BLOCK: i32 = 162;
+
+pub const K_PRINT_STR: i32 = 163;
+
+pub const K_EPRINT_STR: i32 = 164;
+
+pub const K_PUTCHAR: i32 = 165;
+
+pub const K_WASM_POLL: i32 = 167;
+
+pub const K_READ_FILE: i32 = 169;
+
+pub const K_WRITE_FILE: i32 = 170;
+
+pub const K_READ_DIR: i32 = 171;
+
+pub const K_REMOVE_DIR_ALL: i32 = 172;
+
+pub const K_REMOVE_FILE: i32 = 173;
+
+pub const K_TEMP_DIR: i32 = 174;
+
+pub const K_STAT: i32 = 175;
+
+pub const K_ENV: i32 = 176;
+
+pub const K_SUBPROCESS: i32 = 177;
+
+pub const K_READ_CHUNK: i32 = 178;
+
+pub const K_READER_CLOSE: i32 = 179;
+
+pub const K_ARGS: i32 = 180;
+
+pub const K_SLEEP_MS: i32 = 181;
+
+pub const K_MONOTONIC_NS: i32 = 182;
+
+pub const K_NOW_NS: i32 = 183;
+
+pub const K_NOW_UNIX_MS: i32 = 184;
+
+pub const K_RANDOM_BYTES: i32 = 185;
+
+pub const K_RANDOM_I32: i32 = 186;
+
+pub const K_POLL: i32 = 187;
+
+pub const K_TIMER_FD: i32 = 188;
+
+pub const K_STORE_I64: i32 = 199;
+
+pub const K_TCP_LISTEN: i32 = 200;
+
+pub const K_TCP_ACCEPT: i32 = 201;
+
+pub const K_WRITER_WRITE: i32 = 202;
+
+pub const K_SYSCALL3: i32 = 204;
+
+pub const K_RAW_SCRATCH: i32 = 205;
+
+pub const K_SYSCALL4: i32 = 206;
+
+pub const K_RAW_ENVIRON: i32 = 207;
+
+pub const K_PROC_FORK: i32 = 211;
+
+pub const K_PROC_WAITPID: i32 = 212;
+
+pub const K_PROC_EXEC: i32 = 213;
+
+pub const K_ARR_PUSH_SHARED_COUNT: i32 = 216;
+
+pub const K_ARR_PUSH_SHARED_BYTES: i32 = 217;
+
+pub const K_MAP_HASH_SEED: i32 = 222;
+
+pub const K_RAW_ADDR: i32 = 223;
+
+pub const K_RAW_ARR_BOX: i32 = 224;
+
+pub const K_MEMCHR: i32 = 225;
+
+pub const K_WRITE_FILE_EXEC: i32 = 226;
+
+pub const K_ASCII_RUN: i32 = 227;
+
+pub const K_SYSCALL5: i32 = 228;
+
+pub const K_HEAP_MARK: i32 = 229;
+
+pub const K_HEAP_RELEASE_TO: i32 = 230;
+
+pub const K_CREATE_DIR_ALL: i32 = 231;
+
+pub const K_ISATTY: i32 = 232;
+
+pub const K_READ_FILE_BYTES: i32 = 233;
+
+pub const K_RMEMCHR: i32 = 234;
+
+pub const K_COUNT_BYTE: i32 = 235;
+
+pub const K_LSTAT: i32 = 236;
+
+pub const K_ACCESS: i32 = 237;
+
+pub const K_GETEUID: i32 = 238;
+
+pub const K_GETEGID: i32 = 239;
+
+pub const K_HOSTNAME: i32 = 240;
+
+pub const K_FD_STAT: i32 = 241;
+
+pub const K_READER_SEEK: i32 = 242;
+
+pub const K_SIGNAL_IGNORE: i32 = 243;
+
+pub const K_SIGNAL_DEFAULT: i32 = 244;
+
+pub const K_MISMATCH: i32 = 245;
+
+pub const K_GETUID: i32 = 246;
+
+pub const K_GETGID: i32 = 247;
+
+pub const K_GETGROUPS: i32 = 248;
+
+pub const K_ENVIRON: i32 = 249;
+
+pub const K_UNAME_FIELD: i32 = 250;
+
+pub const K_GETCWD: i32 = 251;
+
+pub const K_CPU_COUNT: i32 = 252;
+
+pub const K_SUM_BYTES: i32 = 253;
+
+pub const K_CREATE_DIR: i32 = 260;
+
+pub const K_REMOVE_DIR: i32 = 261;
+
+pub const K_CREATE_LINK: i32 = 262;
+
+pub const K_CREATE_SYMLINK: i32 = 263;
+
+pub const K_READ_LINK: i32 = 264;
+
+pub const K_UMASK: i32 = 265;
+
+pub const K_SLEEP_NS: i32 = 266;
+
+pub const K_RENAME: i32 = 267;
+
+pub const K_CHMOD: i32 = 268;
+
+pub const K_SET_FILE_TIMES: i32 = 269;
+
+pub const K_STATFS: i32 = 270;
+
+pub const K_PROCESS_ALIVE: i32 = 271;
+
+pub const K_RLIMIT_NOFILE: i32 = 272;
+
+pub const K_TRUNCATE: i32 = 273;
+
+pub const K_MKNOD: i32 = 274;
+
+pub const K_CHOWN_AT: i32 = 275;
+
+pub const K_WINDOW_SIZE: i32 = 276;
+
+pub const K_CHDIR: i32 = 277;
+
+pub const K_SIGNAL_MASK: i32 = 278;
+
+pub const K_SIGNAL_DISPOSITION: i32 = 279;
+
+pub const K_PROC_EXEC_AS: i32 = 280;
+
+pub const K_WRITER_TRUNCATE: i32 = 281;
+
+pub const K_PRIORITY: i32 = 282;
+
+pub const K_SET_PRIORITY: i32 = 283;
+
+pub const K_SET_PROCESS_GROUP: i32 = 284;
+
+pub const K_SIGNAL_SEND: i32 = 285;
+
+pub const K_PROC_WAITPID_NOHANG: i32 = 286;
+
+pub const K_RAW_COVER: i32 = 287;
+
+pub const K_BUF_NEW: i32 = 291;
+
+pub const K_BUF_PUSH: i32 = 292;
+
+pub const K_BUF_PUSH_RANGE: i32 = 293;
+
+pub const K_BUF_PUSH_BYTE: i32 = 294;
+
+pub const K_BUF_LEN: i32 = 295;
+
+pub const K_BUF_TAKE: i32 = 296;
+
+pub const K_SYNC: i32 = 298;
+
+pub const K_FD_FSYNC: i32 = 299;
+
+pub const K_FD_FDATASYNC: i32 = 300;
+
+pub const K_FD_SYNCFS: i32 = 301;
+
+pub const K_ARR_PUSH_OWNED_I64: i32 = 302;
+
+pub const K_ARR_PUSH_OWNED_F64: i32 = 303;
+
+pub const K_OPEN_READER_WITH: i32 = 304;
+
+pub const K_OPEN_WRITER_WITH: i32 = 305;
+
+pub const K_BUF_PUSH_U64: i32 = 306;
+
+pub const K_FD_FLAGS: i32 = 307;
+
+pub const K_WRITE_SOME: i32 = 308;
+
+pub const K_CRC32_CKSUM: i32 = 309;
+
+pub const K_READ_DIR_ALL: i32 = 310;
+
+pub const K_FD_DUP_ONTO: i32 = 311;
+
+pub const K_TERMIOS_GET: i32 = 312;
+
+pub const K_TERMIOS_SET: i32 = 313;
+
+pub const K_SET_WINDOW_SIZE: i32 = 314;
+
+pub const K_HEAP_ALLOC_COUNT: i32 = 315;
+
+pub const K_CHROOT: i32 = 316;
+
+pub const K_SETUID: i32 = 317;
+
+pub const K_SETGID: i32 = 318;
+
+pub const K_SETGROUPS: i32 = 319;
+
+pub const K_TCP_LOCAL_PORT: i32 = 320;
+
+pub const K_CHMOD_AT: i32 = 321;
+
+pub const K_SCALE_F64: i32 = 322;
+
+pub const K_SYSCALL6: i32 = 323;
+
+pub const K_SCAN_SET: i32 = 324;
+
+pub const K_BUF_PUSH_MAPPED: i32 = 325;
+
+pub const K_BUF_PUSH_FILTERED: i32 = 326;
+
+pub const K_COUNT_RUNS: i32 = 327;
+
+pub const K_BUF_PUSH_EXPANDED: i32 = 328;
+
+pub const K_BSD_SUM: i32 = 329;
+
+pub const K_READER_SPLICE: i32 = 330;
+
+pub const K_RAW_SPLICE_PIPE: i32 = 331;
+
+pub const K_TCP_LISTEN_WITH: i32 = 332;
+
+pub const K_TCP_SOCKET_CTL: i32 = 333;
+
+pub const K_UDP_BIND: i32 = 334;
+
+pub const K_UDP_CONNECT: i32 = 335;
+
+pub const K_UDP_SENDTO: i32 = 336;
+
+pub const K_UDP_RECVFROM: i32 = 337;
+
+pub const K_TCP_CONNECT_WITH: i32 = 338;
+
+pub const K_UNIX_LISTEN: i32 = 339;
+
+pub const K_UNIX_CONNECT: i32 = 340;
+
+pub const K_REACTOR_NEW: i32 = 341;
+
+pub const K_REACTOR_CTL: i32 = 342;
+
+pub const K_REACTOR_WAIT: i32 = 343;
+
+pub const K_TCP_RECV_INTO: i32 = 344;
+
+pub const K_TCP_SENDFILE: i32 = 346;
+
+pub const K_BUF_TAKE_BYTES: i32 = 347;
+
+pub const K_READ_CHUNK_BYTES: i32 = 348;
+
+pub const K_WRITE_BYTES: i32 = 349;
+
+pub const K_WRITE_SOME_BYTES: i32 = 350;
+
+pub const K_BUF_PUSH_BYTES_RANGE: i32 = 351;
+
+pub const K_WRITE_FILE_BYTES: i32 = 352;
+
+pub const K_TCP_SEND_BYTES: i32 = 353;
+
+pub const K_UDP_SENDTO_BYTES: i32 = 355;
+
+pub const K_UDP_SENDMMSG: i32 = 516;
+
+pub const K_UDP_RECVMMSG: i32 = 517;
+
+pub const K_RENAME_NOREPLACE: i32 = 356;
+
+pub const K_RENAME_EXCHANGE: i32 = 357;
+
+pub const K_MEMCHR_BYTES: i32 = 358;
+
+pub const K_COUNT_BYTE_BYTES: i32 = 359;
+
+pub const K_RMEMCHR_BYTES: i32 = 360;
+
+pub const K_SCAN_SET_BYTES: i32 = 361;
+
+pub const K_GETXATTR: i32 = 362;
+
+pub const K_LGETXATTR: i32 = 363;
+
+pub const K_SETXATTR: i32 = 364;
+
+pub const K_LSETXATTR: i32 = 365;
+
+pub const K_FD_DROP_CACHE: i32 = 366;
+
+pub const K_RAW_TASK_STATE: i32 = 367;
+
+pub const K_SUM_BYTES_ARRAY: i32 = 368;
+
+pub const K_BSD_SUM_BYTES: i32 = 369;
+
+pub const K_BUF_PUSH_BYTES_MAPPED: i32 = 370;
+
+pub const K_BUF_PUSH_BYTES_FILTERED: i32 = 371;
+
+pub const K_BUF_PUSH_BYTES_EXPANDED: i32 = 372;
+
+pub const K_CRC32_CKSUM_ARRAY: i32 = 373;
+
+pub const K_GETXATTR_BYTES: i32 = 374;
+
+pub const K_LGETXATTR_BYTES: i32 = 375;
+
+pub const K_SETXATTR_BYTES: i32 = 376;
+
+pub const K_LSETXATTR_BYTES: i32 = 377;
+
+pub const K_MISMATCH_BYTES: i32 = 378;
+
+pub const K_COUNT_RUNS_BYTES: i32 = 379;
+
+pub const K_STR_FROM_BYTES_RANGE: i32 = 380;
+
+pub const K_OUTER_MUL_F64: i32 = 381;
+
+pub const K_INNER_MUL_ADD_F64: i32 = 382;
+
+pub const K_ARR_RESERVE: i32 = 383;
+
+pub const K_BUF_CLEAR: i32 = 386;
+
+pub const K_TCP_SEND_BUF: i32 = 387;
+
+pub const K_CLOCK_SET: i32 = 388;
+
+pub const K_CLOCK_RESOLUTION: i32 = 389;
+
+pub const K_STR_HASH: i32 = 390;
+
+pub const K_READ_DIR_INO: i32 = 391;
+
+pub const K_SIGNAL_CATCH: i32 = 392;
+
+pub const K_SIGNAL_TAKEN: i32 = 393;
+
+pub const K_SIGNAL_CATCH_INTERRUPTING: i32 = 394;
+
+pub const K_SIGNAL_RAISE: i32 = 395;
+
+pub const K_DISABLE_CORE_DUMPS: i32 = 396;
+
+pub const K_PROC_WAITPID_STATUS: i32 = 397;
+
+pub const K_MOUNTS: i32 = 398;
+
+pub const K_CT_MARK: i32 = 399;
+
+pub const K_VG_REQUEST: i32 = 400;
+
+pub const K_SYSCTL: i32 = 401;
+
+pub const K_AES_EXPAND_KEY: i32 = 402;
+
+pub const K_AES_CTR32: i32 = 403;
+
+pub const K_GHASH: i32 = 404;
+
+pub const K_CLONE_FILE: i32 = 405;
+
+pub const K_SET_EXTPROC: i32 = 406;
+
+pub const K_READER_COPY_RANGE: i32 = 407;
+
+pub const K_PIPE: i32 = 408;
+
+pub const K_SHA256_HW: i32 = 409;
+
+pub const K_SHA256_HW_BLOCKS: i32 = 410;
+
+pub const K_MULHI_U: i32 = 430;
+
+pub const K_WRITER_SPLICE_FOREVER: i32 = 431;
+
+pub const K_READ_DIR_INO_ALL: i32 = 432;
+
+pub const K_UTF8_BLOCKS: i32 = 433;
+
+pub const K_RING_NEW: i32 = 434;
+
+pub const K_RING_CTL: i32 = 435;
+
+pub const K_RING_WAIT: i32 = 436;
+
+pub const K_TCP_KTLS: i32 = 437;
+
+pub const K_RING_RECV: i32 = 438;
+
+pub const K_RING_SEND_ZC: i32 = 439;
+
+pub const K_SHA1_HW: i32 = 440;
+
+pub const K_SHA1_HW_BLOCKS: i32 = 441;
+
+pub const K_UDP_BIND_WITH: i32 = 442;
+
+pub const K_RAW_VDSO: i32 = 443;
+
+pub const K_AES_GCM_SEAL_INTO: i32 = 444;
+
+pub const K_AES_GCM_OPEN_INTO: i32 = 445;
+
+pub const K_MISMATCH_BYTES_STR: i32 = 446;
+
+pub const K_CRC32_IEEE: i32 = 480;
+
+pub const K_CRC32_IEEE_ARRAY: i32 = 481;
+
+pub const K_COUNT_BELOW_U64: i32 = 482;
+
+pub const K_PRCTL_QUERY: i32 = 483;
+
+pub const K_MULHI_S: i32 = 484;
+
+pub const K_BUF_PUSH_DECIMAL: i32 = 485;
+
+pub const K_TCP_ADDR_INTO: i32 = 486;
+
+pub const K_BUF_PUSH_BASE64: i32 = 487;
+
+pub const K_BUF_PUSH_BASE32: i32 = 488;
+
+pub const K_BUF_DECODE_BASE32: i32 = 489;
+
+pub const K_WRITER_NONBLOCKING: i32 = 490;
+
+pub const K_HEAP_ADOPT: i32 = 491;
+
+pub const K_WORKER_REGION: i32 = 492;
+
+pub const K_WORKER_EXIT: i32 = 493;
+
+pub const K_WORKER_REAP: i32 = 494;
+
+pub const K_SEND_ADOPT: i32 = 495;
+
+pub const K_WORKER_UNMAP: i32 = 496;
+
+pub const K_WRITER_SET_TIMES: i32 = 498;
+
+pub const K_TCP_ACCEPT_WITH: i32 = 511;
 
 pub function kind_count(): i32 {
   return 188;
@@ -5773,7 +6433,7 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
     }
     i += 1;
   }
-  return IfSpan { else_at: else_at, end_at: 0 - 1 };
+  return IfSpan { else_at: else_at, end_at: -1 };
 }
 
 function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
@@ -5990,17 +6650,17 @@ function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
 }
 
 pub function const_i32_readable(o: Op): boolean {
-  if (o.kind_tag == 1) {
+  if (o.kind_tag == K_CONST_I32) {
     return o.str.len() == 0;
   }
-  if (o.kind_tag != 2) {
+  if (o.kind_tag != K_CONST_I32_TEXT) {
     return false;
   }
   return util.is_decimal_i32(o.str);
 }
 
 pub function const_i64_readable(o: Op): boolean {
-  return o.kind_tag == 3 && util.is_decimal_i64(o.str);
+  return o.kind_tag == K_CONST_I64 && util.is_decimal_i64(o.str);
 }
 
 pub function const_i64_value(o: Op): i64 {
@@ -6008,20 +6668,20 @@ pub function const_i64_value(o: Op): i64 {
 }
 
 pub function const_i32_value(o: Op): i32 {
-  if (o.kind_tag == 1) {
+  if (o.kind_tag == K_CONST_I32) {
     return o.i32_imm;
   }
   return util.digits_to_i32(o.str);
 }
 
 function fold_width_op(o: Op, v: i32): Option[i32] {
-  if (o.kind_tag == 10) {
+  if (o.kind_tag == K_U32_WRAP) {
     if (v < 0) {
       return None;
     }
     return Some(v);
   }
-  if (o.kind_tag != 9) {
+  if (o.kind_tag != K_INT_CAST) {
     return None;
   }
   if (o.str == "i32") {
@@ -7465,31 +8125,31 @@ pub function is_commutative_kind(id: i32): boolean {
 }
 
 pub function render_op(o: Op): string {
-  if (o.kind_tag == 1) {
+  if (o.kind_tag == K_CONST_I32) {
     return "const_i32 " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 2) {
+  if (o.kind_tag == K_CONST_I32_TEXT) {
     return "const_i32_text " + o.str;
   }
-  if (o.kind_tag == 3) {
+  if (o.kind_tag == K_CONST_I64) {
     return "const_i64 " + o.str;
   }
-  if (o.kind_tag == 7) {
+  if (o.kind_tag == K_INT_EXTEND) {
     return "int_extend";
   }
-  if (o.kind_tag == 8) {
+  if (o.kind_tag == K_INT_WRAP) {
     return "int_wrap";
   }
-  if (o.kind_tag == 5) {
+  if (o.kind_tag == K_CONST_STR) {
     return "const_str " + o.str;
   }
-  if (o.kind_tag == 18) {
+  if (o.kind_tag == K_LOAD_LOCAL) {
     return "load_local " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 19) {
+  if (o.kind_tag == K_STORE_LOCAL) {
     return "store_local " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 20) {
+  if (o.kind_tag == K_TEE_LOCAL) {
     return "tee_local " + util.i32_to_string(o.i32_imm);
   }
   if (o.kind_tag == 149) {
@@ -7501,43 +8161,43 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == 158) {
     return "brif " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 67) {
+  if (o.kind_tag == K_LOAD) {
     return "load w" + util.i32_to_string(o.width);
   }
-  if (o.kind_tag == 68) {
+  if (o.kind_tag == K_STORE) {
     return "store w" + util.i32_to_string(o.width);
   }
-  if (o.kind_tag == 87) {
+  if (o.kind_tag == K_ARR_MAKE) {
     return "arr_make " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 97) {
+  if (o.kind_tag == K_STR_LEN) {
     return "str_len";
   }
-  if (o.kind_tag == 98) {
+  if (o.kind_tag == K_STR_CONCAT) {
     return "str_concat";
   }
-  if (o.kind_tag == 99) {
+  if (o.kind_tag == K_STR_EQ) {
     return "str_eq";
   }
-  if (o.kind_tag == 100) {
+  if (o.kind_tag == K_STR_CMP) {
     return "str_cmp";
   }
-  if (o.kind_tag == 101) {
+  if (o.kind_tag == K_STR_INDEX) {
     return "str_index";
   }
-  if (o.kind_tag == 102) {
+  if (o.kind_tag == K_STR_SLICE) {
     if (o.i32_imm > 0) {
       return "str_slice frame:" + util.i32_to_string(o.i32_imm - 1);
     }
     return "str_slice";
   }
-  if (o.kind_tag == 86 && o.i32_imm > 0) {
+  if (o.kind_tag == K_RAW_STRING && o.i32_imm > 0) {
     return "raw_string frame:" + util.i32_to_string(o.i32_imm - 1);
   }
-  if (o.kind_tag == 96) {
+  if (o.kind_tag == K_ARR_SLICE) {
     return "arr_slice";
   }
-  if (o.kind_tag == 120) {
+  if (o.kind_tag == K_OPT_MAKE) {
     return "opt_make " + util.i32_to_string(o.i32_imm);
   }
   if (o.kind_tag == 122) {
@@ -7561,7 +8221,7 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == 145) {
     return "variant_is " + o.str;
   }
-  if (o.kind_tag == 218) {
+  if (o.kind_tag == K_CONST_STRUCT) {
     let cfb = const_struct_fn_body(o.str);
     if (cfb.len() > 0) {
       return "const_closure " + cfb;

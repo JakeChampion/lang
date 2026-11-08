@@ -84,11 +84,11 @@ jobs:
       # A fuzz run that never leaves baseline gathering (a worker still
       # building its driver when the budget ends) exits 0, so the marker the
       # engine prints when the workers start is required as well.
-      - name: fuzz the manifest reader, the IR verifiers and the assemblers (x86 only)
+      - name: fuzz the manifest reader, the IR verifiers, the assemblers and the package readers (x86 only)
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
         run: |
           set -euo pipefail
-          for target in FuzzSelfHostManifest FuzzSelfHostIRVerify FuzzSelfHostX86Assembler FuzzSelfHostArm64Assembler; do
+          for target in FuzzSelfHostManifest FuzzSelfHostIRVerify FuzzSelfHostX86Assembler FuzzSelfHostArm64Assembler FuzzSelfHostToml FuzzSelfHostLock FuzzSelfHostIndex FuzzSelfHostArchive; do
             log="$RUNNER_TEMP/$target.log"
             go test -fuzz="^${target}\$" -fuzztime=30s -fuzzminimizetime=10x -run=^$ ./internal/testing/e2ecompiler > "$log" 2>&1 || { cat "$log"; exit 1; }
             grep -q "now fuzzing with" "$log" || { cat "$log"; echo "::error::$target never left baseline gathering within its budget"; exit 1; }

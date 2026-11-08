@@ -573,7 +573,18 @@ function store_sample(address: usize, sample: i32, channels: i32, channel: i32, 
   }
 }
 
+@inline
 pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
+  return decode_block_impl[0](state, data, offset);
+}
+
+// This reference path uses a double-precision FFT and double-precision overlap.
+@inline
+pub function decode_block_precise(own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
+  return decode_block_impl[1](state, data, offset);
+}
+
+function decode_block_impl[const PRECISE: i32](own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
   if (!valid_config(state.block_size, state.channels) || state.coefs.len() != state.block_size || state.lap.len() != state.channels * state.block_size / 2 || state.lap_scratch.len() != state.block_size / 2 || state.output.len() != state.block_size * state.channels || state.zero_samples.len() != state.block_size * state.channels || state.last_size < 0 || state.last_size > state.block_size) {
     return Err("invalid decoder state");
   }
@@ -637,7 +648,7 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         overlap = last;
       }
       last = subsize;
-      let inv = packed_transform.inverse(decoded.values, lap, overlap, plans[pattern & 7], work, decoded.needs_scale);
+      let inv = if (PRECISE != 0) { packed_transform.inverse_precise(decoded.values, lap, overlap, plans[pattern & 7], work) } else { packed_transform.inverse(decoded.values, lap, overlap, plans[pattern & 7], work, decoded.needs_scale) };
       work = inv.work;
       lap = inv.lap;
       if (subsize == n) {

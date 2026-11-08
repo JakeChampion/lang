@@ -480,7 +480,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
 }
 
 function answers_empty_bytes(o: ir.Op): boolean {
-  return o.kind_tag == 77 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
+  return o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
 }
 
 function intern_const_agg(vals: string[], packed: string): string[] {
@@ -597,86 +597,86 @@ pub function any_op(cache: irtables.LowerResult[], pred: (ir.Op) => boolean): bo
 
 pub function module_uses_strings(cache: irtables.LowerResult[]): boolean {
   function is_string_use(o: ir.Op): boolean {
-    return o.kind_tag == 5 || o.kind_tag == 97 || o.kind_tag == 98
-      || o.kind_tag == 99 || o.kind_tag == 100
-      || o.kind_tag == 101 || o.kind_tag == 102;
+    return o.kind_tag == ir.K_CONST_STR || o.kind_tag == ir.K_STR_LEN || o.kind_tag == ir.K_STR_CONCAT
+      || o.kind_tag == ir.K_STR_EQ || o.kind_tag == ir.K_STR_CMP
+      || o.kind_tag == ir.K_STR_INDEX || o.kind_tag == ir.K_STR_SLICE;
   }
   return any_op(cache, is_string_use);
 }
 
 pub function module_uses_str_cmp(cache: irtables.LowerResult[]): boolean {
   function is_str_cmp(o: ir.Op): boolean {
-    return o.kind_tag == 100;
+    return o.kind_tag == ir.K_STR_CMP;
   }
   return any_op(cache, is_str_cmp);
 }
 
 pub function module_uses_memchr(cache: irtables.LowerResult[]): boolean {
   function is_memchr(o: ir.Op): boolean {
-    return o.kind_tag == 225;
+    return o.kind_tag == ir.K_MEMCHR;
   }
   return any_op(cache, is_memchr);
 }
 
 pub function module_uses_mismatch(cache: irtables.LowerResult[]): boolean {
   function is_mismatch(o: ir.Op): boolean {
-    return o.kind_tag == 245;
+    return o.kind_tag == ir.K_MISMATCH;
   }
   return any_op(cache, is_mismatch);
 }
 
 pub function module_uses_rmemchr(cache: irtables.LowerResult[]): boolean {
   function is_rmemchr(o: ir.Op): boolean {
-    return o.kind_tag == 234;
+    return o.kind_tag == ir.K_RMEMCHR;
   }
   return any_op(cache, is_rmemchr);
 }
 
 pub function module_uses_count_byte(cache: irtables.LowerResult[]): boolean {
   function is_count_byte(o: ir.Op): boolean {
-    return o.kind_tag == 235;
+    return o.kind_tag == ir.K_COUNT_BYTE;
   }
   return any_op(cache, is_count_byte);
 }
 
 pub function module_uses_scan_set(cache: irtables.LowerResult[]): boolean {
   function is_scan_set(o: ir.Op): boolean {
-    return o.kind_tag == 324;
+    return o.kind_tag == ir.K_SCAN_SET;
   }
   return any_op(cache, is_scan_set);
 }
 
 pub function module_uses_str_hash(cache: irtables.LowerResult[]): boolean {
   function is_str_hash(o: ir.Op): boolean {
-    return o.kind_tag == 390;
+    return o.kind_tag == ir.K_STR_HASH;
   }
   return any_op(cache, is_str_hash);
 }
 
 pub function module_uses_bsd_sum(cache: irtables.LowerResult[]): boolean {
   function is_bsd_sum(o: ir.Op): boolean {
-    return o.kind_tag == 329;
+    return o.kind_tag == ir.K_BSD_SUM;
   }
   return any_op(cache, is_bsd_sum);
 }
 
 pub function module_uses_count_runs(cache: irtables.LowerResult[]): boolean {
   function is_count_runs(o: ir.Op): boolean {
-    return o.kind_tag == 327;
+    return o.kind_tag == ir.K_COUNT_RUNS;
   }
   return any_op(cache, is_count_runs);
 }
 
 pub function module_uses_sum_bytes(cache: irtables.LowerResult[]): boolean {
   function is_sum_bytes(o: ir.Op): boolean {
-    return o.kind_tag == 253;
+    return o.kind_tag == ir.K_SUM_BYTES;
   }
   return any_op(cache, is_sum_bytes);
 }
 
 pub function module_uses_scale_f64(cache: irtables.LowerResult[]): boolean {
   function is_scale_f64(o: ir.Op): boolean {
-    return o.kind_tag == 322;
+    return o.kind_tag == ir.K_SCALE_F64;
   }
   return any_op(cache, is_scale_f64);
 }
@@ -700,21 +700,21 @@ function sha_hw_blocks_helper(): string {
 
 pub function module_uses_crc32_cksum(cache: irtables.LowerResult[]): boolean {
   function is_crc32(o: ir.Op): boolean {
-    return o.kind_tag == 309;
+    return o.kind_tag == ir.K_CRC32_CKSUM;
   }
   return any_op(cache, is_crc32);
 }
 
 pub function module_uses_ascii_run(cache: irtables.LowerResult[]): boolean {
   function is_ascii_run(o: ir.Op): boolean {
-    return o.kind_tag == 227;
+    return o.kind_tag == ir.K_ASCII_RUN;
   }
   return any_op(cache, is_ascii_run);
 }
 
 pub function module_uses_str_slice(cache: irtables.LowerResult[]): boolean {
   function is_str_slice(o: ir.Op): boolean {
-    return o.kind_tag == 102;
+    return o.kind_tag == ir.K_STR_SLICE;
   }
   return any_op(cache, is_str_slice);
 }
@@ -969,7 +969,7 @@ function wasm_helper_symbol(name: string): string {
 
 pub function module_allocates(cache: irtables.LowerResult[]): boolean {
   function needs_heap(o: ir.Op): boolean {
-    return o.kind_tag == 116 || ir.op_needs_heap(o);
+    return o.kind_tag == ir.K_TCP_CLOSE || ir.op_needs_heap(o);
   }
   if (any_op(cache, needs_heap)) {
     return true;
@@ -1299,28 +1299,28 @@ pub function module_uses_random(cache: irtables.LowerResult[]): boolean {
 
 pub function module_uses_divrem(cache: irtables.LowerResult[]): boolean {
   function is_divrem(o: ir.Op): boolean {
-    return o.kind_tag == 24 || o.kind_tag == 26;
+    return o.kind_tag == ir.K_DIV_S || o.kind_tag == ir.K_REM_S;
   }
   return any_op(cache, is_divrem);
 }
 
 pub function module_uses_arr_slice(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice(o: ir.Op): boolean {
-    return o.kind_tag == 96 && o.width != 64 && !ir.is_packed(o);
+    return o.kind_tag == ir.K_ARR_SLICE && o.width != 64 && !ir.is_packed(o);
   }
   return any_op(cache, is_arr_slice);
 }
 
 pub function module_uses_arr_slice_u8(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice_u8(o: ir.Op): boolean {
-    return o.kind_tag == 96 && ir.is_packed(o);
+    return o.kind_tag == ir.K_ARR_SLICE && ir.is_packed(o);
   }
   return any_op(cache, is_arr_slice_u8);
 }
 
 pub function module_uses_arr_slice8(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice8(o: ir.Op): boolean {
-    return o.kind_tag == 96 && o.width == 64;
+    return o.kind_tag == ir.K_ARR_SLICE && o.width == 64;
   }
   return any_op(cache, is_arr_slice8);
 }
@@ -1334,16 +1334,16 @@ pub function module_uses_i64_udivrem(cache: irtables.LowerResult[]): boolean {
 }
 
 function is_udivrem(o: ir.Op): boolean {
-  return (o.kind_tag == 25 || o.kind_tag == 27) && o.width != 64;
+  return (o.kind_tag == ir.K_DIV_U || o.kind_tag == ir.K_REM_U) && o.width != 64;
 }
 
 function is_i64_udivrem(o: ir.Op): boolean {
-  return (o.kind_tag == 25 || o.kind_tag == 27) && o.width == 64;
+  return (o.kind_tag == ir.K_DIV_U || o.kind_tag == ir.K_REM_U) && o.width == 64;
 }
 
 pub function module_uses_i64_divrem(cache: irtables.LowerResult[]): boolean {
   function is_i64_divrem(o: ir.Op): boolean {
-    return (o.kind_tag == 24 || o.kind_tag == 26) && o.width == 64;
+    return (o.kind_tag == ir.K_DIV_S || o.kind_tag == ir.K_REM_S) && o.width == 64;
   }
   return any_op(cache, is_i64_divrem);
 }
@@ -4160,126 +4160,126 @@ function is_host_op_kind(tag: i32): boolean {
 }
 
 function emit_host_op_wat(o: ir.Op): string {
-  if (o.kind_tag == 163) {
+  if (o.kind_tag == ir.K_PRINT_STR) {
     return "    call $__fern_print_str\n    i32.const 0\n";
   }
-  if (o.kind_tag == 164) {
+  if (o.kind_tag == ir.K_EPRINT_STR) {
     return "    call $__fern_eprint_str\n    i32.const 0\n";
   }
-  if (o.kind_tag == 182) {
+  if (o.kind_tag == ir.K_MONOTONIC_NS) {
     return "    call $__fern_monotonic_ns\n";
   }
-  if (o.kind_tag == 184) {
+  if (o.kind_tag == ir.K_NOW_UNIX_MS) {
     return "    call $__fern_now_unix_ms\n";
   }
-  if (o.kind_tag == 183) {
+  if (o.kind_tag == ir.K_NOW_NS) {
     return "    call $__fern_now_ns\n";
   }
-  if (o.kind_tag == 389) {
+  if (o.kind_tag == ir.K_CLOCK_RESOLUTION) {
     return "    call $__fern_clock_resolution\n";
   }
-  if (o.kind_tag == 388) {
+  if (o.kind_tag == ir.K_CLOCK_SET) {
     return "    call $__fern_clock_set\n";
   }
-  if (o.kind_tag == 405) {
+  if (o.kind_tag == ir.K_CLONE_FILE) {
     return "    call $__fern_clone_file\n";
   }
-  if (o.kind_tag == 169) {
+  if (o.kind_tag == ir.K_READ_FILE) {
     return "    call $__fern_read_file\n";
   }
-  if (o.kind_tag == 233) {
+  if (o.kind_tag == ir.K_READ_FILE_BYTES) {
     return "    call $__fern_read_file_bytes\n";
   }
-  if (o.kind_tag == 352) {
+  if (o.kind_tag == ir.K_WRITE_FILE_BYTES) {
     return "    call $__fern_write_file_bytes\n";
   }
-  if (o.kind_tag == 170) {
+  if (o.kind_tag == ir.K_WRITE_FILE) {
     return "    call $__fern_write_file\n";
   }
-  if (o.kind_tag == 203) {
+  if (o.kind_tag == ir.K_OPEN_FILE) {
     return "    i32.const " + util.i32_to_string(o.i32_imm) + "\n    call $__fern_open_file\n";
   }
-  if (o.kind_tag == 304 || o.kind_tag == 305) {
+  if (o.kind_tag == ir.K_OPEN_READER_WITH || o.kind_tag == ir.K_OPEN_WRITER_WITH) {
     let open_write = 0;
-    if (o.kind_tag == 305) {
+    if (o.kind_tag == ir.K_OPEN_WRITER_WITH) {
       open_write = 1;
     }
     return "    i32.const " + util.i32_to_string(open_write) + "\n    call $__fern_open_with\n";
   }
-  if (o.kind_tag == 308) {
+  if (o.kind_tag == ir.K_WRITE_SOME) {
     return "    call $__fern_writer_write_some\n";
   }
-  if (o.kind_tag == 202) {
+  if (o.kind_tag == ir.K_WRITER_WRITE) {
     return "    call $__fern_writer_write\n";
   }
-  if (o.kind_tag == 176) {
+  if (o.kind_tag == ir.K_ENV) {
     return "    call $__fern_env\n";
   }
-  if (o.kind_tag == 175) {
+  if (o.kind_tag == ir.K_STAT) {
     return tid_get("FileStat") + "    call $__fern_stat\n";
   }
-  if (o.kind_tag == 236) {
+  if (o.kind_tag == ir.K_LSTAT) {
     return tid_get("FileStat") + "    call $__fern_lstat\n";
   }
-  if (o.kind_tag == 173) {
+  if (o.kind_tag == ir.K_REMOVE_FILE) {
     return "    call $__fern_remove_file\n";
   }
-  if (o.kind_tag == 260) {
+  if (o.kind_tag == ir.K_CREATE_DIR) {
     return "    call $__fern_create_dir\n";
   }
-  if (o.kind_tag == 261) {
+  if (o.kind_tag == ir.K_REMOVE_DIR) {
     return "    call $__fern_remove_dir\n";
   }
-  if (o.kind_tag == 262) {
+  if (o.kind_tag == ir.K_CREATE_LINK) {
     return "    call $__fern_create_link\n";
   }
-  if (o.kind_tag == 267) {
+  if (o.kind_tag == ir.K_RENAME) {
     return "    call $__fern_rename\n";
   }
-  if (o.kind_tag == 263) {
+  if (o.kind_tag == ir.K_CREATE_SYMLINK) {
     return "    call $__fern_create_symlink\n";
   }
-  if (o.kind_tag == 273) {
+  if (o.kind_tag == ir.K_TRUNCATE) {
     return "    call $__fern_truncate\n";
   }
-  if (o.kind_tag == 269 || o.kind_tag == 498) {
-    let helper: string = if (o.kind_tag == 498) { "writer_set_times" } else { "set_file_times" };
+  if (o.kind_tag == ir.K_SET_FILE_TIMES || o.kind_tag == ir.K_WRITER_SET_TIMES) {
+    let helper: string = if (o.kind_tag == ir.K_WRITER_SET_TIMES) { "writer_set_times" } else { "set_file_times" };
     return "    call $__fern_" + helper + "\n";
   }
-  if (o.kind_tag == 264) {
+  if (o.kind_tag == ir.K_READ_LINK) {
     if (o.i32_imm != 0) {
       return "    call $__fern_read_link_bytes\n";
     }
     return "    call $__fern_read_link\n";
   }
-  if (o.kind_tag == 231) {
+  if (o.kind_tag == ir.K_CREATE_DIR_ALL) {
     return "    call $__fern_create_dir_all\n";
   }
-  if (o.kind_tag == 171) {
+  if (o.kind_tag == ir.K_READ_DIR) {
     if (o.i32_imm != 0) {
       return "    call $__fern_read_dir_bytes\n";
     }
     return "    call $__fern_read_dir\n";
   }
-  if (o.kind_tag == 310) {
+  if (o.kind_tag == ir.K_READ_DIR_ALL) {
     return "    call $__fern_read_dir_all\n";
   }
-  if (o.kind_tag == 391) {
+  if (o.kind_tag == ir.K_READ_DIR_INO) {
     return tid_get("DirEntry") + "    call $__fern_read_dir_ino\n";
   }
-  if (o.kind_tag == 432) {
+  if (o.kind_tag == ir.K_READ_DIR_INO_ALL) {
     return tid_get("DirEntry") + "    call $__fern_read_dir_ino_all\n";
   }
-  if (o.kind_tag == 172) {
+  if (o.kind_tag == ir.K_REMOVE_DIR_ALL) {
     return "    call $__fern_remove_dir_all\n";
   }
-  if (o.kind_tag == 180) {
+  if (o.kind_tag == ir.K_ARGS) {
     return "    call $__fern_args\n";
   }
-  if (o.kind_tag == 249) {
+  if (o.kind_tag == ir.K_ENVIRON) {
     return "    call $__fern_environ\n";
   }
-  if (o.kind_tag == 166) {
+  if (o.kind_tag == ir.K_EXIT) {
     return "    call $__fern_proc_exit\n    i32.const 0\n";
   }
   return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
@@ -4584,23 +4584,23 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   let f64tmp = cx.base + 2;
   let i64tmp = cx.base + 3;
   let bctmp = cx.base + 4;
-  if (o.kind_tag == 1) {
+  if (o.kind_tag == ir.K_CONST_I32) {
     parts = parts.append("    i32.const " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 2) {
+  } else if (o.kind_tag == ir.K_CONST_I32_TEXT) {
     parts = parts.append("    i32.const " + wat_integer_text(wasm_text_const(o)) + "\n");
-  } else if (o.kind_tag == 3) {
+  } else if (o.kind_tag == ir.K_CONST_I64) {
     parts = parts.append("    i64.const " + wat_integer_text(ir.const_i64_text(o)) + "\n");
-  } else if (o.kind_tag == 4) {
+  } else if (o.kind_tag == ir.K_CONST_F64) {
     parts = parts.append("    i64.const " + util.i64_to_string(ir.const_f64_bits(o)) + "\n    f64.reinterpret_i64\n");
-  } else if (o.kind_tag == 11) {
+  } else if (o.kind_tag == ir.K_I32_TO_F64) {
     parts = emit_wasm_i32_to_f64(o, parts);
-  } else if (o.kind_tag == 12) {
+  } else if (o.kind_tag == ir.K_F64_TO_I32) {
     if (o.unsigned) {
       parts = parts.append("    i32.trunc_sat_f64_u\n");
     } else {
       parts = parts.append("    i32.trunc_sat_f64_s\n");
     }
-  } else if (o.kind_tag == 13) {
+  } else if (o.kind_tag == ir.K_F64_TO_I64) {
     if (o.width == ir.width_ptr()) {
       parts = parts.append("    i32.trunc_sat_f64_u\n");
     } else if (o.unsigned) {
@@ -4608,213 +4608,213 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else {
       parts = parts.append("    i64.trunc_sat_f64_s\n");
     }
-  } else if (o.kind_tag == 16) {
+  } else if (o.kind_tag == ir.K_F64_BITS) {
     parts = parts.append("    i64.reinterpret_f64\n");
-  } else if (o.kind_tag == 17) {
+  } else if (o.kind_tag == ir.K_F64_FROM_BITS) {
     parts = parts.append("    f64.reinterpret_i64\n");
-  } else if (o.kind_tag == 14) {
+  } else if (o.kind_tag == ir.K_F32_BITS) {
     parts = parts.append("    f32.demote_f64\n    i32.reinterpret_f32\n");
-  } else if (o.kind_tag == 15) {
+  } else if (o.kind_tag == ir.K_F32_FROM_BITS) {
     parts = parts.append("    f32.reinterpret_i32\n    f64.promote_f32\n");
-  } else if (o.kind_tag == 61) {
+  } else if (o.kind_tag == ir.K_FROUND) {
     parts = emit_wasm_fround(f64tmp, parts);
-  } else if (o.kind_tag == 349) {
+  } else if (o.kind_tag == ir.K_WRITE_BYTES) {
     parts = parts.append("    call $__fern_writer_write_bytes\n");
-  } else if (o.kind_tag == 350) {
+  } else if (o.kind_tag == ir.K_WRITE_SOME_BYTES) {
     parts = parts.append("    call $__fern_writer_write_some_bytes\n");
-  } else if (o.kind_tag == 348) {
+  } else if (o.kind_tag == ir.K_READ_CHUNK_BYTES) {
     parts = parts.append("    call $__fern_reader_read_chunk_bytes\n");
-  } else if (o.kind_tag == 178) {
+  } else if (o.kind_tag == ir.K_READ_CHUNK) {
     parts = parts.append("    call $__fern_reader_read_chunk\n");
-  } else if (o.kind_tag == 179) {
+  } else if (o.kind_tag == ir.K_READER_CLOSE) {
     parts = parts.append("    call $__fern_reader_close\n");
-  } else if (o.kind_tag == 241) {
+  } else if (o.kind_tag == ir.K_FD_STAT) {
     parts = parts.append(tid_get("FileStat") + "    call $__fern_fd_stat\n");
-  } else if (o.kind_tag == 299) {
+  } else if (o.kind_tag == ir.K_FD_FSYNC) {
     parts = parts.append("    call $__fern_fd_fsync\n");
-  } else if (o.kind_tag == 300) {
+  } else if (o.kind_tag == ir.K_FD_FDATASYNC) {
     parts = parts.append("    call $__fern_fd_fdatasync\n");
-  } else if (o.kind_tag == 366) {
+  } else if (o.kind_tag == ir.K_FD_DROP_CACHE) {
     parts = parts.append("    call $__fern_fd_drop_cache\n");
-  } else if (o.kind_tag == 301) {
+  } else if (o.kind_tag == ir.K_FD_SYNCFS) {
     parts = parts.append("    call $__fern_fd_syncfs\n");
-  } else if (o.kind_tag == 311) {
+  } else if (o.kind_tag == ir.K_FD_DUP_ONTO) {
     parts = parts.append("    call $__fern_fd_dup_onto\n");
-  } else if (o.kind_tag == 495 || o.kind_tag == 497) {
+  } else if (o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == 497) {
     parts = parts.append("");
-  } else if (o.kind_tag == 490) {
+  } else if (o.kind_tag == ir.K_WRITER_NONBLOCKING) {
     parts = parts.append("    call $__fern_writer_nonblocking\n");
-  } else if (o.kind_tag == 307) {
+  } else if (o.kind_tag == ir.K_FD_FLAGS) {
     parts = parts.append("    call $__fern_fd_flags\n");
-  } else if (o.kind_tag == 330) {
+  } else if (o.kind_tag == ir.K_READER_SPLICE) {
     parts = parts.append("    call $__fern_reader_splice\n");
-  } else if (o.kind_tag == 407) {
+  } else if (o.kind_tag == ir.K_READER_COPY_RANGE) {
     parts = parts.append("    call $__fern_reader_copy_range\n");
-  } else if (o.kind_tag == 431) {
+  } else if (o.kind_tag == ir.K_WRITER_SPLICE_FOREVER) {
     parts = parts.append("    call $__fern_writer_splice_forever\n");
-  } else if (o.kind_tag == 242) {
+  } else if (o.kind_tag == ir.K_READER_SEEK) {
     parts = parts.append("    call $__fern_reader_seek\n");
-  } else if (o.kind_tag == 281) {
+  } else if (o.kind_tag == ir.K_WRITER_TRUNCATE) {
     parts = parts.append("    call $__fern_writer_truncate\n");
-  } else if (o.kind_tag == 222) {
+  } else if (o.kind_tag == ir.K_MAP_HASH_SEED) {
     parts = parts.append(emit_map_hash_seed_wat());
-  } else if (o.kind_tag == 181) {
+  } else if (o.kind_tag == ir.K_SLEEP_MS) {
     parts = parts.append("    call $__fern_sleep_ms\n");
-  } else if (o.kind_tag == 266) {
+  } else if (o.kind_tag == ir.K_SLEEP_NS) {
     parts = parts.append("    call $__fern_sleep_ns\n");
-  } else if (o.kind_tag == 232) {
+  } else if (o.kind_tag == ir.K_ISATTY) {
     parts = emit_wasm_isatty(parts);
-  } else if (o.kind_tag == 243 || o.kind_tag == 244 || o.kind_tag == 392 || o.kind_tag == 394) {
+  } else if (o.kind_tag == ir.K_SIGNAL_IGNORE || o.kind_tag == ir.K_SIGNAL_DEFAULT || o.kind_tag == ir.K_SIGNAL_CATCH || o.kind_tag == ir.K_SIGNAL_CATCH_INTERRUPTING) {
     parts = emit_wasm_signal_disposition(parts);
-  } else if (o.kind_tag == 393) {
+  } else if (o.kind_tag == ir.K_SIGNAL_TAKEN) {
     parts = emit_wasm_signal_taken(parts);
-  } else if (o.kind_tag == 395) {
+  } else if (o.kind_tag == ir.K_SIGNAL_RAISE) {
     parts = emit_wasm_signal_raise(parts);
-  } else if (o.kind_tag == 399) {
+  } else if (o.kind_tag == ir.K_CT_MARK) {
     parts = parts.append("    drop\n    i32.const 0\n");
-  } else if (o.kind_tag == 278) {
+  } else if (o.kind_tag == ir.K_SIGNAL_MASK) {
     parts = emit_wasm_signal_mask(parts);
-  } else if (o.kind_tag == 279) {
+  } else if (o.kind_tag == ir.K_SIGNAL_DISPOSITION) {
     parts = emit_wasm_signal_disposition_read(parts);
-  } else if (o.kind_tag == 240) {
+  } else if (o.kind_tag == ir.K_HOSTNAME) {
     parts = emit_wasm_hostname(bctmp, parts);
   } else if (o.kind_tag == 148) {
     parts = emit_wasm_wasm_timer_pollable(parts);
-  } else if (o.kind_tag == 161) {
+  } else if (o.kind_tag == ir.K_WASM_POLLABLE_DROP) {
     parts = parts.append("    call $__fern_pollable_drop\n");
-  } else if (o.kind_tag == 162) {
+  } else if (o.kind_tag == ir.K_WASM_BLOCK) {
     parts = emit_wasm_wasm_block(parts);
-  } else if (o.kind_tag >= 334 && o.kind_tag <= 338 || o.kind_tag >= 341 && o.kind_tag <= 344 || o.kind_tag == 442) {
+  } else if (o.kind_tag >= ir.K_UDP_BIND && o.kind_tag <= ir.K_TCP_CONNECT_WITH || o.kind_tag >= ir.K_REACTOR_NEW && o.kind_tag <= ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_UDP_BIND_WITH) {
     parts = parts.append("    call $__fern_" + ir.kind_name(o.kind_tag) + "\n");
-  } else if (o.kind_tag == 200) {
+  } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     parts = parts.append("    call $__fern_tcp_listen\n");
-  } else if (o.kind_tag == 332) {
+  } else if (o.kind_tag == ir.K_TCP_LISTEN_WITH) {
     parts = parts.append("    call $__fern_tcp_listen_with\n");
-  } else if (o.kind_tag == 333) {
+  } else if (o.kind_tag == ir.K_TCP_SOCKET_CTL) {
     parts = parts.append("    call $__fern_tcp_socket_ctl\n");
-  } else if (o.kind_tag == 486) {
+  } else if (o.kind_tag == ir.K_TCP_ADDR_INTO) {
     parts = parts.append("    call $__fern_tcp_addr_into\n");
-  } else if (o.kind_tag == 346) {
+  } else if (o.kind_tag == ir.K_TCP_SENDFILE) {
     parts = parts.append("    call $__fern_tcp_sendfile\n");
-  } else if (o.kind_tag == 201) {
+  } else if (o.kind_tag == ir.K_TCP_ACCEPT) {
     parts = parts.append("    call $__fern_tcp_accept\n");
-  } else if (o.kind_tag == 511) {
+  } else if (o.kind_tag == ir.K_TCP_ACCEPT_WITH) {
     parts = parts.append("    call $__fern_tcp_accept_with\n");
-  } else if (o.kind_tag == 320) {
+  } else if (o.kind_tag == ir.K_TCP_LOCAL_PORT) {
     parts = parts.append("    call $__fern_tcp_local_port\n");
-  } else if (o.kind_tag == 112) {
+  } else if (o.kind_tag == ir.K_TCP_POLLABLE) {
     parts = parts.append("    call $__fern_tcp_pollable\n");
-  } else if (o.kind_tag == 353) {
+  } else if (o.kind_tag == ir.K_TCP_SEND_BYTES) {
     parts = parts.append("    call $__fern_tcp_send_bytes\n");
-  } else if (o.kind_tag == 387) {
+  } else if (o.kind_tag == ir.K_TCP_SEND_BUF) {
     parts = parts.append("    call $__fern_tcp_send_buf\n");
-  } else if (o.kind_tag == 355) {
+  } else if (o.kind_tag == ir.K_UDP_SENDTO_BYTES) {
     parts = parts.append("    call $__fern_udp_sendto_bytes\n");
-  } else if (o.kind_tag == 116) {
+  } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     parts = parts.append("    call $__fern_tcp_close\n");
-  } else if (o.kind_tag == 187) {
+  } else if (o.kind_tag == ir.K_POLL) {
     parts = parts.append("    call $__fern_poll\n");
-  } else if (o.kind_tag == 167) {
+  } else if (o.kind_tag == ir.K_WASM_POLL) {
     parts = emit_wasm_wasm_poll(parts);
-  } else if (o.kind_tag == 174) {
+  } else if (o.kind_tag == ir.K_TEMP_DIR) {
     parts = emit_wasm_temp_dir(parts);
-  } else if (o.kind_tag == 7) {
+  } else if (o.kind_tag == ir.K_INT_EXTEND) {
     if (o.unsigned) {
       parts = parts.append("    i64.extend_i32_u\n");
     } else {
       parts = parts.append("    i64.extend_i32_s\n");
     }
-  } else if (o.kind_tag == 8) {
+  } else if (o.kind_tag == ir.K_INT_WRAP) {
     parts = parts.append("    i32.wrap_i64\n");
-  } else if (o.kind_tag == 10) {} else if (o.kind_tag == 9) {
+  } else if (o.kind_tag == ir.K_U32_WRAP) {} else if (o.kind_tag == ir.K_INT_CAST) {
     if (o.str == "u8") {
       parts = parts.append("    i32.const 255\n    i32.and\n");
     }
-  } else if (o.kind_tag == 92) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH) {
     parts = parts.append("    call $__fern_arr_push" + packed_suffix(o) + "\n");
-  } else if (o.kind_tag == 93) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_OWNED) {
     parts = parts.append("    call $__fern_arr_push_owned" + packed_suffix(o) + "\n");
-  } else if (o.kind_tag == 94) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_I64) {
     parts = parts.append("    call $__fern_arr_push_i64\n");
-  } else if (o.kind_tag == 95) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_F64) {
     parts = parts.append("    call $__fern_arr_push_f64\n");
-  } else if (o.kind_tag == 302) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_OWNED_I64) {
     parts = parts.append("    call $__fern_arr_push_owned_i64\n");
-  } else if (o.kind_tag == 303) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_OWNED_F64) {
     parts = parts.append("    call $__fern_arr_push_owned_f64\n");
-  } else if (o.kind_tag == 103) {
+  } else if (o.kind_tag == ir.K_STR_FROM_BYTES) {
     parts = parts.append("    call $__fern_string_from_bytes\n");
-  } else if (o.kind_tag == 380) {
+  } else if (o.kind_tag == ir.K_STR_FROM_BYTES_RANGE) {
     parts = parts.append("    call $__fern_string_from_bytes_range\n");
-  } else if (o.kind_tag == 219) {
+  } else if (o.kind_tag == ir.K_CLZ) {
     if (o.width == 64) {
       parts = parts.append("    i64.clz\n    i32.wrap_i64\n");
     } else {
       parts = parts.append("    i32.clz\n");
     }
-  } else if (o.kind_tag == 220) {
+  } else if (o.kind_tag == ir.K_CTZ) {
     if (o.width == 64) {
       parts = parts.append("    i64.ctz\n    i32.wrap_i64\n");
     } else {
       parts = parts.append("    i32.ctz\n");
     }
-  } else if (o.kind_tag == 411) {
+  } else if (o.kind_tag == ir.K_BSWAP) {
     if (o.width == 64) {
       parts = parts.append("    call $__fern_bswap64\n");
     } else {
       parts = parts.append("    call $__fern_bswap32\n");
     }
-  } else if (o.kind_tag == 221) {
+  } else if (o.kind_tag == ir.K_POPCOUNT) {
     if (o.width == 64) {
       parts = parts.append("    i64.popcnt\n    i32.wrap_i64\n");
     } else {
       parts = parts.append("    i32.popcnt\n");
     }
-  } else if (o.kind_tag == 80) {
+  } else if (o.kind_tag == ir.K_HEAP_BUMP_BYTES) {
     parts = emit_wasm_heap_bump_bytes(parts);
-  } else if (o.kind_tag == 315) {
+  } else if (o.kind_tag == ir.K_HEAP_ALLOC_COUNT) {
     parts = parts.append("    global.get $__fern_alloc_count\n");
-  } else if (o.kind_tag == 217) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_SHARED_BYTES) {
     parts = parts.append("    i32.const " + util.i32_to_string(arr_push_copied_addr()) + "\n    i64.load\n");
-  } else if (o.kind_tag == 216) {
+  } else if (o.kind_tag == ir.K_ARR_PUSH_SHARED_COUNT) {
     parts = parts.append("    i32.const " + util.i32_to_string(arr_push_shared_addr()) + "\n    i32.load\n");
-  } else if (o.kind_tag == 74) {
+  } else if (o.kind_tag == ir.K_MEMCPY) {
     parts = parts.append("    memory.copy\n    i32.const 0\n");
-  } else if (o.kind_tag == 75) {
+  } else if (o.kind_tag == ir.K_MEMSET) {
     parts = parts.append("    memory.fill\n    i32.const 0\n");
-  } else if (o.kind_tag == 78) {
+  } else if (o.kind_tag == ir.K_FREE) {
     parts = parts.append("    call $__fern_raw_free\n    i32.const 0\n");
   } else if (ir.is_device_kind(o.kind_tag)) {
     parts = parts.append(mmio_wat(o));
-  } else if (o.kind_tag == 69 || o.kind_tag == 71) {
+  } else if (o.kind_tag == ir.K_LOAD_I32 || o.kind_tag == ir.K_LOAD_PTR) {
     parts = parts.append("    i32.load\n");
-  } else if (o.kind_tag == 70) {
+  } else if (o.kind_tag == ir.K_LOAD_I64) {
     parts = parts.append("    i64.load\n");
-  } else if (o.kind_tag == 72 || o.kind_tag == 73) {
+  } else if (o.kind_tag == ir.K_STORE_I32 || o.kind_tag == ir.K_STORE_PTR) {
     parts = parts.append("    i32.store\n    i32.const 0\n");
-  } else if (o.kind_tag == 199) {
+  } else if (o.kind_tag == ir.K_STORE_I64) {
     parts = parts.append("    i64.store\n    i32.const 0\n");
-  } else if (o.kind_tag == 77 || o.kind_tag == ir.K_ALLOC_UNINIT) {
+  } else if (o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT) {
     parts = emit_wasm_alloc_u8(cagg_vals, ns, arrtmp, eltmp, o, parts);
-  } else if (o.kind_tag == 76) {
+  } else if (o.kind_tag == ir.K_ALLOC) {
     parts = parts.append("    call $__fern_alloc\n");
-  } else if (o.kind_tag == 79) {
+  } else if (o.kind_tag == ir.K_PTR_WIDTH) {
     parts = parts.append("    i32.const 4\n");
   } else if (ir.is_sha_hw_op(o.kind_tag)) {
     parts = parts.append("    i32.const 0\n");
   } else if (ir.is_view_string(o)) {
     parts = parts.append(view_string_wat(o, eltmp));
-  } else if (o.kind_tag == 345) {
+  } else if (o.kind_tag == ir.K_STR_DATA) {
     parts = parts.append("    i32.const 4\n    i32.add\n");
-  } else if (o.kind_tag == 223) {
+  } else if (o.kind_tag == ir.K_RAW_ADDR) {
     parts = parts.append("    i32.add\n");
-  } else if (o.kind_tag == 18) {
+  } else if (o.kind_tag == ir.K_LOAD_LOCAL) {
     parts = parts.append("    local.get " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 19) {
+  } else if (o.kind_tag == ir.K_STORE_LOCAL) {
     parts = parts.append("    local.set " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 20) {
+  } else if (o.kind_tag == ir.K_TEE_LOCAL) {
     parts = parts.append("    local.tee " + util.i32_to_string(o.i32_imm) + "\n");
-  } else if (o.kind_tag == 34) {
+  } else if (o.kind_tag == ir.K_NOT) {
     parts = parts.append("    i32.eqz\n");
   } else if (o.kind_tag == 160) {
     parts = parts.append("    return\n");
@@ -4834,32 +4834,32 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    br_if " + util.i32_to_string(o.i32_imm) + "\n");
   } else if (o.kind_tag == 159) {
     parts = parts.append("    drop\n");
-  } else if (o.kind_tag == 84) {
+  } else if (o.kind_tag == ir.K_RAW_STORE_PTR) {
     parts = emit_wasm_raw_store_ptr(arrtmp, eltmp, parts);
-  } else if (o.kind_tag == 82) {
+  } else if (o.kind_tag == ir.K_RAW_STORE8) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.add\n");
     parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
     parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n");
-  } else if (o.kind_tag == 83) {
+  } else if (o.kind_tag == ir.K_RAW_LOAD8) {
     parts = parts.append("    i32.add\n    i32.load8_u\n");
-  } else if (o.kind_tag == 85) {
+  } else if (o.kind_tag == ir.K_RAW_LOAD_PTR) {
     parts = parts.append("    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n");
-  } else if (o.kind_tag == 86 && o.i32_imm > 0) {
+  } else if (o.kind_tag == ir.K_RAW_STRING && o.i32_imm > 0) {
     parts = parts.append(frame_window_wat(cx, arrtmp, eltmp, bctmp));
-  } else if (o.kind_tag == 87) {
+  } else if (o.kind_tag == ir.K_ARR_MAKE) {
     parts = emit_wasm_arr_make(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 88) {
+  } else if (o.kind_tag == ir.K_ARR_GET) {
     parts = emit_wasm_arr_get(arrtmp, bctmp, o, parts);
-  } else if (o.kind_tag == 89) {
+  } else if (o.kind_tag == ir.K_ARR_SET) {
     parts = emit_wasm_arr_set(arrtmp, bctmp, eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 90) {
+  } else if (o.kind_tag == ir.K_ARR_LEN) {
     parts = parts.append("    i32.load\n");
-  } else if (o.kind_tag == 91) {
+  } else if (o.kind_tag == ir.K_ARR_RC) {
     parts = parts.append("    i32.const 8\n    i32.sub\n    i32.load\n");
-  } else if (o.kind_tag == 5) {
+  } else if (o.kind_tag == ir.K_CONST_STR) {
     parts = parts.append("    global.get " + str_base_global(ns) + "\n    i32.const "
       + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n");
-  } else if (o.kind_tag == 101) {
+  } else if (o.kind_tag == ir.K_STR_INDEX) {
     if (o.i32_imm == 1) {
       parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
     } else {
@@ -4867,7 +4867,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     }
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     parts = parts.append(emit_str_op_wat(o));
-  } else if (o.kind_tag == 96) {
+  } else if (o.kind_tag == ir.K_ARR_SLICE) {
     if (o.width == 64) {
       parts = parts.append("    call $__fern_arr_slice8\n");
     } else if (ir.is_packed(o)) {
@@ -4875,11 +4875,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else {
       parts = parts.append("    call $__fern_arr_slice\n");
     }
-  } else if (o.kind_tag == 185) {
+  } else if (o.kind_tag == ir.K_RANDOM_BYTES) {
     parts = parts.append("    call $__fern_random_bytes\n");
-  } else if (o.kind_tag == 186) {
+  } else if (o.kind_tag == ir.K_RANDOM_I32) {
     parts = parts.append("    call $__fern_random_i32\n");
-  } else if (o.kind_tag == 120 && o.width == 64) {
+  } else if (o.kind_tag == ir.K_OPT_MAKE && o.width == 64) {
     if (o.unsigned) {
       parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
     } else {
@@ -4894,7 +4894,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       parts = parts.append("    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
     }
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
-  } else if (o.kind_tag == 120) {
+  } else if (o.kind_tag == ir.K_OPT_MAKE) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n");
@@ -4915,13 +4915,13 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   } else if (is_host_op_kind(o.kind_tag)) {
     parts = parts.append(emit_host_op_wat(o));
-  } else if (o.kind_tag == 165) {
+  } else if (o.kind_tag == ir.K_PUTCHAR) {
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag >= 487 && o.kind_tag <= 489 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
+  } else if (o.kind_tag >= ir.K_BUF_NEW && o.kind_tag <= 297 || o.kind_tag == ir.K_BUF_PUSH_U64 || o.kind_tag == ir.K_BUF_PUSH_DECIMAL || o.kind_tag >= ir.K_BUF_PUSH_BASE64 && o.kind_tag <= ir.K_BUF_DECODE_BASE32 || o.kind_tag == ir.K_BUF_PUSH_MAPPED || o.kind_tag == ir.K_BUF_PUSH_FILTERED || o.kind_tag == ir.K_BUF_PUSH_EXPANDED || o.kind_tag == ir.K_BUF_TAKE_BYTES || o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE || o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED || o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED || o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED || o.kind_tag == ir.K_BUF_CLEAR) {
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == 138) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
-  } else if (o.kind_tag == 218) {
+  } else if (o.kind_tag == ir.K_CONST_STRUCT) {
     parts = emit_wasm_const_struct(cagg_vals, ns, o, parts);
   } else if (o.kind_tag == 139) {
     parts = emit_wasm_struct_get(o, parts);
@@ -4957,13 +4957,13 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_dyn_dispatch_wat(o, structs, funcs));
   } else if (o.kind_tag == 146) {
     parts = emit_wasm_dyn_box(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 6) {
+  } else if (o.kind_tag == ir.K_CONST_FUNC) {
     parts = parts.append("    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n");
   } else if (o.kind_tag == 150) {
     parts = emit_wasm_call_indirect(o, parts);
-  } else if (o.kind_tag == 430) {
+  } else if (o.kind_tag == ir.K_MULHI_U) {
     parts = parts.append("    call $__fern_mulhi_u64\n");
-  } else if (o.kind_tag == 484) {
+  } else if (o.kind_tag == ir.K_MULHI_S) {
     parts = parts.append("    call $__fern_mulhi_s64\n");
   } else if (o.kind_tag >= 421 && o.kind_tag <= 428) {
     parts = parts.append("    unreachable\n");
@@ -4974,19 +4974,19 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 }
 
 function emit_str_op_wat(o: ir.Op): string {
-  if (o.kind_tag == 384 || o.kind_tag == 385) {
+  if (o.kind_tag == ir.K_RET_WORD || o.kind_tag == ir.K_CALL_WORD) {
     let name = "$__fern_ret_word";
     if (o.width == 64) {
       name = "$__fern_scalar_word" + util.i32_to_string(o.i32_imm);
     } else if (o.i32_imm > 0) {
       name += util.i32_to_string(o.i32_imm);
     }
-    if (o.kind_tag == 385) {
+    if (o.kind_tag == ir.K_CALL_WORD) {
       return "    global.get " + name + "\n";
     }
     return "    global.set " + name + "\n    i32.const 0\n";
   }
-  if (o.kind_tag == 383) {
+  if (o.kind_tag == ir.K_ARR_RESERVE) {
     let stride = 4;
     if (o.width == 8) {
       stride = 1;
@@ -4995,85 +4995,85 @@ function emit_str_op_wat(o: ir.Op): string {
     }
     return "    i32.const " + util.i32_to_string(stride) + "\n    call $__fern_arr_reserve\n";
   }
-  if (o.kind_tag == 381) {
+  if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return "    call $__fern_outer_mul_f64\n";
   }
-  if (o.kind_tag == 382) {
+  if (o.kind_tag == ir.K_INNER_MUL_ADD_F64) {
     return "    call $__fern_inner_mul_add_f64\n";
   }
-  if (o.kind_tag == 359) {
+  if (o.kind_tag == ir.K_COUNT_BYTE_BYTES) {
     return "    call $__fern_count_byte_bytes\n";
   }
-  if (o.kind_tag == 482) {
+  if (o.kind_tag == ir.K_COUNT_BELOW_U64) {
     return "    call $__fern_count_below_u64\n";
   }
-  if (o.kind_tag == 368) {
+  if (o.kind_tag == ir.K_SUM_BYTES_ARRAY) {
     return "    call $__fern_sum_bytes_array\n";
   }
-  if (o.kind_tag == 369) {
+  if (o.kind_tag == ir.K_BSD_SUM_BYTES) {
     return "    call $__fern_bsd_sum_bytes\n";
   }
-  if (o.kind_tag == 358) {
+  if (o.kind_tag == ir.K_MEMCHR_BYTES) {
     return "    call $__fern_memchr_bytes\n";
   }
-  if (o.kind_tag == 360) {
+  if (o.kind_tag == ir.K_RMEMCHR_BYTES) {
     return "    call $__fern_rmemchr_bytes\n";
   }
-  if (o.kind_tag == 379) {
+  if (o.kind_tag == ir.K_COUNT_RUNS_BYTES) {
     return "    call $__fern_count_runs_bytes\n";
   }
-  if (o.kind_tag == 361) {
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
     return "    call $__fern_scan_set_bytes\n";
   }
-  if (o.kind_tag == 378) {
+  if (o.kind_tag == ir.K_MISMATCH_BYTES) {
     return "    call $__fern_mismatch_bytes\n";
   }
-  if (o.kind_tag == 446) {
+  if (o.kind_tag == ir.K_MISMATCH_BYTES_STR) {
     return "    call $__fern_mismatch_bytes_str\n";
   }
-  if (o.kind_tag == 97) {
+  if (o.kind_tag == ir.K_STR_LEN) {
     return "    i32.load\n";
   }
-  if (o.kind_tag == 102) {
+  if (o.kind_tag == ir.K_STR_SLICE) {
     return "    call $__fern_substr\n";
   }
-  if (o.kind_tag == 225) {
+  if (o.kind_tag == ir.K_MEMCHR) {
     return "    call $__fern_memchr\n";
   }
-  if (o.kind_tag == 245) {
+  if (o.kind_tag == ir.K_MISMATCH) {
     return "    call $__fern_mismatch\n";
   }
-  if (o.kind_tag == 234) {
+  if (o.kind_tag == ir.K_RMEMCHR) {
     return "    call $__fern_rmemchr\n";
   }
-  if (o.kind_tag == 235) {
+  if (o.kind_tag == ir.K_COUNT_BYTE) {
     return "    call $__fern_count_byte\n";
   }
-  if (o.kind_tag == 253) {
+  if (o.kind_tag == ir.K_SUM_BYTES) {
     return "    call $__fern_sum_bytes\n";
   }
-  if (o.kind_tag == 324) {
+  if (o.kind_tag == ir.K_SCAN_SET) {
     return "    call $__fern_scan_set\n";
   }
-  if (o.kind_tag == 327) {
+  if (o.kind_tag == ir.K_COUNT_RUNS) {
     return "    call $__fern_count_runs\n";
   }
-  if (o.kind_tag == 390) {
+  if (o.kind_tag == ir.K_STR_HASH) {
     return "    call $__fern_str_hash\n";
   }
-  if (o.kind_tag == 329) {
+  if (o.kind_tag == ir.K_BSD_SUM) {
     return "    call $__fern_bsd_sum\n";
   }
-  if (o.kind_tag == 322) {
+  if (o.kind_tag == ir.K_SCALE_F64) {
     return "    i32.const " + util.i32_to_string(o.i32_imm) + "\n    call $__fern_scale_f64\n";
   }
-  if (o.kind_tag == 373) {
+  if (o.kind_tag == ir.K_CRC32_CKSUM_ARRAY) {
     return "    call $__fern_crc32_cksum_array\n";
   }
-  if (o.kind_tag == 480) {
+  if (o.kind_tag == ir.K_CRC32_IEEE) {
     return "    call $__fern_crc32_ieee\n";
   }
-  if (o.kind_tag == 481) {
+  if (o.kind_tag == ir.K_CRC32_IEEE_ARRAY) {
     return "    call $__fern_crc32_ieee_array\n";
   }
   if (ir.is_aes_gcm_op(o.kind_tag)) {
@@ -5082,43 +5082,43 @@ function emit_str_op_wat(o: ir.Op): string {
   if (ir.is_sha_blocks_op(o.kind_tag)) {
     return "    call $__fern_sha_hw_blocks\n";
   }
-  if (o.kind_tag == 309) {
+  if (o.kind_tag == ir.K_CRC32_CKSUM) {
     return "    call $__fern_crc32_cksum\n";
   }
-  if (o.kind_tag == 227) {
+  if (o.kind_tag == ir.K_ASCII_RUN) {
     return "    call $__fern_ascii_run\n";
   }
-  if (o.kind_tag == 104) {
+  if (o.kind_tag == ir.K_STR_BYTES) {
     return "    call $__fern_str_bytes\n";
   }
-  if (o.kind_tag == 105) {
+  if (o.kind_tag == ir.K_STR_SPLIT) {
     return "    call $__fern_str_split\n";
   }
-  if (o.kind_tag == 106) {
+  if (o.kind_tag == ir.K_STR_TO_UPPER) {
     return "    call $__fern_str_upper\n";
   }
-  if (o.kind_tag == 107) {
+  if (o.kind_tag == ir.K_STR_TO_LOWER) {
     return "    call $__fern_str_lower\n";
   }
-  if (o.kind_tag == 108) {
+  if (o.kind_tag == ir.K_STR_REPEAT) {
     return "    call $__fern_str_repeat\n";
   }
-  if (o.kind_tag == 109) {
+  if (o.kind_tag == ir.K_STR_TRIM) {
     return "    call $__fern_str_trim\n";
   }
-  if (o.kind_tag == 111) {
+  if (o.kind_tag == ir.K_STR_REPLACE) {
     return "    call $__fern_str_replace\n";
   }
-  if (o.kind_tag == 113) {
+  if (o.kind_tag == ir.K_STR_LINES) {
     return "    call $__fern_str_lines\n";
   }
-  if (o.kind_tag == 98) {
+  if (o.kind_tag == ir.K_STR_CONCAT) {
     return "    call $__fern_strcat\n";
   }
-  if (o.kind_tag == 99) {
+  if (o.kind_tag == ir.K_STR_EQ) {
     return "    call $__fern_streq\n";
   }
-  if (o.kind_tag == 100) {
+  if (o.kind_tag == ir.K_STR_CMP) {
     return "    call $__fern_strcmp\n";
   }
   return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
@@ -7316,64 +7316,64 @@ pub function arr_slice_helper(): string {
 }
 
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
-  if (o.kind_tag == 370) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_MAPPED) {
     return parts.append("    call $__fern_buf_push_bytes_mapped\n    i32.const 0\n");
   }
-  if (o.kind_tag == 371) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_FILTERED) {
     return parts.append("    call $__fern_buf_push_bytes_filtered\n    i32.const 0\n");
   }
-  if (o.kind_tag == 372) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_EXPANDED) {
     return parts.append("    call $__fern_buf_push_bytes_expanded\n    i32.const 0\n");
   }
-  if (o.kind_tag == 347) {
+  if (o.kind_tag == ir.K_BUF_TAKE_BYTES) {
     return parts.append("    call $__fern_buf_take_bytes\n");
   }
-  if (o.kind_tag == 291) {
+  if (o.kind_tag == ir.K_BUF_NEW) {
     return parts.append("    call $__fern_buf_new\n");
   }
-  if (o.kind_tag == 292) {
+  if (o.kind_tag == ir.K_BUF_PUSH) {
     return parts.append("    call $__fern_buf_push\n    i32.const 0\n");
   }
-  if (o.kind_tag == 293) {
+  if (o.kind_tag == ir.K_BUF_PUSH_RANGE) {
     return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n");
   }
-  if (o.kind_tag == 351) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BYTES_RANGE) {
     return parts.append("    call $__fern_buf_push_bytes_range\n    i32.const 0\n");
   }
-  if (o.kind_tag == 325) {
+  if (o.kind_tag == ir.K_BUF_PUSH_MAPPED) {
     return parts.append("    call $__fern_buf_push_mapped\n    i32.const 0\n");
   }
-  if (o.kind_tag == 326) {
+  if (o.kind_tag == ir.K_BUF_PUSH_FILTERED) {
     return parts.append("    call $__fern_buf_push_filtered\n    i32.const 0\n");
   }
-  if (o.kind_tag == 328) {
+  if (o.kind_tag == ir.K_BUF_PUSH_EXPANDED) {
     return parts.append("    call $__fern_buf_push_expanded\n    i32.const 0\n");
   }
-  if (o.kind_tag == 294) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BYTE) {
     return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n");
   }
-  if (o.kind_tag == 306) {
+  if (o.kind_tag == ir.K_BUF_PUSH_U64) {
     return parts.append("    call $__fern_buf_push_u64\n    i32.const 0\n");
   }
-  if (o.kind_tag == 485) {
+  if (o.kind_tag == ir.K_BUF_PUSH_DECIMAL) {
     return parts.append("    call $__fern_buf_push_decimal\n    i32.const 0\n");
   }
-  if (o.kind_tag == 487) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BASE64) {
     return parts.append("    call $__fern_buf_push_base64\n    i32.const 0\n");
   }
-  if (o.kind_tag == 488) {
+  if (o.kind_tag == ir.K_BUF_PUSH_BASE32) {
     return parts.append("    call $__fern_buf_push_base32\n    i32.const 0\n");
   }
-  if (o.kind_tag == 489) {
+  if (o.kind_tag == ir.K_BUF_DECODE_BASE32) {
     return parts.append("    call $__fern_buf_decode_base32\n");
   }
-  if (o.kind_tag == 295) {
+  if (o.kind_tag == ir.K_BUF_LEN) {
     return parts.append("    call $__fern_buf_len\n");
   }
-  if (o.kind_tag == 386) {
+  if (o.kind_tag == ir.K_BUF_CLEAR) {
     return parts.append("    call $__fern_buf_clear\n    i32.const 0\n");
   }
-  if (o.kind_tag == 296) {
+  if (o.kind_tag == ir.K_BUF_TAKE) {
     return parts.append("    call $__fern_buf_take\n");
   }
   return parts.append("    call $__fern_buf_free\n    i32.const 0\n");

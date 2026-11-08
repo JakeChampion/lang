@@ -1,0 +1,293 @@
+import "std/deflate";
+import "std/rand";
+import "./util";
+
+// Unpacks a package archive, a gzip-compressed tar, into a directory. The
+// bytes come from a registry the program's manifest names, so every entry is
+// checked: a name that escapes the directory, a type other than a file or a
+// directory, and a truncated archive are refused with a message.
+
+const MAX_UNPACKED: i32 = 536870912;
+
+pub function unpack_into(dir: string, raw: u8[]): string {
+  let tar: u8[] = [];
+  match (deflate.gunzip(raw, MAX_UNPACKED)) {
+    Ok(b) => {
+      tar = b;
+    },
+    Err(e) => {
+      return "cannot gunzip the archive: " + e.message();
+    }
+  }
+  let parent = util.dir_of(dir);
+  let suffix = "";
+  for b in rand.bytes(6) {
+    suffix += util.i32_to_string(b as i32);
+  }
+  let tmp = parent + "/.unpack-" + suffix;
+  let err = write_entries(tmp, tar);
+  if (err.len() == 0) {
+    err = install(tmp, dir);
+  }
+  match (remove_dir_all(tmp)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+  return err;
+}
+
+function install(tmp: string, dir: string): string {
+  let src = tmp;
+  match (read_dir(tmp)) {
+    Ok(names) => {
+      if (names.len() == 1 && util.is_dir(tmp + "/" + names[0])) {
+        src = tmp + "/" + names[0];
+      }
+    },
+    Err(_) => {}
+  }
+  match (rename(src, dir)) {
+    Ok(_) => {
+      return "";
+    },
+    Err(e) => {
+      if (util.is_dir(dir)) {
+        return "";
+      }
+      return "cannot install " + dir + ": " + e.message();
+    }
+  }
+}
+
+struct Entry { name: string, kind: u8, at: i32, size: i32 }
+
+function write_entries(tmp: string, t: u8[]): string {
+  match (create_dir_all(tmp)) {
+    Ok(_) => {},
+    Err(e) => {
+      return "cannot create " + tmp + ": " + e.message();
+    }
+  }
+  let next_name = "";
+  let off = 0;
+  while (off + 512 <= t.len() && t[off] != 0) {
+    let e = header(t, off);
+    if (e.size < 0 || e.at + e.size > t.len()) {
+      return "reading tar: truncated archive";
+    }
+    off = e.at + (e.size + 511) / 512 * 512;
+    if (names_next_entry(e.kind)) {
+      next_name = names_next(t, e);
+      continue;
+    }
+    if (next_name.len() > 0) {
+      e = Entry { ...e, name: next_name };
+      next_name = "";
+    }
+    let err = write_entry(tmp, t, e);
+    if (err.len() > 0) {
+      return err;
+    }
+  }
+  return "";
+}
+
+function names_next_entry(kind: u8): boolean {
+  return kind == b'g' || kind == b'x' || kind == b'L';
+}
+
+function names_next(t: u8[], e: Entry): string {
+  if (e.kind == b'x') {
+    return pax_path(t, e.at, e.size);
+  }
+  if (e.kind == b'L') {
+    return c_string(t, e.at, e.size);
+  }
+  return "";
+}
+
+function write_entry(tmp: string, t: u8[], e: Entry): string {
+  let name = clean(e.name);
+  if (name == ".") {
+    return "";
+  }
+  if (escapes(name)) {
+    return "archive entry " + quoted(e.name) + " escapes the package directory";
+  }
+  let dst = tmp + "/" + name;
+  if (e.kind == b'5') {
+    return made(create_dir_all(dst), dst);
+  }
+  if (e.kind != b'0' && e.kind != 0) {
+    return "archive entry " + quoted(e.name) + " has unsupported type " + util.i32_to_string(e.kind as i32) + " (only files and directories)";
+  }
+  let err = made(create_dir_all(util.dir_of(dst)), util.dir_of(dst));
+  if (err.len() > 0) {
+    return err;
+  }
+  match (write_file_bytes(dst, bytes(t, e.at, e.at + e.size))) {
+    Ok(_) => {},
+    Err(we) => {
+      return "cannot write " + dst + ": " + we.message();
+    }
+  }
+  return "";
+}
+
+function escapes(name: string): boolean {
+  return name.len() == 0 || name[0] == b'/' || name == ".." || util.str_has_prefix(name, "../");
+}
+
+function made(r: Result[void, IoError], path: string): string {
+  match (r) {
+    Ok(_) => {
+      return "";
+    },
+    Err(e) => {
+      return "cannot create " + path + ": " + e.message();
+    }
+  }
+}
+
+function header(t: u8[], off: i32): Entry {
+  let name = c_string(t, off, 100);
+  if (c_string(t, off + 257, 5) == "ustar") {
+    let prefix = c_string(t, off + 345, 155);
+    if (prefix.len() > 0) {
+      name = prefix + "/" + name;
+    }
+  }
+  return Entry { name: name, kind: t[off + 156], at: off + 512, size: octal(t, off + 124, 12) };
+}
+
+function c_string(t: u8[], at: i32, n: i32): string {
+  let end = at;
+  while (end < at + n && t[end] != 0) {
+    end += 1;
+  }
+  unsafe {
+    return string_from_bytes_unchecked(bytes(t, at, end));
+  }
+}
+
+function bytes(t: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  let i = from;
+  while (i < to) {
+    out = out.append(t[i]);
+    i += 1;
+  }
+  return out;
+}
+
+function octal(t: u8[], at: i32, n: i32): i32 {
+  let v = 0;
+  let i = at;
+  while (i < at + n) {
+    let c = t[i];
+    if (c >= b'0' && c <= b'7') {
+      v = v * 8 + (c - b'0') as i32;
+    } else if (c != b' ' && c != 0) {
+      return -1;
+    }
+    i += 1;
+  }
+  return v;
+}
+
+function pax_path(t: u8[], at: i32, size: i32): string {
+  let i = at;
+  while (i < at + size) {
+    let sp = i;
+    while (sp < at + size && t[sp] != b' ') {
+      sp += 1;
+    }
+    let len = decimal(t, i, sp);
+    if (len <= 0 || i + len > at + size) {
+      return "";
+    }
+    let rec = "";
+    unsafe {
+      rec = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
+    }
+    if (util.str_has_prefix(rec, "path=")) {
+      return slice_unchecked(rec, 5, rec.len()) + "";
+    }
+    i += len;
+  }
+  return "";
+}
+
+function decimal(t: u8[], from: i32, to: i32): i32 {
+  let v = 0;
+  let i = from;
+  while (i < to) {
+    if (t[i] < b'0' || t[i] > b'9') {
+      return -1;
+    }
+    v = v * 10 + (t[i] - b'0') as i32;
+    i += 1;
+  }
+  return v;
+}
+
+function clean(p: string): string {
+  let segs: string[] = [];
+  let lead = "";
+  if (p.len() > 0 && p[0] == b'/') {
+    lead = "/";
+  }
+  for seg in split(p) {
+    if (seg == ".." && segs.len() > 0 && segs[segs.len() - 1] != "..") {
+      segs = drop_last(segs);
+    } else if (seg.len() > 0 && seg != ".") {
+      segs = segs.append(seg);
+    }
+  }
+  let out = lead + joined(segs);
+  if (out.len() == 0) {
+    return ".";
+  }
+  return out;
+}
+
+function joined(segs: string[]): string {
+  let out = "";
+  let i = 0;
+  while (i < segs.len()) {
+    if (i > 0) {
+      out += "/";
+    }
+    out += segs[i];
+    i += 1;
+  }
+  return out;
+}
+
+function split(p: string): string[] {
+  let out: string[] = [];
+  let start = 0;
+  let i = 0;
+  while (i <= p.len()) {
+    if (i == p.len() || p[i] == b'/') {
+      out = out.append(slice_unchecked(p, start, i) + "");
+      start = i + 1;
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function drop_last(xs: string[]): string[] {
+  let out: string[] = [];
+  let i = 0;
+  while (i + 1 < xs.len()) {
+    out = out.append(xs[i]);
+    i += 1;
+  }
+  return out;
+}
+
+function quoted(s: string): string {
+  return "\"" + s + "\"";
+}

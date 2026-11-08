@@ -586,7 +586,7 @@ struct Walk { vals: i64[], exec: boolean[], edges: boolean[], edge_at: i32[], st
 function walk(ctx: Ctx, w: World, i: i32): Walk {
   let f = ctx.funcs[i];
   let g = f.graph;
-  let at = ssadeps.position_of(g);
+  let at = ssa.block_positions(g);
   let edge_at = edge_starts(g);
   let wk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: __alloc_bool(edge_at[g.blocks.len()]), edge_at: edge_at, stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
   while (wk.changed) {

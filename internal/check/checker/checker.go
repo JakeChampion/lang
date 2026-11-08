@@ -59,6 +59,9 @@ type Info struct {
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
+	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
+	CallSignatureBorrows func(*ast.Call) bool
+	TypeHoldsNoHandle    func(ast.Type) bool
 	// CallBorrowsBeside reports a plain call whose result can borrow from
 	// an argument other than the plain name given.
 	CallBorrowsBeside func(*ast.Call, string) bool
@@ -3052,6 +3055,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.OwnFuncs = c.ownFuncs
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
+	c.info.TypeHoldsNoHandle = c.holdsNoHandle
+	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
+		if id, ok := call.Callee.(*ast.Ident); ok {
+			return c.signatureResultBorrows(id.Name)
+		}
+		return true
+	}
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.NoReturn = NoReturnFuncs(prog)
 
@@ -10677,6 +10687,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
+				if x.Method != nil && (id.Name == "__method_Array_set" || id.Name == "__method_Array_push" || id.Name == "__method_Array_truncate") {
+					if array, ok := x.Method.Receiver.(ast.ArrayType); ok && c.holdsNoHandle(array.Elem) {
+						return true
+					}
+				}
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true
 				}

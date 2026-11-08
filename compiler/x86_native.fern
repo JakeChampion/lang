@@ -986,12 +986,12 @@ function x86_empty_buckets(): i32[] {
 }
 
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, -1), lab_offs: x86_filled(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, -1), lab_offs: x86_filled(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 function x86_filled(n: i32, v: i32): i32[] {
@@ -2584,7 +2584,7 @@ function x86_gas_rep_pfx(mnem: string): i32 {
       return 242;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2613,7 +2613,7 @@ function x86_gas_lea_size(mnem: string): i32 {
       return 16;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2633,7 +2633,7 @@ function x86_gas_mov_size(mnem: string): i32 {
       return 64;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2677,7 +2677,7 @@ function x86_gas_extend_op(mnem: string): i32 {
       return 48904;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2729,7 +2729,7 @@ function x86_gas_bitscan_op(mnem: string): i32 {
       return 15972353;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2743,7 +2743,7 @@ function x86_gas_shld_op(mnem: string): i32 {
       return 172;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2761,7 +2761,7 @@ function x86_gas_rmw_op(mnem: string): i32 {
       return 176;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2795,7 +2795,7 @@ function x86_gas_port_op(mnem: string): i32 {
       return 239;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2812,7 +2812,7 @@ function x86_gas_memext_op(mnem: string): i32 {
       return 769;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2836,7 +2836,7 @@ function x86_gas_mov10_pfx(mnem: string): i32 {
       return 102;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2850,7 +2850,7 @@ function x86_gas_movdq_pfx(mnem: string): i32 {
       return 102;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2876,7 +2876,7 @@ function x86_gas_cvt2s_op(mnem: string): i32 {
       return 62208;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2922,7 +2922,7 @@ function x86_gas_cvt2si(mnem: string): i32 {
       return 62253;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2957,7 +2957,7 @@ function x86_gas_imm3a_op(mnem: string): i32 {
       return 15;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2980,7 +2980,7 @@ function x86_gas_shuf_op(mnem: string): i32 {
       return 26306;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3005,7 +3005,7 @@ function x86_gas_movmsk_op(mnem: string): i32 {
       return 26192;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3045,7 +3045,7 @@ function x86_gas_vshift_op(mnem: string): i32 {
       return 1907;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3094,7 +3094,7 @@ function x86_gas_sse38_op(mnem: string): i32 {
       return 221;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3524,7 +3524,7 @@ function x86_gas_alu_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3550,7 +3550,7 @@ function x86_gas_unary_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3564,7 +3564,7 @@ function x86_gas_incdec_ext(mnem: string): i32 {
       return 1;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3596,7 +3596,7 @@ function x86_gas_shift_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3616,7 +3616,7 @@ function x86_gas_bt_idx(mnem: string): i32 {
       return 3;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3744,7 +3744,7 @@ function x86_gas_cc_code(cond: string): i32 {
       return 15;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -4296,7 +4296,7 @@ function x86_gas_fixed_op(mnem: string): i32 {
       return x86_pack2(72, 167);
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -5151,7 +5151,7 @@ function x86_gas_sse_fp_op(mnem: string): i32 {
       return 22;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -5314,7 +5314,7 @@ function x86_gas_sse_int_op(mnem: string): i32 {
       return 102 * 256 + 226;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -6859,7 +6859,7 @@ function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdic
 }
 
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
-  let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
+  let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: -1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: -1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: -1 };
   if (x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
@@ -7027,7 +7027,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 }
 
 function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
-  let l = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  let l = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: -1, sfx: 0, src: "", dst: "", def_idx: -1, ref_idx: -1 };
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -7180,7 +7180,7 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
       }
     }
-    let gl = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+    let gl = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: -1, sfx: 0, src: "", dst: "", def_idx: -1, ref_idx: -1 };
     if (mnem.len() > 0) {
       let mi = x86_mnem_lookup(seen, mnem);
       if (mi < 0) {
