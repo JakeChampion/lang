@@ -159,6 +159,7 @@ base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bitwise_not                                          0
 bitwise_precedence                                   0
+block_expression_function_assignments               0
 bool_in_tuple_with_i64                               0
 bool_match_true_false_closes                         0
 bool_to_string                                       0
