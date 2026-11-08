@@ -29,13 +29,12 @@ func TestSelfHostStackOperandMoveCycles(t *testing.T) {
 }
 
 const stackOperandCycleDriver = `
-function probe(homes: i32[]): boolean {
+function probe(homes: i32[]): void {
   let ins = ssa.SInst { kind_tag: 0, result: 0, args: [3,2,1,0], imm: 0, str: "" };
   let destinations = ["%rax", "%rsi", "%rdi", "%r8"];
   let moves = ssa_arg_moves(ins, homes, destinations, asmcore.new_state());
-  if (!moves.ok) { return false; }
   write("    movq $11, %rax\n    movq $22, %rsi\n    movq $33, %rdi\n    movq $44, %r8\n    movq $55, -8(%rbp)\n");
-  for text in moves.text { write(text); }
+  for text in moves { write(text); }
   let k = 0;
   while (k < 4) {
     let expected = 11 * (homes[k] + 1);
@@ -43,7 +42,6 @@ function probe(homes: i32[]): boolean {
     write("    cmpq $" + util.i32_to_string(expected) + ", " + destinations[k] + "\n    jne .Lbad\n");
     k = k + 1;
   }
-  return true;
 }
 function main(): i32 {
   write(".text\n.globl _start\n_start:\n    movq %rsp, %rbp\n    subq $16, %rsp\n");
@@ -51,7 +49,7 @@ function main(): i32 {
     for b in [0-2,0,1,2,3] {
       for c in [0-2,0,1,2,3] {
         for d in [0-2,0,1,2,3] {
-          if (!probe([a,b,c,d])) { return 1; }
+          probe([a,b,c,d]);
         }
       }
     }
