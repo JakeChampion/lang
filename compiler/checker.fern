@@ -18593,6 +18593,10 @@ struct MovedEntry { mname: string, mline: i32, mcol: i32 }
 
 struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
+// A break or a continue, with the moved set it takes to the loop at index
+// target of OwnCtx.loops.
+struct OwnJump { target: i32, breaks: boolean, moved: MovedEntry[] }
+
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
 // The last-use facts of one function, decided at the first question.
@@ -18612,7 +18616,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -18680,6 +18684,11 @@ function ow_moved_add(m: MovedEntry[], name: string, line: i32, col: i32): Moved
 
 function ow_fresh_deferred(): Cell[MovedEntry[]] {
   let none: MovedEntry[] = [];
+  return cell_new(none);
+}
+
+function ow_fresh_jumps(): Cell[OwnJump[]] {
+  let none: OwnJump[] = [];
   return cell_new(none);
 }
 
@@ -18869,7 +18878,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret };
+  let nested = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps() };
   return nested;
 }
 
@@ -22721,16 +22730,52 @@ function ow_branch_stmts(body: ast.Stmt[]): ast.Stmt[] {
   return out;
 }
 
-function ow_loop(body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
-  let r = ow_stmts(body, moved, OwnCtx { ...ctx, in_loop: true });
-  let out = r.diags;
-  for elem in r.moved {
-    let nm = elem.mname;
-    if (!ow_moved_has(moved, nm)) {
-      out = out.append(dg_at("E050", "owned parameter \"" + nm + "\" is consumed inside a loop; a later iteration would use it after move", elem.mline, elem.mcol));
+// A later iteration starts from the end of the body, when the end is
+// reachable, and from each continue. Each break joins the moved set after
+// the loop. A jump to an outer loop goes on to that loop.
+function ow_loop(label: string, body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let depth = ctx.loops.len();
+  let lctx = OwnCtx { ...ctx, in_loop: true, loops: ctx.loops.append(label), jumps: ow_fresh_jumps() };
+  let r = ow_stmts(body, moved, lctx);
+  let back = r.moved;
+  let any = !ow_block_diverges(body, util.has_str(ctx.bound, "exit"), ctx.noret);
+  let after = moved;
+  let outer = ctx.jumps.get();
+  for j in lctx.jumps.get() {
+    if (j.target < depth) {
+      outer = outer.append(j);
+    } else if (j.breaks) {
+      after = ow_moved_join(after, j.moved, false);
+    } else if (any) {
+      back = ow_moved_join(back, j.moved, false);
+    } else {
+      back = j.moved;
+      any = true;
     }
   }
-  return out;
+  ctx.jumps.set(outer);
+  let out = r.diags;
+  if (any) {
+    for elem in back {
+      if (!ow_moved_has(moved, elem.mname)) {
+        out = out.append(dg_at("E050", "owned parameter \"" + elem.mname + "\" is consumed inside a loop; a later iteration would use it after move", elem.mline, elem.mcol));
+      }
+    }
+  }
+  return OwnWalk { moved: after, diags: out };
+}
+
+// The jump to the innermost loop, or to the loop of the label.
+function ow_jump(label: string, breaks: boolean, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let i = ctx.loops.len() - 1;
+  while (i >= 0) {
+    if (label.len() == 0 || ctx.loops[i] == label) {
+      ctx.jumps.set(ctx.jumps.get().append(OwnJump { target: i, breaks: breaks, moved: moved }));
+      break;
+    }
+    i -= 1;
+  }
+  return OwnWalk { moved: moved, diags: [] };
 }
 
 // A literal based on q that replaces q.f moves q.f into an own parameter in
@@ -22820,8 +22865,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.StmtWhile(w) => {
       let rc = ru_expr(w.cond, moved, ctx);
-      let ld = ow_loop(w.body, rc.moved, ctx);
-      return OwnWalk { moved: rc.moved, diags: util.append_diags(rc.diags, ld) };
+      let ld = ow_loop(w.label, w.body, rc.moved, ctx);
+      return OwnWalk { moved: ld.moved, diags: util.append_diags(rc.diags, ld.diags) };
     },
     ast.StmtFor(fr) => {
       let takes = !name_has_comma(fr.var_name) && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
@@ -22833,11 +22878,17 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       if (!takes && !name_has_comma(fr.var_name)) {
         fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
       }
-      let ld = ow_loop(fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
-      return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
+      let ld = ow_loop(fr.label, fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
+      return OwnWalk { moved: ld.moved, diags: util.append_diags(ri.diags, ld.diags) };
     },
     ast.StmtMatch(m) => {
       return ow_match_stmt(m, moved, ctx);
+    },
+    ast.StmtContinue(c) => {
+      return ow_jump(c.label, false, moved, ctx);
+    },
+    ast.StmtBreak(b) => {
+      return ow_jump(b.label, true, moved, ctx);
     },
     ast.StmtDefer(dd) => {
       let one: ast.Stmt[] = [dd.action];
@@ -22916,7 +22967,7 @@ function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnW
       pending = ow_moved_join(pending, ow_scope_moves(start, pending, names), false);
     }
     let ra = ow_stmts(arm.body, start, actx);
-    ow_arm_finish_ctx(actx, ctx, names);
+    ow_arm_finish_ctx(actx, ctx, names, rs.moved);
     d = util.append_diags(d, ra.diags);
     branches = branches.append(ow_scope_moves(ra.moved, rs.moved, names));
     runs_on = runs_on.append(!ow_block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern), ctx.noret));
@@ -23011,6 +23062,7 @@ function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     ...c, owned: ow_names_without(ctx.owned, names), borrowed: ow_names_without(ctx.borrowed, names),
     deferred: cell_new(ow_moves_without(ctx.deferred.get(), names)),
     returns: cell_new(OwnReturns { ...returns, moved: ow_moves_without(returns.moved, names) }),
+    jumps: ow_fresh_jumps(),
   };
 }
 
@@ -23059,13 +23111,19 @@ function ow_scope_moves(after: MovedEntry[], before: MovedEntry[], names: string
   return out;
 }
 
-function ow_arm_finish_ctx(arm: OwnCtx, parent: OwnCtx, names: string[]): void {
+// `before` is the moved set at the start of the arm.
+function ow_arm_finish_ctx(arm: OwnCtx, parent: OwnCtx, names: string[], before: MovedEntry[]): void {
   if (names.len() == 0) {
     return;
   }
   parent.deferred.set(ow_scope_moves(arm.deferred.get(), parent.deferred.get(), names));
   let returns = parent.returns.get();
   parent.returns.set(OwnReturns { ...returns, moved: ow_scope_moves(arm.returns.get().moved, returns.moved, names) });
+  let jumps = parent.jumps.get();
+  for j in arm.jumps.get() {
+    jumps = jumps.append(OwnJump { ...j, moved: ow_scope_moves(j.moved, before, names) });
+  }
+  parent.jumps.set(jumps);
 }
 
 function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
@@ -24252,7 +24310,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
+    let ctx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps() };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);

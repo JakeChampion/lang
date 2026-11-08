@@ -1,0 +1,75 @@
+// A loop can consume an own parameter when each path back to the loop head
+// gives it a new value first. A continue is such a path, also from a match
+// arm or from a nested loop by its label. A path that leaves the loop by a
+// break or a return needs no new value.
+
+struct State { bytes: u8[] }
+
+enum Failure { Full }
+
+function (own state: State) step(): Result[State, Failure] {
+  if (state.bytes.len() >= 3) {
+    return Err(Failure.Full);
+  }
+  return Ok(State { bytes: state.bytes.append(1u8) });
+}
+
+function (own state: State) size(): i32 {
+  return state.bytes.len();
+}
+
+function rounds(own state: State): i32 {
+  let n = 0;
+  while (true) {
+    match (state.step()) {
+      Ok(next) => {
+        state = next;
+        n += 1;
+        continue;
+      },
+      Err(_) => {
+        return n;
+      }
+    }
+  }
+}
+
+function nested(own state: State, inner: i32): i32 {
+  let n = 0;
+  outer: while (true) {
+    match (state.step()) {
+      Ok(next) => {
+        state = next;
+        let j = 0;
+        while (j < inner) {
+          j += 1;
+          n += 1;
+          if (j == 2) {
+            continue outer;
+          }
+        }
+        n += 100;
+      },
+      Err(_) => {
+        return n;
+      }
+    }
+  }
+}
+
+function last(own state: State): i32 {
+  let i = 0;
+  while (true) {
+    i += 1;
+    if (i == 2) {
+      return state.size() + i;
+    }
+  }
+}
+
+function main(): i32 {
+  print(rounds(State { bytes: [] }).to_string());
+  print(nested(State { bytes: [] }, 5).to_string());
+  print(last(State { bytes: [7u8] }).to_string());
+  return 0;
+}
