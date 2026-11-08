@@ -20390,7 +20390,7 @@ function lu_mention_search(aid: ast.ExprIdent, later: boolean): LuMention {
 function lu_value_if(e: ast.Expr): Option[ast.StmtIf] {
   if let ast.ExprCall(c) = e {
     if let ast.ExprLambda(lm) = c.callee {
-      if (c.args.len() == 0 && ow_value_if_origin(lm.origin) && lm.body.len() == 1) {
+      if (c.args.len() == 0 && (ow_value_if_origin(lm.origin) || lm.origin == parser.ORIGIN_MATCH_EXPR) && lm.body.len() == 1) {
         if let ast.StmtIf(branch) = lm.body[0] {
           return Some(branch);
         }
@@ -20401,7 +20401,7 @@ function lu_value_if(e: ast.Expr): Option[ast.StmtIf] {
 }
 
 function lu_path_descend(e: ast.Expr): boolean {
-  return match (lu_value_if(e)) { Some(_) => false, None => true };
+  return match ((lu_value_if(e), lu_match_value(e))) { (None(), None()) => true, _ => false };
 }
 
 function lu_body_holds_mention(body: ast.Stmt[], m: LuMention): boolean {
@@ -20416,12 +20416,42 @@ function lu_body_holds_mention(body: ast.Stmt[], m: LuMention): boolean {
 
 function lu_path_body(body: ast.Stmt[], own m: LuMention): LuMention {
   for st in body {
-    m = astwalk.fold_stmt_nodes(st, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+    m = lu_path_stmt(st, m);
   }
   return m;
 }
 
+function lu_path_stmt(st: ast.Stmt, own m: LuMention): LuMention {
+  if let ast.StmtIf(branch) = st {
+    if (lu_body_holds_mention(branch.then_body, m)) {
+      return lu_path_body(branch.then_body, m);
+    }
+    if (lu_body_holds_mention(branch.else_body, m)) {
+      return lu_path_body(branch.else_body, m);
+    }
+    m = astwalk.fold_expr_nodes(branch.cond, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+    m = lu_path_body(branch.then_body, m);
+    return lu_path_body(branch.else_body, m);
+  }
+  return astwalk.fold_stmt_nodes(st, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+}
+
 function lu_path_mention(e: ast.Expr, own m: LuMention): LuMention {
+  if let Some(branch) = lu_match_value(e) {
+    for arm in branch.arms {
+      if (lu_body_holds_mention(arm.body, m)) {
+        return lu_path_body(arm.body, m);
+      }
+    }
+    m = astwalk.fold_expr_nodes(branch.scrutinee, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+    for arm in branch.arms {
+      if (arm.has_guard) {
+        m = astwalk.fold_expr_nodes(arm.guard, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+      }
+      m = lu_path_body(arm.body, m);
+    }
+    return m;
+  }
   let Some(branch) = lu_value_if(e) else {
     return lu_mention_expr(e, m);
   };
