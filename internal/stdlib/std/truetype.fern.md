@@ -525,7 +525,7 @@ function read_coords(b: [u8], at: i32, flags: i32[], short: i32, same: i32): (i3
       let d = u8_at(b, p);
       p += 1;
       if ((fl & same) == 0) {
-        d = 0 - d;
+        d = -d;
       }
       v += d;
     } else if ((fl & same) == 0) {
@@ -638,7 +638,7 @@ function line(r: Raster, x0: f64, y0: f64, x1: f64, y1: f64): Raster {
   let dxdy = (bx - ax) / (by - ay);
   let x = ax;
   if (ay < 0.0) {
-    x = x - ay * dxdy;
+    x -= ay * dxdy;
   }
   let acc = r.acc;
   let ystart = clampi(ay.floor() as i32, 0, r.h);
@@ -793,7 +793,7 @@ function shade(r: Raster): u8[] {
   let cov: u8[] = [];
   let sum = 0.0;
   for i in 0..r.w * r.h {
-    sum = sum + r.acc[i];
+    sum += r.acc[i];
     let a = sum.abs().min(1.0);
     cov = cov.append((a * 255.0 + 0.5) as u8);
   }
