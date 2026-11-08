@@ -1,6 +1,6 @@
 # Boolean environment flags
 
-This module reads boolean environment flags. Empty values, `0`, `false`, and `off` disable a flag without regard to ASCII case.
+This module reads boolean environment flags. Empty values, `0`, `false`, `off`, and `no` disable a flag without regard to ASCII case.
 
 ## Model
 
@@ -8,7 +8,7 @@ This module reads boolean environment flags. Empty values, `0`, `false`, and `of
 
 ## Contracts
 
-Empty values, `0`, `false`, and `off` disable a flag without regard to ASCII case. Other nonempty values enable it.
+Empty values, `0`, `false`, `off`, and `no` disable a flag without regard to ASCII case. Other nonempty values enable it.
 
 ## Executable example
 
@@ -16,7 +16,7 @@ Empty values, `0`, `false`, and `off` disable a flag without regard to ASCII cas
 import "std/envflag";
 
 function main(): i32 {
-  if (envflag.value_on("OFF") || envflag.value_on("0")) { return 1; }
+  if (envflag.value_on("OFF") || envflag.value_on("0") || envflag.value_on("No")) { return 1; }
   if (!envflag.value_on("yes")) { return 2; }
   return 0;
 }
@@ -39,7 +39,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module reads boolean environment flags. Empty values, `0`, `false`, and `off` disable a flag without regard to ASCII case.
+// This module reads boolean environment flags. Empty values, `0`, `false`, `off`, and `no` disable a flag without regard to ASCII case.
 ```
 
 ### `2 pub function value_on(value: string): boolean`
@@ -47,7 +47,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<2 pub function value_on(value: string): boolean>>=
 pub function value_on(value: string): boolean {
-  return !(value == "" || value == "0" || __folds_to(value, "false") || __folds_to(value, "off"));
+  return !(value == "" || value == "0" || __folds_to(value, "false") || __folds_to(value, "off") || __folds_to(value, "no"));
 }
 
 pub function on(name: string): boolean {

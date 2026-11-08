@@ -3,7 +3,7 @@ import "std/envflag";
 import "std/option";
 
 function test_value_on_off_values(): test.TestOutcome {
-  for v in ["", "0", "false", "FALSE", "False", "off", "OFF", "Off"] {
+  for v in ["", "0", "false", "FALSE", "False", "off", "OFF", "Off", "no", "NO", "No"] {
     if (envflag.value_on(v)) {
       return test.fail("value_on(\"" + v + "\") is on");
     }
@@ -12,7 +12,7 @@ function test_value_on_off_values(): test.TestOutcome {
 }
 
 function test_value_on_other_values(): test.TestOutcome {
-  for v in ["1", "true", "on", "yes", "quiet", "00", " 0", "no", "offf", "fals"] {
+  for v in ["1", "true", "on", "yes", "quiet", "00", " 0", "noo", "n", "offf", "fals"] {
     if (!envflag.value_on(v)) {
       return test.fail("value_on(\"" + v + "\") is off");
     }

@@ -3,7 +3,7 @@ package envflag
 import "os"
 
 func ValueOn(v string) bool {
-	return !(v == "" || v == "0" || equalFoldASCII(v, "false") || equalFoldASCII(v, "off"))
+	return !(v == "" || v == "0" || equalFoldASCII(v, "false") || equalFoldASCII(v, "off") || equalFoldASCII(v, "no"))
 }
 
 func On(name string) bool {
