@@ -1,0 +1,4 @@
+import "core/cmp";
+trait Eq { function combine(self: Self, other: Self): i32; }
+function reject(value: dyn Eq): i32 { return 0; }
+function main(): i32 { return 0; }
