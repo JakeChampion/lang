@@ -1,0 +1,74 @@
+import "../fern_toml";
+import "../mvs";
+import "../pkgarchive";
+import "../util";
+
+// Feeds a file to one reader of the package layer: the manifest reader, the
+// lock reader, the index reader, or the archive unpacker. Each reader refuses
+// foreign bytes with a message, so the accepted outcome is exit 0 with a
+// summary on stdout. Exit 2 is a usage or read error.
+
+function text_of(b: u8[]): string {
+  let src = "";
+  unsafe {
+    src = string_from_bytes_unchecked(b);
+  }
+  return src;
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 3) {
+    eprint("usage: pkg_fuzz_run toml|lock|index|archive FILE");
+    return 2;
+  }
+  let raw: u8[] = [];
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      raw = b;
+    },
+    Err(_) => {
+      eprint("pkg_fuzz_run: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  if (av[1] == "toml") {
+    let m = fern_toml.parse(text_of(raw));
+    let d = fern_toml.diagnostic(av[2], m);
+    print("toml deps " + util.i32_to_string(m.deps.len()) + " members " + util.i32_to_string(m.members.len()) + " diagnostic " + util.i32_to_string(d.len()));
+    return 0;
+  }
+  if (av[1] == "lock") {
+    match (fern_toml.parse_lock(text_of(raw))) {
+      Ok(l) => {
+        print("lock entries " + util.i32_to_string(l.entries.len()));
+      },
+      Err(message) => {
+        print("lock refused " + util.i32_to_string(message.len()));
+      }
+    }
+    return 0;
+  }
+  if (av[1] == "index") {
+    match (mvs.parse_index(text_of(raw))) {
+      Ok(_) => {
+        print("index ok");
+      },
+      Err(message) => {
+        print("index refused " + util.i32_to_string(message.len()));
+      }
+    }
+    return 0;
+  }
+  if (av[1] == "archive") {
+    let err = pkgarchive.unpack_into(util.dir_of(av[2]) + "/unpacked", raw);
+    if (err.len() == 0) {
+      print("archive ok");
+    } else {
+      print("archive refused " + util.i32_to_string(err.len()));
+    }
+    return 0;
+  }
+  eprint("pkg_fuzz_run: unknown reader " + av[1]);
+  return 2;
+}

@@ -246,9 +246,11 @@ is the earlier, single hand-written plant.
 
 ## The boundaries after the front end
 
-Four targets feed hostile bytes to the manifest reader, the IR verifiers and
-both in-process assemblers, through the CLI and two drivers. Each input runs
-in a child process under a time and a memory budget. The targets run from
+Eight targets feed hostile bytes to the boundaries after the front end,
+through the CLI and three drivers. They are the build manifest reader, the IR
+verifiers, both in-process assemblers, and the package layer's manifest, lock,
+index and archive readers. Each input runs in a child process under a time and
+a memory budget. The targets run from
 committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
 targets, the encoding the verifier driver reads, the accepted outcomes and
 the triage rule.
