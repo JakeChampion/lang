@@ -221,7 +221,7 @@ pub function (own d: Decoder) decode_fec_into(input: [u8], frames: i32, own outp
 pub function (d: Decoder) final_range(): u32 {
   let range = 0u32;
   for state in d.states {
-    range = range ^ state.final_range();
+    range ^= state.final_range();
   }
   return range;
 }
