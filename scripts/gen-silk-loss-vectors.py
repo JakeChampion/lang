@@ -19,7 +19,7 @@ ARCHIVE_SHA = '3267aa969b2b26542417f57819a5bc25d5079355300307dd2dddc7c704aed418'
 TABLES = runpy.run_path(str(Path(__file__).with_name('gen-silk-tables.py')))
 
 
-def reference(archive, cmake, helper='silk_loss.c'):
+def reference(archive, cmake, helper='silk_loss.c', calls=None):
     data = archive.read_bytes() if archive else urllib.request.urlopen(
         f'https://codeload.github.com/xiph/opus/tar.gz/{PIN}', timeout=60).read()
     if hashlib.sha256(data).hexdigest() != ARCHIVE_SHA:
@@ -43,7 +43,10 @@ def reference(archive, cmake, helper='silk_loss.c'):
             command.append('-Wl,--wrap=silk_resampler')
         command.extend(['-lm', '-o', str(executable)])
         subprocess.run(command, check=True)
-        return [json.loads(line) for line in subprocess.check_output([str(executable)]).splitlines()]
+        outputs = [subprocess.check_output([str(executable), *args]) for args in (calls or [[]])]
+        if calls is not None:
+            return outputs
+        return [json.loads(line) for line in outputs[0].splitlines()]
 
 
 def generate(records):

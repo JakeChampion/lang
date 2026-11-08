@@ -30,16 +30,24 @@ function errors(): test.TestOutcome {
       return test.fail("empty packet");
     }
   }
-  let (d2, b) = d1.decode([0 as u8, 255 as u8]);
+  let (d2, b) = d1.reset().decode([0 as u8, 255 as u8]);
   match (b) {
-    Err(pcm.Unsupported) => {},
+    Ok(samples) => {
+      if (samples.len() != 960) {
+        return test.fail("SILK DTX length");
+      }
+    },
     _ => {
       return test.fail("SILK support");
     }
   }
   let (d3, c) = d2.decode([96 as u8, 255 as u8]);
   match (c) {
-    Err(pcm.Unsupported) => {},
+    Ok(samples) => {
+      if (samples.len() != 960) {
+        return test.fail("hybrid DTX length");
+      }
+    },
     _ => {
       return test.fail("hybrid support");
     }
@@ -179,7 +187,7 @@ function multi_frame(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.new("Opus CELT packets");
-  r = r.it("unsupported modes and malformed arguments", errors);
+  r = r.it("DTX packets, decoder reset, and malformed arguments", errors);
   r = r.it("standard Opus framing and persistent CELT state", encode_packets);
   r = r.it("bandwidths, output rates, channel conversion, and padding", bandwidths);
   r = r.it("packet frame-count codes and 120 ms duration", multi_frame);

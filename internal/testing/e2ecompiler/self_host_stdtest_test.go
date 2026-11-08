@@ -343,6 +343,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"opus_silk_loss", langSrcAbs(t, "tests/stdlib/opus_silk_loss_test.fern"), ""},
 		{"opus_silk_recovery", langSrcAbs(t, "tests/stdlib/opus_silk_recovery_test.fern"), ""},
 		{"opus_silk_fec", langSrcAbs(t, "tests/stdlib/opus_silk_fec_test.fern"), ""},
+		{"opus_playback", langSrcAbs(t, "tests/stdlib/opus_playback_test.fern"), ""},
 		{"opus_pvq", langSrcAbs(t, "tests/stdlib/opus_pvq_test.fern"), ""},
 		{"opus_rate", langSrcAbs(t, "tests/stdlib/opus_rate_test.fern"), ""},
 		{"opus_energy", langSrcAbs(t, "tests/stdlib/opus_energy_test.fern"), ""},
