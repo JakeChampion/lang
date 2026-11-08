@@ -174,6 +174,8 @@ They check compatibility in both directions.
 They check every window pattern at all eight overlap scales, with noise and silence.
 Python 3 is necessary for the CLI tests.
 The example CI entry point is `examples/tests/ulc_codec.fern`.
+`TestSelfHostULCNativeCLI` runs the CLI integration suite on native CI.
+`TestSelfHostULCCLIWASI` checks the portable CLI build and entry point.
 
 Validation used x86-64 Linux and the compiler from this checkout.
 WASI unit and CLI tests also pass.
