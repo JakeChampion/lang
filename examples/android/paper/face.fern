@@ -1,0 +1,215 @@
+// The text of Paper: Roboto, the sans-serif face of Android, in the five
+// weights that the screens use, drawn with std/truetype at the exact size
+// of each piece of text.
+import "std/android/draw";
+import "std/truetype";
+import "std/utf8";
+
+pub const REGULAR: i32 = 0;
+
+pub const MEDIUM: i32 = 1;
+
+pub const SEMIBOLD: i32 = 2;
+
+pub const BOLD: i32 = 3;
+
+pub const EXTRABOLD: i32 = 4;
+
+// The asset of each weight, in the order of the constants.
+pub function files(): string[] {
+  return ["Roboto-Regular.ttf", "Roboto-Medium.ttf", "Roboto-SemiBold.ttf", "Roboto-Bold.ttf", "Roboto-ExtraBold.ttf"];
+}
+
+pub struct Fonts { faces: truetype.Font[] }
+
+// The fonts in the bytes of each file of `files`, in its order. A weight
+// that does not parse takes the first font that does.
+pub function load(data: u8[][]): Fonts {
+  let faces: truetype.Font[] = [];
+  for d in data {
+    if let Some(f) = truetype.parse(d) {
+      faces = faces.append(f);
+    } else if (faces.len() > 0) {
+      faces = faces.append(faces[0]);
+    }
+  }
+  return Fonts { faces: faces };
+}
+
+function has(fs: Fonts, w: i32): boolean {
+  return fs.faces.len() > 0;
+}
+
+function font(fs: Fonts, w: i32): truetype.Font {
+  if (w >= 0 && w < fs.faces.len()) {
+    return fs.faces[w];
+  }
+  return fs.faces[0];
+}
+
+// The ascent above the baseline and the descent below it, in pixels, for
+// text of `px` pixels to the em.
+pub function ascent(fs: Fonts, w: i32, px: i32): i32 {
+  if (!has(fs, w)) {
+    return px;
+  }
+  let f = font(fs, w);
+  return (f.ascender * px + f.units_per_em - 1) / f.units_per_em;
+}
+
+pub function descent(fs: Fonts, w: i32, px: i32): i32 {
+  if (!has(fs, w)) {
+    return px / 4;
+  }
+  let f = font(fs, w);
+  return (0 - f.descender * px + f.units_per_em - 1) / f.units_per_em;
+}
+
+// The height of a line, as Android gives a text view with no font padding.
+pub function line(fs: Fonts, w: i32, px: i32): i32 {
+  return ascent(fs, w, px) + descent(fs, w, px);
+}
+
+// The pen positions of the characters of `s`, in pixels, then the end of
+// the text. `track` adds space between the characters, in thousandths of
+// the em, as Android's letterSpacing does.
+function pens(f: truetype.Font, px: i32, track: i32, s: string): (i32[], f64[]) {
+  let glyphs: i32[] = [];
+  let out: f64[] = [];
+  let scale = px as f64 / (f.units_per_em as f64);
+  let spacing = px as f64 * (track as f64) / 1000.0;
+  let pen = 0.0;
+  let prev = -1;
+  for c in s.chars() {
+    let g = f.glyph(c as i32);
+    if (prev >= 0) {
+      pen = pen + f.kerning(prev, g) as f64 * scale;
+    }
+    glyphs = glyphs.append(g);
+    out = out.append(pen);
+    pen = pen + f.advance(g) as f64 * scale + spacing;
+    prev = g;
+  }
+  return (glyphs, out.append(pen - spacing));
+}
+
+pub function width(fs: Fonts, w: i32, px: i32, s: string): i32 {
+  return spaced_width(fs, w, px, 0, s);
+}
+
+pub function spaced_width(fs: Fonts, w: i32, px: i32, track: i32, s: string): i32 {
+  if (!has(fs, w) || s.len() == 0) {
+    return 0;
+  }
+  let (_, p) = pens(font(fs, w), px, track, s);
+  return (p[p.len() - 1] + 0.999) as i32;
+}
+
+// `s` cut to fit in `room` pixels, with an ellipsis when it is longer.
+pub function fit(fs: Fonts, w: i32, px: i32, s: string, room: i32): string {
+  if (width(fs, w, px, s) <= room) {
+    return s;
+  }
+  let cs: string[] = [];
+  for c in s.chars() {
+    cs = cs.append(c.to_string());
+  }
+  let n = cs.len();
+  while (n > 0) {
+    n -= 1;
+    let cut = cs.take(n).join("").trim() + "…";
+    if (width(fs, w, px, cut) <= room) {
+      return cut;
+    }
+  }
+  return "";
+}
+
+// The end of `s` that fits in `room` pixels, with an ellipsis in front, as
+// a text field shows the text it types.
+pub function fit_end(fs: Fonts, w: i32, px: i32, s: string, room: i32): string {
+  if (width(fs, w, px, s) <= room) {
+    return s;
+  }
+  let cs: string[] = [];
+  for c in s.chars() {
+    cs = cs.append(c.to_string());
+  }
+  let k = 1;
+  while (k < cs.len()) {
+    let cut = "…" + cs.drop(k).join("");
+    if (width(fs, w, px, cut) <= room) {
+      return cut;
+    }
+    k += 1;
+  }
+  return "";
+}
+
+// Draws `s` with its first pen at x and its baseline at y.
+pub function text(fr: draw.Frame, fs: Fonts, w: i32, px: i32, x: i32, y: i32, s: string, color: i32): void {
+  spaced(fr, fs, w, px, 0, x, y, s, color);
+}
+
+pub function spaced(fr: draw.Frame, fs: Fonts, w: i32, px: i32, track: i32, x: i32, y: i32, s: string, color: i32): void {
+  if (!has(fs, w)) {
+    return;
+  }
+  let f = font(fs, w);
+  let (glyphs, p) = pens(f, px, track, s);
+  for i in 0..glyphs.len() {
+    let pen = x as f64 + p[i];
+    let fx = pen.floor();
+    let bm = f.render(glyphs[i], px as f64, pen - fx);
+    let ox = fx as i32 + bm.left;
+    let oy = y + bm.top;
+    for row in 0..bm.height {
+      let at = row * bm.width;
+      for col in 0..bm.width {
+        let a = bm.coverage[at + col] as i32;
+        if (a > 0) {
+          fr.cover(ox + col, oy + row, color, a);
+        }
+      }
+    }
+  }
+}
+
+// The coverage of the text `s`, with `pad` pixels on each side, and the
+// offset of its first pen and its baseline in the map.
+pub struct Mask { width: i32, height: i32, x: i32, base: i32, coverage: f64[] }
+
+pub function mask(fs: Fonts, w: i32, px: i32, s: string, pad: i32): Mask {
+  let tw = width(fs, w, px, s) + 2 * pad + 2;
+  let th = line(fs, w, px) + 2 * pad;
+  let cov: f64[] = [];
+  for i in 0..tw * th {
+    cov = cov.append(0.0);
+  }
+  if (!has(fs, w)) {
+    return Mask { width: tw, height: th, x: pad, base: pad, coverage: cov };
+  }
+  let f = font(fs, w);
+  let base = pad + ascent(fs, w, px);
+  let (glyphs, p) = pens(f, px, 0, s);
+  for i in 0..glyphs.len() {
+    let pen = pad as f64 + p[i];
+    let fx = pen.floor();
+    let bm = f.render(glyphs[i], px as f64, pen - fx);
+    for row in 0..bm.height {
+      for col in 0..bm.width {
+        let x = fx as i32 + bm.left + col;
+        let y = base + bm.top + row;
+        if (x >= 0 && x < tw && y >= 0 && y < th) {
+          let at = y * tw + x;
+          let v = cov[at] + bm.coverage[row * bm.width + col] as f64 / 255.0;
+          if (v > 1.0) {
+            v = 1.0;
+          }
+          cov = cov.with(at, v);
+        }
+      }
+    }
+  }
+  return Mask { width: tw, height: th, x: pad, base: base, coverage: cov };
+}

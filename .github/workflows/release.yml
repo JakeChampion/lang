@@ -240,6 +240,7 @@ jobs:
           key="$RUNNER_TEMP/keys/apk.key.pem"
           mkdir -p dist/apk
           ./bin/fern -apk dist/apk/fern-stopwatch.apk -apk-key "$key" -apk-package dev.fern.stopwatch -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png -apk-min-sdk 28 examples/android/stopwatch/app.fern
+          ./bin/fern -apk dist/apk/fern-paper.apk -apk-key "$key" -apk-package dev.fern.paper -apk-label Paper -apk-icon examples/android/paper/icon.png -apk-min-sdk 26 -apk-home -apk-permission INTERNET,ACCESS_COARSE_LOCATION,EXPAND_STATUS_BAR,REQUEST_DELETE_PACKAGES,QUERY_ALL_PACKAGES -apk-asset examples/android/paper/assets/wallpaper.jpg,examples/android/paper/assets/Roboto-Regular.ttf,examples/android/paper/assets/Roboto-Medium.ttf,examples/android/paper/assets/Roboto-SemiBold.ttf,examples/android/paper/assets/Roboto-Bold.ttf,examples/android/paper/assets/Roboto-ExtraBold.ttf examples/android/paper/app.fern
           ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
 
@@ -350,6 +351,7 @@ jobs:
             |------------------------------|----------------------|
             | Walkie-talkie on the LAN     | `fern-walkie.apk`    |
             | Stopwatch                    | `fern-stopwatch.apk` |
+            | Paper, a minimal home screen | `fern-paper.apk`     |
             | The smallest NativeActivity  | `fern-native.apk`    |
 
             Each `fern` archive ships a single self-contained binary:

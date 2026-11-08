@@ -1,0 +1,161 @@
+import "std/test";
+import "./paper";
+
+function apps(): paper.Entry[] {
+  return [
+    paper.entry("com.android.chrome", "com.google.android.apps.chrome.Main", "Chrome", ""),
+    paper.entry("com.google.android.gm", "com.google.android.gm.ConversationListActivityGmail", "Gmail", ""),
+    paper.entry("dev.fern.paper", "android.app.NativeActivity", "Paper", ""),
+    paper.entry("com.spotify.music", "com.spotify.music.MainActivity", "Spotify", ""),
+    paper.entry("org.example.cafe", "org.example.cafe.Main", "Café Météo", ""),
+  ];
+}
+
+function labels(xs: paper.Entry[]): string {
+  let out: string[] = [];
+  for x in xs {
+    out = out.append(x.label);
+  }
+  return out.join(",");
+}
+
+function test_fold(): test.TestOutcome {
+  return test.assert_eq(paper.fold("Café MÉTÉO Ñandú Łódź"), "cafe meteo nandu lodz");
+}
+
+function test_named_sorts_by_shown_name(): test.TestOutcome {
+  let s = paper.with_name(paper.defaults(), "com.android.chrome/com.google.android.apps.chrome.Main", "Web browser");
+  s = paper.with_name(s, "com.google.android.gm/com.google.android.gm.ConversationListActivityGmail", "email");
+  return test.assert_eq(labels(paper.named(apps(), s)), "Café Météo,email,Paper,Spotify,Web browser");
+}
+
+function test_search_lists_paper(): test.TestOutcome {
+  return test.assert_eq(labels(paper.search(paper.named(apps(), paper.defaults()), "paper", [])), "Paper");
+}
+
+function test_search_finds_both_names(): test.TestOutcome {
+  let s = paper.with_name(paper.defaults(), "com.android.chrome/com.google.android.apps.chrome.Main", "Web browser");
+  let all = paper.named(apps(), s);
+  let by_new = labels(paper.search(all, "web", []));
+  let by_old = labels(paper.search(all, "chrome", []));
+  return test.assert_eq(by_new + " " + by_old, "Web browser Web browser");
+}
+
+function test_search_ranks_prefix_first(): test.TestOutcome {
+  let all = paper.named(apps(), paper.defaults());
+  return test.assert_eq(labels(paper.search(all, "m", [])), "Café Météo,Chrome,Gmail");
+}
+
+function test_search_accents(): test.TestOutcome {
+  let all = paper.named(apps(), paper.defaults());
+  return test.assert_eq(labels(paper.search(all, "meteo", [])), "Café Météo");
+}
+
+function test_hidden_apps(): test.TestOutcome {
+  let all = paper.named(apps(), paper.defaults());
+  let hidden = ["com.spotify.music/com.spotify.music.MainActivity"];
+  let listed = labels(paper.search(all, "", hidden));
+  let found = labels(paper.search(all, "spot", hidden));
+  return test.assert_eq(listed + " " + found, "Café Météo,Chrome,Gmail,Paper Spotify");
+}
+
+function test_rename_back(): test.TestOutcome {
+  let s = paper.with_name(paper.defaults(), "a/b", "Mail");
+  let back = paper.with_name(s, "a/b", "  ");
+  return test.assert_eq(paper.name_of(s, "a/b") + "|" + paper.name_of(back, "a/b"), "Mail|");
+}
+
+function test_moved(): test.TestOutcome {
+  let xs = ["a", "b", "c"];
+  let got = paper.moved(xs, "a", 1).join("") + " " + paper.moved(xs, "c", -2).join("") + " " + paper.moved(xs, "c", 1).join("");
+  return test.assert_eq(got, "bac cab abc");
+}
+
+function test_settings_round_trip(): test.TestOutcome {
+  let s = paper.with_name(paper.defaults(), "a/b", "My\tMail");
+  s = paper.Settings { ...s, favourites: ["a/b", "c/d"], hidden: ["e/f"], mindful: ["c/d"], music: "x.music", units: "c", auto_open: false, filter_on: true, allowed: ["com.phone"], allowed_set: true, asked_location: true };
+  s = paper.with_block(s, "c/d", 5000i64, 1000i64);
+  let text = paper.format_settings(s);
+  return test.assert_eq(paper.format_settings(paper.parse_settings(text)), text);
+}
+
+function test_blocks(): test.TestOutcome {
+  let s = paper.with_block(paper.defaults(), "a/b", 9000i64, 1000i64);
+  let during = paper.blocked_until(s, "a/b", 5000i64);
+  let after = paper.blocked_until(s, "a/b", 9000i64);
+  let cleared = paper.blocked_until(paper.with_block(s, "a/b", 0i64, 5000i64), "a/b", 5000i64);
+  return test.assert_eq(during.to_string() + " " + after.to_string() + " " + cleared.to_string(), "9000 0 0");
+}
+
+function test_holds(): test.TestOutcome {
+  let s = paper.Settings { ...paper.defaults(), filter_on: true, allowed: ["com.phone"] };
+  let got = [
+    paper.holds(s, "dev.fern.paper", "com.news", "", true, false),
+    paper.holds(s, "dev.fern.paper", "com.phone", "", true, false),
+    paper.holds(s, "dev.fern.paper", "com.news", "call", true, false),
+    paper.holds(s, "dev.fern.paper", "com.news", "", false, false),
+    paper.holds(s, "dev.fern.paper", "com.news", "", true, true),
+    paper.holds(paper.defaults(), "dev.fern.paper", "com.news", "", true, false),
+  ];
+  let out = "";
+  for g in got {
+    out += g.to_string() + " ";
+  }
+  return test.assert_eq(out, "true false false false false false ");
+}
+
+function test_held_round_trip(): test.TestOutcome {
+  let a = paper.Held { pkg: "com.news", app: "News", title: "Big\tnews", text: "Line one\nline two", posted: 123i64, key: "0|com.news|1" };
+  let b = paper.Held { pkg: "com.chat", app: "Chat", title: "", text: "hi", posted: 456i64, key: "0|com.chat|2" };
+  let items = paper.add_held(paper.add_held([], a), b);
+  let back = paper.parse_held(paper.format_held(items));
+  let first = back[0];
+  return test.assert_eq(back.len().to_string() + " " + first.app + " " + paper.held_body(first) + " / " + paper.held_body(back[1]), "2 Chat hi / Big news: Line one line two");
+}
+
+function test_weather(): test.TestOutcome {
+  let body = "{\"current\":{\"temperature_2m\":25.4,\"weather_code\":3},\"daily\":{\"temperature_2m_max\":[27.8],\"temperature_2m_min\":[23.2]}}";
+  let Some(w) = paper.parse_weather(body) else {
+    return test.fail("no weather in the reply");
+  };
+  return test.assert_eq(paper.degrees(w.temp) + " " + paper.describe(w) + " " + paper.degrees(w.high) + " " + paper.degrees(w.low), "25 Cloudy 28 23");
+}
+
+function test_weather_url(): test.TestOutcome {
+  let u = paper.weather_url(51.50735, -0.1, true);
+  return test.assert_eq(u.contains("latitude=51.507&longitude=-0.100&") && u.contains("temperature_unit=fahrenheit"), true);
+}
+
+function test_date_and_time(): test.TestOutcome {
+  // 2025-08-21 21:06 UTC was a Thursday.
+  let ms = 1755810360000i64;
+  return test.assert_eq(paper.date_text(ms) + " " + paper.time_text(ms, false) + " " + paper.time_text(ms, true), "Thursday, August 21 9:06 21:06");
+}
+
+function test_next_midnight(): test.TestOutcome {
+  // 21:06 UTC is 22:06 at UTC+1, so the next local midnight is 23:00 UTC.
+  let ms = 1755810360000i64;
+  return test.assert_eq(paper.next_midnight(ms, 3600000i64) - ms, 6840000i64);
+}
+
+function main(): i32 {
+  let r = test.new("android paper");
+  r = r.it("fold takes off case and accents", test_fold);
+  r = r.it("apps sort by the name Paper shows", test_named_sorts_by_shown_name);
+  r = r.it("search lists Paper itself", test_search_lists_paper);
+  r = r.it("search finds a renamed app by both names", test_search_finds_both_names);
+  r = r.it("search ranks a prefix first", test_search_ranks_prefix_first);
+  r = r.it("search ignores accents", test_search_accents);
+  r = r.it("hidden apps show only in a search", test_hidden_apps);
+  r = r.it("an empty name restores the app's name", test_rename_back);
+  r = r.it("move a home app", test_moved);
+  r = r.it("settings file round trip", test_settings_round_trip);
+  r = r.it("blocks end", test_blocks);
+  r = r.it("notification filter rules", test_holds);
+  r = r.it("held notifications round trip", test_held_round_trip);
+  r = r.it("weather reply", test_weather);
+  r = r.it("weather request", test_weather_url);
+  r = r.it("date and time text", test_date_and_time);
+  r = r.it("next local midnight", test_next_midnight);
+  return r.finish();
+}

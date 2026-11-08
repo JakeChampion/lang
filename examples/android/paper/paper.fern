@@ -1,0 +1,687 @@
+// The rules of Paper: the apps and their names, the search, the settings
+// file, the held notifications, the weather and the text of the clock.
+// Every function is pure.
+import "std/json";
+import "std/unicode";
+import "std/utf8";
+
+// --- apps
+
+// A launchable activity. `key` is "package/class". `label` is the name that
+// Paper shows: the name the user gave the app, or else `original`.
+pub struct Entry { key: string, pkg: string, original: string, label: string, folded: string, folded_original: string }
+
+pub function entry(pkg: string, cls: string, original: string, name: string): Entry {
+  let label = original;
+  if (name.len() > 0) {
+    label = name;
+  }
+  return Entry { key: pkg + "/" + cls, pkg: pkg, original: original, label: label, folded: fold(label), folded_original: fold(original) };
+}
+
+pub function renamed(e: Entry): boolean {
+  return e.label != e.original;
+}
+
+// `s` in lower case, with the accents of Latin letters taken off, for search
+// and for sorting.
+pub function fold(s: string): string {
+  let out = "";
+  for c in s.chars() {
+    let cp = c as i32;
+    if (cp >= 65 && cp <= 90) {
+      out += ((cp + 32) as char).to_string();
+    } else if (cp < 192 || cp > 383) {
+      out += c.to_lower().to_string();
+    } else {
+      out += latin(cp);
+    }
+  }
+  return out;
+}
+
+// The base letter of a Latin-1 or Latin Extended-A letter, in lower case.
+// "*" in the table keeps the letter.
+function latin(cp: i32): string {
+  let table = "aaaaaa*ceeeeiiiidnooooo*ouuuuy**aaaaaa*ceeeeiiiidnooooo*ouuuuy*yaaaaaaccccccccddddeeeeeeeeeegggggggghhhhiiiiiiiiii**jjkkkllllllllllnnnnnnnnnoooooo**rrrrrrssssssssttttttuuuuuuuuuuuuwwyyyzzzzzzs";
+  let i = cp - 192;
+  if (i >= 0 && i < table.len() && table[i] != 42u8) {
+    return table.slice_snap(i, i + 1);
+  }
+  return (cp as char).to_lower().to_string();
+}
+
+// The apps with the names in `s`, sorted by the name that Paper shows.
+pub function named(apps: Entry[], s: Settings): Entry[] {
+  let out: Entry[] = [];
+  for a in apps {
+    out = out.append(entry(a.pkg, a.key.split_at(a.pkg.len() + 1).1, a.original, name_of(s, a.key)));
+  }
+  return sort_entries(out);
+}
+
+function sort_entries(xs: Entry[]): Entry[] {
+  if (xs.len() <= 1) {
+    return xs;
+  }
+  let mid = xs.len() / 2;
+  let a = sort_entries(xs.take(mid));
+  let b = sort_entries(xs.drop(mid));
+  let out: Entry[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.len() || j < b.len()) {
+    if (j >= b.len() || i < a.len() && before(a[i], b[j])) {
+      out = out.append(a[i]);
+      i += 1;
+    } else {
+      out = out.append(b[j]);
+      j += 1;
+    }
+  }
+  return out;
+}
+
+function before(a: Entry, b: Entry): boolean {
+  if (a.folded != b.folded) {
+    return a.folded < b.folded;
+  }
+  return a.key <= b.key;
+}
+
+// How well `e` matches the folded query `q`: 0 for a prefix of the name, 1
+// for a prefix of a word, 2 for a part of the name, then 3 to 5 for the same
+// in the app's own name, and -1 for no match.
+pub function rank(e: Entry, q: string): i32 {
+  let r = rank_in(e.folded, q);
+  if (r >= 0 || e.folded_original == e.folded) {
+    return r;
+  }
+  r = rank_in(e.folded_original, q);
+  if (r < 0) {
+    return -1;
+  }
+  return r + 3;
+}
+
+function rank_in(text: string, q: string): i32 {
+  if (text.starts_with(q)) {
+    return 0;
+  }
+  if (text.contains(" " + q)) {
+    return 1;
+  }
+  if (text.contains(q)) {
+    return 2;
+  }
+  return -1;
+}
+
+// The apps of the app list for the query `query`: with no query, every app
+// that is not hidden; with one, every app that matches, best first.
+pub function search(apps: Entry[], query: string, hidden: string[]): Entry[] {
+  let q = fold(query.trim());
+  let out: Entry[] = [];
+  if (q.len() == 0) {
+    for a in apps {
+      if (!has(hidden, a.key)) {
+        out = out.append(a);
+      }
+    }
+    return out;
+  }
+  for r in 0..6 {
+    for a in apps {
+      if (rank(a, q) == r) {
+        out = out.append(a);
+      }
+    }
+  }
+  return out;
+}
+
+pub function find(apps: Entry[], key: string): Option[Entry] {
+  for a in apps {
+    if (a.key == key) {
+      return Some(a);
+    }
+  }
+  return None;
+}
+
+// The first app of package `pkg`.
+pub function find_package(apps: Entry[], pkg: string): Option[Entry] {
+  for a in apps {
+    if (a.pkg == pkg) {
+      return Some(a);
+    }
+  }
+  return None;
+}
+
+// --- lists of keys
+
+pub function has(xs: string[], v: string): boolean {
+  for x in xs {
+    if (x == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function without(xs: string[], v: string): string[] {
+  let out: string[] = [];
+  for x in xs {
+    if (x != v) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+pub function toggle(xs: string[], v: string): string[] {
+  if (has(xs, v)) {
+    return without(xs, v);
+  }
+  return xs.append(v);
+}
+
+// `xs` with `v` moved by `delta` places, when it stays in the list.
+pub function moved(xs: string[], v: string, delta: i32): string[] {
+  let from = -1;
+  for i in 0..xs.len() {
+    if (xs[i] == v) {
+      from = i;
+    }
+  }
+  let to = from + delta;
+  if (from < 0 || to < 0 || to >= xs.len()) {
+    return xs;
+  }
+  let out = without(xs, v);
+  let res: string[] = [];
+  for i in 0..out.len() {
+    if (i == to) {
+      res = res.append(v);
+    }
+    res = res.append(out[i]);
+  }
+  if (to == out.len()) {
+    res = res.append(v);
+  }
+  return res;
+}
+
+// --- settings
+
+pub struct Name { key: string, name: string }
+
+pub struct Block { key: string, until: i64 }
+
+// `units` is "f", "c", or "" for the unit of the country. `allowed` are the
+// packages whose notifications pass the filter; `allowed_set` is false
+// until the user or Paper first sets them.
+pub struct Settings {
+  favourites: string[],
+  hidden: string[],
+  mindful: string[],
+  names: Name[],
+  blocks: Block[],
+  music: string,
+  units: string,
+  auto_open: boolean,
+  filter_on: boolean,
+  allowed: string[],
+  allowed_set: boolean,
+  asked_location: boolean,
+}
+
+pub function defaults(): Settings {
+  return Settings { favourites: [], hidden: [], mindful: [], names: [], blocks: [], music: "com.spotify.music", units: "", auto_open: true, filter_on: false, allowed: [], allowed_set: false, asked_location: false };
+}
+
+pub function name_of(s: Settings, key: string): string {
+  for n in s.names {
+    if (n.key == key) {
+      return n.name;
+    }
+  }
+  return "";
+}
+
+// The settings with the name `name` for `key`. An empty name gives the app
+// its own name back.
+pub function with_name(s: Settings, key: string, name: string): Settings {
+  let clean = flat(name).trim();
+  let names: Name[] = [];
+  for n in s.names {
+    if (n.key != key) {
+      names = names.append(n);
+    }
+  }
+  if (clean.len() > 0) {
+    names = names.append(Name { key: key, name: clean });
+  }
+  return Settings { ...s, names: names };
+}
+
+// The end of the block of `key`, or 0 when it is not blocked at `now`.
+pub function blocked_until(s: Settings, key: string, now: i64): i64 {
+  for b in s.blocks {
+    if (b.key == key && b.until > now) {
+      return b.until;
+    }
+  }
+  return 0i64;
+}
+
+// The settings with `key` blocked until `until`, or not blocked for 0. The
+// blocks that ended before `now` go.
+pub function with_block(s: Settings, key: string, until: i64, now: i64): Settings {
+  let out: Block[] = [];
+  for b in s.blocks {
+    if (b.key != key && b.until > now) {
+      out = out.append(b);
+    }
+  }
+  if (until > now) {
+    out = out.append(Block { key: key, until: until });
+  }
+  return Settings { ...s, blocks: out };
+}
+
+// `units` resolved: true for Fahrenheit. `country` is the country of the
+// locale, such as "US".
+pub function fahrenheit(s: Settings, country: string): boolean {
+  if (s.units == "f") {
+    return true;
+  }
+  if (s.units == "c") {
+    return false;
+  }
+  return has(["US", "LR", "MM", "BS", "BZ", "KY", "PW"], country);
+}
+
+// `s` with no tab and no line break, for a field of a line.
+pub function flat(s: string): string {
+  return s.replace("\t", " ").replace("\r", " ").replace("\n", " ");
+}
+
+function bit(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+// The settings file: one setting on each line, with the fields after the
+// name separated by tabs.
+pub function format_settings(s: Settings): string {
+  let out = "";
+  for k in s.favourites {
+    out += "fav\t" + k + "\n";
+  }
+  for k in s.hidden {
+    out += "hide\t" + k + "\n";
+  }
+  for k in s.mindful {
+    out += "mindful\t" + k + "\n";
+  }
+  for n in s.names {
+    out += "name\t" + n.key + "\t" + flat(n.name) + "\n";
+  }
+  for b in s.blocks {
+    out += "block\t" + b.key + "\t" + b.until.to_string() + "\n";
+  }
+  for p in s.allowed {
+    out += "allow\t" + p + "\n";
+  }
+  out += "music\t" + s.music + "\n";
+  out += "units\t" + s.units + "\n";
+  out += "auto\t" + bit(s.auto_open) + "\n";
+  out += "filter\t" + bit(s.filter_on) + "\n";
+  out += "allowset\t" + bit(s.allowed_set) + "\n";
+  out += "asked\t" + bit(s.asked_location) + "\n";
+  return out;
+}
+
+pub function parse_settings(text: string): Settings {
+  let s = defaults();
+  for line in text.split("\n") {
+    let f = line.split("\t");
+    if (f.len() < 2) {
+      continue;
+    }
+    let k = f[0];
+    let v = f[1];
+    if (k == "fav" && !has(s.favourites, v)) {
+      s = Settings { ...s, favourites: s.favourites.append(v) };
+    } else if (k == "hide") {
+      s = Settings { ...s, hidden: s.hidden.append(v) };
+    } else if (k == "mindful") {
+      s = Settings { ...s, mindful: s.mindful.append(v) };
+    } else if (k == "name" && f.len() >= 3) {
+      s = with_name(s, v, f[2]);
+    } else if (k == "block" && f.len() >= 3) {
+      s = Settings { ...s, blocks: s.blocks.append(Block { key: v, until: digits(f[2]) }) };
+    } else if (k == "allow") {
+      s = Settings { ...s, allowed: s.allowed.append(v) };
+    } else if (k == "music") {
+      s = Settings { ...s, music: v };
+    } else if (k == "units") {
+      s = Settings { ...s, units: v };
+    } else if (k == "auto") {
+      s = Settings { ...s, auto_open: v == "1" };
+    } else if (k == "filter") {
+      s = Settings { ...s, filter_on: v == "1" };
+    } else if (k == "allowset") {
+      s = Settings { ...s, allowed_set: v == "1" };
+    } else if (k == "asked") {
+      s = Settings { ...s, asked_location: v == "1" };
+    }
+  }
+  return s;
+}
+
+// The digits at the start of `s` as a number, or 0.
+pub function digits(s: string): i64 {
+  let v = 0i64;
+  for c in s.bytes() {
+    if (c < 48u8 || c > 57u8) {
+      return v;
+    }
+    v = v * 10i64 + (c - 48u8) as i64;
+  }
+  return v;
+}
+
+// --- notifications
+
+// Whether the filter holds a notification of package `pkg` in `category`
+// that the user can clear and that is not ongoing.
+pub function holds(s: Settings, own_pkg: string, pkg: string, category: string, clearable: boolean, ongoing: boolean): boolean {
+  if (!s.filter_on || pkg == own_pkg || has(s.allowed, pkg) || !clearable || ongoing) {
+    return false;
+  }
+  return !has(["call", "alarm", "navigation", "transport"], category);
+}
+
+// A notification the filter took from the shade. `key` is the key of the
+// notification, by which the service keeps its intent.
+pub struct Held { pkg: string, app: string, title: string, text: string, posted: i64, key: string }
+
+pub const MAX_HELD: i32 = 100;
+
+pub function format_held(items: Held[]): string {
+  let out = "";
+  for h in items {
+    out += flat(h.pkg) + "\t" + flat(h.app) + "\t" + flat(h.title) + "\t" + flat(h.text) + "\t" + h.posted.to_string() + "\t" + flat(h.key) + "\n";
+  }
+  return out;
+}
+
+pub function parse_held(text: string): Held[] {
+  let out: Held[] = [];
+  for line in text.split("\n") {
+    let f = line.split("\t");
+    if (f.len() >= 6) {
+      out = out.append(Held { pkg: f[0], app: f[1], title: f[2], text: f[3], posted: digits(f[4]), key: f[5] });
+    }
+  }
+  return out;
+}
+
+// `items` with `h` first and at most MAX_HELD in all.
+pub function add_held(items: Held[], h: Held): Held[] {
+  let out: Held[] = [h];
+  for x in items {
+    if (out.len() < MAX_HELD && x.key != h.key) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+pub function without_held(items: Held[], key: string): Held[] {
+  let out: Held[] = [];
+  for x in items {
+    if (x.key != key) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+// The line of a held notification in the list: its title and its text.
+pub function held_body(h: Held): string {
+  if (h.title.len() == 0) {
+    return h.text;
+  }
+  if (h.text.len() == 0) {
+    return h.title;
+  }
+  return h.title + ": " + h.text;
+}
+
+// --- weather
+
+// The weather now and the range of today, in the unit of the request, with
+// the WMO code of the weather now.
+pub struct Weather { temp: f64, high: f64, low: f64, code: i32 }
+
+pub enum Sky { Clear, Partly, Cloudy, Fog, Rain, Snow, Storm }
+
+// The Open-Meteo request for latitude `lat` and longitude `lon`.
+pub function weather_url(lat: f64, lon: f64, fahrenheit: boolean): string {
+  let unit = "celsius";
+  if (fahrenheit) {
+    unit = "fahrenheit";
+  }
+  return "https://api.open-meteo.com/v1/forecast?latitude=" + coord(lat) + "&longitude=" + coord(lon) + "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=" + unit + "&timezone=auto&forecast_days=1";
+}
+
+// `v` with three decimals, which is about 100 metres.
+function coord(v: f64): string {
+  let neg = v < 0.0;
+  let a = v;
+  if (neg) {
+    a = 0.0 - v;
+  }
+  let milli = (a * 1000.0).round() as i64;
+  let frac = (milli % 1000i64).to_string();
+  while (frac.len() < 3) {
+    frac = "0" + frac;
+  }
+  let out = (milli / 1000i64).to_string() + "." + frac;
+  if (neg) {
+    return "-" + out;
+  }
+  return out;
+}
+
+// The weather in an Open-Meteo reply, or None when the reply has none.
+pub function parse_weather(body: string): Option[Weather] {
+  let Ok(d) = json.parse_document(body) else {
+    return None;
+  };
+  let Some(cur) = d.get(d.root(), "current") else {
+    return None;
+  };
+  let Some(day) = d.get(d.root(), "daily") else {
+    return None;
+  };
+  let Some(t) = number(d, cur, "temperature_2m") else {
+    return None;
+  };
+  let Some(code) = number(d, cur, "weather_code") else {
+    return None;
+  };
+  let Some(hi) = first_number(d, day, "temperature_2m_max") else {
+    return None;
+  };
+  let Some(lo) = first_number(d, day, "temperature_2m_min") else {
+    return None;
+  };
+  return Some(Weather { temp: t, high: hi, low: lo, code: code as i32 });
+}
+
+function number(d: json.Document, n: i32, key: string): Option[f64] {
+  let Some(v) = d.get(n, key) else {
+    return None;
+  };
+  return d.as_f64(v);
+}
+
+function first_number(d: json.Document, n: i32, key: string): Option[f64] {
+  let Some(a) = d.get(n, key) else {
+    return None;
+  };
+  if (!d.is_array(a)) {
+    return None;
+  }
+  let c = d.first(a);
+  if (c < 0) {
+    return None;
+  }
+  return d.as_f64(c);
+}
+
+pub function sky(w: Weather): Sky {
+  let c = w.code;
+  if (c == 0) {
+    return Clear;
+  }
+  if (c <= 2) {
+    return Partly;
+  }
+  if (c == 3) {
+    return Cloudy;
+  }
+  if (c == 45 || c == 48) {
+    return Fog;
+  }
+  if (c >= 71 && c <= 77 || c == 85 || c == 86) {
+    return Snow;
+  }
+  if (c >= 95) {
+    return Storm;
+  }
+  return Rain;
+}
+
+pub function describe(w: Weather): string {
+  let c = w.code;
+  if (c == 0) {
+    return "Clear";
+  }
+  if (c == 1) {
+    return "Mostly Clear";
+  }
+  if (c == 2) {
+    return "Partly Cloudy";
+  }
+  if (c == 3) {
+    return "Cloudy";
+  }
+  if (c == 45 || c == 48) {
+    return "Foggy";
+  }
+  if (c >= 51 && c <= 57) {
+    return "Drizzle";
+  }
+  if (c >= 61 && c <= 67) {
+    return "Rain";
+  }
+  if (c >= 71 && c <= 77) {
+    return "Snow";
+  }
+  if (c >= 80 && c <= 82) {
+    return "Showers";
+  }
+  if (c == 85 || c == 86) {
+    return "Snow Showers";
+  }
+  if (c >= 95) {
+    return "Thunderstorms";
+  }
+  return "Weather";
+}
+
+pub function degrees(v: f64): string {
+  return (v.round() as i64).to_string();
+}
+
+// --- time
+
+pub const DAY_MS: i64 = 86400000;
+
+function floor_div(a: i64, b: i64): i64 {
+  let q = a / b;
+  if (a % b != 0i64 && a < 0i64 != b < 0i64) {
+    return q - 1i64;
+  }
+  return q;
+}
+
+// The year, month (1 to 12) and day of the days since 1970-01-01.
+pub function civil(days: i64): (i64, i32, i32) {
+  let z = days + 719468i64;
+  let era = floor_div(z, 146097i64);
+  let doe = z - era * 146097i64;
+  let yoe = (doe - doe / 1460i64 + doe / 36524i64 - doe / 146096i64) / 365i64;
+  let doy = doe - (365i64 * yoe + yoe / 4i64 - yoe / 100i64);
+  let mp = (5i64 * doy + 2i64) / 153i64;
+  let d = (doy - (153i64 * mp + 2i64) / 5i64 + 1i64) as i32;
+  let m = mp + 3i64;
+  if (m > 12i64) {
+    m = m - 12i64;
+  }
+  let y = yoe + era * 400i64;
+  if (m <= 2i64) {
+    y = y + 1i64;
+  }
+  return (y, m as i32, d);
+}
+
+// The date line of the home screen, such as "Thursday, August 21", for the
+// local time `local_ms`.
+pub function date_text(local_ms: i64): string {
+  let days = floor_div(local_ms, DAY_MS);
+  let weekdays = ["Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"];
+  let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  let wd = (days % 7i64 + 7i64) % 7i64;
+  let (_, m, d) = civil(days);
+  return weekdays[wd as i32] + ", " + months[m - 1] + " " + d.to_string();
+}
+
+// The time of the local time `local_ms`, such as "9:06", or "21:06" on a
+// 24-hour clock.
+pub function time_text(local_ms: i64, h24: boolean): string {
+  let minute = floor_div(local_ms, 60000i64);
+  let mins = (minute % 1440i64 + 1440i64) % 1440i64;
+  let h = (mins / 60i64) as i32;
+  let m = (mins % 60i64) as i32;
+  if (!h24) {
+    h = h % 12;
+    if (h == 0) {
+      h = 12;
+    }
+  }
+  let mm = m.to_string();
+  if (m < 10) {
+    mm = "0" + mm;
+  }
+  return h.to_string() + ":" + mm;
+}
+
+// The Unix time of the next local midnight after `now`, with the offset
+// `offset` from UTC.
+pub function next_midnight(now: i64, offset: i64): i64 {
+  return (floor_div(now + offset, DAY_MS) + 1i64) * DAY_MS - offset;
+}
+
+// The milliseconds to the next whole minute after `now`.
+pub function to_next_minute(now: i64): i64 {
+  return 60000i64 - (now % 60000i64 + 60000i64) % 60000i64;
+}
