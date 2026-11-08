@@ -328,6 +328,9 @@ pub function (h: Md5) update(chunk: [u8]): Md5 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Md5) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -339,6 +342,7 @@ pub function (h: Md5) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_le64(pad, plen - 8, bits);
   let st = __md5_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_le32(out, 0, st.h0);
   out = __put_le32(out, 4, st.h1);
@@ -706,6 +710,9 @@ pub function (h: Sha1) update(chunk: [u8]): Sha1 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sha1) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -717,6 +724,7 @@ pub function (h: Sha1) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
   let st = __sha1_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
@@ -1123,6 +1131,9 @@ pub function (h: Sha256) update(chunk: [u8]): Sha256 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sha256) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -1134,6 +1145,7 @@ pub function (h: Sha256) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
   let st = __sha256_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
@@ -1596,6 +1608,9 @@ pub function (h: Sha512) update(chunk: [u8]): Sha512 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sha512) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 128;
@@ -1607,6 +1622,7 @@ pub function (h: Sha512) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
   let st = __sha512_blocks(h, pad, 0, plen / 128);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_be64(out, 0, st.h0);
   out = __put_be64(out, 8, st.h1);
@@ -2320,6 +2336,9 @@ pub function (h: Sm3) update(chunk: [u8]): Sm3 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sm3) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -2331,6 +2350,7 @@ pub function (h: Sm3) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
   let st = __sm3_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
@@ -3254,10 +3274,13 @@ pub function (h: Blake2b) update(chunk: [u8]): Blake2b {
   return h;
 }
 
+// The padded last block and the full-width word buffer of a shorter digest
+// are zeroed before their release.
 pub function (h: Blake2b) finish(): u8[] {
   let bl = h.buf_len;
   let pad = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);
   let st = __blake2b_blocks(h, pad, 0, 1, h.total + bl as u64, true);
+  erase(pad);
   let full = __alloc_u8(64);
   full = __put_le64(full, 0, st.h0);
   full = __put_le64(full, 8, st.h1);
@@ -3270,7 +3293,9 @@ pub function (h: Blake2b) finish(): u8[] {
   if (st.out_len == 64) {
     return full;
   }
-  return __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
+  let out = __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
+  erase(full);
+  return out;
 }
 
 // blake2b calculates an `out_len`-byte digest of `s`.
@@ -3323,10 +3348,18 @@ function __mac_digest2(hlen: i32, a: [u8], b: [u8]): u8[] {
 function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
   let bs = __mac_block(hlen);
   if (key.len() > bs) {
-    return __hmac(hlen, __mac_digest(hlen, key), msg);
+    let hashed = __mac_digest(hlen, key);
+    let out = __hmac(hlen, hashed, msg);
+    erase(hashed);
+    return out;
   }
-  let inner = __mac_digest2(hlen, __pad_block(bs, key, 0x36), msg);
-  return __mac_digest2(hlen, __pad_block(bs, key, 0x5c), inner);
+  let ipad = __pad_block(bs, key, 0x36);
+  let inner = __mac_digest2(hlen, ipad, msg);
+  erase(ipad);
+  let opad = __pad_block(bs, key, 0x5c);
+  let out = __mac_digest2(hlen, opad, inner);
+  erase(opad);
+  return out;
 }
 ```
 
@@ -3384,24 +3417,27 @@ function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]
     msg = msg.with(salt.len() + 2, (block_index >> 8 & 255) as u8);
     msg = msg.with(salt.len() + 3, (block_index & 255) as u8);
     let u = __hmac(32, pw, msg);
-    let t = u;
+    erase(msg);
+    let t = __bytes_into(__alloc_u8(hLen), 0, u, 0, hLen);
     let c = 1;
     while (c < iterations) {
-      u = __hmac(32, pw, u);
-      let nt = __alloc_u8(hLen);
+      let nu = __hmac(32, pw, u);
+      erase(u);
+      u = nu;
       let x = 0;
       while (x < hLen) {
-        nt = nt.with(x, (t[x] as i32 ^ u[x] as i32) as u8);
+        t = t.with(x, (t[x] as i32 ^ u[x] as i32) as u8);
         x += 1;
       }
-      t = nt;
       c += 1;
     }
+    erase(u);
     let k = 0;
     while (k < hLen && offset + k < dk_len) {
       dk = dk.with(offset + k, t[k]);
       k += 1;
     }
+    erase(t);
     offset += hLen;
     block_index += 1;
   }
@@ -3443,7 +3479,10 @@ function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
     msg = __bytes_into(msg, 0, t, 0, t.len());
     msg = __bytes_into(msg, t.len(), info, 0, info.len());
     msg = msg.with(t.len() + info.len(), (i & 255) as u8);
-    t = __hmac(hlen, prk, msg);
+    let nt = __hmac(hlen, prk, msg);
+    erase(msg);
+    erase(t);
+    t = nt;
     let n = hlen;
     if (length - offset < n) {
       n = length - offset;
@@ -3452,6 +3491,7 @@ function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
     offset += hlen;
     i += 1;
   }
+  erase(t);
   return okm;
 }
 ```

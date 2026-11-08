@@ -1,0 +1,36 @@
+import "std/string";
+import "std/utf8";
+
+function main(): i32 {
+  let cases: (string, string, string)[] = [
+    ("é", "©", ""),
+    ("xé!", "y©!", "!"),
+    ("€", "↬", ""),
+    ("x€tail", "y↬tail", "tail"),
+    ("😀", "🙀", ""),
+    ("x😀!", "y🙀!", "!"),
+    ("\u{80}", "\u{1000}", ""),
+    ("left😀", "right😀", "t😀"),
+    ("é€😀", "©€😀", "€😀"),
+    ("a\u{301}", "b\u{301}", "\u{301}"),
+    ("same", "same", "same"),
+    ("", "é", ""),
+    ("é", "", ""),
+    ("", "", ""),
+    ("running", "jumping", "ing"),
+    ("abc", "xyz", ""),
+    ("é", "café", "é"),
+    ("a\0b", "c\0b", "\0b"),
+  ];
+  for item in cases {
+    let suffix = item.0.common_suffix(item.1);
+    if (suffix != item.2 || item.1.common_suffix(item.0) != item.2) {
+      return 1;
+    }
+    if (!utf8.is_valid(suffix) || !item.0.ends_with(suffix) || !item.1.ends_with(suffix)) {
+      return 2;
+    }
+  }
+  print("common suffix ok");
+  return 0;
+}

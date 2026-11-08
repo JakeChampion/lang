@@ -1,0 +1,71 @@
+import "std/audio/pcm";
+import "std/opus/silk/predict";
+import "std/test";
+import "opus_silk_predict_vectors";
+
+function reference_filters(): test.TestOutcome {
+  let rows = opus_silk_predict_vectors.FILTERS;
+  let at = 0;
+  while (at < rows.len()) {
+    let order = rows[at];
+    let input: i32[] = [];
+    for i in 0..order {
+      input = input.append(rows[at + 1 + i]);
+    }
+    let stable = match (predict.stabilize(input, order == 16)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("reference NLSF rejected"); },
+    };
+    for i in 0..order {
+      if (stable[i] != rows[at + 1 + order + i]) {
+        return test.fail("NLSF minimum spacing differs from reference");
+      }
+    }
+    let lpc = match (predict.to_lpc(stable, order == 16)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("stable NLSF rejected"); },
+    };
+    for i in 0..order {
+      if (lpc[i] != rows[at + 1 + 2 * order + i]) {
+        return test.fail("LPC reconstruction differs from reference");
+      }
+    }
+    if (predict.inverse_gain(lpc) != rows[at + 1 + 3 * order]) {
+      return test.fail("inverse prediction gain differs from reference");
+    }
+    at += 3 * order + 2;
+  }
+  return test.assert_true(true);
+}
+
+function reference_gains(): test.TestOutcome {
+  let rows = opus_silk_predict_vectors.GAINS;
+  let at = 0;
+  while (at < rows.len()) {
+    let order = rows[at];
+    let input: i32[] = [];
+    for i in 0..order {
+      input = input.append(rows[at + 1 + i]);
+    }
+    if (predict.inverse_gain(input) != rows[at + 1 + order]) {
+      return test.fail("filter stability differs from reference");
+    }
+    at += order + 2;
+  }
+  return test.assert_true(true);
+}
+
+function invalid_filters(): test.TestOutcome {
+  let bad_order = match (predict.stabilize([], false)) { Err(pcm.Header) => true, _ => false };
+  let bad_range = match (predict.to_lpc([32768, 1, 2, 3, 4, 5, 6, 7, 8, 9], false)) { Err(pcm.Header) => true, _ => false };
+  let bad_lpc = predict.inverse_gain([65536]);
+  return test.assert_true(bad_order && bad_range && bad_lpc == 0 && predict.inverse_gain([]) == 0);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK prediction reference filters");
+  runner = runner.it("NLSF spacing and LPC reconstruction", reference_filters);
+  runner = runner.it("inverse prediction gain and stability", reference_gains);
+  runner = runner.it("invalid filter shape and range", invalid_filters);
+  return runner.finish();
+}

@@ -20,6 +20,7 @@ The bandwidth numbers are the libopus numbers, from 1101 for narrowband to 1105 
 ## Contracts
 
 - `parse` reads a packet of one stream, not a self-delimited packet of a multistream.
+- `parse_delimited` reads the first self-delimited stream and returns a normal packet plus its consumed byte count.
 - `write` takes 1 to 48 frames of at most 1275 bytes each. Their duration must not be more than 120 ms.
 - `write` and `pad` refuse to make a packet of more than `max` bytes.
 
@@ -240,6 +241,8 @@ pub function sample_count(packet: [u8], rate: i32): Result[i32, PacketError] {
 <<parse>>=
 pub struct Packet { toc: u8, frames: u8[][], offset: i32, padding: i32 }
 
+pub struct Delimited { packet: u8[], consumed: i32 }
+
 struct Layout { at: i32, len: i32, sizes: i32[], last: i32, pad: i32 }
 
 function size_at(data: [u8], at: i32, len: i32): (i32, i32) {
@@ -374,6 +377,82 @@ function layout(data: [u8]): Result[Layout, PacketError] {
     return layout_many(data, len, samples_per_frame(data[0], 48000));
   }
   return Ok(Layout { at: 1, len: len, sizes: [], last: len, pad: 0 });
+}
+
+// Read frame sizes without inferring the final size from the input length.
+// The remaining bytes can contain other streams.
+function delimited_many(data: [u8]): Result[(Layout, i32, boolean), PacketError] {
+  if (data.len() < 2) {
+    return Err(Invalid);
+  }
+  let flags = data[1] as i32;
+  let count = flags & 63;
+  if (count == 0 || samples_per_frame(data[0], 48000) * count > 5760) {
+    return Err(Invalid);
+  }
+  let l = Layout { at: 2, len: data.len() - 2, sizes: [], last: 0, pad: 0 };
+  if ((flags & 64) != 0) {
+    let (at, left, pad) = padding_at(data, l.at, l.len)?;
+    l = Layout { ...l, at: at, len: left, pad: pad };
+  }
+  if (l.len < 0) {
+    return Err(Invalid);
+  }
+  let cbr = (flags & 128) == 0;
+  if (!cbr) {
+    l = sizes_at(data, l, count)?;
+  }
+  return Ok((l, count, cbr));
+}
+
+function delimited_layout(data: [u8]): Result[(Layout, i32, boolean), PacketError] {
+  let len = data.len() - 1;
+  let code = data[0] as i32 & 3;
+  if (code == 3) {
+    return delimited_many(data);
+  }
+  if (code == 2) {
+    return Ok((layout_two(data, len)?, 2, false));
+  }
+  return Ok((Layout { at: 1, len: len, sizes: [], last: len, pad: 0 }, if (code == 1) { 2 } else { 1 }, code == 1));
+}
+
+function strip_delimiter(data: [u8], at: i32, bytes: i32, consumed: i32): Delimited {
+  let packet: u8[] = [];
+  for i in 0..at {
+    packet = packet.append(data[i]);
+  }
+  for i in at + bytes..consumed {
+    packet = packet.append(data[i]);
+  }
+  return Delimited { packet: packet, consumed: consumed };
+}
+
+pub function parse_delimited(data: [u8]): Result[Delimited, PacketError] {
+  if (data.len() == 0) {
+    return Err(Invalid);
+  }
+  let (l, count, cbr) = delimited_layout(data)?;
+  let (size, bytes) = size_at(data, l.at, l.len);
+  if (size < 0 || size > l.len - bytes) {
+    return Err(Invalid);
+  }
+  let payload = size;
+  if (cbr) {
+    payload = size * count;
+    if (payload > l.len - bytes) {
+      return Err(Invalid);
+    }
+  } else {
+    if (bytes + size > l.last) {
+      return Err(Invalid);
+    }
+    for previous in l.sizes {
+      payload += previous;
+    }
+  }
+  let consumed = l.at + bytes + payload + l.pad;
+  return Ok(strip_delimiter(data, l.at, bytes, consumed));
 }
 
 pub function parse(data: [u8]): Result[Packet, PacketError] {

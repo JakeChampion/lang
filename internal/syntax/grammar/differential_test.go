@@ -9,6 +9,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/syntax/lexer"
 	"github.com/jakechampion/lang/internal/syntax/parser"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 const grammarPath = "../../../spec/grammar.ebnf"
@@ -41,31 +42,37 @@ func TestGrammarDerivesEveryParsedSource(t *testing.T) {
 	covered := map[string]bool{}
 
 	var checked, derived, skipped int
-	for _, path := range fernSources(t) {
-		src, err := os.ReadFile(path)
+	for _, path := range fernSources(t, "../../..") {
+		sources, err := grammarSources(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		if _, perr := parser.Parse(string(src)); perr != nil {
-			skipped++
-			continue
-		}
-		checked++
-
-		toks, _, lerr := lexer.Tokenize(string(src))
-		if lerr != nil {
-			t.Errorf("%s: parser accepted it but the lexer did not: %v", path, lerr)
-			continue
-		}
-
-		if ok, stuck, used := g.MatchCoverage(toks); ok {
-			derived++
-			for _, r := range used {
-				covered[r] = true
+		for _, source := range sources {
+			name := relPath(path)
+			if source.Path != "" {
+				name += " [" + source.Path + "]"
 			}
-		} else {
-			t.Errorf("%s: grammar cannot derive this source, stuck at:\n    %s",
-				relPath(path), Context(toks, stuck))
+			if _, perr := parser.Parse(source.Code); perr != nil {
+				skipped++
+				continue
+			}
+			checked++
+
+			toks, _, lerr := lexer.Tokenize(source.Code)
+			if lerr != nil {
+				t.Errorf("%s: parser accepted it but the lexer did not: %v", name, lerr)
+				continue
+			}
+
+			if ok, stuck, used := g.MatchCoverage(toks); ok {
+				derived++
+				for _, r := range used {
+					covered[r] = true
+				}
+			} else {
+				t.Errorf("%s: grammar cannot derive this source, stuck at:\n    %s",
+					name, Context(toks, stuck))
+			}
 		}
 	}
 
@@ -86,9 +93,30 @@ func TestGrammarDerivesEveryParsedSource(t *testing.T) {
 	}
 }
 
-func fernSources(t *testing.T) []string {
+func grammarSources(path string) ([]literate.FileResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(path, ".fern.md") {
+		return []literate.FileResult{{Code: string(data)}}, nil
+	}
+	doc := literate.Parse(string(data))
+	if !doc.IsProgram() {
+		return nil, nil
+	}
+	if doc.HasFiles() {
+		return doc.TangleFiles()
+	}
+	code, lines, err := doc.Tangle()
+	if err != nil {
+		return nil, err
+	}
+	return []literate.FileResult{{Code: code, LineMap: lines}}, nil
+}
+
+func fernSources(t *testing.T, root string) []string {
 	t.Helper()
-	root := "../../.."
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -96,12 +124,12 @@ func fernSources(t *testing.T) []string {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "target", "bin":
+			case ".git", "node_modules", "target", "bin", "build":
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, ".fern") {
+		if strings.HasSuffix(path, ".fern") || strings.HasSuffix(path, ".fern.md") {
 			out = append(out, path)
 		}
 		return nil

@@ -1,0 +1,81 @@
+import "std/hash/crc32";
+import "std/audio/pcm";
+import "std/opus/range";
+import "std/opus/silk/output";
+import "std/test";
+import "opus_silk_fec_vectors";
+
+function decode(own state: output.State, bytes: [u8], duration: i32, fec: boolean): Result[(output.State, range.Decoder, f32[]), pcm.AudioError] {
+  if (fec) {
+    return output.decode_fec(state, range.decoder(bytes), duration);
+  }
+  return output.decode_frame(state, range.decoder(bytes), duration);
+}
+
+function references(): test.TestOutcome {
+  let rows = opus_silk_fec_vectors.PACKETS;
+  let state = match (output.decoder(8000, 1)) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+  let at = 0;
+  let previous_case = -1;
+  let packet: u8[] = [];
+  let step = 0;
+  while (at < rows.len()) {
+    let id = rows[at];
+    let rate = rows[at + 1];
+    let target = rows[at + 2];
+    let channels = rows[at + 3];
+    let duration = rows[at + 4];
+    let stream = rows[at + 5];
+    let fec = rows[at + 6] == 1;
+    let size = rows[at + 7];
+    if (id != previous_case) {
+      state = match (output.decoder(target, channels)) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+      previous_case = id;
+    }
+    if (size > 0) {
+      packet = [];
+      for i in 0..size {
+        packet = packet.append(rows[at + 8 + i] as u8);
+      }
+    }
+    at += size + 8;
+    let prepared = match (output.begin_packet(state, rate, stream)) { Ok(value) => value, Err(_) => { return test.fail("packet setup"); } };
+    let (next, last, samples) = match (decode(prepared, packet, duration, fec)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("FEC or received packet rejected"); },
+    };
+    state = next;
+    let count = rows[at];
+    if (samples.len() != count) {
+      return test.fail("FEC output length");
+    }
+    let pcm: u8[] = [];
+    for value in samples {
+      let integer = (value * 32768.0f32) as i32;
+      pcm = pcm.append((integer & 255) as u8).append((integer >> 8 & 255) as u8);
+    }
+    if (crc32.of(pcm) != rows[at + 1] as u32) {
+      return test.fail("FEC PCM checksum step " + step.to_string());
+    }
+    if (last.rng != rows[at + 2] as u32) {
+      return test.fail("FEC range step " + step.to_string());
+    }
+    if (state.decoder.mid.recovery.count != rows[at + 3]) {
+      return test.fail("FEC loss count step " + step.to_string());
+    }
+    for i in 0..8 {
+      if ((samples[i] * 32768.0f32) as i32 != rows[at + 4 + i] || (samples[count - 8 + i] * 32768.0f32) as i32 != rows[at + 12 + i]) {
+        return test.fail("FEC boundary samples");
+      }
+    }
+    at += 20;
+    step += 1;
+  }
+  return test.assert_eq(step, 240);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK forward error correction against libopus");
+  runner = runner.it("redundant frames, missing redundancy, and subsequent packets", references);
+  return runner.finish();
+}

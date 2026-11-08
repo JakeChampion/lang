@@ -30,3 +30,4 @@ regex_captures 219
 sum_for 55
 upload 0
 ulc_codec 0
+packed_simd 0

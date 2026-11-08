@@ -3255,7 +3255,49 @@ function f(r: Result[(D, i32[]), string]): i32 {
         Err(_) => { return 0; },
     }
 }
+
 function main(): i32 { return 0; }`)
+}
+
+func TestOwnGuardMethodResultPayloads(t *testing.T) {
+	const declarations = `
+struct State { n: i32 }
+enum Failure { Bad }
+function make(): Result[State, Failure] { return Ok(State { n: 0 }); }
+function (own s: State) step(): Result[(State, i32), Failure] { return Ok((State { n: s.n + 1 }, 1)); }
+function (s: State) lend(): Result[State, Failure] { return Ok(s); }
+struct Borrower { state: State }
+function (b: Borrower) step(): Result[State, Failure] { return Ok(b.state); }
+`
+	wantOK(t, "consume-method-result", declarations+`
+function main(): i32 {
+  let Ok(state) = make() else { return 1; };
+  let Ok((next, used)) = state.step() else { return 2; };
+  let Ok((done, count)) = next.step() else { return 3; };
+  return done.n - 2;
+}`)
+	wantOK(t, "match-method-result", declarations+`
+function main(): i32 {
+  let Ok(state) = make() else { return 1; };
+  match (state.step()) {
+    Ok((next, used)) => { let Ok((done, count)) = next.step() else { return 3; }; return done.n; },
+    Err(_) => { return 2; },
+  }
+}`)
+	wantE051(t, "borrowed-method-result", declarations+`
+function main(): i32 {
+  let Ok(state) = make() else { return 1; };
+  let Ok(next) = state.lend() else { return 2; };
+  let Ok((done, count)) = next.step() else { return 3; };
+  return done.n;
+}`)
+	wantE051(t, "same-name-borrowed-method-result", declarations+`
+function main(): i32 {
+  let borrower = Borrower { state: State { n: 0 } };
+  let Ok(next) = borrower.step() else { return 1; };
+  let Ok((done, count)) = next.step() else { return 2; };
+  return done.n;
+}`)
 }
 
 // An argument before the moved one may read a scalar field of it: the read

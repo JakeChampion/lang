@@ -39,6 +39,8 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `__alloc_reuse(p, old, new)` | `usize, i32, i32 -> usize` | `p` must be a live block of size `old`. |
 | `__free(p, n)` | `usize, i32 -> void` | `p` must be a live block of size `n` with no other reference. |
 | `__load_u8(p)`, `__load_i32(p)`, `__load_i64(p)`, `__load_ptr(p)` | `usize -> value` | `p` must point at initialized memory of the loaded width. |
+| `__f32x4_load_ptr(p)`, `__f64x2_load_ptr(p)` | address | `p` names 16 readable bytes. The range stays live through the load. Unaligned addresses are valid. |
+| `__f32x4_store(p, v)`, `__f64x2_store(p, v)` | address, vector | `p` names 16 writable bytes. The range stays live through the store. Unaligned addresses are valid. |
 | `__store_u8(p, v)`, `__store_i32(p, v)`, `__store_i64(p, v)`, `__store_ptr(p, v)` | `usize, value -> void` | `p` must point at writable memory that no live value aliases. |
 | `__mmio_load8(p)`, `__mmio_load16(p)`, `__mmio_load32(p)`, `__mmio_load64(p)` | `usize -> i32 or i64` | `p` must be a device register or memory of the loaded width, aligned to that width. No pass removes, merges or moves the load. |
 | `__mmio_store8(p, v)`, `__mmio_store16(p, v)`, `__mmio_store32(p, v)`, `__mmio_store64(p, v)` | `usize, i32 or i64 -> void` | `p` must be a writable device register or memory of the stored width, aligned to that width. No pass removes, merges or moves the store. |

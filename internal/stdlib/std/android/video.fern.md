@@ -259,6 +259,9 @@ pub function (decoder: Decoder) input(timeout_us: i64): Result[Option[InputBuffe
   }
 }
 
+// submit checks each argument and each limit before the JNI call, and reads
+// the output format after it.
+// fern-lint: allow cyclomatic-complexity
 pub function (decoder: Decoder) submit(slot: InputBuffer, bytes: [u8], presentation_time_us: i64, flags: u32): Result[void, frame.VideoError] {
   if (slot.index < 0 || slot.data == 0 as usize || slot.capacity < 0 || presentation_time_us < 0i64 || (flags & 4294967288u32) != 0u32) {
     return Err(frame.Header);

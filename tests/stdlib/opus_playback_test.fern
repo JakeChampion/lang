@@ -1,0 +1,99 @@
+import "std/audio/pcm";
+import "std/base64";
+import "std/deflate";
+import "std/opus";
+import "std/f32";
+import "std/test";
+import "opus_playback_vectors";
+
+function word(bytes: [u8], at: i32): u32 {
+  return bytes[at] as u32 | bytes[at + 1] as u32 << 8 | bytes[at + 2] as u32 << 16 | bytes[at + 3] as u32 << 24;
+}
+
+function decode(own state: opus.Decoder, bytes: [u8], action: i32, frames: i32): (opus.Decoder, Result[f32[], pcm.AudioError]) {
+  if (action == 3) {
+    return state.reset().decode_lost(frames);
+  }
+  if (action == 1) {
+    return state.decode_lost(frames);
+  }
+  if (action == 2) {
+    return state.decode_fec(bytes, frames);
+  }
+  return state.decode(bytes);
+}
+
+function references(): test.TestOutcome {
+  let index = 0;
+  for encoded in opus_playback_vectors.CASES {
+    let packed = match (base64.decode(encoded)) { Ok(value) => value, Err(_) => { return test.fail("reference base64"); } };
+    let bytes = match (deflate.zlib_decode(packed, 1048576)) { Ok(value) => value, Err(_) => { return test.fail("reference zlib"); } };
+    let rate = word(bytes, 0) as i32;
+    let channels = word(bytes, 4) as i32;
+    let steps = word(bytes, 8) as i32;
+    let state = match (opus.decoder(rate, channels)) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+    let at = 12;
+    for _ in 0..steps {
+      let action = word(bytes, at) as i32;
+      let frames = word(bytes, at + 4) as i32;
+      let final_range = word(bytes, at + 8);
+      let size = word(bytes, at + 12) as i32;
+      at += 16;
+      let (next, result) = decode(state, bytes[at:at + size], action, frames);
+      state = next;
+      at += size;
+      let samples = match (result) { Ok(value) => value, Err(_) => { return test.fail("playback rejected step " + index.to_string()); } };
+      if (samples.len() != frames * channels) {
+        return test.fail("playback length step " + index.to_string());
+      }
+      if (state.final_range() != final_range) {
+        return test.fail("playback range step " + index.to_string());
+      }
+      for i in 0..samples.len() {
+        let expected = f32_from_bits(word(bytes, at + i * 4) as i32);
+        if (!samples[i].is_finite() || (samples[i] - expected).abs() > 0.000001f32) {
+          return test.fail("playback PCM step " + index.to_string() + " sample " + i.to_string() + " actual " + samples[i].to_string() + " expected " + expected.to_string());
+        }
+      }
+      at += samples.len() * 4;
+      index += 1;
+    }
+    if (at != bytes.len()) {
+      return test.fail("reference trailing bytes");
+    }
+  }
+  return test.assert_eq(index, 290);
+}
+
+function invalid_duration(): test.TestOutcome {
+  for frames in [-120, 0, 1, 121, 5880] {
+    let state = match (opus.decoder(48000, 2)) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+    let (failed, result) = state.decode_lost(frames);
+    match (result) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid loss duration accepted");
+      }
+    }
+    let (reset, recovered) = failed.reset().decode_lost(120);
+    let samples = match (recovered) { Ok(value) => value, Err(_) => { return test.fail("reset after loss error"); } };
+    if (samples.len() != 240) {
+      return test.fail("reset loss duration");
+    }
+    let (_, fec) = reset.decode_fec([], frames);
+    match (fec) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid FEC duration accepted");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Opus playback against unmodified libopus");
+  runner = runner.it("SILK, hybrid, CELT, transitions, loss, and FEC at all output rates", references);
+  runner = runner.it("invalid loss and FEC durations and decoder reset", invalid_duration);
+  return runner.finish();
+}

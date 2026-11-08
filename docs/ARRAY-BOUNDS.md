@@ -42,8 +42,8 @@ both a negative index and `index >= len`.
 
 - **x86-64 / arm64** abort with **exit code 134** (the same trap the
   string-slice helper uses).
-- **wasm** prints the cause line and traps (`unreachable`). `wasmtime`
-  reports exit 134.
+- **wasm** prints the cause line and traps (`unreachable`). The host reports
+  the trap. This is not a WASI command exit status or a component result.
 - **interp** stops with **exit code 134**, `fern -interp` and
   `fern-oracle -interp` alike.
 

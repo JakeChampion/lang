@@ -219,6 +219,15 @@ function test_key_reused(): test.TestOutcome {
   return test.assert_false(public.verify(a, k.sign(b)));
 }
 
+function test_erase_key(): test.TestOutcome {
+  let Ok(k) = ed25519.private_key(__codec_bytes(hex.decode("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"))) else {
+    return test.fail("a 32-byte seed was refused");
+  };
+  let sig = k.sign(__codec_bytes(hex.decode("72")));
+  k.erase();
+  return test.assert_eq(hex.encode(sig), hex.encode(test2_sig()));
+}
+
 function test_public_keys_that_do_not_decode(): test.TestOutcome {
   let msg = __codec_bytes(hex.decode("616263"));
   let sig: u8[] = __codec_bytes(hex.decode("5866666666666666666666666666666666666666666666666666666666666666"
@@ -250,6 +259,7 @@ function main(): i32 {
   r = r.it("seed, key and signature lengths", test_lengths);
   r = r.it("public keys that do not decode", test_public_keys_that_do_not_decode);
   r = r.it("a key built once signs and verifies many messages", test_key_reused);
+  r = r.it("erase consumes a private key", test_erase_key);
   return r.finish();
 }
 

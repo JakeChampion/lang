@@ -26,8 +26,8 @@ pub function plan(n: i32): Plan {
   let pre_sin = zeros(half);
   let post_cos = zeros(half);
   let post_sin = zeros(half);
-  let fft_cos = zeros(half / 2);
-  let fft_sin = zeros(half / 2);
+  let fft_cos = zeros(half - 1);
+  let fft_sin = zeros(half - 1);
   let reversal: i32[] = [];
   let bits = 0;
   let t = half;
@@ -50,10 +50,14 @@ pub function plan(n: i32): Plan {
     }
     reversal = reversal.append(reversed);
   }
-  for j in 0..half / 2 {
-    let angle = 2.0 * PI * (j as f64) / (half as f64);
-    fft_cos = fft_cos.with(j, angle.cos());
-    fft_sin = fft_sin.with(j, angle.sin());
+  let width = 2;
+  while (width <= half) {
+    for k in 0..width / 2 {
+      let angle = 2.0 * PI * (k as f64) / (width as f64);
+      fft_cos = fft_cos.with(width / 2 - 1 + k, angle.cos());
+      fft_sin = fft_sin.with(width / 2 - 1 + k, angle.sin());
+    }
+    width *= 2;
   }
   let window_cos: f64[] = [];
   let window_sin: f64[] = [];
@@ -92,7 +96,7 @@ pub function dct4_reuse(input: [f64], p: Plan, own work: Scratch): Scratch {
   }
   let width = 2;
   while (width <= half) {
-    let stride = half / width;
+    let twiddle = width / 2 - 1;
     let base = 0;
     while (base < half) {
       if (width == 2) {
@@ -109,8 +113,8 @@ pub function dct4_reuse(input: [f64], p: Plan, own work: Scratch): Scratch {
         while (k < width / 2) {
           let a = base + k;
           let b = a + width / 2;
-          let cr = __f64x2_of(p.fft_cos[k * stride], p.fft_cos[(k + 1) * stride]);
-          let ci = __f64x2_of(p.fft_sin[k * stride], p.fft_sin[(k + 1) * stride]);
+          let cr = __f64x2_load(p.fft_cos, twiddle + k);
+          let ci = __f64x2_load(p.fft_sin, twiddle + k);
           let br = __f64x2_load(re, b);
           let bi = __f64x2_load(im, b);
           let vr = br * cr - bi * ci;
@@ -164,13 +168,12 @@ pub function inverse_reuse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, 
   if (!silent) {
     work = dct4_reuse(coefs, p, work);
   }
-  let temp = work.transformed;
+  let Scratch { re, im, transformed: temp, samples: out } = work;
   if (silent) {
     for i in 0..n {
       temp = temp.with(i, 0.0);
     }
   }
-  let out = work.samples;
   let flat = (n - overlap) / 2;
   for i in 0..n / 2 {
     let a = lap[n / 2 - 1 - i];
@@ -188,7 +191,7 @@ pub function inverse_reuse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, 
   for i in 0..n / 2 {
     lap = lap.with(i, temp[i]);
   }
-  return ReusedInverse { lap: lap, work: Scratch { ...work, transformed: temp, samples: out } };
+  return ReusedInverse { lap: lap, work: Scratch { re: re, im: im, transformed: temp, samples: out } };
 }
 
 pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan): Inverse {

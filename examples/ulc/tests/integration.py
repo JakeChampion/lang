@@ -170,6 +170,24 @@ def main():
                 if REFERENCE:
                     run(Path(REFERENCE) / "ulcdecodetool", encoded, p / "mode-c.wav", "-format:FLOAT32")
                     compare(p / "mode.wav", p / "mode-c.wav")
+        # Chunk boundaries cross transients, odd channel counts, and the flush.
+        for channels in (1, 2, 3):
+            long_source = p / f"parallel-input-{channels}.wav"
+            with wave.open(str(p / f"input-{channels}.wav"), "rb") as wav:
+                params, data = wav.getparams(), wav.readframes(wav.getnframes())
+            with wave.open(str(long_source), "wb") as wav:
+                wav.setparams(params)
+                wav.writeframes(data * 3)
+            for command, options in (("encode", [75, 256]), ("encode-cbr", [64, 256]), ("encode-abr", [64, 256, "0.5"])):
+                outputs = []
+                for threads in (1, 2, 4):
+                    dest = p / f"parallel-encode-{threads}.ulc"
+                    result = subprocess.run([str(x) for x in [ULC, command, long_source, dest, *options]],
+                                            env={**os.environ, "ULC_THREADS": str(threads)}, capture_output=True, timeout=60)
+                    assert result.returncode == 0, result.stderr
+                    outputs.append(dest.read_bytes())
+                assert outputs[0] == outputs[1] == outputs[2], (channels, command)
+        print("ok - parallel encoder preserves serial bytes in all rate modes")
         average = float(run(ULC, "analyze", source, 256).stdout)
         assert 0 < average <= 1, average
         run(ULC, "encode-cbr", source, p / "bad.ulc", "0.001", good=False)
@@ -209,6 +227,29 @@ def main():
         synth = synthetic()
         (p / "synthetic.ulc").write_bytes(synth)
         run(ULC, "decode", p / "synthetic.ulc", p / "synthetic-fern.wav", "FLOAT32")
+        for fmt in ("PCM8", "PCM16", "PCM24", "FLOAT32"):
+            outputs = []
+            for threads in (1, 2, 4):
+                path = p / f"parallel-{fmt}-{threads}.wav"
+                run(ULC, "decode", p / "synthetic.ulc", path, fmt, threads)
+                outputs.append(path.read_bytes())
+            assert outputs[0] == outputs[1] == outputs[2], fmt
+            if fmt == "PCM8":
+                with wave.open(str(p / "parallel-PCM8-1.wav"), "rb") as wav:
+                    samples = wav.readframes(wav.getnframes())
+                assert samples[-512:] == bytes([128]) * 512, "PCM8 silence requires the unsigned bias"
+        silent = p / "silent.ulc"
+        silent.write_bytes(container([pack([0, 14, 15, 14, 15])] * 64))
+        for threads in (1, 2, 4):
+            for fmt, zero in (("PCM8", 128), ("PCM16", 0), ("PCM24", 0)):
+                dest = p / f"silent-{threads}-{fmt}.wav"
+                run(ULC, "decode", silent, dest, fmt, threads)
+                with wave.open(str(dest), "rb") as wav:
+                    raw = wav.readframes(wav.getnframes())
+                assert raw == bytes([zero]) * len(raw), (threads, fmt)
+        run(ULC, "decode", p / "synthetic.ulc", p / "bad.wav", "FLOAT32", 3, good=False)
+        assert not (p / "bad.wav").exists()
+        print("ok - parallel output matches serial bytes across every window and PCM format")
         if REFERENCE:
             run(Path(REFERENCE) / "ulcdecodetool", p / "synthetic.ulc", p / "synthetic-c.wav", "-format:FLOAT32")
             analysis_parity(p)

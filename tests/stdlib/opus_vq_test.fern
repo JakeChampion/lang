@@ -3,11 +3,12 @@ import "std/opus/pvq";
 import "std/opus/range";
 import "std/opus/vq";
 import "std/test";
+import "opus_kernel_vectors";
 
 // Each script codes random band shapes in one packet, with and without the
 // shape the decoder gets, and then decodes them. The trace holds the bits of
 // each value, each collapse mask, and the results of renormalise_vector and
-// stereo_itheta. libopus 1.4, in its float build, gave the CRC-32 of each
+// stereo_itheta. the pinned libopus float build, gave the CRC-32 of each
 // trace, from a C program that makes the same calls.
 
 const LAST: i32[] = [176, 176, 176, 176, 176, 176, 96, 54, 37, 28, 24, 19, 18, 16, 14];
@@ -134,11 +135,11 @@ function trace(seed: u32, cases: i32): u32 {
 }
 
 function test_short_script(): test.TestOutcome {
-  return test.assert_eq(trace(2u32, 300), 1287182931u32);
+  return test.assert_eq(trace(2u32, 300), opus_kernel_vectors.VQ_SHORT);
 }
 
 function test_long_script(): test.TestOutcome {
-  return test.assert_eq(trace(3u32, 2000), 2256532715u32);
+  return test.assert_eq(trace(3u32, 2000), opus_kernel_vectors.VQ_LONG);
 }
 
 function ramp(): f32[] {
