@@ -14,6 +14,9 @@ const ownedValueMatchDecls = `struct State { values: i32[] }
 struct Wrapper { state: State, selected: Option[i32] }
 function consume(own state: State): i32 { return state.values.len(); }
 function guard(own state: State): boolean { return state.values.len() > 0; }
+function take_bytes(own value: u8[]): i32 { return value.len(); }
+function take_handles(own value: Writer[]): i32 { return value.len(); }
+function copied(input: [u8]): u8[] { let result: u8[] = []; for byte in input { result = result.append(byte); } return result; }
 `
 
 func ownedValueMatchCases(t *testing.T, bin string, runner []string, dir string) {
@@ -32,6 +35,14 @@ func ownedValueMatchCases(t *testing.T, bin string, runner []string, dir string)
 		{"guard-fallthrough", "tag: i32", "i32", `let state = State { values: [1] }; return match (tag) { 0 when guard(state) => 0, _ => consume(state) };`, true},
 		{"captured", "tag: i32", "i32", `let state = State { values: [1] }; let later = () => state.values.len(); return match (tag) { 0 => consume(state), _ => consume(state) } + later();`, true},
 		{"loop-backedge", "tag: i32", "i32", `let state = State { values: [1] }; let n = 0; for i in [0, 1] { n += match (tag) { 0 => consume(state), _ => consume(state) }; } return n;`, true},
+		{"array-with", "", "i32", `return take_bytes(copied([1u8]).with(0, 2u8));`, false},
+		{"array-append", "", "i32", `return take_bytes(copied([1u8]).append(2u8));`, false},
+		{"array-truncate", "", "i32", `return take_bytes(copied([1u8]).truncate(0));`, false},
+		{"array-chain", "", "i32", `return take_bytes(copied([1u8]).with(0, 2u8).append(3u8));`, false},
+		{"array-handles-with", "value: Writer[]", "i32", `return take_handles(value.with(0, value[0]));`, true},
+		{"array-handles-append", "value: Writer[]", "i32", `return take_handles(value.append(value[0]));`, true},
+		{"array-handles-truncate", "value: Writer[]", "i32", `return take_handles(value.truncate(0));`, true},
+
 		{"borrowed", "state: State, tag: i32", "i32", `return match (tag) { 0 => consume(state), _ => consume(state) };`, true},
 	}
 
@@ -89,7 +100,9 @@ function main(): i32 {
  let a = work(Wrapper { state: State { values: [args().len(), 2] }, selected: None });
  let b = work(Wrapper { state: State { values: [args().len(), 2, 3] }, selected: Some(1) });
  let c = work(Wrapper { state: State { values: [args().len()] }, selected: Some(2) });
- return if (a == 2 && b == 3 && c == 1) { 0 } else { 1 };
+ let d = take_bytes(copied([1u8]).with(0, 2u8).append(3u8));
+ let e = take_bytes(copied([1u8]).truncate(0));
+ return if (a == 2 && b == 3 && c == 1 && d == 2 && e == 0) { 0 } else { 1 };
 }`
 
 	path := filepath.Join(t.TempDir(), "main.fern")

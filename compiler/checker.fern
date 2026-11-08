@@ -19078,6 +19078,11 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
+          if let typeinfo.TypeArray(array) = check_expr(mfa.obj, ctx.scope) {
+            if (!array.view && (mfa.field == "with" || mfa.field == "append" || mfa.field == "truncate") && ow_holds_no_handle(typeinfo.spelling(array.elem), ctx.decls)) {
+              return true;
+            }
+          }
           if (ow_qualified_ctor(c.callee, ctx)) {
             return true;
           }
