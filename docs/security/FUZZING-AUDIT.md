@@ -29,6 +29,8 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdHPACK` | the HPACK decoder of `std/http/hpack`, two blocks on one decoder | `tests/fuzz/stdparse.fern hpack` | the same |
 | `FuzzSelfHostStdJSON` | the JSON parser of `std/json` | `tests/fuzz/stdparse.fern json` | the same |
 | `FuzzSelfHostStdURL` | the URL parser and the query parser of `std/url` | `tests/fuzz/stdparse.fern url` | the same |
+| `FuzzSelfHostStdH2` | the HTTP/2 frame reader of `std/http/h2/frame`, and a server connection of `std/http/h2` fed the client preface and the input in pieces of nine bytes | `tests/fuzz/stdparse.fern h2` | the same |
+| `FuzzSelfHostStdQPACK` | the QPACK decoder of `std/http/qpack`: encoder-stream bytes, then one header section | `tests/fuzz/stdparse.fern qpack` | the same |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -54,6 +56,11 @@ The pinned stage0 cannot build that program, because `std/http` reaches `std/htt
 The HPACK target decodes the input as two blocks on one decoder, so the second block reads the dynamic table that the first block filled.
 The HTTP seeds carry a request with both a length and a chunked body, two length fields and a negative length.
 They also carry a chunk size of sixteen hex digits, a folded header line and a NUL in a header value.
+
+The HTTP/2 seeds carry a HEADERS frame with its CONTINUATION, and a CONTINUATION with no HEADERS before it.
+They also carry a zero window increment, DATA on stream 0, a pad longer than its frame and a stream that depends on itself.
+One seed opens and resets a thousand streams at once.
+The first byte of a QPACK input gives the length of the encoder-stream bytes, and the rest is one header section on stream 0.
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
@@ -96,6 +103,8 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdHPACK` | 48783 | 2 | none |
 | `FuzzSelfHostStdJSON` | 50608 | 1 | none |
 | `FuzzSelfHostStdURL` | 53437 | 1 | none |
+| `FuzzSelfHostStdH2` | 47447 | 1 | none |
+| `FuzzSelfHostStdQPACK` | 46110 | 1 | none |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
@@ -109,9 +118,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the fourteen targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the sixteen targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the fourteen targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the sixteen targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits
