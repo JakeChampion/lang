@@ -508,7 +508,7 @@ pub function gate(mod: parser.Module, sub: Sub): Option[Lowered] {
           }
           return None;
         }
-      } else if (o.kind_tag == 6) {
+      } else if (o.kind_tag == ir.K_CONST_FUNC) {
         if (!irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)");
