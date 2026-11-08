@@ -543,3 +543,15 @@ soak/recent.rss_end_kb	1396
 soak/recent.rss_growth_kb	0
 soak/recent.allocs	982409673
 soak/recent.live_bytes	0
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	125.2
+tls/client/openssl.handshakes_per_s	56.2
+tls/client/go.bulk_mbytes_per_s	106.2
+tls/client/go.handshakes_per_s	54.3
+tls/client/rustls.handshakes_per_s	57.5
+tls/client/bssl.handshakes_per_s	57.3
+tls/server/go.bulk_mbytes_per_s	123.4
+tls/server/curl.bulk_mbytes_per_s	150.2
+tls/server/handshakes_per_s	518.0
+tls/server/resumed_handshakes_per_s	524.7
