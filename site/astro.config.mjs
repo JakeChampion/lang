@@ -60,7 +60,7 @@ const STDLIB_GROUPS = [
   ["Audio", ["audio_ogg", "audio_ogg_tables", "audio_opusfile_headers", "audio_flac", "audio_mp3", "audio_mp3_bits", "audio_mp3_header", "audio_mp3_spectral", "audio_mp3_synthesis", "audio_mp3_tables", "audio_pcm", "audio_qoa", "audio_wav", "audio_wire", "opus", "opus_bands", "opus_celt", "opus_celt_encoder", "opus_energy", "opus_mdct", "opus_modes", "opus_multistream", "opus_packet", "opus_pitch", "opus_playback", "opus_pvq", "opus_pvq_table", "opus_range", "opus_silk", "opus_silk_core", "opus_silk_entropy", "opus_silk_loss", "opus_silk_math", "opus_silk_noise", "opus_silk_output", "opus_silk_predict", "opus_silk_resample", "opus_silk_stereo", "opus_silk_tables", "opus_rate", "opus_vq"]],
   ["Collections & errors", ["array", "constmap", "error", "iter", "map", "ndarray", "option",
     "result", "ordmap", "ordset", "pmap", "pset", "pvec"]],
-  ["Video", ["video_frame", "video_ivf", "video_nal", "video_qtrle"]],
+  ["Video", ["video_frame", "video_playback_clock", "video_ivf", "video_nal", "video_qtrle"]],
   ["Traits", ["cmp", "convert", "mem", "ops"]],
   ["Numbers", ["bigint", "f32", "f64", "f64_text", "i32", "i64", "math", "num", "number_parse", "rand", "simd", "u32",
     "u64"]],
@@ -72,7 +72,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_p2p", "android_property", "android_service", "android_video", "jni"]],
+  ["Interop", ["android", "android_audio", "android_draw", "android_focus", "android_font", "android_p2p", "android_property", "android_service", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "jni"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

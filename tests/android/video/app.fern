@@ -1,0 +1,170 @@
+// This app verifies real Android codecs, MP4 export, surface playback, and seek.
+import "std/android";
+import "std/android/video/player";
+import "std/android/video/capabilities";
+import "std/video/frame";
+import "std/log";
+import "./roundtrip";
+
+struct App { ctx: usize, playback: Option[player.Player], fd: i32, stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+function app_main(ctx: usize): usize {
+  let last = android.run(ctx, App { ctx: ctx, playback: None, fd: -1, stage: 0, resume_ns: 0i64, started_ns: monotonic_ns(), done: false }, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 5);
+  let _ = cleanup(last);
+  return 0 as usize;
+}
+
+function cleanup(own s: App): App {
+  match (s.playback) {
+    Some(p) => {
+      let _ = p.close();
+    },
+    None => {}
+  }
+  if (s.fd >= 0) {
+    roundtrip.close_file(s.fd);
+  }
+  return App { ...s, playback: None, fd: -1 };
+}
+
+function fail(own s: App, error: frame.VideoError): App {
+  log.warn("videotest: FAIL " + error.message());
+  return App { ...cleanup(s), done: true };
+}
+
+function start(own s: App, window: android.Window): App {
+  let base = android.data_dir(s.ctx);
+  let env = android.env(s.ctx);
+  let api = android.sdk_version(s.ctx);
+  log.warn("videotest: sdk=" + api.to_string() + " directory=" + base);
+  match (roundtrip.export_file(env, api, base + "/byte.mp4", false)) {
+    Err(e) => {
+      return fail(s, e);
+    },
+    _ => {}
+  }
+  match (roundtrip.export_file(env, api, base + "/surface.mp4", true)) {
+    Err(e) => {
+      return fail(s, e);
+    },
+    _ => {}
+  }
+  let fd = match (roundtrip.open_file(base + "/byte.mp4", false)) { Ok(value) => value, Err(e) => { return fail(s, e); } };
+  let p = match (player.open(env, api, fd, 0i64, roundtrip.length(fd), window.ptr, capabilities.PreferHardware, frame.default_limits())) {
+    Ok(value) => value, Err(e) => { roundtrip.close_file(fd); return fail(s, e); },
+  };
+  log.warn("videotest: decoder name=" + p.info.name + " implementation=" + p.info.implementation.to_debug());
+  return App { ...s, playback: Some(p), fd: fd, started_ns: monotonic_ns() };
+}
+
+function tick(own s: App): App {
+  if (s.done) {
+    return s;
+  }
+  let Some(borrowed) = s.playback else {
+    return s;
+  };
+  let p = player.Player { ...borrowed };
+  let now = monotonic_ns();
+  if (now - s.started_ns > 20000000000i64) {
+    return fail(s, frame.Platform);
+  }
+  if (s.stage == 0 && p.scheduled_frames >= 3i64) {
+    let paused = player.Player { ...p }.pause(now);
+    return App { ...s, playback: Some(paused.player), stage: 1, resume_ns: now + 100000000i64 };
+  }
+  if (s.stage == 1) {
+    if (now < s.resume_ns) {
+      return s;
+    }
+    let resumed = player.Player { ...p }.resume(now);
+    return App { ...s, playback: Some(resumed.player), stage: 2 };
+  }
+  let next = player.Player { ...p }.tick(now);
+  s = App { ...s, playback: Some(next.player) };
+  match (next.event) {
+    player.Failure(e) => {
+      return fail(s, e);
+    },
+    player.End => {
+      return ended(s, player.Player { ...next.player });
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+function ended(own s: App, own p: player.Player): App {
+  if (s.stage < 2 || p.scheduled_frames == 0i64) {
+    return fail(s, frame.Header);
+  }
+  if (s.stage == 2) {
+    if (p.scheduled_frames + p.dropped_frames != 12i64) {
+      return fail(s, frame.Header);
+    }
+    let seek = p.seek(100000i64);
+    match (seek.event) {
+      player.Failure(e) => {
+        return fail(App { ...s, playback: Some(seek.player) }, e);
+      },
+      _ => {}
+    }
+    return App { ...s, playback: Some(seek.player), stage: 3 };
+  }
+  if (p.scheduled_frames + p.dropped_frames != 24i64) {
+    return fail(s, frame.Header);
+  }
+  log.warn("videotest: playback frames=" + p.scheduled_frames.to_string() + " dropped=" + p.dropped_frames.to_string() + " elapsed_ns=" + (monotonic_ns() - s.started_ns).to_string());
+  log.warn("videotest: roundtrip complete");
+  return App { ...s, done: true };
+}
+
+function step(own s: App, e: android.Event): App {
+  match (e) {
+    android.WindowCreated(w) => {
+      if (!s.done) {
+        return start(s, w);
+      }
+      return s;
+    },
+    android.WindowDestroyed(_) => {
+      return cleanup(s);
+    },
+    android.Tick => {
+      return tick(s);
+    },
+    android.Pause => {
+      match (s.playback) {
+        Some(p) => {
+          let result = player.Player { ...p }.pause(monotonic_ns());
+          return App { ...s, playback: Some(result.player) };
+        },
+        None => {
+          return s;
+        }
+      }
+    },
+    android.Resume => {
+      match (s.playback) {
+        Some(p) => {
+          let result = player.Player { ...p }.resume(monotonic_ns());
+          return App { ...s, playback: Some(result.player) };
+        },
+        None => {
+          return s;
+        }
+      }
+    },
+    _ => {
+      return s;
+    }
+  }
+}

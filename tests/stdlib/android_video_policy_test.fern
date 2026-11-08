@@ -1,0 +1,111 @@
+import "std/android/video/capabilities";
+import "std/test";
+import "std/video/playback_clock";
+import "std/video/frame";
+
+function request(): capabilities.Request {
+  return capabilities.Request { mime: "video/avc", width: 1920, height: 1080, encoder: false, frame_rate: 60, bitrate: 0, profile: 8, level: 2048, color_format: 0 };
+}
+
+function info(name: string, kind: capabilities.Implementation): capabilities.CodecInfo {
+  return capabilities.CodecInfo { name: name, request: request(), implementation: kind, vendor: false, alias: false, supported: true, profiles: [], color_formats: [] };
+}
+
+function names(infos: [capabilities.CodecInfo]): string[] {
+  let out: string[] = [];
+  for i in infos {
+    out = out.append(i.name);
+  }
+  return out;
+}
+
+function preference(): test.TestOutcome {
+  let infos = [info("software", capabilities.Software), info("unknown", capabilities.Unknown), info("hardware", capabilities.Hardware), info("hardware2", capabilities.Hardware)];
+  if (names(capabilities.ordered(infos, request(), capabilities.PreferHardware)) != ["hardware", "hardware2", "software", "unknown"]) {
+    return test.fail("hardware-first candidate order");
+  }
+  if (names(capabilities.ordered(infos, request(), capabilities.PlatformOrder)) != ["software", "unknown", "hardware", "hardware2"]) {
+    return test.fail("platform order");
+  }
+  if (names(capabilities.ordered(infos, request(), capabilities.HardwareOnly)) != ["hardware", "hardware2"]) {
+    return test.fail("strict hardware excludes unknown implementations");
+  }
+  if (names(capabilities.ordered(infos, request(), capabilities.SoftwareOnly)) != ["software"]) {
+    return test.fail("strict software selection");
+  }
+  return test.assert_true(true);
+}
+
+function admission(): test.TestOutcome {
+  let good = info("hardware", capabilities.Hardware);
+  let profiles = capabilities.CodecInfo { ...good, request: capabilities.Request { ...request(), profile: 4096 } };
+  let shape = capabilities.CodecInfo { ...good, request: capabilities.Request { ...request(), width: 3840 } };
+  let encoder = capabilities.CodecInfo { ...good, request: capabilities.Request { ...request(), encoder: true } };
+  let infos = [capabilities.CodecInfo { ...good, supported: false }, profiles, shape, encoder, capabilities.CodecInfo { ...good, alias: true }, good, good, info("", capabilities.Hardware)];
+  return test.assert_true(names(capabilities.ordered(infos, request(), capabilities.PreferHardware)) == ["hardware"]);
+}
+
+function requests(): test.TestOutcome {
+  if (!capabilities.valid(request())) {
+    return test.fail("valid request");
+  }
+  let invalid = [capabilities.Request { ...request(), width: 0 }, capabilities.Request { ...request(), height: -1 }, capabilities.Request { ...request(), mime: "audio/aac" }, capabilities.Request { ...request(), frame_rate: -1 }, capabilities.Request { ...request(), bitrate: -1 }, capabilities.Request { ...request(), profile: -1 }, capabilities.Request { ...request(), level: -1 }, capabilities.Request { ...request(), color_format: -1 }];
+  for r in invalid {
+    if (capabilities.valid(r)) {
+      return test.fail("invalid request admitted");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function presentation_clock(): test.TestOutcome {
+  let Ok(clock) = playback_clock.start(1000000i64, 5000000000i64) else {
+    return test.fail("clock anchor");
+  };
+  let Ok(deadline) = clock.deadline(1033333i64) else {
+    return test.fail("frame deadline");
+  };
+  if (deadline != 5033333000i64) {
+    return test.fail("microseconds to monotonic nanoseconds");
+  }
+  let Ok(paused) = clock.pause(5100000000i64) else {
+    return test.fail("pause");
+  };
+  let Ok(position) = paused.position(6000000000i64) else {
+    return test.fail("paused position");
+  };
+  if (position != 1100000i64) {
+    return test.fail("pause preserves media position");
+  }
+  let Ok(resumed) = paused.resume(6100000000i64) else {
+    return test.fail("resume");
+  };
+  let Ok(after) = resumed.deadline(1133333i64) else {
+    return test.fail("resumed deadline");
+  };
+  if (after != 6133333000i64) {
+    return test.fail("pause shifts the presentation timeline");
+  }
+  match (clock.deadline(9223372036854775807i64)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("deadline overflow");
+    }
+  }
+  match (paused.resume(1i64)) {
+    Err(frame.Header) => {},
+    _ => {
+      return test.fail("monotonic resume");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let runner = test.new("Android video policy");
+  runner = runner.it("hardware preference and strict implementation policies", preference);
+  runner = runner.it("format, profile, direction, aliases, and duplicate admission", admission);
+  runner = runner.it("codec request validation", requests);
+  runner = runner.it("presentation deadlines, pause, resume, and overflow", presentation_clock);
+  return runner.finish();
+}
