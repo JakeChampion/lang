@@ -228,10 +228,11 @@ Artifacts contain both MP4 files, codec names, Android build, elapsed times, and
 
 Emulator results do not establish physical hardware throughput or battery consumption.
 
-Run the same qualification on a connected API 29 or later phone:
+Run the same qualification on a connected API 29 or later phone.
+The check reads the clips with `adb run-as`, so build the APK with `-apk-debuggable`:
 
 ```sh
-bin/fern -apk build/video/fern-videotest.apk -apk-package dev.fern.videotest -apk-min-sdk 29 tests/android/video/app.fern
+bin/fern -apk build/video/fern-videotest.apk -apk-package dev.fern.videotest -apk-min-sdk 29 -apk-debuggable tests/android/video/app.fern
 ANDROID_SERIAL=DEVICE python3 tests/android/video/emulator_check.py build/video/fern-videotest.apk build/video/device
 ```
 

@@ -153,6 +153,8 @@ const extractNativeLibsID = 0x010104ea
 
 const usesCleartextTrafficID = 0x010104ec
 
+const debuggableID = 0x0101000f
+
 // TestApkCleartext checks that -apk-cleartext sets
 // android:usesCleartextTraffic, so the Java networking of the app, such as
 // a media player, can use http://, and that an APK without it leaves the
@@ -169,6 +171,29 @@ func TestApkCleartext(t *testing.T) {
 	}
 	if v, ok := applicationAttr(t, readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml"), extractNativeLibsID); !ok || v != 0 {
 		t.Errorf("android:extractNativeLibs = %#x (set %v), want false beside the cleartext attribute", v, ok)
+	}
+	verifyApkV2(t, raw)
+}
+
+// TestApkDebuggable checks that -apk-debuggable sets android:debuggable, so
+// adb run-as can read the files of the app, and that an APK without it
+// leaves the attribute out.
+func TestApkDebuggable(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	if v, ok := applicationAttr(t, readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml"), debuggableID); ok {
+		t.Errorf("android:debuggable = %#x with no -apk-debuggable, want no attribute", v)
+	}
+	_, raw := buildApk(t, dir, "-apk-debuggable", "-apk-cleartext")
+	man := readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, debuggableID); !ok || v != 0xffffffff {
+		t.Errorf("android:debuggable = %#x (set %v), want true", v, ok)
+	}
+	if v, ok := applicationAttr(t, man, usesCleartextTrafficID); !ok || v != 0xffffffff {
+		t.Errorf("android:usesCleartextTraffic = %#x (set %v), want true beside the debuggable attribute", v, ok)
+	}
+	if v, ok := applicationAttr(t, man, extractNativeLibsID); !ok || v != 0 {
+		t.Errorf("android:extractNativeLibs = %#x (set %v), want false beside the debuggable attribute", v, ok)
 	}
 	verifyApkV2(t, raw)
 }
