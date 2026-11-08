@@ -3969,10 +3969,17 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = s.write("    tbz w0, #31, 1f\n    b __fern_alloc_size_abort\n1:\n");
     s = s.write("    add x0, x0, #24\n");
   }
+  if (ins.str == "alloc" && s.rc_free_debug) {
+    sym = "__fern_raw_alloc_san";
+  }
   if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
     s = s.write("    adrp x1, __fern_lc_rt_req\n");
     s = s.write("    add x1, x1, :lo12:__fern_lc_rt_req\n");
-    s = s.write("    str x0, [x1]\n");
+    if (s.rc_free_debug) {
+      s = s.write("    add x9, x0, #16\n    str x9, [x1]\n");
+    } else {
+      s = s.write("    str x0, [x1]\n");
+    }
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
@@ -5434,7 +5441,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     if (owned) {
       s = s.write("    adrp x2, __fern_lc_rt_req\n");
       s = s.write("    add x2, x2, :lo12:__fern_lc_rt_req\n");
-      s = s.write("    str x1, [x2]\n");
+      if (s.rc_free_debug) {
+        s = s.write("    add x9, x1, #16\n    str x9, [x2]\n");
+      } else {
+        s = s.write("    str x1, [x2]\n");
+      }
     }
     s = s.write("    bl __fern_raw_free\n");
     if (owned) {
@@ -7829,6 +7840,43 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(rt_unframe(s));
   s = s.write(".Lquar_ret:\n");
   return s.write("    ret\n");
+}
+
+// Under -sanitize a raw block carries a redzone: the two words after its
+// size rounded to 8 hold the poison pattern from `__alloc` to `__free`.
+// The allocation takes 16 bytes more, and the free checks the two words.
+function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_raw_alloc_san:\n");
+  s = s.write(rt_frame_of(s, 32) + "    mov x29, sp\n    str x0, [sp, #16]\n    add x0, x0, #16\n    bl __fern_alloc\n    ldr x1, [sp, #16]\n");
+  s = s.write("    add x1, x1, #7\n    lsr x1, x1, #3\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  return s.write("    str x10, [x9]\n    str x10, [x9, #8]\n" + rt_unframe_of(s, 32) + "    ret\n");
+}
+
+// The free side of the redzone: x0 is the block and x5 its size in words.
+// A word that lost the pattern was written past the end of the block.
+// The size then counts the redzone, as the allocation did.
+function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    add x9, x0, x5, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  s = s.write("    ldr x11, [x9]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x11, [x9, #8]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n");
+  return s.write("    add x5, x5, #2\n");
+}
+
+function emit_san_hbo_abort(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.rc_free_debug) {
+    return s;
+  }
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_hbo:\n    .ascii \"fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)\\n\"\n");
+  s = s.write("    .text\n");
+  s = s.write("    .globl __fern_san_abort_hbo\n");
+  s = s.write("__fern_san_abort_hbo:\n");
+  s = s.write("    adrp x1, .Lsan_hbo\n");
+  s = s.write("    add x1, x1, :lo12:.Lsan_hbo\n");
+  s = s.write("    mov x2, #76\n");
+  s = s.write("    mov x0, #2\n");
+  s = s.write("    mov x8, #64\n");
+  s = s.svc(64);
+  return san_report_exit(s);
 }
 
 function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
@@ -10290,6 +10338,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   if (s.rc_free_debug) {
     s = emit_quarantine(s);
+    s = emit_raw_alloc_san(s);
   }
   if (s.harden) {
     s = emit_freelist_take(s);
@@ -10307,6 +10356,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x9, __fern_heap_end\n    add x9, x9, :lo12:__fern_heap_end\n    ldr x9, [x9]\n    cmp x0, x9\n    b.hs .Lrawfree_bad\n");
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
+  if (s.rc_free_debug) {
+    s = san_redzone_check(s);
+  }
   s = s.write("    cbz x5, .Lrawfree_done\n");
   if (s.rc_free_debug) {
     s = san_raw_twice_check(s);
@@ -10918,6 +10970,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   }
   s = emit_san_uaf_abort(s);
   s = emit_san_waf_abort(s);
+  s = emit_san_hbo_abort(s);
   s = emit_san_abort(s);
   return s;
 }

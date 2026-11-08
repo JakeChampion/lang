@@ -22,6 +22,7 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | --- | --- | --- |
 | rc over-release (double free) | a `dec` sees a refcount already `<= 0` | `fern-sanitizer: rc over-release (double free)` + backtrace, exit 124 |
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
+| heap-buffer-overflow | a `__free` finds the redzone after a raw block written | `fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)` + backtrace, exit 124 |
 | leak census | the process exits with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
 
 **A clean run prints no `fern-sanitizer:` line at all.** That is the whole
@@ -76,6 +77,12 @@ Real, and the reason this is opt-in:
   records the policy.
 - Every `inc`/`dec` takes the out-of-line helper (the inline rc fast path is
   bypassed, since it is the helper that carries the poison check).
+- **A raw block carries a redzone.** `__alloc(n)` takes 16 bytes more and
+  fills the two words after `n` rounded to 8 with the poison pattern, and
+  the leak census counts them with the block. `__free(p, n)` reads them
+  back, and a word that lost the pattern reports
+  `fern-sanitizer: heap-buffer-overflow` with exit 124. A write inside the
+  rounding of `n`, past the redzone, or past a typed box is not seen.
 
 With the flag **off**, none of this exists: every check is unemitted and the
 asm is byte-identical to a build from a compiler that never had the feature.
@@ -229,6 +236,10 @@ whose reference outlived the count.
 - **A stale reference that never touches the block again.** The detector fires
   on the `inc`/`dec`, so a dangling pointer that is only ever *read through*
   raw-memory builtins is invisible.
+- **A write past a typed box, or far past a raw block.** The redzone sits
+  after a raw block alone, it is 16 bytes, and the free reads it. A write
+  that lands beyond it, or in the next block, is seen only when that block's
+  own release or count reports it.
 
 Note also that the over-release guard sits **ahead** of the free on the `dec`
 path, so a refcount that drifts low is usually reported as a double free
