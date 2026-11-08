@@ -797,6 +797,47 @@ function packed_file_tests(): void {
     __store_i32(nonfinite as usize + 8 as usize, 2139095040);
   }
   require(packed_decoder.write_samples(__alloc_u8(64), 44, nonfinite, 1, 32).is_err(), "packed WAV stores reject nonfinite samples");
+  for channels in 1..4 {
+    for frames in 0..10 {
+      let source = __alloc_u8(4 * channels * frames);
+      let expected = __alloc_u8(source.len());
+      unsafe {
+        let input = source as usize + 8 as usize;
+        for channel in 0..channels {
+          for i in 0..frames {
+            let value = ((i * 7 + channel * 3) % 17 - 8) as f64 * 9903520314283042199192993792.0;
+            __store_i32(input + (4 * (channel * frames + i)) as usize, f32_bits(value as f32));
+          }
+        }
+        for i in 0..frames {
+          for channel in 0..channels {
+            let a = f32_from_bits(__load_i32(input + (4 * ((channel & ~1) * frames + i)) as usize));
+            let value = a;
+            if ((channel | 1) < channels) {
+              let b = f32_from_bits(__load_i32(input + (4 * ((channel | 1) * frames + i)) as usize));
+              value = if ((channel & 1) == 0) { a + b } else { a - b };
+            }
+            __store_i32(expected as usize + 8 as usize + (4 * (i * channels + channel)) as usize, f32_bits((value as f64 * 1.2621774483536189e-29) as f32));
+          }
+        }
+      }
+      let Ok(actual) = packed_decoder.write_samples(__alloc_u8(3 + source.len()), 3, source, channels, 32) else {
+        exit(1);
+      };
+      for i in 0..source.len() {
+        require(actual[3 + i] == expected[i], "packed WAV output equals scalar channel reconstruction");
+      }
+    }
+    for bad_bits in [2139095040, -8388608, 2143289345] {
+      for index in 0..8 * channels {
+        let source = __alloc_u8(32 * channels);
+        unsafe {
+          __store_i32(source as usize + 8 as usize + (4 * index) as usize, bad_bits);
+        }
+        require(packed_decoder.write_samples(__alloc_u8(source.len()), 0, source, channels, 32).is_err(), "packed WAV output rejects each nonfinite lane");
+      }
+    }
+  }
 }
 
 pub function run_tests(): i32 {
