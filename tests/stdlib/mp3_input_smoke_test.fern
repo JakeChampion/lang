@@ -1,0 +1,22 @@
+import "std/hex";
+import "std/test";
+import "mp3_seek_smoke_vectors";
+import "mp3_input_check";
+
+function independent(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_seek_smoke_vectors.INPUT) else {
+    return test.fail("reference input");
+  };
+  let samples: f32[] = [];
+  for bits in mp3_seek_smoke_vectors.SAMPLE_BITS {
+    samples = samples.append(f32_from_bits(bits as i32));
+  }
+  let ref = mp3_input_check.Reference { sample_rate: 8000, channels: 1, frames: 576i64, start: mp3_seek_smoke_vectors.POSITION, samples: samples };
+  return match (mp3_input_check.run(bytes, ref, 1, false)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}
+
+function main(): i32 {
+  let runner = test.new("MP3 byte-source interpreter smoke");
+  runner = runner.it("independent scalar minimp3 PCM through one-byte input", independent);
+  return runner.finish();
+}

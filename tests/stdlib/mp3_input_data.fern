@@ -1,0 +1,48 @@
+import "std/audio/wire";
+
+pub function concat(a: [u8], b: [u8]): u8[] {
+  let out: u8[] = [];
+  for byte in a {
+    out = out.append(byte);
+  }
+  for byte in b {
+    out = out.append(byte);
+  }
+  return out;
+}
+
+pub function pattern(count: i32): u8[] {
+  let bytes: u8[] = [];
+  for i in 0..count {
+    bytes = bytes.append((i % 251) as u8);
+  }
+  return bytes;
+}
+
+pub function id3(size: i32, footer: boolean): u8[] {
+  let head: u8[] = [73, 68, 51, 4, 0, if (footer) { 16u8 } else { 0u8 }, (size >> 21 & 127) as u8, (size >> 14 & 127) as u8, (size >> 7 & 127) as u8, (size & 127) as u8];
+  let bytes = concat(head, pattern(size));
+  if (footer) {
+    bytes = concat(concat(bytes, [51u8, 68u8, 73u8]), head[3:]);
+  }
+  return bytes;
+}
+
+pub function id3v1(): u8[] {
+  return concat([84u8, 65u8, 71u8], pattern(125));
+}
+
+function ape_footer(size: i32, header: boolean): u8[] {
+  let bytes: u8[] = [65, 80, 69, 84, 65, 71, 69, 88];
+  bytes = wire.put_le(bytes, 2000u64, 4);
+  bytes = wire.put_le(bytes, size as u64, 4);
+  bytes = wire.put_le(bytes, 1u64, 4);
+  bytes = wire.put_le(bytes, if (header) { 2147483648u64 } else { 0u64 }, 4);
+  return concat(bytes, [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+}
+
+pub function ape(payload: [u8], header: boolean): u8[] {
+  let footer = ape_footer(payload.len() + 32, header);
+  let prefix = if (header) { footer } else { [] };
+  return concat(concat(prefix, payload), footer);
+}
