@@ -216,14 +216,15 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 }
 
 // The roots of a call of the method `fa.field` with `arity` arguments. A
-// method of that name reaches only methods with that many parameters, and
-// `ts_call_root` reaches free functions of that name.
+// method of that name reaches only methods with that many parameters. On a
+// receiver of unknown type, `ts_call_root` also reaches free functions of
+// that name.
 function ts_called_method(fa: ast.ExprFieldAccess, arity: i32, own acc: string[]): string[] {
   let tag = ts_recv_tag(fa.obj);
   let ft = util.base_type_name(tag);
   let m = ts_arity_root(fa.field, arity);
   if (ts_named_tag(ft) && !util.str_has_suffix(tag, "[]")) {
-    return acc.append(ts_qualified_root(ft, m)).append(ts_any_root(m)).append(ts_call_root(fa.field));
+    return acc.append(ts_qualified_root(ft, m)).append(ts_any_root(m));
   }
   return acc.append(m).append(ts_call_root(fa.field));
 }
@@ -526,7 +527,7 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, arity: i32, lt: LocalType
       }
       let base = util.base_type_name(spelled);
       if (ts_named_tag(base) && !util.str_has_suffix(spelled, "[]")) {
-        return acc.append(ts_qualified_root(base, m)).append(ts_any_root(m)).append(ts_call_root(fa.field));
+        return acc.append(ts_qualified_root(base, m)).append(ts_any_root(m));
       }
     }
   }

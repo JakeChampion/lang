@@ -140,3 +140,88 @@ function run(): i32 { return subprocess("true", [], "").exit_code; }
 		})
 	}
 }
+
+// A method call or an operator on a receiver of open type reaches only the
+// methods of that name that take its argument count. Atlas.add takes three
+// arguments and Atlas.neg one, so `a + b`, `a.add(b)` and `-a` keep neither.
+func TestSelfHostTreeshakeMethodArity(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	const decls = `import "core/ops";
+struct Atlas { n: i32 }
+function (a: Atlas) add(w: i32, h: i32, n: i32): i32 { return subprocess("true", [], "").exit_code + w + h + n; }
+function (a: Atlas) neg(n: i32): i32 { return subprocess("true", [], "").exit_code + n; }
+struct P { n: i32 }
+impl ops.Add for P { function add(self: Self, o: Self): Self { return P { n: self.n + o.n }; } }
+impl ops.Neg for P { function neg(self: Self): Self { return P { n: 0 - self.n }; } }
+trait Fill { function add(self: Self, w: i32, h: i32, n: i32): i32; }
+struct Q { n: i32 }
+impl Fill for Q { function add(self: Self, w: i32, h: i32, n: i32): i32 { return self.n + w + h + n; } }
+`
+	for _, tc := range []struct {
+		name, main string
+		e066       bool
+	}{
+		{"operator", "function sum[T: ops.Add](a: T, b: T): T { return a + b; }\nfunction main(): i32 { return sum(P { n: 1 }, P { n: 2 }).n - 3; }\n", false},
+		{"method", "function sum[T: ops.Add](a: T, b: T): T { return a.add(b); }\nfunction main(): i32 { return sum(P { n: 1 }, P { n: 2 }).n - 3; }\n", false},
+		{"negation", "function flip[T: ops.Neg](a: T): T { return -a; }\nfunction main(): i32 { return flip(P { n: 0 }).n; }\n", false},
+		{"same-count", "function fill[T: Fill](x: T): i32 { return x.add(1, 2, 3); }\nfunction main(): i32 { return fill(Q { n: 0 }) - 6; }\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(prog, []byte(decls+tc.main), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, _ := exec.Command(cli, "-check", "-target", "wasm32-wasi", prog, stdlib).CombinedOutput()
+			if got := strings.Contains(string(out), "E066"); got != tc.e066 {
+				t.Fatalf("E066 reported = %v, want %v\n%s", got, tc.e066, out)
+			}
+			if !tc.e066 && strings.Contains(string(out), "error") {
+				t.Fatalf("the program does not check:\n%s", out)
+			}
+		})
+	}
+}
+
+// An executable may hold a method that calls a C import, when only an
+// operator of another shape names that method.
+func TestSelfHostTreeshakeOperatorSkipsCImportMethod(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "main.fern")
+	src := `import "core/ops";
+@import("libc.so.6", "getpid")
+function c_pid(): i32;
+struct Atlas { n: i32 }
+function (a: Atlas) add(w: i32, h: i32, n: i32): i32 { return c_pid() + w + h + n; }
+struct P { n: i32 }
+impl ops.Add for P { function add(self: Self, o: Self): Self { return P { n: self.n + o.n }; } }
+function sum[T: ops.Add](a: T, b: T): T { return a + b; }
+function main(): i32 { return sum(P { n: 1 }, P { n: 2 }).n - 3; }
+`
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(cli, "-target", "x86-64-linux", "-o", filepath.Join(dir, "main"), prog, stdlib).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the executable keeps the C import of an unreached method: %v\n%s", err, out)
+	}
+}
+
+// A call through a module reaches a free function whose defaulted parameters
+// it leaves out.
+func TestSelfHostTreeshakeModuleCallKeepsDefaultedFunction(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	dir := t.TempDir()
+	lib := "pub function scale(k: i32, j: i32 = 1): i32 { return subprocess(\"true\", [], \"\").exit_code * k * j; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(prog, []byte("import \"./lib\";\nfunction main(): i32 { return lib.scale(2); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := exec.Command(cli, "-check", "-target", "wasm32-wasi", prog, stdlib).CombinedOutput()
+	if !strings.Contains(string(out), "E066") {
+		t.Fatalf("the module call does not reach scale and its subprocess:\n%s", out)
+	}
+}
