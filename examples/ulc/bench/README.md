@@ -1,16 +1,19 @@
 # ULC benchmarks
 
 Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
-The complete block-size sweep records 112 lower Fern medians across 128 comparisons against tuned upstream C.
+The final suite records 125 lower Fern medians across 144 comparisons against tuned upstream C.
+The geometric mean of C/Fern ratios is 1.313×, with equal weights for all cases.
+Without silence, the ratio is 1.193× across 108 cases.
 Several cases still favor C, particularly large-block noise decode.
-These results cover the stated configurations and do not establish a universal performance ranking.
+These results do not establish a universal performance ranking.
 
-## Complete block-size sweep
+## Final method and results
 
-This sweep records compiler and codec source `e2e09fc33263227ad1b7701be72a390bc6167575`.
-It includes faster plan construction, deferred serial decoder plans, and the serial encoder plan reuse.
+The compiler and codec source is `f8062c446be7c67bc5f1ea7290ffc117743b4440`.
+The suite covers all eight block sizes with one and four workers.
 Each fixture lasts ten seconds, with stereo PCM16 at 44.1 kHz and VBR quality 75.
-Each row has eleven alternating repetitions, including process startup and file I/O.
+Two additional configurations use 100-second inputs and the default block size of 2048.
+Each case has eleven alternating repetitions, including process startup and file I/O.
 No other local builds or tests run during measurement.
 
 The single-worker runs use CPU 0.
@@ -20,26 +23,73 @@ The Fern worker count is a maximum, because short files can take a serial path.
 The C source, libfourier source, and compiler flags match the earlier method below.
 
 A win means a lower median elapsed time.
-Each block-size configuration includes four inputs and both operations, for eight comparisons.
+Each configuration includes four inputs and both operations, for eight comparisons.
 A C/Fern ratio above 1 means Fern is faster.
-The table gives the minimum and maximum ratios across those eight comparisons.
+The next table gives the minimum and maximum ratios across the ten-second cases.
 
 | Block size | One-worker wins | One-worker C/Fern range | Four-worker wins | Four-worker C/Fern range |
 | ---: | ---: | ---: | ---: | ---: |
-| 256 | 5/8 | 0.936–2.620 | 8/8 | 1.185–2.339 |
-| 512 | 7/8 | 0.999–2.644 | 5/8 | 0.761–2.543 |
-| 1024 | 8/8 | 1.094–2.291 | 7/8 | 0.799–2.145 |
-| 2048 | 8/8 | 1.111–3.063 | 8/8 | 1.124–2.316 |
-| 4096 | 8/8 | 1.001–2.390 | 7/8 | 0.905–1.993 |
-| 8192 | 8/8 | 1.097–2.199 | 8/8 | 1.085–2.110 |
-| 16384 | 7/8 | 0.900–2.851 | 7/8 | 0.827–2.253 |
-| 32768 | 6/8 | 0.809–2.199 | 5/8 | 0.781–2.139 |
+| 256 | 5/8 | 0.952–2.342 | 7/8 | 0.937–2.243 |
+| 512 | 8/8 | 1.045–2.785 | 8/8 | 1.004–2.299 |
+| 1024 | 8/8 | 1.109–2.777 | 7/8 | 0.985–2.301 |
+| 2048 | 8/8 | 1.135–1.985 | 8/8 | 1.084–2.486 |
+| 4096 | 7/8 | 0.962–2.365 | 7/8 | 0.791–2.172 |
+| 8192 | 8/8 | 1.052–2.369 | 6/8 | 0.846–2.483 |
+| 16384 | 6/8 | 0.751–2.825 | 5/8 | 0.835–2.813 |
+| 32768 | 6/8 | 0.687–1.855 | 5/8 | 0.805–1.904 |
 
-[All sixteen raw reports](x86-64-block-sweep-e2e09fc.json) retain individual times, input hashes, executable hashes, and compiler hashes.
-Fern wins 57 of 64 single-worker comparisons and 55 of 64 four-worker comparisons.
+The 100-second default-block runs give these ratios:
+
+| Input | Operation | One worker | Four workers |
+| --- | --- | ---: | ---: |
+| silence | encode | 1.317 | 1.388 |
+| silence | decode | 2.163 | 2.173 |
+| tone | encode | 1.140 | 1.799 |
+| tone | decode | 1.264 | 1.557 |
+| noise | encode | 1.112 | 1.835 |
+| noise | decode | 1.013 | 1.181 |
+| transients | encode | 1.162 | 1.880 |
+| transients | decode | 1.261 | 1.325 |
+
+[All eighteen raw reports](x86-64-block-sweep.json) retain individual times, input hashes, executable hashes, and compiler hashes.
+A bootstrap of paired repetitions gives a 95% interval of 1.293× to 1.354× for the aggregate ratio.
+The calculation uses 2000 repetitions and seed 417.
+This interval covers repetitions within this fixed suite.
+It does not quantify other inputs, machines, or runs.
+
 The oracle checks both decoder outputs outside the timed repetitions.
-The maximum Fern error against the double-precision FFT is below `1e-5` in every case.
+The maximum Fern error against the double-precision FFT is `2.38e-7` across these fixtures.
 The records include C errors separately, without a wider Fern tolerance.
+
+## Reproduce the final suite
+
+Build the C tools with the flags in the reproduction section below.
+Build the Fern tools from the measured source:
+
+```sh
+git worktree add /tmp/ulc-measured f8062c446be7c67bc5f1ea7290ffc117743b4440
+make -C /tmp/ulc-measured build
+make -C /tmp/ulc-measured/examples/ulc
+make -C /tmp/ulc-measured/examples/ulc build/reference64
+python3 examples/ulc/bench/run.py \
+  --fern /tmp/ulc-measured/examples/ulc/build/ulc --compiler /tmp/ulc-measured/bin/fern \
+  --oracle /tmp/ulc-measured/examples/ulc/build/reference64 \
+  --source-commit f8062c446be7c67bc5f1ea7290ffc117743b4440 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --seconds 10 --repetitions 11 --cpu 0 --threads 1 --block-size 256 \
+  --output /tmp/ulc-report-256-one.json
+```
+
+Repeat for all block sizes and worker counts.
+Use `--cpus 0,1,2,3 --threads 4` for the four-worker runs.
+Add the two 100-second runs at block size 2048.
+Combine the reports and reproduce the bootstrap interval:
+
+```sh
+python3 examples/ulc/bench/summarize.py \
+  --output /tmp/ulc-sweep.json /tmp/ulc-report-*.json
+```
 
 ## Earlier default-block method
 
@@ -185,51 +235,12 @@ Exact noise tests cover all 512 ordinary run lengths and all 256 decay codes at 
 
 A scalar generator checks the noise tables.
 `python3 tests/generate_noise_tables.py --write` regenerates them from the codec directory.
-The sanitizer unit run reports 191613 allocations, 191613 frees, and zero live bytes.
+The sanitizer unit run for source `15212d32` reports 191613 allocations, 191613 frees, and zero live bytes.
 
 These synthetic inputs do not replace speech and music collections, other hardware, or listening panels.
 The measurements do not establish speed for other quality settings, block sizes, or rate-control modes.
 
-## Extended block-size measurements
-
-Source `c5ee7dbac904297c54e5e4acaec99bb2f55886c8` adds faster plan construction and deferred serial decoder plans.
-These measurements use the same C build, CPU affinity, quality, and alternating execution order as above.
-Each row has eleven repetitions and one worker.
-The endpoint inputs last ten seconds.
-The default-block inputs last 100 seconds.
-
-The results still show gaps for small-block encoding and large-block decoding.
-The default-block noise decode margin is narrow.
-These records preserve those losses and do not establish a universal speed ranking.
-
-| Block size | Input | Operation | C/Fern ratio |
-| ---: | --- | --- | ---: |
-| 256 | silence | encode | 1.447 |
-| 256 | silence | decode | 2.515 |
-| 256 | tone | encode | 0.985 |
-| 256 | tone | decode | 1.382 |
-| 256 | noise | encode | 0.965 |
-| 256 | noise | decode | 1.156 |
-| 256 | transients | encode | 0.986 |
-| 256 | transients | decode | 1.157 |
-| 2048 | silence | encode | 1.419 |
-| 2048 | silence | decode | 1.917 |
-| 2048 | tone | encode | 1.150 |
-| 2048 | tone | decode | 1.149 |
-| 2048 | noise | encode | 1.088 |
-| 2048 | noise | decode | 1.013 |
-| 2048 | transients | encode | 1.165 |
-| 2048 | transients | decode | 1.201 |
-| 32768 | silence | encode | 1.390 |
-| 32768 | silence | decode | 2.270 |
-| 32768 | tone | encode | 1.329 |
-| 32768 | tone | decode | 0.918 |
-| 32768 | noise | encode | 1.326 |
-| 32768 | noise | decode | 0.803 |
-| 32768 | transients | encode | 1.262 |
-| 32768 | transients | decode | 0.948 |
-
-Raw records: [256 samples](x86-64-setup-one-worker-256.json), [2048 samples](x86-64-setup-one-worker-2048.json), and [32768 samples](x86-64-setup-one-worker-32768.json).
+## Accuracy reference
 
 The optional `--oracle` argument selects `tests/reference64.fern`, which uses a double-precision FFT and overlap.
 The oracle runs outside the timed repetitions.
