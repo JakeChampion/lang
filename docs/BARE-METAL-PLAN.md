@@ -605,8 +605,8 @@ check time, in the same mechanism that enforces the OS boundary today.
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver. **The driver exists:** `std/virtio` is the virtio-mmio
-  version 2 transport with split virtqueues in `std/dma` buffers, and
-  `std/virtio_net` sends and receives Ethernet frames over it, by polling.
+  version 2 transport with split virtqueues in `std/dma` buffers.
+  `std/virtio_net` sends and receives Ethernet frames over it.
   `std/ip` is Ethernet, ARP, IPv4, UDP and the TCP segments over the driver.
   `std/tcp/conn` is the TCP connection, `std/tcp` binds connections to an
   interface, and `std/tcp/serve` serves HTTP over it with the shape of
@@ -664,7 +664,10 @@ environment over the FernOS syscalls can come later, as an improvement.
 1. **Done: the freestanding codegen is in the compiler** (#14245). It reads the
    entry shape from the descriptor, so `EntryReset` can be a second value.
 2. **Done: MMIO loads and stores that no pass removes** (#14249). The compiler
-   still removes an unused plain raw load (see "Volatile").
+   still removes an unused plain raw load (see "Volatile"). The `mmio`
+   capability gates the intrinsics: the `kernel` and the freestanding profiles
+   grant it, a hosted target refuses them with E066, and a dependency needs
+   the `mmio` package capability.
 3. **Done: the interrupt/RC rule** (#14250). "The decision (#14250)" above records
    it: a checked top half, the IRQ region in raw memory, a masked idle wait, and a
    bottom half in the reactor.
