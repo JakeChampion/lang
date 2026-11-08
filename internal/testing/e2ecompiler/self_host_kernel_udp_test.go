@@ -26,14 +26,19 @@ function serve(iface: ip.Interface): string {
   let turns = 0;
   while (echoes < 3 && turns < 400000000) {
     match (iface.poll()) {
-      Some(d) => {
-        if (d.port == 7) {
-          print("datagram from " + (d.source[0] as i32).to_string() + "." + (d.source[1] as i32).to_string() + "." + (d.source[2] as i32).to_string() + "." + (d.source[3] as i32).to_string() + " of " + d.payload.len().to_string() + " bytes");
-          if (iface.send_udp(d.source, d.source_port, 7, d.payload)) {
-            echoes += 1;
-          } else {
-            print("no route back");
-          }
+      Some(p) => {
+        match (p) {
+          Udp(d) => {
+            if (d.port == 7) {
+              print("datagram from " + (d.source[0] as i32).to_string() + "." + (d.source[1] as i32).to_string() + "." + (d.source[2] as i32).to_string() + "." + (d.source[3] as i32).to_string() + " of " + d.payload.len().to_string() + " bytes");
+              if (iface.send_udp(d.source, d.source_port, 7, d.payload)) {
+                echoes += 1;
+              } else {
+                print("no route back");
+              }
+            }
+          },
+          Tcp(s) => {}
         }
       },
       None => {}
@@ -44,7 +49,12 @@ function serve(iface: ip.Interface): string {
 }
 `
 
-const udpMainSrc = `import "./board";
+// kernelNetMain is the main module of a network test on qemu-virt. It builds
+// the frames and the kernel mapping, opens the virtio-net device of the
+// device tree over std/virtio_net, and opens a std/ip interface at 10.0.2.15
+// with the gateway of qemu's user network. `run` then uses `iface`.
+func kernelNetMain(imports, body, run string) string {
+	return `import "./board";
 import "std/fdt";
 import "std/frames";
 import "std/ip";
@@ -52,8 +62,8 @@ import "std/option";
 import "std/pagetable";
 import "std/virtio";
 import "std/virtio_net";
-
-` + udpEchoSrc + `
+` + imports + `
+` + body + `
 // The first virtio-mmio transport of the device tree with a network device.
 function find_net(t: fdt.Tree): Option[virtio.Device] {
   for i in 0..t.nodes.len() {
@@ -129,13 +139,17 @@ function main(): i32 {
     return 1;
   };
   let iface = ip.open(n, [10u8, 0u8, 2u8, 15u8], [10u8, 0u8, 2u8, 2u8], page);
-  print("listening on udp 7");
-  print(serve(iface));
+` + run + `
   return 0;
 }
 `
+}
 
-const udpX86MainSrc = `import "./board";
+// kernelNetX86Main is kernelNetMain for qemu microvm: the RAM comes from the
+// PVH memory map, and the device is on one of the eight virtio-mmio
+// transports. main returns 16, so qemu exits with 33 from isa-debug-exit.
+func kernelNetX86Main(imports, body, run string) string {
+	return `import "./board";
 import "std/frames";
 import "std/ip";
 import "std/option";
@@ -143,8 +157,8 @@ import "std/pagetable";
 import "std/pvh";
 import "std/virtio";
 import "std/virtio_net";
-
-` + udpEchoSrc + `
+` + imports + `
+` + body + `
 // Maps every RAM region of the memory map as ordinary memory, rounded out to
 // pages, and the device window as device memory.
 function map_all(tables: pagetable.Tables, regions: pvh.MemoryRegion[]): boolean {
@@ -226,11 +240,18 @@ function main(): i32 {
     return 1;
   };
   let iface = ip.open(n, [10u8, 0u8, 2u8, 15u8], [10u8, 0u8, 2u8, 2u8], page);
-  print("listening on udp 7");
-  print(serve(iface));
+` + run + `
   return 16;
 }
 `
+}
+
+const udpRun = `  print("listening on udp 7");
+  print(serve(iface));`
+
+var udpMainSrc = kernelNetMain("", udpEchoSrc, udpRun)
+
+var udpX86MainSrc = kernelNetX86Main("", udpEchoSrc, udpRun)
 
 // freeUDPPort takes a port from the kernel and gives it back, so qemu can
 // bind it a moment later.

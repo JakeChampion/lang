@@ -53,7 +53,7 @@ function ts_named_tag(tag: string): boolean {
   }
   let i = 0;
   while (i < tag.len()) {
-    if (!lexer.is_alphanumeric(tag[i] as i32)) {
+    if (!lexer.is_alphanumeric(tag[i] as i32) && tag[i] != b'_') {
       return false;
     }
     i += 1;

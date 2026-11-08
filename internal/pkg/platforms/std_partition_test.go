@@ -94,6 +94,7 @@ var stdModuleReach = map[string]string{
 	"std/stream":        "",
 	"std/string":        "",
 	"std/table":         "",
+	"std/tcp":           "privileged",
 	"std/test":          "config,env,fs,host,ktls,log,now,pollable,privileged,random,reactor,tcp,unix,uring",
 	"std/textwrap":      "",
 	"std/time":          "",

@@ -1,10 +1,10 @@
 # IPv4 over a network device
 
-A kernel that answers the host needs more than frames. This module is the first layers of the network stack of `docs/BARE-METAL-PLAN.md` (#14259) over `std/virtio_net`: Ethernet frames, ARP for the addresses on the link, IPv4 and UDP. TCP comes above it later.
+A kernel that answers the host needs more than frames. This module is the first layers of the network stack of `docs/BARE-METAL-PLAN.md` (#14259) over `std/virtio_net`: Ethernet frames, ARP for the addresses on the link, IPv4, UDP, and the wire format of TCP segments. `std/tcp/conn` is the TCP state machine over those segments, and `std/tcp` binds its connections to an interface.
 
 An interface has one IPv4 address, a gateway and the MAC of its device. It keeps an ARP cache in a page of raw memory that the caller gives it. The interface value then copies freely, and nothing allocates on the receive path. The interface learns a MAC from every IPv4 frame it receives and from every ARP reply. It answers an ARP request for its own address.
 
-The module polls. `poll` takes one frame from the device, handles ARP itself, and gives a UDP datagram to the caller. A caller that waits for a datagram calls it in a loop. The IRQ line of the device, through `std/async`, comes later.
+The module polls. `poll` takes one frame from the device, handles ARP itself, and gives a UDP datagram or a TCP segment to the caller. A caller that waits for a datagram calls it in a loop. The IRQ line of the device, through `std/async`, comes later.
 
 ## Module assembly
 
@@ -40,6 +40,7 @@ The module polls. `poll` takes one frame from the device, handles ARP itself, an
 <<dependencies>>=
 import "std/option";
 import "std/raw";
+import "std/tcp/conn";
 import "std/virtio_net";
 ```
 
@@ -54,6 +55,8 @@ const ETHER_IPV4: i32 = 0x0800;
 const ETHER_ARP: i32 = 0x0806;
 
 const PROTO_UDP: i32 = 17;
+
+const PROTO_TCP: i32 = 6;
 
 const ARP_ENTRIES: i32 = 32;
 
@@ -77,6 +80,15 @@ function be16(data: u8[], at: i32): i32 {
 
 function push_be16(data: u8[], v: i32): u8[] {
   return data.append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function be32(data: u8[], at: i32): u32 {
+  return (be16(data, at) as i64 * 65536i64 + be16(data, at + 2) as i64) as u32;
+}
+
+function push_be32(data: u8[], v: u32): u8[] {
+  let high = (v as i64 / 65536i64) as i32;
+  return push_be16(push_be16(data, high), (v as i64 % 65536i64) as i32);
 }
 
 function push_all(data: u8[], more: u8[]): u8[] {
@@ -123,6 +135,15 @@ pub function checksum(data: u8[], start: i32, end: i32): i32 {
   }
   return sum ^ 0xffff;
 }
+
+// The checksum of a UDP or TCP segment, which also covers the pseudo-header:
+// the two addresses, the protocol and the length of the segment.
+pub function transport_checksum(source: u8[], destination: u8[], proto: i32, segment: u8[]): i32 {
+  let data = push_all(push_all([], source), destination);
+  data = push_be16(push_be16(data, proto), segment.len());
+  data = push_all(data, segment);
+  return checksum(data, 0, data.len());
+}
 ```
 
 ### `pub struct Interface`
@@ -135,6 +156,9 @@ pub struct Interface { net: virtio_net.Net, mac: u8[], address: u8[], gateway: u
 
 // A UDP datagram the interface received: the sender, the ports and the data.
 pub struct Datagram { source: u8[], source_port: i32, port: i32, payload: u8[] }
+
+// What `poll` gives the caller: a UDP datagram or a TCP segment.
+pub enum Packet { Udp(Datagram), Tcp(conn.Segment) }
 
 pub function open(net: virtio_net.Net, address: u8[], gateway: u8[], state: usize): Interface {
   let i = 0 as usize;
@@ -234,11 +258,11 @@ pub function (i: Interface) request(address: u8[]): boolean {
 
 ### `receiving`
 
-An ARP request for the interface's address gets a reply, and an ARP reply fills the cache. An IPv4 frame for the interface teaches the cache the sender's MAC. A UDP datagram in it goes to the caller. The interface drops every other frame.
+An ARP request for the interface's address gets a reply, and an ARP reply fills the cache. An IPv4 frame for the interface teaches the cache the sender's MAC. A UDP datagram or a TCP segment in it goes to the caller, after its checksum passes. The interface drops every other frame.
 
 ```fern
 <<receiving>>=
-pub function (i: Interface) poll(): Option[Datagram] {
+pub function (i: Interface) poll(): Option[Packet] {
   let Some(frame) = i.net.receive() else {
     return None;
   };
@@ -272,7 +296,7 @@ function (i: Interface) take_arp(frame: u8[]): void {
   }
 }
 
-function (i: Interface) take_ipv4(frame: u8[]): Option[Datagram] {
+function (i: Interface) take_ipv4(frame: u8[]): Option[Packet] {
   if (frame.len() < 34 || frame[14] as i32 != 0x45) {
     return None;
   }
@@ -286,20 +310,83 @@ function (i: Interface) take_ipv4(frame: u8[]): Option[Datagram] {
   }
   let source = bytes(frame, 26, 30);
   i.learn(source, bytes(frame, 6, 12));
-  if (frame[23] as i32 != PROTO_UDP || total < 28) {
+  let proto = frame[23] as i32;
+  let segment = bytes(frame, 34, 14 + total);
+  if (proto == PROTO_TCP) {
+    return take_tcp(source, destination, segment);
+  }
+  if (proto == PROTO_UDP) {
+    return take_udp(source, destination, segment);
+  }
+  return None;
+}
+
+// Parses a UDP datagram. A checksum of zero means none, and a datagram with
+// a bad checksum is dropped.
+function take_udp(source: u8[], destination: u8[], segment: u8[]): Option[Packet] {
+  if (segment.len() < 8) {
     return None;
   }
-  let length = be16(frame, 38);
-  if (length < 8 || 20 + length > total) {
+  let length = be16(segment, 4);
+  if (length < 8 || length > segment.len()) {
     return None;
   }
-  return Some(Datagram { source: source, source_port: be16(frame, 34), port: be16(frame, 36), payload: bytes(frame, 42, 34 + length) });
+  let datagram = bytes(segment, 0, length);
+  if (be16(datagram, 6) != 0 && transport_checksum(source, destination, PROTO_UDP, datagram) != 0) {
+    return None;
+  }
+  return Some(Udp(Datagram { source: source, source_port: be16(datagram, 0), port: be16(datagram, 2), payload: bytes(datagram, 8, length) }));
+}
+
+// Parses a TCP segment: the header, the maximum segment size option of a
+// SYN, and the payload. A segment with a bad checksum is dropped.
+function take_tcp(source: u8[], destination: u8[], segment: u8[]): Option[Packet] {
+  let n = segment.len();
+  if (n < 20) {
+    return None;
+  }
+  let offset = (segment[12] as i32 >> 4) * 4;
+  if (offset < 20 || offset > n) {
+    return None;
+  }
+  if (transport_checksum(source, destination, PROTO_TCP, segment) != 0) {
+    return None;
+  }
+  return Some(Tcp(conn.Segment { source: source, source_port: be16(segment, 0), destination: destination, port: be16(segment, 2), seq: be32(segment, 4), ack: be32(segment, 8), flags: segment[13] as i32 & 63, window: be16(segment, 14), mss: tcp_mss(segment, offset), payload: bytes(segment, offset, n) }));
+}
+
+// The maximum segment size option of a TCP header whose options end at
+// `offset`, or 0 when the header carries none.
+function tcp_mss(segment: u8[], offset: i32): i32 {
+  let at = 20;
+  while (at < offset) {
+    let kind = segment[at] as i32;
+    if (kind == 0) {
+      return 0;
+    }
+    if (kind == 1) {
+      at += 1;
+      continue;
+    }
+    if (at + 1 >= offset) {
+      return 0;
+    }
+    let len = segment[at + 1] as i32;
+    if (len < 2 || at + len > offset) {
+      return 0;
+    }
+    if (kind == 2 && len == 4) {
+      return be16(segment, at + 2);
+    }
+    at += len;
+  }
+  return 0;
 }
 ```
 
 ### `sending`
 
-`send_udp` builds the IPv4 and UDP headers around the payload. It sends the frame to the MAC of the destination, or to the MAC of the gateway for an address off the link. It is false when the cache does not have that MAC. `request` asks for it, and `poll` learns the answer.
+`send_udp` builds the UDP header around the payload, and `send_tcp` the TCP header around a segment of `std/tcp/conn`. Both go through `send_ipv4`, which builds the IPv4 header. It sends the frame to the MAC of the destination, or to the MAC of the gateway for an address off the link. It is false when the cache does not have that MAC. `request` asks for it, and `poll` learns the answer.
 
 ```fern
 <<sending>>=
@@ -315,7 +402,7 @@ function (i: Interface) on_link(address: u8[]): boolean {
   return address[0] == i.address[0] && address[1] == i.address[1] && address[2] == i.address[2];
 }
 
-pub function (i: Interface) send_udp(destination: u8[], destination_port: i32, source_port: i32, payload: u8[]): boolean {
+pub function (i: Interface) send_ipv4(destination: u8[], proto: i32, segment: u8[]): boolean {
   let hop = destination;
   if (!i.on_link(destination)) {
     hop = i.gateway;
@@ -323,20 +410,53 @@ pub function (i: Interface) send_udp(destination: u8[], destination_port: i32, s
   let Some(mac) = i.resolve(hop) else {
     return false;
   };
-  let length = 8 + payload.len();
   let f = push_all(push_all([], mac), i.mac);
   f = push_be16(f, ETHER_IPV4);
   let ip: u8[] = [0x45u8, 0u8];
-  ip = push_be16(ip, 20 + length);
+  ip = push_be16(ip, 20 + segment.len());
   ip = push_be16(ip, i.next_id());
-  ip = push_all(ip, [0u8, 0u8, 64u8, PROTO_UDP as u8, 0u8, 0u8]);
+  ip = push_all(ip, [0u8, 0u8, 64u8, proto as u8, 0u8, 0u8]);
   ip = push_all(push_all(ip, i.address), destination);
   let c = checksum(ip, 0, 20);
   ip = ip.with(10, (c >> 8) as u8).with(11, (c & 255) as u8);
+  return i.net.send(push_all(push_all(f, ip), segment));
+}
+
+// Puts the transport checksum into bytes `at` and `at + 1` of the segment. A
+// UDP checksum of zero means none, so it is sent as all ones.
+function (i: Interface) with_checksum(destination: u8[], proto: i32, segment: u8[], at: i32): u8[] {
+  let c = transport_checksum(i.address, destination, proto, segment);
+  if (c == 0 && proto == PROTO_UDP) {
+    c = 0xffff;
+  }
+  return segment.with(at, (c >> 8) as u8).with(at + 1, (c & 255) as u8);
+}
+
+pub function (i: Interface) send_udp(destination: u8[], destination_port: i32, source_port: i32, payload: u8[]): boolean {
   let udp: u8[] = [];
   udp = push_be16(push_be16(udp, source_port), destination_port);
-  udp = push_be16(push_be16(udp, length), 0);
+  udp = push_be16(push_be16(udp, 8 + payload.len()), 0);
   udp = push_all(udp, payload);
-  return i.net.send(push_all(push_all(f, ip), udp));
+  return i.send_ipv4(destination, PROTO_UDP, i.with_checksum(destination, PROTO_UDP, udp, 6));
+}
+
+// Sends a TCP segment of std/tcp/conn, with the maximum segment size option
+// when the segment carries one. The segment's source is this interface.
+pub function (i: Interface) send_tcp(s: conn.Segment): boolean {
+  let header = 20;
+  if (s.mss > 0) {
+    header = 24;
+  }
+  let tcp: u8[] = [];
+  tcp = push_be16(push_be16(tcp, s.source_port), s.port);
+  tcp = push_be32(push_be32(tcp, s.seq), s.ack);
+  tcp = tcp.append((header / 4 << 4) as u8).append(s.flags as u8);
+  tcp = push_be16(push_be16(tcp, s.window), 0);
+  tcp = push_be16(tcp, 0);
+  if (s.mss > 0) {
+    tcp = push_be16(push_all(tcp, [2u8, 4u8]), s.mss);
+  }
+  tcp = push_all(tcp, s.payload);
+  return i.send_ipv4(s.destination, PROTO_TCP, i.with_checksum(s.destination, PROTO_TCP, tcp, 16));
 }
 ```
