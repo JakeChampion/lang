@@ -95,7 +95,6 @@ pub function stmt_line(st: Stmt): i32 {
       return 0;
     }
   }
-  return 0;
 }
 
 pub function stmt_col(st: Stmt): i32 {
@@ -211,7 +210,6 @@ pub function expr_line(e: Expr): i32 {
       return z.line;
     }
   }
-  return 0;
 }
 
 pub function expr_ty(e: Expr): string {
@@ -274,7 +272,6 @@ pub function expr_ty(e: Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 pub function expr_col(e: Expr): i32 {
@@ -337,7 +334,6 @@ pub function expr_col(e: Expr): i32 {
       return z.col;
     }
   }
-  return 0;
 }
 
 pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string }

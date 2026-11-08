@@ -299,7 +299,6 @@ function decode_source_read(input: Result[u8[], IoError]): Result[string, lexer.
       return Err(lexer.TokError { msg: e.message(), code: "", line: 0, col: 0 });
     }
   }
-  return Err(lexer.TokError { msg: "could not read source", code: "", line: 0, col: 0 });
 }
 
 function report_source_read_failure(st: DiagStyle, what: string, path: string, e: lexer.TokError): void {
@@ -3242,7 +3241,6 @@ function find_manifest_dir(dir: string): string {
       return "";
     }
   }
-  return "";
 }
 
 function run_resolve(start: string, fetcher: Fetcher): i32 {
@@ -3994,7 +3992,6 @@ function entry_sources(path: string, src: string): (Sources, string) {
       return (plain, tangle_error(path, e.line, e.col, e.msg));
     }
   }
-  return (plain, "");
 }
 
 function multi_file_sources(path: string, src: string): (Sources, string) {
@@ -4375,7 +4372,6 @@ function file_readable(path: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function interp_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
@@ -4423,7 +4419,6 @@ function interp_status(v: interp.Value): (i32, string) {
       return (254, "");
     }
   }
-  return (254, "");
 }
 
 function run_repl(root: string, target: string): i32 {
@@ -4948,7 +4943,6 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
       return 1;
     }
   }
-  return 1;
 }
 
 struct Server {

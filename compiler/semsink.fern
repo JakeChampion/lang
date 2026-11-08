@@ -157,7 +157,6 @@ function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean
       return reads_of(f, at, lent);
     }
   }
-  return reads_of(f, at, lent);
 }
 
 // reads_of with lent leaves a call's record or variant argument unspent

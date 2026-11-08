@@ -126,7 +126,6 @@ function token_line(t: lexer.Token): i32 {
       return x.line;
     }
   }
-  return 0;
 }
 
 function opens_non_block(t: lexer.Token): boolean {
@@ -327,7 +326,6 @@ pub function is_unit_expr(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function e_ident(name: string): ast.Expr {
@@ -693,7 +691,6 @@ function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function s_break(): ast.Stmt {
@@ -1102,7 +1099,6 @@ function tok_spelling(t: lexer.Token): string {
       return "";
     }
   }
-  return "";
 }
 
 function tok_desc(t: lexer.Token): string {
@@ -1213,7 +1209,6 @@ function resolve_labels_stmt(st: ast.Stmt, labels: string[]): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function rl_expr(e: ast.Expr, labels: string[]): ast.Expr {
@@ -1232,7 +1227,6 @@ function rl_expr(e: ast.Expr, labels: string[]): ast.Expr {
       return rl_expr_kids(e, labels);
     }
   }
-  return e;
 }
 
 function rl_expr_kids(e: ast.Expr, labels: string[]): ast.Expr {
@@ -1326,7 +1320,6 @@ function (p: Par) at_end(): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function (p: Par) peek(): lexer.Token {
@@ -1364,7 +1357,6 @@ function (p: Par) peek_line(): i32 {
       return x.line;
     }
   }
-  return 0;
 }
 
 function (p: Par) peek_col(): i32 {
@@ -1395,7 +1387,6 @@ function (p: Par) peek_col(): i32 {
       return x.col;
     }
   }
-  return 0;
 }
 
 function (p: Par) advance(): Par {
@@ -1607,7 +1598,6 @@ function (p: Par) peek_punct(): string {
       return "";
     }
   }
-  return "";
 }
 
 function consume_pub_package(p: Par): (boolean, Par) {
@@ -1635,7 +1625,6 @@ function (p: Par) peek_keyword(): string {
       return "";
     }
   }
-  return "";
 }
 
 function (p: Par) more_elems(close: string): (boolean, Par) {
@@ -1671,7 +1660,6 @@ function (p: Par) peek_ident(): string {
       return "";
     }
   }
-  return "";
 }
 
 function (p: Par) peek_punct_at(k: i32): string {
@@ -1714,7 +1702,6 @@ function (p: Par) peek_number_text(): string {
       return "";
     }
   }
-  return "";
 }
 
 function (p: Par) peek_const_arg(): string {
@@ -1746,7 +1733,6 @@ function (p: Par) peek_is_literal(): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function (p: Par) peek_at_literal(): boolean {
@@ -1801,7 +1787,6 @@ function (p: Par) punct_at(idx: i32): string {
       return "";
     }
   }
-  return "";
 }
 
 function (p: Par) ident_at(idx: i32): string {
@@ -1817,7 +1802,6 @@ function (p: Par) ident_at(idx: i32): string {
       return "";
     }
   }
-  return "";
 }
 
 function (p: Par) keyword_at(idx: i32): string {
@@ -1833,7 +1817,6 @@ function (p: Par) keyword_at(idx: i32): string {
       return "";
     }
   }
-  return "";
 }
 
 function (p: Par) if_stmt_has_else(): boolean {
@@ -2053,7 +2036,6 @@ function map_key_kind_of_expr(e: ast.Expr): i32 {
       return -1;
     }
   }
-  return -1;
 }
 
 function parse_map_lit(p: Par): (ast.Expr, Par) {
@@ -2305,7 +2287,6 @@ function with_written_type_args(callee: ast.Expr, args: string): ast.Expr {
       return callee;
     }
   }
-  return callee;
 }
 
 function parse_delimited(p: Par): (ast.Expr, Par) {
@@ -2849,7 +2830,6 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       return parse_postfix(p, built);
     }
   }
-  return (e_unknown_at("primary", p.peek_line(), p.peek_col()), p);
 }
 
 // The lowest precedence inside one literal of a pattern: the operators that
@@ -2949,7 +2929,6 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
       return body;
     }
   }
-  return body;
 }
 
 function zero_expr_for(rt: string): ast.Expr {
@@ -3953,7 +3932,6 @@ function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // A call to the builtin exit. A desugar's call names the builtin; a written `exit(...)` does unless
@@ -4609,7 +4587,6 @@ function pipe_is_hole(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function pipe_fill(e: ast.Expr, left: ast.Expr): ast.Expr {
@@ -5135,7 +5112,6 @@ pub function pv_tup(pat: ast.Pattern): (i32[], string[], ast.Expr[], ast.Pattern
       return (no_k, no_b, no_l, no_p);
     }
   }
-  return (no_k, no_b, no_l, no_p);
 }
 
 function pv_name(pat: ast.Pattern): string {
@@ -5150,7 +5126,6 @@ function pv_name(pat: ast.Pattern): string {
       return "";
     }
   }
-  return "";
 }
 
 function pattern_is_wildcard(pat: ast.Pattern): boolean {
@@ -5179,7 +5154,6 @@ function arm_is_nested(arm: ast.MatchArm): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function arms_take_flag_chain(arms: ast.MatchArm[]): boolean {
@@ -5882,7 +5856,6 @@ function mentions_name(e: ast.Expr, name: string, hit: boolean): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function stmt_mentions(st: ast.Stmt, name: string): boolean {
@@ -6083,7 +6056,6 @@ function with_stmt_line(st: ast.Stmt, line: i32): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function parse_stmt(p: Par): (ast.Stmt, Par) {
@@ -10241,7 +10213,6 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return "";
     }
   }
-  return "";
 }
 
 function infer_inst(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns): string {
@@ -10408,7 +10379,6 @@ function lambda_param_types_of(e: ast.Expr, env: MEnv, funcs: MFns): string[] {
       return none;
     }
   }
-  return none;
 }
 
 function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
@@ -11083,7 +11053,6 @@ pub function int_literal_tree(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function int_literal_op(op: string): boolean {
@@ -11110,7 +11079,6 @@ pub function float_literal_tree(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function number_literal_tree(e: ast.Expr): boolean {
@@ -11133,7 +11101,6 @@ pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {
@@ -11599,7 +11566,6 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return "";
     }
   }
-  return "";
 }
 
 // An instance keyed by type variables reads those variables in its own body too.
@@ -11829,7 +11795,6 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: e, rins: ins };
     }
   }
-  return RExpr { rexpr: e, rins: ins };
 }
 
 // written is the literal's type with its type arguments, as the program writes it or as its destination gives it.
@@ -12336,7 +12301,6 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       return RStmtOne { rstmt: st, renv: env, rins2: ins };
     }
   }
-  return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
 function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_ty: string): RStmts {
@@ -12569,7 +12533,6 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.Stmt[] {
@@ -12919,7 +12882,6 @@ function bc_stmt(st: ast.Stmt, ctx: BoundUse): (ast.Stmt, BoundUse, boolean) {
       return (st, ctx, false);
     }
   }
-  return (st, ctx, false);
 }
 
 function bc_expr(e: ast.Expr, ctx: BoundUse): (ast.Expr, BoundUse, boolean) {
@@ -12938,7 +12900,6 @@ function bc_expr(e: ast.Expr, ctx: BoundUse): (ast.Expr, BoundUse, boolean) {
       return (e, ctx, false);
     }
   }
-  return (e, ctx, false);
 }
 
 function bc_binary(b: ast.ExprBinary, ctx: BoundUse): ast.Expr {
@@ -14457,7 +14418,6 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
       return RExpr { rexpr: e, rins: ins };
     }
   }
-  return RExpr { rexpr: e, rins: ins };
 }
 
 function ms_lambda(lm: ast.ExprLambda, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
@@ -15076,7 +15036,6 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       return RStmtOne { rstmt: st, renv: env, rins2: ins };
     }
   }
-  return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
 function ms_stmts(stmts: ast.Stmt[], env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmts {
@@ -16377,7 +16336,6 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       return RExpr { rexpr: e, rins: ins };
     }
   }
-  return RExpr { rexpr: e, rins: ins };
 }
 
 function me_rewrite_arm_pattern(pat: ast.Pattern, ed: EnumDecl, key: string): ast.Pattern {
@@ -16405,7 +16363,6 @@ function me_rewrite_arm_pattern(pat: ast.Pattern, ed: EnumDecl, key: string): as
       return pat;
     }
   }
-  return pat;
 }
 
 function me_field_type_of(structs: StructDecl[], sname: string, fname: string): string {
@@ -16609,7 +16566,6 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
       return "";
     }
   }
-  return "";
 }
 
 function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, cts: string[], structs: StructDecl[], env: MEnv): MEnv {
@@ -16655,7 +16611,6 @@ function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, cts: string[], structs
       return env;
     }
   }
-  return env;
 }
 
 function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): RStmtOne {
@@ -16773,7 +16728,6 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       return RStmtOne { rstmt: st, renv: env, rins2: ins };
     }
   }
-  return RStmtOne { rstmt: st, renv: env, rins2: ins };
 }
 
 function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): MEnv {
@@ -17352,7 +17306,6 @@ pub function is_value_block(c: ast.ExprCall): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // The three send builtins take one argument and type it from the site.
@@ -17401,7 +17354,6 @@ function dl_vb_rebuild(c: ast.ExprCall, body: ast.Stmt[]): ast.Expr {
       return ast.ExprCall { callee: c.callee, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
     }
   }
-  return e_unknown("value block");
 }
 
 function dl_expr_kids(e: ast.Expr): ast.Expr[] {
@@ -17553,7 +17505,6 @@ function dl_stmt_has_defer(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function dl_exprs_have_defer(es: ast.Expr[]): boolean {
@@ -17617,7 +17568,6 @@ function dl_expr_has_defer(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
@@ -17683,7 +17633,6 @@ function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function map_expr_kids(e: ast.Expr, f: (ast.Expr) => ast.Expr): ast.Expr {
@@ -18399,7 +18348,6 @@ function hl_owned_lists_have_cycle(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function hl_list_has_cycle(stmts: ast.Stmt[]): boolean {
@@ -18468,7 +18416,6 @@ function rw_call_of(x: ast.Expr, fname: string, caps: string[]): ast.Expr {
       return x;
     }
   }
-  return x;
 }
 
 function rw_call_stmts(stmts: ast.Stmt[], fname: string, caps: string[]): ast.Stmt[] {
@@ -19022,7 +18969,6 @@ function dl_ll_stmt(st: ast.Stmt): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function dl_ll_expr(e: ast.Expr): ast.Expr {
@@ -19051,7 +18997,6 @@ function dl_ll_expr(e: ast.Expr): ast.Expr {
       return dl_ll_expr_kids(e);
     }
   }
-  return e;
 }
 
 function dl_is_source_iife(c: ast.ExprCall): boolean {
@@ -19069,7 +19014,6 @@ function dl_is_source_iife(c: ast.ExprCall): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function vb_body(c: ast.ExprCall): ast.Stmt[] {
@@ -19412,7 +19356,6 @@ function moves_net_of(e: ast.Expr, funcs: FuncDecl[], name: string, acc: i32): i
       return acc;
     }
   }
-  return acc;
 }
 
 function moves_target_of(st: ast.Stmt, name: string, acc: i32): i32 {
@@ -19427,7 +19370,6 @@ function moves_target_of(st: ast.Stmt, name: string, acc: i32): i32 {
       return acc;
     }
   }
-  return acc;
 }
 
 function stmts_move_handle(stmts: ast.Stmt[], funcs: FuncDecl[], name: string): boolean {
@@ -19653,7 +19595,6 @@ function literal_suffix_of(e: ast.Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
@@ -19731,7 +19672,6 @@ function dr_expr(e: ast.Expr): ast.Expr {
       return dr_expr_kids(e);
     }
   }
-  return e;
 }
 
 function dr_expr_kids(e: ast.Expr): ast.Expr {
@@ -19817,7 +19757,6 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
       return [st];
     }
   }
-  return [st];
 }
 
 pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
@@ -19963,7 +19902,6 @@ function rvf_pattern(pat: ast.Pattern, structs: StructDecl[]): ast.Pattern {
       return pat;
     }
   }
-  return pat;
 }
 
 function rvf_patterns(pats: ast.Pattern[], structs: StructDecl[]): ast.Pattern[] {
@@ -20054,7 +19992,6 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
@@ -20096,7 +20033,6 @@ function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function rvf_block(stmts: ast.Stmt[], structs: StructDecl[]): ast.Stmt[] {
@@ -20198,7 +20134,6 @@ function fda_is_named_marker(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function fda_marker_name(e: ast.Expr): string {
@@ -20229,7 +20164,6 @@ function fda_marker_value(e: ast.Expr): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function fda_args_have_named(args: ast.Expr[]): boolean {
@@ -20413,7 +20347,6 @@ function fda_expr_at(e: ast.Expr, w: FdaWalk): (ast.Expr, FdaWalk, boolean) {
       return (e, w, false);
     }
   }
-  return (e, w, false);
 }
 
 function fda_stmt_at(st: ast.Stmt, w: FdaWalk): (ast.Stmt, FdaWalk, boolean) {
@@ -20474,7 +20407,6 @@ function fda_stmt_at(st: ast.Stmt, w: FdaWalk): (ast.Stmt, FdaWalk, boolean) {
       return (st, w, false);
     }
   }
-  return (st, w, false);
 }
 
 function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[]): (ast.Stmt[], util.Diag[]) {
@@ -20560,7 +20492,6 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
       return ("", false);
     }
   }
-  return ("is not a constant expression", true);
 }
 
 function fda_const_value(name: string, funcs: FuncDecl[]): (ast.Expr, boolean) {
@@ -20599,7 +20530,6 @@ function fda_fold_consts(e: ast.Expr, funcs: FuncDecl[], depth: i32): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function fda_fold_default_consts(mod: Module): Module {
@@ -21054,7 +20984,6 @@ function stamp_lambda_ret(e: ast.Expr, fn_ret: string): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
@@ -21566,7 +21495,6 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function elb_try_while(w: ast.StmtWhile, stmts: ast.Stmt[], p: i32): ast.Stmt {
@@ -21762,7 +21690,6 @@ function elb_is_nonneg_int(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
@@ -21887,7 +21814,6 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 struct CondMark { e: ast.Expr, past: boolean }
@@ -21980,7 +21906,6 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 pub function erase_view_spelling(ty: string): string {
@@ -22142,7 +22067,6 @@ function erase_view_expr(e: ast.Expr): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function erase_view_stmt(st: ast.Stmt): ast.Stmt[] {
@@ -22239,7 +22163,6 @@ function spells_view_expr(e: ast.Expr, own found: boolean): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function erase_view_body(body: ast.Stmt[]): ast.Stmt[] {
@@ -22829,7 +22752,6 @@ function tv_obj_expr(e: ast.Expr, sc: TvScope): (ast.Expr, TvScope, boolean) {
       return (e, sc, false);
     }
   }
-  return (e, sc, false);
 }
 
 function tv_obj_stmt(st: ast.Stmt, sc: TvScope): (ast.Stmt, TvScope, boolean) {
@@ -22859,7 +22781,6 @@ function tv_obj_stmt(st: ast.Stmt, sc: TvScope): (ast.Stmt, TvScope, boolean) {
       return (st, sc, false);
     }
   }
-  return (st, sc, false);
 }
 
 function rename_tv_annots(stmts: ast.Stmt[], vars: string[], cts: string[]): ast.Stmt[] {
@@ -22901,7 +22822,6 @@ function rename_tv_annot(st: ast.Stmt, vars: string[], cts: string[]): ast.Stmt 
       return st;
     }
   }
-  return st;
 }
 
 pub struct TraitDefault { trait_name: string, trait_params: string[], trait_consts: string[], method: FuncDecl }
@@ -25212,7 +25132,6 @@ pub function is_unsettled_int_literal(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function float_settled_int(n: ast.ExprNumber): boolean {
@@ -25244,7 +25163,6 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function settled_branch_value(body: ast.Stmt[]): (ast.Expr, boolean) {
@@ -25286,7 +25204,6 @@ function float_settleable(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function value_branches_float_settleable(e: ast.Expr): boolean {
@@ -25713,7 +25630,6 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
       return e;
     }
   }
-  return e;
 }
 
 function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Stmt {
@@ -25758,7 +25674,6 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
       return st;
     }
   }
-  return st;
 }
 
 function settle_block(stmts: ast.Stmt[], ret_type: string, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Stmt[] {

@@ -189,7 +189,6 @@ function tangle_module(path: string, doc: string, src: string): Resolved {
       return Resolved { ...res_none(), err: e.msg, err_path: doc + ":" + util.i32_to_string(e.line) + ":" + util.i32_to_string(e.col) };
     }
   }
-  return res_none();
 }
 
 pub struct Overlay { paths: string[], srcs: string[], sealed: boolean, files: Buffers }
@@ -357,7 +356,6 @@ pub function manifest_dir(dir: string): string {
       return dir;
     }
   }
-  return dir;
 }
 
 pub function find_manifest(dir: string): Option[string] {
@@ -490,7 +488,6 @@ function member_name(memdir: string): string {
       return "";
     }
   }
-  return "";
 }
 
 function locked_dir(dir: string, name: string, minimum: string): Result[string, string] {
@@ -887,7 +884,6 @@ pub function module_src_hash(ov: Overlay, entry_path: string, parts: flatten.Per
       return "?";
     }
   }
-  return "?";
 }
 
 function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string {

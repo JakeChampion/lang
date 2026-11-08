@@ -1420,7 +1420,6 @@ pub function is_dir(path: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function resolve_path(import_path: string, entry_dir: string, root: string): string {

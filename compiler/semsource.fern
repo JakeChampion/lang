@@ -435,7 +435,6 @@ function runtime_callable_changes(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function runtime_callable_flags_change(f: typeinfo.TypeFunc): boolean {
@@ -1909,7 +1908,6 @@ function literal_operand(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // s without its last instructions and values when they define exactly ids.
@@ -4978,7 +4976,6 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, layout: i32, arms
       return variant_arm(a, pv, scrut, owner, layout, arms, entry, join, count, scope, closing, ty);
     }
   }
-  return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
 struct ScalarGate { s: State, hit: i32[], miss: i32[] }

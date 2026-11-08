@@ -2769,7 +2769,6 @@ pub function ty_struct_name(t: Ty): string {
       return "";
     }
   }
-  return "";
 }
 
 pub function ty_i32(): Ty {
@@ -2881,7 +2880,6 @@ pub function is_cell(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function cell_val(t: Ty): Ty {
@@ -2893,7 +2891,6 @@ pub function cell_val(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function ty_ord(t: Ty): i32 {
@@ -2983,7 +2980,6 @@ pub function ty_ord(t: Ty): i32 {
       return -1;
     }
   }
-  return -1;
 }
 
 pub function is_int_tag(t: Ty): boolean {
@@ -3010,7 +3006,6 @@ pub function is_int_tag(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_int_array_tag(t: Ty): boolean {
@@ -3031,7 +3026,6 @@ pub function is_int_array_tag(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_map(t: Ty): boolean {
@@ -3049,7 +3043,6 @@ pub function is_map(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function map_key_is_i32(t: Ty): boolean {
@@ -3061,7 +3054,6 @@ pub function map_key_is_i32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_option(t: Ty): boolean {
@@ -3073,7 +3065,6 @@ pub function is_option(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_result(t: Ty): boolean {
@@ -3085,7 +3076,6 @@ pub function is_result(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function is_fn(t: Ty): boolean {
@@ -3100,7 +3090,6 @@ pub function is_fn(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_i32(t: Ty): boolean {
@@ -3112,7 +3101,6 @@ pub function ty_is_i32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_u8(t: Ty): boolean {
@@ -3124,7 +3112,6 @@ pub function ty_is_u8(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_bool(t: Ty): boolean {
@@ -3136,7 +3123,6 @@ pub function ty_is_bool(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_string(t: Ty): boolean {
@@ -3148,7 +3134,6 @@ pub function ty_is_string(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_f64(t: Ty): boolean {
@@ -3160,7 +3145,6 @@ pub function ty_is_f64(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_unknown(t: Ty): boolean {
@@ -3172,7 +3156,6 @@ pub function ty_is_unknown(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array(t: Ty): boolean {
@@ -3184,7 +3167,6 @@ pub function ty_is_array(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_i32(t: Ty): boolean {
@@ -3196,7 +3178,6 @@ pub function ty_is_array_i32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_u32(t: Ty): boolean {
@@ -3208,7 +3189,6 @@ pub function ty_is_array_u32(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_u64(t: Ty): boolean {
@@ -3220,7 +3200,6 @@ pub function ty_is_array_u64(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_i64(t: Ty): boolean {
@@ -3232,7 +3211,6 @@ pub function ty_is_array_i64(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function ty_is_array_string(t: Ty): boolean {
@@ -3244,7 +3222,6 @@ pub function ty_is_array_string(t: Ty): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function option_inner(t: Ty): Ty {
@@ -3256,7 +3233,6 @@ pub function option_inner(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function result_inner(t: Ty): Ty {
@@ -3268,7 +3244,6 @@ pub function result_inner(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function fn_ret(t: Ty): Ty {
@@ -3280,7 +3255,6 @@ pub function fn_ret(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function map_val(t: Ty): Ty {
@@ -3295,7 +3269,6 @@ pub function map_val(t: Ty): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 pub function ty_tag(t: Ty): string {
@@ -3382,7 +3355,6 @@ pub function ty_tag(t: Ty): string {
       return x.name;
     }
   }
-  return "unknown";
 }
 
 pub function ty_eq(a: Ty, b: Ty): boolean {
@@ -3616,7 +3588,6 @@ pub function ty_friendly(t: Ty): string {
       return ty_tag(t);
     }
   }
-  return ty_tag(t);
 }
 
 function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
@@ -4217,7 +4188,6 @@ function infer_expr_call_type(c: ast.ExprCall, s: EmitState): Ty {
       return ty_unknown();
     }
   }
-  return ty_unknown();
 }
 
 function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
@@ -4412,7 +4382,6 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       return ty_from_name(z.type_name);
     }
   }
-  return ty_unknown();
 }
 
 pub function (s: EmitState) reset_locals(): EmitState {
@@ -5222,7 +5191,6 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     }
   }
-  return a;
 }
 
 function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
@@ -5288,7 +5256,6 @@ function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
       return a;
     }
   }
-  return a;
 }
 
 function unknown_errors_stmts(stmts: ast.Stmt[], where: string, errs: util.Diag[]): util.Diag[] {
@@ -5565,7 +5532,6 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       return ctx;
     }
   }
-  return ctx;
 }
 
 function bind_variant_payloads(pv: ast.PatVariant, st: EmitState): EmitState {
@@ -6042,7 +6008,6 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       return errs;
     }
   }
-  return errs;
 }
 
 function callgate_known_callee(name: string, known: string[]): boolean {
@@ -6337,7 +6302,6 @@ function is_parse_sentinel(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function check_undefined_calls(mod: parser.Module): util.Diag[] {

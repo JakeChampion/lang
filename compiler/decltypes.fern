@@ -49,7 +49,6 @@ function retained_type(t: typeinfo.Type): typeinfo.Type {
       return t;
     }
   }
-  return t;
 }
 
 function declined(name: string): ast.ParamDecl {

@@ -92,7 +92,6 @@ function fn_local_spelling_for(v: ast.StmtVar, funcs: parser.FuncDecl[]): string
       return "";
     }
   }
-  return "";
 }
 
 function stamp_fn_local_types(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
@@ -167,7 +166,6 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
       return lift_expr_walk(e, acc, gfns);
     }
   }
-  return LiftExpr { expr: e, acc: acc };
 }
 
 function lift_call_callee(c: ast.ExprCall, acc: LiftAcc, gfns: string[]): LiftExpr {
@@ -324,7 +322,6 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
       return LiftExpr { expr: e, acc: acc };
     }
   }
-  return LiftExpr { expr: e, acc: acc };
 }
 
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
@@ -586,7 +583,6 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
       return LiftStmts { stmts: [st], acc: acc };
     }
   }
-  return LiftStmts { stmts: [st], acc: acc };
 }
 
 function lift_stmts(stmts: ast.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts {
@@ -1513,7 +1509,6 @@ function passthrough_leads_to_array(e: ast.Expr, mfuncs: MFuncs): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_value_iife(c: ast.ExprCall): boolean {
@@ -1542,7 +1537,6 @@ function passthrough_array_literal(e: ast.Expr, mfuncs: MFuncs): ast.Expr[] {
       return [];
     }
   }
-  return [];
 }
 
 function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): ast.Expr {
@@ -1574,7 +1568,6 @@ function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): 
       return e;
     }
   }
-  return e;
 }
 
 function array_literal_boxes(arr: ast.ExprArray, fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs): boolean {
@@ -1708,7 +1701,6 @@ function var_param_is_fn(v: ast.StmtVar, fd: parser.FuncDecl, vars: VarDecls, id
       return false;
     }
   }
-  return false;
 }
 
 function spelled_param_is_fn(csv: string, idx: i32): boolean {
@@ -1885,7 +1877,6 @@ function lift_arg_is_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function lift_arg_is_passthrough_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolean {
@@ -2080,7 +2071,6 @@ function iife_return_holds_fn_value(v: ast.Expr, fd: parser.FuncDecl, structs: i
       return false;
     }
   }
-  return false;
 }
 
 function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs): boolean {
@@ -2577,7 +2567,6 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       return (e, acc, false);
     }
   }
-  return (e, acc, false);
 }
 
 function lift_inline_closures_expr(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): InlineCloRes {
@@ -2698,7 +2687,6 @@ function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function iife_body_value_use_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
@@ -2798,7 +2786,6 @@ function value_use_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function hoisted_iife_captures(stmts: ast.Stmt[], name: string, fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs): boolean {
@@ -2943,7 +2930,6 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, vars:
       return (st, acc, false);
     }
   }
-  return (st, acc, false);
 }
 
 function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): (ast.Stmt[], parser.FuncDecl[]) {
@@ -2988,7 +2974,6 @@ function var_decl_name_into(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function ident_used_as_value_expr(e: ast.Expr, name: string): boolean {
@@ -3063,7 +3048,6 @@ function ident_used_as_value_expr(e: ast.Expr, name: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function ident_used_as_value_stmt(st: ast.Stmt, name: string): boolean {
@@ -3107,7 +3091,6 @@ function ident_used_as_value_stmt(st: ast.Stmt, name: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function ident_used_as_value_stmts(stmts: ast.Stmt[], name: string): boolean {
@@ -3347,7 +3330,6 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
       return WCapExpr { expr: e, caps: acc, changed: false };
     }
   }
-  return WCapExpr { expr: e, caps: acc, changed: false };
 }
 
 function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs, acc: WCaps, atargets: string[]): WCapStmt {
@@ -3411,7 +3393,6 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
       return WCapStmt { stmt: st, caps: acc, changed: false };
     }
   }
-  return WCapStmt { stmt: st, caps: acc, changed: false };
 }
 
 function wcap_stmt_needs_env_box(stmts: ast.Stmt[], i: i32): boolean {
@@ -3563,7 +3544,6 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
       return false;
     }
   }
-  return false;
 }
 
 function has_wide_cap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs, atargets: string[]): boolean {
@@ -3607,7 +3587,6 @@ function has_wide_cap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], st
       return false;
     }
   }
-  return false;
 }
 
 function has_wide_cap_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs, atargets: string[]): boolean {
@@ -3878,7 +3857,6 @@ function box_nested_lambdas(e: ast.Expr, acc: ast.ExprLambda[]): ast.ExprLambda[
       return out;
     }
   }
-  return out;
 }
 
 function box_nested_lambdas_stmts(stmts: ast.Stmt[], acc: ast.ExprLambda[]): ast.ExprLambda[] {

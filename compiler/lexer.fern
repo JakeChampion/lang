@@ -628,7 +628,6 @@ pub function is_error_tok(t: Token): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function has_error(toks: Token[]): boolean {
@@ -1583,7 +1582,6 @@ function test_mixed(): i32 {
       return 1300;
     }
   }
-  return -1;
 }
 
 function test_hex(): i32 {
@@ -1655,7 +1653,6 @@ function test_hex(): i32 {
       return 1413;
     }
   }
-  return 1414;
 }
 
 function test_scientific(): i32 {
