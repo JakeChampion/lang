@@ -328,6 +328,9 @@ pub function (h: Md5) update(chunk: [u8]): Md5 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Md5) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -339,6 +342,7 @@ pub function (h: Md5) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_le64(pad, plen - 8, bits);
   let st = __md5_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_le32(out, 0, st.h0);
   out = __put_le32(out, 4, st.h1);
@@ -706,6 +710,9 @@ pub function (h: Sha1) update(chunk: [u8]): Sha1 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sha1) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -717,6 +724,7 @@ pub function (h: Sha1) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
   let st = __sha1_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
@@ -1123,9 +1131,9 @@ pub function (h: Sha256) update(chunk: [u8]): Sha256 {
   return h;
 }
 
-// The padded last block holds the tail of the message, so it is zeroed before
-// its release. The state's own buffer holds the same tail until the state is
-// dropped.
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sha256) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -1600,8 +1608,9 @@ pub function (h: Sha512) update(chunk: [u8]): Sha512 {
   return h;
 }
 
-// The padded last block is zeroed before its release, as the SHA-256 finish
-// does.
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sha512) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 128;
@@ -2327,6 +2336,9 @@ pub function (h: Sm3) update(chunk: [u8]): Sm3 {
   return h;
 }
 
+// The padded last block holds the tail of the message, so it is zeroed
+// before its release. The state's own buffer holds the same tail until the
+// state is dropped.
 pub function (h: Sm3) finish(): u8[] {
   let bl = h.buf_len;
   let plen = 64;
@@ -2338,6 +2350,7 @@ pub function (h: Sm3) finish(): u8[] {
   let bits = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
   let st = __sm3_blocks(h, pad, 0, plen / 64);
+  erase(pad);
   let out = __alloc_u8(st.out_len);
   out = __put_be32(out, 0, st.h0);
   out = __put_be32(out, 4, st.h1);
@@ -3261,10 +3274,13 @@ pub function (h: Blake2b) update(chunk: [u8]): Blake2b {
   return h;
 }
 
+// The padded last block and the full-width word buffer of a shorter digest
+// are zeroed before their release.
 pub function (h: Blake2b) finish(): u8[] {
   let bl = h.buf_len;
   let pad = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);
   let st = __blake2b_blocks(h, pad, 0, 1, h.total + bl as u64, true);
+  erase(pad);
   let full = __alloc_u8(64);
   full = __put_le64(full, 0, st.h0);
   full = __put_le64(full, 8, st.h1);
@@ -3277,7 +3293,9 @@ pub function (h: Blake2b) finish(): u8[] {
   if (st.out_len == 64) {
     return full;
   }
-  return __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
+  let out = __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
+  erase(full);
+  return out;
 }
 
 // blake2b calculates an `out_len`-byte digest of `s`.
