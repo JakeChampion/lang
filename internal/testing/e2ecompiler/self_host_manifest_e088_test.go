@@ -12,7 +12,7 @@ import (
 
 func TestSelfHostManifestErrorIsE088(t *testing.T) {
 	const badDep = "[package]\nname = \"app\"\n[dependencies]\nfoo = { path = \"../foo\", capabilities = [\"nett\"] }\n"
-	const msg = `error[E088]: dependency "foo": capabilities: unknown capability "nett" (valid capabilities: env, fs, net, random, subprocess, time)`
+	const msg = `error[E088]: dependency "foo": capabilities: unknown capability "nett" (valid capabilities: env, fs, mmio, net, privileged, random, subprocess, time)`
 	for _, c := range []struct {
 		name  string
 		files map[string]string

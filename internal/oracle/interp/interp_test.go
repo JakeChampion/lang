@@ -779,3 +779,43 @@ func TestInterpUsizeShiftsAtSixtyFourBits(t *testing.T) {
 		t.Errorf("got %v, want 7", v)
 	}
 }
+
+func TestCallEvaluatesCalleeBeforeArguments(t *testing.T) {
+	got := evalProgramValue(t, `function identity(n: i32): i32 { return n; }
+function main(): i32 {
+    let trace = 0;
+    let choose = (): (i32) => i32 => { trace = trace * 10 + 1; return identity; };
+    let argument = (): i32 => { trace = trace * 10 + 2; return 0; };
+    let value = choose()(argument());
+    return trace + value;
+}`)
+	if got != Number(12) {
+		t.Fatalf("got %v, want 12", got)
+	}
+}
+
+func TestCallEvaluatesDynamicReceiverBeforeArguments(t *testing.T) {
+	got := evalProgramValue(t, `trait Add { function add(self: Self, n: i32): i32; }
+struct Box { n: i32 }
+impl Add for Box { function add(self: Self, n: i32): i32 { return self.n + n; } }
+function main(): i32 {
+    let trace = 0;
+    let choose = (): dyn Add => { trace = trace * 10 + 1; return Box { n: 0 }; };
+    let argument = (): i32 => { trace = trace * 10 + 2; return 0; };
+    let value = choose().add(argument());
+    return trace + value;
+}`)
+	if got != Number(12) {
+		t.Fatalf("got %v, want 12", got)
+	}
+}
+
+func TestCallRetainsCalleeBeforeArgumentRebind(t *testing.T) {
+	got := evalProgramValue(t, `function main(): i32 {
+    let f = (n: i32): i32 => 1;
+    return f({ f = (n: i32): i32 => 2; 0 });
+}`)
+	if got != Number(1) {
+		t.Fatalf("got %v, want 1", got)
+	}
+}

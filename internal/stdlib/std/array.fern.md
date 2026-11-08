@@ -10,6 +10,9 @@ Receiver methods extend arrays with statistics, transforms, and set operations. 
 
 Operations that require an element use options for empty input. Integer averages retain integer arithmetic. Collection results must replace the caller value when an update is required.
 
+`chunks` and `chunks_exact` return no chunks when the size is zero or negative.
+This differs from `string.chunks`, which returns one chunk for a nonempty string at those sizes.
+
 ## Executable example
 
 ```fern test name=std-array-example
@@ -932,6 +935,7 @@ pub function slice[T](xs: T[], start: i32, end: i32): T[] {
   return out;
 }
 
+// Return no chunks when size is zero or negative, including for a nonempty array.
 pub function chunks[T](xs: T[], size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
