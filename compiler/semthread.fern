@@ -69,7 +69,7 @@ function decidable(g: ssa.SFunc): boolean {
     }
   }
   for b in g.blocks {
-    if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < g.nvals && constant[b.term.cond]) {
+    if (b.term.kind_tag == ssa.TERM_BRIF && b.term.cond >= 0 && b.term.cond < g.nvals && constant[b.term.cond]) {
       return true;
     }
   }
@@ -182,7 +182,7 @@ function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
   while (hops < 16) {
     let b = g.blocks[s.at[cur]];
     let next: i32 = -1;
-    if (b.insts.len() == 0 && b.term.kind_tag == 2) {
+    if (b.insts.len() == 0 && b.term.kind_tag == ssa.TERM_BR) {
       next = b.term.target;
     } else if (only_tests(s, b)) {
       let d = outcome(f, s, h, path, b.term.cond);
@@ -207,7 +207,7 @@ function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
 }
 
 function only_tests(s: Seen, b: ssa.SBlock): boolean {
-  if (b.insts.len() != 1 || b.term.kind_tag != 3 || b.term.t == b.term.f) {
+  if (b.insts.len() != 1 || b.term.kind_tag != ssa.TERM_BRIF || b.term.t == b.term.f) {
     return false;
   }
   let ins = b.insts[0];
@@ -337,7 +337,7 @@ function block_facts(f: ssasem.Func, g: ssa.SFunc, s: Seen): Seen {
       }
       head = head.with(bi, h);
     }
-    if (b.term.kind_tag == 3 && b.term.t != b.term.f) {
+    if (b.term.kind_tag == ssa.TERM_BRIF && b.term.t != b.term.f) {
       let q = test_of(f, s.defs, b.term.cond);
       if (q.ok) {
         on_t = on_t.with(bi, facts.root.len());
@@ -351,7 +351,7 @@ function block_facts(f: ssasem.Func, g: ssa.SFunc, s: Seen): Seen {
 }
 
 function jump(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function same_term(a: ssa.STerm, b: ssa.STerm): boolean {
@@ -370,7 +370,7 @@ function graph_has_phi(g: ssa.SFunc): boolean {
 
 function has_phi(b: ssa.SBlock): boolean {
   for ins in b.insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       return true;
     }
   }
@@ -524,7 +524,7 @@ function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[], stack_phi_joins
 
 function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_joins: boolean): boolean {
   let y = g.blocks[yi];
-  if (y.term.kind_tag != 2 || y.preds.len() == 0 || y.id == g.entry) {
+  if (y.term.kind_tag != ssa.TERM_BR || y.preds.len() == 0 || y.id == g.entry) {
     return false;
   }
   let x = y.term.target;
@@ -543,7 +543,7 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_jo
       return false;
     }
     let qb = g.blocks[at[q]];
-    if (qb.term.kind_tag != 2 || qb.term.target != y.id || util.index_of_i32(xb.preds, q) >= 0) {
+    if (qb.term.kind_tag != ssa.TERM_BR || qb.term.target != y.id || util.index_of_i32(xb.preds, q) >= 0) {
       return false;
     }
   }
@@ -559,7 +559,7 @@ function join_cost_allows(g: ssa.SFunc, at: i32[], yi: i32, xi: i32, stack_phi_j
 function at_most_two_phis(b: ssa.SBlock): boolean {
   let count = 0;
   for ins in b.insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       count += 1;
     }
   }
@@ -570,10 +570,10 @@ function at_most_two_phis(b: ssa.SBlock): boolean {
 // empty blocks.
 function ends_on_phi(g: ssa.SFunc, at: i32[], xi: i32): boolean {
   let xb = g.blocks[xi];
-  if (xb.term.kind_tag == 1) {
+  if (xb.term.kind_tag == ssa.TERM_RET) {
     return phi_of(xb, xb.term.value).kind_tag == 8;
   }
-  if (xb.term.kind_tag == 3) {
+  if (xb.term.kind_tag == ssa.TERM_BRIF) {
     return xb.term.t != xb.term.f && phi_of(xb, xb.term.cond).kind_tag == 8;
   }
   return chained_branch(g, at, xi) >= 0;
@@ -606,7 +606,7 @@ function reads_own_phi(b: ssa.SBlock, ins: ssa.SInst): boolean {
 function edge_reads(xb: ssa.SBlock, slot: i32, v: i32): i32 {
   let reads = 0;
   for ins in xb.insts {
-    if (ins.kind_tag == 8 && slot < ins.args.len() && ins.args[slot] == v) {
+    if (ins.kind_tag == ssa.PHI && slot < ins.args.len() && ins.args[slot] == v) {
       reads += 1;
     }
   }
@@ -630,7 +630,7 @@ function forward_block(g: ssa.SFunc, at: i32[], yi: i32): ssa.SFunc {
   }
   let insts: ssa.SInst[] = [];
   for ins in xb.insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       let args: i32[] = [];
       for k in 0..ins.args.len() {
         if (k == slot) {
@@ -687,7 +687,7 @@ function merge_branch_chains(g0: ssa.SFunc): Forwarded {
 
 function chained_branch(g: ssa.SFunc, at: i32[], ji: i32): i32 {
   let jb = g.blocks[ji];
-  if (jb.term.kind_tag != 2 || !has_phi(jb)) {
+  if (jb.term.kind_tag != ssa.TERM_BR || !has_phi(jb)) {
     return -1;
   }
   let from = jb.id;
@@ -698,10 +698,10 @@ function chained_branch(g: ssa.SFunc, at: i32[], ji: i32): i32 {
       return -1;
     }
     let nb = g.blocks[ni];
-    if (nb.term.kind_tag == 3) {
+    if (nb.term.kind_tag == ssa.TERM_BRIF) {
       return if (phi_of(jb, nb.term.cond).kind_tag == 8 && nb.term.t != nb.term.f) { ni } else { -1 };
     }
-    if (nb.term.kind_tag != 2) {
+    if (nb.term.kind_tag != ssa.TERM_BR) {
       return -1;
     }
     from = nb.id;
@@ -773,7 +773,7 @@ function first_returning_join(f: ssasem.Func, g: ssa.SFunc, at: i32[]): i32 {
 
 function returning_join(f: ssasem.Func, g: ssa.SFunc, at: i32[], defs: ssa.SInst[], ri: i32): boolean {
   let r = g.blocks[ri];
-  return r.term.kind_tag == 1 && r.preds.len() > 0 && r.id != g.entry && returns_arm_values(f, defs, r) && only_phis(r) && entered_by_jumps(g, at, r);
+  return r.term.kind_tag == ssa.TERM_RET && r.preds.len() > 0 && r.id != g.entry && returns_arm_values(f, defs, r) && only_phis(r) && entered_by_jumps(g, at, r);
 }
 
 // A returned view keeps the shape that the return lowering gives it
@@ -792,7 +792,7 @@ function returns_arm_values(f: ssasem.Func, defs: ssa.SInst[], r: ssa.SBlock): b
 
 function only_phis(r: ssa.SBlock): boolean {
   for ins in r.insts {
-    if (ins.kind_tag != 8 || reads_own_phi(r, ins)) {
+    if (ins.kind_tag != ssa.PHI || reads_own_phi(r, ins)) {
       return false;
     }
   }
@@ -805,7 +805,7 @@ function entered_by_jumps(g: ssa.SFunc, at: i32[], r: ssa.SBlock): boolean {
       return false;
     }
     let qb = g.blocks[at[q]];
-    if (qb.term.kind_tag != 2 || qb.term.target != r.id) {
+    if (qb.term.kind_tag != ssa.TERM_BR || qb.term.target != r.id) {
       return false;
     }
   }
@@ -869,7 +869,7 @@ function split_round(f: ssasem.Func): Joined {
 }
 
 function dead_copy(uses: i32[], ins: ssa.SInst): boolean {
-  return ins.kind_tag == 7 && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] == 0;
+  return ins.kind_tag == ssa.COPY && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] == 0;
 }
 
 function movable_constant(ins: ssa.SInst): boolean {
@@ -884,7 +884,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
   }
   let any_phi = false;
   for ins in jb.insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       any_phi = true;
     } else if (!dead_copy(uses, ins) && !movable_constant(ins)) {
       return no_join(ji);
@@ -896,7 +896,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
   let chain: i32[] = [];
   let bi = ji;
   for _ in 0..16 {
-    if (g.blocks[bi].term.kind_tag != 2) {
+    if (g.blocks[bi].term.kind_tag != ssa.TERM_BR) {
       break;
     }
     let target = g.blocks[bi].term.target;
@@ -917,7 +917,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
     bi = next;
   }
   let bb = g.blocks[bi];
-  if (bb.term.kind_tag != 3 || bb.term.t == bb.term.f) {
+  if (bb.term.kind_tag != ssa.TERM_BRIF || bb.term.t == bb.term.f) {
     return no_join(ji);
   }
   let cond = phi_of(jb, bb.term.cond);
@@ -928,7 +928,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
   // Preserve its register layout when no payload needs this earlier split.
   let payload = false;
   for ins in jb.insts {
-    if (ins.kind_tag == 8 && ins.result != cond.result && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
+    if (ins.kind_tag == ssa.PHI && ins.result != cond.result && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
       payload = true;
     }
   }
@@ -953,7 +953,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
     }
     let qi = at[q];
     let qb = g.blocks[qi];
-    if (qi == ji || qb.term.kind_tag != 2 || qb.term.target != jb.id || ssadeps.dom_holds(dom, qi, ji)) {
+    if (qi == ji || qb.term.kind_tag != ssa.TERM_BR || qb.term.target != jb.id || ssadeps.dom_holds(dom, qi, ji)) {
       return no_join(ji);
     }
   }
@@ -974,7 +974,7 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
 
 function phi_of(b: ssa.SBlock, v: i32): ssa.SInst {
   for ins in b.insts {
-    if (ins.kind_tag == 8 && ins.result == v) {
+    if (ins.kind_tag == ssa.PHI && ins.result == v) {
       return ins;
     }
   }
@@ -994,7 +994,7 @@ function plain_arm(g: ssa.SFunc, ti: i32, from: i32, ji: i32, chain: i32[]): boo
 function join_phis(g: ssa.SFunc, c: Join): boolean[] {
   let out = __alloc_bool(g.nvals);
   for ins in g.blocks[c.j].insts {
-    if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < out.len()) {
+    if (ins.kind_tag == ssa.PHI && ins.result >= 0 && ins.result < out.len()) {
       out = out.with(ins.result, true);
     }
   }
@@ -1025,7 +1025,7 @@ function reads_under_arms(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join): b
     let b = g.blocks[xi];
     if (xi == c.j) {
       for ins in b.insts {
-        if (ins.kind_tag == 8) {
+        if (ins.kind_tag == ssa.PHI) {
           for a in ins.args {
             if (a >= 0 && a < is_phi.len() && is_phi[a]) {
               return false;
@@ -1040,7 +1040,7 @@ function reads_under_arms(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join): b
           let a = ins.args[k];
           if (a >= 0 && a < is_phi.len() && is_phi[a]) {
             let where = here;
-            if (ins.kind_tag == 8) {
+            if (ins.kind_tag == ssa.PHI) {
               where = -1;
               if (k < b.preds.len() && b.preds[k] >= 0 && b.preds[k] < at.len() && at[b.preds[k]] >= 0) {
                 where = arm_of(dom, c, at[b.preds[k]]);
@@ -1101,7 +1101,7 @@ function arm_values(s0: Split, g: ssa.SFunc, defs: ssa.SInst[], c: Join, ti: i32
   let phis: ssa.SInst[] = [];
   let consts: ssa.SInst[] = [];
   for ins in jb.insts {
-    if (ins.kind_tag != 8 || ins.result < 0 || ins.result >= needed.len() || !needed[ins.result] || preds.len() == 0) {
+    if (ins.kind_tag != ssa.PHI || ins.result < 0 || ins.result >= needed.len() || !needed[ins.result] || preds.len() == 0) {
       continue;
     }
     let args: i32[] = [];
@@ -1130,7 +1130,7 @@ function arm_values(s0: Split, g: ssa.SFunc, defs: ssa.SInst[], c: Join, ti: i32
       // a constant of its own.
       consts = consts.append(ssa.SInst { ...through_copies(defs, args[0]), result: id, args: [] });
     } else {
-      phis = phis.append(ssa.SInst { kind_tag: 8, result: id, args: args, imm: 0, str: "" });
+      phis = phis.append(ssa.SInst { kind_tag: ssa.PHI, result: id, args: args, imm: 0, str: "" });
     }
   }
   let insts = phis;
@@ -1156,7 +1156,7 @@ function arm_needs(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join, ti: i32):
           let a = ins.args[k];
           if (a >= 0 && a < is_phi.len() && is_phi[a]) {
             let where = here;
-            if (ins.kind_tag == 8) {
+            if (ins.kind_tag == ssa.PHI) {
               where = arm_of(dom, c, at[b.preds[k]]) == ti;
             }
             if (where) {
@@ -1220,7 +1220,7 @@ function split_join(f: ssasem.Func, at: i32[], dom: ssadeps.Dom, c: Join): ssase
           let a = args[k];
           if (a >= 0 && a < is_phi.len() && is_phi[a]) {
             let where = here;
-            if (ins.kind_tag == 8) {
+            if (ins.kind_tag == ssa.PHI) {
               where = arm_of(dom, c, at[b.preds[k]]);
             }
             args = args.with(k, arm_value(val_t, val_f, c, where, a));
@@ -1233,7 +1233,7 @@ function split_join(f: ssasem.Func, at: i32[], dom: ssadeps.Dom, c: Join): ssase
       let tv = term_read(term);
       if (tv >= 0 && tv < is_phi.len() && is_phi[tv]) {
         let nv = arm_value(val_t, val_f, c, here, tv);
-        if (term.kind_tag == 1) {
+        if (term.kind_tag == ssa.TERM_RET) {
           term = ssa.STerm { ...term, value: nv };
         } else {
           term = ssa.STerm { ...term, cond: nv };

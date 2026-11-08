@@ -60,7 +60,7 @@ function factor(f: ssasem.Func): Factor {
     return no;
   }
   let b = f.graph.blocks[0];
-  if (b.term.kind_tag != 1) {
+  if (b.term.kind_tag != ssa.TERM_RET) {
     return no;
   }
   let result = uncopy(f, b.term.value, []);
@@ -82,7 +82,7 @@ function is_multiply(d: Def): boolean {
 
 function factor_body(b: ssa.SBlock, result: i32): boolean {
   for ins in b.insts {
-    if (ins.kind_tag != 1 && ins.kind_tag != 6 && ins.kind_tag != 7 && ins.result != result) {
+    if (ins.kind_tag != ssa.CONST_INT && ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.COPY && ins.result != result) {
       return false;
     }
   }
@@ -114,7 +114,7 @@ function binary_element(f: ssasem.Func, add: boolean): Factor {
     return no;
   }
   let b = f.graph.blocks[0];
-  if (b.term.kind_tag != 1) {
+  if (b.term.kind_tag != ssa.TERM_RET) {
     return no;
   }
   let result = uncopy(f, b.term.value, []);
@@ -424,7 +424,7 @@ function scale_instructions(ins: ssa.SInst, plan: Plan, funcs: ssasem.Func[], va
   values = values.append(contract.params[0]).append(shape_type()).append(contract.params[1]).append(contract.result);
   insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
   insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[0]], imm: 1, str: "shape" });
-  insts = insts.append(ssa.SInst { kind_tag: 1, result: n + 2, args: [], imm: 0, str: plan.factor.literal });
+  insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: n + 2, args: [], imm: 0, str: plan.factor.literal });
   insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 3, args: [n, n + 2], imm: 0, str: contract.name });
   insts = insts.append(ssa.SInst { ...ins, str: ctor.name, args: [n + 3, n + 1] });
   for c in [contract, ctor] {

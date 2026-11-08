@@ -32,11 +32,11 @@ function member(active: boolean[], v: i32): boolean {
 }
 
 function local_origin(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.variant_new() || ins.kind_tag == 7 || ins.kind_tag == 8;
+  return ins.kind_tag == ssasem.variant_new() || ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI;
 }
 
 function local_read(ins: ssa.SInst, active: boolean[]): boolean {
-  if (ins.kind_tag == 7 || ins.kind_tag == 8) {
+  if (ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) {
     return member(active, ins.result);
   }
   if (ins.args.len() != 1) {
@@ -67,19 +67,19 @@ function candidates(f: ssasem.Func): boolean[] {
           if (!local_read(ins, active)) {
             bad = bad.with(a, true);
           }
-          if ((ins.kind_tag == 7 || ins.kind_tag == 8) && member(active, r)) {
+          if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && member(active, r)) {
             peers = peers.with(a, peers[a].append(r));
             peers = peers.with(r, peers[r].append(a));
           }
-        } else if (member(active, r) && (ins.kind_tag == 7 || ins.kind_tag == 8)) {
+        } else if (member(active, r) && (ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI)) {
           bad = bad.with(r, true);
         }
       }
     }
-    if (b.term.kind_tag == 1 && member(active, b.term.value)) {
+    if (b.term.kind_tag == ssa.TERM_RET && member(active, b.term.value)) {
       bad = bad.with(b.term.value, true);
     }
-    if (b.term.kind_tag == 3 && member(active, b.term.cond)) {
+    if (b.term.kind_tag == ssa.TERM_BRIF && member(active, b.term.cond)) {
       bad = bad.with(b.term.cond, true);
     }
   }

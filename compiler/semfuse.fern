@@ -238,7 +238,7 @@ function direct_abort(f: ssasem.Func): boolean {
 }
 
 function concatenates(f: ssasem.Func, ins: ssa.SInst): boolean {
-  return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_text(f.values[ins.result]);
+  return ins.kind_tag == ssa.BINARY && ins.str == "+" && ssasem.is_text(f.values[ins.result]);
 }
 
 function may_abort(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {
@@ -505,7 +505,7 @@ function fused_site(f: ssasem.Func, c: Chain, name: string): semarrayreport.Site
 
 function escapes(f: ssasem.Func, value: i32): boolean {
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && b.term.value == value) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value == value) {
       return true;
     }
   }
@@ -654,10 +654,10 @@ function use_counts(g: ssa.SFunc): i32[] {
         out = out.with(a, out[a] + 1);
       }
     }
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       out = out.with(b.term.value, out[b.term.value] + 1);
     }
-    if (b.term.kind_tag == 3) {
+    if (b.term.kind_tag == ssa.TERM_BRIF) {
       out = out.with(b.term.cond, out[b.term.cond] + 1);
     }
   }
@@ -724,11 +724,11 @@ function next_block_id(g: ssa.SFunc): i32 {
 }
 
 function br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function brif(cond: i32, t: i32, f: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
 }
 
 function term_targets(t: ssa.STerm): i32[] {
@@ -966,7 +966,7 @@ function header(s: Build, l: Loop): Build {
   for _ in l.backs {
     is = is.append(l.next_i);
   }
-  let phis: ssa.SInst[] = [ssa.SInst { kind_tag: 8, result: l.i, args: is, imm: 0, str: "" }];
+  let phis: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: l.i, args: is, imm: 0, str: "" }];
   let w = l.vars.len();
   let v = 0;
   while (v < w) {
@@ -976,7 +976,7 @@ function header(s: Build, l: Loop): Build {
       args = args.append(l.rows[b * w + v]);
       b += 1;
     }
-    phis = phis.append(ssa.SInst { kind_tag: 8, result: l.vars[v], args: args, imm: 0, str: "" });
+    phis = phis.append(ssa.SInst { kind_tag: ssa.PHI, result: l.vars[v], args: args, imm: 0, str: "" });
     v += 1;
   }
   for ins in h.insts {

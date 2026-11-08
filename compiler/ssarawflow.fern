@@ -196,7 +196,7 @@ function return_seeds(f: ssasem.Func, seeds: i32[], result: boolean): i32[] {
     return seeds;
   }
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && storage(f, f.values[b.term.value])) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && storage(f, f.values[b.term.value])) {
       seeds = seeds.append(b.term.value);
     }
   }

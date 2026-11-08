@@ -260,14 +260,14 @@ function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
 }
 
 function slot_phi(ins: ssa.SInst): boolean {
-  return ins.kind_tag == 8 && ins.str != "";
+  return ins.kind_tag == ssa.PHI && ins.str != "";
 }
 
 function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
   let phis: ssa.SInst[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.PHI) {
         phis = phis.append(ins);
       }
     }
@@ -373,7 +373,7 @@ function lends_from(f: ssasem.Func, lent: boolean[]): boolean {
     i += 1;
   }
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.is_view(f.values[b.term.value])) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && ssasem.is_view(f.values[b.term.value])) {
       return true;
     }
   }
@@ -390,7 +390,7 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
       }
       out = instruction_carried(out, f, a, ins, rows, ix, fr);
     }
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       out = out.with(b.term.value, true);
     }
   }

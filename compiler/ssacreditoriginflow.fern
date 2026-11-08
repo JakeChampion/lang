@@ -100,7 +100,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
           }
           row = row.with(util.index_of_i32(checked.values, op.result), value);
         }
-        if (b.term.kind_tag == 1) {
+        if (b.term.kind_tag == ssa.TERM_RET) {
           let result = row[util.index_of_i32(checked.values, b.term.value)];
           if (result.kind != 1 || result.identity < 2 || result.words != 3 || balance[result.identity] != 1) {
             return refused(f, "owned caller allocation return required");
@@ -112,7 +112,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
             }
           }
           returned = true;
-        } else if (b.term.kind_tag == 2) {
+        } else if (b.term.kind_tag == ssa.TERM_BR) {
           destinations = destinations.with(index, b.term.target);
         } else {
           let condition = row[util.index_of_i32(checked.values, b.term.cond)];

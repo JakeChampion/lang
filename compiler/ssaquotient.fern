@@ -44,15 +44,15 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
       if (q < 0 || leads && ins.str == "/") {
         insts = insts.append(ins);
       } else if (ins.str == "/") {
-        insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [q], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [q], imm: 0, str: "" });
       } else {
         if (leads) {
-          insts = insts.append(ssa.SInst { kind_tag: 9, result: q, args: ins.args, imm: 0, str: "/" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: q, args: ins.args, imm: 0, str: "/" });
         }
         let product = values.len();
         values = values.append(f.values[ins.result]);
-        insts = insts.append(ssa.SInst { kind_tag: 9, result: product, args: [q, ins.args[1]], imm: 0, str: "*" });
-        insts = insts.append(ssa.SInst { kind_tag: 9, result: ins.result, args: [ins.args[0], product], imm: 0, str: "-" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: product, args: [q, ins.args[1]], imm: 0, str: "*" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: ins.result, args: [ins.args[0], product], imm: 0, str: "-" });
       }
       ii += 1;
     }
@@ -127,7 +127,7 @@ function shared_divisors(f: ssasem.Func): Divisors {
   let value = __alloc_i64(f.values.len());
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == 1 && ins.result >= 0 && ins.result < known.len() && ssasem.is_integer(f.values[ins.result])) {
+      if (ins.kind_tag == ssa.CONST_INT && ins.result >= 0 && ins.result < known.len() && ssasem.is_integer(f.values[ins.result])) {
         let c = ins.imm as i64;
         if (ins.str != "") {
           c = util.lit_to_i64(ins.str);
@@ -150,7 +150,7 @@ function shared_divisors(f: ssasem.Func): Divisors {
         ok = c >= 0i64 && c <= 2147483647i64 && (!ssasem.is_u8(f.values[ins.result]) || c <= 255i64);
         out = Divisors { ...out, constant: out.constant.with(ins.result, true) };
       }
-      if (ins.kind_tag == 9 && ins.str == "%" && ins.args.len() == 2 && !out.constant[ins.args[1]]) {
+      if (ins.kind_tag == ssa.BINARY && ins.str == "%" && ins.args.len() == 2 && !out.constant[ins.args[1]]) {
         out = Divisors { ...out, any: true };
       }
       let mag = c;
@@ -166,7 +166,7 @@ function shared_divisors(f: ssasem.Func): Divisors {
 }
 
 function divides(f: ssasem.Func, divisor: Divisors, ins: ssa.SInst): boolean {
-  return ins.kind_tag == 9 && (ins.str == "/" || ins.str == "%") && ins.args.len() == 2 && ins.result >= 0
+  return ins.kind_tag == ssa.BINARY && (ins.str == "/" || ins.str == "%") && ins.args.len() == 2 && ins.result >= 0
     && ssasem.is_integer(f.values[ins.result]) && (divisor.shared[ins.args[1]] || !divisor.constant[ins.args[1]]);
 }
 

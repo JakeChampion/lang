@@ -305,10 +305,10 @@ pub function check_graph(f: ssa.SFunc): Facts {
     let pos = 0;
     let seen_regular = false;
     for ins in f.blocks[bi].insts {
-      if (ins.kind_tag == 6 && (f.blocks[bi].id != f.entry || ins.imm < 0 || ins.imm >= f.nparams)) {
+      if (ins.kind_tag == ssa.PARAM && (f.blocks[bi].id != f.entry || ins.imm < 0 || ins.imm >= f.nparams)) {
         return refused("invalid parameter definition");
       }
-      if (ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.PHI) {
         if (seen_regular || ins.result < 0) {
           return refused("invalid phi definition");
         }
@@ -405,7 +405,7 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
     if (g.reachable[bi]) {
       let pos = 0;
       for ins in b.insts {
-        if (ins.kind_tag == 8) {
+        if (ins.kind_tag == ssa.PHI) {
           let pi = 0;
           while (pi < b.preds.len()) {
             let pb = g.at[b.preds[pi]];
