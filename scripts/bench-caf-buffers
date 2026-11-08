@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Compare CAF output buffer APIs with identical native decode and checksum work."""
+import argparse
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import tempfile
+import zlib
+
+ROOT = Path(__file__).resolve().parent.parent
+WRAPPER = """
+import platform,resource,subprocess,sys,time
+start=time.perf_counter()
+result=subprocess.run(sys.argv[1:])
+usage=resource.getrusage(resource.RUSAGE_CHILDREN)
+rss=usage.ru_maxrss/(1024 if platform.system()=='Darwin' else 1)
+print('process_peak_rss_kb=%d' % rss)
+print('process_wall_ns=%d' % ((time.perf_counter()-start)*1e9))
+raise SystemExit(result.returncode)
+"""
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--compiler', default=os.environ.get('FERN'), required=not bool(os.environ.get('FERN')))
+    parser.add_argument('--baseline-stdlib', type=Path)
+    parser.add_argument('--rounds', type=int, default=1024)
+    parser.add_argument('--trials', type=int, default=7)
+    parser.add_argument('--case', action='append', dest='cases')
+    parser.add_argument('--cpu', type=int)
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    if not 1 <= args.rounds <= 100000 or args.trials < 3:
+        parser.error('rounds must be 1 through 100000 and trials must be at least 3')
+    compiler = Path(shutil.which(args.compiler) or args.compiler).resolve()
+    target = {('Linux', 'x86_64'): 'x86-64-linux', ('Linux', 'aarch64'): 'arm64-linux',
+              ('Darwin', 'arm64'): 'arm64-darwin'}.get((platform.system(), platform.machine()))
+    if target is None:
+        parser.error('use native x86-64 Linux, ARM64 Linux, or ARM64 Darwin')
+    affinity = sorted(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else []
+    cpu = args.cpu if args.cpu is not None else (affinity[0] if affinity else None)
+    if cpu is not None:
+        if cpu not in affinity:
+            parser.error('selected CPU is outside the allowed affinity')
+        os.sched_setaffinity(0, {cpu})
+    env = dict(os.environ)
+    env.pop('FERN_PROFILE', None)
+    env.pop('FERN_PROFILE_FILE', None)
+    text = (ROOT / 'tests/stdlib/caf_vectors.fern').read_text()
+    vectors = {name: zlib.decompress(base64.b64decode(encoded))
+               for name, encoded in re.findall(r'Vector \{ name: "([^"]+)"[^\n]*?encoded: "([^"]+)"', text)}
+    selected = args.cases or ['remux-encoded-2ch-24bit', 'remux-encoded-8ch-24bit',
+                             'direct-encoded-2ch-24bit-silence', 'direct-encoded-2ch-16bit-noise']
+    unknown = set(selected) - set(vectors)
+    if unknown:
+        parser.error('unknown cases: ' + ', '.join(sorted(unknown)))
+    modes = {'default': ('caf_decode.fern', ROOT / 'internal/stdlib'),
+             'reuse': ('caf_reuse.fern', ROOT / 'internal/stdlib')}
+    if args.baseline_stdlib:
+        modes['baseline_default'] = ('caf_decode.fern', args.baseline_stdlib.resolve())
+    result = {'schema': 1, 'platform': platform.platform(), 'target': target, 'cpu': cpu,
+              'allowed_affinity': affinity, 'compiler_sha256': sha(compiler),
+              'compiler_version': subprocess.check_output([str(compiler), '-version'], text=True).strip(),
+              'git_head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+              'rounds': args.rounds, 'trials': args.trials, 'cases': {},
+              'measurement': 'warm decode, seek, and full playable-output checksum; input and index setup excluded',
+              'fresh_bytes': 'new heap storage only, not total allocation traffic',
+              'process_peak_rss': 'launch-context upper bound, including the Python wrapper',
+              'native_peak_rss': 'Linux VmHWM after decode, including native input and index setup; zero when unavailable',
+              'source_sha256': {str(p.relative_to(ROOT)): sha(p) for p in
+                  [ROOT / 'internal/stdlib/std/audio/caf.fern.md',
+                   ROOT / 'bench/audio/caf_common.fern', ROOT / 'bench/audio/caf_decode.fern',
+                   ROOT / 'bench/audio/caf_reuse.fern']}}
+    with tempfile.TemporaryDirectory() as directory:
+        temp = Path(directory)
+        binaries = {}
+        for mode, (source, stdlib) in modes.items():
+            binary = temp / mode
+            subprocess.run([str(compiler), '-stdlib', str(stdlib), '-target', target, '-O',
+                            '-o', str(binary), str(ROOT / 'bench/audio' / source)], cwd=ROOT, env=env, check=True)
+            binaries[mode] = binary
+        for name in selected:
+            encoded = temp / 'input.caf'
+            encoded.write_bytes(vectors[name])
+            trials = {mode: [] for mode in modes}
+            checks = set()
+            order = list(modes)
+            for trial in range(args.trials):
+                for mode in order[trial % len(order):] + order[:trial % len(order)]:
+                    raw = subprocess.check_output([sys.executable, '-c', WRAPPER, str(binaries[mode]),
+                                                   str(encoded), str(args.rounds)], text=True, env=env)
+                    row = {key: int(value) for key, value in (line.split('=', 1) for line in raw.splitlines()) if key != 'mode'}
+                    checks.add((row['samples'], row['checksum']))
+                    trials[mode].append(row)
+            assert len(checks) == 1, (name, 'PCM count or checksum differs')
+            summary = {mode: {key: statistics.median(row[key] for row in rows)
+                              for key in ['wall_ns', 'allocs', 'fresh_bytes', 'native_peak_rss_kb', 'process_peak_rss_kb']}
+                       for mode, rows in trials.items()}
+            result['cases'][name] = {'input_sha256': sha(encoded), 'input_bytes': len(vectors[name]),
+                                     'samples': next(iter(checks))[0], 'checksum': next(iter(checks))[1],
+                                     'raw_trials': trials, 'median': summary,
+                                     'reuse_over_default': summary['reuse']['wall_ns'] / summary['default']['wall_ns']}
+            print(name + ' ' + json.dumps(summary, sort_keys=True), file=sys.stderr, flush=True)
+    value = json.dumps(result, indent=2) + '\n'
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(value)
+    else:
+        print(value, end='')
+
+
+if __name__ == '__main__':
+    main()

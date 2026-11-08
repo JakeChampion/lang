@@ -28,6 +28,48 @@ function audio(value: caf.Audio, vector: Reference, expected: [u8], position: i6
   return samples(value.samples, value.start, value.frames, position, expected, vector.channels, vector);
 }
 
+function buffered(encoded: [u8], expected: [u8], vector: Reference, index: caf.Index): Result[void, string] {
+  let state = match (caf.cursor(index)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let capacity = index.max_packet_frames() * vector.channels;
+  let storage = pcm.zeros(capacity + 1).with(capacity, 123456789);
+  let position = 0i64;
+  let steps = 0;
+  while (true) {
+    let (next, event) = match (state.step_into(encoded, storage)) { Ok(value) => value, Err(e) => { return Err("buffered read: " + e.message()); } };
+    state = next;
+    steps += 1;
+    if (steps > index.packet_count() + 1) {
+      return Err("buffered packet work is unbounded");
+    }
+    match (event) {
+      caf.BufferPending(value) => {
+        if (value.len() != capacity + 1 || value[capacity] != 123456789) {
+          return Err("pending buffer suffix");
+        }
+        storage = value;
+      },
+      caf.BufferSamples(value) => {
+        audio(value, vector, expected, position)?;
+        if (value.samples.len() != capacity + 1 || value.samples[capacity] != 123456789) {
+          return Err("sample buffer suffix");
+        }
+        position += value.frames as i64;
+        storage = value.samples;
+      },
+      caf.BufferFinished(value) => {
+        if (value.len() != capacity + 1 || value[capacity] != 123456789) {
+          return Err("completion buffer suffix");
+        }
+        break;
+      }
+    }
+  }
+  if (position != vector.frames as i64) {
+    return Err("buffered complete length");
+  }
+  return Ok(());
+}
+
 pub function run(encoded: [u8], expected: [u8], vector: Reference): Result[void, string] {
   let index = match (caf.inspect(encoded, caf.default_limits())) { Ok(value) => value, Err(e) => { return Err("index: " + e.message()); } };
   let info = index.information();
@@ -53,6 +95,7 @@ pub function run(encoded: [u8], expected: [u8], vector: Reference): Result[void,
     return Err("complete PCM length");
   }
   samples(decoded.samples, 0, vector.frames, 0i64, expected, vector.channels, vector)?;
+  buffered(encoded, expected, vector, index)?;
   for target in [info.frames, 0i64, info.frames - 1i64, 1i64, 17i64, 4094i64, 4095i64, 4096i64, 4097i64, info.frames / 2i64, 0i64] {
     if (target < 0i64 || target > info.frames) {
       continue;

@@ -1,0 +1,49 @@
+import "std/audio/caf";
+import "std/audio/pcm";
+import "std/bench";
+import "caf_common" as common;
+
+function consume(own state: caf.Cursor, input: [u8], own storage: i32[], rounds: i32, checksum: u32): Result[(caf.Cursor, i32[], u32, i64), pcm.AudioError] {
+  let samples = 0i64;
+  for _ in 0..rounds {
+    state = state.seek(0i64)?;
+    while (true) {
+      let (next, event) = state.step_into(input, storage)?;
+      state = next;
+      match (event) {
+        caf.BufferPending(value) => {
+          storage = value;
+        },
+        caf.BufferSamples(audio) => {
+          let count = audio.frames * audio.format.channels;
+          checksum = common.hash(audio.samples, audio.start * audio.format.channels, count, checksum);
+          samples += count as i64;
+          storage = audio.samples;
+        },
+        caf.BufferFinished(value) => {
+          storage = value;
+          break;
+        }
+      }
+    }
+  }
+  return Ok((state, storage, checksum, samples));
+}
+
+function main(): i32 {
+  let data = match (common.load()) { Ok(value) => value, Err(e) => { print(e); return 1; } };
+  let Ok(initial) = caf.cursor(data.index) else {
+    return 1;
+  };
+  let capacity = data.index.max_packet_frames() * data.index.information().format.channels;
+  let Ok((state, storage, _, _)) = consume(initial, data.encoded, pcm.zeros(capacity), 4, 2166136261u32) else {
+    return 1;
+  };
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let Ok((_, _, checksum, samples)) = consume(state, data.encoded, storage, data.rounds, 2166136261u32) else {
+    return 1;
+  };
+  return common.report("reuse", data, checksum, samples, started, allocs, fresh);
+}
