@@ -141,6 +141,7 @@ Native, ARM64/QEMU, and WASI codec units pass.
 The native integration suite covers all block sizes, channel configurations, WAV formats, window patterns, and overlap scales.
 Parallel output matches serial bytes in every tested format and rate mode.
 Exact noise tests cover all 512 ordinary run lengths and all 256 decay codes at both quantizer limits.
+
 A scalar generator checks the noise tables.
 `python3 tests/generate_noise_tables.py --write` regenerates them from the codec directory.
 The sanitizer unit run reports 191613 allocations, 191613 frees, and zero live bytes.
