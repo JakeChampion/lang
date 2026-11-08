@@ -1,0 +1,2 @@
+main.fern:6:5: error[P001]:
+`@` bindings are not supported on a `_` pattern
