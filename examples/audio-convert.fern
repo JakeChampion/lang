@@ -4,7 +4,16 @@ import "std/audio/wav";
 import "std/audio/qoa";
 import "std/audio/flac";
 import "std/audio/mp3";
+import "std/audio/aac";
+import "std/audio/mp4";
 import "std/io";
+
+function quantize_aac(samples: [f32], rate: i32, channels: i32, channel_config: i32, bits: i32, limits: pcm.Limits): Result[pcm.Block, pcm.AudioError] {
+  if (channel_config == 4 || channel_config == 7) {
+    return Err(pcm.Unsupported);
+  }
+  return pcm.quantize(samples, pcm.Format { sample_rate: rate, channels: channels, bits_per_sample: bits }, limits);
+}
 
 function main(): i32 {
   let argv = args();
@@ -17,9 +26,20 @@ function main(): i32 {
     return 1;
   };
   let limits = pcm.default_limits();
-  let decoded = if (wire.tag(input, 0, "ID3") || input.len() >= 2 && input[0] == 255 && (input[1] & 224u8) == 224u8) {
+  let bits = if (argv[1] == "qoa") { 16 } else { 32 };
+  let decoded = if (wire.tag(input, 4, "ftyp")) {
+    match (mp4.decode(input, mp4.default_limits())) {
+      Ok(audio) => quantize_aac(audio.samples, audio.sample_rate, audio.channels, audio.channel_config, bits, limits),
+      Err(e) => Err(e),
+    }
+  } else if (input.len() >= 2 && input[0] == 255u8 && (input[1] & 246u8) == 240u8) {
+    match (aac.decode(input, limits)) {
+      Ok(audio) => quantize_aac(audio.samples, audio.sample_rate, audio.channels, audio.channel_config, bits, limits),
+      Err(e) => Err(e),
+    }
+  } else if (wire.tag(input, 0, "ID3") || input.len() >= 2 && input[0] == 255 && (input[1] & 224u8) == 224u8) {
     match (mp3.decode(input, limits)) {
-      Ok(audio) => pcm.quantize(audio.samples, pcm.Format { sample_rate: audio.sample_rate, channels: audio.channels, bits_per_sample: if (argv[1] == "qoa") { 16 } else { 32 } }, limits),
+      Ok(audio) => pcm.quantize(audio.samples, pcm.Format { sample_rate: audio.sample_rate, channels: audio.channels, bits_per_sample: bits }, limits),
       Err(e) => Err(e),
     }
   } else if (wire.tag(input, 0, "fLaC")) { flac.decode(input, limits) } else if (wire.tag(input, 0, "qoaf")) { qoa.decode(input, limits) } else { wav.decode(input, limits) };
