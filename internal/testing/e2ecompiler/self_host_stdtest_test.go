@@ -88,6 +88,8 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
+	"mp4": true, "mp4_boundary": true,
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
 	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
@@ -334,6 +336,9 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_compress", langSrcAbs(t, "tests/stdlib/http_compress_test.fern"), ""},
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
+		{"mp4", langSrcAbs(t, "tests/stdlib/mp4_test.fern"), ""},
+		{"mp4_boundary", langSrcAbs(t, "tests/stdlib/mp4_boundary_test.fern"), ""},
+		{"mp4_smoke", langSrcAbs(t, "tests/stdlib/mp4_smoke_test.fern"), ""},
 		{"aac", langSrcAbs(t, "tests/stdlib/aac_test.fern"), ""},
 		{"aac_boundary", langSrcAbs(t, "tests/stdlib/aac_boundary_test.fern"), ""},
 		{"aac_kernel", langSrcAbs(t, "tests/stdlib/aac_kernel_test.fern"), ""},

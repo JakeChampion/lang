@@ -15,6 +15,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus layer supplies file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
+| MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | HE-AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
@@ -39,17 +40,20 @@ function convert(input: [u8]): Result[u8[], pcm.AudioError] {
 }
 ```
 
-`examples/audio-convert.fern` converts MP3, WAVE, native FLAC, or QOA input to WAVE or QOA output.
+`examples/audio-convert.fern` converts AAC-LC ADTS, M4A, MP3, WAVE, native FLAC, or QOA input to WAVE or QOA output.
 Integer input retains its bit depth. QOA output from integer input requires 16-bit samples.
-MP3 input uses float PCM. The example quantizes it to 32-bit WAVE or 16-bit QOA.
+AAC and MP3 input use float PCM. The example quantizes them to 32-bit WAVE or 16-bit QOA.
 
 The example does not preserve container tags or custom channel layout metadata.
+It rejects AAC configurations 4 and 7 because its output API cannot describe those speaker maps.
 The convenience example uses the default allocation limits. It does not implement a complete player.
 
 ```sh
 fern -target x86-64-linux -o audio-convert examples/audio-convert.fern
 ./audio-convert wav input.flac output.wav
 ./audio-convert wav input.mp3 output.wav
+./audio-convert wav input.m4a output.wav
+./audio-convert wav input.aac output.wav
 ./audio-convert qoa input16.wav output.qoa
 ```
 
@@ -96,7 +100,7 @@ It checks cumulative input and output limits. A format change returns `Unsupport
 `std/audio/aac/config.inspect` reads an MPEG-4 AudioSpecificConfig.
 Create a decoder with `aac.create`, then call `Decoder.decode_packet` for each raw access unit.
 The packet API is suitable for a container demuxer that supplies complete access units.
-MP4/M4A demux is separate work under [#14518](https://github.com/JakeChampion/lang/issues/14518).
+`std/audio/mp4` supplies complete-view MP4/M4A demux and playback.
 
 `Decoder.decode_adts` reads one complete ADTS frame at a byte offset.
 It supports one through four raw data blocks and both MPEG identifiers.
@@ -125,6 +129,44 @@ These remaining AAC tasks stay open under [#14517](https://github.com/JakeChampi
 
 The AAC implementation derives from pinned Symphonia source under MPL-2.0.
 See [the notice](../licenses/aac/NOTICE.txt) for attribution, source revision, and license scope.
+
+## MP4 and M4A
+
+`std/audio/mp4.inspect` indexes self-contained AAC tracks from a complete byte view.
+The index retains configuration, packet ranges, packet times, and edit lists. It retains no encoded file bytes.
+Use the same immutable file bytes when calling `decode_track` with a retained index.
+Track numbers select entries in the audio-track array. Track identifiers preserve the container identifiers.
+
+`mp4.decode` selects the first enabled audio track. `mp4.decode_track` selects an explicit audio track.
+Both call the native AAC-LC packet decoder. The packet API also lets callers supply their own encoded-frame reader.
+Packet offsets use signed 64-bit counts. The complete-view API still needs the encoded file in memory during inspection and decode.
+
+The parser supports ordinary and extended box lengths, parent-to-end boxes, and metadata before or after media data.
+It reads fixed and per-sample `stsz` sizes, all three `stz2` widths, `stco`, `co64`, `stsc`, and `stts`.
+Each packet must fit within a declared `mdat` payload.
+Sample descriptions must identify self-contained `mp4a` data and a bounded MPEG-4 decoder configuration.
+QuickTime version-one sample headers and a `wave` wrapper for `esds` are also accepted.
+
+Movie and media clocks retain their distinct units.
+Normal-rate edit lists remove encoder delay and final padding. Empty edits produce silence, and repeated edits reuse the requested media range.
+Cumulative clock conversion prevents a rounding error at each edit from changing the total track length.
+Decode allocates the final presentation buffer and one reusable AAC frame buffer.
+It does not allocate a second full-track PCM buffer before trimming.
+
+Limits bound input bytes, boxes, tracks, packet records, sample descriptions, edits, and output samples.
+The packet-record budget applies across all audio tracks.
+Defaults permit 65,536 boxes, 32 tracks, 1,048,576 packet records, 64 descriptions per track, and 64 edits per track.
+The audio limits also bound each decoded AAC frame and the complete presentation output.
+
+Fragmented media, encryption, external data references, other audio codecs, format-changing descriptions, and nonzero composition offsets return `Unsupported`.
+Reader-backed metadata indexing and cooperative file playback remain separate work.
+These limits keep [#14518](https://github.com/JakeChampion/lang/issues/14518) open after this complete-view playback milestone.
+
+Fifteen independent fixtures compare complete trimmed PCM with FFmpeg at an absolute tolerance of 0.000001.
+They cover fast-start files, multiple audio tracks, a video track, compact sizes, extended boxes, and 64-bit chunk offsets.
+The reference generator uses the independently reported container duration to exclude final codec padding from FFmpeg output.
+Boundary tests cover incomplete prefixes, malformed tables, media ranges, budgets, track selection, and edit-clock rounding.
+They also check 64-bit packet ranges beyond eight GiB without allocating a large file.
 
 ## MP3
 
@@ -539,6 +581,7 @@ python3 scripts/gen-aac-vectors.py --check
 # AAC transforms use an independent C double-precision equation.
 python3 scripts/gen-aac-kernel-vectors.py --check
 python3 scripts/gen-aac-tables.py --check
+python3 scripts/gen-mp4-vectors.py --check
 
 # Requires cc, FFmpeg, and network access to the pinned QOA source.
 python3 scripts/gen-audio-fixtures.py
@@ -651,7 +694,8 @@ Android qualification requires device measurements of decode time, allocations, 
 
 The codec stack now includes complete Opus decode, Ogg demux, and MP3/FLAC seek indexes.
 Further MP3 work includes free-format streams, damaged-stream synchronization, and more tag formats.
-AAC work includes HE-AAC/SBR/PS, protected ADTS verification, program configurations, and MP4/M4A integration.
+AAC work includes HE-AAC/SBR/PS, protected ADTS verification, and program configurations.
+MP4/M4A work includes fragmented media, further codecs, and bounded file-reader playback.
 Vorbis, further encoders, and other lossless formats need independent reference vectors and benchmarks.
 Android qualification still needs physical-device memory, power, thermal, and sustained-playback measurements.
 
