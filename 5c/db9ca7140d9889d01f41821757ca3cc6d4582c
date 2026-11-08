@@ -555,3 +555,14 @@ tls/server/go.bulk_mbytes_per_s	123.4
 tls/server/curl.bulk_mbytes_per_s	150.2
 tls/server/handshakes_per_s	518.0
 tls/server/resumed_handshakes_per_s	524.7
+
+# lane: bootstrap-arm64-linux
+bootstrap/arm64-linux/stage1.wall_s	44
+bootstrap/arm64-linux/stage1.peak_rss_mb	2188
+bootstrap/arm64-linux/stage1.size_bytes	17260792
+bootstrap/arm64-linux/stage2.wall_s	44
+bootstrap/arm64-linux/stage2.peak_rss_mb	2188
+bootstrap/arm64-linux/stage2.size_bytes	17260824
+bootstrap/arm64-linux/stage3.wall_s	46
+bootstrap/arm64-linux/stage3.peak_rss_mb	2189
+bootstrap/arm64-linux/stage3.size_bytes	17260824
