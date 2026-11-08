@@ -138,7 +138,6 @@ import "std/time";
 import "std/async";
 import "std/option";
 import "core/cmp";
-import "core/mem";
 ```
 
 ### `3 pub enum IpAddr`
@@ -1706,18 +1705,12 @@ pub function send_many(sock: Socket, to: [u8], datagrams: u8[][]): Result[i32, N
 // segment size (0 for a single datagram), and every message's bytes in
 // order. On Linux and Android the call is one `sendmmsg`, and a message
 // whose segment size is set is one `UDP_SEGMENT` message the kernel splits.
-pub struct Batch { addrs: u8[], lens: i32[], bytes: __Bytes, messages: i32 }
-
-struct __Bytes { h: usize }
-
-impl mem.Drop for __Bytes {
-  function drop(self: __Bytes): void {
-    buf_free(self.h);
-  }
-}
+// A sent batch keeps the room of its arrays, so a batch that is sent once
+// per wake allocates nothing once it has reached its size.
+pub struct Batch { addrs: u8[], lens: i32[], bytes: u8[], messages: i32 }
 
 pub function batch(): Batch {
-  return Batch { addrs: [], lens: [], bytes: __Bytes { h: buf_new(4096) }, messages: 0 };
+  return Batch { addrs: [], lens: [], bytes: [], messages: 0 };
 }
 
 // len is the messages the batch holds.
@@ -1749,16 +1742,17 @@ pub function (b: Batch) add(to: [u8], datagrams: u8[][]): Batch {
         break;
       }
     }
+    let bytes = out.bytes;
     let k = i;
     while (k < j) {
-      buf_push_bytes_range(out.bytes.h, datagrams[k], 0, datagrams[k].len());
+      bytes = bytes.concat(datagrams[k]);
       k += 1;
     }
     let segment = 0;
     if (j - i > 1) {
       segment = size;
     }
-    out = Batch { ...out, addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment), messages: out.messages + 1 };
+    out = Batch { addrs: out.addrs.concat(to), lens: out.lens.append(total).append(segment), bytes: bytes, messages: out.messages + 1 };
     i = j;
   }
   return out;
@@ -1772,12 +1766,15 @@ pub function (b: Batch) send(sock: Socket): (Batch, Result[i32, NetError]) {
   if (b.messages == 0) {
     return (b, Ok(0));
   }
-  let data = buf_take_bytes(b.bytes.h);
-  let empty = Batch { ...b, addrs: [], lens: [], messages: 0 };
+  let r = __batch_sent(sock, b.addrs, b.bytes, b.lens);
+  return (Batch { addrs: b.addrs.truncate(0), lens: b.lens.truncate(0), bytes: b.bytes.truncate(0), messages: 0 }, r);
+}
+
+function __batch_sent(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
   if (target_os() == "linux" || target_os() == "android") {
-    return (empty, __socket_count(udp_sendmmsg(sock, b.addrs, data, b.lens)));
+    return __socket_count(udp_sendmmsg(sock, addrs, data, lens));
   }
-  return (empty, __sent_one_by_one(sock, b.addrs, data, b.lens));
+  return __sent_one_by_one(sock, addrs, data, lens);
 }
 
 function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): Result[i32, NetError] {
