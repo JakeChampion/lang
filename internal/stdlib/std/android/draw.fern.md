@@ -6,7 +6,9 @@ This module draws rectangles, images and text on the pixels of an Android window
 
 A `Frame` holds the pixels of a window while the window is locked: 4 bytes for each pixel, in the order red, green, blue and alpha, and `stride` pixels for each row. `std/android` locks a window and gives its frame. The functions here only write into the pixels, so a test can make a frame from plain memory.
 
-A color is a pixel word with an alpha from 0, for none, to 255, for opaque: `rgba` makes one, and `rgb` makes an opaque one. Each shape and each glyph blends its color over the pixels of the frame by the alpha and by the part of each pixel that it covers. A shape over opaque pixels leaves them opaque. `store` writes pixel words as they are, so it can make transparent pixels, for example the corners of an icon.
+A color is a pixel word with an alpha from 0, for none, to 255, for opaque: `rgba` makes one, and `rgb` makes an opaque one. Each shape and each glyph blends its color over the pixels of the frame. The weight is the alpha times the part of each pixel that the shape covers. A shape over opaque pixels leaves them opaque.
+
+Over transparent pixels, a shape gives premultiplied pixels: each channel holds its value times the alpha. So a frame from `offscreen` that starts transparent holds a premultiplied image, which a GPU can draw over other pixels. `store` writes pixel words as they are, so it can make transparent pixels, for example the corners of an icon.
 
 An `Image` holds 4 bytes for each pixel, red, green, blue and alpha, row by row with no stride. `std/android/image` decodes one, and `image` copies a part of it into a frame. `cover_size` gives the size of an image scaled to fill a box with its shape kept. The box then shows the middle of the image. `clip_corners` rounds the corners of an opaque image on a flat background.
 
@@ -58,7 +60,8 @@ pub function rgba(r: i32, g: i32, b: i32, a: i32): i32 {
   return (a & 255) << 24 | (b & 255) << 16 | (g & 255) << 8 | r & 255;
 }
 
-// The opaque pixel word of `color` drawn over the pixel word `under`.
+// The pixel word of `color` drawn over the pixel word `under`. It is opaque
+// when `under` is opaque.
 pub function over(color: i32, under: i32): i32 {
   return blend(color, under, weight(color, 15));
 }
@@ -172,15 +175,17 @@ pub function (f: Frame) blit(src: Frame, x: i32, y: i32): void {
   }
 }
 
-// The opaque pixel word of `src` over `dst` with the weight w, from 0 for
-// none to 256 for all of `src`. Red and blue go in one 64-bit product.
+// The pixel word of the opaque `src` over the premultiplied `dst` with the
+// weight w, from 0 for none to 256 for all of `src`. Red and blue go in one
+// 64-bit product.
 function mix_word(src: i32, dst: i32, w: i32): i32 {
   let k = w as i64;
   let srb = (src & 16711935) as i64;
   let drb = (dst & 16711935) as i64;
   let rb = srb * k + drb * (256i64 - k) >> 8 & 16711935i64;
   let g = (src & 65280) * w + (dst & 65280) * (256 - w) >> 8 & 65280;
-  return -16777216 | rb as i32 | g;
+  let a = 255 * w + (dst >> 24 & 255) * (256 - w) >> 8;
+  return a << 24 | rb as i32 | g;
 }
 
 // Blends `src` over the frame with its top left corner at x and y, with the
@@ -495,12 +500,14 @@ function mix(fg: i32, bg: i32, shift: i32, w: i32): i32 {
   return (f * w + b * (255 - w)) / 255 << shift;
 }
 
-// `fg` over `bg` with the weight `w` from 0 to 255. The result is opaque.
+// `fg` over the premultiplied `bg` with the weight `w` from 0 to 255. The
+// result is opaque when `bg` is opaque.
 function blend(fg: i32, bg: i32, w: i32): i32 {
   if (w >= 255) {
-    return fg;
+    return fg | -16777216;
   }
-  return -16777216 | mix(fg, bg, 16, w) | mix(fg, bg, 8, w) | mix(fg, bg, 0, w);
+  let a = (255 * w + (bg >> 24 & 255) * (255 - w)) / 255;
+  return a << 24 | mix(fg, bg, 16, w) | mix(fg, bg, 8, w) | mix(fg, bg, 0, w);
 }
 
 // Blends `color` over the square of `scale` pixels at x and y.
