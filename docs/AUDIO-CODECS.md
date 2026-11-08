@@ -184,6 +184,23 @@ Every compiled sample matches exactly.
 The independent MP3 interpreter smoke uses a float slice from hash-pinned scalar minimp3.
 Regenerate it with `scripts/gen-mp3-seek-smoke.py`.
 
+## Indexed FLAC files
+
+`std/audio/flac/file` builds an index through a bounded seekable source.
+Index construction decodes each frame and verifies the complete-stream MD5 when supplied.
+It retains offsets and sample positions, without retaining encoded input or PCM.
+The logical index uses 24 bytes per frame. Capacity and allocator overhead add to this count.
+
+Playback seeks directly to one indexed frame and reads only its encoded range.
+File offsets and track positions use 64-bit counts.
+Each cooperative step performs at most one seek, source read, or frame decode.
+Index construction also has a cooperative step API.
+
+The caller owns the reader and supplies the same immutable file for all calls.
+Do not reposition it during a pending window read.
+An end-of-track seek completes without source operations.
+The shared `std/audio/file` helper reads bounded windows, including ranges beyond 32-bit offsets.
+
 ## Ogg
 
 `std/audio/ogg` reads bounded pages and packets from partial input.
