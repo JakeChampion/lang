@@ -94,6 +94,8 @@ var interpSlowStdTests = map[string]bool{
 	"caf_boundary": true,
 	// The full lossless reference corpus uses compiled gates. Exact ALAC smoke stays here.
 	"alac": true,
+	// The WavPack corpus completes four of 127 cases in 75 seconds. Small exact PCM controls stay here.
+	"wavpack": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
 	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
 	"vorbis_file": true, "vorbis_input": true, "vorbis_seek": true,
@@ -359,6 +361,9 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"caf_shard3", langSrcAbs(t, "tests/stdlib/caf_shard3_test.fern"), ""},
 		{"caf_boundary", langSrcAbs(t, "tests/stdlib/caf_boundary_test.fern"), ""},
 		{"caf_smoke", langSrcAbs(t, "tests/stdlib/caf_smoke_test.fern"), ""},
+		{"wavpack", langSrcAbs(t, "tests/stdlib/wavpack_test.fern"), ""},
+		{"wavpack_boundary", langSrcAbs(t, "tests/stdlib/wavpack_boundary_test.fern"), ""},
+		{"wavpack_smoke", langSrcAbs(t, "tests/stdlib/wavpack_smoke_test.fern"), ""},
 		{"alac", langSrcAbs(t, "tests/stdlib/alac_test.fern"), ""},
 		{"alac_boundary", langSrcAbs(t, "tests/stdlib/alac_boundary_test.fern"), ""},
 		{"alac_smoke", langSrcAbs(t, "tests/stdlib/alac_smoke_test.fern"), ""},

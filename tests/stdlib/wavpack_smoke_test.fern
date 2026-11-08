@@ -1,0 +1,11 @@
+import "std/test";
+import "wavpack_check";
+import "wavpack_smoke_vectors";
+
+function main(): i32 {
+  let runner = test.new("Independent WavPack small controls");
+  for vector in wavpack_smoke_vectors.all() {
+    runner = runner.it(vector.name, (): test.TestOutcome => wavpack_check.reference(vector));
+  }
+  return runner.finish();
+}

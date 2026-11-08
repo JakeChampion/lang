@@ -1,0 +1,192 @@
+import "std/audio/wavpack";
+import "std/audio/wavpack/bits";
+import "std/audio/pcm";
+import "std/test";
+import "wavpack_smoke_vectors";
+import "aac_kernel_check" as ref;
+
+function fixture(name: string): Result[(u8[], u8[]), string] {
+  for vector in wavpack_smoke_vectors.all() {
+    if (vector.name == name) {
+      return Ok((ref.unpack(vector.encoded)?, ref.unpack(vector.pcm)?));
+    }
+  }
+  return Err("missing fixture");
+}
+
+function rejected(input: [u8], limits: wavpack.Limits): boolean {
+  return match (wavpack.decode(input, limits)) { Err(_) => true, _ => false };
+}
+
+function error_is(input: [u8], limits: wavpack.Limits, expected: pcm.AudioError): boolean {
+  return match (wavpack.decode(input, limits)) { Err(actual) => actual == expected, _ => false };
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok((input, _)) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  for end in 0..input.len() {
+    if (!rejected(input[:end], wavpack.default_limits())) {
+      return test.fail("accepted truncated prefix " + end.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function mutations(): test.TestOutcome {
+  let Ok((input, _)) = fixture("short-24-2-19") else {
+    return test.fail("fixture");
+  };
+  for at in 0..input.len() {
+    if (!rejected(input.with(at, input[at] ^ 1u8), wavpack.default_limits())) {
+      return test.fail("accepted corrupt byte " + at.to_string());
+    }
+  }
+  return test.assert_true(error_is(input.with(input.len() - 1, input[input.len() - 1] ^ 1u8), wavpack.default_limits(), pcm.Checksum));
+}
+
+function budgets(): test.TestOutcome {
+  let Ok((input, _)) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let defaults = wavpack.default_limits();
+  let audio = defaults.audio;
+  for limit in [
+    wavpack.Limits { ...defaults, max_blocks: 0 },
+    wavpack.Limits { ...defaults, max_blocks: 1 },
+    wavpack.Limits { ...defaults, max_metadata: 1 },
+    wavpack.Limits { ...defaults, max_metadata: -1 },
+    wavpack.Limits { ...defaults, audio: pcm.Limits { ...audio, max_input_bytes: input.len() - 1 } },
+    wavpack.Limits { ...defaults, audio: pcm.Limits { ...audio, max_samples: 31 } },
+    wavpack.Limits { ...defaults, audio: pcm.Limits { ...audio, max_samples: -1 } },
+  ] {
+    if (!error_is(input, limit, pcm.Limit)) {
+      return test.fail("budget");
+    }
+  }
+  return test.pass();
+}
+
+function exact_seek(input: [u8], expected: [u8], index: wavpack.Index, first: i32): test.TestOutcome {
+  let Ok(start) = wavpack.reader(index).seek(first as i64) else {
+    return test.fail("seek");
+  };
+  let reader = start;
+  let buffer: i32[] = [];
+  let at = first * 2;
+  while (true) {
+    let (next, frame) = match (reader.read(input, buffer)) { Ok(value) => value, Err(e) => { return test.fail(e.message()); } };
+    reader = next;
+    if (frame.first_frame != (at / 2) as i64) {
+      return test.fail("seek position");
+    }
+    for i in 0..frame.frames * 2 {
+      if (frame.samples[i] != ref.word(expected, at * 4)) {
+        return test.fail("seek sample");
+      }
+      at += 1;
+    }
+    buffer = frame.samples;
+    if (frame.frames == 0) {
+      break;
+    }
+  }
+  return test.assert_true(at * 4 == expected.len());
+}
+
+function seeking(): test.TestOutcome {
+  let Ok((input, expected)) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = wavpack.inspect(input, wavpack.default_limits()) else {
+    return test.fail("inspect");
+  };
+  if (index.group_count() != 3) {
+    return test.fail("group count");
+  }
+  for first in [0, 1, 15, 16, 17, 31, 32, 34, 35] {
+    if let test.Fail(message) = exact_seek(input, expected, index, first) {
+      return test.fail(message);
+    }
+  }
+  if let Ok(_) = wavpack.reader(index).seek(-1i64) {
+    return test.fail("negative seek");
+  }
+  if let Ok(_) = wavpack.reader(index).seek(36i64) {
+    return test.fail("seek after EOF");
+  }
+  return test.pass();
+}
+
+function bounded_stream(): test.TestOutcome {
+  let Ok((input, expected)) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let limits = wavpack.Limits { ...wavpack.default_limits(), audio: pcm.Limits { max_input_bytes: input.len(), max_samples: 32 } };
+  if (!error_is(input, limits, pcm.Limit)) {
+    return test.fail("whole-file budget");
+  }
+  let Ok(index) = wavpack.inspect(input, limits) else {
+    return test.fail("bounded index");
+  };
+  return exact_seek(input, expected, index, 0);
+}
+
+function reusable_suffix(): test.TestOutcome {
+  let Ok((input, _)) = fixture("seek-24-2-35") else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = wavpack.inspect(input, wavpack.default_limits()) else {
+    return test.fail("inspect");
+  };
+  let reader = wavpack.reader(index);
+  let buffer = pcm.zeros(80);
+  for i in 0..buffer.len() {
+    buffer = buffer.with(i, 12345678);
+  }
+  for _ in 0..4 {
+    let held = buffer;
+    let Ok((next, frame)) = reader.read(input, buffer) else {
+      return test.fail("read");
+    };
+    reader = next;
+    if (frame.samples.len() != 80) {
+      return test.fail("capacity");
+    }
+    for i in frame.frames * 2..80 {
+      if (frame.samples[i] != held[i]) {
+        return test.fail("suffix changed");
+      }
+    }
+    buffer = frame.samples;
+  }
+  if let Ok(_) = reader.read(input[:input.len() - 1], buffer) {
+    return test.fail("changed input extent");
+  }
+  return test.pass();
+}
+
+function bit_boundaries(): test.TestOutcome {
+  for (at, end, count) in [(-1i64, 8i64, 1), (0i64, 9i64, 1), (7i64, 8i64, 2), (0i64, 8i64, 33)] {
+    if let Ok(_) = bits.read([255u8], at, end, count) {
+      return test.fail("bit bound");
+    }
+  }
+  if let Ok(_) = bits.exponential([255u8, 255u8, 255u8, 255u8, 255u8], 0i64, 40i64) {
+    return test.fail("unbounded prefix");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("WavPack bounds, integrity, streaming, and exact seeks");
+  runner = runner.it("every truncated prefix", prefixes);
+  runner = runner.it("every corrupt byte and checksum", mutations);
+  runner = runner.it("input, block, metadata, and sample budgets", budgets);
+  runner = runner.it("exact seeks across group boundaries and EOF", seeking);
+  runner = runner.it("bounded streaming exceeds the whole-file sample budget", bounded_stream);
+  runner = runner.it("reusable output suffix and unchanged input extent", reusable_suffix);
+  runner = runner.it("bounded bit fields and exponential prefixes", bit_boundaries);
+  return runner.finish();
+}
