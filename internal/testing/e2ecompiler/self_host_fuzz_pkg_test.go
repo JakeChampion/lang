@@ -22,7 +22,11 @@ import (
 // fuzzReader feeds each input as a file to one reader of a driver, and
 // accepts exit 0 with a summary that opens with the reader's name.
 func fuzzReader(f *testing.F, driverName, reader string, seeds [][]byte) {
-	driver := fuzzDriver(f, driverName)
+	fuzzBinReader(f, fuzzDriver(f, driverName), driverName, reader, seeds)
+}
+
+// fuzzBinReader is fuzzReader for a binary already built.
+func fuzzBinReader(f *testing.F, driver, driverName, reader string, seeds [][]byte) {
 	for _, seed := range seeds {
 		f.Add(seed)
 	}
