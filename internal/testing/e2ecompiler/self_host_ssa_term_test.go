@@ -13,7 +13,7 @@ import (
 func TestSelfHostSsaTerminators(t *testing.T) {
 	const src = `import "./ssa";
 function main(): i32 {
-  let want = ["none", "ret", "br", "brif", "unreachable"];
+  let want = ["", "ret", "br", "brif", "unreachable"];
   for k in 0..want.len() {
     if (ssa.term_name(k) != want[k]) {
       print(ssa.term_name(k));

@@ -514,7 +514,7 @@ pub function term_id(name: string): i32 {
 
 pub function term_name(id: i32): string {
   return match (id) {
-    0 => "none",
+    0 => "",
     1 => "ret",
     2 => "br",
     3 => "brif",
