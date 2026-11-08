@@ -20,6 +20,7 @@ TestAliasGrowNoOverRelease 53
 TestAllocSizeOverflowAborts 59
 TestAndroidGLCanvas 2
 TestAndroidNativeFace 4
+TestAndroidPaperGPU 3
 TestAndroidStopwatchApk 2
 TestAndroidStopwatchControl 4
 TestAndroidStopwatchLogic 4

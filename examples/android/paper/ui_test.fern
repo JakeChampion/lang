@@ -13,14 +13,7 @@ const W: i32 = 1080;
 const H: i32 = 2400;
 
 pub function frame_of(w: i32, h: i32): draw.Frame {
-  return frame(w, h);
-}
-
-function frame(w: i32, h: i32): draw.Frame {
-  unsafe {
-    let bits = __alloc(w * h * 4);
-    return draw.Frame { window: 0 as usize, buffer: 0 as usize, bits: bits, width: w, height: h, stride: w };
-  }
+  return draw.offscreen(w, h);
 }
 
 pub function fonts(): face.Fonts {
@@ -83,7 +76,7 @@ pub function home_view(): ui.View {
 }
 
 function draw_view(v: ui.View, name: string): draw.Frame {
-  let f = frame(W, H);
+  let f = draw.offscreen(W, H);
   let fs = fonts();
   let ns = ui.nodes(fs, v);
   let wall = ui.wallpaper_layer(wallpaper(W));
@@ -249,6 +242,64 @@ function test_many_favourites_scroll(): test.TestOutcome {
   return test.assert_eq(limit > 0 && last.y + last.h <= ui.favourites_bottom(v.m) + 1, true);
 }
 
+// The premultiplied pixel `p` over the opaque pixel `under`, as the GPU
+// draws it.
+function over_premultiplied(p: i32, under: i32): i32 {
+  let a = p >> 24 & 255;
+  let out = -16777216;
+  for shift in [0, 8, 16] {
+    let c = (p >> shift & 255) + ((under >> shift & 255) * (255 - a) + 127) / 255;
+    out = out | c.min(255) << shift;
+  }
+  return out;
+}
+
+// The largest difference of one channel between two opaque pixels.
+function channel_gap(a: i32, b: i32): i32 {
+  let gap = 0;
+  for shift in [0, 8, 16] {
+    gap = gap.max(((a >> shift & 255) - (b >> shift & 255)).abs());
+  }
+  return gap;
+}
+
+// The image of a node, as the GPU draws it over a background, is the node
+// drawn on that background: for text, a rounded fill, a check box, the
+// weather and shadowed text, each channel of each pixel is within 3. The
+// image keeps 8 bits of each premultiplied channel, so shapes that overlap
+// round more than once.
+function test_node_images_match(): test.TestOutcome {
+  let fs = fonts();
+  let m = metrics();
+  let bg = ui.dialog_color();
+  let nodes = [
+    ui.Node { x: 0, y: 0, w: 400, h: 90, paint: ui.Label("Spotify", 60, face.MEDIUM, 0, ui.ink()), act: "", long: "", group: "", clip0: 0, clip1: 1 << 30 },
+    ui.Node { x: 0, y: 0, w: 300, h: 120, paint: ui.Fill(draw.rgb(40, 90, 200), 40), act: "", long: "", group: "", clip0: 0, clip1: 1 << 30 },
+    ui.Node { x: 0, y: 0, w: 60, h: 60, paint: ui.Check(true), act: "", long: "", group: "", clip0: 0, clip1: 1 << 30 },
+    ui.Node { x: 0, y: 0, w: 120, h: 120, paint: ui.Weather(paper.Rain), act: "", long: "", group: "", clip0: 0, clip1: 1 << 30 },
+    ui.Node { x: 0, y: 0, w: 400, h: 90, paint: ui.Shadowed("9:06", 60, face.BOLD, draw.rgb(255, 255, 255), 6), act: "", long: "", group: "", clip0: 0, clip1: 1 << 30 },
+  ];
+  let wall = draw.offscreen(0, 0);
+  let worst = 0;
+  let c = face.new_cache();
+  for n in nodes {
+    let mg = ui.margin(n, m.d);
+    let img = draw.offscreen(n.w + 2 * mg, n.h + 2 * mg);
+    c = ui.raster(img, fs, c, n, mg, wall, m.d);
+    let direct = draw.offscreen(n.w + 2 * mg, n.h + 2 * mg);
+    direct.store(0, 0, direct.width, direct.height, bg);
+    c = ui.render(direct, fs, c, [ui.Node { ...n, x: mg, y: mg }], wall, m.d);
+    for y in 0..img.height {
+      for x in 0..img.width {
+        worst = worst.max(channel_gap(over_premultiplied(img.pixel(x, y), bg), direct.pixel(x, y)));
+      }
+    }
+    draw.release(img);
+    draw.release(direct);
+  }
+  return test.assert_eq((worst <= 3).to_string() + " " + ui.paint_key(nodes[0]), "true label|60|" + face.MEDIUM.to_string() + "|0|" + ui.ink().to_string() + "|Spotify|400x90");
+}
+
 function main(): i32 {
   let r = test.new("android paper ui");
   r = r.it("home layout", test_home_layout);
@@ -261,5 +312,6 @@ function main(): i32 {
   r = r.it("pause before an app", test_pause);
   r = r.it("blocked app", test_blocked);
   r = r.it("many home apps scroll", test_many_favourites_scroll);
+  r = r.it("the image of a node over a background is the node drawn on it", test_node_images_match);
   return r.finish();
 }

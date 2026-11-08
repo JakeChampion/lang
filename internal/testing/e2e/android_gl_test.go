@@ -67,3 +67,9 @@ func runGLCheck(t *testing.T, src, want string) {
 func TestAndroidGLCanvas(t *testing.T) {
 	runGLCheck(t, "tests/android/gl/check.fern", "111111")
 }
+
+// The GPU painter of Paper draws home, the app list sliding in over home,
+// and a dialog as the CPU draws them.
+func TestAndroidPaperGPU(t *testing.T) {
+	runGLCheck(t, "examples/android/paper/gpu_test.fern", "111")
+}
