@@ -27,13 +27,39 @@ function main(): i32 { let r: i32 = mid(args().len()); return r - 1; }
 
 var corruptFrameReport = regexp.MustCompile(`^fern: array index out of range\nbacktrace:\n(  0x[0-9a-f]{16}\n){0,1}$`)
 
+// A frame whose saved frame pointer is its own address would print the same
+// line 64 times. The walk requires each frame to lie above the one before
+// it, so it prints that frame once and stops.
+var loopFrameReport = regexp.MustCompile(`^fern: array index out of range\nbacktrace:\n(  0x[0-9a-f]{16}\n){1,2}$`)
+
 // corruptFrameBeforeCall inserts an instruction that sets the frame pointer
 // to an aligned address above every user mapping, just before mid calls boom.
 func corruptFrameBeforeCall(t *testing.T, asm, target string) string {
 	t.Helper()
-	call, clobber := "call __fn_boom", "    movq $0x800000000000, %rbp\n"
+	clobber := "    movq $0x800000000000, %rbp\n"
 	if target == "arm64-linux" {
-		call, clobber = "bl __fn_boom", "    movz x29, #0x8000, lsl #32\n"
+		clobber = "    movz x29, #0x8000, lsl #32\n"
+	}
+	return patchFrameBeforeCall(t, asm, target, clobber)
+}
+
+// loopFrameBeforeCall builds a frame record on the stack whose saved frame
+// pointer is the record itself and whose return address is mid, and makes
+// it the frame pointer, just before mid calls boom.
+func loopFrameBeforeCall(t *testing.T, asm, target string) string {
+	t.Helper()
+	clobber := "    subq $16, %rsp\n    movq %rsp, %rbp\n    movq %rbp, (%rbp)\n    leaq __fn_mid(%rip), %r11\n    movq %r11, 8(%rbp)\n"
+	if target == "arm64-linux" {
+		clobber = "    sub sp, sp, #16\n    mov x29, sp\n    str x29, [x29]\n    adrp x9, __fn_mid\n    add x9, x9, :lo12:__fn_mid\n    str x9, [x29, #8]\n"
+	}
+	return patchFrameBeforeCall(t, asm, target, clobber)
+}
+
+func patchFrameBeforeCall(t *testing.T, asm, target, clobber string) string {
+	t.Helper()
+	call := "call __fn_boom"
+	if target == "arm64-linux" {
+		call = "bl __fn_boom"
 	}
 	start := strings.Index(asm, "\n__fn_mid:")
 	if start < 0 {
@@ -79,13 +105,14 @@ func TestSelfHostAbortBacktraceCorruptFrame(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, tc := range []struct {
-				name    string
-				patched bool
-			}{{"control", false}, {"corrupt-frame", true}} {
+				name  string
+				patch func(*testing.T, string, string) string
+				want  *regexp.Regexp
+			}{{"control", nil, nil}, {"corrupt-frame", corruptFrameBeforeCall, corruptFrameReport}, {"loop-frame", loopFrameBeforeCall, loopFrameReport}} {
 				t.Run(tc.name, func(t *testing.T) {
 					text := string(asm)
-					if tc.patched {
-						text = corruptFrameBeforeCall(t, text, target)
+					if tc.patch != nil {
+						text = tc.patch(t, text, target)
 					}
 					path := filepath.Join(dir, tc.name+".s")
 					if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
@@ -108,9 +135,9 @@ func TestSelfHostAbortBacktraceCorruptFrame(t *testing.T) {
 						t.Fatalf("exit %d, signalled %t, want 134 from the report path\nstderr:\n%s", code, signalled, stderr.String())
 					}
 					frames := abortFrameRe.FindAllString(stderr.String(), -1)
-					if tc.patched {
-						if !corruptFrameReport.MatchString(stderr.String()) {
-							t.Errorf("the walk did not stop at the stack top:\n%s", stderr.String())
+					if tc.want != nil {
+						if !tc.want.MatchString(stderr.String()) {
+							t.Errorf("the walk did not stop at the corrupt frame:\n%s", stderr.String())
 						}
 					} else if len(frames) < 1 {
 						t.Errorf("control printed no frame:\n%s", stderr.String())
