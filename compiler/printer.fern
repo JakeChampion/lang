@@ -3590,9 +3590,14 @@ pub function format_parsed(pf: parser.ParsedFmt, comments: lexer.Comment[], blan
 function print_annotated_function(fd: parser.FuncDecl, mod: parser.Module, hints: parser.FunctionInlineHint[], cursor: i32, f: Fmt): (string, Fmt, i32) {
   let prefix = "";
   for mark in mod.marks {
-    if (mark.func_name == fd.name && (mark.attr == "provide" || mark.attr == "interrupt")) {
+    // A method can share its name with a plain function, so a mark names its
+    // function by position.
+    if (mark.line != fd.line || mark.col != fd.col) {
+      continue;
+    }
+    if (mark.attr == "provide" || mark.attr == "interrupt") {
       prefix = prefix + "@" + mark.attr + "(" + quote_string(mark.arg) + ")\n";
-    } else if (mark.func_name == fd.name) {
+    } else {
       prefix = prefix + "@" + mark.attr + "\n";
     }
   }
