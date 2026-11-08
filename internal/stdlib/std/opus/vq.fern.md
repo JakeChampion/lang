@@ -35,9 +35,11 @@ A band of `b` short blocks has a bit in the collapse mask for each block. The bi
 <<module introduction>>=
 // The CELT band shapes, ported from libopus 1.4.
 //
+// Copyright (c) 2002-2008 Jean-Marc Valin
 // Copyright (c) 2007-2008 CSIRO
 // Copyright (c) 2007-2009 Xiph.Org Foundation
-// Written by Jean-Marc Valin
+// Copyright (c) 2024 Arm Limited
+// Written by Jean-Marc Valin and Yunho Huh
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -68,7 +70,9 @@ import "std/opus/range";
 
 ### `rotation`
 
-`PI` is an f32 in libopus, so the angle of the rotation is an f32 before `cos` takes it as an f64.
+The rotation uses a double-precision angle, as in current libopus.
+The stereo angle uses the normalized polynomial from libopus commit `22244de5a79bd1d6d623c32e72bf1954b56235be`.
+The Fern interface retains its Q14 scale.
 
 ```fern
 <<rotation>>=
@@ -86,7 +90,7 @@ const SPREAD_FACTOR: i32[] = [15, 10, 5];
 
 // cos(pi / 2 * x), as libopus calculates it.
 pub function cos_norm(x: f32): f32 {
-  return ((0.5f32 * PI * x) as f64).cos() as f32;
+  return (1.5707963267948966f64 * (x as f64)).cos() as f32;
 }
 
 // One pass of plane rotations by the angle of `c` and `s`, between each value
@@ -350,11 +354,27 @@ pub function fast_atan2f(y: f32, x: f32): f32 {
   return x * y * (x2 + 0.43157974f32 * y2) / den + half - quad;
 }
 
+function atan_normalized(x: f32): f32 {
+  let square = x * x;
+  let polynomial = -0.3333165943622589f32 + square * (0.19962704181671143f32 + square * (-0.13976582884788513f32 + square * (0.09794234484434128f32 + square * (-0.057773590087890625f32 + square * (0.023040136322379112f32 + square * -0.0043554059229791164f32)))));
+  return 0.636619772367581f32 * (x + x * square * polynomial);
+}
+
+function atan_ratio(y: f32, x: f32): f32 {
+  if (x * x + y * y < 1.0e-18f32) {
+    return 0.0f32;
+  }
+  if (y < x) {
+    return atan_normalized(y / x);
+  }
+  return 1.0f32 - atan_normalized(x / y);
+}
+
 // The angle between the two channels of a band, from 0 to 16384. With
 // `stereo`, the angle is that of the mid and side of `x` and `y`.
 pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
-  let emid = EPSILON;
-  let eside = EPSILON;
+  let emid = 0.0f32;
+  let eside = 0.0f32;
   if (stereo) {
     for i in 0..n {
       let m = x[i] + y[i];
@@ -368,6 +388,6 @@ pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
   }
   let mid = (emid as f64).sqrt() as f32;
   let side = (eside as f64).sqrt() as f32;
-  return (0.5f32 + 16384.0f32 * 0.63662f32 * fast_atan2f(side, mid)).floor() as i32;
+  return (0.5f32 + 1073741824.0f32 * atan_ratio(side, mid)).floor() as i32 >> 16;
 }
 ```

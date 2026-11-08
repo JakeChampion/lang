@@ -1,83 +1,92 @@
-# Opus CELT packets
+# Opus audio packets
 
-This module connects the existing CELT codec to standard Opus packet framing.
+This module connects SILK and CELT to standard Opus packet framing.
 It encodes fullband CELT packets at 48 kHz with one or two channels and frames of 2.5, 5, 10, or 20 ms.
 
-The decoder accepts CELT-only packets at every Opus bandwidth and all five Opus output sample rates.
+The decoder accepts SILK, hybrid, and CELT packets at all five Opus output sample rates.
 It accepts every packet frame-count code, including multiple frames and padding.
+It handles mode transitions, packet loss, and in-band error correction.
 
 Samples are interleaved `f32` values. The encoder requires finite values between -1 and 1.
 Decoder output can exceed that interval. Apply clipping at the device conversion boundary.
 
-This is partial Opus support. SILK, hybrid, Ogg containers, pre-skip, output gain, and end trimming are outside this module.
-SILK and hybrid packets return `Unsupported`. Do not use this module as a decoder for arbitrary `.opus` files.
+Ogg containers, pre-skip, output gain, and end trimming are outside this module.
+A file decoder must apply those container rules.
+
+`decode_lost` takes the lost duration as samples per channel at the output sample rate.
+`decode_fec` takes the next packet and the lost duration.
+After recovery, decode that same packet normally to obtain its current audio.
+Both durations must be multiples of 2.5 ms, with a maximum of 120 ms.
 
 The encoder has a 120-sample lookahead at 48 kHz. A container must account for that delay and final padding.
 After a decode error, reset the decoder before the next packet.
 
 ```fern
 <<*>>=
-// Encode and decode bounded Opus CELT packets with interleaved samples.
+// Encode CELT packets and decode Opus packets with interleaved samples.
 
 import "std/audio/pcm";
-import "std/opus/packet";
-import "std/opus/celt";
+import "std/opus/playback";
 import "std/opus/celt_encoder";
 import "std/f32";
 
-pub struct Decoder { state: celt.Decoder, sample_rate: i32, channels: i32 }
+pub struct Decoder { state: Option[playback.State], sample_rate: i32, channels: i32 }
 
 pub struct Encoder { state: celt_encoder.Encoder, channels: i32 }
 
 pub struct Encoded { encoder: Encoder, packet: u8[] }
 
 pub function decoder(sample_rate: i32, channels: i32): Result[Decoder, pcm.AudioError] {
-  return match (celt.decoder(sample_rate, channels)) {
-    Ok(state) => Ok(Decoder { state: state, sample_rate: sample_rate, channels: channels }),
-    Err(_) => Err(pcm.Unsupported),
+  return match (playback.decoder(sample_rate, channels)) {
+    Ok(state) => Ok(Decoder { state: Some(state), sample_rate: sample_rate, channels: channels }),
+    Err(error) => Err(error),
   };
 }
 
 pub function (own d: Decoder) reset(): Decoder {
-  return Decoder { ...d, state: d.state.reset() };
+  return match (decoder(d.sample_rate, d.channels)) {
+    Ok(next) => next,
+    Err(_) => Decoder { ...d, state: None },
+  };
 }
 
-// fern-lint: allow cyclomatic-complexity
-// One arm per packet mode and per bandwidth.
-pub function (own d: Decoder) decode(input: [u8]): (Decoder, Result[f32[], pcm.AudioError]) {
-  if (input.len() > 61440) {
-    return (d, Err(pcm.Limit));
-  }
-  let Ok(p) = packet.parse(input) else {
-    return (d, Err(pcm.Header));
-  };
-  match (packet.mode(p.toc)) {
-    Silk => {
-      return (d, Err(pcm.Unsupported));
+function decoded(result: Result[(playback.State, f32[]), pcm.AudioError], rate: i32, channels: i32): (Decoder, Result[f32[], pcm.AudioError]) {
+  match (result) {
+    Ok((next, samples)) => {
+      return (Decoder { state: Some(next), sample_rate: rate, channels: channels }, Ok(samples));
     },
-    Hybrid => {
-      return (d, Err(pcm.Unsupported));
-    },
-    Celt => {}
-  }
-  let size = packet.samples_per_frame(p.toc, d.sample_rate);
-  let cc = if (packet.stereo(p.toc)) { 2 } else { 1 };
-  let bandwidth = packet.bandwidth(p.toc);
-  let end = if (bandwidth == packet.NARROWBAND) { 13 } else if (bandwidth == packet.WIDEBAND) { 17 } else if (bandwidth == packet.SUPERWIDEBAND) { 19 } else { 21 };
-  let f = celt.Frame { frame_size: size, stream_channels: cc, start: 0, end: end };
-  let Decoder { state, sample_rate, channels } = d;
-  let samples: f32[] = [];
-  for frame in p.frames {
-    let (next, result) = state.decode(frame, f);
-    state = next;
-    let Ok(values) = result else {
-      return (Decoder { state: state, sample_rate: sample_rate, channels: channels }, Err(pcm.Header));
-    };
-    for value in values {
-      samples = samples.append(value);
+    Err(error) => {
+      return (Decoder { state: None, sample_rate: rate, channels: channels }, Err(error));
     }
   }
-  return (Decoder { state: state, sample_rate: sample_rate, channels: channels }, Ok(samples));
+}
+
+pub function (own d: Decoder) decode(input: [u8]): (Decoder, Result[f32[], pcm.AudioError]) {
+  let Decoder { state, sample_rate, channels } = d;
+  let Some(current) = state else {
+    return (Decoder { state: None, sample_rate: sample_rate, channels: channels }, Err(pcm.Header));
+  };
+  return decoded(playback.decode(current, input), sample_rate, channels);
+}
+
+pub function (own d: Decoder) decode_lost(frames: i32): (Decoder, Result[f32[], pcm.AudioError]) {
+  let Decoder { state, sample_rate, channels } = d;
+  let Some(current) = state else {
+    return (Decoder { state: None, sample_rate: sample_rate, channels: channels }, Err(pcm.Header));
+  };
+  return decoded(playback.decode_lost(current, frames), sample_rate, channels);
+}
+
+pub function (own d: Decoder) decode_fec(input: [u8], frames: i32): (Decoder, Result[f32[], pcm.AudioError]) {
+  let Decoder { state, sample_rate, channels } = d;
+  let Some(current) = state else {
+    return (Decoder { state: None, sample_rate: sample_rate, channels: channels }, Err(pcm.Header));
+  };
+  return decoded(playback.decode_fec(current, input, frames), sample_rate, channels);
+}
+
+pub function (d: Decoder) final_range(): u32 {
+  return match (d.state) { Some(state) => state.control.final_range, None => 0u32 };
 }
 
 pub function encoder(channels: i32, bitrate: i32): Result[Encoder, pcm.AudioError] {

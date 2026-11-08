@@ -121,6 +121,63 @@ The frame API does not scan damaged input for synchronization.
 `std/opus` provides stateful CELT packet encode and decode.
 The packet API handles multi-frame packets and padding.
 It returns `Unsupported` for SILK and hybrid packets.
+
+The SILK implementation is in progress under [#14510](https://github.com/JakeChampion/lang/issues/14510).
+`std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
+`std/opus/silk/entropy` decodes frame parameters. `std/opus/silk/core` reconstructs integer PCM for one coded channel.
+
+The entropy and predictor tables come from pinned Pion Opus sources.
+`std/opus/silk` decodes internal-rate packets, including stereo and redundant frames.
+`std/opus/silk/resample` converts one channel to each Opus output rate and retains the reference input delay.
+`std/opus/silk/output` combines internal-rate packets, persistent resamplers, and output channel conversion.
+`silk.decode_lost` and `output.decode_lost` retain fixed-point concealment and comfort noise state across missing packets.
+The public Opus facade does not yet call these modules.
+
+SILK reads implicit zero bits at the end of the entropy stream, as the reference decoder requires.
+Payload truncation is not always detectable. The container or transport must supply the encoded frame boundaries.
+
+The reference tests cover signed arithmetic boundaries, division, saturation, filter stability, and spectral frequency spacing.
+They compare exact integer results with Pion Opus revision `e7b8aa55508cfd30a968dbc695d4272a8e04f2f2`.
+The prediction corpus includes 64 narrowband and wideband filters and nine separate stability cases.
+Regenerate the tables and vectors with a clone of that revision:
+
+```sh
+make selfhost-cli
+python3 scripts/gen-silk-tables.py --source-dir /path/to/pion-opus/internal/silk
+python3 scripts/gen-silk-math-vectors.py --source-dir /path/to/pion-opus/internal/silk
+python3 scripts/gen-silk-predict-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-frame-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-packet-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-resample-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-output-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-output-vectors.py --source-dir /path/to/pion-opus --loss
+# Requires cc, CMake, and the pinned archive or network access.
+python3 scripts/gen-silk-loss-vectors.py
+```
+
+The table and arithmetic generators verify source hashes. The prediction generator reads the pinned Git objects.
+The generated test vectors need no Go runtime or network access when tests run.
+The frame corpus compares all decoded parameters, final range, and PCM with 36 sequential Pion reference frames.
+It covers all three internal sample rates, both frame durations, and changes in predictor history.
+A separate frame matches the pinned libopus parameters and PCM exactly.
+
+The packet corpus compares final range and complete PCM for 24 sequential packets with the pinned Pion reference.
+It covers stereo, redundant frames, 10/20/40/60 ms packets, channel conversion, and internal-rate changes.
+
+The resampler corpus checks all 15 rate pairs with saturation, impulses, ramps, noise, and continuous delay history.
+Each case compares a checksum of all output samples and explicit boundary samples.
+A separate libopus frame verifies the input delay.
+
+The complete output path matches PCM checksums, boundary samples, and final range for 150 received libopus packets.
+These are prefixes before packet loss from 50 review-corpus cases, with all output rates and mono/stereo channels.
+They do not establish packet loss recovery or mode-transition conformance.
+
+The loss path matches PCM checksums, boundary samples, and entropy range for all 600 steps of those 50 cases.
+The cases include loss bursts, recovery, comfort noise, output-rate conversion, and internal-rate changes.
+A separate 54-step corpus uses an unmodified C decoder with an observation-only resampler wrapper.
+It covers startup loss, 10/20 ms duration changes, stereo changes, and mediumband excitation history.
+The generator verifies the pinned libopus archive before it builds the reference.
+
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
 
