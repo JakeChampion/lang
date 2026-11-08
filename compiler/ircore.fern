@@ -393,7 +393,7 @@ pub function all_runtime_need_roots(): string[] {
     "priority", "set_priority",
     "clock_resolution", "clock_set",
     "tcp_listen", "tcp_accept", "tcp_accept_with", "tcp_local_port", "tcp_send_bytes", "tcp_send_bytes_u8",
-    "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8",
+    "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8", "udp_recvmmsg", "udp_recvmmsg_u8",
     "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
     "tcp_close", "tcp_pollable", "poll", "timer_fd",
     "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",

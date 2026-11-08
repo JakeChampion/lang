@@ -17,7 +17,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
-| HE-AAC, ALAC, WavPack | No | No | No implementation in these modules. |
+| ALAC | Packets | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. Compressed stereo requires at most 32 predictor bits. File containers remain open. |
+| HE-AAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
 It uses approximately 3.2 bits per sample plus frame headers.
@@ -92,6 +93,35 @@ The WAVE range API borrows a complete WAVE byte view and decodes only the reques
 QOA verifies static frame lengths, byte counts, format consistency, and total samples.
 FLAC verifies CRC-8, CRC-16, sample bounds, frame sequence, and alignment bits.
 Whole-stream FLAC decode verifies a supplied MD5. Individual frame calls cannot verify a complete stream digest.
+
+## ALAC
+
+`std/audio/alac.create` reads a 24-byte configuration or its 48-byte form with an explicit channel layout.
+`information` declares sample depth, frame capacity, and the WAVE speaker mask.
+Packets decode independently and need no earlier packet history.
+State retains two channel scratch arrays, or one array for mono.
+Low sample bits remain in the borrowed input during prediction.
+
+`decode_packet_into` consumes a reusable integer output buffer and preserves its suffix after the valid samples.
+`packet_frames` reads the first audio-element header and checks the declared output budget without residual decode.
+`decode_packet` allocates exactly the required sample prefix. Full decode checks every channel, the end marker, and padding.
+Integer PCM retains its declared right-aligned bit depth. It uses no float conversion or quantization.
+
+The 38 independent cases cover all eight channel layouts, sample depths, special predictor modes, low bits, and raw packets.
+Apple's pinned ALAC decoder supplies exact PCM. FFmpeg supplies a second reference for its supported cases.
+The reference adapters explicitly reorder surround channels to the documented WAVE speaker order.
+Source provenance and licenses are in `licenses/alac/NOTICE.txt`.
+
+The reference build verifies pinned Git blob hashes before compilation:
+
+```sh
+python3 scripts/build-alac-reference.py --source-dir /tmp/apple-alac --output /tmp/alac-reference
+python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --check
+```
+
+Compressed stereo with 33 predictor bits remains unsupported.
+M4A and CAF playback, readers, and seek integration remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
 ## Vorbis
 

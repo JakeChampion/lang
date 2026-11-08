@@ -1593,6 +1593,30 @@ pub function set_broadcast(sock: Socket, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 9, on);
 }
 
+// Lets the kernel hand a run of datagrams of one size from one peer to an
+// Inbox as one message that reports the size of its segments (Linux's
+// UDP_GRO). Other hosts refuse it, and an Inbox then brings each datagram
+// on its own.
+pub function set_udp_gro(sock: Socket, on: boolean): Result[void, NetError] {
+  return __socket_ctl(sock, 10, on);
+}
+
+// Asks for the TOS byte of each datagram an Inbox receives, whose low two
+// bits are the ECN mark (Linux's IP_RECVTOS and IPV6_RECVTCLASS). The
+// socket's own family decides which of the two options takes.
+pub function set_recv_tos(sock: Socket, on: boolean): Result[void, NetError] {
+  let arg = 0;
+  if (on) {
+    arg = 1;
+  }
+  let v4 = tcp_socket_ctl(sock, 11, arg);
+  let v6 = tcp_socket_ctl(sock, 12, arg);
+  if (v4 < 0 && v6 < 0) {
+    return Err(error_from_host(v4));
+  }
+  return Ok(());
+}
+
 pub function send_queue(sock: Socket): Result[i32, NetError] {
   return __socket_count(tcp_socket_ctl(sock, 6, 0));
 }
@@ -1783,6 +1807,97 @@ function __sent_one_by_one(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): 
     m += 1;
   }
   return Ok(n);
+}
+
+// An Inbox receives several datagrams in one call: up to `slots` messages,
+// each in its own `bytes` of the buffer. On Linux and Android the call is
+// one `recvmmsg`, and a run of datagrams of one size from one peer that the
+// kernel coalesced under UDP_GRO (set_udp_gro) arrives as one message that
+// reports the size of its segments. Elsewhere a call brings one message.
+pub struct Inbox { buf: u8[], froms: u8[], lens: i32[], slots: i32, bytes: i32, messages: i32 }
+
+pub function inbox(slots: i32, bytes: i32): Inbox {
+  return Inbox { buf: __alloc_u8(slots * bytes), froms: __alloc_u8(slots * SENDER_BYTES), lens: __alloc_i32(3 * slots), slots: slots, bytes: bytes, messages: 0 };
+}
+
+// receive fills the inbox from sock and returns it with the messages it
+// holds, at least one. Err carries the host's error, would-block included
+// when a nonblocking socket has nothing.
+pub function (b: Inbox) receive(sock: Socket): (Inbox, Result[i32, NetError]) {
+  if (target_os() == "linux" || target_os() == "android") {
+    let n = udp_recvmmsg(sock, b.buf, b.froms, b.lens);
+    if (n < 0) {
+      return (Inbox { ...b, messages: 0 }, Err(error_from_host(n)));
+    }
+    return (Inbox { ...b, messages: n }, Ok(n));
+  }
+  return __received_one(b, sock);
+}
+
+function __received_one(b: Inbox, sock: Socket): (Inbox, Result[i32, NetError]) {
+  if (b.slots == 0 || b.bytes == 0) {
+    return (b, Err(error_from_host(-22)));
+  }
+  let n = udp_recvfrom(sock, b.buf, b.froms);
+  if (n < 0) {
+    return (Inbox { ...b, messages: 0 }, Err(error_from_host(n)));
+  }
+  if (n > b.bytes) {
+    n = b.bytes;
+  }
+  return (Inbox { ...b, lens: b.lens.with(0, n).with(1, 0).with(2, 0), messages: 1 }, Ok(1));
+}
+
+// len is the messages the last receive brought.
+pub function (b: Inbox) len(): i32 {
+  return b.messages;
+}
+
+// bytes_of is the byte count of message i.
+pub function (b: Inbox) bytes_of(i: i32): i32 {
+  return b.lens[3 * i];
+}
+
+// segment_of is the size of the segments of message i, 0 for one datagram.
+pub function (b: Inbox) segment_of(i: i32): i32 {
+  return b.lens[3 * i + 1];
+}
+
+// tos_of is the TOS byte of message i, 0 unless set_recv_tos asked for it.
+pub function (b: Inbox) tos_of(i: i32): i32 {
+  return b.lens[3 * i + 2];
+}
+
+// segments is the datagrams message i holds: one, or the count its segment
+// size splits it into, the last one shorter.
+pub function (b: Inbox) segments(i: i32): i32 {
+  let total = b.lens[3 * i];
+  let seg = b.lens[3 * i + 1];
+  if (seg <= 0 || total <= seg) {
+    return 1;
+  }
+  return (total + seg - 1) / seg;
+}
+
+// segment is the offset into buf and the length of datagram k of message i.
+pub function (b: Inbox) segment(i: i32, k: i32): (i32, i32) {
+  let total = b.lens[3 * i];
+  let seg = b.lens[3 * i + 1];
+  if (seg <= 0 || total <= seg) {
+    return (i * b.bytes, total);
+  }
+  let at = k * seg;
+  let len = seg;
+  if (at + len > total) {
+    len = total - at;
+  }
+  return (i * b.bytes + at, len);
+}
+
+// sender_at is the offset into froms of the SENDER_BYTES address of message
+// i, for sender to read.
+pub function (b: Inbox) sender_at(i: i32): i32 {
+  return i * SENDER_BYTES;
 }
 ```
 

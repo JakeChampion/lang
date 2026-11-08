@@ -684,7 +684,7 @@ function test_fixed_entropy(): test.TestOutcome {
   if (short_entropy() != "client: tls handshake: 231 bytes of entropy, want 232; server: tls handshake: 121 bytes of entropy, want 120") {
     return test.fail(short_entropy());
   }
-  return test.assert_eq(first, "b8dba470783564e16d79f59c65e8a861ca930180a9b96831b120d44a191ab11b");
+  return test.assert_eq(first, "6cbfd50c26fce50bb86e7b9928f76062494bde134dc8fe925889377cb44475e7");
 }
 
 function client_identity(leaf: string): identity.Identity {

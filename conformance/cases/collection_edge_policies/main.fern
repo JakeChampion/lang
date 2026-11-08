@@ -1,5 +1,5 @@
-// spec: CL-03
-// spec: CL-04
+// spec: SS-01
+// spec: SI-01
 
 import "std/array";
 import "std/string";

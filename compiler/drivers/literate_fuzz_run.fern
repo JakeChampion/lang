@@ -1,0 +1,76 @@
+import "../literate";
+import "../util";
+import "../weave";
+
+// Feeds a document to the literate reader: the tangle of the root chunk and
+// of the file roots with the unused-chunk lint, or the weave to text and to
+// HTML. A malformed document is refused with a message, so the accepted
+// outcome is exit 0 with a summary on stdout. Exit 2 is a usage or read error.
+
+function text_of(b: u8[]): string {
+  let src = "";
+  unsafe {
+    src = string_from_bytes_unchecked(b);
+  }
+  return src;
+}
+
+function tangle_summary(src: string): string {
+  let program = 0;
+  if (literate.is_program(src)) {
+    program = 1;
+  }
+  let code = 0;
+  let refused = 0;
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      code = o.code.len();
+    },
+    literate.TangleErr(e) => {
+      refused = e.msg.len();
+    }
+  }
+  let files = 0;
+  let files_refused = 0;
+  match (literate.tangle_files(src)) {
+    literate.FileTangleOk(o) => {
+      files = o.files.len();
+    },
+    literate.FileTangleErr(e) => {
+      files_refused = e.msg.len();
+    }
+  }
+  let unused = literate.unused_chunks(src).len();
+  return "tangle program " + util.i32_to_string(program) + " code " + util.i32_to_string(code) + " refused " + util.i32_to_string(refused) + " files " + util.i32_to_string(files) + " refused " + util.i32_to_string(files_refused) + " unused " + util.i32_to_string(unused);
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 3) {
+    eprint("usage: literate_fuzz_run tangle|weave FILE");
+    return 2;
+  }
+  let raw: u8[] = [];
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      raw = b;
+    },
+    Err(_) => {
+      eprint("literate_fuzz_run: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  let src = text_of(raw);
+  if (av[1] == "tangle") {
+    print(tangle_summary(src));
+    return 0;
+  }
+  if (av[1] == "weave") {
+    let text = weave.weave(src).len();
+    let html = weave.weave_html(src).len();
+    print("weave text " + util.i32_to_string(text) + " html " + util.i32_to_string(html));
+    return 0;
+  }
+  eprint("literate_fuzz_run: unknown reader " + av[1]);
+  return 2;
+}
