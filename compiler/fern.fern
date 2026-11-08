@@ -4214,6 +4214,8 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let package_roots: string[] = [visibility.package_root(entry_ident, root, root_package.dir)];
   let module_packages: pkggrants.ModuleAt[] = [];
   let grant_mans = pkggrants.with_manifest([], gov.dir, gov.man);
+  let gov_dirs: string[] = [];
+  let govs: Governed[] = [];
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
@@ -4264,7 +4266,14 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       srcs = srcs.append(rm.src);
       m = flatten.resolve_imports(m, mdir, root);
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
-      let module_gov = governing_manifest(mdir);
+      // Most modules share a few directories, so each one is searched once.
+      let gi = util.index_of_str(gov_dirs, mdir);
+      if (gi < 0) {
+        gov_dirs = gov_dirs.append(mdir);
+        govs = govs.append(governing_manifest(mdir));
+        gi = govs.len() - 1;
+      }
+      let module_gov = govs[gi];
       if (module_gov.man.err.len() > 0) {
         return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, package_roots: package_roots, files: files, maps: maps, srcs: srcs, errs: [] }, module_gov.dir, module_gov.man);
       }

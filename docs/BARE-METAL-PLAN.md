@@ -688,6 +688,8 @@ Thus a FernOS kernel that implements the syscalls of the compiler can run the
 of syscalls. The eggshell list of limits shows what a first kernel can omit:
 `ptrace`, SysV IPC, inotify, mounts and namespaces. An `arm64-fernos` user
 environment over the FernOS syscalls can come later, as an improvement.
+`docs/FERNOS-LINUX-ABI.md` records the measured set: 18 calls, one thread,
+and three `mmap` reservations at start.
 
 ## Sequencing
 
