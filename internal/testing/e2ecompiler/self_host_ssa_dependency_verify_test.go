@@ -176,7 +176,7 @@ const dominanceReuseChecks = `function dominance_reuse_checks(): i32 {
   ];
   let f = ssa.SFunc { name: "sparse_loop", nparams: 1, nvals: 1, entry: 7, blocks: blocks, takes_env: false };
   let before = ssa.print_func(f);
-  let d = ssadeps.dominates_at(f, ssadeps.position_of(f));
+  let d = ssadeps.dominates_at(f, ssa.block_positions(f));
   let reach = ssadeps.reachable_from_dom(d);
   let dfs = ssadeps.reachable_blocks(f);
   for bi in 0..4 {
