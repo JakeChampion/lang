@@ -435,7 +435,6 @@ function runtime_callable_changes(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function runtime_callable_flags_change(f: typeinfo.TypeFunc): boolean {
@@ -1909,7 +1908,6 @@ function literal_operand(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // s without its last instructions and values when they define exactly ids.
@@ -4978,7 +4976,6 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, layout: i32, arms
       return variant_arm(a, pv, scrut, owner, layout, arms, entry, join, count, scope, closing, ty);
     }
   }
-  return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
 struct ScalarGate { s: State, hit: i32[], miss: i32[] }
@@ -8346,19 +8343,15 @@ function template_verdict(key: string, instances: Produced[]): Produced {
   return template_entry(key, true, "", false);
 }
 
-function queue(pending: Request[], requests: Request[]): Request[] {
+struct Queue { pending: Request[], names: util.NameIndex }
+
+function queue(q: Queue, requests: Request[]): Queue {
   for r in requests {
-    let known = false;
-    for p in pending {
-      if (p.name == r.name) {
-        known = true;
-      }
-    }
-    if (!known) {
-      pending = pending.append(r);
+    if (!q.names.has(r.name)) {
+      q = Queue { pending: q.pending.append(r), names: q.names.added(r.name) };
     }
   }
-  return pending;
+  return q;
 }
 
 function instance_limit(): i32 {
@@ -8719,7 +8712,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   }
   let decls: Produced[] = [];
   let names: string[] = [];
-  let pending: Request[] = [];
+  let pending = Queue { pending: [], names: util.name_index([]) };
   let memo = no_memo();
   let i = 0;
   while (i < mod.funcs.len()) {
@@ -8735,11 +8728,12 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     names = names.append(parser.decl_key(fd));
     i += 1;
   }
+  let decl_index = util.name_index(names);
   let instances: Produced[] = [];
   let at = 0;
-  while (at < pending.len()) {
-    let r = pending[at];
-    let di = util.index_of_str(names, r.key);
+  while (at < pending.pending.len()) {
+    let r = pending.pending[at];
+    let di = decl_index.find(r.key);
     let p = refuse("unbounded instantiation");
     if (at < instance_limit()) {
       let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, opts.debug_lines);
@@ -8808,8 +8802,9 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
     names = names.append(parser.decl_key(mod.funcs[i]));
     i += 1;
   }
+  let decl_index = util.name_index(names);
   for p in built.instances {
-    let at = util.index_of_str(names, p.key);
+    let at = decl_index.find(p.key);
     if (p.view_escape > 0 && at >= 0 && kinds[at] == 0) {
       kinds = kinds.with(at, p.view_escape);
     }
@@ -9351,38 +9346,38 @@ function unroll_loops(all: Produced[], names: string[]): Produced[] {
 }
 
 function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Produced[] {
+  let sw = optbisect.switches();
   let out: Produced[] = [];
-  let i = 0;
-  while (i < all.len()) {
-    let p = all[i];
+  for old in all {
+    let p = old;
     if (p.ok && !p.template && !p.bodyless) {
+      let name = p.func.graph.name;
       let fc = semunroll.fold_constants(p.func);
-      if (fc.folded > 0) {
+      if (fc.folded > 0 && optbisect.allowed_by(sw, "fold-constants", name)) {
         p = Produced { ...p, func: fc.f, analysis: None };
       }
       let th = semthread.thread(p.func, stack_phi_joins);
-      if (th.changed > 0) {
+      if (th.changed > 0 && optbisect.allowed_by(sw, "thread", name)) {
         p = Produced { ...p, func: th.f, analysis: None };
       }
       let ho = semhoist.hoist(p.func);
-      if (ho.moved > 0) {
+      if (ho.moved > 0 && optbisect.allowed_by(sw, "hoist", name)) {
         p = Produced { ...p, func: ho.f, analysis: None };
       }
       let sk = semsink.sink(p.func);
-      if (sk.reread > 0) {
+      if (sk.reread > 0 && optbisect.allowed_by(sw, "sink", name)) {
         p = Produced { ...p, func: sk.f, analysis: None };
       }
       let cs = semcse.merge(p.func);
-      if (cs.merged > 0) {
+      if (cs.merged > 0 && optbisect.allowed_by(sw, "cse", name)) {
         p = Produced { ...p, func: cs.f, analysis: None };
       }
       let pr = semdead.prune(p.func);
-      if (pr.removed > 0) {
+      if (pr.removed > 0 && optbisect.allowed_by(sw, "prune", name)) {
         p = Produced { ...p, func: pr.f, analysis: None };
       }
     }
     out = out.append(p);
-    i += 1;
   }
   return out;
 }

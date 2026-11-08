@@ -178,7 +178,9 @@ block changes their scope.
 Each optimising pass asks `compiler/optbisect.fern` before it rewrites a
 function: specialising a callee to a closure it is given, inlining a callee,
 unrolling a counted loop, fusing a pipeline, a
-byte-copy loop, an ndarray kernel, reuse in one function's rc lowering. The decision's key is the pass
+byte-copy loop, an ndarray kernel, reuse in one function's rc lowering, and
+each of the six cleanups after inlining (`fold-constants`, `thread`, `hoist`,
+`sink`, `cse` and `prune`). The decision's key is the pass
 and the function's name. `FERN_OPT_TRACE=1` lists every decision with its key's
 hash, and `FERN_OPT_BISECT=h` declines each one hashing below `h`. Declining
 a decision leaves the function as it was, so the answer must not change.

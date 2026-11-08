@@ -1273,11 +1273,11 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
     }
     return t;
   }
-  let released = App { ...s, press: no_press() };
+  let t = App { ...s, press: no_press() };
   if (action == 1 && p.axis == 0) {
-    return tapped(released, x as i32, y as i32);
+    return tapped(t, x as i32, y as i32);
   }
-  return released;
+  return t;
 }
 
 function abs_f(v: f32): f32 {

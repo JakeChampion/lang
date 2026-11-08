@@ -459,7 +459,9 @@ func TestEnforceFreestandingAllowsCore(t *testing.T) {
 	}
 }
 
-func TestFreestandingDescriptorGrantsNothing(t *testing.T) {
+// A freestanding target grants mmio alone: a guest library inside someone
+// else's firmware drives devices, and nothing else is beneath it.
+func TestFreestandingDescriptorGrantsOnlyMMIO(t *testing.T) {
 	free := []string{"arm64-freestanding", "x86-64-freestanding"}
 	for _, name := range free {
 		t.Run(name, func(t *testing.T) {
@@ -470,8 +472,8 @@ func TestFreestandingDescriptorGrantsNothing(t *testing.T) {
 			if d.Entry != platforms.EntryExports {
 				t.Errorf("%s entry = %q, want %q: its embedder calls the -export functions", name, d.Entry, platforms.EntryExports)
 			}
-			if len(d.Capabilities) != 0 {
-				t.Errorf("%s grants %v, want nothing", name, d.Capabilities)
+			if len(d.Capabilities) != 1 || d.Capabilities[0] != "mmio" {
+				t.Errorf("%s grants %v, want mmio alone", name, d.Capabilities)
 			}
 			if d.Environment != "freestanding" {
 				t.Errorf("%s environment = %q, want freestanding", name, d.Environment)

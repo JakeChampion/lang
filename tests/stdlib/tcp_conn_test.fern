@@ -1,0 +1,393 @@
+import "std/test";
+import "std/option";
+import "std/tcp/conn";
+
+// The peer is 10.0.2.2:40000, the connection 10.0.2.15:80. The peer's first
+// sequence number is 5000, the connection's 1000.
+function peer(flags: i32, seq: u32, ack: u32, payload: u8[]): conn.Segment {
+  return conn.Segment { source: [10u8, 0u8, 2u8, 2u8], source_port: 40000, destination: [10u8, 0u8, 2u8, 15u8], port: 80, seq: seq, ack: ack, flags: flags, window: 65535, mss: 0, payload: payload };
+}
+
+function syn(mss: i32): conn.Segment {
+  return conn.Segment { ...peer(conn.SYN, 5000 as u32, 0 as u32, []), mss: mss };
+}
+
+function bytes(n: i32, first: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append((first + i) as u8);
+  }
+  return out;
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A connection after the handshake, with the peer's maximum segment size.
+function established(mss: i32): conn.Connection {
+  let Some(accepted) = conn.accept(syn(mss), 1000 as u32, 0i64) else {
+    return conn.none();
+  };
+  let (c, syn_ack) = accepted;
+  let (e, out) = c.receive(peer(conn.ACK, 5001 as u32, 1001 as u32, []), 1i64);
+  return e;
+}
+
+function test_accept_answers_a_syn(): test.TestOutcome {
+  let Some(accepted) = conn.accept(syn(1460), 1000 as u32, 0i64) else {
+    return test.fail("no connection");
+  };
+  let (c, s) = accepted;
+  if (!c.state.eq(SynReceived)) {
+    return test.fail("state " + c.state.to_string());
+  }
+  if (s.flags != (conn.SYN | conn.ACK)) {
+    return test.fail("flags " + s.flags.to_string());
+  }
+  if (s.seq != 1000 as u32 || s.ack != 5001 as u32) {
+    return test.fail("seq " + s.seq.to_string() + " ack " + s.ack.to_string());
+  }
+  if (s.mss != conn.MSS || s.window != conn.WINDOW) {
+    return test.fail("mss " + s.mss.to_string() + " window " + s.window.to_string());
+  }
+  if (s.source_port != 80 || s.port != 40000 || !same(s.destination, [10u8, 0u8, 2u8, 2u8])) {
+    return test.fail("the reply is not for the peer");
+  }
+  return test.pass();
+}
+
+function test_accept_refuses_other_segments(): test.TestOutcome {
+  match (conn.accept(peer(conn.ACK, 5000 as u32, 1 as u32, []), 1000 as u32, 0i64)) {
+    Some(a) => {
+      return test.fail("an ACK was accepted");
+    },
+    None => {}
+  }
+  match (conn.accept(peer(conn.SYN | conn.ACK, 5000 as u32, 1 as u32, []), 1000 as u32, 0i64)) {
+    Some(a) => {
+      return test.fail("a SYN-ACK was accepted");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+function test_handshake_completes_on_the_ack(): test.TestOutcome {
+  let c = established(1460);
+  if (!c.state.eq(Established)) {
+    return test.fail("state " + c.state.to_string());
+  }
+  if (c.snd_una != 1001 as u32 || c.snd_nxt != 1001 as u32 || c.rcv_nxt != 5001 as u32) {
+    return test.fail("sequence numbers moved wrongly");
+  }
+  return test.assert_eq(c.timer, 0i64);
+}
+
+function test_a_repeated_syn_gets_the_syn_ack_again(): test.TestOutcome {
+  let Some(accepted) = conn.accept(syn(1460), 1000 as u32, 0i64) else {
+    return test.fail("no connection");
+  };
+  let (c, first) = accepted;
+  let (again, out) = c.receive(syn(1460), 50i64);
+  if (out.len() != 1 || out[0].flags != (conn.SYN | conn.ACK) || out[0].seq != 1000 as u32) {
+    return test.fail("no second SYN-ACK");
+  }
+  return test.assert_true(again.state.eq(SynReceived));
+}
+
+function test_data_in_order_is_received_and_acknowledged(): test.TestOutcome {
+  let c = established(1460);
+  let (d, out) = c.receive(peer(conn.ACK | conn.PSH, 5001 as u32, 1001 as u32, bytes(5, 1)), 2i64);
+  if (out.len() != 1 || out[0].flags != conn.ACK || out[0].ack != 5006 as u32 || out[0].seq != 1001 as u32) {
+    return test.fail("no acknowledgement of five bytes");
+  }
+  let (e, data) = d.read();
+  if (!same(data, bytes(5, 1))) {
+    return test.fail("read gave " + data.len().to_string() + " bytes");
+  }
+  if (e.received.len() != 0) {
+    return test.fail("read did not take the bytes");
+  }
+  return test.assert_eq(out[0].window, conn.WINDOW - 5);
+}
+
+function test_data_out_of_order_is_dropped_with_a_duplicate_ack(): test.TestOutcome {
+  let c = established(1460);
+  let (d, out) = c.receive(peer(conn.ACK, 5011 as u32, 1001 as u32, bytes(5, 1)), 2i64);
+  if (out.len() != 1 || out[0].ack != 5001 as u32) {
+    return test.fail("no duplicate acknowledgement");
+  }
+  if (d.received.len() != 0 || d.rcv_nxt != 5001 as u32) {
+    return test.fail("the bytes ahead were taken");
+  }
+  let (e, out2) = d.receive(peer(conn.ACK, 5001 as u32, 1001 as u32, bytes(10, 1)), 3i64);
+  if (out2.len() != 1 || out2[0].ack != 5011 as u32) {
+    return test.fail("the missing bytes were not taken");
+  }
+  return test.assert_eq(e.received.len(), 10);
+}
+
+function test_write_sends_segments_of_the_peers_mss_within_its_window(): test.TestOutcome {
+  let c = established(4).write(bytes(10, 1));
+  let (d, out) = c.transmit(10i64);
+  if (out.len() != 3) {
+    return test.fail("segments " + out.len().to_string() + ", want 3");
+  }
+  if (out[0].payload.len() != 4 || out[1].payload.len() != 4 || out[2].payload.len() != 2) {
+    return test.fail("the segments do not follow the mss of 4");
+  }
+  if (out[0].seq != 1001 as u32 || out[1].seq != 1005 as u32 || out[2].seq != 1009 as u32) {
+    return test.fail("the sequence numbers do not follow");
+  }
+  if (out[0].flags != conn.ACK || out[2].flags != (conn.ACK | conn.PSH)) {
+    return test.fail("PSH is not on the last segment alone");
+  }
+  if (d.snd_nxt != 1011 as u32 || d.unacked.len() != 10 || d.unsent.len() != 0) {
+    return test.fail("the bytes are not in flight");
+  }
+  return test.assert_eq(d.timer, 10i64 + conn.RTO_MS);
+}
+
+function test_the_peers_window_holds_bytes_back(): test.TestOutcome {
+  let c = established(1460).write(bytes(10, 1));
+  let (d, out) = c.receive(conn.Segment { ...peer(conn.ACK, 5001 as u32, 1001 as u32, []), window: 6 }, 2i64);
+  let (e, sent) = d.transmit(3i64);
+  if (sent.len() != 1 || sent[0].payload.len() != 6) {
+    return test.fail("the window of 6 was not kept");
+  }
+  let (f, acked) = e.receive(conn.Segment { ...peer(conn.ACK, 5001 as u32, 1007 as u32, []), window: 6 }, 4i64);
+  if (f.snd_una != 1007 as u32 || f.unacked.len() != 0) {
+    return test.fail("the acknowledgement did not free the bytes");
+  }
+  let (g, rest) = f.transmit(5i64);
+  if (rest.len() != 1 || rest[0].payload.len() != 4 || rest[0].seq != 1007 as u32) {
+    return test.fail("the rest did not follow the acknowledgement");
+  }
+  return test.pass();
+}
+
+function test_an_ack_frees_part_of_the_bytes_in_flight(): test.TestOutcome {
+  let c = established(4).write(bytes(10, 1));
+  let (d, out) = c.transmit(10i64);
+  let (e, none) = d.receive(peer(conn.ACK, 5001 as u32, 1005 as u32, []), 20i64);
+  if (none.len() != 0) {
+    return test.fail("a plain acknowledgement got a reply");
+  }
+  if (e.snd_una != 1005 as u32 || !same(e.unacked, bytes(6, 5))) {
+    return test.fail("the first four bytes were not freed");
+  }
+  if (e.timer != 20i64 + conn.RTO_MS) {
+    return test.fail("the timer was not restarted for the rest");
+  }
+  let (f, done) = e.receive(peer(conn.ACK, 5001 as u32, 1011 as u32, []), 30i64);
+  return test.assert_eq(f.timer, 0i64);
+}
+
+function test_an_ack_beyond_what_was_sent_only_gets_an_ack(): test.TestOutcome {
+  let c = established(1460);
+  let (d, out) = c.receive(peer(conn.ACK, 5001 as u32, 1500 as u32, []), 2i64);
+  if (out.len() != 1 || out[0].flags != conn.ACK) {
+    return test.fail("no acknowledgement");
+  }
+  return test.assert_eq(d.snd_una.to_string(), "1001");
+}
+
+function test_retransmission_doubles_and_then_gives_up(): test.TestOutcome {
+  let c = established(1460).write(bytes(10, 1));
+  let (d, out) = c.transmit(0i64);
+  let (e, early) = d.transmit(conn.RTO_MS - 1i64);
+  if (early.len() != 0) {
+    return test.fail("a retransmission before the timeout");
+  }
+  let (f, again) = e.transmit(conn.RTO_MS);
+  if (again.len() != 1 || again[0].seq != 1001 as u32 || again[0].payload.len() != 10) {
+    return test.fail("no retransmission at the timeout");
+  }
+  if (f.rto != 2i64 * conn.RTO_MS || f.timer != conn.RTO_MS + 2i64 * conn.RTO_MS) {
+    return test.fail("the timeout did not double");
+  }
+  let now = f.timer;
+  let g = f;
+  let sent = 1;
+  while (!g.is_closed() && sent < 20) {
+    let (next, more) = g.transmit(now);
+    g = next;
+    sent += more.len();
+    now = g.timer;
+  }
+  if (!g.is_closed()) {
+    return test.fail("the connection never gave up");
+  }
+  return test.assert_eq(sent, 8);
+}
+
+function test_close_sends_a_fin_after_the_data_and_waits_for_the_peer(): test.TestOutcome {
+  let c = established(1460).write(bytes(3, 1)).close();
+  let (d, out) = c.transmit(0i64);
+  if (out.len() != 2 || out[1].flags != (conn.FIN | conn.ACK) || out[1].seq != 1004 as u32) {
+    return test.fail("the FIN does not follow the data");
+  }
+  if (!d.state.eq(FinWait1) || d.snd_nxt != 1005 as u32) {
+    return test.fail("state " + d.state.to_string());
+  }
+  let (e, none) = d.receive(peer(conn.ACK, 5001 as u32, 1005 as u32, []), 1i64);
+  if (!e.state.eq(FinWait2)) {
+    return test.fail("after the ACK of the FIN: " + e.state.to_string());
+  }
+  let (f, ack) = e.receive(peer(conn.FIN | conn.ACK, 5001 as u32, 1005 as u32, []), 2i64);
+  if (!f.state.eq(TimeWait) || ack.len() != 1 || ack[0].ack != 5002 as u32) {
+    return test.fail("the peer's FIN was not acknowledged: " + f.state.to_string());
+  }
+  if (!f.finished()) {
+    return test.fail("not finished");
+  }
+  let (g, early) = f.transmit(2i64 + conn.TIME_WAIT_MS - 1i64);
+  if (g.is_closed()) {
+    return test.fail("TimeWait ended early");
+  }
+  let (h, late) = g.transmit(2i64 + conn.TIME_WAIT_MS);
+  return test.assert_true(h.is_closed());
+}
+
+function test_a_simultaneous_close_passes_through_closing(): test.TestOutcome {
+  let c = established(1460).close();
+  let (d, out) = c.transmit(0i64);
+  let (e, ack) = d.receive(peer(conn.FIN | conn.ACK, 5001 as u32, 1001 as u32, []), 1i64);
+  if (!e.state.eq(Closing) || ack.len() != 1) {
+    return test.fail("state " + e.state.to_string());
+  }
+  let (f, none) = e.receive(peer(conn.ACK, 5002 as u32, 1002 as u32, []), 2i64);
+  return test.assert_true(f.state.eq(TimeWait));
+}
+
+function test_the_peer_closes_first(): test.TestOutcome {
+  let c = established(1460);
+  let (d, ack) = c.receive(peer(conn.FIN | conn.ACK, 5001 as u32, 1001 as u32, bytes(2, 1)), 1i64);
+  if (!d.state.eq(CloseWait) || ack.len() != 1 || ack[0].ack != 5004 as u32) {
+    return test.fail("the FIN with data was not taken: " + d.state.to_string());
+  }
+  if (!d.finished() || d.received.len() != 2) {
+    return test.fail("the data before the FIN was lost");
+  }
+  let (e, out) = d.write(bytes(4, 1)).close().transmit(2i64);
+  if (out.len() != 2 || out[1].flags != (conn.FIN | conn.ACK) || !e.state.eq(LastAck)) {
+    return test.fail("the response and the FIN were not sent: " + e.state.to_string());
+  }
+  let (f, none) = e.receive(peer(conn.ACK, 5004 as u32, 1006 as u32, []), 3i64);
+  return test.assert_true(f.is_closed());
+}
+
+function test_data_after_the_peers_fin_is_only_acknowledged(): test.TestOutcome {
+  let c = established(1460);
+  let (d, ack) = c.receive(peer(conn.FIN | conn.ACK, 5001 as u32, 1001 as u32, []), 1i64);
+  let (e, out) = d.receive(peer(conn.ACK, 5002 as u32, 1001 as u32, bytes(3, 1)), 2i64);
+  if (out.len() != 1 || out[0].ack != 5002 as u32) {
+    return test.fail("no acknowledgement");
+  }
+  return test.assert_eq(e.received.len(), 0);
+}
+
+function test_a_reset_closes_the_connection(): test.TestOutcome {
+  let c = established(1460).write(bytes(3, 1));
+  let (d, out) = c.receive(peer(conn.RST, 5001 as u32, 1001 as u32, []), 1i64);
+  if (out.len() != 0 || !d.is_closed()) {
+    return test.fail("the reset was not taken");
+  }
+  let (e, more) = d.transmit(500i64);
+  return test.assert_eq(more.len(), 0);
+}
+
+function test_write_after_close_is_dropped(): test.TestOutcome {
+  let c = established(1460).close().write(bytes(3, 1));
+  return test.assert_eq(c.unsent.len(), 0);
+}
+
+function test_reset_for_a_stray_segment(): test.TestOutcome {
+  let Some(for_syn) = conn.reset(syn(0)) else {
+    return test.fail("no reset for a SYN");
+  };
+  if (for_syn.flags != (conn.RST | conn.ACK) || for_syn.ack != 5001 as u32 || for_syn.seq != 0 as u32) {
+    return test.fail("the reset of a SYN does not acknowledge it");
+  }
+  if (for_syn.source_port != 80 || for_syn.port != 40000) {
+    return test.fail("the reset is not addressed to the peer");
+  }
+  let Some(for_ack) = conn.reset(peer(conn.ACK, 5000 as u32, 777 as u32, bytes(2, 1))) else {
+    return test.fail("no reset for an ACK");
+  };
+  if (for_ack.flags != conn.RST || for_ack.seq != 777 as u32) {
+    return test.fail("the reset of an ACK does not take its number");
+  }
+  match (conn.reset(peer(conn.RST, 1 as u32, 0 as u32, []))) {
+    Some(r) => {
+      return test.fail("a reset got a reset");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+}
+
+function test_matches_the_peer_alone(): test.TestOutcome {
+  let c = established(1460);
+  if (!c.matches(peer(conn.ACK, 5001 as u32, 1001 as u32, []))) {
+    return test.fail("the peer's segment does not match");
+  }
+  let other = conn.Segment { ...peer(conn.ACK, 5001 as u32, 1001 as u32, []), source_port: 40001 };
+  return test.assert_false(c.matches(other));
+}
+
+function test_sequence_numbers_wrap(): test.TestOutcome {
+  let Some(accepted) = conn.accept(conn.Segment { ...syn(1460), seq: 4294967295 as u32 }, 4294967294 as u32, 0i64) else {
+    return test.fail("no connection");
+  };
+  let (c, s) = accepted;
+  if (s.ack != 0 as u32) {
+    return test.fail("the SYN at the top of the space is acknowledged with " + s.ack.to_string());
+  }
+  let (d, none) = c.receive(peer(conn.ACK, 0 as u32, 4294967295 as u32, []), 1i64);
+  if (!d.state.eq(Established)) {
+    return test.fail("state " + d.state.to_string());
+  }
+  let (e, out) = d.write(bytes(3, 1)).transmit(2i64);
+  if (out.len() != 1 || out[0].seq != 4294967295 as u32) {
+    return test.fail("the data does not start at the top of the space");
+  }
+  let (f, done) = e.receive(peer(conn.ACK, 0 as u32, 2 as u32, []), 3i64);
+  return test.assert_eq(f.unacked.len(), 0);
+}
+
+function main(): i32 {
+  let t = test.new("tcp_conn");
+  t = t.it("accept answers a SYN with a SYN-ACK", test_accept_answers_a_syn);
+  t = t.it("accept refuses other segments", test_accept_refuses_other_segments);
+  t = t.it("the handshake completes on the ACK", test_handshake_completes_on_the_ack);
+  t = t.it("a repeated SYN gets the SYN-ACK again", test_a_repeated_syn_gets_the_syn_ack_again);
+  t = t.it("data in order is received and acknowledged", test_data_in_order_is_received_and_acknowledged);
+  t = t.it("data out of order is dropped with a duplicate ACK", test_data_out_of_order_is_dropped_with_a_duplicate_ack);
+  t = t.it("write sends segments of the peer's mss within its window", test_write_sends_segments_of_the_peers_mss_within_its_window);
+  t = t.it("the peer's window holds bytes back", test_the_peers_window_holds_bytes_back);
+  t = t.it("an ACK frees part of the bytes in flight", test_an_ack_frees_part_of_the_bytes_in_flight);
+  t = t.it("an ACK beyond what was sent only gets an ACK", test_an_ack_beyond_what_was_sent_only_gets_an_ack);
+  t = t.it("retransmission doubles and then gives up", test_retransmission_doubles_and_then_gives_up);
+  t = t.it("close sends a FIN after the data and waits for the peer", test_close_sends_a_fin_after_the_data_and_waits_for_the_peer);
+  t = t.it("a simultaneous close passes through Closing", test_a_simultaneous_close_passes_through_closing);
+  t = t.it("the peer closes first", test_the_peer_closes_first);
+  t = t.it("data after the peer's FIN is only acknowledged", test_data_after_the_peers_fin_is_only_acknowledged);
+  t = t.it("a reset closes the connection", test_a_reset_closes_the_connection);
+  t = t.it("write after close is dropped", test_write_after_close_is_dropped);
+  t = t.it("reset for a stray segment", test_reset_for_a_stray_segment);
+  t = t.it("matches the peer alone", test_matches_the_peer_alone);
+  t = t.it("sequence numbers wrap", test_sequence_numbers_wrap);
+  return t.finish();
+}

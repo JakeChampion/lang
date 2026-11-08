@@ -35,7 +35,11 @@ function ref(s: string, seed: i32): i32 {
             h = (h ^ word(s, 0, n)) * 1099511628211i64;
         }
     }
-    h = h ^ (h as u64 >> 32u64) as i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
+    h = h * -49064778989728563i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
+    h = h * -4265267296055464877i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
     let lo: i64 = h & 4294967295i64;
     if (lo >= 2147483648i64) {
         return (lo - 4294967296i64) as i32;
@@ -58,14 +62,14 @@ function main(): i32 {
     while (k < 300) { high = high + unsafe { string_from_bytes_unchecked([255 as u8, 128 as u8]) }; k = k + 1; }
     if (__str_hash(high, 4660) != ref(high, 4660)) { return 5; }
     let bytes: string = unsafe { string_from_bytes_unchecked([200 as u8, 201 as u8, 202 as u8, 203 as u8, 204 as u8, 205 as u8, 206 as u8, 207 as u8, 208 as u8, 209 as u8, 210 as u8, 211 as u8, 212 as u8, 213 as u8, 214 as u8, 215 as u8, 216 as u8, 217 as u8, 218 as u8, 219 as u8, 220 as u8, 221 as u8, 222 as u8, 223 as u8, 224 as u8, 225 as u8, 226 as u8, 227 as u8, 228 as u8, 229 as u8, 230 as u8, 231 as u8, 232 as u8, 233 as u8, 234 as u8, 235 as u8, 236 as u8, 237 as u8, 238 as u8, 239 as u8, 240 as u8, 241 as u8, 242 as u8, 243 as u8, 244 as u8, 245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8, 250 as u8, 251 as u8, 252 as u8, 253 as u8, 254 as u8, 255 as u8]) };
-    if (__str_hash("", 0) != 1339080641) { return 10; }
-    if (__str_hash("a", 0) != 694301555) { return 11; }
-    if (__str_hash("abcdefgh", 0) != 939000468) { return 12; }
-    if (__str_hash("abcdefghi", 0) != 0 - 2056207145) { return 13; }
-    if (__str_hash("hello, world", 7) != 0 - 196944044) { return 14; }
-    if (__str_hash("hello, world", 0 - 1) != 0 - 194608413) { return 15; }
-    if (__str_hash("__fn_ssa_lift__lift_impl", 208357) != 0 - 43142800) { return 16; }
-    if (__str_hash(bytes, 0 - 123456) != 0 - 1417042185) { return 17; }
+    if (__str_hash("", 0) != 0 - 1164367578) { return 10; }
+    if (__str_hash("a", 0) != 690280484) { return 11; }
+    if (__str_hash("abcdefgh", 0) != 0 - 810889936) { return 12; }
+    if (__str_hash("abcdefghi", 0) != 0 - 989501627) { return 13; }
+    if (__str_hash("hello, world", 7) != 0 - 517647510) { return 14; }
+    if (__str_hash("hello, world", 0 - 1) != 1691401939) { return 15; }
+    if (__str_hash("__fn_ssa_lift__lift_impl", 208357) != 1848727984) { return 16; }
+    if (__str_hash(bytes, 0 - 123456) != 0 - 730865203) { return 17; }
     return 42;
 }
 `
@@ -157,7 +161,7 @@ function main(): i32 {
     m = m.insert("alpha", 1);
     m = m.insert("beta", 2);
     if (m.get_or("beta", 0) != 2) { return 1; }
-    if (__str_hash("abcdefgh", 0) != 939000468) { return 2; }
+    if (__str_hash("abcdefgh", 0) != 0 - 810889936) { return 2; }
     return 42;
 }
 `

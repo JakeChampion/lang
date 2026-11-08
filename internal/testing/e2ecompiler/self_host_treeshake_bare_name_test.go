@@ -101,3 +101,42 @@ function main(): i32 { return shut(Sock { fd: 3 }); }
 		})
 	}
 }
+
+// A method call on a value of an imported type roots that method alone, also
+// when the receiver is a call, an element or a local with no written type.
+// The free function of the same name in the entry module stays dead, so its
+// subprocess is not counted against the target.
+func TestSelfHostTreeshakeImportedReceiverKeepsNoBareName(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	const lib = `pub struct S { n: i32 }
+pub function make(): S { return S { n: 1 }; }
+pub function (s: S) run(): i32 { return s.n; }
+`
+	const head = `import "./lib";
+function run(): i32 { return subprocess("true", [], "").exit_code; }
+`
+	for _, tc := range []struct {
+		name, main string
+		e066       bool
+	}{
+		{"call", "function main(): i32 { return lib.make().run(); }\n", false},
+		{"inferred", "function main(): i32 { let s = lib.make(); return s.run(); }\n", false},
+		{"element", "function main(): i32 { let xs: lib.S[] = [lib.make()]; return xs[0].run(); }\n", false},
+		{"free", "function main(): i32 { return run(); }\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			prog := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(prog, []byte(head+tc.main), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, _ := exec.Command(cli, "-check", "-target", "wasm32-wasi", prog, stdlib).CombinedOutput()
+			if got := strings.Contains(string(out), "E066"); got != tc.e066 {
+				t.Fatalf("E066 reported = %v, want %v\n%s", got, tc.e066, out)
+			}
+		})
+	}
+}

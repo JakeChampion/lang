@@ -766,7 +766,6 @@ function stmt_type_diags(st: ast.Stmt, cx: VisCtx, acc: util.Diag[]): util.Diag[
       return acc;
     }
   }
-  return acc;
 }
 
 function expr_type_diags(e: ast.Expr, cx: VisCtx, acc: util.Diag[]): util.Diag[] {
@@ -830,7 +829,6 @@ function expr_type_diags(e: ast.Expr, cx: VisCtx, acc: util.Diag[]): util.Diag[]
       return acc;
     }
   }
-  return acc;
 }
 
 function public_value_name(mod: parser.Module, name: string): boolean {

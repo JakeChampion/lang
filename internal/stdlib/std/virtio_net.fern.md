@@ -135,6 +135,14 @@ pub function (n: Net) send(frame: u8[]): boolean {
   return true;
 }
 
+// Acknowledges the interrupt of the device, and tells whether it signalled a
+// used buffer. The bottom half of the device's IRQ calls it, and then takes
+// every frame with `receive`: a buffer the device returns after the
+// acknowledgement raises the line again.
+pub function (n: Net) interrupt(): boolean {
+  return (n.dev.interrupt_ack() & 1) != 0;
+}
+
 // The next frame the device received, without its virtio header, or None
 // when the device has returned none.
 pub function (n: Net) receive(): Option[u8[]] {

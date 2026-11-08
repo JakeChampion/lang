@@ -744,7 +744,6 @@ function send_copy_value(v: Value): Value {
       return v;
     }
   }
-  return v;
 }
 
 function send_copy_values(values: Value[]): Value[] {
@@ -812,7 +811,6 @@ function is_err(v: Value): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function unwrap_try(v: Value): Value {
@@ -824,7 +822,6 @@ function unwrap_try(v: Value): Value {
       return v;
     }
   }
-  return v;
 }
 
 function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
@@ -1226,7 +1223,6 @@ function ib_ident_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
@@ -1254,7 +1250,6 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function reads_nothing(e: ast.Expr, own acc: string[]): string[] {
@@ -1298,7 +1293,6 @@ function lam_target_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function lam_read_of(e: ast.Expr, own acc: string[]): string[] {
@@ -1310,7 +1304,6 @@ function lam_read_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function not_lambda_expr(e: ast.Expr): boolean {
@@ -1322,7 +1315,6 @@ function not_lambda_expr(e: ast.Expr): boolean {
       return true;
     }
   }
-  return true;
 }
 
 function (e: Env) raw_value(name: string): Option[Value] {
@@ -5028,7 +5020,6 @@ function orders_by_cmp(v: Value): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // An integer literal beside a typed float operand is a float of its width, as
@@ -5071,7 +5062,6 @@ function struct_op_method(op: string, lv: Value): string {
       return "";
     }
   }
-  return "";
 }
 
 function bit_op_method(op: string): string {
@@ -5526,7 +5516,6 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
       return v_err("can only index into an array or string");
     }
   }
-  return v_err("unreachable index arm");
 }
 
 function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
@@ -5596,7 +5585,6 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
       return v_err("can only slice array or string");
     }
   }
-  return v_err("unreachable slice arm");
 }
 
 function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
@@ -5752,7 +5740,6 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
       return v_err("can only field-access a struct or tuple");
     }
   }
-  return v_err("unreachable field-access arm");
 }
 
 // A Socket runs as its descriptor number, which is also its fd.
@@ -8125,7 +8112,11 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         h = (h ^ str_hash_word(hs, 0, hn)) * 1099511628211i64;
       }
     }
-    h = h ^ (h as u64 >> 32u64) as i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
+    h = h * -49064778989728563i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
+    h = h * -4265267296055464877i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
     return v_int(str_hash_low32(h));
   }
   if (name == "__count_runs") {
@@ -8678,7 +8669,6 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
       return step_stop(cur, v_err("value expression has no terminal value"));
     }
   }
-  return step_stop(cur, v_err("value expression has no terminal value"));
 }
 
 @noinline
@@ -9048,7 +9038,6 @@ function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       return step_stop(env, v_err("parser-side unknown stmt: " + u.kind));
     }
   }
-  return step_stop(env, v_err("unhandled Stmt variant"));
 }
 
 function eval_assign_stmt(a: ast.StmtAssign, own env: Env): StepResult {
@@ -9181,7 +9170,6 @@ function for_elements(iv: Value): Option[Value[]] {
       return None;
     }
   }
-  return None;
 }
 
 function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
@@ -9337,7 +9325,6 @@ pub function exit_status(v: Value): (boolean, i32) {
       return (false, 0);
     }
   }
-  return (false, 0);
 }
 
 pub function eval_module(raw_mod: parser.Module): Value {

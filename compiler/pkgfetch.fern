@@ -59,7 +59,6 @@ function download(url: string): (u8[], string) {
       return ([], "fetch " + url + ": " + e.message());
     }
   }
-  return ([], "fetch " + url + ": no response");
 }
 
 function unpack_into(dir: string, raw: u8[]): string {
@@ -110,7 +109,6 @@ function install(tmp: string, dir: string): string {
       return "cannot install " + dir + ": " + e.message();
     }
   }
-  return "";
 }
 
 struct Entry { name: string, kind: u8, at: i32, size: i32 }
@@ -201,7 +199,6 @@ function made(r: Result[void, IoError], path: string): string {
       return "cannot create " + path + ": " + e.message();
     }
   }
-  return "";
 }
 
 function header(t: u8[], off: i32): Entry {

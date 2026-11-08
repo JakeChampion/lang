@@ -1,0 +1,23 @@
+// A tuple that holds a handle beside a function still holds the handle, so a
+// call that borrows it lends the handle to its result.
+
+struct B { parts: (Writer, (i32) => i32) }
+
+function pick(h: B): Option[B] {
+  return Some(h);
+}
+
+function close_all(own b: B): i32 {
+  return 0;
+}
+
+function run(h: B): i32 {
+  let Some(out) = pick(h) else {
+    return -1;
+  };
+  return close_all(out);
+}
+
+function main(): i32 {
+  return 0;
+}

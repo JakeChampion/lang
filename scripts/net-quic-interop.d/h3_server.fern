@@ -12,7 +12,9 @@ import "std/option";
 import "std/i64";
 import "std/rand";
 
-struct Server { cfg: conn.Config, sock: Socket, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
+// retry_key is empty unless the server was started in retry mode, where
+// every new client first answers a Retry carrying a token sealed with it.
+struct Server { cfg: conn.Config, sock: Socket, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32, retry_key: u8[] }
 
 function now(): Instant {
   return clock.instant();
@@ -89,10 +91,28 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Ok(h) = packet.parse(d, 0, 8) else {
     return s;
   };
-  let Ok(q) = conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now()) else {
+  let path = from.to_string().bytes();
+  if (s.retry_key.len() > 0 && h.token.len() == 0) {
+    let _ = net.send_to(s.sock, conn.retry(s.cfg, s.retry_key, rand.bytes(conn.retry_entropy(s.cfg)), h, path, clock.now()), from);
+    print("fern h3 server: retry sent");
+    return s;
+  }
+  let Ok(q) = admitted(s, h, path, from) else {
     return s;
   };
   return served(Server { ...s, peer: Some(from) }, h3q.server(q, h3.config()).receive(d, now()));
+}
+
+function admitted(s: Server, h: packet.Header, path: u8[], from: net.SocketAddr): Result[conn.Conn, string] {
+  if (h.token.len() == 0) {
+    return conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now());
+  }
+  let Some(odcid) = conn.validated(s.retry_key, h, path, clock.now()) else {
+    let _ = net.send_to(s.sock, conn.invalid_token(h), from);
+    return Err("token refused");
+  };
+  print("fern h3 server: token accepted");
+  return conn.accept_validated(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, odcid, now());
 }
 
 function received(s: Server, d: u8[], from: net.SocketAddr): Server {
@@ -131,7 +151,7 @@ function sent(s: Server, c: h3q.Conn): Server {
   return Server { ...cur, current: Some(next) };
 }
 
-function bound(port: string, cert: string, key: string): Option[Server] {
+function bound(port: string, cert: string, key: string, retry: boolean): Option[Server] {
   let Ok(chain) = read_file(cert) else {
     return None;
   };
@@ -150,12 +170,16 @@ function bound(port: string, cert: string, key: string): Option[Server] {
     return None;
   };
   let _ = net.set_nonblocking(sock, true);
-  return Some(Server { cfg: cfg, sock: sock, current: None, peer: None, answered: 0 });
+  let retry_key: u8[] = [];
+  if (retry) {
+    retry_key = rand.bytes(32);
+  }
+  return Some(Server { cfg: cfg, sock: sock, current: None, peer: None, answered: 0, retry_key: retry_key });
 }
 
 function main(): i32 {
   let argv = args();
-  let Some(s0) = bound(argv[1], argv[2], argv[3]) else {
+  let Some(s0) = bound(argv[1], argv[2], argv[3], argv.len() > 4 && argv[4] == "retry") else {
     return 2;
   };
   print("fern h3 server: listening");
