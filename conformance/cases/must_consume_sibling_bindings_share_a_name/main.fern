@@ -1,0 +1,38 @@
+// Two bindings of one name in sibling scopes are two values. The first
+// binding is at its last use although the later scope mentions the name.
+@must_consume
+struct Res { v: i32 }
+
+function take(own r: Res): i32 {
+  return r.v;
+}
+
+function arms(own a: Option[Res], own b: Option[Res]): i32 {
+  let x = match (a) {
+    Some(w) => take(w),
+    None => 0,
+  };
+  let y = match (b) {
+    Some(w) => take(w),
+    None => 0,
+  };
+  return x + y;
+}
+
+function blocks(flag: boolean, own a: Res, own b: Res): i32 {
+  let n = 0;
+  if (flag) {
+    let t = a;
+    n = n + take(t);
+  } else {
+    n = n + take(a);
+  }
+  let t = b;
+  return n + take(t);
+}
+
+function main(): void {
+  print(arms(Some(Res { v: 1 }), Some(Res { v: 20 })));
+  print(blocks(true, Res { v: 2 }, Res { v: 30 }));
+  print(blocks(false, Res { v: 3 }, Res { v: 40 }));
+}
