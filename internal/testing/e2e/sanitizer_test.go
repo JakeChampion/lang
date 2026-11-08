@@ -150,8 +150,8 @@ func TestX86_64SanitizeLeakVerdict(t *testing.T) {
 	}
 	bytes, _ := strconv.Atoi(m[1])
 	blocks, _ := strconv.Atoi(m[2])
-	if bytes != 160 || blocks != 2 {
-		t.Errorf("verdict says %d bytes in %d blocks, want 160 / 2 (64 rounded + 16 redzone per block)", bytes, blocks)
+	if bytes != 128 || blocks != 2 {
+		t.Errorf("verdict says %d bytes in %d blocks, want 128 / 2 (64 rounded per block, the redzone not counted)", bytes, blocks)
 	}
 }
 
@@ -225,8 +225,8 @@ func TestArm64SanitizeLeakVerdict(t *testing.T) {
 	}
 	bytes, _ := strconv.Atoi(m[1])
 	blocks, _ := strconv.Atoi(m[2])
-	if bytes != 160 || blocks != 2 {
-		t.Errorf("verdict says %d bytes in %d blocks, want 160 / 2 (must match x86-64 exactly)", bytes, blocks)
+	if bytes != 128 || blocks != 2 {
+		t.Errorf("verdict says %d bytes in %d blocks, want 128 / 2 (must match x86-64 exactly)", bytes, blocks)
 	}
 }
 
