@@ -480,7 +480,7 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
 }
 
 function answers_empty_bytes(o: ir.Op): boolean {
-  return o.kind_tag == 77 || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
+  return o.kind_tag == 77 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
 }
 
 function intern_const_agg(vals: string[], packed: string): string[] {
@@ -4794,7 +4794,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    i32.store\n    i32.const 0\n");
   } else if (o.kind_tag == 199) {
     parts = parts.append("    i64.store\n    i32.const 0\n");
-  } else if (o.kind_tag == 77) {
+  } else if (o.kind_tag == 77 || o.kind_tag == ir.K_ALLOC_UNINIT) {
     parts = emit_wasm_alloc_u8(cagg_vals, ns, arrtmp, eltmp, o, parts);
   } else if (o.kind_tag == 76) {
     parts = parts.append("    call $__fern_alloc\n");
@@ -13362,7 +13362,9 @@ function emit_wasm_alloc_u8(cagg_vals: string[], ns: string, arrtmp: i32, eltmp:
   parts = parts.append(n + "    i32.const " + util.i32_to_string(stride) + "\n    call $__fern_arr_elems\n    local.set " + util.i32_to_string(arrtmp) + "\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + n + "    i32.store\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n" + n + "    i32.store\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n" + bytes + "    memory.fill\n");
+  if (o.kind_tag != ir.K_ALLOC_UNINIT) {
+    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n" + bytes + "    memory.fill\n");
+  }
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    end\n");
 
   return parts;

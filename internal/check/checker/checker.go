@@ -2297,6 +2297,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
+	c.info.FuncSigs["__alloc_u8_uninit"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
 	c.info.FuncSigs["__alloc_i32"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}},
@@ -9367,7 +9371,7 @@ var UnsafeBuiltinMethods = []string{
 // docs/security/UNSAFE-INVENTORY.md lists each one with its obligation.
 // compiler/checker.fern's unsafe_intrinsics holds the same set.
 var UnsafeIntrinsics = map[string]bool{
-	"__alloc": true, "__alloc_reuse": true, "__free": true,
+	"__alloc": true, "__alloc_reuse": true, "__alloc_u8_uninit": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
 	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,

@@ -7904,6 +7904,7 @@ function memory_contracts(): ssasem.Contract[] {
   let out: ssasem.Contract[] = [
     ssasem.Contract { name: "__alloc", params: [t_i32()], modes: [v], result: t_usize() },
     ssasem.Contract { name: "__alloc_u8", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
+    ssasem.Contract { name: "__alloc_u8_uninit", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "__alloc_i32", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_i32(), view: false } },
     ssasem.Contract { name: "__alloc_i64", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_i64(), view: false } },
     ssasem.Contract { name: "__alloc_f64", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
