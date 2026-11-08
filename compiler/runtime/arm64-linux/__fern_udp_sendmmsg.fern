@@ -19,13 +19,13 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
     __raw_store_ptr(base, z, 0 as usize);
     z += 1;
   }
-  let bytes = base + ((136 * n) as usize);
+  let bytes = base + (136 * n) as usize;
   let j = 0;
   while (j < total) {
     __raw_store8(bytes, j, data[j]);
     j += 1;
   }
-  let ap = bytes + (((total + 7) / 8 * 8) as usize);
+  let ap = bytes + ((total + 7) / 8 * 8) as usize;
   j = 0;
   while (j < named) {
     __raw_store8(ap, j, addrs[j]);
@@ -46,12 +46,12 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
     let iov = extra + 72 * i;
     let sa = iov + 16;
     let cm = sa + 32;
-    __raw_store_ptr(iov, 0, bytes + (off as usize));
+    __raw_store_ptr(iov, 0, bytes + off as usize);
     __raw_store_ptr(iov, 1, size as usize);
     __raw_store_ptr(hdr, 2, iov);
     __raw_store_ptr(hdr, 3, 1 as usize);
     if (named >= 19 * (i + 1)) {
-      let a = ap + ((19 * i) as usize);
+      let a = ap + (19 * i) as usize;
       let af = 2;
       let salen = 16;
       let at = 4;

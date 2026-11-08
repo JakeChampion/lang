@@ -35,12 +35,12 @@ function __fern_udp_sendmmsg_u8(fd: i32, addrs: i32[], data: i32[], lens: i32[])
     let iov = extra + 72 * i;
     let sa = iov + 16;
     let cm = sa + 32;
-    __raw_store_ptr(iov, 0, bytes + (off as usize));
+    __raw_store_ptr(iov, 0, bytes + off as usize);
     __raw_store_ptr(iov, 1, size as usize);
     __raw_store_ptr(hdr, 2, iov);
     __raw_store_ptr(hdr, 3, 1 as usize);
     if (named >= 19 * (i + 1)) {
-      let a = ap + ((19 * i) as usize);
+      let a = ap + (19 * i) as usize;
       let af = 2;
       let salen = 16;
       let at = 4;
