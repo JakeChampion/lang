@@ -160,6 +160,8 @@ function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
 
 ```fern
 <<9 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: strin...>>=
+// fern-lint: allow cyclomatic-complexity
+// Each match arm implements one Pattern constructor and its cursor/state rules.
 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[]): (i32, PegState) {
   match (p) {
     PLit(s) => {
