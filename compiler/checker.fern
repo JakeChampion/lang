@@ -19695,13 +19695,38 @@ function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
 // An own parameter, a payload that a match took, or a fresh local declared
 // once outside a loop.
 function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
+  return lu_unpack_source_in(fx, name, []);
+}
+
+function lu_unpack_source_in(fx: LuFn, name: string, seen: string[]): boolean {
   if (lu_own_param(fx, name)) {
     return lu_decl_count(fx, name) == 0;
   }
-  if (lu_fresh_bound(fx, name)) {
+  if (lu_fresh_bound(fx, name) || lu_moved_payload(fx, name, seen)) {
     return true;
   }
   return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
+}
+
+// A payload of a match on an owned name at its last use. The match takes the
+// value, so the payload is owned.
+function lu_moved_payload(fx: LuFn, name: string, seen: string[]): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) != 0 || util.has_str(seen, name)) {
+    return false;
+  }
+  let found = false;
+  for b in fx.facts.matched {
+    if (b.name == name) {
+      let ast.ExprIdent(src) = b.init else {
+        return false;
+      };
+      if (!lu_is_last(fx, src) || !lu_unpack_source_in(fx, src.name, seen.append(name))) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
 }
 
 // Each value assigned to the name after its declaration is owned.
