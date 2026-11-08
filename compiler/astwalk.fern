@@ -121,7 +121,6 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
       return acc;
     }
   }
-  return acc;
 }
 
 pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
@@ -188,7 +187,6 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt,
       return acc;
     }
   }
-  return acc;
 }
 
 pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own T) => T): T {
@@ -248,7 +246,6 @@ pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own 
       return acc;
     }
   }
-  return acc;
 }
 
 pub function fold_stmt_own[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T): T {
@@ -300,7 +297,6 @@ pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr,
       return acc;
     }
   }
-  return acc;
 }
 
 pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
@@ -401,7 +397,6 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       return visit(ast.ExprFString { ...fs, exprs: xs });
     }
   }
-  return visit(e);
 }
 
 pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
@@ -451,7 +446,6 @@ pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.Stmt[] {
@@ -829,7 +823,6 @@ function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast
       return st;
     }
   }
-  return st;
 }
 
 // Every name e reads, a builtin's included.
@@ -845,7 +838,6 @@ function ident_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 // The names e reads from bindings in scope, which a builtin identifier never does.
@@ -864,7 +856,6 @@ function binding_read_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function binding_reads_expr(e: ast.Expr, own acc: string[]): string[] {
@@ -880,7 +871,6 @@ pub function not_lambda(e: ast.Expr): boolean {
       return true;
     }
   }
-  return true;
 }
 
 pub function collect_idents_expr(e: ast.Expr, own acc: string[]): string[] {
@@ -963,7 +953,6 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
       return acc;
     }
   }
-  return acc;
 }
 
 function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): (string[], string[]) {
@@ -1026,7 +1015,6 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 pub function collect_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
@@ -1181,7 +1169,6 @@ pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 pub function binders_of(st: ast.Stmt, own acc: string[]): string[] {
@@ -1202,7 +1189,6 @@ pub function binders_of(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 pub function collect_bound_stmt(st: ast.Stmt, own acc: string[]): string[] {
@@ -1349,7 +1335,6 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
       return qualrefs_leaf(st, quals, acc);
     }
   }
-  return acc;
 }
 
 pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[], types: TypeNames, enums: string[], enum_assoc: string[] }
@@ -1477,7 +1462,6 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
       return (e, c, false);
     }
   }
-  return (e, c, false);
 }
 
 function cs_call_at(e: ast.Expr, call: ast.ExprCall, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
@@ -1522,7 +1506,6 @@ function placed_at(e: ast.Expr, line: i32, col: i32): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean) {
@@ -1566,5 +1549,4 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
       return (st, c, false);
     }
   }
-  return (st, c, false);
 }

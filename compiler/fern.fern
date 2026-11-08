@@ -299,7 +299,6 @@ function decode_source_read(input: Result[u8[], IoError]): Result[string, lexer.
       return Err(lexer.TokError { msg: e.message(), code: "", line: 0, col: 0 });
     }
   }
-  return Err(lexer.TokError { msg: "could not read source", code: "", line: 0, col: 0 });
 }
 
 function report_source_read_failure(st: DiagStyle, what: string, path: string, e: lexer.TokError): void {
@@ -2551,13 +2550,23 @@ function unless_embedded(embedded: boolean, text: string): string {
   return text;
 }
 
-struct CliFlag { name: string, also: string[], value: string, help: string }
+// A `mode` flag selects what fern does, so a command takes at most one. A
+// flag with `needs` takes effect only beside one of the flags it names.
+struct CliFlag { name: string, also: string[], value: string, help: string, mode: boolean, needs: string[] }
 
 struct FlagGroup { title: string, flags: CliFlag[] }
 
 function cli_flag(name: string, value: string, help: string): CliFlag {
   let none: string[] = [];
-  return CliFlag { name: name, also: none, value: value, help: help };
+  return CliFlag { name: name, also: none, value: value, help: help, mode: false, needs: none };
+}
+
+function mode_flag(name: string, value: string, help: string): CliFlag {
+  return CliFlag { ...cli_flag(name, value, help), mode: true };
+}
+
+function sub_flag(name: string, value: string, needs: string[], help: string): CliFlag {
+  return CliFlag { ...cli_flag(name, value, help), needs: needs };
 }
 
 function flag_groups(): FlagGroup[] {
@@ -2572,17 +2581,18 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
-      cli_flag("-jni-java", "DIR", "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
-      cli_flag("-jni-dex", "FILE", "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
-      cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
-      cli_flag("-apk-package", "NAME", "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
-      cli_flag("-apk-label", "TEXT", "with -apk: the name of the app on the launcher (default LIB)"),
-      cli_flag("-apk-permission", "NAMES", "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
-      cli_flag("-apk-icon", "FILE", "with -apk: the PNG of the launcher icon (default: the icon of the system)"),
-      cli_flag("-apk-min-sdk", "LEVEL", "with -apk: the lowest Android API level the app runs on (default 24)"),
-      cli_flag("-apk-compress", "", "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
-      cli_flag("-apk-cleartext", "", "with -apk: let the app's Java networking, such as the media player, use http:// with no TLS (android:usesCleartextTraffic); the Fern sockets of the app do not need it"),
-      cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
+      sub_flag("-jni-java", "DIR", ["-shared"], "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
+      sub_flag("-jni-dex", "FILE", ["-shared"], "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
+      mode_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
+      sub_flag("-apk-package", "NAME", ["-apk"], "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
+      sub_flag("-apk-label", "TEXT", ["-apk"], "with -apk: the name of the app on the launcher (default LIB)"),
+      sub_flag("-apk-permission", "NAMES", ["-apk"], "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
+      sub_flag("-apk-icon", "FILE", ["-apk"], "with -apk: the PNG of the launcher icon (default: the icon of the system)"),
+      sub_flag("-apk-min-sdk", "LEVEL", ["-apk"], "with -apk: the lowest Android API level the app runs on (default 24)"),
+      sub_flag("-apk-compress", "", ["-apk"], "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
+      sub_flag("-apk-cleartext", "", ["-apk"], "with -apk: let the app's Java networking, such as the media player, use http:// with no TLS (android:usesCleartextTraffic); the Fern sockets of the app do not need it"),
+      sub_flag("-apk-debuggable", "", ["-apk"], "with -apk: mark the app debuggable (android:debuggable), so adb run-as can read its files; do not ship such an APK"),
+      sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "Linux and Android executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-ram", "BASE,SIZE", "arm64-kernel and x86-64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
@@ -2591,56 +2601,56 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
     ] },
     FlagGroup { title: "run", flags: [
-      cli_flag("-run", "", "build to a temporary binary (or -o) and run it with the program's arguments"),
-      cli_flag("-qemu", "EMULATOR", "with -run: the emulator for a foreign ISA (default qemu-aarch64)"),
-      cli_flag("-interp", "", "run FILE (or - for stdin) through the interpreter, building nothing"),
-      cli_flag("-repl", "", "an interactive interpreter session"),
+      mode_flag("-run", "", "build to a temporary binary (or -o) and run it with the program's arguments"),
+      sub_flag("-qemu", "EMULATOR", ["-run"], "with -run: the emulator for a foreign ISA (default qemu-aarch64)"),
+      mode_flag("-interp", "", "run FILE (or - for stdin) through the interpreter, building nothing"),
+      mode_flag("-repl", "", "an interactive interpreter session"),
     ] },
     FlagGroup { title: "check", flags: [
-      cli_flag("-check", "", "type-check FILE, - for stdin, or the package or workspace under DIR"),
-      cli_flag("-capabilities", "", "the capabilities each package of the program reaches"),
-      cli_flag("-effects", "", "the effect row of every function"),
-      cli_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_ARRAY_REPORT=1 on stderr)"),
-      cli_flag("-targets", "", "list the supported targets and what each provides"),
-      cli_flag("-manifest", "", "print the build manifest stamped into the native image FILE: its target, profile and flags"),
+      mode_flag("-check", "", "type-check FILE, - for stdin, or the package or workspace under DIR"),
+      mode_flag("-capabilities", "", "the capabilities each package of the program reaches"),
+      mode_flag("-effects", "", "the effect row of every function"),
+      mode_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_ARRAY_REPORT=1 on stderr)"),
+      mode_flag("-targets", "", "list the supported targets and what each provides"),
+      mode_flag("-manifest", "", "print the build manifest stamped into the native image FILE: its target, profile and flags"),
     ] },
     FlagGroup { title: "fmt", flags: [
-      cli_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
-      cli_flag("-w", "", "with -fmt: overwrite each file"),
-      cli_flag("-d", "", "with -fmt: print unified diffs, exiting 1 when any file differs"),
+      mode_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
+      sub_flag("-w", "", ["-fmt"], "with -fmt: overwrite each file"),
+      sub_flag("-d", "", ["-fmt"], "with -fmt: print unified diffs, exiting 1 when any file differs"),
     ] },
     FlagGroup { title: "lint", flags: [
-      cli_flag("-lint", "", "lint each PATH: a .fern or .fern.md file, a directory of them, or - for stdin"),
-      cli_flag("-lint-rules", "", "list the lint rules with their severities and options"),
-      cli_flag("-lint-set", "RULE=LEVEL", "with -lint: set a rule to allow, warn or deny (repeatable)"),
-      cli_flag("-lint-opt", "RULE.OPT=VALUE", "with -lint: set a rule option (repeatable)"),
-      cli_flag("-lint-cover", "FILE", "with -lint: score change-risk from FILE, a saved -cover run's stderr"),
+      mode_flag("-lint", "", "lint each PATH: a .fern or .fern.md file, a directory of them, or - for stdin"),
+      mode_flag("-lint-rules", "", "list the lint rules with their severities and options"),
+      sub_flag("-lint-set", "RULE=LEVEL", ["-lint"], "with -lint: set a rule to allow, warn or deny (repeatable)"),
+      sub_flag("-lint-opt", "RULE.OPT=VALUE", ["-lint"], "with -lint: set a rule option (repeatable)"),
+      sub_flag("-lint-cover", "FILE", ["-lint"], "with -lint: score change-risk from FILE, a saved -cover run's stderr"),
     ] },
     FlagGroup { title: "doc", flags: [
-      cli_flag("-doc", "", "a module's Markdown reference page, or with -o OUTDIR one per module under DIR"),
-      cli_flag("-tangle", "", "the Fern source a literate DOC.fern.md tangles to"),
-      cli_flag("-chunk", "NAME", "with -tangle: only the named chunk"),
-      cli_flag("-weave", "", "the woven Markdown of a literate DOC.fern.md"),
-      cli_flag("-html", "", "with -weave: an HTML page instead of Markdown"),
-      cli_flag("-doctest", "", "run a literate DOC.fern.md's test examples, reporting TAP"),
+      mode_flag("-doc", "", "a module's Markdown reference page, or with -o OUTDIR one per module under DIR"),
+      mode_flag("-tangle", "", "the Fern source a literate DOC.fern.md tangles to"),
+      sub_flag("-chunk", "NAME", ["-tangle"], "with -tangle: only the named chunk"),
+      mode_flag("-weave", "", "the woven Markdown of a literate DOC.fern.md"),
+      sub_flag("-html", "", ["-weave"], "with -weave: an HTML page instead of Markdown"),
+      mode_flag("-doctest", "", "run a literate DOC.fern.md's test examples, reporting TAP"),
     ] },
     FlagGroup { title: "lsp", flags: [
-      cli_flag("-lsp", "", "the language server on stdin and stdout"),
+      mode_flag("-lsp", "", "the language server on stdin and stdout"),
     ] },
     FlagGroup { title: "packages", flags: [
-      cli_flag("-add", "", "declare a dependency in fern.toml (SPEC is path:DIR, url:URL, workspace or version:X.Y.Z)"),
-      cli_flag("-grant", "CAPS", "with -add: the comma-separated capabilities the dependency may reach, or none"),
-      cli_flag("-resolve", "", "run MVS over the manifest's index and write fern.lock"),
-      cli_flag("-vendor", "", "flatten the dependency graph into vendor/"),
-      cli_flag("-fetch", "", "download the url dependencies into the package store"),
+      mode_flag("-add", "", "declare a dependency in fern.toml (SPEC is path:DIR, url:URL, workspace or version:X.Y.Z)"),
+      sub_flag("-grant", "CAPS", ["-add"], "with -add: the comma-separated capabilities the dependency may reach, or none"),
+      mode_flag("-resolve", "", "run MVS over the manifest's index and write fern.lock"),
+      mode_flag("-vendor", "", "flatten the dependency graph into vendor/"),
+      mode_flag("-fetch", "", "download the url dependencies into the package store"),
     ] },
     FlagGroup { title: "diagnostics", flags: [
       cli_flag("-color", "MODE", "colour diagnostics: auto (the default), always or never"),
       cli_flag("-ascii", "", "draw the diagnostic gutter with | rather than box drawing"),
       cli_flag("-q", "", "one plain line per diagnostic (also FERN_DIAG_FORMAT=terse)"),
-      cli_flag("-explain", "[CODE]", "explain an error code, or list the codes"),
-      cli_flag("-version", "", "the commit this binary was built from"),
-      CliFlag { name: "-h", also: ["-help"], value: "", help: "print this help" },
+      mode_flag("-explain", "[CODE]", "explain an error code, or list the codes"),
+      mode_flag("-version", "", "the commit this binary was built from"),
+      CliFlag { ...cli_flag("-h", "", "print this help"), also: ["-help"] },
     ] },
     FlagGroup { title: "debug, size and sanitizers", flags: [
       cli_flag("-g", "", "a symbol table and DWARF for debuggers and profilers"),
@@ -2649,8 +2659,8 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-size", "", "build for size over speed (default FERN_SIZE)"),
       cli_flag("-sanitize", "", "the heap memory-safety detectors (also FERN_SANITIZE=1)"),
       cli_flag("-cover", "", "count line and branch hits, reported to stderr at exit (also FERN_COVER=1)"),
-      cli_flag("-cover-report", "", "summarise a saved -cover run's stderr (FILE, or - for stdin)"),
-      cli_flag("-lcov", "", "with -cover-report: an lcov tracefile instead of the summary"),
+      mode_flag("-cover-report", "", "summarise a saved -cover run's stderr (FILE, or - for stdin)"),
+      sub_flag("-lcov", "", ["-cover-report"], "with -cover-report: an lcov tracefile instead of the summary"),
     ] },
   ];
 }
@@ -2713,6 +2723,58 @@ function read_flag(av: string[], i: i32): CliArg {
     return arg;
   }
   return CliArg { ...arg, err: f.name + " needs a value: write " + f.name + " " + f.value + " or " + f.name + "=" + f.value };
+}
+
+// The flags before FILE that are on, in the order given, or None when one does
+// not parse: the main loop reports that flag first.
+function given_flags(av: string[]): Option[string[]] {
+  let out: string[] = [];
+  let i = 1;
+  while (i < av.len() && is_flag(av[i]) && av[i] != "--") {
+    let f = read_flag(av, i);
+    if (f.err.len() > 0) {
+      return None;
+    }
+    if (f.on && !util.has_str(out, f.name)) {
+      out = out.append(f.name);
+    }
+    i = f.last + 1;
+  }
+  return Some(out);
+}
+
+function flag_combination_error(given: string[]): Option[string] {
+  let mode = "";
+  for name in given {
+    let f = find_flag(name);
+    if (f.mode && mode.len() > 0) {
+      return Some(mode + " and " + name + " are separate modes: give one of them");
+    }
+    if (f.mode) {
+      mode = name;
+    }
+    if (f.needs.len() > 0 && !gives_any(given, f.needs)) {
+      return Some(name + " takes effect only with " + either(f.needs));
+    }
+  }
+  return None;
+}
+
+function gives_any(given: string[], names: string[]): boolean {
+  for n in names {
+    if (util.has_str(given, n)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function either(names: string[]): string {
+  let out = names[0];
+  for i in 1..names.len() {
+    out = f"{out} or {names[i]}";
+  }
+  return out;
 }
 
 function read_bool(arg: CliArg, has_eq: boolean, given: string): CliArg {
@@ -2965,7 +3027,7 @@ pub function capability_diags(merged: parser.Module, target: string): util.Diag[
   }
   let desc = platforms.for_target(target);
   let built = constfold.prune_literal_branches(constfold.fold_target_name(merged, desc.environment, desc.isa));
-  for v in platforms.enforce(treeshake.treeshake(built), target) {
+  for v in platforms.enforce(treeshake.treeshake(checker.annotate_module(built)), target) {
     out = out.append(platforms.violation_diag(v));
   }
   return out;
@@ -3180,7 +3242,6 @@ function find_manifest_dir(dir: string): string {
       return "";
     }
   }
-  return "";
 }
 
 function run_resolve(start: string, fetcher: Fetcher): i32 {
@@ -3932,7 +3993,6 @@ function entry_sources(path: string, src: string): (Sources, string) {
       return (plain, tangle_error(path, e.line, e.col, e.msg));
     }
   }
-  return (plain, "");
 }
 
 function multi_file_sources(path: string, src: string): (Sources, string) {
@@ -4313,7 +4373,6 @@ function file_readable(path: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function interp_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
@@ -4361,7 +4420,6 @@ function interp_status(v: interp.Value): (i32, string) {
       return (254, "");
     }
   }
-  return (254, "");
 }
 
 function run_repl(root: string, target: string): i32 {
@@ -4886,7 +4944,6 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
       return 1;
     }
   }
-  return 1;
 }
 
 struct Server {
@@ -6342,10 +6399,10 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
@@ -6382,6 +6439,9 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   if (f.name == "-apk-cleartext") {
     return ApkOpts { ...o, cleartext: true };
   }
+  if (f.name == "-apk-debuggable") {
+    return ApkOpts { ...o, debuggable: true };
+  }
   return o;
 }
 
@@ -6396,7 +6456,7 @@ function apk_build_args(av: string[]): (string[], string) {
     } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java", "-jni-dex"], name)) {
       return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
     } else if (util.str_has_prefix(name, "-apk")) {
-      value_next = name != "-apk-compress" && name != "-apk-cleartext" && !a.contains("=");
+      value_next = name != "-apk-compress" && name != "-apk-cleartext" && name != "-apk-debuggable" && !a.contains("=");
     } else {
       out = out.append(a);
     }
@@ -6468,7 +6528,11 @@ function apk_key(path: string): (u8[], string) {
       }
       return (d, "");
     },
-    Err(_) => {}
+    Err(NotFound(_)) => {},
+    Err(e) => {
+      let none: u8[] = [];
+      return (none, "fern: cannot read the signing key " + path + ": " + e.message());
+    }
   }
   let d = apk.new_scalar();
   match (apk_write_key(path, apk.key_pem(d))) {
@@ -6493,7 +6557,12 @@ function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedd
   let flags: string[] = ["-jni-dex", dex_path];
   for abi in [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")] {
     let so = dir + "/" + abi.0 + "/lib" + lib + ".so";
-    let _ = create_dir_all(dir + "/" + abi.0);
+    if let Err(e) = create_dir_all(dir + "/" + abi.0) {
+      if (status == 0) {
+        eprint("fern: cannot create " + dir + "/" + abi.0 + ": " + e.message());
+        status = 1;
+      }
+    }
     if (status == 0) {
       status = run_with_gate(util.append_all(util.append_all([fern, "-target", abi.1, "-shared", "-export", "ANativeActivity_onCreate", "-o", so], flags), rest), embedded_root, fetcher, gate);
     }
@@ -6515,7 +6584,13 @@ function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedd
     Ok(b) => {
       classes = b;
     },
-    Err(_) => {}
+    Err(NotFound(_)) => {},
+    Err(e) => {
+      if (status == 0) {
+        eprint("fern: cannot read " + dex_path + ": " + e.message());
+        status = 1;
+      }
+    }
   }
   let _ = remove_dir_all(dir);
   return (libs, classes, status);
@@ -6567,7 +6642,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   for name in dex.subclasses_of(classes, "android.app.Service") {
     services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions) });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6686,7 +6761,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag = false;
   let shared = false;
   let export_list = "";
-  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false };
+  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false };
   let harden = false;
   let heap_limit_text = "";
   let ram_text = "";
@@ -6698,6 +6773,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let have_entry = false;
   let target_given = false;
 
+  if let Some(given) = given_flags(av) {
+    if let Some(why) = flag_combination_error(given) {
+      eprint("fern: " + why);
+      return 2;
+    }
+  }
   let i = 1;
   let prog_sep = false;
   while (i < av.len()) {
@@ -6943,8 +7024,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (!have_entry) {
     return usage(embedded);
   }
-  if (array_report == semarrayreport.to_stdout() && (tf.run_it || out_path.len() > 0)) {
-    eprint("fern: -array-report prints the report and writes no output, so it takes neither -o nor -run");
+  if (array_report == semarrayreport.to_stdout() && out_path.len() > 0) {
+    eprint("fern: -array-report prints the report and writes no output, so it takes no -o");
     return 2;
   }
   if (apk_opts.out.len() > 0) {

@@ -101,3 +101,47 @@ func TestSelfHostOptBisectFindsTheDecision(t *testing.T) {
 		t.Fatalf("bisect named %v (found %v), want `reuse incr`; decisions %v", got, ok, ds)
 	}
 }
+
+// The cleanups after inlining ask optbisect too, so a fault in one of them
+// bisects to a decision, and declining every decision keeps the answer.
+func TestSelfHostOptBisectGatesTheCleanups(t *testing.T) {
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("no self-host target runs natively here")
+	}
+	for _, c := range []struct{ name, pass string }{
+		{"match_arm_tuple", "fold-constants"},
+		{"match_arm_tuple", "thread"},
+		{"alloc_flat_map_get", "prune"},
+	} {
+		t.Run(c.name+"/"+c.pass, func(t *testing.T) {
+			src := e2eharness.RepoPath("conformance", "cases", c.name, "main.fern")
+			cmd := e2eharness.SelfHostCompileCmd(t, target, src, filepath.Join(t.TempDir(), "prog"))
+			cmd.Env = e2eharness.SelfHostChildEnv("FERN_OPT_TRACE=1")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("traced compile: %v\n%s", err, out)
+			}
+			traced := false
+			for _, d := range e2eharness.ParseOptTrace(string(out)) {
+				traced = traced || d.Pass == c.pass
+			}
+			if !traced {
+				t.Fatalf("FERN_OPT_TRACE lists no %s decision:\n%s", c.pass, out)
+			}
+			run := func(env []string) (string, int) {
+				cmd := exec.Command(e2eharness.CompileSelfHostFile(t, target, src, env))
+				out, _ := cmd.Output()
+				if cmd.ProcessState == nil {
+					t.Fatalf("%v: the program did not start", env)
+				}
+				return string(out), cmd.ProcessState.ExitCode()
+			}
+			want, wantExit := run(nil)
+			got, gotExit := run([]string{"FERN_OPT_BISECT=4294967296"})
+			if got != want || gotExit != wantExit {
+				t.Errorf("every decision declined: exit %d, stdout %q; every decision taken: exit %d, stdout %q", gotExit, got, wantExit, want)
+			}
+		})
+	}
+}

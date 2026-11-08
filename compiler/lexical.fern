@@ -138,7 +138,6 @@ function expr_at(e: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       return (e, s, false);
     }
   }
-  return (e, s, false);
 }
 
 function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
@@ -248,7 +247,6 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       return (st, s, false);
     }
   }
-  return (st, s, false);
 }
 
 function reserve(name: string, own acc: string[]): string[] {

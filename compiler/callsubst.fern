@@ -122,7 +122,6 @@ function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
       return (e, ctx, false);
     }
   }
-  return (e, ctx, false);
 }
 
 function stmt_at(st: ast.Stmt, ctx: Context): (ast.Stmt, Context, boolean) {
@@ -160,5 +159,4 @@ function stmt_at(st: ast.Stmt, ctx: Context): (ast.Stmt, Context, boolean) {
       return (st, ctx, false);
     }
   }
-  return (st, ctx, false);
 }

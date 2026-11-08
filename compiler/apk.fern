@@ -23,7 +23,7 @@ import "./util";
 // `permissions` are the full names of the permissions the app uses, and
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean }
 
 // A service of the app: its Java class, and its foreground service types as
 // the flags of android:foregroundServiceType, or 0.
@@ -95,11 +95,12 @@ function prefixed(b: [u8]): u8[] {
 // attributes, in the order of their resource IDs, and the resource map
 // gives those IDs. The rest of the pool follows `pool_strings`.
 
-// android:theme, label, icon, name, hasCode, exported, configChanges, value,
-// minSdkVersion, versionCode, versionName, targetSdkVersion,
-// extractNativeLibs, usesCleartextTraffic and foregroundServiceType.
+// android:theme, label, icon, name, hasCode, debuggable, exported,
+// configChanges, value, minSdkVersion, versionCode, versionName,
+// targetSdkVersion, extractNativeLibs, usesCleartextTraffic and
+// foregroundServiceType.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844010, 16844012, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842767, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844010, 16844012, 16844185];
 }
 
 const S_THEME: i32 = 0;
@@ -112,35 +113,37 @@ const S_NAME: i32 = 3;
 
 const S_HAS_CODE: i32 = 4;
 
-const S_EXPORTED: i32 = 5;
+const S_DEBUGGABLE: i32 = 5;
 
-const S_CONFIG_CHANGES: i32 = 6;
+const S_EXPORTED: i32 = 6;
 
-const S_VALUE: i32 = 7;
+const S_CONFIG_CHANGES: i32 = 7;
 
-const S_MIN_SDK: i32 = 8;
+const S_VALUE: i32 = 8;
 
-const S_VERSION_CODE: i32 = 9;
+const S_MIN_SDK: i32 = 9;
 
-const S_VERSION_NAME: i32 = 10;
+const S_VERSION_CODE: i32 = 10;
 
-const S_TARGET_SDK: i32 = 11;
+const S_VERSION_NAME: i32 = 11;
 
-const S_EXTRACT_NATIVE_LIBS: i32 = 12;
+const S_TARGET_SDK: i32 = 12;
 
-const S_CLEARTEXT: i32 = 13;
+const S_EXTRACT_NATIVE_LIBS: i32 = 13;
 
-const S_FOREGROUND_TYPE: i32 = 14;
+const S_CLEARTEXT: i32 = 14;
 
-const S_PREFIX: i32 = 15;
+const S_FOREGROUND_TYPE: i32 = 15;
 
-const S_URI: i32 = 16;
+const S_PREFIX: i32 = 16;
 
-const S_PACKAGE: i32 = 17;
+const S_URI: i32 = 17;
+
+const S_PACKAGE: i32 = 18;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
+    "theme", "label", "icon", "name", "hasCode", "debuggable", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -297,7 +300,11 @@ pub function manifest(app: App): u8[] {
   if (app.compress) {
     extract = -1;
   }
-  app_attrs = app_attrs.append(attr_int(S_HAS_CODE, 18, has_code)).append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract));
+  app_attrs = app_attrs.append(attr_int(S_HAS_CODE, 18, has_code));
+  if (app.debuggable) {
+    app_attrs = app_attrs.append(attr_int(S_DEBUGGABLE, 18, -1));
+  }
+  app_attrs = app_attrs.append(attr_int(S_EXTRACT_NATIVE_LIBS, 18, extract));
   if (app.cleartext) {
     app_attrs = app_attrs.append(attr_int(S_CLEARTEXT, 18, -1));
   }

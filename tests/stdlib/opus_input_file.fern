@@ -1,0 +1,61 @@
+import "std/audio/opusfile";
+import "std/audio/opusfile/input";
+import "opus_file_check";
+import "opus_file_vectors";
+import "opus_input_check";
+
+function event(own state: input.Input, source: Reader, cooperative: boolean): Result[(input.Input, input.ReadEvent), input.ReadError] {
+  if (cooperative) {
+    return state.step(source);
+  }
+  let (next, value) = state.next(source)?;
+  return Ok((next, match (value) { Some(value) => input.Output(value), None => input.Finished }));
+}
+
+function complete(source: Reader, ref: opus_file_check.Reference, progress: opus_file_check.Progress): Result[void, string] {
+  let offset = match (source.seek(0i64, 1)) { Ok(value) => value, Err(e) => { return Err("seek: " + e.message()); } };
+  if (offset != ref.bytes.len() as i64 || progress.link != ref.links.len()) {
+    return Err("file position or complete reference PCM");
+  }
+  return Ok(());
+}
+
+function decode(source: Reader, ref: opus_file_check.Reference, cooperative: boolean): Result[void, string] {
+  let state = match (input.create(opusfile.default_limits(), 17)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let progress = opus_file_check.Progress { link: 0, stage: 0, samples: 0 };
+  while (true) {
+    let (next, value) = match (event(state, source, cooperative)) { Ok(value) => value, Err(e) => { return Err("decode: " + e.message()); } };
+    state = next;
+    let (current, finished) = opus_input_check.progress_event(value, ref, progress)?;
+    progress = current;
+    if (finished) {
+      break;
+    }
+  }
+  return complete(source, ref, progress);
+}
+
+function read_file(path: string, ref: opus_file_check.Reference, cooperative: boolean): Result[void, string] {
+  let source = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err("open: " + e.message()); } };
+  let result = decode(source, ref, cooperative);
+  let closed = source.close();
+  result?;
+  return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return 3;
+  };
+  for cooperative in [false, true] {
+    if let Err(message) = read_file(argv[1], ref, cooperative) {
+      eprint(message);
+      return 1;
+    }
+  }
+  return 0;
+}

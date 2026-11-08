@@ -182,7 +182,9 @@ the native supervised path and the interp fallback.
   gives a dead worker's socket to the replacement. The kernel steers each
   datagram over the `SO_REUSEPORT` group by the hash of its flow. A socket
   that joins or leaves the group moves live QUIC connections to a worker
-  that has no state for them.
+  that has no state for them. The supervisor also picks the key that seals
+  the address-validation tokens its workers' Retry packets carry, before
+  the first fork, so a token one worker issued is accepted by any of them.
 
 - Graceful drain exists (#9854): SIGTERM is a readiness event on the
   reactor, the supervisor forwards it to its workers and waits for them,
