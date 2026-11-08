@@ -1,0 +1,251 @@
+import "std/audio/alac";
+import "std/audio/alac/bits";
+import "std/audio/alac/config";
+import "std/audio/alac/entropy";
+import "std/audio/alac/predict";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "alac_smoke_vectors";
+import "alac_vectors";
+
+function fixture(): Result[(u8[], u8[]), string] {
+  let value = alac_smoke_vectors.vector();
+  let configuration = ref.unpack(value.configuration)?;
+  let packets = ref.unpack(value.packets)?;
+  let count = ref.word(packets, 4);
+  let packet: u8[] = [];
+  for byte in packets[8:8 + count] {
+    packet = packet.append(byte);
+  }
+  return Ok((configuration, packet));
+}
+
+function field(input: [u8], position: i32, width: i32, value: u32): u8[] {
+  let output: u8[] = [];
+  for byte in input {
+    output = output.append(byte);
+  }
+  for i in 0..width {
+    let at = position + i;
+    let mask = 1u8 << (7 - at % 8) as u8;
+    let bit = value >> (width - i - 1) as u32 & 1u32;
+    output = output.with(at / 8, if (bit == 0u32) { output[at / 8] & ~mask } else { output[at / 8] | mask });
+  }
+  return output;
+}
+
+function configurations(): test.TestOutcome {
+  let Ok((configuration, _)) = fixture() else {
+    return test.fail("fixture");
+  };
+  for cut in 0..configuration.len() {
+    if let Err(pcm.Truncated) = alac.create(configuration[:cut], pcm.default_limits()) {} else {
+      return test.fail("configuration byte prefix");
+    }
+  }
+  for depth in [0u8, 8u8, 17u8, 33u8] {
+    if let Err(pcm.Unsupported) = alac.create(configuration.with(5, depth), pcm.default_limits()) {} else {
+      return test.fail("unsupported sample depth");
+    }
+  }
+  for channels in [0u8, 9u8] {
+    if let Err(_) = alac.create(configuration.with(9, channels), pcm.default_limits()) {} else {
+      return test.fail("invalid channel count");
+    }
+  }
+  if let Err(pcm.Unsupported) = alac.create(configuration.with(4, 1u8), pcm.default_limits()) {} else {
+    return test.fail("configuration version");
+  }
+  if let Err(pcm.Header) = alac.create(configuration.with(8, 32u8), pcm.default_limits()) {} else {
+    return test.fail("invalid Rice limit");
+  }
+  let extended = configuration;
+  extended = wire.put_be(extended, 24u64, 4);
+  for byte in "chan".as_bytes() {
+    extended = extended.append(byte);
+  }
+  extended = wire.put_be(extended, 0u64, 4);
+  extended = wire.put_be(extended, 6553601u64, 4);
+  extended = wire.put_be(extended, 0u64, 8);
+  if let Err(_) = alac.create(extended, pcm.default_limits()) {
+    return test.fail("explicit mono layout");
+  }
+  for at in [27, 28, 35, 43, 47] {
+    if let Err(_) = alac.create(extended.with(at, extended[at] ^ 1u8), pcm.default_limits()) {} else {
+      return test.fail("invalid channel-layout extension");
+    }
+  }
+  if let Err(pcm.Unsupported) = alac.create(extended.with(39, 2u8), pcm.default_limits()) {} else {
+    return test.fail("layout channel mismatch");
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok((configuration, packet)) = fixture() else {
+    return test.fail("fixture");
+  };
+  for cut in 0..packet.len() {
+    let Ok(decoder) = alac.create(configuration, pcm.default_limits()) else {
+      return test.fail("decoder");
+    };
+    if let Err(_) = decoder.decode_packet(packet[:cut], pcm.default_limits()) {} else {
+      return test.fail("packet byte prefix");
+    }
+  }
+  for changed in [field(packet, 7, 1, 1u32), field(packet, 20, 2, 3u32), field(packet, 23, 32, 0u32), field(packet, 23, 32, 33u32), field(packet, 71, 4, 1u32), packet.append(0u8), packet.with(packet.len() - 1, packet[packet.len() - 1] | 1u8)] {
+    let Ok(decoder) = alac.create(configuration, pcm.default_limits()) else {
+      return test.fail("decoder");
+    };
+    if let Err(_) = decoder.decode_packet(changed, pcm.default_limits()) {} else {
+      return test.fail("malformed packet extent or field");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok((configuration, packet)) = fixture() else {
+    return test.fail("fixture");
+  };
+  let limits = pcm.default_limits();
+  if let Err(pcm.Limit) = alac.create(configuration, pcm.Limits { ...limits, max_samples: 31 }) {} else {
+    return test.fail("scratch sample budget");
+  }
+  if let Err(pcm.Limit) = alac.create(configuration, pcm.Limits { ...limits, max_input_bytes: 23 }) {} else {
+    return test.fail("configuration input budget");
+  }
+  let Ok(decoder) = alac.create(configuration, limits) else {
+    return test.fail("decoder");
+  };
+  if let Err(pcm.Buffer) = decoder.decode_packet_into(packet, pcm.zeros(18), limits) {} else {
+    return test.fail("short output buffer");
+  }
+  let Ok(next) = alac.create(configuration, limits) else {
+    return test.fail("decoder");
+  };
+  if let Err(pcm.Limit) = next.decode_packet_into(packet, pcm.zeros(19), pcm.Limits { ...limits, max_samples: 18 }) {} else {
+    return test.fail("packet sample budget");
+  }
+  let Ok(exact) = alac.create(configuration, limits) else {
+    return test.fail("decoder");
+  };
+  if let Err(_) = exact.decode_packet_into(packet, pcm.zeros(19), pcm.Limits { ...limits, max_samples: 19, max_input_bytes: packet.len() }) {
+    return test.fail("exact packet and output budgets");
+  }
+  let Ok(short_input) = alac.create(configuration, limits) else {
+    return test.fail("decoder");
+  };
+  if let Err(pcm.Limit) = short_input.decode_packet(packet, pcm.Limits { ...limits, max_input_bytes: packet.len() - 1 }) {} else {
+    return test.fail("encoded packet budget");
+  }
+  let small = field(configuration, 96, 32, (packet.len() - 1) as u32);
+  let Ok(advertised) = alac.create(small, limits) else {
+    return test.fail("frame-byte declaration");
+  };
+  if let Err(pcm.Limit) = advertised.decode_packet(packet, limits) {} else {
+    return test.fail("declared maximum frame bytes");
+  }
+  return test.pass();
+}
+
+function bounded_bits(): test.TestOutcome {
+  for position in [-1i64, 9i64, 9223372036854775807i64] {
+    if let Err(pcm.Header) = bits.read([255u8], position, 1) {} else {
+      return test.fail("invalid bit position");
+    }
+  }
+  if let Err(pcm.Truncated) = bits.read([255u8], 7i64, 2) {} else {
+    return test.fail("incomplete field");
+  }
+  if let Err(pcm.Limit) = bits.skip([], 1i64, 9223372036854775807i64) {} else {
+    return test.fail("skip overflow");
+  }
+  let Ok((_, signed)) = bits.signed([128u8, 0u8, 0u8, 0u8], 0i64, 32) else {
+    return test.fail("signed read");
+  };
+  if (signed != -2147483648) {
+    return test.fail("signed 32-bit minimum");
+  }
+  if let Err(pcm.Truncated) = entropy.rice([255u8], 0i64, 14, 16) {} else {
+    return test.fail("incomplete Rice escape");
+  }
+  if let Err(pcm.Header) = entropy.rice([], 0i64, 32, 16) {} else {
+    return test.fail("Rice shift range");
+  }
+  return test.pass();
+}
+
+function zero_runs(): test.TestOutcome {
+  let Ok((configuration, _)) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(info) = config.read(configuration, pcm.default_limits()) else {
+    return test.fail("configuration");
+  };
+  let initial = config.Info { ...info, mb: 0 };
+  let parameters = entropy.Parameters { depth: 16, mode: 0, shift: 0, factor: 0u32, coefficients: [] };
+  if let Err(pcm.Header) = entropy.residuals([127u8, 255u8, 255u8, 192u8], 0i64, initial, parameters, pcm.zeros(2), 2) {} else {
+    return test.fail("zero run beyond current frame");
+  }
+  let Ok((_, values)) = entropy.residuals([0u8, 128u8], 0i64, initial, parameters, [17, 19, 23], 2) else {
+    return test.fail("exact zero run");
+  };
+  if (values[0] != 0 || values[1] != 0 || values[2] != 23) {
+    return test.fail("zero-run prefix and retained scratch suffix");
+  }
+  if let Err(pcm.Header) = predict.restore([0], 1, entropy.Parameters { ...parameters, coefficients: [1] }) {} else {
+    return test.fail("predictor warm-up extent");
+  }
+  return test.pass();
+}
+
+function layouts(): test.TestOutcome {
+  for channels in 1..9 {
+    let seen = 0u32;
+    for i in 0..channels {
+      let Ok(mapped) = config.channel(channels, i) else {
+        return test.fail("channel map");
+      };
+      if (mapped < 0 || mapped >= channels || (seen & 1u32 << mapped as u32) != 0u32) {
+        return test.fail("channel permutation");
+      }
+      seen |= 1u32 << mapped as u32;
+    }
+    if (config.mask(channels) == 0u32) {
+      return test.fail("speaker mask");
+    }
+  }
+  for value in alac_vectors.vectors() {
+    if (value.name != "compressed-32-low-eight") {
+      continue;
+    }
+    let Ok(configuration) = ref.unpack(value.configuration) else {
+      return test.fail("configuration");
+    };
+    let Ok(bundle) = ref.unpack(value.packets) else {
+      return test.fail("packet");
+    };
+    let packet = field(bundle[8:8 + ref.word(bundle, 4)], 20, 2, 0u32);
+    let Ok(decoder) = alac.create(configuration, pcm.default_limits()) else {
+      return test.fail("decoder");
+    };
+    if let Err(pcm.Unsupported) = decoder.decode_packet(packet, pcm.default_limits()) {} else {
+      return test.fail("explicit 33-bit predictor boundary");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("ALAC malformed input and resource boundaries");
+  runner = runner.it("configuration prefixes, layouts, versions, and depths", configurations);
+  runner = runner.it("packet prefixes, headers, frame lengths, and padding", prefixes);
+  runner = runner.it("scratch, output, packet, and declared byte budgets", budgets);
+  runner = runner.it("checked bit positions and incomplete Rice escapes", bounded_bits);
+  runner = runner.it("bounded zero runs and predictor warm-up", zero_runs);
+  runner = runner.it("channel permutations and declared predictor width", layouts);
+  return runner.finish();
+}

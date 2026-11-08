@@ -1,0 +1,29 @@
+import "std/test";
+import "aac_kernel_check" as ref;
+import "alac_check";
+import "alac_smoke_vectors";
+
+function reference(): test.TestOutcome {
+  let value = alac_smoke_vectors.vector();
+  let Ok(configuration) = ref.unpack(value.configuration) else {
+    return test.fail("configuration fixture");
+  };
+  let Ok(packets) = ref.unpack(value.packets) else {
+    return test.fail("packet fixture");
+  };
+  let Ok(expected) = ref.unpack(value.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  for reuse in [false, true] {
+    if let Err(e) = alac_check.run(configuration, packets, expected, value.rate, value.channels, value.depth, value.frames, reuse) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Independent ALAC interpreter smoke");
+  runner = runner.it("exact signed samples and reusable output", reference);
+  return runner.finish();
+}
