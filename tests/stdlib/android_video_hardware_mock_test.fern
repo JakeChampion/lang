@@ -618,6 +618,77 @@ function playback(): i32 {
   return 0;
 }
 
+function scheduled_output(): i32 {
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  for delayed in [false, true] {
+    mode(17);
+    jni_mode(0);
+    let Ok(p) = player.open(jni_env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, limits) else {
+      return 701;
+    };
+    for _ in 0..4 {
+      let step = p.tick(9876543210i64);
+      p = step.player;
+    }
+    if (p.scheduled_frames != 1i64 || p.output_eos) {
+      return 702;
+    }
+    let pending = p.tick(9876543210i64);
+    p = pending.player;
+    if (p.pending.is_none() || p.scheduled_frames != 1i64) {
+      return 703;
+    }
+    if (delayed) {
+      let dropped = p.tick(10126543210i64);
+      p = dropped.player;
+      match (dropped.event) {
+        player.FrameDropped(223456i64) => {},
+        _ => {
+          return 704;
+        }
+      }
+      if (p.pending.is_some() || p.dropped_frames != 1i64) {
+        return 705;
+      }
+    } else {
+      let paused = p.pause(9876543210i64);
+      let resumed = paused.player.resume(10876543210i64);
+      let waiting = resumed.player.tick(10876543210i64);
+      if (waiting.player.pending.is_none() || waiting.player.scheduled_frames != 1i64) {
+        return 706;
+      }
+      let due = waiting.player.tick(10976543210i64);
+      p = due.player;
+      match (due.event) {
+        player.FrameScheduled(223456i64) => {},
+        _ => {
+          return 707;
+        }
+      }
+      if (p.pending.is_some() || p.scheduled_frames != 2i64 || p.dropped_frames != 0i64) {
+        return 708;
+      }
+    }
+    let ended = p.tick(10976543210i64);
+    match (ended.event) {
+      player.End => {},
+      _ => {
+        return 709;
+      }
+    }
+    if (!ended.player.output_eos) {
+      return 710;
+    }
+    let Ok(_) = ended.player.close() else {
+      return 711;
+    };
+    if (live() != 0) {
+      return 712;
+    }
+  }
+  return 0;
+}
+
 function main(): i32 {
   let result = discovery();
   if (result != 0) {
@@ -639,5 +710,9 @@ function main(): i32 {
   if (result != 0) {
     return result;
   }
-  return playback();
+  result = playback();
+  if (result != 0) {
+    return result;
+  }
+  return scheduled_output();
 }

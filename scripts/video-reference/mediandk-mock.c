@@ -89,7 +89,7 @@ int AMediaCodec_delete(void *c) { assert(c == &codec_token); live_codecs--; retu
 int AMediaCodec_flush(void *c) { assert(c == &codec_token); output_step = 0; return 0; }
 ssize_t AMediaCodec_dequeueInputBuffer(void *c, int64_t timeout) {
     assert(c == &codec_token && timeout >= 0);
-    return timeout == 0 && mode != 16 ? -1 : 3;
+    return timeout == 0 && mode != 16 && mode != 17 ? -1 : 3;
 }
 uint8_t *AMediaCodec_getInputBuffer(void *c, size_t index, size_t *capacity) {
     assert(c == &codec_token && index == 3);
@@ -113,7 +113,14 @@ ssize_t AMediaCodec_dequeueOutputBuffer(void *c, struct buffer_info *info, int64
     case 0: return -1;
     case 1: return -2;
     case 2: return -3;
-    default: info->offset = active_encoder ? 2 : 7; info->size = active_encoder ? 3 : 99; info->time = 123456; info->flags = active_encoder ? 1 : 4; return 2;
+    default:
+        if (mode == 17) {
+            info->offset = 0; info->size = output_step < 6 ? 3 : 0;
+            info->time = output_step == 4 ? 123456 : 223456;
+            info->flags = output_step < 6 ? 0 : 4;
+            return 2;
+        }
+        info->offset = active_encoder ? 2 : 7; info->size = active_encoder ? 3 : 99; info->time = 123456; info->flags = active_encoder ? 1 : 4; return 2;
     }
 }
 void *AMediaCodec_getOutputFormat(void *c) { assert(c == &codec_token); live_formats++; return &format_token; }
@@ -121,7 +128,7 @@ int AMediaCodec_releaseOutputBuffer(void *c, size_t index, bool render) {
     assert(c == &codec_token && index == 2 && !render); released++; return 0;
 }
 int AMediaCodec_releaseOutputBufferAtTime(void *c, size_t index, int64_t time) {
-    assert(c == &codec_token && index == 2 && time == 9876543210LL); released++; return 0;
+    assert(c == &codec_token && index == 2 && (time == 9876543210LL || (mode == 17 && time == 10976543210LL))); released++; return 0;
 }
 uint8_t *AMediaCodec_getOutputBuffer(void *c, size_t index, size_t *capacity) {
     assert(c == &codec_token && index == 2); *capacity = sizeof(output_data); return output_data;
