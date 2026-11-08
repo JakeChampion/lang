@@ -1065,8 +1065,8 @@ function c_import_refusal(f: parser.FuncDecl): string {
   let what = "@import " + f.name + ": ";
   let floats = c_import_floats(f);
   let ints = f.params.len() - floats;
-  if (floats == 0 && ints > 6 || floats > 0 && (ints > 6 || floats > 8)) {
-    return what + "a C import takes at most 6 integer parameters and 8 float parameters (it has " + util.i32_to_string(ints) + " and " + util.i32_to_string(floats) + ")";
+  if (ints > 14 || floats > 8) {
+    return what + "a C import takes at most 14 integer parameters and 8 float parameters (it has " + util.i32_to_string(ints) + " and " + util.i32_to_string(floats) + ")";
   }
   for p in f.params {
     if (!c_import_int(p.type_name) && !c_import_float(p.type_name)) {
@@ -1237,8 +1237,9 @@ function stub_decl(f: parser.FuncDecl, k: i32): string {
 
 // The source of the body that calls C import `f` through stub `k`.
 function c_import_body(f: parser.FuncDecl, k: i32): string {
-  if (c_import_floats(f) > 0) {
-    return c_import_body_floats(f, k);
+  let floats = c_import_floats(f);
+  if (floats > 0 || f.params.len() - floats > 6) {
+    return c_import_body_mem(f, k);
   }
   let args = import_stub(k) + "()";
   let params = "";
@@ -1264,11 +1265,12 @@ function c_import_body(f: parser.FuncDecl, k: i32): string {
     + stub_decl(f, k);
 }
 
-// The body of a C import with float parameters. The integer arguments go
-// in one block of memory and the bits of the float arguments in another,
-// each in the order of its kind, and __c_callv loads each into the argument
-// register that the ABI gives it.
-function c_import_body_floats(f: parser.FuncDecl, k: i32): string {
+// The body of a C import with float parameters or more than 6 integer
+// parameters. The integer arguments go in one block of memory and the bits
+// of the float arguments in another, each in the order of its kind.
+// __c_callv loads each into the argument register that the ABI gives it,
+// and puts the integers after the last register on the stack.
+function c_import_body_mem(f: parser.FuncDecl, k: i32): string {
   let params = "";
   let stores = "";
   let ni = 0;
@@ -1301,9 +1303,9 @@ function c_import_body_floats(f: parser.FuncDecl, k: i32): string {
     ret = ": " + f.ret_type;
     result = "    return r as " + f.ret_type + ";\n";
   }
-  let body = "    let ints: usize = __alloc(64);\n    let floats: usize = __alloc(64);\n" + stores
+  let body = "    let ints: usize = __alloc(128);\n    let floats: usize = __alloc(64);\n" + stores
     + "    let r: usize = __c_callv(" + import_stub(k) + "(), ints, floats, " + kind + ");\n"
-    + "    __free(ints, 64);\n    __free(floats, 64);\n" + result;
+    + "    __free(ints, 128);\n    __free(floats, 64);\n" + result;
   return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n" + body + "  }\n}\n"
     + stub_decl(f, k);
 }

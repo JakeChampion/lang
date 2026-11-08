@@ -7299,6 +7299,12 @@ function emit_ccallv_shim_arm64(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldp x" + util.i32_to_string(2 * i) + ", x" + util.i32_to_string(2 * i + 1) + ", [x10, #" + off + "]\n");
     s = s.write("    ldp d" + util.i32_to_string(2 * i) + ", d" + util.i32_to_string(2 * i + 1) + ", [x11, #" + off + "]\n");
   }
+  // Integers 8 to 15 go on the stack, in the order of the arguments.
+  s = s.write("    sub sp, sp, #64\n");
+  for i in 0..4 {
+    let off = util.i32_to_string(16 * i);
+    s = s.write("    ldp x12, x13, [x10, #" + util.i32_to_string(64 + 16 * i) + "]\n    stp x12, x13, [sp, #" + off + "]\n");
+  }
   if (s.shared) {
     s = s.write(busy_give_arm64());
   }
@@ -7308,7 +7314,7 @@ function emit_ccallv_shim_arm64(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    ldr x10, [x29, #64]\n    cmp w10, #1\n    b.ne .Lfern_ccallv_f64\n    fmov w0, s0\n    b .Lfern_ccallv_done\n");
   s = s.write(".Lfern_ccallv_f64:\n    cmp w10, #2\n    b.ne .Lfern_ccallv_done\n    fmov x0, d0\n");
-  return s.write(".Lfern_ccallv_done:\n" + rt_unframe(s) + "    ret\n");
+  return s.write(".Lfern_ccallv_done:\n    mov sp, x29\n" + rt_unframe(s) + "    ret\n");
 }
 
 pub function busy_take_arm64(): string {
