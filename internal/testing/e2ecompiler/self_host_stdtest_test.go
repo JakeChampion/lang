@@ -90,7 +90,7 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 var interpSlowStdTests = map[string]bool{
 	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
-	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
+	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_file": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
 	"opus_bands": true, "opus_celt": true, "opus_celt_encoder": true,
 	"opus_celt_frame": true, "opus_celt_prefilter": true, "opus_energy": true,
 	// Full PCM corpora use the compiled gates. Independent smoke suites stay here.
@@ -339,6 +339,8 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"android_player", langSrcAbs(t, "tests/stdlib/android_player_test.fern"), ""},
 		{"android_video_policy", langSrcAbs(t, "tests/stdlib/android_video_policy_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
+		{"mp3_file", langSrcAbs(t, "tests/stdlib/mp3_file_test.fern"), ""},
+		{"mp3_file_smoke", langSrcAbs(t, "tests/stdlib/mp3_file_smoke_test.fern"), ""},
 		{"mp3_input", langSrcAbs(t, "tests/stdlib/mp3_input_test.fern"), ""},
 		{"mp3_input_smoke", langSrcAbs(t, "tests/stdlib/mp3_input_smoke_test.fern"), ""},
 		{"mp3_seek", langSrcAbs(t, "tests/stdlib/mp3_seek_test.fern"), ""},
@@ -488,6 +490,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"filetime", langSrcAbs(t, "tests/stdlib/filetime_test.fern"), ""},
 		{"fdt", langSrcAbs(t, "tests/stdlib/fdt_test.fern"), ""},
 		{"pvh", langSrcAbs(t, "tests/stdlib/pvh_test.fern"), ""},
+		{"elf", langSrcAbs(t, "tests/stdlib/elf_test.fern"), ""},
 		{"binary", langSrcAbs(t, "tests/stdlib/binary_test.fern"), ""},
 		{"tz", langSrcAbs(t, "tests/stdlib/tz_test.fern"), ""},
 		{"string_replace_split", langSrcAbs(t, "tests/stdlib/string_replace_split_test.fern"), ""},
