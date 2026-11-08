@@ -2165,7 +2165,21 @@ func blockStmts(st ast.Stmt) []ast.Stmt {
 func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int) bool {
 	f := frames[level]
 	reach := settleReach{frames: frames, level: level, scope: scope}
+	// An initializer reads the outer binding before its declaration hides it.
+	// Later reads in this block name the new binding. Jumps and scope exits
+	// can still reach the outer value, so keep those paths.
+	shadowed := bindsName(f.stmts[f.idx], name)
 	for j := f.idx + 1; j < len(f.stmts); j++ {
+		if shadowed {
+			st := f.stmts[j]
+			if jumpsLive(info, frames, level, jumpsOf(info, st), name, scope) {
+				return true
+			}
+			if divergesStmt(info, st) || neverReturns(info, st) {
+				return false
+			}
+			continue
+		}
 		// A new value on every path replaces the local before any read of
 		// the old one.
 		live, settled := stmtsSettle(info, f.stmts[j:j+1], name, reach)
@@ -2175,6 +2189,7 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int)
 		if settled {
 			return false
 		}
+		shadowed = bindsName(f.stmts[j], name)
 	}
 	if level <= scope {
 		// The binding ends with the block that declares it.
