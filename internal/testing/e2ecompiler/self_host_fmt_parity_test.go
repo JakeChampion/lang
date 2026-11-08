@@ -22,6 +22,17 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"norc-marks-the-free-function-not-the-method", `struct Pool { base: usize }
+
+@norc
+pub function count(base: usize): usize {
+  return base;
+}
+
+pub function (p: Pool) count(): usize {
+  return count(p.base);
+}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
