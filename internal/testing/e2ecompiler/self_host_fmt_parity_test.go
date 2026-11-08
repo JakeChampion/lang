@@ -22,6 +22,12 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"function-attribute-name-collisions", `@norc function count(base: usize): usize { return base; }
+struct Frames { base: usize }
+function (f: Frames) count(): usize { return count(f.base); }
+function release(base: usize): void {}
+@norc function (f: Frames) release(): void {}
+`},
 	{"unsafe-value-blocks", `function f(bytes: u8[]): string {
   let n = unsafe { 3 };
   let text = unsafe { string_from_bytes_unchecked(bytes) };
