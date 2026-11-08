@@ -1,0 +1,124 @@
+import "std/audio/flac/input";
+import "std/audio/pcm";
+import "std/audio/source";
+
+pub struct Progress { stage: i32, frames: i64 }
+
+pub function bytes_reader(bytes: u8[], position: Cell[i32], calls: Cell[i32], partial: boolean): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    let sizes = [1, 3, 17, 255, 4096];
+    let count = if (partial && requested > sizes[calls.get() % sizes.len()]) { sizes[calls.get() % sizes.len()] } else { requested };
+    let remaining = bytes.len() - position.get();
+    count = if (count < remaining) { count } else { remaining };
+    let output: u8[] = [];
+    for i in position.get()..position.get() + count {
+      output = output.append(bytes[i]);
+    }
+    position.set(position.get() + count);
+    calls.set(calls.get() + 1);
+    return Ok(output);
+  };
+}
+
+function samples(audio: input.Audio, ref: pcm.Block, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 1 || audio.position != progress.frames || audio.frames < 1) {
+    return Err("sample position or order");
+  }
+  if (audio.info.format != ref.format || audio.samples.len() != audio.frames * ref.format.channels) {
+    return Err("sample format or count");
+  }
+  let at = audio.position * (ref.format.channels as i64);
+  if (at + audio.samples.len() as i64 > ref.samples.len() as i64) {
+    return Err("extra output");
+  }
+  for i in 0..audio.samples.len() {
+    if (audio.samples[i] != ref.samples[at as i32 + i]) {
+      return Err("PCM at sample " + (at + i as i64).to_string());
+    }
+  }
+  return Ok(Progress { ...progress, frames: progress.frames + audio.frames as i64 });
+}
+
+function begin(info: input.Info, ref: pcm.Block, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 0 || info.format != ref.format) {
+    return Err("identification event");
+  }
+  return Ok(Progress { ...progress, stage: 1 });
+}
+
+function end(summary: input.Summary, ref: pcm.Block, progress: Progress, bytes: i32): Result[Progress, string] {
+  let total = (ref.samples.len() / ref.format.channels) as i64;
+  if (progress.stage != 1 || progress.frames != total || summary.frames != total || summary.bytes_read != bytes as i64 || summary.encoded_frames < 1i64) {
+    return Err("complete PCM, input, or event count");
+  }
+  return Ok(Progress { ...progress, stage: 2 });
+}
+
+pub function event(own value: input.ReadEvent, ref: pcm.Block, progress: Progress, bytes: i32): Result[Progress, string] {
+  return match (value) {
+    input.Pending => Ok(progress),
+    input.Finished => Ok(progress),
+    input.Output(input.Begin(info)) => begin(info, ref, progress),
+    input.Output(input.Samples(audio)) => samples(audio, ref, progress),
+    input.Output(input.End(summary)) => end(summary, ref, progress, bytes),
+  };
+}
+
+function no_read(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function complete(own state: input.Input, progress: Progress): Result[void, string] {
+  if (progress.stage != 2) {
+    return Err("missing end event");
+  }
+  let (next, value) = match (state.step_with(no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if let input.Finished = value {
+    let (_, value) = match (next.next_with(no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if let None = value {
+      return Ok(());
+    }
+  }
+  return Err("source read after completion");
+}
+
+pub function run(bytes: u8[], ref: pcm.Block, chunk: i32, partial: boolean, frame_samples: i32): Result[void, string] {
+  let limits = input.default_limits();
+  limits = input.Limits { ...limits, audio: pcm.Limits { max_input_bytes: 4096, max_samples: frame_samples }, input: source.Limits { chunk_size: chunk, max_buffer_bytes: 4096 } };
+  let state = match (input.create(limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let read = bytes_reader(bytes, position, calls, partial);
+  let progress = Progress { stage: 0, frames: 0i64 };
+  let turns = 0;
+  while (true) {
+    let before = calls.get();
+    let encoded = state.encoded_frames;
+    let (next, value) = match (state.step_with(read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    let reads = calls.get() - before;
+    let decoded = next.encoded_frames - encoded;
+    if (reads > 1 || decoded > 1i64 || reads > 0 && decoded > 0i64 || next.buffer.bytes.len() > 4096) {
+      return Err("cooperative step or retained window bound");
+    }
+    state = next;
+    let finished = match (value) { input.Finished => true, _ => false };
+    progress = event(value, ref, progress, bytes.len())?;
+    if (finished) {
+      break;
+    }
+    turns += 1;
+    if (turns > bytes.len() * 4 + 128) {
+      return Err("input does not advance");
+    }
+  }
+  return complete(state, progress);
+}
+
+// gen-audio-fixtures.py verifies this constant 4-bit fixture with FFmpeg.
+pub function smoke_reference(): pcm.Block {
+  let samples: i32[] = [];
+  for _ in 0..64 {
+    samples = samples.append(-3);
+  }
+  return pcm.Block { format: pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 4 }, samples: samples };
+}

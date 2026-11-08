@@ -88,7 +88,7 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
-	"brotli": true, "deflate": true, "ed25519": true, "http_compress": true,
+	"brotli": true, "deflate": true, "flac_input": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
 	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
 	"opus_bands": true, "opus_celt": true, "opus_celt_encoder": true,
@@ -341,6 +341,8 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"mp3_input_smoke", langSrcAbs(t, "tests/stdlib/mp3_input_smoke_test.fern"), ""},
 		{"mp3_seek", langSrcAbs(t, "tests/stdlib/mp3_seek_test.fern"), ""},
 		{"mp3_seek_smoke", langSrcAbs(t, "tests/stdlib/mp3_seek_smoke_test.fern"), ""},
+		{"flac_input", langSrcAbs(t, "tests/stdlib/flac_input_test.fern"), ""},
+		{"flac_input_smoke", langSrcAbs(t, "tests/stdlib/flac_input_smoke_test.fern"), ""},
 		{"flac_seek", langSrcAbs(t, "tests/stdlib/flac_seek_test.fern"), ""},
 		{"opus", langSrcAbs(t, "tests/stdlib/opus_test.fern"), ""},
 		{"opus_range", langSrcAbs(t, "tests/stdlib/opus_range_test.fern"), ""},

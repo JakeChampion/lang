@@ -141,6 +141,23 @@ They also cover large metadata, one-byte reads, gapless output, limits, and late
 The independent interpreter smoke uses the pinned scalar minimp3 PCM fixture.
 Native and WASI file tests verify caller ownership of the open reader.
 
+## Sequential FLAC input
+
+`std/audio/flac/input` accepts a borrowed `Reader` or bounded source callback.
+It emits positioned integer PCM without retaining the complete track.
+The default encoded window is 4 MiB. Source reads use at most 16 KiB.
+PCM and encoded frame limits apply to each frame. Metadata has a separate cumulative budget.
+
+Each `step` performs at most one source read or frame decode attempt.
+Short reads increase the decode threshold geometrically.
+The reader checks fixed and variable frame sequences, sample counts, and frame checksums.
+It computes the STREAMINFO MD5 incrementally when the stream supplies one.
+
+`End` confirms complete validation at physical EOF.
+A late MD5 mismatch or source error can follow earlier PCM events.
+The caller retains and closes the source on success or failure.
+Unknown sample counts and large metadata do not require complete-track storage.
+
 ## Indexed MP3 and FLAC playback
 
 `std/audio/mp3/seek` and `std/audio/flac/seek` build bounded frame indexes.
