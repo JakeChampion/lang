@@ -19,7 +19,7 @@ ARCHIVE_SHA = '3267aa969b2b26542417f57819a5bc25d5079355300307dd2dddc7c704aed418'
 TABLES = runpy.run_path(str(Path(__file__).with_name('gen-silk-tables.py')))
 
 
-def reference(archive, cmake):
+def reference(archive, cmake, helper='silk_loss.c'):
     data = archive.read_bytes() if archive else urllib.request.urlopen(
         f'https://codeload.github.com/xiph/opus/tar.gz/{PIN}', timeout=60).read()
     if hashlib.sha256(data).hexdigest() != ARCHIVE_SHA:
@@ -38,8 +38,10 @@ def reference(archive, cmake):
         for include in [build, source, source/'include', source/'celt', source/'silk']:
             command.extend(['-I', str(include)])
         executable = root/'silk-loss-reference'
-        command.extend([str(ROOT/'scripts/audio-reference/silk_loss.c'), str(build/'libopus.a'),
-                        '-Wl,--wrap=silk_resampler', '-lm', '-o', str(executable)])
+        command.extend([str(ROOT/'scripts/audio-reference'/helper), str(build/'libopus.a')])
+        if helper == 'silk_loss.c':
+            command.append('-Wl,--wrap=silk_resampler')
+        command.extend(['-lm', '-o', str(executable)])
         subprocess.run(command, check=True)
         return [json.loads(line) for line in subprocess.check_output([str(executable)]).splitlines()]
 

@@ -2,6 +2,9 @@
 
 This module decodes SILK packets to signed 16-bit PCM at their internal sample rate.
 It handles packet activity flags, redundant frames, multiple internal frames, and stereo prediction.
+`decode_fec` uses the redundant frames to recover audio from a lost packet.
+It conceals each internal frame that has no redundant data.
+
 The output contains interleaved samples. One frame contains one sample per output channel.
 Resampling and the outer Opus mode transitions belong to the Opus packet facade.
 
@@ -58,6 +61,16 @@ function conceal_channel(own previous: Channel, rate: i32, duration: i32): Resul
   let Channel { history, state, recovery } = previous;
   let (next, synthesis, output, lag) = loss.conceal(recovery, state, history.voiced, rate, duration)?;
   return Ok((Channel { history: entropy.History { ...history, lag: lag, gain: 10 }, state: synthesis, recovery: next }, output));
+}
+
+function fec_channel(own previous: Channel, own range: range.Decoder, rate: i32, duration: i32, coded: boolean, independent: boolean): Result[(Channel, range.Decoder, i32[]), pcm.AudioError] {
+  if (coded) {
+    return decode_channel(previous, range, rate, duration, true, independent, false);
+  }
+  let gain = previous.history.gain;
+  let (next, output) = conceal_channel(previous, rate, duration)?;
+  let history = entropy.History { ...next.history, gain: gain };
+  return Ok((Channel { ...next, history: history }, range, output));
 }
 
 function header(own range: range.Decoder, count: i32): (range.Decoder, boolean[], boolean) {
@@ -199,18 +212,9 @@ function valid_channels(stream_channels: i32, output_channels: i32): boolean {
   return stream_channels >= 1 && stream_channels <= 2 && output_channels >= 1 && output_channels <= 2;
 }
 
-pub function decode_range(own previous: Decoder, own range: range.Decoder, rate: i32, duration: i32, stream_channels: i32, output_channels: i32): Result[(Decoder, range.Decoder, i32[]), pcm.AudioError] {
-  let internal_duration = if (duration > 20) { 20 } else { duration };
-  if (!entropy.valid_frame(rate, internal_duration)) {
-    return Err(pcm.Header);
-  }
-  if (!valid_duration(duration)) {
-    return Err(pcm.Header);
-  }
-  if (!valid_channels(stream_channels, output_channels)) {
-    return Err(pcm.Header);
-  }
-  let count = duration / internal_duration;
+struct Flags { mid_activity: boolean[], side_activity: boolean[], mid: boolean[], side: boolean[] }
+
+function packet_flags(own range: range.Decoder, count: i32, stream_channels: i32): (range.Decoder, Flags) {
   let (a, mid_activity, mid_redundant) = header(range, count);
   range = a;
   let side_activity: boolean[] = [];
@@ -223,11 +227,97 @@ pub function decode_range(own previous: Decoder, own range: range.Decoder, rate:
   }
   let (b, mid_flags) = redundant_flags(range, count, mid_redundant);
   let (c, side_flags) = redundant_flags(b, count, side_redundant);
-  range = discard_redundancy(c, mid_flags, side_flags, rate, internal_duration, stream_channels == 2)?;
-  if (stream_channels == 1) {
-    return mono(previous, range, mid_activity, rate, internal_duration, output_channels);
+  return (c, Flags { mid_activity: mid_activity, side_activity: side_activity, mid: mid_flags, side: side_flags });
+}
+
+pub function decode_range(own previous: Decoder, own range: range.Decoder, rate: i32, duration: i32, stream_channels: i32, output_channels: i32): Result[(Decoder, range.Decoder, i32[]), pcm.AudioError] {
+  let internal_duration = if (duration > 20) { 20 } else { duration };
+  if (!valid_packet_parameters(rate, duration, stream_channels, output_channels)) {
+    return Err(pcm.Header);
   }
-  return stereo_frames(previous, range, mid_activity, side_activity, rate, internal_duration, output_channels);
+  let (next, flags) = packet_flags(range, duration / internal_duration, stream_channels);
+  range = discard_redundancy(next, flags.mid, flags.side, rate, internal_duration, stream_channels == 2)?;
+  if (stream_channels == 1) {
+    return mono(previous, range, flags.mid_activity, rate, internal_duration, output_channels);
+  }
+  return stereo_frames(previous, range, flags.mid_activity, flags.side_activity, rate, internal_duration, output_channels);
+}
+
+function independent(flags: [boolean], index: i32): boolean {
+  return index == 0 || !flags[index - 1];
+}
+
+function fec_mono(own previous: Decoder, own range: range.Decoder, flags: [boolean], rate: i32, duration: i32, channels: i32): Result[(Decoder, range.Decoder, i32[]), pcm.AudioError] {
+  let mid = previous.mid;
+  let mixed = previous.stereo;
+  let output: i32[] = [];
+  for i in 0..flags.len() {
+    let (next_mid, next, samples) = fec_channel(mid, range, rate, duration, flags[i], independent(flags, i))?;
+    mid = next_mid;
+    range = next;
+    let (next_mixed, delayed) = stereo.mono(mixed, samples, rate * duration, channels);
+    mixed = next_mixed;
+    for sample in delayed {
+      output = output.append(sample);
+    }
+  }
+  return Ok((Decoder { ...previous, mid: mid, stereo: mixed, was_stereo: false, only_mid: false }, range, output));
+}
+
+function fec_weights(own range: range.Decoder, mixed: stereo.State, mid: boolean, side: boolean): (range.Decoder, i32, i32, boolean) {
+  if (!mid) {
+    return (range, mixed.prediction0, mixed.prediction1, false);
+  }
+  let (next, prediction0, prediction1) = stereo.weights(range);
+  if (side) {
+    return (next, prediction0, prediction1, false);
+  }
+  let (last, flag) = next.icdf(tables.ICDF_STEREO_MID_ONLY, 8);
+  return (last, prediction0, prediction1, flag == 1);
+}
+
+function fec_stereo(own previous: Decoder, own range: range.Decoder, mid_flags: [boolean], side_flags: [boolean], rate: i32, duration: i32, channels: i32): Result[(Decoder, range.Decoder, i32[]), pcm.AudioError] {
+  previous = prepare_stereo(previous);
+  let mid = previous.mid;
+  let side = previous.side;
+  let mixed = previous.stereo;
+  let only_mid = previous.only_mid;
+  let output: i32[] = [];
+  for i in 0..mid_flags.len() {
+    let (a, prediction0, prediction1, mid_only) = fec_weights(range, mixed, mid_flags[i], side_flags[i]);
+    if (!mid_only && only_mid) {
+      side = reset(side);
+    }
+    let (next_mid, b, mid_samples) = fec_channel(mid, a, rate, duration, mid_flags[i], independent(mid_flags, i))?;
+    mid = next_mid;
+    range = b;
+    let side_samples = pcm.zeros(rate * duration);
+    if (!only_mid || side_flags[i]) {
+      let (next_side, c, samples) = fec_channel(side, range, rate, duration, side_flags[i], independent(side_flags, i))?;
+      side = next_side;
+      range = c;
+      side_samples = samples;
+    }
+    let (next_mixed, samples) = if (channels == 2) { stereo.unmix(mixed, mid_samples, side_samples, rate * duration, rate, prediction0, prediction1) } else { stereo.mono(mixed, mid_samples, rate * duration, 1) };
+    mixed = next_mixed;
+    for sample in samples {
+      output = output.append(sample);
+    }
+    only_mid = mid_only;
+  }
+  return Ok((Decoder { mid: mid, side: side, stereo: mixed, was_stereo: true, only_mid: only_mid }, range, output));
+}
+
+pub function decode_fec(own previous: Decoder, own range: range.Decoder, rate: i32, duration: i32, stream_channels: i32, output_channels: i32): Result[(Decoder, range.Decoder, i32[]), pcm.AudioError] {
+  if (!valid_packet_parameters(rate, duration, stream_channels, output_channels)) {
+    return Err(pcm.Header);
+  }
+  let internal_duration = if (duration > 20) { 20 } else { duration };
+  let (next, flags) = packet_flags(range, duration / internal_duration, stream_channels);
+  if (stream_channels == 1) {
+    return fec_mono(previous, next, flags.mid, rate, internal_duration, output_channels);
+  }
+  return fec_stereo(previous, next, flags.mid, flags.side, rate, internal_duration, output_channels);
 }
 
 function valid_packet_parameters(rate: i32, duration: i32, stream_channels: i32, output_channels: i32): boolean {

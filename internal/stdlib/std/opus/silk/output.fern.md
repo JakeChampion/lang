@@ -4,6 +4,7 @@ This module combines SILK packet decoding with output resampling and channel con
 Call `begin_packet` once before the encoded frames of an Opus packet.
 The packet boundary retains separate resampler histories during a stereo-to-mono change.
 `decode_frame` accepts the shared range decoder and returns normalized, interleaved float PCM.
+`decode_fec` uses redundant data from the next packet to recover a lost packet.
 The outer Opus decoder handles CELT redundancy and mode transitions.
 
 The output history rules follow [Pion Opus](https://github.com/pion/opus/tree/e7b8aa55508cfd30a968dbc695d4272a8e04f2f2).
@@ -115,10 +116,17 @@ function convert(own previous: State, input: [i32], duration: i32, decoded_chann
   return Ok((State { ...previous, filters: filters, input_buffer: input_buffer, output_buffer: output_buffer }, output));
 }
 
-pub function decode_frame(own previous: State, own range: range.Decoder, duration: i32): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
+function packet_samples(own decoder: silk.Decoder, own range: range.Decoder, rate: i32, duration: i32, stream: i32, channels: i32, fec: boolean): Result[(silk.Decoder, range.Decoder, i32[]), pcm.AudioError] {
+  if (fec) {
+    return silk.decode_fec(decoder, range, rate, duration, stream, channels);
+  }
+  return silk.decode_range(decoder, range, rate, duration, stream, channels);
+}
+
+function decode_packet(own previous: State, own range: range.Decoder, duration: i32, fec: boolean): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
   let State { decoder, filters, input_rate, output_rate, output_channels, stream_channels, filter_channels, input_buffer, output_buffer } = previous;
   let decoded_channels = if (stream_channels == 2 && output_channels == 2) { 2 } else { 1 };
-  let (next, last, samples) = silk.decode_range(decoder, range, input_rate, duration, stream_channels, decoded_channels)?;
+  let (next, last, samples) = packet_samples(decoder, range, input_rate, duration, stream_channels, decoded_channels, fec)?;
   let current = State {
     decoder: next, filters: filters, input_rate: input_rate, output_rate: output_rate,
     output_channels: output_channels, stream_channels: stream_channels, filter_channels: filter_channels,
@@ -126,6 +134,14 @@ pub function decode_frame(own previous: State, own range: range.Decoder, duratio
   };
   let (state, output) = convert(current, samples, duration, decoded_channels)?;
   return Ok((state, last, output));
+}
+
+pub function decode_frame(own previous: State, own range: range.Decoder, duration: i32): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
+  return decode_packet(previous, range, duration, false);
+}
+
+pub function decode_fec(own previous: State, own range: range.Decoder, duration: i32): Result[(State, range.Decoder, f32[]), pcm.AudioError] {
+  return decode_packet(previous, range, duration, true);
 }
 
 pub function decode_lost(own previous: State, duration: i32): Result[(State, f32[]), pcm.AudioError] {
