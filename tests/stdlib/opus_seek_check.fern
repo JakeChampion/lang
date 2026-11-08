@@ -1,0 +1,220 @@
+import "std/audio/opusfile";
+import "std/audio/opusfile/packets";
+import "std/audio/ogg";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/hash/crc32";
+import "std/base64";
+import "std/deflate";
+import "opus_file_check";
+
+struct Progress { link: i32, position: i64, samples: i32 }
+
+function finished_links(ref: opus_file_check.Reference, p: Progress): Progress {
+  let link = p.link;
+  let position = p.position;
+  while (link < ref.links.len() && position == ref.links[link].frames) {
+    link += 1;
+    position = 0i64;
+  }
+  return Progress { ...p, link: link, position: position };
+}
+
+function same_samples(audio: opusfile.Audio, want: opus_file_check.Expected, progress: Progress, delta: [u8]): boolean {
+  let start = progress.position as i32 * audio.info.header.channels;
+  for i in 0..audio.samples.len() {
+    let bits = wire.le(want.pcm, (start + i) * 4, 4) as u32;
+    if (delta.len() > 0) {
+      bits ^= wire.le(delta, (progress.samples + i) * 4, 4) as u32;
+    }
+    let expected = f32_from_bits(bits as i32);
+    let error = (audio.samples[i] - expected).abs();
+    if (!(error <= 0.000001f32)) {
+      eprint("seek PCM difference at link " + progress.link.to_string() + " position " + progress.position.to_string() + " sample " + i.to_string() + ": " + error.to_string());
+      return false;
+    }
+  }
+  return true;
+}
+
+function same(audio: opusfile.Audio, want: opus_file_check.Expected, progress: Progress, delta: [u8]): boolean {
+  if (audio.info.index != progress.link || audio.info.serial != want.serial || audio.position != progress.position || audio.frames <= 0) {
+    return false;
+  }
+  let channels = want.fields[1] as i32;
+  if (audio.info.header.channels != channels || audio.samples.len() != audio.frames * channels || audio.frames as i64 > want.frames - progress.position) {
+    return false;
+  }
+  return audio.granule == want.initial + want.fields[2] + progress.position && same_samples(audio, want, progress, delta);
+}
+
+function read_tail(own cursor: opusfile.SeekCursor, bytes: [u8], cooperative: boolean): Result[(opusfile.SeekCursor, opusfile.SeekEvent), pcm.AudioError] {
+  if (!cooperative) {
+    let (next, value) = cursor.next(bytes)?;
+    return Ok((next, match (value) { Some(audio) => opusfile.SeekSamples(audio), None => opusfile.SeekEnd }));
+  }
+  let packet = cursor.packet;
+  let link = cursor.link;
+  let (next, event) = cursor.step(bytes)?;
+  if (next.link == link && next.packet - packet > 1 || next.link - link > 1) {
+    return Err(pcm.Limit);
+  }
+  return Ok((next, event));
+}
+
+function tail_finished(ref: opus_file_check.Reference, progress: Progress, delta: [u8]): boolean {
+  return progress.link == ref.links.len() && (delta.len() == 0 || progress.samples * 4 == delta.len());
+}
+
+function tail(own cursor: opusfile.SeekCursor, ref: opus_file_check.Reference, link: i32, position: i64, delta: [u8], cooperative: boolean): Result[opusfile.SeekCursor, pcm.AudioError] {
+  let progress = Progress { link: link, position: position, samples: 0 };
+  while (true) {
+    let (next, value) = read_tail(cursor, ref.bytes, cooperative)?;
+    cursor = next;
+    progress = finished_links(ref, progress);
+    match (value) {
+      opusfile.SeekPending => {},
+      opusfile.SeekEnd => {
+        if (!tail_finished(ref, progress, delta)) {
+          return Err(pcm.Truncated);
+        }
+        return Ok(cursor);
+      },
+      opusfile.SeekSamples(audio) => {
+        if (progress.link >= ref.links.len()) {
+          return Err(pcm.Header);
+        }
+        if (!same(audio, ref.links[progress.link], progress, delta)) {
+          return Err(pcm.Sample);
+        }
+        progress = Progress { ...progress, position: progress.position + audio.frames as i64, samples: progress.samples + audio.samples.len() };
+      }
+    }
+  }
+}
+
+pub function check_seek(ref: opus_file_check.Reference, link: i32, position: i64): Result[void, pcm.AudioError] {
+  let index = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits())?;
+  let cursor = opusfile.seek_reader(index).seek(link, position)?;
+  let _ = tail(cursor, ref, link, position, [], false)?;
+  return Ok(());
+}
+
+pub function check_exact(ref: opus_file_check.Reference, link: i32, position: i64): Result[void, pcm.AudioError] {
+  let index = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits())?;
+  let cursor = opusfile.seek_reader(index).seek_exact(link, position)?;
+  let _ = tail(cursor, ref, link, position, [], true)?;
+  return Ok(());
+}
+
+function seek_fixture(encoded: string): Result[u8[], pcm.AudioError] {
+  let packed = match (base64.decode(encoded)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  return match (deflate.zlib_decode(packed, 4194304)) { Ok(value) => Ok(value), Err(_) => Err(pcm.Header) };
+}
+
+function remaining_samples(ref: opus_file_check.Reference, link: i32, position: i64): i64 {
+  let count = 0i64;
+  for li in link..ref.links.len() {
+    let start = if (li == link) { position } else { 0i64 };
+    count += (ref.links[li].frames - start) * ref.links[li].fields[1];
+  }
+  return count;
+}
+
+function index_matches(index: opusfile.SeekIndex, ref: opus_file_check.Reference): boolean {
+  if (index.tracks.len() != ref.links.len() || index.locations.len() != 3 * index.positions.len() || index.durations.len() != index.positions.len()) {
+    return false;
+  }
+  for link in 0..ref.links.len() {
+    if (index.tracks[link].frames != ref.links[link].frames || index.tracks[link].initial_granule != ref.links[link].initial) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function check_case(ref: opus_file_check.Reference, encoded: string): Result[void, pcm.AudioError] {
+  let index = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits())?;
+  if (!index_matches(index, ref)) {
+    return Err(pcm.Header);
+  }
+  let data = seek_fixture(encoded)?;
+  let cursor = opusfile.seek_reader(index);
+  let at = 4;
+  for _ in 0..wire.le(data, 0, 4) as i32 {
+    let link = wire.le(data, at, 4) as i32;
+    let position = wire.le(data, at + 4, 8) as i64;
+    let bytes = wire.le(data, at + 12, 4) as i32;
+    at += 16;
+    if (bytes as i64 != remaining_samples(ref, link, position) * 4i64) {
+      return Err(pcm.Header);
+    }
+    cursor = cursor.seek(link, position)?;
+    cursor = tail(cursor, ref, link, position, data[at:at + bytes], false)?;
+    at += bytes;
+  }
+  if (at != data.len()) {
+    return Err(pcm.Header);
+  }
+  return Ok(());
+}
+
+pub function exact_case(ref: opus_file_check.Reference): Result[void, pcm.AudioError] {
+  let index = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits())?;
+  let cursor = opusfile.seek_reader(index);
+  for link in 0..ref.links.len() {
+    let total = ref.links[link].frames;
+    let points = [total - 1i64, 0i64, total / 2i64, total, 1i64];
+    for position in points {
+      if (position >= 0i64 && position <= total) {
+        cursor = cursor.seek_exact(link, position)?;
+        cursor = tail(cursor, ref, link, position, [], true)?;
+      }
+    }
+  }
+  return Ok(());
+}
+
+function same_packet(bytes: [u8], encoded: ogg.Packet, index: opusfile.SeekIndex, at: i32): Result[void, pcm.AudioError] {
+  let location = packets.Location { offset: index.locations[3 * at], page_offset: index.locations[3 * at + 1], bytes: index.locations[3 * at + 2] };
+  let raw = packets.read(bytes, location, wire.le(bytes, location.page_offset + 14, 4) as u32, index.limits.file.audio.max_input_bytes)?;
+  if (raw.len() != encoded.bytes.len() || crc32.new().update(raw).finish() != crc32.new().update(encoded.bytes).finish()) {
+    return Err(pcm.Checksum);
+  }
+  if (packets.contiguous(bytes, location)?) {
+    if (crc32.new().update(bytes[location.offset:location.offset + location.bytes]).finish() != crc32.new().update(raw).finish()) {
+      return Err(pcm.Checksum);
+    }
+  }
+  return Ok(());
+}
+
+function inspect_page(bytes: [u8], value: Option[ogg.Page], index: opusfile.SeekIndex, checked: i32): Result[i32, pcm.AudioError] {
+  if let Some(page) = value {
+    for encoded in page.packets {
+      if (checked < index.positions.len() && encoded.offset == index.locations[3 * checked] as i64) {
+        same_packet(bytes, encoded, index, checked)?;
+        checked += 1;
+      }
+    }
+  }
+  return Ok(checked);
+}
+
+pub function extraction(ref: opus_file_check.Reference): Result[void, pcm.AudioError] {
+  let index = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits())?;
+  let state = ogg.decoder(ogg.default_limits())?;
+  let at = 0;
+  let checked = 0;
+  while (at < ref.bytes.len()) {
+    let (next, used, page) = state.feed(ref.bytes[at:])?;
+    state = next;
+    at += used;
+    checked = inspect_page(ref.bytes, page, index, checked)?;
+  }
+  state.finish()?;
+  if (checked != index.positions.len()) {
+    return Err(pcm.Header);
+  }
+  return Ok(());
+}
