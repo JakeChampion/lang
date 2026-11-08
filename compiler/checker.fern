@@ -29046,7 +29046,7 @@ function main(): i32 {
     return 590;
   }
 
-  let src60: string = "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0 - 1); } function main(): i32 { return 0; }";
+  let src60: string = "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, -1); } function main(): i32 { return 0; }";
   let mod60 = parser.parse_module(lexer.tokenize(src60));
   let mt60 = check_module(mod60);
   if (!mt60.all_well_typed) {
@@ -32164,7 +32164,7 @@ function lit_arms(body: ast.Stmt[], s: Scope, ids: i32[], st: LitInfer): (i32, i
       if (seed) {
         return (1, util.append_all(ids, rids), rst);
       }
-      return (0 - 1, ids, out);
+      return (-1, ids, out);
     },
     ast.StmtIf(f) => {
       let (a, aids, tst) = lit_arms(f.then_body, cur, ids, lit_expr(f.cond, cur, out));
@@ -33615,7 +33615,7 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
 struct LitPayloadShape { slot: i32, param: typeinfo.Type, arg: typeinfo.Type }
 
 function lit_payload_shape(c: ast.ExprCall, p: i32, owner: string, s: Scope, st: LitInfer): (LitPayloadShape, LitInfer) {
-  let none = LitPayloadShape { slot: 0 - 1, param: t_unknown("no payload shape"), arg: t_unknown("no payload shape") };
+  let none = LitPayloadShape { slot: -1, param: t_unknown("no payload shape"), arg: t_unknown("no payload shape") };
   let (arg, next, found) = lit_composite_local(c.args[p], s, st);
   if (!found) {
     return (none, st);

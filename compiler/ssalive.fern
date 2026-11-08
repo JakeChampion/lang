@@ -398,7 +398,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
 
 pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean[]): Flow {
   let nb = f.blocks.len();
-  let at = position_of(f);
+  let at = ssa.block_positions(f);
   let def_b = __alloc_i32(f.nvals);
   let def_k = __alloc_i32(f.nvals);
   let v = 0;
@@ -569,25 +569,4 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
     }
   }
   return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, slot: slot, slot_value: slot_value, at: at, none: __alloc_bool(f.nvals) };
-}
-
-function position_of(f: ssa.SFunc): i32[] {
-  let top = 0;
-  for b in f.blocks {
-    if (b.id > top) {
-      top = b.id;
-    }
-  }
-  let out = __alloc_i32(top + 1);
-  let i = 0;
-  while (i <= top) {
-    out = out.with(i, -1);
-    i += 1;
-  }
-  i = 0;
-  while (i < f.blocks.len()) {
-    out = out.with(f.blocks[i].id, i);
-    i += 1;
-  }
-  return out;
 }

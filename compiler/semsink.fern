@@ -128,20 +128,6 @@ function sink_rereads(f: ssasem.Func, known: Option[Reads], lent: boolean): Sunk
   return Sunk { f: ssasem.Func { ...f, graph: graph, values: values }, reread: reread };
 }
 
-function successors(t: ssa.STerm): i32[] {
-  let out: i32[] = [];
-  let k = 0;
-  let id = ssa.successor_id(t, k);
-  while (id >= 0) {
-    if (util.index_of_i32(out, id) < 0) {
-      out = out.append(id);
-    }
-    k += 1;
-    id = ssa.successor_id(t, k);
-  }
-  return out;
-}
-
 function projection(kind: i32): boolean {
   return kind == ssasem.variant_get() || kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.array_get();
 }
@@ -292,7 +278,7 @@ function spends(k: i32): boolean {
 
 function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {
   let spent = spent0;
-  for sid in successors(b.term) {
+  for sid in ssa.successors(b.term) {
     let s = g.blocks[pos[sid]];
     let slot = util.index_of_i32(s.preds, b.id);
     for phi in s.insts {
@@ -434,7 +420,7 @@ function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
   if (b.term.kind_tag == ssa.TERM_RET && read_above(rd, bi, b.term.value)) {
     return true;
   }
-  for sid in successors(b.term) {
+  for sid in ssa.successors(b.term) {
     let s = g.blocks[rd.pos[sid]];
     let slot = util.index_of_i32(s.preds, b.id);
     for phi in s.insts {
@@ -471,7 +457,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
     term = ssa.STerm { ...term, value: standing(r, b.term.value) };
   }
   let edits: PhiEdit[] = [];
-  for sid in successors(b.term) {
+  for sid in ssa.successors(b.term) {
     let si = rd.pos[sid];
     let s = g.blocks[si];
     let k = 0;
@@ -670,7 +656,7 @@ function read_of(g: ssa.SFunc, rd: Reads, v: i32): ssa.SInst {
       return ins;
     }
   }
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function standing(r: Rereads, v: i32): i32 {

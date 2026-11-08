@@ -94,7 +94,7 @@ function group_proven(g: Graph, b: i32, idx: i32, base: i32): boolean {
     return const_value(g, idx) >= 0 && below(g, b, idx, base, [], depth());
   }
   let d = def_of(g, idx);
-  if (!binary(d, "|") || !g.i32s[root(g, idx)]) {
+  if (!binary(d, "|") || !g.i32s[ssa.copy_root(g.defs, idx)]) {
     return false;
   }
   let top = d.args[0];
@@ -135,7 +135,7 @@ function depth(): i32 {
 
 function graph_of(f: ssasem.Func): Graph {
   let n = f.values.len();
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let defs: ssa.SInst[] = [];
   let home: i32[] = [];
   let i32s: boolean[] = [];
@@ -161,7 +161,7 @@ function graph_of(f: ssasem.Func): Graph {
     }
     b += 1;
   }
-  let at = ssadeps.position_of(f.graph);
+  let at = ssa.block_positions(f.graph);
   let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   b = 0;
   while (b < nb) {
@@ -284,22 +284,13 @@ function with_dominators(g: Graph, d: ssadeps.Dom, nb: i32): Graph {
   return Graph { ...g, up: up, above: above };
 }
 
-function root(g: Graph, v: i32): i32 {
-  let hops = 0;
-  while (v >= 0 && v < g.defs.len() && g.defs[v].kind_tag == 7 && g.defs[v].args.len() == 1 && hops < 8) {
-    v = g.defs[v].args[0];
-    hops += 1;
-  }
-  return v;
-}
-
 function same(g: Graph, a: i32, b: i32): boolean {
   return equal(g, a, b, 4);
 }
 
 function equal(g: Graph, a: i32, b: i32, steps: i32): boolean {
-  a = root(g, a);
-  b = root(g, b);
+  a = ssa.copy_root(g.defs, a);
+  b = ssa.copy_root(g.defs, b);
   if (a == b) {
     return true;
   }
@@ -326,11 +317,11 @@ function projection(kind: i32): boolean {
 }
 
 function def_of(g: Graph, v: i32): ssa.SInst {
-  return g.defs[root(g, v)];
+  return g.defs[ssa.copy_root(g.defs, v)];
 }
 
 function is_const(g: Graph, v: i32): boolean {
-  let r = root(g, v);
+  let r = ssa.copy_root(g.defs, v);
   return g.defs[r].kind_tag == 1 && g.i32s[r];
 }
 
@@ -355,7 +346,7 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
   if (steps <= 0) {
     return -1;
   }
-  base = root(g, base);
+  base = ssa.copy_root(g.defs, base);
   if (base < 0 || base >= g.defs.len()) {
     return -1;
   }
@@ -415,7 +406,7 @@ function assumed(assume: i32[], v: i32): boolean {
 function masked(g: Graph, x: i32): i32 {
   let d = g.defs[x];
   if (d.kind_tag == ssasem.cast() && d.args.len() == 1 && g.i32s[x]) {
-    return masked(g, root(g, d.args[0]));
+    return masked(g, ssa.copy_root(g.defs, d.args[0]));
   }
   if (!binary(d, "&")) {
     return -1;
@@ -464,7 +455,7 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   if (steps <= 0) {
     return false;
   }
-  x = root(g, x);
+  x = ssa.copy_root(g.defs, x);
   let d = g.defs[x];
   if (small_below(g, b, x, base)) {
     return true;
@@ -525,7 +516,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   if (steps <= 0) {
     return false;
   }
-  x = root(g, x);
+  x = ssa.copy_root(g.defs, x);
   if (is_const(g, x)) {
     return const_value(g, x) >= 0;
   }
@@ -607,7 +598,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
 // least -1 or a nonneg value below some bound on its edge, so the sum cannot
 // overflow. A range loop's counter is such a phi: -1 on entry, x on the back edge.
 function counts_up_from(g: Graph, x: i32, y: i32, assume: i32[], steps: i32): boolean {
-  y = root(g, y);
+  y = ssa.copy_root(g.defs, y);
   let d = g.defs[y];
   if (steps <= 0 || d.kind_tag != 8 || !g.i32s[y] || d.args.len() == 0 || assumed(assume, x)) {
     return false;
@@ -639,12 +630,12 @@ function edge_block(g: Graph, phi: i32, k: i32, operand: i32): i32 {
   if (k < ps.len() && ps[k] >= 0) {
     return ps[k];
   }
-  return g.home[root(g, operand)];
+  return g.home[ssa.copy_root(g.defs, operand)];
 }
 
 // The largest value of a constant or a mask, or -1.
 function small_max(g: Graph, v: i32): i32 {
-  v = root(g, v);
+  v = ssa.copy_root(g.defs, v);
   if (is_const(g, v)) {
     return if (const_value(g, v) >= 0) { const_value(g, v) } else { -1 };
   }
@@ -703,7 +694,7 @@ function below_a_length(g: Graph, b: i32, y: i32): boolean {
   if (b < 0) {
     return false;
   }
-  y = root(g, y);
+  y = ssa.copy_root(g.defs, y);
   let c = g.up[b];
   while (c >= 0) {
     let k = g.first[c];
@@ -724,7 +715,7 @@ const NOT_FOLDED: i64 = 0i64 - 9223372036854775807i64;
 // The value of an i32 constant, or of a shift, sum, difference, product or
 // mask of them, while it stays within 32 bits.
 function folded(g: Graph, v: i32, steps: i32): i64 {
-  v = root(g, v);
+  v = ssa.copy_root(g.defs, v);
   if (is_const(g, v)) {
     return const_value(g, v) as i64;
   }
@@ -800,7 +791,7 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
   if (b < 0) {
     return false;
   }
-  y = root(g, y);
+  y = ssa.copy_root(g.defs, y);
   let c = g.up[b];
   while (c >= 0) {
     let k = g.first[c];
@@ -875,7 +866,7 @@ function any_pow2_quotient(f: ssasem.Func): boolean {
 }
 
 function small_const(g: Graph, v: i32): i32 {
-  let r = root(g, v);
+  let r = ssa.copy_root(g.defs, v);
   let d = g.defs[r];
   if (g.widens[r] != 0) {
     return small_const(g, d.args[0]);
@@ -934,7 +925,7 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
   }
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;
@@ -997,24 +988,6 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
 }
 
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
-
-function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  let defs: ssa.SInst[] = [];
-  let v = 0;
-  while (v < f.values.len()) {
-    defs = defs.append(none);
-    v += 1;
-  }
-  for blk in f.graph.blocks {
-    for ins in blk.insts {
-      if (ins.result >= 0 && ins.result < defs.len()) {
-        defs = defs.with(ins.result, ins);
-      }
-    }
-  }
-  return defs;
-}
 
 function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
   let out = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
@@ -1158,7 +1131,7 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
   if (!any_index_read(f)) {
     return f;
   }
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;
@@ -1453,7 +1426,7 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   let off = 0;
   let a = defs[x];
   if (a.kind_tag == 1) {
-    return Some(WordByte { arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift });
+    return Some(WordByte { arr: g.args[0], x: -1, off: a.imm, shift: shift });
   }
   if (a.kind_tag == 9 && a.str == "+") {
     let c = defs[a.args[1]];

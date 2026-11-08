@@ -5113,7 +5113,7 @@ function diff_intern(a: string[], b: string[]): DiffIds {
   let next = 0;
   let i: i32 = 0;
   while (i < a.len()) {
-    let ida: i32 = ids.get_or(a[i], 0 - 1);
+    let ida: i32 = ids.get_or(a[i], -1);
     if (ida < 0) {
       ida = next;
       ids = ids.insert(a[i], ida);
@@ -5124,7 +5124,7 @@ function diff_intern(a: string[], b: string[]): DiffIds {
   }
   let j: i32 = 0;
   while (j < b.len()) {
-    let idb: i32 = ids.get_or(b[j], 0 - 1);
+    let idb: i32 = ids.get_or(b[j], -1);
     if (idb < 0) {
       idb = next;
       ids = ids.insert(b[j], idb);

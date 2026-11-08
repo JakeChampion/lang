@@ -514,7 +514,7 @@ pub function term_id(name: string): i32 {
 
 pub function term_name(id: i32): string {
   return match (id) {
-    0 => "none",
+    0 => "",
     1 => "ret",
     2 => "br",
     3 => "brif",
@@ -640,7 +640,7 @@ pub function cold_blocks(f: SFunc): boolean[] {
       }
     }
   }
-  let idom = dominators(f, at);
+  let idom = immediate_dominators(f, at);
   let out = __alloc_bool(n);
   for i in 0..n {
     out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
@@ -648,7 +648,9 @@ pub function cold_blocks(f: SFunc): boolean[] {
   return out;
 }
 
-function dominators(f: SFunc, at: i32[]): i32[] {
+// The immediate dominator of each block position, the entry its own, or -1
+// for a block the entry does not reach.
+pub function immediate_dominators(f: SFunc, at: i32[]): i32[] {
   let n = f.blocks.len();
   let entry = position_of(at, f.entry);
   let idom = __alloc_i32(n);
@@ -2338,6 +2340,20 @@ pub function block_positions(f: SFunc): i32[] {
   return out;
 }
 
+// The distinct blocks a terminator can jump to.
+pub function successors(t: STerm): i32[] {
+  if (t.kind_tag == TERM_BR) {
+    return [t.target];
+  }
+  if (t.kind_tag == TERM_BRIF && t.t == t.f) {
+    return [t.t];
+  }
+  if (t.kind_tag == TERM_BRIF) {
+    return [t.t, t.f];
+  }
+  return [];
+}
+
 pub function successor_id(t: STerm, which: i32): i32 {
   if (t.kind_tag == 2 && which == 0) {
     return t.target;
@@ -3891,7 +3907,7 @@ function truth_constants(f: SFunc): i32[] {
 
 function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
   let blk = f.blocks[j];
-  let none = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
+  let none = BoolJoin { ok: false, j: j, k: -1, t: 0, f: 0 };
   if (blk.insts.len() != 1 || blk.insts[0].kind_tag != 8 || uses[blk.insts[0].result] != 1 || !entered_forward(f, at, j)) {
     return none;
   }
@@ -4111,7 +4127,7 @@ function drop_arm(r: Flattening, arm: i32): Flattening {
 }
 
 function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
-  let none = Diamond { ok: false, head: p, t: 0 - 1, f: 0 - 1, join: 0 - 1 };
+  let none = Diamond { ok: false, head: p, t: -1, f: -1, join: -1 };
   let head = f.blocks[p];
   let br = head.term;
   if (!two_way(head)) {
@@ -4128,7 +4144,7 @@ function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
     return none;
   }
   if (returns_picked(f, fl, at_t) && returns_picked(f, fl, at_f)) {
-    return Diamond { ok: true, head: p, t: tp, f: fp, join: 0 - 1 };
+    return Diamond { ok: true, head: p, t: tp, f: fp, join: -1 };
   }
   let jp = join_of(f, at, p, tp, at_t, fp, at_f);
   if (jp < 0 || !select_join(f, fl, f.blocks[jp], arm_source(f, head, at_t), arm_source(f, head, at_f))) {
@@ -4839,9 +4855,9 @@ pub function fold_extensions(f: SFunc): Formed {
   return Formed { f: rewrite_through(f, flat.repl), repl: flat.repl };
 }
 
-struct DefSites { blk: i32[], at: i32[] }
+pub struct DefSites { block: i32[], at: i32[] }
 
-function def_sites_of(f: SFunc): DefSites {
+pub function def_sites_of(f: SFunc): DefSites {
   let blk = util.minus_ones(f.nvals);
   let at = util.minus_ones(f.nvals);
   for bi in 0..f.blocks.len() {
@@ -4853,14 +4869,14 @@ function def_sites_of(f: SFunc): DefSites {
       }
     }
   }
-  return DefSites { blk: blk, at: at };
+  return DefSites { block: blk, at: at };
 }
 
 // The fixed point, or [] when 64 rounds do not settle it.
 function ext_facts(f: SFunc, d: DefSites): i32[] {
   let facts = __alloc_i32(f.nvals);
   for v in 0..f.nvals {
-    if (d.blk[v] >= 0) {
+    if (d.block[v] >= 0) {
       facts = facts.with(v, EXT_BYTE);
     }
   }
@@ -4881,7 +4897,7 @@ function ext_round(f: SFunc, d: DefSites, facts: i32[]): i32[] {
     for ins in blk.insts {
       let r = ins.result;
       if (r >= 0 && r < f.nvals) {
-        let x = ext_transfer(f, d.blk, d.at, facts, ins) & facts[r];
+        let x = ext_transfer(f, d.block, d.at, facts, ins) & facts[r];
         changed = changed || x != facts[r];
         facts = facts.with(r, x);
       }
@@ -5369,7 +5385,7 @@ function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
 
 function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
-    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   }
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
@@ -5475,10 +5491,10 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
 }
 
 function no_inst(): SInst {
-  return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
-function inst_defs(f: SFunc): SInst[] {
+pub function inst_defs(f: SFunc): SInst[] {
   let defs: SInst[] = [];
   let i = 0;
   while (i < f.nvals) {
@@ -5682,7 +5698,7 @@ function is_top_bit(defs: SInst[], ins: SInst): boolean {
 }
 
 function is_const(defs: SInst[], v: i32, want: i64): boolean {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 1) {
     return d.imm as i64 == want;
   }
@@ -5690,7 +5706,7 @@ function is_const(defs: SInst[], v: i32, want: i64): boolean {
 }
 
 function bin_of(defs: SInst[], v: i32, op: string): SInst {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 9 && d.str == op && d.args.len() == 2) {
     return d;
   }
@@ -5723,7 +5739,7 @@ function same_pair(defs: SInst[], a: i32, b: i32, x: i32, y: i32): boolean {
 }
 
 function zero_one(defs: SInst[], v: i32): boolean {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 37 || is_top_bit(defs, d)) {
     return true;
   }
@@ -5838,7 +5854,7 @@ function zero_extends_u32(ins: SInst): boolean {
 
 function def_of(defs: SInst[], v: i32): SInst {
   if (v < 0 || v >= defs.len()) {
-    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   }
   return defs[v];
 }
@@ -5850,7 +5866,8 @@ function shift_width(imm: i32): i32 {
   return 32;
 }
 
-function copy_root(defs: SInst[], v: i32): i32 {
+// The first value of the chain of copies that ends at v.
+pub function copy_root(defs: SInst[], v: i32): i32 {
   let r = v;
   let steps = 0;
   while (steps < defs.len()) {
@@ -5864,8 +5881,13 @@ function copy_root(defs: SInst[], v: i32): i32 {
   return r;
 }
 
+// The definition of copy_root(defs, v).
+pub function copy_source(defs: SInst[], v: i32): SInst {
+  return def_of(defs, copy_root(defs, v));
+}
+
 function const_value(defs: SInst[], v: i32): i64 {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 1) {
     return d.imm as i64;
   }

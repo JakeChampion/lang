@@ -533,7 +533,7 @@ function refuse_probe(): i32 {
 }
 
 function raw_op(kind: string): ir.Op {
-  return ir.Op { source: 0, decl: 0 - 1, kind_tag: ir.kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return ir.Op { source: 0, decl: -1, kind_tag: ir.kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 function selfhost_reuse(gate: i32, token: i32): ir.Op[] {

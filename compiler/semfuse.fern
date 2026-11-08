@@ -283,12 +283,12 @@ function calls_bad(f: ssasem.Func, bad: boolean[], index: util.NameIndex): boole
 }
 
 function no_chain(): Chain {
-  return Chain { ok: false, block: 0, sink: 0, verb: "", stages: [], verbs: [], fns: [], base: 0, roots: [], hi: 0 - 1 };
+  return Chain { ok: false, block: 0, sink: 0, verb: "", stages: [], verbs: [], fns: [], base: 0, roots: [], hi: -1 };
 }
 
 @noinline
 function find_chain(f: ssasem.Func, cx: Context): Chain {
-  let uses = use_counts(f.graph);
+  let uses = ssa.use_counts(f.graph);
   let defs = defs_of(f.graph);
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
@@ -554,7 +554,7 @@ function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
 @noinline
 function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boolean): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
-  let uses = use_counts(f.graph);
+  let uses = ssa.use_counts(f.graph);
   let defs = defs_of(f.graph);
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
@@ -646,29 +646,11 @@ function removed(c: Chain, p: i32): boolean {
   return index_of(c.stages, p) >= 0 || index_of(c.roots, p) >= 0;
 }
 
-function use_counts(g: ssa.SFunc): i32[] {
-  let out = __alloc_i32(g.nvals);
-  for b in g.blocks {
-    for ins in b.insts {
-      for a in ins.args {
-        out = out.with(a, out[a] + 1);
-      }
-    }
-    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
-      out = out.with(b.term.value, out[b.term.value] + 1);
-    }
-    if (b.term.kind_tag == ssa.TERM_BRIF) {
-      out = out.with(b.term.cond, out[b.term.cond] + 1);
-    }
-  }
-  return out;
-}
-
 function defs_of(g: ssa.SFunc): Def[] {
   let out: Def[] = [];
   let v = 0;
   while (v < g.nvals) {
-    out = out.append(Def { block: 0 - 1, pos: 0 - 1 });
+    out = out.append(Def { block: -1, pos: -1 });
     v += 1;
   }
   let bi = 0;
@@ -774,7 +756,7 @@ function fresh(s: Build, n: i32): Build {
 struct Loop { head: i32, i: i32, next_i: i32, start: i32, entry: i32, vars: i32[], inits: i32[], cur: i32[], backs: i32[], rows: i32[], exits: i32[], exit_rows: i32[], seen_at: i32, out_at: i32, count_at: i32 }
 
 function no_loop(): Loop {
-  return Loop { head: 0 - 1, i: 0 - 1, next_i: 0 - 1, start: 0 - 1, entry: 0 - 1, vars: [], inits: [], cur: [], backs: [], rows: [], exits: [], exit_rows: [], seen_at: 0 - 1, out_at: 0 - 1, count_at: 0 };
+  return Loop { head: -1, i: -1, next_i: -1, start: -1, entry: -1, vars: [], inits: [], cur: [], backs: [], rows: [], exits: [], exit_rows: [], seen_at: -1, out_at: -1, count_at: 0 };
 }
 
 function back(l: Loop, from: i32, cur: i32[]): Loop {
@@ -854,7 +836,7 @@ function inner(f: ssasem.Func, c: Chain, st: Stepped, j: i32): Stepped {
     s = Build { ...s, values: s.values.append(s.values[v]) };
   }
   l = Loop { ...l, vars: vars, cur: vars };
-  let h = loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: 0 - 1 }, n.v);
+  let h = loop_head(Opened { s: open(close(s, br(head)), head, []), l: l, yes: -1 }, n.v);
   h = guards(c, h, j + 1, pipeline_exit(st));
   let fetched = emit(h.s, ssasem.array_get(), element(arr_t), [ys.v, h.l.i], 1, "");
   return Stepped { s: fetched.s, l: h.l, e: fetched.v, outer: st.outer.append(o) };
@@ -1043,13 +1025,13 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
 
 function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Type, seed: i32, start: i32): Opened {
   if (seed >= 0) {
-    return Opened { s: s, l: Loop { ...no_loop(), inits: [seed] }, yes: 0 - 1 };
+    return Opened { s: s, l: Loop { ...no_loop(), inits: [seed] }, yes: -1 };
   }
   if (verb == "fold" || verb == "scan") {
-    return Opened { s: s, l: Loop { ...no_loop(), inits: [sink.args[1]] }, yes: 0 - 1 };
+    return Opened { s: s, l: Loop { ...no_loop(), inits: [sink.args[1]] }, yes: -1 };
   }
   if (verb == "len") {
-    return Opened { s: s, l: Loop { ...no_loop(), inits: [start] }, yes: 0 - 1 };
+    return Opened { s: s, l: Loop { ...no_loop(), inits: [start] }, yes: -1 };
   }
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let z = emit(s, ssasem.zero(), acc_t, [], 0, "");
@@ -1091,7 +1073,7 @@ function guards(c: Chain, o: Opened, from: i32, exit: i32): Opened {
 struct Peeled { s: Build, seed: i32, empty: i32, none: i32, join: i32 }
 
 function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
-  let out = Peeled { s: s, seed: 0 - 1, empty: 0 - 1, none: 0 - 1, join: 0 - 1 };
+  let out = Peeled { s: s, seed: -1, empty: -1, none: -1, join: -1 };
   for v in c.verbs {
     if (v != "map") {
       return out;

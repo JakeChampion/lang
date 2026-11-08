@@ -6,29 +6,6 @@ pub struct Layout { ok: boolean, order: i32[], loop_end: i32[] }
 
 struct Loops { n: i32, header: boolean[], members: boolean[], at: i32[], succ: i32[][] }
 
-function positions(f: ssa.SFunc): i32[] {
-  let top = 0;
-  for b in f.blocks {
-    if (b.id > top) {
-      top = b.id;
-    }
-  }
-  let out: i32[] = [];
-  let i = 0;
-  while (i <= top) {
-    out = out.append(-1);
-    i += 1;
-  }
-  i = 0;
-  while (i < f.blocks.len()) {
-    if (f.blocks[i].id >= 0) {
-      out = out.with(f.blocks[i].id, i);
-    }
-    i += 1;
-  }
-  return out;
-}
-
 function position(at: i32[], id: i32): i32 {
   if (id < 0 || id >= at.len()) {
     return -1;
@@ -83,7 +60,7 @@ function pushed_at(own stack: i32[], d: i32, v: i32): i32[] {
 
 function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops {
   let n = f.blocks.len();
-  let at = positions(f);
+  let at = ssa.block_positions(f);
   let l = Loops { n: n, header: __alloc_bool(n), members: __alloc_bool(n * n), at: at, succ: successor_table(f, at) };
   let u = 0;
   while (u < n) {

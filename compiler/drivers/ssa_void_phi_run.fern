@@ -23,7 +23,7 @@ function graph(value: i32, trivial: boolean): ssa.SFunc {
   let join: ssa.SBlock = ssa.SBlock {
     id: 3, preds: [1, 2], insts: [
       ssa.SInst { kind_tag: 8, result: 2, args: [0, other], imm: 0, str: "" },
-      ssa.SInst { kind_tag: 11, result: 0 - 1, args: [2], imm: 0, str: "observe" },
+      ssa.SInst { kind_tag: 11, result: -1, args: [2], imm: 0, str: "observe" },
     ],
     term: returned(value),
   };

@@ -770,7 +770,7 @@ function unique_lock_entries(entries: LockEntry[]): LockEntry[] {
   let positions: Map[string, i32] = map_new(entries.len());
   let out: LockEntry[] = [];
   for entry in entries {
-    let at: i32 = positions.get_or(entry.name, 0 - 1);
+    let at: i32 = positions.get_or(entry.name, -1);
     if (at >= 0) {
       out = out.with(at, entry);
     } else {

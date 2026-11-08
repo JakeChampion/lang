@@ -1582,7 +1582,7 @@ pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): 
   let none: i32[] = [];
   let instOff = wit_iface_instance_offset(tbody, iface);
   if (instOff < 0) {
-    return WitFuncLookup { found: false, off: 0 - 1, scope: WitScope { offs: none, owners: none } };
+    return WitFuncLookup { found: false, off: -1, scope: WitScope { offs: none, owners: none } };
   }
   let scope = wit_iface_scope(tbody, instOff);
   let p = instOff + 1;

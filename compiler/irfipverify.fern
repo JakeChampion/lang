@@ -146,7 +146,7 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
   }
   let remedy = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
   out = out.append(irverify.Problem {
-    fn_name: claim.fn_name, op: 0 - 1, kind: "E068",
+    fn_name: claim.fn_name, op: -1, kind: "E068",
     msg: "`" + kw + "` function \"" + claim.fn_name + "\" allocates: "
       + util.i32_to_string(fresh) + " un-reused allocation site(s) exceed the allowance of "
       + util.i32_to_string(claim.allowance) + ": " + sites + " — " + remedy,

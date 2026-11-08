@@ -16,11 +16,11 @@ struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 struct Loop { ok: boolean, head: i32, body: i32, step: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
 
 function none(): ssa.SInst {
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, step: 0 - 1, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
+  return Loop { ok: false, head: 0, body: 0, step: -1, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -273,7 +273,7 @@ struct Tail { len: i32, distance: i32 }
 // An index `a.len() - distance` with an invariant distance: the length's
 // value and the distance, or a negative `len` when the index is not one.
 function tail_distance(ix: Index, l: Loop, index: i32): Tail {
-  let no = Tail { len: 0 - 1, distance: 0 - 1 };
+  let no = Tail { len: -1, distance: -1 };
   let at = ix.defs[index];
   if (at.kind_tag != 9 || at.str != "-" || at.args.len() != 2 || !invariant(ix, at.args[1], l)) {
     return no;
@@ -346,7 +346,7 @@ function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
   if (!pure_body(f, ix, l, allowed)) {
     return no;
   }
-  let out = Loop { ...l, update: update, src: 0 - 1, from: from, at: 0 - 1, back: true, rebased: rebased };
+  let out = Loop { ...l, update: update, src: -1, from: from, at: -1, back: true, rebased: rebased };
   if (!closed_body(f, ix, out)) {
     return no;
   }

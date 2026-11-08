@@ -11,24 +11,8 @@ function contains(values: i32[], value: i32): boolean {
   return false;
 }
 
-pub function position_of(f: ssa.SFunc): i32[] {
-  let top = 0;
-  for b in f.blocks {
-    if (b.id > top) {
-      top = b.id;
-    }
-  }
-  let out = util.minus_ones(top + 1);
-  let i = 0;
-  while (i < f.blocks.len()) {
-    out = out.with(f.blocks[i].id, i);
-    i += 1;
-  }
-  return out;
-}
-
 pub function reachable_blocks(f: ssa.SFunc): boolean[] {
-  let at = position_of(f);
+  let at = ssa.block_positions(f);
   let reachable = __alloc_bool(f.blocks.len());
   let entry = at[f.entry];
   reachable = reachable.with(entry, true);
@@ -61,71 +45,14 @@ pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
 }
 
 pub function dominates(f: ssa.SFunc): Dom {
-  return dominates_at(f, position_of(f));
+  return dominates_at(f, ssa.block_positions(f));
 }
 
 // The positions must describe the same graph as f.
 pub function dominates_at(f: ssa.SFunc, at: i32[]): Dom {
   let n = f.blocks.len();
   let entry = at[f.entry];
-  let po = util.minus_ones(n);
-  let order: i32[] = [];
-  let seen = __alloc_bool(n);
-  let stack: i32[] = [entry];
-  let sp = 1;
-  let next_succ = util.minus_ones(n);
-  seen = seen.with(entry, true);
-  while (sp > 0) {
-    let bi = stack[sp - 1];
-    let term = f.blocks[bi].term;
-    let k = next_succ[bi] + 1;
-    let id = ssa.successor_id(term, k);
-    while (id >= 0 && seen[at[id]]) {
-      k += 1;
-      id = ssa.successor_id(term, k);
-    }
-    next_succ = next_succ.with(bi, k);
-    if (id >= 0) {
-      let sk = at[id];
-      seen = seen.with(sk, true);
-      stack = push_at(stack, sp, sk);
-      sp += 1;
-    } else {
-      po = po.with(bi, order.len());
-      order = order.append(bi);
-      sp -= 1;
-    }
-  }
-  let idom = util.minus_ones(n);
-  idom = idom.with(entry, entry);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    let r = order.len() - 1;
-    while (r >= 0) {
-      let bi = order[r];
-      r -= 1;
-      if (bi == entry) {
-        continue;
-      }
-      let nd: i32 = -1;
-      for pid in f.blocks[bi].preds {
-        let p = at[pid];
-        if (p < 0 || idom[p] < 0) {
-          continue;
-        }
-        if (nd < 0) {
-          nd = p;
-        } else {
-          nd = intersect(idom, po, p, nd);
-        }
-      }
-      if (nd >= 0 && idom[bi] != nd) {
-        idom = idom.with(bi, nd);
-        changed = true;
-      }
-    }
-  }
+  let idom = ssa.immediate_dominators(f, at);
   let first_child = util.minus_ones(n);
   let next_sibling = util.minus_ones(n);
   let bi = 0;
@@ -186,20 +113,6 @@ function push_at(own stack: i32[], d: i32, v: i32): i32[] {
     return stack.with(d, v);
   }
   return stack.append(v);
-}
-
-function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
-  let x = a;
-  let y = b;
-  while (x != y) {
-    while (po[x] < po[y]) {
-      x = idom[x];
-    }
-    while (po[y] < po[x]) {
-      y = idom[y];
-    }
-  }
-  return x;
 }
 
 function available(value: i32, block: i32, pos: i32, defs: i32[], positions: i32[], dom: Dom): boolean {
@@ -294,7 +207,7 @@ pub function check_graph(f: ssa.SFunc): Facts {
   if (f.nparams < 0 || f.nparams > f.nvals) {
     return refused("parameter dimensions");
   }
-  let at = position_of(f);
+  let at = ssa.block_positions(f);
   if (f.blocks[at[f.entry]].preds.len() > 0) {
     return refused("entry has predecessors");
   }

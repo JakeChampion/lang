@@ -385,7 +385,7 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   let l_done = names[6];
   let l_byte = names[7];
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == 361) {
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
     s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
   } else {
     s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
@@ -462,12 +462,12 @@ function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
   s = mlo.state;
   s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n");
   s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == 378 || o.kind_tag == 446) {
+  if (o.kind_tag == ir.K_MISMATCH_BYTES || o.kind_tag == ir.K_MISMATCH_BYTES_STR) {
     s = s.write("    ldr x5, [x0]\n    add x0, x0, #8\n");
   } else {
     s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
   }
-  if (o.kind_tag == 378) {
+  if (o.kind_tag == ir.K_MISMATCH_BYTES) {
     s = s.write("    ldr x6, [x2]\n    add x2, x2, #8\n");
   } else {
     s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
@@ -481,7 +481,7 @@ function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
   s = s.write("    cmp x4, x6\n    csel x4, x6, x4, gt\n");
   s = s.write("    cmp x4, #0\n    b.ge " + lb + "_nok\n    mov x4, #0\n");
   s = s.write(lb + "_nok:\n");
-  if (o.kind_tag == 378 && !ir.is_packed(o)) {
+  if (o.kind_tag == ir.K_MISMATCH_BYTES && !ir.is_packed(o)) {
     s = s.write("    add x8, x0, x1, lsl #3\n    add x9, x2, x3, lsl #3\n    mov x10, #0\n");
     s = s.write(lb + "_slots:\n    cmp x10, x4\n    b.ge " + lb + "_slots_done\n");
     s = s.write("    add x11, x8, x10, lsl #3\n    ldrb w11, [x11]\n    add x14, x9, x10, lsl #3\n    ldrb w14, [x14]\n");
@@ -606,14 +606,14 @@ function emit_count_below_u64_arm64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 384 || o.kind_tag == 385) {
+  if (o.kind_tag == ir.K_RET_WORD || o.kind_tag == ir.K_CALL_WORD) {
     let reg = "x" + util.i32_to_string(o.i32_imm + 1);
-    if (o.kind_tag == 384) {
+    if (o.kind_tag == ir.K_RET_WORD) {
       return s.write("    ldr " + reg + ", [sp], #16\n    str " + reg + ", [sp, #-16]!\n");
     }
     return s.write("    str " + reg + ", [sp, #-16]!\n");
   }
-  if (o.kind_tag == 383) {
+  if (o.kind_tag == ir.K_ARR_RESERVE) {
     s = s.write("    ldr x0, [sp], #16\n    cmp w0, #0\n");
     s = ssa_trap_guard(s, CC_GE, "__fern_oob_abort");
     s = s.write("    mov w0, w0\n");
@@ -623,20 +623,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    bl __fern_arr_box\n    str xzr, [x0]\n    str x0, [sp, #-16]!\n");
     return s.need("heap");
   }
-  if (o.kind_tag == 382) {
+  if (o.kind_tag == ir.K_INNER_MUL_ADD_F64) {
     return emit_inner_mul_add_f64(s);
   }
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
-  if (o.kind_tag == 410) {
+  if (o.kind_tag == ir.K_SHA256_HW_BLOCKS) {
     s = s.need("sha256").need("heap");
     return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha256_hw_blocks\n    str x0, [sp, #-16]!\n");
   }
-  if (o.kind_tag == 381) {
+  if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
   }
-  if (o.kind_tag == 225 || o.kind_tag == 358) {
+  if (o.kind_tag == ir.K_MEMCHR || o.kind_tag == ir.K_MEMCHR_BYTES) {
     let mlo = asmcore.fresh_label(s);
     let l_clamped = mlo.name;
     let mlo2 = asmcore.fresh_label(mlo.state);
@@ -659,7 +659,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_bytes = mlo10.name;
     s = mlo10.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 358) {
+    if (o.kind_tag == ir.K_MEMCHR_BYTES) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
     } else {
       s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
@@ -667,7 +667,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp x2, #0\n    b.ge " + l_clamped + "\n    mov x2, #0\n");
     s = s.write(l_clamped + ":\n");
     s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
-    if (o.kind_tag == 358 && !ir.is_packed(o)) {
+    if (o.kind_tag == ir.K_MEMCHR_BYTES && !ir.is_packed(o)) {
       s = s.write(l_tail + ":\n    cmp x2, x3\n    b.ge " + l_none + "\n");
       s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.eq " + l_done + "\n");
       s = s.write("    add x2, x2, #1\n    b " + l_tail + "\n");
@@ -713,10 +713,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 245 || o.kind_tag == 378 || o.kind_tag == 446) {
+  if (o.kind_tag == ir.K_MISMATCH || o.kind_tag == ir.K_MISMATCH_BYTES || o.kind_tag == ir.K_MISMATCH_BYTES_STR) {
     return emit_mismatch_arm64(o, s);
   }
-  if (o.kind_tag == 234 || o.kind_tag == 360) {
+  if (o.kind_tag == ir.K_RMEMCHR || o.kind_tag == ir.K_RMEMCHR_BYTES) {
     let rlo = asmcore.fresh_label(s);
     let r_ok = rlo.name;
     let rlo2 = asmcore.fresh_label(rlo.state);
@@ -737,7 +737,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let r_lane = rlo9.name;
     s = rlo9.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 360) {
+    if (o.kind_tag == ir.K_RMEMCHR_BYTES) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
     } else {
       s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
@@ -746,7 +746,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sub x3, x3, #1\n    cmp x3, #0\n    b.lt " + r_none + "\n");
     s = s.write("    cmp x2, x3\n    b.le " + r_ok + "\n    mov x2, x3\n");
     s = s.write(r_ok + ":\n");
-    if (o.kind_tag == 360 && !ir.is_packed(o)) {
+    if (o.kind_tag == ir.K_RMEMCHR_BYTES && !ir.is_packed(o)) {
       s = s.write(r_tail + ":\n    cmp x2, #0\n    b.lt " + r_none + "\n");
       s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.eq " + r_done + "\n");
       s = s.write("    sub x2, x2, #1\n    b " + r_tail + "\n");
@@ -783,7 +783,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(r_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 235 || o.kind_tag == 359) {
+  if (o.kind_tag == ir.K_COUNT_BYTE || o.kind_tag == ir.K_COUNT_BYTE_BYTES) {
     let clo = asmcore.fresh_label(s);
     let c_vec = clo.name;
     let clo2 = asmcore.fresh_label(clo.state);
@@ -794,14 +794,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done = clo4.name;
     s = clo4.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 359) {
+    if (o.kind_tag == ir.K_COUNT_BYTE_BYTES) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
     } else {
       s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
     }
     s = s.write("    mov x7, #0\n");
     s = s.write("    cmp x1, #255\n    b.hi " + c_done + "\n");
-    if (o.kind_tag == 359 && !ir.is_packed(o)) {
+    if (o.kind_tag == ir.K_COUNT_BYTE_BYTES && !ir.is_packed(o)) {
       s = s.write("    mov x2, #0\n");
       s = s.write(c_tail + ":\n    cmp x2, x3\n    b.ge " + c_done + "\n");
       s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w4, [x5]\n    cmp x4, x1\n    b.ne " + c_next + "\n");
@@ -826,10 +826,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 482) {
+  if (o.kind_tag == ir.K_COUNT_BELOW_U64) {
     return emit_count_below_u64_arm64(s);
   }
-  if (o.kind_tag == 322) {
+  if (o.kind_tag == ir.K_SCALE_F64) {
     let flo = asmcore.fresh_label(s);
     let sf_loop = flo.name;
     let flo2 = asmcore.fresh_label(flo.state);
@@ -860,7 +860,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.need("heap");
     return s;
   }
-  if (o.kind_tag == 390) {
+  if (o.kind_tag == ir.K_STR_HASH) {
     let hlo = asmcore.fresh_label(s);
     let h_loop = hlo.name;
     let hlo2 = asmcore.fresh_label(hlo.state);
@@ -911,14 +911,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sxtw x2, w2\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 329 || o.kind_tag == 369) {
+  if (o.kind_tag == ir.K_BSD_SUM || o.kind_tag == ir.K_BSD_SUM_BYTES) {
     let blo = asmcore.fresh_label(s);
     let b_loop = blo.name;
     let blo2 = asmcore.fresh_label(blo.state);
     let b_done = blo2.name;
     s = blo2.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 369) {
+    if (o.kind_tag == ir.K_BSD_SUM_BYTES) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
     } else {
       s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
@@ -926,7 +926,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    and x1, x1, #0xffff\n    mov x2, #0\n");
     s = s.write(b_loop + ":\n");
     s = s.write("    cmp x2, x3\n    b.ge " + b_done + "\n");
-    if (o.kind_tag == 369 && !ir.is_packed(o)) {
+    if (o.kind_tag == ir.K_BSD_SUM_BYTES && !ir.is_packed(o)) {
       s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n");
     } else {
       s = s.write("    add x5, x0, x2\n    ldrb w6, [x5]\n");
@@ -937,7 +937,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(b_done + ":\n    str x1, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 327 || o.kind_tag == 379) {
+  if (o.kind_tag == ir.K_COUNT_RUNS || o.kind_tag == ir.K_COUNT_RUNS_BYTES) {
     let clo = asmcore.fresh_label(s);
     let c_loop = clo.name;
     let clo2 = asmcore.fresh_label(clo.state);
@@ -946,7 +946,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let c_done = clo3.name;
     s = clo3.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 379) {
+    if (o.kind_tag == ir.K_COUNT_RUNS_BYTES) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
     } else {
       s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
@@ -955,7 +955,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    mov x1, #0\n    mov x8, #0\n    ldr x4, [x2]\n");
     s = s.write(c_loop + ":\n");
     s = s.write("    cmp x1, x3\n    b.ge " + c_done + "\n");
-    if (o.kind_tag == 379 && !ir.is_packed(o)) {
+    if (o.kind_tag == ir.K_COUNT_RUNS_BYTES && !ir.is_packed(o)) {
       s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
     } else {
       s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
@@ -970,10 +970,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_done + ":\n    str x8, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 324 || o.kind_tag == 361) {
+  if (o.kind_tag == ir.K_SCAN_SET || o.kind_tag == ir.K_SCAN_SET_BYTES) {
     return emit_scan_set(o, s);
   }
-  if (o.kind_tag == 380 && !ir.is_packed(o)) {
+  if (o.kind_tag == ir.K_STR_FROM_BYTES_RANGE && !ir.is_packed(o)) {
     let loop_label = asmcore.fresh_label(s);
     let done_label = asmcore.fresh_label(loop_label.state);
     s = done_label.state;
@@ -982,15 +982,15 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n    add w1, w1, w6\n    add x2, x2, #1\n    b " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    sxtw x1, w1\n    str x1, [sp, #-16]!\n");
   }
-  if (o.kind_tag == 433) {
+  if (o.kind_tag == ir.K_UTF8_BLOCKS) {
     s = s.need("utf8_blocks");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_utf8_blocks\n");
     return s.write("    str x0, [sp, #-16]!\n");
   }
-  if (o.kind_tag == 253 || o.kind_tag == 368) {
+  if (o.kind_tag == ir.K_SUM_BYTES || o.kind_tag == ir.K_SUM_BYTES_ARRAY) {
     s = s.need("sum_bytes");
     s = s.write("    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 368) {
+    if (o.kind_tag == ir.K_SUM_BYTES_ARRAY) {
       s = s.write("    ldr x6, [x0]\n    add x8, x0, #8\n    bl __fern_sum_bytes_data\n");
     } else {
       s = s.write("    bl __fern_sum_bytes\n");
@@ -998,7 +998,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 373 && !ir.is_packed(o)) {
+  if (o.kind_tag == ir.K_CRC32_CKSUM_ARRAY && !ir.is_packed(o)) {
     let loop_label = asmcore.fresh_label(s);
     let done_label = asmcore.fresh_label(loop_label.state);
     s = done_label.state;
@@ -1016,14 +1016,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (ir.is_crc32_op(o.kind_tag)) {
     let kernel = "crc32_cksum";
-    if (o.kind_tag >= 480) {
+    if (o.kind_tag >= ir.K_CRC32_IEEE) {
       kernel = "crc32_ieee";
       s = s.need("crc32_ieee");
     } else {
       s = s.need("crc32_cksum");
     }
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-    if (o.kind_tag == 373 || o.kind_tag == 481) {
+    if (o.kind_tag == ir.K_CRC32_CKSUM_ARRAY || o.kind_tag == ir.K_CRC32_IEEE_ARRAY) {
       s = s.write("    ldr x6, [x1]\n    add x7, x1, #8\n    bl __fern_" + kernel + "_data\n");
     } else {
       s = s.write("    bl __fern_" + kernel + "\n");
@@ -1031,7 +1031,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 227) {
+  if (o.kind_tag == ir.K_ASCII_RUN) {
     let alo = asmcore.fresh_label(s);
     let a_clamped = alo.name;
     let alo2 = asmcore.fresh_label(alo.state);
@@ -1071,7 +1071,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 104) {
+  if (o.kind_tag == ir.K_STR_BYTES) {
     if (ir.is_packed(o)) {
       s = s.need("str_bytes_u8");
       return s.write("    bl __fn___fern_str_bytes_u8\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -1080,39 +1080,39 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    bl __fn___fern_str_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 105) {
+  if (o.kind_tag == ir.K_STR_SPLIT) {
     s = s.need("str_split");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_split\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 106 || o.kind_tag == 107) {
+  if (o.kind_tag == ir.K_STR_TO_UPPER || o.kind_tag == ir.K_STR_TO_LOWER) {
     let cfn = "__fn___fern_str_to_upper";
-    if (o.kind_tag == 107) {
+    if (o.kind_tag == ir.K_STR_TO_LOWER) {
       cfn = "__fn___fern_str_to_lower";
     }
     s = s.need("str_case");
     s = s.write("    bl " + cfn + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 108) {
+  if (o.kind_tag == ir.K_STR_REPEAT) {
     s = s.need("str_repeat");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_repeat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 109) {
+  if (o.kind_tag == ir.K_STR_TRIM) {
     s = s.need("str_trim");
     s = s.write("    bl __fn___fern_str_trim\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 111) {
+  if (o.kind_tag == ir.K_STR_REPLACE) {
     s = s.need("str_replace");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_replace\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 113) {
+  if (o.kind_tag == ir.K_STR_LINES) {
     s = s.need("str_lines");
     s = s.write("    bl __fn___fern_str_lines\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
@@ -1149,14 +1149,14 @@ function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = hl.state;
   }
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == 361) {
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
     s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
   } else {
     s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
   }
   s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
   s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
-  if (o.kind_tag != 361 || ir.is_packed(o)) {
+  if (o.kind_tag != ir.K_SCAN_SET_BYTES || ir.is_packed(o)) {
     s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
     s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
     s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
@@ -1178,7 +1178,7 @@ function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(s_short + ":\n");
   s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-  if (o.kind_tag == 361 && !ir.is_packed(o)) {
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES && !ir.is_packed(o)) {
     s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
   } else {
     s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
@@ -2159,7 +2159,7 @@ function ssa_blab(fr: SsaFrame, lp: string, id: i32): asmcore.Lab {
 }
 
 function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
-  return asmcore.EmitState { ...s, ssa_x0: 0 - 1 };
+  return asmcore.EmitState { ...s, ssa_x0: -1 };
 }
 
 function ssa_dst(reg_of: i32[], v: i32): string {
@@ -5446,22 +5446,22 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 112 || o.kind_tag == 495 || o.kind_tag == 497) {
+  if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == 497) {
     return s;
   }
 
-  if (o.kind_tag == 79) {
+  if (o.kind_tag == ir.K_PTR_WIDTH) {
     s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
   } else if (ir.is_sha_hw_op(o.kind_tag)) {
     s = s.write("    mov x0, #1\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 441) {
+  } else if (o.kind_tag == ir.K_SHA1_HW_BLOCKS) {
     s = s.need("sha1").need("heap");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 74) {
+  } else if (o.kind_tag == ir.K_MEMCPY) {
     s = emit_arm64_op_memcpy(o, i, lp, s);
-  } else if (o.kind_tag == 75) {
+  } else if (o.kind_tag == ir.K_MEMSET) {
     s = emit_arm64_op_memset(i, lp, s);
-  } else if (o.kind_tag == 78) {
+  } else if (o.kind_tag == ir.K_FREE) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     let owned = s.leak_check && s.rt_owned_allocs;
     if (owned) {
@@ -5473,42 +5473,42 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     }
     s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
-  } else if (o.kind_tag == 91) {
+  } else if (o.kind_tag == ir.K_ARR_RC) {
     s = s.write("    ldr x0, [sp], #16\n    ldursw x0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     s = emit_str_op(o, s);
-  } else if (o.kind_tag == 185) {
+  } else if (o.kind_tag == ir.K_RANDOM_BYTES) {
     let rb = "random_bytes" + asmcore.packed_suffix(ir.is_packed(o));
     s = s.need("heap");
     s = s.need(rb);
     s = s.write("    bl __fn___fern_" + rb + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 186) {
+  } else if (o.kind_tag == ir.K_RANDOM_I32) {
     s = s.need("random_i32");
     s = s.write("    bl __fn___fern_random_i32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 211) {
+  } else if (o.kind_tag == ir.K_PROC_FORK) {
     s = s.need("proc_fork");
     s = s.write("    bl __fn___fern_proc_fork\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 212) {
+  } else if (o.kind_tag == ir.K_PROC_WAITPID) {
     s = s.need("proc_waitpid");
     s = s.write("    bl __fn___fern_proc_waitpid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 286) {
+  } else if (o.kind_tag == ir.K_PROC_WAITPID_NOHANG) {
     s = s.need("proc_waitpid_nohang");
     s = s.write("    bl __fn___fern_proc_waitpid_nohang\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 397) {
+  } else if (o.kind_tag == ir.K_PROC_WAITPID_STATUS) {
     s = s.need("proc_waitpid_status");
     s = s.write("    bl __fn___fern_proc_waitpid_status\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 492) {
+  } else if (o.kind_tag == ir.K_WORKER_REGION) {
     s = s.need("worker_region");
     s = s.write("    bl __fn___fern_worker_region\n    ldr x1, [sp], #16\n");
     s = arm64_worker_region_size(s);
     s = arm64_worker_region_census(s);
     s = s.write("    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 493) {
+  } else if (o.kind_tag == ir.K_WORKER_EXIT) {
     s = s.need("worker_exit");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0]\n");
     s = arm64_worker_exit_census(s);
     s = s.write("    bl __fn___fern_worker_exit\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 494) {
+  } else if (o.kind_tag == ir.K_WORKER_REAP) {
     s = s.need("worker_regions");
     s = s.write("    ldr x0, [sp], #16\n");
     s = arm64_worker_reap_census(s);
@@ -5516,184 +5516,184 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
       s = s.write(quar_addr("x1", "__fern_forget_lo") + "    str x0, [x1]\n    ldr x2, [x0, #40]\n    add x2, x2, x0\n" + quar_addr("x1", "__fern_forget_hi") + "    str x2, [x1]\n");
     }
     s = s.write("    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 496) {
+  } else if (o.kind_tag == ir.K_WORKER_UNMAP) {
     s = emit_arm64_worker_unmap(s);
-  } else if (o.kind_tag == 213) {
+  } else if (o.kind_tag == ir.K_PROC_EXEC) {
     s = s.need("heap");
     s = s.need("proc_exec");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_proc_exec\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 280) {
+  } else if (o.kind_tag == ir.K_PROC_EXEC_AS) {
     s = s.need("heap");
     s = s.need("proc_exec_as");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_proc_exec_as\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 80) {
+  } else if (o.kind_tag == ir.K_HEAP_BUMP_BYTES) {
     s = emit_arm64_op_heap_bump_bytes(o, s);
-  } else if (o.kind_tag == 315) {
+  } else if (o.kind_tag == ir.K_HEAP_ALLOC_COUNT) {
     s = emit_arm64_op_heap_alloc_count(o, s);
-  } else if (o.kind_tag == 229) {
+  } else if (o.kind_tag == ir.K_HEAP_MARK) {
     s = s.need("heap");
     s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");
     s = arm64_copy_words(s, "__fern_freelist", "__fern_freelist_shadow", 65536);
     s = arm64_copy_words(s, "__fern_large_freelist", "__fern_large_freelist_shadow", 2560);
     s = s.write("    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 230) {
+  } else if (o.kind_tag == ir.K_HEAP_RELEASE_TO) {
     s = emit_arm64_op_heap_release_to(o, s);
-  } else if (o.kind_tag == 491) {
+  } else if (o.kind_tag == ir.K_HEAP_ADOPT) {
     s = emit_arm64_op_heap_adopt(o, s);
-  } else if (o.kind_tag == 183) {
+  } else if (o.kind_tag == ir.K_NOW_NS) {
     s = s.need("now_ns");
     s = s.write("    bl __fn___fern_now_ns\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 187) {
+  } else if (o.kind_tag == ir.K_POLL) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_poll\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("poll");
-  } else if (o.kind_tag == 188) {
+  } else if (o.kind_tag == ir.K_TIMER_FD) {
     s = s.write("    bl __fn___fern_timer_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("timer_fd");
-  } else if (o.kind_tag == 312) {
+  } else if (o.kind_tag == ir.K_TERMIOS_GET) {
     s = s.need("heap");
     s = s.need("termios_get");
     s = s.need("arr_push_owned");
     s = s.write("    bl __fn___fern_termios_get\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 313) {
+  } else if (o.kind_tag == ir.K_TERMIOS_SET) {
     s = s.need("heap");
     s = s.need("termios_set");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_termios_set\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 406) {
+  } else if (o.kind_tag == ir.K_SET_EXTPROC) {
     s = s.need("heap");
     s = s.need("set_extproc");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_set_extproc\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 314) {
+  } else if (o.kind_tag == ir.K_SET_WINDOW_SIZE) {
     s = s.need("heap");
     s = s.need("set_window_size");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_set_window_size\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 408) {
+  } else if (o.kind_tag == ir.K_PIPE) {
     s = s.need("heap");
     s = s.need("pipe");
     s = s.write("    bl __fn___fern_pipe\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag >= 420 && o.kind_tag <= 428) {
     s = emit_dir_op(o, s);
-  } else if (o.kind_tag == 276) {
+  } else if (o.kind_tag == ir.K_WINDOW_SIZE) {
     s = s.need("heap");
     s = s.need("window_size");
     s = s.write("    bl __fn___fern_window_size\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 232) {
+  } else if (o.kind_tag == ir.K_ISATTY) {
     s = s.write("    bl __fn___fern_isatty\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("isatty");
-  } else if (o.kind_tag == 271) {
+  } else if (o.kind_tag == ir.K_PROCESS_ALIVE) {
     s = s.write("    bl __fn___fern_process_alive\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("process_alive");
-  } else if (o.kind_tag == 285) {
+  } else if (o.kind_tag == ir.K_SIGNAL_SEND) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_signal_send\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("signal_send");
-  } else if (o.kind_tag == 284) {
+  } else if (o.kind_tag == ir.K_SET_PROCESS_GROUP) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_set_process_group\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("set_process_group");
-  } else if (o.kind_tag == 282) {
+  } else if (o.kind_tag == ir.K_PRIORITY) {
     s = s.write("    bl __fn___fern_priority\n    str x0, [sp, #-16]!\n");
     s = s.need("priority");
-  } else if (o.kind_tag == 283) {
+  } else if (o.kind_tag == ir.K_SET_PRIORITY) {
     s = s.write("    bl __fn___fern_set_priority\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("set_priority");
-  } else if (o.kind_tag == 388) {
+  } else if (o.kind_tag == ir.K_CLOCK_SET) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_clock_set\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("clock_set");
-  } else if (o.kind_tag == 389) {
+  } else if (o.kind_tag == ir.K_CLOCK_RESOLUTION) {
     s = s.write("    bl __fn___fern_clock_resolution\n    str x0, [sp, #-16]!\n");
     s = s.need("clock_resolution");
-  } else if (o.kind_tag == 272) {
+  } else if (o.kind_tag == ir.K_RLIMIT_NOFILE) {
     s = s.write("    bl __fn___fern_rlimit_nofile\n    str x0, [sp, #-16]!\n");
     s = s.need("rlimit_nofile");
-  } else if (o.kind_tag == 396) {
+  } else if (o.kind_tag == ir.K_DISABLE_CORE_DUMPS) {
     s = s.write("    bl __fn___fern_disable_core_dumps\n    str x0, [sp, #-16]!\n");
     s = s.need("disable_core_dumps");
-  } else if (o.kind_tag == 483) {
+  } else if (o.kind_tag == ir.K_PRCTL_QUERY) {
     s = s.write("    bl __fn___fern_prctl_query\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("prctl_query");
-  } else if (o.kind_tag == 399) {
+  } else if (o.kind_tag == ir.K_CT_MARK) {
     s = s.need("ct_mark");
     s = s.write("    bl __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 400) {
+  } else if (o.kind_tag == ir.K_VG_REQUEST) {
     s = s.write("    ldr x4, [sp], #16\n    mov x3, #0\n    ror x12, x12, #3\n    ror x12, x12, #13\n    ror x12, x12, #51\n    ror x12, x12, #61\n    orr x10, x10, x10\n    str x3, [sp, #-16]!\n");
-  } else if (o.kind_tag == 243 || o.kind_tag == 244) {
+  } else if (o.kind_tag == ir.K_SIGNAL_IGNORE || o.kind_tag == ir.K_SIGNAL_DEFAULT) {
     let sig_fn = "signal_ignore";
-    if (o.kind_tag == 244) {
+    if (o.kind_tag == ir.K_SIGNAL_DEFAULT) {
       sig_fn = "signal_default";
     }
     s = s.write("    bl __fn___fern_" + sig_fn + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need(sig_fn);
-  } else if (o.kind_tag == 392 || o.kind_tag == 394) {
+  } else if (o.kind_tag == ir.K_SIGNAL_CATCH || o.kind_tag == ir.K_SIGNAL_CATCH_INTERRUPTING) {
     let restart = "1";
-    if (o.kind_tag == 394) {
+    if (o.kind_tag == ir.K_SIGNAL_CATCH_INTERRUPTING) {
       restart = "0";
     }
     s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + restart + "\n    str x1, [sp, #-16]!\n    adrp x1, __fern_sig_return\n    add x1, x1, :lo12:__fern_sig_return\n    str x1, [sp, #-16]!\n");
     s = s.write("    adrp x1, __fern_sig_catcher\n    add x1, x1, :lo12:__fern_sig_catcher\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_signal_catch\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
     s = s.need("signal_catch");
-  } else if (o.kind_tag == 395) {
+  } else if (o.kind_tag == ir.K_SIGNAL_RAISE) {
     s = s.write("    bl __fn___fern_signal_raise\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("signal_raise");
-  } else if (o.kind_tag == 393) {
+  } else if (o.kind_tag == ir.K_SIGNAL_TAKEN) {
     s = s.write("    ldr x0, [sp], #16\n    bl __fern_signal_taken\n    str x0, [sp, #-16]!\n");
     s = s.need("signal_taken");
-  } else if (o.kind_tag == 237) {
+  } else if (o.kind_tag == ir.K_ACCESS) {
     s = s.need("heap");
     s = s.need("access");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_access\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 240) {
+  } else if (o.kind_tag == ir.K_HOSTNAME) {
     s = s.write("    bl __fn___fern_hostname\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("hostname");
-  } else if (o.kind_tag == 250) {
+  } else if (o.kind_tag == ir.K_UNAME_FIELD) {
     s = s.write("    bl __fn___fern_uname_field\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("uname_field");
-  } else if (o.kind_tag == 251) {
+  } else if (o.kind_tag == ir.K_GETCWD) {
     s = s.write("    bl __fn___fern_getcwd\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("getcwd");
-  } else if (o.kind_tag == 252) {
+  } else if (o.kind_tag == ir.K_CPU_COUNT) {
     s = s.write("    bl __fn___fern_cpu_count\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("cpu_count");
-  } else if (o.kind_tag == 238) {
+  } else if (o.kind_tag == ir.K_GETEUID) {
     s = s.write("    bl __fn___fern_geteuid\n    str x0, [sp, #-16]!\n");
     s = s.need("geteuid");
-  } else if (o.kind_tag == 239) {
+  } else if (o.kind_tag == ir.K_GETEGID) {
     s = s.write("    bl __fn___fern_getegid\n    str x0, [sp, #-16]!\n");
     s = s.need("getegid");
-  } else if (o.kind_tag == 246) {
+  } else if (o.kind_tag == ir.K_GETUID) {
     s = s.write("    bl __fn___fern_getuid\n    str x0, [sp, #-16]!\n");
     s = s.need("getuid");
-  } else if (o.kind_tag == 247) {
+  } else if (o.kind_tag == ir.K_GETGID) {
     s = s.write("    bl __fn___fern_getgid\n    str x0, [sp, #-16]!\n");
     s = s.need("getgid");
-  } else if (o.kind_tag == 248) {
+  } else if (o.kind_tag == ir.K_GETGROUPS) {
     s = s.write("    bl __fn___fern_getgroups\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("getgroups");
-  } else if (o.kind_tag == 249) {
+  } else if (o.kind_tag == ir.K_ENVIRON) {
     s = s.write("    bl __fn___fern_environ\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("environ");
-  } else if (o.kind_tag == 333) {
+  } else if (o.kind_tag == ir.K_TCP_SOCKET_CTL) {
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 486 || o.kind_tag == 511 || o.kind_tag == 516) {
+  } else if (o.kind_tag == ir.K_TCP_LISTEN_WITH || o.kind_tag >= ir.K_UDP_BIND && o.kind_tag <= ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SENDFILE || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_TCP_SEND_BUF || o.kind_tag >= ir.K_RING_NEW && o.kind_tag <= ir.K_RING_SEND_ZC || o.kind_tag == ir.K_UDP_BIND_WITH || o.kind_tag == ir.K_TCP_ADDR_INTO || o.kind_tag == ir.K_TCP_ACCEPT_WITH || o.kind_tag == ir.K_UDP_SENDMMSG) {
     let udp_name = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc = ir.op_pops(o);
     let udp_regs: string[] = ["x0", "x1", "x2", "x3"];
@@ -5708,36 +5708,36 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
       k -= 1;
     }
     s = s.write("    bl __fn___fern_" + udp_name + "\n    add sp, sp, #" + util.i32_to_string(16 * udp_argc) + "\n    str x0, [sp, #-16]!\n");
-    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 516 || o.kind_tag >= 436 && o.kind_tag <= 438) {
+    if (o.kind_tag == ir.K_UDP_RECVFROM || o.kind_tag == ir.K_REACTOR_WAIT || o.kind_tag == ir.K_TCP_RECV_INTO || o.kind_tag == ir.K_TCP_SEND_BYTES || o.kind_tag == ir.K_UDP_SENDTO_BYTES || o.kind_tag == ir.K_UDP_SENDMMSG || o.kind_tag >= ir.K_RING_WAIT && o.kind_tag <= ir.K_RING_RECV) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
-  } else if (o.kind_tag == 116) {
+  } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     s = s.need("heap");
     s = s.need("tcp_close");
     s = s.write("    bl __fn___fern_tcp_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 200) {
+  } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     s = s.need("heap");
     s = s.need("tcp_listen");
     s = s.write("    bl __fn___fern_tcp_listen\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 201) {
+  } else if (o.kind_tag == ir.K_TCP_ACCEPT) {
     s = s.need("heap");
     s = s.need("tcp_accept");
     s = s.write("    bl __fn___fern_tcp_accept\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 320) {
+  } else if (o.kind_tag == ir.K_TCP_LOCAL_PORT) {
     s = s.need("tcp_local_port");
     s = s.write("    bl __fn___fern_tcp_local_port\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 308) {
+  } else if (o.kind_tag == ir.K_WRITE_SOME) {
     s = s.need("heap");
     s = s.need("write_some");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_write_some\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 431) {
+  } else if (o.kind_tag == ir.K_WRITER_SPLICE_FOREVER) {
     s = s.need("heap");
     s = s.need("splice_forever");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_splice_forever\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 203) {
+  } else if (o.kind_tag == ir.K_OPEN_FILE) {
     s = s.need("heap");
     s = s.need("open_file");
     let open_mode = 438;
@@ -5746,73 +5746,73 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     }
     s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #" + util.i32_to_string(open_mode) + "\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_res\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 304 || o.kind_tag == 305) {
+  } else if (o.kind_tag == ir.K_OPEN_READER_WITH || o.kind_tag == ir.K_OPEN_WRITER_WITH) {
     s = s.need("heap");
     s = s.need("open_file");
     s = s.need("open_with");
     let open_write = 0;
-    if (o.kind_tag == 305) {
+    if (o.kind_tag == ir.K_OPEN_WRITER_WITH) {
       open_write = 1;
     }
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(open_write) + "\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_with\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 260) {
+  } else if (o.kind_tag == ir.K_CREATE_DIR) {
     s = s.need("heap");
     s = s.need("create_dir");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_dir\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 261) {
+  } else if (o.kind_tag == ir.K_REMOVE_DIR) {
     s = s.need("heap");
     s = s.need("remove_dir");
     s = s.write("    bl __fn___fern_remove_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 277) {
+  } else if (o.kind_tag == ir.K_CHDIR) {
     s = s.need("heap");
     s = s.need("chdir");
     s = s.write("    bl __fn___fern_chdir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 316) {
+  } else if (o.kind_tag == ir.K_CHROOT) {
     s = s.need("heap");
     s = s.need("chroot");
     s = s.write("    bl __fn___fern_chroot\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 317) {
+  } else if (o.kind_tag == ir.K_SETUID) {
     s = s.need("heap");
     s = s.need("setuid");
     s = s.write("    bl __fn___fern_setuid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 318) {
+  } else if (o.kind_tag == ir.K_SETGID) {
     s = s.need("heap");
     s = s.need("setgid");
     s = s.write("    bl __fn___fern_setgid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 319) {
+  } else if (o.kind_tag == ir.K_SETGROUPS) {
     s = s.need("heap");
     s = s.need("setgroups");
     s = s.write("    bl __fn___fern_setgroups\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 278) {
+  } else if (o.kind_tag == ir.K_SIGNAL_MASK) {
     s = s.need("signal_mask");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_signal_mask\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 279) {
+  } else if (o.kind_tag == ir.K_SIGNAL_DISPOSITION) {
     s = s.need("signal_disposition");
     s = s.write("    bl __fn___fern_signal_disposition\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 262) {
+  } else if (o.kind_tag == ir.K_CREATE_LINK) {
     s = s.need("heap");
     s = s.need("create_link");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_link\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 405) {
+  } else if (o.kind_tag == ir.K_CLONE_FILE) {
     s = s.need("heap");
     s = s.need("clone_file");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_clone_file\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 267) {
+  } else if (o.kind_tag == ir.K_RENAME) {
     s = s.need("heap");
     s = s.need("rename");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_rename\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 356 || o.kind_tag == 357 || o.kind_tag == 362 || o.kind_tag == 363 || o.kind_tag == 374 || o.kind_tag == 375) {
+  } else if (o.kind_tag == ir.K_RENAME_NOREPLACE || o.kind_tag == ir.K_RENAME_EXCHANGE || o.kind_tag == ir.K_GETXATTR || o.kind_tag == ir.K_LGETXATTR || o.kind_tag == ir.K_GETXATTR_BYTES || o.kind_tag == ir.K_LGETXATTR_BYTES) {
     let op = ir.kind_name(o.kind_tag);
-    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+    if (o.kind_tag >= ir.K_GETXATTR_BYTES && ir.is_packed(o)) {
       op += "_u8";
     }
     s = s.need("heap");
     s = s.need(op);
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_" + op + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 364 || o.kind_tag == 365 || o.kind_tag == 376 || o.kind_tag == 377) {
+  } else if (o.kind_tag == ir.K_SETXATTR || o.kind_tag == ir.K_LSETXATTR || o.kind_tag == ir.K_SETXATTR_BYTES || o.kind_tag == ir.K_LSETXATTR_BYTES) {
     let op = ir.kind_name(o.kind_tag);
-    if (o.kind_tag >= 374 && ir.is_packed(o)) {
+    if (o.kind_tag >= ir.K_GETXATTR_BYTES && ir.is_packed(o)) {
       op += "_u8";
     }
     s = s.need("heap");
@@ -5820,11 +5820,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_" + op + "\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 263) {
+  } else if (o.kind_tag == ir.K_CREATE_SYMLINK) {
     s = s.need("heap");
     s = s.need("create_symlink");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_symlink\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 264) {
+  } else if (o.kind_tag == ir.K_READ_LINK) {
     s = s.need("heap");
     s = s.need("read_link");
     let helper = "read_link";
@@ -5833,127 +5833,127 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
       s = s.need("read_link_bytes");
     }
     s = s.write("    bl __fn___fern_" + helper + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 268) {
+  } else if (o.kind_tag == ir.K_CHMOD) {
     s = s.need("heap");
     s = s.need("chmod");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_chmod\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 274) {
+  } else if (o.kind_tag == ir.K_MKNOD) {
     s = s.need("heap");
     s = s.need("mknod");
     s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x3, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_mknod\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 275) {
+  } else if (o.kind_tag == ir.K_CHOWN_AT) {
     s = s.need("heap");
     s = s.need("chown_at");
     s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x3, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_chown_at\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 321) {
+  } else if (o.kind_tag == ir.K_CHMOD_AT) {
     s = s.need("heap");
     s = s.need("chmod_at");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_chmod_at\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 273) {
+  } else if (o.kind_tag == ir.K_TRUNCATE) {
     s = s.need("heap");
     s = s.need("truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 269 || o.kind_tag == 498) {
-    let helper: string = if (o.kind_tag == 498) { "writer_set_times" } else { "set_file_times" };
+  } else if (o.kind_tag == ir.K_SET_FILE_TIMES || o.kind_tag == ir.K_WRITER_SET_TIMES) {
+    let helper: string = if (o.kind_tag == ir.K_WRITER_SET_TIMES) { "writer_set_times" } else { "set_file_times" };
     s = s.need("heap");
     s = s.need(helper);
     s = s.write("    ldr x5, [sp], #16\n    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x5, [sp, #-16]!\n    str x4, [sp, #-16]!\n    str x3, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_" + helper + "\n    add sp, sp, #96\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 265) {
+  } else if (o.kind_tag == ir.K_UMASK) {
     s = s.need("umask");
     s = s.write("    bl __fn___fern_umask\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 270) {
+  } else if (o.kind_tag == ir.K_STATFS) {
     s = s.need("heap");
     s = s.need("statfs");
     s = s.write("    bl __fn___fern_statfs\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 398) {
+  } else if (o.kind_tag == ir.K_MOUNTS) {
     s = s.need("heap");
     s = s.need("mounts");
     s = s.write("    bl __fn___fern_mounts\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 401) {
+  } else if (o.kind_tag == ir.K_SYSCTL) {
     s = s.need("heap");
     s = s.need("sysctl");
     s = s.write("    bl __fn___fern_sysctl\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 299) {
+  } else if (o.kind_tag == ir.K_FD_FSYNC) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_fsync");
     s = s.write("    bl __fn___fern_fd_fsync\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 300) {
+  } else if (o.kind_tag == ir.K_FD_FDATASYNC) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_fdatasync");
     s = s.write("    bl __fn___fern_fd_fdatasync\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 301) {
+  } else if (o.kind_tag == ir.K_FD_SYNCFS) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_syncfs");
     s = s.write("    bl __fn___fern_fd_syncfs\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 366) {
+  } else if (o.kind_tag == ir.K_FD_DROP_CACHE) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_drop_cache");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_fd_drop_cache\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 298) {
+  } else if (o.kind_tag == ir.K_SYNC) {
     s = s.need("sync");
     s = s.write("    bl __fn___fern_sync\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 241) {
+  } else if (o.kind_tag == ir.K_FD_STAT) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_stat");
     s = s.write("    bl __fn___fern_fd_stat\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 311) {
+  } else if (o.kind_tag == ir.K_FD_DUP_ONTO) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_dup_onto");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_fd_dup_onto\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 307) {
+  } else if (o.kind_tag == ir.K_FD_FLAGS) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_flags");
     s = s.write("    bl __fn___fern_fd_flags\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 242) {
+  } else if (o.kind_tag == ir.K_READER_SEEK) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("reader_seek");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_seek\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 330) {
+  } else if (o.kind_tag == ir.K_READER_SPLICE) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("reader_splice");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_splice\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 407) {
+  } else if (o.kind_tag == ir.K_READER_COPY_RANGE) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("reader_copy_range");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_copy_range\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 281) {
+  } else if (o.kind_tag == ir.K_WRITER_TRUNCATE) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 490) {
+  } else if (o.kind_tag == ir.K_WRITER_NONBLOCKING) {
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_nonblocking");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_nonblocking\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 181) {
+  } else if (o.kind_tag == ir.K_SLEEP_MS) {
     s = s.need("sleep_ms");
     s = s.write("    bl __fn___fern_sleep_ms\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 266) {
+  } else if (o.kind_tag == ir.K_SLEEP_NS) {
     s = s.need("sleep_ns");
     s = s.write("    bl __fn___fern_sleep_ns\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 146) {
@@ -6687,7 +6687,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   s = s.write("_start:\n");
   s = emit_ir_reloc(s, darwin);
   s = emit_relro_protect(s, reloc_wanted(s, darwin));
-  if (!darwin && asmcore.sandbox_on()) {
+  if (!darwin && s.sandbox) {
     s = s.write("    bl __fern_seccomp_install\n");
   }
   if (darwin) {
@@ -12228,11 +12228,11 @@ function a64_ghash(s: asmcore.EmitState): string {
 
 function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("aes_gcm").need("heap");
-  if (o.kind_tag == 402) {
+  if (o.kind_tag == ir.K_AES_EXPAND_KEY) {
     return s.write("    ldr x0, [sp], #16\n    bl __fern_aes_expand_key\n    str x0, [sp, #-16]!\n");
   }
-  if (o.kind_tag == 444 || o.kind_tag == 445) {
-    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal_into" } else { "__fern_aes_gcm_open_into" };
+  if (o.kind_tag == ir.K_AES_GCM_SEAL_INTO || o.kind_tag == ir.K_AES_GCM_OPEN_INTO) {
+    let fused: string = if (o.kind_tag == ir.K_AES_GCM_SEAL_INTO) { "__fern_aes_gcm_seal_into" } else { "__fern_aes_gcm_open_into" };
     let pops = "";
     for i in 0..9 {
       pops = pops + "    ldr x" + util.i32_to_string(8 - i) + ", [sp], #16\n";
@@ -12240,7 +12240,7 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s.write(pops + "    bl " + fused + "\n    str x0, [sp, #-16]!\n");
   }
   let callee = "__fern_aes_ctr32";
-  if (o.kind_tag == 404) {
+  if (o.kind_tag == ir.K_GHASH) {
     callee = "__fern_ghash";
   }
   return s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl " + callee + "\n    str x0, [sp, #-16]!\n");
@@ -12797,7 +12797,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
-  if (darwin && asmcore.sandbox_on()) {
+  if (darwin && sw.sandbox) {
     eprint("fern: FERN_SANDBOX=1 has no sandbox on arm64-darwin; the seccomp filter is a Linux kernel feature");
     exit(1);
     return "";
@@ -12806,7 +12806,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
   s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
-  if (asmcore.sandbox_on()) {
+  if (s.sandbox) {
     s = emit_seccomp_install(s);
   }
   if (asmcore.reset_entry(s)) {
@@ -12851,7 +12851,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
   }
-  if (globl_defs && asmcore.sandbox_on()) {
+  if (globl_defs && s.sandbox) {
     eprint("fern: FERN_SANDBOX=1 needs the whole-program emit; a per-module unit cannot see its siblings' syscalls");
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
@@ -12902,7 +12902,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   }
   if (is_entry) {
     s = emit_ir_runtime_settled(s, false);
-    if (asmcore.sandbox_on()) {
+    if (s.sandbox) {
       s = emit_seccomp_install(s);
     }
   } else {

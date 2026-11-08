@@ -541,7 +541,7 @@ struct Tlv { tag: i32, start: i32, end: i32 }
 // The DER element at `at`: its tag and the span of its content.
 function tlv(b: [u8], at: i32): Tlv {
   if (at + 2 > b.len()) {
-    return Tlv { tag: 0 - 1, start: at, end: at };
+    return Tlv { tag: -1, start: at, end: at };
   }
   let n = b[at + 1] as i32;
   let start = at + 2;
@@ -556,7 +556,7 @@ function tlv(b: [u8], at: i32): Tlv {
     n = len;
   }
   if (start + n > b.len()) {
-    return Tlv { tag: 0 - 1, start: at, end: at };
+    return Tlv { tag: -1, start: at, end: at };
   }
   return Tlv { tag: b[at] as i32, start: start, end: start + n };
 }

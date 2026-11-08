@@ -691,7 +691,7 @@ function comp_dir(): string {
 }
 
 function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean, pie: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
+  let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
   }
@@ -777,7 +777,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
 }
 
 function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
+  let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
   }
@@ -2003,7 +2003,7 @@ function export_widen_arm64(x: string, w: string, t: string): string {
 }
 
 function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module, note: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
+  let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
   }
@@ -5279,7 +5279,7 @@ function lsp_identifier(name: string): boolean {
 struct RefDoc { m: i32, uri: string, text: lsp.Text, stdlib: boolean }
 
 function ref_doc_none(): RefDoc {
-  return RefDoc { m: 0 - 1, uri: "", text: lsp.text_of(""), stdlib: false };
+  return RefDoc { m: -1, uri: "", text: lsp.text_of(""), stdlib: false };
 }
 
 function lsp_ref_doc(s: Server, q: Asked, at: RefDoc, m: i32): RefDoc {
@@ -7229,7 +7229,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged) } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged) } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

@@ -78,7 +78,7 @@ function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
       depth += 1;
     } else if (k == ir.K_BLOCK || k == ir.K_LOOP) {
       if (depth == 0) {
-        return IfSpan { ok: false, if_at: 0, else_at: 0 - 1, end_at: end_at };
+        return IfSpan { ok: false, if_at: 0, else_at: -1, end_at: end_at };
       }
       depth -= 1;
     } else if (k == ir.K_IF) {
@@ -93,7 +93,7 @@ function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
     }
     i -= 1;
   }
-  return IfSpan { ok: false, if_at: 0, else_at: 0 - 1, end_at: end_at };
+  return IfSpan { ok: false, if_at: 0, else_at: -1, end_at: end_at };
 }
 
 struct SlotFind { ok: boolean, slot: i32, at: i32 }
@@ -336,7 +336,7 @@ function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
     }
     i += 1;
   }
-  return IfSpan { ok: false, if_at: 0, else_at: 0 - 1, end_at: 0 - 1 };
+  return IfSpan { ok: false, if_at: 0, else_at: -1, end_at: -1 };
 }
 
 function read_site(ops: ir.Op[], call: i32): Site {

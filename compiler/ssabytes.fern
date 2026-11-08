@@ -97,7 +97,7 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     ops = abort_if(ops);
   }
   if (op.str == element_name()) {
-    let slot = ir.Op { ...op, str: "", decl: 0 - 1, i32_imm: 1 };
+    let slot = ir.Op { ...op, str: "", decl: -1, i32_imm: 1 };
     return joined(ops, [ir.op_load_local(base), ir.op_const_i32(-8), ir.op_raw_addr(), ir.op_load_local(index), slot]);
   }
   if (op.str == check_name()) {
