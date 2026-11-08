@@ -388,9 +388,6 @@ pub function decode(own decoder: range.Decoder, previous: History, rate: i32, du
   if (k.error) {
     return Err(pcm.Header);
   }
-  if (k.tell() > k.storage * 8) {
-    return Err(pcm.Truncated);
-  }
   let control = Control {
     signal: signal, high_offset: high, gains: frame_gains, lsf: lsf,
     first_lpc: first_lpc, lpc: lpc, interpolation: interpolation, pitch: pitch_values,

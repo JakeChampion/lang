@@ -1,0 +1,81 @@
+import "std/hash/crc32";
+import "std/audio/pcm";
+import "std/opus/packet";
+import "std/opus/range";
+import "std/opus/silk/output";
+import "std/test";
+import "opus_silk_output_vectors";
+
+function received_packets(): test.TestOutcome {
+  let rows = opus_silk_output_vectors.PACKETS;
+  let at = 0;
+  let index = 0;
+  while (at < rows.len()) {
+    let rate = rows[at];
+    let channels = rows[at + 1];
+    let steps = rows[at + 2];
+    let state = match (output.decoder(rate, channels)) { Ok(value) => value, Err(_) => { return test.fail("output decoder creation"); } };
+    at += 3;
+    for _ in 0..steps {
+      let size = rows[at];
+      let bytes: u8[] = [];
+      for i in 0..size {
+        bytes = bytes.append(rows[at + 1 + i] as u8);
+      }
+      at += size + 1;
+      let p = match (packet.parse(bytes)) { Ok(value) => value, Err(_) => { return test.fail("libopus packet framing"); } };
+      let internal_rate = if (packet.bandwidth(p.toc) == packet.NARROWBAND) { 8 } else if (packet.bandwidth(p.toc) == packet.MEDIUMBAND) { 12 } else { 16 };
+      let stream = if (packet.stereo(p.toc)) { 2 } else { 1 };
+      let duration = packet.samples_per_frame(p.toc, 48000) / 48;
+      let Ok(prepared) = output.begin_packet(state, internal_rate, stream) else {
+        return test.fail("packet setup");
+      };
+      state = prepared;
+      let samples: f32[] = [];
+      let final_range = 0u32;
+      for frame in p.frames {
+        let (next, last, decoded) = match (output.decode_frame(state, range.decoder(frame), duration)) {
+          Ok(values) => values,
+          Err(pcm.Truncated) => { return test.fail("truncated libopus frame at " + index.to_string()); },
+          Err(pcm.Header) => { return test.fail("invalid libopus header at " + index.to_string()); },
+          Err(pcm.Buffer) => { return test.fail("output buffer at " + index.to_string()); },
+          Err(_) => { return test.fail("received libopus frame rejected at " + index.to_string()); },
+        };
+        state = next;
+        final_range = last.rng;
+        for value in decoded {
+          samples = samples.append(value);
+        }
+      }
+      let count = rows[at];
+      if (samples.len() != count) {
+        return test.fail("libopus output length");
+      }
+      let pcm: u8[] = [];
+      for value in samples {
+        let integer = (value * 32768.0f32) as i32;
+        pcm = pcm.append((integer & 255) as u8).append((integer >> 8 & 255) as u8);
+      }
+      if (crc32.of(pcm) != rows[at + 1] as u32) {
+        return test.fail("libopus PCM checksum packet " + index.to_string());
+      }
+      if (final_range != rows[at + 2] as u32) {
+        return test.fail("libopus final range packet " + index.to_string());
+      }
+      for i in 0..8 {
+        if ((samples[i] * 32768.0f32) as i32 != rows[at + 3 + i] || (samples[count - 8 + i] * 32768.0f32) as i32 != rows[at + 11 + i]) {
+          return test.fail("libopus boundary samples");
+        }
+      }
+      at += 19;
+      index += 1;
+    }
+  }
+  return test.assert_eq(index, 150);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK complete output against libopus");
+  runner = runner.it("150 received packets across rates, bandwidths, and channels", received_packets);
+  return runner.finish();
+}

@@ -123,8 +123,10 @@ function invalid_frames(): test.TestOutcome {
     let result = entropy.decode(range.decoder(packet[0:size]), entropy.history(), 16, 20, true, true, false);
     match (result) {
       Err(_) => {},
-      Ok(_) => {
-        return test.fail("truncated entropy accepted");
+      Ok((_, _, control)) => {
+        if (size == 0 || control.pulses.len() != 320 || control.excitation.len() != 320) {
+          return test.fail("short entropy output bounds");
+        }
       }
     }
   }
@@ -157,7 +159,7 @@ function main(): i32 {
   let runner = test.new("SILK entropy reference frames");
   runner = runner.it("pinned libopus frame parameters", libopus_frame);
   runner = runner.it("all internal rates, durations, and predictor history", reference_frames);
-  runner = runner.it("truncated entropy and invalid parameters", invalid_frames);
+  runner = runner.it("short entropy remains bounded and invalid parameters fail", invalid_frames);
   runner = runner.it("invalid reconstruction buffers, gains, filters, and pitch", invalid_reconstruction);
   return runner.finish();
 }

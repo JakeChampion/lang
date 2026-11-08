@@ -75,8 +75,15 @@ function invalid(): test.TestOutcome {
   for size in 0..4 {
     match (silk.decode_range(silk.decoder(), range.decoder(opus_silk_frame_vectors.LIBOPUS_PACKET[0:size]), 16, 20, 1, 1)) {
       Err(_) => {},
-      Ok(_) => {
-        return test.fail("truncated SILK packet accepted");
+      Ok((_, _, samples)) => {
+        if (size == 0 || samples.len() != 320) {
+          return test.fail("short SILK packet output bounds");
+        }
+        for sample in samples {
+          if (sample < -32768 || sample > 32767) {
+            return test.fail("short SILK packet sample range");
+          }
+        }
       }
     }
   }
@@ -87,6 +94,6 @@ function main(): i32 {
   let runner = test.new("SILK internal-rate packets");
   runner = runner.it("pinned libopus packet and delay", libopus_packet);
   runner = runner.it("stereo, redundancy, frame durations, and rate changes", packets);
-  runner = runner.it("invalid packet parameters and truncation", invalid);
+  runner = runner.it("invalid packet parameters and bounded short payloads", invalid);
   return runner.finish();
 }

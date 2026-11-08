@@ -129,7 +129,11 @@ The SILK implementation is in progress under [#14510](https://github.com/JakeCha
 The entropy and predictor tables come from pinned Pion Opus sources.
 `std/opus/silk` decodes internal-rate packets, including stereo and redundant frames.
 `std/opus/silk/resample` converts one channel to each Opus output rate and retains the reference input delay.
+`std/opus/silk/output` combines internal-rate packets, persistent resamplers, and output channel conversion.
 The public Opus facade does not yet call these modules.
+
+SILK reads implicit zero bits at the end of the entropy stream, as the reference decoder requires.
+Payload truncation is not always detectable. The container or transport must supply the encoded frame boundaries.
 
 The reference tests cover signed arithmetic boundaries, division, saturation, filter stability, and spectral frequency spacing.
 They compare exact integer results with Pion Opus revision `e7b8aa55508cfd30a968dbc695d4272a8e04f2f2`.
@@ -144,6 +148,7 @@ python3 scripts/gen-silk-predict-vectors.py --source-dir /path/to/pion-opus
 python3 scripts/gen-silk-frame-vectors.py --source-dir /path/to/pion-opus
 python3 scripts/gen-silk-packet-vectors.py --source-dir /path/to/pion-opus
 python3 scripts/gen-silk-resample-vectors.py --source-dir /path/to/pion-opus
+python3 scripts/gen-silk-output-vectors.py --source-dir /path/to/pion-opus
 ```
 
 The table and arithmetic generators verify source hashes. The prediction generator reads the pinned Git objects.
@@ -158,6 +163,10 @@ It covers stereo, redundant frames, 10/20/40/60 ms packets, channel conversion, 
 The resampler corpus checks all 15 rate pairs with saturation, impulses, ramps, noise, and continuous delay history.
 Each case compares a checksum of all output samples and explicit boundary samples.
 A separate libopus frame verifies the input delay.
+
+The complete output path matches PCM checksums, boundary samples, and final range for 150 received libopus packets.
+These are prefixes before packet loss from 50 review-corpus cases, with all output rates and mono/stereo channels.
+They do not establish packet loss recovery or mode-transition conformance.
 
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
