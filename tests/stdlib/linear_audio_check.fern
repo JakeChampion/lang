@@ -1,6 +1,7 @@
 import "std/audio/aiff";
 import "std/audio/au";
 import "std/audio/caf/linear" as caf_linear;
+import "std/audio/wav";
 import "std/audio/linear";
 import "std/audio/pcm";
 import "std/audio/wire";
@@ -16,6 +17,7 @@ pub function run(vector: linear_audio_vectors.Vector): Result[void, string] {
     0 => aiff.inspect(input, aiff.default_limits()),
     1 => au.inspect(input, limits),
     2 => caf_linear.inspect(input, caf_linear.default_limits()),
+    3 => wav.inspect_linear(input, limits),
     _ => { return Err("unknown reference container"); },
   };
   let index = match (indexed) {

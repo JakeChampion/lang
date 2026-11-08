@@ -64,6 +64,14 @@ pub function (index: Index) information(): Info {
   return index.info;
 }
 
+pub function (index: Index) data_offset(): i32 {
+  return index.offset;
+}
+
+pub function (index: Index) data_bytes(): i32 {
+  return index.bytes;
+}
+
 function range(input: [u8], index: Index, start: i32, frames: i32, capacity: i32, limits: pcm.Limits): Result[(i32, i32), pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (input.len() != index.input_bytes || start < 0 || start > index.info.frames || frames < 0 || frames > index.info.frames - start) {

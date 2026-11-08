@@ -7,7 +7,7 @@ The Opus packet API reuses the Fern CELT implementation.
 
 | Format | Decode | Encode | Current scope |
 | --- | --- | --- | --- |
-| WAVE | Yes | Yes | Integer PCM, 8/16/24/32 bits, one through eight channels. Extensible PCM uses standard channel masks and matching valid and container depths. |
+| WAVE | Yes | Integer PCM | Integer PCM at 8/16/24/32 bits and IEEE float at 32/64 bits, one through eight channels. Ordinary and extensible subformats. |
 | AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
 | AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
@@ -129,7 +129,7 @@ The generator records the reference version and SHA-256 values for encoded bytes
 python3 scripts/gen-linear-audio-vectors.py --check
 ```
 
-The codecs perform no file I/O. Reader integration, floating-point WAVE, and container encoders remain open under #14687.
+The codecs perform no file I/O. Reader integration and additional container encoders remain open under #14687.
 
 `std/audio/caf/linear` supplies CAF integer PCM, IEEE float, and G.711 playback through the same linear index.
 Integer PCM uses 8, 16, 24, or 32 bits in either byte order.
@@ -142,6 +142,16 @@ The 36 additional CAF references retain every integer sample and normalized floa
 They cover all eight channel counts, both byte orders, float values outside unity, every G.711 code word, and unknown data size.
 The trim case compares the playable slice of independent FFmpeg PCM.
 Seven CAF boundary groups check descriptions, signed table fields, trim, empty presentations, limits, float errors, and every-byte mutations.
+
+`std/audio/wav.inspect_linear` supplies the same range APIs for integer and IEEE float WAVE.
+It accepts ordinary and extensible float subformats at 32 and 64 bits.
+The existing integer header, decode, range, and encoder APIs retain their contracts.
+`wav.decode_float` decodes complete files to normalized `f64` PCM without integer quantization.
+The index also exposes the encoded data offset and byte count.
+
+Thirty additional WAVE references compare every sample and float bit pattern exactly.
+They cover all eight channel counts, integer depths, both float widths, and canonical extensible channel masks.
+Six boundary groups cover float payloads, live aliases, GUIDs, masks, prefixes, range limits, empty files, and mutations.
 
 ## ALAC
 
