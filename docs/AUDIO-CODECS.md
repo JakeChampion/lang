@@ -11,7 +11,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
-| Opus | Partial | Partial | Standard CELT-only packets. The encoder uses 48 kHz fullband mono or stereo. The decoder accepts all CELT bandwidths and Opus output rates. |
+| Opus | Yes | Partial | SILK, hybrid, and CELT packets, mono/stereo, all Opus output rates, loss concealment, and forward error correction. The CELT encoder uses 48 kHz fullband mono or stereo. |
+| Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. Codec headers and playback trimming need a codec-specific layer. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
 
@@ -116,13 +117,43 @@ Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 96
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
 
+## Ogg
+
+`std/audio/ogg` reads bounded pages and packets from partial input.
+Each `Decoder.feed` call returns the next decoder, the consumed byte count, and an optional completed page.
+Call it again with the unconsumed bytes. Call `finish` after the final input.
+An error requires a new decoder.
+
+The reader checks capture bytes, version, flags, checksums, stream sequences, and continuation flags.
+It tracks byte offsets and signed granule positions.
+It supports packets across pages, interleaved logical streams, and sequential chains.
+Its limits bound active streams, individual packets, and aggregate incomplete packet storage.
+The page buffer holds at most 65,307 bytes. A page returns at most 255 completed packets.
+
+The reference corpus uses unmodified libogg revision `be05b13e98b048f0b5a0f5fa8ce514d56db5f822`.
+It contains 56 pages and 48 packets, with 471,404 encoded bytes across five cases.
+The tests compare page fields, every packet checksum, packet lengths, and first-byte and first-page offsets.
+Each case runs with complete input and partial input. Small pages also run one byte at a time.
+Separate tests cover malformed headers, truncation, sequence errors, continuation errors, integer overflow, and storage limits.
+
+Regenerate the corpus and the checksum table with these commands:
+
+```sh
+python3 scripts/gen-ogg-vectors.py
+python3 scripts/gen-ogg-tables.py
+```
+
+The reference generator needs cc and CMake. It verifies the pinned archive hash before the build.
+Normal tests need no libogg library or network access.
+
 ## Opus and Android
 
-`std/opus` provides stateful CELT packet encode and decode.
+`std/opus` provides stateful SILK, hybrid, and CELT packet decode, plus CELT packet encode.
 The packet API handles multi-frame packets and padding.
-It returns `Unsupported` for SILK and hybrid packets.
+The decoder accepts all five Opus output rates and mono or stereo output.
+`decode_lost` conceals missing packets. `decode_fec` recovers a preceding packet when the next packet contains redundancy.
+Decode that next packet normally after the FEC call.
 
-The SILK implementation is in progress under [#14510](https://github.com/JakeChampion/lang/issues/14510).
 `std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
 `std/opus/silk/entropy` decodes frame parameters. `std/opus/silk/core` reconstructs integer PCM for one coded channel.
 
@@ -131,7 +162,7 @@ The entropy and predictor tables come from pinned Pion Opus sources.
 `std/opus/silk/resample` converts one channel to each Opus output rate and retains the reference input delay.
 `std/opus/silk/output` combines internal-rate packets, persistent resamplers, and output channel conversion.
 `silk.decode_lost` and `output.decode_lost` retain fixed-point concealment and comfort noise state across missing packets.
-The public Opus facade does not yet call these modules.
+The public Opus facade combines these modules with CELT and retains state through codec mode transitions.
 
 SILK reads implicit zero bits at the end of the entropy stream, as the reference decoder requires.
 Payload truncation is not always detectable. The container or transport must supply the encoded frame boundaries.
@@ -170,13 +201,19 @@ A separate libopus frame verifies the input delay.
 
 The complete output path matches PCM checksums, boundary samples, and final range for 150 received libopus packets.
 These are prefixes before packet loss from 50 review-corpus cases, with all output rates and mono/stereo channels.
-They do not establish packet loss recovery or mode-transition conformance.
+The complete playback corpus separately checks packet loss recovery and mode transitions.
 
 The loss path matches PCM checksums, boundary samples, and entropy range for all 600 steps of those 50 cases.
 The cases include loss bursts, recovery, comfort noise, output-rate conversion, and internal-rate changes.
 A separate 54-step corpus uses an unmodified C decoder with an observation-only resampler wrapper.
 It covers startup loss, 10/20 ms duration changes, stereo changes, and mediumband excitation history.
 The generator verifies the pinned libopus archive before it builds the reference.
+
+The public decoder corpus compares 212,220 float samples across 290 steps with pinned libopus.
+It checks all output rates, both channel counts, codec modes, transitions, loss, FEC, and final entropy ranges.
+The maximum permitted absolute sample difference is 0.000001.
+Separate kernel traces match complete CELT, MDCT, vector quantization, and band results bit for bit.
+Regenerate these corpora with `scripts/gen-opus-playback-vectors.py` and `scripts/gen-opus-kernel-vectors.py`.
 
 It does not read Ogg containers, apply pre-skip or gain, or trim the final packet.
 Arbitrary `.opus` file playback therefore needs more work.
