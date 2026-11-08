@@ -59,6 +59,8 @@ jobs:
       - uses: ./.github/actions/setup-fern
       - name: Check the player qualification runner
         run: python3 -B -m unittest discover -s tests/android/player -p 'test_*.py'
+      - name: Check the shared emulator helpers
+        run: python3 -B -m unittest discover -s tests/android -p 'test_emulator.py'
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
