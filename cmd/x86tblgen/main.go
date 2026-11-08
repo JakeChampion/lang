@@ -56,7 +56,7 @@ func lookup(b *strings.Builder, fn, param string, rows []string) {
 	for _, r := range rows {
 		fmt.Fprintf(b, "        %s,\n", r)
 	}
-	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
+	b.WriteString("        _ => { return -1; }\n    }\n}\n")
 }
 
 func genNamedTables() string {
