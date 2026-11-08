@@ -47,6 +47,10 @@ Add baseline DC differences, AC run lengths, canonical Huffman output and byte s
 Specify color-plane conversion, edge extension, sample factors and alpha admission before the image writer.
 Preserve exact output-byte limits, dimensions, cancellation and fresh call state.
 
+The internal MCU geometry prerequisite accepts explicit sample factors for a complete frame in one scan.
+It retains component dimensions, raster order, single-component MCU rules and complete dummy blocks.
+The public image writer still needs its own option and alpha contracts.
+
 ## Validation
 
 The internal entropy stage accepts complete natural-order blocks for one component.
