@@ -69,13 +69,13 @@ function def_inst(g: ssa.SFunc, d: Defs, v: i32): Option[ssa.SInst] {
 
 // An i32 constant written as its value, not as literal text.
 function small_constant(f: ssasem.Func, ins: ssa.SInst): boolean {
-  return ins.kind_tag == 1 && ins.str == "" && ins.args.len() == 0 && ins.result >= 0 && ssasem.is_i32(f.values[ins.result]);
+  return ins.kind_tag == ssa.CONST_INT && ins.str == "" && ins.args.len() == 0 && ins.result >= 0 && ssasem.is_i32(f.values[ins.result]);
 }
 
 // An i32 constant, through copies, or a sum, difference or product of two.
 function constant_of(f: ssasem.Func, d: Defs, v: i32): Option[i32] {
   if let Some(ins) = def_inst(f.graph, d, v) {
-    if (ins.kind_tag == 9 && ins.args.len() == 2 && ssasem.is_i32(f.values[v])) {
+    if (ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && ssasem.is_i32(f.values[v])) {
       if let Some(a) = literal_of(f, d, ins.args[0]) {
         if let Some(b) = literal_of(f, d, ins.args[1]) {
           if let Some(x) = arithmetic(ins.str, a as i64, b as i64) {
@@ -95,7 +95,7 @@ function literal_of(f: ssasem.Func, d: Defs, v: i32): Option[i32] {
     if (small_constant(f, ins)) {
       return Some(ins.imm);
     }
-    if (ins.kind_tag == 7 && ins.args.len() == 1) {
+    if (ins.kind_tag == ssa.COPY && ins.args.len() == 1) {
       return literal_of(f, d, ins.args[0]);
     }
   }
@@ -200,7 +200,7 @@ function loop_shape(f: ssasem.Func, d: Defs, hi: i32): Counted {
   }
   let heads = straight_run(f, d, hi, h.id);
   let t = g.blocks[heads[heads.len() - 1]];
-  if (t.term.kind_tag != 3 || t.term.t == t.term.f) {
+  if (t.term.kind_tag != ssa.TERM_BRIF || t.term.t == t.term.f) {
     return no_loop();
   }
   let exit_id = t.term.f;
@@ -314,7 +314,7 @@ struct Step { from: i32, by: i32 }
 function stepped(f: ssasem.Func, d: Defs, shape: Counted, v: i32): Option[Step] {
   if let Some(ins) = def_inst(f.graph, d, v) {
     let inside = util.index_of_i32(shape.heads, d.block[v]) >= 0 || util.index_of_i32(shape.bodies, d.block[v]) >= 0;
-    if (ins.kind_tag == 9 && inside && ins.args.len() == 2 && header_phi(f, d, shape, ins.args[0])) {
+    if (ins.kind_tag == ssa.BINARY && inside && ins.args.len() == 2 && header_phi(f, d, shape, ins.args[0])) {
       if let Some(k) = constant_of(f, d, ins.args[1]) {
         if let Some(by) = signed_step(ins.str, k) {
           return Some(Step { from: ins.args[0], by: by });
@@ -448,7 +448,7 @@ function reads_any(b: ssa.SBlock, inner: boolean[]): boolean {
       return true;
     }
   }
-  return b.term.kind_tag == 3 && is_marked(inner, b.term.cond) || b.term.kind_tag == 1 && is_marked(inner, b.term.value);
+  return b.term.kind_tag == ssa.TERM_BRIF && is_marked(inner, b.term.cond) || b.term.kind_tag == ssa.TERM_RET && is_marked(inner, b.term.value);
 }
 
 // The straight-line copy that replaces one loop. `map` names the current copy
@@ -475,7 +475,7 @@ function unrolled_at(f: ssasem.Func, hi: i32): ssasem.Func {
     }
   }
   cp = header_pass(cp, g, c, incoming, c.trips, true);
-  let head = ssa.SBlock { ...h, insts: cp.insts, term: ssa.STerm { kind_tag: 2, cond: 0, target: c.exit, t: 0, f: 0, value: 0 } };
+  let head = ssa.SBlock { ...h, insts: cp.insts, term: ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: c.exit, t: 0, f: 0, value: 0 } };
   let finals = final_values(cp, h, c.iv);
   let test_id = test_block(g, c).id;
   let blocks: ssa.SBlock[] = [];
@@ -498,7 +498,7 @@ function unrolled_at(f: ssasem.Func, hi: i32): ssasem.Func {
 function final_values(cp: Copy, h: ssa.SBlock, iv: i32): i32[] {
   let finals = util.minus_ones(cp.nvals);
   for ins in h.insts {
-    if (ins.kind_tag == 8 && ins.result != iv) {
+    if (ins.kind_tag == ssa.PHI && ins.result != iv) {
       finals = finals.with(ins.result, mapped(cp, ins.result));
     }
   }
@@ -548,7 +548,7 @@ function known_constants(f: ssasem.Func, d: Defs): Copy {
 function phi_operands(h: ssa.SBlock, which: i32): i32[] {
   let out: i32[] = [];
   for ins in h.insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       out = out.append(ins.args[which]);
     }
   }
@@ -560,14 +560,14 @@ function phi_operands(h: ssa.SBlock, which: i32): i32[] {
 function header_pass(cp: Copy, g: ssa.SFunc, c: Counted, incoming: i32[], k: i32, last: boolean): Copy {
   let pi = 0;
   for ins in g.blocks[c.head].insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       cp = bound_phi(cp, ins, incoming[pi], ins.result == c.iv, c.start + k * c.step, last);
       pi += 1;
     }
   }
   for bi in c.heads {
     for ins in g.blocks[bi].insts {
-      if (ins.kind_tag != 8) {
+      if (ins.kind_tag != ssa.PHI) {
         cp = copied(cp, ins, last);
       }
     }
@@ -601,7 +601,7 @@ function bound_phi(cp: Copy, phi: ssa.SInst, value: i32, iv: boolean, at: i32, l
       next = fresh(cp, phi.result);
       r = next.nvals - 1;
     }
-    return emitted(next, ssa.SInst { kind_tag: 1, result: r, args: [], imm: at, str: "" }, true, at);
+    return emitted(next, ssa.SInst { kind_tag: ssa.CONST_INT, result: r, args: [], imm: at, str: "" }, true, at);
   }
   return Copy { ...cp, map: cp.map.with(phi.result, value) };
 }
@@ -643,10 +643,10 @@ pub function fold(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]
   if (small_constant(f, ins)) {
     return Folded { ins: ins, known: true, value: ins.imm };
   }
-  if (ins.kind_tag == 7 && ins.args.len() == 1 && is_marked(known, ins.args[0])) {
+  if (ins.kind_tag == ssa.COPY && ins.args.len() == 1 && is_marked(known, ins.args[0])) {
     return Folded { ins: ins, known: true, value: konst[ins.args[0]] };
   }
-  if (ins.kind_tag == 10) {
+  if (ins.kind_tag == ssa.UNARY) {
     return folded_negation(f, ins, known, konst);
   }
   return folded_pair(f, ins, known, konst);
@@ -655,14 +655,14 @@ pub function fold(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]
 function folded_negation(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
   if (ins.args.len() == 1 && is_marked(known, ins.args[0]) && ssasem.is_i32(f.values[ins.result])) {
     if let Some(v) = folded_i32(ins.str, 0, konst[ins.args[0]]) {
-      return Folded { ins: ssa.SInst { kind_tag: 1, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
+      return Folded { ins: ssa.SInst { kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
     }
   }
   return unfolded(ins);
 }
 
 function folded_pair(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
-  if (ins.kind_tag != 9 || ins.args.len() != 2 || !is_marked(known, ins.args[0]) || !is_marked(known, ins.args[1]) || !ssasem.is_i32(f.values[ins.args[0]])) {
+  if (ins.kind_tag != ssa.BINARY || ins.args.len() != 2 || !is_marked(known, ins.args[0]) || !is_marked(known, ins.args[1]) || !ssasem.is_i32(f.values[ins.args[0]])) {
     return unfolded(ins);
   }
   return folded_binary(f, ins, konst);
@@ -676,11 +676,11 @@ function folded_binary(f: ssasem.Func, ins: ssa.SInst, konst: i32[]): Folded {
     if (compared(ins.str, a, b)) {
       yes = 1;
     }
-    return Folded { ins: ssa.SInst { kind_tag: 2, result: ins.result, args: [], imm: yes, str: "" }, known: false, value: 0 };
+    return Folded { ins: ssa.SInst { kind_tag: ssa.CONST_BOOL, result: ins.result, args: [], imm: yes, str: "" }, known: false, value: 0 };
   }
   if (ssasem.is_i32(f.values[ins.result])) {
     if let Some(v) = folded_i32(ins.str, konst[ins.args[0]], konst[ins.args[1]]) {
-      return Folded { ins: ssa.SInst { kind_tag: 1, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
+      return Folded { ins: ssa.SInst { kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
     }
   }
   return unfolded(ins);
@@ -745,7 +745,7 @@ function fold_block(f: ssasem.Func, d: Defs, st: Fold, bi: i32): Fold {
     }
     let lane = lane_operand(f, d, ins);
     if (lane >= 0) {
-      insts = insts.with(ii, ssa.SInst { kind_tag: 7, result: ins.result, args: [lane], imm: 0, str: "" });
+      insts = insts.with(ii, ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [lane], imm: 0, str: "" });
       touched = true;
       st = Fold { ...st, folded: st.folded + 1, changed: true };
       continue;
@@ -795,7 +795,7 @@ function forwarded(f: ssasem.Func, d: Defs, v: i32): i32 {
   let steps = 0;
   while (steps < f.graph.nvals) {
     if let Some(ins) = def_inst(f.graph, d, at) {
-      if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.args.len() == 1) {
+      if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && ins.args.len() == 1) {
         at = ins.args[0];
         steps += 1;
         continue;

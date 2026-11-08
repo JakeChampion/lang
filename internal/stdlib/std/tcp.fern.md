@@ -2,7 +2,7 @@
 
 A kernel that answers an HTTP request needs TCP. This module binds the connections of `std/tcp/conn` to a `std/ip` interface: it is the third slice of the network stack of `docs/BARE-METAL-PLAN.md` (#14259). A `Listener` owns one port and up to `CONNECTIONS` connections. It takes the TCP segments the interface receives. It accepts a SYN into a free slot, resets a segment that reaches no connection, and sends what every connection has to send.
 
-The module polls, like the layers below it. `poll` takes one frame from the interface and gives the events of the connections: a handshake completed, bytes received, the peer finished, a connection closed. The caller answers with `write` and `close`, and the next `poll` sends. A connection is a small number, the index of its slot, from `Accepted` until `Closed`.
+`poll` takes the frames the interface has and gives the events of the connections: a handshake completed, bytes received, the peer finished, a connection closed. The caller answers with `write` and `close`, and the next `poll` sends. A connection is a small number, the index of its slot, from `Accepted` until `Closed`.
 
 The clock is the caller's. Every call takes the time in milliseconds, which the retransmission timers of the connections use.
 
@@ -87,26 +87,27 @@ pub enum Event { Accepted(i32), Data(i32, u8[]), Finished(i32), Closed(i32) }
 
 ### `receiving`
 
-`poll` takes one frame from the interface and gives the TCP segments for the port to `deliver`. It then sends what the connections have to send, and gives the events. `deliver` takes one segment: to its connection, to a free slot when it is a SYN, or a reset when neither.
+`poll` takes every frame the interface has and gives the TCP segments for the port to `deliver`. It then sends what the connections have to send, and gives the events. A program that polls calls it in a loop. A program that waits on the IRQ line of the device calls it once for each wake, after it acknowledges the device. `deliver` takes one segment: to its connection, to a free slot when it is a SYN, or a reset when neither.
 
 ```fern
 <<receiving>>=
 pub function (l: Listener) poll(now: i64): (Listener, Event[]) {
   let events: Event[] = [];
-  match (l.iface.poll()) {
-    Some(p) => {
-      match (p) {
-        Tcp(s) => {
-          if (s.port == l.port) {
-            let (delivered, found) = l.deliver(s, now);
-            l = delivered;
-            events = found;
-          }
-        },
-        Udp(d) => {}
-      }
-    },
-    None => {}
+  while (true) {
+    let Some(p) = l.iface.poll() else {
+      break;
+    };
+    let Tcp(s) = p else {
+      continue;
+    };
+    if (s.port != l.port) {
+      continue;
+    }
+    let (delivered, found) = l.deliver(s, now);
+    l = delivered;
+    for e in found {
+      events = events.append(e);
+    }
   }
   let (flushed, more) = l.flush(now);
   for e in more {

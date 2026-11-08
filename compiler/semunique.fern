@@ -90,7 +90,7 @@ function entry_pred(at: i32[], h: ssa.SBlock, hi: i32): i32 {
 }
 
 function jumps_only_to(b: ssa.SBlock, target: i32): boolean {
-  return b.term.kind_tag == 2 && b.term.target == target;
+  return b.term.kind_tag == ssa.TERM_BR && b.term.target == target;
 }
 
 function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
@@ -223,7 +223,7 @@ function reads(b: ssa.SBlock, v: i32, phi: i32): boolean {
       return true;
     }
   }
-  return b.term.kind_tag == 1 && b.term.value == v || b.term.kind_tag == 3 && b.term.cond == v;
+  return b.term.kind_tag == ssa.TERM_RET && b.term.value == v || b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == v;
 }
 
 function has(xs: i32[], v: i32): boolean {

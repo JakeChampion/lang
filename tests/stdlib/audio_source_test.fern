@@ -1,0 +1,102 @@
+import "std/audio/source";
+import "std/test";
+
+function no_read(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function limits(): test.TestOutcome {
+  for invalid in [source.Limits { chunk_size: 0, max_buffer_bytes: 4 }, source.Limits { chunk_size: 1048577, max_buffer_bytes: 4 }, source.Limits { chunk_size: 1, max_buffer_bytes: 0 }] {
+    if let Err(source.ReadSize) = source.create(invalid) {} else {
+      return test.fail("invalid source limit");
+    }
+  }
+  for needed in [-1, 5] {
+    let Ok(buffer) = source.create(source.Limits { chunk_size: 8, max_buffer_bytes: 4 }) else {
+      return test.fail("create");
+    };
+    if let Err(source.ReadSize) = buffer.ensure(needed, no_read) {} else {
+      return test.fail("window budget before source read");
+    }
+  }
+  return test.pass();
+}
+
+function windows(): test.TestOutcome {
+  let Ok(buffer) = source.create(source.Limits { chunk_size: 8, max_buffer_bytes: 4 }) else {
+    return test.fail("create");
+  };
+  let calls = cell_new(0);
+  let read = (count: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return if (count == 4) { Ok([1u8, 2u8, 3u8]) } else if (count == 3) { Ok([4u8, 5u8, 6u8]) } else { Err(IoError.Interrupted) };
+  };
+  let Ok((first, ready)) = buffer.ensure(4, read) else {
+    return test.fail("short read");
+  };
+  if (ready || calls.get() != 1 || first.available() != 3) {
+    return test.fail("one bounded read");
+  }
+  let Ok(next) = first.advance(2) else {
+    return test.fail("advance");
+  };
+  let Ok((full, ready)) = next.ensure(4, read) else {
+    return test.fail("compact");
+  };
+  if (!ready || calls.get() != 2 || full.position != 0 || full.bytes != [3u8, 4u8, 5u8, 6u8]) {
+    return test.fail("preserved bytes or remaining capacity");
+  }
+  let Ok((same, ready)) = full.ensure(4, no_read) else {
+    return test.fail("buffered ensure read source");
+  };
+  let Ok(empty) = same.advance(4) else {
+    return test.fail("consume all");
+  };
+  return test.assert_true(ready && empty.bytes.len() == 0 && empty.position == 0);
+}
+
+function eof(): test.TestOutcome {
+  let Ok(buffer) = source.create(source.default_limits()) else {
+    return test.fail("create");
+  };
+  let Ok((ended, ready)) = buffer.ensure(1, (_: i32): Result[u8[], IoError] => Ok([])) else {
+    return test.fail("EOF");
+  };
+  let Ok((same, ready_again)) = ended.ensure(1, no_read) else {
+    return test.fail("EOF read source");
+  };
+  return test.assert_true(!ready && !ready_again && same.eof && same.available() == 0);
+}
+
+function errors(): test.TestOutcome {
+  let Ok(buffer) = source.create(source.Limits { chunk_size: 2, max_buffer_bytes: 4 }) else {
+    return test.fail("create");
+  };
+  if let Err(source.ReadIo(Interrupted())) = buffer.ensure(1, no_read) {} else {
+    return test.fail("I/O category");
+  }
+  let Ok(buffer) = source.create(source.Limits { chunk_size: 2, max_buffer_bytes: 4 }) else {
+    return test.fail("create");
+  };
+  if let Err(source.ReadSize) = buffer.ensure(1, (_: i32): Result[u8[], IoError] => Ok([1u8, 2u8, 3u8])) {} else {
+    return test.fail("oversized callback output");
+  }
+  for count in [-1, 1] {
+    let Ok(buffer) = source.create(source.Limits { chunk_size: 2, max_buffer_bytes: 4 }) else {
+      return test.fail("create");
+    };
+    if let Err(source.ReadSize) = buffer.advance(count) {} else {
+      return test.fail("invalid consumed count");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Bounded audio sources");
+  runner = runner.it("limits are checked before source reads", limits);
+  runner = runner.it("short reads compact and preserve the unread prefix", windows);
+  runner = runner.it("EOF is permanent and never reads the source again", eof);
+  runner = runner.it("I/O, callback, and advance errors remain distinct", errors);
+  return runner.finish();
+}

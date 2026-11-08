@@ -118,7 +118,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
       }
       row = row.with(util.index_of_i32(values, op.result), true);
     }
-    if (b.term.kind_tag == 1 && !readable(row, values, b.term.value) || b.term.kind_tag == 3 && !readable(row, values, b.term.cond)) {
+    if (b.term.kind_tag == ssa.TERM_RET && !readable(row, values, b.term.value) || b.term.kind_tag == ssa.TERM_BRIF && !readable(row, values, b.term.cond)) {
       return Graph { ...bad, error: "unavailable caller origin terminator" };
     }
     rows = rows.with(chosen, row);
@@ -137,14 +137,14 @@ function block_edges(f: ssa.SFunc, b: ssa.SBlock): string {
     }
     seen = seen.append(p);
   }
-  if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+  if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_BRIF || b.term.kind_tag == ssa.TERM_BRIF && b.term.t == b.term.f) {
     return "invalid caller origin graph";
   }
   let targets: i32[] = [];
-  if (b.term.kind_tag == 2) {
+  if (b.term.kind_tag == ssa.TERM_BR) {
     targets = [b.term.target];
   }
-  if (b.term.kind_tag == 3) {
+  if (b.term.kind_tag == ssa.TERM_BRIF) {
     targets = [b.term.t, b.term.f];
   }
   for t in targets {

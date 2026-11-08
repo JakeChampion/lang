@@ -534,7 +534,7 @@ struct Outgoing { context: Context, targets: i32[], paths: i32[] }
 function outgoing(c: Context, term: ssa.STerm): Outgoing {
   let targets: i32[] = [term.target];
   let paths: i32[] = [c.state.path];
-  if (term.kind_tag == 3) {
+  if (term.kind_tag == ssa.TERM_BRIF) {
     c = available(c, term.cond);
     let condition_slot = util.index_of_i32(c.ids, term.cond);
     if (c.error == "" && c.values[condition_slot].kind != 0) {
@@ -605,13 +605,13 @@ function input_error(f: ssa.SFunc): string {
       }
       seen = seen.append(p);
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+    if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_BRIF || b.term.kind_tag == ssa.TERM_BRIF && b.term.t == b.term.f) {
       return "invalid reuse terminator";
     }
     let targets: i32[] = [];
-    if (b.term.kind_tag == 2) {
+    if (b.term.kind_tag == ssa.TERM_BR) {
       targets = [b.term.target];
-    } else if (b.term.kind_tag == 3) {
+    } else if (b.term.kind_tag == ssa.TERM_BRIF) {
       targets = [b.term.t, b.term.f];
     }
     for t in targets {
@@ -816,7 +816,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
           c = transfer(c, op, shape, drop.name, release.name, fields, calls, composed);
         }
       }
-      if (c.error == "" && b.term.kind_tag == 1) {
+      if (c.error == "" && b.term.kind_tag == ssa.TERM_RET) {
         c = available(c, b.term.value);
         if (c.error == "") {
           c = returned(c, b.term.value, composed);

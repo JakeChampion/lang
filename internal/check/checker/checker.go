@@ -10539,7 +10539,7 @@ func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[s
 		var found *ast.FieldAccess
 		callsOutsideLambdas(value, func(call *ast.Call) bool {
 			cid, ok := call.Callee.(*ast.Ident)
-			if !ok || call.Method != nil {
+			if !ok {
 				return false
 			}
 			flags := ownFuncs[cid.Name]

@@ -1,0 +1,156 @@
+import "std/audio/flac";
+import "std/audio/flac/file" as flacfile;
+import "std/audio/flac/seek";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "audio_vectors";
+
+pub struct Source { bytes: u8[], position: Cell[i64], operations: Cell[i32], reads: Cell[i32] }
+
+pub function mock(bytes: u8[]): Source {
+  return Source { bytes: bytes, position: cell_new(0i64), operations: cell_new(0), reads: cell_new(0) };
+}
+
+pub function seek_source(src: Source): (i64) => Result[i64, IoError] {
+  return (offset: i64): Result[i64, IoError] => {
+    src.operations.set(src.operations.get() + 1);
+    if (offset < 0i64 || offset > src.bytes.len() as i64) {
+      return Err(IoError.Interrupted);
+    }
+    src.position.set(offset);
+    return Ok(offset);
+  };
+}
+
+pub function read_source(src: Source): (i32) => Result[u8[], IoError] {
+  return source_read(src, 17);
+}
+
+pub function source_read(src: Source, maximum: i32): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    src.operations.set(src.operations.get() + 1);
+    src.reads.set(src.reads.get() + 1);
+    let count = if (requested > maximum) { maximum } else { requested };
+    let left = src.bytes.len() as i64 - src.position.get();
+    count = if (count as i64 > left) { left as i32 } else { count };
+    let bytes: u8[] = [];
+    for i in 0..count {
+      bytes = bytes.append(src.bytes[src.position.get() as i32 + i]);
+    }
+    src.position.set(src.position.get() + count as i64);
+    return Ok(bytes);
+  };
+}
+
+pub function no_seek(_: i64): Result[i64, IoError] {
+  return Err(IoError.Interrupted);
+}
+
+pub function no_read(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function index(src: Source, limits: flacfile.Limits): Result[flacfile.Index, string] {
+  let builder = match (flacfile.create(limits)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  while (true) {
+    let before = src.operations.get();
+    let entries = builder.entries.len();
+    let (next, value) = match (builder.step_with(seek_source(src), read_source(src))) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    builder = next;
+    let operations = src.operations.get() - before;
+    if (operations > 1 || builder.entries.len() > entries + 1) {
+      return Err("index cooperative work bound");
+    }
+    match (value) {
+      flacfile.BuildReady(index) => {
+        let (_, done) = match (builder.step_with(no_seek, no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        if let flacfile.BuildFinished = done {
+          return Ok(index);
+        }
+        return Err("index read after completion");
+      },
+      flacfile.BuildFinished => {
+        return Err("missing complete index");
+      },
+      flacfile.BuildPending => {}
+    }
+  }
+}
+
+pub function same(audio: seek.Audio, ref: pcm.Block, position: i64): boolean {
+  if (audio.position != position || audio.format != ref.format || audio.frames < 1 || audio.samples.len() != audio.frames * ref.format.channels) {
+    return false;
+  }
+  let at = position as i32 * ref.format.channels;
+  if (audio.samples.len() > ref.samples.len() - at) {
+    return false;
+  }
+  for i in 0..audio.samples.len() {
+    if (audio.samples[i] != ref.samples[at + i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function tail(own cursor: flacfile.Cursor, src: Source, ref: pcm.Block, position: i64): Result[flacfile.Cursor, string] {
+  let at = position;
+  while (true) {
+    let before = src.operations.get();
+    let (next, value) = match (cursor.step_with(seek_source(src), read_source(src))) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    let operations = src.operations.get() - before;
+    if (operations > 1) {
+      return Err("playback cooperative work bound");
+    }
+    match (value) {
+      flacfile.Output(audio) => {
+        if (operations != 0 || !same(audio, ref, at)) {
+          return Err("selected frame PCM or decode/read separation");
+        }
+        at += audio.frames as i64;
+      },
+      flacfile.Finished => {
+        if (at != cursor.index.frames) {
+          return Err("incomplete selected tail");
+        }
+        let (done, value) = match (cursor.next_with(no_seek, no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        if let None = value {
+          return Ok(done);
+        }
+        return Err("source access after completion");
+      },
+      flacfile.Pending => {}
+    }
+  }
+}
+
+pub function reference(v: audio_vectors.Flac): Result[void, string] {
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return Err("reference bytes");
+  };
+  let ref = match (flac.decode(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  return run(bytes, ref);
+}
+
+pub function run(bytes: u8[], ref: pcm.Block): Result[void, string] {
+  let src = mock(bytes);
+  let idx = index(src, flacfile.default_limits())?;
+  if (idx.frames * (ref.format.channels as i64) != ref.samples.len() as i64 || idx.input_bytes != bytes.len() as i64) {
+    return Err("index track counts");
+  }
+  let positions: i64[] = [idx.frames, 0i64, 1i64, idx.frames - 1i64, idx.frames / 2i64, 0i64];
+  for entry in idx.entries {
+    positions = positions.append(entry.position);
+    if (entry.position > 0i64) {
+      positions = positions.append(entry.position - 1i64);
+    }
+  }
+  let cursor = flacfile.reader(idx);
+  for position in positions {
+    cursor = match (cursor.seek(position)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = tail(cursor, src, ref, position)?;
+  }
+  return Ok(());
+}

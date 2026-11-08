@@ -26,7 +26,7 @@ function mix(x: i32, y: i32): i32 {
 function peek(p: usize): i32 {
   unsafe {
     __fence();
-    return __mmio_load32(p);
+    return __load_i32(p);
   }
 }
 
@@ -42,7 +42,7 @@ function (m: Mixer) mix(y: i32): i32 {
 function main(): i32 {
   unsafe {
     let p: usize = __alloc(8);
-    __mmio_store32(p, 2);
+    __store_i32(p, 2);
     let r = mix(20, peek(p)) + peek(p);
     __free(p, 8);
     let m = Mixer { base: 21 };

@@ -456,20 +456,20 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 		return true
 	})
-	fieldOwner := func(name string) bool {
-		if isParam[name] {
-			return ownParam[name] && declCount[name] == 0
-		}
-		return (freshInitLocal[name] || unpackInitLocal[name]) && declCount[name] == 1 || bound[name] && declCount[name] == 0
-	}
 	aliasInitLocal := map[string]bool{}
 	for name, root := range RenameRoots(body) {
 		if ownParam[root] || freshInitLocal[root] || unpackInitLocal[root] {
 			aliasInitLocal[name] = true
 		}
 	}
-	for name := range ownedAliases(body, ownParam, declCount, order, freshInitLocal, staleAssign, payloadOwned) {
+	for name := range ownedAliases(info, body, ownParam, declCount, order, freshInitLocal, staleAssign, payloadOwned) {
 		aliasInitLocal[name] = true
+	}
+	fieldOwner := func(name string) bool {
+		if isParam[name] {
+			return ownParam[name] && declCount[name] == 0
+		}
+		return (freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]) && declCount[name] == 1 || bound[name] && declCount[name] == 0
 	}
 	admitted := func(name string) bool {
 		return isParam[name] || freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
@@ -1383,31 +1383,44 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 // ownedAliases names the locals declared once, outside a loop, from an own
 // parameter or a payload that a match took, at its last use, and given only
 // owned values after that (stale names the locals given another value).
-func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool, payloadOwned func(string) bool) map[string]bool {
+func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool, payloadOwned func(string) bool) map[string]bool {
 	looped := loopedDecls(body)
 	sole := func(name string) bool {
 		return declCount[name] == 1 && !looped[name] && !stale[name]
 	}
+	out := map[string]bool{}
 	ownedAtLastUse := func(e ast.Expr) bool {
 		src, ok := e.(*ast.Ident)
-		return ok && (ownParam[src.Name] && declCount[src.Name] == 0 || payloadOwned(src.Name)) && order.IsLast(src)
+		return ok && (ownParam[src.Name] && declCount[src.Name] == 0 || payloadOwned(src.Name) || out[src.Name]) && order.IsLast(src)
 	}
 	freshAtLastUse := func(e ast.Expr) bool {
 		src, ok := e.(*ast.Ident)
 		return ok && freshLocal[src.Name] && sole(src.Name) && order.IsLast(src)
 	}
-	out := map[string]bool{}
+	movedPayload := movedPayloads(body, ownParam, declCount, order, func(name string) bool {
+		return ownParam[name] && declCount[name] == 0 || payloadOwned(name) || freshLocal[name] && sole(name) || out[name]
+	})
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
-			if sole(x.Name) && ownedAtLastUse(x.Init) {
+			source := x.Init
+			if base, ok := spreadSource(source); ok {
+				source = base
+			}
+			if !sole(x.Name) {
+				break
+			}
+			if ownedAtLastUse(source) || freshAtLastUse(source) {
+				out[x.Name] = true
+			} else if m, ok := source.(*ast.MatchExpr); ok && ownedMatchValue(info, m, ownedAtLastUse, freshAtLastUse) {
 				out[x.Name] = true
 			}
 		case *ast.Destructure:
 			// The fields that the destructure takes from an own parameter, a
 			// payload a match took, or a fresh local at its last use are
 			// owned, as the source is.
-			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) {
+			src, isID := x.Init.(*ast.Ident)
+			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) && !(isID && movedPayload(src.Name) && order.IsLast(src)) {
 				return true
 			}
 			for i, name := range x.Names {
@@ -1419,6 +1432,53 @@ func ownedAliases(body *ast.Block, ownParam map[string]bool, declCount map[strin
 		return true
 	})
 	return out
+}
+
+// A match that consumes an owned local transfers an unmodified payload into
+// its result. A sibling field of the source does not retain that payload.
+func ownedMatchValue(info *Info, m *ast.MatchExpr, ownedAtLastUse, freshAtLastUse func(ast.Expr) bool) bool {
+	if m.StructMatch != "" || m.IsFloat || len(m.Arms) == 0 || !ownedAtLastUse(m.Tag) && !freshAtLastUse(m.Tag) {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.VariantName == "" && !arm.IsWildcard || len(arm.TupleElems) > 0 || !armYieldsFresh(info, arm) {
+			return false
+		}
+	}
+	return true
+}
+
+// movedPayloads reports the payloads of a match on an owned name at its last
+// use. The match takes the value, so the payload is owned. A name is owned
+// when owned says so, or when it is such a payload.
+func movedPayloads(body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, owned func(string) bool) func(string) bool {
+	tags := map[string][]ast.Expr{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if m, ok := n.(*ast.Match); ok {
+			for _, arm := range m.Arms {
+				for _, b := range arm.Binders() {
+					tags[b] = append(tags[b], m.Tag)
+				}
+			}
+		}
+		return true
+	})
+	var moved func(name string, seen map[string]bool) bool
+	moved = func(name string, seen map[string]bool) bool {
+		if ownParam[name] || declCount[name] != 0 || seen[name] || len(tags[name]) == 0 {
+			return false
+		}
+		seen[name] = true
+		defer delete(seen, name)
+		for _, tag := range tags[name] {
+			src, ok := tag.(*ast.Ident)
+			if !ok || !order.IsLast(src) || !owned(src.Name) && !moved(src.Name, seen) {
+				return false
+			}
+		}
+		return true
+	}
+	return func(name string) bool { return moved(name, map[string]bool{}) }
 }
 
 // heldByEnclosingCall reports whether a call that encloses c reads name

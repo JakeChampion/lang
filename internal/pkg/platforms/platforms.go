@@ -51,9 +51,9 @@ var capabilityProfiles = map[string]capabilityProfile{
 
 	"wasi-proxy": {"log", "now", "config", "random", "fetch", "pollable"},
 
-	"kernel": {"privileged", "arena"},
+	"kernel": {"privileged", "arena", "mmio"},
 
-	"none": nil,
+	"none": {"mmio"},
 }
 
 type environment struct {

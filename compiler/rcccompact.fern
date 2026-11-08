@@ -25,10 +25,10 @@ function renamed(ids: i32[], v: i32): i32 {
 }
 
 function term_value(term: ssa.STerm): i32 {
-  if (term.kind_tag == 1) {
+  if (term.kind_tag == ssa.TERM_RET) {
     return term.value;
   }
-  if (term.kind_tag == 3) {
+  if (term.kind_tag == ssa.TERM_BRIF) {
     return term.cond;
   }
   return -1;
@@ -115,7 +115,7 @@ pub function compact(f: ssa.SFunc): Dense {
       insts = insts.append(ssa.SInst { kind_tag: ins.kind_tag, result: renamed(ids, ins.result), args: args, imm: ins.imm, str: ins.str });
     }
     let term = ssa.STerm { ...b.term, value: renamed_field(ids, b.term.value) };
-    if (term.kind_tag == 3) {
+    if (term.kind_tag == ssa.TERM_BRIF) {
       term = ssa.STerm { kind_tag: term.kind_tag, cond: renamed(ids, term.cond), target: term.target, t: term.t, f: term.f, value: term.value };
     }
     blocks = blocks.append(ssa.SBlock { id: b.id, insts: insts, term: term, preds: b.preds });

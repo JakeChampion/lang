@@ -24,7 +24,20 @@ function probe(a: usize): string {
   raw.store_u32(raw.offset(a, 12 as usize), 0x7eadbeef as u32);
   let second = "u64 after byte store " + (raw.load_u64(a) == 0x112233445566ff88i64 as u64).to_string() + " bytes of u16 " + (raw.load_u8(raw.offset(a, 8 as usize)) == 0xef as u8 && raw.load_u8(raw.offset(a, 9 as usize)) == 0xbe as u8).to_string() + " u64 at 8 " + (raw.load_u64(raw.offset(a, 8 as usize)) == 0x7eadbeef0000beefi64 as u64).to_string();
   raw.store_usize(raw.offset(a, 16 as usize), a);
-  return first + "\n" + second + "\nusize round trip " + (raw.load_usize(raw.offset(a, 16 as usize)) == a).to_string();
+  return first + "\n" + second + "\nusize round trip " + (raw.load_usize(raw.offset(a, 16 as usize)) == a).to_string() + "\nmmio round trip " + mmio(raw.offset(a, 32 as usize)).to_string();
+}
+
+// Stores and loads at every width through the MMIO intrinsics, which the
+// mmio capability grants a kernel. The 32-bit load sign-extends.
+function mmio(p: usize): boolean {
+  unsafe {
+    __mmio_store8(p, 200);
+    __mmio_store16(p + 2 as usize, 40000);
+    __mmio_store32(p + 4 as usize, -5);
+    __mmio_store64(p + 8 as usize, 1234567890123i64);
+    let widths = __mmio_load8(p) == 200 && __mmio_load16(p + 2 as usize) == 40000 && __mmio_load32(p + 4 as usize) == -5 && __mmio_load64(p + 8 as usize) == 1234567890123i64;
+    return widths && __load_u8(p + 2 as usize) == 64 && __load_u8(p + 3 as usize) == 156;
+  }
 }
 `
 
@@ -86,6 +99,7 @@ var rawWantLines = []string{
 	"u32 low true u16 at 4 true u8 at 7 true\n",
 	"u64 after byte store true bytes of u16 true u64 at 8 true\n",
 	"usize round trip true\n",
+	"mmio round trip true\n",
 	"frame back true\n",
 }
 

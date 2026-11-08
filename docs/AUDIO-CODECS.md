@@ -117,6 +117,47 @@ Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 96
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
 
+## Sequential MP3 input
+
+`std/audio/mp3/input` accepts a borrowed `Reader` or a bounded source callback.
+It decodes a track without retaining all encoded bytes or decoded samples.
+The caller closes the reader after success or failure.
+
+`step` performs at most one source read or one frame decode.
+`next` continues until `Begin`, `Samples`, `End`, or completion.
+Sample events identify their playable position after recognized Xing/LAME delay and padding.
+
+Input limits bound the encoded window and individual frames.
+The metadata budget covers skipped ID3 payloads and trailing tags.
+The reader retains at most 192 metadata bytes for trailing ID3v1 and APE validation.
+An APE payload that starts with complete MP3 frames needs a Xing frame count on non-seekable input.
+
+Empty source reads mean permanent EOF. I/O errors retain their own error category.
+Checksums, declared counts, and trailing metadata can fail after earlier PCM events.
+`End` confirms complete validation. Completion performs no further source reads.
+
+The tests use all 16 reference tracks with three input chunk sizes.
+They also cover large metadata, one-byte reads, gapless output, limits, and late I/O failures.
+The independent interpreter smoke uses the pinned scalar minimp3 PCM fixture.
+Native and WASI file tests verify caller ownership of the open reader.
+
+## Sequential FLAC input
+
+`std/audio/flac/input` accepts a borrowed `Reader` or bounded source callback.
+It emits positioned integer PCM without retaining the complete track.
+The default encoded window is 4 MiB. Source reads use at most 16 KiB.
+PCM and encoded frame limits apply to each frame. Metadata has a separate cumulative budget.
+
+Each `step` performs at most one source read or frame decode attempt.
+Short reads increase the decode threshold geometrically.
+The reader checks fixed and variable frame sequences, sample counts, and frame checksums.
+It computes the STREAMINFO MD5 incrementally when the stream supplies one.
+
+`End` confirms complete validation at physical EOF.
+A late MD5 mismatch or source error can follow earlier PCM events.
+The caller retains and closes the source on success or failure.
+Unknown sample counts and large metadata do not require complete-track storage.
+
 ## Indexed MP3 and FLAC playback
 
 `std/audio/mp3/seek` and `std/audio/flac/seek` build bounded frame indexes.
@@ -142,6 +183,39 @@ They cover frame interiors, boundaries, the exact track end, MP3 gapless metadat
 Every compiled sample matches exactly.
 The independent MP3 interpreter smoke uses a float slice from hash-pinned scalar minimp3.
 Regenerate it with `scripts/gen-mp3-seek-smoke.py`.
+
+## Indexed MP3 files
+
+`std/audio/mp3/file` builds a validated index from a bounded seekable source.
+It retains a logical 16-byte entry for each audio frame, plus array and allocator overhead.
+Each entry supplies a 64-bit file offset, an encoded byte count, and a reservoir payload count.
+Index construction decodes one frame at a time without retaining complete input or PCM.
+
+Tail inspection uses at most 160 final bytes and an optional 32-byte APE header.
+It excludes trailing tags before audio decode, even when their payload begins with complete MP3 frames.
+The metadata limit covers leading and trailing tags together.
+
+Playback restores reservoir history and warms two complete frames before output.
+Recognized Xing/LAME delay and padding apply once.
+Each cooperative step performs at most one seek, bounded source read, or frame decode.
+The caller supplies the same immutable file and preserves its position during pending reads.
+
+## Indexed FLAC files
+
+`std/audio/flac/file` builds an index through a bounded seekable source.
+Index construction decodes each frame and verifies the complete-stream MD5 when supplied.
+It retains offsets and sample positions, without retaining encoded input or PCM.
+The logical index uses 24 bytes per frame. Capacity and allocator overhead add to this count.
+
+Playback seeks directly to one indexed frame and reads only its encoded range.
+File offsets and track positions use 64-bit counts.
+Each cooperative step performs at most one seek, source read, or frame decode.
+Index construction also has a cooperative step API.
+
+The caller owns the reader and supplies the same immutable file for all calls.
+Do not reposition it during a pending window read.
+An end-of-track seek completes without source operations.
+The shared `std/audio/file` helper reads bounded windows, including ranges beyond 32-bit offsets.
 
 ## Ogg
 

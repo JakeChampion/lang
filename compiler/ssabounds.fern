@@ -171,7 +171,7 @@ function graph_of(f: ssasem.Func): Graph {
       let p = at[blk.preds[0]];
       if (p >= 0) {
         let term = f.graph.blocks[p].term;
-        if (term.kind_tag == 3 && term.t != term.f) {
+        if (term.kind_tag == ssa.TERM_BRIF && term.t != term.f) {
           g = learn(g, term.cond, term.t == blk.id, 2);
         }
       }
@@ -866,7 +866,7 @@ pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
 function any_pow2_quotient(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == 9 && (ins.str == "/" || ins.str == "%") && ins.args.len() == 2) {
+      if (ins.kind_tag == ssa.BINARY && (ins.str == "/" || ins.str == "%") && ins.args.len() == 2) {
         return true;
       }
     }
@@ -891,9 +891,9 @@ function small_const(g: Graph, v: i32): i32 {
 
 function int_const(t: typeinfo.Type, result: i32, n: i32): ssa.SInst {
   if (ssasem.text_constant(t)) {
-    return ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: util.i32_to_string(n) };
+    return ssa.SInst { kind_tag: ssa.CONST_INT, result: result, args: [], imm: 0, str: util.i32_to_string(n) };
   }
-  return ssa.SInst { kind_tag: 1, result: result, args: [], imm: n, str: "" };
+  return ssa.SInst { kind_tag: ssa.CONST_INT, result: result, args: [], imm: n, str: "" };
 }
 
 function widening(f: ssasem.Func, ins: ssa.SInst): i32 {
@@ -958,22 +958,22 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
           if (plan.lo[p] < 0) {
             c = -1;
           }
-          insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: c, str: "" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: c, str: "" });
           values = values.append(t);
         } else {
           let lo = plan.x[p];
           if (plan.lo[p] != 0) {
-            insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: plan.lo[p], str: "" });
-            insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [lo, v], imm: 0, str: "+" });
+            insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: plan.lo[p], str: "" });
+            insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 1, args: [lo, v], imm: 0, str: "+" });
             values = values.append(t).append(t);
             lo = v + 1;
             v += 2;
           }
-          insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: plan.span[p], str: "" });
-          insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [lo, v], imm: 0, str: "+" });
-          insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 2, args: [], imm: 31, str: "" });
-          insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 3, args: [lo, v + 2], imm: 0, str: ">>" });
-          insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 4, args: [v + 1, v + 3], imm: 0, str: "|" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: plan.span[p], str: "" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 1, args: [lo, v], imm: 0, str: "+" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v + 2, args: [], imm: 31, str: "" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 3, args: [lo, v + 2], imm: 0, str: ">>" });
+          insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 4, args: [v + 1, v + 3], imm: 0, str: "|" });
           values = values.append(t).append(t).append(t).append(t).append(t);
           idx = v + 4;
         }
@@ -1171,11 +1171,11 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       parts = word_parts(defs, ins.args, w, parts);
       let v = values.len();
       let i32_t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
-      insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: w.off, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: w.off, str: "" });
       if (w.x < 0) {
-        insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 1, args: [], imm: w.off, str: "" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v + 1, args: [], imm: w.off, str: "" });
       } else {
-        insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [w.x, v], imm: 0, str: "+" });
+        insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 1, args: [w.x, v], imm: 0, str: "+" });
       }
       values = values.append(i32_t).append(i32_t);
       fused = true;
@@ -1222,14 +1222,14 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
       base = values.len() - 1;
     } else {
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr], imm: 0, str: "__raw_arr_ptr" });
-      insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 1, args: [], imm: 8, str: "" });
-      insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v + 1, args: [], imm: 8, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
       values = values.append(addr_t).append(addr_t).append(addr_t);
       base = v + 2;
     }
     let at = values.len();
     insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: at, args: [first], imm: 0, str: "" });
-    insts = insts.append(ssa.SInst { kind_tag: 9, result: at + 1, args: [base, at], imm: 0, str: "+" });
+    insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: at + 1, args: [base, at], imm: 0, str: "+" });
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: at + 2, args: [at + 1], imm: 0, str: ["__load_i32", "__load_i64"][w.bytes / 8] });
     values = values.append(addr_t).append(addr_t);
     word = at + 2;
@@ -1363,7 +1363,7 @@ struct Word { bytes: i32, arr: i32, x: i32, off: i32, big: boolean }
 struct WordByte { arr: i32, x: i32, off: i32, shift: i32 }
 
 function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word] {
-  if (ins.kind_tag != 9 || ins.str != "|" || ins.result < 0) {
+  if (ins.kind_tag != ssa.BINARY || ins.str != "|" || ins.result < 0) {
     return None;
   }
   let t = f.values[ins.result];

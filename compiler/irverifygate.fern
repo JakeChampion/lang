@@ -228,7 +228,7 @@ function decided(f: ssa.SFunc): ssa.SFunc {
   for b in f.blocks {
     let taken = branch_taken(defs, b.term);
     if (taken >= 0) {
-      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { kind_tag: 2, cond: 0, target: taken, t: 0, f: 0, value: 0 } });
+      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: taken, t: 0, f: 0, value: 0 } });
       changed = true;
     } else {
       blocks = blocks.append(b);

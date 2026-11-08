@@ -1,0 +1,132 @@
+import "std/audio/flac";
+import "std/audio/flac/file" as flacfile;
+import "std/audio/flac/seek";
+import "std/audio/file";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "audio_vectors";
+import "flac_file_check";
+
+function references(): test.TestOutcome {
+  for v in audio_vectors.flacs() {
+    if let Err(message) = flac_file_check.reference(v) {
+      return test.fail(v.name + ": " + message);
+    }
+  }
+  return test.pass();
+}
+
+function malformed_and_limits(): test.TestOutcome {
+  for value in audio_vectors.invalid_flacs() {
+    let Ok(bytes) = hex.decode(value) else {
+      return test.fail("bad fixture");
+    };
+    let src = flac_file_check.mock(bytes);
+    if let Err(_) = flacfile.inspect_with(flac_file_check.seek_source(src), flac_file_check.read_source(src), flacfile.default_limits()) {} else {
+      return test.fail("invalid indexed stream");
+    }
+  }
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return test.fail("reference");
+  };
+  for count in [0, 1] {
+    let src = flac_file_check.mock(bytes);
+    if let Err(source.ReadAudio(pcm.Limit)) = flacfile.inspect_with(flac_file_check.seek_source(src), flac_file_check.read_source(src), flacfile.Limits { ...flacfile.default_limits(), max_entries: count }) {} else {
+      return test.fail("index entry bound");
+    }
+  }
+  return test.pass();
+}
+
+function range_matches(window: file.Window, seeks: i32, reads: i32): boolean {
+  let bytes = window.view();
+  return bytes.len() == 3 && bytes[0] == 1u8 && bytes[1] == 2u8 && bytes[2] == 3u8 && seeks == 1 && reads == 3;
+}
+
+function big_offsets(): test.TestOutcome {
+  let limit = source.Limits { chunk_size: 1, max_buffer_bytes: 3 };
+  let Ok(window) = file.create(8589934592i64, 3, limit) else {
+    return test.fail("64-bit file range");
+  };
+  let position = cell_new(0i64);
+  let seeks = cell_new(0);
+  let reads = cell_new(0);
+  let seek = (offset: i64): Result[i64, IoError] => {
+    seeks.set(seeks.get() + 1);
+    position.set(offset);
+    return Ok(offset);
+  };
+  let read = (count: i32): Result[u8[], IoError] => {
+    reads.set(reads.get() + 1);
+    if (position.get() < 8589934592i64 || count != 1) {
+      return Err(IoError.Interrupted);
+    }
+    let byte = (position.get() - 8589934592i64 + 1i64) as u8;
+    position.set(position.get() + 1i64);
+    return Ok([byte]);
+  };
+  while (!window.ready) {
+    let Ok(next) = window.step_with(seek, read) else {
+      return test.fail("range step");
+    };
+    window = next;
+  }
+  let Ok(done) = window.step_with(flac_file_check.no_seek, flac_file_check.no_read) else {
+    return test.fail("ready window accessed source");
+  };
+  if (!range_matches(done, seeks.get(), reads.get())) {
+    return test.fail("range offset, read bounds, or content");
+  }
+  if let Err(source.ReadSize) = file.create(9223372036854775807i64, 1, limit) {} else {
+    return test.fail("64-bit range overflow");
+  }
+  return test.pass();
+}
+
+function read_failure(own window: file.Window, mode: i32): boolean {
+  let seek = (offset: i64): Result[i64, IoError] => Ok(offset);
+  let Ok(positioned) = window.step_with(seek, flac_file_check.no_read) else {
+    return false;
+  };
+  let read = (_: i32): Result[u8[], IoError] => if (mode == 2) { Err(IoError.Interrupted) } else { Ok([]) };
+  return match (positioned.step_with(seek, read)) {
+    Err(source.ReadIo(Interrupted())) => mode == 2,
+    Err(source.ReadAudio(pcm.Truncated)) => mode == 3,
+    _ => false,
+  };
+}
+
+function range_failure(mode: i32): boolean {
+  let Ok(window) = file.create(8589934592i64, 3, source.Limits { chunk_size: 1, max_buffer_bytes: 3 }) else {
+    return false;
+  };
+  if (mode >= 2) {
+    return read_failure(window, mode);
+  }
+  let seek = (offset: i64): Result[i64, IoError] => if (mode == 0) { Err(IoError.Interrupted) } else { Ok(offset + 1i64) };
+  return match (window.step_with(seek, flac_file_check.no_read)) {
+    Err(source.ReadIo(Interrupted())) => mode == 0,
+    Err(source.ReadSize) => mode == 1,
+    _ => false,
+  };
+}
+
+function range_errors(): test.TestOutcome {
+  for mode in 0..4 {
+    if (!range_failure(mode)) {
+      return test.fail("file seek/read error category");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed FLAC file sources");
+  runner = runner.it("reference tracks with cooperative indexing and repeated seeks", references);
+  runner = runner.it("invalid streams and index entry budgets", malformed_and_limits);
+  runner = runner.it("file windows preserve 64-bit offsets and bound reads", big_offsets);
+  runner = runner.it("file seek failures, wrong positions, read errors, and premature EOF", range_errors);
+  return runner.finish();
+}
