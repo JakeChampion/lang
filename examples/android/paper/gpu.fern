@@ -221,7 +221,7 @@ function evict(own p: Painter, passes: ui.Pass[]): Painter {
     let (key, img) = e;
     if (used.get(key).is_some() || key.starts_with("solid|")) {
       kept = kept.insert(key, img);
-      bytes = bytes + img.t.width as i64 * (img.t.height as i64) * 4i64;
+      bytes += img.t.width as i64 * (img.t.height as i64) * 4i64;
     } else {
       gl.free(img.t);
     }

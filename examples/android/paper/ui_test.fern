@@ -249,7 +249,7 @@ function over_premultiplied(p: i32, under: i32): i32 {
   let out = -16777216;
   for shift in [0, 8, 16] {
     let c = (p >> shift & 255) + ((under >> shift & 255) * (255 - a) + 127) / 255;
-    out = out | c.min(255) << shift;
+    out |= c.min(255) << shift;
   }
   return out;
 }
