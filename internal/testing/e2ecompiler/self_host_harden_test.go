@@ -469,10 +469,10 @@ func TestSelfHostHardenArm64(t *testing.T) {
 	t.Run("refusals", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"-harden", "-target", "arm64-darwin", "-emit", "asm", "-o", filepath.Join(dir, "x.s"), src, stdlib},
-			{"-harden", "-target", "arm64-android", "-o", filepath.Join(dir, "android"), src, stdlib},
+			{"-harden", "-target", "wasm32-wasi", "-o", filepath.Join(dir, "x.wasm"), src, stdlib},
 		} {
 			msg, err := exec.Command(cli, args...).CombinedOutput()
-			if err == nil || !strings.Contains(string(msg), "-harden is only supported for -target arm64-linux and x86-64-linux (got") {
+			if err == nil || !strings.Contains(string(msg), "-harden is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android (got") {
 				t.Errorf("%v: want the -harden refusal, got err=%v\n%s", args, err, msg)
 			}
 		}

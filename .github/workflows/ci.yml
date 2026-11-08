@@ -40,180 +40,33 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Which lanes this change reaches. One API listing, no checkout; ~10 s.
+  # Build one dependency graph and select the tests that consume this change.
   changes:
     runs-on: ubuntu-24.04
-    # Ten seconds of work on a pull request. On a main push it may wait up to
+    # A main push may wait up to
     # CI_CHANGES_WAIT_MINUTES for the merged pull request's in-flight run.
     timeout-minutes: 40
     outputs:
       lanes: ${{ steps.filter.outputs.lanes }}
+      selection: ${{ steps.filter.outputs.selection }}
     steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-ci-planner
+      - id: planner
+        name: Build the dependency planner
+        run: |
+          go build -o "$RUNNER_TEMP/ci-plan" ./cmd/ci-plan
+          echo "lanes=$("$RUNNER_TEMP/ci-plan" -table)" >> "$GITHUB_OUTPUT"
       - id: filter
         uses: actions/github-script@v9
         env:
-          # The lane table: the filter each lane ran under when it triggered
-          # itself. `paths` runs the lane when a changed file matches;
-          # `paths-ignore` runs it when a changed file matches nothing in the
-          # list. GitHub's filter grammar, evaluated in `filter`: `*` does not
-          # cross `/`, `**` does, `?` and `+` quantify the character before
-          # them, `[…]` is a character class, and a `!` entry negates the
-          # entries before it.
-          #
-          # The doc-only exclusion is deliberately narrow: `*.md` is root-level
-          # prose (README, CLAUDE.md), and the literate sources under
-          # examples/literate/*.fern.md — which ARE compiled — still trigger
-          # everything. docs/ holds no .fern.md and no test fixture.
-          #
-          # Every allowlist names this file, as each lane's used to name its
-          # own: an edit here changes what the lane runs under. `internal/**`
-          # rather than an enumeration of packages, because the enumerations
-          # drifted — listing a deleted package and missing 40+ live ones
-          # (#8474, #8627); TestWorkflowPathFiltersCoverEveryDependency holds
-          # each allowlist to the packages its lane is built from.
-          #
-          # test-fernsmith also skips a change that touches only the self-host
-          # compiler (compiler, internal/testing/e2ecompiler): its tests
-          # never read those trees, and each of its jobs deletes both right
-          # after checkout (.github/actions/drop-selfhost-sources) so that
-          # stays true. A lane whose tests do read them keeps the doc-only
-          # block; every internal/testing/e2e lane, and examples through `fern`,
-          # compiles its programs with the self-host and so reads them.
-          #
-          # internal/testing/sourcelint reads this table (TestPRLanesShareOneDocOnlyFilter,
-          # TestWorkflowPathFiltersHaveNoDeadEntries, ...).
-          LANES: |
-            {
-              "test-units":            { "paths-ignore": ["docs/**", "*.md"] },
-              "test-coreutils":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-arm64":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-wasm":         { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md"] },
-              "test-e2e-selfhost":     { "paths-ignore": ["docs/**", "*.md"] },
-              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "compiler/**", "internal/testing/e2ecompiler/**"] },
-              "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md"] },
-              "examples":              { "paths-ignore": ["docs/**", "*.md"] },
-              "perf":                  { "paths-ignore": ["docs/**", "*.md"] },
-              "bootstrap": { "paths": [
-                "bootstrap/**",
-                "compiler/**",
-                "internal/stdlib/**",
-                "coreutils/tr.fern",
-                "coreutils/lib/gnu.fern",
-                "Makefile",
-                ".github/workflows/bootstrap.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] },
-              "macos": { "paths": [
-                "internal/**",
-                "cmd/fern/**",
-                "bootstrap/**",
-                "compiler/**",
-                "examples/**",
-                "tests/**",
-                "bench/**",
-                "coreutils/**",
-                ".github/workflows/macos.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml",
-                ".github/actions/**",
-                "mise.toml",
-                "mise.lock",
-                "go.mod"
-              ] },
-              "docs-build": { "paths": [
-                "cmd/fern/**",
-                "compiler/**",
-                "web/**",
-                "site/**",
-                "docs/coreutils-log/**",
-                "scripts/check-site-examples",
-                "editors/vscode/syntaxes/**",
-                "internal/**",
-                "mise.toml",
-                "mise.lock",
-                "go.mod",
-                ".github/workflows/docs-build.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] },
-              "playground-e2e": { "paths": [
-                "cmd/fern/**",
-                "compiler/**",
-                "web/**",
-                "internal/**",
-                "mise.toml",
-                "mise.lock",
-                "go.mod",
-                ".github/workflows/playground-e2e.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] },
-              "fern-image": { "paths": [
-                "fern-image/**",
-                "compiler/**",
-                "internal/stdlib/**",
-                "bootstrap/**",
-                "scripts/fern-embed-stage",
-                "Makefile",
-                ".github/workflows/fern-image.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] },
-              "showcase": { "paths": [
-                "examples/showcase/**",
-                "examples/fractal/**",
-                "fern-image/packages/**",
-                "site/src/styles/**",
-                "site/src/assets/fonts/**",
-                "cmd/fern/**",
-                "compiler/**",
-                "internal/**",
-                "Makefile",
-                "mise.toml",
-                "mise.lock",
-                "go.mod",
-                ".github/workflows/showcase.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] },
-              "android": { "paths": [
-                "examples/android/**",
-                "tests/android/**",
-                "compiler/**",
-                "internal/stdlib/**",
-                "bootstrap/**",
-                "Makefile",
-                "mise.toml",
-                "mise.lock",
-                ".github/actions/setup-fern/**",
-                "scripts/android-app-syscalls.py",
-                "scripts/test_android_app_syscalls.py",
-                "conformance/**",
-                ".github/workflows/android.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] },
-              "vscode-extension": { "paths": [
-                "editors/vscode/**",
-                ".github/workflows/vscode-extension.yml",
-                ".github/workflows/ci-suite.yml",
-                ".github/workflows/ci-main.yml",
-                ".github/workflows/ci.yml"
-              ] }
-            }
+          LANES: ${{ steps.planner.outputs.lanes }}
+          CI_PLANNER: ${{ runner.temp }}/ci-plan
         with:
           script: |
+            const planRepository = (paths) => JSON.parse(require("node:child_process").execFileSync(
+              process.env.CI_PLANNER, paths === null ? ["-full"] : [],
+              { input: JSON.stringify(paths), encoding: "utf8" }));
             // Without a parsable table the lane names are unknown, so this one
             // failure cannot run everything: it fails loudly, and every filtered
             // lane skips until the table is fixed. laneTable in
@@ -225,7 +78,9 @@ jobs:
               core.setFailed(`the lane table is not valid JSON: ${e.message}`);
               return;
             }
-            const everything = Object.fromEntries(Object.keys(lanes).map((l) => [l, true]));
+            const everything = Object.fromEntries(Object.keys(lanes).map((l) => [l, l !== "test-affected"]));
+            let selection = { version: 1, full: true, lanes: everything };
+            core.setOutput("selection", JSON.stringify(selection));
             const { owner, repo } = context.repo;
             try {
 
@@ -250,54 +105,22 @@ jobs:
                 why = `listing the changed files failed: ${e.message}`;
               }
 
-              // GitHub's filter globs: `*` stops at `/` and `**` does not; `?`
-              // and `+` are quantifiers on the character or class before them,
-              // not wildcards of their own. One with nothing to quantify is
-              // taken literally, which is what GitHub does with it too.
-              const compile = (glob) => {
-                let re = "^";
-                let atom = false;
-                for (let i = 0; i < glob.length; i++) {
-                  const c = glob[i];
-                  if (c === "*") {
-                    if (glob[i + 1] === "*") { re += ".*"; i++; } else re += "[^/]*";
-                    atom = false;
-                  } else if ((c === "?" || c === "+") && atom) {
-                    re += c;
-                    atom = false;
-                  } else if (c === "[" && glob.indexOf("]", i) > i) {
-                    const j = glob.indexOf("]", i);
-                    re += glob.slice(i, j + 1);
-                    i = j;
-                    atom = true;
-                  } else {
-                    re += c.replace(/[.+?^${}()|\\]/g, "\\$&");
-                    atom = true;
-                  }
-                }
-                return new RegExp(re + "$");
-              };
-              // Later entries win, so `!` re-excludes what an earlier entry let in.
-              const selects = (patterns, path) => {
-                let hit = false;
-                for (const p of patterns) {
-                  const neg = p.startsWith("!");
-                  if (compile(neg ? p.slice(1) : p).test(path)) hit = !neg;
-                }
-                return hit;
-              };
               const paths = files === null ? [] : files.flatMap((f) =>
                 f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
-              const runsOn = (filter, ps) => {
-                let ok = true;
-                if (filter.paths) ok = ps.some((p) => selects(filter.paths, p));
-                if (ok && filter["paths-ignore"]) ok = ps.some((p) => !selects(filter["paths-ignore"], p));
-                return ok;
+              const plans = new Map();
+              const planFor = (ps) => {
+                const key = JSON.stringify(ps);
+                if (!plans.has(key)) plans.set(key, planRepository(ps));
+                return plans.get(key);
               };
-              const runs = (filter) => files === null || runsOn(filter, paths);
+              const runsOn = (_filter, ps, lane) => planFor(ps).lanes[lane];
+              selection = planFor(files === null ? null : paths);
+              for (const lane of Object.keys(lanes)) {
+                if (typeof selection.lanes[lane] !== "boolean") throw new Error(`missing planner decision for ${lane}`);
+              }
 
               const out = {};
-              for (const [lane, filter] of Object.entries(lanes)) out[lane] = runs(filter);
+              for (const [lane, filter] of Object.entries(lanes)) out[lane] = selection.lanes[lane];
 
               // A main push whose tree is byte-identical to the head of the
               // pull request it merged re-tests what that PR's run tested, or
@@ -435,8 +258,17 @@ jobs:
                   }
                   core.info(`last passed at ${b.slice(0, 7)} (${at}): ${n} file(s) changed since`);
                   changed[b] = cmp.files.flatMap((f) => f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]);
+                  {
+                    const scope = planFor(changed[b]);
+                    if (base['test-units'] === b) {
+                      for (const key of ['unitPackages', 'unitGroups', 'unitHosts', 'unitRepositoryOnly']) selection[key] = scope[key];
+                    }
+                    if (base.macos === b) {
+                      for (const key of ['macosGroups', 'macosFull', 'darwinTests', 'needsGNU']) selection[key] = scope[key];
+                    }
+                  }
                 }
-                return candidates.filter((l) => base[l] && changed[base[l]] && !runsOn(lanes[l], changed[base[l]]));
+                return candidates.filter((l) => base[l] && changed[base[l]] && !runsOn(lanes[l], changed[base[l]], l));
               };
               let proven = null;
               let unchanged = [];
@@ -459,11 +291,13 @@ jobs:
               }
               for (const l of unchanged) out[l] = false;
               core.setOutput("lanes", JSON.stringify(out));
+              core.setOutput("selection", JSON.stringify(selection));
+              core.info(`Plan: ${selection.reason || "path filters"}`);
 
               const on = Object.keys(out).filter((l) => out[l]);
               const off = Object.keys(out).filter((l) => !out[l]);
               core.info(files === null
-                ? (off.length ? `${on.length} lane(s) run, ${off.length} skipped` : `every lane runs: ${why}`)
+                ? (off.some((lane) => lane !== "test-affected") ? `${on.length} lane(s) run, ${off.length} skipped` : `every lane runs: ${why}`)
                 : `${paths.length} changed path(s): ${on.length} lane(s) run, ${off.length} skipped`);
               if (provenOff.length) {
                 core.info(`${provenOff.length} lane(s) skipped: they passed on #${proven.pr}'s run ${proven.run} at this exact tree` +
@@ -496,13 +330,18 @@ jobs:
               // an API shape change must skip no lane, and a failed job here
               // would skip all of them (a `needs` on a failed job never runs).
               // Only a table that does not parse, above, is loud instead.
+              core.setOutput("selection", JSON.stringify({ version: 1, full: true, lanes: everything }));
               core.setOutput("lanes", JSON.stringify(everything));
               core.warning(`every lane runs: the filter failed (${e.message})`);
             }
 
   lint:
     name: Lint
+    needs: [changes]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/lint.yml
+    with:
+      selection: ${{ needs.changes.outputs.selection || '{"full":true}' }}
     secrets: inherit
 
   suite:
@@ -514,6 +353,7 @@ jobs:
     uses: ./.github/workflows/ci-suite.yml
     with:
       lanes: ${{ needs.changes.outputs.lanes }}
+      selection: ${{ needs.changes.outputs.selection }}
     secrets: inherit
     permissions:
       contents: write

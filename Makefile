@@ -20,6 +20,8 @@ RUNTIME_SRCS := $(wildcard compiler/runtime/*/*.fern)
 bin/fern: bin/fern-selfhost $(wildcard compiler/*.fern) $(RUNTIME_SRCS) $(STDLIB_SRCS) $(wildcard internal/syntax/diag/explanations/*.md)
 	./scripts/fern-embed-stage build/embed
 	./bin/fern-selfhost -target $(HOST_TARGET) -embed build/embed -o $@ compiler/fern_main.fern internal/stdlib
+	@mkdir -p build/ci-compiler-cache
+	cp bin/fern-selfhost bin/fern build/ci-compiler-cache/
 
 # The self-host compiler bin/fern is built with, from the pinned stage0 and no
 # Go toolchain (docs/BOOTSTRAP.md).
@@ -140,6 +142,7 @@ ci-selftest:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
 	node scripts/ci-changes-selftest.mjs
+	node scripts/ci-run-affected-selftest.mjs
 	node scripts/main-red-selftest.mjs
 	node scripts/perf-gate-selftest.mjs
 	node scripts/nightly-findings-selftest.mjs
@@ -148,7 +151,9 @@ ci-selftest:
 	python3 scripts/gen-large-push-wide-machine-reference.py --check
 	python3 scripts/gen-large-free-wide-classes.py --check
 	python3 -m unittest discover -s scripts -p test_large_free_wide_classes.py
+	python3 -B -m unittest discover -s scripts -p test_native_pair_bench.py
 	python3 -m unittest discover -s scripts -p test_large_push_wide_machine.py
+	python3 -m unittest discover -s scripts -p test_gen_mp3_tables.py
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree. Fails only on a

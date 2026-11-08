@@ -1291,19 +1291,20 @@ pub function op_privileged(kind: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-// The privileged kinds are 415 to 417 and 499 to 506.
+// The privileged kinds are 415 to 417 and 499 to 510.
 pub function is_privileged_kind(id: i32): boolean {
-  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_BREAKPOINT;
+  return id >= K_WFI && id <= K_SMC || id >= K_BOOT_INFO && id <= K_IRQ_PENDING;
 }
 
 // hvc and smc take the function and three arguments. wfi, boot_info,
-// sysreg_read, tlb_flush_all and breakpoint take nothing. The others take one
-// operand: the value of sysreg_write, or the address of a cache or TLB op.
+// sysreg_read, tlb_flush_all, breakpoint and the IRQ ops take nothing. The
+// others take one operand: the value of sysreg_write, or the address of a cache
+// or TLB op.
 function privileged_pops(id: i32): i32 {
   if (id == K_HVC || id == K_SMC) {
     return 4;
   }
-  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_TLB_FLUSH_ALL || id == K_BREAKPOINT) {
+  if (id == K_WFI || id == K_BOOT_INFO || id == K_SYSREG_READ || id == K_TLB_FLUSH_ALL || id >= K_BREAKPOINT) {
     return 0;
   }
   return 1;
@@ -1382,6 +1383,22 @@ function maintenance_kind_name(id: i32): string {
   }
   if (id == K_BREAKPOINT) {
     return "breakpoint";
+  }
+  return irq_kind_name(id);
+}
+
+function irq_kind_name(id: i32): string {
+  if (id == K_IRQ_MASK) {
+    return "irq_mask";
+  }
+  if (id == K_IRQ_UNMASK) {
+    return "irq_unmask";
+  }
+  if (id == K_IRQ_WAIT) {
+    return "irq_wait";
+  }
+  if (id == K_IRQ_PENDING) {
+    return "irq_pending";
   }
   return "mmio_store";
 }
@@ -2384,6 +2401,14 @@ pub const K_TLB_FLUSH_ALL: i32 = 505;
 
 pub const K_BREAKPOINT: i32 = 506;
 
+pub const K_IRQ_MASK: i32 = 507;
+
+pub const K_IRQ_UNMASK: i32 = 508;
+
+pub const K_IRQ_WAIT: i32 = 509;
+
+pub const K_IRQ_PENDING: i32 = 510;
+
 pub function kind_count(): i32 {
   return 188;
 }
@@ -2619,6 +2644,22 @@ function kind_id_maintenance(name: string): i32 {
   }
   if (name == "breakpoint") {
     return K_BREAKPOINT;
+  }
+  return kind_id_irq(name);
+}
+
+function kind_id_irq(name: string): i32 {
+  if (name == "irq_mask") {
+    return K_IRQ_MASK;
+  }
+  if (name == "irq_unmask") {
+    return K_IRQ_UNMASK;
+  }
+  if (name == "irq_wait") {
+    return K_IRQ_WAIT;
+  }
+  if (name == "irq_pending") {
+    return K_IRQ_PENDING;
   }
   return 0;
 }

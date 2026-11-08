@@ -61,6 +61,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<30 function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32>>
 
 <<31 function __timer_pollable(ns: i64): i32>>
+
+<<32 kernel wait>>
 ```
 
 ### `module introduction`
@@ -922,11 +924,20 @@ pub function block_on[T](f: Future[T]): Option[T] {
 // Waits for any (fd, interest) pair of `set` to become ready (1 readable, 2
 // writable), or for the clock to reach `until`. Inside a task the task parks
 // and its scheduler's clock decides `until`. Outside one the machine's
-// monotonic clock does, and nothing answers Cancelled.
+// monotonic clock does, and nothing answers Cancelled. On a kernel target the
+// pairs name IRQ lines, and the machine's wait is the idle loop of chunk 32.
 pub function wait_any(set: i32[], until: Option[Instant]): Wake {
   if (in_task()) {
     return __park(set, until);
   }
+  if (target_os() == "kernel") {
+    return __irq_wait_any(set, until);
+  } else {
+    return __host_wait_any(set, until);
+  }
+}
+
+function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
   let timeout_ms = -1;
   if let Some(at) = until {
     timeout_ms = __ms_until(time.instant_nanos(at) - monotonic_ns());
@@ -1072,5 +1083,100 @@ function __drop_pollable(tok: i32): i32 {
     return wasm_pollable_drop(tok);
   }
   return 0;
+}
+```
+
+### `32 kernel wait`
+
+A kernel has no descriptors, so on a kernel target a wait's pairs name IRQ
+lines, with interest 1. The machine's wait is the idle loop that
+`docs/BARE-METAL-PLAN.md` decides. The IRQ region that `__irq_pending()` names
+holds one pending word for each 32 lines. The top half of an interrupt handler
+sets the bit of its line there.
+
+This loop is the only code that clears a bit, and it runs with IRQs masked.
+Thus the two read-modify-write sequences never interleave on one core.
+`__irq_wait()` lets one interrupt through, and it returns with IRQs masked
+again. Thus the loop sees the bit that the top half set. A kernel has no clock,
+so a deadline stops the program.
+
+```fern
+<<32 kernel wait>>=
+// The lines of the IRQ region.
+pub const IRQ_LINES: i32 = 1024;
+
+// A future that is ready with `id` once IRQ line `id` has fired since the last
+// wait on it. The top half of the handler sets the bit of the line in the IRQ
+// region, with __irq_pending() and __mmio_store32. Only a kernel target grants
+// the `privileged` capability that a wait for an interrupt needs, so E066
+// refuses this future on every other target.
+pub function irq(id: i32): Future[i32] {
+  if (target_os() != "kernel") {
+    let region = __irq_pending();
+  }
+  if (id < 0 || id >= IRQ_LINES) {
+    eprint("std/async: IRQ line " + id.to_string() + " is outside the IRQ region of " + IRQ_LINES.to_string() + " lines\n");
+    exit(134);
+  }
+  return Pending(Wait { set: [id, 1], until: None }, (wake: Wake): Future[i32] => __irq_woken(id, wake));
+}
+
+function __irq_woken(id: i32, wake: Wake): Future[i32] {
+  match (wake) {
+    Woke(at) => {
+      return Ready(id);
+    },
+    TimedOut => {
+      return irq(id);
+    },
+    Cancelled => {
+      return Future.Cancelled;
+    }
+  }
+  return Future.Cancelled;
+}
+
+// Woke(i) for the first pair of `set` whose line has fired, with its bit
+// cleared. With no pair the wait ends at once, as the hosted wait does.
+function __irq_wait_any(set: i32[], until: Option[Instant]): Wake {
+  if let Some(at) = until {
+    eprint("std/async: a kernel has no clock, so a wait cannot have a deadline\n");
+    exit(134);
+  }
+  let n = set.len() / 2;
+  if (n <= 0) {
+    return TimedOut;
+  }
+  __irq_mask();
+  while (true) {
+    let hit = __irq_take(set, n);
+    if (hit >= 0) {
+      __irq_unmask();
+      return Woke(hit);
+    }
+    __irq_wait();
+  }
+  return TimedOut;
+}
+
+// The index of the first pair of `set` whose line has fired, or -1. Clears the
+// bit it reports. IRQs are masked here.
+function __irq_take(set: i32[], n: i32): i32 {
+  unsafe {
+    let region = __irq_pending();
+    let i = 0;
+    while (i < n) {
+      let id = set[i * 2];
+      let word = region + (id / 32 * 4) as usize;
+      let bit = 1 << id % 32;
+      let bits = __mmio_load32(word);
+      if ((bits & bit) != 0) {
+        __mmio_store32(word, bits ^ bit);
+        return i;
+      }
+      i += 1;
+    }
+  }
+  return -1;
 }
 ```

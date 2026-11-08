@@ -3854,8 +3854,8 @@ function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean)
   }
   let sub = extracted(pf.f, w.at, from);
   let at = ssa.block_positions(sub);
-  let reach = ssadeps.reachable_blocks(sub);
-  let dom = ssadeps.dominates(sub);
+  let dom = ssadeps.dominates_at(sub, at);
+  let reach = ssadeps.reachable_from_dom(dom);
   let wa = walk_of(sub, w.irops, w.self_abi, w.abis, w.sigs, w.ops, at, dom, reach, pf.hold, base_of(w));
   let lva = live_of(wa, wa.takes);
   if (!lva.ok) {
@@ -4109,8 +4109,8 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   if (resumes(f)) {
     return skipped("resumes from a task frame");
   }
-  let reach = ssadeps.reachable_blocks(f);
-  let dom = ssadeps.dominates(f);
+  let dom = ssadeps.dominates_at(f, at);
+  let reach = ssadeps.reachable_from_dom(dom);
   let w = walk_of(f, irops, self_abi, abis, sigs, ops, at, dom, reach, no_hold(), no_base());
   let lv = live_of(w, w.takes);
   if (!lv.ok) {

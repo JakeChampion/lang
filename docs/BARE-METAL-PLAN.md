@@ -2,8 +2,10 @@
 
 Status: [plan] the scope is decided and the sequencing below is accepted. The
 guest posture is built: the compiler emits a freestanding artifact (#14245, the
-port of epic #6506's codegen half). The rest is not built. Epic #14248 tracks
-the work, with one sub-issue for each piece and each milestone.
+port of epic #6506's codegen half). Milestones 1 and 2 run on qemu in CI: a
+kernel image on each ISA boots, takes timer interrupts and stops the VM. The
+rest is not built. Epic #14248 tracks the work, with one sub-issue for each
+piece and each milestone.
 
 This plan names historical or proposed source paths. The reference documentation identifies current files.
 
@@ -139,22 +141,36 @@ and C1 stays true. SMP needs one IRQ region for each core, or atomics (#14258).
 
 **The idle wait cannot lose a wakeup.** When no task can run, the reactor:
 
-1. masks IRQs
-2. reads the pending words, and clears the bits that it reads
-3. if no bit was set, waits for an interrupt with IRQs still masked, then goes
+1. masks IRQs with `__irq_mask()`
+2. reads the pending word of each line that a task waits on, and clears the bit
+   of the first line that fired
+3. if no bit was set, waits for one interrupt with `__irq_wait()`, then goes
    back to step 2
-4. unmasks IRQs, and makes ready each task whose IRQ bit was set.
+4. unmasks IRQs with `__irq_unmask()`, and wakes the task of that line.
 
-On arm64, a pending IRQ wakes WFI, also when PSTATE masks the IRQ. Thus an IRQ
-between steps 2 and 3 is not lost. On x86-64, `sti; hlt` is the wait, because
-`sti` delays the interrupt until after the next instruction. The effect intrinsics
-must give this wait as one operation, for example `__irq_wait()`: it starts and
-ends with IRQs masked.
+`__irq_wait()` starts and ends with IRQs masked. Between the two, the top
+halves of the interrupts that arrive run. On arm64, it is `wfi`, then `msr
+daifclr, #2`, then `msr daifset, #2`. A pending IRQ wakes WFI also when PSTATE
+masks it, so an IRQ between steps 2 and 3 is not lost. The unmask then lets its
+top half set the bit before the mask returns. On x86-64, it is `sti`, `hlt`,
+`cli`. `sti` delays the interrupt until after the next instruction, so the same
+IRQ wakes `hlt`, and its top half runs before `cli`.
+
+A bit that step 2 does not clear stays set for the next wait. Thus two lines
+that fire together each wake their task.
 
 **The bottom half is a task.** Each IRQ line that a driver uses has one
-`std/async` task, which waits on an IRQ pollable. The reactor is the only code
-that reads the pending words and readies those tasks. Thus the task table, which
-holds RC values, is touched only by the main context.
+`std/async` task. The task waits on `async.irq(line)`, a future that is ready
+after the line fired. On a kernel target, the pairs of a wait name IRQ lines.
+The machine's wait in `wait_any` is the loop above (`std/async`, chunk 32). It
+is the only code that clears a pending bit, and it runs with IRQs masked. Thus
+the read-modify-write of the top half and that of the reactor cannot
+interleave on one core.
+
+The task table holds RC values, and only the main context touches it. A kernel
+has no clock, so a wait with a deadline stops the program with a message. The
+IRQ region is `.bss` of the kernel image, `__fern_irq_pending`. It holds 32
+words for 1024 lines, and `__irq_pending()` names it.
 
 **A trap preempts a user process.** A timer IRQ during a user process enters the
 kernel through a top half. The top half saves the registers of the process in raw
@@ -251,6 +267,13 @@ each one with E066:
     drops the translation before the next instruction.
   - On x86-64, they are `invlpg` and a reload of `%cr3`. The reload keeps the
     global pages.
+
+- `__irq_mask()` and `__irq_unmask()` set and clear the IRQ mask of the core:
+  `msr daifset, #2` and `msr daifclr, #2` on arm64, `cli` and `sti` on x86-64.
+  `__irq_wait()` is the idle wait of "The decision (#14250)". `__irq_pending()`
+  gives the address of the IRQ region. The reactor of `std/async` uses the four,
+  and a top half uses `__irq_pending()`. None needs an `unsafe` block, because
+  the loads and stores on the region do.
 
 They take the host-call path of the MMIO ops, so no pass removes or moves them.
 x86-64 refuses `__hvc` and `__smc`, and writes `hlt` for `__wfi`.
@@ -461,9 +484,12 @@ provider implements, in addition to the descriptor set.
 
 **The decision (#14251).** A board module marks its provider with
 `@provide("log")`, and the program names its board with an import, as a TamaGo
-program does. No flag and no package-config entry is necessary. Only `log` takes a
-provider now. Its signature is `(data: usize, len: i32): void`, so the call changes
-no reference count and does not allocate.
+program does. No flag and no package-config entry is necessary. `log` and `exit`
+take providers now. The `log` signature is `(data: usize, len: i32): void`, so the
+call changes no reference count and does not allocate. The `exit` signature is
+`(code: i32): void`, which is TamaGo's `Exit`. A kernel image calls it from
+`exit` and with the result of `main`, so a VM stops when the program ends. A
+`FERN_LEAKCHECK` build prints its census through the `log` provider first.
 
 On a target that grants the capability, the descriptor wins and the provider is an
 ordinary function. Thus a hosted build keeps its own implementation.
@@ -638,12 +664,23 @@ environment over the FernOS syscalls can come later, as an improvement.
 7. **Started: milestone 1** (#14260). An arm64 image on qemu-virt and an
    x86-64 image on qemu microvm boot, print and stop the VM in CI. `std/fdt`
    reads the device tree, and `std/pvh` reads the PVH start info through
-   `__boot_info`. Firecracker remains. **Started: the effect intrinsics** (#14252), with
-   `__fence`, `__wfi`, `__hvc`, `__smc`, `__boot_info` and the port ops
-   (section 2).
-   Then: `interrupt` and `naked` (#14253) →
+   `__boot_info`. Firecracker remains. **Done: the effect intrinsics** (#14252), with
+   `__fence`, `__wfi`, `__hvc`, `__smc`, `__boot_info`, the system register,
+   cache, TLB and port ops, `__breakpoint` and the IRQ ops (section 2).
+   **Done: `@interrupt`** (#14253) on both kernel targets. `naked` remains.
+8. **Done: milestone 2** (#14261). On qemu-virt, the generic timer ticks through
+   a GICv3 into an `@interrupt("irq")` top half. On qemu microvm, the local APIC
+   timer ticks into an `@interrupt("32")` top half. A `std/async` task takes 20
+   wakes from `async.irq(line)`. Between the wakes it allocates and frees for
+   longer than a period, so ticks land inside RC operations. A `FERN_LEAKCHECK`
+   image prints a balanced census at the end
+   (`internal/testing/e2ecompiler/self_host_kernel_irq_test.go`, the
+   `kernel-boot` job). The boards are the test's own modules. A `std/` board
+   package can follow when a second board needs one. The x86-64 identity map is
+   write-back everywhere. A board on real hardware needs the local APIC and its
+   MMIO pages mapped uncached, before milestone 3. Then: `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-8. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+9. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 

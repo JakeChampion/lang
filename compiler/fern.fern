@@ -777,14 +777,14 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
   return [dw.abbrev, dw.info, dw.line, dw.loc];
 }
 
-function arm64_elf_binary_pie(asm: string, words: u8[]): string {
+function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): string {
   let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
   }
   let pa = p.asm;
-  let tv = elf.elf_text_vaddr_pie() as i64;
-  let dv = elf.elf_data_vaddr_pie(pa.text.len()) as i64;
+  let tv = elf.elf_text_vaddr_pie(harden) as i64;
+  let dv = elf.elf_data_vaddr_pie(pa.text.len(), harden) as i64;
   let gap = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
@@ -798,18 +798,18 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
     eoff = 0;
   }
   unsafe {
-    return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad));
+    return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, harden));
   }
 }
 
 // A kernel image: the position-independent layout at `base`, as an ET_EXEC that
 // the loader enters at _start.
 function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, elf.elf_text_vaddr_pie());
+  let p = arm64_native.arm64_gas_program_words(asm, words, elf.elf_text_vaddr_pie(false));
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-kernel", "assembler", p.unknown);
   }
-  let tv = base + elf.elf_text_vaddr_pie() as i64;
+  let tv = base + elf.elf_text_vaddr_pie(false) as i64;
   let dv = base + elf.elf_data_vaddr_kernel(p.asm.text.len()) as i64;
   let gap = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
@@ -1803,7 +1803,7 @@ pub function freestanding_roots(merged: parser.Module, export_list: string): (pa
 // runtime calls it, as an embedder calls an -export entry.
 pub function provider_entries(m: parser.Module, target: string): parser.Module {
   for pv in parser.marked(m, "provide") {
-    if (!platforms.has_capability(target, pv.arg)) {
+    if (platforms.provider_used(target, pv.arg)) {
       m = parser.Module { ...m, exports: m.exports.append(parser.ExportBinding { func_name: pv.func_name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
     }
   }
@@ -2352,10 +2352,10 @@ function remap_path(remaps: PathRemap[], path: string): string {
 }
 
 function harden_refused(harden: boolean, target: string): boolean {
-  if (!harden || target == "arm64-linux" || target == "x86-64-linux") {
+  if (!harden || target == "arm64-linux" || target == "x86-64-linux" || asmcore.is_android(target)) {
     return false;
   }
-  eprint("fern: -harden is only supported for -target arm64-linux and x86-64-linux (got \"" + target + "\")");
+  eprint("fern: -harden is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android (got \"" + target + "\")");
   return true;
 }
 
@@ -2365,15 +2365,16 @@ function switches_refused(harden: boolean, pie: boolean, target: string, shared:
   return harden_refused(harden, target) || pie_refused(pie, target, shared) || heap_limit < 0i64 || quarantine < 0i64;
 }
 
+// An Android executable is position independent with or without the flag.
 function pie_refused(pie: boolean, target: string, shared: boolean): boolean {
-  if (!pie || (target == "arm64-linux" || target == "x86-64-linux") && !shared) {
+  if (!pie || (target == "arm64-linux" || target == "x86-64-linux" || asmcore.is_android(target)) && !shared) {
     return false;
   }
   let with = "";
   if (shared) {
     with = " with -shared";
   }
-  eprint("fern: -pie is only supported for -target arm64-linux and x86-64-linux executables (got \"" + target + "\"" + with + ")");
+  eprint("fern: -pie is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android executables (got \"" + target + "\"" + with + ")");
   return true;
 }
 
@@ -2581,7 +2582,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-apk-min-sdk", "LEVEL", "with -apk: the lowest Android API level the app runs on (default 24)"),
       cli_flag("-apk-compress", "", "with -apk: deflate the libraries, so the APK is smaller, and Android extracts them at install (default: store them, so Android maps them from the APK)"),
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
-      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
+      cli_flag("-harden", "", "Linux and Android executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-ram", "BASE,SIZE", "arm64-kernel and x86-64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
@@ -7215,15 +7216,16 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (shared) {
-      out_asm = export_entries(merged, entry_names(merged, shared_roots), true, false) + import_entries(merged, true) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), true, harden) + import_entries(merged, true) + out_asm;
     }
+    out_asm += bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged, false);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged, harden);
       if (out_asm.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = arm64_elf_binary_pie(out_asm, words_of(recs));
+      out_asm = arm64_elf_binary_pie(out_asm, words_of(recs), harden);
       if (out_asm.len() == 0) {
         return 2;
       }

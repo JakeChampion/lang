@@ -516,22 +516,21 @@ The sampler installs a signal handler and an interval timer, and writes its
 report through raw syscalls at exit, so it needs a native executable with a
 host. Android, wasm and `-shared` builds refuse it with exit 2.
 
-### Binary hardening (`-harden`) is arm64-linux and x86-64-linux executables only
+### Binary hardening (`-harden`) is the Linux and Android executables and shared objects
 
-On arm64-linux `-harden` adds BTI landing pads, the GNU property note that
-enforces them, and return-address signing. On both Linux targets it adds a
-stack canary in every framed function and a check on every indirect call
-(`docs/security/CFI.md`). On x86-64-linux it also asks the kernel for the
-shadow stack and continues without one where the kernel refuses
-(`docs/security/SHADOW-STACK.md`). Every
-other target, and `-shared`, refuses the flag with exit 2.
-What is left (x86-64 CET, the shared and Android images, the runtime's
-hand-written frames) is listed in `docs/HARDENING.md`.
+On arm64-linux and arm64-android `-harden` adds BTI landing pads, the GNU
+property note that enforces them, and return-address signing. On all four
+targets it adds a stack canary in every framed function and a check on every
+indirect call (`docs/security/CFI.md`). On x86-64 it also asks the kernel
+for the shadow stack and continues without one where the kernel refuses
+(`docs/security/SHADOW-STACK.md`). Every other target refuses the flag with
+exit 2. What is left (x86-64 CET, the runtime's hand-written frames) is
+listed in `docs/HARDENING.md`.
 
 ### Build profiles (`-profile`) follow their flags
 
-`-profile hardened` is `-harden -pie`, so the two Linux native targets accept
-it and every other target refuses it with exit 2. `safe`, `diagnostic` and
+`-profile hardened` is `-harden -pie`, so the Linux and Android native
+targets accept it and every other target refuses it with exit 2. `safe`, `diagnostic` and
 `minimal` build wherever their flags build. The support table and the
 measured cost of each profile per target are in
 `docs/security/PROFILE-COSTS.md`.
@@ -569,15 +568,17 @@ mapped without reserve, so a page costs memory only once a call reaches it,
 with a 1 MiB guard at its foot (`emit_stack_switch` in `asm_ir.fern` and
 `asm_arm64_ir.fern`; the sizes are `asmcore.stack_size` and
 `stack_guard`). A recursion a million calls deep runs. Where the system
-refuses the mapping, the process stays on the stack it started with.
+refuses the mapping, startup stops the program with `fern: could not map
+the stack` and exit 134, as it does for the arena
+(`docs/security/STACK-GUARD.md`).
 
-Running into the guard, or below the starting stack, is reported rather
-than dying of a bare SIGSEGV: `fern: stack overflow` and the backtrace, from
-the faulting instruction, then exit 134 like the other fatal aborts. A
-handler on an alternate stack tells the two apart by the fault address: one
-within 1 MiB of the interrupted stack pointer is the stack running out, and
-any other fault is left to kill the process as it did. On wasm the engine
-owns the stack, and wasmtime reports its exhaustion as a trap.
+Running into the guard is reported rather than dying of a bare SIGSEGV:
+`fern: stack overflow` and the backtrace, from the faulting instruction,
+then exit 134 like the other fatal aborts. A handler on an alternate stack
+tells the two apart by the fault address: one inside the guard is the stack
+running out, and any other fault is left to kill the process as it did. On
+wasm the engine owns the stack, and wasmtime reports its exhaustion as a
+trap.
 
 `fern -interp` gets the same stack, being a native program itself, once the
 `fern` running it was built by a compiler with this runtime.

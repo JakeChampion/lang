@@ -990,17 +990,20 @@ function elf_note_ph(own buf: i32[], note: ElfNote, base: i64, off: i32): i32[] 
   return elf_le64(buf, note.align as i64);
 }
 
-pub function elf_text_vaddr_pie(): i32 {
-  return elf_align16(elf_eh_size() + elf_image_phnum(false, false, true) * elf_ph_size());
+// The text offset of a PIE image without unwind tables, such as the Android
+// executable: the headers, with one more when the image carries the note.
+pub function elf_text_vaddr_pie(note: boolean): i32 {
+  return elf_align16(elf_eh_size() + elf_image_phnum(false, note, true) * elf_ph_size());
 }
 
-pub function elf_data_vaddr_pie(text_len: i32): i32 {
-  return elf_data_vaddr_after(elf_text_vaddr_pie() + text_len, elf_page_align());
+// The data address of that image: the note follows the text.
+pub function elf_data_vaddr_pie(text_len: i32, note: boolean): i32 {
+  return elf_data_vaddr_after(elf_note_end(elf_text_vaddr_pie(note) + text_len, elf_bti(note)), elf_page_align());
 }
 
 // Kernel translation tables need a page-aligned data segment.
 pub function elf_data_vaddr_kernel(text_len: i32): i32 {
-  let end = elf_text_vaddr_pie() + text_len;
+  let end = elf_text_vaddr_pie(false) + text_len;
   return elf_data_vaddr_after((end + 4095) / 4096 * 4096, elf_page_align());
 }
 
@@ -1027,8 +1030,8 @@ pub function elf_image_kernel_pvh(text: u8[], data: i32[], entry_off: i32, bss: 
   return elf_image_executable(text, [], [], data, elf_em_x86_64(), entry_off, bss, base, 2, false, note, true, elf_x86_page_align(), relro, 4096);
 }
 
-pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32): u8[] {
-  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, elf_no_note(), true, elf_page_align(), relro, 16);
+pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32, note: boolean): u8[] {
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, elf_bti(note), true, elf_page_align(), relro, 16);
 }
 
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {

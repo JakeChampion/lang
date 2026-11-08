@@ -1,0 +1,17 @@
+{
+  "parent_instructions": 29754123904,
+  "candidate_instructions": 29732061129,
+  "compiler_sha256": "eb9aa2a97f7d1b83f4e7901bd194e9e2d9240eb14792303834de206424b6fa1f",
+  "binary_sha256": "7f5f2f60c2a584c744b5f87e6e90f21cceb536bd104c7875e3681425a298bd87",
+  "command": [
+    "/workspace/lang/build/compiler-profile/fern-mask-opt",
+    "-target",
+    "x86-64-linux",
+    "-o",
+    "/workspace/lang/build/compiler-profile/valgrind-checker",
+    "/workspace/lang-compiler-baseline/compiler/checker.fern",
+    "/workspace/lang-compiler-baseline/internal/stdlib"
+  ],
+  "proof_cache": "isolated-warm",
+  "certification": "enabled"
+}

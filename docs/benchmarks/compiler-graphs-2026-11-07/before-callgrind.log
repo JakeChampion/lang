@@ -1,0 +1,12 @@
+==18680== Callgrind, a call-graph generating cache profiler
+==18680== Copyright (C) 2002-2017, and GNU GPL'd, by Josef Weidendorfer et al.
+==18680== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==18680== Command: /workspace/lang/build/compiler-profile/fern-before-opt -target x86-64-linux -o /workspace/lang/build/compiler-profile/valgrind-checker /workspace/lang-compiler-baseline/compiler/checker.fern /workspace/lang-compiler-baseline/internal/stdlib
+==18680== Parent PID: 18676
+==18680== 
+==18680== For interactive control, run 'callgrind_control -h'.
+==18680== 
+==18680== Events    : Ir
+==18680== Collected : 29767466522
+==18680== 
+==18680== I   refs:      29,767,466,522

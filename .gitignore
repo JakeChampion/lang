@@ -19,6 +19,11 @@
 
 # cargo's build directory when the hyper bench server is built in place
 scripts/net-bench.d/hyperhello/target/
+# zig's caches when the http.zig and zap bench servers are built in place
+scripts/net-bench.d/httpzhello/.zig-cache/
+scripts/net-bench.d/httpzhello/zig-pkg/
+scripts/net-bench.d/zaphello/.zig-cache/
+scripts/net-bench.d/zaphello/zig-pkg/
 bench/maps/rust/target/
 __pycache__/
 /rootsgen

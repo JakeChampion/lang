@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Measure whole-file MP3 decode against the pinned scalar C reference."""
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import shutil
+import statistics
+import subprocess
+import tempfile
+import time
+
+root = Path(__file__).resolve().parent.parent
+os.chdir(root)
+spec = importlib.util.spec_from_file_location('vectors', root / 'scripts/gen-mp3-vectors.py')
+vectors = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(vectors)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+compiler = shutil.which(compiler) or compiler
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    vectors.reference(tmp)
+    shutil.copy(root / 'scripts/audio-reference/mp3_bench.c', tmp / 'bench.c')
+    for name, flags in [('scalar', []), ('simd', ['-DFERN_MP3_BENCH_SIMD'])]:
+        subprocess.run(['cc', '-O3', '-ffp-contract=off', *flags, '-o', str(tmp / name), str(tmp / 'bench.c')], check=True)
+    subprocess.run([compiler, '-target', target, '-o', str(tmp / 'fern'), 'bench/audio/mp3_decode.fern', 'internal/stdlib'], check=True)
+    data = vectors.encoded(tmp, 48000, 2, values=vectors.signal(48000, 2, 48000))
+    (tmp / 'input.mp3').write_bytes(data)
+    times = {'fern': [], 'scalar': [], 'simd': []}
+    checksums = set()
+    for i in range(5):
+        for name in (['fern', 'scalar', 'simd'] if i % 2 == 0 else ['simd', 'scalar', 'fern']):
+            start = time.perf_counter()
+            result = subprocess.check_output([str(tmp / name), str(tmp / 'input.mp3')], text=True).strip()
+            times[name].append(time.perf_counter() - start)
+            checksums.add(result)
+    assert len(checksums) == 1
+    medians = {name: statistics.median(values) for name, values in times.items()}
+    print(json.dumps({'machine': platform.platform(), 'compiler_sha256': hashlib.sha256(Path(compiler).read_bytes()).hexdigest(),
+                      'reference': vectors.tables.REV, 'input_sha256': hashlib.sha256(data).hexdigest(), 'iterations': 100,
+                      'sample_rate': 48000, 'channels': 2, 'output': 'normalized f32', 'seconds': times,
+                      'median_seconds': medians, 'fern_over_c': {name: medians['fern'] / medians[name] for name in ['scalar', 'simd']}}, indent=2))

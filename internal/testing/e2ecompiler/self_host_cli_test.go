@@ -2403,7 +2403,6 @@ function main(): i32 {
 			{"-target", "x86-64-linux", "-shared", src},
 			{"-target", "x86-64-linux", "-shared", "-export", "nope", "-o", so, src},
 			{"-target", "arm64-darwin", "-harden", "-o", so, src},
-			{"-target", "arm64-android", "-harden", "-o", so, src},
 			{"-target", "wasm32-wasi", "-harden", "-o", so, src},
 			{"-target", "wasm32-wasi-http", "-run", src},
 			{"-target", "wasm32-wasi", "-cover", src},

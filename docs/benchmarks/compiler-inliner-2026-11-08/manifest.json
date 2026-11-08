@@ -1,0 +1,76 @@
+{
+  "date": "2026-11-08",
+  "parent_source_revision": "5f7de5a05b15043a37cb95147ffc80b11b90552a",
+  "candidate_source_revision": "30e43fdafc0767419dada63381f5b9043fcd4559",
+  "fixed_input_revision": "d4636805f696a93b35f8461d8f29cb477d682a1c",
+  "original_before_graph_revision": "d4636805f696a93b35f8461d8f29cb477d682a1c",
+  "original_before_graph_allocations": 52096031,
+  "original_before_graph_instructions": 29767466522,
+  "producer_source_revision": "38f241ca26366e5ef39a898c780bbfbc3a4694f5",
+  "producer_sha256": "4698ff2c2123df02546ba2eb419e402018d59db811e75ce236269fd76786f0a3",
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "debug_variables": false,
+  "certification": "enabled",
+  "allocation_environment": {
+    "FERN_LEAKCHECK": "1",
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "0"
+  },
+  "instruction_environment": {
+    "FERN_RC_CERTIFY": "1",
+    "FERN_RC_CERTIFY_MEMO": "separate primed proof cache for each compiler"
+  },
+  "valgrind_arguments": [
+    "--tool=callgrind",
+    "--cache-sim=no",
+    "--branch-sim=no"
+  ],
+  "warm_cache_build_stamp_entries": 1,
+  "warm_cache_proof_entries": 2335,
+  "tools": {
+    "Go": "1.27.3",
+    "wasmtime": "50.0.1",
+    "Valgrind": "3.24.0"
+  },
+  "parent_binary_identity": {
+    "matching_source_revisions": [
+      "99e807b132ff7100613ef1d0f18d1fa52cf8d2e3",
+      "5f7de5a05b15043a37cb95147ffc80b11b90552a"
+    ],
+    "normal_sha256": "86b48fe44f37935a7bf1322c20efcd10aca395fbbe0603cad67b3b2c7e26cc7b",
+    "counter_sha256": "d5faba6f94a4559b12a727a58511f6a84e414aaedba7ff320b91eb03468af136"
+  },
+  "candidate_compiler_sha256": "1dec40547b18ebfb0b0f094aeb47a555bda3e7d405ca7be2cc419177c0cc8f0b",
+  "candidate_counter_sha256": "d45748b019216d9c533fba00e6020028da509c79d8f0d715725a4c0bdb7981dd",
+  "candidate_source_sha256": {
+    "compiler/seminline.fern": "fdce89ace0324b32d3f4234fb083a151897eea16c29681f3421155426a2190a6",
+    "internal/testing/e2ecompiler/self_host_inline_read_word_test.go": "bd067d25092d3533ebc1466db0f0f8a128b8c188911154be3eda1397f9602f00"
+  },
+  "test_selector": "^TestSelfHostInline(OpaqueReturnSummary|KeepsReadWordOwner)$",
+  "test_targets": [
+    "x86-64-linux",
+    "arm64-linux",
+    "wasm32-wasi"
+  ],
+  "owner_cases_include_sanitizer": true,
+  "interrupted_instruction_run_used": false,
+  "files_sha256": {
+    "allocations.json": "4391e79f1e13bbb4f5cb429a02b9dbb0ba29a59f4a6c90c20c7bc9dcdd312ef7",
+    "allocator-stats.fern.txt": "14da6d60df304a5343d2978528a355b97e16003fcd78a711a8f38cfb3181d2f2",
+    "callgrind.log": "5c3f2ec63e2392bc8dc14f1e9fddd9f5489d3c15b7c149573b924cf08a46e45d",
+    "instructions.json": "fc6fbe1c3429cd94dc48b400187b2a26598f432dbb80b1ff7f081794ad4f3fc8",
+    "mask-only-allocations.json": "cdaf22291b5caa767395adfedbb935e9ad3245c75953591112068795ab821b96",
+    "mask-only-callgrind.log": "3943c184fc246ed61d0e68892ff5de8dda33087fe76e599bb85d7481df7a7fd7",
+    "mask-only-instructions.json": "fbd858c116375dc7c51112ecd826b9abb53cd75b9ffaf8f2f3e636ec3a2ace7a",
+    "mask-only-memory.json": "a0e96bfa37397f52ee80dc5da8eceea91c6c94f715d7621b7f0c6730491230cc",
+    "mask-only.patch": "90b5f4e9afcc06c43a78eeefabe5bad4c5969abdbec9539b8ea34f96f76100c6",
+    "memory.json": "4eeed5c7eb86f3ce369b416917cce77cc1092c4b0cd8fe0e0ad30078c3fee328",
+    "selected.patch": "62510cf45d6527289203784a20d89710ca7d41465fb79daf93d843d6426419b7",
+    "worklist-allocations.json": "78808d33e1e4016cc54de72620348e6c06758aff2c8157aced76b42ec6f3df0b",
+    "worklist-callgrind.log": "7a50e8052aae59b55d04cde7e861b492a2286e8fc28f9c86e87fc83eefe8bc87",
+    "worklist-instructions.json": "0e1524ca489ef3cb4ede89f5a56f7382ff6cb46721d4eb9a56c937500bf627b0",
+    "worklist.patch": "96fb0e6c0fb3054e2f129994e4e1487abbaaee47931bd09a0532a53ce22205af"
+  }
+}

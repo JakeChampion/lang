@@ -1,0 +1,19 @@
+diff --git a/compiler/seminline.fern b/compiler/seminline.fern
+index e7146b3102..fe1a09ec23 100644
+--- a/compiler/seminline.fern
++++ b/compiler/seminline.fern
+@@ -1678,11 +1678,10 @@ function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
+ }
+ 
+ function none_of(n: i32): boolean[] {
+-  let out: boolean[] = [];
+-  for _ in 0..n {
+-    out = out.append(false);
++  if (n <= 0) {
++    return [];
+   }
+-  return out;
++  return __alloc_bool(n);
+ }
+ 
+ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
