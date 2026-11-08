@@ -1,0 +1,376 @@
+{
+  "version": 1,
+  "global": [
+    "Makefile",
+    "go.mod",
+    "go.sum",
+    "mise*.toml",
+    "mise*.lock",
+    ".github/ci/**",
+    ".github/workflows/ci.yml",
+    ".github/workflows/ci-suite.yml",
+    ".github/workflows/ci-main.yml",
+    "internal/ciplan/**",
+    "cmd/ci-plan/**",
+    "scripts/ci-plan*",
+    "scripts/ci-changes-selftest.mjs",
+    "scripts/ci-run-affected.mjs",
+    "scripts/ci-run-affected-selftest.mjs",
+    ".github/actions/setup-ci-planner/**"
+  ],
+  "components": {
+    "compiler": {
+      "inputs": [
+        "compiler/**",
+        "bootstrap/**",
+        "internal/stdlib/**",
+        "internal/syntax/diag/explanations/**"
+      ]
+    },
+    "coreutils": {
+      "inputs": [
+        "coreutils/**"
+      ]
+    },
+    "examples": {
+      "inputs": [
+        "examples/**"
+      ]
+    },
+    "benchmarks": {
+      "inputs": [
+        "bench/**"
+      ]
+    },
+    "fixtures": {
+      "inputs": [
+        "tests/**",
+        "conformance/**",
+        "spec/**"
+      ]
+    },
+    "images": {
+      "inputs": [
+        "fern-image/**"
+      ]
+    },
+    "showcase": {
+      "inputs": [
+        "examples/showcase/**",
+        "examples/fractal/**",
+        "site/src/styles/**",
+        "site/src/assets/fonts/**"
+      ],
+      "depends": []
+    },
+    "website": {
+      "inputs": [
+        "site/**",
+        "docs/coreutils-log/**",
+        "editors/vscode/syntaxes/**"
+      ],
+      "depends": [
+        "playground"
+      ]
+    },
+    "playground": {
+      "inputs": [
+        "web/**"
+      ]
+    },
+    "android": {
+      "inputs": [
+        "examples/android/**",
+        "tests/android/**"
+      ]
+    },
+    "editor": {
+      "inputs": [
+        "editors/vscode/**"
+      ]
+    },
+    "documentation": {
+      "inputs": [
+        "docs/**",
+        "*.md",
+        ".claude/**",
+        ".githooks/**",
+        "SECURITY.md"
+      ]
+    },
+    "generators": {
+      "inputs": [
+        "cmd/*gen/**",
+        "tools/**",
+        "scripts/gen*",
+        "scripts/test_gen*"
+      ]
+    }
+  },
+  "targets": {
+    "test-units": {
+      "go": [
+        "@units"
+      ],
+      "components": [],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-units.yml"
+      ]
+    },
+    "test-coreutils": {
+      "go": [
+        "internal/testing/coreutils"
+      ],
+      "components": [
+        "coreutils"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-coreutils.yml"
+      ]
+    },
+    "test-e2e-x86_64": {
+      "go": [
+        "internal/testing/e2e",
+        "cmd/ci-test-workers"
+      ],
+      "components": [
+        "fixtures"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-e2e-x86_64.yml"
+      ]
+    },
+    "test-e2e-arm64": {
+      "go": [
+        "internal/testing/e2e",
+        "cmd/ci-test-workers"
+      ],
+      "components": [
+        "fixtures"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-e2e-arm64.yml"
+      ]
+    },
+    "test-e2e-wasm": {
+      "go": [
+        "internal/testing/e2e"
+      ],
+      "components": [
+        "fixtures"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-e2e-wasm.yml"
+      ]
+    },
+    "test-e2e-other": {
+      "go": [
+        "internal/testing/e2e",
+        "cmd/ci-test-workers"
+      ],
+      "components": [
+        "fixtures"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-e2e-other.yml"
+      ]
+    },
+    "test-e2e-differential": {
+      "go": [
+        "internal/testing/e2e"
+      ],
+      "components": [],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-e2e-differential.yml"
+      ]
+    },
+    "test-e2e-selfhost": {
+      "go": [
+        "internal/testing/e2ecompiler",
+        "internal/testing/e2e",
+        "cmd/ci-test-workers"
+      ],
+      "components": [
+        "fixtures"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/test-e2e-selfhost.yml"
+      ]
+    },
+    "test-fernsmith": {
+      "go": [
+        "internal/testing/fernsmith/..."
+      ],
+      "components": [],
+      "compiler": false,
+      "inputs": [
+        ".github/workflows/test-fernsmith.yml"
+      ]
+    },
+    "fuzz-diff": {
+      "go": [
+        "internal/testing/e2e",
+        "internal/testing/fernsmith"
+      ],
+      "components": [],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/fuzz-diff.yml"
+      ]
+    },
+    "examples": {
+      "go": [],
+      "components": [],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/examples.yml",
+        ".github/examples-expected-exits.txt"
+      ],
+      "programs": [
+        "examples/*.fern",
+        "examples/tests/*.fern"
+      ]
+    },
+    "perf": {
+      "go": [],
+      "components": [
+        "benchmarks"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/perf.yml"
+      ]
+    },
+    "bootstrap": {
+      "go": [],
+      "components": [],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/bootstrap.yml",
+        "coreutils/tr.fern",
+        "coreutils/lib/gnu.fern"
+      ]
+    },
+    "macos": {
+      "go": [
+        "cmd/fern",
+        "internal/testing/e2e",
+        "internal/testing/e2ecompiler",
+        "internal/testing/coreutils",
+        "internal/oracle/interp",
+        "internal/tables/strerror",
+        "internal/tools/tty"
+      ],
+      "components": [
+        "coreutils",
+        "fixtures"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/macos.yml"
+      ],
+      "programs": [
+        "examples/*.fern",
+        "examples/tests/*.fern"
+      ]
+    },
+    "docs-build": {
+      "go": [
+        "cmd/fern"
+      ],
+      "components": [
+        "website"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/docs-build.yml"
+      ]
+    },
+    "playground-e2e": {
+      "go": [
+        "cmd/fern"
+      ],
+      "components": [
+        "playground"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/playground-e2e.yml"
+      ]
+    },
+    "fern-image": {
+      "go": [],
+      "components": [
+        "images"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/fern-image.yml",
+        "scripts/fern-embed-stage"
+      ]
+    },
+    "showcase": {
+      "go": [],
+      "components": [
+        "showcase"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/showcase.yml",
+        "site/src/styles/**",
+        "site/src/assets/fonts/**"
+      ],
+      "programs": [
+        "examples/showcase/*.fern.md",
+        "examples/fractal/*.fern.md"
+      ]
+    },
+    "android": {
+      "go": [],
+      "components": [
+        "android"
+      ],
+      "compiler": true,
+      "inputs": [
+        ".github/workflows/android.yml"
+      ]
+    },
+    "vscode-extension": {
+      "go": [],
+      "components": [
+        "editor"
+      ],
+      "compiler": false,
+      "inputs": [
+        ".github/workflows/vscode-extension.yml"
+      ]
+    },
+    "test-affected": {
+      "go": [],
+      "components": [],
+      "compiler": false,
+      "inputs": [
+        ".github/workflows/test-affected.yml"
+      ]
+    }
+  },
+  "opaqueTests": {
+    "internal/testing/e2e": {
+      "TestGrammarDerivesSelfHostParsedSources": [
+        "**/*.fern"
+      ]
+    }
+  },
+  "hostIndependentUnits": [
+    "internal/ciplan",
+    "internal/testing/sourcelint"
+  ]
+}

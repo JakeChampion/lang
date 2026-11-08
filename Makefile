@@ -20,6 +20,8 @@ RUNTIME_SRCS := $(wildcard compiler/runtime/*/*.fern)
 bin/fern: bin/fern-selfhost $(wildcard compiler/*.fern) $(RUNTIME_SRCS) $(STDLIB_SRCS) $(wildcard internal/syntax/diag/explanations/*.md)
 	./scripts/fern-embed-stage build/embed
 	./bin/fern-selfhost -target $(HOST_TARGET) -embed build/embed -o $@ compiler/fern_main.fern internal/stdlib
+	@mkdir -p build/ci-compiler-cache
+	cp bin/fern-selfhost bin/fern build/ci-compiler-cache/
 
 # The self-host compiler bin/fern is built with, from the pinned stage0 and no
 # Go toolchain (docs/BOOTSTRAP.md).
@@ -140,6 +142,7 @@ ci-selftest:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
 	node scripts/ci-changes-selftest.mjs
+	node scripts/ci-run-affected-selftest.mjs
 	node scripts/main-red-selftest.mjs
 	node scripts/perf-gate-selftest.mjs
 	node scripts/nightly-findings-selftest.mjs
