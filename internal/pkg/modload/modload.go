@@ -1481,7 +1481,11 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 func (r *rewriter) rewriteFuncBody(fn *ast.FuncDecl) {
 	prev := r.localVars
 	r.localVars = map[string]bool{}
-	r.withScope(paramNames(fn.Params), func() { r.rewriteBlock(fn.Body) })
+	names := paramNames(fn.Params)
+	if fn.Receiver != nil {
+		names = append(names, fn.Receiver.Name)
+	}
+	r.withScope(names, func() { r.rewriteBlock(fn.Body) })
 	r.localVars = prev
 }
 

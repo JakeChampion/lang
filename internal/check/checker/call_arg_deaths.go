@@ -2146,6 +2146,14 @@ func liveAfterBinding(info *Info, bf *bodyFrames, c ast.Node, aid *ast.Ident, or
 	later := false
 	var visit func(ast.Node) bool
 	visit = func(m ast.Node) bool {
+		if branch, ok := m.(*ast.MatchExpr); ok {
+			for _, arm := range branch.Arms {
+				if nodeHolds(arm.Body, aid) {
+					ast.Walk(arm.Body, visit)
+					return false
+				}
+			}
+		}
 		if branch, ok := m.(*ast.IfExpr); ok {
 			if nodeHolds(branch.Then, aid) {
 				ast.Walk(branch.Then, visit)

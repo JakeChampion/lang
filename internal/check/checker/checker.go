@@ -10658,6 +10658,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
+				if x.Method != nil && (id.Name == "__method_Array_set" || id.Name == "__method_Array_push" || id.Name == "__method_Array_truncate") {
+					if array, ok := x.Method.Receiver.(ast.ArrayType); ok && c.holdsNoHandle(array.Elem) {
+						return true
+					}
+				}
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true
 				}
