@@ -170,6 +170,20 @@ The decoder accepts all five Opus output rates and mono or stereo output.
 `decode_lost` conceals missing packets. `decode_fec` recovers a preceding packet when the next packet contains redundancy.
 Decode that next packet normally after the FEC call.
 
+`std/opus/multistream` combines coupled and mono streams with explicit channel maps.
+It supports repeated channels, silent channels, and decoded channels that the output omits.
+Its limits bound input bytes, stream count, and output samples.
+
+The `decode_into`, `decode_lost_into`, and `decode_fec_into` methods consume reusable output buffers.
+Each result declares the valid frame count. Entries after the valid samples retain their values.
+Codec scratch space still allocates within bounded limits.
+
+The multistream corpus compares 972,000 float samples across 605 steps with pinned libopus.
+It covers all five output rates, mono through eight-channel surround, custom maps, loss, FEC, and reset.
+Every final entropy range matches. Sample differences must not exceed 0.000001.
+An independent six-step subset also checks the self-host interpreter.
+Regenerate both corpora with `scripts/gen-opus-multistream-vectors.py`.
+
 `std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
 `std/opus/silk/entropy` decodes frame parameters. `std/opus/silk/core` reconstructs integer PCM for one coded channel.
 
