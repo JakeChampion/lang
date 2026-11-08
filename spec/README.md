@@ -105,6 +105,7 @@ maintained as living documents and a copy would drift:
 
 | Doc | Rule |
 | --- | --- |
+| `docs/EVALUATION-ORDER.md` | Callees, receivers, operands, arguments, aggregates, and selected branches follow a defined order. |
 | `docs/INTEGER-SEMANTICS.md` | Integer operations are portable and never trap. `+ - * <<` wrap at the operand's width on every backend. |
 | `docs/FLOAT-SEMANTICS.md` | IEEE 754 for ordinary arithmetic, with the edges **deliberately** under-specified — the NaN bit-pattern in particular. The model for how to write down a freedom. |
 | `docs/ARRAY-BOUNDS.md` | Bounds-checking semantics. |
@@ -139,9 +140,9 @@ bounds check the section is about.
 ## What is not specified
 
 Everything else — and the gap is larger than what is here. There is no
-statement anywhere of what a Fern program *means*: no evaluation order,
-no reference-counting or ownership semantics beyond the mode-lattice
-sketch, no typing rules, no memory model. `conformance/cases` pins
+complete definition of what a Fern program *means*.
+Evaluation order and the indexed ownership contracts cover part of that definition.
+Formal typing rules and a complete memory model remain unspecified. `conformance/cases` pins
 behaviour by example, which is a description of the current
 implementations' behaviour rather than a definition of the language's.
 

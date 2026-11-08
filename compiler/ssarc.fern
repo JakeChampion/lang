@@ -6015,6 +6015,9 @@ function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowe
   if (ins.str == "udp_sendto_bytes") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_sendto_bytes())) };
   }
+  if (ins.str == "udp_sendmmsg") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_sendmmsg())) };
+  }
   if (ins.str == "udp_recvfrom") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_recvfrom())) };
   }

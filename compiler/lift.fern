@@ -1341,13 +1341,13 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
         return (s, a, false);
       },
       ast.StmtAssign(_) => {
-        return (s, a, false);
+        return ilc_stmt_at(s, a, scope, scope_vars, gfns, structs, mfuncs);
       },
       ast.StmtWhile(_) => {
-        return (s, a, true);
+        return (s, a, false);
       },
       ast.StmtFor(_) => {
-        return (s, a, true);
+        return (s, a, false);
       },
       ast.StmtDefer(_) => {
         return (s, a, true);

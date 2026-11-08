@@ -164,7 +164,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<74 function __h3_pending_max(): i64>>
 
-<<75 function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void>>
+<<75 function __h3_sent(sock: Socket, out: u8[][], path: [u8]): void>>
 
 <<76 struct __H3Req>>
 
@@ -4967,6 +4967,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
   let start = (f: http.HttpFramed, kept: boolean, st: __Stop, host: platform.Host): __Started => __started_again(__serve_start(handler, host, f.request, f.version, kept, Idle, opts, st));
   conns = __Conns { ...conns, quic: __quic_open(drv, l, opts) };
   while (true) {
+    conns = __h3_drain(conns);
     let now = monotonic_ns();
     events = __with_backlog(conns, drv.wait_into(events, time.millis_timeout(__snapshot_timeout(snap, __stop_timeout(stop, opts, now, __least_timeout(__least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)), __quic_timeout(conns.quic, now)))))));
     let ends = async.ready_pairs(events) * 2;
@@ -5169,6 +5170,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
   let events = async.event_room(64);
   conns = __Conns { ...conns, quic: __quic_open(drv, l, opts) };
   while (true) {
+    conns = __h3_drain(conns);
     let now = monotonic_ns();
     events = __with_backlog(conns, drv.wait_into(events, time.millis_timeout(__snapshot_timeout(snap, __stop_timeout(stop, opts, now, __least_timeout(__least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)), __quic_timeout(conns.quic, now)))))));
     let ends = async.ready_pairs(events) * 2;
@@ -5945,7 +5947,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
 // keys[i] is every connection ID connection i answers to, read again when
 // its cids_version moves; paths[i] is the address it is sent to, as the
 // socket reported it, and peers[i] the same address parsed.
-struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, key: u8[], conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
+struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, key: u8[], conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[], out: net.Batch }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5963,7 +5965,7 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: None, port: 0, cfg: quic.config([]), key: [], conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
+  return __Quic { sock: None, port: 0, cfg: quic.config([]), key: [], conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [], out: net.batch() };
 }
 
 function __quic_socket(port: i32): Socket {
@@ -6054,11 +6056,12 @@ function __quic_close[D: async.Driver](drv: D, q: __Quic): void {
   let Some(sock) = q.sock else {
     return;
   };
+  let pending = q.out.send(sock);
   let now: Instant = clock.instant();
   let i: i32 = 0;
   while (i < q.conns.len()) {
     let closing: h3q.Conn = q.conns[i].close(now).transmit(now);
-    __h3_sent(sock, closing.datagrams(), q.peers[i]);
+    __h3_sent(sock, closing.datagrams(), q.paths[i]);
     i = i + 1;
   }
   drv.unwatch(sock.fd);
@@ -6089,14 +6092,14 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
 }
 ```
 
-### `75 function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void`
+### `75 function __h3_sent(sock: Socket, out: u8[][], path: [u8]): void`
 
 ```fern
-<<75 function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void>>=
-function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void {
-  for d in out {
-    let r = net.send_to(sock, d, to);
-  }
+<<75 function __h3_sent(sock: Socket, out: u8[][], path: [u8]): void>>=
+// __h3_sent sends a connection's flight to the address at path, as the
+// socket reported it, in as few system calls as the host offers.
+function __h3_sent(sock: Socket, out: u8[][], path: [u8]): void {
+  let r = net.send_many(sock, path, out);
 }
 ```
 
@@ -6323,13 +6326,13 @@ function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.Socket
   };
   if (h.token.len() == 0) {
     if (__h3_retry_wanted(q, opts)) {
-      __h3_sent(sock, [quic.retry(q.cfg, q.key, random_bytes(quic.retry_entropy(q.cfg)), h, path, clock.now())], from);
+      __h3_sent(sock, [quic.retry(q.cfg, q.key, random_bytes(quic.retry_entropy(q.cfg)), h, path, clock.now())], path);
       return Err("retry sent");
     }
     return Ok(h.dcid);
   }
   let Some(odcid) = quic.validated(q.key, h, path, clock.now()) else {
-    __h3_sent(sock, [quic.invalid_token(h)], from);
+    __h3_sent(sock, [quic.invalid_token(h)], path);
     return Err("token refused");
   };
   return Ok(odcid);
@@ -6623,10 +6626,23 @@ function __h3_flush(own c: __Conns, serial: i32): __Conns {
     return c;
   }
   let built = __Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].transmit(clock.instant())) } };
-  if let Some(sock) = built.quic.sock {
-    __h3_sent(sock, built.quic.conns[i].datagrams(), built.quic.peers[i]);
+  let b = built.quic;
+  let flight = b.conns[i].datagrams();
+  return __Conns { ...built, quic: __Quic { ...b, conns: b.conns.with(i, b.conns[i].sent()), out: b.out.add(b.paths[i], flight) } };
+}
+
+// __h3_drain sends every flight the pass gathered, in one call, before the
+// loop waits again.
+function __h3_drain(own c: __Conns): __Conns {
+  let q = c.quic;
+  if (q.out.len() == 0) {
+    return c;
   }
-  return __Conns { ...built, quic: __Quic { ...built.quic, conns: built.quic.conns.with(i, built.quic.conns[i].sent()) } };
+  let Some(sock) = q.sock else {
+    return c;
+  };
+  let r = q.out.send(sock);
+  return __Conns { ...c, quic: __Quic { ...q, out: r.0 } };
 }
 ```
 

@@ -1,0 +1,24 @@
+function one(n: i32): i32 { return n + 1; }
+function two(n: i32): i32 { return n + 2; }
+
+function main(): i32 {
+  let named = { let f = one; f = two; f(3) };
+  if (named != 5) { return 1; }
+  let lambda = { let f = one; f = (n: i32): i32 => n + 3; f(4) };
+  if (lambda != 7) { return 2; }
+  let offset = 4;
+  let captured = { let f = one; f = (n: i32): i32 => n + offset; f(5) };
+  if (captured != 9) { return 3; }
+  let conditional = { let f = two; if (offset == 4) { f = one; } else { f = two; } f(6) };
+  if (conditional != 7) { return 4; }
+  let matched = { let f = one; match (offset) { 4 => { f = two; }, _ => { f = one; } } f(7) };
+  if (matched != 9) { return 5; }
+  let looped = { let f = two; let i = 0; while (i < 2) { f = one; i += 1; } f(8) };
+  if (looped != 9) { return 6; }
+  let walked = { let f = one; for n in [1, 2] { f = two; } f(9) };
+  if (walked != 11) { return 7; }
+  let g = two;
+  let copied = { let f = one; f = g; f(10) };
+  if (copied != 12) { return 8; }
+  return 0;
+}

@@ -29,6 +29,7 @@ which ones.
 | `ARRAY-ALGEBRA.md` | [policy] | Normative answers to the seven array-algebra semantics questions of #9729 (pairing truncation, float reduction order, shape mismatch, views) that fusion must obey. |
 | `ARRAY-BOUNDS.md` | [policy] | Bounds-checking semantics: an out-of-range index or `.with` write aborts the program on every backend. |
 | `CLOSURE-CAPTURE.md` | [policy] | Closures capture enclosing variables by reference through a shared cell, with E049 governing write-back. |
+| `EVALUATION-ORDER.md` | [policy] | Observable order for calls, operands, aggregates, named arguments, and selected branches. |
 | `FLOAT-SEMANTICS.md` | [policy] | IEEE 754 for ordinary arithmetic, with NaN bit patterns, the sign of zero and denormals left unspecified across backends. |
 | `INITIALIZATION.md` | [policy] | Required initializers, lexical scope, and checked optional payload access. |
 | `INTEGER-SEMANTICS.md` | [policy] | Wrapping, never-trapping integer operations with identical results on every backend, and the rules for usize. |
@@ -175,7 +176,7 @@ which ones.
 | `FIP-APPLICATION-GUIDE.md` | [reference] | Building bounded applications with FIP and FBIP: what own/fip/fbip guarantee, capacity design, and measuring. |
 | `RC-DESIGN.md` | [reference] | How the self-host compiler decides and emits reference counting: semantic graph, ownership inference, unit plan, physical lowering, certifier, runtime box contract. |
 | `SEMANTIC-GENERICS.md` | [reference] | The typed lowering builds a body per generic instantiation, so reference counting sees concrete types. |
-| `MODE-LATTICE.md` | [research] | Framing own, fip, view types and `@must_consume` as one two-axis mode lattice (#5365). |
+| `MODE-LATTICE.md` | [reference] | Current ownership, view, allocation, and consumption contracts, followed by the historical lattice study. |
 | `ARENA-DECISION.md` | [record] | The 2026-06 decision to remove the arena block and `arena_save`/`arena_restore`; per-request memory is reclaimed by reference counting only. |
 | `CYCLE-COLLECTION-ANALYSIS.md` | [record] | Whether RC needs a cycle collector; its recommendation was adopted and reference cycles are not constructible. |
 | `FIP-BROKER.md` | [record] | The bounded message-broker experiment (#9589): recycled slots allocate nothing in unique state. |
