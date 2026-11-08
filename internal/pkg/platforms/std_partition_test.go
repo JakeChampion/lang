@@ -31,6 +31,7 @@ var stdModuleReach = map[string]string{
 	"std/dma":           "privileged",
 	"std/dns":           "fs,host,log,mmio,now,pollable,privileged,random,reactor,tcp,unix,uring",
 	"std/dotenv":        "",
+	"std/elf":           "",
 	"std/envflag":       "env",
 	"std/errno":         "",
 	"std/fdt":           "",
