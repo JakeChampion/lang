@@ -14,7 +14,7 @@ case "$(uname -sm)" in
   *) echo 'unsupported host' >&2; exit 1 ;;
 esac
 mkdir -p build/audio
-for suite in audio opus mp3 opus_silk_math opus_silk_predict opus_silk_entropy; do
+for suite in audio opus mp3 opus_silk_math opus_silk_predict opus_silk_entropy opus_silk opus_silk_resample; do
   source="tests/stdlib/${suite}_test.fern"
   "$fern_audio_compiler" -check "$source" internal/stdlib
   "$fern_audio_compiler" -target "$target" -sanitize -o "build/audio/$suite" "$source" internal/stdlib
