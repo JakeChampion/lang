@@ -1,0 +1,23 @@
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+import "opus_input_check";
+
+function reference(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference data");
+  };
+  match (opus_input_check.run(ref, 1, false)) {
+    Err(message) => {
+      return test.fail(message);
+    },
+    Ok(_) => {}
+  }
+  return match (opus_input_check.run_next(ref)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Opus byte-source interpreter smoke");
+  runner = runner.it("independent PCM through one-byte reads and next", reference);
+  return runner.finish();
+}
