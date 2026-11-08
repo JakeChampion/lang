@@ -14,12 +14,17 @@ The evidence does not yet identify the cause.
 The test app now distinguishes a surface failure from a source failure.
 The emulator check records unfiltered logcat, activity permissions, and the final media player state before force-stop.
 A failed diagnostic command does not replace the original playback assertion.
+The final force-stop also preserves an active playback failure.
+If playback succeeds, a failed force-stop still fails the check.
+
 The log includes the last 160 platform lines when playback fails.
 All playback, PCM, timeline, and screenshot assertions remain in place.
 
 Python compilation passes.
+Host regression controls reproduce and prevent the loss of the playback failure during cleanup.
 The test app compiles as an Android ARM64 shared library.
 The event controls pass native sanitizers and WASI.
 The host JNI lifecycle and exception controls pass.
+
 This session has no Android emulator, so CI must supply the next device evidence.
 This change collects evidence and does not claim to repair content playback.

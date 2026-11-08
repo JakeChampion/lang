@@ -143,6 +143,7 @@ def run_playback(uri, error_uri, out):
         (out / "meminfo.txt").write_text(adb("shell", "dumpsys", "meminfo", PACKAGE))
         (out / "device.txt").write_text(adb("shell", "getprop", "ro.build.fingerprint"))
     finally:
+        playback_failed = sys.exc_info()[0] is not None
         (out / "logcat.txt").write_text(log)
         # Keep platform errors and URI grants before force-stop removes them.
         for name, command in (
@@ -157,7 +158,12 @@ def run_playback(uri, error_uri, out):
                     print("\n".join(details.splitlines()[-160:]), flush=True)
             except (OSError, subprocess.SubprocessError) as error:
                 print("Player diagnostic failed: " + name + ": " + str(error), flush=True)
-        adb("shell", "am", "force-stop", PACKAGE)
+        try:
+            adb("shell", "am", "force-stop", PACKAGE)
+        except (OSError, subprocess.SubprocessError) as error:
+            if not playback_failed:
+                raise
+            print("Player cleanup failed: " + str(error), flush=True)
 
 
 def insert_media():
