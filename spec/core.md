@@ -532,6 +532,10 @@ is the number of slots it leaves.
 | `tlb_flush` | 504 | 1 | 1 |
 | `tlb_flush_all` | 505 | 0 | 1 |
 | `breakpoint` | 506 | 0 | 1 |
+| `irq_mask` | 507 | 0 | 1 |
+| `irq_unmask` | 508 | 0 | 1 |
+| `irq_wait` | 509 | 0 | 1 |
+| `irq_pending` | 510 | 0 | 1 |
 | `tcp_accept_with` | 511 | 2 | 1 |
 <!-- END ir_effects_run -->
 
