@@ -7,7 +7,9 @@ The Opus packet API reuses the Fern CELT implementation.
 
 | Format | Decode | Encode | Current scope |
 | --- | --- | --- | --- |
-| WAVE | Yes | Yes | Integer PCM, 8/16/24/32 bits, one through eight channels. Extensible PCM uses standard channel masks and matching valid and container depths. |
+| WAVE | Yes | Integer PCM | Integer PCM at 8/16/24/32 bits and IEEE float at 32/64 bits, one through eight channels. Ordinary and extensible subformats. |
+| AIFF/AIFC | Yes | No | Signed integer PCM at 1 through 32 bits, NONE/twos/sowt, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Exact byte-view frame ranges. |
+| AU | Yes | No | Big-endian signed integer PCM at 8/16/24/32 bits, IEEE float at 32 or 64 bits, and G.711 A-law/mu-law. Known and unknown data sizes. |
 | FLAC | Yes | No | Native FLAC, 4 through 32 bits, one through eight channels. All predictor types, Rice/Rice2, wasted bits, and stereo assignments. |
 | QOA | Yes | Yes | Static files, signed 16-bit PCM, one through eight channels. Independent frame APIs also accept individual frames. |
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
@@ -18,7 +20,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF supplies file playback. Compressed stereo requires at most 32 predictor bits. M4A remains open. |
-| CAF | ALAC | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
+| CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
 | HE-AAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
@@ -94,6 +96,62 @@ The WAVE range API borrows a complete WAVE byte view and decodes only the reques
 QOA verifies static frame lengths, byte counts, format consistency, and total samples.
 FLAC verifies CRC-8, CRC-16, sample bounds, frame sequence, and alignment bits.
 Whole-stream FLAC decode verifies a supplied MD5. Individual frame calls cannot verify a complete stream digest.
+
+## AIFF, AIFF-C, and AU
+
+`std/audio/aiff.inspect` and `std/audio/au.inspect` return an opaque `std/audio/linear.Index`.
+The index retains scalar format and range metadata. It retains no encoded input or PCM.
+The caller must preserve the input bytes after inspection.
+Frame ranges permit exact seeks without earlier decode.
+Multichannel samples retain their stored order.
+
+`read_integer_into` consumes reusable `i32[]` storage and preserves its suffix after the valid sample prefix.
+Integer samples retain their declared right-aligned depth. G.711 expands to signed 16-bit PCM.
+Float input returns `Unsupported` through integer APIs.
+
+`read_float_into` consumes reusable `f64[]` storage and preserves finite float values without clipping.
+It normalizes integer samples to their signed full scale.
+Non-finite float input returns `Sample`.
+
+`information` supplies the sample format and frame count.
+Each read checks the selected frame range, input extent, output capacity, and sample budget.
+Inspection permits tracks longer than the output budget because each range has its own limit.
+AIFF inspection also checks a chunk budget, sound offsets, and integral 80-bit sample rates.
+Nonzero AIFF sound block sizes and other compression tags remain unsupported.
+
+The 58 independent FFmpeg references cover every channel count from one through eight, byte order, partial sample bytes, and sample depths.
+They include float values outside unity and every G.711 code word.
+Tests compare all integer samples and normalized float bit patterns exactly.
+Repeated frame ranges check suffix preservation and live buffer aliases.
+The generator records the reference version and SHA-256 values for encoded bytes and both PCM representations.
+
+```sh
+python3 scripts/gen-linear-audio-vectors.py --check
+```
+
+The codecs perform no file I/O. Reader integration and additional container encoders remain open under #14687.
+
+`std/audio/caf/linear` supplies CAF integer PCM, IEEE float, and G.711 playback through the same linear index.
+Integer PCM uses 8, 16, 24, or 32 bits in either byte order.
+Float PCM uses 32 or 64 bits in either byte order.
+Constant packet tables can declare initial and final trim without an extra PCM copy.
+The opaque index contains only the playable range.
+ALAC playback retains its packet API in the parent CAF module.
+
+The 36 additional CAF references retain every integer sample and normalized float bit pattern.
+They cover all eight channel counts, both byte orders, float values outside unity, every G.711 code word, and unknown data size.
+The trim case compares the playable slice of independent FFmpeg PCM.
+Seven CAF boundary groups check descriptions, signed table fields, trim, empty presentations, limits, float errors, and every-byte mutations.
+
+`std/audio/wav.inspect_linear` supplies the same range APIs for integer and IEEE float WAVE.
+It accepts ordinary and extensible float subformats at 32 and 64 bits.
+The existing integer header, decode, range, and encoder APIs retain their contracts.
+`wav.decode_float` decodes complete files to normalized `f64` PCM without integer quantization.
+The index also exposes the encoded data offset and byte count.
+
+Thirty additional WAVE references compare every sample and float bit pattern exactly.
+They cover all eight channel counts, integer depths, both float widths, and canonical extensible channel masks.
+Six boundary groups cover float payloads, live aliases, GUIDs, masks, prefixes, range limits, empty files, and mutations.
 
 ## ALAC
 

@@ -4,12 +4,14 @@ import "std/http/h2/frame";
 import "std/http/hpack";
 import "std/http/qpack";
 import "std/json";
+import "std/quic/frames";
+import "std/quic/packet";
 import "std/url";
 
 // Feeds a file to one network-facing parser of the standard library: the
 // HTTP/1 request framer and its chunked-body decoder, the HTTP/2 frame reader
-// and server connection, the HPACK or QPACK decoder, the JSON parser, or the
-// URL and query parsers. Each refuses malformed bytes with
+// and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
+// reader, the JSON parser, or the URL and query parsers. Each refuses malformed bytes with
 // an error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
@@ -154,6 +156,50 @@ function qpack_summary(raw: u8[]): string {
   return "qpack fields " + d.fields.len().to_string() + " waiting " + d.waiting.to_string() + " inserts " + d.insert_count().to_string();
 }
 
+// Walks the coalesced packets of one datagram, and tries to open each Initial
+// packet with the client Initial keys of its destination connection ID.
+function quic_summary(raw: u8[]): string {
+  let packets = 0;
+  let opened = 0;
+  let refused = 0;
+  let at = 0;
+  while (at < raw.len() && refused == 0) {
+    match (packet.parse(raw, at, 8)) {
+      Ok(h) => {
+        packets += 1;
+        let initial = match (h.kind) { packet.Initial => true, _ => false };
+        if (initial) {
+          match (packet.open(raw, h, packet.initial_keys(h.dcid, true), -1i64)) {
+            Ok(_) => {
+              opened += 1;
+            },
+            Err(_) => {}
+          }
+        }
+        if (h.end <= at) {
+          return "quic stalled at " + at.to_string();
+        }
+        at = h.end;
+      },
+      Err(e) => {
+        refused = e.message().len() + 1;
+      }
+    }
+  }
+  return "quic packets " + packets.to_string() + " opened " + opened.to_string() + " refused " + refused.to_string();
+}
+
+function quic_frames_summary(raw: u8[]): string {
+  match (frames.read_all(raw)) {
+    Ok(fs) => {
+      return "frames " + fs.len().to_string();
+    },
+    Err(e) => {
+      return "frames refused " + e.code.to_string();
+    }
+  }
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -180,7 +226,7 @@ function url_summary(src: string): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|json|url FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|json|url FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -207,6 +253,14 @@ function main(): i32 {
   }
   if (av[1] == "qpack") {
     print(qpack_summary(raw));
+    return 0;
+  }
+  if (av[1] == "quic") {
+    print(quic_summary(raw));
+    return 0;
+  }
+  if (av[1] == "frames") {
+    print(quic_frames_summary(raw));
     return 0;
   }
   if (av[1] == "json") {

@@ -439,6 +439,8 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: url,     pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdURL,          wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: h2,      pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdH2,           wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: qpack,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQPACK,        wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: quic,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQUIC,         wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: quic-frames, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdQUICFrames, wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45

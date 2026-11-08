@@ -1,0 +1,56 @@
+import "std/video/mp4";
+import "std/video/frame";
+import "std/video/nal";
+import "std/hex";
+import "std/test";
+import "video_mp4_vectors";
+
+function reference(v: video_mp4_vectors.Vector): Result[void, string] {
+  let Ok(input) = hex.decode(v.bytes) else {
+    return Err("fixture hex");
+  };
+  let index = match (mp4.inspect(input, mp4.default_limits())) { Ok(value) => value, Err(e) => { return Err(v.name + ": " + e.message()); } };
+  if (index.tracks.len() != v.tracks.len() || index.bytes != input.len() as i64) {
+    return Err(v.name + " track count");
+  }
+  for i in 0..v.tracks.len() {
+    let track = index.tracks[i];
+    let expected = v.tracks[i];
+    if (track.clock.scale != expected.scale || track.packets.len() != expected.packets.len()) {
+      return Err(v.name + " clock or count");
+    }
+    let config = track.descriptions[0];
+    if (config.codec != (if (v.hevc) { mp4.HEVC } else { mp4.AVC }) || config.format != frame.Format { width: 32, height: 32 }) {
+      return Err(v.name + " description");
+    }
+    if (config.config.csd0.len() == 0 || config.config.length_size != 4) {
+      return Err(v.name + " NAL configuration");
+    }
+    for j in 0..expected.packets.len() {
+      let p = track.packets[j];
+      let e = expected.packets[j];
+      if (p.offset != e.offset || p.bytes != e.bytes || p.decode_time != e.dts || p.presentation_time != e.pts || p.duration != e.duration || p.sync != e.sync || p.description != 0) {
+        return Err(v.name + " packet " + j.to_string());
+      }
+      let Ok(_) = nal.to_annex_b(input[p.offset as i32:p.offset as i32 + p.bytes], config.config.length_size, frame.default_limits()) else {
+        return Err(v.name + " NAL packet");
+      };
+    }
+  }
+  return Ok(());
+}
+
+function references(): test.TestOutcome {
+  for vector in video_mp4_vectors.vectors() {
+    if let Err(e) = reference(vector) {
+      return test.fail(e);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("native MP4 video packets");
+  runner = runner.it("AVC and HEVC packet ranges and times match FFprobe", references);
+  return runner.finish();
+}

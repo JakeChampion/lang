@@ -99,13 +99,13 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 					changed = mark(id.Name, s.Value) || changed
 				}
 			case *ast.ForEach:
-				changed = markForEach(mark, s) || changed
+				changed = markForEach(mark, s, b.values) || changed
 			case *ast.Block:
 				// The checker lowers a `for` into a block, and the block
 				// keeps the loop as its Sugar. The answer must not depend
 				// on whether the lowering already ran.
 				if s.Sugar != nil {
-					changed = markForEach(mark, s.Sugar) || changed
+					changed = markForEach(mark, s.Sugar, b.values) || changed
 				}
 			}
 			return true
@@ -114,13 +114,22 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 	return b.locals
 }
 
-// markForEach marks the element a `for` binds as a borrow of what the loop
-// walks. A range and a pattern bind no such element.
-func markForEach(mark func(string, ast.Expr) bool, fe *ast.ForEach) bool {
-	if fe.Pattern != nil || fe.RangeHigh != nil {
+// Scalar array elements are copies. Other elements retain the iterable borrow.
+func markForEach(mark func(string, ast.Expr) bool, fe *ast.ForEach, values map[string]bool) bool {
+	if fe.Pattern != nil || fe.RangeHigh != nil || valueElementIterable(fe.Iter, values) {
 		return false
 	}
 	return mark(fe.Var, fe.Iter)
+}
+
+func valueElementIterable(e ast.Expr, values map[string]bool) bool {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return values[x.Name]
+	case *ast.SliceExpr:
+		return valueElementIterable(x.Source, values)
+	}
+	return false
 }
 
 type borrowScope struct {
@@ -154,6 +163,10 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case *ast.FieldAccess:
 		return c.exprBorrows(x.Target, b)
 	case *ast.Index:
+		// Lowered for-each loops index a synthetic iterable alias.
+		if x.ElemType != nil && !ast.IsPointerType(x.ElemType) {
+			return false
+		}
 		if id, ok := x.Array.(*ast.Ident); ok && b.values[id.Name] {
 			return false
 		}
