@@ -703,6 +703,7 @@ func New() *Interp {
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
+	i.Builtins["__alloc_u8_uninit"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8_uninit", Number(0))}
 	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
 	registerRawMemory(i)
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}

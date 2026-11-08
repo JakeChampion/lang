@@ -101,8 +101,8 @@ function inverse(lap: usize, temp: usize, out: usize, overlap: i32, p: packed_tr
       let b = __f32x4_load_ptr(temp + (4 * (half + i)) as usize);
       let c = __f32x4_load_bytes(p.window_cos, 4 * (n - overlap + i - flat));
       let s = __f32x4_load_bytes(p.window_sin, 4 * (n - overlap + i - flat));
-      __f32x4_store(out + (4 * i) as usize, c * a - s * b);
-      __f32x4_store(out + (4 * (n - 4 - i)) as usize, __f32x4_reverse(s * a + c * b));
+      __f32x4_store(out + (4 * i) as usize, __f32x4_mul_add(c, a, -(s * b)));
+      __f32x4_store(out + (4 * (n - 4 - i)) as usize, __f32x4_reverse(__f32x4_mul_add(s, a, c * b)));
       i += 4;
     }
     while (i < half) {
@@ -180,10 +180,9 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         } else {
           packed_transform.dct4_packed(coefficient_address, temp_address, re as usize + 8 as usize, im as usize + 8 as usize, plans[shift]);
         }
-        inverse(lap_address, temp_address, sample_address, overlap, plans[shift]);
-        if (size == n) {
-          __memcpy(out_address, sample_address, 4 * n);
-        } else {
+        let destination = if (size == n) { out_address } else { sample_address };
+        inverse(lap_address, temp_address, destination, overlap, plans[shift]);
+        if (size != n) {
           let available = (n - size) / 2;
           if (size <= available) {
             reverse_copy(out_address + (4 * at) as usize, lap_address + (4 * (n / 2 - size)) as usize, size);

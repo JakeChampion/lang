@@ -330,6 +330,42 @@ function packed_tests(): void {
     }
   }
   require(error < peak * 0.000003, "scaled FFT retains tiny coefficients");
+  // Every ordinary noise-run length crosses different SIMD and batch boundaries.
+  for count in 16..528 {
+    let q = count % 27;
+    let amplitude = count % 8 + 1;
+    let prefix = if (q < 14) { [q] } else { [14, q - 14] };
+    let run = count - 16;
+    let codes = prefix.concat([8, run >> 5, run >> 1 & 15, amplitude - 1 << 1 | run & 1]);
+    let data = nybbles(codes);
+    let initial_seed = count as u32 * 2654435761u32;
+    let Ok(decoded) = codec.coefficients(codec.reader(data, 0, initial_seed), count) else {
+      exit(1);
+    };
+    let packed = __alloc_u8(4 * count);
+    let final_seed = 0u32;
+    unsafe {
+      let Ok(parsed) = codec.coefficient_buffer(codec.reader(data, 0, initial_seed), count, packed as usize + 8 as usize, true) else {
+        exit(1);
+      };
+      final_seed = parsed.reader.seed;
+    }
+    let seed = initial_seed;
+    let level = (amplitude * amplitude) as f64 / ((1u64 << (7 + q) as u64) as f64);
+    for i in 0..count {
+      seed ^= seed << 13u32;
+      seed ^= seed >> 17u32;
+      seed ^= seed << 5u32;
+      if ((seed & 2147483648u32) != 0u32) {
+        level = -level;
+      }
+      require(f64_bits(decoded.values[i]) == f64_bits(level), "noise run preserves each scalar sign");
+      unsafe {
+        require(__load_i32(packed as usize + 8 as usize + (4 * i) as usize) == f32_bits((level * 79228162514264337593543950336.0) as f32), "batched noise run preserves exact packed bits");
+      }
+    }
+    require(decoded.reader.seed == seed && final_seed == seed, "batched noise run preserves its final seed");
+  }
   for q in [0, 26] {
     for code in 0..256 {
       let prefix = if (q == 0) { [0] } else { [14, 12] };

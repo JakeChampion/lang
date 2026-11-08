@@ -472,7 +472,12 @@ every function it emits, through a memo keyed by the function's ops, contract
 and callee contracts (`rcmemo`, under the user's cache root), so a steady
 compile pays only for lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves it
 out, `FERN_RC_CERTIFY=report` turns refusals into a census, and a refusal
-exits 5 naming the function and the unit. Pinned by `TestSelfHostRcCertify*`
+exits 5 naming the function and the unit. A function that resumes from a
+task frame is the one function the certifier skips, because it does not
+model the frame. The memo does not record a skip. A function that the
+certifier cannot decide is a refusal that also exits 5. The causes are ops
+that do not lift, no entry block, a liveness failure, or a walk that does not
+settle. Pinned by `TestSelfHostRcCertify*`
 and the `certifier-refuses-missing-retain` row of the physical-RC driver.
 
 ## 2. The runtime contract

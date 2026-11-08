@@ -6,6 +6,22 @@ var allocFilledCases = []struct {
 	name string
 	src  string
 }{
+	{"uninitialized_bytes", `import "std/array";
+function main(): i32 {
+    unsafe {
+        let empty = __alloc_u8_uninit(0);
+        for length in 1..74 {
+            let bytes = __alloc_u8_uninit(length);
+            for i in 0..length { bytes = bytes.with(i, 173 as u8); }
+            for byte in bytes { if (byte != 173 as u8) { return 1; } }
+            let old = bytes;
+            bytes = bytes.with(length - 1, 29 as u8).append(61 as u8);
+            if (old.len() != length || old[length - 1] != 173 as u8 || bytes.len() != length + 1 || bytes[length - 1] != 29 as u8 || bytes[length] != 61 as u8) { return 1; }
+        }
+        if (empty.len() != 0) { return 1; }
+        return 53;
+    }
+}`},
 	{"f64", `function main(): i32 {
     let a: f64[] = __alloc_f64(17);
     let empty = __alloc_f64(0);

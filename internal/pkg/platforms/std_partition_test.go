@@ -63,6 +63,8 @@ var stdModuleReach = map[string]string{
 	"std/opus":          "",
 	"std/pvh":           "",
 	"std/raw":           "privileged",
+	"std/virtio":        "privileged",
+	"std/virtio_net":    "privileged",
 	"std/ordmap":        "",
 	"std/ordset":        "",
 	"std/pagetable":     "privileged",

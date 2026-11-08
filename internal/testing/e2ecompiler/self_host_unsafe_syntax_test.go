@@ -46,6 +46,7 @@ func TestSelfHostUnsafeSyntax(t *testing.T) {
 func TestSelfHostUnsafeBlockScope(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	for _, source := range []string{
+		"function main(): i32 { return __alloc_u8_uninit(4).len(); }",
 		"function main(): i32 { unsafe { let hidden: i32 = 42; } return hidden; }",
 		"unsafe function main(): i32 { unsafe { return false; } }",
 		"function take(own xs: i32[]): i32 { return xs[0]; } unsafe function f(own xs: i32[]): i32 { unsafe { let a: i32 = take(xs); return take(xs) + a; } }",

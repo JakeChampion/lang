@@ -4048,6 +4048,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "alloc_u8_u8") {
     s = s.need("alloc_bytes");
     sym = "__fern_alloc_bytes";
+  } else if (ins.str == "alloc_uninit_u8" || ins.str == "alloc_uninit") {
+    s = s.need("alloc_bytes_uninit");
+    sym = "__fern_alloc_bytes_uninit";
   } else if (ins.str == "arr_push_owned_u8") {
     s = s.need("arr_push_u8");
     sym = "__fern_arr_push_owned_u8";
@@ -8306,6 +8309,10 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lfern_alloc_bytes_done:\n");
   s = s.write("    ldp x19, x20, [sp], #16\n" + rt_unframe(s) + "    ret\n");
   s = s.write(".Lfern_alloc_bytes_empty:\n    adrp x0, .Lfern_empty_bytes\n    add x0, x0, :lo12:.Lfern_empty_bytes\n    ret\n");
+  if (s.has_need("alloc_bytes_uninit")) {
+    s = s.write("__fern_alloc_bytes_uninit:\n    tbz w0, #31, .Lfern_uninit_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_uninit_sized:\n    cbz w0, .Lfern_alloc_bytes_empty\n");
+    s = s.write(rt_frame(s) + "    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    bl __fern_arr_box\n    str x19, [x0]\n    ldp x19, x20, [sp], #16\n" + rt_unframe(s) + "    ret\n");
+  }
   return s;
 }
 
@@ -11327,7 +11334,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_u8(s);
   }
-  if (s.has_need("alloc_bytes")) {
+  if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
     s = emit_alloc_bytes(s);
   }
   s = emit_array_helpers(s);

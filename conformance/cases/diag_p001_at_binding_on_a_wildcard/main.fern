@@ -1,0 +1,13 @@
+// `name @ _` would bind the scrutinee, but `_` takes no `@` binding. The
+// binding is rejected, so `w` in the arm cannot silently mean the outer `w`.
+function pick(o: Option[i32]): i32 {
+  let w = 5;
+  return match (o) {
+    Some(x) => x,
+    w @ _ => w + 1000,
+  };
+}
+
+function main(): i32 {
+  return pick(None);
+}

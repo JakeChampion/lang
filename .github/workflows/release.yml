@@ -66,6 +66,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: ./.github/actions/stage0
+
       - name: Build fern
         run: make bin/fern
 
@@ -192,6 +194,8 @@ jobs:
       signing: ${{ steps.keys.outputs.signing }}
     steps:
       - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/stage0
 
       - name: Build fern
         run: make bin/fern

@@ -1,0 +1,25 @@
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+import "opus_seek_check";
+
+function reference_seek(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference bytes");
+  };
+  return match (opus_seek_check.check_seek(ref, 0, 137i64)) { Ok(_) => test.pass(), Err(e) => test.fail(e.message()) };
+}
+
+function reference_exact(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference bytes");
+  };
+  return match (opus_seek_check.check_exact(ref, 0, 311i64)) { Ok(_) => test.pass(), Err(e) => test.fail(e.message()) };
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Opus seek interpreter smoke");
+  runner = runner.it("independent PCM after a seek inside a trimmed packet", reference_seek);
+  runner = runner.it("exact history with cooperative steps", reference_exact);
+  return runner.finish();
+}

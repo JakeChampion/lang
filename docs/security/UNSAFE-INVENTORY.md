@@ -68,6 +68,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__rc_inc(a)`, `__rc_dec(a)`, `__rc_get(a)`, `__fern_rc_dec(p)` | The count must match the real number of references after the call. |
 | `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. [The bounds audit](BOUNDS-AUDIT.md) shows an `unsafe` block that reads past a three-element array through it. Outside a block both checkers refuse the call as `E095`. |
 | `__arr_push_shared_bytes()`, `__arr_push_shared_count()` | Read-only counters. No obligation. |
+| `__alloc_u8_uninit(n)` | The caller must initialize all `n` payload bytes before any read or observation, including serialization or sharing. It returns an ordinary managed array. Initial contents are unspecified. |
 | `__heap_mark()`, `__heap_release_to(m)` | Every value allocated after the mark must be dead before the release. |
 | `__heap_adopt(start, end)` | The region must be mapped and writable, nothing allocated before the call may be read again, and only a forked worker calls it. |
 | `__send_adopt(addr)` | `addr` must be a root that `__send_root` gave up, in this heap or in a live worker region, and no other value may own it. The parent must copy a root of a region before the region removal. |
@@ -105,7 +106,7 @@ The audit of their internal range checks belongs to SEC-005 and SEC-035.
 
 - Scan and count kernels: `__memchr`, `__rmemchr`, `__memchr_bytes`, `__rmemchr_bytes`, `__mismatch`, `__mismatch_bytes`, `__mismatch_bytes_str`, `__count_byte`, `__count_byte_bytes`, `__count_runs`, `__count_runs_bytes`, `__count_below_u64`, `__scan_set`, `__scan_set_bytes`, `__ascii_run`, `__sum_bytes`, `__sum_bytes_array`, `__bsd_sum`, `__bsd_sum_bytes`, `__crc32_cksum`, `__crc32_cksum_array`, `__crc32_ieee_array`, `__str_hash`.
 - Byte views: `__bytes_into`, `__bytes_owned`, `__bytes_range`.
-- Typed allocations: `__alloc_bool`, `__alloc_i32`, `__alloc_i64`, `__alloc_u8`. Every payload word is zero at allocation ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)), so a fresh array carries no obligation.
+- Typed allocations: `__alloc_bool`, `__alloc_i32`, `__alloc_i64`, `__alloc_f64`, `__alloc_u8`. Every payload word is zero at allocation ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)), so a fresh array carries no obligation.
 - Arithmetic and text conversion: `__abs_f64`, `__ceil_f64`, `__floor_f64`, `__round_f64`, `__sqrt_f64`, `__trunc_f64`, `__scale_f64`, `__outer_mul_f64`, `__inner_mul_add_f64`, `__clz32`, `__clz64`, `__ctz32`, `__ctz64`, `__popcount32`, `__popcount64`, `__mulhi_u64`, `__ptr_width`, the `__primitive_*_to_string` family.
 - Lanes: the `__f64x2_*` and `__f32x4_*` families.
 - Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`. Their buffer contracts belong to SEC-037.

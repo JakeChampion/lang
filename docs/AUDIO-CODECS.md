@@ -221,7 +221,44 @@ An independent complete file checks the self-host interpreter.
 Regenerate the file corpus with `scripts/gen-opus-file-vectors.py`.
 The generator verifies pinned libopusfile, libopus, and libogg archive hashes.
 Normal tests need no reference library or network access.
-Seeking and file-reader adapters remain separate work.
+File-reader adapters remain separate work.
+
+### Indexed Opus seeks
+
+`inspect_seek` validates the complete immutable encoded input and builds an index without PCM decode.
+The index retains packet locations, raw positions, durations, and link metadata.
+Its parallel arrays require 24 logical bytes per packet, plus array capacity.
+The default limits allow 16 MiB of encoded input and 1,048,576 packets.
+The file, codec, comment, link, and per-packet output limits also apply before decode.
+
+`seek_reader(index)` consumes the index and creates a cursor.
+`seek(link, position)` selects a playable frame and resets codec state.
+It uses at least 80 ms of preroll when that history exists.
+The preroll limit accepts 80 ms through ten seconds at 48 kHz.
+Finite preroll can produce different PCM from a decode that starts at the beginning.
+This is also true for libopusfile.
+
+`seek_exact(link, position)` replays the full history of the selected link.
+Its PCM matches a complete decode, with no retained PCM or decoder checkpoints.
+Its decode cost increases with the target position.
+Both methods accept the end position and continue into subsequent links on the next read.
+Output preserves gain, pre-skip, final sample boundaries, absolute timestamps, and channel maps.
+
+`step(input)` decodes at most one packet or advances one link.
+It returns `SeekPending`, `SeekSamples`, or `SeekEnd` with the next cursor.
+This API lets an application cancel or apply backpressure between packet decodes.
+`next(input)` continues until samples or the end.
+The input view must contain the same unchanged bytes that created the index.
+Each sample result contains at most one packet of PCM.
+
+The seek corpus compares 90 cold seeks and 760,044 float samples with independent libopusfile output.
+Separate exact seeks compare full-history PCM at the same 0.000001 tolerance.
+Tests cover repeated forward and backward seeks, chains, gain, trimming, continued packets, zero output, and invalid limits or positions.
+Packet extraction also matches the sequential Ogg decoder.
+The interpreter smoke corpus retains independent PCM checks for both seek policies.
+
+Regenerate the seek corpus with `scripts/gen-opus-seek-vectors.py`.
+The generator verifies all three reference archive hashes and checks the complete-file fixtures before it freezes seek results.
 
 ## Opus and Android
 
@@ -244,6 +281,19 @@ It covers all five output rates, mono through eight-channel surround, custom map
 Every final entropy range matches. Sample differences must not exceed 0.000001.
 An independent six-step subset also checks the self-host interpreter.
 Regenerate both corpora with `scripts/gen-opus-multistream-vectors.py`.
+
+The whole-frame CELT encoder retains its libopus 1.4 reference at `82ac57d9f1aaf575800cf17373348e45b7ce6c0d`.
+Its transform tables, rotation angle, and stereo-energy epsilon stay separate from the current decoder reference.
+An unmodified scalar C helper reproduces the six existing encoder-frame and band-analysis trace checksums.
+The default MDCT and VQ kernel tests continue to check the current reference.
+The additional encoder table data contains 7,240 logical bytes, before array and allocator overhead.
+
+Regenerate the encoder tables and trace fixtures with these commands:
+
+```sh
+python3 scripts/gen-opus-encoder-modes.py
+python3 scripts/gen-opus-encoder-vectors.py
+```
 
 `std/opus/silk/math` supplies fixed-point arithmetic. `std/opus/silk/predict` reconstructs stable prediction filters.
 `std/opus/silk/entropy` decodes frame parameters. `std/opus/silk/core` reconstructs integer PCM for one coded channel.

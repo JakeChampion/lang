@@ -163,6 +163,8 @@ pub const K_VPERMUTE: i32 = 513;
 
 pub const K_VEXTRACT_BITS: i32 = 514;
 
+pub const K_ALLOC_UNINIT: i32 = 515;
+
 pub function lane_kind_names(): string[] {
   return [
     "vsplat", "vextract", "vreplace",
@@ -344,6 +346,10 @@ pub function op_arr_push_owned_f64(): Op {
 
 pub function op_alloc_u8(): Op {
   return op0(77);
+}
+
+pub function op_alloc_uninit(): Op {
+  return Op { ...op0(515), width: 8 };
 }
 
 pub function op_alloc_slots(width: i32): Op {
@@ -2437,6 +2443,9 @@ pub function kind_retired(id: i32): boolean {
 }
 
 pub function kind_id(name: string): i32 {
+  if (name == "alloc_uninit") {
+    return K_ALLOC_UNINIT;
+  }
   let n = name.len();
   if (n == 7 && name == "mulhi_u") {
     return 430;
@@ -5083,6 +5092,9 @@ function buf_kind_name(id: i32): string {
 }
 
 pub function kind_name(id: i32): string {
+  if (id == K_ALLOC_UNINIT) {
+    return "alloc_uninit";
+  }
   if (id == K_VEXTRACT_BITS) {
     return "vextract_bits";
   }
@@ -5583,6 +5595,9 @@ function pops_of(fixed: i32, o: Op): i32 {
 }
 
 function kind_pops(t: i32): i32 {
+  if (t == K_ALLOC_UNINIT) {
+    return 1;
+  }
   if (t == K_VEXTRACT_BITS) {
     return 1;
   }

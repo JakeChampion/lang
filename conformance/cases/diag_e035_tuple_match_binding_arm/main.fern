@@ -1,0 +1,30 @@
+// A tuple match takes only tuple patterns and `_`. A bare name is not a
+// catch-all that binds the tuple: it is rejected, in the value form and in
+// the statement form, and an outer variable with the same name is not read.
+function value_form(t: (i32, i32)): i32 {
+  let other = 100;
+  return match (t) {
+    (1, x) => x,
+    other => other + 1000,
+    _ => 0,
+  };
+}
+
+function statement_form(t: (i32, i32)): i32 {
+  let rest = 100;
+  match (t) {
+    (1, x) => {
+      return x;
+    },
+    rest => {
+      return rest;
+    },
+    _ => {
+      return 0;
+    },
+  }
+}
+
+function main(): i32 {
+  return value_form((7, 8)) + statement_form((7, 8));
+}

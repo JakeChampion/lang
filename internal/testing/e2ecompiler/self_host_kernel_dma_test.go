@@ -127,10 +127,11 @@ pub function device_tree(): u8[] {
 }
 
 // The device window of qemu-virt: the GIC, the UART and the other
-// peripherals, between 0x08000000 and 0x0a000000.
+// peripherals from 0x08000000, and the 32 virtio-mmio transports from
+// 0x0a000000, up to 0x0b000000.
 pub const DEVICES: usize = 0x08000000;
 
-pub const DEVICES_BYTES: usize = 0x02000000;
+pub const DEVICES_BYTES: usize = 0x03000000;
 
 // The top half of a synchronous exception: it records the exception class
 // and the faulting address in tpidrro_el0 and tpidr_el1, and steps over the
@@ -422,11 +423,14 @@ pub function memmap(info: pvh.StartInfo): u8[] {
   return copy(info.memmap_address as usize, info.memmap_entries as i32 * pvh.MEMMAP_ENTRY_BYTES);
 }
 
-// The device window of qemu microvm above the RAM: the IOAPIC and the local
-// APIC, from 0xfec00000 to 0xff000000.
-pub const DEVICES: usize = 0xfec00000;
+// The device window of qemu microvm above the RAM: the eight virtio-mmio
+// transports from 0xfeb00000, then the IOAPIC and the local APIC, up to
+// 0xff000000.
+pub const VIRTIO: usize = 0xfeb00000;
 
-pub const DEVICES_BYTES: usize = 0x00400000;
+pub const DEVICES: usize = 0xfeb00000;
+
+pub const DEVICES_BYTES: usize = 0x00500000;
 
 // The command line, up to 256 bytes and its NUL.
 pub function command_line(info: pvh.StartInfo): u8[] {
