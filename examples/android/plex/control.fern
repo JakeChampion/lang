@@ -385,8 +385,8 @@ function first_reply(rs: plex.Reply[]): plex.Reply {
 function poll_call(own c: Option[Call]): (Option[Call], Option[Done]) {
   match (c) {
     Some(call) => {
-      let purpose = call.purpose;
-      match (call.w.poll()) {
+      let Call { purpose, w } = call;
+      match (w.poll()) {
         worker.Finished(rs) => {
           return (None, Some(Done { purpose: purpose, reply: first_reply(rs) }));
         },
@@ -495,8 +495,8 @@ struct Fetched { keys: string[], replies: plex.Reply[] }
 function poll_batch(own b: Option[Batch]): (Option[Batch], Option[Fetched]) {
   match (b) {
     Some(batch) => {
-      let keys = batch.keys;
-      match (batch.w.poll()) {
+      let Batch { keys, w } = batch;
+      match (w.poll()) {
         worker.Finished(rs) => {
           return (None, Some(Fetched { keys: keys, replies: rs }));
         },

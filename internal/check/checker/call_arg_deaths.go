@@ -1397,6 +1397,9 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 		src, ok := e.(*ast.Ident)
 		return ok && freshLocal[src.Name] && sole(src.Name) && order.IsLast(src)
 	}
+	movedPayload := movedPayloads(body, ownParam, declCount, order, func(name string) bool {
+		return ownParam[name] && declCount[name] == 0 || payloadOwned(name) || freshLocal[name] && sole(name) || out[name]
+	})
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
@@ -1416,7 +1419,8 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 			// The fields that the destructure takes from an own parameter, a
 			// payload a match took, or a fresh local at its last use are
 			// owned, as the source is.
-			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) {
+			src, isID := x.Init.(*ast.Ident)
+			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) && !(isID && movedPayload(src.Name) && order.IsLast(src)) {
 				return true
 			}
 			for i, name := range x.Names {
@@ -1442,6 +1446,39 @@ func ownedMatchValue(info *Info, m *ast.MatchExpr, ownedAtLastUse, freshAtLastUs
 		}
 	}
 	return true
+}
+
+// movedPayloads reports the payloads of a match on an owned name at its last
+// use. The match takes the value, so the payload is owned. A name is owned
+// when owned says so, or when it is such a payload.
+func movedPayloads(body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, owned func(string) bool) func(string) bool {
+	tags := map[string][]ast.Expr{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if m, ok := n.(*ast.Match); ok {
+			for _, arm := range m.Arms {
+				for _, b := range arm.Binders() {
+					tags[b] = append(tags[b], m.Tag)
+				}
+			}
+		}
+		return true
+	})
+	var moved func(name string, seen map[string]bool) bool
+	moved = func(name string, seen map[string]bool) bool {
+		if ownParam[name] || declCount[name] != 0 || seen[name] || len(tags[name]) == 0 {
+			return false
+		}
+		seen[name] = true
+		defer delete(seen, name)
+		for _, tag := range tags[name] {
+			src, ok := tag.(*ast.Ident)
+			if !ok || !order.IsLast(src) || !owned(src.Name) && !moved(src.Name, seen) {
+				return false
+			}
+		}
+		return true
+	}
+	return func(name string) bool { return moved(name, map[string]bool{}) }
 }
 
 // heldByEnclosingCall reports whether a call that encloses c reads name
