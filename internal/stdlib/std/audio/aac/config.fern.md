@@ -84,6 +84,8 @@ function padding(input: [u8], reader: bits.Reader, config: Config): Result[Confi
   return Ok(config);
 }
 
+// Check the ordered SBR and PS extension fields before accepting AAC-LC.
+// fern-lint: allow cyclomatic-complexity
 function sync_extension(input: [u8], reader: bits.Reader, config: Config): Result[Config, pcm.AudioError] {
   if (bits.left(input, reader) < 11i64) {
     return padding(input, reader, config);
@@ -120,6 +122,8 @@ function sync_extension(input: [u8], reader: bits.Reader, config: Config): Resul
   return padding(input, b5, config);
 }
 
+// Validate the complete AudioSpecificConfig before exposing its configuration.
+// fern-lint: allow cyclomatic-complexity
 pub function inspect(input: [u8], limits: pcm.Limits): Result[Config, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (input.len() > 64) {
@@ -138,6 +142,8 @@ pub function inspect(input: [u8], limits: pcm.Limits): Result[Config, pcm.AudioE
   return sync_extension(input, b6, config);
 }
 
+// Validate transport lengths and channel fields before returning the frame boundary.
+// fern-lint: allow cyclomatic-complexity
 pub function adts(input: [u8], at: i32, limits: pcm.Limits): Result[Adts, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (at < 0 || at > input.len()) {

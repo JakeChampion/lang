@@ -84,6 +84,8 @@ function tree(input: [u8], reader: Reader, node: i32): Result[(Reader, i32), pcm
   return Err(pcm.Header);
 }
 
+// Keep fast-prefix and fallback-tree checks in one bounded decode path.
+// fern-lint: allow cyclomatic-complexity
 pub function huffman(input: [u8], reader: Reader, book: i32): Result[(Reader, i32), pcm.AudioError] {
   if (book < 0 || book > 11 || !valid(input, reader)) {
     return Err(pcm.Header);

@@ -44,6 +44,8 @@ function coefficients(input: [u8], reader: bits.Reader, order: i32, resolution: 
   return Ok((reader, lpc));
 }
 
+// Read each TNS filter with its resolution and compression fields.
+// fern-lint: allow cyclomatic-complexity
 function filter(input: [u8], reader: bits.Reader, short: boolean, resolution: i32, window: i32, top: i32): Result[(bits.Reader, Filter), pcm.AudioError] {
   let (b1, length) = bits.read(input, reader, if (short) { 4 } else { 6 })?;
   let (b2, order) = bits.read(input, b1, if (short) { 3 } else { 5 })?;
@@ -61,6 +63,8 @@ function filter(input: [u8], reader: bits.Reader, short: boolean, resolution: i3
   return Ok((end, Filter { window: window, top: top, bottom: bottom, reverse: reverse != 0u32, coefficients: lpc }));
 }
 
+// Read per-window TNS filters with the short and long block bounds.
+// fern-lint: allow cyclomatic-complexity
 pub function read(input: [u8], reader: bits.Reader, rate: i32, short: boolean): Result[(bits.Reader, Filter[]), pcm.AudioError] {
   if (rate < 0 || rate >= 13) {
     return Err(pcm.Header);

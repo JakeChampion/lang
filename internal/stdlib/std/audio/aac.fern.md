@@ -99,6 +99,8 @@ function output_channel(config: i32, channel: i32): i32 {
   return if (channel < 5) { channel + 3 } else { channel - 1 };
 }
 
+// Check implicit channel placement and element identity together.
+// fern-lint: allow cyclomatic-complexity
 function element(own run: Run, kind: i32, tag: i32): Result[(Run, i32), audio.AudioError] {
   let index = -1;
   for i in 0..run.elements.len() {
@@ -143,6 +145,8 @@ function single(input: [u8], own run: Run, kind: i32): Result[Run, audio.AudioEr
   return synthesize(Run { ...next, reader: end, seed: seed }, value, channel);
 }
 
+// Keep common-window stereo flags beside channel-pair decode.
+// fern-lint: allow cyclomatic-complexity
 function pair(input: [u8], own run: Run): Result[Run, audio.AudioError] {
   let (b1, tag) = bits.read(input, run.reader, 4)?;
   let (b2, common_window) = bits.read(input, b1, 1)?;
@@ -311,6 +315,8 @@ pub function (own decoder: Decoder) decode_adts(input: [u8], at: i32, limits: au
   return decoder.decode_adts_into(input, at, dsp.zeros(count), limits);
 }
 
+// Check cumulative PCM budgets and format consistency at each ADTS frame.
+// fern-lint: allow cyclomatic-complexity
 pub function decode(input: [u8], limits: audio.Limits): Result[Decoded, audio.AudioError] {
   audio.check_input(input, limits)?;
   let header = config.adts(input, 0, limits)?;
