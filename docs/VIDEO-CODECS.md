@@ -33,6 +33,12 @@ The platform selects codecs and controls synchronization.
 Hardware use, format support, and stream support depend on the device.
 This path is available for an app that needs audio and video together.
 
+The platform player opens paths, file URIs, HTTP streams, and granted content URIs.
+Content sources use the activity context and Android's content resolver.
+The app must hold the URI read grant from the document picker or MediaStore.
+This avoids a dependency on unrestricted filesystem paths or broad storage permission.
+The caller must preserve the read grant for later source opens.
+
 `std/android/video/player` provides explicit video codec policies and buffer control.
 It controls one video track and does not synchronize an audio track.
 The native Fern packet codecs remain independent of both platform players.
@@ -263,11 +269,15 @@ A hardware codec can reject a particular format or fail under resource pressure.
 Record the selected codec attributes and the exact media request with each result.
 
 The Android lane also runs `tests/android/player/app.fern` with an AVC and stereo AAC clip.
+It checks both an HTTP source and the same clip in MediaStore through a granted content URI.
 It requires video output, stable pause position, accurate seek, timeline anchors, completion, repeated playback, and error callbacks.
 
 The error callback for a missing HTTP source comes after the retries of the platform, about 30 seconds after the request.
 The fixture contains four seconds of 320 by 240 video and 48 kHz stereo audio.
-Artifacts include the fixture, its independent FFprobe metadata, logs, a screenshot, and Android media diagnostics.
+
+The runner verifies that MediaStore returns the exact fixture bytes before playback.
+It removes only the temporary MediaStore entry that it creates.
+Artifacts include the fixture, independent FFprobe metadata, and separate HTTP and content playback diagnostics.
 The test delegates A/V synchronization to Android. It does not measure acoustic lip-sync error or physical device power.
 
 ```sh
