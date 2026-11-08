@@ -1,0 +1,14 @@
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+
+function reference(): test.TestOutcome {
+  let ref = match (opus_file_check.reference(opus_file_vectors.SMOKE)) { Ok(value) => value, Err(_) => { return test.fail("reference data"); } };
+  return opus_file_check.check_case(ref, true);
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Opus file interpreter smoke");
+  runner = runner.it("independent complete-file PCM with gain and exact boundaries", reference);
+  return runner.finish();
+}
