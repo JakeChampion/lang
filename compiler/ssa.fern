@@ -401,16 +401,14 @@ pub function term_id(name: string): i32 {
 }
 
 pub function term_name(id: i32): string {
-  if (id == 1) {
-    return "ret";
-  }
-  if (id == 2) {
-    return "br";
-  }
-  if (id == 3) {
-    return "brif";
-  }
-  return "";
+  return match (id) {
+    0 => "none",
+    1 => "ret",
+    2 => "br",
+    3 => "brif",
+    4 => "unreachable",
+    _ => "terminator " + util.i32_to_string(id),
+  };
 }
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
