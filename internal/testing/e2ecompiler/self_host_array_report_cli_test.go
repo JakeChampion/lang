@@ -134,9 +134,15 @@ func TestSelfHostArrayReportCLIRefusals(t *testing.T) {
 	if code == 0 || !strings.Contains(stderr, "E0") || strings.Contains(stdout, "decisions:") {
 		t.Errorf("ill-typed program: exit %d, stdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	for _, args := range [][]string{{"-array-report", "-o", "prog"}, {"-array-report", "-run"}} {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-array-report", "-o", "prog"}, "fern: -array-report prints the report and writes no output, so it takes no -o\n"},
+		{[]string{"-array-report", "-run"}, "fern: -array-report and -run are separate modes: give one of them\n"},
+	} {
+		args, want := c.args, c.want
 		stdout, stderr, code := arrayReportCLI(t, "function main(): i32 { return 0; }\n", nil, args...)
-		want := "fern: -array-report prints the report and writes no output, so it takes neither -o nor -run\n"
 		if code != 2 || stdout != "" || stderr != want {
 			t.Errorf("fern %s: exit %d, stdout %q, stderr %q; want exit 2 and %q", strings.Join(args, " "), code, stdout, stderr, want)
 		}

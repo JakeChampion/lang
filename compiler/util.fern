@@ -1067,27 +1067,33 @@ pub function diag_after(a: Diag, b: Diag): boolean {
   return a.col > b.col;
 }
 
+// A stable bottom-up merge sort: `after(a, b)` says that a sorts after b.
 pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
-  let out: T[] = [];
-  for x in xs {
-    let at = out.len();
-    while (at > 0 && after(out[at - 1], x)) {
-      at -= 1;
-    }
-    let next: T[] = [];
-    let i = 0;
-    while (i <= out.len()) {
-      if (i == at) {
-        next = next.append(x);
+  let src = xs;
+  let width = 1;
+  while (width < src.len()) {
+    let dst: T[] = [];
+    let lo = 0;
+    while (lo < src.len()) {
+      let mid = if (lo + width < src.len()) { lo + width } else { src.len() };
+      let hi = if (lo + 2 * width < src.len()) { lo + 2 * width } else { src.len() };
+      let i = lo;
+      let j = mid;
+      while (i < mid || j < hi) {
+        if (j >= hi || i < mid && !after(src[i], src[j])) {
+          dst = dst.append(src[i]);
+          i += 1;
+        } else {
+          dst = dst.append(src[j]);
+          j += 1;
+        }
       }
-      if (i < out.len()) {
-        next = next.append(out[i]);
-      }
-      i += 1;
+      lo = hi;
     }
-    out = next;
+    src = dst;
+    width *= 2;
   }
-  return out;
+  return src;
 }
 
 pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
@@ -1420,7 +1426,6 @@ pub function is_dir(path: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub function resolve_path(import_path: string, entry_dir: string, root: string): string {

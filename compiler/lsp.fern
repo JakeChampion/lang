@@ -115,7 +115,6 @@ pub function parse_message(body: string): Option[Message] {
       return None;
     }
   }
-  return None;
 }
 
 pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
@@ -127,7 +126,6 @@ pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
       return JNull;
     }
   }
-  return JNull;
 }
 
 pub function get_string(v: json.JsonValue, key: string): string {
@@ -139,7 +137,6 @@ pub function get_string(v: json.JsonValue, key: string): string {
       return "";
     }
   }
-  return "";
 }
 
 pub function document_uri(params: json.JsonValue): string {
@@ -187,7 +184,6 @@ pub function changed_text(params: json.JsonValue): Option[string] {
       return None;
     }
   }
-  return None;
 }
 
 pub function send(body: string): void {

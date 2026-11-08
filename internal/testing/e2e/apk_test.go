@@ -278,6 +278,19 @@ func TestApkRefusals(t *testing.T) {
 			t.Errorf("the key link target changed: %v", err)
 		}
 	})
+	t.Run("unreadable-key", func(t *testing.T) {
+		key := filepath.Join(dir, "key-is-a-dir.pem")
+		if err := os.Mkdir(key, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"-apk", filepath.Join(dir, "unreadable.apk"), "-apk-key", key,
+			e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "cannot read the signing key "+key) {
+			t.Errorf("a key that cannot be read: want the read error, got %v\n%s", err, out)
+		}
+	})
 }
 
 // -apk-icon puts the PNG and a resource table that names it in the APK, and

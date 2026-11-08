@@ -5470,7 +5470,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(h_mix + ":\n");
     s = s.write("    xorq %r11, %rdx\n    imulq %r9, %rdx\n");
     s = s.write(h_fin + ":\n");
-    s = s.write("    movq %rdx, %rcx\n    shrq $32, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $33, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movabsq $-49064778989728563, %rcx\n    imulq %rcx, %rdx\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $33, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movabsq $-4265267296055464877, %rcx\n    imulq %rcx, %rdx\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $33, %rcx\n    xorq %rcx, %rdx\n");
     s = s.write("    movslq %edx, %rdx\n    pushq %rdx\n");
     return s;
   }
@@ -5933,11 +5937,11 @@ function ssa_cold_clobbers(cold: i32[]): i32[] {
 struct ColdSaves { by_pos: i32[], by_val: i32[], any: boolean }
 
 function ssa_slotless(nspill: i32, views: i32[], cold: ColdSaves): boolean {
-  return nspill == 0 && ssa_view_count(views) == 0 && !cold.any;
+  return nspill == 0 && ssa.view_count(views) == 0 && !cold.any;
 }
 
 function ssa_frame_words(nspill: i32, views: i32[], cold: ColdSaves): i32 {
-  let words = nspill + 3 * ssa_view_count(views);
+  let words = nspill + 3 * ssa.view_count(views);
   if (cold.any) {
     return words + COLD_SLOTS;
   }
@@ -6028,7 +6032,7 @@ function ssa_has_integer_saved(reg_of: i32[]): boolean {
 // Whether the select at `ii` starts a run that reads the flags of the compare
 // just before it.
 function ssa_select_head(fv: FuseView, blk: ssa.SBlock, ii: i32): boolean {
-  if (!ssa_is_select(blk, ii)) {
+  if (!ssa.select_at(blk, ii)) {
     return false;
   }
   let sc = ssa_select_fuse(fv, blk, ii);
@@ -7121,7 +7125,10 @@ function ssa_unary_known(what: string): boolean {
   if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
     return true;
   }
-  return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
+    return true;
+  }
+  return util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 function ssa_funary_known(what: string): boolean {
@@ -7179,7 +7186,7 @@ function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
       return cur;
     }
     let b = f.blocks[bi];
-    if (!ssa_only_phis(b) || b.term.kind_tag != 2 || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
+    if (!ssa.only_phis(b) || b.term.kind_tag != 2 || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
       return cur;
     }
     cur = b.term.target;
@@ -7197,15 +7204,6 @@ function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: 
     return s;
   }
   return ssa_jump(fr, lp, ssa_forward(f, fr, reg_of, to), next, s);
-}
-
-function ssa_only_phis(b: ssa.SBlock): boolean {
-  for ins in b.insts {
-    if (ins.kind_tag != 8) {
-      return false;
-    }
-  }
-  return true;
 }
 
 // The edge from pred needs a move for some phi of id.
@@ -8384,7 +8382,7 @@ function ssa_register_runtime(ins: ssa.SInst, reg_of: i32[], target: string, s: 
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = ssa_str_marks(ins.str, s);
-  let target = "__fern_" + ssa_str_target(ins.str);
+  let target = "__fern_" + ssa.runtime_helper_name(ins.str);
   if (ssa_register_runtime(ins, reg_of, target, s)) {
     let srcs: i32[] = [];
     let dsts: i32[] = [];
@@ -8401,7 +8399,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i -= 1;
   }
-  s = ssa_call_sym(s, "__fn___fern_" + ssa_str_target(ins.str));
+  s = ssa_call_sym(s, "__fn___fern_" + ssa.runtime_helper_name(ins.str));
   if (argc > 0) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
@@ -8442,40 +8440,6 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   s = ssa_branch(ssa_call_sym(s, "__fn___fern_str_eq.r"), J_JMP, dn.lab);
   s = ssa_zero(s.lab_def(nn.lab), "%rax").lab_def(dn.lab);
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
-}
-
-function ssa_str_target(op: string): string {
-  if (op == "str_from_bytes") {
-    return "string_from_bytes";
-  }
-  if (op == "str_from_bytes_u8") {
-    return "string_from_bytes_u8";
-  }
-  if (op == "str_from_bytes_range_u8") {
-    return "string_from_bytes_range_u8";
-  }
-  if (op == "read_chunk") {
-    return "reader_read_chunk";
-  }
-  if (op == "write_bytes") {
-    return "writer_write_bytes";
-  }
-  if (op == "write_bytes_u8") {
-    return "writer_write_bytes_u8";
-  }
-  if (op == "write_some_bytes") {
-    return "writer_write_some_bytes";
-  }
-  if (op == "write_some_bytes_u8") {
-    return "writer_write_some_bytes_u8";
-  }
-  if (op == "read_chunk_bytes") {
-    return "reader_read_chunk_bytes";
-  }
-  if (op == "read_chunk_bytes_u8") {
-    return "reader_read_chunk_bytes_u8";
-  }
-  return op;
 }
 
 function ssa_host_need(op: string): string {
@@ -8806,16 +8770,12 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.EmitState { ...s, capture: outer };
   let pops = ssa_leading_pops(arm, ins.args.len());
   let moves = ssa_arg_moves(ins, reg_of, pops, s);
-  if (!moves.ok) {
-    pops = [];
-    moves = ssa_arg_moves(ins, reg_of, pops, s);
-  }
   let i = 0;
   while (i < ins.args.len() - pops.len()) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i += 1;
   }
-  for m in moves.text {
+  for m in moves {
     s = s.write(m);
   }
   let body = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
@@ -8895,9 +8855,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
   return slice_unchecked(text, at + prefix.len() - 1, end) + "";
 }
 
-struct SsaArgMoves { ok: boolean, text: string[] }
-
-function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): SsaArgMoves {
+function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): string[] {
   let srcs: string[] = [];
   let dsts: string[] = [];
   let k = 0;
@@ -8951,7 +8909,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
       }
     }
   }
-  return SsaArgMoves { ok: true, text: out };
+  return out;
 }
 
 function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
@@ -9197,35 +9155,6 @@ function ssa_rt_arg_reg(a: i32): i32 {
   return 1;
 }
 
-function ssa_view_slots(f: ssa.SFunc): i32[] {
-  let out: i32[] = [];
-  let n = 0;
-  for blk in f.blocks {
-    for ins in blk.insts {
-      if (ins.kind_tag == 51) {
-        if (out.len() == 0) {
-          out = util.minus_ones(f.nvals);
-        }
-        if (ins.imm >= 1) {
-          out = out.with(ins.result, n);
-          n += 1;
-        }
-      }
-    }
-  }
-  return out;
-}
-
-function ssa_view_count(views: i32[]): i32 {
-  let n = 0;
-  for v in views {
-    if (v >= 0) {
-      n += 1;
-    }
-  }
-  return n;
-}
-
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   if (ins.imm == 2) {
@@ -9307,13 +9236,13 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     if (cmp.result != last.args[0] || fv.uses[cmp.result] != 1) {
       return value_test;
     }
-    if (!ssa_unique_test(cmp) && !ssa_fusable_cmp(cmp)) {
+    if (!ssa.unique_test(cmp) && !ssa_fusable_cmp(cmp)) {
       return value_test;
     }
     n = 2;
     inverted = true;
   }
-  if (ssa_unique_test(cmp)) {
+  if (ssa.unique_test(cmp)) {
     return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4, test: false };
   }
   if (!ssa_fusable_cmp(cmp)) {
@@ -9424,17 +9353,12 @@ struct SelectCond { fu: SsaFuse, first: boolean }
 // Whether the instruction at ii is a select that takes the flags of the compare
 // before it, so that the compare emits nothing of its own.
 function ssa_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
-  return ssa_is_select(blk, ii) && ssa_select_fuse(ssa_fuse_view(fr), blk, ii).fu.n > 0;
-}
-
-// A select past the first instruction, which the select fusion can read.
-function ssa_is_select(blk: ssa.SBlock, ii: i32): boolean {
-  return ii >= 1 && ii < blk.insts.len() && blk.insts[ii].kind_tag == 36;
+  return ssa.select_at(blk, ii) && ssa_select_fuse(ssa_fuse_view(fr), blk, ii).fu.n > 0;
 }
 
 function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
   let none = SelectCond { fu: ssa_no_fuse(), first: false };
-  if (!ssa_is_select(blk, ii)) {
+  if (!ssa.select_at(blk, ii)) {
     return none;
   }
   let c = blk.insts[ii].args[0];
@@ -9557,10 +9481,6 @@ function ssa_cc_text(cc: i32): string {
 
 function ssa_join(lp: string, blk: i32): string {
   return lp + "uq" + util.i32_to_string(blk);
-}
-
-function ssa_unique_test(ins: ssa.SInst): boolean {
-  return ssa.rc_inlined(ins) && ins.str == "__fern_rc_is_unique";
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
@@ -10489,10 +10409,10 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = ssa_release_entry(entry, lp, s);
   let saved = ssa_saved_regs(reg_of);
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
-  let views = ssa_view_slots(f);
+  let views = ssa.view_slots(f);
   let nspill = ssa_lane_spill(f, ssa.spill_count(reg_of));
   let tails = s.profile == 0;
-  let leaf = s.profile == 0 && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
+  let leaf = s.profile == 0 && nspill == 0 && ssa.view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold = ssa_cold_saves(f, alloc);
   let bare = !leaf && ssa_slotless(nspill, views, cold) && !hev_on(s) && tails && f.nparams <= ssa_nargs();
   let canary = 0;
@@ -10518,7 +10438,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa_view_count(views), canary: canary };
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame = ssa_frame_words(fr.nspill, views, cold) * 8;
@@ -11451,8 +11371,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_nonblocking");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
-    s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("sleep_ms");
@@ -11465,16 +11383,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     ircore.flat_arm_missing(o);
   }
   return s;
-}
-
-function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  let k = asmcore.buf_arity(o.kind_tag);
-  while (k > 0) {
-    k -= 1;
-    s = s.write("    popq " + ssa_arg_regs()[k] + "\n");
-  }
-  let sym = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  return s.write("    call " + sym + "\n    pushq %rax\n").buf_needs(sym);
 }
 
 function const_text_u32(t: string): boolean {

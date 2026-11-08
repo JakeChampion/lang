@@ -193,7 +193,6 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
@@ -389,7 +388,6 @@ function lt_stmt(st: ast.Stmt, own lt: LocalTypes): LocalTypes {
       return lt;
     }
   }
-  return lt;
 }
 
 function local_types(fd: parser.FuncDecl): LocalTypes {

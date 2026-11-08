@@ -131,7 +131,6 @@ function is_str_view(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_owned_string(t: typeinfo.Type): boolean {
@@ -143,7 +142,6 @@ function is_owned_string(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function str_copy_hint(from: typeinfo.Type, to: typeinfo.Type): string {
@@ -1315,7 +1313,6 @@ pub function type_debug(t: typeinfo.Type): string {
       return "erased(" + e.name + ")";
     }
   }
-  return "?";
 }
 
 function is_integer(t: typeinfo.Type): boolean {
@@ -1613,7 +1610,6 @@ function is_unknown(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_void(t: typeinfo.Type): boolean {
@@ -1625,7 +1621,6 @@ function is_void(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_func_type(t: typeinfo.Type): boolean {
@@ -1637,7 +1632,6 @@ function is_func_type(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_tuple_type(t: typeinfo.Type): boolean {
@@ -1697,7 +1691,6 @@ function type_contains_unknown(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_composite_type(t: typeinfo.Type): boolean {
@@ -1718,7 +1711,6 @@ function is_composite_type(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function cmp_method_receiver(t: typeinfo.Type): string {
@@ -1733,7 +1725,6 @@ function cmp_method_receiver(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 // cmp_parts gives the parts of a type that core/cmp compares structurally.
@@ -1873,7 +1864,6 @@ function is_primitive_type(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function literal_match_type(t: typeinfo.Type): boolean {
@@ -1897,7 +1887,6 @@ function literal_match_type(t: typeinfo.Type): boolean {
       return true;
     }
   }
-  return false;
 }
 
 function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
@@ -1937,7 +1926,6 @@ function cast_pointer_shaped(t: typeinfo.Type, source: boolean): boolean {
       return false;
     }
   }
-  return false;
 }
 
 pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[], is_unsafe: boolean, is_pub: boolean }
@@ -2805,7 +2793,7 @@ function is_resolvable_raw_name(name: string): boolean {
   if (util.str_has_prefix(name, "__fern_")) {
     return true;
   }
-  return util.str_has_prefix(name, "__") && util.has_str(registered_intrinsics(), name);
+  return is_registered_intrinsic(name);
 }
 
 function for_iter_is_range(iter: ast.Expr): boolean {
@@ -3255,7 +3243,6 @@ function impl_parts(t: typeinfo.Type): typeinfo.Type[] {
       return [];
     }
   }
-  return [];
 }
 
 // impl_of_holds says whether the impl of trait_name that t takes its method
@@ -4015,7 +4002,6 @@ function scalar_module_for(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 function scalar_method_available(recv: string, method: string): boolean {
@@ -4417,7 +4403,6 @@ function method_namespace_of(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
@@ -5122,7 +5107,6 @@ pub function receiver_key(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 // `__send_copy` has its argument's type, `__send_adopt` the type of its
@@ -5749,7 +5733,6 @@ function binds_nothing(e: ast.Expr, s: Scope): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function ctor_pins_nothing(c: ast.ExprCall, s: Scope): boolean {
@@ -6373,7 +6356,6 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return s.resolve_type(z.type_name);
     }
   }
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
@@ -6744,7 +6726,6 @@ function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type 
       return t_unknown("can only index into an array or string");
     }
   }
-  return t_unknown("unreachable index arm");
 }
 
 function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
@@ -6769,7 +6750,6 @@ function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
       return t_unknown("can only slice array or string");
     }
   }
-  return t_unknown("unreachable slice arm");
 }
 
 function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
@@ -6867,7 +6847,6 @@ function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s:
       return t_unknown("can only field-access a struct or tuple");
     }
   }
-  return t_unknown("unreachable field-access arm");
 }
 
 function struct_field_type(sn: typeinfo.TypeStruct, field: string, s: Scope): typeinfo.Type {
@@ -7095,7 +7074,6 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return CheckResult { scope: s, ty: t_unknown("parser-side unknown stmt:" + u.kind) };
     }
   }
-  return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
 }
 
 pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
@@ -7957,7 +7935,6 @@ function unknown_beyond_tvars(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function type_from_name_erasing_tparams(name: string, tparams: string[], tn: TypeNames): typeinfo.Type {
@@ -8490,7 +8467,6 @@ pub function type_label(t: typeinfo.Type): string {
       return e.name;
     }
   }
-  return "unknown";
 }
 
 function array_label(a: typeinfo.TypeArray): string {
@@ -8685,7 +8661,6 @@ function stmt_exprs(st: ast.Stmt): ast.Expr[] {
       return out;
     }
   }
-  return out;
 }
 
 function vb_ret_diags(body: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: UnionSig[], is_void: boolean): util.Diag[] {
@@ -8720,7 +8695,6 @@ function vb_ret_diags(body: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions:
       return util.append_diags(out, stmt_ret_diags(body[i], cur, ret_ty, unions, is_void));
     }
   }
-  return out;
 }
 
 function stmt_ret_diags(st: ast.Stmt, s: Scope, ret_ty: typeinfo.Type, unions: UnionSig[], is_void: boolean): util.Diag[] {
@@ -9553,7 +9527,6 @@ function mc_is_binding(e: ast.Expr, name: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function mc_mentions_stmts(stmts: ast.Stmt[], name: string): boolean {
@@ -9749,7 +9722,6 @@ function mc_expr_consumes(e: ast.Expr, name: string, tname: string, report: bool
       return (false, none);
     }
   }
-  return (false, none);
 }
 
 function mc_stmt_consumes(st: ast.Stmt, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
@@ -9789,7 +9761,6 @@ function mc_stmt_consumes(st: ast.Stmt, name: string, tname: string, report: boo
       return (false, none);
     }
   }
-  return (false, none);
 }
 
 // A literal match lowers to `if (true) { let tmp = scrutinee; ... }`, so
@@ -10092,7 +10063,6 @@ function exit_type_known(t: typeinfo.Type): boolean {
       return !type_contains_unknown(t);
     }
   }
-  return true;
 }
 
 function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
@@ -10401,7 +10371,6 @@ function unsafe_descend(e: ast.Expr): boolean {
       return true;
     }
   }
-  return true;
 }
 
 function unsafe_call(c: ast.ExprCall, own acc: UnsafeWalk): UnsafeWalk {
@@ -10597,7 +10566,6 @@ function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function unsettled_part(e: ast.Expr, path: i32[], at: i32, lits: string[]): boolean {
@@ -11209,7 +11177,6 @@ function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
       return out;
     }
   }
-  return out;
 }
 
 function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
@@ -11240,7 +11207,6 @@ function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
       return out;
     }
   }
-  return out;
 }
 
 function mx_match_arm_types(m: ast.StmtMatch, s: Scope): typeinfo.Type[] {
@@ -11552,7 +11518,6 @@ function slit_descend(e: ast.Expr): boolean {
       return true;
     }
   }
-  return true;
 }
 
 // A built-in handle comes from the call that opens it. A struct the
@@ -11890,7 +11855,6 @@ function value_block_can_break(e: ast.Expr, label: string, nested: boolean): boo
       return false;
     }
   }
-  return false;
 }
 
 function label_in_scope(labels: string[], name: string): boolean {
@@ -11938,7 +11902,6 @@ function not_a_scope_root(e: ast.Expr): boolean {
       return true;
     }
   }
-  return true;
 }
 
 function loop_diags(stmts: ast.Stmt[], in_loop: boolean, labels: string[]): util.Diag[] {
@@ -12841,7 +12804,6 @@ function bare_numeric_literal(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function int_literal_tree(e: ast.Expr): boolean {
@@ -12930,7 +12892,6 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
       return out;
     }
   }
-  return out;
 }
 
 function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
@@ -13058,7 +13019,6 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
@@ -13258,7 +13218,6 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -13448,7 +13407,6 @@ function qual_enum_name(obj: ast.Expr, s: Scope): string {
       return "";
     }
   }
-  return "";
 }
 
 function qual_variant_exists(en: string, field: string, s: Scope): boolean {
@@ -13868,7 +13826,6 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: bool
       return assoc_miss();
     }
   }
-  return assoc_miss();
 }
 
 function tparam_assoc_diag(tid: ast.ExprIdent, field: string, s: Scope): util.Diag {
@@ -13974,7 +13931,6 @@ function lanes_inside(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function holds_lanes(t: typeinfo.Type): boolean {
@@ -14169,7 +14125,6 @@ function scalar_receiver_name(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 function display_dispatch_name(t: typeinfo.Type): string {
@@ -14188,7 +14143,6 @@ function display_dispatch_name(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 function display_resolves(t: typeinfo.Type, s: Scope): boolean {
@@ -14217,7 +14171,6 @@ function display_unjudged(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_display_builtin(name: string): boolean {
@@ -15261,7 +15214,6 @@ function try_ret_other_type(ret: typeinfo.Type, name: string): boolean {
       return spellable(ret);
     }
   }
-  return false;
 }
 
 function try_ret_label(ret: typeinfo.Type): string {
@@ -15994,7 +15946,6 @@ function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
       return t_unknown("not an array");
     }
   }
-  return t_unknown("not an array");
 }
 
 function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): util.Diag[] {
@@ -16025,7 +15976,6 @@ function checks_array_element(ty: typeinfo.Type): boolean {
       return is_dyn_slot(ty) || is_str_view(ty);
     }
   }
-  return false;
 }
 
 function slice_unchecked_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
@@ -16217,7 +16167,6 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return false;
     }
   }
-  return false;
 }
 
 function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
@@ -16378,7 +16327,6 @@ function builtin_iterable(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function type_label_or_tvar(t: typeinfo.Type): string {
@@ -17892,7 +17840,6 @@ function const_literal(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function const_unary_err(u: ast.ExprUnary, earlier: string[]): string {
@@ -18218,6 +18165,11 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
   return acc;
 }
 
+// Every intrinsic name starts with "__", so other names skip the list.
+function is_registered_intrinsic(name: string): boolean {
+  return util.str_has_prefix(name, "__") && util.has_str(registered_intrinsics(), name);
+}
+
 function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
@@ -18258,9 +18210,8 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin or an intrinsic redeclares it, as
-  // native's pre-registered signature makes it there.
-  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
+  // A free function named like a builtin or an intrinsic redeclares it.
+  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -19008,7 +18959,6 @@ function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // A for-each takes an owned name only at its last use; any other iterator
@@ -19234,7 +19184,6 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return f;
     }
   }
-  return f;
 }
 
 function lu_pattern_values(pat: ast.Pattern, value: ast.Expr, own matched: LuVar[]): LuVar[] {
@@ -19622,7 +19571,6 @@ function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string, root: ast.S
       return lu_payload_facts_fresh(fx, facts, name, root);
     }
   }
-  return false;
 }
 
 // The scrutinee of `m`, and each arm that does not bind `name` again.
@@ -19992,7 +19940,6 @@ function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
       return true;
     }
   }
-  return true;
 }
 
 // An own parameter holds its fields as a fresh local does, so a field unpacked from it is owned the same way.
@@ -20332,7 +20279,6 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function lu_empty_facts(): LuFacts {
@@ -20500,7 +20446,6 @@ function lu_loop_labels(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function lu_loop_labels_all(stmts: ast.Stmt[], own acc: string[]): string[] {
@@ -20558,7 +20503,6 @@ function lu_jump_walk(st: ast.Stmt, nested: boolean, inner: string[], own j: LuJ
       return j;
     }
   }
-  return j;
 }
 
 function lu_jump_walk_all(stmts: ast.Stmt[], nested: boolean, inner: string[], own j: LuJumps): LuJumps {
@@ -20964,7 +20908,6 @@ function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
       return LU_NOT_BRANCH;
     }
   }
-  return LU_NOT_BRANCH;
 }
 
 // A block, an unsafe block, or an `if (true)`: the then body always runs.
@@ -21038,7 +20981,6 @@ function lu_stmt_exits(st: ast.Stmt, noret: util.NameIndex, bound: boolean): boo
       return false;
     }
   }
-  return false;
 }
 
 // bound: a parameter named exit hides the builtin, so the check names only
@@ -21411,7 +21353,6 @@ function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): s
       return acc;
     }
   }
-  return acc;
 }
 
 // A later update `S { ...q, field: v }` replaces the path, so it does not
@@ -21556,7 +21497,6 @@ function lu_straight(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function lu_has_try(e: ast.Expr): boolean {
@@ -21934,7 +21874,6 @@ function ow_ident_name(e: ast.Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 function ow_is_field_read(e: ast.Expr, target: string, field: string): boolean {
@@ -21946,7 +21885,6 @@ function ow_is_field_read(e: ast.Expr, target: string, field: string): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function ow_count_field_reads(e: ast.Expr, target: string, field: string): i32 {
@@ -22013,7 +21951,6 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
       return out;
     }
   }
-  return out;
 }
 
 struct OwnCall { args: ast.Expr[], flags: boolean[], recv: i32 }
@@ -22176,7 +22113,6 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, s: Scope, seen: string[]):
       return "";
     }
   }
-  return "";
 }
 
 function send_unsafe_erased_reason(name: string, s: Scope): string {
@@ -23363,7 +23299,7 @@ function ow_holds_no_handle(tn: string, dx: OwnDecls): boolean {
 // other parts.
 function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[]): boolean {
   let n = tn.len();
-  if (tn == "fn" || util.index_of_sub(tn, "=>") >= 0) {
+  if (tn == "fn" || parser.top_arrow_at(tn) >= 0) {
     return true;
   }
   if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
@@ -24122,7 +24058,6 @@ function e049_init_ref_ty(init: ast.Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 function e049_scope(stmts: ast.Stmt[]): NameTy[] {
@@ -24747,7 +24682,6 @@ function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function lambda_annots(stmts: ast.Stmt[]): Annot[] {
@@ -24786,7 +24720,6 @@ function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
       return acc;
     }
   }
-  return acc;
 }
 
 function unknown_type_hint(name: string, traits: string[]): string {
@@ -25492,7 +25425,6 @@ function fip_recv_root(e: ast.Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 function fip_with_in_place(c: ast.ExprCall, fa: ast.ExprFieldAccess, root_own: boolean, root: string): boolean {
@@ -25594,7 +25526,6 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
       return out;
     }
   }
-  return out;
 }
 
 function e053_own_exprs(stmt: ast.Stmt, fx: E053Ctx, cur: Scope): util.Diag[] {
@@ -27232,7 +27163,6 @@ function spellable(t: typeinfo.Type): boolean {
       return true;
     }
   }
-  return true;
 }
 
 function template_index(gens: parser.FuncDecl[], name: string): i32 {
@@ -29041,7 +28971,6 @@ function type_to_irtag(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 function type_to_arrtag(t: typeinfo.Type): string {
@@ -29060,7 +28989,6 @@ function type_to_arrtag(t: typeinfo.Type): string {
       return "";
     }
   }
-  return "";
 }
 
 pub struct Imports { paths: string[], unloaded: string[], sights: parser.ModuleSight[] }
@@ -29420,7 +29348,6 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       return unsettled(e);
     }
   }
-  return unsettled(e);
 }
 
 function stamped_type_args(c: ast.ExprCall, s: Scope): string[] {
@@ -29488,7 +29415,6 @@ function width_open(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function any_width_open(ts: typeinfo.Type[]): boolean {
@@ -29612,7 +29538,6 @@ function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
       return true;
     }
   }
-  return true;
 }
 
 function all_names_whole(ts: typeinfo.Type[], s: Scope): boolean {
@@ -29767,7 +29692,6 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
       return ForBinding { scope: bind_for_element(body, fr.var_name, sub.elem), valid: sub.ok };
     }
   }
-  return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
 }
 
 function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
@@ -29821,7 +29745,6 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): 
       return s;
     }
   }
-  return s;
 }
 
 function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
@@ -29899,7 +29822,6 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function annotate_func(fd: parser.FuncDecl, env: ModuleEnv): parser.FuncDecl {
@@ -30427,7 +30349,6 @@ function vb_annotation_of(t: typeinfo.Type, s: Scope): string {
       return "";
     }
   }
-  return "";
 }
 
 function vb_wants_annotation(t: typeinfo.Type): boolean {
@@ -30448,7 +30369,6 @@ function vb_wants_annotation(t: typeinfo.Type): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function vb_placeholder_decl(v: ast.StmtVar): boolean {
@@ -30463,7 +30383,6 @@ function vb_placeholder_decl(v: ast.StmtVar): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function vb_zero_of(tag: string): ast.Expr {
@@ -30722,7 +30641,6 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function pretype_stmts(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
@@ -30753,7 +30671,6 @@ function pretype_at(x: ast.Expr, own acc: boolean): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function colliding_variant_names(mod: parser.Module): string[] {
@@ -31222,7 +31139,6 @@ function qualify_stmt(st: ast.Stmt, s: Scope, coll: util.NameIndex): ast.Stmt {
       return st;
     }
   }
-  return st;
 }
 
 function expr_names_shared(e: ast.Expr, coll: util.NameIndex): boolean {
@@ -31986,7 +31902,6 @@ function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
       return (false, ids);
     }
   }
-  return (false, ids);
 }
 
 // The literal ids of a `let` or assignment value. A value `if`, `match` or
@@ -32398,7 +32313,6 @@ function wide_int_tree(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function gcall_of(e: ast.Expr, want: typeinfo.Type, s: Scope): (ast.Expr, typeinfo.Type, boolean) {
@@ -33183,7 +33097,6 @@ function lit_expr(e: ast.Expr, s: Scope, st: LitInfer): LitInfer {
       return st;
     }
   }
-  return st;
 }
 
 function lit_lambda(lm: ast.ExprLambda, s: Scope, st: LitInfer): LitInfer {
@@ -33415,7 +33328,6 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
       return (s, st);
     }
   }
-  return (s, st);
 }
 
 function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type, LitInfer) {
@@ -33766,7 +33678,6 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       return (st, rw, false);
     }
   }
-  return (st, rw, false);
 }
 
 function lit_rewrite_expr(e: ast.Expr, rw: LitRewrite): (ast.Expr, LitRewrite, boolean) {
@@ -33967,7 +33878,6 @@ function lit_candidate_at(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 // A capitalised name, alone, as an argument or as an element, can be a unit variant whose

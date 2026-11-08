@@ -107,7 +107,6 @@ function classify(path: string): i32 {
       return ENTRY_OTHER;
     }
   }
-  return ENTRY_OTHER;
 }
 
 function sort_pairs(names: string[], contents: u8[][]): (string[], u8[][]) {
@@ -258,7 +257,6 @@ function fa_expr(e: ast.Expr, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
       return (e, a, false);
     }
   }
-  return (e, a, false);
 }
 
 function callee_ident(callee: ast.Expr): string {
@@ -270,7 +268,6 @@ function callee_ident(callee: ast.Expr): string {
       return "";
     }
   }
-  return "";
 }
 
 function fail(c: ast.ExprCall, a: FoldAcc, msg: string): (ast.Expr, FoldAcc, boolean) {

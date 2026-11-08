@@ -204,7 +204,6 @@ function header_needs_parens(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function print_header_expr(e: ast.Expr, depth: i32): string {
@@ -297,7 +296,6 @@ function print_return_only_c(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt
       return ("", f);
     }
   }
-  return ("", f);
 }
 
 // A body that holds a comment stays a block, so that the comment stays in the
@@ -350,7 +348,6 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
       return ("", f);
     }
   }
-  return ("", f);
 }
 
 // The statements of an `unsafe { …; e }` value block: the parser wraps them,
@@ -498,7 +495,6 @@ function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt):
       return ("", f);
     }
   }
-  return ("", f);
 }
 
 function if_value_parens(text: string, parent_prec: i32): string {
@@ -525,7 +521,6 @@ function print_value_local_body(body: ast.Stmt[], depth: i32, f: Fmt): (string, 
       return ("", f);
     }
   }
-  return ("", f);
 }
 
 // A literal match on a scrutinee that is not a name binds it to a local first.
@@ -583,7 +578,6 @@ function print_value_local_iife(c: ast.ExprCall, depth: i32, f: Fmt): (string, F
       return ("", f);
     }
   }
-  return ("", f);
 }
 
 function value_local_name(first: ast.Stmt, last: ast.Stmt): string {
@@ -1341,7 +1335,6 @@ function first_line(e: ast.Expr): i32 {
       return ast.expr_line(e);
     }
   }
-  return ast.expr_line(e);
 }
 
 function is_postfix_unary(op: string): boolean {
@@ -1392,7 +1385,6 @@ function last_line(e: ast.Expr, spans: parser.BlockSpans): i32 {
       return ln;
     }
   }
-  return ln;
 }
 
 function list_closer(open: i32, es: ast.Expr[], spans: parser.BlockSpans): i32 {
@@ -1635,7 +1627,6 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       return out + ")";
     }
   }
-  return "_";
 }
 
 function pv_pattern_name(pat: ast.Pattern): string {
@@ -1650,7 +1641,6 @@ function pv_pattern_name(pat: ast.Pattern): string {
       return "";
     }
   }
-  return "";
 }
 
 function nested_slot_binder(pv: ast.PatVariant, i: i32): string {
@@ -1732,7 +1722,6 @@ function range_slot_for(cond: ast.Expr, binder: string): string {
       return "";
     }
   }
-  return "";
 }
 
 function payload_slot(pv: ast.PatVariant, binder: string): string {
@@ -2204,7 +2193,6 @@ function expr_is_missing(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function stmt_is_single_line(st: ast.Stmt): boolean {
@@ -2234,7 +2222,6 @@ function stmt_is_single_line(st: ast.Stmt): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
@@ -2489,7 +2476,6 @@ function expr_is_true(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function expr_is_false(e: ast.Expr): boolean {
@@ -2501,7 +2487,6 @@ function expr_is_false(e: ast.Expr): boolean {
       return false;
     }
   }
-  return false;
 }
 
 function is_not_of_ident(e: ast.Expr, name: string): boolean {
@@ -2658,7 +2643,6 @@ function stmt_last_line(st: ast.Stmt, ln: i32, spans: parser.BlockSpans): i32 {
       return ln;
     }
   }
-  return ln;
 }
 
 function split_commas(csv: string): string[] {

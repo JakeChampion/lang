@@ -8171,6 +8171,10 @@ func StrHash(s []byte, seed int32) uint32 {
 			h = (h ^ word(s)) * prime
 		}
 	}
-	h ^= h >> 32
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
 	return uint32(h)
 }
