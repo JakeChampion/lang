@@ -1,0 +1,44 @@
+import "std/test";
+import "aac_check";
+import "aac_vectors";
+
+function mono(): test.TestOutcome {
+  for v in aac_vectors.vectors() {
+    if (v.channels == 1) {
+      if let Err(message) = aac_check.reference(v) {
+        return test.fail(message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function layouts(): test.TestOutcome {
+  for v in aac_vectors.vectors() {
+    if (v.name.starts_with("layout-")) {
+      if let Err(message) = aac_check.reference(v) {
+        return test.fail(message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function tools(): test.TestOutcome {
+  for v in aac_vectors.vectors() {
+    if (v.channels == 2 && !v.name.starts_with("layout-")) {
+      if let Err(message) = aac_check.reference(v) {
+        return test.fail(message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("AAC-LC independent PCM");
+  runner = runner.it("all ADTS sample rates and silence against FFmpeg", mono);
+  runner = runner.it("all declared channel layouts against FFmpeg", layouts);
+  runner = runner.it("transients, intensity stereo, and noise substitution against FFmpeg", tools);
+  return runner.finish();
+}

@@ -14,7 +14,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus layer supplies file playback. |
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
-| AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
+| AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
+| HE-AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
 It uses approximately 3.2 bits per sample plus frame headers.
@@ -86,6 +87,44 @@ The WAVE range API borrows a complete WAVE byte view and decodes only the reques
 QOA verifies static frame lengths, byte counts, format consistency, and total samples.
 FLAC verifies CRC-8, CRC-16, sample bounds, frame sequence, and alignment bits.
 Whole-stream FLAC decode verifies a supplied MD5. Individual frame calls cannot verify a complete stream digest.
+
+## AAC-LC
+
+`std/audio/aac.decode` decodes a complete ADTS byte view to interleaved `f32` samples.
+It checks cumulative input and output limits. A format change returns `Unsupported` in this whole-file API.
+
+`std/audio/aac/config.inspect` reads an MPEG-4 AudioSpecificConfig.
+Create a decoder with `aac.create`, then call `Decoder.decode_packet` for each raw access unit.
+The packet API is suitable for a container demuxer that supplies complete access units.
+MP4/M4A demux is separate work under [#14518](https://github.com/JakeChampion/lang/issues/14518).
+
+`Decoder.decode_adts` reads one complete ADTS frame at a byte offset.
+It supports one through four raw data blocks and both MPEG identifiers.
+A configuration change resets overlap state before decode.
+Both packet methods have an `_into` form that consumes a reusable PCM buffer.
+The valid sample prefix has `frames * channels` entries. The remaining buffer entries retain their values.
+
+Decoder state retains channel overlap, window shapes, element tags, and a noise seed.
+The transform scratch uses 4,224 float entries. Channel overlap uses 1,024 entries per channel.
+Channel syntax and spectral arrays still allocate during decode. The API does not promise an allocation-free audio callback.
+
+Output uses WAVE speaker order for the declared AAC configuration.
+Configuration 7 places its extra front pair after the back pair.
+Some encoders use configuration 7 for a side pair instead. ADTS cannot distinguish these interpretations.
+An application must retain layout knowledge from its source when it needs an exact speaker map.
+
+The decoder supports long and grouped short windows, sine and Kaiser-Bessel windows, all spectral codebooks, escapes, and pulse data.
+It also supports mid-side stereo, intensity stereo, noise substitution, and temporal noise shaping.
+Packet errors consume the decoder. The caller can create a new one from its retained configuration.
+`Decoder.reset` clears overlap and noise state while retaining transform storage.
+
+HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames return `Unsupported`.
+Protected ADTS frame decode also returns `Unsupported` until CRC verification is implemented.
+Header inspection still exposes protection and raw-block counts.
+These remaining AAC tasks stay open under [#14517](https://github.com/JakeChampion/lang/issues/14517).
+
+The AAC implementation derives from pinned Symphonia source under MPL-2.0.
+See [the notice](../licenses/aac/NOTICE.txt) for attribution, source revision, and license scope.
 
 ## MP3
 
@@ -495,6 +534,12 @@ scripts/bench-mp3
 python3 scripts/gen-mp3-tables.py --check --source /path/to/minimp3.h
 python3 -m unittest discover -s scripts -p test_gen_mp3_tables.py
 
+# AAC reference packets and complete decoded PCM use FFmpeg.
+python3 scripts/gen-aac-vectors.py --check
+# AAC transforms use an independent C double-precision equation.
+python3 scripts/gen-aac-kernel-vectors.py --check
+python3 scripts/gen-aac-tables.py --check
+
 # Requires cc, FFmpeg, and network access to the pinned QOA source.
 python3 scripts/gen-audio-fixtures.py
 
@@ -507,7 +552,26 @@ The generator independently verifies its synthetic FLAC vectors with FFmpeg.
 It also produces FLAC vectors through FFmpeg and QOA vectors through the pinned C reference.
 The vectors cover frame boundaries, signed extrema, predictor orders, residual methods, and stereo reconstruction.
 The suites also cover truncated input, invalid headers, checksums, forbidden subframes, and allocation limits.
-The standard compiler differential suite includes the audio, Opus, and MP3 test programs.
+The standard compiler differential suite includes the audio, Opus, MP3, and AAC test programs.
+
+The AAC tests compare every decoded sample with frozen FFmpeg PCM at an absolute tolerance of 0.000001.
+The 44 fixtures cover all 13 ADTS rates, seven channel configurations, silence, transients, intensity stereo, and noise substitution.
+Directly written syntax fixtures cover all 11 spectral codebooks, escape values through 8,191, pulse data, and eight TNS combinations.
+An independent C double-precision oracle checks both inverse-transform sizes and all window sequences and shapes.
+The Huffman tests check all 1,362 pinned raw codewords and their incomplete byte prefixes.
+Boundary tests check raw packets, multi-block ADTS, reset, buffer reuse, truncated input, invalid syntax, and resource limits.
+
+A separate test checks the correlated-PNS same-vector rule from ISO/IEC 14496-3 section 4.6.13.3.
+FDK AAC v2.0.3 independently confirms equal, nonzero channels for that directly written packet.
+Its source pin is `716f4394641d53f0d79c9ddac3fa93b03a49f278`.
+The helper is `scripts/audio-reference/aac-pns.cpp`. It links FDK AAC only as a reference tool.
+
+PNS permits different random generators. This check compares the channel relationship, not random sample phase.
+
+FFmpeg 7.1.5 generates independent channels for that correlated packet.
+Its PCM is therefore unsuitable as the oracle for this particular same-vector test.
+
+These tests establish the measured AAC-LC scope. They do not establish complete AAC conformance or performance leadership.
 
 The initial local checks also decoded 36 WAVE files and 54 FFmpeg FLAC files with exact PCM equality.
 Nine additional QOA files matched the C encoder byte for byte.
@@ -585,8 +649,11 @@ Android qualification requires device measurements of decode time, allocations, 
 
 ## Remaining codec work
 
-A complete player still needs complete Opus decode and Ogg demux.
-Further MP3 work includes free-format streams, damaged-stream synchronization, more tag formats, and a sample-accurate seek index.
-Opus qualification must cover SILK, hybrid mode changes, packet loss, Ogg granule positions, pre-skip, gain, and end trimming.
+The codec stack now includes complete Opus decode, Ogg demux, and MP3/FLAC seek indexes.
+Further MP3 work includes free-format streams, damaged-stream synchronization, and more tag formats.
+AAC work includes HE-AAC/SBR/PS, protected ADTS verification, program configurations, and MP4/M4A integration.
+Vorbis, further encoders, and other lossless formats need independent reference vectors and benchmarks.
+Android qualification still needs physical-device memory, power, thermal, and sustained-playback measurements.
+
 Additional formats need their own reference vectors and benchmarks before the support matrix changes.
 No metadata inspector or unsupported-format placeholder counts as a codec implementation.

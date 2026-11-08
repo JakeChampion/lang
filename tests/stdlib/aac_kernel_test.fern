@@ -1,0 +1,162 @@
+import "std/audio/aac/bits";
+import "std/audio/aac/config";
+import "std/audio/aac/dsp";
+import "std/audio/pcm";
+import "std/hex";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "aac_kernel_vectors";
+
+function codeword(bytes: [u8], at: i32): boolean {
+  let book = ref.word(bytes, at);
+  let symbol = ref.word(bytes, at + 4);
+  let code = ref.word(bytes, at + 8);
+  let width = ref.word(bytes, at + 12);
+  let count = (width + 7) / 8;
+  let input: u8[] = [];
+  for i in 0..count {
+    input = input.append((code >> 8 * (count - 1 - i)) as u8);
+  }
+  let reader = bits.Reader { at: 0, bit: count * 8 - width };
+  let Ok((end, actual)) = bits.huffman(input, reader, book) else {
+    return false;
+  };
+  if (actual != symbol || end.at != count || end.bit != 0) {
+    return false;
+  }
+  for cut in 1..count {
+    if let Err(pcm.Truncated) = bits.huffman(input[:cut], reader, book) {} else {
+      return false;
+    }
+  }
+  return true;
+}
+
+function codewords(): test.TestOutcome {
+  let Ok(bytes) = ref.unpack(aac_kernel_vectors.DATA) else {
+    return test.fail("reference data");
+  };
+  let count = ref.word(bytes, 0);
+  for i in 0..count {
+    if (!codeword(bytes, 4 + 16 * i)) {
+      return test.fail("Huffman reference " + i.to_string());
+    }
+  }
+  return test.assert_true(count == 1362);
+}
+
+function transforms(): test.TestOutcome {
+  let Ok(bytes) = ref.unpack(aac_kernel_vectors.DATA) else {
+    return test.fail("reference data");
+  };
+  let at = 4 + 16 * ref.word(bytes, 0);
+  let count = ref.word(bytes, at);
+  at += 4;
+  let scratch = dsp.create();
+  for _ in 0..count {
+    let n = ref.word(bytes, at);
+    at += 4;
+    let input = ref.floats(bytes, at, n);
+    at += n * 4;
+    let Ok(next) = dsp.imdct(input, 0, n, scratch, 0) else {
+      return test.fail("inverse transform");
+    };
+    scratch = next;
+    if (!ref.compare(scratch.time, 2 * n, bytes, at)) {
+      return test.fail("independent inverse-transform equation, N=" + n.to_string());
+    }
+    at += 2 * n * 4;
+  }
+  return test.assert_true(count == 4);
+}
+
+function windows(): test.TestOutcome {
+  let Ok(bytes) = ref.unpack(aac_kernel_vectors.DATA) else {
+    return test.fail("reference data");
+  };
+  let at = 4 + 16 * ref.word(bytes, 0);
+  let transforms = ref.word(bytes, at);
+  at += 4;
+  for _ in 0..transforms {
+    let n = ref.word(bytes, at);
+    at += 4 + n * 12;
+  }
+  let count = ref.word(bytes, at);
+  at += 4;
+  let work = dsp.Work { delay: dsp.zeros(1024), scratch: dsp.create(), pcm: dsp.zeros(1024) };
+  let previous = 0;
+  for _ in 0..count {
+    let sequence = ref.word(bytes, at);
+    let shape = ref.word(bytes, at + 4);
+    at += 8;
+    let input = ref.floats(bytes, at, 1024);
+    at += 4096;
+    let Ok(next) = dsp.synth(input, work, 0, 1, 0, sequence, shape, previous) else {
+      return test.fail("window synthesis");
+    };
+    work = next;
+    if (!ref.compare(work.pcm, 1024, bytes, at)) {
+      return test.fail("independent window/overlap equation, sequence=" + sequence.to_string());
+    }
+    at += 4096;
+    previous = shape;
+  }
+  return test.assert_true(count == 6 && at == bytes.len());
+}
+
+function bit_ranges(): test.TestOutcome {
+  let input: u8[] = [165u8, 90u8, 240u8, 15u8, 129u8];
+  let Ok((b1, a)) = bits.read(input, bits.create(), 4) else {
+    return test.fail("first nibble");
+  };
+  let Ok((b2, b)) = bits.read(input, b1, 12) else {
+    return test.fail("cross-byte word");
+  };
+  let Ok((b3, c)) = bits.read(input, b2, 17) else {
+    return test.fail("wide word");
+  };
+  if (a != 10u32 || b != 1370u32 || c != 122911u32 || bits.left(input, b3) != 7i64) {
+    return test.fail("MSB order or cursor");
+  }
+  if let Err(pcm.Truncated) = bits.read(input, b3, 8) {} else {
+    return test.fail("read beyond end");
+  }
+  if let Err(pcm.Header) = bits.read(input, bits.create(), 33) {} else {
+    return test.fail("oversized word");
+  }
+  if let Err(pcm.Truncated) = bits.huffman([], bits.create(), 0) {} else {
+    return test.fail("empty Huffman input");
+  }
+  return test.pass();
+}
+
+function configs(): test.TestOutcome {
+  for value in ["1210", "121056e500"] {
+    let Ok(bytes) = hex.decode(value) else {
+      return test.fail("ASC reference");
+    };
+    let Ok(info) = config.inspect(bytes, pcm.default_limits()) else {
+      return test.fail("common LC ASC");
+    };
+    if (info.sample_rate != 44100 || info.channels != 2 || info.frame_size != 1024) {
+      return test.fail("ASC fields");
+    }
+  }
+  let Ok(he) = hex.decode("2b9208") else {
+    return test.fail("HE reference");
+  };
+  if let Err(pcm.Unsupported) = config.inspect(he, pcm.default_limits()) {} else {
+    return test.fail("HE must not be reported as LC");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("AAC bit input, codebooks, transforms, and configuration");
+  runner = runner.it("all pinned raw Huffman codewords and partial byte input", codewords);
+  runner = runner.it("inverse transforms against an independent C double equation", transforms);
+  runner = runner.it("all window sequences and shapes against independent C overlap", windows);
+  runner = runner.it("MSB input ranges, incomplete words, and empty codebooks", bit_ranges);
+  runner = runner.it("common LC configuration and explicit unsupported profiles", configs);
+  return runner.finish();
+}

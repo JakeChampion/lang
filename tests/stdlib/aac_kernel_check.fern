@@ -1,0 +1,32 @@
+import "std/audio/wire";
+import "std/base64";
+import "std/deflate";
+import "std/f64";
+
+pub function unpack(encoded: string): Result[u8[], string] {
+  let packed = match (base64.decode(encoded)) { Ok(value) => value, Err(_) => { return Err("base64 reference"); } };
+  return match (deflate.zlib_decode(packed, 262144)) { Ok(value) => Ok(value), Err(_) => Err("compressed reference") };
+}
+
+pub function word(bytes: [u8], at: i32): i32 {
+  return wire.le(bytes, at, 4) as i32;
+}
+
+pub function floats(bytes: [u8], at: i32, count: i32): f32[] {
+  let values: f32[] = [];
+  for i in 0..count {
+    values = values.append(f32_from_bits(word(bytes, at + 4 * i)));
+  }
+  return values;
+}
+
+pub function compare(values: [f32], count: i32, bytes: [u8], at: i32): boolean {
+  for i in 0..count {
+    let expected = f32_from_bits(word(bytes, at + 4 * i));
+    let error = values[i] - expected;
+    if (!values[i].is_finite() || error > 0.000001f32 || error < -0.000001f32) {
+      return false;
+    }
+  }
+  return true;
+}
