@@ -25,6 +25,10 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostArchive` | the unpacker reads a package archive: the gunzip, the tar reader and the entry name rules | `compiler/drivers/pkg_fuzz_run.fern archive` | the same |
 | `FuzzSelfHostTangle` | the chunk grammar, the tangle of the root chunk and of the file roots, and the unused-chunk lint read a `.fern.md` document | `compiler/drivers/literate_fuzz_run.fern tangle` | the same |
 | `FuzzSelfHostWeave` | the weave reads a `.fern.md` document and writes text and HTML | `compiler/drivers/literate_fuzz_run.fern weave` | the same |
+| `FuzzSelfHostStdHTTP` | the HTTP/1 request framer of `std/http`, and its chunked-body decoder fed in pieces of seven bytes | `tests/fuzz/stdparse.fern http` | the same |
+| `FuzzSelfHostStdHPACK` | the HPACK decoder of `std/http/hpack`, two blocks on one decoder | `tests/fuzz/stdparse.fern hpack` | the same |
+| `FuzzSelfHostStdJSON` | the JSON parser of `std/json` | `tests/fuzz/stdparse.fern json` | the same |
+| `FuzzSelfHostStdURL` | the URL parser and the query parser of `std/url` | `tests/fuzz/stdparse.fern url` | the same |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -43,6 +47,13 @@ The weave target writes the document as text and as HTML.
 The seeds carry an undefined reference, two chunks that reference each other, and a chunk that references itself.
 They also carry an escaped reference, an unterminated fence, an empty chunk name and a `file=` path that leaves the package directory.
 Two more hold bytes that are not UTF-8 and a root chunk of three thousand references.
+
+The stdlib targets feed the parsers that a server runs on the bytes of its peers.
+The shipped CLI builds `tests/fuzz/stdparse.fern`, so they fuzz the standard library as this tree compiles it.
+The pinned stage0 cannot build that program, because `std/http` reaches `std/http/qpack` through `std/platform` and `std/fetch`.
+The HPACK target decodes the input as two blocks on one decoder, so the second block reads the dynamic table that the first block filled.
+The HTTP seeds carry a request with both a length and a chunked body, two length fields and a negative length.
+They also carry a chunk size of sixteen hex digits, a folded header line and a NUL in a header value.
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
@@ -77,6 +88,15 @@ The literate readers ran 45 seconds each on 2026-11-08 on the same kind of host,
 | `FuzzSelfHostTangle` | 73799 | 0 | none |
 | `FuzzSelfHostWeave` | 53269 | 1 | none |
 
+The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, after their seeds passed.
+
+| Target | Executions | New inputs kept | Findings |
+|---|---|---|---|
+| `FuzzSelfHostStdHTTP` | 48180 | 2 | none |
+| `FuzzSelfHostStdHPACK` | 48783 | 2 | none |
+| `FuzzSelfHostStdJSON` | 50608 | 1 | none |
+| `FuzzSelfHostStdURL` | 53437 | 1 | none |
+
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
 
@@ -89,9 +109,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the ten targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the fourteen targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the ten targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the fourteen targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits

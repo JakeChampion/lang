@@ -1,0 +1,144 @@
+import "std/http";
+import "std/http/hpack";
+import "std/json";
+import "std/url";
+
+// Feeds a file to one network-facing parser of the standard library: the
+// HTTP/1 request framer and its chunked-body decoder, the HPACK decoder, the
+// JSON parser, or the URL and query parsers. Each refuses malformed bytes with
+// an error value, so the accepted outcome is exit 0 with a summary on stdout.
+// Exit 2 is a usage or read error.
+
+function text_of(b: u8[]): string {
+  let src = "";
+  unsafe {
+    src = string_from_bytes_unchecked(b);
+  }
+  return src;
+}
+
+// Feeds the bytes in pieces of seven, so a decoder carries state across calls.
+function chunked(raw: u8[]): string {
+  let d = http.chunk_decoder(http.limits());
+  let at = 0;
+  let body = 0;
+  while (at < raw.len()) {
+    let end = at + 7;
+    if (end > raw.len()) {
+      end = raw.len();
+    }
+    match (d.feed(__bytes_range(raw, at, end))) {
+      http.ChunkData(next, bytes) => {
+        d = next;
+        body += bytes.len();
+      },
+      http.ChunkEnd(bytes, _, rest) => {
+        return "end " + (body + bytes.len()).to_string() + " rest " + (rest.len() + raw.len() - end).to_string();
+      },
+      http.ChunkRefused(code) => {
+        return "refused " + code.to_string();
+      }
+    }
+    at = end;
+  }
+  return "open " + body.to_string();
+}
+
+function http_summary(raw: u8[]): string {
+  let framing = "";
+  match (http.parse_request_framed(raw)) {
+    http.Complete(f) => {
+      framing = "complete " + f.len.to_string();
+    },
+    http.Incomplete => {
+      framing = "incomplete";
+    },
+    http.Continue => {
+      framing = "continue";
+    },
+    http.Malformed(code) => {
+      framing = "malformed " + code.to_string();
+    }
+  }
+  return "http " + framing + " chunked " + chunked(raw);
+}
+
+// Decodes the bytes as two header blocks on one decoder, so the second block
+// reads the dynamic table the first one filled.
+function hpack_summary(raw: u8[]): string {
+  let d = hpack.decoder(4096, 16384);
+  let fields = 0;
+  let round = 0;
+  while (round < 2) {
+    match (d.decode(raw)) {
+      Ok(r) => {
+        d = r.decoder;
+        fields += r.fields.len();
+      },
+      Err(e) => {
+        return "hpack refused " + e.message().len().to_string() + " fields " + fields.to_string();
+      }
+    }
+    round += 1;
+  }
+  return "hpack fields " + fields.to_string() + " table " + d.table_size().to_string();
+}
+
+function json_summary(src: string): string {
+  match (json.parse(src)) {
+    Ok(_) => {
+      return "json ok";
+    },
+    Err(e) => {
+      return "json refused " + e.message().len().to_string();
+    }
+  }
+}
+
+function url_summary(src: string): string {
+  let query = url.query_parse(src).len();
+  match (url.parse(src)) {
+    Ok(_) => {
+      return "url ok query " + query.to_string();
+    },
+    Err(e) => {
+      return "url refused " + e.message().len().to_string() + " query " + query.to_string();
+    }
+  }
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 3) {
+    eprint("usage: stdparse http|hpack|json|url FILE");
+    return 2;
+  }
+  let raw: u8[] = [];
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      raw = b;
+    },
+    Err(_) => {
+      eprint("stdparse: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  if (av[1] == "http") {
+    print(http_summary(raw));
+    return 0;
+  }
+  if (av[1] == "hpack") {
+    print(hpack_summary(raw));
+    return 0;
+  }
+  if (av[1] == "json") {
+    print(json_summary(text_of(raw)));
+    return 0;
+  }
+  if (av[1] == "url") {
+    print(url_summary(text_of(raw)));
+    return 0;
+  }
+  eprint("stdparse: unknown reader " + av[1]);
+  return 2;
+}
