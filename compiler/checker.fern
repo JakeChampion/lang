@@ -19445,7 +19445,31 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
-  return lu_fresh_expr(e) && !lu_init_borrows(fx, e) || lu_fresh_match_value(fx, e);
+  return lu_fresh_expr(e) && !lu_init_borrows(fx, e) || lu_fresh_match_value(fx, e) || lu_fresh_if_value(fx, e);
+}
+
+function lu_if_body_fresh(fx: LuFn, body: ast.Stmt[]): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => {
+      return lu_fresh_value(fx, r.value);
+    },
+    ast.StmtIf(branch) => {
+      return lu_if_body_fresh(fx, branch.then_body) && lu_if_body_fresh(fx, branch.else_body);
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function lu_fresh_if_value(fx: LuFn, e: ast.Expr): boolean {
+  let Some(branch) = lu_value_if(e) else {
+    return false;
+  };
+  return lu_if_body_fresh(fx, branch.then_body) && lu_if_body_fresh(fx, branch.else_body);
 }
 
 // A match expression on a fresh value whose each arm yields a payload it
@@ -19720,6 +19744,9 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
   if (lu_fresh_value(fx, e)) {
     return true;
   }
+  if let Some(branch) = lu_value_if(e) {
+    return lu_if_body_owned(fx, name, branch.then_body, seen) && lu_if_body_owned(fx, name, branch.else_body, seen);
+  }
   if let ast.ExprStructLit(sl) = e {
     return sl.has_base && ow_ident_name(sl.base) == name;
   }
@@ -19740,6 +19767,23 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
     return lu_assigned_name_owned(fx, src, inner);
   }
   return lu_unpack_expr_in(fx, e, inner);
+}
+
+function lu_if_body_owned(fx: LuFn, name: string, body: ast.Stmt[], seen: string[]): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => {
+      return lu_assigned_owned(fx, name, r.value, seen);
+    },
+    ast.StmtIf(branch) => {
+      return lu_if_body_owned(fx, name, branch.then_body, seen) && lu_if_body_owned(fx, name, branch.else_body, seen);
+    },
+    _ => {
+      return false;
+    }
+  }
 }
 
 function lu_assigned_name_owned(fx: LuFn, src: ast.ExprIdent, seen: string[]): boolean {
@@ -20308,9 +20352,60 @@ function lu_mention_search(aid: ast.ExprIdent, later: boolean): LuMention {
   return LuMention { name: aid.name, line: aid.line, col: aid.col, later: later, found: false };
 }
 
-// A later mention of the name inside the statement.
+// A value-if chooses one branch. Reads in its other branch do not follow
+// a move in the selected branch, even though they occur later in source.
+function lu_value_if(e: ast.Expr): Option[ast.StmtIf] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lm) = c.callee {
+      if (c.args.len() == 0 && ow_value_if_origin(lm.origin) && lm.body.len() == 1) {
+        if let ast.StmtIf(branch) = lm.body[0] {
+          return Some(branch);
+        }
+      }
+    }
+  }
+  return None;
+}
+
+function lu_path_descend(e: ast.Expr): boolean {
+  return match (lu_value_if(e)) { Some(_) => false, None => true };
+}
+
+function lu_body_holds_mention(body: ast.Stmt[], m: LuMention): boolean {
+  for st in body {
+    let probe = LuMention { name: m.name, line: m.line, col: m.col, later: false, found: false };
+    if (astwalk.fold_stmt_nodes(st, probe, lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lu_path_body(body: ast.Stmt[], own m: LuMention): LuMention {
+  for st in body {
+    m = astwalk.fold_stmt_nodes(st, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+  }
+  return m;
+}
+
+function lu_path_mention(e: ast.Expr, own m: LuMention): LuMention {
+  let Some(branch) = lu_value_if(e) else {
+    return lu_mention_expr(e, m);
+  };
+  if (lu_body_holds_mention(branch.then_body, m)) {
+    return lu_path_body(branch.then_body, m);
+  }
+  if (lu_body_holds_mention(branch.else_body, m)) {
+    return lu_path_body(branch.else_body, m);
+  }
+  m = astwalk.fold_expr_nodes(branch.cond, m, lu_mention_stmt, lu_path_mention, lu_path_descend);
+  m = lu_path_body(branch.then_body, m);
+  return lu_path_body(branch.else_body, m);
+}
+
+// A later mention of the name on a reachable path inside the statement.
 function lu_later_in(st: ast.Stmt, aid: ast.ExprIdent): boolean {
-  return astwalk.fold_stmt_nodes(st, lu_mention_search(aid, true), lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found;
+  return astwalk.fold_stmt_nodes(st, lu_mention_search(aid, true), lu_mention_stmt, lu_path_mention, lu_path_descend).found;
 }
 
 function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): boolean {
@@ -20511,6 +20606,11 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
   }
   if (lu_later_in(st, aid)) {
     return true;
+  }
+  if let ast.StmtAssign(a) = st {
+    if (a.target == aid.name && lu_mentions_at(a.value, aid)) {
+      return false;
+    }
   }
   return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name, scope);
 }
