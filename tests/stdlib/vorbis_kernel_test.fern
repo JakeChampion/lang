@@ -1,0 +1,161 @@
+import "std/audio/vorbis/dsp";
+import "std/audio/pcm";
+import "std/f64";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_kernel_vectors";
+
+function compare(actual: [f32], count: i32, bytes: [u8], at: i32): boolean {
+  for i in 0..count {
+    let expected = f32_from_bits(ref.word(bytes, at + 4 * i));
+    let difference = actual[i] - expected;
+    let magnitude = if (expected < 0.0f32) { -expected } else { expected };
+    let tolerance = 0.0001f32 + 0.000002f32 * magnitude;
+    if (!actual[i].is_finite() || difference > tolerance || difference < -tolerance) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function transforms(): test.TestOutcome {
+  for v in vorbis_kernel_vectors.transforms() {
+    let Ok(bytes) = ref.unpack(v.data) else {
+      return test.fail("independent transform bytes");
+    };
+    let count = 1 << v.exponent - 1;
+    let input = ref.floats(bytes, 0, count);
+    let Ok(scratch) = dsp.create(v.exponent) else {
+      return test.fail("scratch");
+    };
+    let Ok(output) = dsp.imdct(input, v.exponent, scratch) else {
+      return test.fail("inverse transform");
+    };
+    if (!compare(output.time, 2 * count, bytes, 4 * count)) {
+      return test.fail("C double equation at block exponent " + v.exponent.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function overlap(): test.TestOutcome {
+  for v in vorbis_kernel_vectors.overlaps() {
+    let Ok(bytes) = ref.unpack(v.data) else {
+      return test.fail("independent overlap bytes");
+    };
+    let Ok(scratch) = dsp.create(v.large) else {
+      return test.fail("scratch");
+    };
+    let count = 1 << v.large - 1;
+    let buffer = dsp.zeros(count + 16);
+    for i in count..count + 16 {
+      buffer = buffer.with(i, 1.0f32);
+    }
+    let work = dsp.Work { scratch: scratch, delay: dsp.zeros(count), pcm: buffer };
+    let previous = 0;
+    let at = 0;
+    for frame in 0..v.frames {
+      let exponent = ref.word(bytes, at);
+      let frames = ref.word(bytes, at + 4);
+      let n = 1 << exponent - 1;
+      at += 8;
+      let input = ref.floats(bytes, at, n);
+      at += 4 * n;
+      if let Ok(actual) = dsp.frames(exponent, previous) {
+        if (actual != frames) {
+          return test.fail("independent output frame count");
+        }
+      } else {
+        return test.fail("frame dimensions");
+      }
+      let Ok(next) = dsp.synth(input, work, 0, 1, v.large, exponent, previous) else {
+        return test.fail("overlap synthesis");
+      };
+      work = next;
+      if (!compare(work.pcm, frames, bytes, at)) {
+        return test.fail("C whole-timeline overlap at frame " + frame.to_string());
+      }
+      for i in count..count + 16 {
+        if (work.pcm[i] != 1.0f32) {
+          return test.fail("retained output tail");
+        }
+      }
+      at += 4 * frames;
+      previous = exponent;
+    }
+    if (at != bytes.len()) {
+      return test.fail("complete independent overlap data");
+    }
+  }
+  return test.pass();
+}
+
+function channels(): test.TestOutcome {
+  let Ok(scratch) = dsp.create(6) else {
+    return test.fail("scratch");
+  };
+  let work = dsp.Work { scratch: scratch, delay: dsp.zeros(64), pcm: dsp.zeros(64) };
+  let impulse = dsp.zeros(32).with(0, 1.0f32);
+  let zero = dsp.zeros(32);
+  let Ok(first) = dsp.synth(impulse, work, 0, 2, 6, 6, 0) else {
+    return test.fail("first channel priming");
+  };
+  let Ok(second) = dsp.synth(zero, first, 1, 2, 6, 6, 0) else {
+    return test.fail("second channel priming");
+  };
+  let Ok(third) = dsp.synth(zero, second, 0, 2, 6, 6, 6) else {
+    return test.fail("first channel output");
+  };
+  let Ok(output) = dsp.synth(zero, third, 1, 2, 6, 6, 6) else {
+    return test.fail("second channel output");
+  };
+  let nonzero = false;
+  for i in 0..32 {
+    if (output.pcm[2 * i + 1] != 0.0f32) {
+      return test.fail("channel overlap storage alias");
+    }
+    if (output.pcm[2 * i] != 0.0f32) {
+      nonzero = true;
+    }
+  }
+  return test.assert_true(nonzero);
+}
+
+function bounds(): test.TestOutcome {
+  if let Err(pcm.Header) = dsp.create(5) {} else {
+    return test.fail("small block exponent");
+  }
+  if let Err(pcm.Header) = dsp.frames(14, 6) {} else {
+    return test.fail("large block exponent");
+  }
+  let Ok(scratch) = dsp.create(6) else {
+    return test.fail("scratch");
+  };
+  if let Err(pcm.Buffer) = dsp.imdct(dsp.zeros(31), 6, scratch) {} else {
+    return test.fail("short spectrum");
+  }
+  let Ok(second) = dsp.create(6) else {
+    return test.fail("scratch");
+  };
+  let work = dsp.Work { scratch: second, delay: dsp.zeros(31), pcm: dsp.zeros(32) };
+  if let Err(pcm.Buffer) = dsp.synth(dsp.zeros(32), work, 0, 1, 6, 6, 0) {} else {
+    return test.fail("short overlap storage");
+  }
+  let Ok(third) = dsp.create(6) else {
+    return test.fail("scratch");
+  };
+  let bad = dsp.Work { scratch: third, delay: dsp.zeros(32), pcm: dsp.zeros(32) };
+  if let Err(pcm.Sample) = dsp.synth(dsp.zeros(32).with(0, f32_from_bits(2143289344)), bad, 0, 1, 6, 6, 0) {} else {
+    return test.fail("non-finite spectrum");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis inverse transforms and overlap against independent C");
+  runner = runner.it("all eight block sizes and two spectral inputs", transforms);
+  runner = runner.it("all block transitions against whole-timeline window accumulation", overlap);
+  runner = runner.it("independent interleaved channel histories", channels);
+  runner = runner.it("block dimensions, caller storage, and non-finite input", bounds);
+  return runner.finish();
+}

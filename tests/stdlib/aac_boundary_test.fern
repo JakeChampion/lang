@@ -1,0 +1,254 @@
+import "std/audio/aac";
+import "std/audio/aac/config";
+import "std/audio/aac/dsp";
+import "std/audio/pcm";
+import "std/test";
+import "std/hex";
+import "std/f64";
+import "aac_kernel_check" as ref;
+import "aac_vectors";
+
+function adts(blocks: i32): u8[] {
+  let size = 7 + 4 * blocks;
+  let bytes: u8[] = [255u8, 241u8, 80u8, 64u8, (size >> 3) as u8, ((size & 7) << 5 | 31) as u8, (252 + blocks - 1) as u8];
+  for _ in 0..blocks {
+    for byte in [0u8, 0u8, 0u8, 7u8] {
+      bytes = bytes.append(byte);
+    }
+  }
+  return bytes;
+}
+
+function silence(): test.TestOutcome {
+  for blocks in 1..5 {
+    let bytes = adts(blocks);
+    let Ok(value) = aac.decode(bytes, pcm.default_limits()) else {
+      return test.fail("silent ADTS block count " + blocks.to_string());
+    };
+    if (value.channels != 1 || value.sample_rate != 44100 || value.samples.len() != 1024 * blocks) {
+      return test.fail("silent format or count");
+    }
+    for sample in value.samples {
+      if (sample != 0.0f32) {
+        return test.fail("silent PCM");
+      }
+    }
+    let Ok(mpeg2) = aac.decode(bytes.with(1, 249u8), pcm.default_limits()) else {
+      return test.fail("MPEG-2 ADTS header");
+    };
+    if (mpeg2.samples != value.samples) {
+      return test.fail("MPEG-2 PCM");
+    }
+  }
+  return test.pass();
+}
+
+function packet_and_buffer(): test.TestOutcome {
+  let limits = pcm.default_limits();
+  let Ok(c) = config.create(2, 44100, 1) else {
+    return test.fail("configuration");
+  };
+  let Ok(decoder) = aac.create(c, limits) else {
+    return test.fail("decoder");
+  };
+  let output = dsp.zeros(1100);
+  for i in 1024..1100 {
+    output = output.with(i, 1.0f32);
+  }
+  let Ok((next, frame)) = decoder.decode_packet_into([0u8, 0u8, 0u8, 7u8], output, limits) else {
+    return test.fail("raw access unit");
+  };
+  if (frame.frames != 1024 || frame.bytes_read != 4 || next.configuration() != c || frame.samples.len() != 1100) {
+    return test.fail("packet metadata");
+  }
+  for i in 0..1100 {
+    if (frame.samples[i] != (if (i < 1024) { 0.0f32 } else { 1.0f32 })) {
+      return test.fail("valid PCM prefix or retained buffer tail");
+    }
+  }
+  let Ok((done, again)) = next.decode_adts_into(adts(1), 0, frame.samples, limits) else {
+    return test.fail("reused output storage");
+  };
+  return test.assert_true(again.samples.len() == 1100 && done.configuration() == c);
+}
+
+function reset(): test.TestOutcome {
+  for v in aac_vectors.vectors() {
+    if (v.name == "codebook-1") {
+      let Ok(bytes) = ref.unpack(v.bytes) else {
+        return test.fail("reference bytes");
+      };
+      let limits = pcm.default_limits();
+      let Ok(header) = config.adts(bytes, 0, limits) else {
+        return test.fail("header");
+      };
+      let Ok(decoder) = aac.create(header.config, limits) else {
+        return test.fail("create");
+      };
+      let Ok((next, first)) = decoder.decode_adts(bytes, 0, limits) else {
+        return test.fail("first frame");
+      };
+      let Ok((after, overlapped)) = next.decode_adts(bytes, 0, limits) else {
+        return test.fail("second frame");
+      };
+      let Ok((done, restored)) = after.reset().decode_packet(bytes[7:], limits) else {
+        return test.fail("reset frame");
+      };
+      return test.assert_true(first.samples == restored.samples && first.samples != overlapped.samples && done.configuration() == header.config);
+    }
+  }
+  return test.fail("missing reset reference");
+}
+
+function truncation(): test.TestOutcome {
+  let limits = pcm.default_limits();
+  let bytes = adts(1);
+  for cut in 0..bytes.len() {
+    if let Err(pcm.Truncated) = aac.decode(bytes[:cut], limits) {} else {
+      return test.fail("ADTS prefix " + cut.to_string());
+    }
+  }
+  let Ok(header) = config.adts(bytes, 0, limits) else {
+    return test.fail("header");
+  };
+  for cut in 0..4 {
+    let Ok(decoder) = aac.create(header.config, limits) else {
+      return test.fail("create");
+    };
+    if let Err(pcm.Truncated) = decoder.decode_packet(bytes[7:7 + cut], limits) {} else {
+      return test.fail("raw prefix " + cut.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let bytes = adts(2);
+  if let Err(pcm.Limit) = aac.decode(bytes, pcm.Limits { max_input_bytes: bytes.len() - 1, max_samples: 4096 }) {} else {
+    return test.fail("input budget");
+  }
+  if let Err(pcm.Limit) = aac.decode(bytes, pcm.Limits { max_input_bytes: bytes.len(), max_samples: 2047 }) {} else {
+    return test.fail("output budget");
+  }
+  let defaults = pcm.default_limits();
+  let Ok(header) = config.adts(bytes, 0, defaults) else {
+    return test.fail("header");
+  };
+  let Ok(decoder) = aac.create(header.config, defaults) else {
+    return test.fail("create");
+  };
+  if let Err(pcm.Buffer) = decoder.decode_adts_into(bytes, 0, dsp.zeros(2047), defaults) {} else {
+    return test.fail("small output buffer");
+  }
+  let both = adts(1);
+  for byte in adts(1) {
+    both = both.append(byte);
+  }
+  if let Err(pcm.Limit) = aac.decode(both, pcm.Limits { max_input_bytes: both.len(), max_samples: 2047 }) {} else {
+    return test.fail("cumulative output budget");
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let limits = pcm.default_limits();
+  let bytes = adts(1);
+  if let Err(pcm.Unsupported) = aac.decode([255u8, 240u8, 80u8, 64u8, 1u8, 191u8, 252u8, 0u8, 0u8, 0u8, 0u8, 0u8, 7u8], limits) {} else {
+    return test.fail("protected ADTS requires CRC verification");
+  }
+  for bad in [bytes.with(0, 0u8), bytes.with(1, 243u8), bytes.with(2, 124u8), bytes.with(3, 0u8), bytes.with(4, 0u8).with(5, 0u8), bytes.with(10, 39u8)] {
+    if let Err(_) = aac.decode(bad, limits) {} else {
+      return test.fail("invalid header, channel layout, or raw block");
+    }
+  }
+  let Ok(c) = config.create(2, 44100, 1) else {
+    return test.fail("configuration");
+  };
+  for raw in [[64u8], [160u8], [222u8, 128u8], [0u8, 0u8, 0u8, 7u8, 0u8]] {
+    let Ok(decoder) = aac.create(c, limits) else {
+      return test.fail("create");
+    };
+    if let Err(_) = decoder.decode_packet(raw, limits) {} else {
+      return test.fail("unsupported element, SBR, or trailing bytes");
+    }
+  }
+  return test.pass();
+}
+
+function mutations(): test.TestOutcome {
+  for v in aac_vectors.vectors() {
+    if (v.name == "codebook-11" || v.name == "pulse-signed" || v.name == "tns-4-1-1") {
+      let Ok(bytes) = ref.unpack(v.bytes) else {
+        return test.fail("mutation reference");
+      };
+      let limits = pcm.Limits { max_input_bytes: 8192, max_samples: 8192 };
+      for at in 0..bytes.len() {
+        for bit in 0..8 {
+          let changed = bytes.with(at, bytes[at] ^ 1u8 << bit as u8);
+          if let Ok(value) = aac.decode(changed, limits) {
+            if (value.samples.len() > limits.max_samples) {
+              return test.fail("mutated output budget");
+            }
+            for sample in value.samples {
+              if (!sample.is_finite()) {
+                return test.fail("non-finite mutated PCM");
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+// The same-vector rule is ISO/IEC 14496-3 section 4.6.13.3.
+// FDK AAC v2.0.3 independently confirms equal, nonzero PCM channels.
+function correlated_noise(): test.TestOutcome {
+  let Ok(packet) = hex.decode("fff15080025ffc210055a686002d343001c0") else {
+    return test.fail("correlated noise syntax");
+  };
+  let bytes: u8[] = [];
+  for _ in 0..3 {
+    for byte in packet {
+      bytes = bytes.append(byte);
+    }
+  }
+  let Ok(value) = aac.decode(bytes, pcm.default_limits()) else {
+    return test.fail("correlated noise decode");
+  };
+  let nonzero = false;
+  for i in 0..value.samples.len() / 2 {
+    if (value.samples[2 * i] != value.samples[2 * i + 1]) {
+      return test.fail("PNS stereo same-vector rule");
+    }
+    if (value.samples[2 * i] != 0.0f32) {
+      nonzero = true;
+    }
+  }
+  // Clear the two mask bits while retaining identical noise scalefactors.
+  let independent = packet.with(9, packet[9] & 231u8);
+  let Ok(separate) = aac.decode(independent, pcm.default_limits()) else {
+    return test.fail("independent noise decode");
+  };
+  let different = false;
+  for i in 0..separate.samples.len() / 2 {
+    if (separate.samples[2 * i] != separate.samples[2 * i + 1]) {
+      different = true;
+    }
+  }
+  return test.assert_true(nonzero && different);
+}
+
+function main(): i32 {
+  let runner = test.new("AAC-LC packet boundaries and resource limits");
+  runner = runner.it("one through four raw blocks and both ADTS MPEG identifiers", silence);
+  runner = runner.it("raw packets and a reusable output buffer with a retained tail", packet_and_buffer);
+  runner = runner.it("reset removes overlap history and restores independent PCM", reset);
+  runner = runner.it("every incomplete prefix of a minimal frame and raw access unit", truncation);
+  runner = runner.it("input, output, cumulative, and caller-buffer limits", limits);
+  runner = runner.it("invalid headers, layouts, elements, and trailing data", malformed);
+  runner = runner.it("correlated noise shares a vector and independent noise does not", correlated_noise);
+  runner = runner.it("every bit mutation of escape, pulse, and TNS frames stays bounded", mutations);
+  return runner.finish();
+}

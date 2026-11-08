@@ -1,0 +1,55 @@
+import "std/audio/vorbis";
+import "std/audio/vorbis/types";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_smoke_vectors";
+
+function reference(): test.TestOutcome {
+  let v = vorbis_smoke_vectors.vector();
+  let Ok(identification) = ref.unpack(v.identification) else {
+    return test.fail("identification fixture");
+  };
+  let Ok(setup) = ref.unpack(v.setup) else {
+    return test.fail("setup fixture");
+  };
+  let Ok(packets) = ref.unpack(v.packets) else {
+    return test.fail("packet fixture");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let Ok(counts) = ref.unpack(v.counts) else {
+    return test.fail("frame count fixture");
+  };
+  let Ok(decoder) = vorbis.create(identification, setup, types.default_limits()) else {
+    return test.fail("create decoder");
+  };
+  let at = 0;
+  let rendered = 0;
+  let packet = 0;
+  while (at < packets.len()) {
+    let size = ref.word(packets, at);
+    at += 4;
+    let Ok((next, value)) = decoder.decode_packet(packets[at:at + size], pcm.default_limits()) else {
+      return test.fail("packet decode");
+    };
+    decoder = next;
+    at += size;
+    if (value.frames != ref.word(counts, 4 * packet) || value.channels != 1 || value.sample_rate != 44100 || value.samples.len() != value.frames) {
+      return test.fail("frame format");
+    }
+    if (!ref.compare(value.samples, value.samples.len(), expected, 4 * rendered)) {
+      return test.fail("independent nonzero float PCM");
+    }
+    rendered += value.samples.len();
+    packet += 1;
+  }
+  return if (rendered == v.frames) { test.pass() } else { test.fail("complete frame count") };
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis independent packet interpreter smoke");
+  runner = runner.it("public-API libvorbis float PCM through floor and residue synthesis", reference);
+  return runner.finish();
+}

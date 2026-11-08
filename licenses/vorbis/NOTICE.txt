@@ -1,0 +1,18 @@
+The native Vorbis modules derive from Project Symphonia and the Vorbis I specification.
+Reference: Symphonia v0.5.5, commit 6d533f26150953a882a6a111ebd13f0abf7129d5.
+https://github.com/pdeljanov/Symphonia/tree/6d533f26150953a882a6a111ebd13f0abf7129d5/symphonia-codec-vorbis
+
+Copyright (c) 2019-2023 The Project Symphonia Developers.
+The inverse-transform implementation also follows symphonia-core/src/dsp/mdct at the same pin.
+The covered Fern modules identify their MPL-2.0 license in each source file.
+The full license is in MPL-2.0.txt.
+
+Normative format reference: https://xiph.org/vorbis/doc/Vorbis_I_spec.html
+Single-entry codebooks follow Errata 20150226, including the one-bit length requirement.
+Both bit values decode to the sole used entry in that special case.
+
+PCM reference fixtures use Xiph.Org libVorbis 1.3.7 through its public float API.
+The reference harness is scripts/audio-reference/vorbis-packets.c.
+It is not part of the Fern runtime. It copies no libvorbis implementation source.
+The 63-bit floor amplitude check uses equivalent amplitude ratios because
+libvorbis 1.3.7 reads that field through its 32-bit input API.

@@ -1,0 +1,10 @@
+The native AAC modules and their generated tables derive from Project Symphonia.
+Reference: Symphonia v0.5.5, commit 6d533f26150953a882a6a111ebd13f0abf7129d5.
+https://github.com/pdeljanov/Symphonia/tree/6d533f26150953a882a6a111ebd13f0abf7129d5/symphonia-codec-aac
+
+Copyright (c) 2019-2023 The Project Symphonia Developers.
+Previous author: Kostya Shishkov <kostya.shiskov@gmail.com>.
+The reference AAC files include NihAV code relicensed for Symphonia with the author's permission.
+
+These Fern AAC source files are available under the Mozilla Public License 2.0.
+The full license is in MPL-2.0.txt. Each covered module identifies this license.
