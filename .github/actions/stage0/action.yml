@@ -1,0 +1,46 @@
+name: Pinned stage0
+description: >
+  Puts the stage0 compiler that bootstrap/stage0.lock pins where
+  bootstrap/bootstrap.sh and the fern launcher look for it. The binary is
+  immutable for a given lock, so it comes from the Actions cache. Only a
+  cache miss downloads it from the release, and that job saves it at once,
+  so the next job does not depend on the release server.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the pinned stage0
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: build/bootstrap/stage0
+        key: stage0-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock') }}
+
+    # bootstrap.sh downloads on a miss and checks the lock's sha256 either way.
+    - name: Resolve the pinned stage0
+      id: resolve
+      shell: bash
+      run: echo "path=$(bootstrap/bootstrap.sh stage0)" >> "$GITHUB_OUTPUT"
+
+    # Saved here, not in a post step, so a job that fails later still shares
+    # the download with the jobs after it.
+    - name: Save the pinned stage0
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: build/bootstrap/stage0
+        key: stage0-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock') }}
+
+    # The launcher (internal/tools/launcher) reads the same file from the user
+    # cache directory: <cache>/fern/stage0/<release>/fern-selfhost-<host>.
+    - name: Give the launcher the same stage0
+      shell: bash
+      env:
+        STAGE0: ${{ steps.resolve.outputs.path }}
+      run: |
+        if [ "$RUNNER_OS" = macOS ]; then cache="$HOME/Library/Caches"; else cache="${XDG_CACHE_HOME:-$HOME/.cache}"; fi
+        release="$(basename "$(dirname "$STAGE0")")"
+        dest="$cache/fern/stage0/$release"
+        mkdir -p "$dest"
+        cp "$STAGE0" "$dest/"
+        echo "stage0 for bootstrap.sh and the launcher: $STAGE0"
