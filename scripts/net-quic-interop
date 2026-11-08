@@ -13,7 +13,10 @@
 # Then HTTP/3 (std/http/h3q) each way against aioquic's own HTTP/3
 # (aioquic.h3): a GET and a POST of $SIZE bytes on one connection, each
 # answered with a body naming the request and a trailer, which the client
-# checks.
+# checks. Then std/fetch against aioquic's HTTP/3 server
+# (scripts/net-quic-interop.d/fetch_h3.fern): the pool told the origin
+# offers HTTP/3, two GETs ride one QUIC connection the pool keeps, and the
+# POST dials a connection of its own, as a POST does over TCP.
 #
 # Usage: net-quic-interop
 #
@@ -54,6 +57,7 @@ bin/fern -target "$TARGET" -o "$work/client" "$d/client.fern"
 bin/fern -target "$TARGET" -o "$work/server" "$d/server.fern"
 bin/fern -target "$TARGET" -o "$work/h3_client" "$d/h3_client.fern"
 bin/fern -target "$TARGET" -o "$work/h3_server" "$d/h3_server.fern"
+bin/fern -target "$TARGET" -o "$work/fetch_h3" "$d/fetch_h3.fern"
 
 # await_line LOG TEXT — once LOG holds TEXT, or the run fails with LOG.
 await_line() {
@@ -141,6 +145,19 @@ aioquic_h3_client() {
   expect "aioquic h3 client, fern h3 server" "$log" "aioquic h3 client: GET /hello -> 200 GET /hello 0 | x-served-by=fern" "aioquic h3 client: POST /upload -> 200 POST /upload $SIZE | x-served-by=fern" "fern h3 server: ended code=256 remote=true"
 }
 
+# fern_fetch — std/fetch over HTTP/3 against aioquic's HTTP/3 server.
+fern_fetch() {
+  local port log="$work/fern-fetch.log"
+  port="$(free_port)"
+  start_server "$work/aioquic-h3-server-fetch.log" "$venv/bin/python" "$d/aioquic_h3_server.py" "$port" "$certs/leaf.pem" "$certs/leaf.key"
+  await_line "$work/aioquic-h3-server-fetch.log" "aioquic h3 server: listening"
+  "$work/fetch_h3" "$port" localhost "$certs/ca.pem" "$SIZE" > "$log" 2>&1 || echo "fern fetch: exit $?" >> "$log"
+  sleep 0.5
+  stop_server
+  cat "$work/aioquic-h3-server-fetch.log" >> "$log"
+  expect "fern fetch, aioquic h3 server" "$log" "fern fetch: GET /hello -> 200 GET /hello 0 | x-served-by=aioquic" "fern fetch: GET /hello again -> 200 GET /hello 0 | x-served-by=aioquic" "fern fetch: POST /upload -> 200 POST /upload $SIZE | x-served-by=aioquic" "fern fetch: h3 connections kept 2"
+}
+
 echo "== aioquic $("$venv/bin/python" -c 'import aioquic; print(aioquic.__version__)'), $ARCH"
 fern_client plain
 fern_client retry
@@ -149,6 +166,7 @@ aioquic_client plain
 aioquic_client chacha20
 fern_h3_client
 aioquic_h3_client
+fern_fetch
 if [ "$failed" -ne 0 ]; then
   echo "net-quic-interop: a case failed" >&2
   exit 1

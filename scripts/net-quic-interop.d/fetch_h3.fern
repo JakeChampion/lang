@@ -1,0 +1,74 @@
+// std/fetch over HTTP/3 against a server that only speaks QUIC: the pool is
+// told the origin offers HTTP/3 on the port, as an Alt-Svc field would have
+// told it, then two GETs of /hello ride one QUIC connection and a POST of
+// SIZE bytes to /upload dials its own, as a POST does over TCP; each
+// response is printed with its trailers, then how many connections the
+// pool keeps. Exits 0 when all three were answered.
+//   fetch_h3 PORT NAME CA.pem SIZE
+import "std/i32";
+import "std/fetch";
+import "std/http";
+import "std/tls/verify";
+import "std/time";
+import "std/string";
+import "std/utf8";
+import "std/option";
+import "std/result";
+
+function shown(label: string, r: Result[HttpResponse, fetch.FetchError]): string {
+  match (r) {
+    Ok(resp) => {
+      let out = f"fern fetch: {label} -> {resp.status} {utf8.from_bytes_lossy(resp.body_bytes())} |";
+      for i in 0..resp.trailers.names.len() {
+        out += f" {resp.trailers.names[i]}={resp.trailers.values[i]}";
+      }
+      return out;
+    },
+    Err(e) => {
+      return f"fern fetch: {label} -> error {e.message()}";
+    }
+  }
+  return label;
+}
+
+function kept_h3(pool: fetch.Idle): i32 {
+  let n = 0;
+  for k in pool.kept.get() {
+    if let Some(_) = k.h3 {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function main(): i32 {
+  let argv = args();
+  let Ok(port) = i32.parse_i32(argv[1]) else {
+    return 2;
+  };
+  let Ok(roots) = verify.roots_from_file(argv[3]) else {
+    eprint("no roots");
+    return 2;
+  };
+  let Ok(size) = i32.parse_i32(argv[4]) else {
+    return 2;
+  };
+  let pool = fetch.idle();
+  pool.offer_h3(argv[2], port, port);
+  let tr = fetch.sockets_with(pool);
+  let policy = fetch.Policy { public_only: false, proxies: fetch.proxies("", "", ""), roots: Some(roots), jar: None, allow: None };
+  let base = f"https://{argv[2]}:{port}";
+  let bounds = fetch.Timeouts { ...fetch.timeouts(), total: time.duration_seconds(20) };
+  let first = fetch.send_on(tr, fetch.get(base + "/hello").with_timeouts(bounds), policy);
+  print(shown("GET /hello", first));
+  let again = fetch.send_on(tr, fetch.get(base + "/hello").with_timeouts(bounds), policy);
+  print(shown("GET /hello again", again));
+  let posted = fetch.send_on(tr, fetch.request("POST", base + "/upload").with_bytes(__alloc_u8(size)).with_timeouts(bounds), policy);
+  print(shown("POST /upload", posted));
+  print(f"fern fetch: h3 connections kept {kept_h3(pool)}");
+  fetch.close_idle(tr);
+  if (first.is_ok() && again.is_ok() && posted.is_ok()) {
+    return 0;
+  }
+  return 1;
+}

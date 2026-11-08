@@ -7,6 +7,9 @@ import (
 
 func TestLanesRejected(t *testing.T) {
 	for name, tc := range map[string]struct{ src, code, msg string }{
+		"f32 bits index":     {`function f(v: f32x4, k: i32): u32 { return __f32x4_lane_bits(v, k); }`, "E038", "integer literal"},
+		"f32 bits range":     {`function f(v: f32x4): u32 { return __f32x4_lane_bits(v, 4); }`, "E038", "integer literal"},
+		"f64 bits range":     {`function f(v: f64x2): u64 { return __f64x2_lane_bits(v, 2); }`, "E038", "integer literal"},
 		"raw f32 load":       {`function f(p: usize): f32x4 { return __f32x4_load_ptr(p); }`, "E095", "unsafe block"},
 		"raw f64 load":       {`function f(p: usize): f64x2 { return __f64x2_load_ptr(p); }`, "E095", "unsafe block"},
 		"raw f32 store":      {`function f(p: usize, v: f32x4): void { __f32x4_store(p, v); }`, "E095", "unsafe block"},
@@ -41,6 +44,9 @@ func TestLanesRejected(t *testing.T) {
 
 func TestLanesAccepted(t *testing.T) {
 	for name, src := range map[string]string{
+		"f32 bits":        `function f(v: f32x4): u32 { return __f32x4_lane_bits(v, 3); }`,
+		"f64 bits":        `function f(v: f64x2): u64 { return __f64x2_lane_bits(v, 1); }`,
+		"permutation":     `function f(a: f32x4, b: f32x4): u32 { return __f32x4_lane_bits(__f32x4_zip_lo(a, b), 0); }`,
 		"arithmetic":      `function f(a: f64x2, b: f64x2): f64x2 { return -(a + b) * a / b - a; }`,
 		"f32 lanes":       `function f(a: f32x4): f32x4 { return __f32x4_mul_add(a, a, __f32x4_sqrt(__f32x4_abs(a))); }`,
 		"builtins":        `function f(a: f64x2): f64 { let m: f64x2 = __f64x2_lt(a, __f64x2_of(1.0, 2.0)); let b: f64x2 = __f64x2_select(__f64x2_min(a, a), __f64x2_max(a, a), m); return __f64x2_lane(__f64x2_round(__f64x2_floor(b)), 1) + __f64x2_lane(__f64x2_ne(a, b), 0); }`,

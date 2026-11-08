@@ -432,6 +432,14 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__port_out8", capability: "privileged" },
     Gate { builtin: "__port_out16", capability: "privileged" },
     Gate { builtin: "__port_out32", capability: "privileged" },
+    Gate { builtin: "__mem_load8", capability: "privileged" },
+    Gate { builtin: "__mem_load16", capability: "privileged" },
+    Gate { builtin: "__mem_load32", capability: "privileged" },
+    Gate { builtin: "__mem_load64", capability: "privileged" },
+    Gate { builtin: "__mem_store8", capability: "privileged" },
+    Gate { builtin: "__mem_store16", capability: "privileged" },
+    Gate { builtin: "__mem_store32", capability: "privileged" },
+    Gate { builtin: "__mem_store64", capability: "privileged" },
   ];
 }
 

@@ -403,9 +403,7 @@ function received(own state: State, bytes: [u8], fec: boolean): Result[(State, f
 }
 
 function parse(input: [u8]): Result[packet.Packet, pcm.AudioError] {
-  if (input.len() > 61440) {
-    return Err(pcm.Limit);
-  }
+  // Frame sizes and duration bound copied data and PCM. Padding is borrowed.
   return match (packet.parse(input)) { Ok(value) => Ok(value), Err(_) => Err(pcm.Header) };
 }
 

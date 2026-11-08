@@ -6,6 +6,15 @@ var allocFilledCases = []struct {
 	name string
 	src  string
 }{
+	{"f64", `function main(): i32 {
+    let a: f64[] = __alloc_f64(17);
+    let empty = __alloc_f64(0);
+    for x in a { if (f64_bits(x) != 0i64) { return 1; } }
+    let old = a;
+    a = a.with(8, -3.25);
+    if (old[8] != 0.0 || a[8] != -3.25 || empty.len() != 0) { return 1; }
+    return 53;
+}`},
 	{"i32", `function main(): i32 {
     let a: i32[] = __alloc_i32(5);
     let e: i32[] = __alloc_i32(0);

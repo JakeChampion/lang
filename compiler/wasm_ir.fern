@@ -4398,6 +4398,20 @@ function wasm_lane_const(width: i32, text: string): string {
 
 function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   let k = ir.kind_name(o.kind_tag);
+  if (k == "vextract_bits") {
+    return "    " + (if (o.width == 32) { "i32x4" } else { "i64x2" }) + ".extract_lane " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  if (k == "vpermute") {
+    let out = "    i8x16.shuffle";
+    let bytes = o.width / 8;
+    let lanes = 16 / bytes;
+    for i in 0..16 {
+      let lane = i / bytes;
+      let selected = if (o.i32_imm == 3) { (lane + lanes / 2) % lanes } else if (o.i32_imm == 0) { lanes - 1 - lane } else { (lane & 1) * lanes + lane / 2 + (if (o.i32_imm == 2) { lanes / 2 } else { 0 }) };
+      out += " " + util.i32_to_string(selected * bytes + i % bytes);
+    }
+    return out + "\n";
+  }
   if (k == "vbitmask") {
     if (o.width == 32) {
       return "    i32x4.bitmask\n";

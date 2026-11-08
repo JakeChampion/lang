@@ -7484,6 +7484,17 @@ function ssa_lane_sfx(width: i32): string {
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
+  if (b == "vpermute") {
+    return ssa_vpermute(ins, reg_of, s);
+  }
+  if (b == "vextract_bits") {
+    s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+    let d = ssa_dst(reg_of, ins.result);
+    let target = if (ins.imm == 32) { ssa_r32(d) } else { d };
+    let op = if (ins.imm == 32) { "pextrd" } else { "pextrq" };
+    s = s.write("    " + op + " $" + util.i32_to_string(ssa_lane_index(ins.str)) + ", " + ssa_fsrc(reg_of, ins.args[0], "%xmm1") + ", " + target + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (b == "vbitmask") {
     s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
     let m = "movmskpd";
@@ -7527,6 +7538,27 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     return ssa_vbin(ins, reg_of, s);
   }
   return ssa_vunary(ins, reg_of, s);
+}
+
+function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  if (a != "%xmm1") {
+    s = s.write("    movaps " + a + ", %xmm1\n");
+  }
+  let mode = ssa_lane_index(ins.str);
+  if (mode == 0 || mode == 3) {
+    let mask = if (ins.imm == 32 && mode == 0) { 27 } else { 78 };
+    s = s.write("    pshufd $" + util.i32_to_string(mask) + ", %xmm1, %xmm1\n");
+  } else {
+    s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+    let op = if (mode == 1) { "unpckl" } else { "unpckh" };
+    let mnem = if (ins.imm == 32) { "p" + op + "dq" } else { op + "pd" };
+    s = s.write("    " + mnem + " " + ssa_fsrc(reg_of, ins.args[1], "%xmm2") + ", %xmm1\n");
+  }
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    movaps %xmm1, " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
 }
 
 function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {

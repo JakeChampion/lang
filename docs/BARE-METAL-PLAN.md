@@ -605,12 +605,13 @@ check time, in the same mechanism that enforces the OS boundary today.
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver.
-- **A sanctioned raw-pointer surface** (#14256). `__raw_*` is a **self-host-compiler
-  internal**. In `internal/`, only the capability tables of
-  `internal/pkg/platforms` name it. An OS needs it as a
-  *language* surface, capability-gated. Being self-host-only is the right side of
-  `docs/NATIVE-CONVERGENCE.md` (new surface lands self-host-first), so this is a
-  promotion to public surface rather than a port.
+- **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
+  self-host-compiler internal, the floor of the runtime helpers. The public
+  surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
+  and `store_u8` to `store_u64` are `@norc` functions over the `__mem_*`
+  intrinsics. The `privileged` capability gates the intrinsics, so a hosted
+  program fails with E066, and a dependency needs the `privileged` package
+  capability (`docs/PACKAGE-CAPABILITIES-BRIEF.md`).
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
   Fern already ships, which emit ELF rather than shelling out to one.
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
@@ -715,9 +716,14 @@ environment over the FernOS syscalls can come later, as an improvement.
    `TestSelfHostKernelX86DMAOnQemu` write a pattern into a buffer, churn the
    heap through the tick program, and find the pattern intact and the frames
    returned. The issue stays open until a virtio driver uses the region.
-11. Beside those: the raw-pointer surface (#14256) and a
-   TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
-   north-star section).
+11. **The raw-pointer surface exists** (#14256), as `std/raw` (the raw-pointer
+   item of the north-star section). `TestSelfHostKernelRawOnQemu` and
+   `TestSelfHostKernelX86RawOnQemu` store and load a frame at every width and
+   see the bytes of each value where the little-endian layout puts them. The
+   same program fails with E066 on a hosted target, and a dependency without
+   the `privileged` grant fails at the package gate.
+12. Beside those: a TCP/IP stack in Fern (#14259). The panic scope is decided
+   (#14257, see the north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 

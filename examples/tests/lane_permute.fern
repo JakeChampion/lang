@@ -1,0 +1,68 @@
+import "std/array";
+
+function bits32(value: f32x4, bytes: u8[]): void {
+  let words = [__f32x4_lane_bits(value, 0), __f32x4_lane_bits(value, 1), __f32x4_lane_bits(value, 2), __f32x4_lane_bits(value, 3)];
+  for i in 0..4 {
+    let expected = 0u32;
+    for j in 0..4 {
+      expected |= bytes[4 * i + j] as u32 << (8 * j) as u32;
+    }
+    assert(words[i] == expected);
+  }
+}
+
+function bits64(value: f64x2, bytes: u8[]): void {
+  let words = [__f64x2_lane_bits(value, 0), __f64x2_lane_bits(value, 1)];
+  for i in 0..2 {
+    let expected = 0u64;
+    for j in 0..8 {
+      expected |= bytes[8 * i + j] as u64 << (8 * j) as u64;
+    }
+    assert(words[i] == expected);
+  }
+}
+
+function check(got: u8[], a: u8[], b: u8[], width: i32, mode: i32): void {
+  let bytes = width / 8;
+  let lanes = 16 / bytes;
+  for i in 0..16 {
+    let lane = i / bytes;
+    let source = if (mode == 0 || mode == 3 || (lane & 1) == 0) { a } else { b };
+    let at = if (mode == 3) { (lane + lanes / 2) % lanes } else if (mode == 0) { lanes - 1 - lane } else { lane / 2 + (if (mode == 2) { lanes / 2 } else { 0 }) };
+    assert(got[i] == source[at * bytes + i % bytes]);
+  }
+}
+
+function main(): i32 {
+  let seed = 417u32;
+  for trial in 0..1024 {
+    let a = __alloc_u8(16);
+    let b = __alloc_u8(16);
+    for i in 0..16 {
+      seed = seed * 1664525u32 + 1013904223u32;
+      a = a.with(i, (seed >> 24u32) as u8);
+      seed = seed * 1664525u32 + 1013904223u32;
+      b = b.with(i, (seed >> 24u32) as u8);
+    }
+    if (trial == 0) {
+      a = [1u8, 0u8, 128u8, 127u8, 0u8, 0u8, 0u8, 128u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 240u8, 127u8];
+    }
+    let x = __f32x4_load_bytes(a, 0);
+    let y = __f32x4_load_bytes(b, 0);
+    bits32(x, a);
+    bits32(y, b);
+    check(__f32x4_with_bytes(__alloc_u8(16), 0, __f32x4_swap_halves(x)), a, b, 32, 3);
+    check(__f32x4_with_bytes(__alloc_u8(16), 0, __f32x4_reverse(x)), a, b, 32, 0);
+    check(__f32x4_with_bytes(__alloc_u8(16), 0, __f32x4_zip_lo(x, y)), a, b, 32, 1);
+    check(__f32x4_with_bytes(__alloc_u8(16), 0, __f32x4_zip_hi(x, y)), a, b, 32, 2);
+    let u = __f64x2_load_bytes(a, 0);
+    let v = __f64x2_load_bytes(b, 0);
+    bits64(u, a);
+    bits64(v, b);
+    check(__f64x2_with_bytes(__alloc_u8(16), 0, __f64x2_swap_halves(u)), a, b, 64, 3);
+    check(__f64x2_with_bytes(__alloc_u8(16), 0, __f64x2_reverse(u)), a, b, 64, 0);
+    check(__f64x2_with_bytes(__alloc_u8(16), 0, __f64x2_zip_lo(u, v)), a, b, 64, 1);
+    check(__f64x2_with_bytes(__alloc_u8(16), 0, __f64x2_zip_hi(u, v)), a, b, 64, 2);
+  }
+  return 0;
+}

@@ -10,6 +10,11 @@ This module provides value iterators and lazy adapters.
 
 `map`, `filter`, and `take` defer their work until the consumer requests an element. Consumers such as `fold` and `collect` advance the iterator.
 
+`range(lo, hi)` excludes `hi`. `range_incl(lo, hi)` includes `hi`, including `2147483647`.
+Both constructors accept `i32` bounds and return `Range`, whose elements are `i32` values.
+A reversed range is empty. An inclusive range with equal bounds yields one element.
+The cursor and exclusive upper bound in `Range` use `i64` so the final state cannot overflow.
+
 ## Executable example
 
 ```fern test name=core-iter-example
@@ -350,7 +355,7 @@ impl[I: Iterator[T], T, J: Iterator[U], U] Iterator[(T, U)] for Zipped[I, T, J, 
   }
 }
 
-pub struct Range { lo: i32, hi: i32 }
+pub struct Range { lo: i64, hi: i64 }
 ```
 
 ### `5 pub function range(lo: i32, hi: i32): Range`
@@ -358,11 +363,11 @@ pub struct Range { lo: i32, hi: i32 }
 ```fern
 <<5 pub function range(lo: i32, hi: i32): Range>>=
 pub function range(lo: i32, hi: i32): Range {
-  return Range { lo: lo, hi: hi };
+  return Range { lo: lo as i64, hi: hi as i64 };
 }
 
 pub function range_incl(lo: i32, hi: i32): Range {
-  return Range { lo: lo, hi: hi + 1 };
+  return Range { lo: lo as i64, hi: hi as i64 + 1i64 };
 }
 ```
 
@@ -375,7 +380,7 @@ impl Iterator[i32] for Range {
     if (self.lo >= self.hi) {
       return None;
     }
-    return Some((self.lo, Range { lo: self.lo + 1, hi: self.hi }));
+    return Some((self.lo as i32, Range { lo: self.lo + 1i64, hi: self.hi }));
   }
 }
 
