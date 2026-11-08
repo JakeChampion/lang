@@ -2338,6 +2338,20 @@ pub function block_positions(f: SFunc): i32[] {
   return out;
 }
 
+// The distinct blocks a terminator can jump to.
+pub function successors(t: STerm): i32[] {
+  if (t.kind_tag == TERM_BR) {
+    return [t.target];
+  }
+  if (t.kind_tag == TERM_BRIF && t.t == t.f) {
+    return [t.t];
+  }
+  if (t.kind_tag == TERM_BRIF) {
+    return [t.t, t.f];
+  }
+  return [];
+}
+
 pub function successor_id(t: STerm, which: i32): i32 {
   if (t.kind_tag == 2 && which == 0) {
     return t.target;

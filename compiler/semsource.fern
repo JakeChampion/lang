@@ -5675,16 +5675,6 @@ function mapped_term(t: ssa.STerm, map: i32[]): ssa.STerm {
   return t;
 }
 
-function successors(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
-    return [t.target];
-  }
-  if (t.kind_tag == 3) {
-    return [t.t, t.f];
-  }
-  return [];
-}
-
 function block_positions(blocks: ssa.SBlock[]): i32[] {
   let at: i32[] = [];
   let i = 0;
@@ -5704,7 +5694,7 @@ function reached(blocks: ssa.SBlock[], at: i32[]): boolean[] {
   let work: i32[] = [blocks[0].id];
   let head = 0;
   while (head < work.len()) {
-    for next in successors(blocks[at[work[head]]].term) {
+    for next in ssa.successors(blocks[at[work[head]]].term) {
       if (next < at.len() && at[next] >= 0 && !seen[next]) {
         seen = seen.with(next, true);
         work = work.append(next);

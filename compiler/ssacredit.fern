@@ -193,19 +193,6 @@ function block_at(f: ssa.SFunc, id: i32): i32 {
   return -1;
 }
 
-function successors(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
-    return [t.target];
-  }
-  if (t.kind_tag == 3) {
-    if (t.t == t.f) {
-      return [t.t];
-    }
-    return [t.t, t.f];
-  }
-  return [];
-}
-
 function structure(f: ssa.SFunc): Verdict {
   let defined = filled(f.nvals, -1);
   let bi = 0;
@@ -222,12 +209,12 @@ function structure(f: ssa.SFunc): Verdict {
       if (pos < 0 || util.index_of_i32(b.preds, pred) != pi) {
         return verdict(f, 3, bi, "invalid predecessor");
       }
-      if (util.index_of_i32(successors(f.blocks[pos].term), b.id) < 0) {
+      if (util.index_of_i32(ssa.successors(f.blocks[pos].term), b.id) < 0) {
         return verdict(f, 3, bi, "predecessor is not an edge");
       }
       pi += 1;
     }
-    for id in successors(b.term) {
+    for id in ssa.successors(b.term) {
       let pos = block_at(f, id);
       if (pos < 0) {
         return verdict(f, 3, bi, "missing successor");
@@ -318,7 +305,7 @@ function loop_members(f: ssa.SFunc, dom: ssadeps.Dom): i32[] {
   let members = filled(f.blocks.len(), 0);
   let from = 0;
   for b in f.blocks {
-    for header in successors(b.term) {
+    for header in ssa.successors(b.term) {
       if (ssadeps.dom_holds(dom, from, header)) {
         let seen = filled(f.blocks.len(), 0).with(header, 1);
         let todo: i32[] = [from];
@@ -440,7 +427,7 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
           return verdict(f, 3, b.id, "condition lacks available scalar provenance");
         }
       }
-      for id in successors(b.term) {
+      for id in ssa.successors(b.term) {
         let pos = block_at(f, id);
         let next = edge(f, f.blocks[pos], b.id, run.accounts);
         if (next.result.status != 0) {

@@ -1435,19 +1435,6 @@ function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32)
   return ssaunits.Step { block: -1, point: point, target: -1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
-function successors(t: ssa.STerm): i32[] {
-  if (t.kind_tag == 2) {
-    return [t.target];
-  }
-  if (t.kind_tag == 3) {
-    if (t.t == t.f) {
-      return [t.t];
-    }
-    return [t.t, t.f];
-  }
-  return [];
-}
-
 function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32, dest_at: i32, held: i32, known: Option[semrecords.Field[]]): irtables.LowerState {
   let step = at(p, idx, from, ssaunits.edge_point(), target);
   let dest = f.graph.blocks[dest_at];
