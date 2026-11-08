@@ -1,0 +1,153 @@
+import "std/audio/opusfile/headers";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/base64";
+import "std/deflate";
+import "std/test";
+import "opus_headers_vectors";
+
+function word(bytes: [u8], at: i32): i32 {
+  return wire.le(bytes, at, 4) as i32;
+}
+
+function equal_blob(actual: [u8], expected: [u8], at: i32): (i32, boolean) {
+  let size = word(expected, at);
+  if (size != actual.len()) {
+    return (at + 4 + size, false);
+  }
+  for i in 0..size {
+    if (actual[i] != expected[at + 4 + i]) {
+      return (at + 4 + size, false);
+    }
+  }
+  return (at + 4 + size, true);
+}
+
+function header_case(input: [u8], expected: [u8], at: i32, valid: boolean): (i32, boolean) {
+  match (headers.inspect(input)) {
+    Err(_) => {
+      return (at, !valid);
+    },
+    Ok(actual) => {
+      if (!valid) {
+        return (at, false);
+      }
+      let fields: i64[] = [actual.version as i64, actual.channels as i64, actual.pre_skip as i64, actual.input_sample_rate as i64, actual.output_gain as i64, actual.mapping_family as i64, actual.streams as i64, actual.coupled as i64];
+      for i in 0..fields.len() {
+        if (fields[i] != wire.le(expected, at + i * 8, 8) as i64) {
+          return (at, false);
+        }
+      }
+      return equal_blob(actual.mapping, expected, at + 64);
+    }
+  }
+}
+
+function tag_fields(actual: headers.Tags, expected: [u8], at: i32): (i32, boolean) {
+  let (next, vendor) = equal_blob(actual.vendor, expected, at);
+  at = next;
+  if (!vendor || actual.comments.len() != word(expected, at)) {
+    return (at, false);
+  }
+  at += 4;
+  for comment in actual.comments {
+    let (end, same) = equal_blob(comment, expected, at);
+    if (!same) {
+      return (at, false);
+    }
+    at = end;
+  }
+  return equal_blob(actual.suffix, expected, at);
+}
+
+function tags_case(input: [u8], expected: [u8], at: i32, valid: boolean): (i32, boolean) {
+  match (headers.tags(input, headers.default_tag_limits())) {
+    Err(_) => {
+      return (at, !valid);
+    },
+    Ok(actual) => {
+      if (!valid) {
+        return (at, false);
+      }
+      return tag_fields(actual, expected, at);
+    }
+  }
+}
+
+function group(bytes: [u8]): test.TestOutcome {
+  let at = 4;
+  for index in 0..word(bytes, 0) {
+    let kind = word(bytes, at);
+    let valid = word(bytes, at + 4) != 0;
+    let size = word(bytes, at + 8);
+    at += 12;
+    let input = bytes[at:at + size];
+    at += size;
+    let (end, same) = if (kind == 0) { header_case(input, bytes, at, valid) } else { tags_case(input, bytes, at, valid) };
+    if (!same) {
+      return test.fail("header or tags differ at case " + index.to_string());
+    }
+    at = end;
+  }
+  return test.assert_eq(at, bytes.len());
+}
+
+function references(): test.TestOutcome {
+  for i in 0..opus_headers_vectors.CASES.len() {
+    let packed = match (base64.decode(opus_headers_vectors.CASES[i])) { Ok(value) => value, Err(_) => { return test.fail("reference base64"); } };
+    let bytes = match (deflate.zlib_decode(packed, 1048576)) { Ok(value) => value, Err(_) => { return test.fail("reference zlib"); } };
+    match (group(bytes)) {
+      test.Pass => {},
+      test.Fail(message) => {
+        return test.fail("group " + i.to_string() + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits_and_lookup(): test.TestOutcome {
+  let bytes: u8[] = [79, 112, 117, 115, 84, 97, 103, 115, 0, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 65, 61, 98];
+  let limits = headers.default_tag_limits();
+  let parsed = match (headers.tags(bytes, limits)) { Ok(value) => value, Err(_) => { return test.fail("one comment"); } };
+  let values = headers.values(parsed, "a");
+  if (values.len() != 1 || values[0].len() != 1 || values[0][0] != 98u8) {
+    return test.fail("case insensitive comment field");
+  }
+  match (headers.tags(bytes, headers.TagLimits { ...limits, max_comments: 0 })) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("comment count limit");
+    }
+  }
+  match (headers.tags(bytes, headers.TagLimits { ...limits, max_bytes: bytes.len() - 1 })) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("comment byte limit");
+    }
+  }
+  return test.assert_eq(headers.values(parsed, "missing").len(), 0);
+}
+
+function private_mapping(): test.TestOutcome {
+  let bytes: u8[] = [79, 112, 117, 115, 72, 101, 97, 100, 1, 3, 0, 0, 0, 0, 0, 0, 0, 128, 255, 1, 1, 0, 1, 255];
+  let actual = match (headers.inspect(bytes)) { Ok(value) => value, Err(_) => { return test.fail("private mapping family"); } };
+  if (actual.channels != 3 || actual.streams != 1 || actual.coupled != 1 || actual.output_gain != -32768 || actual.mapping[2] != 255u8) {
+    return test.fail("private mapping and signed gain");
+  }
+  match (headers.inspect(bytes.with(19, 255u8).with(20, 1u8))) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("more than 255 decoded channels");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Ogg Opus headers against libopusfile");
+  runner = runner.it("identification and comments match the reference", references);
+  runner = runner.it("bounded comments and case insensitive lookup", limits_and_lookup);
+  runner = runner.it("private channel mapping and decoded channel bounds", private_mapping);
+  return runner.finish();
+}

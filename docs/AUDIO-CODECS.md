@@ -146,6 +146,22 @@ python3 scripts/gen-ogg-tables.py
 The reference generator needs cc and CMake. It verifies the pinned archive hash before the build.
 Normal tests need no libogg library or network access.
 
+`std/audio/opusfile/headers` reads Opus identification packets and bounded comment packets.
+It accepts channel mapping families 0, 1, and 255, with explicit stream and channel counts.
+Comments retain raw bytes and binary suffix data. Field lookup ignores ASCII case.
+The reference corpus checks 514 identification headers and 2,295 comment packets against pinned libopusfile.
+Private channel mappings and the 255-channel bound have separate RFC checks.
+
+`std/opus/packet.parse_delimited` reads one stream from a multistream packet.
+It returns a normal Opus packet and the consumed byte count.
+Its 1,896 reference cases compare boundaries, frame lengths, padding, and packet bytes with pinned libopus.
+These modules supply file-decoder components. Complete file playback still needs the stream and granule rules.
+
+```sh
+python3 scripts/gen-opus-headers-vectors.py
+python3 scripts/gen-opus-delimited-vectors.py
+```
+
 ## Opus and Android
 
 `std/opus` provides stateful SILK, hybrid, and CELT packet decode, plus CELT packet encode.
