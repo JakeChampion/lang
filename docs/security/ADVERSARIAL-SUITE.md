@@ -87,6 +87,7 @@ QEMU establishes emulated behaviour only.
 | A hostile HTTP/2 frame sequence or QPACK encoder stream and header section | `FuzzSelfHostStdH2`, `FuzzSelfHostStdQPACK` | a frame, a connection or stream error, a decode or a refusal, never a signal or a hang | x86 |
 | A hostile QUIC datagram or packet payload | `FuzzSelfHostStdQUIC`, `FuzzSelfHostStdQUICFrames` | a parse, an open, a refusal or a frame error, never a signal or a hang | x86 |
 | A hostile TLS record, handshake message, server flight or certificate | `FuzzSelfHostStdTLS`, `FuzzSelfHostStdTLSServer`, `FuzzSelfHostStdTLSClient`, `FuzzSelfHostStdX509`, `TestSelfHostStdTLSAgainstGo` | a decode, a handshake step, a refusal with its alert, or a verification result, never a signal or a hang | x86 |
+| A hostile DEFLATE, gzip, zlib, zstd or Brotli stream | `FuzzSelfHostStdInflate`, `FuzzSelfHostStdGunzip`, `FuzzSelfHostStdZlib`, `FuzzSelfHostStdZstd`, `FuzzSelfHostStdBrotli` | the output that Go's decoder gives, a refusal where Go refuses, or a round trip that gives the input back, never a signal or a hang | x86 |
 | An ELF file supplied as source | the probes in `ELF-INPUTS.md` | `P001` | x86 |
 | A malformed attribute in a format directive | `TestSelfHostFmtWriteRefusesMalformedAttribute` | refusal | x86 |
 | An unsafe function reached without an unsafe block | `conformance/cases/diag_e095`, `conformance/cases/diag_e095_unsafe_function_as_a_value`, `conformance/cases/diag_e095_import_conceals_unsafe_function`, `conformance/cases/diag_e095_safe_trait_method_unsafe_impl` | `E095` | both checkers |

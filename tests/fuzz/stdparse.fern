@@ -1,3 +1,6 @@
+import "std/brotli";
+import "std/deflate";
+import "std/hash/crc32";
 import "std/hex";
 import "std/http";
 import "std/http/h2";
@@ -16,12 +19,14 @@ import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
 import "std/url";
+import "std/zstd";
 
 // Feeds a file to one network-facing parser of the standard library: the
 // HTTP/1 request framer and its chunked-body decoder, the HTTP/2 frame reader
 // and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
-// reader, the TLS record and handshake readers, the X.509 reader, the JSON
-// parser, or the URL and query parsers. Each refuses malformed bytes with an
+// reader, the TLS record and handshake readers, the X.509 reader, the
+// DEFLATE, gzip, zlib, zstd and Brotli decoders, the JSON parser, or the URL
+// and query parsers. Each refuses malformed bytes with an
 // error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
@@ -489,6 +494,128 @@ function x509_summary(raw: u8[]): string {
   return "x509 certificates " + ders.len().to_string() + " parsed " + parsed.to_string() + " verified " + verified.to_string() + " names " + names.to_string();
 }
 
+// The output limit of each decoder, 1 MiB.
+const DECODE_LIMIT: i32 = 1048576;
+
+// The length and CRC-32 of decoded bytes, which a test compares with the
+// output of another decoder.
+function digest(out: [u8]): string {
+  return out.len().to_string() + " crc " + crc32.of(out).to_string();
+}
+
+function inflate_refusal(e: deflate.InflateError): string {
+  match (e) {
+    deflate.Truncated => {
+      return "truncated";
+    },
+    deflate.OutputLimit => {
+      return "limit";
+    },
+    deflate.BadChecksum => {
+      return "checksum";
+    },
+    deflate.BadHeader(_) => {
+      return "header";
+    },
+    deflate.Malformed(_) => {
+      return "malformed";
+    }
+  }
+}
+
+function inflate_summary(raw: u8[]): string {
+  match (deflate.inflate(raw, DECODE_LIMIT)) {
+    Ok(got) => {
+      return "inflate ok " + digest(got.out) + " consumed " + got.consumed.to_string();
+    },
+    Err(e) => {
+      return "inflate refused " + inflate_refusal(e);
+    }
+  }
+}
+
+function gunzip_summary(raw: u8[]): string {
+  match (deflate.gunzip(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      return "gunzip ok " + digest(out);
+    },
+    Err(e) => {
+      return "gunzip refused " + inflate_refusal(e);
+    }
+  }
+}
+
+function zlib_summary(raw: u8[]): string {
+  match (deflate.zlib_decode(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      return "zlib ok " + digest(out);
+    },
+    Err(e) => {
+      return "zlib refused " + inflate_refusal(e);
+    }
+  }
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
+}
+
+// Decodes the bytes as a zstd frame, then compresses the bytes and decodes
+// them back. A round trip that does not give the bytes back is a finding.
+function zstd_summary(raw: u8[]): string {
+  let decoded = "";
+  match (zstd.decompress(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      decoded = "ok " + digest(out);
+    },
+    Err(e) => {
+      decoded = "refused " + e.message().len().to_string();
+    }
+  }
+  let trip = "broken";
+  match (zstd.decompress(zstd.compress(raw), raw.len())) {
+    Ok(back) => {
+      if (same(back, raw)) {
+        trip = "ok";
+      }
+    },
+    Err(_) => {}
+  }
+  return "zstd " + decoded + " roundtrip " + trip;
+}
+
+function brotli_summary(raw: u8[]): string {
+  let decoded = "";
+  match (brotli.decompress(raw, DECODE_LIMIT)) {
+    Ok(out) => {
+      decoded = "ok " + digest(out);
+    },
+    Err(e) => {
+      decoded = "refused " + e.message().len().to_string();
+    }
+  }
+  let trip = "broken";
+  match (brotli.decompress(brotli.compress(raw), raw.len())) {
+    Ok(back) => {
+      if (same(back, raw)) {
+        trip = "ok";
+      }
+    },
+    Err(_) => {}
+  }
+  return "brotli " + decoded + " roundtrip " + trip;
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -515,7 +642,7 @@ function url_summary(src: string): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|json|url FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|json|url FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -570,6 +697,26 @@ function main(): i32 {
   }
   if (av[1] == "x509") {
     print(x509_summary(raw));
+    return 0;
+  }
+  if (av[1] == "inflate") {
+    print(inflate_summary(raw));
+    return 0;
+  }
+  if (av[1] == "gunzip") {
+    print(gunzip_summary(raw));
+    return 0;
+  }
+  if (av[1] == "zlib") {
+    print(zlib_summary(raw));
+    return 0;
+  }
+  if (av[1] == "zstd") {
+    print(zstd_summary(raw));
+    return 0;
+  }
+  if (av[1] == "brotli") {
+    print(brotli_summary(raw));
     return 0;
   }
   if (av[1] == "json") {
