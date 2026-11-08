@@ -499,6 +499,7 @@ iter_build_consume                                   0
 iter_range_collect                                   0
 iter_step_by                                         0
 iterator_nested_tuple_adapter                        0
+iterator_ranges_include_i32_max                      0
 json_array_field                                     0
 json_arrays_and_options                              0
 json_error_location                                  0
