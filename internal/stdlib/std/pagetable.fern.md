@@ -137,7 +137,7 @@ function clear(table: usize): void {
 <<walk>>=
 function index(address: usize, level: i32): usize {
   let shift = 39 - 9 * level;
-  return (address >> shift as usize) & (ENTRIES - ONE);
+  return address >> shift as usize & ENTRIES - ONE;
 }
 
 // The table at `level` + 1 under the entry of `address` in `table`, made
@@ -147,7 +147,7 @@ function (m: Tables) next_table(table: usize, address: usize, level: i32): usize
     let at = table + index(address, level) * ENTRY_BYTES;
     let entry = __load_i64(at);
     if ((entry & 1i64) != 0i64) {
-      return (entry as usize) & (0xfffffffff000 as usize);
+      return entry as usize & 0xfffffffff000 as usize;
     }
     let Some(fresh) = m.frames.alloc() else {
       return ZERO;
@@ -212,9 +212,9 @@ pub function (m: Tables) activate(): void {
 pub function active_root(): usize {
   unsafe {
     if (target_arch() == "arm64") {
-      return (__sysreg_read("ttbr0_el1") as usize) & (0xfffffffff000 as usize);
+      return __sysreg_read("ttbr0_el1") as usize & 0xfffffffff000 as usize;
     }
-    return (__sysreg_read("cr3") as usize) & (0xfffffffff000 as usize);
+    return __sysreg_read("cr3") as usize & 0xfffffffff000 as usize;
   }
 }
 ```
