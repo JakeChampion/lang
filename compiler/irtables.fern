@@ -682,14 +682,7 @@ function mul_lost(kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, ow
   return ops.append(ir.op_bin("and", 0, false));
 }
 
-pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32): ir.Op[] {
-  let uns = kind == "u8" || kind == "u32" || kind == "u64";
-  let w = 0;
-  if (wide) {
-    w = 64;
-  }
-  let ops: ir.Op[] = [];
-
+function chk_base(op: string, uns: boolean): string {
   let basek = "add";
   if (op == "-?") {
     basek = "sub";
@@ -721,12 +714,48 @@ pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
       basek = "shr_s";
     }
   }
-  ops = chk_overflow(op, kind, uns, w, lslot, rslot, ops);
+  return basek;
+}
+
+pub function chk_present_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32): ir.Op[] {
+  let w = 0;
+  if (wide) {
+    w = 64;
+  }
+  let uns = kind == "u8" || kind == "u32" || kind == "u64";
+  let ops = chk_overflow(op, kind, uns, w, lslot, rslot, []);
+  return ops.append(ir.op_bin("not", 0, false));
+}
+
+// A false presence flag produces a scalar zero without division or shifts.
+pub function chk_value_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, present: i32, oslot: i32): ir.Op[] {
+  let w = 0;
+  if (wide) {
+    w = 64;
+  }
+  let uns = kind == "u8" || kind == "u32" || kind == "u64";
+  let ops = [ir.op_load_local(present), ir.op_if(0)];
+  ops = sat_op(chk_base(op, uns), kind, w, lslot, rslot, ops);
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_else());
+  ops = sat_const(kind, "zero", ops);
+  ops = ops.append(ir.op_store_local(oslot));
+  ops = ops.append(ir.op_end());
+  return sat_load(oslot, ops);
+}
+
+pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32): ir.Op[] {
+  let uns = kind == "u8" || kind == "u32" || kind == "u64";
+  let w = 0;
+  if (wide) {
+    w = 64;
+  }
+  let ops = chk_overflow(op, kind, uns, w, lslot, rslot, []);
   ops = ops.append(ir.op_if(0));
   ops = ops.append(ir.op_const_option(1));
   ops = ops.append(ir.op_store_local(oslot));
   ops = ops.append(ir.op_else());
-  ops = sat_op(basek, kind, w, lslot, rslot, ops);
+  ops = sat_op(chk_base(op, uns), kind, w, lslot, rslot, ops);
   if (wide) {
     ops = ops.append(ir.op_opt_make_w(0, 64, true));
   } else {
