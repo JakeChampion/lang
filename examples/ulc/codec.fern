@@ -438,6 +438,14 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
     }
   }
   let Decoder { block_size: n, channels, last_size: previous_size, lap: all_lap, seed, plans, work, lap_zero: _, output, zero_samples, lap_scratch: lap } = state;
+  let output_address = 0 as usize;
+  unsafe {
+    // The validated output spans n * channels doubles. Preserve retained blocks.
+    if (__load_i32(output as usize - 8 as usize) != 1) {
+      output = __send_copy(output);
+    }
+    output_address = output as usize + 8 as usize;
+  }
   let r = read(reader(data, offset, seed));
   let control = r.value;
   let pattern_index = 1;
@@ -484,7 +492,9 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       lap = inv.lap;
       if (subsize == n) {
         for i in 0..n {
-          output = output.with(i * channels + channel, work.samples[i]);
+          unsafe {
+            __store_i64(output_address + (8 * (i * channels + channel)) as usize, f64_bits(work.samples[i]));
+          }
         }
       } else {
         let available = (n - subsize) / 2;
@@ -494,7 +504,9 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         if (subsize <= available) {
           for i in 0..subsize {
             src -= 1;
-            output = output.with((at + i) * channels + channel, lap[src]);
+            unsafe {
+              __store_i64(output_address + (8 * ((at + i) * channels + channel)) as usize, f64_bits(lap[src]));
+            }
           }
           for i in subsize..available {
             dst -= 1;
@@ -508,10 +520,14 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
         } else {
           for i in 0..available {
             src -= 1;
-            output = output.with((at + i) * channels + channel, lap[src]);
+            unsafe {
+              __store_i64(output_address + (8 * ((at + i) * channels + channel)) as usize, f64_bits(lap[src]));
+            }
           }
           for i in available..subsize {
-            output = output.with((at + i) * channels + channel, work.samples[j]);
+            unsafe {
+              __store_i64(output_address + (8 * ((at + i) * channels + channel)) as usize, f64_bits(work.samples[j]));
+            }
             j += 1;
           }
           for i in 0..available {
@@ -534,8 +550,12 @@ pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[B
       let at = i * channels + ch;
       let a = output[at - 1];
       let b = output[at];
-      output = output.with(at - 1, a + b);
-      output = output.with(at, a - b);
+      unsafe {
+        __store_i64(output_address + (8 * (at - 1)) as usize, f64_bits(a + b));
+      }
+      unsafe {
+        __store_i64(output_address + (8 * at) as usize, f64_bits(a - b));
+      }
     }
     ch += 2;
   }
