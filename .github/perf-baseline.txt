@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. video_qtrle.text moved 1.01% with the drift of main since the last bank, and it is pinned at its measured value.
 # 2026-11-08: PR #14591, perf-aarch64 job 128688225606 on b6f70f98. aarch64/http_hello.text grows 1.10% with the HTTP/3 fields std/fetch gained in #14551, whose arm64 perf lane never reported before the merge; the x86_64 row was pinned there. Pinned at the measured value.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: the pool and its kept connections carry the HTTP/3 fields, so http_hello.text grows 1.09% on x86_64 and is pinned at its measured value.
 # 2026-11-08: PR #14748, perf-aarch64 job 128848947775 on 717cf25b. aarch64/video_qtrle.ir falls 1.08% on main's tree. This PR changes no compiler or codec source. Pinned at its measured value.
@@ -606,7 +607,7 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
-x86_64/video_qtrle.text 5738
+x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6080
 aarch64/video_qtrle.ir 1662057925
