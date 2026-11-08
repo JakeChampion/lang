@@ -88,6 +88,8 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
+	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
 	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
 	"mp4": true, "mp4_boundary": true,
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
@@ -336,6 +338,11 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_compress", langSrcAbs(t, "tests/stdlib/http_compress_test.fern"), ""},
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
+		{"vorbis", langSrcAbs(t, "tests/stdlib/vorbis_test.fern"), ""},
+		{"vorbis_boundary", langSrcAbs(t, "tests/stdlib/vorbis_boundary_test.fern"), ""},
+		{"vorbis_codebook", langSrcAbs(t, "tests/stdlib/vorbis_codebook_test.fern"), ""},
+		{"vorbis_kernel", langSrcAbs(t, "tests/stdlib/vorbis_kernel_test.fern"), ""},
+		{"vorbis_smoke", langSrcAbs(t, "tests/stdlib/vorbis_smoke_test.fern"), ""},
 		{"mp4", langSrcAbs(t, "tests/stdlib/mp4_test.fern"), ""},
 		{"mp4_boundary", langSrcAbs(t, "tests/stdlib/mp4_boundary_test.fern"), ""},
 		{"mp4_smoke", langSrcAbs(t, "tests/stdlib/mp4_smoke_test.fern"), ""},
