@@ -152,6 +152,14 @@ python3 examples/ulc/bench/summarize.py \
 
 ## Earlier default-block method
 
+For rate-control measurements, select `--rate-mode cbr --bitrate 96 --direction encode`.
+Use `--rate-mode abr` for ABR at the same target bitrate.
+ABR uses the same average complexity for both encoders, measured by C outside timing.
+The oracle checks decoded frame counts and finite samples outside timing.
+It records RMS error, SNR, and file bitrate for each encoder.
+Quality calculations omit the two-block delay and final padding.
+File bitrate includes container and padding bytes.
+
 The next four result tables record source `15212d32dc49807e204a9767467ff574a3f3fd98`.
 Fern has lower median elapsed time in all 32 comparisons in those tables.
 Their narrowest lead is 1.039× for long, single-worker noise decode.
