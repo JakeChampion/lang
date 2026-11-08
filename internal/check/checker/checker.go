@@ -2419,6 +2419,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 		c.info.FuncSigs[fmt.Sprintf("__mmio_load%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: value}
 		c.info.FuncSigs[fmt.Sprintf("__mmio_store%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT, value}, Result: ast.VoidType{}}
+		c.info.FuncSigs[fmt.Sprintf("__mem_load%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: value}
+		c.info.FuncSigs[fmt.Sprintf("__mem_store%d", bits)] = &ast.FuncType{Params: []ast.Type{usizeT, value}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__fence"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	c.info.FuncSigs["__wfi"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
@@ -9364,6 +9366,8 @@ var UnsafeIntrinsics = map[string]bool{
 	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
+	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
+	"__mem_store8": true, "__mem_store16": true, "__mem_store32": true, "__mem_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
 	"__cache_clean": true, "__cache_flush": true,
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,

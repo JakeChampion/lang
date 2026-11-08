@@ -1097,7 +1097,7 @@ function device_sig(name: string): DeviceSig {
   if (builtinsigs.port_intrinsic(name)) {
     return port_sig(name);
   }
-  return mmio_sig(name);
+  return access_sig(name);
 }
 
 // A cache or TLB op of one address takes the address.
@@ -1128,12 +1128,13 @@ function port_sig(name: string): DeviceSig {
   return DeviceSig { params: [t_i32()], result: t_i32() };
 }
 
-function mmio_sig(name: string): DeviceSig {
+// An MMIO or raw memory access takes the address, and a store the value too.
+function access_sig(name: string): DeviceSig {
   let value = t_i32();
-  if (builtinsigs.mmio_width(name) == 64) {
+  if (builtinsigs.access_width(name) == 64) {
     value = t_i64();
   }
-  if (util.str_has_prefix(name, "__mmio_store")) {
+  if (builtinsigs.access_store(name)) {
     return DeviceSig { params: [t_usize(), value], result: t_void() };
   }
   return DeviceSig { params: [t_usize()], result: value };
@@ -10260,7 +10261,9 @@ pub function unsafe_intrinsics(): string[] {
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
     "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
-    "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
+    "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64",
+    "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64",
+    "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64", "__hvc", "__smc", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
     "__memcpy", "__memset", "__str_bytes", "__account_entry", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
@@ -18226,6 +18229,7 @@ function registered_intrinsics(): string[] {
     "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64", "__mmio_store8", "__mmio_store16", "__mmio_store32", "__mmio_store64", "__fence", "__wfi", "__hvc", "__smc", "__boot_info", "__sysreg_read", "__sysreg_write", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending",
     "__port_in8", "__port_in16", "__port_in32", "__port_out8", "__port_out16", "__port_out32",
+    "__mem_load8", "__mem_load16", "__mem_load32", "__mem_load64", "__mem_store8", "__mem_store16", "__mem_store32", "__mem_store64",
     "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__count_below_u64", "__crc32_cksum_array", "__crc32_ieee_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",

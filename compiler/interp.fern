@@ -7609,7 +7609,7 @@ function call_mmio_builtin(name: string, args: Value[]): Value {
     return v_err(name + ": needs a kernel target");
   }
   let want = 1;
-  if (util.str_has_prefix(name, "__mmio_store")) {
+  if (builtinsigs.access_store(name)) {
     want = 2;
   }
   if (args.len() != want) {
@@ -7625,13 +7625,13 @@ function call_mmio_builtin(name: string, args: Value[]): Value {
   return raw_mmio(name, w);
 }
 
-// No device answers the interpreter, so an MMIO access is an ordinary access
-// to its own memory.
+// No device answers the interpreter, so an MMIO or raw memory access is an
+// ordinary access to its own memory.
 function raw_mmio(name: string, w: i64[]): Value {
-  let bits = builtinsigs.mmio_width(name);
+  let bits = builtinsigs.access_width(name);
   let p = w[0] as usize;
   unsafe {
-    if (util.str_has_prefix(name, "__mmio_load")) {
+    if (!builtinsigs.access_store(name)) {
       if (bits == 8) {
         return v_int(__load_u8(p));
       }
