@@ -1,0 +1,222 @@
+import "std/audio/vorbisfile/seek";
+import "std/audio/vorbisfile";
+import "std/audio/vorbis/packet";
+import "std/audio/vorbis/setup";
+import "std/audio/ogg/tables";
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_file_smoke_vectors";
+import "vorbis_seek_vectors";
+
+function fixture(): Result[u8[], string] {
+  return ref.unpack(vorbis_file_smoke_vectors.vector().encoded);
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(encoded) = fixture() else {
+    return test.fail("fixture");
+  };
+  for cut in 0..encoded.len() {
+    if let Ok(_) = seek.inspect(encoded[:cut], seek.default_limits()) {
+      return test.fail("index accepted an incomplete container");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(encoded) = fixture() else {
+    return test.fail("fixture");
+  };
+  let limits = seek.default_limits();
+  let Ok(index) = seek.inspect(encoded, limits) else {
+    return test.fail("index");
+  };
+  for bound in [seek.Limits { ...limits, max_input_bytes: encoded.len() - 1 }, seek.Limits { ...limits, max_packets: index.packet_count() - 1 }, seek.Limits { ...limits, max_packets: 715827883 }, seek.Limits { ...limits, max_packets: 0 }] {
+    if let Err(pcm.Limit) = seek.inspect(encoded, bound) {} else {
+      return test.fail("index resource limit");
+    }
+  }
+  if let Err(_) = seek.inspect(encoded, seek.Limits { ...limits, max_input_bytes: encoded.len(), max_packets: index.packet_count() }) {
+    return test.fail("exact index budgets");
+  }
+  for value in vorbis_seek_vectors.vectors() {
+    if (value.name != "leading-empty-link") {
+      continue;
+    }
+    let Ok(chain) = ref.unpack(value.encoded) else {
+      return test.fail("chain");
+    };
+    if let Err(pcm.Limit) = seek.inspect(chain, seek.Limits { ...limits, file: vorbisfile.Limits { ...limits.file, max_links: 1 } }) {} else {
+      return test.fail("link budget");
+    }
+    let Ok(two) = seek.inspect(chain, limits) else {
+      return test.fail("chain index");
+    };
+    if let Err(pcm.Limit) = seek.inspect(chain, seek.Limits { ...limits, max_packets: two.packet_count() - 1 }) {} else {
+      return test.fail("shared packet budget across links");
+    }
+  }
+  return test.pass();
+}
+
+function positions(): test.TestOutcome {
+  let Ok(encoded) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = seek.inspect(encoded, seek.default_limits()) else {
+    return test.fail("index");
+  };
+  for position in [-1i64, 96i64] {
+    if let Err(pcm.Header) = seek.cursor(index).seek(0, position) {} else {
+      return test.fail("sample position");
+    }
+  }
+  for link in [-1, 1] {
+    if let Err(pcm.Header) = seek.cursor(index).seek(link, 0i64) {} else {
+      return test.fail("link position");
+    }
+  }
+  let Ok(end) = seek.cursor(index).seek(0, 95i64) else {
+    return test.fail("exact end");
+  };
+  let Ok((done, event)) = end.next(encoded) else {
+    return test.fail("end read");
+  };
+  if let None = event {} else {
+    return test.fail("PCM at exact end");
+  }
+  let Ok((_, final)) = done.step(encoded) else {
+    return test.fail("repeated completion");
+  };
+  if let seek.Finished = final {} else {
+    return test.fail("completion state");
+  }
+  if let Err(pcm.Header) = seek.cursor(index).step(encoded[:encoded.len() - 1]) {} else {
+    return test.fail("different encoded view length");
+  }
+  return test.pass();
+}
+
+function work(): test.TestOutcome {
+  let Ok(encoded) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = seek.inspect(encoded, seek.default_limits()) else {
+    return test.fail("index");
+  };
+  let Ok(state) = seek.cursor(index).seek(0, 64i64) else {
+    return test.fail("seek");
+  };
+  let Ok((priming, one)) = state.step(encoded) else {
+    return test.fail("setup step");
+  };
+  if let seek.Pending = one {} else {
+    return test.fail("setup must not decode");
+  }
+  let Ok((ready, two)) = priming.step(encoded) else {
+    return test.fail("overlap step");
+  };
+  if let seek.Pending = two {} else {
+    return test.fail("exactly one preceding packet");
+  }
+  let Ok((_, three)) = ready.step(encoded) else {
+    return test.fail("output step");
+  };
+  if let seek.Samples(audio) = three {
+    return test.assert_true(audio.position == 64i64 && audio.frames == 31);
+  }
+  return test.fail("output after one overlap primer");
+}
+
+function first_audio(encoded: [u8]): Result[vorbisfile.Indexed, pcm.AudioError] {
+  let scanner = vorbisfile.scan(vorbisfile.default_limits())?;
+  let at = 0;
+  while (true) {
+    let eof = at == encoded.len();
+    let (next, used, event) = scanner.feed(encoded[at:])?;
+    scanner = next;
+    at += used;
+    if let Some(vorbisfile.ScanPacket(value)) = event {
+      return Ok(value);
+    }
+    if (eof && used == 0) {
+      return Err(pcm.Header);
+    }
+  }
+}
+
+function broken_floor(encoded: [u8], at: i32, page: i32): u8[] {
+  let changed: u8[] = [];
+  for byte in encoded {
+    changed = changed.append(byte);
+  }
+  changed = changed.with(at + 1, changed[at + 1] | 2u8);
+  let segments = changed[page + 26] as i32;
+  let end = page + 27 + segments;
+  for i in page + 27..end {
+    end += changed[i] as i32;
+  }
+  let crc = 0u32;
+  for i in page..end {
+    let byte = if (i >= page + 22 && i < page + 26) { 0u32 } else { changed[i] as u32 };
+    crc = crc << 8u32 ^ tables.CRC[(crc >> 24u32 ^ byte) as i32];
+  }
+  for i in 0..4 {
+    changed = changed.with(page + 22 + i, (crc >> (8 * i) as u32) as u8);
+  }
+  return changed;
+}
+
+function payloads(): test.TestOutcome {
+  let Ok(encoded) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(first) = first_audio(encoded) else {
+    return test.fail("scan");
+  };
+  let damaged = broken_floor(encoded, first.location.offset as i32, first.location.page_offset as i32);
+  let Ok(index) = seek.inspect(damaged, seek.default_limits()) else {
+    return test.fail("mode-only inspection must not decode spectral payloads");
+  };
+  if let Err(pcm.Header) = seek.cursor(index).next(damaged) {} else {
+    return test.fail("read must validate the floor book selector");
+  }
+  return test.pass();
+}
+
+function mode_headers(): test.TestOutcome {
+  let Ok(encoded) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = seek.inspect(encoded, seek.default_limits()) else {
+    return test.fail("index");
+  };
+  let info = index.links()[0].info.audio;
+  let modes: setup.Mode[] = [];
+  for _ in 0..64 {
+    modes = modes.append(setup.Mode { long: true, mapping: 0 });
+  }
+  if let Err(pcm.Truncated) = packet.layout_exponent([0u8], info, modes) {} else {
+    return test.fail("long window flags must be complete");
+  }
+  if let Ok(6) = packet.layout_exponent([0u8, 0u8], info, modes) {} else {
+    return test.fail("complete long mode header");
+  }
+  if let Err(pcm.Header) = packet.layout_exponent([1u8, 0u8], info, modes) {} else {
+    return test.fail("packet type bit");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis indexed-seek boundaries and work limits");
+  runner = runner.it("every byte prefix rejects an incomplete container", prefixes);
+  runner = runner.it("encoded bytes, packets, links, and scalar storage limits", budgets);
+  runner = runner.it("invalid positions, exact end, and input view extent", positions);
+  runner = runner.it("one setup step and one overlap packet before exact PCM", work);
+  runner = runner.it("indexing checks modes while reads validate packet entropy", payloads);
+  runner = runner.it("all long-window header fields must be complete", mode_headers);
+  return runner.finish();
+}

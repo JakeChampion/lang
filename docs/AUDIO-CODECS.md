@@ -147,7 +147,15 @@ Each cooperative step performs at most one source read and one decoder feed.
 Pending events drain before another source read. Empty successful reads mean permanent EOF.
 The caller retains and closes the reader. The adapter retains one bounded input chunk and codec state.
 
-Seeking remains open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
+`std/audio/vorbisfile/seek` indexes an immutable byte view and returns exact PCM after a sample seek.
+It retains packet locations and sample positions, with 32 logical bytes per packet before capacity and runtime overhead.
+Seeks use binary search and one preceding packet for overlap. Seeks within a link reuse decoder configuration and scratch.
+
+Each `step` performs at most one setup parse, one packet decode, or one link transition.
+The index validates container structure, setup, mode headers, and sample boundaries. Reads validate the spectral payload.
+
+Input bytes must remain unchanged after inspection. The default index permits 16 MiB and 1,048,576 packets across selected links.
+Reader-backed seek indexes and performance qualification remain open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
 
 `decode_packet_into` consumes a reusable PCM buffer. Entries after the valid prefix retain their values.
 `packet_frames` checks the mode and computes the required output frame count without decode.
