@@ -145,18 +145,21 @@ function b(data: string): void {}
 function c(data: usize, len: i32): void {}
 @provide("log")
 function d(data: usize, len: i32): void {}
+@provide("exit")
+function e(code: i64): void {}
 function main(): i32 {
   return 0;
 }
 `})
 	out, err := cli.compileCmd("x86-64-linux", filepath.Join(dir, "bad"), filepath.Join(dir, "bad.fern")).CombinedOutput()
 	if err == nil {
-		t.Fatal("the build with three provider problems succeeded")
+		t.Fatal("the build with four provider problems succeeded")
 	}
 	for _, want := range []string{
-		"bad.fern:2:1: error[E101]: `@provide(\"now\")`: no capability `now` takes a provider; a provider can implement `log`",
+		"bad.fern:2:1: error[E101]: `@provide(\"now\")`: no capability `now` takes a provider; a provider can implement `log` or `exit`",
 		"bad.fern:4:1: error[E101]: the `log` provider \"b\" must be a function with the signature (data: usize, len: i32): void",
 		"bad.fern:8:1: error[E101]: capability `log` has two providers, \"c\" and \"d\"",
+		"bad.fern:10:1: error[E101]: the `exit` provider \"e\" must be a function with the signature (code: i32): void",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("no %q in:\n%s", want, out)

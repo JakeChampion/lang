@@ -1574,6 +1574,7 @@ func New() *Interp {
 	i.Builtins["int____int_to_string_u64"] = &Builtin{Fn: builtinIntToStringU64}
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
+	i.Builtins["tcp_accept_with"] = &Builtin{Fn: builtinTcpAcceptWith}
 	i.Builtins["tcp_local_port"] = &Builtin{Fn: builtinTcpLocalPort}
 	i.Builtins["tcp_listen_with"] = &Builtin{Fn: builtinTcpListenWith}
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
@@ -1643,6 +1644,27 @@ func builtinTcpAccept(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_accept: expected number arg, got %T", args[0])
 	}
+	return i.acceptOn(int64(id), false)
+}
+
+// builtinTcpAcceptWith answers tcp_accept_with(listener, nonblocking): the
+// accepted connection, non-blocking when asked, as accept4 hands it back.
+func builtinTcpAcceptWith(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("tcp_accept_with: expected 2 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_accept_with: expected number arg, got %T", args[0])
+	}
+	nonblocking, ok := args[1].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("tcp_accept_with: expected boolean nonblocking arg, got %T", args[1])
+	}
+	return i.acceptOn(int64(id), bool(nonblocking))
+}
+
+func (i *Interp) acceptOn(id int64, nonblocking bool) (Value, error) {
 	ln, ok := i.tcpListeners[int64(id)]
 	if !ok {
 		return Number(-1), nil
@@ -1660,6 +1682,12 @@ func builtinTcpAccept(i *Interp, args []Value) (Value, error) {
 	i.tcpNextHandle++
 	cid := i.tcpNextHandle
 	i.tcpConns[cid] = conn
+	if nonblocking {
+		if i.tcpNonblocking == nil {
+			i.tcpNonblocking = map[int64]bool{}
+		}
+		i.tcpNonblocking[cid] = true
+	}
 	return Number(cid), nil
 }
 

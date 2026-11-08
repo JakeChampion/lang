@@ -1,0 +1,101 @@
+import "./component_blocks" as blocks;
+import "./dct";
+import "./quantization";
+import "./mcu_order" as order;
+import "./entropy_writer" as entropy;
+import "./frame_writer" as frame;
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum WriteError { Shape, Order(order.OrderError), Block(blocks.BlockError), Transform(dct.DctError), Quantization(quantization.QuantizationError), Frame(frame.FrameError), Cancelled }
+
+pub struct Plane { samples: u8[], layout: blocks.PlaneLayout, edge: blocks.Edge }
+
+pub struct Options { frame: frame.Options, max_blocks: i32 }
+
+function sampling(components: [frame.Component]): order.Sampling[] {
+  let result: order.Sampling[] = [];
+  for item in components {
+    result = result.append(order.Sampling { horizontal: item.horizontal, vertical: item.vertical });
+  }
+  return result;
+}
+
+function plane_shape(plane: Plane, component: frame.Component, options: Options, plan: order.Plan): Result[void, WriteError] {
+  let width = (options.frame.width * component.horizontal + plan.max_horizontal - 1) / plan.max_horizontal;
+  let height = (options.frame.height * component.vertical + plan.max_vertical - 1) / plan.max_vertical;
+  if (plane.layout.width != width || plane.layout.height != height) {
+    return Err(WriteError.Shape);
+  }
+  return match (blocks.validate(plane.samples, plane.layout)) { Ok(_) => Ok(()), Err(e) => Err(WriteError.Block(e)) };
+}
+
+pub function inspect(planes: [Plane], components: [frame.Component], options: Options): Result[order.Plan, WriteError] {
+  if (components.len() < 1 || components.len() > 4 || planes.len() != components.len()) {
+    return Err(WriteError.Shape);
+  }
+  let plan = match (order.inspect(options.frame.width, options.frame.height, sampling(components), options.max_blocks)) {
+    Ok(v) => v, Err(e) => { return Err(WriteError.Order(e)); },
+  };
+  for i in 0..planes.len() {
+    plane_shape(planes[i], components[i], options, plan)?;
+  }
+  return Ok(plan);
+}
+
+function prepare(plane: Plane, address: order.Address, extent: blocks.BlockExtent, quantizers: [u8], cancelled: () => boolean): Result[i32[], WriteError] {
+  let samples = match (blocks.block_padded(plane.samples, plane.layout, extent, address.x, address.y, plane.edge, cancelled)) {
+    Ok(v) => v, Err(blocks.Cancelled) => { return Err(WriteError.Cancelled); },
+    Err(e) => { return Err(WriteError.Block(e)); },
+  };
+  let values = match (dct.forward(samples, cancelled)) {
+    Ok(v) => v, Err(dct.Cancelled) => { return Err(WriteError.Cancelled); },
+    Err(e) => { return Err(WriteError.Transform(e)); },
+  };
+  return match (quantization.quantize(values, quantizers, cancelled)) {
+    Ok(v) => Ok(v), Err(quantization.Cancelled) => Err(WriteError.Cancelled), Err(e) => Err(WriteError.Quantization(e)),
+  };
+}
+
+function frame_error(error: frame.FrameError): WriteError {
+  return match (error) { frame.Cancelled => WriteError.Cancelled, _ => WriteError.Frame(error) };
+}
+
+function entropy_error(error: entropy.EncodeError): WriteError {
+  return match (error) { entropy.Cancelled => WriteError.Cancelled, entropy.Limit => WriteError.Frame(frame.Limit), _ => WriteError.Frame(frame.Entropy(error)) };
+}
+
+function extent(component: frame.Component, plan: order.Plan, interleaved: boolean): blocks.BlockExtent {
+  return blocks.BlockExtent { columns: plan.columns * (if (interleaved) { component.horizontal } else { 1 }), rows: plan.rows * (if (interleaved) { component.vertical } else { 1 }) };
+}
+
+function fold_result(result: Result[order.Fold[i32], order.FoldError[WriteError]]): Result[void, WriteError] {
+  return match (result) {
+    Ok(_) => Ok(()), Err(order.Order(order.Cancelled)) => Err(WriteError.Cancelled),
+    Err(order.Order(e)) => Err(WriteError.Order(e)), Err(order.Consumer(e)) => Err(e),
+  };
+}
+
+// Plane descriptors share samples. The producer retains one block at a time.
+pub function encode(planes: [Plane], components: frame.Component[], tables: frame.ComponentTables, options: Options, cancelled: () => boolean): Result[u8[], WriteError] {
+  let plan = inspect(planes, components, options)?;
+  let result = frame.encode_components_produced(
+    planes, components, tables, options.frame, cancelled,
+    (source: [Plane], emit: ([i32]) => Result[void, entropy.EncodeError]): Result[void, WriteError] => {
+      let retained: Plane[] = [];
+      for item in source {
+        retained = retained.append(item);
+      }
+      let folded = order.fold_blocks[i32, WriteError](options.frame.width, options.frame.height, sampling(components), options.max_blocks, cancelled, 0, (count: i32, address: order.Address): Result[i32, WriteError] => {
+        let component = components[address.component];
+        let values = prepare(retained[address.component], address, extent(component, plan, components.len() > 1), tables.quantization[component.quantization].values, cancelled)?;
+        if let Err(e) = emit(values) {
+          return Err(entropy_error(e));
+        }
+        return Ok(count + 1);
+      });
+      return fold_result(folded);
+    },
+  );
+  return match (result) { Ok(v) => Ok(v), Err(frame.FrameEncode(e)) => Err(frame_error(e)), Err(frame.FrameSource(e)) => Err(e) };
+}

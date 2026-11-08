@@ -223,9 +223,9 @@ func TestSelfHostPIE(t *testing.T) {
 			flags []string
 			want  string
 		}{
-			{[]string{"-pie", "-shared", "-target", "x86-64-linux"}, "fern: -pie is only supported for -target arm64-linux and x86-64-linux executables (got \"x86-64-linux\" with -shared)"},
-			{[]string{"-pie", "-target", "wasm32-wasi"}, "fern: -pie is only supported for -target arm64-linux and x86-64-linux executables (got \"wasm32-wasi\")"},
-			{[]string{"-pie", "-target", "arm64-darwin"}, "fern: -pie is only supported for -target arm64-linux and x86-64-linux executables (got \"arm64-darwin\")"},
+			{[]string{"-pie", "-shared", "-target", "x86-64-linux"}, "fern: -pie is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android executables (got \"x86-64-linux\" with -shared)"},
+			{[]string{"-pie", "-target", "wasm32-wasi"}, "fern: -pie is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android executables (got \"wasm32-wasi\")"},
+			{[]string{"-pie", "-target", "arm64-darwin"}, "fern: -pie is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android executables (got \"arm64-darwin\")"},
 		} {
 			errout, code := compile(t, filepath.Join(t.TempDir(), "out"), tc.flags...)
 			if code != 2 || !strings.HasPrefix(errout, tc.want) {

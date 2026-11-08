@@ -142,9 +142,10 @@ decoder, a compatible encoder, and WAV tools.
 - **Debugging.** `fern -sanitize` catches double frees and use-after-free and
   prints a leak census at exit; `-g` emits a symbol table; fatal aborts print
   a frame-pointer backtrace by default. `docs/SANITIZER.md`.
-- **Audio.** Native FLAC decode, integer PCM WAVE and QOA encode/decode, and
-  CELT-only Opus packets. Frame APIs support bounded playback buffers. MP3
-  and complete Opus file playback remain unimplemented. See [audio codecs](docs/AUDIO-CODECS.md).
+- **Audio.** Native MP3 and FLAC decode, integer PCM WAVE and QOA encode/decode,
+  and CELT-only Opus packets. MP3 supports gapless metadata and bounded frame
+  buffers. Complete Opus file playback remains unimplemented.
+  See [audio codecs](docs/AUDIO-CODECS.md).
 - **Video.** Native lossless QTRLE packet encode/decode, IVF packet reads, and
   AVC/HEVC packet conversion. The Android MediaCodec adapter provides surface
   decode for device-supported formats. See [video codecs](docs/VIDEO-CODECS.md).

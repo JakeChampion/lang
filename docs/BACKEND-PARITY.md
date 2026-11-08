@@ -112,7 +112,7 @@ file at a nonzero offset, reads distinct bytes back, unmaps and closes, pins
 the errno of a bad descriptor, and round-trips bytes through the byte store.
 The Darwin legs run in the Apple Silicon lane.
 
-`tcp_listen`, `tcp_listen_with`, `tcp_connect_with`, `tcp_accept`,
+`tcp_listen`, `tcp_listen_with`, `tcp_connect_with`, `tcp_accept`, `tcp_accept_with`,
 `tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_addr_into`, `tcp_recv_into`,
 `tcp_send_bytes`, `udp_bind`, `udp_bind_with`, `udp_connect`, `udp_sendto`
 and `udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
@@ -308,6 +308,7 @@ of these at check time there.
 | Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | `fern-oracle -interp` |
 | --- | --- | --- | --- | --- | --- |
 | `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 20-byte record (a datagram socket's is 16 bytes) | E066 | net package |
+| `tcp_accept_with(sock, nonblocking)` | Fern body: one `accept4(2)` with `SOCK_CLOEXEC`, and `SOCK_NONBLOCK` when asked | Fern body: `accept(2)`, then `fcntl(2)` for `FD_CLOEXEC` and, when asked, `O_NONBLOCK` | the `tcp_accept` body with the record's blocking flag set from the argument | E066 | net package; the connection is marked non-blocking when asked |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
 | `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5 and 7 through wasi:sockets, op 3 a flag in the record; 1 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket |
 | `tcp_addr_into` | Fern body: one `getsockname(2)` or `getpeername(2)` | Fern body | `local-address` or `remote-address` of the tcp or udp socket, -EINVAL as 28 | E066 | `getsockname` or `getpeername` on the descriptor |
@@ -516,22 +517,21 @@ The sampler installs a signal handler and an interval timer, and writes its
 report through raw syscalls at exit, so it needs a native executable with a
 host. Android, wasm and `-shared` builds refuse it with exit 2.
 
-### Binary hardening (`-harden`) is arm64-linux and x86-64-linux executables only
+### Binary hardening (`-harden`) is the Linux and Android executables and shared objects
 
-On arm64-linux `-harden` adds BTI landing pads, the GNU property note that
-enforces them, and return-address signing. On both Linux targets it adds a
-stack canary in every framed function and a check on every indirect call
-(`docs/security/CFI.md`). On x86-64-linux it also asks the kernel for the
-shadow stack and continues without one where the kernel refuses
-(`docs/security/SHADOW-STACK.md`). Every
-other target, and `-shared`, refuses the flag with exit 2.
-What is left (x86-64 CET, the shared and Android images, the runtime's
-hand-written frames) is listed in `docs/HARDENING.md`.
+On arm64-linux and arm64-android `-harden` adds BTI landing pads, the GNU
+property note that enforces them, and return-address signing. On all four
+targets it adds a stack canary in every framed function and a check on every
+indirect call (`docs/security/CFI.md`). On x86-64 it also asks the kernel
+for the shadow stack and continues without one where the kernel refuses
+(`docs/security/SHADOW-STACK.md`). Every other target refuses the flag with
+exit 2. What is left (x86-64 CET, the runtime's hand-written frames) is
+listed in `docs/HARDENING.md`.
 
 ### Build profiles (`-profile`) follow their flags
 
-`-profile hardened` is `-harden -pie`, so the two Linux native targets accept
-it and every other target refuses it with exit 2. `safe`, `diagnostic` and
+`-profile hardened` is `-harden -pie`, so the Linux and Android native
+targets accept it and every other target refuses it with exit 2. `safe`, `diagnostic` and
 `minimal` build wherever their flags build. The support table and the
 measured cost of each profile per target are in
 `docs/security/PROFILE-COSTS.md`.
@@ -569,15 +569,17 @@ mapped without reserve, so a page costs memory only once a call reaches it,
 with a 1 MiB guard at its foot (`emit_stack_switch` in `asm_ir.fern` and
 `asm_arm64_ir.fern`; the sizes are `asmcore.stack_size` and
 `stack_guard`). A recursion a million calls deep runs. Where the system
-refuses the mapping, the process stays on the stack it started with.
+refuses the mapping, startup stops the program with `fern: could not map
+the stack` and exit 134, as it does for the arena
+(`docs/security/STACK-GUARD.md`).
 
-Running into the guard, or below the starting stack, is reported rather
-than dying of a bare SIGSEGV: `fern: stack overflow` and the backtrace, from
-the faulting instruction, then exit 134 like the other fatal aborts. A
-handler on an alternate stack tells the two apart by the fault address: one
-within 1 MiB of the interrupted stack pointer is the stack running out, and
-any other fault is left to kill the process as it did. On wasm the engine
-owns the stack, and wasmtime reports its exhaustion as a trap.
+Running into the guard is reported rather than dying of a bare SIGSEGV:
+`fern: stack overflow` and the backtrace, from the faulting instruction,
+then exit 134 like the other fatal aborts. A handler on an alternate stack
+tells the two apart by the fault address: one inside the guard is the stack
+running out, and any other fault is left to kill the process as it did. On
+wasm the engine owns the stack, and wasmtime reports its exhaustion as a
+trap.
 
 `fern -interp` gets the same stack, being a native program itself, once the
 `fern` running it was built by a compiler with this runtime.

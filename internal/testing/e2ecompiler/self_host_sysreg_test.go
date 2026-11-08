@@ -59,12 +59,12 @@ func TestSelfHostSysregArm64RowsMatchGas(t *testing.T) {
 			cases = append(cases, "msr "+name+", x9")
 		}
 	}
-	cases = append(cases, "mrs x3, s3_0_c12_c0_0", "msr s2_7_c15_c15_7, x3")
+	cases = append(cases, "mrs x3, s3_0_c12_c0_0", "msr s2_7_c15_c15_7, x3", "msr daifset, #2", "msr daifclr, #2", "msr daifset, #15", "msr daifclr, #1")
 	compareArm64Cases(t, cases)
 
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
-	for _, c := range []string{"msr currentel, x9", "mrs x9, icc_eoir1_el1", "mrs x9, s4_0_c0_c0_0", "mrs x9, s3_8_c0_c0_0", "mrs x9, s3_0_c16_c0_0"} {
+	for _, c := range []string{"msr currentel, x9", "mrs x9, icc_eoir1_el1", "mrs x9, s4_0_c0_c0_0", "mrs x9, s3_8_c0_c0_0", "mrs x9, s3_0_c16_c0_0", "msr daifset, #16", "msr daifset, x9"} {
 		if len(refusalsFor(t, bin, runner, ".text\n_start:\n    "+c+"\n")) == 0 {
 			t.Errorf("%q: the self-host assembler accepts it", c)
 		}

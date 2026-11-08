@@ -1,0 +1,12 @@
+import "../../compiler/fern";
+import "std/i64";
+function main(): i32 {
+  let before = __heap_alloc_count();
+  let bytes = __heap_bump_bytes();
+  let status = fern.run_with(args(), "", fern.no_fetcher());
+  let allocations = __heap_alloc_count() - before;
+  let growth = __heap_bump_bytes() - bytes;
+  print(allocations.to_string());
+  print(growth.to_string());
+  return status;
+}

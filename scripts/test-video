@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-fern_video_compiler=${FERN:-$(./bootstrap/bootstrap.sh stage0)}
+if [ -n "${FERN:-}" ]; then
+  fern_video_compiler=$FERN
+else
+  make bin/fern-selfhost
+  fern_video_compiler="$PWD/bin/fern-selfhost"
+fi
 case "$(uname -sm)" in
   'Linux x86_64') target=x86-64-linux; android_target=x86-64-android ;;
   'Linux aarch64') target=arm64-linux; android_target=arm64-android ;;

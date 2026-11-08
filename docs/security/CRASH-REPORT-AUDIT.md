@@ -18,7 +18,7 @@ With the backtrace off (`-backtrace=false` or `FERN_BACKTRACE=0`), it exits at o
 Every step is a register move, a stack buffer of 32 bytes, or a system call.
 No step allocates, takes a lock, or calls back into the program.
 
-The cause lines live in `compiler/aborts.fern`: array index, string index, slice range, stack overflow, stack guard, allocation size, out of memory, and map failure.
+The cause lines live in `compiler/aborts.fern`: array index, string index, slice range, stack overflow, stack mapping, stack guard, allocation size, out of memory, and map failure.
 The bounds and allocation aborts exit with status 134.
 `docs/security/BOUNDS-AUDIT.md` pins the abort of every checked path on x86-64, arm64, and Wasm.
 
@@ -30,7 +30,7 @@ Darwin installs it for `SIGSEGV` and `SIGBUS` alone, because a wild read raises 
 
 The handler reads the fault address from the signal information.
 A fault inside the 1 MiB guard of the runtime's own stack is a stack overflow.
-The runtime keeps the kernel's stack when its own mapping fails. There a fault within 1 MiB of the context's stack pointer counts as one.
+The runtime always has a stack of its own when the handler runs, because startup stops the program when that mapping fails ([STACK-GUARD.md](STACK-GUARD.md)).
 
 The handler then builds a frame record on the alternate stack from the context's frame pointer and return address.
 It enters the report path with `fern: stack overflow` and status 134.
@@ -81,7 +81,7 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 | A frameless leaf still reports its caller first | `TestSelfHostAbortBareFrameX86_64` |
 | The walk off leaves the cause line alone | `TestSelfHostAbortBacktraceOffX86_64`, `TestSelfHostAbortBacktraceOffArm64` |
 | Stack overflow, a deep control, and an unrelated fault | `TestSelfHostStackOverflow` |
-| A guard the kernel refuses stops startup before `main` | `TestSelfHostStackGuardDenial` (`docs/security/STACK-GUARD.md`) |
+| A stack mapping or a guard the kernel refuses stops startup before `main` | `TestSelfHostStackMapDenial`, `TestSelfHostStackGuardDenial` (`docs/security/STACK-GUARD.md`) |
 | A frame pointer above the stack top ends the walk, and the report keeps its cause line and status 134 | `TestSelfHostAbortBacktraceCorruptFrame`, on x86-64 and arm64 under QEMU |
 | An abort in a shared object prints the Fern frames and stops at the export wrapper | `TestSharedLibX86AbortBacktrace`, `TestArm64SharedLibAbortBacktrace` |
 | An overflow report walks past the handler's record into the application stack | `TestSelfHostStackOverflow` requires two frames or more |

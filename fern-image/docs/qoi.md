@@ -57,6 +57,11 @@ Both directions require exact pixels, dimensions, channel count and color-space 
 The finite corpus has 48 cases with RGB/RGBA, both declarations, runs, ramps and deterministic byte patterns.
 Each worker requires balanced nonzero heap counts and zero live bytes.
 
+The private codec state uses packed channel words and scalar token words.
+The public image model and QOI API retain their previous behavior.
+The native allocator probe checks the cost separately from release timing.
+The tests also check every output-byte budget and every cancellation poll in the selected token corpus.
+
 Run the collector from the repository root:
 
 ```sh

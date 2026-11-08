@@ -1,0 +1,64 @@
+import "./bits";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum IntegerError { Distribution, Value, Input(bits.BitError) }
+
+pub struct Distribution { width: i32, offset: u32 }
+
+function admit(distributions: [Distribution]): Result[void, IntegerError] {
+  if (distributions.len() != 4) {
+    return Err(IntegerError.Distribution);
+  }
+  for distribution in distributions {
+    if (distribution.width < 0 || distribution.width > 32) {
+      return Err(IntegerError.Distribution);
+    }
+    let maximum = if (distribution.width == 0) { 2147483647u32 } else { 67108863u32 };
+    if (distribution.offset > maximum) {
+      return Err(IntegerError.Distribution);
+    }
+  }
+  return Ok(());
+}
+
+function raw(input: [u8], position: i64, width: i32, extent: i64): Result[bits.Read, IntegerError] {
+  return match (bits.read(input, position, width, extent)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(IntegerError.Input(error)),
+  };
+}
+
+pub function read(input: [u8], position: i64, extent: i64, distributions: [Distribution]): Result[bits.Read, IntegerError] {
+  admit(distributions)?;
+  let selector = raw(input, position, 2, extent)?;
+  let distribution = distributions[selector.value as i32];
+  let payload = raw(input, selector.next, distribution.width, extent)?;
+  let value = payload.value + distribution.offset as u64 & 4294967295u64;
+  return Ok(bits.Read { value: value, next: payload.next });
+}
+
+function contains(distribution: Distribution, value: u32): boolean {
+  if (distribution.width == 0) {
+    return value == distribution.offset;
+  }
+  return value >= distribution.offset && value as u64 - distribution.offset as u64 < 1u64 << distribution.width as u64;
+}
+
+pub function fields(value: u32, distributions: [Distribution]): Result[bits.Field[], IntegerError] {
+  admit(distributions)?;
+  let selector = -1;
+  let width = 33;
+  for i in 0..4 {
+    let distribution = distributions[i];
+    if (contains(distribution, value) && distribution.width < width) {
+      selector = i;
+      width = distribution.width;
+    }
+  }
+  if (selector < 0) {
+    return Err(IntegerError.Value);
+  }
+  let payload = value as u64 - distributions[selector].offset as u64;
+  return Ok([bits.Field { value: selector as u64, width: 2 }, bits.Field { value: payload, width: width }]);
+}

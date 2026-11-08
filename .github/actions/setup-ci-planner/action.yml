@@ -1,0 +1,22 @@
+name: Set up the CI planner
+description: Install Go and restore its build cache without the compiler toolchain.
+inputs:
+  tools:
+    description: Go tools to install from the pinned toolchain
+    required: false
+    default: go
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@v4
+      with:
+        version: 2026.11.0
+        github_token: ${{ github.token }}
+        cache_key_prefix: mise-planner
+        install_args: ${{ inputs.tools }}
+    - uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/go-build
+        key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-planner
+        restore-keys: |
+          gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-

@@ -93,6 +93,10 @@ func startupDenial(t *testing.T, mode, want, check string) {
 	}
 }
 
+func TestSelfHostStackMapDenial(t *testing.T) {
+	startupDenial(t, "stack-map", "fern: could not map the stack\n", "")
+}
+
 func TestSelfHostStackGuardDenial(t *testing.T) {
 	startupDenial(t, "guard", "fern: could not protect the stack guard\n", "")
 }

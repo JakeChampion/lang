@@ -1,0 +1,103 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/f16_fields";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function all_words(): test.TestOutcome {
+  for word in 0..65536 {
+    let raw = word as u32;
+    let result = f16_fields.read([raw as u8, (raw >> 8) as u8], 0i64, 16i64);
+    if ((raw >> 10 & 31u32) == 31u32) {
+      if (!match (result) { Err(f16_fields.Value) => true, _ => false }) {
+        return test.fail("all infinity and NaN declarations fail");
+      }
+      continue;
+    }
+    let Ok(decoded) = result else {
+      return test.fail("every finite half word");
+    };
+    let Ok(encoded) = f16_fields.field(decoded.value) else {
+      return test.fail("every finite half value can encode");
+    };
+    let expected = if (word == 32768) { 0u64 } else { raw as u64 };
+    if (encoded.value != expected || encoded.width != 16 || decoded.next != 16i64) {
+      return test.fail("exact finite round trip and negative-zero normalization");
+    }
+  }
+  return test.pass();
+}
+
+function goldens(): test.TestOutcome {
+  for (word, expected) in [(0u32, 0u32), (32768u32, 0x80000000u32), (1u32, 0x33800000u32), (1023u32, 0x387fc000u32), (1024u32, 0x38800000u32), (15360u32, 0x3f800000u32), (31743u32, 0x477fe000u32), (48128u32, 0xbf800000u32)] {
+    let Ok(decoded) = f16_fields.read([word as u8, (word >> 8) as u8], 0i64, 16i64) else {
+      return test.fail("independent half-to-single golden");
+    };
+    if (f32_bits(decoded.value) as u32 != expected) {
+      return test.fail("exact single-precision result and signed zero");
+    }
+  }
+  return test.pass();
+}
+
+function truncation(): test.TestOutcome {
+  for (word, expected) in [(0u32, 0u64), (0x80000000u32, 0u64), (1u32, 0u64), (0x80000001u32, 0u64), (0x337fffffu32, 0u64), (0xb37fffffu32, 0u64), (0x33800000u32, 1u64), (0xb3800000u32, 32769u64), (0x3f801001u32, 15360u64), (0x3f803000u32, 15361u64), (0xbf801001u32, 48128u64), (0x477fe000u32, 31743u64), (0xc77fe000u32, 64511u64)] {
+    let Ok(field) = f16_fields.field(f32_from_bits(word as i32)) else {
+      return test.fail("finite truncation golden");
+    };
+    if (field.value != expected || field.width != 16) {
+      return test.fail("metadata truncation differs from nearest-even sample conversion");
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  for word in [0x477fe001u32, 0xc77fe001u32, 0x477ff000u32, 0x7f800000u32, 0xff800000u32, 0x7fc00000u32, 0xffc00000u32, 0x7f800001u32, 0xffffffffu32] {
+    if (!match (f16_fields.field(f32_from_bits(word as i32))) { Err(f16_fields.Value) => true, _ => false }) {
+      return test.fail("invalid samples fail before output preparation");
+    }
+  }
+  return test.pass();
+}
+
+function extents(): test.TestOutcome {
+  for offset in 0..8 {
+    let Ok(field) = f16_fields.field(1.5f32) else {
+      return test.fail("finite field");
+    };
+    let Ok(packed) = bits.pack([bits.Field { value: 0u64, width: offset }, field], 3, never) else {
+      return test.fail("bounded packed field");
+    };
+    let alias = packed.bytes;
+    let Ok(decoded) = f16_fields.read(packed.bytes, offset as i64, packed.bits) else {
+      return test.fail("unaligned field");
+    };
+    if (decoded.value != 1.5f32 || decoded.next != packed.bits || alias != packed.bytes) {
+      return test.fail("borrowed field and exact next position");
+    }
+    for extent in offset..offset + 16 {
+      if (!match (f16_fields.read(alias, offset as i64, extent as i64)) { Err(f16_fields.Input(bits.Truncated)) => true, _ => false }) {
+        return test.fail("each truncated logical bit extent");
+      }
+    }
+  }
+  for (position, extent) in [(-1i64, 16i64), (0i64, -1i64), (17i64, 16i64), (0i64, 17i64), (9223372036854775807i64, 9223372036854775807i64)] {
+    if (!match (f16_fields.read([0u8, 0u8], position, extent)) { Err(f16_fields.Input(bits.Bounds)) => true, _ => false }) {
+      return test.fail("closed bounds before input access");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL finite F16 metadata fields");
+  suite = suite.it("all half words and finite canonical output", all_words);
+  suite = suite.it("independent exact single-precision goldens", goldens);
+  suite = suite.it("metadata truncation and tiny signed values", truncation);
+  suite = suite.it("nonfinite and out-of-range output", invalid);
+  suite = suite.it("borrowed unaligned input and every bit cut", extents);
+  return suite.finish();
+}

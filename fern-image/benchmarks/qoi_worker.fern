@@ -1,0 +1,108 @@
+import "../packages/codecs/qoi/qoi";
+import "std/clock";
+import "std/time";
+import "std/i32";
+import "std/i64";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function repeat(mode: string, input: [u8], decoded: qoi.Decoded, count: i32): Result[(i64, i32), i32] {
+  let checksum = 0i64;
+  let bytes = 0;
+  for i in 0..count {
+    if (mode == "encode") {
+      let Ok(output) = qoi.encode(decoded.image, decoded.color_space, 16777216, never) else {
+        return Err(6);
+      };
+      bytes = output.len();
+      checksum += bytes as i64 + output[0] as i64 + output[bytes - 1] as i64;
+    } else {
+      let Ok(output) = qoi.decode(input, qoi.default_limits(), never) else {
+        return Err(7);
+      };
+      bytes = output.image.data.len();
+      checksum += bytes as i64 + output.image.data[0] as i64 + output.image.data[bytes - 1] as i64;
+    }
+  }
+  return Ok((checksum, bytes));
+}
+
+struct Prepared {
+  input: u8[],
+  decoded: qoi.Decoded,
+}
+
+function prepare(input_path: string, raw_path: string, prefix: string): Result[Prepared, i32] {
+  let Ok(input) = read_file_bytes(input_path) else {
+    return Err(2);
+  };
+  let Ok(raw) = read_file_bytes(raw_path) else {
+    return Err(2);
+  };
+  let Ok(decoded) = qoi.decode(input, qoi.default_limits(), never) else {
+    return Err(3);
+  };
+  if (!same(decoded.image.data, raw)) {
+    return Err(4);
+  }
+  let Ok(encoded) = qoi.encode(decoded.image, decoded.color_space, 16777216, never) else {
+    return Err(5);
+  };
+  if let Err(_) = write_file_bytes(prefix + ".qoi", encoded) {
+    return Err(2);
+  }
+  if let Err(_) = write_file_bytes(prefix + ".raw", decoded.image.data) {
+    return Err(2);
+  }
+  return Ok(Prepared { input: input, decoded: decoded });
+}
+
+function iterations(text: string): Result[i32, i32] {
+  let Ok(count) = i32.parse_i32(text) else {
+    return Err(1);
+  };
+  if (count <= 0 || count > 1000000) {
+    return Err(1);
+  }
+  return Ok(count);
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() != 6 || av[1] != "encode" && av[1] != "decode") {
+    return 1;
+  }
+  let Ok(count) = iterations(av[5]) else {
+    return 1;
+  };
+  let Ok(prepared) = prepare(av[2], av[3], av[4]) else {
+    return 2;
+  };
+  let Ok((warmup, _)) = repeat(av[1], prepared.input, prepared.decoded, 2) else {
+    return 8;
+  };
+  let start = clock.instant();
+  let Ok((checksum, bytes)) = repeat(av[1], prepared.input, prepared.decoded, count) else {
+    return 8;
+  };
+  let nanos = clock.elapsed(start).as_nanos();
+  if (nanos < 0) {
+    return 9;
+  }
+  print(f"{nanos} {checksum} {bytes} {warmup}");
+  return 0;
+}

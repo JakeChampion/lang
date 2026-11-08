@@ -5,12 +5,17 @@ A frame contains one sample per channel. Limits count samples across all channel
 
 The modules perform no file, device, or network I/O.
 
+`quantize` converts normalized float samples to integer PCM.
+It clips to the target range and rounds ties away from zero.
+It does not add dither. Non-finite samples return `Sample`.
+
 ```fern
 <<*>>=
 // Integer PCM audio formats, sample limits, and shared codec errors.
 
 import "core/cmp";
 import "core/error";
+import "std/f64";
 
 @derive(cmp.Eq, cmp.Debug)
 pub enum AudioError { Header, Truncated, Unsupported, Limit, Sample, Checksum, Buffer }
@@ -100,5 +105,27 @@ pub function zeros(n: i32): i32[] {
     out = out.append(0);
   }
   return out;
+}
+
+pub function quantize(samples: [f32], format: Format, limits: Limits): Result[Block, AudioError] {
+  if (!valid(format) || samples.len() % format.channels != 0) {
+    return Err(Header);
+  }
+  if (limits.max_input_bytes < 0) {
+    return Err(Limit);
+  }
+  let _ = sample_count(samples.len() / format.channels, format.channels, limits)?;
+  let scale = (1i64 << (format.bits_per_sample - 1) as i64) as f64;
+  let out: i32[] = [];
+  for sample in samples {
+    let value = sample as f64;
+    if (!value.is_finite()) {
+      return Err(Sample);
+    }
+    let scaled = value * scale;
+    let result = if (scaled >= scale - 1.0) { (scale - 1.0) as i32 } else if (scaled <= -scale) { (-scale) as i32 } else { (scaled + (if (scaled < 0.0) { -0.5 } else { 0.5 })) as i32 };
+    out = out.append(result);
+  }
+  return Ok(Block { format: format, samples: out });
 }
 ```

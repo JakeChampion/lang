@@ -5,6 +5,7 @@ var Capabilities = []string{"env", "fs", "net", "random", "subprocess", "time"}
 var BuiltinCaps = map[string]string{
 	"tcp_listen":            "net",
 	"tcp_accept":            "net",
+	"tcp_accept_with":       "net",
 	"tcp_local_port":        "net",
 	"tcp_send_bytes":        "net",
 	"tcp_close":             "net",

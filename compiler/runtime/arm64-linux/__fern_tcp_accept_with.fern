@@ -1,0 +1,7 @@
+function __fern_tcp_accept_with(fd: i32, nonblocking: boolean): i32 {
+  let flags: i64 = 524288;
+  if (nonblocking) {
+    flags = 526336;
+  }
+  return __syscall4(242, fd as i64, 0, 0, flags) as i32;
+}

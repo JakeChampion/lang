@@ -247,6 +247,7 @@ pub function builtin_sigs(): string[] {
     "target_arch(): string",
     "target_os(): string",
     "tcp_accept(Socket): Socket",
+    "tcp_accept_with(Socket, boolean): Socket",
     "tcp_addr_into(Socket, boolean, u8[]): i32",
     "tcp_close(Socket): i32",
     "tcp_connect_with(u8[], i32, boolean): Socket",
@@ -337,9 +338,10 @@ pub function port_intrinsic(name: string): boolean {
 // __boot_info gives the address that the loader passed to the reset entry.
 // __sysreg_read and __sysreg_write access a system register. The cache ops act
 // on the line that holds an address, and the TLB ops drop the translation of an
-// address or of every address.
+// address or of every address. The IRQ ops mask and unmask interrupts, wait
+// for one with interrupts masked, and give the address of the IRQ region.
 pub function privileged_intrinsic(name: string): boolean {
-  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint"], name) || sysreg.intrinsic(name);
+  return util.has_str(["__wfi", "__hvc", "__smc", "__boot_info", "__cache_clean", "__cache_flush", "__tlb_flush", "__tlb_flush_all", "__breakpoint", "__irq_mask", "__irq_unmask", "__irq_wait", "__irq_pending"], name) || sysreg.intrinsic(name);
 }
 
 // The bit width of an MMIO intrinsic, such as 32 for __mmio_load32, or 0 for any

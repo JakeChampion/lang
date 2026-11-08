@@ -8,6 +8,10 @@ description: >
   per-package object files across runs.
 
 inputs:
+  compiler-cache:
+    description: Reuse complete compiler binaries with identical source inputs
+    required: false
+    default: "true"
   wasmtime:
     description: >
       Install wasmtime + wasm-tools + the WASI preview1 adapter and
@@ -104,6 +108,21 @@ runs:
         key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ inputs.build-cache-key }}
         restore-keys: |
           gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-
+
+    - name: Cache the shipped compiler
+      if: inputs.compiler-cache == 'true'
+      id: compiler-cache
+      uses: actions/cache@v6
+      with:
+        path: build/ci-compiler-cache
+        key: fern-cli-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/**', 'compiler/**', 'internal/stdlib/**', 'internal/syntax/diag/explanations/**', 'scripts/fern-embed-stage', 'scripts/flag-lib', 'Makefile', 'mise.lock') }}
+    - name: Update compiler timestamps after an exact cache restore
+      if: inputs.compiler-cache == 'true' && steps.compiler-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        mkdir -p bin
+        install -m 0755 build/ci-compiler-cache/fern-selfhost bin/fern-selfhost
+        install -m 0755 build/ci-compiler-cache/fern bin/fern
 
     # The compiler `fern` builds for itself when no fern-selfhost sits beside
     # it (internal/tools/launcher): the pinned stage0 it downloads and the self-host

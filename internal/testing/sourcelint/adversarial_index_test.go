@@ -1,14 +1,15 @@
-package e2e
+package sourcelint
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // docs/security/ADVERSARIAL-SUITE.md names every attack-shaped test. A name
@@ -43,8 +44,6 @@ func adversarialIndexMissing(doc string, goFuncs map[string]bool, root string) [
 	return missing
 }
 
-var goTestFuncPattern = regexp.MustCompile(`(?m)^func ((?:Test|Fuzz)[A-Za-z0-9_]+)\(`)
-
 func goTestFunctions(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	funcs := map[string]bool{}
@@ -54,7 +53,10 @@ func goTestFunctions(t *testing.T, root string) map[string]bool {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "build", "vendor":
+			case ".git", "node_modules", "build", "bin", "target", "vendor", "testdata":
+				return filepath.SkipDir
+			}
+			if p != root && (strings.HasPrefix(d.Name(), ".") || isNestedCheckout(root, p)) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -62,12 +64,14 @@ func goTestFunctions(t *testing.T, root string) map[string]bool {
 		if !strings.HasSuffix(p, "_test.go") {
 			return nil
 		}
-		src, err := os.ReadFile(p)
+		src, err := parser.ParseFile(token.NewFileSet(), p, nil, parser.SkipObjectResolution)
 		if err != nil {
 			return err
 		}
-		for _, m := range goTestFuncPattern.FindAllSubmatch(src, -1) {
-			funcs[string(m[1])] = true
+		for _, decl := range src.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && (strings.HasPrefix(fn.Name.Name, "Test") || strings.HasPrefix(fn.Name.Name, "Fuzz")) {
+				funcs[fn.Name.Name] = true
+			}
 		}
 		return nil
 	})
@@ -78,7 +82,7 @@ func goTestFunctions(t *testing.T, root string) map[string]bool {
 }
 
 func TestAdversarialSuiteIndexNamesLiveTests(t *testing.T) {
-	root := e2eharness.RepoPath()
+	root := mustRepoRoot(t)
 	doc, err := os.ReadFile(filepath.Join(root, "docs", "security", "ADVERSARIAL-SUITE.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +104,7 @@ func TestAdversarialSuiteIndexNamesLiveTests(t *testing.T) {
 // names the test, case or lane that proves it, and a name nothing answers to
 // is a claim without evidence.
 func TestSecurityClaimsNameLiveGates(t *testing.T) {
-	root := e2eharness.RepoPath()
+	root := mustRepoRoot(t)
 	funcs := goTestFunctions(t, root)
 	for _, doc := range []string{"GUARANTEES.md", "RELEASE-CHECKLIST.md"} {
 		src, err := os.ReadFile(filepath.Join(root, "docs", "security", doc))

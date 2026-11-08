@@ -3074,6 +3074,19 @@ function arm64_msr(buf: i32[], rt: i32, name: string): i32[] {
   return arm64_le32(buf, arm64_msr_base(name) | (rt & 31) as i64);
 }
 
+// MSR (immediate) for a PSTATE field, without its CRm immediate: daifset and
+// daifclr set and clear the DAIF bits that the immediate names. -1 for any
+// other name.
+function arm64_msr_pstate(name: string): i64 {
+  if (name == "daifset") {
+    return 0xd50340df;
+  }
+  if (name == "daifclr") {
+    return 0xd50340ff;
+  }
+  return -1;
+}
+
 function arm64_fp_single(word: i64, single: boolean): i64 {
   if (single) {
     return word & 0xffbfffff;
@@ -9529,6 +9542,16 @@ pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm
         continue;
       }
       arm64_push_arr(a.code, arm64_mrs([], arm64_gas_reg(ops[0]), arm64_gas_trim(ops[1])));
+      continue;
+    }
+    if (mnem == "msr" && ops.len() == 2 && arm64_msr_pstate(arm64_gas_trim(ops[0])) >= 0) {
+      let tok = arm64_gas_trim(ops[1]);
+      let imm = arm64_gas_imm(tok);
+      if (tok.len() < 2 || tok[0] != b'#' || imm < 0 || imm > 15) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("msr:" + rest) };
+        continue;
+      }
+      arm64_push_arr(a.code, arm64_le32([], arm64_msr_pstate(arm64_gas_trim(ops[0])) | imm as i64 << 8));
       continue;
     }
     if (mnem == "msr") {

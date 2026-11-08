@@ -1,7 +1,7 @@
 # Image format coverage
 
 **Status:** In progress. No format-wide completion or performance claim.
-**Date:** 2026-11-07.
+**Date:** 2026-11-08.
 
 The user requires complete decode and encode support in pure Fern.
 This inventory keeps restricted delivery stages separate from the final acceptance scope.
@@ -15,7 +15,7 @@ The [PNG third edition](https://www.w3.org/TR/2025/REC-png-3-20250624/) defines 
 | --- | --- | --- |
 | Sample representation | RGB8/RGBA8 output, packed grayscale and indexed input | Sixteen-bit precision and corresponding output modes |
 | Grayscale | Decode at depths 1/2/4/8, grayscale-alpha8 | Sixteen-bit input and grayscale output options |
-| Reconstruction | Five filters, noninterlaced input, packed sample expansion | Adam7 and wider output modes and filter selection |
+| Reconstruction | Five filters, eager Adam7 and noninterlaced input, packed sample expansion | Adam7 row/progressive contracts, wider output modes and filter selection |
 | Transparency | Explicit alpha, palette alpha and grayscale/RGB keys | Complete precision and output options |
 | Color | Restricted admission | Standard color declarations, profiles and HDR interpretation |
 | Metadata | Most data is discarded or rejected | Defined ancillary chunks and explicit preservation policies |
@@ -32,9 +32,9 @@ It includes Huffman and arithmetic entropy methods, with precision rules for eac
 | Feature group | Current coverage | Remaining work |
 | --- | --- | --- |
 | Image input | Restricted baseline component and JFIF decode | Full process, precision, component and scan combinations |
-| Image output | Internal single-component frames from blocks or a borrowed plane | Color assembly, image options and other JPEG processes |
+| Image output | Internal baseline frames from direct blocks and explicit component planes | Image color assembly, sample reduction, options and other JPEG processes |
 | Transform | Inverse DCT, forward DCT and explicit quantization | Qualify complete encode/decode paths for each applicable process |
-| Stream control | Restricted baseline checks | All legal scan scripts, restart rules and table forms |
+| Stream control | Restricted baseline checks, complete single-scan DCT MCU geometry and direct baseline component frame output | Full scan scripts, other entropy methods and table forms |
 | Image interpretation | Explicit forward and inverse sample kernels, separate restricted color/metadata modules | Integrate complete color, profile, orientation and metadata behavior |
 
 The first baseline writer does not complete JPEG support.
@@ -42,13 +42,22 @@ The final audit must map every supported process to its normative conformance re
 
 ## JPEG XL
 
-The [reference project's overview](https://github.com/libjxl/libjxl/blob/main/doc/format_overview.md) describes the codestream and container separately.
+The [pinned reference overview](https://github.com/libjxl/libjxl/blob/v0.12.0/doc/format_overview.md) describes the codestream and container separately.
 The implementation must follow ISO/IEC 18181 and its conformance requirements.
-No JPEG XL runtime codec exists in the current image engine.
+Internal preparation covers bounded box envelopes, raw fields, unsigned integer codes and dimension headers.
+Sample-precision preparation covers exact integer and floating-point declarations.
+
+Finite F16 metadata preparation preserves exact read values and the original writer's truncation rules.
+These internal fields do not set the numeric policy for raw image samples.
+
+Pixel coding and complete container semantics remain unfinished.
 
 The inventory includes Modular and VarDCT, lossless and lossy operation, color and extra channels, and progressive groups.
 It also includes frames, animation, blending, orientation, profiles, patches, splines, noise and reconstruction filters.
 Container coverage includes complete and partial codestream boxes, metadata, compressed boxes, frame indexes and exact JPEG bitstream reconstruction.
+
+The [edition-three preview](https://www.iso.org/obp/ui?_escaped_fragment_=iso:std:iso-iec:18181:-2:ed-3:v1:en) also defines the jhgm HDR gain map box.
+Its gain-map interpretation remains part of the complete format requirement.
 Precision and extension limits require a normative field-by-field audit before implementation.
 All required entropy, compression and color operations must use Fern.
 

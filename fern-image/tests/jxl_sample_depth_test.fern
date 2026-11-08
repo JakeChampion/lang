@@ -1,0 +1,153 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/sample_depth";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function valid(floating: boolean, precision: u32, exponent: u32): boolean {
+  if (!floating) {
+    return precision >= 1u32 && precision <= 31u32;
+  }
+  let mantissa = precision as i64 - exponent as i64 - 1i64;
+  return exponent >= 2u32 && exponent <= 8u32 && mantissa >= 2i64 && mantissa <= 23i64;
+}
+
+function roundtrip(floating: boolean, precision: u32, exponent: u32, offset: i32): boolean {
+  let Ok(fields) = sample_depth.fields(floating, precision, exponent) else {
+    return false;
+  };
+  let Ok(output) = bits.pack([bits.Field { value: 0u64, width: offset }].concat(fields), 4, never) else {
+    return false;
+  };
+  let Ok(value) = sample_depth.read(output.bytes, offset as i64, output.bits) else {
+    return false;
+  };
+  if (value.floating != floating || value.bits != precision || value.exponent != (if (floating) { exponent } else { 0u32 }) || value.next != output.bits) {
+    return false;
+  }
+  for extent in offset..output.bits as i32 {
+    if (!match (sample_depth.read(output.bytes, offset as i64, extent as i64)) { Err(sample_depth.Input(bits.Truncated)) => true, _ => false }) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function integers(): test.TestOutcome {
+  for precision in 1..32 {
+    for offset in 0..8 {
+      if (!roundtrip(false, precision as u32, 4294967295u32, offset)) {
+        return test.fail("integer precision, ignored exponent and every truncated bit");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function floating(): test.TestOutcome {
+  for precision in 1..65 {
+    for exponent in 0..18 {
+      if (valid(true, precision as u32, exponent as u32)) {
+        for offset in 0..8 {
+          if (!roundtrip(true, precision as u32, exponent as u32, offset)) {
+            return test.fail("floating precision, exponent, mantissa and bit extents");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function golden(floating: boolean, precision: u32, exponent: u32, raw: u64, length: i32): boolean {
+  let Ok(fields) = sample_depth.fields(floating, precision, exponent) else {
+    return false;
+  };
+  let Ok(output) = bits.pack(fields, 2, never) else {
+    return false;
+  };
+  let Ok(value) = bits.read(output.bytes, 0i64, length, output.bits) else {
+    return false;
+  };
+  return output.bits == length as i64 && value.value == raw;
+}
+
+function goldens(): test.TestOutcome {
+  return test.assert_true(golden(false, 8u32, 0u32, 0u64, 3) && golden(false, 10u32, 0u32, 2u64, 3) && golden(false, 12u32, 0u32, 4u64, 3) && golden(false, 31u32, 0u32, 246u64, 9) && golden(true, 16u32, 5u32, 35u64, 7) && golden(true, 24u32, 7u32, 53u64, 7) && golden(true, 32u32, 8u32, 57u64, 7));
+}
+
+function raw_case(floating: boolean, precision: u32, exponent: u32, selector: i32): boolean {
+  let payload = if (selector == 3) { [bits.Field { value: (precision - 1u32) as u64, width: 6 }] } else { [] };
+  let fields = [bits.Field { value: if (floating) { 1u64 } else { 0u64 }, width: 1 }, bits.Field { value: selector as u64, width: 2 }].concat(payload);
+  if (floating) {
+    fields = fields.append(bits.Field { value: (exponent - 1u32) as u64, width: 4 });
+  }
+  let Ok(output) = bits.pack(fields, 2, never) else {
+    return false;
+  };
+  return match (sample_depth.read(output.bytes, 0i64, output.bits)) {
+    Ok(value) => valid(floating, precision, exponent) && value.floating == floating && value.bits == precision && value.exponent == (if (floating) { exponent } else { 0u32 }) && value.next == output.bits,
+    Err(sample_depth.Value) => !valid(floating, precision, exponent),
+    _ => false,
+  };
+}
+
+function representations(): test.TestOutcome {
+  for precision in 1..65 {
+    if (!raw_case(false, precision as u32, 0u32, 3)) {
+      return test.fail("all raw integer declarations and semantic limits");
+    }
+    for exponent in 1..17 {
+      if (!raw_case(true, precision as u32, exponent as u32, 3)) {
+        return test.fail("all raw floating declarations and semantic limits");
+      }
+    }
+  }
+  for selector in 0..3 {
+    let precision = [8u32, 10u32, 12u32][selector];
+    if (!raw_case(false, precision, 0u32, selector)) {
+      return test.fail("direct integer selectors");
+    }
+    for exponent in 1..17 {
+      if (!raw_case(true, [32u32, 16u32, 24u32][selector], exponent as u32, selector)) {
+        return test.fail("direct floating selectors and full exponent field");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  for floating in [false, true] {
+    for precision in [0u32, 1u32, 2u32, 3u32, 4u32, 31u32, 32u32, 33u32, 64u32, 65u32, 4294967295u32] {
+      for exponent in [0u32, 1u32, 2u32, 5u32, 8u32, 9u32, 16u32, 4294967295u32] {
+        if (!valid(floating, precision, exponent) && !match (sample_depth.fields(floating, precision, exponent)) { Err(sample_depth.Value) => true, _ => false }) {
+          return test.fail("invalid descriptor before output preparation");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function bounds(): test.TestOutcome {
+  for (position, extent) in [(-1i64, 0i64), (0i64, -1i64), (1i64, 0i64), (0i64, 9i64), (9223372036854775807i64, 9223372036854775807i64)] {
+    if (!match (sample_depth.read([0u8], position, extent)) { Err(sample_depth.Input(bits.Bounds)) => true, _ => false }) {
+      return test.fail("logical bounds before access");
+    }
+  }
+  return test.assert_true(match (sample_depth.read([], 0i64, 0i64)) { Err(sample_depth.Input(bits.Truncated)) => true, _ => false });
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL sample precision");
+  suite = suite.it("integer precision and exact logical extents", integers);
+  suite = suite.it("floating precision and mantissa limits", floating);
+  suite = suite.it("independent exact selector and exponent goldens", goldens);
+  suite = suite.it("all raw representations and semantic rejection", representations);
+  suite = suite.it("invalid descriptors before output", invalid);
+  suite = suite.it("closed bounds and empty input", bounds);
+  return suite.finish();
+}

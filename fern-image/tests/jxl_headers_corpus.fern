@@ -1,0 +1,114 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/headers";
+import "std/hex";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function word(input: [u8], at: i32, width: i32): u64 {
+  let value = 0u64;
+  for i in 0..width {
+    value |= input[at + i] as u64 << (i * 8) as u64;
+  }
+  return value;
+}
+
+function emit(fields: [bits.Field], budget: i32, prefix: i32, path: string, index: i32): i32 {
+  let all = [bits.Field { value: 0u64, width: prefix }].concat(fields);
+  match (bits.pack(all, budget, never)) {
+    Ok(output) => {
+      let size = output.bits;
+      let data = hex.encode(output.bytes);
+      print(f"{index} pack ok {size} {data}");
+      if let Err(_) = write_file_bytes(path + ".packed", output.bytes) {
+        return 4;
+      }
+    },
+    Err(error) => {
+      print(f"{index} pack error {error.to_debug()}");
+    }
+  }
+  return 0;
+}
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(packet) = read_file_bytes(path) else {
+    return 1;
+  };
+  if (packet.len() < 52) {
+    return 2;
+  }
+  let mode = word(packet, 0, 4) as i32;
+  let a = word(packet, 4, 8);
+  let b = word(packet, 12, 8);
+  let c = word(packet, 20, 8);
+  let d = word(packet, 28, 8);
+  let budget = word(packet, 36, 4) as i32;
+  let prefix = word(packet, 40, 4) as i32;
+  let queries = word(packet, 44, 4) as i32;
+  let length = word(packet, 48, 4) as i32;
+  if (mode < 0 || mode > 2 || queries < 0 || queries > 4096 || length < 0 || length > 65536 || packet.len() != 52 + queries * 16 + length) {
+    return 3;
+  }
+  let result = if (mode == 2) { headers.animation_fields(a as u32, b as u32, c as u32, d != 0u64) } else { headers.dimension_fields(a as i64, b as i64, mode == 1) };
+  match (result) {
+    Ok(fields) => {
+      let code = emit(fields, budget, prefix, path, index);
+      if (code != 0) {
+        return code;
+      }
+    },
+    Err(error) => {
+      print(f"{index} pack error {error.to_debug()}");
+    }
+  }
+  let input = packet[52 + queries * 16:];
+  for i in 0..queries {
+    let position = word(packet, 52 + i * 16, 8) as i64;
+    let extent = word(packet, 60 + i * 16, 8) as i64;
+    if (mode == 2) {
+      match (headers.read_animation(input, position, extent)) {
+        Ok(value) => {
+          let n = value.numerator;
+          let d = value.denominator;
+          let loops = value.loops;
+          let flag = if (value.timecodes) { 1 } else { 0 };
+          let next = value.next;
+          print(f"{index} query {i} animation {n} {d} {loops} {flag} {next}");
+        },
+        Err(error) => {
+          print(f"{index} query {i} error {error.to_debug()}");
+        }
+      }
+    } else {
+      match (headers.read_dimensions(input, position, extent, mode == 1)) {
+        Ok(value) => {
+          let w = value.width;
+          let h = value.height;
+          let next = value.next;
+          print(f"{index} query {i} dimensions {w} {h} {next}");
+        },
+        Err(error) => {
+          print(f"{index} query {i} error {error.to_debug()}");
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 5;
+  }
+  for i in 1..paths.len() {
+    let code = inspect(paths[i], i - 1);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

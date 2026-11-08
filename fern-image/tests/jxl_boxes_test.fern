@@ -1,0 +1,226 @@
+import "../packages/codecs/jxl/boxes";
+import "std/test";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function joined(a: u8[], b: [u8]): u8[] {
+  for byte in b {
+    a = a.append(byte);
+  }
+  return a;
+}
+
+function signatures(): test.TestOutcome {
+  let signature: u8[] = [0, 0, 0, 12, 74, 88, 76, 32, 13, 10, 135, 10];
+  if (boxes.signature([]) != boxes.NeedMore || boxes.signature([255u8]) != boxes.NeedMore
+    || boxes.signature([255u8, 10]) != boxes.Codestream || boxes.signature(signature) != boxes.Container) {
+    return test.fail("known JPEG XL signatures");
+  }
+  for size in 1..12 {
+    if (boxes.signature(signature[:size]) != boxes.NeedMore) {
+      return test.fail("short container signature");
+    }
+  }
+  for i in 1..signature.len() {
+    if (boxes.signature(signature.with(i, signature[i] ^ 1)) != boxes.Invalid) {
+      return test.fail("complete invalid container signature");
+    }
+  }
+  return test.assert_true(boxes.signature([1u8]) == boxes.Invalid && boxes.signature([255u8, 0]) == boxes.Invalid);
+}
+
+function goldens(): test.TestOutcome {
+  let short: u8[] = [0, 0, 0, 11, 106, 120, 108, 99, 1, 2, 3];
+  let extended: u8[] = [0, 0, 0, 1, 106, 120, 108, 99, 0, 0, 0, 0, 0, 0, 0, 19, 1, 2, 3];
+  let to_end: u8[] = [0, 0, 0, 0, 106, 120, 108, 99, 1, 2, 3];
+  for (input, form, offset) in [(short, boxes.Short, 8), (extended, boxes.Extended, 16), (to_end, boxes.ToEnd, 8)] {
+    let Ok(header) = boxes.read(input, 0) else {
+      return test.fail("independent box envelope");
+    };
+    if (header.kind != 1786276963u32 || header.size != form || header.start != 0 || header.payload != offset || header.bytes != 3 || header.next != input.len()) {
+      return test.fail("independent box descriptor");
+    }
+    let Ok(encoded) = boxes.write(header.kind, [1u8, 2, 3], form, input.len(), never) else {
+      return test.fail("independent box output");
+    };
+    if (!same(encoded, input)) {
+      return test.fail("exact independent header bytes");
+    }
+  }
+  return test.pass();
+}
+
+function roundtrips(): test.TestOutcome {
+  for size in [0, 1, 7, 8, 15, 16, 255, 256, 257, 4096] {
+    let payload = __alloc_u8(size);
+    for i in 0..size {
+      payload = payload.with(i, (i * 37) as u8);
+    }
+    for kind in [0u32, 4294967295u32, 1786276963u32] {
+      for form in [boxes.Short, boxes.Extended, boxes.ToEnd] {
+        let Ok(encoded) = boxes.write(kind, payload, form, size + 16, never) else {
+          return test.fail("bounded box output");
+        };
+        let Ok(header) = boxes.read(encoded, 0) else {
+          return test.fail("bounded box input");
+        };
+        if (header.kind != kind || header.size != form || header.bytes != size || header.next != encoded.len() || !same(encoded[header.payload:header.next], payload)) {
+          return test.fail("exact box payload and descriptor round trip");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid_lengths(): test.TestOutcome {
+  let short: u8[] = [0, 0, 0, 8, 0, 0, 0, 0];
+  for size in 2..8 {
+    if (!match (boxes.read(short.with(3, size as u8), 0)) { Err(boxes.Length) => true, _ => false }) {
+      return test.fail("short declared envelope length");
+    }
+  }
+  let extended: u8[] = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16];
+  for size in [0, 1, 7, 8, 15] {
+    if (!match (boxes.read(extended.with(15, size as u8), 0)) { Err(boxes.Length) => true, _ => false }) {
+      return test.fail("short extended envelope length");
+    }
+  }
+  for input in [short.with(0, 128), short.with(0, 255), extended.with(8, 128), extended.with(8, 255), extended.with(15, 17)] {
+    if (!match (boxes.read(input, 0)) { Err(boxes.Truncated) => true, _ => false }) {
+      return test.fail("unsigned declared length before narrowing");
+    }
+  }
+  for at in [-1, short.len() + 1, 2147483647] {
+    if (!match (boxes.read(short, at)) { Err(boxes.Bounds) => true, _ => false }) {
+      return test.fail("invalid box offset");
+    }
+  }
+  for input in [short, extended] {
+    for cut in 0..input.len() {
+      if (!match (boxes.read(input[:cut], 0)) { Err(boxes.Truncated) => true, _ => false }) {
+        return test.fail("every incomplete header prefix");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function scan_and_aliases(): test.TestOutcome {
+  let payload: u8[] = [0, 0, 0, 8, 0, 0, 0, 0];
+  let Ok(a) = boxes.write(0u32, payload, boxes.Short, 100, never) else {
+    return test.fail("short box");
+  };
+  let Ok(b) = boxes.write(1u32, [], boxes.Extended, 100, never) else {
+    return test.fail("extended box");
+  };
+  let Ok(c) = boxes.write(2u32, payload, boxes.ToEnd, 100, never) else {
+    return test.fail("final box");
+  };
+  let input = joined(joined(a, b), c);
+  let alias = input;
+  let wrapped = joined([99u8], input).append(88);
+  let view = wrapped[1:wrapped.len() - 1];
+  let Ok(headers) = boxes.scan(view, input.len(), 3, never) else {
+    return test.fail("complete borrowed box sequence");
+  };
+  if (headers.len() != 3 || headers[0].start != 0 || headers[1].start != a.len() || headers[2].start != a.len() + b.len() || headers[2].next != input.len()) {
+    return test.fail("complete box sequence offsets");
+  }
+  let changed = input.with(headers[0].payload, 1);
+  if (!same(alias, view) || !same(payload, alias[headers[0].payload:headers[0].next]) || changed[headers[0].payload] == alias[headers[0].payload]) {
+    return test.fail("opaque nested-looking payload and caller aliases");
+  }
+  for limit in [0, 1, 2] {
+    if (!match (boxes.scan(view, input.len(), limit, never)) { Err(boxes.Limit) => true, _ => false }) {
+      return test.fail("complete descriptor count budget");
+    }
+  }
+  if (!match (boxes.scan(view, input.len() - 1, 3, never)) { Err(boxes.Limit) => true, _ => false }
+    || !match (boxes.scan(joined(a, [0u8]), 100, 3, never)) { Err(boxes.Truncated) => true, _ => false }) {
+    return test.fail("input budget and final partial header");
+  }
+  return test.pass();
+}
+
+function output_limits(): test.TestOutcome {
+  let payload = __alloc_u8(257);
+  for form in [boxes.Short, boxes.Extended, boxes.ToEnd] {
+    let total = payload.len() + (if (form == boxes.Extended) { 16 } else { 8 });
+    for limit in 0..total {
+      if (!match (boxes.write(1u32, payload, form, limit, never)) { Err(boxes.Limit) => true, _ => false }) {
+        return test.fail("every insufficient encoded output budget");
+      }
+    }
+    if (!match (boxes.write(1u32, payload, form, total, never)) { Ok(v) => v.len() == total, _ => false }) {
+      return test.fail("exact encoded output budget");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let payload = __alloc_u8(777);
+  let calls = cell_new(0);
+  let count = (): boolean => {
+    calls.set(calls.get() + 1);
+    return false;
+  };
+  let Ok(input) = boxes.write(1u32, payload, boxes.Extended, 1000, count) else {
+    return test.fail("box poll baseline");
+  };
+  let total = calls.get();
+  for stop in 1..total + 1 {
+    calls.set(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() >= stop;
+    };
+    if (!match (boxes.write(1u32, payload, boxes.Extended, 1000, cancel)) { Err(boxes.Cancelled) => true, _ => false } || calls.get() != stop) {
+      return test.fail("every box writer cancellation checkpoint");
+    }
+  }
+  calls.set(0);
+  let Ok(_) = boxes.scan(input, 1000, 1, count) else {
+    return test.fail("scan poll baseline");
+  };
+  let total = calls.get();
+  for stop in 1..total + 1 {
+    calls.set(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() >= stop;
+    };
+    if (!match (boxes.scan(input, 1000, 1, cancel)) { Err(boxes.Cancelled) => true, _ => false } || calls.get() != stop) {
+      return test.fail("every box scan cancellation checkpoint");
+    }
+  }
+  return test.assert_true(match (boxes.write(1u32, payload, boxes.Extended, 1000, never)) { Ok(v) => same(input, v), _ => false });
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL signatures and box envelopes");
+  suite = suite.it("raw and boxed signatures and incomplete input", signatures);
+  suite = suite.it("independent short, extended and final header bytes", goldens);
+  suite = suite.it("opaque type and payload boundary round trips", roundtrips);
+  suite = suite.it("unsigned lengths, invalid offsets and every header prefix", invalid_lengths);
+  suite = suite.it("borrowed scans, count limits and opaque payload aliases", scan_and_aliases);
+  suite = suite.it("every output byte budget", output_limits);
+  suite = suite.it("every cooperative cancellation checkpoint and fresh calls", cancellation);
+  return suite.finish();
+}

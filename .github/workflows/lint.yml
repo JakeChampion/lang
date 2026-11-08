@@ -1,78 +1,15 @@
 name: Lint
 
-# Every cheap whole-repo gate, in ONE job.
-#
-# These were eight separate jobs. Each did well under a minute of work, and
-# together they did ~5 minutes — but they spent 165 job-minutes in the queue to
-# do it (measured on run 31819147972: `deadcode` was queued at +0.1 min and
-# started at +24.2 to run for 48 s). A GitHub-hosted runner pool is shared
-# across every SHA in flight, so eight slots held for a minute each are eight
-# slots the self-host lane could not have, and that lane's 54-second `build`
-# job gates 48 downstream jobs. Fewer, fuller jobs beat more, emptier ones
-# whenever the pool is the constraint.
-#
-# Each step carries `if: ${{ !cancelled() }}` so a failure in one still reports
-# the rest: collapsing the jobs must not cost the "which gates are red" signal
-# that eight separate check runs gave for free.
-#
-# The gates, in order:
-#
-#   build      — `go build ./...` so a compile-only failure surfaces here,
-#                not buried under a test failure.
-#   vet        — `go vet ./...` against the whole module.
-#   gofmt      — `make gofmt-check`. Nothing gated Go formatting before, so 21
-#                files across internal/ and cmd/ had drifted.
-#   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every tracked .fern
-#                outside conformance/ and testdata/).
-#                Fern sources only.
-#   check-sources — `make check-sources`: native `fern -check` over the
-#                self-host sources plus every stdlib module as a standalone
-#                import, and the feature census over those same sources.
-#                Every self-host lane needs both to type-check but asks only
-#                implicitly, by building a driver, so a type error surfaced as
-#                a build-step failure at the top of a job named for something
-#                else (#7317). Also runs on every push to main
-#                (main-housekeeping.yml) to catch merge races.
-#   deadcode   — `make deadcode`: fails on any unreachable function not in
-#                scripts/deadcode-allowlist.txt. A whole-program SSA reachability
-#                analysis, so it is the slowest of these by some way.
-#   actionlint — `make actionlint`: lints .github/workflows/*.yml and the
-#                composite actions, plus shellcheck over `run:` blocks. These
-#                files gated everything else in the repo while nothing gated
-#                them, so a bad `runs-on` or an expression naming a context the
-#                trigger does not provide only showed up as a red run.
-#   testnames  — `make testnames`: every `Test…` name in .github/ must be a test
-#                function or a prefix of one. `go test -run` exits 0 for a name
-#                that matches nothing, so the arm64 cross-host lane ran 15 of
-#                the 17 tests it listed — including the one its 55-minute budget
-#                was sized for — and reported green the whole time (#6310).
-#   ci-selftest — `make ci-selftest`: runs ci.yml's `changes` script against
-#                stubbed API responses (scripts/ci-changes-selftest.mjs), so the
-#                path-filter grammar it implements is pinned before it gates a
-#                pull request.
-#   fern-test-cache — `make fern-test-cache`: a `.fern` edit reaches the compiler
-#                through a child process, so the go command's test cache cannot
-#                see it and a suite keeps reporting its previous result after
-#                the source changes — `ok … (cached)`, every subtest PASS,
-#                nothing executed (#9087). The probe perturbs a source and
-#                requires the cached result to fall.
-#   freeze     — `make freeze`: reports the live state of the native-convergence
-#                freeze preconditions, derived from the tree. Fails only when
-#                ground is LOST (an AST emitter returns, a backend loses
-#                IR-or-error routing, the checker-codes filter comes back).
-#
-# x86 only: these are arch-agnostic, so a second arch would double minutes for
-# no extra signal.
-
-# Called from ci.yml rather than triggered: that is the one workflow a pull
-# request or a push to main launches. Lint runs OUTSIDE the PR queue's two
-# slots, so it reports while a suite is still waiting for one, and the rest of
-# the run is cancelled when a lane goes red. This lane has no path filter
-# there, deliberately: it is the one gate a doc-only pull request still
-# reports, so a PR never shows no checks at all. `workflow_dispatch` stays so
-# the lane can be run on its own.
+# Cheap repository checks always run. The dependency plan selects source,
+# compiler, and generator checks. Manual runs use the complete set.
 on:
   workflow_call:
+    inputs:
+      selection:
+        description: Dependency plan for expensive lint checks
+        required: false
+        type: string
+        default: '{"full":true}'
   workflow_dispatch:
 
 jobs:
@@ -82,19 +19,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+        with:
+          compiler-cache: ${{ fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.fern || fromJSON(inputs.selection).lint.compiler || fromJSON(inputs.selection).lint.cache }}
 
       - name: Install uv for generated-source checks
+        if: ${{ fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.generators }}
         uses: astral-sh/setup-uv@v7
 
-      # The cheap gates run as one parallel make (Makefile: lint-fast), with
-      # -k so a failure in one still runs the rest; each prints its own
-      # banner. check-sources keeps a step of its own: it is the long one.
-      - name: vet, gofmt, fern -fmt, deadcode, actionlint, testnames, ci self-test, digest (parallel)
+      - name: Check repository rules and CI
         if: ${{ !cancelled() }}
-        run: make -j"$(nproc)" -k lint-fast
-      - name: fern -check sources
-        if: ${{ !cancelled() }}
+        run: |
+          make ci-selftest
+          make -j"$(nproc)" -k actionlint testnames gofmt-check
+      - name: Check Go sources
+        if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.go) }}
+        run: make -j"$(nproc)" -k vet deadcode
+      - name: Check Fern format
+        if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.fern) }}
+        env:
+          FERN_CI_SELECTION: ${{ inputs.selection || '{"full":true}' }}
+        run: node scripts/ci-format.mjs
+      - name: Check compiler sources
+        if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.compiler) }}
         run: make check-sources
+      - name: Check generated sources
+        if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.generators) }}
+        run: make -j"$(nproc)" -k digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check walkie-emulator-check native-emulator-check runtime-bundle-check
       # TestEveryExampleChecks checks each program file alone, but only in the
       # full suite. This checks the files that the change touches.
       - name: fern -check changed programs
@@ -103,9 +53,9 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: scripts/check-changed-programs "$BASE"
       - name: fern test cache
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.cache) }}
         run: make fern-test-cache
 
       - name: freeze preconditions
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.compiler) }}
         run: make freeze

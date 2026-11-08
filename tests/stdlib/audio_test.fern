@@ -318,6 +318,36 @@ function limits(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function quantization(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 48000, channels: 1, bits_per_sample: 16 };
+  let Ok(block) = pcm.quantize([-2.0f32, -1.0f32, -0.5f32, -0.0000152587890625f32, 0.0f32, 0.0000152587890625f32, 0.5f32, 1.0f32, 2.0f32], format, pcm.default_limits()) else {
+    return test.fail("float conversion");
+  };
+  if (sum(block.samples) != sum([-32768, -32768, -16384, -1, 0, 1, 16384, 32767, 32767])) {
+    return test.fail("quantization and clipping");
+  }
+  let wide = pcm.Format { ...format, bits_per_sample: 32 };
+  let Ok(extremes) = pcm.quantize([-1.0f32, 1.0f32], wide, pcm.default_limits()) else {
+    return test.fail("32-bit PCM");
+  };
+  if (extremes.samples[0] != -2147483647 - 1 || extremes.samples[1] != 2147483647) {
+    return test.fail("32-bit extrema");
+  }
+  match (pcm.quantize([f32_from_bits(2143289344)], format, pcm.default_limits())) {
+    Err(pcm.Sample) => {},
+    _ => {
+      return test.fail("non-finite PCM");
+    }
+  }
+  match (pcm.quantize([0.0f32], format, pcm.Limits { max_input_bytes: 100, max_samples: 0 })) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("PCM limit");
+    }
+  }
+  return test.assert_true(true);
+}
+
 function main(): i32 {
   let r = test.new("audio codecs");
   r = r.it("QOA matches the independent reference codec", qoa_reference);
@@ -327,5 +357,6 @@ function main(): i32 {
   r = r.it("truncation, checksums, and malformed frames", corrupt_input);
   r = r.it("WAVE extensible PCM and metadata chunks", wave_extensible);
   r = r.it("allocation and buffer limits", limits);
+  r = r.it("float PCM quantization and clipping", quantization);
   return r.finish();
 }

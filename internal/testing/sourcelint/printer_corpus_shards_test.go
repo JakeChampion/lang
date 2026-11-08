@@ -36,7 +36,10 @@ func TestPrinterCorpusMatrixCoversEveryShard(t *testing.T) {
 		}
 		return out
 	}
-	hosts, groups, shards := list("host"), list("group"), list("shard")
+	hosts, groups, shards := list("host"), []string{"heavy", "rest"}, list("shard")
+	if !strings.Contains(string(data), `default: '["heavy","rest"]'`) || !strings.Contains(test, "group: ${{ fromJSON(inputs.groups") {
+		t.Fatal("unit groups must default to every group and use the dependency plan")
+	}
 	if strings.Join(hosts, " ") != "x86_64 aarch64" || strings.Join(groups, " ") != "heavy rest" {
 		t.Fatalf("test-units.yml: matrix hosts %v groups %v; want [x86_64 aarch64] and [heavy rest]", hosts, groups)
 	}
