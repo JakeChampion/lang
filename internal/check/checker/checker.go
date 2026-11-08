@@ -2434,6 +2434,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[n+"_f32"] = &ast.FuncType{Params: ps32, Result: ast.FloatType{Width: 32}}
 		c.info.FuncSigs[n+"_f64"] = &ast.FuncType{Params: ps64, Result: ast.FloatType{Width: 64}}
 	}
+	c.info.FuncSigs["__c_callv"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, usizeT, usizeT, ast.NumberType{Width: 32, Signed: true}},
+		Result: usizeT,
+	}
 	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{Width: 64, Signed: true},
