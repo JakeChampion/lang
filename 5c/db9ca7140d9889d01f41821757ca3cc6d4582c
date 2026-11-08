@@ -498,3 +498,14 @@ aarch64/video_qtrle.ir	1669557998
 h3spec/passed	85
 h3spec/failed	0
 h3spec/pending	1
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	41
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2467
+bootstrap/x86-64-linux/stage1.size_bytes	15958128
+bootstrap/x86-64-linux/stage2.wall_s	41
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2467
+bootstrap/x86-64-linux/stage2.size_bytes	15958176
+bootstrap/x86-64-linux/stage3.wall_s	40
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2468
+bootstrap/x86-64-linux/stage3.size_bytes	15958176
