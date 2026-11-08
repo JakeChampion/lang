@@ -606,8 +606,9 @@ check time, in the same mechanism that enforces the OS boundary today.
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver. **The driver exists:** `std/virtio` is the virtio-mmio
   version 2 transport with split virtqueues in `std/dma` buffers, and
-  `std/virtio_net` sends and receives Ethernet frames over it, by polling. The
-  stack above it is the open part.
+  `std/virtio_net` sends and receives Ethernet frames over it, by polling.
+  `std/ip` is Ethernet, ARP, IPv4 and UDP over the driver. TCP is the open
+  part.
 - **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
   self-host-compiler internal, the floor of the runtime helpers. The public
   surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
@@ -737,8 +738,17 @@ environment over the FernOS syscalls can come later, as an improvement.
    microvm runs without ACPI so that its eight transports sit at
    `0xfeb00000`. The driver polls; its IRQ line through `std/async` comes
    with the stack.
-13. Beside those: the TCP/IP stack over the driver (#14259). The panic scope is
-   decided (#14257, see the north-star section).
+13. **The first layers of the stack exist** (#14259, second slice), as
+   `std/ip`: Ethernet framing, an ARP cache in a page of raw memory with
+   requests and replies, IPv4 and UDP, by polling the device.
+   `TestSelfHostKernelUDPEchoOnQemu` and `TestSelfHostKernelX86UDPEchoOnQemu`
+   run a UDP echo server on port 7 behind a forwarded host port. The host
+   sends three datagrams and reads each one back. qemu's user network asks
+   for the guest's MAC first, so the ARP reply is on the path.
+14. Beside those: TCP over `std/ip`, with the `std/net` surface so that
+   `std/http` runs over it, and the IRQ line of the device through
+   `std/async` (#14259). The panic scope is decided (#14257, see the
+   north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 
