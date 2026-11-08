@@ -123,7 +123,7 @@ an axis; everything else is RC-counted and lifetime-free.
 ### 2.1 `own` consuming params — E050 / E051
 
 Surface: `own xs: T` on parameters and receivers (`own self`),
-contextual keyword (`internal/syntax/parser/parser.go:887,1422,1483`;
+contextual keyword (`internal/syntax/parser/parser.go`;
 `ast.Param.Own`, `internal/syntax/ast/ast.go:2497`).
 
 Native analysis: `checkOwnedParams`
@@ -186,10 +186,8 @@ Constructor shapes — struct / tuple literals and payload-carrying
 variant construction — are admitted in EVERY tier, `fip` included
 (#9602). The checker cannot tell a rebuild that reuses a dead
 donor's box from one that allocates a fresh box, so the IR decides:
-`verifyFipAllocs` (`internal/oracle/ir/fip_verify.go`) counts the sites
-that lowered to a real `OpAlloc` rather than to `__alloc_reuse` and
-reports E068 when they exceed the allowance, which for a bare `fip`
-is zero. Rejecting the shape in the checker instead left `fip`
+The historical Go verifier counted real allocation sites and reported E068 above the allowance.
+The current verifier is `compiler/irfipverify.fern`. Rejecting the shape in the checker instead left `fip`
 unable to carry struct state at all: a field write is E048, whose
 remedy names the rebuild `T { ...old, f: v }`, and that rebuild was
 E053 — the two diagnostics forbidding each other. On this axis
@@ -350,12 +348,10 @@ differential gate (MUST-CONSUME.md "Self-host parity").
 
 Derived placements (all existing spellings, no new ones):
 
-- **default param** = borrowed. Borrow inference
-  (`inferParamEscapes`, `internal/oracle/ir/rc_analysis.go:344`;
-  consumed as `paramBorrowable`, ir.go:5187) silently promotes
-  non-escaping params back to borrowed under owned-by-default —
-  the mode is inferred, never surfaced (the Roc stance,
-  OWNERSHIP-INFERENCE-PLAN.md §2).
+- **default param** = borrowed. The historical Go IR used
+  `inferParamEscapes` and `paramBorrowable` for borrow inference.
+  That IR is retired. See `docs/NATIVE-RETIREMENT.md` and
+  OWNERSHIP-INFERENCE-PLAN.md §2 for the implementation history.
 - **`own` param** = owned at the boundary, droppable, affine
   consume. E050 is the owned→dead transition enforced; E051 is
   the illegal borrowed→owned coercion.
@@ -489,15 +485,11 @@ surfaces are already ported (§2), the actionable order is:
    E050/E051 (the richest state). Each merge must keep the
    differential codes gate byte-stable per fixture — the merge
    is an internal refactor with zero diagnostic change.
-3. **Keep the IR ownership analyses keyed to the same
-   vocabulary**: native `inferParamEscapes`
-   (rc_analysis.go:344) / self-host
-   `borrowable_params_interproc` and
-   `consume_safe_params_interproc`
-   (`compiler/irlower.fern:32676` / `:32769`) are the
-   inference that assigns axis-1 modes to unannotated params;
-   they should be documented (and eventually named) as mode
-   inference, not as unrelated escape analyses.
+3. **Keep the IR ownership analyses keyed to the same vocabulary.**
+   The study proposed a common vocabulary for `inferParamEscapes`,
+   `borrowable_params_interproc`, and `consume_safe_params_interproc`.
+   The Go IR and the earlier self-hosted lowering are now retired.
+   `docs/SELFHOST-SEMANTIC-SOURCE.md` describes the replacement pipeline.
 
 **(b) For #5366 (share-nothing workers): sendable is a derived
 judgment, not new machinery.** With per-worker heaps and
@@ -613,9 +605,8 @@ mirrored secondary source rather than full-text fetches):
   axis, borrow inference (Slice 0/2d), `own`'s two jobs.
 - `docs/OWNERSHIP-TYPES-PLAN.md` — the four-value Ownership
   axis (Owned/Borrowed/View/Static), `str` (A1/A2), the
-  self-host CS slices. Note: it cites `inferParamEscapes` at
-  `ir.go:3173`; the function now lives at
-  `internal/oracle/ir/rc_analysis.go:344` (minor drift, reported here).
+  self-host CS slices. Its `inferParamEscapes` references describe
+  the retired Go IR, rather than the current compiler.
 - `docs/RC-PERCEUS-PLAN.md` — Phase 2d-borrow (the borrowed-
   parameter model) and the Perceus borrowed-parameter rule.
 - `docs/NICHE-LANGUAGE-RESEARCH.md` — Koka fip/fbip (ICFP 2023),
