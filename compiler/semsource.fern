@@ -8679,10 +8679,25 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
   return Inferred { all: out, table: inferred_table(table, rows, ix) };
 }
 
-pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean }
+// Diagnostic switches that turn semantic passes off. env_passes reads them
+// once, where the build options are made.
+pub struct PassSwitches { reach: boolean, inline: boolean, scale_kernel: boolean, product_kernel: boolean, fusion: boolean }
+
+pub function env_passes(): PassSwitches {
+  let inline = true;
+  match (env("FERN_SEM_INLINE")) {
+    Some(v) => {
+      inline = envflag.value_on(v);
+    },
+    None => {}
+  }
+  return PassSwitches { reach: !envflag.on("FERN_NO_SEM_REACH"), inline: inline, scale_kernel: !envflag.on("FERN_NO_SCALE_KERNEL"), product_kernel: !envflag.on("FERN_NO_PRODUCT_KERNEL"), fusion: !envflag.on("FERN_NO_ARRAY_FUSION") };
+}
+
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean, passes: PassSwitches }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false };
+  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false, passes: env_passes() };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -8749,13 +8764,13 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
-    let sp = specialize_calls(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts.whole, false), names), names, mod.funcs, opts.array_report), names, table, mod);
+    let sp = specialize_calls(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts, false), names), names, mod.funcs, opts.array_report, opts.passes), names, table, mod, opts.passes);
     names = sp.names;
     table = sp.table;
-    let inlined = inline_leaves(sp.all, names, mod, opts.size, sp.roots);
+    let inlined = inline_leaves(sp.all, names, mod, opts, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true), opts.stack_phi_joins);
+    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins);
   }
   decls = [];
   instances = [];
@@ -8897,8 +8912,8 @@ function byte_copy_loops(all: Produced[]): Produced[] {
   return out;
 }
 
-function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean, roots: i32[]): Spliced {
-  if (!inline_on()) {
+function inline_leaves(all: Produced[], names: string[], mod: parser.Module, opts: BuildOpts, roots: i32[]): Spliced {
+  if (!opts.passes.inline) {
     return Spliced { all: all, spliced: [], laid: [] };
   }
   let funcs: ssasem.Func[] = [];
@@ -8926,7 +8941,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i += 1;
   }
-  let out = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size, roots);
+  let out = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, opts.size, roots);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
@@ -8955,8 +8970,8 @@ function without_unnamed(all: Produced[], names: string[], spliced: boolean[], m
   return out;
 }
 
-function reach_module(all: Produced[], names: string[], mod: parser.Module, whole: boolean, prune: boolean): Produced[] {
-  if (!whole || !kernel_switch_on("FERN_NO_SEM_REACH")) {
+function reach_module(all: Produced[], names: string[], mod: parser.Module, opts: BuildOpts, prune: boolean): Produced[] {
+  if (!opts.whole || !opts.passes.reach) {
     return all;
   }
   let funcs: ssasem.Func[] = [];
@@ -9211,8 +9226,8 @@ function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
 // roots[i] is the entry that all[i] is a clone of, or i.
 struct Specialised { all: Produced[], names: string[], table: ssasem.Contracts, roots: i32[] }
 
-function specialize_calls(all: Produced[], names: string[], table: ssasem.Contracts, mod: parser.Module): Specialised {
-  if (!inline_on()) {
+function specialize_calls(all: Produced[], names: string[], table: ssasem.Contracts, mod: parser.Module, passes: PassSwitches): Specialised {
+  if (!passes.inline) {
     return Specialised { all: all, names: names, table: table, roots: seminline.own_roots(all.len()) };
   }
   let funcs: ssasem.Func[] = [];
@@ -9272,19 +9287,8 @@ function kernel_calls(all: Produced[], names: string[], mod: parser.Module): str
   return out;
 }
 
-function inline_on(): boolean {
-  match (env("FERN_SEM_INLINE")) {
-    Some(v) => {
-      return envflag.value_on(v);
-    },
-    None => {
-      return true;
-    }
-  }
-}
-
-function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[], sink: i32): Produced[] {
-  let enabled = fusion_on();
+function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[], sink: i32, passes: PassSwitches): Produced[] {
+  let enabled = passes.fusion;
   let report = sink != semarrayreport.off();
   if (!enabled && !report) {
     return all;
@@ -9297,7 +9301,7 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   }
   let out = semfuse.fuse_pipelines(funcs, names, usable, stdlib_names(all, names, decls, "std/array"), stdlib_names(all, names, decls, "core/iter"), enabled, report);
   let sw = optbisect.switches();
-  if (inline_on()) {
+  if (passes.inline) {
     let inlinable: boolean[] = [];
     let modes: i32[][] = [];
     let keys = decl_keys(decls);
@@ -9386,10 +9390,10 @@ function ndarray_kernels_needed(names: string[], enabled: boolean, products: boo
   return semndarray.has_kernel(names) || report && semndarray.any_operation(names);
 }
 
-function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module, sink: i32): Produced[] {
+function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module, sink: i32, passes: PassSwitches): Produced[] {
   let report = sink != semarrayreport.off();
-  let enabled = kernel_switch_on("FERN_NO_SCALE_KERNEL");
-  let products = kernel_switch_on("FERN_NO_PRODUCT_KERNEL");
+  let enabled = passes.scale_kernel;
+  let products = passes.product_kernel;
   if (!ndarray_kernels_needed(names, enabled, products, report)) {
     return all;
   }
@@ -9442,10 +9446,6 @@ function stdlib_names(all: Produced[], names: string[], decls: parser.FuncDecl[]
   return trusted;
 }
 
-function kernel_switch_on(name: string): boolean {
-  return !envflag.on(name);
-}
-
 function ndarray_open(all: Produced[], names: string[], mod: parser.Module, funcs: ssasem.Func[]): boolean[] {
   let roots: string[] = ["main"];
   for fd in mod.funcs {
@@ -9467,10 +9467,6 @@ function ndarray_open(all: Produced[], names: string[], mod: parser.Module, func
     j += 1;
   }
   return open;
-}
-
-function fusion_on(): boolean {
-  return !envflag.on("FERN_NO_ARRAY_FUSION");
 }
 
 pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method: string, traits: string[]): string[] {
