@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
-for source in tests/jxl_headers_test.fern tests/jxl_integers_test.fern tests/jxl_bits_test.fern tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
+for source in tests/jxl_sample_depth_test.fern tests/jxl_headers_test.fern tests/jxl_integers_test.fern tests/jxl_bits_test.fern tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
   output="build/$(basename "$source" .fern)"
   "$FERN" -check "$source"
   "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"

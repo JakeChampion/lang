@@ -44,7 +44,8 @@ The final audit must map every supported process to its normative conformance re
 
 The [pinned reference overview](https://github.com/libjxl/libjxl/blob/v0.12.0/doc/format_overview.md) describes the codestream and container separately.
 The implementation must follow ISO/IEC 18181 and its conformance requirements.
-Internal preparation covers bounded box envelopes, raw fields and unsigned integer codes.
+Internal preparation covers bounded box envelopes, raw fields, unsigned integer codes and dimension headers.
+Sample-precision preparation covers exact integer and floating-point declarations.
 Pixel coding and complete container semantics remain unfinished.
 
 The inventory includes Modular and VarDCT, lossless and lossy operation, color and extra channels, and progressive groups.

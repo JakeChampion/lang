@@ -1,0 +1,197 @@
+{
+  "generator_sha256": "551169728e6f5eec2a8031dab17158a3ad80696dd4b0ee96b6c88ae468b8fb6c",
+  "adapter_sha256": "6fdfbffa6d7e7140c106157b946d6c7a37e422ae88c451d19670754177809cfc",
+  "reference_version": "0.12.0",
+  "reference_dependencies": {
+    "fixture-generator": {
+      "sha256": "bfc16938263d71715a9eb9674fa50a6c83c6b22771f045ec54072b4224202404",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-xl/lib/libjxl.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl.0.12.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl.0.12.0.dylib": {
+      "sha256": "f993dfe302464a20f72c7ea7c235a20c8e37bc833ebb7408d83d8615222999b8",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-xl/lib/libjxl.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl.0.12.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libjxl_cms.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlidec.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlidec.1.2.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlienc.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlienc.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlienc.1.2.0.dylib": {
+      "sha256": "6f07b64b1247ef2963b69813326a2ad363391e07b90e2dca6cf244f17176f884",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlienc.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlienc.1.2.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib": {
+      "sha256": "41ea919f6b53d772067477235cbe8fdf97aaad403c30a90512c6c4b17cd529ef",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlidec.1.2.0.dylib": {
+      "sha256": "23f7347022952e956a8fd9a045e32069c0d9adda23100af9d061502008976330",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/brotli/lib/libbrotlidec.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlidec.1.2.0.dylib"
+        },
+        {
+          "install_name": "@rpath/libbrotlicommon.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/brotli/1.2.0/lib/libbrotlicommon.1.2.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib": {
+      "sha256": "a751191b0171517db242747261866729c5a4ab06bb769944a3201b2992156218",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib": {
+      "sha256": "dc786129100b266e763dddd3abaf4ce3ac2d36058810df1afcd273877c6b3197",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/jpeg-xl/lib/libjxl_cms.0.12.dylib",
+          "resolved": "/opt/homebrew/Cellar/jpeg-xl/0.12.0_1/lib/libjxl_cms.0.12.0.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib",
+          "resolved": "/opt/homebrew/Cellar/little-cms2/2.19.1/lib/liblcms2.2.dylib"
+        },
+        {
+          "install_name": "/opt/homebrew/opt/highway/lib/libhwy.1.dylib",
+          "resolved": "/opt/homebrew/Cellar/highway/1.4.0/lib/libhwy.1.4.0.dylib"
+        }
+      ]
+    },
+    "/opt/homebrew/Cellar/little-cms2/2.19.1/lib/liblcms2.2.dylib": {
+      "sha256": "ee7ae735ed415d98567cfa1964949febdeef110a33ea3cf9c29d7c61c6a043c6",
+      "links": [
+        {
+          "install_name": "/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib",
+          "resolved": "/opt/homebrew/Cellar/little-cms2/2.19.1/lib/liblcms2.2.dylib"
+        }
+      ]
+    }
+  },
+  "images": [
+    {
+      "bits": 1,
+      "exponent": 0,
+      "position": 33,
+      "basic_info": "1 0 24",
+      "file_sha256": "c360841ecb53da50d002cdf8625d2c1fa48149ffd493c694858a23c47065363d",
+      "file_base64": "/woAEAxEAggAAQAsAEsSpUKFJIYkD4AG",
+      "codestream_sha256": "c360841ecb53da50d002cdf8625d2c1fa48149ffd493c694858a23c47065363d",
+      "codestream_base64": "/woAEAxEAggAAQAsAEsSpUKFJIYkD4AG"
+    },
+    {
+      "bits": 8,
+      "exponent": 0,
+      "position": 33,
+      "basic_info": "8 0 26",
+      "file_sha256": "3c7c73e9af570d5f8961b65b169882fb5114a96d750f981e45d3a83dc47b1c98",
+      "file_base64": "/woAEBAJCAABADgASxKlQoUk1kjhGw9A/h4=",
+      "codestream_sha256": "3c7c73e9af570d5f8961b65b169882fb5114a96d750f981e45d3a83dc47b1c98",
+      "codestream_base64": "/woAEBAJCAABADgASxKlQoUk1kjhGw9A/h4="
+    },
+    {
+      "bits": 10,
+      "exponent": 0,
+      "position": 33,
+      "basic_info": "10 0 27",
+      "file_sha256": "11dda0b22391763f87a5295b36720cd0001d2c161de37cd80a306a17f093442d",
+      "file_base64": "/woAEBQJCAABADwASxKlQoUk1krhXA9A/vsB",
+      "codestream_sha256": "11dda0b22391763f87a5295b36720cd0001d2c161de37cd80a306a17f093442d",
+      "codestream_base64": "/woAEBQJCAABADwASxKlQoUk1krhXA9A/vsB"
+    },
+    {
+      "bits": 12,
+      "exponent": 0,
+      "position": 33,
+      "basic_info": "12 0 27",
+      "file_sha256": "abe1c4400ff5efaac7bc4a9122d8b967779cf353ee1c2d7f40be0556e74fa20f",
+      "file_base64": "/woAEBgJCAABADwASxKlQoUk1kzhnQ9A/u8f",
+      "codestream_sha256": "abe1c4400ff5efaac7bc4a9122d8b967779cf353ee1c2d7f40be0556e74fa20f",
+      "codestream_base64": "/woAEBgJCAABADwASxKlQoUk1kzhnQ9A/u8f"
+    },
+    {
+      "bits": 16,
+      "exponent": 0,
+      "position": 33,
+      "basic_info": "16 0 238",
+      "file_sha256": "24dcf73565707c8cedf05e554d360a59461e18571ec3ef3143f1dafa4d9619e1",
+      "file_base64": "AAAADEpYTCANCocKAAAAFGZ0eXBqeGwgAAAAAGp4bCAAAAAJanhsbAoAAADFanhsY/8KABD8QAIIAgEAwAJLGJuccYQDOIADOCBKwDkFAQAgRIAIEAEiQIT//z/4//+iPsYYc661997nnHMOAUVEREREZGZm3vd+VVVVFfz//8H//xf1McaYc6299z7nnHMIKCIiIiIiMzPzvverqqqq4P//D/7/v6iPMcaca+299znnnENAERERERGZmZn3vV9VVVUF//9/8P//RX2MMeZca++9zznnHAKKiIiIiMjMzLzv/aqqqqoD8O3//+n/Nw==",
+      "codestream_sha256": "06f9f14af9427f8a24b0e8005222d49f274685cde859d1676c42c670ec6a3faf",
+      "codestream_base64": "/woAEPxAAggCAQDAAksYm5xxhAM4gAM4IErAOQUBACBEgAgQASJAhP//P/j//6I+xhhzrrX33ueccw4BRURERERkZmbe935VVVUV/P//wf//F/Uxxphzrb33PueccwgoIiIiIiIzM/O+96uqqqrg//8P/v+/qI8xxpxr7b33OeecQ0AREREREZmZmfe9X1VVVQX//3/w//9FfYwx5lxr773POeccAoqIiIiIyMzMvO/9qqqqqgPw7f//6f83"
+    },
+    {
+      "bits": 16,
+      "exponent": 5,
+      "position": 33,
+      "basic_info": "16 5 77",
+      "file_sha256": "1da43f44476238ffa2a2fa9e05df649ec8885b63c5ff7ea1c71320374578e689",
+      "file_base64": "AAAADEpYTCANCocKAAAAFGZ0eXBqeGwgAAAAAGp4bCAAAAAJanhsbAoAAAAkanhsY/8KABBGkAgAAQBAAEsSpUKFJJZOstUPwADffwA=",
+      "codestream_sha256": "60f948c59d6285c1d186d9f627e7470fc517429e22938d41a4083fccf511baa7",
+      "codestream_base64": "/woAEEaQCAABAEAASxKlQoUklk6y1Q/AAN9/AA=="
+    },
+    {
+      "bits": 24,
+      "exponent": 7,
+      "position": 33,
+      "basic_info": "24 7 80",
+      "file_sha256": "e08be7142ce7fb67588dd5901310c7ce5ce7d940a351277aa46c500358dee673",
+      "file_base64": "AAAADEpYTCANCocKAAAAFGZ0eXBqeGwgAAAAAGp4bCAAAAAJanhsbAoAAAAnanhsY/8KABBqkAgAAQBMAEsSpUKFJNqWvOL2AAwAvP3/AQA=",
+      "codestream_sha256": "47645b46e44645d78acbcb0ae190d2dd342e61f1684c5f84a7d7341d0e5d70e9",
+      "codestream_base64": "/woAEGqQCAABAEwASxKlQoUk2pa84vYADAC8/f8BAA=="
+    },
+    {
+      "bits": 32,
+      "exponent": 8,
+      "position": 33,
+      "basic_info": "32 8 81",
+      "file_sha256": "a93bf62e024dac00b39191f46bc5e7f04500f45b739509cc570fa33e9a46a1f3",
+      "file_base64": "AAAADEpYTCANCocKAAAAFGZ0eXBqeGwgAAAAAGp4bCAAAAAJanhsbAoAAAAoanhsY/8KABBykAgAAQBQAEsSpUKFJNoe+wEAAGgAAAAHAAB0",
+      "codestream_sha256": "6457898087f4540a8f1edc84fd4f6cd19ac9751df2e5a0a150c4124d603babcc",
+      "codestream_base64": "/woAEHKQCAABAFAASxKlQoUk2h77AQAAaAAAAAcAAHQ="
+    }
+  ]
+}
