@@ -44,6 +44,9 @@ The [JPEG XL bit-field prerequisite](../docs/contexts/image/specs/jxl-bitstream.
 The [JPEG XL integer prerequisite](../docs/contexts/image/specs/jxl-integers.md) checks U32 distributions and the complete unsigned U64 code in both directions.
 The [JPEG XL header prerequisite](../docs/contexts/image/specs/jxl-headers.md) reads and writes dimension, preview and animation descriptors without image allocation.
 The [JPEG XL precision prerequisite](../docs/contexts/image/specs/jxl-sample-depth.md) reads and writes integer and floating-point sample declarations without sample conversion.
+
+The [JPEG XL finite metadata prerequisite](../docs/contexts/image/specs/jxl-f16-fields.md) reads exact F16 values and writes the original metadata coder's finite truncation form.
+
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.

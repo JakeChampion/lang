@@ -1,0 +1,47 @@
+import "./bits";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum FloatError { Value, Input(bits.BitError) }
+
+pub struct Read { value: f32, next: i64 }
+
+function value(word: u32): Result[f32, FloatError] {
+  let sign = word >> 15;
+  let exponent = word >> 10 & 31u32;
+  let mantissa = word & 1023u32;
+  if (exponent == 31u32) {
+    return Err(FloatError.Value);
+  }
+  if (exponent == 0u32) {
+    let scaled = mantissa as f32 * 0.000000059604644775390625f32;
+    return Ok(if (sign != 0u32) { -scaled } else { scaled });
+  }
+  let expanded = sign << 31 | exponent + 112u32 << 23 | mantissa << 13;
+  return Ok(f32_from_bits(expanded as i32));
+}
+
+pub function read(input: [u8], position: i64, extent: i64): Result[Read, FloatError] {
+  let raw = match (bits.read(input, position, 16, extent)) {
+    Ok(value) => value,
+    Err(error) => { return Err(FloatError.Input(error)); },
+  };
+  return Ok(Read { value: value(raw.value as u32)?, next: raw.next });
+}
+
+pub function field(sample: f32): Result[bits.Field, FloatError] {
+  let word = f32_bits(sample) as u32;
+  let absolute = word & 0x7fffffffu32;
+  if (absolute > 0x477fe000u32) {
+    return Err(FloatError.Value);
+  }
+  let exponent = absolute >> 23;
+  if (exponent < 103u32) {
+    return Ok(bits.Field { value: 0u64, width: 16 });
+  }
+  let mantissa = absolute & 0x7fffffu32;
+  let biased = if (exponent < 113u32) { 0u32 } else { exponent - 112u32 };
+  let fraction = if (exponent < 113u32) { 1u32 << 10u32 - (113u32 - exponent) | mantissa >> 13u32 + 113u32 - exponent } else { mantissa >> 13 };
+  let encoded = word >> 31 << 15 | biased << 10 | fraction;
+  return Ok(bits.Field { value: encoded as u64, width: 16 });
+}
