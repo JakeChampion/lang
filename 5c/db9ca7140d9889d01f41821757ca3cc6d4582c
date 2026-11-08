@@ -520,3 +520,26 @@ bootstrap/arm64-darwin/stage2.size_bytes	17535057
 bootstrap/arm64-darwin/stage3.wall_s	75
 bootstrap/arm64-darwin/stage3.peak_rss_mb	2511
 bootstrap/arm64-darwin/stage3.size_bytes	17535057
+
+# lane: net-soak
+soak/static.requests	43821944
+soak/static.failed	0
+soak/static.rss_warm_kb	684
+soak/static.rss_end_kb	684
+soak/static.rss_growth_kb	0
+soak/static.allocs	426003
+soak/static.live_bytes	0
+soak/echo.requests	37281721
+soak/echo.failed	0
+soak/echo.rss_warm_kb	708
+soak/echo.rss_end_kb	708
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	1791540150
+soak/echo.live_bytes	0
+soak/recent.requests	27055674
+soak/recent.failed	0
+soak/recent.rss_warm_kb	1396
+soak/recent.rss_end_kb	1396
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	982409673
+soak/recent.live_bytes	0
