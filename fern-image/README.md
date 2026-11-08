@@ -24,10 +24,12 @@ The [forward block transform](docs/jpeg-dct.md) prepares natural-order coefficie
 The [coefficient quantizer](docs/jpeg-quantization.md) applies explicit nearest-integer rules and preserves the decoder's quantizer order.
 The [internal entropy writer](docs/jpeg-entropy-writer.md) emits baseline coefficient scans with explicit tables, restart markers and exact byte limits.
 The [internal frame writer](docs/jpeg-frame-writer.md) serializes complete one-component baseline files from explicit quantized blocks and tables.
-The [component-block extractor](docs/jpeg-component-blocks.md) prepares partial image edges with explicit replication or constant fill.
+The [component-block extractor](docs/jpeg-component-blocks.md) prepares partial edges and complete MCU dummy blocks with explicit replication or constant fill.
 The [component fold](docs/jpeg-plane-coefficients.md) delivers quantized blocks without a required complete coefficient plane.
 The [producer writer](docs/jpeg-produced-frames.md) connects these blocks directly to complete one-component frames.
 The [forward sample converter](docs/jpeg-rgb-ycbcr.md) prepares explicit full-range JFIF samples from packed RGB8 rows.
+The [MCU order fold](docs/jpeg-mcu-order.md) describes component block positions and complete dummy blocks for a future color writer.
+The [MCU entropy producer](docs/jpeg-mcu-entropy.md) emits explicit baseline component scans with separate DC predictors and complete-MCU restart intervals.
 The [shared sample word primitive](docs/sample-bytes.md) preserves exact raw words with explicit byte order.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
