@@ -1,0 +1,205 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/u32_fields";
+import "../packages/codecs/jxl/u64_fields";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function distribution(width: i32, offset: u32): u32_fields.Distribution {
+  return u32_fields.Distribution { width: width, offset: offset };
+}
+
+function u64_roundtrip(value: u64, offset: i32): boolean {
+  let fields = [bits.Field { value: 0u64, width: offset }].concat(u64_fields.fields(value));
+  let Ok(output) = bits.pack(fields, 11, never) else {
+    return false;
+  };
+  let alias = output.bytes;
+  let Ok(actual) = u64_fields.read(output.bytes, offset as i64, output.bits) else {
+    return false;
+  };
+  if (actual.value != value || actual.next != output.bits || alias.len() != output.bytes.len()) {
+    return false;
+  }
+  for extent in offset..output.bits as i32 {
+    if (!match (u64_fields.read(output.bytes, offset as i64, extent as i64)) { Err(bits.Truncated) => true, _ => false }) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function u64_small(): test.TestOutcome {
+  for value in 0..4096 {
+    for offset in 0..8 {
+      if (!u64_roundtrip(value as u64, offset)) {
+        return test.fail("small unsigned integers and every truncated bit extent");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function u64_boundaries(): test.TestOutcome {
+  for shift in 1..64 {
+    let power = 1u64 << shift as u64;
+    for value in [power - 1u64, power, power + 1u64] {
+      for offset in 0..8 {
+        if (!u64_roundtrip(value, offset)) {
+          return test.fail("unsigned continuation boundaries");
+        }
+      }
+    }
+  }
+  return test.assert_true(u64_roundtrip(18446744073709551615u64, 7));
+}
+
+function u64_goldens(): test.TestOutcome {
+  for (value, expected, size) in [(0u64, 0u64, 2), (1u64, 1u64, 6), (16u64, 61u64, 6), (17u64, 2u64, 10), (272u64, 1022u64, 10), (273u64, 1095u64, 15), (4095u64, 16383u64, 15), (4096u64, 49155u64, 24)] {
+    let Ok(output) = bits.pack(u64_fields.fields(value), 10, never) else {
+      return test.fail("unsigned integer golden output");
+    };
+    let Ok(raw) = bits.read(output.bytes, 0i64, size, output.bits) else {
+      return test.fail("unsigned integer golden bits");
+    };
+    if (raw.value != expected || output.bits != size as i64) {
+      return test.fail("independent unsigned integer golden");
+    }
+  }
+  let fields = u64_fields.fields(18446744073709551615u64);
+  let Ok(output) = bits.pack(fields, 10, never) else {
+    return test.fail("complete unsigned domain");
+  };
+  return test.assert_true(fields.len() == 16 && output.bits == 73i64 && output.bytes[9] == 1u8);
+}
+
+function u64_long_forms(): test.TestOutcome {
+  for groups in 0..8 {
+    let fields = [bits.Field { value: 3u64, width: 2 }, bits.Field { value: 0u64, width: 12 }];
+    for group in 0..groups {
+      fields = fields.append(bits.Field { value: 1u64, width: 1 });
+      fields = fields.append(bits.Field { value: 0u64, width: if (group == 6) { 4 } else { 8 } });
+    }
+    if (groups < 7) {
+      fields = fields.append(bits.Field { value: 0u64, width: 1 });
+    }
+    let Ok(output) = bits.pack(fields, 10, never) else {
+      return test.fail("legal longer unsigned representation");
+    };
+    let Ok(value) = u64_fields.read(output.bytes, 0i64, output.bits) else {
+      return test.fail("read legal longer representation");
+    };
+    if (value.value != 0u64 || value.next != output.bits) {
+      return test.fail("long unsigned form and consumed position");
+    }
+  }
+  return test.pass();
+}
+
+function u32_widths(): test.TestOutcome {
+  for width in 1..33 {
+    for offset in [0u32, 1u32, 67108863u32] {
+      let distributions = [distribution(width, offset), distribution(0, 17u32), distribution(0, 23u32), distribution(0, 31u32)];
+      let maximum = (1u64 << width as u64) - 1u64;
+      for payload in [0u64, maximum / 3u64, maximum] {
+        let fields = [bits.Field { value: 0u64, width: 2 }, bits.Field { value: payload, width: width }];
+        let Ok(output) = bits.pack(fields, 5, never) else {
+          return test.fail("range distribution bytes");
+        };
+        let Ok(value) = u32_fields.read(output.bytes, 0i64, output.bits, distributions) else {
+          return test.fail("range distribution input");
+        };
+        if (value.value != (payload + offset as u64) % 4294967296u64 || value.next != output.bits) {
+          return test.fail("range offset and modulo arithmetic");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function u32_choices(): test.TestOutcome {
+  let distributions = [distribution(8, 0u32), distribution(2, 0u32), distribution(2, 0u32), distribution(0, 2u32)];
+  for (value, selector, width) in [(0u32, 1u64, 2), (2u32, 3u64, 0), (3u32, 1u64, 2), (4u32, 0u64, 8), (255u32, 0u64, 8)] {
+    let Ok(fields) = u32_fields.fields(value, distributions) else {
+      return test.fail("shortest distribution");
+    };
+    if (fields[0].value != selector || fields[1].width != width) {
+      return test.fail("shortest choice and first equal selector");
+    }
+    let Ok(output) = bits.pack(fields, 5, never) else {
+      return test.fail("selected distribution output");
+    };
+    let Ok(actual) = u32_fields.read(output.bytes, 0i64, output.bits, distributions) else {
+      return test.fail("selected distribution input");
+    };
+    if (actual.value != value as u64) {
+      return test.fail("selected integer value");
+    }
+  }
+  return test.assert_true(match (u32_fields.fields(256u32, distributions)) { Err(u32_fields.Value) => true, _ => false });
+}
+
+function u32_direct(): test.TestOutcome {
+  let distributions = [distribution(0, 2147483647u32), distribution(0, 9u32), distribution(0, 9u32), distribution(32, 0u32)];
+  for selector in 0..4 {
+    let payload = if (selector == 3) { 4294967295u64 } else { 0u64 };
+    let fields = [bits.Field { value: selector as u64, width: 2 }, bits.Field { value: payload, width: distributions[selector].width }];
+    let Ok(output) = bits.pack(fields, 5, never) else {
+      return test.fail("direct selector output");
+    };
+    let Ok(value) = u32_fields.read(output.bytes, 0i64, output.bits, distributions) else {
+      return test.fail("every direct selector");
+    };
+    let expected = if (selector == 3) { payload } else { distributions[selector].offset as u64 };
+    if (value.value != expected || value.next != output.bits) {
+      return test.fail("direct value and position");
+    }
+    for extent in 0..output.bits as i32 {
+      if (!match (u32_fields.read(output.bytes, 0i64, extent as i64, distributions)) { Err(u32_fields.Input(bits.Truncated)) => true, _ => false }) {
+        return test.fail("every U32 truncated bit extent");
+      }
+    }
+  }
+  let Ok(fields) = u32_fields.fields(9u32, distributions) else {
+    return test.fail("duplicate direct values");
+  };
+  return test.assert_true(fields[0].value == 1u64);
+}
+
+function malformed(): test.TestOutcome {
+  let valid = [distribution(0, 0u32), distribution(0, 1u32), distribution(4, 2u32), distribution(32, 0u32)];
+  let bad = [[valid[0], valid[1], valid[2]], valid.append(valid[0])];
+  for distributions in bad {
+    if (!match (u32_fields.read([], 0i64, 0i64, distributions)) { Err(u32_fields.Distribution) => true, _ => false }) {
+      return test.fail("exactly four distributions");
+    }
+  }
+  for value in [distribution(-1, 0u32), distribution(33, 0u32), distribution(0, 2147483648u32), distribution(1, 67108864u32)] {
+    for index in 0..4 {
+      let distributions = valid.with(index, value);
+      if (!match (u32_fields.fields(0u32, distributions)) { Err(u32_fields.Distribution) => true, _ => false }) {
+        return test.fail("every distribution before writer access");
+      }
+      if (!match (u32_fields.read([], -1i64, -1i64, distributions)) { Err(u32_fields.Distribution) => true, _ => false }) {
+        return test.fail("every distribution before input access");
+      }
+    }
+  }
+  return test.assert_true(match (u64_fields.read([], -1i64, 0i64)) { Err(bits.Bounds) => true, _ => false });
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL integer fields");
+  suite = suite.it("small U64 values at every bit offset", u64_small);
+  suite = suite.it("U64 powers and continuation boundaries", u64_boundaries);
+  suite = suite.it("independent U64 bytes and complete unsigned domain", u64_goldens);
+  suite = suite.it("legal longer U64 forms", u64_long_forms);
+  suite = suite.it("every U32 width, offset and modulo boundary", u32_widths);
+  suite = suite.it("shortest U32 choice and selector ties", u32_choices);
+  suite = suite.it("every U32 direct selector and truncated extent", u32_direct);
+  suite = suite.it("malformed distributions before access", malformed);
+  return suite.finish();
+}

@@ -1,0 +1,51 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum PassError { Dimensions, Limit }
+
+pub struct Pass { x: i32, y: i32, dx: i32, dy: i32, width: i32, height: i32, stride: i32, offset: i32, bytes: i32 }
+
+pub struct Plan { passes: Pass[], bytes: i32 }
+
+function extent(size: i32, start: i32, step: i32): i32 {
+  return if (size <= start) { 0 } else { (size - start - 1) / step + 1 };
+}
+
+function pattern(index: i32): (i32, i32, i32, i32) {
+  return match (index) {
+    0 => (0, 0, 8, 8), 1 => (4, 0, 8, 8), 2 => (0, 4, 4, 8), 3 => (2, 0, 4, 4),
+    4 => (0, 2, 2, 4), 5 => (1, 0, 2, 2), _ => (0, 1, 1, 2),
+  };
+}
+
+function pass(width: i32, height: i32, bits: i32, index: i32, offset: i32, limit: i32): Result[Pass, PassError] {
+  let (x, y, dx, dy) = pattern(index);
+  let w = extent(width, x, dx);
+  let h = extent(height, y, dy);
+  let stride = (w as i64 * (bits as i64) + 7i64) / 8i64;
+  if (stride > 2147483647i64) {
+    return Err(PassError.Limit);
+  }
+  let bytes = if (w == 0 || h == 0) { 0i64 } else { (stride + 1i64) * (h as i64) };
+  if (bytes > limit as i64 - offset as i64) {
+    return Err(PassError.Limit);
+  }
+  return Ok(Pass { x: x, y: y, dx: dx, dy: dy, width: w, height: h, stride: stride as i32, offset: offset, bytes: bytes as i32 });
+}
+
+pub function plan(width: i32, height: i32, bits: i32, max_bytes: i32): Result[Plan, PassError] {
+  if (width <= 0 || height <= 0 || bits < 1 || bits > 64) {
+    return Err(PassError.Dimensions);
+  }
+  if (max_bytes <= 0) {
+    return Err(PassError.Limit);
+  }
+  let passes: Pass[] = [];
+  let total = 0;
+  for i in 0..7 {
+    let value = pass(width, height, bits, i, total, max_bytes)?;
+    total += value.bytes;
+    passes = passes.append(value);
+  }
+  return Ok(Plan { passes: passes, bytes: total });
+}

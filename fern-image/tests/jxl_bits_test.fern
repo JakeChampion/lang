@@ -1,0 +1,190 @@
+import "../packages/codecs/jxl/bits";
+import "std/test";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function goldens(): test.TestOutcome {
+  let input: u8[] = [213, 106];
+  for (position, width, expected) in [(0i64, 3, 5u64), (3i64, 5, 26u64), (4i64, 8, 173u64), (8i64, 8, 106u64), (16i64, 0, 0u64)] {
+    let Ok(value) = bits.read(input, position, width, 16i64) else {
+      return test.fail("independent low-bit-first field");
+    };
+    if (value.value != expected || value.next != position + width as i64) {
+      return test.fail("independent bit value and position");
+    }
+  }
+  let Ok(output) = bits.pack([bits.Field { value: 5u64, width: 3 }, bits.Field { value: 26u64, width: 5 }, bits.Field { value: 106u64, width: 8 }], 2, never) else {
+    return test.fail("independent low-bit-first output");
+  };
+  return test.assert_true(output.bits == 16i64 && same(output.bytes, input));
+}
+
+function widths_and_offsets(): test.TestOutcome {
+  let input = __alloc_u8(16);
+  for i in 0..input.len() {
+    input = input.with(i, (i * 37 + 11) as u8);
+  }
+  let wrapped = [99u8].concat(input).append(88);
+  let window = wrapped[1:wrapped.len() - 1];
+  for width in 0..57 {
+    for start in 0..65 {
+      let expected = 0u64;
+      for bit in 0..width {
+        let at = start + bit;
+        let value = input[at / 8] >> (at % 8) as u8 & 1;
+        expected |= value as u64 << bit as u64;
+      }
+      let Ok(actual) = bits.read(window, start as i64, width, 128i64) else {
+        return test.fail("every bit width and offset");
+      };
+      if (actual.value != expected || actual.next != (start + width) as i64) {
+        return test.fail("per-bit independent value and next position");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function mixed_and_aliases(): test.TestOutcome {
+  let fields: bits.Field[] = [];
+  for width in 0..57 {
+    let maximum = (1u64 << width as u64) - 1u64;
+    fields = fields.append(bits.Field { value: maximum, width: width });
+    fields = fields.append(bits.Field { value: maximum / 3u64, width: width });
+  }
+  let alias = fields;
+  let Ok(output) = bits.pack(fields, 1000, never) else {
+    return test.fail("mixed field output");
+  };
+  let bytes_alias = output.bytes;
+  let position = 0i64;
+  for field in fields {
+    let Ok(value) = bits.read(output.bytes, position, field.width, output.bits) else {
+      return test.fail("mixed field input");
+    };
+    if (value.value != field.value) {
+      return test.fail("mixed field values");
+    }
+    position = value.next;
+  }
+  let changed = fields.with(1, bits.Field { value: 0u64, width: 1 });
+  if (changed[1].width == alias[1].width || !same(bytes_alias, output.bytes) || position != output.bits) {
+    return test.fail("retained field and byte aliases");
+  }
+  let Ok(empty) = bits.pack([], 0, never) else {
+    return test.fail("empty field sequence");
+  };
+  return test.assert_true(empty.bits == 0i64 && empty.bytes.len() == 0);
+}
+
+function bounds_and_padding(): test.TestOutcome {
+  let input: u8[] = [255, 0, 128];
+  for (position, extent) in [(-1i64, 24i64), (25i64, 24i64), (0i64, -1i64), (0i64, 25i64), (9223372036854775807i64, 24i64)] {
+    if (!match (bits.read(input, position, 0, extent)) { Err(bits.Bounds) => true, _ => false }) {
+      return test.fail("invalid bit position or extent");
+    }
+  }
+  for extent in 0..25 {
+    if (!match (bits.read(input, extent as i64, 1, extent as i64)) { Err(bits.Truncated) => true, _ => false }) {
+      return test.fail("every closed logical bit end");
+    }
+  }
+  for width in [-1, 57, 2147483647] {
+    if (!match (bits.read(input, 0i64, width, 24i64)) { Err(bits.Width) => true, _ => false }) {
+      return test.fail("invalid read width");
+    }
+  }
+  if (!match (bits.align(input, 1i64, 24i64)) { Err(bits.Padding) => true, _ => false }
+    || !match (bits.align(input, 9i64, 12i64)) { Err(bits.Truncated) => true, _ => false }
+    || !match (bits.align(input, 9i64, 24i64)) { Ok(v) => v == 16i64, _ => false }
+    || !match (bits.align(input, 24i64, 24i64)) { Ok(v) => v == 24i64, _ => false }) {
+    return test.fail("zero alignment and complete padding admission");
+  }
+  return test.pass();
+}
+
+function value_admission(): test.TestOutcome {
+  for width in 0..57 {
+    let invalid: bits.Field[] = [bits.Field { value: 1u64 << width as u64, width: width }];
+    if (!match (bits.pack(invalid, 100, never)) { Err(bits.Value) => true, _ => false }) {
+      return test.fail("every field value boundary");
+    }
+  }
+  for width in [-1, 57, 2147483647] {
+    if (!match (bits.pack([bits.Field { value: 0u64, width: width }], 100, never)) { Err(bits.Width) => true, _ => false }) {
+      return test.fail("invalid output field width");
+    }
+  }
+  let Ok(output) = bits.pack([bits.Field { value: 3u64, width: 2 }], 1, never) else {
+    return test.fail("partial final byte");
+  };
+  return test.assert_true(output.bits == 2i64 && same(output.bytes, [3u8]));
+}
+
+function budgets(): test.TestOutcome {
+  let fields: bits.Field[] = [];
+  for i in 0..33 {
+    fields = fields.append(bits.Field { value: 1u64, width: 56 });
+  }
+  let total = fields.len() * 7;
+  for limit in 0..total {
+    if (!match (bits.pack(fields, limit, never)) { Err(bits.Limit) => true, _ => false }) {
+      return test.fail("every output byte budget");
+    }
+  }
+  if (!match (bits.pack([], -1, never)) { Err(bits.Limit) => true, _ => false }) {
+    return test.fail("negative output byte budget");
+  }
+  return test.assert_true(match (bits.pack(fields, total, never)) { Ok(v) => v.bytes.len() == total, _ => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let fields: bits.Field[] = [bits.Field { value: 0u64, width: 0 }, bits.Field { value: 7u64, width: 3 }, bits.Field { value: 987654321u64, width: 56 }];
+  let calls = cell_new(0);
+  let count = (): boolean => {
+    calls.set(calls.get() + 1);
+    return false;
+  };
+  let Ok(expected) = bits.pack(fields, 100, count) else {
+    return test.fail("bit output poll baseline");
+  };
+  let total = calls.get();
+  for stop in 1..total + 1 {
+    calls.set(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() >= stop;
+    };
+    if (!match (bits.pack(fields, 100, cancel)) { Err(bits.Cancelled) => true, _ => false } || calls.get() != stop) {
+      return test.fail("every bit output cancellation checkpoint");
+    }
+  }
+  return test.assert_true(match (bits.pack(fields, 100, never)) { Ok(v) => v.bits == expected.bits && same(v.bytes, expected.bytes), _ => false });
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL raw bit fields");
+  suite = suite.it("independent low-bit-first input and output", goldens);
+  suite = suite.it("every field width and bit offset", widths_and_offsets);
+  suite = suite.it("mixed fields, empty output and retained aliases", mixed_and_aliases);
+  suite = suite.it("logical extents, invalid positions and zero padding", bounds_and_padding);
+  suite = suite.it("field values, widths and unused final bits", value_admission);
+  suite = suite.it("every output byte budget", budgets);
+  suite = suite.it("every cancellation checkpoint and fresh calls", cancellation);
+  return suite.finish();
+}

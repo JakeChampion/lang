@@ -1,0 +1,66 @@
+import "../packages/codecs/qoi/qoi";
+import "std/i32";
+import "std/i64";
+
+function never(): boolean {
+  return false;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function prepare(paths: [string]): Result[(u8[], u8[], qoi.Decoded), i32] {
+  if (paths.len() != 3) {
+    return Err(1);
+  }
+  let input = match (read_file_bytes(paths[1])) { Ok(v) => v, Err(_) => { return Err(2); } };
+  let raw = match (read_file_bytes(paths[2])) { Ok(v) => v, Err(_) => { return Err(2); } };
+  let prepared = match (qoi.decode(input, qoi.default_limits(), never)) { Ok(v) => v, Err(_) => { return Err(3); } };
+  if (!same(prepared.image.data, raw)) {
+    return Err(4);
+  }
+  return Ok((input, raw, prepared));
+}
+
+function main(): i32 {
+  let (input, raw, prepared) = match (prepare(args())) { Ok(v) => v, Err(e) => { return e; } };
+  let before_encode = __heap_alloc_count();
+  let fresh_before_encode = __heap_bump_bytes();
+  let Ok(encoded) = qoi.encode(prepared.image, prepared.color_space, 16777216, never) else {
+    return 5;
+  };
+  let encode_allocations = __heap_alloc_count() - before_encode;
+  let encode_fresh = __heap_bump_bytes() - fresh_before_encode;
+  let encoded_size = encoded.len();
+  let Ok(checked) = qoi.decode(encoded, qoi.default_limits(), never) else {
+    return 6;
+  };
+  if (!same(checked.image.data, raw) || checked.color_space != prepared.color_space) {
+    return 7;
+  }
+  encoded = [];
+  let before_decode = __heap_alloc_count();
+  let fresh_before_decode = __heap_bump_bytes();
+  let Ok(decoded) = qoi.decode(input, qoi.default_limits(), never) else {
+    return 8;
+  };
+  let decode_allocations = __heap_alloc_count() - before_decode;
+  let decode_fresh = __heap_bump_bytes() - fresh_before_decode;
+  if (!same(decoded.image.data, raw) || decoded.color_space != prepared.color_space) {
+    return 9;
+  }
+  let width = prepared.image.layout.width;
+  let height = prepared.image.layout.height;
+  let channels = raw.len() / width / height;
+  print(f"{width} {height} {channels} {encoded_size} {encode_allocations} {encode_fresh} {decode_allocations} {decode_fresh}");
+  return 0;
+}

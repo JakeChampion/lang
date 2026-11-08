@@ -1,0 +1,117 @@
+import "../packages/codecs/png/adam7";
+import "std/test";
+
+function assignment(x: i32, y: i32): i32 {
+  let tile: i32[] = [
+    1, 6, 4, 6, 2, 6, 4, 6, 7, 7, 7, 7, 7, 7, 7, 7,
+    5, 6, 5, 6, 5, 6, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7,
+    3, 6, 4, 6, 3, 6, 4, 6, 7, 7, 7, 7, 7, 7, 7, 7,
+    5, 6, 5, 6, 5, 6, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7,
+  ];
+  return tile[y % 8 * 8 + x % 8];
+}
+
+function partition(): test.TestOutcome {
+  for width in 1..18 {
+    for height in 1..18 {
+      let Ok(plan) = adam7.plan(width, height, 24, 100000) else {
+        return test.fail("small pass geometry");
+      };
+      let visits = __alloc_u8(width * height);
+      for index in 0..7 {
+        let pass = plan.passes[index];
+        if (pass.bytes != 0) {
+          for y in 0..pass.height {
+            for x in 0..pass.width {
+              let xx = pass.x + x * pass.dx;
+              let yy = pass.y + y * pass.dy;
+              if (xx < 0 || xx >= width || yy < 0 || yy >= height || assignment(xx, yy) != index + 1) {
+                return test.fail("normative pass assignment");
+              }
+              let at = yy * width + xx;
+              visits = visits.with(at, visits[at] + 1);
+            }
+          }
+        }
+      }
+      for count in visits {
+        if (count != 1) {
+          return test.fail("complete disjoint pass partition");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function packed_sizes(): test.TestOutcome {
+  for bits in [1, 2, 4, 8, 16, 24, 32, 48, 64] {
+    for width in 1..18 {
+      let Ok(plan) = adam7.plan(width, 17, bits, 100000) else {
+        return test.fail("packed plan");
+      };
+      let offset = 0;
+      for pass in plan.passes {
+        let stride = (pass.width * bits + 7) / 8;
+        let size = if (pass.width == 0 || pass.height == 0) { 0 } else { (stride + 1) * pass.height };
+        if (pass.offset != offset || pass.stride != stride || pass.bytes != size) {
+          return test.fail("exact packed stride and stream offset");
+        }
+        offset += size;
+      }
+      if (plan.bytes != offset) {
+        return test.fail("complete filtered stream size");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let Ok(plan) = adam7.plan(17, 9, 32, 10000) else {
+    return test.fail("limit baseline");
+  };
+  if (!match (adam7.plan(17, 9, 32, plan.bytes)) { Ok(v) => v.bytes == plan.bytes, _ => false }) {
+    return test.fail("exact pass admission");
+  }
+  for limit in [0, -1, plan.bytes - 1] {
+    if (!match (adam7.plan(17, 9, 32, limit)) { Err(adam7.Limit) => true, _ => false }) {
+      return test.fail("short pass admission");
+    }
+  }
+  for bits in [1, 8, 24, 64] {
+    if (!match (adam7.plan(2147483647, 2147483647, bits, 2147483647)) { Err(adam7.Limit) => true, _ => false }) {
+      return test.fail("large geometry overflow rejection");
+    }
+  }
+  return test.pass();
+}
+
+function empty_and_invalid(): test.TestOutcome {
+  let Ok(plan) = adam7.plan(1, 1, 1, 2) else {
+    return test.fail("single sample pass");
+  };
+  if (plan.bytes != 2 || plan.passes.len() != 7 || plan.passes[0].bytes != 2) {
+    return test.fail("single sample filtered bytes");
+  }
+  for i in 1..7 {
+    if (plan.passes[i].bytes != 0 || plan.passes[i].offset != 2) {
+      return test.fail("empty passes have no filter byte");
+    }
+  }
+  for (w, h, bits) in [(0, 1, 8), (1, 0, 8), (-1, 1, 8), (1, -1, 8), (1, 1, 0), (1, 1, 65)] {
+    if (!match (adam7.plan(w, h, bits, 1000)) { Err(adam7.Dimensions) => true, _ => false }) {
+      return test.fail("invalid geometry");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("Adam7 checked pass geometry");
+  suite = suite.it("normative tile partitions every small image once", partition);
+  suite = suite.it("packed row sizes and complete stream offsets", packed_sizes);
+  suite = suite.it("exact limits and maximal arithmetic", limits);
+  suite = suite.it("empty passes and invalid dimensions", empty_and_invalid);
+  return suite.finish();
+}

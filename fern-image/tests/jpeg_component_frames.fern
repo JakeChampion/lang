@@ -1,0 +1,137 @@
+import "../packages/codecs/jpeg/frame_writer" as frame;
+import "../packages/codecs/jpeg/entropy_writer" as writer;
+import "../packages/codecs/jpeg/header";
+import "std/binary";
+import "std/hex";
+
+function never(): boolean {
+  return false;
+}
+
+function number(data: [u8], at: i32): i32 {
+  return match (binary.read_u32_be(data, at)) { Ok(v) => v as i32, Err(_) => 0 };
+}
+
+function entropy_name(error: writer.EncodeError): string {
+  return match (error) { writer.Shape => "Shape", writer.Table => "Table", writer.MissingSymbol => "MissingSymbol", writer.Coefficient => "Coefficient", writer.Limit => "Limit", writer.Cancelled => "Cancelled" };
+}
+
+function name(error: frame.FrameError): string {
+  return match (error) { frame.Shape => "Shape", frame.Dimensions => "Dimensions", frame.Table => "Table", frame.Limit => "Limit", frame.Cancelled => "Cancelled", frame.Entropy(e) => "Entropy." + entropy_name(e) };
+}
+
+function emit(path: string): i32 {
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (data.len() < 32) {
+    return 3;
+  }
+  let config = frame.Options { width: number(data, 0), height: number(data, 4), restart_interval: number(data, 8), max_output_bytes: number(data, 12) };
+  let count = number(data, 16);
+  let nq = number(data, 20);
+  let ndc = number(data, 24);
+  let nac = number(data, 28);
+  if (count < 0 || count > 5 || nq < 0 || nq > 5 || ndc < 0 || ndc > 3 || nac < 0 || nac > 3 || data.len() < 32 + count * 24) {
+    return 3;
+  }
+  let components: frame.Component[] = [];
+  let at = 32;
+  for i in 0..count {
+    components = components.append(frame.Component { id: number(data, at), horizontal: number(data, at + 4), vertical: number(data, at + 8), quantization: number(data, at + 12), dc: number(data, at + 16), ac: number(data, at + 20) });
+    at += 24;
+  }
+  let quantization: header.QuantTable[] = [];
+  for i in 0..nq {
+    if (data.len() - at < 2) {
+      return 3;
+    }
+    let length = data[at] as i32 * 256 + data[at + 1] as i32;
+    at += 2;
+    if (length > data.len() - at) {
+      return 3;
+    }
+    let values: u8[] = [];
+    for j in 0..length {
+      values = values.append(data[at + j]);
+    }
+    at += length;
+    quantization = quantization.append(header.QuantTable { values: values });
+  }
+  let parsed: header.HuffmanTable[] = [];
+  for i in 0..ndc + nac {
+    if (data.len() - at < 18) {
+      return 3;
+    }
+    let counts: u8[] = [];
+    for j in 0..16 {
+      counts = counts.append(data[at + j]);
+    }
+    let length = data[at + 16] as i32 * 256 + data[at + 17] as i32;
+    at += 18;
+    if (length > data.len() - at) {
+      return 3;
+    }
+    let symbols: u8[] = [];
+    for j in 0..length {
+      symbols = symbols.append(data[at + j]);
+    }
+    at += length;
+    parsed = parsed.append(header.HuffmanTable { counts: counts, symbols: symbols });
+  }
+  let dc: header.HuffmanTable[] = [];
+  let ac: header.HuffmanTable[] = [];
+  for i in 0..ndc {
+    dc = dc.append(parsed[i]);
+  }
+  for i in 0..nac {
+    ac = ac.append(parsed[ndc + i]);
+  }
+  if ((data.len() - at) % 4 != 0) {
+    return 3;
+  }
+  let values: i32[] = [];
+  while (at < data.len()) {
+    values = values.append(number(data, at));
+    at += 4;
+  }
+  let tables = frame.ComponentTables { quantization: quantization, huffman: writer.ScanTables { dc: dc, ac: ac } };
+  let result = frame.encode_components_produced(
+    values[0:values.len()], components, tables, config, never,
+    (source: [i32], consume: ([i32]) => Result[void, writer.EncodeError]): Result[void, writer.EncodeError] => {
+      let at = 0;
+      while (at < source.len()) {
+        let end = if (source.len() - at < 64) { source.len() } else { at + 64 };
+        consume(source[at:end])?;
+        at = end;
+      }
+      return Ok(());
+    },
+  );
+  match (result) {
+    Ok(output) => {
+      print(path + " ok " + hex.encode(output));
+    },
+    Err(frame.FrameEncode(e)) => {
+      print(path + " error " + name(e));
+    },
+    Err(frame.FrameSource(e)) => {
+      print(path + " error Entropy." + entropy_name(e));
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

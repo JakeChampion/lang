@@ -195,11 +195,15 @@ function malformed(): test.TestOutcome {
         return test.fail("truncated grayscale");
       }
     }
-    let unsupported = if (channels == 1) { [fixtures.depth_1(), fixtures.interlace_1()] } else { [fixtures.depth_2(), fixtures.interlace_2(), fixtures.transparency_2()] };
+    let unsupported = if (channels == 1) { [fixtures.depth_1()] } else { [fixtures.depth_2(), fixtures.transparency_2()] };
     for input in unsupported {
       if (!match (png.decode(input, pixels.default_limits())) { Err(png.PngError.Unsupported) => true, _ => false }) {
         return test.fail("unsupported mode");
       }
+    }
+    let invalid_interlace = if (channels == 1) { fixtures.interlace_1() } else { fixtures.interlace_2() };
+    if (!match (png.decode(invalid_interlace, pixels.default_limits())) { Err(png.PngError.Scanline) => true, _ => false }) {
+      return test.fail("noninterlaced bytes cannot form complete Adam7 passes");
     }
     if (channels == 1) {
       let Ok(image) = png.decode(fixtures.transparency_1(), pixels.default_limits()) else {

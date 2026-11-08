@@ -1,0 +1,160 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/headers";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function dimensions(width: i64, height: i64, preview: boolean, offset: i32): boolean {
+  let Ok(fields) = headers.dimension_fields(width, height, preview) else {
+    return false;
+  };
+  let all = [bits.Field { value: 0u64, width: offset }].concat(fields);
+  let Ok(output) = bits.pack(all, 10, never) else {
+    return false;
+  };
+  let Ok(value) = headers.read_dimensions(output.bytes, offset as i64, output.bits, preview) else {
+    return false;
+  };
+  if (value.width != width || value.height != height || value.next != output.bits) {
+    return false;
+  }
+  for extent in offset..output.bits as i32 {
+    if (!match (headers.read_dimensions(output.bytes, offset as i64, extent as i64, preview)) { Err(headers.Input(bits.Truncated)) => true, _ => false }) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function image_dimensions(): test.TestOutcome {
+  for height in [1i64, 2i64, 7i64, 8i64, 9i64, 128i64, 256i64, 257i64, 512i64, 513i64, 8192i64, 8193i64, 262144i64, 262145i64, 1073741824i64] {
+    for width in [1i64, 3i64, height, height * 2i64] {
+      for offset in 0..8 {
+        if (!dimensions(width, height, false, offset)) {
+          return test.fail("image dimensions and each truncated bit extent");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function all_ratios(): test.TestOutcome {
+  for height in 1..100 {
+    let h = height as i64;
+    for width in [h, h * 12i64 / 10i64, h * 4i64 / 3i64, h * 3i64 / 2i64, h * 16i64 / 9i64, h * 5i64 / 4i64, h * 2i64] {
+      for preview in [false, true] {
+        if (!dimensions(width, h, preview, 3)) {
+          return test.fail("all fixed aspect ratios and truncation rules");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function preview_dimensions(): test.TestOutcome {
+  for height in [1i64, 8i64, 32i64, 64i64, 65i64, 128i64, 256i64, 264i64, 320i64, 321i64, 1344i64, 1345i64, 4352i64, 4360i64, 5440i64] {
+    for width in [1i64, 3i64, height, height * 2i64] {
+      for offset in 0..8 {
+        if (!dimensions(width, height, true, offset)) {
+          return test.fail("preview distributions and legal undivided fallback");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function goldens(): test.TestOutcome {
+  for (width, height, preview, expected, size) in [(8i64, 8i64, false, 65u64, 9), (9i64, 8i64, false, 129u64, 9), (1i64, 1i64, false, 4096u64, 15), (8i64, 8i64, true, 261u64, 11), (9i64, 8i64, true, 1080u64, 12), (5440i64, 5440i64, true, 65534u64, 18)] {
+    let Ok(fields) = headers.dimension_fields(width, height, preview) else {
+      return test.fail("dimension golden fields");
+    };
+    let Ok(output) = bits.pack(fields, 10, never) else {
+      return test.fail("dimension golden output");
+    };
+    let Ok(value) = bits.read(output.bytes, 0i64, size, output.bits) else {
+      return test.fail("dimension golden raw bits");
+    };
+    if (value.value != expected || output.bits != size as i64) {
+      return test.fail("independent dimension golden");
+    }
+  }
+  for (numerator, denominator, timecodes, expected) in [(100u32, 1u32, false, 0u8), (100u32, 1u32, true, 64u8), (1000u32, 1001u32, false, 5u8)] {
+    let Ok(fields) = headers.animation_fields(numerator, denominator, 0u32, timecodes) else {
+      return test.fail("animation golden fields");
+    };
+    let Ok(output) = bits.pack(fields, 1, never) else {
+      return test.fail("animation golden output");
+    };
+    if (output.bits != 7i64 || output.bytes.len() != 1 || output.bytes[0] != expected) {
+      return test.fail("independent animation golden");
+    }
+  }
+  return test.pass();
+}
+
+function animation(): test.TestOutcome {
+  for numerator in [1u32, 24u32, 100u32, 1000u32, 1024u32, 1025u32, 1073741824u32] {
+    for denominator in [1u32, 8u32, 256u32, 257u32, 1001u32, 1024u32] {
+      for loops in [0u32, 1u32, 7u32, 8u32, 65535u32, 65536u32, 4294967295u32] {
+        for timecodes in [false, true] {
+          let Ok(fields) = headers.animation_fields(numerator, denominator, loops, timecodes) else {
+            return test.fail("animation fields");
+          };
+          let Ok(output) = bits.pack(fields, 12, never) else {
+            return test.fail("animation output");
+          };
+          let Ok(value) = headers.read_animation(output.bytes, 0i64, output.bits) else {
+            return test.fail("animation input");
+          };
+          if (value.numerator != numerator || value.denominator != denominator || value.loops != loops || value.timecodes != timecodes || value.next != output.bits) {
+            return test.fail("exact animation descriptor");
+          }
+          for extent in 0..output.bits as i32 {
+            if (!match (headers.read_animation(output.bytes, 0i64, extent as i64)) { Err(headers.Input(bits.Truncated)) => true, _ => false }) {
+              return test.fail("every animation truncated bit extent");
+            }
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  for (width, height) in [(0i64, 1i64), (1i64, 0i64), (-1i64, 1i64), (1i64, -1i64), (4294967296i64, 1i64), (1i64, 4294967296i64)] {
+    for preview in [false, true] {
+      if (!match (headers.dimension_fields(width, height, preview)) { Err(headers.Dimension) => true, _ => false }) {
+        return test.fail("dimension domain before output");
+      }
+    }
+  }
+  for (numerator, denominator) in [(0u32, 1u32), (1u32, 0u32), (1073741825u32, 1u32), (1u32, 1025u32)] {
+    if (!match (headers.animation_fields(numerator, denominator, 0u32, false)) { Err(headers.Value) => true, _ => false }) {
+      return test.fail("animation distribution limits");
+    }
+  }
+  if (!match (headers.dimension_fields(1i64, 1073741825i64, false)) { Err(headers.Value) => true, _ => false }) {
+    return test.fail("unrepresentable image height");
+  }
+  if (!match (headers.dimension_fields(1i64, 5441i64, true)) { Err(headers.Value) => true, _ => false }) {
+    return test.fail("unrepresentable preview height");
+  }
+  return test.assert_true(match (headers.read_dimensions([], -1i64, 0i64, false)) { Err(headers.Input(bits.Bounds)) => true, _ => false });
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL dimension and animation headers");
+  suite = suite.it("image dimensions and exact logical extents", image_dimensions);
+  suite = suite.it("every fixed ratio and integer truncation", all_ratios);
+  suite = suite.it("preview dimensions and undivided fallback", preview_dimensions);
+  suite = suite.it("independent dimension and animation goldens", goldens);
+  suite = suite.it("animation tick rates, loops and timecodes", animation);
+  suite = suite.it("malformed domains and unrepresentable values", invalid);
+  return suite.finish();
+}

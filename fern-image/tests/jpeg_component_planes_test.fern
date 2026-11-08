@@ -1,0 +1,275 @@
+import "../packages/codecs/jpeg/component_planes" as planes;
+import "../packages/codecs/jpeg/frame_writer" as frame;
+import "../packages/codecs/jpeg/entropy_writer" as entropy;
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "../packages/codecs/jpeg/mcu_order" as order;
+import "../packages/codecs/jpeg/plane_writer" as old;
+import "../packages/codecs/jpeg/header";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function table(ac: boolean): header.HuffmanTable {
+  let symbols: u8[] = [];
+  for value in 0..256 {
+    if (!ac && value <= 11 || ac && ((value & 15) >= 1 && (value & 15) <= 10 || value == 0 || value == 240)) {
+      symbols = symbols.append(value as u8);
+    }
+  }
+  let counts: u8[] = [];
+  for i in 0..16 {
+    counts = counts.append(if (i == 7) { symbols.len() as u8 } else { 0 });
+  }
+  return header.HuffmanTable { counts: counts, symbols: symbols };
+}
+
+function quantizer(value: u8): header.QuantTable {
+  let values: u8[] = [];
+  for i in 0..64 {
+    values = values.append(value);
+  }
+  return header.QuantTable { values: values };
+}
+
+function tables(): frame.ComponentTables {
+  return frame.ComponentTables { quantization: [quantizer(1), quantizer(3), quantizer(7), quantizer(255)], huffman: entropy.ScanTables { dc: [table(false), table(false)], ac: [table(true), table(true)] } };
+}
+
+function component(id: i32, h: i32, v: i32): frame.Component {
+  return frame.Component { id: id, horizontal: h, vertical: v, quantization: id % 4, dc: id % 2, ac: (id + 1) % 2 };
+}
+
+function options(width: i32, height: i32): planes.Options {
+  return planes.Options { frame: frame.Options { width: width, height: height, restart_interval: 1, max_output_bytes: 65536 }, max_blocks: 1000 };
+}
+
+function plane(width: i32, height: i32, value: u8): planes.Plane {
+  let stride = width + 3;
+  let samples: u8[] = [];
+  for y in 0..height {
+    for x in 0..stride {
+      samples = samples.append(if (x < width) { value } else { 231 });
+    }
+  }
+  return planes.Plane { samples: samples, layout: blocks.PlaneLayout { width: width, height: height, stride: stride }, edge: blocks.Replicate };
+}
+
+function source(components: [frame.Component], width: i32, height: i32): planes.Plane[] {
+  let h = 1;
+  let v = 1;
+  for item in components {
+    h = if (item.horizontal > h) { item.horizontal } else { h };
+    v = if (item.vertical > v) { item.vertical } else { v };
+  }
+  let result: planes.Plane[] = [];
+  for i in 0..components.len() {
+    let item = components[i];
+    result = result.append(plane((width * item.horizontal + h - 1) / h, (height * item.vertical + v - 1) / v, (17 + i * 79) as u8));
+  }
+  return result;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function constants(): test.TestOutcome {
+  let patterns = [[component(0, 4, 4)], [component(0, 2, 2), component(1, 1, 1), component(2, 1, 1)], [component(0, 3, 1), component(1, 2, 2)], [component(0, 2, 2), component(1, 1, 1), component(2, 1, 1), component(3, 1, 1)]];
+  for components in patterns {
+    for width in [1, 9, 17, 33] {
+      let input = source(components, width, 17);
+      let config = options(width, 17);
+      let t = tables();
+      let Ok(encoded) = planes.encode(input, components, t, config, never) else {
+        return test.fail("constant component planes");
+      };
+      let Ok(plan) = planes.inspect(input, components, config) else {
+        return test.fail("constant component plan");
+      };
+      let expected = frame.encode_components_produced(
+        0, components, t, config.frame, never,
+        (unused: i32, emit: ([i32]) => Result[void, entropy.EncodeError]): Result[void, entropy.EncodeError] => {
+          for mcu in 0..plan.mcus {
+            for i in 0..components.len() {
+              let item = components[i];
+              let count = if (components.len() == 1) { 1 } else { item.horizontal * item.vertical };
+              let dc = (17 + i * 79 - 128) * 8;
+              let q = t.quantization[item.quantization].values[0] as i32;
+              let rounded = if (dc < 0) { -((-dc * 2 + q) / (q * 2)) } else { (dc * 2 + q) / (q * 2) };
+              let values: i32[] = [];
+              for k in 0..64 {
+                values = values.append(if (k == 0) { rounded } else { 0 });
+              }
+              for k in 0..count {
+                emit(values)?;
+              }
+            }
+          }
+          return Ok(());
+        },
+      );
+      if (!match (expected) { Ok(v) => same(encoded, v), _ => false }) {
+        return test.fail("constant planes match exact mathematical DC blocks");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function earlier_grayscale(): test.TestOutcome {
+  let input = plane(17, 9, 128);
+  let values = input.samples;
+  for i in 0..values.len() {
+    values = values.with(i, ((i * 37 + 13) % 256) as u8);
+  }
+  let p = planes.Plane { ...input, samples: values, edge: blocks.Constant(67) };
+  let t = frame.ComponentTables { quantization: [quantizer(1)], huffman: entropy.ScanTables { dc: [table(false)], ac: [table(true)] } };
+  let old_tables = frame.Tables { quantization: t.quantization[0].values, dc: t.huffman.dc[0], ac: t.huffman.ac[0] };
+  let component = frame.Component { id: 1, horizontal: 1, vertical: 1, quantization: 0, dc: 0, ac: 0 };
+  for restart in [0, 1, 7] {
+    let config = planes.Options { ...options(17, 9), frame: frame.Options { ...options(17, 9).frame, restart_interval: restart } };
+    let Ok(encoded) = planes.encode([p], [component], t, config, never) else {
+      return test.fail("component grayscale adapter");
+    };
+    let Ok(previous) = old.encode(values, p.layout, p.edge, old_tables, old.Options { restart_interval: restart, max_blocks: 6, max_output_bytes: 65536 }, never) else {
+      return test.fail("earlier grayscale adapter");
+    };
+    // The new raw frame omits the earlier writer's 18-byte JFIF segment.
+    if (encoded.len() != previous.len() - 18 || !same(encoded[2:encoded.len()], previous[20:previous.len()])) {
+      return test.fail("earlier grayscale marker and entropy bytes");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  let components = [component(0, 2, 2), component(1, 1, 1), component(2, 1, 1)];
+  let input = source(components, 17, 17);
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  for count in [0, 1, 2, 4] {
+    let bad: planes.Plane[] = [];
+    for i in 0..count {
+      bad = bad.append(input[i % 3]);
+    }
+    if (!match (planes.encode(bad, components, tables(), options(17, 17), cancel)) { Err(planes.Shape) => true, _ => false }) {
+      return test.fail("plane count admission");
+    }
+  }
+  for layout in [blocks.PlaneLayout { width: 8, height: 9, stride: 9 }, blocks.PlaneLayout { width: 9, height: 8, stride: 9 }, blocks.PlaneLayout { width: 9, height: 9, stride: 8 }, blocks.PlaneLayout { width: 9, height: 9, stride: 2147483647 }] {
+    let bad = input.with(1, planes.Plane { ...input[1], layout: layout });
+    if (!match (planes.encode(bad, components, tables(), options(17, 17), cancel)) { Err(planes.Shape) => true, Err(planes.Block(_)) => true, _ => false }) {
+      return test.fail("plane dimensions, stride and storage admission");
+    }
+  }
+  for max_blocks in [-1, 0, 23] {
+    if (!match (planes.encode(input, components, tables(), planes.Options { ...options(17, 17), max_blocks: max_blocks }, cancel)) { Err(planes.Order(order.Limit)) => true, _ => false }) {
+      return test.fail("complete padded block limit");
+    }
+  }
+  let bad = input.with(1, planes.Plane { ...input[1], samples: [] });
+  if (!match (planes.encode(bad, components, tables(), options(17, 17), cancel)) { Err(planes.Block(blocks.Storage)) => true, _ => false }) {
+    return test.fail("short sample storage");
+  }
+  if (calls.get() != 0) {
+    return test.fail("invalid planes precede callbacks");
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let components = [component(0, 2, 2), component(1, 1, 1), component(2, 1, 1)];
+  let input = source(components, 17, 17);
+  let config = options(17, 17);
+  let Ok(encoded) = planes.encode(input, components, tables(), config, never) else {
+    return test.fail("component baseline for limits");
+  };
+  for limit in 0..encoded.len() {
+    let limited = planes.Options { ...config, frame: frame.Options { ...config.frame, max_output_bytes: limit } };
+    if (!match (planes.encode(input, components, tables(), limited, never)) { Err(planes.Frame(frame.Limit)) => true, _ => false }) {
+      return test.fail("every output byte belongs to the limit");
+    }
+  }
+  for limit in [encoded.len(), encoded.len() + 1] {
+    let limited = planes.Options { ...config, max_blocks: 24, frame: frame.Options { ...config.frame, max_output_bytes: limit } };
+    if (!match (planes.encode(input, components, tables(), limited, never)) { Ok(v) => same(encoded, v), _ => false }) {
+      return test.fail("exact block and byte admission");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let components = [component(0, 1, 1), component(1, 1, 1), component(2, 1, 1)];
+  let input = source(components, 1, 1);
+  let polls = cell_new(0);
+  let count = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  let Ok(encoded) = planes.encode(input, components, tables(), options(1, 1), count) else {
+    return test.fail("component cancellation baseline");
+  };
+  let total = polls.get();
+  if (total <= 0) {
+    return test.fail("component producer polls cancellation");
+  }
+  for stop in 1..total + 1 {
+    polls.set(0);
+    let cancel = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    if (!match (planes.encode(input, components, tables(), options(1, 1), cancel)) { Err(planes.Cancelled) => true, _ => false }) {
+      return test.fail("every stage cancellation checkpoint");
+    }
+    if (polls.get() != stop) {
+      return test.fail("cancellation stops the producer immediately");
+    }
+  }
+  if (!match (planes.encode(input, components, tables(), options(1, 1), never)) { Ok(v) => same(encoded, v), _ => false }) {
+    return test.fail("fresh state after cancellation");
+  }
+  return test.pass();
+}
+
+function aliases(): test.TestOutcome {
+  let components = [component(0, 2, 2), component(1, 1, 1), component(2, 1, 1)];
+  let input = source(components, 17, 17);
+  let retained = cell_new(input);
+  let t = tables();
+  let Ok(encoded) = planes.encode(input, components, t, options(17, 17), never) else {
+    return test.fail("aliased input encoding");
+  };
+  let saved = cell_new(encoded);
+  let changed = encoded.with(0, 0);
+  let modified = input.with(0, planes.Plane { ...input[0], samples: input[0].samples.with(0, 255) });
+  if (input[0].samples[0] != 17 || retained.get()[0].samples[0] != 17 || modified[0].samples[0] != 255 || saved.get()[0] != 255 || changed[0] != 0 || t.quantization[3].values[0] != 255) {
+    return test.fail("input, table and output aliases");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG component planes");
+  suite = suite.it("constant planes match exact mathematical DC blocks", constants);
+  suite = suite.it("earlier grayscale marker and entropy bytes remain exact", earlier_grayscale);
+  suite = suite.it("invalid planes and complete block limits precede callbacks", admission);
+  suite = suite.it("every output byte and exact padded block count", limits);
+  suite = suite.it("every pipeline cancellation checkpoint and fresh state", cancellation);
+  suite = suite.it("plane, table and output aliases remain independent", aliases);
+  return suite.finish();
+}

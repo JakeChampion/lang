@@ -5,6 +5,12 @@ FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
 wasmtime --version
+for source in tests/jxl_f16_fields_test.fern tests/jxl_sample_depth_test.fern tests/jxl_headers_test.fern tests/jxl_integers_test.fern tests/jxl_bits_test.fern tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
+  output="build/wasm-$(basename "$source" .fern).wasm"
+  "$FERN" -check "$source"
+  "$FERN" -target wasm32-wasi -sanitize -o "$output" "$source"
+  wasmtime "$output"
+done
 "$FERN" -check tests/qoi_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-qoi_test.wasm tests/qoi_test.fern
 wasmtime build/wasm-qoi_test.wasm
@@ -45,6 +51,12 @@ wasmtime build/wasm-jpeg_plane_coefficients_test.wasm
 "$FERN" -check tests/jpeg_mcu_order_test.fern
 "$FERN" -check tests/jpeg_padded_blocks_test.fern
 "$FERN" -check tests/jpeg_mcu_entropy_test.fern
+"$FERN" -check tests/jpeg_component_frames_test.fern
+"$FERN" -check tests/jpeg_component_planes_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_planes_test.wasm tests/jpeg_component_planes_test.fern
+wasmtime build/wasm-jpeg_component_planes_test.wasm
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_frames_test.wasm tests/jpeg_component_frames_test.fern
+wasmtime build/wasm-jpeg_component_frames_test.wasm
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_mcu_entropy_test.wasm tests/jpeg_mcu_entropy_test.fern
 wasmtime build/wasm-jpeg_mcu_entropy_test.wasm
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_padded_blocks_test.wasm tests/jpeg_padded_blocks_test.fern

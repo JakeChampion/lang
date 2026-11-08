@@ -4,6 +4,12 @@ cd "$(dirname "$0")/.."
 FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
+for source in tests/jxl_f16_fields_test.fern tests/jxl_sample_depth_test.fern tests/jxl_headers_test.fern tests/jxl_integers_test.fern tests/jxl_bits_test.fern tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
+  output="build/$(basename "$source" .fern)"
+  "$FERN" -check "$source"
+  "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
+  "$output"
+done
 "$FERN" -check tests/qoi_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/qoi_test tests/qoi_test.fern
 ./build/qoi_test
@@ -44,6 +50,12 @@ mkdir -p build
 "$FERN" -check tests/jpeg_mcu_order_test.fern
 "$FERN" -check tests/jpeg_padded_blocks_test.fern
 "$FERN" -check tests/jpeg_mcu_entropy_test.fern
+"$FERN" -check tests/jpeg_component_frames_test.fern
+"$FERN" -check tests/jpeg_component_planes_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_planes_test tests/jpeg_component_planes_test.fern
+./build/jpeg_component_planes_test
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_frames_test tests/jpeg_component_frames_test.fern
+./build/jpeg_component_frames_test
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_mcu_entropy_test tests/jpeg_mcu_entropy_test.fern
 ./build/jpeg_mcu_entropy_test
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_padded_blocks_test tests/jpeg_padded_blocks_test.fern

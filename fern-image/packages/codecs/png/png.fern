@@ -4,6 +4,7 @@ import "./palette";
 import "./filters";
 import "./indexed_validation";
 import "./transparency";
+import "./adam7";
 import "std/hash/crc32";
 import "std/deflate";
 import "core/cmp";
@@ -15,7 +16,7 @@ struct EncodedRow { channels: i32, stride: i32, depth: i32, palette: Option[pale
 
 struct PaletteChunks { colors: u8[], alpha: u8[], has_alpha: boolean, color_type: i32, key: transparency.Key }
 
-struct Prepared { layout: pixels.Layout, scanline: EncodedRow, compressed: u8[], filtered_bytes: i32 }
+struct Prepared { layout: pixels.Layout, scanline: EncodedRow, compressed: u8[], filtered_bytes: i32, passes: Option[adam7.Plan] }
 
 pub struct RowLimits { max_payload_bytes: i64, max_row_work: i64 }
 
@@ -233,6 +234,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
   let scanline = EncodedRow { channels: 0, stride: 0, depth: 8, palette: None, key: transparency.Opaque };
   let chunks = PaletteChunks { colors: [], alpha: [], has_alpha: false, color_type: 0, key: transparency.Opaque };
   let header = false;
+  let interlaced = false;
   let data_seen = false;
   let data_closed = false;
   let compressed: u8[] = [];
@@ -286,7 +288,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
       let format = if (channels == 2 || channels == 4) { pixels.RGBA8 } else { pixels.RGB8 };
       let depth = input[body + 8] as i32;
       let packed_gray = channels == 1 && (depth == 1 || depth == 2 || depth == 4);
-      if (!packed_gray && depth != 8 || input[body + 10] != 0 || input[body + 11] != 0 || input[body + 12] != 0) {
+      if (!packed_gray && depth != 8 || input[body + 10] != 0 || input[body + 11] != 0 || input[body + 12] > 1) {
         return Err(PngError.Unsupported);
       }
       let Some(stride) = w as i32 *? pixels.channels(format) else {
@@ -295,6 +297,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
       layout = match (pixels.checked_layout(w as i32, h as i32, stride, format, limits)) { Ok(v) => v, Err(_) => { return Err(PngError.Limit); } };
       let wire_stride = (w as i64 * (channels as i64) * (depth as i64) + 7i64) / 8i64;
       scanline = EncodedRow { channels: channels, stride: wire_stride as i32, depth: depth, palette: None, key: transparency.Opaque };
+      interlaced = input[body + 12] == 1;
       header = true;
     } else if (kind == CHUNK_PLTE || kind == CHUNK_TRNS) {
       chunks = palette_chunk(chunks, kind, input[body:end], data_seen, scanline.depth)?;
@@ -338,6 +341,15 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
     scanline = EncodedRow { ...scanline, palette: Some(table) };
   }
   scanline = EncodedRow { ...scanline, key: chunks.key };
+  return finish_prepare(layout, scanline, compressed, interlaced, limits);
+}
+
+function finish_prepare(layout: pixels.Layout, scanline: EncodedRow, compressed: u8[], interlaced: boolean, limits: pixels.Limits): Result[Prepared, PngError] {
+  if (interlaced) {
+    let maximum = if (limits.max_bytes < 67108864) { limits.max_bytes } else { 67108864 };
+    let passes = match (adam7.plan(layout.width, layout.height, scanline.channels * scanline.depth, maximum)) { Ok(v) => v, Err(_) => { return Err(PngError.Limit); } };
+    return Ok(Prepared { layout: layout, scanline: scanline, compressed: compressed, filtered_bytes: passes.bytes, passes: Some(passes) });
+  }
   let Some(filtered_size) = scanline.stride +? 1 else {
     return Err(PngError.Limit);
   };
@@ -347,7 +359,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
   if (total > limits.max_bytes || total > 67108864) {
     return Err(PngError.Limit);
   }
-  return Ok(Prepared { layout: layout, scanline: scanline, compressed: compressed, filtered_bytes: total });
+  return Ok(Prepared { layout: layout, scanline: scanline, compressed: compressed, filtered_bytes: total, passes: None });
 }
 
 function inflate_prepared(prepared: Prepared): Result[u8[], PngError] {
@@ -362,6 +374,9 @@ pub function decode(input: [u8], limits: pixels.Limits): Result[pixels.Image, Pn
   let prepared = prepare(input, limits)?;
   let layout = prepared.layout;
   let filtered = inflate_prepared(prepared)?;
+  if let Some(plan) = prepared.passes {
+    return reconstruct_adam7(filtered, prepared, plan);
+  }
   if (prepared.scanline.stride != layout.stride) {
     return reconstruct_expanded(filtered, prepared);
   }
@@ -428,7 +443,43 @@ function prepare_rows(input: [u8], limits: pixels.Limits, row_limits: RowLimits)
     || 2i64 * (input.len() as i64) > row_limits.max_payload_bytes) {
     return Err(DecoderBudget);
   }
-  return match (prepare(input, limits)) { Ok(v) => Ok(v), Err(e) => Err(DecoderCodec(e)) };
+  let prepared = match (prepare(input, limits)) { Ok(v) => v, Err(e) => { return Err(DecoderCodec(e)); } };
+  if let Some(_) = prepared.passes {
+    return Err(DecoderCodec(PngError.Unsupported));
+  }
+  return Ok(prepared);
+}
+
+function scatter_pass(own bytes: u8[], row: [u8], layout: pixels.Layout, pass: adam7.Pass, y: i32): u8[] {
+  let channels = pixels.channels(layout.format);
+  for x in 0..pass.width {
+    let at = (pass.y + y * pass.dy) * layout.stride + (pass.x + x * pass.dx) * channels;
+    for c in 0..channels {
+      bytes = bytes.with(at + c, row[x * channels + c]);
+    }
+  }
+  return bytes;
+}
+
+function reconstruct_adam7(filtered: [u8], prepared: Prepared, plan: adam7.Plan): Result[pixels.Image, PngError] {
+  let layout = prepared.layout;
+  let bytes = __alloc_u8(layout.bytes);
+  let never = (): boolean => false;
+  for pass in plan.passes {
+    if (pass.bytes != 0) {
+      let stride = pass.width * pixels.channels(layout.format);
+      let reduced = pixels.Layout { ...layout, width: pass.width, height: 1, stride: stride, bytes: stride };
+      let scanline = EncodedRow { ...prepared.scanline, stride: pass.stride };
+      let previous: u8[] = [];
+      let input = filtered[pass.offset:pass.offset + pass.bytes];
+      for y in 0..pass.height {
+        previous = match (unfilter_row(input, scanline, y, previous, never)) { Ok(v) => v, Err(_) => { return Err(PngError.Scanline); } };
+        let row = match (expanded_row(previous, reduced, scanline, never)) { Ok(v) => v, Err(_) => { return Err(PngError.Scanline); } };
+        bytes = scatter_pass(bytes, row, layout, pass, y);
+      }
+    }
+  }
+  return Ok(pixels.Image { layout: layout, data: bytes });
 }
 
 function plan_prepared(prepared: Prepared, input_bytes: i32, first: i32, count: i32, row_limits: RowLimits): Result[RowPlan, DecoderError] {
