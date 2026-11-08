@@ -126,8 +126,9 @@ pub function event(e: android.Event): Option[Change] {
 `MediaPlayer` keeps its listeners across `reset`, so `open` can play one stream after another.
 A failed reset prevents source and preparation calls.
 `open` rejects empty addresses, embedded NUL bytes, and addresses longer than 8192 UTF-8 bytes.
-`seek` rejects negative positions and uses the long API with `SEEK_CLOSEST`.
-Positions above the signed 32-bit range retain their value.
+`seek` uses the API 26 method with `SEEK_CLOSEST`.
+It rejects negative positions and positions above 2,147,483,647 milliseconds.
+Android clamps larger values internally, despite the Java long parameter.
 
 ```fern
 <<the player>>=
@@ -417,7 +418,7 @@ pub function seek(ctx: usize, p: Player, ms: i64): boolean {
     return false;
   }
   defer end(e);
-  if (ms < 0i64) {
+  if (ms < 0i64 || ms > 2147483647i64) {
     return false;
   }
   return call_void(e, p.obj, "seekTo", "(JI)V", [ms as usize, 3 as usize]);

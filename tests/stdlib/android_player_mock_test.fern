@@ -78,7 +78,7 @@ function operations(ctx: usize): i32 {
       return 207;
     }
   }
-  if (player.seek(ctx, p, -1i64) || !player.seek(ctx, p, 2147483648i64) || seek_time() != 2147483648i64) {
+  if (player.seek(ctx, p, -1i64) || player.seek(ctx, p, 2147483648i64) || !player.seek(ctx, p, 2147483647i64) || seek_time() != 2147483647i64) {
     return 208;
   }
   let before = opens();

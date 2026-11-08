@@ -43,7 +43,7 @@ It returns `None` before an anchor is available.
 The anchor is a platform estimate, without the clock rate or a physical output latency measurement.
 Each operation bounds its JNI references, so repeated position queries do not retain local Java references.
 A failed construction releases partial resources.
-Long seeks retain their 64-bit position through JNI.
+Seek requests use the closest-frame mode and reject values above Android's signed 32-bit millisecond limit.
 
 ## Android packet path
 
