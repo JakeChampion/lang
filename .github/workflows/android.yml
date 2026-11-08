@@ -7,8 +7,9 @@ name: Android
 # settings screen, and no crash in logcat. It is the one gate that loads a
 # Fern library with Android's loader. examples/android/native is the
 # smallest app with no Java code, and examples/android/native/emulator_check.py
-# drives it on the same emulator, once with stored libraries and once with
-# the deflated libraries of -apk-compress.
+# drives it on the same emulator, once with stored libraries, once with
+# the deflated libraries of -apk-compress, and once built with -harden, so
+# the hardened library runs under Android's loader and app seccomp filter.
 # tests/android/dex is an app with @jni classes in the classes.dex that fern
 # -apk writes, and its check requires that ART loads, constructs and binds
 # them. tests/android/audio checks std/android/audio and a JNI call from
@@ -54,6 +55,7 @@ jobs:
           ./bin/fern -target x86-64-android -o build/android-stopwatch/zone tests/android/tz/zone.fern
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-native-compressed.apk -apk-compress -apk-package dev.fern.nativez -apk-label "Fern Native Z" examples/android/native/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-native-hardened.apk -harden -apk-package dev.fern.nativeh -apk-label "Fern Native H" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
@@ -69,6 +71,7 @@ jobs:
             build/android-stopwatch/zone
             build/android-stopwatch/fern-native.apk
             build/android-stopwatch/fern-native-compressed.apk
+            build/android-stopwatch/fern-native-hardened.apk
             build/android-stopwatch/fern-dextest.apk
             build/android-stopwatch/fern-audiotest.apk
             build/android-stopwatch/fern-focustest.apk
@@ -104,6 +107,7 @@ jobs:
             python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native mapped
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-compressed.apk dev.fern.nativez build/android-stopwatch/emulator/native-compressed extracted
+            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native-hardened.apk dev.fern.nativeh build/android-stopwatch/emulator/native-hardened mapped
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus

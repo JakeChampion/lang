@@ -52,7 +52,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Under `-harden`, an indirect call to an address that is not an address-taken function aborts | `TestSelfHostForwardEdgeCFI` | x86, arm64 |
 | Under `-harden`, a call through a typed function value to a function of another signature aborts | `TestSelfHostForwardEdgeCFI` | x86, arm64 |
 | Under `-harden` on x86-64, the program asks the kernel for the shadow stack and locks it | `TestSelfHostShadowStack` | x86; the fault is unverified on a host without the feature |
-| Under `-harden` on arm64, every function value's stub is a BTI landing pad and every framed function signs its return address | `TestSelfHostHardenArm64` | arm64 emulated; native unverified |
+| Under `-harden` on arm64, every function value's stub is a BTI landing pad and every framed function signs its return address | `TestSelfHostHardenArm64`, `TestSelfHostHardenAndroid` | arm64 emulated; native unverified |
 | No load segment is writable and executable, the stack is not executable, and a shared object's tables are read-only after relocation | `TestSelfHostImagePermissions`, `TestSharedObjectLayout` | x86, arm64 |
 | A `-pie` image loads at a base the kernel chooses | `TestSelfHostPIE` | x86, arm64 |
 | A build is reproducible across source roots, directories, locales, time zones and environments. A `-g` build is reproducible with `-remap-path-prefix` | `TestSelfHostReproducibleAcrossPaths`, `TestSelfHostRemapPathPrefix` | x86, arm64, Darwin and Android images, WASI component |

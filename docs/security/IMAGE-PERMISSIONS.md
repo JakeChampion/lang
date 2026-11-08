@@ -103,6 +103,6 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 ## Remaining limits
 
 - PIE and Android protection rounds the length down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages can protect fewer pages than a kernel with 4 KiB pages. Fixed-address images have a separate read-only load segment on each supported page size.
-- The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
+- The Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.
 - A `-shared` object built without `-harden` has no `PT_GNU_PROPERTY`, so a BTI host does not guard its pages. `TestSelfHostHardenShared` requires the header in the hardened arm64 object and not in the plain one.
