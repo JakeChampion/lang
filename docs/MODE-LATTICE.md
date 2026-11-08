@@ -1,19 +1,38 @@
 # The mode lattice — own / fip / views / @must_consume as one system
 
-Status: [research] design note (research issue **#5365**). **No surface change** —
-every existing spelling stays exactly as it is; no new syntax is
-proposed here. Thesis: Fern's four shipped ownership-adjacent
-surfaces — `own` consuming params (E050/E051), `fip` functions
-(E053/E068), the `T[]`-owned vs `[T]`/`str` view spelling
-(E063/E065), and `@must_consume` (E067) — are four points in one
-two-axis mode lattice (borrowed ≤ owned ≤ unique on the access
-axis; droppable vs must-consume on the orthogonal disposal axis),
-and their checkers are four spellings of one per-binding mode
-state machine. Writing the lattice down now means the goal-2
-Perceus/checker consolidation maintains ONE analysis with four
-reporting surfaces instead of four parallel analyses that drift.
+Status: [reference] the current contract below is normative.
+The historical study after it records research issue #5365.
 
-This study names historical or proposed source paths. The reference documentation identifies current files.
+## Current contract
+
+
+- Parameters borrow by default. An `own` parameter accepts an ownership transfer under E051.
+  E050 rejects use of that parameter after consumption.
+
+- A local `T[]` can initialize a local `[T]` when the element types match exactly.
+  This includes literals and temporary arrays. The view keeps the source storage alive.
+  Copy-on-write preserves the view contents when the owner changes.
+
+- An owned array can also lend a full-range view to a borrowed `[T]` parameter.
+  These rules do not permit a view to initialize an owned array.
+
+- E063 rejects a returned array view of function-local storage, including a view inside an aggregate.
+  E065 applies the corresponding rule to string views. E082 rejects closure captures that contain views.
+
+- `fip` and `fbip` impose allocation and reuse requirements under E053 and E068.
+
+- E067 requires at least one consumption on each checked path for a binding of a marked type.
+  An `own` parameter is an exempt sink. E050 restricts its later uses but does not require consumption inside the sink.
+  E067 alone does not prove exactly-once resource use.
+
+The case `local_array_views_keep_their_storage` covers local views and copy-on-write.
+[STR-VIEW-CONTRACT.md](STR-VIEW-CONTRACT.md) records the local-view decision.
+[MUST-CONSUME.md](MUST-CONSUME.md) defines the E067 checks and limits.
+
+## Historical study
+
+The remaining sections retain the earlier design analysis and implementation references.
+The current contract above takes precedence when an older implementation description differs.
 
 Reference design: Jane Street's OCaml mode extensions
 ("Oxidizing OCaml" — modes on bindings, orthogonal to types;
@@ -68,14 +87,10 @@ original "exactly-once obligations" — corrected there).
 The ordering is a submoding order read exactly as OxCaml's: a
 binding at a stronger mode can be *used* where a weaker one is
 expected, never the reverse (borrowed → owned is E051). The
-owned→borrowed direction is spelt out per surface: an owned
-`string` borrows into a `str` anywhere (`assignable`), and an
-owned `T[]` lends into a `[T]` at a PARAMETER (`argAssignable`
-/ `argOK`, #6798) — parameters are borrowed by default, so the
-callee never frees what it was lent, while an owning sink (let
-init, struct field, array element, return) keeps the strict
-rule because it would outlive the lend. `own` params are
-excluded from both: they consume.
+owned→borrowed direction permits an owned `string` as a `str`.
+An owned `T[]` also lends to a `[T]` parameter or local initializer.
+The element types must match exactly. The checker creates a full-range view.
+`own` parameters consume their arguments and do not use this borrowed-argument conversion.
 
 **Axis 2 — disposal obligation, per type, applied to owned
 values:**
@@ -290,12 +305,10 @@ its source's storage on every target and in both interpreters: a lent
 `T[]` box, or a `{data,len}` descriptor that points into the source
 (`ssabytes`, RC-DESIGN §1.5), so a write `reactor_wait` or
 `tcp_recv_into` makes into the array afterwards shows through it
-(#13188). A slice and `.as_bytes()` are views; a view
-and an owned `T[]` convert in neither direction (E003 / E002 /
-E043 / E038) except the owned-into-`[T]` argument lend, as in
-native (#9944). Still looser than native: method resolution does
-not separate the `slice` namespace from `Array`, and a generic
-`[T]` result that goes through substitution comes back owned.
+(#13188). A slice and `.as_bytes()` are views.
+An owned `T[]` can lend to a `[T]` parameter or local initializer.
+A view does not implicitly convert to an owned `T[]`.
+The earlier native/self-host distinction in this study is historical.
 
 ### 2.4 `@must_consume` — E067
 
@@ -315,9 +328,9 @@ the obligation — violations at the store site; loop bodies are
 opaque (mustconsume.go:27-32); overwriting an unconsumed
 binding violates (139). `own` params are exempt
 (mustconsume.go:53-55): an own-marked param declares the
-function the value's SINK — E067's caller-side at-least-once
-plus E050's sink-side at-most-once compose to exactly-once
-across the boundary (mustconsume.go:46-52).
+function the value's sink. E050 rejects use after consumption.
+The sink can leave the parameter unconsumed, so this boundary does not
+prove that the resource operation occurs exactly once.
 
 Guarantee: the forgotten-obligation bug class (unsent response,
 unclosed socket) is a compile error; RC still does all freeing —
@@ -325,9 +338,8 @@ zero runtime cost.
 
 **Discrepancy (reported):** `PLT-LANDSCAPE-2026.md` §2.2 calls
 this "exactly-once obligations". As implemented E067 is
-**at-least-once** (mustconsume.go:21-22, MUST-CONSUME.md
-"Deliberately deferred"); exactly-once exists only as the
-composition with `own` at a sink boundary.
+**at-least-once**. The `own` sink exemption also prevents an
+exactly-once guarantee across that boundary.
 
 Self-host status: **ported.** `must_consume_diags` + the `mc_*`
 family (checker.fern:2798-3277; reports at 2972, 3009, 3037,

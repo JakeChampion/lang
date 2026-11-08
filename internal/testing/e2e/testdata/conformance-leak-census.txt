@@ -212,6 +212,8 @@ closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
 codec_errors                                         0
+collection_edge_policies                            0
+comparison_float_laws                               0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
@@ -313,6 +315,7 @@ eq_struct_enum                                       0
 erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
+evaluation_order_effects                            0
 exit                                                 0
 exit_42                                              0
 exit_code                                            0
