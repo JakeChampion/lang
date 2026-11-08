@@ -123,6 +123,9 @@ jobs:
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
+      - name: Video codecs and Android MediaCodec ABI
+        if: matrix.group == 'rest'
+        run: scripts/test-video
       # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages, plus
       # the aarch64 binutils/gcc that internal/testing/e2eharness's native-linker
       # parity gate assembles against. Same lookup-and-skip shape as wasm:
