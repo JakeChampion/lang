@@ -46,11 +46,7 @@ pub struct VStruct { type_name: string, field_names: string[], field_values: Val
 
 pub struct VErr { msg: string, abort: boolean }
 
-pub struct VCellI { c: Cell[i32], is_char: boolean, is_byte: boolean, is_bool: boolean }
-
-pub struct VCellF { c: Cell[f64] }
-
-pub struct VCell { kind: string, ci: Cell[i32], cl: Cell[i64], cf: Cell[f64], cs: Cell[string], value: Option[interpheap.Root] }
+pub struct VCell { kind: string, root: interpheap.Root }
 
 pub struct VTry { box: Value }
 
@@ -65,7 +61,7 @@ pub struct VCellV { root: interpheap.Root }
 
 pub struct VLanes { width: i32, bits: i64[] }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VControl | VType | VHandle | VCellV;
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCell | VErr | VTry | VControl | VType | VHandle | VCellV;
 
 function v_int(n: i32): Value {
   return VInt { v: n, is_char: false, is_byte: false };
@@ -1142,68 +1138,21 @@ function (e: Env) lookup(name: string): Value {
 }
 
 function deref_cell(v: Value): Value {
-  match (v) {
-    VCellI(ci) => {
-      if (ci.is_bool) {
-        return VBool { v: ci.c.get() != 0 };
-      }
-      return VInt { v: ci.c.get(), is_char: ci.is_char, is_byte: ci.is_byte };
-    },
-    VCellF(cf) => {
-      return VFloat { v: cf.c.get() };
-    },
-    VCellV(cv) => {
-      return managed_cell_value(cv.root);
-    },
-    _ => {
-      return v;
-    }
+  if let VCellV(cv) = v {
+    return managed_cell_value(cv.root);
   }
+  return v;
 }
 
 function cell_slot_set(slot: Value, v: Value): boolean {
-  match (slot) {
-    VCellI(ci) => {
-      match (v) {
-        VInt(n) => {
-          ci.c.set(n.v);
-          return true;
-        },
-        VBool(bb) => {
-          if (bb.v) {
-            ci.c.set(1);
-          } else {
-            ci.c.set(0);
-          }
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
-    VCellF(cf) => {
-      match (v) {
-        VFloat(f) => {
-          cf.c.set(f.v);
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
-    VCellV(cv) => {
-      let encoded = encoded_value(v);
-      if (encoded.ok) {
-        interpheap.replace(cv.root, encoded.text, [], encoded.edges);
-      }
-      return encoded.ok;
-    },
-    _ => {
-      return false;
+  if let VCellV(cv) = slot {
+    let encoded = encoded_binding(v, cv.root.heap);
+    if (encoded.ok) {
+      interpheap.replace(cv.root, encoded.text, [], encoded.edges);
     }
+    return encoded.ok;
   }
+  return false;
 }
 
 function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
@@ -1347,62 +1296,57 @@ function cellify_env(own e: Env, names: string[]): Env {
 }
 
 function is_cell(v: Value): boolean {
-  match (v) {
-    VCellI(_) => {
-      return true;
-    },
-    VCellF(_) => {
-      return true;
-    },
-    VCellV(_) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
+  if let VCellV(_) = v {
+    return true;
   }
+  return false;
 }
 
+// Function captures reference managed slots. All captured values use the same representation.
 function cell_for(heap: interpheap.Heap, v: Value): Value {
-  match (v) {
-    VInt(n) => {
-      return VCellI { c: cell_new(n.v), is_char: n.is_char, is_byte: n.is_byte, is_bool: false };
-    },
-    VBool(bb) => {
-      if (bb.v) {
-        return VCellI { c: cell_new(1), is_char: false, is_byte: false, is_bool: true };
-      }
-      return VCellI { c: cell_new(0), is_char: false, is_byte: false, is_bool: true };
-    },
-    VFloat(f) => {
-      return VCellF { c: cell_new(f.v) };
-    },
-    VFunc(_) => {
-      return v;
-    },
-    _ => {
-      let encoded = encoded_value(v);
-      if (encoded.ok) {
-        return VCellV { root: interpheap.allocate(heap, encoded.text, [], encoded.edges) };
-      }
-      return v;
-    }
+  let encoded = encoded_binding(v, heap);
+  if (encoded.ok) {
+    return VCellV { root: interpheap.allocate(heap, encoded.text, [], encoded.edges) };
   }
+  return v;
 }
 
 function cell_value(heap: interpheap.Heap, v: Value): Value {
-  match (scalar_cell(v)) {
-    Some(sc) => {
-      return sc;
-    },
-    None => {}
-  }
   let encoded = encoded_value(v);
   if (encoded.ok) {
-    let c = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new(""), value: None };
-    return VCell { ...c, kind: "value", value: Some(interpheap.allocate(heap, encoded.text, [], encoded.edges)) };
+    let c = VCell { kind: cell_value_kind(v), root: interpheap.allocate(heap, encoded.text, [], encoded.edges) };
+    return c;
   }
   return v_err("Cell: the value holds a function or a cell, which E057 rejects");
+}
+
+function cell_value_kind(v: Value): string {
+  match (v) {
+    VInt(n) => {
+      return int_type_name(n);
+    },
+    VUint(_) => {
+      return "u32";
+    },
+    VBool(_) => {
+      return "bool";
+    },
+    VInt64(n) => {
+      return if (n.ptr) { "usize" } else if (n.unsigned) { "u64" } else { "i64" };
+    },
+    VFloat(_) => {
+      return "f64";
+    },
+    VFloat32(_) => {
+      return "f32";
+    },
+    VString(_) => {
+      return "string";
+    },
+    _ => {
+      return "value";
+    }
+  }
 }
 
 // The kind a cell of the declared element type holds, or "" for a type the
@@ -1430,71 +1374,16 @@ function cell_as_declared(c: VCell, type_name: string): Value {
   if (!cell_kind_numeric(want) || !cell_kind_numeric(c.kind) || want == c.kind) {
     return VCell { ...c };
   }
-  match (scalar_cell(coerce_int_width(cell_method(c, "get", []), want))) {
-    Some(sc) => {
-      return sc;
-    },
-    None => {
-      return VCell { ...c };
-    }
+  let encoded = encoded_value(coerce_int_width(managed_cell_value(c.root), want));
+  if (encoded.ok) {
+    interpheap.replace(c.root, encoded.text, [], encoded.edges);
+    return VCell { ...c, kind: want };
   }
+  return VCell { ...c };
 }
 
 function cell_kind_numeric(kind: string): boolean {
   return util.has_str(["i32", "u32", "u8", "i64", "u64", "usize", "f64", "f32"], kind);
-}
-
-// A cell of a scalar, held in the slot of its kind, or None for a value the
-// heap holds.
-function scalar_cell(v: Value): Option[Value] {
-  let c = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new(""), value: None };
-  match (v) {
-    VInt(n) => {
-      c.ci.set(n.v);
-      if (n.is_char) {
-        return Some(VCell { ...c, kind: "char" });
-      }
-      if (n.is_byte) {
-        return Some(VCell { ...c, kind: "u8" });
-      }
-      return Some(VCell { ...c, kind: "i32" });
-    },
-    VUint(n) => {
-      c.ci.set(n.v);
-      return Some(VCell { ...c, kind: "u32" });
-    },
-    VBool(bb) => {
-      if (bb.v) {
-        c.ci.set(1);
-      }
-      return Some(VCell { ...c, kind: "bool" });
-    },
-    VInt64(n) => {
-      c.cl.set(vint_as_i64(v));
-      if (n.ptr) {
-        return Some(VCell { ...c, kind: "usize" });
-      }
-      if (n.unsigned) {
-        return Some(VCell { ...c, kind: "u64" });
-      }
-      return Some(VCell { ...c, kind: "i64" });
-    },
-    VFloat(f) => {
-      c.cf.set(f.v);
-      return Some(VCell { ...c, kind: "f64" });
-    },
-    VFloat32(f) => {
-      c.cf.set(f.v);
-      return Some(VCell { ...c, kind: "f32" });
-    },
-    VString(sv) => {
-      c.cs.set(sv.v);
-      return Some(VCell { ...c, kind: "string" });
-    },
-    _ => {
-      return None;
-    }
-  }
 }
 
 function cell_hex_text(h: usize, bits: i64): void {
@@ -1565,10 +1454,10 @@ function cell_scalar_text(h: usize, v: Value): boolean {
   return true;
 }
 
-function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[]): (boolean, interpheap.Root[]) {
+function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: Option[interpheap.Heap]): (boolean, interpheap.Root[]) {
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
-    let (ok, next) = cell_any_text(h, v, edges);
+    let (ok, next) = cell_any_text(h, v, edges, heap);
     edges = next;
     if (!ok) {
       return (false, edges);
@@ -1577,7 +1466,37 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[]): (
   return (true, edges);
 }
 
-function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[]): (boolean, interpheap.Root[]) {
+function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: Option[interpheap.Heap]): (boolean, interpheap.Root[]) {
+  if let Some(owner) = heap {
+    match (v) {
+      VCellV(cv) => {
+        cell_bits_text(h, 118, edges.len() as i64);
+        return (true, edges.append(cv.root));
+      },
+      VCell(c) => {
+        cell_bits_text(h, 67, edges.len() as i64);
+        cell_name_text(h, c.kind);
+        return (true, edges.append(c.root));
+      },
+      VHandle(value) => {
+        let handle = interpheap.NativeHandle { reader: value.r, writer: value.w, directory: value.d };
+        let root = interpheap.allocate_handle(owner, handle);
+        cell_bits_text(h, 72, edges.len() as i64);
+        return (true, edges.append(root));
+      },
+      VFunc(f) => {
+        let captured = encoded_captures(f.captured_values, owner);
+        if (!captured.ok) {
+          return (false, edges);
+        }
+        let code = interpheap.ClosureCode { params: f.params, ret_type: f.ret_type, body: f.body, captured_names: f.captured_names, captured_types: f.captured_types, generic_name: f.generic_name };
+        let root = interpheap.allocate_closure(owner, code, captured.text, captured.edges);
+        cell_bits_text(h, 70, edges.len() as i64);
+        return (true, edges.append(root));
+      },
+      _ => {}
+    }
+  }
   match (v) {
     VArr(a) => {
       buf_push_byte(h, 97);
@@ -1591,19 +1510,19 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[]): (boole
       cell_name_text(h, a.elem);
       let store = a.store;
       edges = edges.append(store);
-      return cell_parts_text(h, a.items, edges);
+      return cell_parts_text(h, a.items, edges, heap);
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
-      return cell_parts_text(h, t.elements, edges);
+      return cell_parts_text(h, t.elements, edges, heap);
     },
     VMap(m) => {
       buf_push_byte(h, 109);
-      let (ok, next) = cell_parts_text(h, m.keys, edges);
+      let (ok, next) = cell_parts_text(h, m.keys, edges, heap);
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, next);
+      return cell_parts_text(h, m.values, next, heap);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -1617,7 +1536,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[]): (boole
       for name in st.field_names {
         cell_name_text(h, name);
       }
-      return cell_parts_text(h, st.field_values, edges);
+      return cell_parts_text(h, st.field_values, edges, heap);
     },
     _ => {
       return (cell_scalar_text(h, v), edges);
@@ -1627,14 +1546,34 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[]): (boole
 
 struct EncodedValue { ok: boolean, text: string, edges: interpheap.Root[] }
 
+// Public Cell values cannot contain functions or cells.
 function encoded_value(v: Value): EncodedValue {
+  return encoded_value_mode(v, None);
+}
+
+// Internal slots store captures through managed edges, which the collector can trace.
+function encoded_binding(v: Value, heap: interpheap.Heap): EncodedValue {
+  return encoded_value_mode(v, Some(heap));
+}
+
+function encoded_captures(values: Value[], heap: interpheap.Heap): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_any_text(h, v, []);
+  let (ok, edges) = cell_parts_text(h, values, [], Some(heap));
+  return encoded_buffer(h, ok, edges);
+}
+
+function encoded_value_mode(v: Value, heap: Option[interpheap.Heap]): EncodedValue {
+  let h = buf_new(64);
+  let (ok, edges) = cell_any_text(h, v, [], heap);
+  return encoded_buffer(h, ok, edges);
+}
+
+function encoded_buffer(h: usize, ok: boolean, edges: interpheap.Root[]): EncodedValue {
   if (!ok) {
     buf_free(h);
     return EncodedValue { ok: false, text: "", edges: [] };
   }
-  // Raw bytes: a string value may hold bytes that are not UTF-8.
+  // The payload can contain a byte string that is not UTF-8.
   let text = "";
   unsafe {
     text = string_from_bytes_unchecked(buf_take_bytes(h));
@@ -1717,6 +1656,28 @@ function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Val
   if (tag == 115) {
     return v_string(cell_name_value(s, at));
   }
+  if (tag == 118) {
+    return VCellV { root: edges[cell_hex_value(s, at) as i32] };
+  }
+  if (tag == 67) {
+    let root = edges[cell_hex_value(s, at) as i32];
+    return VCell { kind: cell_name_value(s, at), root: root };
+  }
+  if (tag == 72) {
+    let root = edges[cell_hex_value(s, at) as i32];
+    if let Some(handle) = interpheap.get(root).handle {
+      return VHandle { r: handle.reader, w: handle.writer, d: handle.directory };
+    }
+    return v_err("function capture has no handle");
+  }
+  if (tag == 70) {
+    let root = edges[cell_hex_value(s, at) as i32];
+    let payload = interpheap.get(root);
+    if let Some(code) = payload.closure {
+      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: cell_parts_value(payload.text, cell_new(0), interpheap.children(root)), captured_types: code.captured_types, generic_name: code.generic_name };
+    }
+    return v_err("function binding has no code");
+  }
   if (tag == 97) {
     let edge = cell_hex_value(s, at) as i32;
     let offset = cell_hex_value(s, at) as i32;
@@ -1750,60 +1711,16 @@ function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Val
 }
 
 function cell_set_value(c: VCell, v: Value): Value {
-  if (c.kind == "value") {
-    let encoded = encoded_value(v);
-    if (encoded.ok) {
-      match (c.value) {
-        Some(root) => {
-          interpheap.replace(root, encoded.text, [], encoded.edges);
-          return v_void();
-        },
-        None => {
-          return v_err("Cell: missing managed value");
-        }
-      }
-    }
+  let value = coerce_int_width(v, c.kind);
+  if (c.kind != "value" && cell_value_kind(value) != c.kind) {
+    return v_err("Cell.set: the value is not a " + c.kind);
+  }
+  let encoded = encoded_value(value);
+  if (!encoded.ok) {
     return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
-  if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char" || c.kind == "u8") && is_i32_arg(v)) {
-    c.ci.set(vint_bits(v));
-    return v_void();
-  }
-  if (c.kind == "bool") {
-    match (v) {
-      VBool(bb) => {
-        if (bb.v) {
-          c.ci.set(1);
-        } else {
-          c.ci.set(0);
-        }
-        return v_void();
-      },
-      _ => {}
-    }
-  }
-  if ((c.kind == "i64" || c.kind == "u64" || c.kind == "usize") && is_int_like(v)) {
-    c.cl.set(vint_as_i64(v));
-    return v_void();
-  }
-  if (c.kind == "f64" && is_float_like(v)) {
-    c.cf.set(vfloat_as_f64(v));
-    return v_void();
-  }
-  if (c.kind == "f32" && is_float_like(v)) {
-    c.cf.set(f32_round(vfloat_as_f64(v)));
-    return v_void();
-  }
-  if (c.kind == "string") {
-    match (v) {
-      VString(sv) => {
-        c.cs.set(sv.v);
-        return v_void();
-      },
-      _ => {}
-    }
-  }
-  return v_err("Cell.set: the value is not a " + c.kind);
+  interpheap.replace(c.root, encoded.text, [], encoded.edges);
+  return v_void();
 }
 
 function cell_method(c: VCell, name: string, args: Value[]): Value {
@@ -1811,47 +1728,7 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (args.len() != 0) {
       return v_err("Cell.get takes no arguments");
     }
-    if (c.kind == "i32") {
-      return v_int(c.ci.get());
-    }
-    if (c.kind == "u8") {
-      return v_byte(c.ci.get());
-    }
-    if (c.kind == "char") {
-      return VInt { v: c.ci.get(), is_char: true, is_byte: false };
-    }
-    if (c.kind == "u32") {
-      return v_uint(c.ci.get());
-    }
-    if (c.kind == "bool") {
-      return v_bool(c.ci.get() != 0);
-    }
-    if (c.kind == "i64") {
-      return v_int64(c.cl.get());
-    }
-    if (c.kind == "u64") {
-      return v_uint64(c.cl.get());
-    }
-    if (c.kind == "usize") {
-      return v_usize(c.cl.get());
-    }
-    if (c.kind == "f64") {
-      return VFloat { v: c.cf.get() };
-    }
-    if (c.kind == "f32") {
-      return v_float32(c.cf.get());
-    }
-    if (c.kind == "value") {
-      match (c.value) {
-        Some(root) => {
-          return managed_cell_value(root);
-        },
-        None => {
-          return v_err("Cell: missing managed value");
-        }
-      }
-    }
-    return v_string(c.cs.get());
+    return managed_cell_value(c.root);
   }
   if (name == "set") {
     if (args.len() != 1) {
@@ -3160,7 +3037,7 @@ function call_host_net(name: string, args: Value[]): Value {
   if (util.has_str(["udp_sendto", "udp_sendto_bytes", "udp_sendmmsg"], name)) {
     return call_host_udp_send(name, args);
   }
-  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom"], name)) {
+  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_recvmmsg"], name)) {
     return call_host_udp(name, args);
   }
   if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
@@ -3180,6 +3057,37 @@ function call_host_udp_send(name: string, args: Value[]): Value {
     return v_int(udp_sendmmsg_by_sendto(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3)));
   }
   return v_int(udp_sendto_bytes(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
+}
+
+// udp_recvmmsg_by_recvfrom answers udp_recvmmsg with one message, read by
+// udp_recvfrom into the first slot of the buffer, because the pinned stage0
+// compiler that builds this interpreter does not know the builtin.
+function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i32[]): (i32, u8[], u8[], i32[]) {
+  let n = lens.len() / 3;
+  if (n == 0) {
+    return (0, buf, froms, lens);
+  }
+  let stride = buf.len() / n;
+  if (stride == 0) {
+    return (-22, buf, froms, lens);
+  }
+  let from = __alloc_u8(19);
+  let got = udp_recvfrom(sock, buf, from);
+  if (got < 0) {
+    return (got, buf, froms, lens);
+  }
+  if (got > stride) {
+    got = stride;
+  }
+  let out_froms = froms;
+  if (froms.len() >= 19) {
+    let k = 0;
+    while (k < 19) {
+      out_froms = out_froms.with(k, from[k]);
+      k += 1;
+    }
+  }
+  return (1, buf, out_froms, lens.with(0, got).with(1, 0).with(2, 0));
 }
 
 // udp_sendmmsg_by_sendto answers udp_sendmmsg with one udp_sendto_bytes per
@@ -3252,6 +3160,13 @@ function call_host_udp(name: string, args: Value[]): Value {
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
     arr_fill(arg_at(args, 2), bytes_as_i64s(from));
     return v_int(n);
+  }
+  if (name == "udp_recvmmsg") {
+    let r = udp_recvmmsg_by_recvfrom(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3));
+    arr_fill(arg_at(args, 1), bytes_as_i64s(r.1));
+    arr_fill(arg_at(args, 2), bytes_as_i64s(r.2));
+    arr_fill(arg_at(args, 3), i32s_as_i64s(r.3));
+    return v_int(r.0);
   }
   return v_int(udp_connect(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
 }
@@ -8624,12 +8539,6 @@ function value_eq(a: Value, b: Value): boolean {
           return false;
         }
       }
-    },
-    VCellI(_) => {
-      return false;
-    },
-    VCellF(_) => {
-      return false;
     },
     VCellV(_) => {
       return false;

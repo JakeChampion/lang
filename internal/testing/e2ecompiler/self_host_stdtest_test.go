@@ -88,6 +88,8 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// The full lossless reference corpus uses compiled gates. Exact ALAC smoke stays here.
+	"alac": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
 	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
 	"vorbis_file": true, "vorbis_input": true,
@@ -339,6 +341,9 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_compress", langSrcAbs(t, "tests/stdlib/http_compress_test.fern"), ""},
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
+		{"alac", langSrcAbs(t, "tests/stdlib/alac_test.fern"), ""},
+		{"alac_boundary", langSrcAbs(t, "tests/stdlib/alac_boundary_test.fern"), ""},
+		{"alac_smoke", langSrcAbs(t, "tests/stdlib/alac_smoke_test.fern"), ""},
 		{"vorbis_file", langSrcAbs(t, "tests/stdlib/vorbis_file_test.fern"), ""},
 		{"vorbis_file_boundary", langSrcAbs(t, "tests/stdlib/vorbis_file_boundary_test.fern"), ""},
 		{"vorbis_file_smoke", langSrcAbs(t, "tests/stdlib/vorbis_file_smoke_test.fern"), ""},
@@ -567,6 +572,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"tls_record", langSrcAbs(t, "tests/stdlib/tls_record_test.fern"), ""},
 		{"tls_roots", langSrcAbs(t, "tests/stdlib/tls_roots_test.fern"), ""},
 		{"tls_server", langSrcAbs(t, "tests/stdlib/tls_server_test.fern"), ""},
+		{"tls_tls12", langSrcAbs(t, "tests/stdlib/tls12_test.fern"), ""},
 		{"tls_verify", langSrcAbs(t, "tests/stdlib/tls_verify_test.fern"), ""},
 		{"tls_x509", langSrcAbs(t, "tests/stdlib/tls_x509_test.fern"), ""},
 		{"hash_checksums", langSrcAbs(t, "tests/stdlib/hash_checksums_test.fern"), ""},

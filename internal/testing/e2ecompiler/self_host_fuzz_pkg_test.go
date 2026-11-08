@@ -17,10 +17,12 @@ import (
 // archive an index names are inputs an attacker controls. Each reader
 // refuses foreign bytes with a message, so the one accepted outcome is exit
 // 0 with the reader's summary; a signal, a hang or a budget breach fails
-// the input.
+// the input. The literate targets share the harness.
 
-func fuzzPkgReader(f *testing.F, reader string, seeds [][]byte) {
-	driver := fuzzDriver(f, "pkg_fuzz_run")
+// fuzzReader feeds each input as a file to one reader of a driver, and
+// accepts exit 0 with a summary that opens with the reader's name.
+func fuzzReader(f *testing.F, driverName, reader string, seeds [][]byte) {
+	driver := fuzzDriver(f, driverName)
 	for _, seed := range seeds {
 		f.Add(seed)
 	}
@@ -34,7 +36,7 @@ func fuzzPkgReader(f *testing.F, reader string, seeds [][]byte) {
 			t.Fatal(err)
 		}
 		r := runUnderBudget(exec.Command(driver, reader, path))
-		if failOutsideBudget(t, "pkg_fuzz_run "+reader, r, input) {
+		if failOutsideBudget(t, driverName+" "+reader, r, input) {
 			return
 		}
 		if r.code != 0 || !strings.HasPrefix(r.stdout, reader+" ") {
@@ -46,7 +48,7 @@ func fuzzPkgReader(f *testing.F, reader string, seeds [][]byte) {
 // FuzzSelfHostToml feeds hostile bytes to the fern.toml reader and its
 // diagnostic formatter.
 func FuzzSelfHostToml(f *testing.F) {
-	fuzzPkgReader(f, "toml", [][]byte{
+	fuzzReader(f, "pkg_fuzz_run", "toml", [][]byte{
 		[]byte("[package]\nname = \"app\"\n"),
 		[]byte("[package]\nname = \"app\"\nindex = \"reg/index.toml\"\nindex_key = \"ed25519:" + strings.Repeat("a", 64) + "\"\n[dependencies]\nfoo = \"1.1.0\"\nbar = { path = \"../bar\" }\n"),
 		[]byte("[workspace]\nmembers = [\"a\", \"b\"]\n[exclude]\nfoo = \"1.0.0\"\n"),
@@ -65,7 +67,7 @@ func FuzzSelfHostToml(f *testing.F) {
 // FuzzSelfHostLock feeds hostile bytes to the fern.lock reader.
 func FuzzSelfHostLock(f *testing.F) {
 	entry := "[[package]]\nname = \"lib\"\nversion = \"1.2.3\"\n"
-	fuzzPkgReader(f, "lock", [][]byte{
+	fuzzReader(f, "pkg_fuzz_run", "lock", [][]byte{
 		[]byte(entry + "path = \"../lib\"\n"),
 		[]byte("index_serial = 42\n" + entry + "url = \"https://example.invalid/lib\"\nhash = \"sha256:" + strings.Repeat("a", 64) + "\"\n"),
 		[]byte(entry),
@@ -80,7 +82,7 @@ func FuzzSelfHostLock(f *testing.F) {
 
 // FuzzSelfHostIndex feeds hostile bytes to the registry index reader.
 func FuzzSelfHostIndex(f *testing.F) {
-	fuzzPkgReader(f, "index", [][]byte{
+	fuzzReader(f, "pkg_fuzz_run", "index", [][]byte{
 		[]byte("[foo]\n\"1.0.0\" = { path = \"foo-1.0.0\" }\n\"1.1.0\" = { path = \"foo-1.1.0\" }\n"),
 		[]byte("serial = 7\n[foo]\n\"1.0.0\" = { url = \"https://example.invalid/foo.tar.gz\", hash = \"sha256:" + strings.Repeat("b", 64) + "\" }\n"),
 		[]byte("[foo]\n\"1.0.0\" = { path = \"a\", url = \"b\" }\n"),
@@ -126,7 +128,7 @@ func FuzzSelfHostArchive(f *testing.F) {
 	escape := fuzzTarGz(f, map[string]string{"../x": "oops"})
 	long := fuzzTarGz(f, map[string]string{strings.Repeat("a", 150) + "/b.fern": "x"})
 	truncated := good[:len(good)/2]
-	fuzzPkgReader(f, "archive", [][]byte{
+	fuzzReader(f, "pkg_fuzz_run", "archive", [][]byte{
 		good,
 		escape,
 		long,

@@ -170,7 +170,7 @@ function verification(events: handshake.Event[]): handshake.Verification {
       }
     }
   }
-  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [] };
+  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false };
 }
 
 function signing(events: handshake.Event[]): handshake.Signing {

@@ -389,6 +389,9 @@ pub function raw_array_args(name: string): i32[] {
   if (name == "udp_recvfrom") {
     return [1, 2];
   }
+  if (name == "udp_recvmmsg") {
+    return [1, 2, 3];
+  }
   return [];
 }
 

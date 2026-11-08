@@ -3,8 +3,8 @@
 # compiler's std/envflag value_on and Go's internal/envflag on what turns one on.
 # shellcheck shell=bash
 
-# fern_flag NAME [UNSET] — succeeds when the variable NAME is on: "", 0, false
-# and off, in any case, are off, anything else is on. An unset NAME is off,
+# fern_flag NAME [UNSET] — succeeds when the variable NAME is on: "", 0, false,
+# off and no, in any case, are off, anything else is on. An unset NAME is off,
 # or on when UNSET is 1.
 fern_flag() {
   if [ -z "${!1+set}" ]; then
@@ -12,7 +12,7 @@ fern_flag() {
     return
   fi
   case "$(printf '%s' "${!1}" | tr '[:upper:]' '[:lower:]')" in
-    '' | 0 | false | off) return 1 ;;
+    '' | 0 | false | off | no) return 1 ;;
   esac
   return 0
 }

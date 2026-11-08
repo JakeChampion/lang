@@ -20,7 +20,8 @@ Errors consume the decoder. Create a new decoder after an error.
 
 ```fern
 <<*>>=
-// This module decodes incremental Ogg Vorbis streams to PCM.
+// Incremental Ogg Vorbis playback with bounded packet storage.
+
 import "std/audio/ogg";
 import "std/audio/pcm";
 import "std/audio/wire";

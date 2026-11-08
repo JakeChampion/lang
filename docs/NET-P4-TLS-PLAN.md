@@ -1,6 +1,7 @@
 # Net P4: TLS 1.3 — the plan
 
-Status: [record] done; every slice landed, with the QUIC hooks and kTLS after them, and #9858 is closed.
+Status: [record] done; every slice landed, with the QUIC hooks and kTLS after them, and #9858 is closed. The
+client later learned TLS 1.2 for servers that do not speak TLS 1.3 (#14673, `std/tls/tls12`).
 
 How #9858 is built, in the order it lands. One PR per slice. Each slice
 names its gate, and every primitive runs its vectors through the

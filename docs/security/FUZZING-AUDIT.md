@@ -23,6 +23,8 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostLock` | the lock reader reads a `fern.lock` | `compiler/drivers/pkg_fuzz_run.fern lock` | the same |
 | `FuzzSelfHostIndex` | the index reader reads a registry `index.toml` | `compiler/drivers/pkg_fuzz_run.fern index` | the same |
 | `FuzzSelfHostArchive` | the unpacker reads a package archive: the gunzip, the tar reader and the entry name rules | `compiler/drivers/pkg_fuzz_run.fern archive` | the same |
+| `FuzzSelfHostTangle` | the chunk grammar, the tangle of the root chunk and of the file roots, and the unused-chunk lint read a `.fern.md` document | `compiler/drivers/literate_fuzz_run.fern tangle` | the same |
+| `FuzzSelfHostWeave` | the weave reads a `.fern.md` document and writes text and HTML | `compiler/drivers/literate_fuzz_run.fern weave` | the same |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -32,6 +34,15 @@ Unknown kinds and unknown callees are part of the input space, because the verif
 The package readers take the bytes an attacker controls when a program depends on a package: the manifest and lock of a dependency, the index a manifest names, and the archive the index points at.
 Each reader refuses a malformed input with a message, so the one accepted outcome is exit 0 with the reader's summary.
 The archive target unpacks into a directory of its own under the input's directory. Its seeds carry an entry that escapes the package directory, a long name and a truncated archive.
+
+A package can ship `.fern.md` modules, so the literate reader takes attacker bytes too.
+The tangle target runs four readers over one document and prints their counts.
+They are the chunk grammar, the tangle of the root chunk, the tangle of the file roots and the unused-chunk lint.
+The weave target writes the document as text and as HTML.
+
+The seeds carry an undefined reference, two chunks that reference each other, and a chunk that references itself.
+They also carry an escaped reference, an unterminated fence, an empty chunk name and a `file=` path that leaves the package directory.
+Two more hold bytes that are not UTF-8 and a root chunk of three thousand references.
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
@@ -59,6 +70,13 @@ The package readers ran 45 seconds each on 2026-11-08 on the same kind of host, 
 | `FuzzSelfHostIndex` | 31382 | 0 | none |
 | `FuzzSelfHostArchive` | 56102 | 2 | none |
 
+The literate readers ran 45 seconds each on 2026-11-08 on the same kind of host, after their seeds passed.
+
+| Target | Executions | New inputs kept | Findings |
+|---|---|---|---|
+| `FuzzSelfHostTangle` | 73799 | 0 | none |
+| `FuzzSelfHostWeave` | 53269 | 1 | none |
+
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
 
@@ -71,9 +89,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the eight targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the ten targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the eight targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the ten targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits

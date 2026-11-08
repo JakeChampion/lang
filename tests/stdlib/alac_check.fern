@@ -1,0 +1,47 @@
+import "std/audio/alac";
+import "std/audio/pcm";
+import "aac_kernel_check" as ref;
+
+pub function run(configuration: [u8], packets: [u8], expected: [u8], rate: i32, channels: i32, depth: i32, frames: i32, reuse: boolean): Result[void, string] {
+  let decoder = match (alac.create(configuration, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err("configuration: " + e.message()); } };
+  let info = decoder.information();
+  if (info.format.sample_rate != rate || info.format.channels != channels || info.format.bits_per_sample != depth) {
+    return Err("format information");
+  }
+  let capacity = info.frame_length * channels;
+  let output = pcm.zeros(capacity + 1).with(capacity, 1234567);
+  let at = 4;
+  let sample = 0;
+  for _ in 0..ref.word(packets, 0) {
+    let bytes = ref.word(packets, at);
+    at += 4;
+    let predicted = match (decoder.packet_frames(packets[at:at + bytes], pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err("frame preflight: " + e.message()); } };
+    let (next, frame) = match (if (reuse) { decoder.decode_packet_into(packets[at:at + bytes], output, pcm.default_limits()) } else { decoder.decode_packet(packets[at:at + bytes], pcm.default_limits()) }) {
+      Ok(value) => value, Err(e) => { return Err("packet: " + e.message()); },
+    };
+    decoder = next;
+    at += bytes;
+    let count = frame.frames * channels;
+    if (predicted != frame.frames || !reuse && frame.samples.len() != count) {
+      return Err("frame preflight or exact output allocation");
+    }
+    if (frame.bytes_read != bytes || frame.format.sample_rate != rate || frame.format.channels != channels || frame.format.bits_per_sample != depth || count > frame.samples.len() || sample + count > expected.len() / 4) {
+      return Err("packet extent or format");
+    }
+    for i in 0..count {
+      let golden = ref.word(expected, 4 * (sample + i));
+      if (frame.samples[i] != golden) {
+        return Err("sample " + (sample + i).to_string() + ": actual " + frame.samples[i].to_string() + ", expected " + golden.to_string());
+      }
+    }
+    if (reuse && (frame.samples.len() != capacity + 1 || frame.samples[capacity] != 1234567)) {
+      return Err("output buffer suffix");
+    }
+    sample += count;
+    output = frame.samples;
+  }
+  if (sample != frames * channels || sample * 4 != expected.len() || at != packets.len()) {
+    return Err("complete PCM or packet extent");
+  }
+  return Ok(());
+}

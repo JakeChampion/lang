@@ -291,6 +291,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "udp_sendto", capability: "tcp" },
     Gate { builtin: "udp_sendto_bytes", capability: "tcp" },
     Gate { builtin: "udp_sendmmsg", capability: "mmsg" },
+    Gate { builtin: "udp_recvmmsg", capability: "mmsg" },
     Gate { builtin: "udp_recvfrom", capability: "tcp" },
     Gate { builtin: "tcp_connect_with", capability: "tcp" },
     Gate { builtin: "unix_listen", capability: "unix" },

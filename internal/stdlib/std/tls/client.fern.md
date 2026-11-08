@@ -1,10 +1,12 @@
-# TLS 1.3 client sessions
+# TLS client sessions
 
-This module provides TLS 1.3 client sessions and connections.
+This module provides TLS client sessions and connections.
 
 ## Model
 
 Client configuration supplies a server name, trust roots, ALPN protocols, and optional resumption or client identity. A session advances the TLS handshake and application records.
+
+The client offers TLS 1.3 and TLS 1.2. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets and sends no client certificate. It cannot be saved, offloaded to the kernel or rekeyed.
 
 ## Contracts
 
@@ -69,7 +71,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module provides TLS 1.3 client sessions and connections.
+// This module provides TLS client sessions and connections.
 ```
 
 ### `dependencies 2`
@@ -159,7 +161,7 @@ function __hello(config: Config): handshake.ClientConfig {
   if (__is_address(sni)) {
     sni = "";
   }
-  let hc = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn };
+  let hc = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn, tls12: true };
   match (config.identity) {
     Some(id) => {
       return handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
@@ -490,7 +492,11 @@ function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Re
 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError] {
   match (verify.server(v.chain, s.roots, s.name, now)) {
     Ok(leaf) => {
-      if (!verify.signed(leaf, v.scheme, v.signed, v.signature)) {
+      let ok = verify.signed(leaf, v.scheme, v.signed, v.signature);
+      if (v.tls12) {
+        ok = verify.signed12(leaf, v.scheme, v.signed, v.signature);
+      }
+      if (!ok) {
         return Err(tls.SignatureInvalid);
       }
       return Ok(());
