@@ -10,6 +10,29 @@ This module defines comparison and display traits.
 
 The comparison helpers use these traits rather than a representation-specific comparison. Array extrema return an option because an empty array has no element.
 
+### Equality, order, and hash laws
+
+An `Eq` implementation defines an equivalence relation.
+For all values, equality must be reflexive, symmetric, and transitive.
+
+An `Ord` implementation defines a total order.
+The sign of `a.cmp(b)` must reverse when the operands reverse.
+Comparison must be transitive, and `a.cmp(a)` must return zero.
+Only the sign of a nonzero result matters.
+When a type implements both traits, `a.eq(b)` must equal `a.cmp(b) == 0`.
+
+When a type implements `Eq` and `Hash`, equal values must have equal hashes.
+Unequal values can share a hash. A hash does not identify a value uniquely.
+These laws apply to custom implementations and comparison callbacks.
+The compiler checks method signatures but does not prove these laws.
+
+For `f32` and `f64`, `Eq` treats all NaNs as equal.
+`Ord` places that NaN class after every number, including positive infinity.
+Positive and negative zero compare equal. Their hashes are equal.
+
+All NaNs also share a hash, regardless of sign or payload.
+These collection traits intentionally differ from IEEE operators: `NaN == NaN` remains false.
+
 ## Executable example
 
 ```fern test name=core-cmp-example
