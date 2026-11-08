@@ -349,7 +349,7 @@ pub function op_alloc_u8(): Op {
 }
 
 pub function op_alloc_uninit(): Op {
-  return Op { ...op0(515), width: 8 };
+  return Op { ...op0(K_ALLOC_UNINIT), width: 8 };
 }
 
 pub function op_alloc_slots(width: i32): Op {
@@ -769,36 +769,48 @@ pub function op_pipe(): Op {
   return op0(K_PIPE);
 }
 
+pub const K_OPEN_DIR: i32 = 420;
+
 pub function op_open_dir(): Op {
-  return op0(420);
+  return op0(K_OPEN_DIR);
 }
+
+pub const K_DIR_OPEN: i32 = 421;
 
 pub function op_dir_open(): Op {
-  return op0(421);
+  return op0(K_DIR_OPEN);
 }
 
+pub const K_DIR_ENTRIES: i32 = 422;
+
 pub function op_dir_entries(): Op {
-  return op0(422);
+  return op0(K_DIR_ENTRIES);
 }
 
 pub function op_dir_stat(follow: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+pub const K_DIR_ACCESS: i32 = 424;
+
 pub function op_dir_access(): Op {
-  return op0(424);
+  return op0(K_DIR_ACCESS);
 }
 
 pub function op_dir_unlink(dir: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: 425, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+pub const K_DIR_CHMOD: i32 = 426;
+
 pub function op_dir_chmod(): Op {
-  return op0(426);
+  return op0(K_DIR_CHMOD);
 }
 
+pub const K_DIR_CHOWN: i32 = 427;
+
 pub function op_dir_chown(): Op {
-  return op0(427);
+  return op0(K_DIR_CHOWN);
 }
 
 pub function op_dir_open_file(write: i32): Op {
@@ -997,8 +1009,10 @@ pub function op_rlimit_nofile(): Op {
   return op0(K_RLIMIT_NOFILE);
 }
 
+pub const K_WASM_TIMER_POLLABLE: i32 = 148;
+
 pub function op_wasm_timer_pollable(): Op {
-  return op0(148);
+  return op0(K_WASM_TIMER_POLLABLE);
 }
 
 pub function op_wasm_pollable_drop(): Op {
@@ -1038,7 +1052,7 @@ pub function op_tcp_accept_with(): Op {
 }
 
 pub function op_udp_sendmmsg(): Op {
-  return op0(516);
+  return op0(K_UDP_SENDMMSG);
 }
 
 pub function op_tcp_local_port(): Op {
@@ -1221,8 +1235,10 @@ pub function op_send_adopt(): Op {
 // send_root takes the box under it from its owner and leaves its address.
 // It emits nothing: the word is the box, and the move is what the certifier
 // counts.
+pub const K_SEND_ROOT: i32 = 497;
+
 pub function op_send_root(): Op {
-  return op0(497);
+  return op0(K_SEND_ROOT);
 }
 
 // The worker ops, 491 to 497, by name and by id.
@@ -1484,20 +1500,26 @@ pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op {
   return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
+pub const K_OPT_TAG: i32 = 122;
+
 pub function op_opt_tag(): Op {
-  return op0(122);
+  return op0(K_OPT_TAG);
 }
 
+pub const K_OPT_PAYLOAD: i32 = 123;
+
 pub function op_opt_payload(): Op {
-  return op0(123);
+  return op0(K_OPT_PAYLOAD);
 }
 
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
   return Op { source: 0, decl: -1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
+pub const K_OPT_SET_PAYLOAD: i32 = 124;
+
 pub function op_opt_set_payload(): Op {
-  return op0(124);
+  return op0(K_OPT_SET_PAYLOAD);
 }
 
 pub function op_print_str(): Op {
@@ -1808,8 +1830,10 @@ pub function op_buf_push_bytes_range(): Op {
   return op0(K_BUF_PUSH_BYTES_RANGE);
 }
 
+pub const K_BUF_FREE: i32 = 297;
+
 pub function op_buf_free(): Op {
-  return op0(297);
+  return op0(K_BUF_FREE);
 }
 
 pub function op_buf_clear(): Op {
@@ -2239,11 +2263,11 @@ pub function op_if(blocktype: i32): Op {
 }
 
 pub function op_else(): Op {
-  return op0(155);
+  return op0(K_ELSE);
 }
 
 pub function op_end(): Op {
-  return op0(156);
+  return op0(K_END);
 }
 
 pub function op_br(depth: i32): Op {
@@ -2255,11 +2279,11 @@ pub function op_brif(depth: i32): Op {
 }
 
 pub function op_drop(): Op {
-  return op0(159);
+  return op0(K_DROP);
 }
 
 pub function op_return(): Op {
-  return op0(160);
+  return op0(K_RETURN);
 }
 
 pub const K_CONST_I32: i32 = 1;

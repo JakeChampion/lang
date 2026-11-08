@@ -18,7 +18,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_ok=162\n" +
 		"bijection_failures=0\n" +
 		"retired=26\n" +
-		"ext_ok=302\n" +
+		"ext_ok=303\n" +
 		"ext_failures=0\n" +
 		"neg_ok=15\n" +
 		"neg_failures=0\n" +
@@ -33,7 +33,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=261 bad=0\n"
+		"tag_consistency ok=262 bad=0\n"
 
 	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
 	if err != nil {
@@ -67,7 +67,11 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.|counted\()?op0\((\d+)\)`)
+	consts := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^pub const (K_\w+): i32 = (\d+);`).FindAllStringSubmatch(string(src), -1) {
+		consts[m[1]] = m[2]
+	}
+	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.|counted\()?op0\((K_\w+)\)`)
 	matches := ctor.FindAllStringSubmatch(string(src), -1)
 	if len(matches) < 200 {
 		t.Fatalf("found %d op0 constructors in ir.fern, want at least 200 — the pattern no longer matches", len(matches))
@@ -79,8 +83,8 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 			t.Errorf("op_%s: no kind %q in ir-kind-ids.txt", m[1], kind)
 			continue
 		}
-		if m[2] != want {
-			t.Errorf("op_%s builds tag %s, but %s is %s", m[1], m[2], kind, want)
+		if consts[m[2]] != want {
+			t.Errorf("op_%s builds tag %s = %q, but %s is %s", m[1], m[2], consts[m[2]], kind, want)
 		}
 	}
 	if n := len(regexp.MustCompile(`\bop0\(`).FindAllString(string(src), -1)); n != len(matches)+1 {
