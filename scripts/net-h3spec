@@ -61,7 +61,8 @@ echo "== h3spec $H3SPEC_VERSION, $ARCH, HTTP/3 on port $port"
 status=0
 "$h3spec" -n -t 5000 localhost "$port" > "$work/h3spec.log" 2>&1 || status=$?
 cat "$work/h3spec.log"
-summary="$(grep -E '^[0-9]+ examples?, [0-9]+ failures?' "$work/h3spec.log" | tail -1)"
+# hspec colours the summary line; the escape sequences go before the counts are read.
+summary="$(sed 's/\x1b\[[0-9;]*m//g' "$work/h3spec.log" | grep -E '^[0-9]+ examples?, [0-9]+ failures?' | tail -1)"
 examples="$(echo "$summary" | sed -n 's/^\([0-9]*\) example.*/\1/p')"
 failed="$(echo "$summary" | sed -n 's/.* \([0-9]*\) failure.*/\1/p')"
 pending="$(echo "$summary" | sed -n 's/.* \([0-9]*\) pending.*/\1/p')"
