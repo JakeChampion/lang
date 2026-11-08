@@ -4602,6 +4602,8 @@ function validates_utf8(name: string): boolean {
     || name == "uname_field" || name == "mounts";
 }
 
+// fern-lint: allow cyclomatic-complexity
+// A table: one arm per runtime helper that needs another.
 function direct_need_deps(name: string): string[] {
   if (name == "utf8_valid") {
     let dutf8: string[] = ["utf8_blocks"];

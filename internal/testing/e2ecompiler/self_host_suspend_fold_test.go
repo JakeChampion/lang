@@ -14,7 +14,8 @@ const suspendFoldProgram = `import "std/time";
 import "std/clock";
 import "std/async";
 
-function wait(): i32 {
+// Keep the suspension helper out of scan's guard-count measurement.
+@noinline function wait(): i32 {
   let none: i32[] = [];
   let woke: async.Wake = async.wait_any(none, Some(clock.instant().add(time.duration_millis(2 as i64))));
   return 0;
@@ -77,8 +78,7 @@ function main(): i32 {
 
 // A loop or an if with no suspension site in it is skipped whole on a rewind,
 // so the transform guards it once with the code around it and adds no guard
-// inside it. The old transform added 31 ifs to scan, 2 of them for each
-// construct; the fold adds 12.
+// inside it.
 func TestSelfHostSuspendSiteFreeConstructs(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
