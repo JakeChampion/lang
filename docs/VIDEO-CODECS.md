@@ -1,11 +1,11 @@
 # Video codecs
 
-Status: [reference] initial implementation, 2026-11-07.
+Status: [reference] native packets and Android media paths, 2026-11-08.
 
-The video APIs provide a native lossless codec and an Android platform decoder adapter.
+The video APIs provide a native lossless codec and Android platform codec adapters.
 They do not yet constitute a complete video player.
 
-| Format | Native Fern decode | Native Fern encode | Android platform adapter |
+| Format | Native Fern decode | Native Fern encode | Android platform decode and encode |
 | --- | --- | --- | --- |
 | QuickTime Animation, QTRLE | RGB24 and ARGB32 packets | RGB24 and ARGB32 packets | No |
 | H.264 / AVC | No | No | Yes, device dependent |
@@ -13,10 +13,16 @@ They do not yet constitute a complete video player.
 | VP8, VP9, AV1 | No | No | Yes, device dependent |
 | MPEG-2, MPEG-4 Part 2, H.263 | No | No | Yes, device dependent |
 
-The Android adapter delegates compressed video decode to MediaCodec.
-The platform selects the decoder. Hardware acceleration is not a guarantee.
+The Android adapter delegates compressed video decode and encode to MediaCodec.
+The capabilities module queries support for each complete request.
+Selection can prefer hardware, require hardware, require software, or preserve platform order.
+Hardware and software attributes come from Android API 29, without codec-name guesses.
+Earlier API levels report an unknown implementation.
+
+A supported format can still fail configuration because of device resources or codec defects.
 Codec, profile, level, bit depth, resolution, and HDR support depend on the device.
 The adapter does not bundle FFmpeg or another external codec library.
+
 The native QTRLE codec uses Fern on every target.
 
 ## Android packet path
@@ -66,10 +72,63 @@ A packet presentation timestamp is not an absolute release timestamp.
 The player must map presentation time to its playback clock.
 It must drain output through the EOS flag after input EOS.
 
-This work does not test a real Android device or emulator.
-The native ABI test uses a C test double, without a video decoder.
-It verifies configuration bytes, cleanup, input capacity, output metadata, EOS, flush, and release calls.
-A successful build or ABI test does not establish device codec support or playback performance.
+## Android discovery, export, and playback
+
+`std/android/video/capabilities` queries regular codecs through an attached JNI environment.
+Regular codecs exclude implementations that require secure or tunneled operation.
+Requests contain MIME, dimensions, direction, frame rate, bitrate, profile, level, and color format.
+Zero optional fields mean unknown or unspecified, rather than universal support.
+The result includes profile-level pairs, color formats, vendor attributes, and aliases.
+Candidate selection checks the exact request and excludes aliases and duplicate names.
+
+`open_selected` and `select_encoder` attempt candidates in policy order.
+They record each configuration failure and close the failed codec before the next attempt.
+`HardwareOnly` never silently selects software.
+`fallback_to_software` closes a failed decoder before it opens a replacement.
+The caller must restart at a sync sample with codec configuration.
+
+Android software codecs supply this fallback. Fern does not bundle a common-format software decoder.
+
+Byte-buffer encoders accept tightly packed I420 or NV12 frames with even dimensions.
+Surface encoders accept GPU or camera input through their `ANativeWindow`.
+Surface creation, surface EOS, and runtime bitrate or keyframe requests require API 26.
+Encoded output exposes timestamps, flags, format changes, backpressure, and EOS.
+The output format contains the configuration that the muxer needs.
+
+`std/android/video/muxer` writes MP4 or WebM to a writable, seekable descriptor.
+Tracks come from encoder output formats before muxer start.
+A live output view passes directly to the muxer without a Fern packet copy.
+The caller releases the codec buffer after that write.
+Codec configuration buffers do not become media samples.
+Container codec restrictions and sample order still apply.
+
+`std/android/video/extractor` reads platform-supported containers from an explicit file range.
+Its API 28 sample-size query checks limits before a write into a decoder input buffer.
+The extractor preserves the complete native track format, including codec and color metadata.
+It rejects encrypted and partial samples.
+
+DRM and adaptive network streams remain unsupported.
+
+`std/android/video/player` connects this extractor to a selected decoder and surface.
+Each nonblocking `tick` submits at most one input and obtains at most one output.
+It retains at most one pending output buffer.
+The presentation clock converts media microseconds to monotonic nanoseconds with checked arithmetic.
+Pause preserves the media position. Seek flushes buffers and restores configuration at a previous sync sample.
+
+The player discards preroll frames before the target timestamp.
+
+Runtime recovery closes the decoder and retries one software implementation policy.
+It restarts from a sync sample near the last scheduled frame.
+Hardware-only policy refuses software recovery.
+Counters report scheduled and discarded frames, including final frames that also carry EOS.
+
+The app owns the file descriptor and surface until player close.
+The player controls one unencrypted video track. Audio and A/V synchronization remain future work.
+
+Platform color metadata passes through the extractor and codec formats.
+Missing identifiers remain unspecified. The app must select a suitable display surface and HDR mode.
+This adapter does not implement tone mapping, color conversion, or HDR display qualification.
+
 
 ## IVF packets
 
@@ -83,7 +142,8 @@ Timestamp conversion uses the declared rational timebase and checked arithmetic.
 
 IVF support does not establish VP8, VP9, or AV1 software decode support.
 AV1 temporal units can require further packet handling for a particular platform decoder.
-MP4, MOV, Matroska, WebM, MPEG-TS, and fragmented streams still need demuxers.
+Android MediaExtractor supplies its supported containers through the Android adapter.
+Native Fern demuxers for MP4, MOV, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
 
 ## Native QTRLE
 
@@ -141,6 +201,7 @@ scripts/bench-video
 ```
 
 The checked-in vectors need no external codec during normal native or WASI tests.
+
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 
 The widths cross literal, repeat, and skip boundaries.
@@ -153,7 +214,30 @@ The malformed-input cases cover packet truncation, runs, skips, dimensions, outp
 It also builds ARM64 Android shared libraries.
 On Linux, it executes the MediaCodec ABI test through a shared library for the host architecture.
 The unit workflow runs this script on x86-64 and ARM64 hosts.
-The compiler differential suite includes the native video tests.
+
+The compiler differential suite includes the native video and codec-policy tests.
+The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
+They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
+These mocks do not decode video.
+
+The Android workflow builds `tests/android/video/app.fern` and runs it on the API 34 emulator.
+It requires AVC exports through both byte-buffer input and an EGL surface producer.
+FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
+The test requires surface playback, pause, resume, seek, and a gray screenshot.
+Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
+
+Emulator results do not establish physical hardware throughput or battery consumption.
+
+Run the same qualification on a connected API 29 or later phone:
+
+```sh
+bin/fern -apk build/video/fern-videotest.apk -apk-package dev.fern.videotest -apk-min-sdk 29 tests/android/video/app.fern
+ANDROID_SERIAL=DEVICE python3 tests/android/video/emulator_check.py build/video/fern-videotest.apk build/video/device
+```
+
+Use `HardwareOnly` for device measurements that require hardware.
+A hardware codec can reject a particular format or fail under resource pressure.
+Record the selected codec attributes and the exact media request with each result.
 
 ## Performance checkpoint
 
@@ -173,7 +257,9 @@ It has no comparison with an established decoder and establishes no world-leadin
 ## Player work and qualification order
 
 The common playback priorities are H.264, HEVC, VP9, and AV1, followed by legacy formats.
-An Android player also needs demuxers, timestamps, seek indexes, audio synchronization, and surface lifecycle management.
+The Android path now supplies platform demux, timestamps, sync-sample seek, and surface playback control.
+A complete player still needs audio synchronization, lifecycle integration, and representative device qualification.
+
 Device tests must cover backpressure, resolution changes, EOS, flush, and playback after a seek.
 HDR requires correct metadata, surface configuration, and display support.
 
