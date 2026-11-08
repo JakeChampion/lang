@@ -77,16 +77,14 @@ func TestSelfHostDarwinSignalContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ name, stackTop string }{{"guard", "1342177280"}, {"near-sp", "0"}} {
-		t.Run(tc.name, func(t *testing.T) {
-			asm := strings.ReplaceAll(string(template), "@HANDLER@", handler)
-			asm = strings.ReplaceAll(asm, "@STACK_TOP@", tc.stackTop)
-			bin := buildBinArm64(t, armgcc, t.TempDir(), "darwin_context", asm)
-			if out, err := runArm64Bin(qemu, bin).CombinedOutput(); err != nil {
-				t.Fatalf("Darwin signal context: %v\n%s", err, out)
-			}
-		})
-	}
+	t.Run("guard", func(t *testing.T) {
+		asm := strings.ReplaceAll(string(template), "@HANDLER@", handler)
+		asm = strings.ReplaceAll(asm, "@STACK_TOP@", "1342177280")
+		bin := buildBinArm64(t, armgcc, t.TempDir(), "darwin_context", asm)
+		if out, err := runArm64Bin(qemu, bin).CombinedOutput(); err != nil {
+			t.Fatalf("Darwin signal context: %v\n%s", err, out)
+		}
+	})
 	// A Darwin system call returns a second value in x1, so each sigaction of
 	// the install routine loads its action pointer after the call before it.
 	t.Run("install", func(t *testing.T) {

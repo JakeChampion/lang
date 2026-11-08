@@ -127,6 +127,8 @@ jobs:
       # the fixed point. A job of its own paid a setup and a slot of the
       # runner pool for those three minutes, so the chain rides this leg.
       - uses: ./.github/actions/setup-fern
+        with:
+          compiler-cache: "false"
         if: matrix.host == 'arm64-linux'
 
       - name: the current pin builds the candidate (make selfhost-cli)
@@ -170,6 +172,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+        with:
+          compiler-cache: "false"
 
       - name: the current pin builds the candidate (make selfhost-cli)
         run: |

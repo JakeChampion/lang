@@ -532,7 +532,7 @@ is the number of slots it leaves.
 | `tlb_flush` | 504 | 1 | 1 |
 | `tlb_flush_all` | 505 | 0 | 1 |
 | `breakpoint` | 506 | 0 | 1 |
-| `tcp_accept_with` | 507 | 2 | 1 |
+| `tcp_accept_with` | 511 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

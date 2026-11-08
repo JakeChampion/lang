@@ -1,0 +1,77 @@
+import "../packages/codecs/jpeg/mcu_order" as order;
+
+function number(bytes: [u8], at: i32): i32 {
+  let value = 0u32;
+  for i in 0..4 {
+    value = value << 8u32 | bytes[at + i] as u32;
+  }
+  return value as i32;
+}
+
+function error_name(error: order.OrderError): string {
+  return match (error) { order.Dimensions => "Dimensions", order.Components => "Components", order.Sampling => "Sampling", order.Limit => "Limit", order.Cancelled => "Cancelled" };
+}
+
+function never(): boolean {
+  return false;
+}
+
+function emit(bytes: [u8], index: i32): i32 {
+  let at = index * 28;
+  let width = number(bytes, at);
+  let height = number(bytes, at + 4);
+  let limit = number(bytes, at + 8);
+  let count = number(bytes, at + 12);
+  let traversal = number(bytes, at + 16);
+  if (count < 0 || count > 5 || traversal < 0 || traversal > 1) {
+    return 4;
+  }
+  let sampling: order.Sampling[] = [];
+  for i in 0..count {
+    let horizontal = if (i < 4) { bytes[at + 20 + i * 2] as i32 } else { 1 };
+    let vertical = if (i < 4) { bytes[at + 21 + i * 2] as i32 } else { 1 };
+    sampling = sampling.append(order.Sampling { horizontal: horizontal, vertical: vertical });
+  }
+  let plan = match (order.inspect(width, height, sampling, limit)) {
+    Ok(v) => v,
+    Err(e) => {
+      print(f"error {index} {error_name(e)}");
+      return 0;
+    },
+  };
+  print(f"plan {index} {plan.columns} {plan.rows} {plan.mcus} {plan.units} {plan.blocks} {plan.max_horizontal} {plan.max_vertical}");
+  if (traversal == 1) {
+    let consume = (value: i32, address: order.Address): Result[i32, i32] => {
+      let dummy = if (address.dummy) { 1 } else { 0 };
+      print(f"block {index} {address.mcu} {address.unit} {address.component} {address.x} {address.y} {address.width} {address.height} {dummy}");
+      return Ok(value + 1);
+    };
+    let Ok(result) = order.fold_blocks(width, height, sampling, limit, never, 0, consume) else {
+      return 5;
+    };
+    if (result.value != plan.blocks) {
+      return 6;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(paths[1]) else {
+    return 2;
+  };
+  if (bytes.len() == 0 || bytes.len() % 28 != 0) {
+    return 3;
+  }
+  for index in 0..bytes.len() / 28 {
+    let code = emit(bytes, index);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

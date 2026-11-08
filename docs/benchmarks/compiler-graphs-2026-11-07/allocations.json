@@ -1,0 +1,42 @@
+[
+  {
+    "compiler": "before",
+    "compiler_sha256": "a6b875bc3d238da2dad5cddba28cc7256efdab8c359554ff8ef5442c6a1e51fd",
+    "allocations": 52096031,
+    "frees": 52096031,
+    "live_bytes": 0,
+    "assembly_bytes": 32467837,
+    "assembly_sha256": "e961f3d9f4fdccc89dd5fe756d886d4db0375972c8371db5c156bb7b33a241f5",
+    "command": [
+      "build/compiler-profile/fern-before-count",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang/build/compiler-profile/identical-checker.s",
+      "/workspace/lang-compiler-baseline/compiler/checker.fern",
+      "/workspace/lang-compiler-baseline/internal/stdlib"
+    ]
+  },
+  {
+    "compiler": "after",
+    "compiler_sha256": "d5faba6f94a4559b12a727a58511f6a84e414aaedba7ff320b91eb03468af136",
+    "allocations": 52050468,
+    "frees": 52050468,
+    "live_bytes": 0,
+    "assembly_bytes": 32467837,
+    "assembly_sha256": "e961f3d9f4fdccc89dd5fe756d886d4db0375972c8371db5c156bb7b33a241f5",
+    "command": [
+      "build/compiler-profile/fern-after-count",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang/build/compiler-profile/identical-checker.s",
+      "/workspace/lang-compiler-baseline/compiler/checker.fern",
+      "/workspace/lang-compiler-baseline/internal/stdlib"
+    ]
+  }
+]

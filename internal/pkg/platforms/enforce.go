@@ -215,7 +215,8 @@ var gatedBuiltins = map[string]string{
 	"__boot_info": "privileged", "__sysreg_read": "privileged", "__sysreg_write": "privileged",
 	"__cache_clean": "privileged", "__cache_flush": "privileged", "__tlb_flush": "privileged", "__tlb_flush_all": "privileged",
 	"__breakpoint": "privileged",
-	"__port_in8":   "privileged", "__port_in16": "privileged", "__port_in32": "privileged",
+	"__irq_mask":   "privileged", "__irq_unmask": "privileged", "__irq_wait": "privileged", "__irq_pending": "privileged",
+	"__port_in8": "privileged", "__port_in16": "privileged", "__port_in32": "privileged",
 	"__port_out8": "privileged", "__port_out16": "privileged", "__port_out32": "privileged",
 }
 
@@ -328,8 +329,30 @@ var equivalents = map[string]string{"timer_fd": "wasm_timer_pollable", "wasm_tim
 
 // providerSignatures holds each capability that a module can implement with
 // @provide, and the signature of its provider. A `log` provider is a byte sink
-// that does not allocate.
-var providerSignatures = map[string]string{"log": "(data: usize, len: i32): void"}
+// that does not allocate. An `exit` provider ends the run of a target whose
+// entry is not a process.
+var providerSignatures = map[string]string{"log": "(data: usize, len: i32): void", "exit": "(code: i32): void"}
+
+// providerParams reports whether params are the parameters of a provider of
+// capability.
+func providerParams(capability string, params []ast.Param) bool {
+	if capability == "exit" {
+		return len(params) == 1 && params[0].Type.String() == "i32"
+	}
+	return len(params) == 2 && params[0].Type.String() == "usize" && params[1].Type.String() == "i32"
+}
+
+// ProviderUsed reports whether the program's provider of capability is the
+// implementation on target. The target's own implementation wins: a `log`
+// provider serves a target that does not grant `log`, and an `exit` provider
+// serves a target whose entry is not a process. compiler/platforms.fern's
+// provider_used holds the same rule.
+func ProviderUsed(target, capability string) bool {
+	if capability == "exit" {
+		return ForTarget(target).Entry.OrDefault() != EntryProcess
+	}
+	return !HasCapability(target, capability)
+}
 
 // Provided reports the capabilities that the program's providers add to the
 // target's set.
@@ -348,7 +371,7 @@ func Provided(prog *ast.Program) map[string]bool {
 func ProviderEntries(prog *ast.Program, target string) []string {
 	var out []string
 	for _, fn := range prog.Funcs {
-		if fn.Provides != "" && !HasCapability(target, fn.Provides) {
+		if fn.Provides != "" && ProviderUsed(target, fn.Provides) {
 			out = append(out, fn.Name)
 		}
 	}
@@ -385,13 +408,13 @@ func ProviderProblems(prog *ast.Program) []ProviderProblem {
 func providerProblem(fn *ast.FuncDecl) string {
 	sig, ok := providerSignatures[fn.Provides]
 	if !ok {
-		return fmt.Sprintf("`@provide(%q)`: no capability `%s` takes a provider; a provider can implement `log`", fn.Provides, fn.Provides)
+		return fmt.Sprintf("`@provide(%q)`: no capability `%s` takes a provider; a provider can implement `log` or `exit`", fn.Provides, fn.Provides)
 	}
 	ret := "void"
 	if fn.ReturnType != nil {
 		ret = fn.ReturnType.String()
 	}
-	if fn.Receiver == nil && len(fn.TypeParams) == 0 && len(fn.Params) == 2 && fn.Params[0].Type.String() == "usize" && fn.Params[1].Type.String() == "i32" && ret == "void" {
+	if fn.Receiver == nil && len(fn.TypeParams) == 0 && ret == "void" && providerParams(fn.Provides, fn.Params) {
 		return ""
 	}
 	return fmt.Sprintf("the `%s` provider %q must be a function with the signature %s", fn.Provides, fn.Name, sig)

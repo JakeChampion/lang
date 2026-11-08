@@ -1,0 +1,118 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/u32_fields";
+import "../packages/codecs/jxl/u64_fields";
+import "std/hex";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function word(input: [u8], at: i32, width: i32): u64 {
+  let value = 0u64;
+  for i in 0..width {
+    value |= input[at + i] as u64 << (i * 8) as u64;
+  }
+  return value;
+}
+
+function emit(fields: [bits.Field], prefix: i32, budget: i32, path: string, index: i32): i32 {
+  let all = [bits.Field { value: 0u64, width: prefix }].concat(fields);
+  match (bits.pack(all, budget, never)) {
+    Ok(output) => {
+      let length = output.bits;
+      let encoded = hex.encode(output.bytes);
+      print(f"{index} pack ok {length} {encoded}");
+      if let Err(_) = write_file_bytes(path + ".packed", output.bytes) {
+        return 4;
+      }
+    },
+    Err(error) => {
+      print(f"{index} pack error {error.to_debug()}");
+    }
+  }
+  return 0;
+}
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(packet) = read_file_bytes(path) else {
+    return 1;
+  };
+  if (packet.len() < 60) {
+    return 2;
+  }
+  let mode = word(packet, 0, 4) as i32;
+  let value = word(packet, 4, 8);
+  let budget = word(packet, 12, 4) as i32;
+  let prefix = word(packet, 16, 4) as i32;
+  let queries = word(packet, 20, 4) as i32;
+  let bytes = word(packet, 24, 4) as i32;
+  if (mode < 0 || mode > 1 || queries < 0 || queries > 4096 || bytes < 0 || bytes > 65536 || packet.len() != 60 + queries * 16 + bytes) {
+    return 3;
+  }
+  let distributions: u32_fields.Distribution[] = [];
+  for i in 0..4 {
+    distributions = distributions.append(u32_fields.Distribution { width: word(packet, 28 + i * 8, 4) as i32, offset: word(packet, 32 + i * 8, 4) as u32 });
+  }
+  if (mode == 0) {
+    let code = emit(u64_fields.fields(value), prefix, budget, path, index);
+    if (code != 0) {
+      return code;
+    }
+  } else {
+    match (u32_fields.fields(value as u32, distributions)) {
+      Ok(fields) => {
+        let code = emit(fields, prefix, budget, path, index);
+        if (code != 0) {
+          return code;
+        }
+      },
+      Err(error) => {
+        print(f"{index} pack error {error.to_debug()}");
+      }
+    }
+  }
+  let input = packet[60 + queries * 16:];
+  for i in 0..queries {
+    let position = word(packet, 60 + i * 16, 8) as i64;
+    let extent = word(packet, 68 + i * 16, 8) as i64;
+    if (mode == 0) {
+      match (u64_fields.read(input, position, extent)) {
+        Ok(result) => {
+          let sample = result.value;
+          let next = result.next;
+          print(f"{index} query {i} ok {sample} {next}");
+        },
+        Err(error) => {
+          print(f"{index} query {i} error {error.to_debug()}");
+        }
+      }
+    } else {
+      match (u32_fields.read(input, position, extent, distributions)) {
+        Ok(result) => {
+          let sample = result.value;
+          let next = result.next;
+          print(f"{index} query {i} ok {sample} {next}");
+        },
+        Err(error) => {
+          print(f"{index} query {i} error {error.to_debug()}");
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 5;
+  }
+  for i in 1..paths.len() {
+    let code = inspect(paths[i], i - 1);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

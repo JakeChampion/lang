@@ -1,3 +1,4 @@
+import "./ast";
 import "./parser";
 import "./astwalk";
 import "./util";
@@ -421,6 +422,10 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__tlb_flush", capability: "privileged" },
     Gate { builtin: "__tlb_flush_all", capability: "privileged" },
     Gate { builtin: "__breakpoint", capability: "privileged" },
+    Gate { builtin: "__irq_mask", capability: "privileged" },
+    Gate { builtin: "__irq_unmask", capability: "privileged" },
+    Gate { builtin: "__irq_wait", capability: "privileged" },
+    Gate { builtin: "__irq_pending", capability: "privileged" },
     Gate { builtin: "__port_in8", capability: "privileged" },
     Gate { builtin: "__port_in16", capability: "privileged" },
     Gate { builtin: "__port_in32", capability: "privileged" },
@@ -466,14 +471,29 @@ pub function gated_capability(name: string): string {
 // The capabilities that a module can provide with @provide, and the signature
 // of each provider. A `log` provider is a byte sink that does not allocate.
 pub function providable(): string[] {
-  return ["log"];
+  return ["log", "exit"];
 }
 
 pub function provider_signature(capability: string): string {
   if (capability == "log") {
     return "(data: usize, len: i32): void";
   }
+  if (capability == "exit") {
+    return "(code: i32): void";
+  }
   return "";
+}
+
+// Whether the program's provider of `capability` is the implementation on
+// `target`. The target's own implementation wins: a `log` provider serves a
+// target that does not grant `log`, and an `exit` provider serves a target
+// whose entry is not a process, because only a process can exit through its
+// kernel.
+pub function provider_used(target: string, capability: string): boolean {
+  if (capability == "exit") {
+    return entry_shape(target) != "process";
+  }
+  return !has_capability(target, capability);
 }
 
 // The capabilities that a provider in the program adds to the target's set.
@@ -648,17 +668,21 @@ pub function provider_diags(mod: parser.Module): util.Diag[] {
 function provider_problem(mod: parser.Module, pv: parser.FuncMark): string {
   let sig = provider_signature(pv.arg);
   if (sig.len() == 0) {
-    return "`@provide(\"" + pv.arg + "\")`: no capability `" + pv.arg + "` takes a provider; a provider can implement `log`";
+    return "`@provide(\"" + pv.arg + "\")`: no capability `" + pv.arg + "` takes a provider; a provider can implement `log` or `exit`";
   }
   for fd in mod.funcs {
-    if (fd.name == pv.func_name) {
-      let shape = fd.receiver_name.len() == 0 && fd.type_params.len() == 0 && fd.params.len() == 2;
-      if (shape && fd.params[0].type_name == "usize" && fd.params[1].type_name == "i32" && fd.ret_type == "void") {
-        return "";
-      }
+    if (fd.name == pv.func_name && fd.receiver_name.len() == 0 && fd.type_params.len() == 0 && fd.ret_type == "void" && provider_params(pv.arg, fd.params)) {
+      return "";
     }
   }
   return "the `" + pv.arg + "` provider \"" + util.mangled_name(pv.func_name) + "\" must be a function with the signature " + sig;
+}
+
+function provider_params(capability: string, params: ast.ParamDecl[]): boolean {
+  if (capability == "exit") {
+    return params.len() == 1 && params[0].type_name == "i32";
+  }
+  return params.len() == 2 && params[0].type_name == "usize" && params[1].type_name == "i32";
 }
 
 pub function violation_diag(v: Violation): util.Diag {

@@ -8,6 +8,34 @@ Image quality and libvips comparisons remain unmeasured.
 The test suite proves selected functional properties only.
 No throughput or parity claim follows from its results.
 
+The [native QOI benchmark plan](../../docs/contexts/image/specs/qoi-native-benchmarks.md) separates codec time from process overhead.
+Its workers use the same native counter and include codec allocation and release.
+The collector verifies lossless pixels and color declarations with the pinned offline QOI reference.
+It records inner time, complete-process RSS, source/input hashes and host load.
+The sanitizer worker runs separately from the release workers.
+
+Run the Apple Silicon smoke pipeline from the repository root:
+
+```sh
+uv run --no-project python -m unittest discover -s fern-image/tests -p benchmark_qoi_test.py
+uv run --no-project python fern-image/tests/benchmark_qoi.py \
+  --fern /absolute/path/to/fern \
+  --reference-header /absolute/path/to/pinned/qoi.h \
+  --output /absolute/path/to/new/proof-directory
+```
+
+The defaults use side 16, three measured iterations and two warmups.
+Change only `--side` for the next pipeline scale.
+The output directory must be new. Host-load controls and repeated representative corpora remain necessary for a performance rank.
+
+`benchmarks/qoi_allocations.fern` isolates allocator observations for one encode and one decode.
+Compile it with `-sanitize` and enable `FERN_LEAKCHECK=1` for the final heap census.
+Pass an encoded QOI file and its exact packed pixels as two arguments.
+The probe checks every pixel outside the counter intervals.
+It reports dimensions, channels, encoded length, allocation counts and allocator bump-byte deltas.
+
+These are allocator observations. The bump-byte delta is not a physical memory measurement.
+
 Before M2, define a dataset with provenance and license records.
 Include photos, line art, gradients, transparency, noise, and extreme dimensions.
 Record hardware, CPU baseline, compiler commit, flags, warm-up policy, and concurrency.

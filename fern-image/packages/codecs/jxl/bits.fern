@@ -1,0 +1,105 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum BitError { Width, Bounds, Truncated, Value, Padding, Limit, Cancelled }
+
+pub struct Field { value: u64, width: i32 }
+
+pub struct Read { value: u64, next: i64 }
+
+pub struct Packed { bytes: u8[], bits: i64 }
+
+function mask(width: i32): u64 {
+  return (1u64 << width as u64) - 1u64;
+}
+
+pub function read(input: [u8], position: i64, width: i32, extent: i64): Result[Read, BitError] {
+  if (width < 0 || width > 56) {
+    return Err(BitError.Width);
+  }
+  if (extent < 0i64 || extent > input.len() as i64 * 8i64 || position < 0i64 || position > extent) {
+    return Err(BitError.Bounds);
+  }
+  if (width as i64 > extent - position) {
+    return Err(BitError.Truncated);
+  }
+  if (width == 0) {
+    return Ok(Read { value: 0u64, next: position });
+  }
+  let first = (position / 8i64) as i32;
+  let shift = (position % 8i64) as i32;
+  let count = (shift + width + 7) / 8;
+  let value = 0u64;
+  for i in 0..count {
+    value |= input[first + i] as u64 << (i * 8) as u64;
+  }
+  return Ok(Read { value: value >> shift as u64 & mask(width), next: position + width as i64 });
+}
+
+pub function align(input: [u8], position: i64, extent: i64): Result[i64, BitError] {
+  let _ = read(input, position, 0, extent)?;
+  let width = ((8i64 - position % 8i64) % 8i64) as i32;
+  let padding = read(input, position, width, extent)?;
+  if (padding.value != 0u64) {
+    return Err(BitError.Padding);
+  }
+  return Ok(padding.next);
+}
+
+function admit(fields: [Field], max_bytes: i32, cancelled: () => boolean): Result[i64, BitError] {
+  if (max_bytes < 0) {
+    return Err(BitError.Limit);
+  }
+  let bits = 0i64;
+  for field in fields {
+    if (cancelled()) {
+      return Err(BitError.Cancelled);
+    }
+    if (field.width < 0 || field.width > 56) {
+      return Err(BitError.Width);
+    }
+    if (field.value > mask(field.width)) {
+      return Err(BitError.Value);
+    }
+    bits += field.width as i64;
+    if (bits > max_bytes as i64 * 8i64) {
+      return Err(BitError.Limit);
+    }
+  }
+  return Ok(bits);
+}
+
+function store(field: Field, position: i64, own output: u8[]): u8[] {
+  let consumed = 0;
+  let at = position;
+  while (consumed < field.width) {
+    let index = (at / 8i64) as i32;
+    let shift = (at % 8i64) as i32;
+    let take = if (field.width - consumed < 8 - shift) { field.width - consumed } else { 8 - shift };
+    let value = (field.value >> consumed as u64 & mask(take)) << shift as u64;
+    output = output.with(index, output[index] | value as u8);
+    consumed += take;
+    at += take as i64;
+  }
+  return output;
+}
+
+pub function pack(fields: [Field], max_bytes: i32, cancelled: () => boolean): Result[Packed, BitError] {
+  if (cancelled()) {
+    return Err(BitError.Cancelled);
+  }
+  let total = admit(fields, max_bytes, cancelled)?;
+  let output = __alloc_u8(((total + 7i64) / 8i64) as i32);
+  let position = 0i64;
+  for field in fields {
+    if (cancelled()) {
+      return Err(BitError.Cancelled);
+    }
+    output = store(field, position, output);
+    position += field.width as i64;
+  }
+  if (cancelled()) {
+    return Err(BitError.Cancelled);
+  }
+  return Ok(Packed { bytes: output, bits: total });
+}

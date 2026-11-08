@@ -1,0 +1,75 @@
+{
+  "revision": "ea99364f61c14656440e8d77e9c233ccf3124633",
+  "vectors": [
+    {
+      "name": "M2L3_bitrate_16_all",
+      "bit_sha1": "84b071a6600a9efc2abcf6aaec851c373f7e0187",
+      "pcm_sha1": "2024ddae05db994b6be7666a3d1e6b8ea0845fec"
+    },
+    {
+      "name": "M2L3_bitrate_22_all",
+      "bit_sha1": "ac445dae893b7bd2b2ee0099997e828d9b6c5c67",
+      "pcm_sha1": "117fd91da270248aeaa39776ee5f2d2c384985ab"
+    },
+    {
+      "name": "M2L3_bitrate_24_all",
+      "bit_sha1": "8fd26999366821c6e2bf8c8ce97bdd85873c3860",
+      "pcm_sha1": "3919e7184de4957ee6bb554d1770da61221b23e7"
+    },
+    {
+      "name": "M2L3_compl24",
+      "bit_sha1": "8db67394dd1ce1b67401b9a6f8f80cbf28ca9214",
+      "pcm_sha1": "0fa9b33aaceac4636507f6121c9860af4e6a1a2a"
+    },
+    {
+      "name": "M2L3_noise",
+      "bit_sha1": "bbd166d7dcc35974157d57b3573f67cd65164888",
+      "pcm_sha1": "a269a335e32a01820daa39f38f8d02d1b27a7927"
+    },
+    {
+      "name": "l3-he_32khz",
+      "bit_sha1": "2fe121cbdb61be533204569ead0d7414ef616cef",
+      "pcm_sha1": "f8586d0316c6fcef24b55a322b800e2ee02297da"
+    },
+    {
+      "name": "l3-he_44khz",
+      "bit_sha1": "a8b124ea3a4286dbc58d5a04f64e3674d0bbb924",
+      "pcm_sha1": "4d75102224c01a5dd7d8ce47c81cda28818df939"
+    },
+    {
+      "name": "l3-he_48khz",
+      "bit_sha1": "4e40f805d93b8076ce9e05a881b58ae654313bc8",
+      "pcm_sha1": "f8586d0316c6fcef24b55a322b800e2ee02297da"
+    },
+    {
+      "name": "l3-hecommon",
+      "bit_sha1": "0efa5cd8665a712b7188708a278374a0642ca942",
+      "pcm_sha1": "642e29be84637de2baec2b8a451144f0ac0d26b2"
+    },
+    {
+      "name": "l3-si",
+      "bit_sha1": "94a5ef8b400fe73290838634aad3e7af30cb764a",
+      "pcm_sha1": "e7d94c740471d9d57ff0e1a22a8eb3405b782d77"
+    },
+    {
+      "name": "l3-si_block",
+      "bit_sha1": "76639558bb2d1ad462f3edbf3f6f8c8a74444f08",
+      "pcm_sha1": "cd60851deb577ae8ad1def5774116a4271276b6c"
+    },
+    {
+      "name": "l3-si_huff",
+      "bit_sha1": "9c20cd796db928f0bc2950a2bc663e9d79a3c3e7",
+      "pcm_sha1": "a6e726de9d5e2f4e6239a10aa9de8f5f025fbe08"
+    },
+    {
+      "name": "l3-test45",
+      "bit_sha1": "5eb2b5dee593d09debdd5846324dea6ecd60fa17",
+      "pcm_sha1": "5196c251eb5219b8ed9ef7575ed8b7cee6a0ee9f"
+    },
+    {
+      "name": "l3-test46",
+      "bit_sha1": "8228967ef6a91236dc9da288f36eb2e7ecd4d74f",
+      "pcm_sha1": "4a18bbb7bc5e3e907430c81f526a1c69a2cbab90"
+    }
+  ]
+}

@@ -11,7 +11,7 @@ The flags a profile sets are described in `docs/HARDENING.md` and `docs/SANITIZE
 | Profile | Flags | Use |
 |---|---|---|
 | `safe` | the defaults: bounds checks, arena checks, write-xor-execute, a non-executable stack, the backtrace walk | every build |
-| `hardened` | `-harden -pie` | a program that reads untrusted input on a native Linux target |
+| `hardened` | `-harden -pie` | a program that reads untrusted input on a Linux or Android target |
 | `diagnostic` | `-sanitize -backtrace -g` | finding a memory misuse |
 | `minimal` | `-size` | the smallest image, which drops the backtrace walk unless `-backtrace` is given |
 

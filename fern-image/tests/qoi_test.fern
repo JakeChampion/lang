@@ -185,6 +185,93 @@ function storage(): test.TestOutcome {
   return test.assert_true(match (qoi.encode(bad, qoi.Srgb, 1000, active)) { Err(qoi.Storage) => true, _ => false });
 }
 
+function token_source(channels: i32): Result[pixels.Image, pixels.ImageError] {
+  let format = if (channels == 3) { pixels.RGB8 } else { pixels.RGBA8 };
+  let image = pixels.create(16, 1, 16 * channels + 3, format, pixels.default_limits())?;
+  for x in 0..16 {
+    let base = if (x % 5 <= 1) { 0 } else { x * 31 };
+    for c in 0..channels {
+      let value = if (c == 3) { x / 4 * 17 } else { base + c * 47 };
+      image = pixels.Image { ...image, data: image.data.with(x * channels + c, value as u8) };
+    }
+  }
+  return Ok(image);
+}
+
+function every_output_limit(): test.TestOutcome {
+  for channels in [3, 4] {
+    let Ok(image) = token_source(channels) else {
+      return test.fail("token source layout");
+    };
+    for color in [qoi.Srgb, qoi.Linear] {
+      let Ok(encoded) = qoi.encode(image, color, 1000, active) else {
+        return test.fail("token budget baseline");
+      };
+      for limit in 0..encoded.len() {
+        if (!match (qoi.encode(image, color, limit, active)) { Err(qoi.Limit) => true, _ => false }) {
+          return test.fail("every token output budget");
+        }
+      }
+      for limit in [encoded.len(), encoded.len() + 1] {
+        if (!match (qoi.encode(image, color, limit, active)) { Ok(v) => equal(v, encoded), _ => false }) {
+          return test.fail("exact complete stream budget");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function every_cancellation(): test.TestOutcome {
+  let calls = cell_new(0);
+  let count = (): boolean => {
+    calls.set(calls.get() + 1);
+    return false;
+  };
+  for channels in [3, 4] {
+    let Ok(image) = token_source(channels) else {
+      return test.fail("cancellation token source");
+    };
+    for color in [qoi.Srgb, qoi.Linear] {
+      calls.set(0);
+      let Ok(encoded) = qoi.encode(image, color, 1000, count) else {
+        return test.fail("count every encoder poll");
+      };
+      let total = calls.get();
+      for stop in 1..total + 1 {
+        calls.set(0);
+        let cancel = (): boolean => {
+          calls.set(calls.get() + 1);
+          return calls.get() >= stop;
+        };
+        if (!match (qoi.encode(image, color, 1000, cancel)) { Err(qoi.Cancelled) => true, _ => false } || calls.get() != stop) {
+          return test.fail("every encoder cancellation checkpoint");
+        }
+      }
+      if (!match (qoi.encode(image, color, 1000, active)) { Ok(v) => equal(v, encoded), _ => false }) {
+        return test.fail("fresh encoder state after cancellation");
+      }
+    }
+  }
+  let input = stream(7, 4, 0, [254u8, 10, 20, 30, 118, 165, 122, 255, 200, 100, 50, 128, 9, 193]);
+  calls.set(0);
+  let Ok(decoded) = qoi.decode(input, qoi.default_limits(), count) else {
+    return test.fail("count every decoder poll");
+  };
+  let total = calls.get();
+  for stop in 1..total + 1 {
+    calls.set(0);
+    let cancel = (): boolean => {
+      calls.set(calls.get() + 1);
+      return calls.get() >= stop;
+    };
+    if (!match (qoi.decode(input, qoi.default_limits(), cancel)) { Err(qoi.Cancelled) => true, _ => false } || calls.get() != stop) {
+      return test.fail("every decoder cancellation checkpoint");
+    }
+  }
+  return test.assert_true(match (qoi.decode(input, qoi.default_limits(), active)) { Ok(v) => equal(v.image.data, decoded.image.data), _ => false });
+}
+
 function main(): i32 {
   let r = test.new("QOI RGB8/RGBA8");
   r = r.it("independent opcode vector", opcodes);
@@ -198,5 +285,7 @@ function main(): i32 {
   r = r.it("input, pixel, output and exact encoded budgets", budgets);
   r = r.it("early and late cancellation", cancellation);
   r = r.it("forged public pixel storage", storage);
+  r = r.it("every encoded byte budget across token forms", every_output_limit);
+  r = r.it("every encoder and decoder cancellation checkpoint", every_cancellation);
   return r.finish();
 }

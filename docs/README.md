@@ -94,6 +94,7 @@ which ones.
 | `RUNTIME-INTRINSICS.md` | [reference] | The raw-memory intrinsic floor (syscalls, scratch, environ, raw loads and stores) the Fern runtime helpers are built on. |
 | `RUNTIME-IN-FERN.md` | [tracker] | Rewriting the runtime helpers in Fern (#2649): Tiers 0–2 done, and syscall leaves moving onto shared Fern source. |
 | `BARE-METAL-PLAN.md` | [plan] | Scope below the OS (guest libraries, drivers, kernels, an OS in Fern), why the interrupt/RC memory model gates it, and the order of work; nothing built. |
+| `COMPILER-PERFORMANCE.md` | [plan] | Controlled compiler measurements, current profiles, and priorities for parser and compiler performance. |
 | `MULTICORE-RESEARCH.md` | [research] | Survey of parallelism: share-nothing workers with per-worker heaps, given non-atomic refcounts (#5366). |
 | `PERFORMANCE-RESEARCH.md` | [research] | Survey of compiler and runtime performance techniques from Zig, Rust, OCaml, APL, LuaJIT, SBCL and others. |
 | `PLATFORM-RESEARCH.md` | [research] | Historical survey of the handler and host interfaces, with platform proposals tracked in #4414. |
@@ -236,7 +237,7 @@ which ones.
 
 | Doc | Status | What it is |
 | --- | --- | --- |
-| `AUDIO-CODECS.md` | [reference] | WAVE, FLAC, QOA, and Opus CELT APIs, format limits, and validation. |
+| `AUDIO-CODECS.md` | [reference] | Audio codec APIs, supported formats, bounded buffers, conformance checks, and performance measurements. |
 | `ARRAY-SHAPES.md` | [policy] | Normative rules for std/ndarray: a counted handle with shape, strides and offset, views, shape mismatch, and when a view materializes. |
 | `CURSOR-IDIOM.md` | [policy] | The immutable read-and-advance cursor idiom for stdlib parsers and readers. |
 | `CRASH-ONLY-SERVE.md` | [reference] | Crash-only serving in std/serve: the trap taxonomy, the supervisor with a prefork worker pool, and its test bar. |

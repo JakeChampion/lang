@@ -57,7 +57,7 @@ func TestSelfHostFernDocMode(t *testing.T) {
 	}
 	fernBin := buildFernDocCLI(t)
 	outDir := t.TempDir()
-	stdlib := filepath.Join(langSrcAbs(t, "internal"), "stdlib")
+	stdlib := langSrcAbs(t, "internal/stdlib")
 	for _, root := range []string{"std", "core"} {
 		cmd := exec.Command(fernBin, "-doc", "-o", outDir, filepath.Join(stdlib, root))
 		var stderr bytes.Buffer

@@ -14,37 +14,26 @@ func TestUnitLaneCoversEveryNonSlowPackage(t *testing.T) {
 		t.Fatalf("read unit-test-packages: %v", err)
 	}
 	src := string(b)
-	re := regexp.MustCompile(`grep -vE '/internal/testing/\(([^)]*)\)`)
+	re := regexp.MustCompile(`grep -vE '([^']+)'`)
 	m := re.FindStringSubmatch(src)
 	if m == nil {
 		t.Fatal("could not find the exclusion alternation in scripts/unit-test-packages — if its shape changed, update this gate with it")
 	}
-	excluded := strings.Split(m[1], "|")
+	excluded := regexp.MustCompile(m[1])
 	allowed := map[string]string{
 		"e2e":         "test-e2e-{arm64,x86_64,wasm,other}",
 		"e2ecompiler": "test-e2e-selfhost",
 		"fernsmith":   "test-fernsmith",
 		"coreutils":   "test-coreutils",
 	}
-	for _, pkg := range excluded {
-		pkg = strings.TrimSpace(pkg)
-		if pkg == "" {
-			continue
-		}
-		if _, ok := allowed[pkg]; !ok {
-			t.Errorf("internal/testing/%s is excluded from the unit lane but has no workflow of its own, so nothing runs its tests. "+
-				"Either give it a lane or stop excluding it (#8470)", pkg)
+	for pkg, lane := range allowed {
+		if !excluded.MatchString("github.com/jakechampion/lang/internal/testing/" + pkg) {
+			t.Errorf("internal/testing/%s is no longer excluded from the unit lane, but %s still runs it — it would now run twice", pkg, lane)
 		}
 	}
-	for pkg, lane := range allowed {
-		found := false
-		for _, e := range excluded {
-			if strings.TrimSpace(e) == pkg {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("internal/testing/%s is no longer excluded from the unit lane, but %s still runs it — it would now run twice", pkg, lane)
+	for _, pkg := range []string{"e2eharness", "corpus", "sourcelint", "e2e/helper", "e2ecompiler/helper", "coreutils/helper"} {
+		if excluded.MatchString("github.com/jakechampion/lang/internal/testing/" + pkg) {
+			t.Errorf("the unit lane excludes %s without a recursive suite", pkg)
 		}
 	}
 }

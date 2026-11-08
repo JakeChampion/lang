@@ -1,13 +1,15 @@
 package sourcelint
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ciplan"
 )
 
 const ciFile = "ci.yml"
@@ -105,39 +107,32 @@ type laneFilter struct {
 	PathsIgnore []string `json:"paths-ignore"`
 }
 
+var dependencyGraphOnce sync.Once
+var dependencyGraph *ciplan.Graph
+var dependencyGraphError error
+var dependencyFiltersOnce sync.Once
+var dependencyFilters map[string]laneFilter
+
+func ciDependencyGraph(t *testing.T) *ciplan.Graph {
+	t.Helper()
+	dependencyGraphOnce.Do(func() {
+		dependencyGraph, dependencyGraphError = ciplan.Load(mustRepoRoot(t))
+	})
+	if dependencyGraphError != nil {
+		t.Fatal(dependencyGraphError)
+	}
+	return dependencyGraph
+}
+
 func laneTable(t *testing.T) map[string]laneFilter {
 	t.Helper()
-	src := workflowSource(t, ciFile)
-	lines := strings.Split(src, "\n")
-	start, indent := -1, 0
-	for i, l := range lines {
-		if strings.TrimSpace(l) == "LANES: |" {
-			start, indent = i, len(l)-len(strings.TrimLeft(l, " "))
-			break
+	dependencyFiltersOnce.Do(func() {
+		dependencyFilters = map[string]laneFilter{}
+		for name, filter := range ciDependencyGraph(t).FilterTable() {
+			dependencyFilters[name] = laneFilter{Paths: filter.Paths}
 		}
-	}
-	if start < 0 {
-		t.Fatalf("%s has no `LANES: |` block — if the lane table moved, update this gate with it", ciFile)
-	}
-	var b strings.Builder
-	for _, l := range lines[start+1:] {
-		if strings.TrimSpace(l) == "" {
-			continue
-		}
-		if len(l)-len(strings.TrimLeft(l, " ")) <= indent {
-			break
-		}
-		b.WriteString(l)
-		b.WriteString("\n")
-	}
-	table := map[string]laneFilter{}
-	if err := json.Unmarshal([]byte(b.String()), &table); err != nil {
-		t.Fatalf("%s: the lane table is not valid JSON: %v", ciFile, err)
-	}
-	if len(table) == 0 {
-		t.Fatalf("%s: the lane table is empty", ciFile)
-	}
-	return table
+	})
+	return dependencyFilters
 }
 
 func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
@@ -344,7 +339,7 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 				t.Errorf("%s: %q is in the lane table, but it must run on every pull request — "+
 					"it is the one gate a doc-only PR still reports", ciFile, id)
 			}
-			if j.keys["needs"] != "" || j.keys["if"] != "" {
+			if j.keys["needs"] != "[changes]" || j.keys["if"] != "${{ !cancelled() }}" {
 				t.Errorf("%s: %q must run unconditionally, but has needs=%q if=%q",
 					ciFile, id, j.keys["needs"], j.keys["if"])
 			}

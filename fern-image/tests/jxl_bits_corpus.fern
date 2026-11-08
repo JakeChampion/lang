@@ -1,0 +1,90 @@
+import "../packages/codecs/jxl/bits";
+import "std/hex";
+import "core/cmp";
+
+function never(): boolean {
+  return false;
+}
+
+function word(input: [u8], at: i32, width: i32): u64 {
+  let value = 0u64;
+  for i in 0..width {
+    value |= input[at + i] as u64 << (i * 8) as u64;
+  }
+  return value;
+}
+
+function inspect(path: string, index: i32): i32 {
+  let Ok(packet) = read_file_bytes(path) else {
+    return 1;
+  };
+  if (packet.len() < 16) {
+    return 2;
+  }
+  let budget = word(packet, 0, 4) as i32;
+  let count = word(packet, 4, 4) as i32;
+  let queries = word(packet, 8, 4) as i32;
+  let bytes = word(packet, 12, 4) as i32;
+  if (count < 0 || count > 1024 || queries < 0 || queries > 8192 || bytes < 0 || bytes > 65536 || packet.len() != 16 + count * 12 + queries * 20 + bytes) {
+    return 3;
+  }
+  let fields: bits.Field[] = [];
+  for i in 0..count {
+    let at = 16 + i * 12;
+    fields = fields.append(bits.Field { value: word(packet, at + 4, 8), width: word(packet, at, 4) as i32 });
+  }
+  match (bits.pack(fields, budget, never)) {
+    Ok(output) => {
+      let length = output.bits;
+      let encoded = hex.encode(output.bytes);
+      print(f"{index} pack ok {length} {encoded}");
+      if let Err(_) = write_file_bytes(path + ".packed", output.bytes) {
+        return 4;
+      }
+    },
+    Err(error) => {
+      print(f"{index} pack error {error.to_debug()}");
+    }
+  }
+  let first = 16 + count * 12;
+  let input = packet[first + queries * 20:];
+  for i in 0..queries {
+    let at = first + i * 20;
+    let position = word(packet, at, 8) as i64;
+    let width = word(packet, at + 8, 4) as i32;
+    let extent = word(packet, at + 12, 8) as i64;
+    match (bits.read(input, position, width, extent)) {
+      Ok(value) => {
+        let sample = value.value;
+        let next = value.next;
+        print(f"{index} query {i} ok {sample} {next}");
+      },
+      Err(error) => {
+        print(f"{index} query {i} error {error.to_debug()}");
+      }
+    }
+    match (bits.align(input, position, extent)) {
+      Ok(next) => {
+        print(f"{index} align {i} ok {next}");
+      },
+      Err(error) => {
+        print(f"{index} align {i} error {error.to_debug()}");
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 5;
+  }
+  for i in 1..paths.len() {
+    let code = inspect(paths[i], i - 1);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

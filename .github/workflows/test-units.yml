@@ -33,6 +33,21 @@ name: Test units
 on:
   workflow_call:
     inputs:
+      repository-only:
+        description: Selected packages need Go and repository tools only
+        required: false
+        type: boolean
+        default: false
+      packages:
+        description: JSON list of affected packages, or an empty list for every package
+        required: false
+        type: string
+        default: '[]'
+      groups:
+        description: JSON list of the unit groups that contain affected packages
+        required: false
+        type: string
+        default: '["heavy","rest"]'
       hosts:
         description: >
           The hosts whose matrix legs run, as a space-separated list of
@@ -60,7 +75,7 @@ jobs:
       # hosts, where the host exclude matches nothing.
       matrix:
         host: [x86_64, aarch64]
-        group: [heavy, rest]
+        group: ${{ fromJSON(inputs.groups || '["heavy","rest"]') }}
         shard: [0, 1, 2]
         exclude:
           - { group: rest, shard: 1 }
@@ -99,7 +114,12 @@ jobs:
       # when a requested tool is missing. That is what makes this real rather
       # than hopeful: without it a half-succeeded install returns the lane to
       # silently running nothing.
+      - uses: ./.github/actions/setup-ci-planner
+        if: inputs.repository-only == true
+        with:
+          tools: go gotestsum
       - uses: ./.github/actions/setup-fern
+        if: inputs.repository-only != true
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
@@ -117,6 +137,7 @@ jobs:
       # for a cross package it may not carry would trade a real skip for an
       # infrastructure red.
       - name: aarch64 runtime + assembler (arm64 execution tests)
+        if: inputs.repository-only != true
         uses: ./.github/actions/apt-cross-toolchain
         with:
           qemu-package: qemu-user
@@ -126,6 +147,7 @@ jobs:
       # dropped apt cache or a renamed package silently returns the lane to
       # green-by-skip, which is exactly how it spent its life.
       - name: Assert the aarch64 runtime is actually usable
+        if: inputs.repository-only != true
         env:
           WANT_CROSS: ${{ matrix.host == 'x86_64' }}
         run: |
@@ -147,9 +169,9 @@ jobs:
       # program through the verdict cache, so a compiler-only change does not
       # check every example again. The cmd/fern tests that build the self-host
       # CLI read it from the driver cache.
-      - if: matrix.group == 'rest'
+      - if: matrix.group == 'rest' && inputs.repository-only != true
         uses: ./.github/actions/selfhost-driver-cache
-      - if: matrix.group == 'rest'
+      - if: matrix.group == 'rest' && inputs.repository-only != true
         uses: ./.github/actions/oracle-verdict-cache
         with:
           slot: units-${{ matrix.host }}
@@ -164,6 +186,7 @@ jobs:
         # those two gates by design and must not be asked to require them.
         env:
           FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
+          FERN_CI_UNIT_PACKAGES: ${{ inputs.packages }}
           FERN_PRINTER_CORPUS_SHARD: "${{ matrix.shard }}/${{ matrix.group == 'heavy' && 3 || 1 }}"
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
@@ -200,7 +223,7 @@ jobs:
         # printer corpus is partitioned across two workers on each host.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
-          gotestsum --format pkgname-and-test-fails -- -timeout 25m \
+          gotestsum --format pkgname-and-test-fails -- -timeout 25m -count=1 \
             $(scripts/unit-test-packages)
       - name: name the failed tests as annotations
         if: failure()

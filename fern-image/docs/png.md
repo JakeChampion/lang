@@ -1,6 +1,6 @@
 # Restricted PNG codec
 
-The PNG module decodes grayscale at one, two, four or eight bits per sample without interlace.
+The eager PNG decoder accepts grayscale at one, two, four or eight bits per sample with or without Adam7 interlace.
 It also decodes eight-bit grayscale with alpha, RGB and RGBA.
 Indexed input supports one, two, four and eight-bit indices with PLTE and optional indexed tRNS.
 Grayscale and RGB tRNS produce RGBA8 with exact sample-key comparisons before expansion.
@@ -27,7 +27,10 @@ It rejects bad headers, checksums, trailing compressed bytes, and oversized outp
 The decoder reconstructs all five PNG scanline filters, with byte-width modular addition.
 The pixel constructor validates dimensions, stride, pixel count, and output bytes before decompression.
 
-The exact filtered length must match height times the sum of row bytes and one filter byte.
+For noninterlaced input, the exact filtered length matches height times the sum of row bytes and one filter byte.
+For Adam7 input, the planner sums each nonempty pass with its own packed row stride and filter bytes.
+Empty passes consume no bytes. Each pass starts with a zero previous filter row.
+The decoder reconstructs and expands each pass before it scatters pixels into the final image.
 A wrong length or filter value produces an explicit error.
 
 Input bytes cannot exceed 16 MiB. A file cannot contain more than 1,024 chunks.
@@ -38,7 +41,9 @@ These are separate arrays. They do not establish an aggregate process memory bud
 
 ## Compatibility limits
 
-Interlaced and sixteen-bit images return Unsupported.
+Sixteen-bit images return Unsupported.
+Sequential, incremental and graph row APIs still return Unsupported for interlaced input.
+Their current memory plans cover row storage and do not permit an implicit complete decoded image.
 Grayscale and indexed input admit one, two and four-bit samples.
 Unknown critical chunks, animation and nontrivial color metadata also return Unsupported.
 
@@ -83,6 +88,12 @@ A failure returns an explicit error rather than partial output.
 
 ## Verification and release gate
 
+The Adam7 tests use independent tile extraction and offline Pillow checks.
+They cover current sample modes, all five filters, empty passes, narrow dimensions, transparency and packed padding.
+Geometry tests verify the normative partition, exact filtered sizes and arithmetic limits.
+Malformed pass data, exact admission, prefixes, aliases and row API rejection have separate checks.
+The [Adam7 checkpoint spec](../../docs/contexts/image/specs/png-adam7.md) retains the remaining full-format scope.
+
 Seven native cases cover independent RGB/RGBA goldens for all five filters.
 They also cover round trips, every truncated prefix, CRC and length failures, invalid filters, and resource budgets.
 
@@ -95,7 +106,8 @@ A separate Fern executable writes an encoded RGBA fixture.
 An independent Python check verified its chunk CRCs and decompressed scanline bytes.
 
 The native suite uses heap sanitization and reports zero live bytes.
-The [finite differential and mutation corpus](png-qualification.md) adds 964 cases against an offline Pillow reference.
+The [finite differential and mutation corpus](png-qualification.md) checks 1940 cases against an offline Pillow reference.
+The Adam7 collector checks 132 independent images and 12 malformed inputs on each target.
 Broad compatibility, unbounded fuzz campaigns, peak RSS, and production CPU deadlines remain unverified.
 
 This codec is experimental and has no production-readiness claim.

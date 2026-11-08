@@ -21,14 +21,19 @@
 #                               h2load and h2o it builds. Default:
 #                               ~/.cache/fern-h3-tools.
 #
-# WHAT IS MEASURED. Four hello servers answering the same five-byte body
+# WHAT IS MEASURED. Six hello servers answering the same five-byte body
 # on a loopback port: scripts/net-bench.d/hello.fern, built by bin/fern
 # for the host; scripts/net-bench.d/gohello, Go's net/http with its
 # defaults; scripts/net-bench.d/hyperhello, hyper 1's http1 server on a
 # multi-threaded tokio runtime, built --locked against its Cargo.lock by
-# the Rust toolchain mise.net-nightly.toml pins; and h2o, the host's
+# the Rust toolchain mise.net-nightly.toml pins; h2o, the host's
 # package (Ubuntu's 2.2.5 on the runner), answering through an mruby
-# handler with a worker thread per core. Then two servers whose handler
+# handler with a worker thread per core; and the two Zig servers, built
+# ReleaseFast by the Zig toolchain mise.net-nightly.toml pins at the
+# commits their build.zig.zon files pin: scripts/net-bench.d/httpzhello,
+# http.zig with an I/O worker and a handler thread per core, and
+# scripts/net-bench.d/zaphello, zap over its vendored facil.io with a
+# worker process per core. Then two servers whose handler
 # fetches an upstream twice per request, P3's exit case
 # (docs/NET-P3-SUSPENSION-PLAN.md §1): scripts/net-bench.d/twofetch.fern,
 # a worker per core built by the self-host compiler (bin/fern-selfhost, whose
@@ -73,7 +78,7 @@
 #   net/<server>/c<N>.rps       requests per second, whole; <server> is
 #                               fern, fern-ring (the same server waiting
 #                               on an io_uring, FERN_IO_URING=1), go,
-#                               hyper, h2o, fern-twofetch or
+#                               hyper, h2o, httpz, zap, fern-twofetch or
 #                               hyper-twofetch
 #   net/<server>/c<N>.p50_us    median latency, microseconds
 #   net/<server>/c<N>.p99_us    99th-percentile latency, microseconds
@@ -131,6 +136,10 @@ if ! command -v h2o >/dev/null 2>&1; then
   echo "net-bench: h2o not found; the host's package supplies it (apt-get install h2o)" >&2
   exit 2
 fi
+if ! command -v zig >/dev/null 2>&1; then
+  echo "net-bench: zig not found; mise.net-nightly.toml pins the toolchain (MISE_ENV=net-nightly mise install zig)" >&2
+  exit 2
+fi
 
 # Thousands of connections need that many descriptors on both sides; the
 # soft limit is raised to the hard one where the hard one allows it.
@@ -142,10 +151,16 @@ go build -o "$work/pipeload" ./scripts/net-bench.d/pipeload
 cargo build --release --locked --quiet --manifest-path scripts/net-bench.d/hyperhello/Cargo.toml --target-dir "$work/hyper-target"
 cp "$work/hyper-target/release/hyperhello" "$work/hyper-hello"
 cp "$work/hyper-target/release/twofetch" "$work/hyper-twofetch"
+(cd scripts/net-bench.d/httpzhello && zig build -Doptimize=ReleaseFast --prefix "$work/httpz-out")
+cp "$work/httpz-out/bin/httpz-hello" "$work/httpz-hello"
+(cd scripts/net-bench.d/zaphello && zig build -Doptimize=ReleaseFast --prefix "$work/zap-out")
+cp "$work/zap-out/bin/zap-hello" "$work/zap-hello"
 make selfhost-cli >&2
 bin/fern-selfhost -target "$TARGET" -o "$work/fern-twofetch" "$PWD/scripts/net-bench.d/twofetch.fern" "$PWD/internal/stdlib"
 hyper_version="$(sed -n '/^name = "hyper"$/{n;s/^version = "\(.*\)"/\1/p}' scripts/net-bench.d/hyperhello/Cargo.lock)"
 h2o_version="$(h2o --version | sed -n 's/^h2o version \(.*\)/\1/p')"
+httpz_commit="$(sed -n 's|.*http.zig/archive/\([0-9a-f]\{12\}\)[0-9a-f]*\.tar\.gz.*|\1|p' scripts/net-bench.d/httpzhello/build.zig.zon)"
+zap_commit="$(sed -n 's|.*zigzap/zap/archive/\([0-9a-f]\{12\}\)[0-9a-f]*\.tar\.gz.*|\1|p' scripts/net-bench.d/zaphello/build.zig.zon)"
 h3tools="$(scripts/net-bench.d/h3tools)"
 h2load_version="$("$h3tools/bin/h2load" --version | sed -n 's/^h2load nghttp2\/\(.*\)/\1/p')"
 certs="$work/certs"
@@ -223,9 +238,9 @@ h3_rows() {
 
 {
   echo "# scripts/net-bench report — arch $ARCH, target $TARGET, $(nproc) cpus"
-  echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3), hyper $hyper_version ($(rustc --version | cut -d' ' -f2)), h2o $h2o_version"
+  echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3), hyper $hyper_version ($(rustc --version | cut -d' ' -f2)), h2o $h2o_version, http.zig $httpz_commit and zap $zap_commit (zig $(zig version))"
   echo "# HTTP/3 loads (connections x streams): $H3_SHAPES, h2load $h2load_version, h2o $("$h3tools/bin/h2o" --version | sed -n 's/^h2o version //p') from scripts/net-bench.d/h3tools"
-  for server in fern fern-ring go hyper h2o; do
+  for server in fern fern-ring go hyper h2o httpz zap; do
     port="$(free_port)"
     start "$server" "$port"
     for n in $CONNECTIONS; do
