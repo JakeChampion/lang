@@ -1,0 +1,50 @@
+// A match on the method result of a name a struct pattern binds reaches
+// the checker with the generic enum's type and the lowering with its
+// instance, so the arm's bare variant has to lower against the instance
+// (#14647).
+struct Box[T] { v: T, n: i32 }
+
+enum Step[T] { Done(T), More(Box[T]) }
+
+function (b: Box[T]) poll(): Step[T] {
+  if (b.n > 2) {
+    return Done(b.v);
+  }
+  return More(Box { v: b.v, n: b.n + 1 });
+}
+
+struct Call { purpose: i32, w: Box[i32[]] }
+
+function poll_call(c: Option[Call]): (Option[Call], Option[i32]) {
+  match (c) {
+    Some(call) => {
+      let Call { purpose, w } = call;
+      match (w.poll()) {
+        Done(v) => {
+          return (None, Some(purpose + v.len()));
+        },
+        More(again) => {
+          return (Some(Call { purpose: purpose, w: again }), None);
+        }
+      }
+    },
+    None => {
+      return (None, None);
+    }
+  }
+}
+
+function main(): i32 {
+  let state: Option[Call] = Some(Call { purpose: 10, w: Box { v: [1, 2, 3], n: 0 } });
+  let i = 0;
+  while (i < 10) {
+    let (next, done) = poll_call(state);
+    state = next;
+    if let Some(d) = done {
+      print(d.to_string());
+      return 0;
+    }
+    i += 1;
+  }
+  return 1;
+}
