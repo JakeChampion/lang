@@ -8423,8 +8423,9 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x24, x24, :lo12:__fern_bt_floor\n");
   s = s.write("    ldr x22, [x24]\n");
   s = s.write("    str xzr, [x24]\n");
+  s = s.write("    add x23, x20, #8\n");
   s = s.write("    cmp x22, #0\n");
-  s = s.write("    csel x22, x20, x22, eq\n");
+  s = s.write("    csel x22, x23, x22, eq\n");
   s = s.write("    ldr x20, [x20]\n");
   s = s.write("    adrp x24, __fern_stack_top\n");
   s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");

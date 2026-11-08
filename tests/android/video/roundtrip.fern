@@ -1,0 +1,173 @@
+// This test exports twelve AVC frames through byte-buffer and surface encoders.
+import "std/android/video";
+import "std/android/video/capabilities";
+import "std/android/video/muxer";
+import "std/video/frame";
+import "std/jni";
+import "std/log";
+import "./egl";
+
+@import("libc.so", "open")
+function c_open(path: usize, flags: i32, mode: i32): i32;
+
+@import("libc.so", "close")
+function c_close(fd: i32): i32;
+
+@import("libc.so", "lseek")
+function c_seek(fd: i32, offset: i64, mode: i32): i64;
+
+pub function open_file(path: string, write: boolean): Result[i32, frame.VideoError] {
+  let name = jni.cstr(path);
+  let fd = c_open(name, if (write) { 578 } else { 0 }, 384);
+  jni.free_buffer(name);
+  if (fd < 0) {
+    return Err(frame.Platform);
+  }
+  return Ok(fd);
+}
+
+pub function close_file(fd: i32): void {
+  let _ = c_close(fd);
+}
+
+pub function length(fd: i32): i64 {
+  return c_seek(fd, 0i64, 2);
+}
+
+function close_encoder(encoder: video.Encoder): void {
+  let _ = encoder.close();
+}
+
+function close_muxer(writer: muxer.Muxer): void {
+  let _ = writer.close();
+}
+
+function close_format(format: video.CodecFormat): void {
+  let _ = format.close();
+}
+
+struct Progress { track: i32, packets: i32, ended: boolean }
+
+function drain(encoder: video.Encoder, writer: muxer.Muxer, progress: Progress): Result[Progress, frame.VideoError] {
+  match (encoder.output(1000i64)?) {
+    video.EncodingFormat(format) => {
+      defer close_format(format);
+      if (progress.track >= 0) {
+        return Err(frame.State);
+      }
+      let track = writer.add_track(format)?;
+      writer.start()?;
+      return Ok(Progress { ...progress, track: track });
+    },
+    video.EncodedBuffer(buffer) => {
+      return write_packet(encoder, writer, progress, buffer);
+    },
+    _ => {
+      return Ok(progress);
+    }
+  }
+}
+
+function release(encoder: video.Encoder, buffer: video.OutputBuffer): void {
+  let _ = encoder.release(buffer);
+}
+
+function write_packet(encoder: video.Encoder, writer: muxer.Muxer, progress: Progress, buffer: video.OutputBuffer): Result[Progress, frame.VideoError] {
+  defer release(encoder, buffer);
+  let packets = progress.packets;
+  if (buffer.size > 0 && (buffer.flags & video.FLAG_CODEC_CONFIG) == 0u32) {
+    if (progress.track < 0) {
+      return Err(frame.State);
+    }
+    writer.write_view(progress.track, encoder.output_view(buffer)?, buffer.presentation_time_us, buffer.flags)?;
+    packets += 1;
+  }
+  return Ok(Progress { ...progress, packets: packets, ended: (buffer.flags & video.FLAG_END_OF_STREAM) != 0u32 });
+}
+
+pub function export_file(env: usize, api: i32, path: string, surface: boolean): Result[void, frame.VideoError] {
+  let config = video.default_encoder_config(video.H264, frame.Format { width: 128, height: 128 }, 200000, 30);
+  if (surface) {
+    config = video.EncoderConfig { ...config, color_format: video.COLOR_SURFACE };
+  }
+  let infos = capabilities.discover(env, api, video.encoder_request(config), capabilities.default_limits())?;
+  let selected = match (if (surface) { video.select_surface_encoder(config, infos, capabilities.PreferHardware, frame.default_limits()) } else { video.select_encoder(config, infos, capabilities.PreferHardware, frame.default_limits()) }) {
+    Ok(value) => value, Err(e) => { return Err(e.error); },
+  };
+  let encoder = selected.encoder;
+  defer close_encoder(encoder);
+  log.warn("videotest: encoder surface=" + surface.to_string() + " name=" + selected.info.name + " implementation=" + selected.info.implementation.to_debug());
+  let fd = open_file(path, true)?;
+  defer close_file(fd);
+  let writer = muxer.create(fd, muxer.MP4, frame.default_limits().max_packet_bytes)?;
+  defer close_muxer(writer);
+  let ctx: Option[egl.Context] = None;
+  if (surface) {
+    ctx = Some(egl.open(encoder.input_surface)?);
+  }
+  defer close_gl(ctx);
+  let started = monotonic_ns();
+  let pixels: u8[] = [];
+  if (!surface) {
+    for i in 0..24576 {
+      pixels = pixels.append(if (i < 16384) { 126u8 } else { 128u8 });
+    }
+  }
+  let submitted = 0;
+  let input_ended = false;
+  let parameters_set = false;
+  let progress = Progress { track: -1, packets: 0, ended: false };
+  while (!progress.ended) {
+    if (monotonic_ns() - started > 20000000000i64) {
+      return Err(frame.Platform);
+    }
+    if (!input_ended) {
+      if (surface) {
+        if (submitted < 12) {
+          let Some(gl) = ctx else {
+            return Err(frame.State);
+          };
+          gl.frame(submitted as i64 * 33333333i64)?;
+          submitted += 1;
+        } else {
+          encoder.signal_end_of_input()?;
+          input_ended = true;
+        }
+      } else {
+        match (encoder.input(1000i64)?) {
+          Some(slot) => {
+            if (submitted < 12) {
+              encoder.submit(slot, pixels, submitted as i64 * 1000000i64 / 30i64, 0u32)?;
+              submitted += 1;
+            } else {
+              encoder.submit(slot, [], 400000i64, video.FLAG_END_OF_STREAM)?;
+              input_ended = true;
+            }
+          },
+          None => {}
+        }
+      }
+    }
+    if (submitted >= 6 && !parameters_set) {
+      encoder.set_bitrate(180000)?;
+      encoder.request_keyframe()?;
+      parameters_set = true;
+    }
+    progress = drain(encoder, writer, progress)?;
+  }
+  if (progress.packets != 12) {
+    return Err(frame.Header);
+  }
+  writer.stop()?;
+  log.warn("videotest: export surface=" + surface.to_string() + " frames=" + progress.packets.to_string() + " elapsed_ns=" + (monotonic_ns() - started).to_string());
+  return Ok(());
+}
+
+function close_gl(ctx: Option[egl.Context]): void {
+  match (ctx) {
+    Some(value) => {
+      value.close();
+    },
+    None => {}
+  }
+}
