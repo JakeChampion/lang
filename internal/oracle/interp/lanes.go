@@ -285,6 +285,24 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			return out, nil
 		}}
+		i.Builtins[p+"load_ptr"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("vector load requires an address")
+			}
+			address, ok := args[0].(Number)
+			if !ok {
+				return nil, fmt.Errorf("vector load requires an address")
+			}
+			bytes, err := ip.raw.span(p+"load_ptr", int64(address), 16)
+			if err != nil {
+				return nil, err
+			}
+			out := Lanes{Width: width, Bits: make([]uint64, lanes)}
+			for k := 0; k < 16; k++ {
+				out.Bits[k/(width/8)] |= uint64(bytes[k]) << ((k % (width / 8)) * 8)
+			}
+			return out, nil
+		}}
 		i.Builtins[p+"store"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
 			if len(args) != 2 {
 				return nil, fmt.Errorf("vector store requires an address and lanes")

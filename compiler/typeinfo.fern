@@ -275,6 +275,9 @@ pub function lane_builtin_params(name: string): Type[] {
   let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   let arr: Type = TypeArray { elem: e, view: false };
   let v = lane_builtin_verb(name);
+  if (v == "load_ptr") {
+    return [TypeI32 { is_char: false, width: -1, unsigned: true, polymorphic: false }];
+  }
   if (v == "store") {
     return [TypeI32 { is_char: false, width: -1, unsigned: true, polymorphic: false }, lt];
   }

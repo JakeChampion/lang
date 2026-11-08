@@ -62,6 +62,7 @@ def main():
     parser.add_argument("--reference", type=Path, required=True, help="C release directory")
     parser.add_argument("--compiler", type=Path, help="Fern compiler used for the executable")
     parser.add_argument("--reference-label", default="C default")
+    parser.add_argument("--source-commit", help="Git commit used for the Fern compiler and codec")
     parser.add_argument("--seconds", type=float, default=10)
     parser.add_argument("--repetitions", type=int, default=7)
     parser.add_argument("--output", type=Path, required=True)
@@ -90,6 +91,8 @@ def main():
               "reference_label": args.reference_label, "quality": 75, "block_size": 2048,
               "fern_binary_sha256": hashlib.sha256(fern.read_bytes()).hexdigest(),
               "reference_encoder_sha256": hashlib.sha256((reference / "ulcencodetool").read_bytes()).hexdigest(),
+              "reference_decoder_sha256": hashlib.sha256((reference / "ulcdecodetool").read_bytes()).hexdigest(),
+              "source_commit": args.source_commit,
               "results": []}
     if args.compiler:
         compiler = args.compiler.resolve()

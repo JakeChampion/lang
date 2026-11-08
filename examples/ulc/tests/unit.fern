@@ -291,7 +291,14 @@ function packed_tests(): void {
       input = input.with(i, (i as f64 * 0.19).sin() * 0.01 + (i as f64 * 0.071).cos() * 0.003);
     }
     let expected = transform.dct4(input);
-    let result = packed_transform.dct4(input, packed_transform.plan(n), packed_transform.scratch(n));
+    let retained = packed_transform.scratch(n);
+    let result = packed_transform.dct4(input, packed_transform.plan(n), packed_transform.Scratch { ...retained });
+    for byte in retained.re {
+      require(byte == 0, "packed real scratch preserves retained aliases");
+    }
+    for byte in retained.im {
+      require(byte == 0, "packed imaginary scratch preserves retained aliases");
+    }
     let peak = 1.0;
     let error = 0.0;
     for i in 0..n {
@@ -386,6 +393,15 @@ function parser_properties(): void {
     exit(1);
   };
   require(verify_scan(template, nybbles([0, 0, 15, 15, 0, 0, 0])), "valid noise block reaches the scanner");
+  for control in [0, 1, 8, 15] {
+    for at in 0..17 {
+      let codes: i32[] = [0, 0];
+      for i in 0..256 {
+        codes = codes.append(if (i == at) { control } else { 2 });
+      }
+      let _ = verify_scan(template, nybbles(codes));
+    }
+  }
   let seed = 417u32;
   for trial in 0..500 {
     let data: u8[] = [];

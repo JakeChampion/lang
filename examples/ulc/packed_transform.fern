@@ -65,67 +65,90 @@ pub function dct4(input: [f64], p: Plan, own work: Scratch, scaled: boolean = fa
   let n = p.shape.n;
   let half = n / 2;
   let quarter = half / 4;
-  for group in 0..quarter {
-    let j = p.shape.reversal[group];
-    let a = __f32x4_pack(__f64x2_of(input[2 * j], input[2 * j + 2]), __f64x2_of(input[2 * j + 4], input[2 * j + 6]));
-    let b = __f32x4_pack(__f64x2_of(input[n - 1 - 2 * j], input[n - 3 - 2 * j]), __f64x2_of(input[n - 5 - 2 * j], input[n - 7 - 2 * j]));
-    let c = __f32x4_load_bytes(p.pre_cos, 4 * j);
-    let t = __f32x4_load_bytes(p.pre_sin, 4 * j);
-    re = __f32x4_with_bytes(re, 16 * group, a * c + b * t);
-    im = __f32x4_with_bytes(im, 16 * group, a * t - b * c);
+  if (n < 16 || n > 32768 || (n & n - 1) != 0 || re.len() < 2 * n || im.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n) {
+    eprint("invalid packed FFT dimensions");
+    exit(1);
   }
-  let width = 2;
-  while (width <= quarter) {
-    let twiddle = width / 2 - 1;
-    let base = 0;
-    while (base < quarter) {
-      for k in 0..width / 2 {
-        let a = 16 * (base + k);
-        let b = a + 8 * width;
-        let c = __f32x4_load_bytes(p.cosine, 16 * (twiddle + k));
-        let t = __f32x4_load_bytes(p.sine, 16 * (twiddle + k));
-        let br = __f32x4_load_bytes(re, b);
-        let bi = __f32x4_load_bytes(im, b);
-        let vr = br * c - bi * t;
-        let vi = br * t + bi * c;
-        let ar = __f32x4_load_bytes(re, a);
-        let ai = __f32x4_load_bytes(im, a);
-        re = __f32x4_with_bytes(re, a, ar + vr);
-        im = __f32x4_with_bytes(im, a, ai + vi);
-        re = __f32x4_with_bytes(re, b, ar - vr);
-        im = __f32x4_with_bytes(im, b, ai - vi);
-      }
-      base += width;
+  let re_address = 0 as usize;
+  let im_address = 0 as usize;
+  unsafe {
+    // Keep retained scratch buffers unchanged. Each vector span is below 2 * n.
+    if (__load_i32(re as usize - 8 as usize) != 1) {
+      re = __send_copy(re);
     }
-    width *= 2;
+    if (__load_i32(im as usize - 8 as usize) != 1) {
+      im = __send_copy(im);
+    }
+    re_address = re as usize + 8 as usize;
+    im_address = im as usize + 8 as usize;
   }
-  for k in 0..quarter {
-    let r = __f32x4_load_bytes(re, 16 * k);
-    let i = __f32x4_load_bytes(im, 16 * k);
-    let c = __f32x4_load_bytes(p.merge_cos, 16 * k);
-    let t = __f32x4_load_bytes(p.merge_sin, 16 * k);
-    let rr = r * c - i * t;
-    let ii = r * t + i * c;
-    let ar = __f32x4_lane(rr, 0) as f64;
-    let br = __f32x4_lane(rr, 1) as f64;
-    let cr = __f32x4_lane(rr, 2) as f64;
-    let dr = __f32x4_lane(rr, 3) as f64;
-    let ai = __f32x4_lane(ii, 0) as f64;
-    let bi = __f32x4_lane(ii, 1) as f64;
-    let ci = __f32x4_lane(ii, 2) as f64;
-    let di = __f32x4_lane(ii, 3) as f64;
-    let r0 = ar + br + cr + dr;
-    let i0 = ai + bi + ci + di;
-    let r1 = ar - cr - bi + di;
-    let i1 = ai - ci + br - dr;
-    let r2 = ar - br + cr - dr;
-    let i2 = ai - bi + ci - di;
-    let r3 = ar - cr + bi - di;
-    let i3 = ai - ci - br + dr;
-    transformed = post(transformed, p.shape, k, r0, i0);
-    transformed = post(transformed, p.shape, k + quarter, r1, i1);
-    transformed = post(transformed, p.shape, k + 2 * quarter, r2, i2);
-    transformed = post(transformed, p.shape, k + 3 * quarter, r3, i3);
+  unsafe {
+    let cosine_address = p.cosine as usize + 8 as usize;
+    let sine_address = p.sine as usize + 8 as usize;
+    let merge_cos_address = p.merge_cos as usize + 8 as usize;
+    let merge_sin_address = p.merge_sin as usize + 8 as usize;
+    for group in 0..quarter {
+      let j = p.shape.reversal[group];
+      let a = __f32x4_pack(__f64x2_of(input[2 * j], input[2 * j + 2]), __f64x2_of(input[2 * j + 4], input[2 * j + 6]));
+      let b = __f32x4_pack(__f64x2_of(input[n - 1 - 2 * j], input[n - 3 - 2 * j]), __f64x2_of(input[n - 5 - 2 * j], input[n - 7 - 2 * j]));
+      let c = __f32x4_load_bytes(p.pre_cos, 4 * j);
+      let t = __f32x4_load_bytes(p.pre_sin, 4 * j);
+      __f32x4_store(re_address + (16 * group) as usize, a * c + b * t);
+      __f32x4_store(im_address + (16 * group) as usize, a * t - b * c);
+    }
+    let width = 2;
+    while (width <= quarter) {
+      let twiddle = width / 2 - 1;
+      let base = 0;
+      while (base < quarter) {
+        for k in 0..width / 2 {
+          let a = 16 * (base + k);
+          let b = a + 8 * width;
+          let c = __f32x4_load_ptr(cosine_address + (16 * (twiddle + k)) as usize);
+          let t = __f32x4_load_ptr(sine_address + (16 * (twiddle + k)) as usize);
+          let br = __f32x4_load_ptr(re_address + b as usize);
+          let bi = __f32x4_load_ptr(im_address + b as usize);
+          let vr = br * c - bi * t;
+          let vi = br * t + bi * c;
+          let ar = __f32x4_load_ptr(re_address + a as usize);
+          let ai = __f32x4_load_ptr(im_address + a as usize);
+          __f32x4_store(re_address + a as usize, ar + vr);
+          __f32x4_store(im_address + a as usize, ai + vi);
+          __f32x4_store(re_address + b as usize, ar - vr);
+          __f32x4_store(im_address + b as usize, ai - vi);
+        }
+        base += width;
+      }
+      width *= 2;
+    }
+    for k in 0..quarter {
+      let r = __f32x4_load_ptr(re_address + (16 * k) as usize);
+      let i = __f32x4_load_ptr(im_address + (16 * k) as usize);
+      let c = __f32x4_load_ptr(merge_cos_address + (16 * k) as usize);
+      let t = __f32x4_load_ptr(merge_sin_address + (16 * k) as usize);
+      let rr = r * c - i * t;
+      let ii = r * t + i * c;
+      let ar = __f32x4_lane(rr, 0) as f64;
+      let br = __f32x4_lane(rr, 1) as f64;
+      let cr = __f32x4_lane(rr, 2) as f64;
+      let dr = __f32x4_lane(rr, 3) as f64;
+      let ai = __f32x4_lane(ii, 0) as f64;
+      let bi = __f32x4_lane(ii, 1) as f64;
+      let ci = __f32x4_lane(ii, 2) as f64;
+      let di = __f32x4_lane(ii, 3) as f64;
+      let r0 = ar + br + cr + dr;
+      let i0 = ai + bi + ci + di;
+      let r1 = ar - cr - bi + di;
+      let i1 = ai - ci + br - dr;
+      let r2 = ar - br + cr - dr;
+      let i2 = ai - bi + ci - di;
+      let r3 = ar - cr + bi - di;
+      let i3 = ai - ci - br + dr;
+      transformed = post(transformed, p.shape, k, r0, i0);
+      transformed = post(transformed, p.shape, k + quarter, r1, i1);
+      transformed = post(transformed, p.shape, k + 2 * quarter, r2, i2);
+      transformed = post(transformed, p.shape, k + 3 * quarter, r3, i3);
+    }
   }
   return Scratch { re: re, im: im, transformed: transformed, samples: samples };
 }

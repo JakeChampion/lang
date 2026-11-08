@@ -43,7 +43,7 @@ func TestPackedLanesPreserveBitsAndAliases(t *testing.T) {
 	}
 }
 
-func TestRawLaneStoresCheckAllocationBounds(t *testing.T) {
+func TestRawLaneMemoryChecksAllocationBounds(t *testing.T) {
 	i := &Interp{Builtins: map[string]*Builtin{}}
 	i.registerLaneBuiltins()
 	registerRawMemory(i)
@@ -61,6 +61,23 @@ func TestRawLaneStoresCheckAllocationBounds(t *testing.T) {
 		if _, err := i.Builtins[prefix+"store"].Fn(i, []Value{p + 1, lanes}); err != nil {
 			t.Fatal(err)
 		}
+		loaded, err := i.Builtins[prefix+"load_ptr"].Fn(i, []Value{p + 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := loaded.(Lanes)
+		for k, bits := range got.Bits {
+			want := lanes.Bits[k]
+			if width == 32 {
+				want = uint64(uint32(want))
+			}
+			if bits != want {
+				t.Fatalf("width %d lane %d: %x, want %x", width, k, bits, want)
+			}
+		}
+		if _, err := i.Builtins[prefix+"load_ptr"].Fn(i, []Value{p + 18}); err == nil {
+			t.Fatal("accepted an out-of-bounds load")
+		}
 		bytes, err := i.raw.span("test", int64(p+1), 16)
 		if err != nil {
 			t.Fatal(err)
@@ -76,6 +93,9 @@ func TestRawLaneStoresCheckAllocationBounds(t *testing.T) {
 		}
 		if _, err := i.Builtins["__free"].Fn(i, []Value{p, Number(33)}); err != nil {
 			t.Fatal(err)
+		}
+		if _, err := i.Builtins[prefix+"load_ptr"].Fn(i, []Value{p}); err == nil {
+			t.Fatal("accepted a load after release")
 		}
 		if _, err := i.Builtins[prefix+"store"].Fn(i, []Value{p, lanes}); err == nil {
 			t.Fatal("accepted a store after release")

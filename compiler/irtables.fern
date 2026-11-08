@@ -982,6 +982,9 @@ pub function result_v128(): i32 {
 }
 
 pub function lane_builtin_op(verb: string): string {
+  if (verb == "load_ptr") {
+    return "vload";
+  }
   if (verb == "bitmask") {
     return "vbitmask";
   }
