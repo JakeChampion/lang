@@ -1,0 +1,25 @@
+// The match reads a borrowed parameter, so its payload is borrowed. A
+// destructure of the payload does not own the fields.
+struct Out { items: i32[], w: Writer }
+
+struct Call { purpose: string, r: Out }
+
+function take(own r: Out): i32 {
+  return r.items.len();
+}
+
+function run(c: Option[Call]): i32 {
+  match (c) {
+    Some(call) => {
+      let Call { purpose, r } = call;
+      return purpose.len() + take(r);
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function main(): void {
+  print(run(None));
+}

@@ -1,0 +1,47 @@
+// A match on an own parameter at its last use takes the value. A
+// destructure of its payload moves the fields.
+struct Out { items: i32[], w: Writer }
+
+struct Call { purpose: string, r: Out }
+
+function take(own r: Out): i32 {
+  return r.items.len();
+}
+
+function run(own c: Option[Call]): i32 {
+  match (c) {
+    Some(call) => {
+      let Call { purpose, r } = call;
+      return purpose.len() + take(r);
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function nested(own c: Option[Option[Call]]): i32 {
+  match (c) {
+    Some(inner) => {
+      match (inner) {
+        Some(call) => {
+          let Call { purpose, r } = call;
+          return purpose.len() + take(r);
+        },
+        None => {
+          return 1;
+        }
+      }
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function main(): void {
+  print(run(Some(Call { purpose: "abc", r: Out { items: [1, 2, 3], w: stdout() } })));
+  print(run(None));
+  print(nested(Some(Some(Call { purpose: "de", r: Out { items: [4, 5], w: stdout() } }))));
+  print(nested(Some(None)));
+}

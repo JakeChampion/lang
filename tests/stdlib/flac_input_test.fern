@@ -1,0 +1,226 @@
+import "std/audio/flac";
+import "std/audio/flac/input";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/audio/wire";
+import "std/hex";
+import "std/test";
+import "audio_vectors";
+import "flac_input_check";
+
+function reference(v: audio_vectors.Flac): Result[void, string] {
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return Err("reference bytes");
+  };
+  let ref = match (flac.decode(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let header = match (flac.inspect(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  for chunk in [1, 17, 16384] {
+    flac_input_check.run(bytes, ref, chunk, chunk != 1, header.max_block * header.format.channels)?;
+  }
+  return Ok(());
+}
+
+function references(): test.TestOutcome {
+  for v in audio_vectors.flacs() {
+    if let Err(message) = reference(v) {
+      return test.fail(v.name + ": " + message);
+    }
+  }
+  return test.pass();
+}
+
+function unknown(bytes: u8[]): u8[] {
+  let result = bytes.with(21, bytes[21] & 240u8);
+  for i in 22..26 {
+    result = result.with(i, 0u8);
+  }
+  return result;
+}
+
+function metadata(bytes: u8[]): u8[] {
+  let out: u8[] = [];
+  for byte in bytes[:42] {
+    out = out.append(byte);
+  }
+  out = out.with(4, out[4] & 127u8);
+  out = out.append(129u8);
+  out = wire.put_be(out, 1048579u64, 3);
+  for _ in 0..1048579 {
+    out = out.append(0u8);
+  }
+  for byte in bytes[42:] {
+    out = out.append(byte);
+  }
+  return out;
+}
+
+function unknown_and_metadata(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return test.fail("reference bytes");
+  };
+  let Ok(ref) = flac.decode(bytes, pcm.default_limits()) else {
+    return test.fail("reference PCM");
+  };
+  let Ok(header) = flac.inspect(bytes, pcm.default_limits()) else {
+    return test.fail("reference header");
+  };
+  let tagged = metadata(unknown(bytes));
+  return match (flac_input_check.run(tagged, ref, 4096, true, header.max_block * ref.format.channels)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}
+
+function matches(e: pcm.AudioError, expected: Option[pcm.AudioError]): boolean {
+  return match (expected) { Some(want) => want == e, None => true };
+}
+
+function rejected(bytes: u8[], limits: input.Limits, expected: Option[pcm.AudioError]): boolean {
+  let state = match (input.create(limits)) { Ok(value) => value, Err(source.ReadAudio(e)) => { return matches(e, expected); }, Err(_) => { return false; } };
+  let read = flac_input_check.bytes_reader(bytes, cell_new(0), cell_new(0), true);
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(_))) => {
+        state = next;
+      },
+      Err(source.ReadAudio(e)) => {
+        return matches(e, expected);
+      },
+      _ => {
+        return false;
+      }
+    }
+  }
+}
+
+function malformed(): test.TestOutcome {
+  for encoded in audio_vectors.invalid_flacs() {
+    let Ok(bytes) = hex.decode(encoded) else {
+      return test.fail("malformed reference");
+    };
+    if (!rejected(bytes, input.default_limits(), None)) {
+      return test.fail("malformed FLAC accepted");
+    }
+  }
+  return test.pass();
+}
+
+function bounds(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return test.fail("reference bytes");
+  };
+  let limits = input.default_limits();
+  let small = input.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_samples: 1 } };
+  if (!rejected(bytes, small, Some(pcm.Limit))) {
+    return test.fail("frame PCM budget");
+  }
+  let tagged = metadata(bytes);
+  if (!rejected(tagged, input.Limits { ...limits, max_metadata_bytes: 1048624i64 }, Some(pcm.Limit))) {
+    return test.fail("metadata budget before payload read");
+  }
+  let short: u8[] = [];
+  for byte in bytes[:bytes.len() - 1] {
+    short = short.append(byte);
+  }
+  if (!rejected(short, limits, Some(pcm.Truncated))) {
+    return test.fail("truncated frame");
+  }
+  return test.pass();
+}
+
+function absent_digest_and_frame_budget(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[0].bytes) else {
+    return test.fail("reference bytes");
+  };
+  let Ok(ref) = flac.decode(bytes, pcm.default_limits()) else {
+    return test.fail("reference PCM");
+  };
+  let digestless = bytes;
+  for i in 26..42 {
+    digestless = digestless.with(i, 0u8);
+  }
+  if let Err(message) = flac_input_check.run(digestless, ref, 1, false, ref.samples.len()) {
+    return test.fail(message);
+  }
+  let limits = input.default_limits();
+  let small = input.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_input_bytes: 8 } };
+  if (!rejected(bytes, small, Some(pcm.Limit))) {
+    return test.fail("encoded frame budget");
+  }
+  let declared = bytes.with(17, 4u8);
+  if (!rejected(declared, limits, Some(pcm.Header))) {
+    return test.fail("declared maximum frame length");
+  }
+  return test.pass();
+}
+
+function late_checksum(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return test.fail("reference bytes");
+  };
+  let damaged = bytes.with(26, bytes[26] ^ 1u8);
+  let Ok(state) = input.create(input.default_limits()) else {
+    return test.fail("create");
+  };
+  let read = flac_input_check.bytes_reader(damaged, cell_new(0), cell_new(0), true);
+  let samples = 0;
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(value))) => {
+        state = next;
+        if let input.Samples(audio) = value {
+          samples += audio.frames;
+        }
+        if let input.End(_) = value {
+          return test.fail("MD5 mismatch emitted End");
+        }
+      },
+      Err(source.ReadAudio(pcm.Checksum)) => {
+        return test.assert_true(samples == 273);
+      },
+      _ => {
+        return test.fail("final STREAMINFO MD5 failure");
+      }
+    }
+  }
+}
+
+function late_io(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return test.fail("reference bytes");
+  };
+  let Ok(state) = input.create(input.default_limits()) else {
+    return test.fail("create");
+  };
+  let calls = cell_new(0);
+  let read = (_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return if (calls.get() == 1) { Ok(bytes) } else { Err(IoError.Interrupted) };
+  };
+  let samples = 0;
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(value))) => {
+        state = next;
+        if let input.Samples(audio) = value {
+          samples += audio.frames;
+        }
+      },
+      Err(source.ReadIo(Interrupted())) => {
+        return test.assert_true(calls.get() == 2 && samples == 273);
+      },
+      _ => {
+        return test.fail("I/O error became complete EOF");
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let runner = test.new("Bounded native FLAC input");
+  runner = runner.it("exact PCM and MD5 with three input chunk sizes", references);
+  runner = runner.it("unknown sample counts and large metadata through a bounded window", unknown_and_metadata);
+  runner = runner.it("malformed independent frames and metadata are rejected", malformed);
+  runner = runner.it("per-frame PCM, metadata, and truncation limits", bounds);
+  runner = runner.it("absent MD5, encoded frame budget, and declared frame sizes", absent_digest_and_frame_budget);
+  runner = runner.it("a final MD5 error follows PCM and prevents End", late_checksum);
+  runner = runner.it("a late source error remains distinct from EOF", late_io);
+  return runner.finish();
+}

@@ -178,7 +178,7 @@ function graph(f: ssa.SFunc, name: string, words: i32): Relation {
     return failure("unsupported scalar caller graph");
   }
   let b = f.blocks[0];
-  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1) {
+  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != ssa.TERM_RET) {
     return failure("unsupported scalar caller graph");
   }
   return body(f, name, words);

@@ -1,0 +1,81 @@
+import "std/audio/mp3";
+import "std/audio/mp3/file";
+import "std/audio/mp3/input";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "mp3_vectors";
+import "mp3_file_check";
+import "mp3_input_data";
+import "flac_file_check" as io;
+
+function references(): test.TestOutcome {
+  for v in mp3_vectors.cases() {
+    if let Err(message) = mp3_file_check.reference(v) {
+      return test.fail(v.name + ": " + message);
+    }
+  }
+  return test.pass();
+}
+
+function tagged_case(index: i32): Result[void, string] {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[index].bytes) else {
+    return Err("reference bytes");
+  };
+  let ref = match (mp3.decode(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let track = match (mp3.inspect_track(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let h = match (mp3.inspect(bytes, track.data_offset, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  // The headerless APE payload starts with a complete MP3 frame, even when
+  // the audio track has no Xing frame count. Tail inspection must exclude it.
+  let payload = mp3_input_data.concat(mp3_input_data.concat([], bytes[track.data_offset:track.data_offset + h.bytes]), mp3_input_data.pattern(65537));
+  for header in [false, true] {
+    let prefix = mp3_input_data.id3(65537, true);
+    let ape = mp3_input_data.ape(payload, header);
+    let tagged = mp3_input_data.concat(mp3_input_data.concat(mp3_input_data.concat(prefix, bytes), ape), mp3_input_data.id3v1());
+    mp3_file_check.run(tagged, ref)?;
+  }
+  return Ok(());
+}
+
+function tags(): test.TestOutcome {
+  for index in [0, 9] {
+    if let Err(message) = tagged_case(index) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+function bad_input(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[15].bytes) else {
+    return test.fail("protected reference");
+  };
+  let damaged = bytes.with(4, bytes[4] ^ 1u8);
+  let src = io.mock(damaged);
+  if let Err(source.ReadAudio(pcm.Checksum)) = file.inspect_with(io.seek_source(src), io.read_source(src), damaged.len() as i64, file.default_limits()) {} else {
+    return test.fail("index frame checksum");
+  }
+  let limits = file.default_limits();
+  for count in [0, 1] {
+    let src = io.mock(bytes);
+    if let Err(source.ReadAudio(pcm.Limit)) = file.inspect_with(io.seek_source(src), io.read_source(src), bytes.len() as i64, file.Limits { ...limits, max_entries: count }) {} else {
+      return test.fail("index entry budget");
+    }
+  }
+  let tagged = mp3_input_data.concat(bytes, mp3_input_data.ape(mp3_input_data.pattern(65537), true));
+  let tagged_source = io.mock(tagged);
+  let small = file.Limits { ...limits, input: input.Limits { ...limits.input, max_metadata_bytes: 65536i64 } };
+  if let Err(source.ReadAudio(pcm.Limit)) = file.inspect_with(io.seek_source(tagged_source), io.read_source(tagged_source), tagged.len() as i64, small) {} else {
+    return test.fail("trailer budget before payload read");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed MP3 file sources");
+  runner = runner.it("reference tracks with cooperative indexing and exact repeated seeks", references);
+  runner = runner.it("bounded tags and APE payloads that start with complete MP3 frames", tags);
+  runner = runner.it("frame checksums and index and metadata budgets", bad_input);
+  return runner.finish();
+}

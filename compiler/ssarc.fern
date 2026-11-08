@@ -1457,7 +1457,7 @@ function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx:
     pi += 1;
   }
   for ins in dest.insts {
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       r = emit(r, ir.op_load_local(ins.args[pi]));
     }
   }
@@ -1469,7 +1469,7 @@ function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx:
   let i = dest.insts.len() - 1;
   while (i >= 0) {
     let ins = dest.insts[i];
-    if (ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PHI) {
       r = emit(r, ir.op_store_local(ins.result));
     }
     i -= 1;
@@ -2899,7 +2899,7 @@ function string_binary(own r: irtables.LowerState, ins: ssa.SInst): irtables.Low
 }
 
 function literal_text_eq(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 {
-  if (ins.kind_tag != 9 || ins.str != "==" && ins.str != "!=" || ins.args.len() != 2) {
+  if (ins.kind_tag != ssa.BINARY || ins.str != "==" && ins.str != "!=" || ins.args.len() != 2) {
     return -1;
   }
   if (!ssasem.is_text(f.values[ins.args[0]])) {
@@ -2940,7 +2940,7 @@ function text_eq_by_length(own r: irtables.LowerState, f: ssasem.Func, p: ssauni
 }
 
 function float_scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
-  if (ins.kind_tag == 10) {
+  if (ins.kind_tag == ssa.UNARY) {
     return emit(r, ir.op_funary("fneg"));
   }
   r = emit(r, ir.op_fbin(irtables.map_fbinop(ins.str)));
@@ -3004,10 +3004,10 @@ function scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irt
   if (ins.kind_tag == ssasem.cast()) {
     return cast(r, f, ins);
   }
-  if (ins.kind_tag == 9 && ssasem.is_text(f.values[ins.args[0]])) {
+  if (ins.kind_tag == ssa.BINARY && ssasem.is_text(f.values[ins.args[0]])) {
     return string_binary(r, ins);
   }
-  if (ins.kind_tag == 10 && ins.str == "!") {
+  if (ins.kind_tag == ssa.UNARY && ins.str == "!") {
     return emit(r, ir.op_bin("not", 0, false));
   }
   if (ssasem.is_float(f.values[ins.args[0]])) {
@@ -3017,7 +3017,7 @@ function scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irt
     return emit(r, ir.op_lane(irtables.lane_operator(ins.kind_tag, ins.str), l.width));
   }
   let w = operand_width(f, ins);
-  if (ins.kind_tag == 9) {
+  if (ins.kind_tag == ssa.BINARY) {
     r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false));
   } else {
     r = emit(r, ir.op_bin("sub", w, false));
@@ -3741,23 +3741,23 @@ function zero(t: typeinfo.Type): ir.Op {
 }
 
 function constant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
-  if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) {
+  if (ins.kind_tag == ssa.CONST_INT && ssasem.is_wide(f.values[ins.result])) {
     return emit(r, ir.op_const_i64_text(ins.str));
   }
-  if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) {
+  if (ins.kind_tag == ssa.CONST_INT && ssasem.is_u32(f.values[ins.result])) {
     return emit(r, ir.op_const_i32_text(ins.str));
   }
-  if (ins.kind_tag == 1 && ins.str != "" && ssasem.is_usize(f.values[ins.result])) {
+  if (ins.kind_tag == ssa.CONST_INT && ins.str != "" && ssasem.is_usize(f.values[ins.result])) {
     return emit(r, ir.op_const_ptr_text(ins.str));
   }
-  if (ins.kind_tag == 1 && ssasem.is_f64(f.values[ins.result])) {
+  if (ins.kind_tag == ssa.CONST_INT && ssasem.is_f64(f.values[ins.result])) {
     return emit(r, ir.op_const_f64_text(ins.str));
   }
-  if (ins.kind_tag == 1 && ssasem.is_f32(f.values[ins.result])) {
+  if (ins.kind_tag == ssa.CONST_INT && ssasem.is_f32(f.values[ins.result])) {
     r = emit(r, ir.op_const_f64_text(ins.str));
     return round_f32(r);
   }
-  if (ins.kind_tag == 5) {
+  if (ins.kind_tag == ssa.CONST_STR) {
     return emit(r, ir.op_const_str(ins.str));
   }
   if (ins.kind_tag == ssasem.zero()) {
@@ -3772,7 +3772,7 @@ function constant(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): i
 }
 
 function negation_zero(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
-  if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]]) && !ssasem.is_lanes(f.values[ins.args[0]])) {
+  if (ins.kind_tag == ssa.UNARY && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]]) && !ssasem.is_lanes(f.values[ins.args[0]])) {
     return emit(r, zero(f.values[ins.args[0]]));
   }
   return r;
@@ -3883,7 +3883,7 @@ function source_tagged(own r: irtables.LowerState, begin: i32, pos: sourcepos.So
 function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, token: i32, tested: boolean): irtables.LowerState {
   let scratch_start = r.scratch_start;
   r = negation_zero(r, f, ins);
-  if (ins.kind_tag == 35) {
+  if (ins.kind_tag == ssa.LINE) {
     return r;
   }
   if (ins.kind_tag == ssasem.with()) {
@@ -3936,7 +3936,7 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     r = text_eq_by_length(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) {
+  if (ins.kind_tag == ssa.BINARY && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) {
     r = overflow_binary(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
@@ -6740,7 +6740,7 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   let first = tokens.region.transient + 1;
   let late = ssaunits.late_values(keeps);
   for ins in b.insts {
-    if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
       let step = at(p, idx, b.id, pos, -1);
       let held = bracketed(f, step, ins, grows, links);
       let defer0 = ssaunits.deferred_retain(f, p, step, ins);
@@ -6891,7 +6891,7 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
 }
 
 function set_return_words(own e: Emit, b: ssa.SBlock): Emit {
-  if (b.term.kind_tag != 1) {
+  if (b.term.kind_tag != ssa.TERM_RET) {
     return e;
   }
   e = Emit { ...e, r: return_scalar_words(e.r, b) };
@@ -6923,14 +6923,14 @@ function ends_in_exit(f: ssasem.Func, b: ssa.SBlock): boolean {
 
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
   let b = f.graph.blocks[order[position]];
-  if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
+  if (b.term.kind_tag == ssa.TERM_RET || b.term.kind_tag == ssa.TERM_UNREACHABLE) {
     let ret = at(p, e.steps, b.id, ssaunits.return_point(), -1);
     e = Emit { ...e, r: supplies(e.r, f, p, ret, false, [], [], token_slot(f)) };
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && e.links[b.term.value] >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && e.links[b.term.value] >= 0) {
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
     e = Emit { ...e, r: drops(e.r, ret, f, p, e.links) };
-    if (b.term.kind_tag == 4 && !ends_in_exit(f, b)) {
+    if (b.term.kind_tag == ssa.TERM_UNREACHABLE && !ends_in_exit(f, b)) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
     }
@@ -6938,7 +6938,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (e.why != "") {
       return e;
     }
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) };
     } else {
       e = Emit { ...e, r: emit(e.r, zero(f.result)) };
@@ -6946,7 +6946,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     let return_op = located_return(e.r, b.id);
     return Emit { ...e, r: emit(e.r, return_op) };
   }
-  if (b.term.kind_tag == 2) {
+  if (b.term.kind_tag == ssa.TERM_BR) {
     return jump(e, f, p, order, position, b.term.target);
   }
   if (b.term.t == b.term.f) {
@@ -7049,7 +7049,7 @@ function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
 function returned_records(f: ssasem.Func): i32[] {
   let out: i32[] = [];
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) {
       out = out.append(b.term.value);
     }
   }
@@ -7085,7 +7085,7 @@ function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
   if (ins.kind_tag == ssasem.record_get()) {
     return true;
   }
-  if ((ins.kind_tag == 7 || ins.kind_tag == 8) && util.index_of_i32(boxes, ins.result) >= 0) {
+  if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && util.index_of_i32(boxes, ins.result) >= 0) {
     return true;
   }
   for arg in ins.args {

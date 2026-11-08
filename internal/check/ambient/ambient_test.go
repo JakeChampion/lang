@@ -219,7 +219,7 @@ import "std/platform";
 import "std/async";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let one: Option[i32] = async.block_on(async.spawn((): i32 => 1));` + handlerTail,
-			want: []string{"eprint@log", "monotonic_ns@now", "wasm_timer_pollable@pollable", "__irq_mask@privileged", "reactor_ctl@reactor", "tcp_pollable@tcp", "ring_ctl@uring"},
+			want: []string{"eprint@log", "__mmio_load32@mmio", "monotonic_ns@now", "wasm_timer_pollable@pollable", "__irq_mask@privileged", "reactor_ctl@reactor", "tcp_pollable@tcp", "ring_ctl@uring"},
 		},
 		{
 			name: "a value whose target the walk cannot name charges nothing",

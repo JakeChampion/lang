@@ -4,7 +4,7 @@ A kernel that answers the host needs more than frames. This module is the first 
 
 An interface has one IPv4 address, a gateway and the MAC of its device. It keeps an ARP cache in a page of raw memory that the caller gives it. The interface value then copies freely, and nothing allocates on the receive path. The interface learns a MAC from every IPv4 frame it receives and from every ARP reply. It answers an ARP request for its own address.
 
-The module polls. `poll` takes one frame from the device, handles ARP itself, and gives a UDP datagram or a TCP segment to the caller. A caller that waits for a datagram calls it in a loop. The IRQ line of the device, through `std/async`, comes later.
+`poll` takes one frame from the device, handles ARP itself, and gives a UDP datagram or a TCP segment to the caller. A caller that waits for a datagram calls it in a loop, or after a wake on the IRQ line of the device.
 
 ## Module assembly
 

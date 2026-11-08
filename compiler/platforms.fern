@@ -28,7 +28,10 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "config", "random", "fetch", "pollable"];
   }
   if (profile == "kernel") {
-    return ["privileged", "arena"];
+    return ["privileged", "arena", "mmio"];
+  }
+  if (profile == "none") {
+    return ["mmio"];
   }
   let empty: string[] = [];
   return empty;
@@ -441,6 +444,14 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__mem_store16", capability: "privileged" },
     Gate { builtin: "__mem_store32", capability: "privileged" },
     Gate { builtin: "__mem_store64", capability: "privileged" },
+    Gate { builtin: "__mmio_load8", capability: "mmio" },
+    Gate { builtin: "__mmio_load16", capability: "mmio" },
+    Gate { builtin: "__mmio_load32", capability: "mmio" },
+    Gate { builtin: "__mmio_load64", capability: "mmio" },
+    Gate { builtin: "__mmio_store8", capability: "mmio" },
+    Gate { builtin: "__mmio_store16", capability: "mmio" },
+    Gate { builtin: "__mmio_store32", capability: "mmio" },
+    Gate { builtin: "__mmio_store64", capability: "mmio" },
   ];
 }
 

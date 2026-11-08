@@ -1,0 +1,150 @@
+import "std/audio/mp3/input";
+import "std/audio/source";
+import "std/audio/pcm";
+import "std/f32";
+
+pub struct Reference { sample_rate: i32, channels: i32, frames: i64, start: i64, samples: f32[] }
+
+pub struct Progress { stage: i32, frames: i64, matched: i32 }
+
+pub function bytes_reader(bytes: u8[], position: Cell[i32], calls: Cell[i32], partial: boolean): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    let sizes = [1, 3, 17, 255, 4096];
+    let count = if (partial && requested > sizes[calls.get() % sizes.len()]) { sizes[calls.get() % sizes.len()] } else { requested };
+    let remaining = bytes.len() - position.get();
+    count = if (count < remaining) { count } else { remaining };
+    let output: u8[] = [];
+    for i in position.get()..position.get() + count {
+      output = output.append(bytes[i]);
+    }
+    position.set(position.get() + count);
+    calls.set(calls.get() + 1);
+    return Ok(output);
+  };
+}
+
+function samples(audio: input.Audio, ref: Reference, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 1 || audio.position != progress.frames || audio.frames < 1) {
+    return Err("sample event position or order");
+  }
+  if (audio.info.channels != ref.channels || audio.info.sample_rate != ref.sample_rate || audio.samples.len() != audio.frames * ref.channels) {
+    return Err("sample format or count");
+  }
+  let matched = sample_bits(audio, ref)?;
+  return Ok(Progress { ...progress, frames: progress.frames + audio.frames as i64, matched: progress.matched + matched });
+}
+
+function sample_bits(audio: input.Audio, ref: Reference): Result[i32, string] {
+  let matched = 0;
+  let begin = ref.start * (ref.channels as i64);
+  for i in 0..audio.samples.len() {
+    let at = audio.position * (ref.channels as i64) + i as i64;
+    if (!audio.samples[i].is_finite()) {
+      return Err("non-finite output");
+    }
+    if (at >= begin && at - begin < ref.samples.len() as i64) {
+      if (f32_bits(audio.samples[i]) != f32_bits(ref.samples[(at - begin) as i32])) {
+        return Err("PCM bits at sample " + at.to_string());
+      }
+      matched += 1;
+    }
+  }
+  return Ok(matched);
+}
+
+function begin(info: input.Info, ref: Reference, progress: Progress): Result[Progress, string] {
+  if (progress.stage != 0 || info.sample_rate != ref.sample_rate || info.channels != ref.channels) {
+    return Err("identification event");
+  }
+  return Ok(Progress { ...progress, stage: 1 });
+}
+
+function end(summary: input.Summary, ref: Reference, progress: Progress, bytes: i32): Result[Progress, string] {
+  if (progress.stage != 1 || progress.frames != ref.frames || summary.frames != ref.frames || summary.bytes_read != bytes as i64 || progress.matched != ref.samples.len()) {
+    return Err("complete PCM, input, or event count");
+  }
+  return Ok(Progress { ...progress, stage: 2 });
+}
+
+pub function event(own value: input.ReadEvent, ref: Reference, progress: Progress, bytes: i32): Result[Progress, string] {
+  match (value) {
+    input.Pending => {
+      return Ok(progress);
+    },
+    input.Finished => {
+      return Ok(progress);
+    },
+    input.Output(input.Begin(info)) => {
+      return begin(info, ref, progress);
+    },
+    input.Output(input.Samples(audio)) => {
+      return samples(audio, ref, progress);
+    },
+    input.Output(input.End(summary)) => {
+      return end(summary, ref, progress, bytes);
+    }
+  }
+}
+
+function bounded(state: input.Input): boolean {
+  let padding = match (state.info) { Some(info) => info.padding_frames * info.channels, None => 0 };
+  return state.buffer.bytes.len() <= state.limits.input.max_buffer_bytes && state.tail.len() <= padding
+    && state.trailer.first.len() <= 32 && state.trailer.last.len() <= 160
+    && state.codec.reservoir.len() <= 511 && state.codec.overlap.len() == 576 && state.codec.qmf.len() == 960;
+}
+
+function step(own state: input.Input, read: (i32) => Result[u8[], IoError], calls: Cell[i32]): Result[(input.Input, input.ReadEvent), string] {
+  let before = calls.get();
+  let frames = state.encoded_frames;
+  let (next, value) = match (state.step_with(read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let reads = calls.get() - before;
+  let decoded = next.encoded_frames - frames;
+  if (reads > 1 || decoded > 1i64 || reads > 0 && decoded > 0i64 || !bounded(next)) {
+    return Err("cooperative step or retained state budget");
+  }
+  return Ok((next, value));
+}
+
+function no_read(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function complete(own state: input.Input, progress: Progress): Result[void, string] {
+  if (progress.stage != 2) {
+    return Err("missing end event");
+  }
+  let (next, value) = match (state.step_with(no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if let input.Finished = value {
+    let (_, value) = match (next.next_with(no_read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if let None = value {
+      return Ok(());
+    }
+  }
+  return Err("source read after completion");
+}
+
+pub function run(bytes: u8[], ref: Reference, chunk: i32, partial: boolean): Result[void, string] {
+  let limits = input.default_limits();
+  let audio = pcm.Limits { max_input_bytes: 4096, max_samples: 2304 };
+  let window = source.Limits { chunk_size: chunk, max_buffer_bytes: 4096 };
+  let state = match (input.create(input.Limits { ...limits, audio: audio, input: window })) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let read = bytes_reader(bytes, position, calls, partial);
+  let progress = Progress { stage: 0, frames: 0i64, matched: 0 };
+  let turns = 0;
+  while (true) {
+    let (next, value) = step(state, read, calls)?;
+    state = next;
+    let finished = match (value) { input.Finished => true, _ => false };
+    progress = event(value, ref, progress, bytes.len())?;
+    if (finished) {
+      break;
+    }
+    turns += 1;
+    if (turns > bytes.len() * 4 + 128) {
+      return Err("input does not advance");
+    }
+  }
+  return complete(state, progress);
+}

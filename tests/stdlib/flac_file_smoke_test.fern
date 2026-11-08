@@ -1,0 +1,18 @@
+import "std/hex";
+import "std/test";
+import "audio_vectors";
+import "flac_file_check";
+import "flac_input_check";
+
+function independent(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[9].bytes) else {
+    return test.fail("reference bytes");
+  };
+  return match (flac_file_check.run(bytes, flac_input_check.smoke_reference())) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed FLAC file interpreter smoke");
+  runner = runner.it("independent constant PCM through repeated indexed file seeks", independent);
+  return runner.finish();
+}

@@ -1,0 +1,92 @@
+import "std/android";
+import "std/android/player";
+import "std/test";
+
+function simple_events(): test.TestOutcome {
+  match (player.event(android.Posted(19, 0 as usize))) {
+    Some(player.Prepared) => {},
+    _ => {
+      return test.fail("prepared event");
+    }
+  }
+  match (player.event(android.Posted(20, 0 as usize))) {
+    Some(player.Completed) => {},
+    _ => {
+      return test.fail("completion event");
+    }
+  }
+  match (player.event(android.Posted(23, 0 as usize))) {
+    Some(player.Seeked) => {},
+    _ => {
+      return test.fail("seek completion event");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function info_events(): test.TestOutcome {
+  match (player.event(android.Posted(22, 3 as usize))) {
+    Some(player.Rendering) => {},
+    _ => {
+      return test.fail("first rendered frame");
+    }
+  }
+  match (player.event(android.Posted(22, 701 as usize))) {
+    Some(player.Buffering(true)) => {},
+    _ => {
+      return test.fail("buffering start");
+    }
+  }
+  match (player.event(android.Posted(22, 702 as usize))) {
+    Some(player.Buffering(false)) => {},
+    _ => {
+      return test.fail("buffering end");
+    }
+  }
+  match (player.event(android.Posted(22, 900 as usize))) {
+    None => {},
+    _ => {
+      return test.fail("unknown platform info");
+    }
+  }
+  match (player.event(android.Posted(900, 0 as usize))) {
+    None => {},
+    _ => {
+      return test.fail("other posted event");
+    }
+  }
+  match (player.event(android.Tick)) {
+    None => {},
+    _ => {
+      return test.fail("other activity event");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function error_events(): test.TestOutcome {
+  for (what, extra) in [(1, -1004), (-38, -2147483648), (2147483647, -1)] {
+    let packed = ((what as u64 & 4294967295u64) << 32u64 | extra as u64 & 4294967295u64) as usize;
+    // Posted carries a pointer-width argument. Android targets use 64 bits.
+    let expected_what = if (4294967296u64 as usize == 0 as usize) { 0 } else { what };
+    match (player.event(android.Posted(21, packed))) {
+      Some(player.Failed(a, b)) => {
+        if (a != expected_what || b != extra) {
+          return test.fail("signed platform error fields");
+        }
+      },
+      _ => {
+        return test.fail("platform failure event");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let suite = test.new("Android media player events");
+  suite = suite.it("prepared, completion, and seek", simple_events);
+  suite = suite.it("rendering, buffering, and unrelated events", info_events);
+  suite = suite.it("signed platform error codes", error_events);
+  return suite.finish();
+}

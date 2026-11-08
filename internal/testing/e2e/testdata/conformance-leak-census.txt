@@ -1,3 +1,4 @@
+# 2026-11-08: must_consume_destructure_of_a_moved_payload is clean under RC trace.
 # 2026-11-08: must_consume_sibling_bindings_share_a_name is clean under RC trace.
 # 2026-11-08: Three generic and must_consume fixtures measured with RC trace; all clean.
 # 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
@@ -607,6 +608,7 @@ multi_file                                           0
 multi_hop_alias                                      0
 multiline_stdin                                      0
 must_consume_destructure_in_one_arm_moves            0
+must_consume_destructure_of_a_moved_payload          0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0

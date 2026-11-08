@@ -159,6 +159,14 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "__mem_store16", capability: "privileged" },
     BuiltinCap { builtin: "__mem_store32", capability: "privileged" },
     BuiltinCap { builtin: "__mem_store64", capability: "privileged" },
+    BuiltinCap { builtin: "__mmio_load8", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_load16", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_load32", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_load64", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_store8", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_store16", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_store32", capability: "mmio" },
+    BuiltinCap { builtin: "__mmio_store64", capability: "mmio" },
   ];
 }
 

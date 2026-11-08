@@ -1,0 +1,62 @@
+import "std/audio/mp3/input";
+import "std/audio/source";
+import "std/hex";
+import "mp3_seek_smoke_vectors";
+import "mp3_input_check";
+
+function event(own state: input.Input, reader: Reader, cooperative: boolean): Result[(input.Input, input.ReadEvent), source.ReadError] {
+  if (cooperative) {
+    return state.step(reader);
+  }
+  let (next, value) = state.next(reader)?;
+  return Ok((next, match (value) { Some(value) => input.Output(value), None => input.Finished }));
+}
+
+function decode(reader: Reader, ref: mp3_input_check.Reference, bytes: i32, cooperative: boolean): Result[void, string] {
+  let state = match (input.create(input.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let progress = mp3_input_check.Progress { stage: 0, frames: 0i64, matched: 0 };
+  while (true) {
+    let (next, value) = match (event(state, reader, cooperative)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    state = next;
+    let finished = match (value) { input.Finished => true, _ => false };
+    progress = mp3_input_check.event(value, ref, progress, bytes)?;
+    if (finished) {
+      break;
+    }
+  }
+  let offset = match (reader.seek(0i64, 1)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (progress.stage != 2 || offset != bytes as i64) {
+    return Err("file position or complete reference PCM");
+  }
+  return Ok(());
+}
+
+function read_file(path: string, ref: mp3_input_check.Reference, bytes: i32, cooperative: boolean): Result[void, string] {
+  let reader = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let result = decode(reader, ref, bytes, cooperative);
+  let closed = reader.close();
+  result?;
+  return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(bytes) = hex.decode(mp3_seek_smoke_vectors.INPUT) else {
+    return 3;
+  };
+  let samples: f32[] = [];
+  for bits in mp3_seek_smoke_vectors.SAMPLE_BITS {
+    samples = samples.append(f32_from_bits(bits as i32));
+  }
+  let ref = mp3_input_check.Reference { sample_rate: 8000, channels: 1, frames: 576i64, start: mp3_seek_smoke_vectors.POSITION, samples: samples };
+  for cooperative in [false, true] {
+    if let Err(message) = read_file(argv[1], ref, bytes.len(), cooperative) {
+      eprint(message);
+      return 1;
+    }
+  }
+  return 0;
+}

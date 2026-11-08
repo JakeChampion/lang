@@ -797,7 +797,7 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
         exports: merged.exports,
         marks: merged.marks,
         impls: merged.impls,
-        trait_reqs: merged.trait_reqs, trait_decls: merged.trait_decls, inferred_consts: merged.inferred_consts, todo_sites: merged.todo_sites, sights: merged.sights,
+        trait_reqs: merged.trait_reqs, trait_decls: merged.trait_decls, substituted_consts: merged.substituted_consts, todo_sites: merged.todo_sites, sights: merged.sights,
       };
     },
     Err(e) => {

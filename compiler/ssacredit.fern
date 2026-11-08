@@ -213,7 +213,7 @@ function structure(f: ssa.SFunc): Verdict {
     if (b.id < 0 || block_at(f, b.id) != bi) {
       return verdict(f, 3, bi, "invalid or duplicate block ID");
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+    if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_BRIF) {
       return verdict(f, 2, bi, "unsupported terminator");
     }
     let pi = 0;
@@ -302,10 +302,10 @@ function dense(f: ssa.SFunc): ssa.SFunc {
       preds = preds.append(block_at(f, p));
     }
     let term = b.term;
-    if (term.kind_tag == 2) {
+    if (term.kind_tag == ssa.TERM_BR) {
       term = ssa.STerm { ...term, target: block_at(f, term.target) };
     }
-    if (term.kind_tag == 3) {
+    if (term.kind_tag == ssa.TERM_BRIF) {
       term = ssa.STerm { ...term, t: block_at(f, term.t), f: block_at(f, term.f) };
     }
     blocks = blocks.append(ssa.SBlock { ...b, id: i, preds: preds, term: term });
@@ -428,13 +428,13 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
     if (run.result.status != 0) {
       return run.result;
     }
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       let done = finish(f, boundary, b.term.value, run.accounts, b.id);
       if (done.status != 0) {
         return done;
       }
     } else {
-      if (b.term.kind_tag == 3) {
+      if (b.term.kind_tag == ssa.TERM_BRIF) {
         let v = b.term.cond;
         if (v < 0 || v >= f.nvals || run.accounts.roots[v] != -1) {
           return verdict(f, 3, b.id, "condition lacks available scalar provenance");

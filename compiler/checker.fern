@@ -19695,13 +19695,38 @@ function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
 // An own parameter, a payload that a match took, or a fresh local declared
 // once outside a loop.
 function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
+  return lu_unpack_source_in(fx, name, []);
+}
+
+function lu_unpack_source_in(fx: LuFn, name: string, seen: string[]): boolean {
   if (lu_own_param(fx, name)) {
     return lu_decl_count(fx, name) == 0;
   }
-  if (lu_fresh_bound(fx, name)) {
+  if (lu_fresh_bound(fx, name) || lu_moved_payload(fx, name, seen)) {
     return true;
   }
   return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
+}
+
+// A payload of a match on an owned name at its last use. The match takes the
+// value, so the payload is owned.
+function lu_moved_payload(fx: LuFn, name: string, seen: string[]): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) != 0 || util.has_str(seen, name)) {
+    return false;
+  }
+  let found = false;
+  for b in fx.facts.matched {
+    if (b.name == name) {
+      let ast.ExprIdent(src) = b.init else {
+        return false;
+      };
+      if (!lu_is_last(fx, src) || !lu_unpack_source_in(fx, src.name, seen.append(name))) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
 }
 
 // Each value assigned to the name after its declaration is owned.
@@ -19800,6 +19825,13 @@ function lu_payload_elem_local(fx: LuFn, id: ast.ExprIdent): boolean {
 // A local declared once, outside a loop, from an own parameter at its last
 // use, and given only owned values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
+  return lu_owned_alias_in(fx, name, []);
+}
+
+function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
+  if (util.has_str(seen, name)) {
+    return false;
+  }
   if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name, [])) {
     return false;
   }
@@ -19815,10 +19847,35 @@ function lu_owned_alias(fx: LuFn, name: string): boolean {
   let Some(init) = lu_init_of(fx, name) else {
     return false;
   };
+  if let Some(m) = lu_match_value(init) {
+    return lu_moved_match_value(fx, m, seen.append(name));
+  }
   if let ast.ExprIdent(src) = init {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
+  if let Some(src) = lu_spread_source(init) {
+    return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
+  }
   return false;
+}
+
+// A named source at its last use transfers its payload to every yielding arm.
+function lu_moved_match_value(fx: LuFn, m: ast.StmtMatch, seen: string[]): boolean {
+  let ast.ExprIdent(src) = m.scrutinee else {
+    return false;
+  };
+  if (m.arms.len() == 0 || !lu_is_last(fx, src)) {
+    return false;
+  }
+  if (!(lu_own_param(fx, src.name) || lu_fresh_bound(fx, src.name) || lu_fresh_init(fx, src.name) || lu_unpack_init(fx, src.name) || lu_owned_alias_in(fx, src.name, seen))) {
+    return false;
+  }
+  for arm in m.arms {
+    if (!lu_arm_yields_fresh(fx, arm)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The names a let declares inside a loop body.
@@ -21130,7 +21187,7 @@ function lu_reads_field_of(e: ast.Expr, name: string): boolean {
 // in field reads before the argument.
 function lu_returns_after_reads(site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
   if let ast.StmtReturn(r) = site.stmts[site.idx] {
-    return !site.in_iife && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(call, aid);
+    return (!site.in_iife || r.line > 0) && astwalk.count_ident_expr(r.value, aid.name) == astwalk.count_ident_expr(call, aid.name) && lu_reads_before(call, aid);
   }
   return false;
 }
@@ -21160,7 +21217,7 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (util.has_str(fx.facts.captured, q.name) || lu_repeats(site.frames, q.name)) {
     return false;
   }
-  let fresh_local = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && (lu_fresh_init(fx, q.name) || lu_unpack_init(fx, q.name));
+  let fresh_local = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && (lu_fresh_init(fx, q.name) || lu_unpack_init(fx, q.name) || lu_owned_alias(fx, q.name));
   let bound = !util.has_str(fx.params, q.name) && lu_decl_count(fx, q.name) == 0 && util.has_str(site.binders, q.name);
   if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name)) {
     return false;
@@ -21904,12 +21961,12 @@ function ow_count_field_reads(e: ast.Expr, target: string, field: string): i32 {
   return astwalk.fold_expr(e, 0, tally);
 }
 
-struct OwFieldMove { target: string, field: string, ofuncs: OwnFuncs, found: boolean }
+struct OwFieldMove { target: string, field: string, ctx: OwnCtx, found: boolean }
 
 // A call in e, outside a lambda, takes target.field as an own argument. The
 // call can be at any depth of e.
-function ow_moves_field(e: ast.Expr, target: string, field: string, ofuncs: OwnFuncs): boolean {
-  return astwalk.fold_expr_pruned(e, OwFieldMove { target: target, field: field, ofuncs: ofuncs, found: false }, ow_field_move_call, astwalk.not_lambda).found;
+function ow_moves_field(e: ast.Expr, target: string, field: string, ctx: OwnCtx): boolean {
+  return astwalk.fold_expr_pruned(e, OwFieldMove { target: target, field: field, ctx: ctx, found: false }, ow_field_move_call, astwalk.not_lambda).found;
 }
 
 function ow_field_move_call(e: ast.Expr, own m: OwFieldMove): OwFieldMove {
@@ -21917,12 +21974,10 @@ function ow_field_move_call(e: ast.Expr, own m: OwFieldMove): OwFieldMove {
     return m;
   }
   if let ast.ExprCall(c) = e {
-    if let ast.ExprIdent(cid) = c.callee {
-      let flags = ow_func_flags(m.ofuncs, cid.name);
-      for j in 0..c.args.len() {
-        if (j < flags.len() && flags[j] && ow_is_field_read(c.args[j], m.target, m.field)) {
-          return OwFieldMove { ...m, found: true };
-        }
+    let oc = ow_own_call(c, m.ctx);
+    for j in 0..oc.args.len() {
+      if (j < oc.flags.len() && oc.flags[j] && ow_is_field_read(oc.args[j], m.target, m.field)) {
+        return OwFieldMove { ...m, found: true };
       }
     }
   }
@@ -21941,7 +21996,7 @@ function ow_field_move_fields(target: string, value: ast.Expr, ctx: OwnCtx): str
       }
       for i in 0..sl.field_values.len() {
         let fname = sl.field_names[i];
-        if (ow_count_field_reads(value, target, fname) == 1 && ow_moves_field(sl.field_values[i], target, fname, ctx.ofuncs)) {
+        if (ow_count_field_reads(value, target, fname) == 1 && ow_moves_field(sl.field_values[i], target, fname, ctx)) {
           out = out.append(target + "." + fname);
         }
       }
@@ -29859,7 +29914,7 @@ function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): p
   if (focus.top) {
     ntop = annotate_block(rmod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
-  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, marks: rmod.marks, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts, todo_sites: rmod.todo_sites, sights: rmod.sights };
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, marks: rmod.marks, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, substituted_consts: rmod.substituted_consts, todo_sites: rmod.todo_sites, sights: rmod.sights };
 }
 
 function unchecked_capture(e: ast.Expr, own found: boolean): boolean {

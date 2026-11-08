@@ -70,7 +70,7 @@ pub function module_rank(sights: ModuleSight[], from: string, decl: string): i32
   return 2;
 }
 
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], marks: FuncMark[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], marks: FuncMark[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], substituted_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
 pub function with_stdlib_origin(mod: Module, path: string): Module {
   if (!util.is_stdlib_path(path)) {
@@ -25729,7 +25729,7 @@ pub function inferred_const_table(funcs: FuncDecl[], names: string[], t: ConstTa
   for fd in funcs {
     if (fd.is_const && util.has_str(names, fd.name) && fd.body.len() == 1) {
       if let ast.StmtReturn(r) = fd.body[0] {
-        out = ConstTable { names: out.names.append(fd.name), values: out.values.append(astwalk.substitute_consts_expr(r.value, out.names, out.values)) };
+        out = ConstTable { names: out.names.append(fd.name), values: out.values.append(astwalk.substitute_consts_expr(const_value(fd, r.value), out.names, out.values)) };
       }
     }
   }
@@ -25819,14 +25819,46 @@ function const_table_within(t: ConstTable, names: string[]): ConstTable {
   return out;
 }
 
-function unannotated_const_names(funcs: FuncDecl[]): string[] {
+// The consts whose uses become their value: each one without a type, and
+// each one whose value is a literal of exactly its declared type.
+function substituted_const_names(funcs: FuncDecl[]): string[] {
   let out: string[] = [];
   for fd in funcs {
-    if (fd.is_const && fd.ret_type == "") {
+    if (fd.is_const && (fd.ret_type == "" || typed_literal_const(fd))) {
       out = out.append(fd.name);
     }
   }
   return out;
+}
+
+function typed_literal_const(fd: FuncDecl): boolean {
+  if (fd.body.len() != 1) {
+    return false;
+  }
+  let ast.StmtReturn(r) = fd.body[0] else {
+    return false;
+  };
+  match (r.value) {
+    ast.ExprNumber(n) => {
+      return fd.ret_type == "i32" && n.suffix == "" && !n.is_float && !is_unit_literal(n) && !is_quoted_literal(n);
+    },
+    ast.ExprBool(_) => {
+      return fd.ret_type == "boolean";
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// A typed const's literal keeps its declared type at each use.
+function const_value(fd: FuncDecl, value: ast.Expr): ast.Expr {
+  if let ast.ExprNumber(n) = value {
+    if (fd.ret_type == "i32" && n.suffix == "") {
+      return ast.ExprNumber { ...n, suffix: "i32" };
+    }
+  }
+  return value;
 }
 
 function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[] {
@@ -26176,13 +26208,13 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     },
     None => {}
   }
-  let parsed = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, marks: marks, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
+  let parsed = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, marks: marks, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, substituted_consts: [], todo_sites: p.todos, sights: [] };
   if (!verbatim) {
-    let inferred = unannotated_const_names(funcs);
+    let inferred = substituted_const_names(funcs);
     let nothing: string[] = [];
     parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
     parsed = rewrite_assoc_const_reads(parsed);
-    parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
+    parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), substituted_consts: inferred };
     parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }
   let settled = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
@@ -26211,7 +26243,7 @@ function coded_kind(code: string, msg: string): string {
 }
 
 function lex_error_module(le: lexer.TokError): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let m = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], marks: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
+  let m = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], marks: [], impls: [], trait_reqs: [], trait_decls: [], substituted_consts: [], todo_sites: [], sights: [] };
   let traits: TraitDecl[] = [];
   let impls: ImplDecl[] = [];
   let flines: FieldLines[] = [];

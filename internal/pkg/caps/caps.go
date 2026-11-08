@@ -1,6 +1,6 @@
 package caps
 
-var Capabilities = []string{"env", "fs", "net", "privileged", "random", "subprocess", "time"}
+var Capabilities = []string{"env", "fs", "mmio", "net", "privileged", "random", "subprocess", "time"}
 
 var BuiltinCaps = map[string]string{
 	"tcp_listen":            "net",
@@ -136,6 +136,8 @@ var BuiltinCaps = map[string]string{
 	"__port_out8": "privileged", "__port_out16": "privileged", "__port_out32": "privileged",
 	"__mem_load8": "privileged", "__mem_load16": "privileged", "__mem_load32": "privileged", "__mem_load64": "privileged",
 	"__mem_store8": "privileged", "__mem_store16": "privileged", "__mem_store32": "privileged", "__mem_store64": "privileged",
+	"__mmio_load8": "mmio", "__mmio_load16": "mmio", "__mmio_load32": "mmio", "__mmio_load64": "mmio",
+	"__mmio_store8": "mmio", "__mmio_store16": "mmio", "__mmio_store32": "mmio", "__mmio_store64": "mmio",
 }
 
 var Ungated = map[string]bool{

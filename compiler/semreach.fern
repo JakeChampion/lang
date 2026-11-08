@@ -960,7 +960,7 @@ function absorb_block(ctx: Ctx, w: World, f: ssasem.Func, i: i32, wk: Walk, pos:
   for k in 0..n {
     w = absorb_inst(ctx, w, f, wk, b.insts[k]);
   }
-  if (wk.cut[pos] < 0 && b.term.kind_tag == 1) {
+  if (wk.cut[pos] < 0 && b.term.kind_tag == ssa.TERM_RET) {
     w = returned(ctx, w, i, wk, b.term.value);
   }
   return w;
@@ -1064,10 +1064,10 @@ function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBloc
   if (wk.exec[pos]) {
     cut = wk.cut[pos];
   }
-  if (cut >= 0 && (cut < b.insts.len() || b.term.kind_tag != 4)) {
+  if (cut >= 0 && (cut < b.insts.len() || b.term.kind_tag != ssa.TERM_UNREACHABLE)) {
     return (ssa.SBlock { ...b, insts: b.insts.truncate(cut), term: unreachable() }, true);
   }
-  if (wk.exec[pos] && b.term.kind_tag == 3) {
+  if (wk.exec[pos] && b.term.kind_tag == ssa.TERM_BRIF) {
     let t = decided(b.term, wk.vals[b.term.cond], dead);
     if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
       return (ssa.SBlock { ...b, term: t }, true);
@@ -1111,5 +1111,5 @@ function decided(t: ssa.STerm, c: i64, dead: i32): ssa.STerm {
 }
 
 function unreachable(): ssa.STerm {
-  return ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_UNREACHABLE, cond: 0, target: 0, t: 0, f: 0, value: 0 };
 }

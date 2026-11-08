@@ -423,7 +423,7 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
 }
 
 pub function tail_allocator(ins: ssa.SInst): string {
-  if (ins.kind_tag == 50 && ins.str == "raw_arr_box" && ins.args.len() == 1) {
+  if (ins.kind_tag == ssa.RT_CALL && ins.str == "raw_arr_box" && ins.args.len() == 1) {
     return "__fern_arr_box";
   }
   return "";

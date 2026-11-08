@@ -104,7 +104,7 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
     released = released.append(load.imm);
     i += 2;
   }
-  if (b.term.kind_tag != 1 || b.term.value != result.result) {
+  if (b.term.kind_tag != ssa.TERM_RET || b.term.value != result.result) {
     return refused(f, "drop return mismatch");
   }
   return Proof { ok: true, function_name: f.name, message: "proved flat-child drop body" };
@@ -123,7 +123,7 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
     return refused(f, "unsupported release graph");
   }
   let entry = f.blocks[block_index(f, f.entry)];
-  if (entry.preds.len() != 0 || entry.insts.len() != 2 || entry.term.kind_tag != 3) {
+  if (entry.preds.len() != 0 || entry.insts.len() != 2 || entry.term.kind_tag != ssa.TERM_BRIF) {
     return refused(f, "unsupported uniqueness guard");
   }
   let p = entry.insts[0];
@@ -155,7 +155,7 @@ function release_edges(f: ssa.SFunc, drop: ssa.SFunc, entry: ssa.SBlock, p: ssa.
     target = no.id;
     shared = entry.id;
   }
-  if (yes.term.kind_tag != 2 || !direct && no.term.kind_tag != 2 || yes.term.target != target) {
+  if (yes.term.kind_tag != ssa.TERM_BR || !direct && no.term.kind_tag != ssa.TERM_BR || yes.term.target != target) {
     return refused(f, "release join mismatch");
   }
   let ji = block_index(f, yes.term.target);
@@ -171,7 +171,7 @@ function release_edges(f: ssa.SFunc, drop: ssa.SFunc, entry: ssa.SBlock, p: ssa.
   if (!unary(dec, 11, p.result, "__fern_rc_dec") || dec.imm != 0 || !zero(result)) {
     return refused(f, "parent release mismatch");
   }
-  if (join.term.kind_tag != 1 || join.term.value != result.result) {
+  if (join.term.kind_tag != ssa.TERM_RET || join.term.value != result.result) {
     return refused(f, "release return mismatch");
   }
   return Proof { ok: true, function_name: f.name, message: "proved conditional parent release body" };

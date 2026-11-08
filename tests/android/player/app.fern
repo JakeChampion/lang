@@ -1,0 +1,260 @@
+// This app checks platform A/V playback, pause, seek, EOS, and reuse.
+import "std/android";
+import "std/android/player";
+import "std/log";
+
+const CLASS: string = "dev.fern.playertest.Listener";
+
+struct App { ctx: usize, media: Option[player.Player], window: Option[android.Window], uri: string, phase: i32, round: i32, paused_ms: i64, wait_ns: i64, deadline_ns: i64, timestamps: i32, rendered: boolean, done: boolean }
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+@jni("dev.fern.playertest.Listener implements android.media.MediaPlayer$OnPreparedListener, android.media.MediaPlayer$OnCompletionListener, android.media.MediaPlayer$OnErrorListener, android.media.MediaPlayer$OnInfoListener, android.media.MediaPlayer$OnSeekCompleteListener", "void onPrepared(android.media.MediaPlayer)")
+pub function prepared(env: usize, thiz: usize, mp: usize): void {
+  player.prepared(env, thiz, mp);
+}
+
+@jni("dev.fern.playertest.Listener", "void onCompletion(android.media.MediaPlayer)")
+pub function completed(env: usize, thiz: usize, mp: usize): void {
+  player.completed(env, thiz, mp);
+}
+
+@jni("dev.fern.playertest.Listener", "boolean onError(android.media.MediaPlayer, int, int)")
+pub function failed(env: usize, thiz: usize, mp: usize, what: i32, extra: i32): u8 {
+  return player.failed(env, thiz, mp, what, extra);
+}
+
+@jni("dev.fern.playertest.Listener", "boolean onInfo(android.media.MediaPlayer, int, int)")
+pub function info(env: usize, thiz: usize, mp: usize, what: i32, extra: i32): u8 {
+  return player.info(env, thiz, mp, what, extra);
+}
+
+@jni("dev.fern.playertest.Listener", "void onSeekComplete(android.media.MediaPlayer)")
+pub function seeked(env: usize, thiz: usize, mp: usize): void {
+  player.seeked(env, thiz, mp);
+}
+
+function app_main(ctx: usize): usize {
+  let first = App { ctx: ctx, media: None, window: None, uri: android.intent_extra(ctx, "uri"), phase: 0, round: 0, paused_ms: 0i64, wait_ns: 0i64, deadline_ns: monotonic_ns() + 30000000000i64, timestamps: 0, rendered: false, done: false };
+  let last = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
+  let _ = close(last);
+  return 0 as usize;
+}
+
+function close(own s: App): App {
+  match (s.media) {
+    Some(p) => {
+      player.close(s.ctx, p);
+    },
+    None => {}
+  }
+  return App { ...s, media: None };
+}
+
+function fail(own s: App, message: string): App {
+  log.warn("playertest: FAIL " + message);
+  return App { ...close(s), done: true };
+}
+
+function create(own s: App, window: android.Window): App {
+  match (player.new(s.ctx, "dev.fern.playertest.Missing")) {
+    None => {},
+    _ => {
+      return fail(s, "missing listener accepted");
+    }
+  }
+  let Some(p) = player.new(s.ctx, CLASS) else {
+    return fail(s, "player construction");
+  };
+  s = App { ...s, media: Some(p), window: Some(window) };
+  if (player.open(s.ctx, p, "") || player.seek(s.ctx, p, -1i64)) {
+    return fail(s, "invalid argument accepted");
+  }
+  if (!player.show(s.ctx, p, window) || !player.open(s.ctx, p, s.uri)) {
+    return fail(s, "source or surface");
+  }
+  log.warn("playertest: opened");
+  return s;
+}
+
+function ready(own s: App): App {
+  let Some(p) = s.media else {
+    return fail(s, "prepared without player");
+  };
+  let (width, height) = player.video_size(s.ctx, p);
+  let duration = player.duration_ms(s.ctx, p);
+  if (width != 320 || height != 240 || duration < 3900i64 || duration > 4100i64) {
+    return fail(s, "track dimensions or duration");
+  }
+  for _ in 0..2000 {
+    let _ = player.position_ms(s.ctx, p);
+  }
+  if (!player.start(s.ctx, p)) {
+    return fail(s, "start");
+  }
+  log.warn("playertest: prepared round=" + s.round.to_string() + " duration_ms=" + duration.to_string());
+  return App { ...s, phase: if (s.round == 0) { 1 } else { 4 } };
+}
+
+function tick(own s: App): App {
+  if (s.done) {
+    return s;
+  }
+  let Some(p) = s.media else {
+    return s;
+  };
+  let now = monotonic_ns();
+  if (now > s.deadline_ns) {
+    return fail(s, "timeout");
+  }
+  if (s.phase == 0 || s.phase == 3 || s.phase == 5) {
+    return s;
+  }
+  let pos = player.position_ms(s.ctx, p);
+  if (s.phase == 1 && pos >= 400i64) {
+    if (!player.pause(s.ctx, p)) {
+      return fail(s, "pause");
+    }
+    let paused = player.position_ms(s.ctx, p);
+    log.warn("playertest: paused position_ms=" + paused.to_string());
+    return App { ...s, phase: 2, paused_ms: paused, wait_ns: now + 1000000000i64 };
+  }
+  if (s.phase == 2 && now >= s.wait_ns) {
+    return pause_done(s, p, pos);
+  }
+  if (s.phase == 4) {
+    return sample_timestamp(s, p, pos, now);
+  }
+  return s;
+}
+
+function pause_done(own s: App, p: player.Player, pos: i64): App {
+  if (pos > s.paused_ms + 40i64 || pos < s.paused_ms || player.playing(s.ctx, p)) {
+    return fail(s, "position advanced during pause");
+  }
+  if (!player.seek(s.ctx, p, 1500i64)) {
+    return fail(s, "seek request");
+  }
+  log.warn("playertest: pause stable");
+  return App { ...s, phase: 3 };
+}
+
+function sample_timestamp(own s: App, p: player.Player, pos: i64, now: i64): App {
+  match (player.timestamp(s.ctx, p)) {
+    Some(anchor) => {
+      let delta = anchor.media_us - pos * 1000i64;
+      let age = now - anchor.monotonic_ns;
+      if (delta < -500000i64 || delta > 500000i64 || age < -2000000000i64 || age > 2000000000i64) {
+        return fail(s, "platform timeline anchor");
+      }
+      if (s.timestamps == 0) {
+        log.warn("playertest: timestamp media_us=" + anchor.media_us.to_string() + " monotonic_ns=" + anchor.monotonic_ns.to_string());
+      }
+      return App { ...s, timestamps: s.timestamps + 1 };
+    },
+    None => {
+      return s;
+    }
+  }
+}
+
+function seek_done(own s: App): App {
+  if (s.phase != 3) {
+    return fail(s, "unexpected seek callback");
+  }
+  let Some(p) = s.media else {
+    return fail(s, "seek without player");
+  };
+  let pos = player.position_ms(s.ctx, p);
+  if (pos < 1420i64 || pos > 1580i64 || !player.start(s.ctx, p)) {
+    return fail(s, "seek position or resume");
+  }
+  log.warn("playertest: seeked position_ms=" + pos.to_string());
+  return App { ...s, phase: 4 };
+}
+
+function complete(own s: App): App {
+  let Some(p) = s.media else {
+    return fail(s, "completion without player");
+  };
+  if (s.phase != 4 || !s.rendered || s.timestamps == 0 || player.position_ms(s.ctx, p) < 3900i64) {
+    return fail(s, "completion state");
+  }
+  log.warn("playertest: completed round=" + s.round.to_string());
+  if (s.round == 0) {
+    player.stop(s.ctx, p);
+    let Some(w) = s.window else {
+      return fail(s, "missing window");
+    };
+    if (!player.show(s.ctx, p, w) || !player.open(s.ctx, p, s.uri)) {
+      return fail(s, "player reuse");
+    }
+    return App { ...s, round: 1, phase: 0, rendered: false, timestamps: 0 };
+  }
+  s = close(s);
+  let Some(bad) = player.new(s.ctx, CLASS) else {
+    return fail(s, "error player construction");
+  };
+  s = App { ...s, media: Some(bad), phase: 5 };
+  if (!player.open(s.ctx, bad, s.uri + ".missing")) {
+    return fail(s, "error source preparation");
+  }
+  return s;
+}
+
+function change(own s: App, event: player.Change): App {
+  match (event) {
+    player.Prepared => {
+      return ready(s);
+    },
+    player.Seeked => {
+      return seek_done(s);
+    },
+    player.Completed => {
+      return complete(s);
+    },
+    player.Rendering => {
+      log.warn("playertest: rendered");
+      return App { ...s, rendered: true };
+    },
+    player.Failed(what, extra) => {
+      if (s.phase != 5) {
+        return fail(s, "platform error " + what.to_string() + "/" + extra.to_string());
+      }
+      log.warn("playertest: expected error " + what.to_string() + "/" + extra.to_string());
+      log.warn("playertest: passed timestamps=" + s.timestamps.to_string());
+      return App { ...close(s), done: true };
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+function step(own s: App, event: android.Event): App {
+  if (s.done) {
+    return s;
+  }
+  if let Some(value) = player.event(event) {
+    return change(s, value);
+  }
+  match (event) {
+    android.WindowCreated(w) => {
+      return create(s, w);
+    },
+    android.WindowDestroyed(_) => {
+      return fail(s, "window destroyed during test");
+    },
+    android.Tick => {
+      return tick(s);
+    },
+    _ => {
+      return s;
+    }
+  }
+}
