@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,7 +20,14 @@ func jniBuild(t *testing.T, src string, args ...string) (string, string, error) 
 		t.Fatal(err)
 	}
 	java := filepath.Join(dir, "java")
-	full := append([]string{"-target", "arm64-android", "-jni-java", java, "-o", filepath.Join(dir, "libdemo.so")}, args...)
+	full := []string{"-target", "arm64-android", "-o", filepath.Join(dir, "libdemo.so")}
+	// -jni-java is a sub-flag of -shared, and the CLI refuses it without its
+	// mode before it reads the program. The case without -shared tests the
+	// @jni refusal of an executable, so it gets no -jni-java.
+	if slices.Contains(args, "-shared") {
+		full = append(full, "-jni-java", java)
+	}
+	full = append(full, args...)
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), append(full, path, e2eharness.SelfHostStdlibRoot(t))...)
 	cmd.Env = e2eharness.ChildEnv()
 	out, err := cmd.CombinedOutput()
