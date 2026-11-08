@@ -1,0 +1,44 @@
+import "std/audio/caf";
+import "std/audio/pcm";
+import "std/bench";
+import "caf_common" as common;
+
+function consume(own state: caf.Cursor, input: [u8], rounds: i32, checksum: u32): Result[(caf.Cursor, u32, i64), pcm.AudioError] {
+  let samples = 0i64;
+  for _ in 0..rounds {
+    state = state.seek(0i64)?;
+    while (true) {
+      let (next, event) = state.step(input)?;
+      state = next;
+      match (event) {
+        caf.Pending => {},
+        caf.Samples(audio) => {
+          let count = audio.frames * audio.format.channels;
+          checksum = common.hash(audio.samples, audio.start * audio.format.channels, count, checksum);
+          samples += count as i64;
+        },
+        caf.Finished => {
+          break;
+        }
+      }
+    }
+  }
+  return Ok((state, checksum, samples));
+}
+
+function main(): i32 {
+  let data = match (common.load()) { Ok(value) => value, Err(e) => { print(e); return 1; } };
+  let Ok(initial) = caf.cursor(data.index) else {
+    return 1;
+  };
+  let Ok((state, _, _)) = consume(initial, data.encoded, 4, 2166136261u32) else {
+    return 1;
+  };
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let Ok((_, checksum, samples)) = consume(state, data.encoded, data.rounds, 2166136261u32) else {
+    return 1;
+  };
+  return common.report("default", data, checksum, samples, started, allocs, fresh);
+}

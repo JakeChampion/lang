@@ -1,0 +1,73 @@
+import "std/audio/caf";
+import "std/bench";
+import "std/io";
+import "std/i32";
+import "std/u32";
+import "std/string";
+
+pub struct Input { encoded: u8[], index: caf.Index, rounds: i32 }
+
+pub function load(): Result[Input, string] {
+  let argv = args();
+  if (argv.len() != 3) {
+    return Err("usage: caf-bench INPUT ROUNDS");
+  }
+  let rounds = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
+  if (rounds < 1 || rounds > 100000) {
+    return Err("rounds must be between 1 and 100000");
+  }
+  let encoded = match (io.read_input_bytes(argv[1])) { Ok(value) => value, Err(_) => { return Err("cannot read input"); } };
+  let index = match (caf.inspect(encoded, caf.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (index.information().frames < 1i64) {
+    return Err("benchmark input must contain playable samples");
+  }
+  return Ok(Input { encoded: encoded, index: index, rounds: rounds });
+}
+
+pub function hash(samples: [i32], first: i32, count: i32, value: u32): u32 {
+  for i in first..first + count {
+    value = (value ^ samples[i] as u32) * 16777619u32;
+  }
+  return value;
+}
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (!line.starts_with("VmHWM:")) {
+      continue;
+    }
+    for field in line.split("\t") {
+      for part in field.split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+pub function report(mode: string, input: Input, checksum: u32, samples: i64, started: i64, allocs: i64, fresh: i64): i32 {
+  let elapsed = monotonic_ns() - started;
+  let allocated = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  let expected = input.index.information().frames * (input.index.information().format.channels as i64) * (input.rounds as i64);
+  if (samples != expected) {
+    print("incomplete benchmark PCM");
+    return 1;
+  }
+  let resident = peak_rss();
+  print("mode=" + mode);
+  print("rounds=" + input.rounds.to_string());
+  print("samples=" + samples.to_string());
+  print("checksum=" + checksum.to_string());
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocated.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("native_peak_rss_kb=" + resident.to_string());
+  return 0;
+}
