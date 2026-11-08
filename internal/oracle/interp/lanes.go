@@ -285,6 +285,25 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			return out, nil
 		}}
+		i.Builtins[p+"store"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("vector store requires an address and lanes")
+			}
+			address, ok := args[0].(Number)
+			l, valid := args[1].(Lanes)
+			if !ok || !valid || l.Width != width {
+				return nil, fmt.Errorf("vector store requires matching lanes")
+			}
+			bytes, err := ip.raw.span(p+"store", int64(address), 16)
+			if err != nil {
+				return nil, err
+			}
+			for k := 0; k < 16; k++ {
+				bytes[k] = byte(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8))
+			}
+			return Void{}, nil
+		}}
+
 		i.Builtins[p+"load_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			a, at, err := laneWindow(p+"load_bytes", args[0], args[1], 16)
 			if err != nil {

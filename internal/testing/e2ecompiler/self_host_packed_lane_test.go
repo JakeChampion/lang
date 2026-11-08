@@ -60,3 +60,54 @@ func TestSelfHostPackedLaneBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfHostRawLaneStores(t *testing.T) {
+	const source = `function main(): i32 {
+  unsafe {
+   let p = __alloc(40);
+   __store_u8(p, 37);
+   __store_u8(p + 33 as usize, 19);
+   __f32x4_store(p + 1 as usize, __f32x4_of(1.0 as f32, 2.0 as f32, 3.0 as f32, 4.0 as f32));
+   let a = __load_i32(p + 1 as usize);
+   let last = __load_i32(p + 13 as usize);
+   __f64x2_store(p + 17 as usize, __f64x2_of(1.0, -0.0));
+   let b = __load_i64(p + 17 as usize);
+   let sign = __load_i64(p + 25 as usize);
+   let first_guard = __load_u8(p);
+   let last_guard = __load_u8(p + 33 as usize);
+   __free(p, 40);
+   if (a != 1065353216 || last != 1082130432 || b != 4607182418800017408i64 || sign != f64_bits(-0.0) || first_guard != 37 || last_guard != 19) { return 1; }
+  }
+  return 0;
+ }`
+	for _, target := range []string{e2eharness.HostSelfHostTarget(), e2eharness.TargetWasm32Wasi} {
+		if target == "" {
+			continue
+		}
+		if target == e2eharness.TargetWasm32Wasi {
+			if _, err := exec.LookPath("wasmtime"); err != nil {
+				continue
+			}
+		}
+		t.Run(target, func(t *testing.T) {
+			dir := t.TempDir()
+			entry := filepath.Join(dir, "main.fern")
+			bin := filepath.Join(dir, "program")
+			if err := os.WriteFile(entry, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := e2eharness.SelfHostCompileCmd(t, target, entry, bin)
+			cmd.Env = e2eharness.SelfHostChildEnv()
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			run := exec.Command(bin)
+			if target == e2eharness.TargetWasm32Wasi {
+				run = e2eharness.RunWasmCore(t, bin)
+			}
+			if out, err := run.CombinedOutput(); err != nil {
+				t.Fatalf("run: %v\n%s", err, out)
+			}
+		})
+	}
+}

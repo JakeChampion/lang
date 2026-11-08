@@ -275,6 +275,9 @@ pub function lane_builtin_params(name: string): Type[] {
   let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   let arr: Type = TypeArray { elem: e, view: false };
   let v = lane_builtin_verb(name);
+  if (v == "store") {
+    return [TypeI32 { is_char: false, width: -1, unsigned: true, polymorphic: false }, lt];
+  }
   if (v == "pack") {
     return [TypeLanes { width: 64 }, TypeLanes { width: 64 }];
   }
@@ -320,6 +323,9 @@ function lane_operands(v: string, lt: Type): Type[] {
 pub function lane_builtin_result(name: string): Type {
   let w = lane_builtin_width(name);
   let v = lane_builtin_verb(name);
+  if (v == "store") {
+    return TypeVoid { tag: 0 };
+  }
   if (v == "bitmask") {
     return TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   }

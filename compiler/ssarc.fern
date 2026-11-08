@@ -6219,7 +6219,11 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   let verb = typeinfo.lane_builtin_verb(ins.str);
   let op = irtables.lane_builtin_op(verb);
   if (op != "") {
-    return emit(r, ir.op_lane(op, w));
+    r = emit(r, ir.op_lane(op, w));
+    if (verb == "store") {
+      return emit(r, ir.op_const_i32(0));
+    }
+    return r;
   }
   if (verb == "lane") {
     r = emit(r, ir.op_drop());

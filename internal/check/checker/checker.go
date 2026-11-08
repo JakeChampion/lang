@@ -9361,7 +9361,7 @@ var UnsafeBuiltinMethods = []string{
 var UnsafeIntrinsics = map[string]bool{
 	"__alloc": true, "__alloc_reuse": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
-	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
+	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__store_i64": true, "__store_ptr": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__hvc": true, "__smc": true, "__sysreg_read": true, "__sysreg_write": true,
@@ -17752,7 +17752,7 @@ func isFloat(t ast.Type) bool {
 	return ok
 }
 
-var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with", "load_bytes", "with_bytes"}
+var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with", "load_bytes", "with_bytes", "store"}
 
 func (c *checker) registerLaneBuiltins() {
 	i32 := ast.NumberType{}
@@ -17776,6 +17776,7 @@ func (c *checker) registerLaneBuiltins() {
 			"with":       {Params: []ast.Type{arr, i32, lt}, Result: arr},
 			"load_bytes": {Params: []ast.Type{bytes, i32}, Result: lt},
 			"with_bytes": {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
+			"store":      {Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}, lt}, Result: ast.VoidType{}},
 		}
 		for _, v := range []string{"sqrt", "abs", "floor", "round"} {
 			sigs[v] = &ast.FuncType{Params: []ast.Type{lt}, Result: lt}

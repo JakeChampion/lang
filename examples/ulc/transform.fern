@@ -168,13 +168,12 @@ pub function inverse_reuse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, 
   if (!silent) {
     work = dct4_reuse(coefs, p, work);
   }
-  let temp = work.transformed;
+  let Scratch { re, im, transformed: temp, samples: out } = work;
   if (silent) {
     for i in 0..n {
       temp = temp.with(i, 0.0);
     }
   }
-  let out = work.samples;
   let flat = (n - overlap) / 2;
   for i in 0..n / 2 {
     let a = lap[n / 2 - 1 - i];
@@ -192,7 +191,7 @@ pub function inverse_reuse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, 
   for i in 0..n / 2 {
     lap = lap.with(i, temp[i]);
   }
-  return ReusedInverse { lap: lap, work: Scratch { ...work, transformed: temp, samples: out } };
+  return ReusedInverse { lap: lap, work: Scratch { re: re, im: im, transformed: temp, samples: out } };
 }
 
 pub function inverse_planned(coefs: [f64], own lap: f64[], overlap: i32, p: Plan): Inverse {

@@ -47,7 +47,20 @@ pub function scratch(n: i32): Scratch {
 }
 
 // Four interleaved FFTs share each SIMD butterfly and need no lane shuffle.
-pub function dct4(input: [f64], p: Plan, own work: Scratch): Scratch {
+pub function dct4(input: [f64], p: Plan, own work: Scratch, scaled: boolean = false): Scratch {
+  if (scaled) {
+    // Exact binary scaling avoids float subnormal operations in tiny noise tails.
+    let input_scaled = transform.zeros(input.len());
+    for i in 0..input.len() {
+      input_scaled = input_scaled.with(i, input[i] * 79228162514264337593543950336.0);
+    }
+    work = dct4(input_scaled, p, work, false);
+    let Scratch { re, im, transformed, samples } = work;
+    for i in 0..input.len() {
+      transformed = transformed.with(i, transformed[i] * 1.2621774483536189e-29);
+    }
+    return Scratch { re: re, im: im, transformed: transformed, samples: samples };
+  }
   let Scratch { re, im, transformed, samples } = work;
   let n = p.shape.n;
   let half = n / 2;
@@ -124,7 +137,7 @@ function post(own out: f64[], p: transform.Plan, j: i32, re: f64, im: f64): f64[
   return out.with(2 * j, re * c - im * s).with(p.n - 1 - 2 * j, re * s + im * c);
 }
 
-pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch): Inverse {
+pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own work: Scratch, scaled: boolean = false): Inverse {
   let n = coefs.len();
   let silent = true;
   for value in coefs {
@@ -134,15 +147,14 @@ pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own wo
     }
   }
   if (!silent) {
-    work = dct4(coefs, p, work);
+    work = dct4(coefs, p, work, scaled);
   }
-  let temp = work.transformed;
+  let Scratch { re, im, transformed: temp, samples: out } = work;
   if (silent) {
     for i in 0..n {
       temp = temp.with(i, 0.0);
     }
   }
-  let out = work.samples;
   let flat = (n - overlap) / 2;
   for i in 0..n / 2 {
     let a = lap[n / 2 - 1 - i];
@@ -160,7 +172,7 @@ pub function inverse(coefs: [f64], own lap: f64[], overlap: i32, p: Plan, own wo
   for i in 0..n / 2 {
     lap = lap.with(i, temp[i]);
   }
-  return Inverse { lap: lap, work: Scratch { ...work, transformed: temp, samples: out } };
+  return Inverse { lap: lap, work: Scratch { re: re, im: im, transformed: temp, samples: out } };
 }
 
 pub struct Dual { mdct: f64[], mdst: f64[], lap: f64[], work: Scratch }

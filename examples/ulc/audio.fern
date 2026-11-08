@@ -152,7 +152,39 @@ pub function wav_buffer(rate: i32, channels: i32, bits: i32, count: i32): Result
   out = out.concat([100u8, 97u8, 116u8, 97u8]);
   out = put(out, size as u32, 4);
   let buffer = __alloc_u8(44 + size + (size & 1));
+  if (bits == 8 && size > 0) {
+    unsafe {
+      // PCM8 silence is 128. Only the validated data range receives this fill.
+      __memset(buffer as usize + 52 as usize, 128, size);
+    }
+  }
   return Ok(__bytes_into(buffer, 0, out, 0, 44));
+}
+
+// The caller owns samples.len() * 4 writable bytes at address.
+pub unsafe function store_float_samples(address: usize, samples: f64[]): Result[void, string] {
+  let index = 0;
+  let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
+  unsafe {
+    while (index + 4 <= samples.len()) {
+      let lo = __f64x2_load(samples, index);
+      let hi = __f64x2_load(samples, index + 2);
+      if (__f64x2_bitmask(__f64x2_lt(__f64x2_abs(lo), infinity)) != 3 || __f64x2_bitmask(__f64x2_lt(__f64x2_abs(hi), infinity)) != 3) {
+        return Err("nonfinite output sample");
+      }
+      __f32x4_store(address + (4 * index) as usize, __f32x4_pack(lo, hi));
+      index += 4;
+    }
+    while (index < samples.len()) {
+      let value = samples[index];
+      if (!value.is_finite()) {
+        return Err("nonfinite output sample");
+      }
+      __store_i32(address + (4 * index) as usize, f32_bits(value as f32));
+      index += 1;
+    }
+  }
+  return Ok(());
 }
 
 pub function write_samples(own out: u8[], at: i32, samples: f64[], bits: i32): Result[u8[], string] {
@@ -163,27 +195,16 @@ pub function write_samples(own out: u8[], at: i32, samples: f64[], bits: i32): R
   if (at < 0 || at > out.len() || samples.len() as u64 * (bytes as u64) > (out.len() - at) as u64) {
     return Err("sample output exceeds WAV buffer bounds");
   }
-  let index = 0;
   if (bits == 32) {
-    let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
-    while (index + 4 <= samples.len()) {
-      let lo = __f64x2_load(samples, index);
-      let hi = __f64x2_load(samples, index + 2);
-      if (__f64x2_bitmask(__f64x2_lt(__f64x2_abs(lo), infinity)) != 3 || __f64x2_bitmask(__f64x2_lt(__f64x2_abs(hi), infinity)) != 3) {
-        return Err("nonfinite output sample");
-      }
-      out = __f32x4_with_bytes(out, at + 4 * index, __f32x4_pack(lo, hi));
-      index += 4;
+    if (samples.len() == 0) {
+      return Ok(out);
     }
-    while (index < samples.len()) {
-      let value = samples[index];
-      if (!value.is_finite()) {
-        return Err("nonfinite output sample");
+    unsafe {
+      // Copy shared storage before the direct stores. The range check is above.
+      if (__load_i32(out as usize - 8 as usize) != 1) {
+        out = __send_copy(out);
       }
-      let raw = f32_bits(value as f32) as u32;
-      let cursor = at + 4 * index;
-      out = out.with(cursor, raw as u8).with(cursor + 1, (raw >> 8u32) as u8).with(cursor + 2, (raw >> 16u32) as u8).with(cursor + 3, (raw >> 24u32) as u8);
-      index += 1;
+      store_float_samples(out as usize + 8 as usize + at as usize, samples)?;
     }
     return Ok(out);
   }

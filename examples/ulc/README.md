@@ -92,7 +92,8 @@ File output preserves the initial delay and final padding, as the reference tool
 The encoder adds two blocks to the input length after rounding to a complete block.
 The reconstructed input starts two blocks into the decoded audio.
 
-On Linux, the CLI uses up to four workers for files with at least 32 blocks.
+On Linux, the encoder uses up to four workers for files with at least 32 blocks.
+File decode uses workers for at least four blocks and 65,536 samples.
 The CPU affinity limits the default worker count.
 Set `ULC_THREADS=1`, `2`, or `4` to select it explicitly.
 The final decode argument also accepts this count after the output format.

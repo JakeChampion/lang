@@ -458,3 +458,4 @@ irq_unmask=508
 irq_wait=509
 irq_pending=510
 tcp_accept_with=511
+vpack=512

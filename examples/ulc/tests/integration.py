@@ -234,6 +234,19 @@ def main():
                 run(ULC, "decode", p / "synthetic.ulc", path, fmt, threads)
                 outputs.append(path.read_bytes())
             assert outputs[0] == outputs[1] == outputs[2], fmt
+            if fmt == "PCM8":
+                with wave.open(str(p / "parallel-PCM8-1.wav"), "rb") as wav:
+                    samples = wav.readframes(wav.getnframes())
+                assert samples[-512:] == bytes([128]) * 512, "PCM8 silence requires the unsigned bias"
+        silent = p / "silent.ulc"
+        silent.write_bytes(container([pack([0, 14, 15, 14, 15])] * 64))
+        for threads in (1, 2, 4):
+            for fmt, zero in (("PCM8", 128), ("PCM16", 0), ("PCM24", 0)):
+                dest = p / f"silent-{threads}-{fmt}.wav"
+                run(ULC, "decode", silent, dest, fmt, threads)
+                with wave.open(str(dest), "rb") as wav:
+                    raw = wav.readframes(wav.getnframes())
+                assert raw == bytes([zero]) * len(raw), (threads, fmt)
         run(ULC, "decode", p / "synthetic.ulc", p / "bad.wav", "FLOAT32", 3, good=False)
         assert not (p / "bad.wav").exists()
         print("ok - parallel output matches serial bytes across every window and PCM format")

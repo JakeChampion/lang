@@ -305,6 +305,39 @@ function packed_tests(): void {
     }
     require(error < peak * 0.000003, "packed FFT matches double precision");
   }
+  let tiny = transform.zeros(256);
+  for i in 0..256 {
+    tiny = tiny.with(i, (i as f64 * 0.19).sin() * (f32_from_bits(1) as f64));
+  }
+  let exact = transform.dct4(tiny);
+  let scaled = packed_transform.dct4(tiny, packed_transform.plan(256), packed_transform.scratch(256), true);
+  let peak = 0.0;
+  let error = 0.0;
+  for i in 0..256 {
+    if (exact[i].abs() > peak) {
+      peak = exact[i].abs();
+    }
+    if ((exact[i] - scaled.transformed[i]).abs() > error) {
+      error = (exact[i] - scaled.transformed[i]).abs();
+    }
+  }
+  require(error < peak * 0.000003, "scaled FFT retains tiny coefficients");
+  for code in [0, 255] {
+    let decoded = get([0, 15, 15, 0, code >> 4, code & 15], 32768);
+    let seed = 1234567u32;
+    let level = (1.0 / 512.0) as f32;
+    let decay = (1.0 - (code * code) as f64 / 524288.0) as f32;
+    for i in 0..32768 {
+      seed ^= seed << 13u32;
+      seed ^= seed >> 17u32;
+      seed ^= seed << 5u32;
+      if ((seed & 2147483648u32) != 0u32) {
+        level = -level;
+      }
+      require(f64_bits(decoded.values[i]) == f64_bits(level as f64), "stable noise tail preserves every rounded value");
+      level *= decay;
+    }
+  }
   let seed = 1234567u32;
   for count in 0..1001 {
     require(codec.advance_seed(1234567u32, count) == seed, "noise seed jump matches scalar xorshift");
@@ -328,11 +361,70 @@ function packed_tests(): void {
   }
 }
 
+function verify_scan(template: codec.Decoder, data: u8[]): boolean {
+  let scanned = codec.scan_block(data, 0, 256, 1);
+  let decoded = codec.decode_block(codec.Decoder { ...template, lap_zero: false }, data, 0);
+  match (scanned) {
+    Ok(scan) => {
+      let Ok(block) = decoded else {
+        require(false, "scanner accepted a malformed block");
+        return false;
+      };
+      require(scan.next_byte == block.next_byte && scan.last_size == block.state.last_size && scan.silent == block.state.lap_zero, "scanner and decoder metadata agree");
+      require(codec.advance_seed(1234567u32, scan.noise_samples) == block.state.seed, "scanner and decoder noise counts agree");
+      return true;
+    },
+    Err(_) => {
+      require(decoded.is_err(), "scanner rejected a valid block");
+      return false;
+    }
+  }
+}
+
+function parser_properties(): void {
+  let Ok(template) = codec.decoder(256, 1) else {
+    exit(1);
+  };
+  require(verify_scan(template, nybbles([0, 0, 15, 15, 0, 0, 0])), "valid noise block reaches the scanner");
+  let seed = 417u32;
+  for trial in 0..500 {
+    let data: u8[] = [];
+    for i in 0..trial % 65 {
+      seed ^= seed << 13u32;
+      seed ^= seed >> 17u32;
+      seed ^= seed << 5u32;
+      data = data.append(seed as u8);
+    }
+    let _ = verify_scan(template, data);
+  }
+  for value in template.output {
+    require(value == 0.0, "output cache preserves retained aliases");
+  }
+  for value in template.lap_scratch {
+    require(value == 0.0, "overlap cache preserves retained aliases");
+  }
+  let Ok(buffer) = audio.wav_buffer(44100, 1, 32, 5) else {
+    exit(1);
+  };
+  let alias = buffer;
+  let Ok(changed) = audio.write_samples(buffer, 44, [0.5, -0.5, 0.25, -0.25, 0.0], 32) else {
+    exit(1);
+  };
+  for i in 44..64 {
+    require(alias[i] == 0u8, "direct float stores preserve byte-buffer aliases");
+  }
+  let Ok(back) = audio.read_wav(changed) else {
+    exit(1);
+  };
+  require(back.samples[0] == 0.5 && back.samples[1] == -0.5 && back.samples[4] == 0.0, "unaligned float stores include the scalar tail");
+}
+
 pub function run_tests(): i32 {
   window_cache_tests();
   transform_tests();
   print("ok - transform definition and lapping");
   packed_tests();
+  parser_properties();
   print("ok - packed FFT, noise index, and seed jumps");
   syntax_tests();
   print("ok - coefficient syntax and validation");

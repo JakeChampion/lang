@@ -2675,6 +2675,23 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
 
 function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb = typeinfo.lane_builtin_verb(name);
+  if (verb == "store") {
+    let lanes = lane_args([args[1]]);
+    if (lanes.len() != 1 || lanes[0].width != width) {
+      return v_err("vector store requires matching lanes");
+    }
+    let address = vint_as_i64(args[0]) as usize;
+    unsafe {
+      for i in 0..128 / width {
+        if (width == 32) {
+          __store_i32(address + (4 * i) as usize, lanes[0].bits[i] as i32);
+        } else {
+          __store_i64(address + (8 * i) as usize, lanes[0].bits[i]);
+        }
+      }
+    }
+    return v_void();
+  }
   if (verb == "pack") {
     let lanes = lane_args(args);
     if (lanes.len() != 2) {
