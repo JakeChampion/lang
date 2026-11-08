@@ -16,6 +16,18 @@ The final row does not need padding bytes. Storage checks use wide arithmetic.
 Invalid layout, storage and block bounds return explicit errors before callbacks or sample access.
 An origin outside the plane returns `Bounds`, even with an edge policy.
 
+The separate `block_padded` entry point also accepts a `BlockExtent` in block columns and rows.
+That extent must contain the complete actual component block grid.
+It admits entire dummy blocks within that explicit extent.
+Replication repeats the final actual row or column throughout those blocks.
+Constant fill uses the supplied byte for every outside sample.
+The original `block` entry point retains its strict origin bounds.
+
+Actual layout and storage checks precede padded extent checks, then requested block bounds.
+An insufficient extent returns `Layout`. An outside block coordinate returns `Bounds`.
+Large dummy coordinates do not overflow sample arithmetic or require a large allocation.
+Each result still contains exactly 64 samples.
+
 The helper checks cancellation before allocation, during rows and before success.
 Input windows and retained aliases remain unchanged.
 Tests cover odd dimensions, partial blocks, strides, fill values, large invalid extents, cancellation and aliases.

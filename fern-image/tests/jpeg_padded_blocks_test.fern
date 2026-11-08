@@ -1,0 +1,185 @@
+import "../packages/codecs/jpeg/component_blocks" as blocks;
+import "../packages/codecs/jpeg/mcu_order" as order;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function input(layout: blocks.PlaneLayout): u8[] {
+  let bytes: u8[] = [];
+  for y in 0..layout.height {
+    for x in 0..layout.stride {
+      bytes = bytes.append(if (x < layout.width) { (x * 37 + y * 17 + 11) as u8 } else { 221 });
+    }
+  }
+  return bytes;
+}
+
+function samples(bytes: [u8], layout: blocks.PlaneLayout, extent: blocks.BlockExtent, bx: i32, by: i32, fill: i32): boolean {
+  let edge = if (fill < 0) { blocks.Replicate } else { blocks.Constant(fill as u8) };
+  let Ok(result) = blocks.block_padded(bytes, layout, extent, bx, by, edge, never) else {
+    return false;
+  };
+  for y in 0..8 {
+    for x in 0..8 {
+      let sx = bx as i64 * 8i64 + x as i64;
+      let sy = by as i64 * 8i64 + y as i64;
+      let outside = sx >= layout.width as i64 || sy >= layout.height as i64;
+      let cx = if (sx >= layout.width as i64) { layout.width - 1 } else { sx as i32 };
+      let cy = if (sy >= layout.height as i64) { layout.height - 1 } else { sy as i32 };
+      let wanted = if (outside && fill >= 0) { fill as u8 } else { (cx * 37 + cy * 17 + 11) as u8 };
+      if (result[y * 8 + x] != wanted) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function goldens(): test.TestOutcome {
+  for width in [1, 7, 8, 9, 17] {
+    for height in [1, 7, 8, 9, 17] {
+      let layout = blocks.PlaneLayout { width: width, height: height, stride: width + 3 };
+      let extent = blocks.BlockExtent { columns: (width + 7) / 8 + 3, rows: (height + 7) / 8 + 3 };
+      let bytes = input(layout);
+      for by in 0..extent.rows {
+        for bx in 0..extent.columns {
+          for fill in [-1, 0, 128, 255] {
+            if (!samples(bytes, layout, extent, bx, by, fill)) {
+              return test.fail("complete padded sample grid");
+            }
+          }
+        }
+      }
+      if (!match (blocks.block(bytes, layout, extent.columns - 1, 0, blocks.Replicate, never)) { Err(blocks.Bounds) => true, _ => false }) {
+        return test.fail("original bounds remain strict");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function mcu_integration(): test.TestOutcome {
+  for sampling in [
+    [order.Sampling { horizontal: 2, vertical: 2 }, order.Sampling { horizontal: 1, vertical: 1 }, order.Sampling { horizontal: 1, vertical: 1 }],
+    [order.Sampling { horizontal: 3, vertical: 1 }, order.Sampling { horizontal: 2, vertical: 2 }],
+    [order.Sampling { horizontal: 4, vertical: 1 }, order.Sampling { horizontal: 1, vertical: 2 }, order.Sampling { horizontal: 2, vertical: 2 }],
+  ] {
+    let Ok(plan) = order.inspect(25, 17, sampling, 100) else {
+      return test.fail("MCU plan");
+    };
+    let consume = (value: i32, address: order.Address): Result[i32, string] => {
+      let layout = blocks.PlaneLayout { width: address.width, height: address.height, stride: address.width + 3 };
+      let item = sampling[address.component];
+      let extent = blocks.BlockExtent { columns: plan.columns * item.horizontal, rows: plan.rows * item.vertical };
+      for fill in [-1, 17, 255] {
+        if (!samples(input(layout), layout, extent, address.x, address.y, fill)) {
+          return Err("MCU sample address");
+        }
+      }
+      return Ok(value + 1);
+    };
+    let Ok(result) = order.fold_blocks(25, 17, sampling, 100, never, 0, consume) else {
+      return test.fail("complete MCU sample fold");
+    };
+    if (result.value != plan.blocks) {
+      return test.fail("complete MCU sample count");
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let calls = cell_new(0);
+  let cancel = (): boolean => {
+    calls.set(calls.get() + 1);
+    return true;
+  };
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = input(layout);
+  if (!match (blocks.block_padded([], blocks.PlaneLayout { width: 0, height: 1, stride: 1 }, blocks.BlockExtent { columns: 0, rows: 0 }, -1, -1, blocks.Replicate, cancel)) { Err(blocks.Layout) => true, _ => false }
+    || !match (blocks.block_padded([], layout, blocks.BlockExtent { columns: 0, rows: 0 }, -1, -1, blocks.Replicate, cancel)) { Err(blocks.Storage) => true, _ => false }) {
+    return test.fail("actual source admission first");
+  }
+  for extent in [
+    blocks.BlockExtent { columns: 1, rows: 2 }, blocks.BlockExtent { columns: 2, rows: 1 },
+    blocks.BlockExtent { columns: -2147483648, rows: 2 }, blocks.BlockExtent { columns: 2, rows: 0 },
+  ] {
+    if (!match (blocks.block_padded(bytes, layout, extent, -1, -1, blocks.Replicate, cancel)) { Err(blocks.Layout) => true, _ => false }) {
+      return test.fail("padded extent before coordinates");
+    }
+  }
+  let extent = blocks.BlockExtent { columns: 4, rows: 4 };
+  for position in [(-1, 0), (0, -1), (4, 0), (0, 4), (2147483647, 2147483647)] {
+    let (x, y) = position;
+    if (!match (blocks.block_padded(bytes, layout, extent, x, y, blocks.Replicate, cancel)) { Err(blocks.Bounds) => true, _ => false }) {
+      return test.fail("padded block bounds");
+    }
+  }
+  return test.assert_true(calls.get() == 0);
+}
+
+function wide_and_aliases(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = input(layout);
+  let extent = blocks.BlockExtent { columns: 2147483647, rows: 2147483647 };
+  for position in [(2147483646, 0), (0, 2147483646), (2147483646, 2147483646)] {
+    let (x, y) = position;
+    for fill in [-1, 128] {
+      if (!samples(bytes, layout, extent, x, y, fill)) {
+        return test.fail("large padded coordinate without overflow");
+      }
+    }
+  }
+  let window: u8[] = [7];
+  for byte in bytes[:105] {
+    window = window.append(byte);
+  }
+  window = window.append(13);
+  let alias = cell_new(window);
+  let Ok(output) = blocks.block_padded(window[1:106], layout, extent, 2, 0, blocks.Replicate, never) else {
+    return test.fail("minimal borrowed source footprint");
+  };
+  let changed = output.with(0, 99);
+  if (changed[0] != 99 || output[0] != (8 * 37 + 11) as u8 || window[0] != 7 || window[106] != 13) {
+    return test.fail("independent padded block result");
+  }
+  for i in 0..window.len() {
+    if (alias.get()[i] != window[i]) {
+      return test.fail("padded input aliases");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let layout = blocks.PlaneLayout { width: 9, height: 9, stride: 12 };
+  let bytes = input(layout);
+  let extent = blocks.BlockExtent { columns: 4, rows: 4 };
+  for position in [(0, 0), (1, 1), (2, 0), (0, 2), (2, 2)] {
+    let (x, y) = position;
+    for stop in 1..11 {
+      let polls = cell_new(0);
+      let cancel = (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      };
+      if (!match (blocks.block_padded(bytes, layout, extent, x, y, blocks.Replicate, cancel)) { Err(blocks.Cancelled) => true, _ => false }
+        || polls.get() != stop) {
+        return test.fail("every padded cancellation checkpoint");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG padded component blocks");
+  suite = suite.it("explicit fill and replication for complete padded grids", goldens);
+  suite = suite.it("MCU addresses produce complete sample blocks", mcu_integration);
+  suite = suite.it("source, extent and bounds precede callbacks", malformed);
+  suite = suite.it("wide coordinates, minimal windows and aliases", wide_and_aliases);
+  suite = suite.it("every padded cancellation checkpoint", cancellation);
+  return suite.finish();
+}

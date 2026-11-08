@@ -41,6 +41,15 @@ mkdir -p build
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_plane_coefficients_test tests/jpeg_plane_coefficients_test.fern
 ./build/jpeg_plane_coefficients_test
 "$FERN" -check tests/jpeg_produced_test.fern
+"$FERN" -check tests/jpeg_mcu_order_test.fern
+"$FERN" -check tests/jpeg_padded_blocks_test.fern
+"$FERN" -check tests/jpeg_mcu_entropy_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_mcu_entropy_test tests/jpeg_mcu_entropy_test.fern
+./build/jpeg_mcu_entropy_test
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_padded_blocks_test tests/jpeg_padded_blocks_test.fern
+./build/jpeg_padded_blocks_test
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_mcu_order_test tests/jpeg_mcu_order_test.fern
+./build/jpeg_mcu_order_test
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_produced_test tests/jpeg_produced_test.fern
 ./build/jpeg_produced_test
 for source in experiments/essentials.fern experiments/io.fern experiments/zlib.fern experiments/provider_factories.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/jpeg_header_test.fern tests/jpeg_entropy_test.fern tests/jpeg_idct_test.fern tests/jpeg_grayscale_test.fern tests/jpeg_ycbcr_test.fern tests/jpeg_rgb_ycbcr_test.fern tests/sample_bytes_test.fern tests/jpeg_planes_test.fern tests/jpeg_chroma_test.fern tests/jpeg_jfif_test.fern tests/jpeg_rgb_test.fern tests/png_rows_test.fern tests/png_provider_test.fern ../tests/stdlib/deflate_reader_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/providers_test.fern tests/regions_test.fern tests/row_cache_test.fern tests/cached_regions_test.fern tests/cached_tile_fusion_test.fern tests/linux_rss_test.fern tests/nearest_fusion_test.fern tests/cached_fusion_test.fern experiments/png-encode.fern examples/pixels.fern; do

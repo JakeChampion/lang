@@ -1,6 +1,10 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 const arm64BssValueListProgram = `
 function main(): i32 {
@@ -17,12 +21,25 @@ function main(): i32 {
 }
 `
 
+func arm64NativeModuleProgram(t *testing.T, source string) string {
+	t.Helper()
+	path := filepath.Join(copySelfHostTree(t), "arm64_native.fern")
+	module, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(module, []byte("\n"+source)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestSelfHostArm64BssValueList(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	source := arm64NativeSrc(t) + arm64BssValueListProgram
+	source := arm64NativeModuleProgram(t, arm64BssValueListProgram)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			if stderr, code := cli.exitOf(t, source, target); code != 0 {
+			if stderr, code := cli.exitOfFile(t, source, target, nil); code != 0 {
 				t.Fatalf("exit = %d\n%s", code, stderr)
 			}
 		})
