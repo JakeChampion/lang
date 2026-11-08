@@ -1,0 +1,43 @@
+import "./interp";
+import "./interpheap";
+import "./parser";
+import "./lexer";
+import "std/i32";
+
+function parse(text: string): parser.Module {
+  return parser.parse_module(lexer.tokenize(text));
+}
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("function binding check failed");
+    exit(1);
+  }
+}
+
+@noinline
+function exercise(s: interp.Session, entry: parser.Module): void {
+  let (_, emitted, value) = s.run(entry, "step");
+  let (status, code) = interp.exit_status(value);
+  require(emitted && status && code == 0);
+}
+
+function main(): i32 {
+  let declarations = parse("function one(n: i32): i32 { return n; }\nfunction trial(): i32 {\nlet f = one;\nlet block = { f = (n: i32): i32 => if (n == 0) { 0 } else { f(n - 1) + 1 }; 0 };\nif (f(5) != 5) { return 1; }\nlet data = cell_new(3);\nlet bias = 4;\nlet g = (n: i32): i32 => data.get() + n;\nlet h = (n: i32): i32 => bias + n;\nbias += 1;\nlet changed = { f = h; 0 };\nif (f(2) != 7) { return 2; }\ng = (n: i32): i32 => h(n);\nh = (n: i32): i32 => g(n);\nreturn block + changed;\n}");
+  let session = interp.new_session().declare(declarations);
+  let entry = parse("function step(): i32 { trial(); }");
+  let rounds = 8;
+  if let Some(text) = env("FERN_HEAP_PILOT_ROUNDS") {
+    if let Ok(n) = i32.parse_i32(text) {
+      rounds = n;
+    }
+  }
+  for _ in 0..rounds {
+    exercise(session, entry);
+    interpheap.collect(session.env.heap);
+    let stats = interpheap.stats(session.env.heap);
+    require(stats.live == 0 && stats.edges == 0i64 && stats.slots <= 64);
+  }
+  print("function bindings and cycles pass");
+  return 0;
+}

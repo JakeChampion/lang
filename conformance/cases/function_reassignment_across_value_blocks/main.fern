@@ -1,0 +1,68 @@
+function one(n: i32): i32 {
+  return n + 1;
+}
+
+function two(n: i32): i32 {
+  return n + 2;
+}
+
+function escaped(offset: i32): (i32) => i32 {
+  let f = one;
+  let changed = { f = (n: i32): i32 => offset + n; 0 };
+  return f;
+}
+
+function main(): i32 {
+  let f = one;
+  let original = f;
+  let first = { f = two; f(3) };
+  if (first != 5 || f(4) != 6) {
+    return 1;
+  }
+  if (f({ f = one; 0 }) != 2 || f(0) != 1) {
+    return 2;
+  }
+  let branch = if (false) { 99 } else { f = two; f(3) };
+  if (branch != 5 || f(4) != 6) {
+    return 3;
+  }
+  let matched = match (true) { true => { f = one; f(3) }, false => 99 };
+  if (matched != 4 || f(4) != 5) {
+    return 4;
+  }
+  let bias = 10;
+  let capture = { f = (n: i32): i32 => n + bias; f(2) };
+  bias += 1;
+  if (capture != 12 || f(3) != 14) {
+    return 5;
+  }
+  let data = cell_new(20);
+  let cell_capture = { f = (n: i32): i32 => n + data.get(); f(2) };
+  data.set(30);
+  if (cell_capture != 22 || f(3) != 33) {
+    return 6;
+  }
+  let shadow = { let f = one; f = two; f(0) };
+  if (shadow != 2 || f(0) != 30) {
+    return 7;
+  }
+  let reverse = { f = one; 0 };
+  if (reverse != 0 || f(0) != 1) {
+    return 8;
+  }
+  let writer = stdout();
+  let handle_capture = {
+    f = (n: i32): i32 => {
+      let result = writer.write("");
+      return n;
+    };
+    f(2)
+  };
+  if (handle_capture != 2 || f(3) != 3) {
+    return 9;
+  }
+  if (original(0) != 1 || escaped(40)(2) != 42) {
+    return 10;
+  }
+  return 0;
+}

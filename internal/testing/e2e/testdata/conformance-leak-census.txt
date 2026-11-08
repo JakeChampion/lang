@@ -366,6 +366,7 @@ fstring_cast_after_interpolation                     0
 fstring_interpolation_char_escape                    0
 fstring_reassign_releases_old                        0
 function_array_element_returned                      0
+function_reassignment_across_value_blocks            0
 functional_base_unchanged                            0
 gcd_euclid                                           0
 general_reuse_crossblock                             0
