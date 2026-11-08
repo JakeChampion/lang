@@ -1,0 +1,60 @@
+import "std/audio/vorbis";
+import "std/audio/vorbis/types";
+import "std/audio/pcm";
+import "std/f64";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_vectors";
+
+function reference(v: vorbis_vectors.Vector): Result[void, string] {
+  let identification = ref.unpack(v.identification)?;
+  let setup = ref.unpack(v.setup)?;
+  let packets = ref.unpack(v.packets)?;
+  let expected = ref.unpack(v.pcm)?;
+  let counts = ref.unpack(v.counts)?;
+  let decoder = match (vorbis.create(identification, setup, types.default_limits())) { Ok(value) => value, Err(e) => { return Err(v.name + " setup: " + e.message()); } };
+  let at = 0;
+  let rendered = 0;
+  let packet = 0;
+  while (at < packets.len()) {
+    let size = ref.word(packets, at);
+    at += 4;
+    let (next, value) = match (decoder.decode_packet(packets[at:at + size], pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(v.name + " packet at " + at.to_string() + ": " + e.message()); } };
+    decoder = next;
+    at += size;
+    if (value.frames != ref.word(counts, 4 * packet)) {
+      return Err(v.name + " packet frame count");
+    }
+    packet += 1;
+    if (value.sample_rate != v.rate || value.channels != v.channels || value.samples.len() != value.frames * v.channels) {
+      return Err(v.name + " format");
+    }
+    for i in 0..value.samples.len() {
+      let sample = f32_from_bits(ref.word(expected, 4 * (rendered + i)));
+      let error = value.samples[i] - sample;
+      if (!value.samples[i].is_finite() || error > 0.000001f32 || error < -0.000001f32) {
+        return Err(v.name + " sample " + (rendered + i).to_string() + ": actual " + value.samples[i].to_string() + ", expected " + sample.to_string());
+      }
+    }
+    rendered += value.samples.len();
+  }
+  if (rendered != v.frames * v.channels) {
+    return Err(v.name + " missing PCM");
+  }
+  return Ok(());
+}
+
+function complete(): test.TestOutcome {
+  for v in vorbis_vectors.vectors() {
+    if let Err(message) = reference(v) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis independent packet PCM");
+  runner = runner.it("all samples against libvorbis across rates, channels, and qualities", complete);
+  return runner.finish();
+}

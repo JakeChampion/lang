@@ -16,7 +16,8 @@ The Opus packet API reuses the Fern CELT implementation.
 | MP3 | Yes | No | Indexed-bitrate MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
-| HE-AAC, Vorbis, ALAC, WavPack | No | No | No implementation in these modules. |
+| Vorbis | Packets | No | Version one, one through eight channels, all standard block sizes, both floor types, all residue types, submaps, and channel coupling. Container playback remains separate work. |
+| HE-AAC, ALAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
 It uses approximately 3.2 bits per sample plus frame headers.
@@ -91,6 +92,37 @@ The WAVE range API borrows a complete WAVE byte view and decodes only the reques
 QOA verifies static frame lengths, byte counts, format consistency, and total samples.
 FLAC verifies CRC-8, CRC-16, sample bounds, frame sequence, and alignment bits.
 Whole-stream FLAC decode verifies a supplied MD5. Individual frame calls cannot verify a complete stream digest.
+
+## Vorbis
+
+`std/audio/vorbis.create` reads the identification and setup packets.
+`std/audio/vorbis/headers` reads the separate comment packet and preserves its exact bytes.
+The decoder checks version, framing, codebook completeness, setup references, and shared allocation budgets.
+The single-entry codebook rule follows Vorbis Errata 20150226.
+
+`Decoder.decode_packet` returns interleaved float PCM in WAVE speaker order.
+The first packet primes overlap storage and returns zero frames.
+Later packets produce one quarter of the sum of the previous and current block lengths.
+Container code must use granule positions to trim initial and final PCM.
+Ogg Vorbis playback, seeking, and reader integration remain open under [#14519](https://github.com/JakeChampion/lang/issues/14519).
+
+`decode_packet_into` consumes a reusable PCM buffer. Entries after the valid prefix retain their values.
+`packet_frames` checks the mode and computes the required output frame count without decode.
+Packet errors consume the decoder. `reset` clears overlap history and retains configuration and scratch storage.
+
+Legal early residue endings preserve complete values and leave the remaining values zero.
+An incomplete floor becomes unused. Packet type and mode fields must be complete.
+
+The decoder supports blocks from 64 through 8,192 samples.
+State retains at most 4,096 overlap entries per channel, plus bounded spectral, floor, and transform scratch.
+Codebooks and Bark maps are prepared once. Packet syntax and classification arrays still allocate.
+The API does not promise an allocation-free audio callback.
+
+Independent float PCM fixtures use the public synthesis API from Xiph libvorbis 1.3.7.
+They cover rate and channel changes between streams, quality settings, transients, and synthetic type-zero floors.
+Separate transform fixtures use the defining cosine equation and whole-timeline overlap accumulation in binary64 C.
+The native implementation derives from pinned Symphonia source under MPL-2.0.
+See [the notice](../licenses/vorbis/NOTICE.txt) for attribution, reference scope, and license terms.
 
 ## AAC-LC
 
