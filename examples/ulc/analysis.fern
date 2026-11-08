@@ -56,6 +56,19 @@ pub function fast_log(x: f64): f64 {
   return -1.7417939 + (2.8212026 + (-1.4699568 + (0.44717955 - 0.056570851 * mantissa) * mantissa) * mantissa) * mantissa + 0.6931471806 * (exponent as f64);
 }
 
+@inline
+pub function fast_logs(input: f64x2): f64x2 {
+  let a = f32_bits(__f64x2_lane(input, 0) as f32) as u32;
+  let b = f32_bits(__f64x2_lane(input, 1) as f32) as u32;
+  let exponent = __f64x2_of(((a >> 23u32) as i32 - 127) as f64, ((b >> 23u32) as i32 - 127) as f64);
+  let mantissa = __f64x2_of(f32_from_bits((127u32 << 23u32 | a & 8388607u32) as i32) as f64, f32_from_bits((127u32 << 23u32 | b & 8388607u32) as i32) as f64);
+  let polynomial = __f64x2_splat(0.44717955) - __f64x2_splat(0.056570851) * mantissa;
+  polynomial = __f64x2_splat(-1.4699568) + polynomial * mantissa;
+  polynomial = __f64x2_splat(2.8212026) + polynomial * mantissa;
+  polynomial = __f64x2_splat(-1.7417939) + polynomial * mantissa;
+  return polynomial + __f64x2_splat(0.6931471806) * exponent;
+}
+
 pub struct Spectrum { mask: f64[], noise: f64[] }
 
 pub function spectrum(power: [f64], p: Profile, noise_mode: boolean): f64[] {

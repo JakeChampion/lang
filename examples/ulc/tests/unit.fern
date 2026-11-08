@@ -245,6 +245,52 @@ function planar_tests(): void {
   require(encoder.planar([], 0, 0).is_err(), "channel conversion rejects zero channels");
 }
 
+function paired_log_tests(): void {
+  let seed = 417u32;
+  for i in 0..65536 {
+    seed ^= seed << 13u32;
+    seed ^= seed >> 17u32;
+    seed ^= seed << 5u32;
+    let a = (f32_from_bits(seed as i32) as f64).abs();
+    seed ^= seed << 13u32;
+    seed ^= seed >> 17u32;
+    seed ^= seed << 5u32;
+    let b = (f32_from_bits(seed as i32) as f64).abs();
+    if (!a.is_finite()) {
+      a = 0.0;
+    }
+    if (!b.is_finite()) {
+      b = 0.0;
+    }
+    let actual = analysis.fast_logs(__f64x2_of(a, b));
+    require(f64_bits(__f64x2_lane(actual, 0)) == f64_bits(analysis.fast_log(a)), "paired logarithm preserves the first scalar result");
+    require(f64_bits(__f64x2_lane(actual, 1)) == f64_bits(analysis.fast_log(b)), "paired logarithm preserves the second scalar result");
+  }
+}
+
+function prepared_priority_tests(p: encoder.Prepared, n: i32, channels: i32): void {
+  let count = 0;
+  for value in p.coefs {
+    if (value.abs() >= 0.00000000023283064365386963) {
+      count += 1;
+    }
+  }
+  require(p.nonzero == count, "nonzero count matches the coefficient threshold");
+  for ch in 0..channels {
+    for pair in 0..n / 2 {
+      let index = ch * n + 2 * pair;
+      let a = p.coefs[index].abs();
+      let b = p.coefs[index + 1].abs();
+      if (a >= 0.00000000023283064365386963 && a > 2.0 * b) {
+        require(p.ranks[index] < p.ranks[index + 1], "pair priorities preserve the stronger first coefficient");
+      }
+      if (b >= 0.00000000023283064365386963 && b > 2.0 * a) {
+        require(p.ranks[index + 1] < p.ranks[index], "pair priorities preserve the stronger second coefficient");
+      }
+    }
+  }
+}
+
 function priority_rank_tests(): void {
   let seed = 417u32;
   for n in [0, 1, 7, 256, 513] {
@@ -307,6 +353,7 @@ function encoder_features(): void {
         require(false, "prepare transient frame");
         return;
       };
+      prepared_priority_tests(prepared, n, 2);
       let measured = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, prepared.nonzero, true);
       let written = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, prepared.nonzero, false);
       require(measured.bits == written.bits && written.bytes.len() * 8 == written.bits, "count-only pass matches actual bytes");
@@ -768,6 +815,7 @@ pub function run_tests(): i32 {
   encoder_features();
   planar_tests();
   priority_rank_tests();
+  paired_log_tests();
   print("ok - transient encoder, rate control, and count-only passes");
   containers();
   print("ok - WAV and ULC2 roundtrips");

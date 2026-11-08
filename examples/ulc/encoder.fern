@@ -195,23 +195,38 @@ pub function prepare(own state: Encoder, samples: [f64]): Result[Prepared, strin
       work = dual.work;
       lap = dual.lap;
       let power = transform.zeros(size / 2);
-      for i in 0..size {
-        let re = dual.mdct[i];
-        let im = dual.mdst[i];
-        let energy = re * re + im * im;
-        let absolute = re.abs();
-        let index = ch * n + at + i;
-        coefs = coefs.with(index, re);
-        let key = -1.0e100;
-        if (absolute >= 0.00000000023283064365386963) {
-          key = analysis.fast_log(re * re);
-          nonzero += 1;
+      for group in 0..size / 2 {
+        let i = 2 * group;
+        let re = __f64x2_load(dual.mdct, i);
+        let im = __f64x2_load(dual.mdst, i);
+        let square = re * re;
+        let energy = square + im * im;
+        let absolute = __f64x2_abs(re);
+        let first = __f64x2_lane(absolute, 0);
+        let second = __f64x2_lane(absolute, 1);
+        let below = __f64x2_lt(absolute, __f64x2_splat(0.00000000023283064365386963));
+        let flags = __f64x2_bitmask(below);
+        let priorities = __f64x2_splat(-1.0e100);
+        if (flags != 3) {
+          priorities = analysis.fast_logs(square);
+          if (flags == 0) {
+            nonzero += 2;
+          } else {
+            nonzero += 1;
+            priorities = __f64x2_select(__f64x2_splat(-1.0e100), priorities, below);
+          }
         }
-        keys = keys.with(index, key);
-        power = power.with(i / 2, power[i / 2] + energy);
-        power_all = power_all.with((at + i) / 2, power_all[(at + i) / 2] + energy);
-        sum_square += re * re;
-        sum_abs += absolute;
+        let index = ch * n + at + i;
+        coefs = __f64x2_with(coefs, index, re);
+        keys = __f64x2_with(keys, index, priorities);
+        let energy0 = __f64x2_lane(energy, 0);
+        let energy1 = __f64x2_lane(energy, 1);
+        power = power.with(group, energy0 + energy1);
+        power_all = power_all.with((at + i) / 2, power_all[(at + i) / 2] + energy0 + energy1);
+        sum_square += __f64x2_lane(square, 0);
+        sum_square += __f64x2_lane(square, 1);
+        sum_abs += first;
+        sum_abs += second;
       }
       let spectrum = analysis.spectrum(power, state.profiles[shift], true);
       for i in 0..size {
