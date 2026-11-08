@@ -1,0 +1,54 @@
+// The server h3spec drives: std/serve with TLS and HTTP/3 on. It answers
+// every request with a small body. Each conformance case then sees a
+// server that takes its request and answers the frames it checks.
+import "std/i32";
+import "std/result";
+import "std/http";
+import "std/platform";
+import "std/serve";
+import "std/tls/identity";
+import "std/tls/server";
+import "std/rand";
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  if (req.method == "POST") {
+    return http.text(200, f"took {req.body_bytes().len()} bytes");
+  }
+  return http.ok("hello");
+}
+
+function port(): i32 {
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
+}
+
+function identity_from_env(): Result[identity.Identity, string] {
+  let Some(cert_path) = env("TLS_CERT") else {
+    return Err("TLS_CERT is not set");
+  };
+  let Some(key_path) = env("TLS_KEY") else {
+    return Err("TLS_KEY is not set");
+  };
+  let Ok(cert) = read_file(cert_path) else {
+    return Err("TLS_CERT could not be read");
+  };
+  let Ok(key) = read_file(key_path) else {
+    return Err("TLS_KEY could not be read");
+  };
+  return match (identity.from_pem(cert, key)) { Ok(id) => Ok(id), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  match (identity_from_env()) {
+    Ok(id) => {
+      let cfg = serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3();
+      return serve.exit_code(serve.run(port(), cfg, handle));
+    },
+    Err(message) => {
+      eprint(message);
+      return 2;
+    }
+  }
+}
