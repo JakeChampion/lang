@@ -1,0 +1,28 @@
+// Tests of the frame times of std/android/trace. The trace functions need
+// a device; the emulator check of examples/android/paper records them.
+import "std/android/trace";
+import "std/test";
+
+function test_record_keeps_120(): test.TestOutcome {
+  let f = trace.frames();
+  for i in 0..200 {
+    f = trace.record(f, i as i64);
+  }
+  return test.assert_eq(f.times.len().to_string() + " " + f.times[0].to_string() + " " + f.times[119].to_string(), "120 80 199");
+}
+
+function test_bars(): test.TestOutcome {
+  let f = trace.record(trace.record(trace.record(trace.frames(), 8000000i64), 16666667i64), 50000000i64);
+  let b = trace.bars(f, 240, 100, 16666667i64);
+  // A frame of half a period is a quarter of the box, one of a period is
+  // half of it, and a longer one stops at the top.
+  let got = b.len().to_string() + " " + b[0].h.to_string() + " " + b[0].late.to_string() + " " + b[1].h.to_string() + " " + b[1].late.to_string() + " " + b[2].h.to_string() + " " + b[2].y.to_string() + " " + b[2].late.to_string() + " " + b[1].x.to_string() + " " + b[1].w.to_string();
+  return test.assert_eq(got, "3 23 false 50 false 100 0 true 2 2");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/trace");
+  r = r.it("record keeps the last 120 frames", test_record_keeps_120);
+  r = r.it("bars give each frame a height and tell late frames", test_bars);
+  return r.finish();
+}

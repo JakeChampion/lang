@@ -8,8 +8,9 @@ presses the home key. The app draws its own pixels, so the check reads the
 log lines of the app and the colours of the screen. It requires the home
 screen in the paper colour above the wallpaper, a swipe up that opens the
 app list in the paper colour, a search for "pap" that finds Paper and opens
-it, the back key that goes back to the home screen, and no crash in
-logcat. OUT_DIR gets the frames and logcat.
+it, the back key that goes back to the home screen, a frame section in
+the system trace while the list slides, and no crash in logcat. OUT_DIR
+gets the frames, logcat and the trace.
 """
 
 import re
@@ -82,9 +83,15 @@ def main(apk, out):
     if part < 0.2 or part > 0.7:
         fail(f"the home screen has {part:.3f} of the paper colour, not paper above the wallpaper")
 
+    adb("shell", "atrace", "--async_start", "-c", "-b", "4096", "-a", PACKAGE, check=False)
     adb("shell", "input", "swipe", str(width // 2), str(height * 3 // 4), str(width // 2), str(height // 4), "150")
     if not wait_for(r"paper: layer 1"):
         fail("a swipe up did not open the app list")
+    trace = adb("shell", "atrace", "--async_stop", check=False)
+    with open(f"{out}/trace.txt", "w") as f:
+        f.write(trace)
+    if not re.search(r"B\|\d+\|frame", trace):
+        fail("the system trace has no frame section of the app")
     _, _, part = paper_part(out, "drawer")
     if part < 0.6:
         fail(f"the app list has {part:.3f} of the paper colour")

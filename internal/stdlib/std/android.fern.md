@@ -39,6 +39,7 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 <<module introduction>>=
 // This module runs an Android app with no Java code, through NativeActivity.
 import "std/android/draw";
+import "std/android/trace";
 import "std/jni";
 import "std/utf8";
 ```
@@ -182,7 +183,7 @@ function c_pthread_detach(thread: usize): i32;
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. The keyboard of the system types through these events, because the activity has no text field.
 
-`Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time.
+`Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time. The step of each `Vsync` is a section named `frame` in the system trace, through `std/android/trace`.
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk -apk-home` sets it.
 
@@ -641,7 +642,9 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
     }
     // The frame callback can run in the same poll as another source.
     if let Some(e) = frame_event(ctx) {
+      trace.begin("frame");
       state = step(state, e);
+      trace.end();
     }
   }
   detach(vm);

@@ -7,6 +7,7 @@
 // bars, and the notification listener of the notification filter.
 import "std/android";
 import "std/android/draw";
+import "std/android/property";
 import "std/fetch";
 import "std/jni";
 import "std/log";
@@ -767,6 +768,7 @@ function device(ctx: usize, wall: u8[]): control.Device {
     default_allowed: (): string[] => default_allowed(ctx),
     open_held: (pkg: string, key: string): void => open_held(ctx, pkg, key),
     request_frame: (): void => android.request_frame(ctx),
+    property: (name: string): string => property.get(name).unwrap_or(""),
     attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => attach_gpu(p, window),
     present: (p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => gpu.present(p, passes),
     detach_gpu: (p: gpu.Painter): gpu.Painter => gpu.detach(p),

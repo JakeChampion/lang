@@ -46,6 +46,17 @@ function read_text(path: string): string {
   return "";
 }
 
+// The value of the property `name` in the file `props` of the test, which
+// holds a line "name=value" for each property.
+function prop(dir: string, name: string): string {
+  for line in read_text(dir + "/props").split("\n") {
+    if (line.starts_with(name + "=")) {
+      return line.drop(name.len() + 1).to_owned();
+    }
+  }
+  return "";
+}
+
 // The GPU calls of the app go to a log of their own.
 function gpu_line(dir: string, line: string): void {
   let ok = write_file(dir + "/gpu", read_text(dir + "/gpu") + line + "\n");
@@ -106,6 +117,7 @@ function fake(dir: string, now: i64): control.Device {
     default_allowed: (): string[] => ["com.android.dialer"],
     open_held: (pkg: string, key: string): void => log_line(dir, "held " + key),
     request_frame: (): void => {},
+    property: (name: string): string => prop(dir, name),
     attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => {
       gpu_line(dir, "attach");
       return p;
@@ -139,8 +151,15 @@ function at(own r: Run, dt: i64, e: android.Event): Run {
 // Paper with its window shown, a status bar of 66 pixels and a navigation
 // bar of 132, and its files in a new directory.
 function shown(name: string): Run {
+  return shown_with(name, "");
+}
+
+// As `shown`, with the system properties in `props`, one "name=value" on
+// each line.
+function shown_with(name: string, props: string): Run {
   let dir = "/tmp/paper-control-" + name + "-" + now_unix_ms().to_string();
   let made = create_dir_all(dir);
+  let wrote = write_file(dir + "/props", props);
   let s = control.with_density(control.new(fake(dir, 0), dir, ui_test.fonts()), 440);
   let r = Run { s: s, dir: dir, now: 0 };
   r = at(r, 0, android.Start);
@@ -352,6 +371,35 @@ function test_gpu_kept_without_window(): test.TestOutcome {
   return test.assert_eq(runs(read_text(dir + "/gpu").trim()), "attach detach attach close");
 }
 
+// With the property debug.fern.frames at 1, the frames of the slide record
+// the gaps between them, and each frame draws the overlay as its last
+// pass. Without it, there is no overlay.
+function test_frame_overlay(): test.TestOutcome {
+  let r = slide_at_60hz(shown_with("overlay", "debug.fern.frames=1"));
+  let plain = slide_at_60hz(shown("no-overlay"));
+  let sixty = 0;
+  for t in r.s.frames.times {
+    if (t == 16000000i64) {
+      sixty += 1;
+    }
+  }
+  let last = read_text(r.dir + "/frames").trim().split("\n");
+  let got = r.s.overlay.to_string() + " " + (sixty >= 8).to_string() + " " + last[last.len() - 1] + " " + plain.s.overlay.to_string() + " " + plain.s.frames.times.len().to_string();
+  return test.assert_eq(got, "true true 2 full false 0");
+}
+
+// A swipe up that opens the app list, and a frame every 16 ms while it
+// slides in.
+function slide_at_60hz(own r: Run): Run {
+  let t = at(r, 100, android.Touch(0, (W / 2) as f32, 2000.0));
+  t = at(t, 16, android.Touch(2, (W / 2) as f32, 1400.0));
+  t = at(t, 16, android.Touch(1, (W / 2) as f32, 900.0));
+  for i in 0..12 {
+    t = at(t, 16, android.Tick);
+  }
+  return t;
+}
+
 function test_pick_home_apps(): test.TestOutcome {
   let r = long_at(shown("pick"), W / 2, 1300);
   r = tap(r, "pick-home");
@@ -386,6 +434,7 @@ function main(): i32 {
   r = r.it("choose home apps", test_pick_home_apps);
   r = r.it("the app list slides over home as a second pass", test_slide_passes);
   r = r.it("the painter keeps its images while the window is away", test_gpu_kept_without_window);
+  r = r.it("the frame overlay shows the gaps between frames", test_frame_overlay);
   r = r.it("open a held notification", test_held_notifications);
   return r.finish();
 }

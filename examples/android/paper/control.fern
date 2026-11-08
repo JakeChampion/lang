@@ -5,6 +5,7 @@
 import "std/android";
 import "std/android/draw";
 import "std/android/motion";
+import "std/android/trace";
 import "std/option";
 import "std/worker";
 import "./face";
@@ -36,7 +37,8 @@ const CLOSE_MS: i64 = 150;
 
 const WEATHER_MAX_AGE_MS: i64 = 1800000;
 
-// The input and output of the app. `attach_gpu` puts the painter on a
+// The input and output of the app. `property` gives the value of a system
+// property, or "". `attach_gpu` puts the painter on a
 // window, `present` draws a frame of passes with it, `detach_gpu` takes it
 // off the window with its images kept, and `close_gpu` frees it. `wallpaper` decodes the wallpaper at a width. `apps` gives the launchable apps with their labels, and `app_keys`
 // only their keys, which is faster. `launch` opens an app by its key from
@@ -69,6 +71,7 @@ pub struct Device {
   default_allowed: () => string[],
   open_held: (string, string) => void,
   request_frame: () => void,
+  property: (string) => string,
   attach_gpu: (gpu.Painter, usize) => gpu.Painter,
   present: (gpu.Painter, ui.Pass[]) => gpu.Painter,
   detach_gpu: (gpu.Painter) => gpu.Painter,
@@ -99,6 +102,11 @@ pub struct App {
   painter: gpu.Painter,
   slide: Slide,
   frame_ns: i64,
+  // The gaps between the frames that drew, the time of the last one, and
+  // whether the overlay shows them: the property debug.fern.frames is 1.
+  frames: trace.Frames,
+  drawn_ns: i64,
+  overlay: boolean,
   settings: paper.Settings,
   installed: paper.Entry[],
   apps: paper.Entry[],
@@ -148,7 +156,7 @@ function path(s: App, name: string): string {
 pub function new(dev: Device, dir: string, fonts: face.Fonts): App {
   let settings = paper.parse_settings(dev.read(dir + "/" + SETTINGS_FILE));
   let held = paper.parse_held(dev.read(dir + "/" + HELD_FILE));
-  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
+  return load_weather(App { dev: dev, dir: dir, fonts: fonts, window: 0 as usize, w: 0, h: 0, d: 2.0, top: 0, bottom: 0, painter: gpu.painter(fonts), slide: no_slide(), frame_ns: 0i64, frames: trace.frames(), drawn_ns: 0i64, overlay: false, settings: settings, installed: [], apps: [], held: held, layer: ui.HOME, query: "", typing: false, list_scroll: 0, fav_scroll: 0, sheet: None, sheet_kind: "", sheet_key: "", pick_keys: [], pause_key: "", pause_at: 0i64, press: no_press(), fling: no_fling(), weather: None, weather_at: 0i64, job: None, note: "", note_until: 0i64, shown: false, minute: -1i64, nodes: [], dirty: true, bars: -1 });
 }
 
 pub function with_density(own s: App, dpi: i32): App {
@@ -1157,7 +1165,8 @@ function poll_weather(own s: App): App {
 // --- the window and the timers
 
 function started(own s: App): App {
-  let t = reload_held(reload_apps(App { ...s, shown: true, dirty: true }, false));
+  let overlay = s.dev.property("debug.fern.frames") == "1";
+  let t = reload_held(reload_apps(App { ...s, shown: true, overlay: overlay, dirty: true }, false));
   if (!t.settings.asked_location && !t.dev.has_location()) {
     t.dev.ask_location();
     let next = paper.Settings { ...t.settings, asked_location: true };
@@ -1329,12 +1338,39 @@ function draw_frame(own s: App, ns: i64): App {
     let home_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.HOME, sheet: None });
     let list_nodes = ui.nodes(s.fonts, ui.View { ...v, layer: ui.DRAWER, sheet: None });
     let shift = ((1.0 - part) * (s.h as f64) * 0.08) as i32;
-    let slid = s.dev.present(s.painter, [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }]);
+    let slid = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: home_nodes, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list_nodes, dy: shift, alpha: part }]));
     return App { ...s, painter: slid, nodes: [], dirty: false };
   }
   let shown = ui.nodes(s.fonts, v);
-  let p = s.dev.present(s.painter, [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }]);
+  let p = s.dev.present(s.painter, with_overlay(s, [ui.Pass { nodes: shown, dy: 0, alpha: 1.0 }]));
   return App { ...s, painter: p, nodes: shown, dirty: false };
+}
+
+// The passes with the frame overlay over them, when it shows: a bar for
+// the gap before each frame that drew, above the navigation bar. A bar is
+// red when its frame came late.
+function with_overlay(s: App, passes: ui.Pass[]): ui.Pass[] {
+  if (!s.overlay) {
+    return passes;
+  }
+  let period = 16666667i64;
+  if (s.frames.times.len() > 0) {
+    period = s.frames.times[0];
+    for t in s.frames.times {
+      period = period.min(t);
+    }
+  }
+  let h = (80.0 * s.d) as i32;
+  let top = s.h - s.bottom - h;
+  let nodes: ui.Node[] = [];
+  for b in trace.bars(s.frames, s.w, h, period) {
+    let color = draw.rgba(40, 160, 90, 200);
+    if (b.late) {
+      color = draw.rgba(220, 50, 40, 220);
+    }
+    nodes = nodes.append(ui.Node { x: b.x, y: top + b.y, w: b.w, h: b.h, paint: ui.Fill(color, 0), act: "", long: "", group: "", clip0: 0, clip1: s.h });
+  }
+  return passes.append(ui.Pass { nodes: nodes, dy: 0, alpha: 1.0 });
 }
 
 // Draws at once: the window needs its pixels before the call returns.
@@ -1350,7 +1386,13 @@ function frame(own s: App, ns: i64): App {
   if (!t.dirty && !animating(t)) {
     return t;
   }
-  return draw_frame(t, ns);
+  let u = draw_frame(t, ns);
+  let gap = ns - u.drawn_ns;
+  // A gap of more than 200 ms is a pause between animations, not a frame.
+  if (u.overlay && u.drawn_ns > 0i64 && gap < 200000000i64) {
+    u = App { ...u, frames: trace.record(u.frames, gap) };
+  }
+  return App { ...u, drawn_ns: ns };
 }
 
 // The state after event `e`: the app handles it, runs its timers and polls
