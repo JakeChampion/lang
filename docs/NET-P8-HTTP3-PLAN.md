@@ -132,10 +132,45 @@ Each is a bound with a test that crosses it.
    and RETIRE_CONNECTION_ID with active_connection_id_limit, a stateless
    reset token per connection ID, the peer's key update answered and one
    started, PATH_CHALLENGE on a new path. Gate: two `Conn`s rotating
-   connection IDs and keys mid-stream.
+   connection IDs and keys mid-stream. Landed (#12512).
+
+   Connection IDs: each side derives its IDs and their reset tokens from a
+   32-byte secret in its entropy (HMAC-SHA256 over the sequence number), so
+   neither needs a random source after the handshake. Once connected, a
+   side issues IDs until the peer holds its `active_connection_id_limit`,
+   and issues another whenever the peer retires one. The peer's IDs are
+   stored up to this side's limit (CONNECTION_ID_LIMIT_ERROR past it),
+   `retire_prior_to` retires the ones below it and moves the ID in use when
+   it is among them, a RETIRE_CONNECTION_ID for the ID the packet arrived
+   on or for a sequence number never issued is PROTOCOL_VIOLATION, and
+   `Conn.rotate_dcid()` moves to the next ID the peer issued. A stateless
+   reset matches any of the peer's tokens. A datagram is this connection's
+   when it names any ID this side issued (`Conn.local_cids()`, re-read by
+   a router when `Conn.cids_version()` moves).
+
+   Paths: `Conn.receive_from(datagram, path, now)` takes the sender's
+   address in the caller's encoding. A server whose client sends from a new
+   address moves to it once a packet from there is authenticated: it sends
+   a PATH_CHALLENGE there, expanded to 1200 bytes when the path's
+   amplification budget allows, limits what it sends on the unvalidated
+   path to three times what it received there, and addresses the client by
+   a spare connection ID when one was issued (RFC 9000 sections 9.3 and
+   9.5). A PATH_RESPONSE with the challenge's data validates the path; no
+   answer within three PTOs returns to the previous path. A client drops
+   datagrams from an address that is not its server's. `Conn.path()` is
+   where datagrams go now; `std/serve` keeps each connection's address and
+   routing IDs in step with it. Congestion control is not reset on
+   migration: NAT rebinding, the case the slice is for, keeps the route.
+   Gates: `tests/stdlib/quic_conn_test.fern` (IDs issued to the limit, a
+   rotation mid-stream, a rebinding followed and validated, a path that does
+   not answer abandoned, a client ignoring an unknown server address,
+   retire_prior_to, the refused frames), `TestServeH3RebindX86_64` (a
+   client's second request from a second socket, answered there on a new
+   ID), and aioquic's client changing connection ID between its requests
+   in `scripts/net-quic-interop`.
 
    The key-update portion is implemented independently of connection-ID
-   rotation and path validation, which remain follow-ups. `Conn.update_keys(now)`
+   rotation and path validation. `Conn.update_keys(now)`
    requires handshake confirmation and acknowledgement in the current phase.
    A peer's authenticated update advances sending keys before its ACK; old
    receive keys allow reordering for at most three PTOs after the first new-phase

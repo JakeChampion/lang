@@ -125,16 +125,17 @@ runs:
         install -m 0755 build/ci-compiler-cache/fern bin/fern
 
     # The compiler `fern` builds for itself when no fern-selfhost sits beside
-    # it (internal/tools/launcher): the pinned stage0 it downloads and the self-host
-    # it compiles with it, cached under the user cache directory. Without
-    # this every job that runs `bin/fern -target` re-downloads the release
-    # asset and rebuilds the compiler. The key is what the launcher keys on:
-    # the stage0 pin, the self-host sources and the stdlib.
+    # it (internal/tools/launcher), cached under the user cache directory.
+    # Without this every job that runs `bin/fern -target` rebuilds the
+    # compiler. The key is what the launcher keys on: the stage0 pin, the
+    # self-host sources and the stdlib.
     - name: Cache the launcher's self-host build
       uses: actions/cache@v6
       with:
         path: ${{ runner.os == 'macOS' && '~/Library/Caches/fern' || '~/.cache/fern' }}
         key: fern-launcher-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bootstrap/stage0.lock', 'compiler/*.fern', 'internal/stdlib/**') }}
+
+    - uses: ./.github/actions/stage0
 
     # Two paths link through `-fuse-ld=lld`: cmd/fern's arm64-darwin
     # cross-link from Linux (clang + lld's Mach-O backend) and

@@ -1,0 +1,161 @@
+import "std/audio/opusfile";
+import "std/audio/pcm";
+import "std/opus/multistream";
+import "std/test";
+import "opus_file_check";
+import "opus_file_vectors";
+import "opus_seek_check";
+import "opus_seek_vectors";
+
+function references(): test.TestOutcome {
+  for i in 0..opus_file_vectors.CASES.len() {
+    let Ok(ref) = opus_file_check.reference(opus_file_vectors.CASES[i]) else {
+      return test.fail("reference bytes");
+    };
+    match (opus_seek_check.check_case(ref, opus_seek_vectors.CASES[i])) {
+      Ok(_) => {},
+      Err(e) => {
+        return test.fail("seek case " + i.to_string() + ": " + e.message());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function extraction(): test.TestOutcome {
+  for i in 0..opus_file_vectors.CASES.len() {
+    let Ok(ref) = opus_file_check.reference(opus_file_vectors.CASES[i]) else {
+      return test.fail("reference bytes");
+    };
+    match (opus_seek_check.extraction(ref)) {
+      Ok(_) => {},
+      Err(e) => {
+        return test.fail("packet case " + i.to_string() + ": " + e.message());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function exact_references(): test.TestOutcome {
+  for i in 0..opus_file_vectors.CASES.len() {
+    let Ok(ref) = opus_file_check.reference(opus_file_vectors.CASES[i]) else {
+      return test.fail("reference bytes");
+    };
+    match (opus_seek_check.exact_case(ref)) {
+      Ok(_) => {},
+      Err(e) => {
+        return test.fail("exact seek case " + i.to_string() + ": " + e.message());
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference bytes");
+  };
+  let base = opusfile.default_seek_limits();
+  let cases = [opusfile.SeekLimits { ...base, max_input_bytes: 1 }, opusfile.SeekLimits { ...base, max_packets: 0 }, opusfile.SeekLimits { ...base, preroll: 3839 }, opusfile.SeekLimits { ...base, preroll: 480001 }];
+  for limit in cases {
+    match (opusfile.inspect_seek(ref.bytes, limit)) {
+      Err(pcm.Limit) => {},
+      _ => {
+        return test.fail("index or preroll budget");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function packet_limits(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.CASES[0]) else {
+    return test.fail("reference bytes");
+  };
+  let base = opusfile.default_seek_limits();
+  let small_audio = multistream.Limits { ...base.file.audio, max_samples: 959 };
+  let small_file = opusfile.Limits { ...base.file, audio: small_audio };
+  let cases = [opusfile.SeekLimits { ...base, max_packets: 1 }, opusfile.SeekLimits { ...base, file: small_file }];
+  for limit in cases {
+    match (opusfile.inspect_seek(ref.bytes, limit)) {
+      Err(pcm.Limit) => {},
+      _ => {
+        return test.fail("packet or raw output budget");
+      }
+    }
+  }
+  return test.pass();
+}
+
+struct Point { link: i32, position: i64 }
+
+function positions(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference bytes");
+  };
+  let points = [Point { link: -1, position: 0i64 }, Point { link: 1, position: 0i64 }, Point { link: 0, position: -1i64 }, Point { link: 0, position: 521i64 }];
+  for point in points {
+    let Ok(index) = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits()) else {
+      return test.fail("index");
+    };
+    match (opusfile.seek_reader(index).seek(point.link, point.position)) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid seek position");
+      }
+    }
+    let Ok(exact_index) = opusfile.inspect_seek(ref.bytes, opusfile.default_seek_limits()) else {
+      return test.fail("index");
+    };
+    match (opusfile.seek_reader(exact_index).seek_exact(point.link, point.position)) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid exact seek position");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid_input(): test.TestOutcome {
+  let Ok(ref) = opus_file_check.reference(opus_file_vectors.SMOKE) else {
+    return test.fail("reference bytes");
+  };
+  let limits = opusfile.default_seek_limits();
+  let damaged = ref.bytes.with(ref.bytes.len() - 1, ref.bytes[ref.bytes.len() - 1] ^ 1u8);
+  match (opusfile.inspect_seek(damaged, limits)) {
+    Err(pcm.Checksum) => {},
+    _ => {
+      return test.fail("index must check Ogg checksums");
+    }
+  }
+  match (opusfile.inspect_seek(ref.bytes[:ref.bytes.len() - 1], limits)) {
+    Err(pcm.Truncated) => {},
+    _ => {
+      return test.fail("index must reject truncated pages");
+    }
+  }
+  let Ok(index) = opusfile.inspect_seek(ref.bytes, limits) else {
+    return test.fail("index");
+  };
+  match (opusfile.seek_reader(index).next(ref.bytes[1:])) {
+    Err(pcm.Header) => {},
+    _ => {
+      return test.fail("reader must check indexed input length");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed Ogg Opus seeks against libopusfile PCM");
+  runner = runner.it("repeated seeks, preroll, gain, sample boundaries, and chains", references);
+  runner = runner.it("exact history with one packet per cooperative step", exact_references);
+  runner = runner.it("packet extraction across pages matches sequential Ogg packets", extraction);
+  runner = runner.it("encoded input, index, and preroll limits", limits);
+  runner = runner.it("packet count and raw output limits before PCM decode", packet_limits);
+  runner = runner.it("invalid link and sample positions", positions);
+  runner = runner.it("checksums, truncated pages, and changed input length", invalid_input);
+  return runner.finish();
+}

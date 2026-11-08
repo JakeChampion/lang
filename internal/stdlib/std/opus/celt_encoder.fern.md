@@ -146,6 +146,10 @@ function max32(a: f32, b: f32): f32 {
 
 ### `mdcts`
 
+The encoder uses the libopus 1.4 transform tables through `mdct.forward_encoder`.
+Its quantization helpers retain that reference's angle arithmetic.
+The decoder and general transform APIs use the current reference tables.
+
 A frame of short blocks has `short_blocks` MDCTs of `modes.SHORT_MDCT_SIZE` bins for each channel. Their bins are interleaved: bin `j` of block `b` is at `b + j * short_blocks`. A mono frame of a stereo input takes the mean of the two spectra. When the input had a lower rate, the bins above that rate are 0 and the others are scaled up.
 
 ```fern
@@ -168,7 +172,7 @@ pub function compute_mdcts(input: [f32], short_blocks: i32, c: i32, cc: i32, lm:
   }
   for ch in 0..cc {
     for blk in 0..b {
-      out = mdct.forward(input, ch * (b * n + modes.OVERLAP) + blk * n, out, blk + ch * n * b, shift, b);
+      out = mdct.forward_encoder(input, ch * (b * n + modes.OVERLAP) + blk * n, out, blk + ch * n * b, shift, b);
     }
   }
   if (cc == 2 && c == 1) {
@@ -1715,7 +1719,7 @@ function frame_bands(own st: Encoder, own e: range.Encoder, own old: f32[], own 
   if (c == 2) {
     y = half(q.x, q.n, q.n);
   }
-  let res = bands.quant_all_bands(range.Encoding(fe), breq, half(q.x, 0, q.n), y, q.band_e);
+  let res = bands.quant_all_bands_encoder(range.Encoding(fe), breq, half(q.x, 0, q.n), y, q.band_e);
   let e2 = encoding_of(res.c);
   if (rsv > 0) {
     let on = 0u32;

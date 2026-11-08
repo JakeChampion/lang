@@ -64,6 +64,7 @@ jobs:
         with:
           version: 2026.11.0
           github_token: ${{ github.token }}
+      - uses: ./.github/actions/stage0
       - uses: ./.github/actions/selfhost-driver-cache
       - name: Execute all native Darwin profiling modes
         run: |
@@ -128,6 +129,7 @@ jobs:
           sw_vers
           clang --version | head -1
           go version
+      - uses: ./.github/actions/stage0
       # The stage0-built arm64-darwin drivers, carried between runs. Shard 0
       # runs the self-host tests that build them, so it is the shard that saves.
       - uses: ./.github/actions/selfhost-driver-cache

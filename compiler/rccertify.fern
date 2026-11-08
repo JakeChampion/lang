@@ -101,10 +101,16 @@ pub function render(fn_name: string, x: Finding): string {
     + util.i32_to_string(x.block) + ": " + x.message;
 }
 
-pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string }
+// `skipped` names a function the design leaves uncertified. `failed` names
+// one the certifier could not decide, which the gate refuses.
+pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string, failed: string }
 
 function skipped(why: string): Report {
-  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why };
+  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why, failed: "" };
+}
+
+function failed(why: string): Report {
+  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: "", failed: why };
 }
 
 function org_none(): i32 {
@@ -3033,29 +3039,6 @@ function round_limit(): i32 {
   return 64;
 }
 
-function use_counts(f: ssa.SFunc): i32[] {
-  let uses = __alloc_i32(f.nvals);
-  for b in f.blocks {
-    for ins in b.insts {
-      for a in ins.args {
-        uses = count_use(uses, a);
-      }
-    }
-    uses = count_use(uses, b.term.value);
-    if (b.term.kind_tag == 3) {
-      uses = count_use(uses, b.term.cond);
-    }
-  }
-  return uses;
-}
-
-function count_use(own uses: i32[], v: i32): i32[] {
-  if (v < 0 || v >= uses.len()) {
-    return uses;
-  }
-  return uses.with(v, uses[v] + 1);
-}
-
 function resumes(f: ssa.SFunc): boolean {
   for b in f.blocks {
     for ins in b.insts {
@@ -3074,7 +3057,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   let uses = base.uses;
   let paired = base.paired;
   if (!base.on) {
-    uses = use_counts(f);
+    uses = ssa.use_counts(f);
     paired = returns_pair(f, irops);
   }
   let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
@@ -4094,17 +4077,17 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
     }
     findings = findings.append(Finding { kind: x.kind, value: value, block: x.block, defined: x.defined, message: x.message });
   }
-  return Report { findings: findings, tracked: report.tracked, unproved: report.unproved, opaque: report.opaque, skipped: report.skipped };
+  return Report { findings: findings, tracked: report.tracked, unproved: report.unproved, opaque: report.opaque, skipped: report.skipped, failed: report.failed };
 }
 
 function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
   if (f0.blocks.len() == 0) {
-    return skipped("no blocks");
+    return failed("no blocks");
   }
   let f = ended_at_exit(f0);
   let at = ssadeps.position_of(f);
   if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
-    return skipped("no entry block");
+    return failed("no entry block");
   }
   if (resumes(f)) {
     return skipped("resumes from a task frame");
@@ -4114,11 +4097,11 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   let w = walk_of(f, irops, self_abi, abis, sigs, ops, at, dom, reach, no_hold(), no_base());
   let lv = live_of(w, w.takes);
   if (!lv.ok) {
-    return skipped("liveness: " + lv.why);
+    return failed("liveness: " + lv.why);
   }
   let done = settle(progress_of(w, lv), w, lv, rpo(f, at), reach, w.takes);
   if (done.changed) {
-    return skipped("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
+    return failed("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
   }
   let findings = done.p.findings;
   let unproved = done.p.unproved;
@@ -4138,5 +4121,5 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
       }
     }
   }
-  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), opaque: done.p.opaque, skipped: "" };
+  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), opaque: done.p.opaque, skipped: "", failed: "" };
 }

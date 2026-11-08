@@ -66,6 +66,7 @@ func TestSelfHostAllocSizeAbortIRArm64(t *testing.T) {
 func TestSelfHostTransformSizeAbortWASM(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, src string }{
+		{"uninitialized-bytes", `function main(): i32 { unsafe { return __alloc_u8_uninit(-1).len(); } }`},
 		{"repeat", repeatWrapsToZeroSrc},
 		{"replace", replaceWrapsToZeroSrc},
 	} {

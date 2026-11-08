@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PINS = runpy.run_path(str(Path(__file__).with_name('gen-opus-headers-vectors.py')))['PINS']
 
 
-def reference(args):
+def reference(args, helper='opus_file.c'):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         sources = {}
@@ -44,7 +44,7 @@ def reference(args):
         includes = [source/'include', source/'src', sources['opus']/'include', sources['ogg']/'include', ogg/'include']
         executable = root/'opus-file-reference'
         subprocess.run(['cc', '-O2', '-DOP_DISABLE_HTTP', '-DOP_HAVE_LRINTF',
-                        *['-I'+str(p) for p in includes], str(ROOT/'scripts/audio-reference/opus_file.c'),
+                        *['-I'+str(p) for p in includes], str(ROOT/'scripts/audio-reference'/helper),
                         *[str(source/('src/'+name+'.c')) for name in ['info', 'internal', 'stream', 'opusfile']],
                         str(opus/'libopus.a'), str(ogg/'libogg.a'), '-lm', '-o', str(executable)], check=True)
         return [json.loads(line) for line in subprocess.check_output([str(executable)]).splitlines()]

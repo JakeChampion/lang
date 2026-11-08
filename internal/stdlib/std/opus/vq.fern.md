@@ -74,6 +74,9 @@ The rotation uses a double-precision angle, as in current libopus.
 The stereo angle uses the normalized polynomial from libopus commit `22244de5a79bd1d6d623c32e72bf1954b56235be`.
 The Fern interface retains its Q14 scale.
 
+The whole-frame encoder retains the float angle and stereo-energy epsilon from libopus 1.4.
+Its named encoder helpers preserve those choices without changing the current decoder kernels.
+
 ```fern
 <<rotation>>=
 pub const SPREAD_NONE: i32 = 0;
@@ -114,17 +117,28 @@ function rotation1(own x: f32[], at: i32, len: i32, stride: i32, c: f32, s: f32)
   return x;
 }
 
+function rotation_cos(x: f32, legacy_encoder: boolean): f32 {
+  if (legacy_encoder) {
+    return ((0.5f32 * PI * x) as f64).cos() as f32;
+  }
+  return cos_norm(x);
+}
+
+pub function exp_rotation(own x: f32[], len: i32, dir: i32, stride: i32, k: i32, spread: i32): f32[] {
+  return exp_rotation_reference(x, len, dir, stride, k, spread, false);
+}
+
 // Rotates the `len` values of `x`, in `stride` blocks, for a codeword of `k`
 // pulses. `dir` is 1 before the search and -1 after the decode.
-pub function exp_rotation(own x: f32[], len: i32, dir: i32, stride: i32, k: i32, spread: i32): f32[] {
+function exp_rotation_reference(own x: f32[], len: i32, dir: i32, stride: i32, k: i32, spread: i32, legacy_encoder: boolean): f32[] {
   if (2 * k >= len || spread == SPREAD_NONE) {
     return x;
   }
   let factor = SPREAD_FACTOR[spread - 1];
   let gain = 1.0f32 * (len as f32) / ((len + factor * k) as f32);
   let theta = 0.5f32 * (gain * gain);
-  let c = cos_norm(theta);
-  let s = cos_norm(1.0f32 - theta);
+  let c = rotation_cos(theta, legacy_encoder);
+  let s = rotation_cos(1.0f32 - theta, legacy_encoder);
   let stride2 = 0;
   if (len >= 8 * stride) {
     stride2 = 1;
@@ -300,15 +314,23 @@ pub struct Quant { e: range.Encoder, x: f32[], mask: i32 }
 
 // Codes the shape `x` with `k` pulses. With `resynth`, the result holds the
 // shape that the decoder gets.
-pub function alg_quant(own e: range.Encoder, own x: f32[], n: i32, k: i32, spread: i32, b: i32, gain: f32, resynth: boolean): Quant {
-  x = exp_rotation(x, n, 1, b, k, spread);
+function quant_reference(own e: range.Encoder, own x: f32[], n: i32, k: i32, spread: i32, b: i32, gain: f32, resynth: boolean, legacy_encoder: boolean): Quant {
+  x = exp_rotation_reference(x, n, 1, b, k, spread, legacy_encoder);
   let s = pvq_search(x, k, n);
   e = pvq.encode_pulses(e, s.iy, k);
   let out = s.x;
   if (resynth) {
-    out = exp_rotation(normalise_residual(s.iy, n, s.yy, gain), n, 0 - 1, b, k, spread);
+    out = exp_rotation_reference(normalise_residual(s.iy, n, s.yy, gain), n, 0 - 1, b, k, spread, legacy_encoder);
   }
   return Quant { e: e, x: out, mask: collapse_mask(s.iy, n, b) };
+}
+
+pub function alg_quant(own e: range.Encoder, own x: f32[], n: i32, k: i32, spread: i32, b: i32, gain: f32, resynth: boolean): Quant {
+  return quant_reference(e, x, n, k, spread, b, gain, resynth, false);
+}
+
+pub function alg_quant_encoder(own e: range.Encoder, own x: f32[], n: i32, k: i32, spread: i32, b: i32, gain: f32, resynth: boolean): Quant {
+  return quant_reference(e, x, n, k, spread, b, gain, resynth, true);
 }
 
 pub struct Unquant { d: range.Decoder, x: f32[], mask: i32 }
@@ -372,9 +394,9 @@ function atan_ratio(y: f32, x: f32): f32 {
 
 // The angle between the two channels of a band, from 0 to 16384. With
 // `stereo`, the angle is that of the mid and side of `x` and `y`.
-pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
-  let emid = 0.0f32;
-  let eside = 0.0f32;
+function stereo_energy(x: [f32], y: [f32], stereo: boolean, n: i32, epsilon: f32): (f32, f32) {
+  let emid = epsilon;
+  let eside = epsilon;
   if (stereo) {
     for i in 0..n {
       let m = x[i] + y[i];
@@ -388,6 +410,16 @@ pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
   }
   let mid = (emid as f64).sqrt() as f32;
   let side = (eside as f64).sqrt() as f32;
+  return (mid, side);
+}
+
+pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
+  let (mid, side) = stereo_energy(x, y, stereo, n, 0.0f32);
   return (0.5f32 + 1073741824.0f32 * atan_ratio(side, mid)).floor() as i32 >> 16;
+}
+
+pub function stereo_itheta_encoder(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
+  let (mid, side) = stereo_energy(x, y, stereo, n, EPSILON);
+  return (0.5f32 + 16384.0f32 * 0.63662f32 * fast_atan2f(side, mid)).floor() as i32;
 }
 ```

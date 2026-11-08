@@ -1,6 +1,9 @@
 # The CELT MDCT
 
-This module changes CELT audio between time and frequency (RFC 6716, section 4.3.7). It is a port of the float build of `kiss_fft.c` and `mdct.c` from libopus 1.4.
+This module changes CELT audio between time and frequency (RFC 6716, section 4.3.7).
+It ports the float arithmetic of `kiss_fft.c` and `mdct.c` from libopus.
+The default tables follow commit `22244de5a79bd1d6d623c32e72bf1954b56235be`.
+`forward_encoder` retains the libopus 1.4 tables for the existing encoder port.
 
 ## Model
 
@@ -16,7 +19,7 @@ The core is a complex FFT of `n / 4` values. Its size factors into stages of rad
 - A complex array holds the real part and the imaginary part of each value, one after the other.
 - `forward` reads `n / 2 + OVERLAP` values of `input` from `in_at`. It writes `n / 2` values of `out`, from `out_at`, at a step of `stride`.
 - `backward` reads `n / 2` values of `input` from `in_at`, at a step of `stride`. It changes `n / 2 + OVERLAP / 2` values of `out` from `out_at`. Before the call, the first `OVERLAP / 2` of these values must be the tail that `backward` wrote for the block before. After the call, the first `n / 2` values are the output, and the last `OVERLAP / 2` values are the tail for the next block.
-- The arithmetic is in f32, in the same order as libopus, so the results are the same bits.
+- The arithmetic is in f32, in the same order as the selected reference.
 
 ## Module assembly
 
@@ -66,6 +69,7 @@ The core is a complex FFT of `n / 4` values. Its size factors into stages of rad
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import "std/opus/modes";
+import "std/opus/encoder_modes";
 ```
 
 ### `butterflies`
@@ -78,19 +82,19 @@ A radix-2 stage always comes after a radix-4 stage, so it has `m` equal to 4. A 
 <<butterflies>>=
 const TW: f32 = 0.7071067690849304f32;
 
-function tw_r(j: i32): f32 {
-  return modes.FFT_TWIDDLES[2 * j];
+function tw_r(twiddles: [f32], j: i32): f32 {
+  return twiddles[2 * j];
 }
 
-function tw_i(j: i32): f32 {
-  return modes.FFT_TWIDDLES[2 * j + 1];
+function tw_i(twiddles: [f32], j: i32): f32 {
+  return twiddles[2 * j + 1];
 }
 
 // The product of the complex value at `a` and the twiddle `j`.
-function cmul(f: [f32], a: i32, j: i32): (f32, f32) {
+function cmul(f: [f32], a: i32, j: i32, twiddles: [f32]): (f32, f32) {
   let r = f[a];
   let i = f[a + 1];
-  return (r * tw_r(j) - i * tw_i(j), r * tw_i(j) + i * tw_r(j));
+  return (r * tw_r(twiddles, j) - i * tw_i(twiddles, j), r * tw_i(twiddles, j) + i * tw_r(twiddles, j));
 }
 
 function set(own f: f32[], a: i32, r: f32, i: f32): f32[] {
@@ -145,16 +149,16 @@ function bfly4_unit(own f: f32[], at: i32, n: i32): f32[] {
   return f;
 }
 
-function bfly4(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32): f32[] {
+function bfly4(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32, twiddles: [f32]): f32[] {
   if (m == 1) {
     return bfly4_unit(f, at, n);
   }
   for i in 0..n {
     for j in 0..m {
       let o = at + 2 * (i * mm + j);
-      let (s0r, s0i) = cmul(f, o + 2 * m, j * fstride);
-      let (s1r, s1i) = cmul(f, o + 4 * m, 2 * j * fstride);
-      let (s2r, s2i) = cmul(f, o + 6 * m, 3 * j * fstride);
+      let (s0r, s0i) = cmul(f, o + 2 * m, j * fstride, twiddles);
+      let (s1r, s1i) = cmul(f, o + 4 * m, 2 * j * fstride, twiddles);
+      let (s2r, s2i) = cmul(f, o + 6 * m, 3 * j * fstride, twiddles);
       let s5r = f[o] - s1r;
       let s5i = f[o + 1] - s1i;
       let f0r = f[o] + s1r;
@@ -172,13 +176,13 @@ function bfly4(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32): f3
   return f;
 }
 
-function bfly3(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32): f32[] {
-  let epi = tw_i(fstride * m);
+function bfly3(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32, twiddles: [f32]): f32[] {
+  let epi = tw_i(twiddles, fstride * m);
   for i in 0..n {
     for j in 0..m {
       let o = at + 2 * (i * mm + j);
-      let (s1r, s1i) = cmul(f, o + 2 * m, j * fstride);
-      let (s2r, s2i) = cmul(f, o + 4 * m, 2 * j * fstride);
+      let (s1r, s1i) = cmul(f, o + 2 * m, j * fstride, twiddles);
+      let (s2r, s2i) = cmul(f, o + 4 * m, 2 * j * fstride, twiddles);
       let s3r = s1r + s2r;
       let s3i = s1i + s2i;
       let er = (s1r - s2r) * epi;
@@ -197,18 +201,18 @@ function bfly3(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32): f3
 
 // The five outputs of one radix-5 butterfly. `ya` and `yb` are the twiddles of
 // one and two fifths of a turn.
-function five(own f: f32[], o: i32, m: i32, fstride: i32, u: i32): f32[] {
+function five(own f: f32[], o: i32, m: i32, fstride: i32, u: i32, twiddles: [f32]): f32[] {
   let y = fstride * m;
-  let yar = tw_r(y);
-  let yai = tw_i(y);
-  let ybr = tw_r(2 * y);
-  let ybi = tw_i(2 * y);
+  let yar = tw_r(twiddles, y);
+  let yai = tw_i(twiddles, y);
+  let ybr = tw_r(twiddles, 2 * y);
+  let ybi = tw_i(twiddles, 2 * y);
   let s0r = f[o];
   let s0i = f[o + 1];
-  let (s1r, s1i) = cmul(f, o + 2 * m, u * fstride);
-  let (s2r, s2i) = cmul(f, o + 4 * m, 2 * u * fstride);
-  let (s3r, s3i) = cmul(f, o + 6 * m, 3 * u * fstride);
-  let (s4r, s4i) = cmul(f, o + 8 * m, 4 * u * fstride);
+  let (s1r, s1i) = cmul(f, o + 2 * m, u * fstride, twiddles);
+  let (s2r, s2i) = cmul(f, o + 4 * m, 2 * u * fstride, twiddles);
+  let (s3r, s3i) = cmul(f, o + 6 * m, 3 * u * fstride, twiddles);
+  let (s4r, s4i) = cmul(f, o + 8 * m, 4 * u * fstride, twiddles);
   let s7r = s1r + s4r;
   let s7i = s1i + s4i;
   let s10r = s1r - s4r;
@@ -232,10 +236,10 @@ function five(own f: f32[], o: i32, m: i32, fstride: i32, u: i32): f32[] {
   return set(f, o + 6 * m, s11r - s12r, s11i - s12i);
 }
 
-function bfly5(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32): f32[] {
+function bfly5(own f: f32[], at: i32, fstride: i32, m: i32, n: i32, mm: i32, twiddles: [f32]): f32[] {
   for i in 0..n {
     for u in 0..m {
-      f = five(f, at + 2 * (i * mm + u), m, fstride, u);
+      f = five(f, at + 2 * (i * mm + u), m, fstride, u, twiddles);
     }
   }
   return f;
@@ -262,7 +266,7 @@ function factor(s: i32, i: i32): i32 {
   return modes.FFT_FACTORS[16 * s + i];
 }
 
-function stage(own f: f32[], at: i32, s: i32, i: i32, m: i32, stride: i32): f32[] {
+function stage(own f: f32[], at: i32, s: i32, i: i32, m: i32, stride: i32, twiddles: [f32]): f32[] {
   let shift = modes.FFT_SHIFT[s];
   if (shift < 0) {
     shift = 0;
@@ -276,16 +280,16 @@ function stage(own f: f32[], at: i32, s: i32, i: i32, m: i32, stride: i32): f32[
     return bfly2(f, at, stride);
   }
   if (p == 4) {
-    return bfly4(f, at, stride << shift, m, stride, m2);
+    return bfly4(f, at, stride << shift, m, stride, m2, twiddles);
   }
   if (p == 3) {
-    return bfly3(f, at, stride << shift, m, stride, m2);
+    return bfly3(f, at, stride << shift, m, stride, m2, twiddles);
   }
-  return bfly5(f, at, stride << shift, m, stride, m2);
+  return bfly5(f, at, stride << shift, m, stride, m2, twiddles);
 }
 
 // The FFT of size index `s`, in place, on the complex values from `at`.
-pub function fft_impl(own f: f32[], at: i32, s: i32): f32[] {
+function fft_table(own f: f32[], at: i32, s: i32, twiddles: [f32]): f32[] {
   let fstride = [1];
   let l = 0;
   let m = 0;
@@ -297,7 +301,7 @@ pub function fft_impl(own f: f32[], at: i32, s: i32): f32[] {
   m = factor(s, 2 * l - 1);
   let i = l - 1;
   while (i >= 0) {
-    f = stage(f, at, s, i, m, fstride[i]);
+    f = stage(f, at, s, i, m, fstride[i], twiddles);
     m = 1;
     if (i != 0) {
       m = factor(s, 2 * i - 1);
@@ -305,6 +309,12 @@ pub function fft_impl(own f: f32[], at: i32, s: i32): f32[] {
     i -= 1;
   }
   return f;
+}
+
+// Cache one twiddle array for all butterfly calls in this transform.
+pub function fft_impl(own f: f32[], at: i32, s: i32): f32[] {
+  let twiddles = modes.FFT_TWIDDLES;
+  return fft_table(f, at, s, twiddles);
 }
 
 // The forward FFT of the `modes.FFT_SIZE[s]` complex values of `input`,
@@ -374,13 +384,12 @@ function fold(x: [f32], at: i32, n2: i32, n4: i32): f32[] {
 
 // The rotation before the FFT, with the scale of the FFT, into bit-reverse
 // order.
-function pre_rotate(f: [f32], shift: i32, n4: i32): f32[] {
+function pre_rotate(f: [f32], shift: i32, n4: i32, mdct_twiddles: [f32], scale: f32): f32[] {
   let t = TRIG_AT[shift];
-  let scale = modes.FFT_SCALE[shift];
   let out = zeros(2 * n4);
   for i in 0..n4 {
-    let t0 = trig(t, i);
-    let t1 = trig(t, n4 + i);
+    let t0 = mdct_twiddles[t + i];
+    let t1 = mdct_twiddles[t + n4 + i];
     let re = f[2 * i];
     let im = f[2 * i + 1];
     let yr = re * t0 - im * t1;
@@ -391,19 +400,38 @@ function pre_rotate(f: [f32], shift: i32, n4: i32): f32[] {
 }
 
 // The forward MDCT of size `modes.MDCT_SIZE >> shift`.
-pub function forward(input: [f32], in_at: i32, own out: f32[], out_at: i32, shift: i32, stride: i32): f32[] {
+function forward_table(input: [f32], in_at: i32, own out: f32[], out_at: i32, shift: i32, stride: i32, fft_twiddles: [f32], mdct_twiddles: [f32], scale: f32): f32[] {
   let n = modes.MDCT_SIZE >> shift;
   let n2 = n >> 1;
   let n4 = n >> 2;
   let t = TRIG_AT[shift];
-  let f2 = fft_impl(pre_rotate(fold(input, in_at, n2, n4), shift, n4), 0, shift);
+  let f2 = fft_table(pre_rotate(fold(input, in_at, n2, n4), shift, n4, mdct_twiddles, scale), 0, shift, fft_twiddles);
   for i in 0..n4 {
     let fr = f2[2 * i];
     let fi = f2[2 * i + 1];
-    out = out.with(out_at + 2 * stride * i, fi * trig(t, n4 + i) - fr * trig(t, i));
-    out = out.with(out_at + stride * (n2 - 1) - 2 * stride * i, fr * trig(t, n4 + i) + fi * trig(t, i));
+    out = out.with(out_at + 2 * stride * i, fi * mdct_twiddles[t + n4 + i] - fr * mdct_twiddles[t + i]);
+    out = out.with(out_at + stride * (n2 - 1) - 2 * stride * i, fr * mdct_twiddles[t + n4 + i] + fi * mdct_twiddles[t + i]);
   }
   return out;
+}
+
+// Current reference transform for general MDCT use and decoder qualification.
+pub function forward(input: [f32], in_at: i32, own out: f32[], out_at: i32, shift: i32, stride: i32): f32[] {
+  let fft_twiddles = modes.FFT_TWIDDLES;
+  let mdct_twiddles = modes.MDCT_TWIDDLES;
+  return forward_table(input, in_at, out, out_at, shift, stride, fft_twiddles, mdct_twiddles, modes.FFT_SCALE[shift]);
+}
+
+// Keep the libopus 1.4 encoder's quantization decisions stable.
+pub function forward_encoder(input: [f32], in_at: i32, own out: f32[], out_at: i32, shift: i32, stride: i32): f32[] {
+  let fft_twiddles = modes.FFT_TWIDDLES;
+  let indices = encoder_modes.FFT_PATCH_INDICES;
+  let values = encoder_modes.FFT_PATCH_VALUES;
+  for i in 0..indices.len() {
+    fft_twiddles = fft_twiddles.with(indices[i], values[i]);
+  }
+  let mdct_twiddles = encoder_modes.MDCT_TWIDDLES;
+  return forward_table(input, in_at, out, out_at, shift, stride, fft_twiddles, mdct_twiddles, encoder_modes.FFT_SCALE[shift]);
 }
 
 // The rotation after the FFT of the inverse MDCT, from both ends of the

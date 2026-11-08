@@ -604,7 +604,10 @@ check time, in the same mechanism that enforces the OS boundary today.
 - **A network stack in Fern** (#14259). TamaGo uses the pure-Go gVisor TCP/IP stack over
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
-  a virtio-net driver.
+  a virtio-net driver. **The driver exists:** `std/virtio` is the virtio-mmio
+  version 2 transport with split virtqueues in `std/dma` buffers, and
+  `std/virtio_net` sends and receives Ethernet frames over it, by polling. The
+  stack above it is the open part.
 - **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
   self-host-compiler internal, the floor of the runtime helpers. The public
   surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
@@ -722,8 +725,20 @@ environment over the FernOS syscalls can come later, as an improvement.
    see the bytes of each value where the little-endian layout puts them. The
    same program fails with E066 on a hosted target, and a dependency without
    the `privileged` grant fails at the package gate.
-12. Beside those: a TCP/IP stack in Fern (#14259). The panic scope is decided
-   (#14257, see the north-star section).
+12. **The virtio-net driver exists** (#14259, first slice; it closes #14255).
+   `std/virtio` probes a virtio-mmio version 2 transport, negotiates features
+   and builds split virtqueues in `std/dma` buffers. `std/virtio_net` opens
+   the network device with the MAC and virtio 1.0 features, keeps eight
+   receive buffers posted and sends from eight transmit buffers.
+   `TestSelfHostKernelVirtioNetOnQemu` and
+   `TestSelfHostKernelX86VirtioNetOnQemu` send an ARP request and an ICMP
+   echo to the gateway of qemu's user network and receive both replies. qemu
+   needs `-global virtio-mmio.force-legacy=false` for version 2, and the
+   microvm runs without ACPI so that its eight transports sit at
+   `0xfeb00000`. The driver polls; its IRQ line through `std/async` comes
+   with the stack.
+13. Beside those: the TCP/IP stack over the driver (#14259). The panic scope is
+   decided (#14257, see the north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 

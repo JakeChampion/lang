@@ -77,7 +77,7 @@ function entropy(seed: i32, n: i32): u8[] {
   return out;
 }
 
-struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean }
+struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean, client_path: u8[], drop_client: i32 }
 
 function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
   return start_at(cc, sc, WALL_MS);
@@ -85,7 +85,7 @@ function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
 
 function start_at(cc: conn.Config, sc: conn.Config, unix_ms: i64): Result[Pair, string] {
   let c = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(unix_ms))?;
-  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false });
+  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false, client_path: [1u8], drop_client: 0 });
 }
 
 function noted(who: string, c: conn.Conn): string {
@@ -124,7 +124,7 @@ function noted(who: string, c: conn.Conn): string {
 function to_server(p: Pair, d: u8[]): Pair {
   match (p.server) {
     Some(s) => {
-      let step = s.receive(d, at_ns(p.now));
+      let step = s.receive_from(d, p.client_path, at_ns(p.now));
       return Pair { ...p, server: Some(step.events_taken()), log: p.log + noted("server", step) };
     },
     None => {
@@ -147,8 +147,11 @@ function to_server(p: Pair, d: u8[]): Pair {
   }
 }
 
+// SERVER_PATH is the server's address as the client sees it.
+const SERVER_PATH: u8 = 1u8;
+
 function to_client(p: Pair, d: u8[]): Pair {
-  let step = p.client.receive(d, at_ns(p.now));
+  let step = p.client.receive_from(d, [SERVER_PATH], at_ns(p.now));
   return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step) };
 }
 
@@ -160,7 +163,9 @@ function exchange(p: Pair): (Pair, boolean) {
   for d in in_order(cur, out) {
     let (next, lost) = carried(cur);
     cur = next;
-    if (!lost) {
+    if (cur.drop_client > 0) {
+      cur = Pair { ...cur, drop_client: cur.drop_client - 1 };
+    } else if (!lost) {
       cur = to_server(cur, d);
     }
   }
@@ -658,9 +663,134 @@ function refused_by_server(payload: u8[]): string {
 function test_refused_frames(): test.TestOutcome {
   let out = refused_by_server(frames.encode(frames.RetireConnectionId(100000 as i64)));
   out += refused_by_server(frames.encode(frames.RetireConnectionId(0 as i64)));
+  out += refused_by_server(new_cid_frame(2 as i64, 0 as i64, 40));
+  out += refused_by_server(new_cid_frame(1 as i64, 0 as i64, 41));
   out += refused_by_server(frames.encode(frames.Crypto(100000000 as i64, [120u8])));
   out += refused_by_server(frames.encode(frames.Crypto(0 as i64, [24u8, 0u8, 0u8, 1u8, 1u8])));
-  return test.assert_eq(out, "server closed local 10 RETIRE_CONNECTION_ID for a sequence number never issued; server closed local 13 CRYPTO data past what this side holds out of order; server closed local 266 tls handshake: unexpected handshake message 24; ");
+  return test.assert_eq(out, "server closed local 10 RETIRE_CONNECTION_ID for a sequence number never issued; server closed local 10 RETIRE_CONNECTION_ID names the connection ID it arrived on; server closed local 9 more connection IDs than active_connection_id_limit allows; server closed local 10 NEW_CONNECTION_ID repeats a sequence number with another connection ID; server closed local 13 CRYPTO data past what this side holds out of order; server closed local 266 tls handshake: unexpected handshake message 24; ");
+}
+
+function new_cid_frame(seq: i64, prior: i64, fill: i32): u8[] {
+  return frames.encode(frames.NewConnectionIdFrame(frames.NewConnectionId { sequence: seq, retire_prior_to: prior, id: entropy(fill, 8), reset_token: entropy(fill + 1, 16) }));
+}
+
+function seqs(ids: conn.Cid[]): string {
+  let out = "";
+  for k in ids {
+    out = out + k.seq.to_string() + ",";
+  }
+  return out;
+}
+
+function settled_pair(): Result[Pair, string] {
+  let (cc, sc) = stream_configs();
+  let p0 = start(cc, sc)?;
+  return Ok(settle(p0, 12, 10000 * MS));
+}
+
+function test_connection_ids_issued(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let s = server_of(p);
+  let line = "client holds " + seqs(p.client.remote_cids) + " answers to " + seqs(p.client.local_cids) + "; server holds " + seqs(s.remote_cids) + " answers to " + seqs(s.local_cids);
+  return test.assert_eq(line, "client holds 0,1, answers to 0,1,; server holds 0,1, answers to 0,1,");
+}
+
+function test_rotated_connection_id(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let before = hex.encode(p.client.dcid);
+  p = Pair { ...p, client: p.client.rotate_dcid() };
+  let changed = hex.encode(p.client.dcid) != before;
+  let r = streamed(p, 3000, 200);
+  let Ok(e) = r else {
+    return test.fail(echo_report(r));
+  };
+  let s = server_of(e.p);
+  return test.assert_eq(echo_report(r) + " | dcid changed " + changed.to_string() + ", client dcid seq " + e.p.client.dcid_seq.to_string() + ", server answers to " + seqs(s.local_cids) + " client holds " + seqs(e.p.client.remote_cids), "3000 back, same true, fin true, streams left 0 | dcid changed true, client dcid seq 1, server answers to 1,2, client holds 1,2,");
+}
+
+function test_rebinding(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  p = Pair { ...p, client_path: [2u8] };
+  let r = streamed(p, 3000, 200);
+  let Ok(e) = r else {
+    return test.fail(echo_report(r));
+  };
+  let s = server_of(e.p);
+  return test.assert_eq(echo_report(r) + " | server path " + hex.encode(s.path()) + ", probing " + s.probe.is_some().to_string() + ", server dcid seq " + s.dcid_seq.to_string() + ", client answers to " + seqs(e.p.client.local_cids), "3000 back, same true, fin true, streams left 0 | server path 02, probing false, server dcid seq 1, client answers to 1,2,");
+}
+
+function test_path_validation_fails(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let Ok(opened) = p.client.open_stream(false) else {
+    return test.fail("no stream");
+  };
+  let Ok(w) = opened.0.write(opened.1, entropy(5, 100), true) else {
+    return test.fail("no write");
+  };
+  let (p1, moved) = exchange(Pair { ...p, client: w, client_path: [2u8] });
+  let migrated = hex.encode(server_of(p1).path());
+  let p2 = settle(Pair { ...p1, drop_client: 1000 }, 60, p1.now + 20000 * MS);
+  let s = server_of(p2);
+  return test.assert_eq(migrated + " then " + hex.encode(s.path()) + ", probing " + s.probe.is_some().to_string(), "02 then 01, probing false");
+}
+
+function server_frame(p: Pair, payload: u8[]): u8[] {
+  let s = server_of(p);
+  let Some(k) = s.spaces[2].send else {
+    return [];
+  };
+  return packet.seal_short(p.client.scid, s.spaces[2].next_pn, 2, false, false, payload, k);
+}
+
+function test_client_ignores_unknown_server_path(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let d = server_frame(p, frames.encode(frames.Ping));
+  let ignored = p.client.receive_from(d, [9u8], at_ns(p.now));
+  let taken = p.client.receive_from(d, [SERVER_PATH], at_ns(p.now));
+  return test.assert_eq((ignored.accepted - p.client.accepted).to_string() + "," + (taken.accepted - p.client.accepted).to_string(), "0,1");
+}
+
+function retired_in(p: Pair, datagrams: u8[][]): string {
+  let Some(k) = p.client.spaces[2].recv else {
+    return "no keys";
+  };
+  let out = "";
+  for d in datagrams {
+    let Ok(h) = packet.parse(d, 0, 8) else {
+      continue;
+    };
+    let Ok(o) = packet.open(d, h, k, p.client.spaces[2].largest_recv) else {
+      continue;
+    };
+    let Ok(fs) = frames.read_all(o.payload) else {
+      continue;
+    };
+    for f in fs {
+      if let frames.RetireConnectionId(seq) = f {
+        out = out + seq.to_string() + ",";
+      }
+    }
+  }
+  return out;
+}
+
+function test_retire_prior_to(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let step = server_of(p).receive(peer_frame(p, new_cid_frame(2 as i64, 2 as i64, 42)), at_ns(p.now));
+  let sent = step.transmit(at_ns(p.now));
+  return test.assert_eq("dcid seq " + sent.dcid_seq.to_string() + ", holds " + seqs(sent.remote_cids) + ", retired " + retired_in(p, sent.datagrams()), "dcid seq 2, holds 2,, retired 0,1,");
 }
 
 function test_peer_key_update_ack(): test.TestOutcome {
@@ -915,6 +1045,12 @@ function main(): i32 {
   r = r.it("the encryption limit rotates or closes before overuse", test_key_encryption_limit);
   r = r.it("the ChaCha authentication limit is cumulative", test_chacha_authentication_limit);
   r = r.it("frames a server refuses in 1-RTT", test_refused_frames);
+  r = r.it("each side issues connection IDs up to the peer's limit", test_connection_ids_issued);
+  r = r.it("a client moves to the next connection ID mid-stream", test_rotated_connection_id);
+  r = r.it("a server follows a client to a new address and validates the path", test_rebinding);
+  r = r.it("a path that does not answer is abandoned", test_path_validation_fails);
+  r = r.it("a client drops datagrams from an unknown server address", test_client_ignores_unknown_server_path);
+  r = r.it("retire_prior_to retires the connection IDs below it", test_retire_prior_to);
   return r.finish();
 }
 

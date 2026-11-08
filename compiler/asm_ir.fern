@@ -667,6 +667,10 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    xorl %eax, %eax\n    rep stosq\n    movq %rdx, %rax\n");
   s = s.write("    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
   s = s.write(".Lfern_alloc_bytes_empty:\n    leaq .Lfern_empty_bytes(%rip), %rax\n    ret\n");
+  if (s.has_need("alloc_bytes_uninit")) {
+    s = s.write("__fern_alloc_bytes_uninit:\n    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %r12, (%rax)\n    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
+  }
   return s;
 }
 
@@ -4441,7 +4445,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_u8(s);
   }
-  if (s.has_need("alloc_bytes")) {
+  if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
     s = emit_alloc_bytes(s);
   }
 
@@ -9071,6 +9075,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "alloc_u8_u8") {
     s = s.need("alloc_bytes");
     sym = "__fern_alloc_bytes";
+  } else if (ins.str == "alloc_uninit_u8" || ins.str == "alloc_uninit") {
+    s = s.need("alloc_bytes_uninit");
+    sym = "__fern_alloc_bytes_uninit";
   } else if (ins.str == "arr_push_owned_u8") {
     s = s.need("arr_push_u8");
     sym = "__fern_arr_push_owned_u8";
