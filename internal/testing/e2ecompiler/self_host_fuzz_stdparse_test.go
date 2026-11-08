@@ -1,6 +1,8 @@
 package e2ecompiler
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -10,8 +12,9 @@ import (
 
 // The targets here feed hostile bytes to the network-facing parsers of the
 // standard library through tests/fuzz/stdparse.fern: the HTTP/1 request
-// framer and its chunked-body decoder, the HPACK decoder, the JSON parser,
-// and the URL and query parsers. A server reads these bytes from its peers.
+// framer and its chunked-body decoder, the HTTP/2 frame reader and server
+// connection, the HPACK and QPACK decoders, the JSON parser, and the URL and
+// query parsers. A server reads these bytes from its peers.
 // The shipped CLI builds the program, so the targets fuzz the standard
 // library as this tree compiles it. Each parser refuses malformed bytes with
 // an error value, so the one accepted outcome is exit 0 with a summary.
@@ -81,6 +84,63 @@ func FuzzSelfHostStdHPACK(f *testing.F) {
 		hexSeed(f, "400a6375"),
 		hexSeed(f, "408aff"),
 		hexSeed(f, "40"+"7f"+"ffff03"),
+		[]byte(""),
+	})
+}
+
+// h2Frame lays out one HTTP/2 frame: a 24-bit length, a type, flags and a
+// 31-bit stream identifier before the payload.
+func h2Frame(kind, flags byte, stream uint32, payload []byte) []byte {
+	n := len(payload)
+	head := []byte{byte(n >> 16), byte(n >> 8), byte(n), kind, flags, 0, 0, 0, 0}
+	binary.BigEndian.PutUint32(head[5:], stream)
+	return append(head, payload...)
+}
+
+// FuzzSelfHostStdH2 feeds hostile bytes to the HTTP/2 frame reader, and the
+// client preface and the same bytes in pieces of nine to a server connection.
+func FuzzSelfHostStdH2(f *testing.F) {
+	block := hexSeed(f, "828684418cf1e3c2e5f23a6ba0ab90f4ff")
+	settings := h2Frame(4, 0, 0, nil)
+	headers := h2Frame(1, 5, 1, block)
+	rst := h2Frame(3, 0, 1, []byte{0, 0, 0, 8})
+	var rapidReset bytes.Buffer
+	rapidReset.Write(settings)
+	for id := uint32(1); id < 2000; id += 2 {
+		rapidReset.Write(h2Frame(1, 5, id, block))
+		rapidReset.Write(h2Frame(3, 0, id, []byte{0, 0, 0, 8}))
+	}
+	fuzzStdParser(f, "h2", [][]byte{
+		append(append([]byte{}, settings...), headers...),
+		append(append(append([]byte{}, settings...), h2Frame(4, 1, 0, nil)...), h2Frame(6, 0, 0, make([]byte, 8))...),
+		append(append([]byte{}, settings...), append(h2Frame(1, 4, 1, block[:5]), h2Frame(9, 4, 1, block[5:])...)...),
+		append(append([]byte{}, settings...), h2Frame(9, 4, 1, block)...),
+		append(append([]byte{}, settings...), h2Frame(8, 0, 0, []byte{0, 0, 0, 0})...),
+		append(append([]byte{}, settings...), h2Frame(0, 0, 0, []byte("a"))...),
+		append(append([]byte{}, settings...), h2Frame(0, 8, 1, []byte{5, 'a'})...),
+		append(append([]byte{}, settings...), h2Frame(2, 0, 1, []byte{0, 0, 0, 1, 16})...),
+		append(append([]byte{}, settings...), h2Frame(4, 0, 0, []byte{0, 5, 0, 0, 0, 1})...),
+		append(append([]byte{}, settings...), h2Frame(7, 0, 0, []byte{0, 0, 0, 1, 0, 0, 0, 2, 'b', 'y', 'e'})...),
+		append(append(append([]byte{}, settings...), headers...), rst...),
+		rapidReset.Bytes(),
+		{0xff, 0xff, 0xff, 0, 0, 0, 0, 0, 1},
+		[]byte(""),
+	})
+}
+
+// FuzzSelfHostStdQPACK feeds hostile bytes to the QPACK decoder. The first
+// byte gives the length of the encoder-stream bytes that follow it, and the
+// rest is one header section on stream 0.
+func FuzzSelfHostStdQPACK(f *testing.F) {
+	fuzzStdParser(f, "qpack", [][]byte{
+		hexSeed(f, "000000d1d7"),
+		hexSeed(f, "073fe11f41610162020080"),
+		hexSeed(f, "00060080"),
+		hexSeed(f, "00ffffffffffffffffff0f"),
+		hexSeed(f, "053fffffff0f0000"),
+		hexSeed(f, "01000000"),
+		hexSeed(f, "0000"),
+		hexSeed(f, "00"),
 		[]byte(""),
 	})
 }
