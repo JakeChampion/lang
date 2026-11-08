@@ -67,6 +67,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | A temporary name comes from kernel entropy, and no descriptor leaks to a child | `TestSelfHostTempFiles` | x86, arm64 |
 | A JSON document deeper than 128 levels, an invalid UTF-8 sequence and a format width past one million are refused or saturated | `tests/stdlib/parse_limits_test.fern` | x86, arm64, oracle |
 | A sandboxed program cannot gain privilege through a setuid helper, and a system call outside the allowlist is `SIGSYS` | `TestSeccompNoNewPrivsBlocksSetuidEscalation`, `TestSeccompFilterDenies` | x86, native arm64 |
+| A sandboxed program cannot open a socket outside `AF_UNIX`, `AF_INET` and `AF_INET6`, reach a foreign `ioctl` request, `setsockopt` level or `prctl` option, or make a namespace through `clone` | `TestSeccompDeniesArguments`, `TestSelfHostSandboxFilterShape` | x86, native arm64 |
 | `std/mitigations` reports hardware mitigations from the kernel's records only | `TestSelfHostMitigationsReport` | x86, arm64 |
 
 ## Toolchain and packages
