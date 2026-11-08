@@ -2560,7 +2560,8 @@ function unchecked_str_index(ins: ssa.SInst): boolean {
 
 function value_op(k: i32): boolean {
   return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8 || k == 35 || k == ssasem.zero() || k == ssasem.call()
-    || k == ssasem.append_range() || ssasem.scalar_op(k) || ssasem.is_function_op(k);
+    || k == ssasem.append_range() || ssasem.scalar_op(k) || ssasem.is_function_op(k)
+    || k == ssasem.checked_present() || k == ssasem.checked_value();
 }
 
 function container_op(k: i32): boolean {
@@ -2960,7 +2961,11 @@ function overflow_binary(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
   let t = f.values[ins.args[0]];
   let wide = ssasem.is_wide(t);
   let ops: ir.Op[] = [];
-  if (ssasem.saturating(ins.str)) {
+  if (ins.kind_tag == ssasem.checked_present()) {
+    ops = irtables.chk_present_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1]);
+  } else if (ins.kind_tag == ssasem.checked_value()) {
+    ops = irtables.chk_value_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.args[2], ins.result);
+  } else if (ssasem.saturating(ins.str)) {
     ops = irtables.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result);
   } else {
     ops = irtables.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result);
@@ -3923,7 +3928,8 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     r = text_eq_by_length(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ins.kind_tag == ssa.BINARY && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) {
+  if (ins.kind_tag == ssasem.checked_present() || ins.kind_tag == ssasem.checked_value()
+    || ins.kind_tag == ssa.BINARY && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) {
     r = overflow_binary(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }

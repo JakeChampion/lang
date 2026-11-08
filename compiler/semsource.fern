@@ -9350,6 +9350,12 @@ function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Pr
     let p = old;
     if (p.ok && !p.template && !p.bodyless) {
       let name = p.func.graph.name;
+      if (optbisect.allowed_by(sw, "option-split", name)) {
+        let split = semoption.split(p.func);
+        if (split.graph.nvals != p.func.graph.nvals) {
+          p = Produced { ...p, func: split, analysis: None };
+        }
+      }
       let fc = semunroll.fold_constants(p.func);
       if (fc.folded > 0 && optbisect.allowed_by(sw, "fold-constants", name)) {
         p = Produced { ...p, func: fc.f, analysis: None };
