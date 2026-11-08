@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb. video_qtrle.ir falls with the split codec and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-aarch64 job 128621787370 on 3318c8cb, and the same bin/fern run on x86_64 here.
 # std/video/qtrle is split into helpers for the complexity ratchet, so video_qtrle.text rises on both ISAs. Pinned at the measured values.
 # 2026-11-07: PR #14495, perf-x86_64 job 128549905950 and perf-aarch64 job 128549905962 on 614d7deb.
@@ -603,6 +604,6 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
 x86_64/video_qtrle.text 5738
-x86_64/video_qtrle.ir 1876434265
+x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6080
 aarch64/video_qtrle.ir 1680157959
