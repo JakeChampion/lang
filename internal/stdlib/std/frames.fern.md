@@ -106,7 +106,7 @@ pub function free_count(base: usize): usize {
 
 @norc
 function word_of(base: usize, index: usize): usize {
-  return base + HEADER_BYTES + (index / BITS) * WORD_BYTES;
+  return base + HEADER_BYTES + index / BITS * WORD_BYTES;
 }
 
 @norc
@@ -126,7 +126,7 @@ function set_bit(base: usize, index: usize): void {
 function clear_bit(base: usize, index: usize): void {
   unsafe {
     let at = word_of(base, index);
-    __store_i64(at, __load_i64(at) & (0i64 - 1i64 - mask_of(index)));
+    __store_i64(at, __load_i64(at) & 0i64 - 1i64 - mask_of(index));
   }
 }
 
@@ -161,7 +161,7 @@ pub function alloc(base: usize): usize {
       let bits = __load_i64(at);
       if (bits != 0i64 - 1i64) {
         let bit = __ctz64((0i64 - 1i64 - bits) as u64) as usize;
-        __store_i64(at, bits | (1i64 << bit as i64));
+        __store_i64(at, bits | 1i64 << bit as i64);
         __store_i64(base + WORD_BYTES * 2, w as i64);
         add_free(base, 0i64 - 1i64);
         return base + (w * BITS + bit) * FRAME_BYTES;
