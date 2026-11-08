@@ -30,13 +30,23 @@ function peek(p: usize): i32 {
   }
 }
 
+struct Mixer { base: i32 }
+
+// A method named like a @norc function is not under the rule: the attribute
+// marks the free function, which the mark's position tells apart.
+function (m: Mixer) mix(y: i32): i32 {
+  let parts: i32[] = [m.base, y];
+  return parts[0] * parts[1];
+}
+
 function main(): i32 {
   unsafe {
     let p: usize = __alloc(8);
     __mmio_store32(p, 2);
     let r = mix(20, peek(p)) + peek(p);
     __free(p, 8);
-    return r;
+    let m = Mixer { base: 21 };
+    return r + m.mix(2) - 42;
   }
 }
 `
