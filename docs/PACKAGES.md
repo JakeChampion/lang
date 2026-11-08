@@ -63,6 +63,23 @@ dependencies at most the capabilities it holds itself — an amplifying
 grant is a load-time manifest error. See
 docs/PACKAGE-CAPABILITIES-BRIEF.md.
 
+## Android apps: `[android]`
+
+An `[android]` table holds the settings of `fern -apk` for an app. Each key is the name of an `-apk-` flag with no prefix and with `_` for `-`:
+
+```toml
+[android]
+package = "dev.fern.paper"
+label = "Paper"
+icon = "icon.png"
+min_sdk = 26
+home = true
+permissions = ["INTERNET", "ACCESS_COARSE_LOCATION"]
+assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
+```
+
+`fern -apk OUT FILE` reads the table of the `fern.toml` that governs FILE. A flag on the command line takes priority over the table. The paths of `icon`, `key` and `assets` are relative to the directory of `fern.toml`. The keys are `package`, `label`, `icon` and `key` (strings), `min_sdk` (a number), `home`, `compress`, `cleartext` and `debuggable` (true or false), and `permissions` and `assets` (arrays of strings). Any other key is a manifest error.
+
 ## Hash-addressed dependencies + `fern -fetch` (slice 2)
 
 A `url` dependency is identified by its **hash**, not its URL — the

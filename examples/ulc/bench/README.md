@@ -150,6 +150,76 @@ python3 examples/ulc/bench/summarize.py \
   --output /tmp/ulc-sweep.json /tmp/ulc-report-*.json
 ```
 
+## CBR and ABR encoding
+
+Source `7c91179ef43de2ac1622d06d0f7885fea9095fb2` specializes bitstream size calculations.
+It keeps the existing byte writer separate from the count-only helpers.
+The suite compares CBR and ABR at 96 kbps with tuned upstream C.
+Inputs use stereo PCM16 at 44.1 kHz and block size 2048.
+Both encoders receive the same average complexity for ABR, measured by C outside timing.
+
+The 32 cases cover four inputs, two durations, both rate modes, and one or four workers.
+Each case has eleven alternating repetitions, with startup and file I/O included.
+No other local builds or tests run during timing.
+
+Fern has lower medians in 31 of 32 cases.
+The geometric-mean C/Fern ratio is 1.376× overall and 1.391× without silence.
+The fixed-suite bootstrap interval is 1.356× to 1.395×, with 2000 repetitions and seed 417.
+The remaining loss is ten-second tone input in one-worker ABR, at 0.981×.
+These results do not establish a universal ranking.
+
+Each configuration below contains four input types:
+
+| Duration | Mode | One-worker wins | One-worker geometric mean | Four-worker wins | Four-worker geometric mean |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 10 s | CBR | 4/4 | 1.143 | 4/4 | 1.704 |
+| 10 s | ABR | 3/4 | 1.127 | 4/4 | 1.793 |
+| 100 s | CBR | 4/4 | 1.088 | 4/4 | 1.717 |
+| 100 s | ABR | 4/4 | 1.085 | 4/4 | 1.614 |
+
+[All eight raw reports](x86-64-rate-modes.json) retain the individual times, hashes, file sizes, RMS errors, and SNR values.
+The float64 decoder checks frame counts and finite samples outside timing.
+Quality calculations omit the two-block delay and final padding.
+File bitrate includes container and padding bytes.
+
+Fern and C file sizes differ by at most 0.085% in this suite.
+Fern's SNR difference from C ranges from about -0.000001 dB to +0.024337 dB.
+All 32 file sizes and Fern RMS errors match the prior implementation's recorded values.
+
+[The exploratory before-and-after probes](x86-64-bitstream-before-after.json) retain all nine cases and 31 alternating repetitions per case.
+Their final encoded files match byte for byte in VBR, CBR, and ABR.
+The candidate binary matches the committed build byte for byte.
+These probes show a 1.026× geometric-mean improvement over the previous writer.
+Individual probe results include gains and small losses.
+
+Build the pinned source in a separate worktree:
+
+```sh
+git worktree add /tmp/ulc-count-measured 7c91179ef43de2ac1622d06d0f7885fea9095fb2
+make -C /tmp/ulc-count-measured build
+make -C /tmp/ulc-count-measured/examples/ulc
+make -C /tmp/ulc-count-measured/examples/ulc build/reference64
+python3 /tmp/ulc-count-measured/examples/ulc/bench/run.py \
+  --fern /tmp/ulc-count-measured/examples/ulc/build/ulc \
+  --compiler /tmp/ulc-count-measured/bin/fern \
+  --oracle /tmp/ulc-count-measured/examples/ulc/build/reference64 \
+  --source-commit 7c91179ef43de2ac1622d06d0f7885fea9095fb2 \
+  --reference /tmp/ulc-reference/release \
+  --reference-label 'GCC -O3 -march=native -fno-math-errno -funroll-loops with x86 SIMD (-D_M_X64)' \
+  --rate-mode cbr --bitrate 96 --direction encode \
+  --seconds 10 --repetitions 11 --cpu 0 --threads 1 \
+  --output /tmp/ulc-rate-report-10-cbr-one.json
+```
+
+Use `--rate-mode abr` for ABR, and repeat with 100-second inputs.
+Use `--cpus 0,1,2,3 --threads 4` for four-worker measurements.
+Reproduce the aggregate with `bench/summarize.py`:
+
+```sh
+python3 examples/ulc/bench/summarize.py \
+  --output /tmp/ulc-rate-summary.json /tmp/ulc-rate-report-*.json
+```
+
 ## Earlier default-block method
 
 The next four result tables record source `15212d32dc49807e204a9767467ff574a3f3fd98`.

@@ -40,10 +40,16 @@ func sockaddrOf(name string, addr Value, port int64) (syscall.Sockaddr, error) {
 }
 
 func senderInto(from Array, sa syscall.Sockaddr) {
-	if len(from.Elems()) < 19 {
+	senderIntoAt(from, 0, sa)
+}
+
+// senderIntoAt writes the 19-byte record of sa at element at of from, when
+// from reaches that far.
+func senderIntoAt(from Array, at int, sa syscall.Sockaddr) {
+	if len(from.Elems()) < at+19 {
 		return
 	}
-	into := from.intoElems()
+	into := from.intoElems()[at:]
 	for k := 0; k < 19; k++ {
 		into[k] = Number(0)
 	}
@@ -307,6 +313,16 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 		err = connectResult(fd)
 	case 9:
 		err = syscall.SetsockoptInt(fd, solSocket, syscall.SO_BROADCAST, int(arg))
+	case 10:
+		if udpGRO < 0 {
+			err = syscall.ENOPROTOOPT
+		} else {
+			err = syscall.SetsockoptInt(fd, ipprotoUDP, udpGRO, int(arg))
+		}
+	case 11:
+		err = syscall.SetsockoptInt(fd, ipprotoIP, ipRecvTOS, int(arg))
+	case 12:
+		err = syscall.SetsockoptInt(fd, ipprotoIPv6, ipv6RecvTclass, int(arg))
 	}
 	if err != nil {
 		return negErrno(err), true
@@ -452,4 +468,83 @@ func builtinUdpSendmmsg(i *Interp, args []Value) (Value, error) {
 		sent++
 	}
 	return Number(sent), nil
+}
+
+// builtinUdpRecvmmsg answers udp_recvmmsg: one Recvmsg per message slot,
+// the first in the socket's own mode and the rest without waiting, so the
+// call returns at least one message when the socket blocks, as recvmmsg
+// with MSG_WAITFORONE does.
+func builtinUdpRecvmmsg(i *Interp, args []Value) (Value, error) {
+	const name = "udp_recvmmsg"
+	if len(args) != 4 {
+		return nil, fmt.Errorf("%s: expected 4 args, got %d", name, len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected number fd arg, got %T", name, args[0])
+	}
+	buf, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected u8[] buf arg, got %T", name, args[1])
+	}
+	froms, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected u8[] froms arg, got %T", name, args[2])
+	}
+	lens, ok := args[3].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected i32[] lens arg, got %T", name, args[3])
+	}
+	fd, ok := i.udpSocks[int64(id)]
+	if !ok {
+		return Number(-int64(syscall.EBADF)), nil
+	}
+	n := len(lens.Elems()) / 3
+	if n == 0 {
+		return Number(0), nil
+	}
+	stride := len(buf.Elems()) / n
+	if stride == 0 {
+		return Number(-int64(syscall.EINVAL)), nil
+	}
+	into := buf.intoElems()
+	record := lens.intoElems()
+	count := 0
+	for m := 0; m < n; m++ {
+		flags := 0
+		if m > 0 {
+			flags = syscall.MSG_DONTWAIT
+		}
+		p := make([]byte, stride)
+		oob := make([]byte, 64)
+		got, oobn, _, sa, err := syscall.Recvmsg(fd, p, oob, flags)
+		if err != nil {
+			if count > 0 {
+				break
+			}
+			return negErrno(err), nil
+		}
+		for k := 0; k < got; k++ {
+			into[m*stride+k] = Number(p[k])
+		}
+		seg, tos := 0, 0
+		if oobn > 0 {
+			if msgs, err := syscall.ParseSocketControlMessage(oob[:oobn]); err == nil {
+				for _, c := range msgs {
+					switch {
+					case c.Header.Level == ipprotoUDP && int(c.Header.Type) == udpGRO && len(c.Data) >= 2:
+						seg = int(c.Data[0]) | int(c.Data[1])<<8
+					case (c.Header.Level == ipprotoIP && c.Header.Type == ipTOS || c.Header.Level == ipprotoIPv6 && c.Header.Type == ipv6Tclass) && len(c.Data) >= 1:
+						tos = int(c.Data[0])
+					}
+				}
+			}
+		}
+		senderIntoAt(froms, 19*m, sa)
+		record[3*m] = Number(got)
+		record[3*m+1] = Number(seg)
+		record[3*m+2] = Number(tos)
+		count++
+	}
+	return Number(count), nil
 }

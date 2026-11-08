@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Compare native MP4 packet metadata and extracted AVC/HEVC pixels with FFmpeg."""
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location("mp4_fixtures", ROOT / "scripts/gen-video-mp4-fixtures.py")
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/mp4-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+subprocess.run([compiler, "-target", target, "-sanitize", "-o", str(binary),
+                "scripts/video-reference/mp4.fern", "internal/stdlib"], check=True)
+
+
+def decode(path, track=0, raw=False):
+    args = ["ffmpeg", "-v", "error"]
+    if not raw:
+        args += ["-ignore_editlist", "1"]
+    args += ["-i", str(path), "-map", f"0:v:{track}", "-vsync", "0",
+             "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+    return subprocess.check_output(args)
+
+
+with tempfile.TemporaryDirectory() as directory:
+    directory = Path(directory)
+    for name, path in fixtures.generate(directory):
+        metadata = fixtures.packets(path)
+        lines = subprocess.check_output([str(binary), str(path)], text=True).splitlines()
+        track = -1
+        packet_number = 0
+        output = bytearray()
+        groups = []
+        for line in lines:
+            values = line.split()
+            if values[0] == "T":
+                if track >= 0:
+                    assert packet_number == 6
+                    groups.append(output)
+                track += 1
+                output = bytearray()
+                packet_number = 0
+                stream = metadata["streams"][track]
+                assert int(values[1]) == int(stream["time_base"].split("/")[1])
+                assert values[2] == ("HEVC" if stream["codec_name"] == "hevc" else "AVC")
+                assert [int(v) for v in values[3:]] == [stream["width"], stream["height"]]
+            elif values[0] == "C":
+                output += bytes.fromhex(values[1])
+            else:
+                assert values[0] == "P" and track >= 0
+                packets = [p for p in metadata["packets"] if p["stream_index"] == metadata["streams"][track]["index"]]
+                expected = packets[packet_number]
+                assert [int(v) for v in values[1:6]] == [int(expected[k]) for k in ("pos", "size", "dts", "pts", "duration")], (name, line, expected)
+                assert (values[6] == "true") == ("K" in expected["flags"])
+                output += bytes.fromhex(values[7])
+                packet_number += 1
+        assert packet_number == 6
+        groups.append(output)
+        assert len(groups) == len(metadata["streams"])
+        for i, group in enumerate(groups):
+            stream = metadata["streams"][i]
+            elementary = directory / f'{name}-{i}.{"hevc" if stream["codec_name"] == "hevc" else "h264"}'
+            elementary.write_bytes(group)
+            actual = decode(elementary, raw=True)
+            expected = decode(path, track=i)
+            assert len(actual) == 6 * 32 * 32 * 3
+            assert actual == expected, (name, i, "decoded pixels differ")
+        print(name + ": FFprobe packet metadata and FFmpeg decoded pixels match", flush=True)

@@ -1440,6 +1440,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{sock, u8s, u8s},
 		Result: ast.NumberType{},
 	}
+	// udp_recvmmsg(sock, buf, froms, lens): recvmmsg. lens holds three words
+	// per message slot, buf is split evenly across the slots, and froms takes
+	// one 19-byte address per message. The call fills, per message received,
+	// its byte count, its UDP_GRO segment size (0 for a plain datagram) and
+	// its TOS byte (0 unless the socket asked for it). Messages received, at
+	// least one, or -errno.
+	c.info.FuncSigs["udp_recvmmsg"] = &ast.FuncType{
+		Params: []ast.Type{sock, u8s, u8s, ast.ArrayType{Elem: ast.NumberType{}}},
+		Result: ast.NumberType{},
+	}
 	c.info.FuncSigs["read_file"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
@@ -2423,6 +2433,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 		c.info.FuncSigs[n+"_f32"] = &ast.FuncType{Params: ps32, Result: ast.FloatType{Width: 32}}
 		c.info.FuncSigs[n+"_f64"] = &ast.FuncType{Params: ps64, Result: ast.FloatType{Width: 64}}
+	}
+	c.info.FuncSigs["__c_callv"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, usizeT, usizeT, ast.NumberType{Width: 32, Signed: true}},
+		Result: usizeT,
 	}
 	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
@@ -9413,6 +9427,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
 	"__c_call5": true, "__c_call5_f32": true, "__c_call5_f64": true,
 	"__c_call6": true, "__c_call6_f32": true, "__c_call6_f64": true,
+	"__c_callv":  true,
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,

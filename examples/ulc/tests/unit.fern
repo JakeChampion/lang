@@ -354,9 +354,12 @@ function encoder_features(): void {
         return;
       };
       prepared_priority_tests(prepared, n, 2);
-      let measured = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, prepared.nonzero, true);
-      let written = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, prepared.nonzero, false);
-      require(measured.bits == written.bits && written.bytes.len() * 8 == written.bits, "count-only pass matches actual bytes");
+      for keep in [0, 1, prepared.nonzero / 2, prepared.nonzero] {
+        let measured = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, keep, true);
+        let written = bitstream.pass(prepared.coefs, prepared.noise, prepared.ranks, n, 2, prepared.control, keep, false);
+        require(measured.bytes.len() == 0, "count-only passes produce no output bytes");
+        require(measured.bits == written.bits && written.bytes.len() * 8 == written.bits, "count-only pass matches actual bytes at each coefficient limit");
+      }
       let Ok(encoded) = encoder.encode_prepared(prepared) else {
         require(false, "encode CBR transient");
         return;

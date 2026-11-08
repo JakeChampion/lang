@@ -3051,6 +3051,9 @@ function import_attr(fd: parser.FuncDecl): string {
   if (fd.import_iface == parser.CALLBACK_IFACE) {
     return "@callback(" + quote_string(fd.import_wit) + ")\n";
   }
+  if (fd.import_iface.len() > 0 && fd.import_weak) {
+    return "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ", weak)\n";
+  }
   if (fd.import_iface.len() > 0) {
     return "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
   }

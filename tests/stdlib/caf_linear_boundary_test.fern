@@ -1,0 +1,201 @@
+import "std/audio/caf/linear" as caf;
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+
+function join(own first: u8[], rest: [u8]): u8[] {
+  for byte in rest {
+    first = first.append(byte);
+  }
+  return first;
+}
+
+function chunk(name: string, data: [u8]): u8[] {
+  let output = join([], name.as_bytes());
+  return join(wire.put_be(output, data.len() as u64, 8), data);
+}
+
+function description(rate: f64, codec: string, flags: u64, bits: i32, channels: i32, bytes: i32): u8[] {
+  let output = wire.put_be([], f64_bits(rate) as u64, 8);
+  output = join(output, codec.as_bytes());
+  output = wire.put_be(output, flags, 4);
+  output = wire.put_be(output, bytes as u64, 4);
+  output = wire.put_be(output, 1u64, 4);
+  output = wire.put_be(output, channels as u64, 4);
+  return wire.put_be(output, bits as u64, 4);
+}
+
+function file(desc: [u8], table: [u8], data: [u8]): u8[] {
+  let output: u8[] = [99, 97, 102, 102, 0, 1, 0, 0];
+  output = join(output, chunk("desc", desc));
+  if (table.len() != 0) {
+    output = join(output, chunk("pakt", table));
+  }
+  return join(output, chunk("data", join([0u8, 0u8, 0u8, 0u8], data)));
+}
+
+function fixture(table: [u8]): u8[] {
+  return file(description(44100f64, "lpcm", 0u64, 16, 1, 2), table, [128u8, 0u8, 0u8, 0u8, 127u8, 255u8]);
+}
+
+function packet_table(packets: u64, valid: u64, priming: u64, remainder: u64): u8[] {
+  let output = wire.put_be([], packets, 8);
+  output = wire.put_be(output, valid, 8);
+  output = wire.put_be(output, priming, 4);
+  return wire.put_be(output, remainder, 4);
+}
+
+function field(input: [u8], at: i32, bytes: i32, value: u64): u8[] {
+  let output = join([], input);
+  for i in 0..bytes {
+    output = output.with(at + i, (value >> ((bytes - 1 - i) * 8) as u64) as u8);
+  }
+  return output;
+}
+
+function prefixes(): test.TestOutcome {
+  let input = fixture([]);
+  for cut in 0..input.len() {
+    if let Err(_) = caf.inspect(input[:cut], caf.default_limits()) {} else {
+      return test.fail("incomplete CAF prefix");
+    }
+  }
+  return test.pass();
+}
+
+function formats(): test.TestOutcome {
+  let input = fixture([]);
+  for changed in [
+    field(input, 12, 8, 31u64), field(input, 12, 8, 33u64), field(input, 20, 8, 0u64),
+    field(input, 20, 8, 9218868437227405312u64), field(input, 20, 8, f64_bits(44100.5f64) as u64),
+    field(input, 28, 4, 1633772320u64), field(input, 32, 4, 4u64), field(input, 36, 4, 3u64),
+    field(input, 40, 4, 0u64), field(input, 40, 4, 2u64), field(input, 44, 4, 0u64), field(input, 44, 4, 9u64),
+    field(input, 48, 4, 0u64), field(input, 48, 4, 20u64), field(input, 48, 4, 4294967295u64), input.append(0u8),
+  ] {
+    if let Err(_) = caf.inspect(changed, caf.default_limits()) {} else {
+      return test.fail("invalid or unsupported scalar description");
+    }
+  }
+  for tag in ["alaw", "ulaw"] {
+    let good = file(description(8000f64, tag, 0u64, 8, 1, 1), [], [0u8]);
+    if let Err(_) = caf.inspect(good, caf.default_limits()) {
+      return test.fail("G.711 description");
+    }
+    for changed in [field(good, 32, 4, 1u64), field(good, 48, 4, 16u64)] {
+      if let Err(pcm.Header) = caf.inspect(changed, caf.default_limits()) {} else {
+        return test.fail("invalid G.711 fields");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function trim(): test.TestOutcome {
+  let input = fixture(packet_table(3u64, 1u64, 1u64, 1u64));
+  let Ok(index) = caf.inspect(input, caf.default_limits()) else {
+    return test.fail("trim table");
+  };
+  if (index.information().frames != 1) {
+    return test.fail("trim extent");
+  }
+  let Ok(block) = index.read_integer_into(input, 0, 1, [99, 71], pcm.default_limits()) else {
+    return test.fail("trim read");
+  };
+  if (block.frames != 1 || block.samples[0] != 0 || block.samples[1] != 71) {
+    return test.fail("trim PCM or suffix");
+  }
+  let empty = fixture(packet_table(3u64, 0u64, 3u64, 0u64));
+  let Ok(end) = caf.inspect(empty, caf.default_limits()) else {
+    return test.fail("empty presentation");
+  };
+  let Ok(output) = end.read_integer_into(empty, 0, 0, [71], pcm.default_limits()) else {
+    return test.fail("empty presentation read");
+  };
+  if (end.information().frames != 0 || output.samples[0] != 71) {
+    return test.fail("empty presentation storage");
+  }
+  return test.pass();
+}
+
+function tables(): test.TestOutcome {
+  for table in [
+    packet_table(2u64, 1u64, 1u64, 1u64), packet_table(4u64, 1u64, 1u64, 1u64),
+    packet_table(18446744073709551615u64, 1u64, 1u64, 1u64), packet_table(3u64, 4u64, 0u64, 0u64),
+    packet_table(3u64, 1u64, 4294967295u64, 1u64), packet_table(3u64, 1u64, 1u64, 4294967295u64),
+    packet_table(3u64, 1u64, 0u64, 0u64), packet_table(3u64, 1u64, 1u64, 1u64).append(0u8), [0u8],
+  ] {
+    if let Err(pcm.Header) = caf.inspect(fixture(table), caf.default_limits()) {} else {
+      return test.fail("packet table count, extent, or signed field");
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let input = fixture([]);
+  if let Err(pcm.Limit) = caf.inspect(input, caf.Limits { audio: pcm.default_limits(), max_chunks: 1 }) {} else {
+    return test.fail("chunk budget");
+  }
+  if let Err(pcm.Limit) = caf.inspect(input, caf.Limits { audio: pcm.Limits { max_input_bytes: input.len() - 1, max_samples: 3 }, max_chunks: 2 }) {} else {
+    return test.fail("input budget");
+  }
+  let small = caf.Limits { audio: pcm.Limits { max_input_bytes: input.len(), max_samples: 1 }, max_chunks: 2 };
+  let Ok(index) = caf.inspect(input, small) else {
+    return test.fail("long-track metadata with a small output budget");
+  };
+  let Ok(block) = index.read_integer(input, 2, 1, small.audio) else {
+    return test.fail("bounded last frame");
+  };
+  if (block.samples[0] != 32767) {
+    return test.fail("bounded last sample");
+  }
+  if let Err(pcm.Limit) = index.read_integer(input, 0, 2, small.audio) {} else {
+    return test.fail("output budget");
+  }
+  let unknown = field(input, 56, 8, 18446744073709551615u64);
+  let Ok(all) = caf.decode(unknown, caf.default_limits()) else {
+    return test.fail("unknown final data size");
+  };
+  if (all.samples.len() != 3) {
+    return test.fail("unknown final data extent");
+  }
+  return test.pass();
+}
+
+function floats(): test.TestOutcome {
+  let input = file(description(48000f64, "lpcm", 1u64, 64, 1, 8), [], wire.put_be([], 9221120237041090560u64, 8));
+  let Ok(index) = caf.inspect(input, caf.default_limits()) else {
+    return test.fail("float metadata");
+  };
+  if let Err(pcm.Sample) = index.read_float(input, 0, 1, pcm.default_limits()) {} else {
+    return test.fail("non-finite float");
+  }
+  if let Err(pcm.Unsupported) = caf.decode(input, caf.default_limits()) {} else {
+    return test.fail("float quantization requires an explicit API");
+  }
+  return test.pass();
+}
+
+function mutations(): test.TestOutcome {
+  let input = fixture(packet_table(3u64, 1u64, 1u64, 1u64));
+  for at in 0..input.len() {
+    let changed = input.with(at, input[at] ^ 255u8);
+    if let Ok(index) = caf.inspect(changed, caf.default_limits()) {
+      let frames = if (index.information().frames < 8) { index.information().frames } else { 8 };
+      let _ = index.read_float(changed, 0, frames, pcm.Limits { max_input_bytes: 1024, max_samples: 64 });
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("CAF linear sample bounds and presentation metadata");
+  runner = runner.it("all incomplete prefixes", prefixes);
+  runner = runner.it("sample descriptions and supported scalar representations", formats);
+  runner = runner.it("initial/final trim and empty presentations", trim);
+  runner = runner.it("packet table counts, signed fields, and extents", tables);
+  runner = runner.it("metadata, output, input, and chunk budgets", limits);
+  runner = runner.it("non-finite float payloads and explicit quantization", floats);
+  runner = runner.it("every-byte mutations stay bounded", mutations);
+  return runner.finish();
+}

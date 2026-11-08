@@ -66,11 +66,11 @@ The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly)
 
 ```sh
 make build
-./bin/fern -apk fern-stopwatch.apk -apk-package dev.fern.stopwatch \
-     -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png \
-     -apk-min-sdk 28 examples/android/stopwatch/app.fern
+./bin/fern -apk fern-stopwatch.apk examples/android/stopwatch/app.fern
 adb install -r fern-stopwatch.apk
 ```
+
+The `[android]` table of `fern.toml` gives the package, the label, the icon and the API level.
 
 The APK has the library for `arm64-v8a` and for `x86_64` emulators. It
 needs Android 9 (API 28) or later, for the alarm usage of the beeps.

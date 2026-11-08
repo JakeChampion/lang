@@ -31,6 +31,14 @@ APK, or the file that `-apk-key` names. When the file does not exist,
 installs an update only when the same key signs it. With the same key, the
 same source gives the same APK, byte for byte.
 
+To try a change on a phone or an emulator, add `-apk-run`:
+
+```sh
+fern -apk stopwatch.apk -apk-run app.fern
+```
+
+`-apk-run` builds the library for the ABI of the device that adb sees only. It installs the APK, starts it, and shows the log lines of the app until the app stops.
+
 `emulator_check.py` drives the APK on an emulator in CI: the face, a tap
 to start, a tap to pause, and the back key. `std/android` describes the event
 model. The app writes its log lines to logcat with the tag `fern`.

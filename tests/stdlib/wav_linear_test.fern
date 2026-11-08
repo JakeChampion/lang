@@ -1,0 +1,26 @@
+import "std/test";
+import "linear_audio_check";
+import "linear_audio_vectors";
+
+function references(): test.TestOutcome {
+  let count = 0;
+  for vector in linear_audio_vectors.all() {
+    if (vector.container != 3) {
+      continue;
+    }
+    if let Err(e) = linear_audio_check.run(vector) {
+      return test.fail(vector.name + ": " + e);
+    }
+    count += 1;
+  }
+  if (count != 30) {
+    return test.fail("WAVE reference corpus is incomplete");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("WAVE integer and IEEE float independent references");
+  runner = runner.it("all layouts, float widths, exact PCM, and reusable ranges", references);
+  return runner.finish();
+}

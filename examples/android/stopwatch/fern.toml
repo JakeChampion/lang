@@ -1,0 +1,10 @@
+# The settings of `fern -apk` for the stopwatch.
+[package]
+name = "stopwatch"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.stopwatch"
+label = "Fern Stopwatch"
+icon = "icon.png"
+min_sdk = 28

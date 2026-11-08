@@ -22,6 +22,8 @@ name: Android
 # class take the audio focus from each other.
 # tests/android/worker forks two workers from the loop thread and polls
 # them, and one child resolves a name through netd.
+# examples/android/paper is a home screen: its check makes it the home app,
+# opens the app list, finds Paper in it, and goes back with the back key.
 # examples/android/plex is the Plex client: its check runs it against a fake
 # Plex server on the host, for the posters, a track and a video that moves
 # between the media player and the drawing of the app on one window.
@@ -55,11 +57,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - name: Check the player qualification runner
+        run: python3 -B -m unittest discover -s tests/android/player -p 'test_*.py'
+      - name: Check the shared emulator helpers
+        run: python3 -B -m unittest discover -s tests/android -p 'test_emulator.py'
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
           mkdir -p build/android-stopwatch
-          ./bin/fern -apk build/android-stopwatch/fern-stopwatch.apk -apk-package dev.fern.stopwatch -apk-label "Fern Stopwatch" -apk-icon examples/android/stopwatch/icon.png -apk-min-sdk 28 examples/android/stopwatch/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-stopwatch.apk examples/android/stopwatch/app.fern
           ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
           ./bin/fern -target x86-64-android -o build/android-stopwatch/zone tests/android/tz/zone.fern
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
@@ -72,9 +78,15 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
-          ./bin/fern -apk build/android-stopwatch/fern-plex.apk -apk-package dev.fern.plex -apk-label "Fern for Plex" -apk-min-sdk 30 -apk-permission INTERNET -apk-cleartext examples/android/plex/app.fern
-          ./bin/fern -apk build/android-stopwatch/fern-walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-paper.apk examples/android/paper/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-plex.apk examples/android/plex/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-walkie.apk examples/android/walkie/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION,WAKE_LOCK examples/android/walkie/app.fern
+      - name: Check native MP4 video packets with FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          FERN="$PWD/bin/fern-selfhost" scripts/check-video-mp4-interop
       - uses: actions/upload-artifact@v7
         with:
           name: fern-stopwatch-apk
@@ -92,6 +104,7 @@ jobs:
             build/android-stopwatch/fern-focustest.apk
             build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-workertest.apk
+            build/android-stopwatch/fern-paper.apk
             build/android-stopwatch/fern-plex.apk
             build/android-stopwatch/fern-walkie.apk
             build/android-stopwatch/fern-walkie2.apk
@@ -110,6 +123,8 @@ jobs:
           path: build/android-stopwatch
       - name: Install the video reference tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Check the Plex video screen assertion
+        run: python3 -B -m unittest discover -s examples/android/plex -p 'test_*.py'
       # The Plex check plays an H.264 test pattern, which ffmpeg writes.
       - name: Write the test video of the Plex check
         run: ffmpeg -loglevel error -f lavfi -i testsrc=size=320x240:rate=25 -t 20 -c:v libx264 -pix_fmt yuv420p -movflags +faststart build/android-stopwatch/pattern.mp4
@@ -133,10 +148,11 @@ jobs:
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
             python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video
-            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player
+            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker
+            python3 examples/android/paper/emulator_check.py build/android-stopwatch/fern-paper.apk build/android-stopwatch/emulator/paper
             python3 examples/android/plex/emulator_check.py build/android-stopwatch/fern-plex.apk build/android-stopwatch/emulator/plex build/android-stopwatch/pattern.mp4
             python3 tests/android/tz/emulator_check.py build/android-stopwatch/zone build/android-stopwatch/emulator/tz
             python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie

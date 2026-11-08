@@ -267,8 +267,9 @@ func TestSharedCImportRefusals(t *testing.T) {
 	}{
 		{"executable", `@import("libc.so.6", "getpid") function c(): i32;`, "x86-64-linux", false, "has no dynamic loader; build a -shared object"},
 		{"wasm", `@import("libc.so.6", "getpid") function c(): i32;`, "wasm32-wasi", false, "cannot load the C library libc.so.6"},
-		{"seven params", `@import("libc.so.6", "f") function c(a: i32, b: i32, d: i32, e: i32, g: i32, h: i32, k: i32): i32;`, "x86-64-linux", true, "at most 6 parameters"},
-		{"float param", `@import("libm.so.6", "sqrt") function c(x: f64): f64;`, "x86-64-linux", true, "parameter x is f64; a C import takes integer and usize parameters"},
+		{"fifteen params", `@import("libc.so.6", "f") function c(a: i32, b: i32, d: i32, e: i32, g: i32, h: i32, k: i32, l: i32, m: i32, n: i32, o: i32, q: i32, r: i32, t: i32, u: i32): i32;`, "x86-64-linux", true, "at most 14 integer parameters and 8 float parameters"},
+		{"nine floats", `@import("libm.so.6", "f") function c(a: f64, b: f64, d: f64, e: f64, g: f64, h: f64, k: f64, l: f64, n: f64): f64;`, "x86-64-linux", true, "at most 14 integer parameters and 8 float parameters"},
+		{"string param", `@import("libc.so.6", "puts") function c(s: string): i32;`, "x86-64-linux", true, "parameter s is string; a C import takes integer, usize, f32 and f64 parameters"},
 		{"string result", `@import("libc.so.6", "getenv") function c(n: usize): string;`, "x86-64-linux", true, "the result is string"},
 	}
 	for _, tc := range cases {
@@ -293,6 +294,214 @@ func TestSharedCImportRefusals(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			if err == nil || !strings.Contains(string(out), tc.want) {
 				t.Fatalf("want a refusal with %q, got %v:\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
+const libmImportSrc = `@import("libm.so.6", "ldexp")
+function c_ldexp(x: f64, e: i32): f64;
+
+@import("libm.so.6", "ldexpf")
+function c_ldexpf(x: f32, e: i32): f32;
+
+@import("libm.so.6", "fmaf")
+function c_fmaf(a: f32, b: f32, c: f32): f32;
+
+@import("libm.so.6", "hypot")
+function c_hypot(a: f64, b: f64): f64;
+
+@import("libm.so.6", "lroundf")
+function c_lroundf(x: f32): i64;
+
+// Each check is a digit of the result: an int and a float in their own
+// registers, an f32 result, three float arguments, and an integer result
+// of a float argument.
+pub function check(): i32 {
+  let n = 0;
+  if (c_ldexp(1.5, 3) == 12.0) {
+    n += 1;
+  }
+  if (c_ldexpf(0.75 as f32, 2) == 3.0 as f32) {
+    n += 10;
+  }
+  if (c_fmaf(2.0 as f32, 3.0 as f32, 0.5 as f32) == 6.5 as f32) {
+    n += 100;
+  }
+  if (c_hypot(3.0, 4.0) == 5.0) {
+    n += 1000;
+  }
+  if (c_lroundf(2.6 as f32) == 3i64) {
+    n += 10000;
+  }
+  return n;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+const libmImportLoader = `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char** v) {
+  void* h = dlopen(v[1], RTLD_NOW); if (!h) { fprintf(stderr, "%s\n", dlerror()); return 100; }
+  int (*check)(void) = (int(*)(void)) dlsym(h, "check");
+  if (!check) return 101;
+  int got = check();
+  printf("%d\n", got);
+  return got == 11111 ? 42 : 1;
+}
+`
+
+// A weak C import binds a weak symbol, so the library loads, with every
+// symbol bound at once, where the symbol is absent. A weak import of a
+// symbol that is present calls it as a strong import does.
+const weakImportSrc = `@import("libm.so.6", "fern_no_such_symbol", weak)
+function c_missing(x: f64): f64;
+
+@import("libm.so.6", "ldexp", weak)
+function c_ldexp(x: f64, e: i32): f64;
+
+pub function check(): i32 {
+  let x = c_ldexp(1.5, 3);
+  if (x < 0.0) {
+    return c_missing(x) as i32;
+  }
+  if (x == 12.0) {
+    return 11111;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+// A C import with float parameters passes each float in the vector
+// register that the ABI gives it, beside the integers in their own
+// registers, and gives back an f32, an f64 or an integer result.
+func TestSharedCImportsFloatArgs(t *testing.T) {
+	runImportLoader(t, libmImportSrc, "")
+}
+
+func TestSharedCImportsWeak(t *testing.T) {
+	runImportLoader(t, weakImportSrc, "")
+}
+
+// The integer arguments after the last argument register go on the stack
+// in their order, beside floats in their own registers.
+const manyArgsLib = `#include <stdint.h>
+int64_t mix9(int64_t a, int32_t b, int64_t c, int32_t d, int64_t e, int32_t f, int64_t g, int32_t h, int64_t i) {
+  return a + 2*b + 3*c + 4*d + 5*e + 6*f + 7*g + 8*h + 9*i;
+}
+double mixd(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j, double x, float y) {
+  return a + 2*b + 3*c + 4*d + 5*e + 6*f + 7*g + 8*h + 9*i + 10*j + x * y;
+}
+int64_t mix14(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, int64_t h, int64_t i, int64_t j, int64_t k, int64_t l, int64_t m, int64_t n) {
+  return a + 2*b + 3*c + 4*d + 5*e + 6*f + 7*g + 8*h + 9*i + 10*j + 11*k + 12*l + 13*m + 14*n;
+}
+`
+
+const manyArgsSrc = `@import("libmix.so", "mix9")
+function c_mix9(a: i64, b: i32, c: i64, d: i32, e: i64, f: i32, g: i64, h: i32, i: i64): i64;
+
+@import("libmix.so", "mixd")
+function c_mixd(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32, x: f64, y: f32): f64;
+
+@import("libmix.so", "mix14")
+function c_mix14(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64, n: i64): i64;
+
+// Each check is a digit of the result: nine integers, ten integers with two
+// floats, and fourteen integers.
+pub function check(): i32 {
+  let n = 0;
+  if (c_mix9(1i64, 2, 3i64, 4, 5i64, 6, 7i64, 8, -9i64) == 123i64) {
+    n += 1;
+  }
+  if (c_mixd(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1.5, 3.0 as f32) == 389.5) {
+    n += 10;
+  }
+  if (c_mix14(1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 100i64) == 1491i64) {
+    n += 100;
+  }
+  return n + 11000;
+}
+
+function main(): i32 {
+  return 0;
+}
+`
+
+func TestSharedCImportsStackArgs(t *testing.T) {
+	runImportLoader(t, manyArgsSrc, manyArgsLib)
+}
+
+// runImportLoader builds src as a shared object for each Linux target the
+// host can run, and loads it with RTLD_NOW. Its check() must return 11111.
+// A non-empty clib is the C source of libmix.so, which src may import.
+func runImportLoader(t *testing.T, src, clib string) {
+	t.Helper()
+	type leg struct {
+		target     string
+		cc, runner string
+		env        []string
+	}
+	var legs []leg
+	if gcc, err := exec.LookPath("gcc"); err == nil && runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		legs = append(legs, leg{"x86-64-linux", gcc, "", nil})
+	}
+	if runtime.GOOS == "linux" {
+		gcc, qemu := e2eharness.Arm64Tooling(t)
+		var env []string
+		if qemu != "" {
+			env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+		}
+		legs = append(legs, leg{"arm64-linux", gcc, qemu, env})
+	}
+	if len(legs) == 0 {
+		t.Skip("no C toolchain for a Linux shared object on this host")
+	}
+	for _, l := range legs {
+		t.Run(l.target, func(t *testing.T) {
+			if l.target == "arm64-linux" {
+				e2eharness.Arm64CLibc(t, l.cc)
+			}
+			so, out := buildImportLib(t, l.target, src, "check")
+			if so == "" {
+				t.Fatalf("build: %s", out)
+			}
+			dir := filepath.Dir(so)
+			var env []string
+			if clib != "" {
+				csrc := filepath.Join(dir, "mix.c")
+				if err := os.WriteFile(csrc, []byte(clib), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if o, err := exec.Command(l.cc, "-shared", "-fPIC", "-o", filepath.Join(dir, "libmix.so"), csrc).CombinedOutput(); err != nil {
+					t.Fatalf("cc libmix: %v\n%s", err, o)
+				}
+				env = append(env, "LD_LIBRARY_PATH="+dir)
+			}
+			loader := filepath.Join(dir, "loader.c")
+			if err := os.WriteFile(loader, []byte(libmImportLoader), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(dir, "loader")
+			if o, err := exec.Command(l.cc, "-o", bin, loader, "-ldl").CombinedOutput(); err != nil {
+				t.Fatalf("cc: %v\n%s", err, o)
+			}
+			var cmd *exec.Cmd
+			if l.runner != "" {
+				cmd = exec.Command(l.runner, bin, so)
+			} else {
+				cmd = exec.Command(bin, so)
+			}
+			cmd.Env = append(append(os.Environ(), l.env...), env...)
+			o, err := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Fatalf("loader exit %d (%v), want 42; each digit of the output is one check:\n%s", code, err, o)
 			}
 		})
 	}

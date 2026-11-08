@@ -868,7 +868,11 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ImportIface)
 		f.b.WriteString("\", \"")
 		f.b.WriteString(fn.ImportWITName)
-		f.b.WriteString("\")\n")
+		if fn.ImportWeak {
+			f.b.WriteString("\", weak)\n")
+		} else {
+			f.b.WriteString("\")\n")
+		}
 	}
 	if fn.JNIClass != "" {
 		f.indent(depth)

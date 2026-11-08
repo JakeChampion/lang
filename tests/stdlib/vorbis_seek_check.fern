@@ -1,0 +1,113 @@
+import "std/audio/vorbisfile/seek";
+import "std/audio/vorbisfile";
+import "std/f64";
+import "aac_kernel_check" as ref;
+
+function base(formats: [u8], link: i32): i32 {
+  let samples = 0;
+  for i in 0..link {
+    samples += ref.word(formats, 12 * i + 4) * ref.word(formats, 12 * i + 8);
+  }
+  return samples;
+}
+
+pub function audio(value: vorbisfile.Audio, formats: [u8], expected: [u8], link: i32, position: i64, initial: i64): Result[void, string] {
+  if (value.info.index != link || value.position != position || value.granule != initial + position || value.info.audio.sample_rate != ref.word(formats, 12 * link) || value.info.audio.channels != ref.word(formats, 12 * link + 4)) {
+    return Err("seek format, sample position, or timestamp");
+  }
+  let channels = value.info.audio.channels;
+  if (value.frames < 1 || value.samples.len() != value.frames * channels || position + value.frames as i64 > ref.word(formats, 12 * link + 8) as i64) {
+    return Err("seek frame extent");
+  }
+  let start = base(formats, link) + position as i32 * channels;
+  for i in 0..value.samples.len() {
+    let golden = f32_from_bits(ref.word(expected, 4 * (start + i)));
+    let error = value.samples[i] - golden;
+    if (!value.samples[i].is_finite() || error > 0.000001f32 || error < -0.000001f32) {
+      return Err("seek PCM at " + (start + i).to_string() + ": actual " + value.samples[i].to_string() + ", expected " + golden.to_string());
+    }
+  }
+  return Ok(());
+}
+
+pub function complete(encoded: [u8], formats: [u8], expected: [u8], index: seek.Index): Result[void, string] {
+  let state = seek.cursor(index);
+  let links = index.links();
+  let link = 0;
+  let position = 0i64;
+  let samples = 0;
+  while (true) {
+    let (next, event) = match (state.next(encoded)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    state = next;
+    let Some(value) = event else {
+      break;
+    };
+    while (link < links.len() && position == links[link].frames) {
+      link += 1;
+      position = 0i64;
+    }
+    if (link >= links.len()) {
+      return Err("extra seek link");
+    }
+    audio(value, formats, expected, link, position, links[link].initial_granule)?;
+    position += value.frames as i64;
+    samples += value.samples.len();
+  }
+  if (samples * 4 != expected.len()) {
+    return Err("incomplete indexed PCM");
+  }
+  return Ok(());
+}
+
+pub function positions(encoded: [u8], formats: [u8], expected: [u8], index: seek.Index): Result[void, string] {
+  let state = seek.cursor(index);
+  let links = index.links();
+  for link in 0..links.len() {
+    let size = links[link].frames;
+    for target in [size - 1i64, 0i64, 1i64, 32i64, 64i64, 127i64, 128i64, 129i64, 255i64, 257i64, 1023i64, 1024i64, 1025i64, size / 2i64, 0i64, size] {
+      if (target < 0i64 || target > size) {
+        continue;
+      }
+      state = match (state.seek(link, target)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+      let current = link;
+      let position = target;
+      let outputs = 0;
+      let pending = 0;
+      while (outputs < 2) {
+        let (next, event) = match (state.step(encoded)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+        state = next;
+        match (event) {
+          seek.Pending => {
+            pending += 1;
+            if (pending > 8) {
+              return Err("seek preroll or setup work is unbounded");
+            }
+          },
+          seek.Samples(value) => {
+            while (current < links.len() && position == links[current].frames) {
+              current += 1;
+              position = 0i64;
+            }
+            if (current >= links.len()) {
+              return Err("extra link after seek");
+            }
+            audio(value, formats, expected, current, position, links[current].initial_granule)?;
+            position += value.frames as i64;
+            outputs += 1;
+          },
+          seek.Finished => {
+            while (current < links.len() && position == links[current].frames) {
+              current += 1;
+              position = 0i64;
+            }
+            if (current != links.len()) {
+              return Err("early end after seek");
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+  return Ok(());
+}

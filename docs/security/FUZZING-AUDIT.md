@@ -25,6 +25,14 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostArchive` | the unpacker reads a package archive: the gunzip, the tar reader and the entry name rules | `compiler/drivers/pkg_fuzz_run.fern archive` | the same |
 | `FuzzSelfHostTangle` | the chunk grammar, the tangle of the root chunk and of the file roots, and the unused-chunk lint read a `.fern.md` document | `compiler/drivers/literate_fuzz_run.fern tangle` | the same |
 | `FuzzSelfHostWeave` | the weave reads a `.fern.md` document and writes text and HTML | `compiler/drivers/literate_fuzz_run.fern weave` | the same |
+| `FuzzSelfHostStdHTTP` | the HTTP/1 request framer of `std/http`, and its chunked-body decoder fed in pieces of seven bytes | `tests/fuzz/stdparse.fern http` | the same |
+| `FuzzSelfHostStdHPACK` | the HPACK decoder of `std/http/hpack`, two blocks on one decoder | `tests/fuzz/stdparse.fern hpack` | the same |
+| `FuzzSelfHostStdJSON` | the JSON parser of `std/json` | `tests/fuzz/stdparse.fern json` | the same |
+| `FuzzSelfHostStdURL` | the URL parser and the query parser of `std/url` | `tests/fuzz/stdparse.fern url` | the same |
+| `FuzzSelfHostStdH2` | the HTTP/2 frame reader of `std/http/h2/frame`, and a server connection of `std/http/h2` fed the client preface and the input in pieces of nine bytes | `tests/fuzz/stdparse.fern h2` | the same |
+| `FuzzSelfHostStdQPACK` | the QPACK decoder of `std/http/qpack`: encoder-stream bytes, then one header section | `tests/fuzz/stdparse.fern qpack` | the same |
+| `FuzzSelfHostStdQUIC` | the QUIC packet reader of `std/quic/packet`: the coalesced packets of a datagram, and the opening of each Initial packet with the client Initial keys | `tests/fuzz/stdparse.fern quic` | the same |
+| `FuzzSelfHostStdQUICFrames` | the QUIC frame reader of `std/quic/frames` on one packet payload | `tests/fuzz/stdparse.fern frames` | the same |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -43,6 +51,27 @@ The weave target writes the document as text and as HTML.
 The seeds carry an undefined reference, two chunks that reference each other, and a chunk that references itself.
 They also carry an escaped reference, an unterminated fence, an empty chunk name and a `file=` path that leaves the package directory.
 Two more hold bytes that are not UTF-8 and a root chunk of three thousand references.
+
+The stdlib targets feed the parsers that a server runs on the bytes of its peers.
+The shipped CLI builds `tests/fuzz/stdparse.fern`, so they fuzz the standard library as this tree compiles it.
+The pinned stage0 cannot build that program, because `std/http` reaches `std/http/qpack` through `std/platform` and `std/fetch`.
+The HPACK target decodes the input as two blocks on one decoder, so the second block reads the dynamic table that the first block filled.
+The HTTP seeds carry a request with both a length and a chunked body, two length fields and a negative length.
+They also carry a chunk size of sixteen hex digits, a folded header line and a NUL in a header value.
+
+The HTTP/2 seeds carry a HEADERS frame with its CONTINUATION, and a CONTINUATION with no HEADERS before it.
+They also carry a zero window increment, DATA on stream 0, a pad longer than its frame and a stream that depends on itself.
+One seed opens and resets a thousand streams at once.
+The first byte of a QPACK input gives the length of the encoder-stream bytes, and the rest is one header section on stream 0.
+
+The QUIC seeds start from a client Initial packet that the test seals from RFC 9001 with Go's own HKDF, AES-GCM and AES.
+The packet reader opens that packet, which checks the two implementations against each other.
+Other seeds carry two coalesced Initial packets, a flipped tag byte and a truncated packet.
+They also carry a version negotiation packet, a Retry packet, a connection ID of 21 bytes and a length past the datagram.
+
+The frame seeds carry ACK frames with ranges and with an ECN count, and CRYPTO and STREAM frames.
+They also carry a stream offset at the varint limit and a connection ID of 21 bytes.
+Two more carry a close reason that is not UTF-8 and an unknown frame type.
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
@@ -77,6 +106,19 @@ The literate readers ran 45 seconds each on 2026-11-08 on the same kind of host,
 | `FuzzSelfHostTangle` | 73799 | 0 | none |
 | `FuzzSelfHostWeave` | 53269 | 1 | none |
 
+The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, after their seeds passed.
+
+| Target | Executions | New inputs kept | Findings |
+|---|---|---|---|
+| `FuzzSelfHostStdHTTP` | 48180 | 2 | none |
+| `FuzzSelfHostStdHPACK` | 48783 | 2 | none |
+| `FuzzSelfHostStdJSON` | 50608 | 1 | none |
+| `FuzzSelfHostStdURL` | 53437 | 1 | none |
+| `FuzzSelfHostStdH2` | 47447 | 1 | none |
+| `FuzzSelfHostStdQPACK` | 46110 | 1 | none |
+| `FuzzSelfHostStdQUIC` | 65431 | 4 | none |
+| `FuzzSelfHostStdQUICFrames` | 57205 | 1 | none |
+
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
 
@@ -89,9 +131,9 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the ten targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the eighteen targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the ten targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the eighteen targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
 
 ## Limits

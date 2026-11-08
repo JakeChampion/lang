@@ -1,0 +1,276 @@
+import "std/http";
+import "std/http/h2";
+import "std/http/h2/frame";
+import "std/http/hpack";
+import "std/http/qpack";
+import "std/json";
+import "std/quic/frames";
+import "std/quic/packet";
+import "std/url";
+
+// Feeds a file to one network-facing parser of the standard library: the
+// HTTP/1 request framer and its chunked-body decoder, the HTTP/2 frame reader
+// and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
+// reader, the JSON parser, or the URL and query parsers. Each refuses malformed bytes with
+// an error value, so the accepted outcome is exit 0 with a summary on stdout.
+// Exit 2 is a usage or read error.
+
+function text_of(b: u8[]): string {
+  let src = "";
+  unsafe {
+    src = string_from_bytes_unchecked(b);
+  }
+  return src;
+}
+
+// Feeds the bytes in pieces of seven, so a decoder carries state across calls.
+function chunked(raw: u8[]): string {
+  let d = http.chunk_decoder(http.limits());
+  let at = 0;
+  let body = 0;
+  while (at < raw.len()) {
+    let end = at + 7;
+    if (end > raw.len()) {
+      end = raw.len();
+    }
+    match (d.feed(__bytes_range(raw, at, end))) {
+      http.ChunkData(next, bytes) => {
+        d = next;
+        body += bytes.len();
+      },
+      http.ChunkEnd(bytes, _, rest) => {
+        return "end " + (body + bytes.len()).to_string() + " rest " + (rest.len() + raw.len() - end).to_string();
+      },
+      http.ChunkRefused(code) => {
+        return "refused " + code.to_string();
+      }
+    }
+    at = end;
+  }
+  return "open " + body.to_string();
+}
+
+function http_summary(raw: u8[]): string {
+  let framing = "";
+  match (http.parse_request_framed(raw)) {
+    http.Complete(f) => {
+      framing = "complete " + f.len.to_string();
+    },
+    http.Incomplete => {
+      framing = "incomplete";
+    },
+    http.Continue => {
+      framing = "continue";
+    },
+    http.Malformed(code) => {
+      framing = "malformed " + code.to_string();
+    }
+  }
+  return "http " + framing + " chunked " + chunked(raw);
+}
+
+// Decodes the bytes as two header blocks on one decoder, so the second block
+// reads the dynamic table the first one filled.
+function hpack_summary(raw: u8[]): string {
+  let d = hpack.decoder(4096, 16384);
+  let fields = 0;
+  let round = 0;
+  while (round < 2) {
+    match (d.decode(raw)) {
+      Ok(r) => {
+        d = r.decoder;
+        fields += r.fields.len();
+      },
+      Err(e) => {
+        return "hpack refused " + e.message().len().to_string() + " fields " + fields.to_string();
+      }
+    }
+    round += 1;
+  }
+  return "hpack fields " + fields.to_string() + " table " + d.table_size().to_string();
+}
+
+// Reads frames until the bytes run out or a frame is refused, then feeds the
+// client preface and the same bytes in pieces of nine to a server connection.
+function h2_summary(raw: u8[]): string {
+  let frames = 0;
+  let at = 0;
+  let refused = 0;
+  while (refused == 0) {
+    match (frame.read(raw, at, frame.MIN_FRAME_SIZE)) {
+      Ok(frame.Got(_, used)) => {
+        frames += 1;
+        at += used;
+      },
+      Ok(frame.More) => {
+        break;
+      },
+      Err(e) => {
+        refused = e.code + 1;
+      }
+    }
+  }
+  let step = h2.server(h2.config());
+  let output = step.output.len();
+  let events = step.events.len();
+  step = step.conn.read(frame.preface());
+  output += step.output.len();
+  events += step.events.len();
+  let from = 0;
+  while (from < raw.len()) {
+    let end = from + 9;
+    if (end > raw.len()) {
+      end = raw.len();
+    }
+    step = step.conn.read(__bytes_range(raw, from, end));
+    output += step.output.len();
+    events += step.events.len();
+    from = end;
+  }
+  return "h2 frames " + frames.to_string() + " refused " + refused.to_string() + " events " + events.to_string() + " output " + output.to_string();
+}
+
+// The first byte gives the length of the encoder-stream bytes that follow it,
+// and the rest is one header section on stream 0.
+function qpack_summary(raw: u8[]): string {
+  let d = qpack.decoder(4096i64, 16i64, 65536i64);
+  if (raw.len() == 0) {
+    return "qpack empty";
+  }
+  let split = 1 + raw[0] as i32;
+  if (split > raw.len()) {
+    split = raw.len();
+  }
+  match (d.on_encoder_stream(__bytes_range(raw, 1, split))) {
+    Ok(next) => {
+      d = next;
+    },
+    Err(e) => {
+      return "qpack encoder refused " + e.message().len().to_string();
+    }
+  }
+  d = d.decode(0i64, __bytes_range(raw, split, raw.len()));
+  if let Some(e) = d.failed {
+    return "qpack refused " + e.message().len().to_string();
+  }
+  return "qpack fields " + d.fields.len().to_string() + " waiting " + d.waiting.to_string() + " inserts " + d.insert_count().to_string();
+}
+
+// Walks the coalesced packets of one datagram, and tries to open each Initial
+// packet with the client Initial keys of its destination connection ID.
+function quic_summary(raw: u8[]): string {
+  let packets = 0;
+  let opened = 0;
+  let refused = 0;
+  let at = 0;
+  while (at < raw.len() && refused == 0) {
+    match (packet.parse(raw, at, 8)) {
+      Ok(h) => {
+        packets += 1;
+        let initial = match (h.kind) { packet.Initial => true, _ => false };
+        if (initial) {
+          match (packet.open(raw, h, packet.initial_keys(h.dcid, true), -1i64)) {
+            Ok(_) => {
+              opened += 1;
+            },
+            Err(_) => {}
+          }
+        }
+        if (h.end <= at) {
+          return "quic stalled at " + at.to_string();
+        }
+        at = h.end;
+      },
+      Err(e) => {
+        refused = e.message().len() + 1;
+      }
+    }
+  }
+  return "quic packets " + packets.to_string() + " opened " + opened.to_string() + " refused " + refused.to_string();
+}
+
+function quic_frames_summary(raw: u8[]): string {
+  match (frames.read_all(raw)) {
+    Ok(fs) => {
+      return "frames " + fs.len().to_string();
+    },
+    Err(e) => {
+      return "frames refused " + e.code.to_string();
+    }
+  }
+}
+
+function json_summary(src: string): string {
+  match (json.parse(src)) {
+    Ok(_) => {
+      return "json ok";
+    },
+    Err(e) => {
+      return "json refused " + e.message().len().to_string();
+    }
+  }
+}
+
+function url_summary(src: string): string {
+  let query = url.query_parse(src).len();
+  match (url.parse(src)) {
+    Ok(_) => {
+      return "url ok query " + query.to_string();
+    },
+    Err(e) => {
+      return "url refused " + e.message().len().to_string() + " query " + query.to_string();
+    }
+  }
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 3) {
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|json|url FILE");
+    return 2;
+  }
+  let raw: u8[] = [];
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      raw = b;
+    },
+    Err(_) => {
+      eprint("stdparse: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  if (av[1] == "http") {
+    print(http_summary(raw));
+    return 0;
+  }
+  if (av[1] == "hpack") {
+    print(hpack_summary(raw));
+    return 0;
+  }
+  if (av[1] == "h2") {
+    print(h2_summary(raw));
+    return 0;
+  }
+  if (av[1] == "qpack") {
+    print(qpack_summary(raw));
+    return 0;
+  }
+  if (av[1] == "quic") {
+    print(quic_summary(raw));
+    return 0;
+  }
+  if (av[1] == "frames") {
+    print(quic_frames_summary(raw));
+    return 0;
+  }
+  if (av[1] == "json") {
+    print(json_summary(text_of(raw)));
+    return 0;
+  }
+  if (av[1] == "url") {
+    print(url_summary(text_of(raw)));
+    return 0;
+  }
+  eprint("stdparse: unknown reader " + av[1]);
+  return 2;
+}

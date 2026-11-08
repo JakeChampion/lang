@@ -1,0 +1,55 @@
+import "std/audio/vorbisfile/seek";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_seek_check";
+import "vorbis_file_vectors";
+import "vorbis_seek_vectors";
+
+function reference(name: string, encoded_text: string, formats_text: string, pcm_text: string): test.TestOutcome {
+  let Ok(encoded) = ref.unpack(encoded_text) else {
+    return test.fail("fixture");
+  };
+  let Ok(formats) = ref.unpack(formats_text) else {
+    return test.fail("formats");
+  };
+  let Ok(expected) = ref.unpack(pcm_text) else {
+    return test.fail("PCM");
+  };
+  let index = match (seek.inspect(encoded, seek.default_limits())) { Ok(v) => v, Err(e) => { return test.fail(name + " index: " + e.message()); } };
+  let links = index.links();
+  if (links.len() * 12 != formats.len() || index.packet_count() < 1) {
+    return test.fail("indexed link or packet counts");
+  }
+  for i in 0..links.len() {
+    if (links[i].frames != ref.word(formats, 12 * i + 8) as i64) {
+      return test.fail("indexed complete length");
+    }
+  }
+  if let Err(e) = vorbis_seek_check.complete(encoded, formats, expected, index) {
+    return test.fail(name + " complete: " + e);
+  }
+  if let Err(e) = vorbis_seek_check.positions(encoded, formats, expected, index) {
+    return test.fail(name + " positions: " + e);
+  }
+  return test.pass();
+}
+
+function references(): test.TestOutcome {
+  for value in vorbis_file_vectors.vectors() {
+    if let test.Fail(message) = reference(value.name, value.encoded, value.formats, value.pcm) {
+      return test.fail(message);
+    }
+  }
+  for value in vorbis_seek_vectors.vectors() {
+    if let test.Fail(message) = reference(value.name, value.encoded, value.formats, value.pcm) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed Vorbis exact seeks against independent PCM");
+  runner = runner.it("cold and repeated seeks across rates, layouts, block transitions, and chains", references);
+  return runner.finish();
+}

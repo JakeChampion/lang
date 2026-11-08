@@ -313,8 +313,18 @@ Each is a bound with a test that crosses it.
       call before it waits again. With 64 connections that is 57 times fewer
       sends and 41 percent less server CPU per request
       (`docs/benchmarks/net-sendmmsg-2026-11-08.md`). Gates:
-      `TestSelfHostUDPSendmmsg` and `TestNetSendManyX86_64`. GRO on receive
-      and ECN remain.
+      `TestSelfHostUDPSendmmsg` and `TestNetSendManyX86_64`. The receive
+      side landed next: `udp_recvmmsg(sock, buf, froms, lens)` brings many
+      messages in one call, each with its sender, byte count, `UDP_GRO`
+      segment size and TOS byte, under the same `mmsg` capability; socket
+      ops 10, 11 and 12 set `UDP_GRO`, `IP_RECVTOS` and `IPV6_RECVTCLASS`.
+      `net.Inbox` receives into slots and walks a coalesced message into
+      its datagrams, and `std/serve` reads every datagram of a wake through
+      an inbox of 16 slots with `UDP_GRO` on. With 64 connections that is
+      15 times fewer receives and 51 percent less server CPU per request
+      (`docs/benchmarks/net-recvmmsg-2026-11-08.md`). Gates:
+      `TestSelfHostUDPRecvmmsg` and `TestNetInboxX86_64`. ECN remains: the
+      TOS byte reaches the inbox, and nothing reads or sets the marks yet.
 
 0-RTT waits on early data in `std/tls/handshake`, which does not derive
 an early traffic secret yet.

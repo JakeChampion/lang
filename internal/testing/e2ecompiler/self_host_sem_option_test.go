@@ -27,6 +27,9 @@ function fixture(row: i32): ssasem.Func {
   if (row == 6) { constant = ssa.SInst { ...constant, kind_tag: 5, str: "payload" }; }
   let fallback = constant;
   let cons = ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "Some" };
+  if (row == 9 || row == 10) {
+    cons = ssa.SInst { ...cons, kind_tag: ssa.BINARY, args: [0, 0], str: "+?" };
+  }
   let params: typeinfo.Type[] = [];
   if (row == 7) {
     constant = ssa.SInst { ...constant, kind_tag: ssasem.param(), imm: 0 };
@@ -53,7 +56,7 @@ function fixture(row: i32): ssasem.Func {
     ssa.SBlock { id: 2, preds: [0], insts: [ssa.SInst { ...fallback, result: 4 }],
       term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 4 } }];
   let result = payload;
-  if (row == 3) {
+  if (row == 3 || row == 10) {
     result = whole;
     blocks = [ssa.SBlock { ...blocks[0], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } }];
   }
@@ -69,14 +72,14 @@ function fixture(row: i32): ssasem.Func {
 }
 function main(): i32 {
   let row: i32 = 0;
-  while (row < 9) {
+  while (row < 11) {
     let before = fixture(row);
     let checked = ssasem.analyze(before);
     if (!checked.ok) { print(checked.why); return row + 1; }
     let after = semoption.split(before);
     checked = ssasem.analyze(after);
     if (!checked.ok) { print(checked.why); return row + 11; }
-    if ((after.graph.nvals > before.graph.nvals) != (row == 0 || row == 4)) { return row + 21; }
+    if ((after.graph.nvals > before.graph.nvals) != (row == 0 || row == 4 || row == 9)) { return row + 21; }
     if (row == 4 && (after.dbg_vals.len() != 0 || after.dbg_names.len() != 0)) { return 40; }
     row = row + 1;
   }

@@ -11,6 +11,10 @@ The first audio packet primes overlap storage and produces no PCM.
 Container code must apply its granule positions to trim the beginning and end.
 Comment packets are read separately with `std/audio/vorbis/headers`.
 
+`layout` validates setup and retains only format information and packet modes.
+Its `block_size` method checks the complete mode header, including both long-window flags.
+It uses no overlap or transform storage and does not validate packet entropy.
+
 Packet methods consume the decoder on error. Reset retains configuration and scratch storage.
 The reusable-buffer method preserves storage after the valid output prefix.
 Setup budgets bound codebook storage before allocation.
@@ -30,6 +34,19 @@ import "std/audio/vorbis/types";
 import "std/audio/pcm";
 
 pub opaque struct Decoder { info: types.Info, config: setup.Setup, previous: i32, scratch: dsp.Scratch, delay: f32[], spectra: f32[], floors: f32[], curve: f32[] }
+
+pub opaque struct Layout { info: types.Info, modes: setup.Mode[] }
+
+pub function layout(identification: [u8], setup_packet: [u8], limits: types.Limits): Result[Layout, pcm.AudioError] {
+  let info = headers.identification(identification, limits)?;
+  let config = setup.read(setup_packet, info, limits)?;
+  return Ok(Layout { info: info, modes: config.modes });
+}
+
+pub function (value: Layout) block_size(input: [u8], limits: pcm.Limits): Result[i32, pcm.AudioError] {
+  pcm.check_input(input, limits)?;
+  return Ok(1 << packet.layout_exponent(input, value.info, value.modes)?);
+}
 
 pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32, samples: f32[] }
 

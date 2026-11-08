@@ -155,6 +155,14 @@ const usesCleartextTrafficID = 0x010104ec
 
 const debuggableID = 0x0101000f
 
+const themeID = 0x01010000
+
+// Theme.DeviceDefault.Wallpaper.NoTitleBar, the theme of a home screen, and
+// Theme.NoTitleBar.Fullscreen, the theme of other apps.
+const homeThemeID = 0x0103013d
+
+const appThemeID = 0x0103000a
+
 // TestApkCleartext checks that -apk-cleartext sets
 // android:usesCleartextTraffic, so the Java networking of the app, such as
 // a media player, can use http://, and that an APK without it leaves the
@@ -663,5 +671,227 @@ func checkDex(t *testing.T, b []byte) {
 	}
 	if got := binary.LittleEndian.Uint32(b[8:]); got != adler32.Checksum(b[12:]) {
 		t.Error("the Adler-32 checksum does not match")
+	}
+}
+
+// -apk-home makes the activity a home screen: the home categories beside
+// the launcher category, one task, and the wallpaper theme, which keeps the
+// status bar. An APK without it keeps the fullscreen theme and no home
+// category.
+func TestApkHome(t *testing.T) {
+	dir := t.TempDir()
+	_, plain := buildApk(t, dir)
+	man := readZipEntry(t, zipOf(t, plain), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, themeID); !ok || v != appThemeID {
+		t.Errorf("android:theme = %#x (set %v) with no -apk-home, want %#x", v, ok, appThemeID)
+	}
+	if bytes.Contains(man, utf16le("android.intent.category.HOME")) {
+		t.Error("an APK with no -apk-home has the home category")
+	}
+	path, raw := buildApk(t, dir, "-apk-home")
+	man = readZipEntry(t, zipOf(t, raw), "AndroidManifest.xml")
+	if v, ok := applicationAttr(t, man, themeID); !ok || v != homeThemeID {
+		t.Errorf("android:theme = %#x (set %v), want %#x", v, ok, homeThemeID)
+	}
+	for _, s := range []string{"android.intent.category.HOME", "android.intent.category.DEFAULT", "android.intent.category.LAUNCHER"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the manifest tree is not checked")
+	}
+	o, err := exec.Command(aapt, "dump", "xmltree", path, "AndroidManifest.xml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+	}
+	tree := string(o)
+	for _, want := range []string{
+		`A: android:taskAffinity(0x01010012)="" (Raw: "")`,
+		"A: android:clearTaskOnLaunch(0x01010015)=(type 0x12)0xffffffff",
+		"A: android:stateNotNeeded(0x01010016)=(type 0x12)0xffffffff",
+		"A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff",
+		"A: android:launchMode(0x0101001d)=(type 0x10)0x2",
+		"A: android:windowSoftInputMode(0x0101022b)=(type 0x11)0x10",
+		"A: android:resumeWhilePausing(0x010104b2)=(type 0x12)0xffffffff",
+		`A: android:name(0x01010003)="android.intent.category.HOME"`,
+	} {
+		if !strings.Contains(tree, want) {
+			t.Errorf("the manifest has no %s:\n%s", want, tree)
+		}
+	}
+}
+
+// -apk-asset puts each file under assets/ with its own name, stored, and
+// refuses a file it cannot read and two files with one name.
+func TestApkAsset(t *testing.T) {
+	dir := t.TempDir()
+	one := filepath.Join(dir, "one.txt")
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	two := filepath.Join(sub, "two.bin")
+	if err := os.WriteFile(one, []byte("first asset"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(two, []byte{0, 1, 2, 255}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, raw := buildApk(t, dir, "-apk-asset", one+","+two)
+	zr := zipOf(t, raw)
+	if got := string(readZipEntry(t, zr, "assets/one.txt")); got != "first asset" {
+		t.Errorf("assets/one.txt = %q", got)
+	}
+	if got := readZipEntry(t, zr, "assets/two.bin"); !bytes.Equal(got, []byte{0, 1, 2, 255}) {
+		t.Errorf("assets/two.bin = %v", got)
+	}
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "assets/") && f.Method != zip.Store {
+			t.Errorf("%s: method %d, want stored", f.Name, f.Method)
+		}
+	}
+	verifyApkV2(t, raw)
+	again := filepath.Join(dir, "again")
+	if err := os.MkdirAll(again, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	same := filepath.Join(again, "one.txt")
+	if err := os.WriteFile(same, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range []string{one + "," + same, filepath.Join(dir, "missing.png")} {
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", filepath.Join(dir, "bad.apk"), "-apk-asset", list,
+			e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd.Env = e2eharness.ChildEnv()
+		o, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(o), "-apk-asset") {
+			t.Errorf("-apk-asset %s: %v\n%s, want a refusal that names -apk-asset", list, err, o)
+		}
+	}
+}
+
+// fern -apk takes the settings that no flag gives from the [android] table
+// of the fern.toml of the app, with each path relative to that file. A
+// flag takes priority over the table, and a bad table is refused.
+func TestApkManifest(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.ReadFile(e2eharness.RepoPath(nativeApp, "app.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	face, err := os.ReadFile(e2eharness.RepoPath(nativeApp, "face.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("app.fern", string(src))
+	write("face.fern", string(face))
+	write("data.txt", "fern")
+	write("fern.toml", "[package]\nname = \"native\"\nlib = \"app.fern\"\n\n[android]\npackage = \"dev.fern.fromfile\"\nhome = true\nassets = [\"data.txt\"]\n")
+	build := func(extra ...string) ([]byte, error) {
+		out := filepath.Join(dir, "app.apk")
+		args := append([]string{"-apk", out}, extra...)
+		args = append(args, filepath.Join(dir, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err != nil {
+			return o, err
+		}
+		return os.ReadFile(out)
+	}
+	raw, err := build("-apk-package", "dev.fern.flag")
+	if err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, raw)
+	}
+	zr := zipOf(t, raw)
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("dev.fern.flag")) || bytes.Contains(man, utf16le("dev.fern.fromfile")) {
+		t.Error("the -apk-package flag did not take priority over the package of fern.toml")
+	}
+	if !bytes.Contains(man, utf16le("android.intent.category.HOME")) {
+		t.Error("home = true in fern.toml did not make a home screen")
+	}
+	if got := string(readZipEntry(t, zr, "assets/data.txt")); got != "fern" {
+		t.Errorf("assets/data.txt = %q, want the file next to fern.toml", got)
+	}
+	write("fern.toml", "[package]\nname = \"native\"\n\n[android]\nhome = \"yes\"\n")
+	o, err := build()
+	if err == nil || !strings.Contains(string(o), "error[E088]: [android] home: expected true or false") {
+		t.Errorf("a bad [android] table: err = %v, output:\n%s", err, o)
+	}
+}
+
+// fakeAdb records each call in $FAKE_ADB_LOG and answers as a device with
+// the ABI x86_64 and an app with the process 4242.
+const fakeAdb = `#!/bin/sh
+echo "$@" >> "$FAKE_ADB_LOG"
+case "$*" in
+  "shell getprop ro.product.cpu.abi") echo x86_64 ;;
+  install*) echo Success ;;
+  "shell am start"*) echo "Status: ok" ;;
+  "shell pidof"*) echo 4242 ;;
+  "shell logcat"*) echo "I/fern    ( 4242): hello from the app" ;;
+esac
+`
+
+// fern -apk -apk-run builds the library for the ABI of the device only,
+// installs the APK, starts its activity, and shows the log of its process
+// through the shell of the device.
+func TestApkRun(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "adb"), []byte(fakeAdb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "adb.log")
+	out := filepath.Join(dir, "app.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-run", "-apk-package", "dev.fern.runtest",
+		e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_ADB_LOG="+logPath)
+	o, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fern -apk -apk-run: %v\n%s", err, o)
+	}
+	if !strings.Contains(string(o), "hello from the app") {
+		t.Errorf("the output has no log line of the app:\n%s", o)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	want := []string{
+		"shell getprop ro.product.cpu.abi",
+		"install -r " + out,
+		"shell am start -W -n dev.fern.runtest/android.app.NativeActivity",
+		"shell pidof dev.fern.runtest",
+		"shell logcat -v brief --pid=4242 & L=$!; while [ -d /proc/4242 ]; do sleep 1; done; kill $L",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("adb calls:\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var libs []string
+	for _, f := range zipOf(t, raw).File {
+		if strings.HasPrefix(f.Name, "lib/") {
+			libs = append(libs, f.Name)
+		}
+	}
+	if strings.Join(libs, " ") != "lib/x86_64/libapp.so" {
+		t.Errorf("libraries = %v, want only the one of the device ABI", libs)
 	}
 }

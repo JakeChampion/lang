@@ -1,0 +1,211 @@
+import "std/video/mp4";
+import "std/video/frame";
+import "std/audio/mp4/boxes";
+import "std/audio/pcm";
+import "std/hex";
+import "std/test";
+import "video_mp4_vectors";
+
+function fixture(name: string): Result[u8[], string] {
+  for v in video_mp4_vectors.vectors() {
+    if (v.name == name) {
+      return match (hex.decode(v.bytes)) { Ok(value) => Ok(value), Err(_) => Err("fixture hex") };
+    }
+  }
+  return Err("missing fixture");
+}
+
+function locate(input: [u8], path: [string]): Result[boxes.Box, pcm.AudioError] {
+  let found = boxes.Box { kind: 0u32, start: 0, data: 0, end: input.len() };
+  let budget = boxes.Budget { boxes: 0, maximum: 1024 };
+  for tag in path {
+    let (next, children) = boxes.children(input, found.data, found.end, budget)?;
+    budget = next;
+    found = boxes.required(children, tag)?;
+  }
+  return Ok(found);
+}
+
+function sample_box(input: [u8], tag: string): Result[boxes.Box, pcm.AudioError] {
+  return locate(input, ["moov", "trak", "mdia", "minf", "stbl", tag]);
+}
+
+function word(bytes: u8[], at: i32, value: u32): u8[] {
+  for i in 0..4 {
+    bytes = bytes.with(at + i, (value >> ((3 - i) * 8) as u32) as u8);
+  }
+  return bytes;
+}
+
+function truncation(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  for cut in 0..bytes.len() {
+    if let Err(_) = mp4.inspect(bytes[:cut], mp4.default_limits()) {} else {
+      return test.fail("incomplete prefix " + cut.to_string());
+    }
+  }
+  for bad in [word(bytes, 0, 4u32), word(bytes, 0, 4294967295u32), word(bytes, 0, 1u32), word(bytes, 0, 0u32)] {
+    if let Err(_) = mp4.inspect(bad, mp4.default_limits()) {} else {
+      return test.fail("invalid top box");
+    }
+  }
+  return test.pass();
+}
+
+function table_errors(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let Ok(size) = sample_box(bytes, "stsz") else {
+    return test.fail("sizes");
+  };
+  let Ok(offset) = sample_box(bytes, "stco") else {
+    return test.fail("offsets");
+  };
+  let Ok(chunks) = sample_box(bytes, "stsc") else {
+    return test.fail("chunks");
+  };
+  let Ok(times) = sample_box(bytes, "stts") else {
+    return test.fail("times");
+  };
+  let Ok(ctts) = sample_box(bytes, "ctts") else {
+    return test.fail("composition");
+  };
+  let Ok(sync) = sample_box(bytes, "stss") else {
+    return test.fail("sync");
+  };
+  for bad in [word(bytes, size.data + 8, 99u32), word(bytes, offset.data + 8, 0u32), word(bytes, offset.data + 8, 4294967295u32), word(bytes, chunks.data + 8, 2u32), word(bytes, chunks.data + 12, 0u32), word(bytes, chunks.data + 16, 2u32), word(bytes, times.data + 8, 0u32), word(bytes, times.data + 12, 0u32), word(bytes, ctts.data + 8, 0u32), word(bytes, ctts.data + 8, 7u32), word(bytes, sync.data + 8, 0u32), word(bytes, sync.data + 8, 7u32), word(bytes, sync.data + 12, 1u32)] {
+    if let Err(_) = mp4.inspect(bad, mp4.default_limits()) {} else {
+      return test.fail("invalid table or packet outside mdat");
+    }
+  }
+  if let Err(frame.Unsupported) = mp4.inspect(bytes.with(ctts.data, 2u8), mp4.default_limits()) {} else {
+    return test.fail("composition version");
+  }
+  return test.pass();
+}
+
+function signed_times(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let Ok(ctts) = sample_box(bytes, "ctts") else {
+    return test.fail("composition");
+  };
+  let unsigned = word(bytes, ctts.data + 12, 4294967295u32);
+  let Ok(index) = mp4.inspect(unsigned, mp4.default_limits()) else {
+    return test.fail("unsigned offset");
+  };
+  if (index.tracks[0].packets[0].presentation_time != 4294967295i64) {
+    return test.fail("unsigned offset narrowed");
+  }
+  let Ok(signed) = mp4.inspect(unsigned.with(ctts.data, 1u8), mp4.default_limits()) else {
+    return test.fail("signed offset");
+  };
+  if (signed.tracks[0].packets[0].presentation_time != -1i64) {
+    return test.fail("negative composition offset");
+  }
+  let absent = word(bytes, ctts.start + 4, boxes.tag("free"));
+  let Ok(no_ctts) = mp4.inspect(absent, mp4.default_limits()) else {
+    return test.fail("absent composition table");
+  };
+  for p in no_ctts.tracks[0].packets {
+    if (p.presentation_time != p.decode_time) {
+      return test.fail("implicit zero offset");
+    }
+  }
+  return test.pass();
+}
+
+function sync_tables(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let Ok(box) = sample_box(bytes, "stss") else {
+    return test.fail("sync");
+  };
+  let absent = word(bytes, box.start + 4, boxes.tag("free"));
+  let Ok(all_sync) = mp4.inspect(absent, mp4.default_limits()) else {
+    return test.fail("absent sync table");
+  };
+  for p in all_sync.tracks[0].packets {
+    if (!p.sync) {
+      return test.fail("implicit all-sync");
+    }
+  }
+  if (box.end - box.start != 24) {
+    return test.fail("fixture sync length");
+  }
+  let empty = word(word(word(word(bytes, box.start, 16u32), box.data + 4, 0u32), box.start + 16, 8u32), box.start + 20, boxes.tag("free"));
+  let Ok(no_sync) = mp4.inspect(empty, mp4.default_limits()) else {
+    return test.fail("empty sync table");
+  };
+  for p in no_sync.tracks[0].packets {
+    if (p.sync) {
+      return test.fail("empty sync table marks keyframes");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let l = mp4.default_limits();
+  for limited in [mp4.Limits { ...l, max_boxes: 1 }, mp4.Limits { ...l, max_tracks: 0 }, mp4.Limits { ...l, max_packets: 5 }, mp4.Limits { ...l, max_descriptions: 0 }, mp4.Limits { ...l, max_edits: 0 }, mp4.Limits { ...l, max_input_bytes: bytes.len() - 1 }, mp4.Limits { ...l, video: frame.Limits { ...l.video, max_pixels: 1023 } }, mp4.Limits { ...l, video: frame.Limits { ...l.video, max_packet_bytes: 32 } }] {
+    if let Err(frame.Limit) = mp4.inspect(bytes, limited) {} else {
+      return test.fail("metadata, input, dimension, or packet budget");
+    }
+  }
+  let Ok(two) = fixture("avc-two-tracks") else {
+    return test.fail("two tracks");
+  };
+  if let Err(frame.Limit) = mp4.inspect(two, mp4.Limits { ...l, max_packets: 6 }) {} else {
+    return test.fail("cumulative video packet budget");
+  }
+  let Ok(audio) = fixture("avc-audio") else {
+    return test.fail("audio track");
+  };
+  if let Err(frame.Limit) = mp4.inspect(audio, mp4.Limits { ...l, max_tracks: 1 }) {} else {
+    return test.fail("non-video track budget");
+  }
+  return test.pass();
+}
+
+function unsupported(): test.TestOutcome {
+  let Ok(bytes) = fixture("avc-bframes") else {
+    return test.fail("fixture");
+  };
+  let Ok(stsd) = sample_box(bytes, "stsd") else {
+    return test.fail("description");
+  };
+  let Ok(dref) = locate(bytes, ["moov", "trak", "mdia", "minf", "dinf", "dref"]) else {
+    return test.fail("reference");
+  };
+  let Ok(trak) = locate(bytes, ["moov", "trak"]) else {
+    return test.fail("track header");
+  };
+  let Ok(free) = locate(bytes, ["free"]) else {
+    return test.fail("free");
+  };
+  for bad in [word(bytes, stsd.data + 12, boxes.tag("encv")), bytes.with(stsd.data + 23, 2u8), word(bytes, dref.data + 16, 0u32), word(bytes, free.start + 4, boxes.tag("moof")), word(bytes, trak.start + 4, boxes.tag("mvex"))] {
+    if let Err(frame.Unsupported) = mp4.inspect(bad, mp4.default_limits()) {} else {
+      return test.fail("unsupported encryption, reference, or fragments");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("native MP4 video boundaries");
+  r = r.it("truncated prefixes and malformed boxes", truncation);
+  r = r.it("sample tables and media containment", table_errors);
+  r = r.it("signed and unsigned composition offsets", signed_times);
+  r = r.it("absent and empty sync tables", sync_tables);
+  r = r.it("input and cumulative metadata budgets", budgets);
+  r = r.it("unsupported sources and encryption", unsupported);
+  return r.finish();
+}

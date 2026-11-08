@@ -1,6 +1,7 @@
 # Android media player
 
-This module plays video and audio from a file or an HTTP stream with `android.media.MediaPlayer`, for a NativeActivity app of `std/android`.
+This module plays video and audio through `android.media.MediaPlayer` for a NativeActivity app.
+Sources include paths, file URIs, HTTP streams, and granted content URIs.
 
 ## Model
 
@@ -21,6 +22,13 @@ Use `std/android/video` when the app needs explicit codec policies.
 The media time uses microseconds. The monotonic time uses nanoseconds.
 An unavailable or unknown anchor returns `None`.
 The anchor does not include the clock rate or a physical output latency measurement.
+
+Content URIs use the activity context and Android's content resolver.
+This path accepts a URI from the system document picker or MediaStore.
+The app must hold read permission for the URI when it opens the source.
+A document picker can grant access to one item without broad storage permission.
+The app must retain or persist that permission for later source opens.
+A denied or unavailable source returns false or reports `Failed` through the platform.
 
 ## Contracts
 
@@ -334,9 +342,6 @@ function retain(e: usize, mp: usize, listener: usize): Option[Player] {
   return Some(Player { obj: obj, listener: saved_listener });
 }
 
-// Starts to prepare the stream at `uri`: a path, or an http or https
-// address. Prepared or Failed follows. It is false when the player refuses
-// the address at once.
 function valid_uri(uri: string): boolean {
   if (uri.len() == 0 || uri.len() > 8192) {
     return false;
@@ -349,6 +354,26 @@ function valid_uri(uri: string): boolean {
   return true;
 }
 
+function parse_uri(e: usize, text: usize): usize {
+  let class = find_class(e, "android/net/Uri");
+  if (class == 0 as usize) {
+    return 0 as usize;
+  }
+  let id = jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;");
+  if (cleared(e) || id == 0 as usize) {
+    return 0 as usize;
+  }
+  let values = jni.jvalues([text]);
+  let uri = jni.call_static_object_method_a(e, class, id, values);
+  jni.free_buffer(values);
+  if (cleared(e)) {
+    return 0 as usize;
+  }
+  return uri;
+}
+
+// Prepares a path, file URI, HTTP address, or granted content URI.
+// Prepared or Failed follows. An immediate failure returns false.
 pub function open(ctx: usize, p: Player, uri: string): boolean {
   let e: usize = android.env(ctx);
   if (!begin(e)) {
@@ -362,7 +387,11 @@ pub function open(ctx: usize, p: Player, uri: string): boolean {
   if (cleared(e) || text == 0 as usize) {
     return false;
   }
-  return call_void(e, p.obj, "setDataSource", "(Ljava/lang/String;)V", [text]) && call_void(e, p.obj, "prepareAsync", "()V", []);
+  let parsed = parse_uri(e, text);
+  if (parsed == 0 as usize) {
+    return false;
+  }
+  return call_void(e, p.obj, "setDataSource", "(Landroid/content/Context;Landroid/net/Uri;)V", [android.activity_object(ctx), parsed]) && call_void(e, p.obj, "prepareAsync", "()V", []);
 }
 
 // Shows the video on window `w`. It gives the window up as the target of

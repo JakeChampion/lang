@@ -83,6 +83,9 @@ QEMU establishes emulated behaviour only.
 | A hostile `fern.toml`, `fern.lock` or registry index | `FuzzSelfHostToml`, `FuzzSelfHostLock`, `FuzzSelfHostIndex` | a summary or a refusal, never a signal or a hang | x86 |
 | A hostile package archive | `FuzzSelfHostArchive` | a refusal or an unpack into the package directory alone, never a signal or a hang | x86 |
 | A hostile `.fern.md` document | `FuzzSelfHostTangle`, `FuzzSelfHostWeave` | a tangle, a weave or a refusal, never a signal or a hang | x86 |
+| A hostile HTTP/1 request, chunked body, HPACK block, JSON document or URL | `FuzzSelfHostStdHTTP`, `FuzzSelfHostStdHPACK`, `FuzzSelfHostStdJSON`, `FuzzSelfHostStdURL` | a parse or a refusal, never a signal or a hang | x86 |
+| A hostile HTTP/2 frame sequence or QPACK encoder stream and header section | `FuzzSelfHostStdH2`, `FuzzSelfHostStdQPACK` | a frame, a connection or stream error, a decode or a refusal, never a signal or a hang | x86 |
+| A hostile QUIC datagram or packet payload | `FuzzSelfHostStdQUIC`, `FuzzSelfHostStdQUICFrames` | a parse, an open, a refusal or a frame error, never a signal or a hang | x86 |
 | An ELF file supplied as source | the probes in `ELF-INPUTS.md` | `P001` | x86 |
 | A malformed attribute in a format directive | `TestSelfHostFmtWriteRefusesMalformedAttribute` | refusal | x86 |
 | An unsafe function reached without an unsafe block | `conformance/cases/diag_e095`, `conformance/cases/diag_e095_unsafe_function_as_a_value`, `conformance/cases/diag_e095_import_conceals_unsafe_function`, `conformance/cases/diag_e095_safe_trait_method_unsafe_impl` | `E095` | both checkers |

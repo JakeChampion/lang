@@ -1,5 +1,6 @@
 # 2026-11-08: PR #14591, perf-aarch64 job 128688225606 on b6f70f98. aarch64/http_hello.text grows 1.10% with the HTTP/3 fields std/fetch gained in #14551, whose arm64 perf lane never reported before the merge; the x86_64 row was pinned there. Pinned at the measured value.
 # 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: the pool and its kept connections carry the HTTP/3 fields, so http_hello.text grows 1.09% on x86_64 and is pinned at its measured value.
+# 2026-11-08: PR #14748, perf-aarch64 job 128848947775 on 717cf25b. aarch64/video_qtrle.ir falls 1.08% on main's tree. This PR changes no compiler or codec source. Pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb. video_qtrle.ir falls with the split codec and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-aarch64 job 128621787370 on 3318c8cb, and the same bin/fern run on x86_64 here.
 # std/video/qtrle is split into helpers for the complexity ratchet, so video_qtrle.text rises on both ISAs. Pinned at the measured values.
@@ -608,4 +609,4 @@ aarch64/perceus_rbtree_ck.ir	56271318
 x86_64/video_qtrle.text 5738
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6080
-aarch64/video_qtrle.ir 1680157959
+aarch64/video_qtrle.ir 1662057925

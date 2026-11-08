@@ -389,6 +389,9 @@ pub function raw_array_args(name: string): i32[] {
   if (name == "udp_recvfrom") {
     return [1, 2];
   }
+  if (name == "udp_recvmmsg") {
+    return [1, 2, 3];
+  }
   return [];
 }
 
@@ -2765,6 +2768,36 @@ pub function checked_arith(op: string): boolean {
   return op == "+?" || op == "-?" || op == "*?" || op == "/?" || op == "%?" || op == "<<?" || op == ">>?";
 }
 
+pub function checked_present(): i32 {
+  return -57;
+}
+
+pub function checked_value(): i32 {
+  return -58;
+}
+
+function checked_scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  let arity = 2;
+  if (ins.kind_tag == checked_value()) {
+    arity = 3;
+  }
+  if (ins.args.len() != arity || !checked_arith(ins.str)) {
+    return "checked scalar operation arity";
+  }
+  let left = f.values[ins.args[0]];
+  if (!is_integer(left) || is_usize(left) || !semtypes.equal(left, f.values[ins.args[1]])) {
+    return "checked scalar operand type";
+  }
+  if (arity == 2) {
+    if (!is_bool(result)) {
+      return "checked presence result type";
+    }
+  } else if (!is_bool(f.values[ins.args[2]]) || !semtypes.equal(left, result)) {
+    return "checked payload result type";
+  }
+  return "";
+}
+
 function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {
   if (integer_op(op) || saturating(op)) {
     return t;
@@ -3037,6 +3070,9 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
   }
   let result = f.values[ins.result];
   let kind = ins.kind_tag;
+  if (kind == checked_present() || kind == checked_value()) {
+    return checked_scalar_error(ins, f, result);
+  }
   if (kind == 6) {
     return parameter_error(ins, f, result);
   }

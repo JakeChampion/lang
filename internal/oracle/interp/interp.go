@@ -1603,6 +1603,7 @@ func New() *Interp {
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
 	i.Builtins["udp_sendto_bytes"] = &Builtin{Fn: builtinUdpSendtoBytes}
 	i.Builtins["udp_sendmmsg"] = &Builtin{Fn: builtinUdpSendmmsg}
+	i.Builtins["udp_recvmmsg"] = &Builtin{Fn: builtinUdpRecvmmsg}
 	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
@@ -1995,7 +1996,7 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 9 {
+	if op < 1 || op > 12 {
 		return Number(-22), nil
 	}
 	if op == 8 {

@@ -67,17 +67,32 @@ function save(f: draw.Frame, path: string): void {
   }
 }
 
+// Writes the premultiplied pixels of `f` as a PNG file, whose pixels hold
+// each channel apart from the alpha.
 function save_rgba(f: draw.Frame, path: string): void {
   let rgba: u8[] = [];
   for y in 0..f.height {
     for x in 0..f.width {
       let c = f.pixel(x, y);
-      rgba = rgba.append((c & 255) as u8).append((c >> 8 & 255) as u8).append((c >> 16 & 255) as u8).append((c >> 24 & 255) as u8);
+      let a = c >> 24 & 255;
+      for shift in [0, 8, 16] {
+        rgba = rgba.append(straight(c >> shift & 255, a) as u8);
+      }
+      rgba = rgba.append(a as u8);
     }
   }
   if let Ok(bytes) = png.encode_rgba8(f.width, f.height, rgba) {
     let written = write_file_bytes(path, bytes);
   }
+}
+
+// The channel `v` of a premultiplied pixel with the alpha `a`, apart from
+// the alpha.
+function straight(v: i32, a: i32): i32 {
+  if (a == 0) {
+    return 0;
+  }
+  return (v * 255 + a / 2) / a;
 }
 
 function same(a: i32, b: i32): string {

@@ -1,0 +1,107 @@
+// Draws with std/android/gl on an offscreen canvas and reads the pixels
+// back. It is a shared object: check() gives one digit for each check that
+// passes. internal/testing/e2e loads it with Mesa's OpenGL ES 2 on the host.
+import "std/android/draw";
+import "std/android/gl";
+
+// The two pixels differ by at most 2 in each channel.
+function near(a: i32, b: i32): boolean {
+  for shift in [0, 8, 16, 24] {
+    if (((a >> shift & 255) - (b >> shift & 255)).abs() > 2) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Each check is a digit of the result: the clear colour, a premultiplied
+// texture over it, a stretched part, the alpha ramp, the row clip, the
+// layer at half alpha, the texture drawn again on a new surface after the
+// canvas left the first one, and glyphs from two pages of an atlas.
+pub function check(): i32 {
+  let Some(c) = gl.open_offscreen(64, 64) else {
+    return 1;
+  };
+  let bg = draw.rgb(200, 100, 50);
+  let src = draw.offscreen(4, 4);
+  src.store(0, 0, 4, 4, 0);
+  src.fill(0, 0, 2, 4, draw.rgb(0, 0, 255));
+  src.cover(2, 0, draw.rgb(255, 255, 255), 128);
+  let t = gl.texture(src);
+  draw.release(src);
+  c.clear(bg);
+  c.draw(t, 10, 10, 1.0, 0, 64);
+  c.draw_part(t, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: 20, y: 20, w: 8, h: 8 }, 1.0, gl.no_fade(), 0, 64);
+  c.draw_part(t, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: 40, y: 0, w: 4, h: 40 }, 1.0, gl.Fade { y0: 0, y1: 40, a0: 1.0, a1: 0.0 }, 0, 64);
+  c.draw_part(t, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: 50, y: 0, w: 4, h: 64 }, 1.0, gl.no_fade(), 30, 34);
+  c.begin_layer();
+  c.draw_part(t, gl.Part { x: 0, y: 0, w: 1, h: 1 }, gl.Part { x: 0, y: 50, w: 10, h: 10 }, 1.0, gl.no_fade(), 0, 64);
+  c.end_layer();
+  c.draw_layer(0, 2, 0.5);
+  let f = c.read();
+  let n = 0;
+  if (near(f.pixel(0, 0), bg)) {
+    n += 1;
+  }
+  let half = draw.over(draw.rgba(255, 255, 255, 128), bg);
+  if (near(f.pixel(10, 10), draw.rgb(0, 0, 255)) && near(f.pixel(12, 10), half) && near(f.pixel(14, 10), bg)) {
+    n += 10;
+  }
+  if (near(f.pixel(20, 20), draw.rgb(0, 0, 255)) && near(f.pixel(27, 27), draw.rgb(0, 0, 255)) && near(f.pixel(28, 28), bg)) {
+    n += 100;
+  }
+  if (near(f.pixel(41, 0), draw.rgb(0, 0, 255)) && near(f.pixel(41, 20), draw.over(draw.rgba(0, 0, 255, 128), bg)) && near(f.pixel(41, 40), bg)) {
+    n += 1000;
+  }
+  if (near(f.pixel(51, 29), bg) && near(f.pixel(51, 30), draw.rgb(0, 0, 255)) && near(f.pixel(51, 34), bg)) {
+    n += 10000;
+  }
+  if (near(f.pixel(5, 52), draw.over(draw.rgba(0, 0, 255, 128), bg)) && near(f.pixel(5, 51), bg)) {
+    n += 100000;
+  }
+  draw.release(f);
+  let off = c.detach();
+  let k = off.attach_offscreen(16, 8);
+  k.clear(bg);
+  k.draw(t, 0, 0, 1.0, 0, 8);
+  let g = k.read();
+  if (!off.attached() && k.attached() && g.width == 16 && near(g.pixel(1, 1), draw.rgb(0, 0, 255)) && near(g.pixel(5, 1), bg)) {
+    n += 1000000;
+  }
+  draw.release(g);
+  n += glyphs(k, bg);
+  gl.free(t);
+  gl.close(k);
+  return n;
+}
+
+// 10000000 when a full glyph and a glyph at half coverage, which does not
+// fit on the first page of the atlas, draw in their colours.
+function glyphs(c: gl.Canvas, bg: i32): i32 {
+  let full: u8[] = [];
+  for i in 0..16 {
+    full = full.append(255u8);
+  }
+  let half: u8[] = [];
+  for i in 0..100 {
+    half = half.append(128u8);
+  }
+  let (a1, s1) = gl.atlas(16).add(4, 4, full);
+  let (a2, s2) = a1.add(10, 10, half);
+  let c2 = c.attach_offscreen(16, 16);
+  c2.clear(bg);
+  c2.draw_glyphs(a2, [gl.Glyph { slot: s1, x: 1, y: 1 }], draw.rgb(255, 0, 0), 1.0, 0, 16);
+  c2.draw_glyphs(a2, [gl.Glyph { slot: s2, x: 5, y: 5 }], draw.rgb(0, 255, 0), 1.0, 0, 16);
+  let f = c2.read();
+  let ok = a2.pages.len() == 2 && s2.page == 1 && near(f.pixel(1, 1), draw.rgb(255, 0, 0)) && near(f.pixel(4, 4), draw.rgb(255, 0, 0)) && near(f.pixel(5, 0), bg) && near(f.pixel(8, 8), draw.over(draw.rgba(0, 255, 0, 128), bg)) && near(f.pixel(15, 15), bg);
+  draw.release(f);
+  gl.free_atlas(a2);
+  if (ok) {
+    return 10000000;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  return 0;
+}
