@@ -48,7 +48,7 @@ function main(): i32 {
 
 func TestSelfHostArm64ByteAlignment(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	source := writeAssemblerProgram(t, writeSelfHostAsmProject(t), "arm64_native.fern", arm64ByteAlignmentProgram)
+	source := arm64NativeModuleProgram(t, arm64ByteAlignmentProgram)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			if stderr, code := cli.exitOfFile(t, source, target, nil, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1"); code != 0 {
@@ -65,8 +65,7 @@ func TestSelfHostArm64DarwinByteAlignment(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
-	src := writeAssemblerProgram(t, dir, "arm64_native.fern", arm64ByteAlignmentProgram)
-	bin := filepath.Join(dir, "alignment")
+	src, bin := arm64NativeModuleProgram(t, arm64ByteAlignmentProgram), filepath.Join(dir, "alignment")
 	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {

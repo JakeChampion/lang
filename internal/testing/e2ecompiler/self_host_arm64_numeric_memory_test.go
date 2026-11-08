@@ -26,7 +26,7 @@ func TestSelfHostArm64NumericLabelMemory(t *testing.T) {
 
 func TestSelfHostArm64NumericLabelsIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	source := writeAssemblerProgram(t, writeSelfHostAsmProject(t), "arm64_native.fern", arm64NumericLabelSelfTestMain)
+	source := arm64NativeModuleProgram(t, arm64NumericLabelSelfTestMain)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOfFile(t, source, target, nil, "FERN_STRICT_IR=1")

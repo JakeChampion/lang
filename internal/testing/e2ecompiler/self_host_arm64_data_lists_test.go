@@ -29,7 +29,7 @@ function main(): i32 {
 
 func TestSelfHostArm64DataLists(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	source := writeAssemblerProgram(t, writeSelfHostAsmProject(t), "arm64_native.fern", arm64DataListsProgram)
+	source := arm64NativeModuleProgram(t, arm64DataListsProgram)
 	if stderr, code := cli.exitOfFile(t, source, "x86-64-linux", nil, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1"); code != 0 {
 		t.Fatalf("exit = %d\n%s", code, stderr)
 	}

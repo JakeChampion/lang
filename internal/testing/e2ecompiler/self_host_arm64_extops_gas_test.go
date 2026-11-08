@@ -865,8 +865,7 @@ func TestSelfHostArm64SysregFpGas(t *testing.T) {
 		{"mrs x23, fpsr", 0xd53b4437},
 		{"msr fpsr, x23", 0xd51b4437},
 		{"mrs x23, dczid_el0", 0xd53b00f7},
-		{"mrs x23, cntfrq_el0", 0xd53be017},
-		{"msr cntfrq_el0, x23", 0xd51be017},
+		{"msr cntfrq_el0, x0", 0xd51be000},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
 		"msr dczid_el0, x0",

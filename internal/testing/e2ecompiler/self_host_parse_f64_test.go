@@ -143,7 +143,7 @@ func TestSelfHostParseF64Watbin(t *testing.T) {
 
 func TestSelfHostParseF64X86Gas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
+	dir := copySelfHostTree(t)
 	nat := mustRead(t, "../../../compiler/x86_native.fern")
 	prog := "import \"std/io\";\n" + string(nat) + "\n" +
 		strings.ReplaceAll(parseF64DriverBody, "PARSE", "x86_gas_parse_f64")
@@ -152,7 +152,7 @@ func TestSelfHostParseF64X86Gas(t *testing.T) {
 
 func TestSelfHostParseF64Arm64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
+	dir := copySelfHostTree(t)
 	a64 := mustRead(t, "../../../compiler/arm64_native.fern")
 	prog := "import \"std/io\";\n" + string(a64) + "\n" +
 		strings.ReplaceAll(parseF64DriverBody, "PARSE", "arm64_parse_f64")
