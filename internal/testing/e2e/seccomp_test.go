@@ -324,13 +324,18 @@ func injectSyscall(nr int, args ...uint64) func(string) string {
 
 // sandboxArgProg reaches every call the filter checks an argument of: socket
 // and setsockopt through tcp_listen, ioctl through isatty, prctl through
-// disable_core_dumps, and on arm64 clone through proc_fork.
+// disable_core_dumps, fcntl through a pipe's non-blocking flag, and on arm64
+// clone through proc_fork.
 const sandboxArgProg = `function main(): i32 {
     let fd: Socket = tcp_listen(0);
     if (fd.fd < 0) { return 1; }
     tcp_close(fd);
     if (isatty(0)) { return 2; }
     if (!disable_core_dumps()) { return 3; }
+    let Ok(q) = pipe() else { return 4; };
+    let Ok(_) = q.w.set_nonblocking(true) else { return 5; };
+    q.r.close();
+    q.w.close();
     let pid: i32 = proc_fork();
     if (pid == 0) { exit(0); }
     return 0;
@@ -355,6 +360,7 @@ func TestSeccompDeniesArguments(t *testing.T) {
 			{"socket domain high word", 198, nil, []uint64{1<<32 | 2, 1, 0}},
 			{"ioctl request", 29, []uint64{0, 21505, 0}, []uint64{0, 21522, 0}},
 			{"prctl option", 167, []uint64{4, 1, 0}, []uint64{35, 0, 0}},
+			{"fcntl command", 25, []uint64{0, 3, 0}, []uint64{0, 6, 0}},
 			{"setsockopt level", 208, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
 			{"clone flags", 220, nil, []uint64{0x10000000 | 0x200 | 17, 0, 0, 0, 0}},
 		}
@@ -364,6 +370,7 @@ func TestSeccompDeniesArguments(t *testing.T) {
 			{"socket domain high word", 41, nil, []uint64{1<<32 | 2, 1, 0}},
 			{"ioctl request", 16, []uint64{0, 21505, 0}, []uint64{0, 21522, 0}},
 			{"prctl option", 157, []uint64{4, 1, 0}, []uint64{35, 0, 0}},
+			{"fcntl command", 72, []uint64{0, 3, 0}, []uint64{0, 6, 0}},
 			{"setsockopt level", 54, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
 		}
 	}
