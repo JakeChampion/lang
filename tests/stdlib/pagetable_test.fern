@@ -112,10 +112,53 @@ function test_refusals(): test.TestOutcome {
   return test.assert_eq(f.free_count() as i64, 0i64);
 }
 
+// A page inside a mapped block changes on its own: the block splits into a
+// table of its pages, the page takes the new attributes, and its neighbours
+// keep the old ones.
+function test_split(): test.TestOutcome {
+  let f = region();
+  let Some(t) = pagetable.new(f) else {
+    return test.fail("no tables");
+  };
+  if (!t.map_normal(0x40000000 as usize, pagetable.BLOCK_BYTES)) {
+    return test.fail("map_normal refused a block");
+  }
+  let used = 63 as usize - f.free_count();
+  if (!t.map_device(0x40003000 as usize, pagetable.PAGE_BYTES)) {
+    return test.fail("map_device refused a page inside the block");
+  }
+  if (63 as usize - f.free_count() != used + 1 as usize) {
+    return test.fail("the split did not take exactly one frame");
+  }
+  let l1 = table_of(entry(t.root, 0 as usize));
+  let l2 = table_of(entry(l1, 1 as usize));
+  let l2e = entry(l2, 0 as usize);
+  if (target_arch() == "arm64" && (l2e & 3i64) != 3i64) {
+    return test.fail("the arm64 level 2 entry is not a table after the split");
+  }
+  if (target_arch() == "x86-64" && (l2e & 0x81i64) != 1i64) {
+    return test.fail("the x86-64 level 2 entry is not a table after the split");
+  }
+  let l3 = table_of(l2e);
+  let page = entry(l3, 3 as usize);
+  let neighbour = entry(l3, 2 as usize);
+  if (table_of(page) != 0x40003000 as usize || table_of(neighbour) != 0x40002000 as usize) {
+    return test.fail("the split pages do not map their addresses");
+  }
+  if (target_arch() == "arm64" && (attr_of(page) != 0x60000000000403i64 || attr_of(neighbour) != 0x40000000000707i64)) {
+    return test.fail("arm64 split attributes " + attr_of(page).to_string() + " " + attr_of(neighbour).to_string());
+  }
+  if (target_arch() == "x86-64" && (attr_of(page) != 0x1bi64 || attr_of(neighbour) != 0x3i64)) {
+    return test.fail("x86-64 split attributes " + attr_of(page).to_string() + " " + attr_of(neighbour).to_string());
+  }
+  return test.assert_eq(entry(l3, 511 as usize) != 0i64, true);
+}
+
 function main(): i32 {
   let r = test.new("std/pagetable");
   r = r.it("maps a 2 MiB block through three tables", test_block);
   r = r.it("maps a 4 KiB device page through four tables", test_page);
   r = r.it("refuses unaligned ranges and stops when the frames run out", test_refusals);
+  r = r.it("splits a block when a page inside it changes", test_split);
   return r.finish();
 }
