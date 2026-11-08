@@ -51,7 +51,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 
 	"wasi-proxy": {"log", "now", "config", "random", "fetch", "pollable"},
 
-	"kernel": {"privileged"},
+	"kernel": {"privileged", "arena"},
 
 	"none": nil,
 }

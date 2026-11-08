@@ -570,7 +570,9 @@ check time, in the same mechanism that enforces the OS boundary today.
 
 - **Physical memory.** #6511's embedder-supplied heap is the guest half. A kernel
   *produces* memory: page-frame allocator, page tables, then the Fern heap on
-  top of that, then a fresh heap per process.
+  top of that, then a fresh heap per process. `std/frames` is the page-frame
+  allocator, `std/pagetable` builds the kernel mapping in its frames, and
+  `__heap_adopt` moves the heap onto them (sequencing, step 9).
 - **DMA** (#14255). Volatile is not sufficient. A driver needs physically contiguous,
   uncached (or explicitly cache-maintained) allocations, and physical addresses
   distinct from virtual ones. This is an allocator feature, and it is the one
@@ -677,10 +679,32 @@ environment over the FernOS syscalls can come later, as an improvement.
    (`internal/testing/e2ecompiler/self_host_kernel_irq_test.go`, the
    `kernel-boot` job). The boards are the test's own modules. A `std/` board
    package can follow when a second board needs one. The x86-64 identity map is
-   write-back everywhere. A board on real hardware needs the local APIC and its
-   MMIO pages mapped uncached, before milestone 3. Then: `naked` (#14253) →
+   write-back everywhere, so the local APIC is cached until `main` activates
+   the kernel mapping of step 9, which maps the device window uncached. Then:
+   `naked` (#14253) →
    volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
-9. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
+9. **Done: milestone 3** (#14262). `std/frames` is a page-frame allocator
+   over raw memory. Its header and bitmap live in the first frames of its
+   region, and its `@norc` core takes only the base address. The kernel image
+   reads its RAM from the device tree or the PVH memory map. It builds the
+   frames over the RAM above the cursor of the bootstrap heap. It takes every
+   frame and gives every one back. Then it moves the heap onto a run of frames
+   with `__heap_adopt`, which the `kernel` profile grants as `arena`
+   (`TestSelfHostKernelFramesOnQemu`, `TestSelfHostKernelX86FramesOnQemu`).
+
+   `std/pagetable` builds the kernel mapping in frames, with one descriptor
+   format for each ISA behind a `target_arch()` fold. The RAM of the boot
+   protocol is ordinary memory, the device window of the board is device
+   memory, and every other address is unmapped. `activate` writes `TTBR0_EL1`
+   or `CR3`, so the identity map of the reset entry serves only until `main`
+   builds its own. A load from an unmapped address then faults: on arm64 the
+   sync handler records the data abort and steps over it, and on x86-64 the
+   page-fault handler ends the run (`TestSelfHostKernelMapsOnQemu`,
+   `TestSelfHostKernelX86MapsOnQemu`). The tick program runs on the new
+   mapping, and a `FERN_LEAKCHECK` image prints a balanced census. The reset
+   entry still seeds a bootstrap heap from `-ram`, and the frames start above
+   its cursor. The DMA region (#14255) is the next piece of the memory story.
+10. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
    TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
    north-star section).
 

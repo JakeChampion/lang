@@ -37,6 +37,7 @@ QEMU establishes emulated behaviour only.
 | A second release of one box | `TestX86_64SanitizeDoubleFreeReported`, `TestArm64SanitizeDoubleFreeReported`, `TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64` | `-sanitize` report; the release build counts and continues | x86, arm64 |
 | A released block reused before the sanitizer can see it | `TestX86_64SanitizeQuarantinesFreedBlocks`, `TestArm64SanitizeQuarantinesFreedBlocks`, `TestSelfHostSanitizeBoxFreeIsQuarantined`, `TestSelfHostUafQuarantineAsmContractX86_64`, `TestSelfHostUafQuarantineAsmContractArm64`, `TestSelfHostSanitizeQuarantineGrowth` | the block stays quarantined; the growth is pinned | x86, arm64 |
 | A raw write into the payload of a released block | `TestSelfHostQuarantinePolicy` | `fern-sanitizer: write-after-free`, exit 124 under `-sanitize` | x86, arm64 |
+| A raw write past the end of a raw block | `TestSelfHostQuarantinePolicy` | `fern-sanitizer: heap-buffer-overflow` at the block's free, exit 124 under `-sanitize` | x86, arm64 |
 | A raw read through a dangling pointer | `TestSelfHostQuarantinePolicy` | the poison pattern, not the stale bytes, under `-sanitize` | x86, arm64 |
 | A raw free of an address outside the arena | `TestSelfHostRawFreeOutsideHeap` | abort with the out-of-heap cause | x86, arm64 |
 | A second raw free of one block after other frees of its class | `TestSelfHostHardenRawInterleavedDoubleFree` | abort with the double-free cause under `-harden`, for a small and a large class | x86, arm64 |

@@ -4514,6 +4514,8 @@ function kind_name_4(id: i32): string {
   return kind_name_4b(id);
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each kind has one match arm.
 function kind_name_4a(id: i32): string {
   if (id == 161) {
     return "wasm_pollable_drop";
@@ -4788,6 +4790,8 @@ function kind_name_4a(id: i32): string {
   return "invalid";
 }
 
+// fern-lint: allow cyclomatic-complexity
+// Each kind has one match arm.
 function kind_name_4b(id: i32): string {
   if (id == 227) {
     return "ascii_run";

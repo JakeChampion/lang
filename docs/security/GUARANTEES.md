@@ -39,6 +39,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | An allocation whose size wraps the heap pointer aborts | `TestSelfHostAllocRefusesWrappedBump` | x86, arm64 |
 | A raw free of an address outside the arena aborts | `TestSelfHostRawFreeOutsideHeap` | x86, arm64 |
 | Under `-sanitize`, a use after free, a double free and a leak are reported | `TestX86_64SanitizeUseAfterFreeReported`, `TestX86_64SanitizeDoubleFreeReported`, `TestX86_64SanitizeLeakVerdict` and their arm64 rows | x86, arm64 |
+| Under `-sanitize`, a raw write up to 16 bytes past a raw block is reported at the block's free | `TestSelfHostQuarantinePolicy` | x86, arm64 |
 | `crypto.erase` zeroes a secret before its block is reused | `TestSelfHostEraseZeroesStorage` | x86, arm64 |
 | `-heap-limit` bounds the arena, and a program past it exits 125 | `TestSelfHostHeapLimit` | x86, arm64 |
 

@@ -286,6 +286,25 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
+// Under -sanitize a raw block carries a redzone: the two words after its
+// size rounded to 8 hold the poison pattern from `__alloc` to `__free`.
+// The allocation takes 16 bytes more, and the free checks the two words.
+function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_raw_alloc_san:\n");
+  s = s.write("    pushq %rdi\n    pushq %rdi\n    addq $16, %rdi\n    call __fern_alloc\n    popq %rdi\n    popq %rdi\n");
+  s = s.write("    addq $7, %rdi\n    andq $-8, %rdi\n    movabs $" + rc_poison64() + ", %rdx\n");
+  return s.write("    movq %rdx, (%rax,%rdi)\n    movq %rdx, 8(%rax,%rdi)\n    ret\n");
+}
+
+// The free side of the redzone: %rdi is the block and %rsi its size rounded
+// to 8. A word that lost the pattern was written past the end of the block.
+// The size then counts the redzone, as the allocation did.
+function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    movabs $" + rc_poison64() + ", %r8\n");
+  s = s.write("    cmpq %r8, (%rdi,%rsi)\n    jne __fern_san_abort_hbo\n    cmpq %r8, 8(%rdi,%rsi)\n    jne __fern_san_abort_hbo\n");
+  return s.write("    addq $16, %rsi\n");
+}
+
 // Under -sanitize a raw free of a block that is in the quarantine aborts as a
 // double free. The poison word selects the candidates, and a walk of the
 // quarantine decides, so a live block that holds the poison value is freed.
@@ -315,6 +334,20 @@ function quar_scan_at_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lquar_end_size0:\n    cmpl $" + rc_poison() + ", 8(%rdi)\n    jne __fern_san_abort_waf\n    movq (%rdi), %rsi\n.Lquar_end_scan:\n");
   s = quar_payload(s, "atexit", "    cmpq %rax, (%r8)\n    jne __fern_san_abort_waf\n");
   return s.write("    movq 16(%rdi), %rdi\n    jmp .Lquar_end_loop\n.Lquar_end_done:\n");
+}
+
+function emit_san_hbo_abort(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_hbo:\n    .ascii \"fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_san_abort_hbo\n");
+  s = s.write("__fern_san_abort_hbo:\n");
+  s = s.write("    leaq .Lsan_hbo(%rip), %rsi\n");
+  s = s.write("    movq $76, %rdx\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  return san_report_exit(s);
 }
 
 function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
@@ -3339,6 +3372,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   if (s.rc_free_debug) {
     s = emit_quarantine(s);
+    s = emit_raw_alloc_san(s);
   }
   if (s.harden) {
     s = emit_freelist_take(s);
@@ -3359,6 +3393,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jae .Lrawfree_bad\n");
   s = s.write("    addq $7, %rsi\n");
   s = s.write("    andq $-8, %rsi\n");
+  if (s.rc_free_debug) {
+    s = san_redzone_check(s);
+  }
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
   if (s.rc_free_debug) {
@@ -8966,6 +9003,35 @@ function ssa_shared_environ(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState)
   return ssa_store(reg_of, ins.result, d, s);
 }
 
+// Under -sanitize the user `__alloc` goes through the wrapper that adds the
+// redzone.
+function raw_alloc_sym(s: asmcore.EmitState): string {
+  if (s.rc_free_debug) {
+    return "__fern_raw_alloc_san";
+  }
+  return "__fern_alloc";
+}
+
+// The owned-allocation census takes the request of a user `__alloc` in %rdi,
+// the redzone included.
+function lc_rt_req_alloc(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check || !s.rt_owned_allocs) {
+    return s;
+  }
+  if (s.rc_free_debug) {
+    return s.write("    leaq 16(%rdi), %rax\n    movq %rax, __fern_lc_rt_req(%rip)\n");
+  }
+  return s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
+}
+
+// The census takes the size of a user `__free` in %rsi, the redzone included.
+function lc_rt_req_free(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.rc_free_debug) {
+    return s.write("    leaq 16(%rsi), %rax\n    movq %rax, __fern_lc_rt_req(%rip)\n");
+  }
+  return s.write("    movq %rsi, __fern_lc_rt_req(%rip)\n");
+}
+
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.need("heap");
@@ -9010,8 +9076,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = ssa_trap_need(s, "__fern_alloc_size_abort").write("    testl %edi, %edi\n    js " + ssa_trap(s, "__fern_alloc_size_abort") + "\n");
     s = s.write("    addq $24, %rdi\n");
   }
-  if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
-    s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
+  if (ins.str == "alloc") {
+    sym = raw_alloc_sym(s);
+    s = lc_rt_req_alloc(s);
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
@@ -10862,7 +10929,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    popq %rsi\n    popq %rdi\n");
     let owned = s.leak_check && s.rt_owned_allocs;
     if (owned) {
-      s = s.write("    movq %rsi, __fern_lc_rt_req(%rip)\n");
+      s = lc_rt_req_free(s);
     }
     s = s.write("    call __fern_raw_free\n");
     if (owned) {
@@ -12634,6 +12701,7 @@ function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_san_uaf_abort(s);
     s = emit_san_waf_abort(s);
+    s = emit_san_hbo_abort(s);
   }
   if (asmcore.vdso_wanted(s, "x86-64-linux")) {
     s = s.need("ccall:__c_call2");

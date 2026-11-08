@@ -146,6 +146,9 @@ decoder, a compatible encoder, and WAV tools.
   and CELT-only Opus packets. MP3 supports gapless metadata and bounded frame
   buffers. Complete Opus file playback remains unimplemented.
   See [audio codecs](docs/AUDIO-CODECS.md).
+- **Video.** Native lossless QTRLE packet encode/decode, IVF packet reads, and
+  AVC/HEVC packet conversion. The Android MediaCodec adapter provides surface
+  decode for device-supported formats. See [video codecs](docs/VIDEO-CODECS.md).
 - **Profiling.** On Linux, `FERN_PROFILE=cpu` and `FERN_PROFILE=alloc` include
   self-contained CPU or allocation sampling in native builds, with collapsed
   stacks at exit. The `cpu-pprof` and `alloc-pprof` modes write pprof files.

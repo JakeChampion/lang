@@ -1,0 +1,47 @@
+import "std/video/frame";
+import "std/video/qtrle";
+import "std/video/nal";
+import "std/hex";
+import "../../tests/stdlib/video_vectors";
+import "../../tests/stdlib/video_nal_vectors";
+
+function main(): i32 {
+  let limits = frame.default_limits();
+  for v in video_vectors.vectors() {
+    let format = frame.Format { width: v.width, height: v.height };
+    let Ok(initial) = frame.create(format, limits) else {
+      return 1;
+    };
+    let pixels = initial.pixels;
+    for i in 0..v.packets.len() {
+      let Ok(packet) = hex.decode(v.packets[i]) else {
+        return 2;
+      };
+      let previous = pixels;
+      let Ok(decoded) = qtrle.decode_into(packet, format, v.depth, pixels, limits) else {
+        return 3;
+      };
+      pixels = decoded.pixels;
+      let base = if (i == 0) { [] } else { previous };
+      let Ok(encoded) = qtrle.encode(pixels, base, format, v.depth, limits) else {
+        return 4;
+      };
+      print(v.width.to_string() + " " + v.height.to_string() + " " + v.depth.to_string() + " " + hex.encode(encoded));
+    }
+  }
+  for v in video_nal_vectors.vectors() {
+    let Ok(config) = hex.decode(v.config) else {
+      return 5;
+    };
+    let Ok(packet) = hex.decode(v.packet) else {
+      return 6;
+    };
+    let parsed = if (v.hevc) { nal.hevc_config(config, limits) } else { nal.avc_config(config, limits) };
+    let csd = match (parsed) { Ok(value) => value, Err(e) => { eprint((if (v.hevc) { "HEVC: " } else { "AVC: " }) + e.message()); return 7; } };
+    let Ok(converted) = nal.to_annex_b(packet, csd.length_size, limits) else {
+      return 8;
+    };
+    print((if (v.hevc) { "hevc" } else { "h264" }) + " " + v.argb + " " + hex.encode(csd.csd0) + hex.encode(csd.csd1) + hex.encode(converted));
+  }
+  return 0;
+}

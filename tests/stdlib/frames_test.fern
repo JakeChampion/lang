@@ -1,0 +1,118 @@
+import "std/test";
+import "std/frames";
+import "std/option";
+
+// A region of 64 frames plus one frame of slack, so init has to round the
+// base up. The header and the bitmap take the first frame.
+const REGION_BYTES: usize = 266240;
+
+function region(): frames.Frames {
+  unsafe {
+    let Some(f) = frames.new(__alloc(REGION_BYTES as i32) + 1 as usize, REGION_BYTES - 1 as usize) else {
+      eprint("no frames\n");
+      exit(98);
+      return frames.Frames { base: 0 as usize };
+    };
+    return f;
+  }
+}
+
+function test_counts(): test.TestOutcome {
+  let f = region();
+  if (f.base % frames.FRAME_BYTES != 0 as usize) {
+    return test.fail("base is not frame aligned");
+  }
+  if (f.count() != 64 as usize) {
+    return test.fail("count " + (f.count() as i64).to_string() + ", want 64");
+  }
+  return test.assert_eq(f.free_count() as i64, 63i64);
+}
+
+// Every free frame comes out once, frame aligned and inside the region, and
+// then alloc gives None.
+function test_exhaust(): test.TestOutcome {
+  let f = region();
+  let got = 0;
+  let last = 0 as usize;
+  while (true) {
+    let Some(frame) = f.alloc() else {
+      break;
+    };
+    if (frame % frames.FRAME_BYTES != 0 as usize || frame < f.base || frame >= f.end() || frame <= last) {
+      return test.fail("frame " + (frame as i64).to_string() + " is misplaced");
+    }
+    last = frame;
+    got += 1;
+  }
+  if (got != 63) {
+    return test.fail("allocated " + got.to_string() + " frames, want 63");
+  }
+  return test.assert_eq(f.free_count() as i64, 0i64);
+}
+
+// A freed frame is the next one allocated, and a frame the region does not
+// own is refused.
+function test_free(): test.TestOutcome {
+  let f = region();
+  let Some(a) = f.alloc() else {
+    return test.fail("no first frame");
+  };
+  let Some(b) = f.alloc() else {
+    return test.fail("no second frame");
+  };
+  if (!f.free(a)) {
+    return test.fail("free refused an owned frame");
+  }
+  if (f.free(a) || f.free(a + 1 as usize) || f.free(f.end())) {
+    return test.fail("free accepted a frame it does not own");
+  }
+  let Some(c) = f.alloc() else {
+    return test.fail("no third frame");
+  };
+  if (c != a || b == a) {
+    return test.fail("the freed frame did not come back first");
+  }
+  return test.assert_eq(f.free_count() as i64, 61i64);
+}
+
+// A run is contiguous, skips frames in use, and comes back whole.
+function test_runs(): test.TestOutcome {
+  let f = region();
+  let Some(first) = f.alloc() else {
+    return test.fail("no first frame");
+  };
+  let Some(run) = f.alloc_run(8 as usize) else {
+    return test.fail("no run of 8");
+  };
+  if (run != first + frames.FRAME_BYTES) {
+    return test.fail("the run does not start after the first frame");
+  }
+  if (f.alloc_run(60 as usize).is_some()) {
+    return test.fail("a run of 60 fits in 54 free frames");
+  }
+  let Some(rest) = f.alloc_run(54 as usize) else {
+    return test.fail("no run of 54");
+  };
+  if (rest != run + 8 as usize * frames.FRAME_BYTES || f.free_count() != 0 as usize) {
+    return test.fail("the second run is misplaced");
+  }
+  if (!f.free_run(run, 8 as usize) || f.free_run(run, 8 as usize)) {
+    return test.fail("free_run did not return the run exactly once");
+  }
+  let Some(again) = f.alloc_run(8 as usize) else {
+    return test.fail("the returned run is not free");
+  };
+  if (again != run) {
+    return test.fail("the returned run came back elsewhere");
+  }
+  return test.assert_eq(f.free_count() as i64, 0i64);
+}
+
+function main(): i32 {
+  let r = test.new("std/frames");
+  r = r.it("counts the frames after the header", test_counts);
+  r = r.it("hands out every free frame once", test_exhaust);
+  r = r.it("reuses a freed frame and refuses a foreign one", test_free);
+  r = r.it("allocates and returns runs", test_runs);
+  return r.finish();
+}
