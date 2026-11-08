@@ -93,7 +93,7 @@ function main(): i32 {
         let mixed: string = asm_arm64_ir.emit_module_or_error_sub(d.full, false, d.sub, recs);
         let words: u8[] = buf_take_bytes(recs);
         let a = arm64_native.arm64_gas_program(text);
-        let b = arm64_native.arm64_gas_program_words(mixed, words);
+        let b = arm64_native.arm64_gas_program_words(mixed, words, 0 - 1);
         let eh: i32 = first_diff(arm64_native.arm64_eh_frame(a, 0 as i64, 0 as i64), arm64_native.arm64_eh_frame(b, 0 as i64, 0 as i64));
         report(marks(mixed), text_insns(mixed), a.asm.text.len() / 4, b.unknown, first_diff_u8(a.asm.text, b.asm.text), first_diff(a.data, b.data), eh);
         return 0;
