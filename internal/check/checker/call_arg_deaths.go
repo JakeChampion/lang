@@ -1131,14 +1131,14 @@ func armYieldsFresh(info *Info, arm *ast.MatchExprArm) bool {
 		value = b.Tail
 		block = b
 	}
-	if id, ok := value.(*ast.Ident); ok && slices.Contains(arm.Binders(), id.Name) {
+	if id, ok := value.(*ast.Ident); ok && (slices.Contains(arm.Binders(), id.Name) || block != nil && slices.ContainsFunc(block.Stmts, func(st ast.Stmt) bool { return bindsName(st, id.Name) })) {
 		return freshArmPayload(info, block, id)
 	}
 	return freshInit(info, value)
 }
 
-// freshArmPayload checks the binding that the arm returns. A nested shadow
-// does not change that binding.
+// freshArmPayload checks the binding that the arm returns: its payload, or a
+// local of its block. A nested shadow does not change that binding.
 func freshArmPayload(info *Info, block *ast.BlockExpr, id *ast.Ident) bool {
 	if block == nil {
 		return true
@@ -1511,6 +1511,11 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 // lastUseArgs returns the arguments at their last use, and the subset of
 // them that are unadmitted locals (see ArgDeaths.Unadmitted).
 func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) (map[ast.Expr]bool, map[ast.Expr]bool) {
+	defer distinctBindings(fn)()
+	return lastUseArgsOf(fn, info, handleFree, scalar)
+}
+
+func lastUseArgsOf(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, scalar map[ast.Expr]bool) (map[ast.Expr]bool, map[ast.Expr]bool) {
 	out := map[ast.Expr]bool{}
 	loose := map[ast.Expr]bool{}
 	if fn.Body == nil {
@@ -1524,7 +1529,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool, s
 			inner, ok = &ast.FuncDecl{Params: lm.Params, Body: lm.Body}, true
 		}
 		if ok && inner != fn {
-			innerOut, innerLoose := lastUseArgs(inner, info, handleFree, scalar)
+			innerOut, innerLoose := lastUseArgsOf(inner, info, handleFree, scalar)
 			for e := range innerOut {
 				out[e] = true
 			}

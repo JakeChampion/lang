@@ -2241,7 +2241,7 @@ function f(k: i32): i32 {
     let n: i32 = sink(a);
     return t + n;
 }`)
-	wantE051(t, "one-declaration-borrowed", admissionPrelude+`
+	wantOK(t, "fresh-redeclaration-after-a-borrowed-one", admissionPrelude+`
 function f(b: Box, k: i32): i32 {
     if (k > 0) {
         let a: Acc = b.a;
