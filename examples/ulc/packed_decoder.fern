@@ -273,6 +273,53 @@ pub unsafe function store_float_samples(destination: usize, samples: u8[], chann
   return Ok(());
 }
 
+// The caller provides one writable output span for the validated sample buffer.
+unsafe function store_pcm[const CONFIG: i32](destination: usize, samples: u8[]): Result[void, string] {
+  let stereo = (CONFIG & 1) != 0;
+  let bits = CONFIG & ~1;
+  let scale = 1 << bits - 1;
+  let multiplier = __f64x2_splat(INVERSE_SCALE * (scale as f64));
+  let lower = __f64x2_splat(-(scale as f64));
+  let upper = __f64x2_splat((scale - 1) as f64);
+  let bias = __f64x2_splat(6755399441055744.0);
+  let infinity = __f64x2_splat(f64_from_bits(9218868437227405312i64));
+  let valid = 3;
+  unsafe {
+    let first = samples as usize + 8 as usize;
+    let second = first + (if (stereo) { samples.len() / 2 } else { 4 }) as usize;
+    let end = first + (if (stereo) { samples.len() / 2 } else { samples.len() }) as usize;
+    let out = destination;
+    while (first < end) {
+      let a = get(first, 0);
+      let b = get(second, 0);
+      let values = if (stereo) { __f64x2_of(a + b, a - b) } else { __f64x2_of(a, b) };
+      valid &= __f64x2_bitmask(__f64x2_lt(__f64x2_abs(values), infinity));
+      let clipped = __f64x2_min(__f64x2_max(values * multiplier, lower), upper);
+      // All rounded PCM values keep the bias exponent. The low word holds the signed integer.
+      let words = __f64x2_round(clipped) + bias;
+      let left = __f64x2_lane_bits(words, 0) as i32;
+      let right = __f64x2_lane_bits(words, 1) as i32;
+      if (bits == 8) {
+        __store_u8(out, (left + 128) as u8);
+        __store_u8(out + 1 as usize, (right + 128) as u8);
+      } else if (bits == 16) {
+        __store_i32(out, left & 65535 | right << 16);
+      } else {
+        __store_i32(out, left & 16777215 | right << 24);
+        __store_u8(out + 4 as usize, (right >> 8) as u8);
+        __store_u8(out + 5 as usize, (right >> 16) as u8);
+      }
+      first += (if (stereo) { 4 } else { 8 }) as usize;
+      second += (if (stereo) { 4 } else { 8 }) as usize;
+      out += (bits / 4) as usize;
+    }
+  }
+  if (valid != 3) {
+    return Err("nonfinite output sample");
+  }
+  return Ok(());
+}
+
 pub function write_samples(own out: u8[], at: i32, samples: u8[], channels: i32, bits: i32): Result[u8[], string] {
   if (at < 0 || at > out.len() || channels < 1 || channels > 255 || samples.len() % (4 * channels) != 0) {
     return Err("invalid packed sample dimensions");
@@ -291,6 +338,33 @@ pub function write_samples(own out: u8[], at: i32, samples: u8[], channels: i32,
     out = unique(out);
     unsafe {
       store_float_samples(out as usize + 8 as usize + at as usize, samples, channels)?;
+    }
+    return Ok(out);
+  }
+  if (count == 0) {
+    return Ok(out);
+  }
+  if ((channels == 1 || channels == 2) && count % (2 * channels) == 0) {
+    out = unique(out);
+    unsafe {
+      let destination = out as usize + 8 as usize + at as usize;
+      if (channels == 1) {
+        if (bits == 8) {
+          store_pcm[8](destination, samples)?;
+        } else if (bits == 16) {
+          store_pcm[16](destination, samples)?;
+        } else {
+          store_pcm[24](destination, samples)?;
+        }
+      } else {
+        if (bits == 8) {
+          store_pcm[9](destination, samples)?;
+        } else if (bits == 16) {
+          store_pcm[17](destination, samples)?;
+        } else {
+          store_pcm[25](destination, samples)?;
+        }
+      }
     }
     return Ok(out);
   }
