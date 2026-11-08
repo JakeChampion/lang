@@ -55,6 +55,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - name: Check the player qualification runner
+        run: python3 -B -m unittest discover -s tests/android/player -p 'test_*.py'
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern

@@ -7,12 +7,15 @@ Requires adb, FFmpeg, and ffprobe. Set ANDROID_SERIAL for a physical device.
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import hashlib
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import threading
 import time
+import uuid
 
 PACKAGE = "dev.fern.playertest"
 
@@ -99,25 +102,17 @@ def verify_screen(data):
     assert len(colors) > 8 and max(pixels) - min(pixels) > 100, "video surface is blank"
 
 
-def main(apk, directory):
-    out = Path(directory).resolve()
+def run_playback(uri, error_uri, out):
     out.mkdir(parents=True, exist_ok=True)
-    write_fixture(out)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(out / "av.mp4"))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    port = str(server.server_address[1])
+    adb("shell", "am", "force-stop", PACKAGE)
     log = ""
-    installed = False
-    mapped = False
     try:
-        adb("install", "-r", apk)
-        installed = True
-        adb("shell", "am", "force-stop", PACKAGE)
-        adb("reverse", "tcp:" + port, "tcp:" + port)
-        mapped = True
         adb("logcat", "-c")
-        adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
-            "--es", "uri", "http://127.0.0.1:" + port + "/av.mp4")
+        command = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
+                   "--es", "uri", uri, "--es", "error_uri", error_uri]
+        if uri.startswith("content://"):
+            command += ["--grant-read-uri-permission", "-d", uri]
+        adb(*command)
         # Two playback rounds take about 12 seconds. The error round waits for
         # the retries of the platform's HTTP source, about 30 seconds more.
         deadline = time.monotonic() + 120
@@ -149,13 +144,62 @@ def main(apk, directory):
         (out / "device.txt").write_text(adb("shell", "getprop", "ro.build.fingerprint"))
     finally:
         (out / "logcat.txt").write_text(log)
-        if installed:
-            adb("shell", "am", "force-stop", PACKAGE)
-        if mapped:
-            adb("reverse", "--remove", "tcp:" + port)
-        server.shutdown()
-        server.server_close()
-    print("Android AAC+AVC playback, pause, seek, timeline, reuse, and errors passed", flush=True)
+        adb("shell", "am", "force-stop", PACKAGE)
+
+
+def insert_media():
+    collection = "content://media/external/video/media"
+    name = "fern-player-" + uuid.uuid4().hex + ".mp4"
+    adb("shell", "content", "insert", "--uri", collection,
+        "--bind", "_display_name:s:" + name, "--bind", "mime_type:s:video/mp4")
+    # Some Android releases return no URI from content insert.
+    result = adb("shell", "content", "query", "--uri", collection,
+                 "--projection", "_id", "--where", shlex.quote("_display_name='" + name + "'"))
+    match = re.fullmatch(r"Row: 0 _id=([0-9]+)", result.strip())
+    if match is None:
+        raise AssertionError("MediaStore query did not return one created video item: " + result)
+    return collection + "/" + match[1]
+
+
+def write_media(uri, path):
+    data = path.read_bytes()
+    subprocess.run(["adb", "shell", "-T", "content", "write", "--uri", uri],
+                   input=data, check=True, capture_output=True, timeout=45)
+    actual = adb("exec-out", "content", "read", "--uri", uri, binary=True)
+    assert hashlib.sha256(actual).digest() == hashlib.sha256(data).digest(), "MediaStore fixture differs"
+
+
+def main(apk, directory):
+    out = Path(directory).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    write_fixture(out)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(out / "av.mp4"))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = str(server.server_address[1])
+    mapped = False
+    media_uri = None
+    try:
+        adb("install", "-r", apk)
+        adb("reverse", "tcp:" + port, "tcp:" + port)
+        mapped = True
+        uri = "http://127.0.0.1:" + port + "/av.mp4"
+        run_playback(uri, uri + ".missing", out / "http")
+        media_uri = insert_media()
+        write_media(media_uri, out / "av.mp4")
+        (out / "content-uri.txt").write_text(media_uri + "\n")
+        run_playback(media_uri, uri + ".missing", out / "content")
+    finally:
+        try:
+            if media_uri is not None:
+                adb("shell", "content", "delete", "--uri", media_uri)
+        finally:
+            try:
+                if mapped:
+                    adb("reverse", "--remove", "tcp:" + port)
+            finally:
+                server.shutdown()
+                server.server_close()
+    print("Android HTTP and content URI playback, pause, seek, timeline, reuse, and errors passed", flush=True)
 
 
 if __name__ == "__main__":

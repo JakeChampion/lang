@@ -15,6 +15,7 @@ Source reads can block, so applications must set appropriate I/O deadlines.
 
 ```fern
 <<*>>=
+// This module connects Ogg Vorbis playback to bounded byte sources.
 import "std/audio/source";
 import "std/audio/vorbisfile";
 
