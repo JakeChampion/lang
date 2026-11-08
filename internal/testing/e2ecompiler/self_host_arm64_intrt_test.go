@@ -82,7 +82,7 @@ function main(): i32 {
     let na: Arm64Asm = n.asm;
     if (na.text[0] != 0 || na.text[1] != 224 || na.text[2] != 59 || na.text[3] != 213) { return 15; }
     // an unknown sysreg is recorded, not mis-encoded.
-    let o: Arm64GasProg = arm64_gas_program("mrs x0, ttbr0_el1\n");
+    let o: Arm64GasProg = arm64_gas_program("mrs x0, bogus_reg\n");
     if (o.unknown.len() != 1) { return 16; }
     let translation = arm64_gas_program("mrs x9, sctlr_el1\nmsr sctlr_el1, x9\nmsr mair_el1, x9\nmsr tcr_el1, x9\nmsr ttbr0_el1, x9\ntlbi vmalle1\n");
     if (translation.unknown.len() != 0) { return 17; }
