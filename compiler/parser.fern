@@ -1410,6 +1410,14 @@ function (p: Par) refused_type(msg: string): Par {
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:" + msg)) };
 }
 
+function (p: Par) refused_at(kind: string, line: i32, col: i32): Par {
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown_at(kind, line, col)) };
+}
+
+function at_wildcard_kind(): string {
+  return coded_kind("P001", "`@` bindings are not supported on a `_` pattern");
+}
+
 function unit_type_message(): string {
   return "`()` is not a type; the unit type is written `void`";
 }
@@ -3428,6 +3436,17 @@ function wrap_tuple_elems(path: ast.Stmt[], kinds: i32[], pats: ast.Pattern[], p
   return cur;
 }
 
+// A tuple match takes only tuple patterns and `_`, as the oracle's checker requires.
+function non_tuple_arm_error(pat: ast.Pattern, at_binding: string): Option[string] {
+  if let ast.PatWildcard(_) = pat {
+    if (at_binding.len() > 0) {
+      return Some(at_wildcard_kind());
+    }
+    return None;
+  }
+  return Some(coded_kind("E035", "match on a tuple only accepts tuple patterns or `_`"));
+}
+
 function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkcol: i32): ast.Stmt {
   if (arms.len() == 0) {
     return s_unknown_at("empty tuple match", mkline, mkcol);
@@ -4384,6 +4403,9 @@ function parse_match_expr_arms(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i3
       } else {
         let (etwp_pattern, etwp_p) = parse_pattern(p);
         p = etwp_p;
+        if let Some(kind) = non_tuple_arm_error(etwp_pattern, et_at) {
+          p = p.refused_at(kind, etline, etcol);
+        }
         et_wild = true;
       }
       let et_guard = e_bool(true);
@@ -4892,6 +4914,8 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
   let tup_pats: ast.Pattern[] = [];
   let name = p.peek_ident();
   let at_binding = "";
+  let at_line = p.peek_line();
+  let at_col = p.peek_col();
   if (name.len() > 0 && name != "_" && p.peek2_punct() == "@") {
     at_binding = name;
     p = p.advance();
@@ -4903,6 +4927,9 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
   }
   if (name == "_") {
     p = p.advance();
+    if (at_binding.len() > 0) {
+      p = p.refused_at(at_wildcard_kind(), at_line, at_col);
+    }
     return (p_wildcard(), p);
   }
   if (p.peek_is_pat_literal()) {
@@ -5719,6 +5746,9 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
       } else {
         let (twp_pattern, twp_p) = parse_pattern(p);
         p = twp_p;
+        if let Some(kind) = non_tuple_arm_error(twp_pattern, t_at) {
+          p = p.refused_at(kind, taline, tacol);
+        }
         t_wild = true;
       }
       let t_guard = e_bool(true);

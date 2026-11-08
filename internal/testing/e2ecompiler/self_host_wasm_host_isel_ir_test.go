@@ -91,16 +91,40 @@ func TestSelfHostWasmHostIselIR(t *testing.T) {
 }
 
 func TestSelfHostWatbinUndefinedReference(t *testing.T) {
+	runWatbinRejections(t, []watbinRejection{
+		{"defined", `(module (func $g) (func $f (call $g)))`, ""},
+		{"undefined-call", `(module (func $f (call $g)))`, "watbin: reference to undefined $g\n"},
+		{"undefined-global", `(module (func $f (result i32) (global.get $base)))`, "watbin: reference to undefined $base\n"},
+	})
+}
+
+// A number or a hex escape that is not well formed stops the build, so a bad
+// immediate cannot encode as a different value.
+func TestSelfHostWatbinBadNumbers(t *testing.T) {
+	runWatbinRejections(t, []watbinRejection{
+		{"i32-unsigned-range", `(module (func $f (result i32) (i32.const 0xFFFF_FFFF)))`, ""},
+		{"i32-negative", `(module (func $f (result i32) (i32.const -2147483648)))`, ""},
+		{"i64-extremes", `(module (func $f (result i64) (i64.const -9223372036854775808)) (func $g (result i64) (i64.const 0xFFFFFFFFFFFFFFFF)))`, ""},
+		{"data-escape", `(module (memory 1) (data (i32.const 0) \"\\0a\\ff\"))`, ""},
+		{"letter-in-decimal", `(module (func $f (result i32) (i32.const 1a)))`, "watbin: bad integer \"1a\"\n"},
+		{"trailing-junk", `(module (func $f (result i32) (i32.const 12z)))`, "watbin: bad integer \"12z\"\n"},
+		{"no-digits", `(module (func $f (result i32) (i32.const 0x)))`, "watbin: bad integer \"0x\"\n"},
+		{"i32-overflow", `(module (func $f (result i32) (i32.const 4294967296)))`, "watbin: bad integer \"4294967296\"\n"},
+		{"i64-overflow", `(module (func $f (result i64) (i64.const 18446744073709551616)))`, "watbin: bad integer \"18446744073709551616\"\n"},
+		{"bad-data-escape", `(module (memory 1) (data (i32.const 0) \"\\zz\"))`, "watbin: bad hex escape in "},
+	})
+}
+
+type watbinRejection struct{ name, wat, stderr string }
+
+func runWatbinRejections(t *testing.T, cases []watbinRejection) {
+	t.Helper()
 	cli := newStrictCLI(t)
 	watbin, err := os.ReadFile("../../../compiler/watbin.fern")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct{ name, wat, stderr string }{
-		{"defined", `(module (func $g) (func $f (call $g)))`, ""},
-		{"undefined-call", `(module (func $f (call $g)))`, "watbin: reference to undefined $g\n"},
-		{"undefined-global", `(module (func $f (result i32) (global.get $base)))`, "watbin: reference to undefined $base\n"},
-	} {
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			src := string(watbin) + "\nfunction main(): i32 {\n    let b: i32[] = wat_to_binary(\"" + c.wat + "\");\n    return 0;\n}\n"
 			bin := buildBin(t, cli.gcc, t.TempDir(), "watbin", cli.emit(t, "x86-64-linux", src))

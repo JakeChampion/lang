@@ -155,8 +155,12 @@ pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[],
     report_one(fn_name, f, r, g);
     return 0;
   }
+  if (r.failed != "") {
+    dump_if_asked(fn_name, f);
+    refuse_uncertified(fn_name, r.failed);
+  }
   if (r.findings.len() == 0) {
-    if (k != "") {
+    if (k != "" && r.skipped == "") {
       rcmemo.add(g.memo, k);
     }
     return 0;
@@ -171,6 +175,11 @@ pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[],
   eprint(out);
   exit(5);
   return 0;
+}
+
+function refuse_uncertified(fn_name: string, why: string): void {
+  eprint("FERN_RC_CERTIFY: " + fn_name + " cannot be certified (#14570): " + why);
+  exit(5);
 }
 
 function report_one(fn_name: string, f: ssa.SFunc, r: rccertify.Report, g: Gate): void {
@@ -191,8 +200,10 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
     },
     Err(message) => {
       if (g.census != 0 as usize) {
-        buf_push(g.census, "FERN_RC_CERTIFY: census " + fn_name + " skipped=lift:" + message + "\n");
+        buf_push(g.census, "FERN_RC_CERTIFY: census " + fn_name + " failed=lift:" + message + "\n");
+        return 0;
       }
+      refuse_uncertified(fn_name, "lift: " + message);
       return 0;
     }
   }
@@ -268,6 +279,9 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
     + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len());
   if (r.skipped != "") {
     line = line + " skipped=" + r.skipped;
+  }
+  if (r.failed != "") {
+    line = line + " failed=" + r.failed;
   }
   let own = g.abis.lookup(fn_name);
   if (!own.known) {

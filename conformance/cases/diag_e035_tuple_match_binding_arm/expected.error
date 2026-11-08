@@ -1,0 +1,3 @@
+main.fern:8:5: error[E035]:
+main.fern:19:5: error[E035]:
+only accepts tuple patterns or `_`
