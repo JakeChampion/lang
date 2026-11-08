@@ -1,0 +1,32 @@
+import "std/audio/vorbisfile/seek";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_seek_check";
+import "vorbis_file_smoke_vectors";
+
+function reference(): test.TestOutcome {
+  let vector = vorbis_file_smoke_vectors.vector();
+  let Ok(encoded) = ref.unpack(vector.encoded) else {
+    return test.fail("fixture");
+  };
+  let Ok(formats) = ref.unpack(vector.formats) else {
+    return test.fail("formats");
+  };
+  let Ok(expected) = ref.unpack(vector.pcm) else {
+    return test.fail("PCM");
+  };
+  let index = match (seek.inspect(encoded, seek.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(e.message()); } };
+  if let Err(e) = vorbis_seek_check.complete(encoded, formats, expected, index) {
+    return test.fail(e);
+  }
+  if let Err(e) = vorbis_seek_check.positions(encoded, formats, expected, index) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Indexed Vorbis interpreter smoke");
+  runner = runner.it("exact nonzero PCM through cold and repeated seeks", reference);
+  return runner.finish();
+}

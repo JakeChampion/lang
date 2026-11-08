@@ -108,27 +108,34 @@ pub function output_channel(channels: i32, channel: i32): i32 {
   };
 }
 
-function mode(input: [u8], config: setup.Setup): Result[(bits.Reader, setup.Mode), pcm.AudioError] {
+function mode(input: [u8], modes: [setup.Mode]): Result[(bits.Reader, setup.Mode), pcm.AudioError] {
   let (b1, kind) = bits.read(input, bits.create(), 1)?;
   if (kind != 0u32) {
     return Err(pcm.Header);
   }
-  let (b2, index) = bits.read(input, b1, types.ilog(config.modes.len() - 1))?;
-  if (index >= config.modes.len() as u32) {
+  let (b2, index) = bits.read(input, b1, types.ilog(modes.len() - 1))?;
+  if (index >= modes.len() as u32) {
     return Err(pcm.Header);
   }
-  return Ok((b2, config.modes[index as i32]));
+  return Ok((b2, modes[index as i32]));
 }
 
 pub function exponent(input: [u8], info: types.Info, config: setup.Setup): Result[i32, pcm.AudioError] {
-  let (_, current) = mode(input, config)?;
+  return layout_exponent(input, info, config.modes);
+}
+
+pub function layout_exponent(input: [u8], info: types.Info, modes: [setup.Mode]): Result[i32, pcm.AudioError] {
+  let (reader, current) = mode(input, modes)?;
+  if (current.long) {
+    let _ = bits.skip(input, reader, 2)?;
+  }
   return Ok(if (current.long) { info.large_exponent } else { info.small_exponent });
 }
 
 // Keep packet stage order explicit through nonzero propagation and submap decoding.
 // fern-lint: allow cyclomatic-complexity
 pub function read(input: [u8], info: types.Info, config: setup.Setup, previous: i32, own work: dsp.Work, own spectra: f32[], own floor_values: f32[], own curve: f32[]): Result[Run, pcm.AudioError] {
-  let (b2, mode) = mode(input, config)?;
+  let (b2, mode) = mode(input, config.modes)?;
   let exponent = if (mode.long) { info.large_exponent } else { info.small_exponent };
   let reader = b2;
   if (mode.long) {

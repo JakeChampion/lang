@@ -10,6 +10,8 @@ Counts use samples per channel at the stream sample rate.
 
 ```fern
 <<*>>=
+// Map Vorbis packet durations to checked granule timestamps and playable sample ranges.
+
 import "std/audio/pcm";
 
 pub struct Timing { decoded: i64, page_end: i64, start: i64, initial: i64, seen: boolean, last_granule: i64, trim_at: Option[i64] }
