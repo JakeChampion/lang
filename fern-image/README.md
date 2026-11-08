@@ -42,6 +42,7 @@ The [JPEG XL box prerequisite](../docs/contexts/image/specs/jxl-container.md) ch
 It preserves opaque payloads and header forms. Complete container semantics and JPEG XL pixel coding remain unfinished.
 The [JPEG XL bit-field prerequisite](../docs/contexts/image/specs/jxl-bitstream.md) checks raw low-bit-first fields, logical extents and exact bounded output.
 The [JPEG XL integer prerequisite](../docs/contexts/image/specs/jxl-integers.md) checks U32 distributions and the complete unsigned U64 code in both directions.
+The [JPEG XL header prerequisite](../docs/contexts/image/specs/jxl-headers.md) reads and writes dimension, preview and animation descriptors without image allocation.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.

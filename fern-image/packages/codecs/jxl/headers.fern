@@ -1,0 +1,151 @@
+import "./bits";
+import "./u32_fields";
+import "std/array";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum HeaderError { Dimension, Value, Input(bits.BitError) }
+
+pub struct Dimensions { width: i64, height: i64, next: i64 }
+
+pub struct Animation { numerator: u32, denominator: u32, loops: u32, timecodes: boolean, next: i64 }
+
+function raw(input: [u8], position: i64, width: i32, extent: i64): Result[bits.Read, HeaderError] {
+  return match (bits.read(input, position, width, extent)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(HeaderError.Input(error)),
+  };
+}
+
+function distribution(width: i32, offset: u32): u32_fields.Distribution {
+  return u32_fields.Distribution { width: width, offset: offset };
+}
+
+function translate(error: u32_fields.IntegerError): HeaderError {
+  return match (error) {
+    u32_fields.Input(cause) => HeaderError.Input(cause),
+    _ => HeaderError.Value,
+  };
+}
+
+function integer(input: [u8], position: i64, extent: i64, choices: [u32_fields.Distribution]): Result[bits.Read, HeaderError] {
+  return match (u32_fields.read(input, position, extent, choices)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(translate(error)),
+  };
+}
+
+function integer_fields(value: u32, choices: [u32_fields.Distribution]): Result[bits.Field[], HeaderError] {
+  return match (u32_fields.fields(value, choices)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(translate(error)),
+  };
+}
+
+function dimension_choices(preview: boolean, divided: boolean): u32_fields.Distribution[] {
+  if (!preview) {
+    return [distribution(9, 1u32), distribution(13, 1u32), distribution(18, 1u32), distribution(30, 1u32)];
+  }
+  if (divided) {
+    return [distribution(0, 16u32), distribution(0, 32u32), distribution(5, 1u32), distribution(9, 33u32)];
+  }
+  return [distribution(6, 1u32), distribution(8, 65u32), distribution(10, 321u32), distribution(12, 1345u32)];
+}
+
+function ratio_width(height: i64, ratio: i32): i64 {
+  return match (ratio) {
+    1 => height,
+    2 => height * 6i64 / 5i64,
+    3 => height * 4i64 / 3i64,
+    4 => height * 3i64 / 2i64,
+    5 => height * 16i64 / 9i64,
+    6 => height * 5i64 / 4i64,
+    7 => height * 2i64,
+    _ => 0i64,
+  };
+}
+
+function find_ratio(width: i64, height: i64): i32 {
+  for ratio in 1..8 {
+    if (ratio_width(height, ratio) == width) {
+      return ratio;
+    }
+  }
+  return 0;
+}
+
+function scalar(input: [u8], position: i64, extent: i64, preview: boolean, divided: boolean): Result[bits.Read, HeaderError] {
+  if (!preview && divided) {
+    let value = raw(input, position, 5, extent)?;
+    return Ok(bits.Read { value: (value.value + 1u64) * 8u64, next: value.next });
+  }
+  let value = integer(input, position, extent, dimension_choices(preview, divided))?;
+  return Ok(bits.Read { value: value.value * (if (divided) { 8u64 } else { 1u64 }), next: value.next });
+}
+
+pub function read_dimensions(input: [u8], position: i64, extent: i64, preview: boolean): Result[Dimensions, HeaderError] {
+  let divided = raw(input, position, 1, extent)?;
+  let height = scalar(input, divided.next, extent, preview, divided.value != 0u64)?;
+  let ratio = raw(input, height.next, 3, extent)?;
+  if (ratio.value != 0u64) {
+    return Ok(Dimensions { width: ratio_width(height.value as i64, ratio.value as i32), height: height.value as i64, next: ratio.next });
+  }
+  let width = scalar(input, ratio.next, extent, preview, divided.value != 0u64)?;
+  return Ok(Dimensions { width: width.value as i64, height: height.value as i64, next: width.next });
+}
+
+function scalar_fields(value: i64, preview: boolean, divided: boolean): Result[bits.Field[], HeaderError] {
+  if (!preview && divided) {
+    return Ok([bits.Field { value: (value / 8i64 - 1i64) as u64, width: 5 }]);
+  }
+  let sample = if (divided) { value / 8i64 } else { value };
+  return integer_fields(sample as u32, dimension_choices(preview, divided));
+}
+
+function use_division(width: i64, height: i64, preview: boolean, ratio: i32): boolean {
+  if (preview) {
+    return width % 8i64 == 0i64 && height % 8i64 == 0i64 && height <= 4352i64 && (ratio != 0 || width <= 4352i64);
+  }
+  return height <= 256i64 && height % 8i64 == 0i64 && (ratio != 0 || width <= 256i64 && width % 8i64 == 0i64);
+}
+
+pub function dimension_fields(width: i64, height: i64, preview: boolean): Result[bits.Field[], HeaderError] {
+  if (width <= 0i64 || height <= 0i64 || width > 4294967295i64 || height > 4294967295i64) {
+    return Err(HeaderError.Dimension);
+  }
+  let ratio = find_ratio(width, height);
+  let divided = use_division(width, height, preview, ratio);
+  let y = scalar_fields(height, preview, divided)?;
+  let result = [bits.Field { value: if (divided) { 1u64 } else { 0u64 }, width: 1 }].concat(y).append(bits.Field { value: ratio as u64, width: 3 });
+  if (ratio != 0) {
+    return Ok(result);
+  }
+  return Ok(result.concat(scalar_fields(width, preview, divided)?));
+}
+
+function numerator_choices(): u32_fields.Distribution[] {
+  return [distribution(0, 100u32), distribution(0, 1000u32), distribution(10, 1u32), distribution(30, 1u32)];
+}
+
+function denominator_choices(): u32_fields.Distribution[] {
+  return [distribution(0, 1u32), distribution(0, 1001u32), distribution(8, 1u32), distribution(10, 1u32)];
+}
+
+function loop_choices(): u32_fields.Distribution[] {
+  return [distribution(0, 0u32), distribution(3, 0u32), distribution(16, 0u32), distribution(32, 0u32)];
+}
+
+pub function read_animation(input: [u8], position: i64, extent: i64): Result[Animation, HeaderError] {
+  let numerator = integer(input, position, extent, numerator_choices())?;
+  let denominator = integer(input, numerator.next, extent, denominator_choices())?;
+  let loops = integer(input, denominator.next, extent, loop_choices())?;
+  let timecodes = raw(input, loops.next, 1, extent)?;
+  return Ok(Animation { numerator: numerator.value as u32, denominator: denominator.value as u32, loops: loops.value as u32, timecodes: timecodes.value != 0u64, next: timecodes.next });
+}
+
+pub function animation_fields(numerator: u32, denominator: u32, loops: u32, timecodes: boolean): Result[bits.Field[], HeaderError] {
+  let n = integer_fields(numerator, numerator_choices())?;
+  let d = integer_fields(denominator, denominator_choices())?;
+  let l = integer_fields(loops, loop_choices())?;
+  return Ok(n.concat(d).concat(l).append(bits.Field { value: if (timecodes) { 1u64 } else { 0u64 }, width: 1 }));
+}

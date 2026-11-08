@@ -62,6 +62,7 @@ jobs:
           uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_boxes_test.py
           uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_bits_test.py
           uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_integers_test.py
+          uv run --no-project python -m unittest discover -s fern-image/tests -p qualify_jxl_headers_test.py
       - name: Qualify Adam7 PNG input with offline references
         run: |
           results="$(mktemp -d "$RUNNER_TEMP/png-adam7.XXXXXX")"
@@ -76,6 +77,10 @@ jobs:
           FERN: ${{ github.workspace }}/bin/fern
       - name: Qualify JPEG XL integer fields with pinned offline coders
         run: bash fern-image/scripts/test-jxl-integers-reference.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - name: Qualify JPEG XL headers with pinned offline classes
+        run: bash fern-image/scripts/test-jxl-headers-reference.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - name: Check sample transparency with offline libpng
