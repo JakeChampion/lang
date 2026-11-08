@@ -19852,6 +19852,13 @@ function lu_payload_elem_local(fx: LuFn, id: ast.ExprIdent): boolean {
 // A local declared once, outside a loop, from an own parameter at its last
 // use, and given only owned values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
+  return lu_owned_alias_in(fx, name, []);
+}
+
+function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
+  if (util.has_str(seen, name)) {
+    return false;
+  }
   if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name, [])) {
     return false;
   }
@@ -19867,6 +19874,9 @@ function lu_owned_alias(fx: LuFn, name: string): boolean {
   let Some(init) = lu_init_of(fx, name) else {
     return false;
   };
+  if let Some(m) = lu_match_value(init) {
+    return lu_moved_match_value(fx, m, seen.append(name));
+  }
   if let ast.ExprIdent(src) = init {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
@@ -19874,6 +19884,25 @@ function lu_owned_alias(fx: LuFn, name: string): boolean {
     return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
   }
   return false;
+}
+
+// A named source at its last use transfers its payload to every yielding arm.
+function lu_moved_match_value(fx: LuFn, m: ast.StmtMatch, seen: string[]): boolean {
+  let ast.ExprIdent(src) = m.scrutinee else {
+    return false;
+  };
+  if (m.arms.len() == 0 || !lu_is_last(fx, src)) {
+    return false;
+  }
+  if (!(lu_own_param(fx, src.name) || lu_fresh_bound(fx, src.name) || lu_fresh_init(fx, src.name) || lu_unpack_init(fx, src.name) || lu_owned_alias_in(fx, src.name, seen))) {
+    return false;
+  }
+  for arm in m.arms {
+    if (!lu_arm_yields_fresh(fx, arm)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The names a let declares inside a loop body.
