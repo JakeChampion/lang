@@ -103,6 +103,7 @@ jobs:
         with:
           qemu-package: qemu-user
           cross-libc: "true"
+          host-gl: "true"
       - name: build the e2e test binary
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/
@@ -143,6 +144,7 @@ jobs:
         # cost it.
         env:
           FERN_REQUIRE_ARM64_TOOLING: "1"
+          FERN_REQUIRE_HOST_GL: "1"
         run: |
           set -euo pipefail
           W="$PWD/.github/other-test-weights.txt"

@@ -18,6 +18,7 @@ TestAccessLogServeInterp 8
 TestAccessLogServeX86_64 45
 TestAliasGrowNoOverRelease 53
 TestAllocSizeOverflowAborts 59
+TestAndroidGLCanvas 2
 TestAndroidNativeFace 4
 TestAndroidStopwatchApk 2
 TestAndroidStopwatchControl 4
