@@ -138,7 +138,8 @@ The runner also accepts `--block-size`, `--channels`, `--sample-rate`, and `--qu
 - Encoder workers use detector checkpoints and exact overlap preroll. Linux decoder workers write disjoint ranges of a shared mapping.
 
 Native, ARM64/QEMU, and WASI codec units pass.
-The native integration suite covers all block sizes, channel configurations, WAV formats, window patterns, and overlap scales.
+The native integration suite covers all block sizes, WAV formats, window patterns, and overlap scales.
+It also covers mono, stereo, and three-channel inputs.
 Parallel output matches serial bytes in every tested format and rate mode.
 Exact noise tests cover all 512 ordinary run lengths and all 256 decay codes at both quantizer limits.
 
