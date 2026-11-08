@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,11 +20,22 @@ func jniBuild(t *testing.T, src string, args ...string) (string, string, error) 
 		t.Fatal(err)
 	}
 	java := filepath.Join(dir, "java")
-	full := append([]string{"-target", "arm64-android", "-jni-java", java, "-o", filepath.Join(dir, "libdemo.so")}, args...)
+	full := []string{"-target", "arm64-android", "-o", filepath.Join(dir, "libdemo.so")}
+	if slices.Contains(args, "-shared") {
+		full = append(full, "-jni-java", java)
+	}
+	full = append(full, args...)
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), append(full, path, e2eharness.SelfHostStdlibRoot(t))...)
 	cmd.Env = e2eharness.ChildEnv()
 	out, err := cmd.CombinedOutput()
 	return java, string(out), err
+}
+
+func TestJNIJavaRequiresShared(t *testing.T) {
+	_, out, err := jniBuild(t, "function main(): i32 { return 0; }\n", "-jni-java", t.TempDir())
+	if err == nil || !strings.Contains(out, "-jni-java takes effect only with -shared") {
+		t.Fatalf("want the Java output flag refusal, got %v:\n%s", err, out)
+	}
 }
 
 // The Java class that -jni-java writes: a final class with a private
