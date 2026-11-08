@@ -61,8 +61,12 @@ pub function dom_holds(d: Dom, bi: i32, di: i32): boolean {
 }
 
 pub function dominates(f: ssa.SFunc): Dom {
+  return dominates_at(f, position_of(f));
+}
+
+// The positions must describe the same graph as f.
+pub function dominates_at(f: ssa.SFunc, at: i32[]): Dom {
   let n = f.blocks.len();
-  let at = position_of(f);
   let entry = at[f.entry];
   let po = util.minus_ones(n);
   let order: i32[] = [];
@@ -167,6 +171,14 @@ pub function dominates(f: ssa.SFunc): Dom {
     bi += 1;
   }
   return Dom { pre: pre, post: post, idom: idom, by_clock: by_clock };
+}
+
+pub function reachable_from_dom(d: Dom): boolean[] {
+  let out = __alloc_bool(d.pre.len());
+  for bi in 0..d.pre.len() {
+    out = out.with(bi, d.pre[bi] >= 0);
+  }
+  return out;
 }
 
 function push_at(own stack: i32[], d: i32, v: i32): i32[] {
@@ -327,7 +339,8 @@ pub function check_graph(f: ssa.SFunc): Facts {
       return refused("undefined value");
     }
   }
-  let g = Facts { checked: true, why: "", at: at, defs: defs, positions: positions, reachable: reachable_blocks(f), dom: dominates(f) };
+  let dom = dominates_at(f, at);
+  let g = Facts { checked: true, why: "", at: at, defs: defs, positions: positions, reachable: reachable_from_dom(dom), dom: dom };
   err = uses_error(f, [], g);
   if (err != "") {
     return refused(err);

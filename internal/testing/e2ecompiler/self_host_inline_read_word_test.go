@@ -442,17 +442,88 @@ function main(): i32 {
 `
 
 func TestSelfHostInlineOpaqueReturnSummary(t *testing.T) {
-	gcc, runner := e2eharness.X86_64Tooling(t)
 	dir := t.TempDir()
 	e2eharness.CopySelfHostDriver(t, dir, "seminline.fern")
-	if err := os.WriteFile(filepath.Join(dir, "opaque-return-summary.fern"), []byte(inlineOpaqueReturnProgram), 0o644); err != nil {
+	module, err := os.OpenFile(filepath.Join(dir, "seminline.fern"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
-	bin := e2eharness.BuildSelfHostBin(t, gcc, dir, "opaque-return-summary.fern", "opaque-return-summary")
-	if out, err := e2eharness.RunX86_64Bin(runner, bin).CombinedOutput(); err != nil || !strings.HasPrefix(string(out), "ok\n") {
-		t.Fatalf("opaque return summary: %v\n%s", err, out)
+	if _, err := module.WriteString(inlineWordFlowProbe); err != nil {
+		module.Close()
+		t.Fatal(err)
+	}
+	if err := module.Close(); err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Replace(inlineOpaqueReturnProgram, "function main(): i32 {", "function main(): i32 { let flow = seminline.test_word_flow_checks(); if (flow != 0) { return flow; }", 1)
+	if source == inlineOpaqueReturnProgram {
+		t.Fatal("word-flow probe entry point is missing")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opaque-return-summary.fern"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range selfHostFusionTargets {
+		t.Run(target, func(t *testing.T) {
+			bin := e2eharness.CachedDriverBinFor(t, dir, "opaque-return-summary.fern", target)
+			if out, err := runScaleTarget(t, target, bin).CombinedOutput(); err != nil || !strings.HasPrefix(string(out), "ok\n") {
+				t.Fatalf("opaque return summary: %v\n%s", err, out)
+			}
+		})
 	}
 }
+
+const inlineWordFlowProbe = `
+function word_flow_probe_op(k: i32, r: i32, args: i32[], name: string): ssa.SInst {
+  return ssa.SInst { kind_tag: k, result: r, args: args, imm: 0, str: name };
+}
+function word_flow_probe_jump(to: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, cond: -1, target: to, t: -1, f: -1, value: -1 };
+}
+function word_flow_probe_block(id: i32, preds: i32[], insts: ssa.SInst[], term: ssa.STerm): ssa.SBlock {
+  return ssa.SBlock { id: id, preds: preds, insts: insts, term: term };
+}
+function word_flow_probe_func(blocks: ssa.SBlock[]): ssasem.Func {
+  let word: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
+  let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
+  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: false };
+  return ssasem.Func { graph: ssa.SFunc { name: "word_flow", nparams: 1, nvals: 10, entry: 0, takes_env: false, blocks: blocks }, values: [bytes, word, word, word, word, word, word, word, word, word], params: [bytes], result: word, records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false };
+}
+pub function test_word_flow_checks(): i32 {
+  let param = word_flow_probe_op(ssasem.param(), 0, [], "");
+  let seed = word_flow_probe_op(ssasem.call(), 1, [0], "__raw_arr_ptr");
+  let constant = word_flow_probe_op(1, 8, [], "");
+  let entry = word_flow_probe_block(0, [], [param, seed, constant], word_flow_probe_jump(10));
+  let dead = word_flow_probe_block(50, [50], [word_flow_probe_op(8, 5, [5], ""), word_flow_probe_op(7, 6, [5], ""), word_flow_probe_op(7, 7, [6], "")], word_flow_probe_jump(50));
+  let ret = ssa.STerm { kind_tag: 1, cond: -1, target: -1, t: -1, f: -1, value: 4 };
+  let tail = word_flow_probe_block(30, [20], [word_flow_probe_op(7, 4, [3], "")], ret);
+  let middle = word_flow_probe_block(20, [10], [word_flow_probe_op(7, 3, [2], "")], word_flow_probe_jump(30));
+  let first = word_flow_probe_block(10, [0], [word_flow_probe_op(7, 2, [1], "")], word_flow_probe_jump(20));
+  let chain = word_flow_probe_func([entry, tail, middle, first, dead]);
+  let cycle = word_flow_probe_func([entry, word_flow_probe_block(20, [10], [word_flow_probe_op(7, 3, [2], "")], word_flow_probe_jump(10)), word_flow_probe_block(10, [0, 20], [word_flow_probe_op(8, 2, [1, 3], ""), word_flow_probe_op(7, 4, [2], "")], word_flow_probe_jump(20)), dead]);
+  let const_ret = ssa.STerm { ...ret, value: 8 };
+  let const_tail = word_flow_probe_block(30, [20], [word_flow_probe_op(7, 4, [3], ""), word_flow_probe_op(ssasem.call(), -1, [8], "consume_word")], const_ret);
+  let mixed = word_flow_probe_func([entry, const_tail, middle, first, dead]);
+  let read_tail = word_flow_probe_block(30, [20], [word_flow_probe_op(7, 4, [3], ""), word_flow_probe_op(ssasem.call(), -1, [4], "consume_word")], const_ret);
+  let consumed = word_flow_probe_func([entry, read_tail, middle, first, dead]);
+  let owners = resource_owners([]);
+  let names = util.name_index([]);
+  for f in [chain, cycle, mixed, consumed] {
+    let checked = ssadeps.check_graph(f.graph);
+    if (checked.why != "") { print(checked.why); return 90; }
+    let read = read_word_values(f, [], names, [], owners);
+    if (read.len() != 10) { print("word flow length"); return 91; }
+    for v in 0..read.len() {
+      if (((read[v] & 2u8) != 0u8) != (v >= 1 && v <= 4)) { print("word flow closure"); return 92; }
+    }
+  }
+  if (!returns_word(chain, [], names, [], owners) || returns_word(mixed, [], names, [], owners)) { print("word flow return"); return 94; }
+  if (calls_with_read_word(mixed, [], names, [], owners) || !calls_with_read_word(consumed, [], names, [], owners)) { print("word flow consumer"); return 95; }
+  let zero = word_flow_probe_block(0, [], [param, word_flow_probe_op(1, 1, [], ""), constant], word_flow_probe_jump(10));
+  let unseeded = word_flow_probe_func([zero, tail, middle, first, dead]);
+  if (read_word_values(unseeded, [], names, [], owners).len() != 0) { print("unseeded word flow"); return 93; }
+  return 0;
+}
+`
 
 const inlineParentClosureOwnerProgram = `import "core/mem";
 struct Blk { h: usize }

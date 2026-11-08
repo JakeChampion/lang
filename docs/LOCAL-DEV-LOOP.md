@@ -95,10 +95,22 @@ fetch the notes ref first, so they need the remote; nothing else is hosted.
 
 Build two compiler snapshots with `bootstrap/bootstrap.sh distcheck`, then run
 `scripts/native-pair-bench BASE_COMPILER CANDIDATE_COMPILER FIXED_SOURCE_ROOT REPORT`.
-It measures X25519 programs emitted by each compiler and the native compilers
-compiling the same checker source. It alternates execution order on one host,
-checks program results, and records every timing and compiler hash in JSON.
-Timing ratios are informational; instruction-count baselines remain the gates.
+
+It measures X25519 and calendar programs from each compiler.
+It also measures both compilers on the same checker source.
+It alternates execution order on one host and checks program results.
+The JSON report records every duration and compiler hash.
+Timing ratios are informational. Instruction-count baselines remain the gates.
+
+The compiler comparison keeps ownership certification enabled in both modes.
+The `compiler_cold` field disables the proof cache.
+The `compiler` field measures warm proof caches in separate temporary directories.
+Each compiler runs once before each mode to initialize that mode.
+This separation exposes certification costs that a warm proof cache can hide.
+
+The default uses seven pairs per compiler mode and 15 pairs per program.
+Use `--compiler-pairs N` to change the compiler sample count.
+Build without `-g` for production measurements because debug variables can prevent scalar replacement.
 
 For an Apple Silicon measurement, dispatch the Perf workflow on the candidate
 branch with `native_baseline` set to the baseline commit. That optional mode

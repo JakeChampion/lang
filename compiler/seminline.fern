@@ -344,18 +344,29 @@ function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
 // only while the memory's owner lives. A call keeps its arguments alive until
 // it returns, but in a spliced body the caller can release the owner after
 // its last read, before a call that uses the word.
-function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean[] {
+function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): u8[] {
   if (!has_word_seed(f, funcs, ix, words, owners)) {
     return [];
   }
-  let read = none_of(f.values.len());
+  // Bit 0 marks eligible values. Bit 1 marks words read from memory.
+  let read = __alloc_u8(f.values.len());
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && (read[ins.result] & 2u8) == 0u8 && can_hold_word(f.values[ins.result]) && !copied_load(ins, f)) {
+        read = read.with(ins.result, 1u8);
+        if (memory_read(ins, f, funcs, ix, words, owners) || reads_any(ins.args, read)) {
+          read = read.with(ins.result, 3u8);
+        }
+      }
+    }
+  }
   let more = true;
   while (more) {
     more = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        if (ins.result >= 0 && !read[ins.result] && can_hold_word(f.values[ins.result]) && !copied_load(ins, f) && (memory_read(ins, f, funcs, ix, words, owners) || reads_any(ins.args, read))) {
-          read = read.with(ins.result, true);
+        if (ins.result >= 0 && read[ins.result] == 1u8 && reads_any(ins.args, read)) {
+          read = read.with(ins.result, 3u8);
           more = true;
         }
       }
@@ -465,7 +476,7 @@ function returns_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, 
     return false;
   }
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && read[b.term.value]) {
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && (read[b.term.value] & 2u8) != 0u8) {
       return true;
     }
     for ins in b.insts {
@@ -563,9 +574,9 @@ function copied_scalar_result(name: string): boolean {
     || name == "__rmemchr" || name == "__mismatch";
 }
 
-function reads_any(args: i32[], read: boolean[]): boolean {
+function reads_any(args: i32[], read: u8[]): boolean {
   for a in args {
-    if (a >= 0 && read[a]) {
+    if (a >= 0 && (read[a] & 2u8) != 0u8) {
       return true;
     }
   }
@@ -1678,11 +1689,10 @@ function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
 }
 
 function none_of(n: i32): boolean[] {
-  let out: boolean[] = [];
-  for _ in 0..n {
-    out = out.append(false);
+  if (n <= 0) {
+    return [];
   }
-  return out;
+  return __alloc_bool(n);
 }
 
 function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {

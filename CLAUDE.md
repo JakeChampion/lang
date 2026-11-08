@@ -42,6 +42,11 @@ everything it provides. Where a module has a best-in-class counterpart elsewhere
 (simdjson for JSON, #12105), that is the benchmark to beat, measured, not a
 target to approach; speed comes from the compiler and the runtime kernels first.
 
+The **parser and self-hosted compiler aim to be among the fastest in the world**.
+Measure complete compilation, memory use, and generated code as well as parser
+throughput. `docs/COMPILER-PERFORMANCE.md` defines the measurement process and
+the current priorities. Speed claims require repeatable comparisons.
+
 The reach goes below the OS as well: hosted apps, guest libraries inside someone
 else's firmware, drivers, and kernels are all targets, anchored by the long-term
 goal of an **entire OS written in Fern** — `docs/BARE-METAL-PLAN.md` for what that
