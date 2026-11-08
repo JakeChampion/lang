@@ -1,6 +1,7 @@
 // The pixels of Paper on the GPU. Each node becomes an image once, and each
 // frame draws those images at their places, so a scroll, a fling or a slide
-// costs the CPU almost nothing.
+// costs the CPU almost nothing. Text draws from a glyph atlas, so a new
+// label costs only the glyphs that the atlas does not hold yet.
 import "core/map";
 import "std/android";
 import "std/android/draw";
@@ -16,15 +17,19 @@ struct Image { t: gl.Texture, m: i32 }
 // its images while the app has no window. `images` holds the image of each
 // node by its key, and `bytes` their size. `backdrop` is the screen of the
 // wallpaper below the paper colour, for the wallpaper and for the fades at
-// the edges of a list.
-pub struct Painter { canvas: Option[gl.Canvas], images: Map[string, Image], bytes: i64, cache: face.Cache, fonts: face.Fonts, wall: draw.Frame, d: f64, w: i32, h: i32, backdrop: gl.Texture, backdrop_key: string }
+// the edges of a list. `atlas` holds the glyphs, and `slots` the slot of
+// each glyph by its key.
+pub struct Painter { canvas: Option[gl.Canvas], images: Map[string, Image], bytes: i64, atlas: gl.Atlas, slots: Map[i64, gl.Slot], cache: face.Cache, fonts: face.Fonts, wall: draw.Frame, d: f64, w: i32, h: i32, backdrop: gl.Texture, backdrop_key: string }
 
 // The size of the images, in bytes, above which a frame frees the images
 // that it did not draw.
 const BUDGET: i64 = 100663296i64;
 
+// The side of a page of the glyph atlas, in texels.
+const ATLAS_SIZE: i32 = 1024;
+
 pub function painter(fonts: face.Fonts): Painter {
-  return Painter { canvas: None, images: map_new(256), bytes: 0i64, cache: face.new_cache(), fonts: fonts, wall: draw.offscreen(0, 0), d: 2.0, w: 0, h: 0, backdrop: no_texture(), backdrop_key: "" };
+  return Painter { canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), cache: face.new_cache(), fonts: fonts, wall: draw.offscreen(0, 0), d: 2.0, w: 0, h: 0, backdrop: no_texture(), backdrop_key: "" };
 }
 
 function no_texture(): gl.Texture {
@@ -76,6 +81,7 @@ pub function close(p: Painter): Painter {
     gl.free(img.t);
   }
   gl.free(p.backdrop);
+  gl.free_atlas(p.atlas);
   gl.close(c);
   return forget(p);
 }
@@ -83,7 +89,7 @@ pub function close(p: Painter): Painter {
 // The painter with no canvas and no images, which it does not free: the
 // device lost them with the context.
 function forget(p: Painter): Painter {
-  return Painter { ...p, canvas: None, images: map_new(256), bytes: 0i64, backdrop: no_texture(), backdrop_key: "" };
+  return Painter { ...p, canvas: None, images: map_new(256), bytes: 0i64, atlas: gl.atlas(ATLAS_SIZE), slots: map_new(512), backdrop: no_texture(), backdrop_key: "" };
 }
 
 // The painter for a screen of w by h at the density `d`, with the wallpaper
@@ -189,10 +195,38 @@ function draw_node(own p: Painter, c: gl.Canvas, n: ui.Node, dy: i32): Painter {
     ui.Underline(color) => {
       return solid(p, c, n, color, dy);
     },
+    ui.Label(text, px, weight, track, color) => {
+      return draw_text(p, c, n, Text { s: text, px: px, weight: weight, track: track, color: color }, dy);
+    },
     _ => {
       return draw_image(p, c, n, dy);
     }
   }
+}
+
+// A label: its text, size, weight, letter spacing and colour.
+struct Text { s: string, px: i32, weight: i32, track: i32, color: i32 }
+
+// Draws the label `t` of node `n` from the glyph atlas, with its first pen
+// at the left of the node and its baseline at the ascent below the top.
+function draw_text(own p: Painter, c: gl.Canvas, n: ui.Node, t: Text, dy: i32): Painter {
+  let (cache, placed) = face.layout(p.cache, p.fonts, t.weight, t.px, t.track, t.s);
+  let q = Painter { ...p, cache: cache };
+  let base = n.y + dy + face.ascent(p.fonts, t.weight, t.px);
+  let glyphs: gl.Glyph[] = [];
+  for pl in placed {
+    if (pl.bm.width > 0) {
+      if (q.slots.get(pl.key).is_none()) {
+        let (a, slot) = q.atlas.add(pl.bm.width, pl.bm.height, pl.bm.coverage);
+        q = Painter { ...q, atlas: a, slots: q.slots.insert(pl.key, slot) };
+      }
+      if let Some(slot) = q.slots.get(pl.key) {
+        glyphs = glyphs.append(gl.Glyph { slot: slot, x: n.x + pl.x, y: base + pl.bm.top });
+      }
+    }
+  }
+  c.draw_glyphs(q.atlas, glyphs, t.color, 1.0, n.clip0 + dy, n.clip1 + dy);
+  return q;
 }
 
 // A rectangle of one colour: an image of one pixel, on the whole node.

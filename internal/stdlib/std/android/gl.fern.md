@@ -39,6 +39,8 @@ The root chunk keeps the order of the declarations.
 <<canvas>>
 
 <<drawing>>
+
+<<glyphs>>
 ```
 
 ### `module introduction`
@@ -157,6 +159,9 @@ function gl_attrib_pointer(index: i32, size: i32, kind: i32, normalized: i32, st
 @import("libGLESv2.so", "glEnableVertexAttribArray")
 function gl_enable_attrib(index: i32): void;
 
+@import("libGLESv2.so", "glDisableVertexAttribArray")
+function gl_disable_attrib(index: i32): void;
+
 @import("libGLESv2.so", "glGenTextures")
 function gl_gen_textures(n: i32, out: usize): void;
 
@@ -174,6 +179,9 @@ function gl_pixel_store(name: i32, value: i32): void;
 
 @import("libGLESv2.so", "glTexImage2D")
 function gl_tex_image(target: i32, level: i32, inner: i32, width: i32, height: i32, border: i32, format: i32, kind: i32, pixels: usize): void;
+
+@import("libGLESv2.so", "glTexSubImage2D")
+function gl_tex_sub_image(target: i32, level: i32, x: i32, y: i32, width: i32, height: i32, format: i32, kind: i32, pixels: usize): void;
 
 @import("libGLESv2.so", "glGenFramebuffers")
 function gl_gen_framebuffers(n: i32, out: usize): void;
@@ -225,11 +233,17 @@ function gl_finish(): void;
 
 One program draws each quad. The vertex shader puts the unit square on the rectangle `u_dst` of the window, and takes the texture coordinates from the rectangle `u_src`. The fragment shader multiplies the premultiplied texel by the alpha and by the ramp `u_fade`: the alpha goes from `u_fade.z` at row `u_fade.x` to `u_fade.w` at row `u_fade.y`. A row is the centre of a pixel less half a pixel, so the ramp starts on the first row. The texture coordinates need high precision, so the fragment shader asks for it where the GPU has it.
 
+A second program draws text. Each glyph is two triangles, with a position on the window and a position in the atlas at each corner. The fragment shader multiplies the premultiplied colour `u_color` by the coverage of the glyph in the atlas.
+
 ```fern
 <<shaders>>=
 const VERTEX_SHADER: string = "attribute vec2 a_pos;\nuniform vec2 u_screen;\nuniform vec4 u_dst;\nuniform vec4 u_src;\nvarying vec2 v_uv;\nvarying float v_y;\nvoid main() {\n  vec2 p = u_dst.xy + a_pos * u_dst.zw;\n  v_uv = mix(u_src.xy, u_src.zw, a_pos);\n  v_y = p.y;\n  gl_Position = vec4(p.x / u_screen.x * 2.0 - 1.0, 1.0 - p.y / u_screen.y * 2.0, 0.0, 1.0);\n}\n";
 
 const FRAGMENT_SHADER: string = "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\nuniform sampler2D u_tex;\nuniform float u_alpha;\nuniform vec4 u_fade;\nvarying vec2 v_uv;\nvarying float v_y;\nvoid main() {\n  float t = clamp((v_y - 0.5 - u_fade.x) / (u_fade.y - u_fade.x), 0.0, 1.0);\n  gl_FragColor = texture2D(u_tex, v_uv) * (u_alpha * mix(u_fade.z, u_fade.w, t));\n}\n";
+
+const TEXT_VERTEX_SHADER: string = "attribute vec2 a_pos;\nattribute vec2 a_uv;\nuniform vec2 u_screen;\nvarying vec2 v_uv;\nvoid main() {\n  v_uv = a_uv;\n  gl_Position = vec4(a_pos.x / u_screen.x * 2.0 - 1.0, 1.0 - a_pos.y / u_screen.y * 2.0, 0.0, 1.0);\n}\n";
+
+const TEXT_FRAGMENT_SHADER: string = "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\nuniform sampler2D u_atlas;\nuniform vec4 u_color;\nvarying vec2 v_uv;\nvoid main() {\n  gl_FragColor = u_color * texture2D(u_atlas, v_uv).a;\n}\n";
 
 const GL_VERTEX_SHADER: i32 = 35633;
 
@@ -264,20 +278,22 @@ function shader(kind: i32, source: string): i32 {
   return id;
 }
 
-// The program of the two shaders, with the attribute a_pos at 0, or 0 when
-// it does not link.
-function program(): i32 {
-  let vs = shader(GL_VERTEX_SHADER, VERTEX_SHADER);
-  let fs = shader(GL_FRAGMENT_SHADER, FRAGMENT_SHADER);
+// The program of the shaders from `vertex` and `fragment`, with each
+// attribute of `attributes` at its index, or 0 when it does not link.
+function program(vertex: string, fragment: string, attributes: string[]): i32 {
+  let vs = shader(GL_VERTEX_SHADER, vertex);
+  let fs = shader(GL_FRAGMENT_SHADER, fragment);
   if (vs == 0 || fs == 0) {
     return 0;
   }
   let id = gl_create_program();
   gl_attach_shader(id, vs);
   gl_attach_shader(id, fs);
-  let name = jni.cstr("a_pos");
-  gl_bind_attrib(id, 0, name);
-  jni.free_buffer(name);
+  for i in 0..attributes.len() {
+    let name = jni.cstr(attributes[i]);
+    gl_bind_attrib(id, i, name);
+    jni.free_buffer(name);
+  }
   gl_link_program(id);
   gl_delete_shader(vs);
   gl_delete_shader(fs);
@@ -312,10 +328,13 @@ function uniform(program: i32, name: string): i32 {
 <<canvas>>=
 struct Places { screen: i32, dst: i32, src: i32, alpha: i32, fade: i32, tex: i32 }
 
+// The text program and the locations of its uniforms.
+struct TextPlaces { program: i32, screen: i32, color: i32, atlas: i32 }
+
 // `pbuffer` is the surface of one pixel that keeps the context current.
 // `surface` is the surface that the canvas draws on: a window, an image, or
 // `pbuffer` when the canvas is detached. `window` is 0 off a window.
-pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32 }
+pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32 }
 
 // What `present` did: it showed the frame, the canvas has no window, or the
 // device lost the context.
@@ -544,10 +563,14 @@ function fail(d: usize, surface: usize, ctx: usize): Option[Canvas] {
 // The canvas with its program, its quad and its layer, once its context is
 // current.
 function start(d: usize, config: usize, pbuffer: usize, ctx: usize): Option[Canvas] {
-  let p = program();
-  if (p == 0) {
+  let p = program(VERTEX_SHADER, FRAGMENT_SHADER, ["a_pos"]);
+  let tp = program(TEXT_VERTEX_SHADER, TEXT_FRAGMENT_SHADER, ["a_pos", "a_uv"]);
+  if (p == 0 || tp == 0) {
     return fail(d, pbuffer, ctx);
   }
+  let text = TextPlaces { program: tp, screen: uniform(tp, "u_screen"), color: uniform(tp, "u_color"), atlas: uniform(tp, "u_atlas") };
+  gl_use_program(tp);
+  gl_uniform1i(text.atlas, 0);
   gl_use_program(p);
   let places = Places { screen: uniform(p, "u_screen"), dst: uniform(p, "u_dst"), src: uniform(p, "u_src"), alpha: uniform(p, "u_alpha"), fade: uniform(p, "u_fade"), tex: uniform(p, "u_tex") };
   gl_uniform1i(places.tex, 0);
@@ -563,7 +586,7 @@ function start(d: usize, config: usize, pbuffer: usize, ctx: usize): Option[Canv
     gl_enable(GL_BLEND);
     gl_blend_func(1, GL_ONE_MINUS_SRC_ALPHA);
     gl_enable(GL_SCISSOR_TEST);
-    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0 };
+    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0 };
     return Some(c.sized(1, 1));
   }
 }
@@ -575,6 +598,9 @@ pub function (c: Canvas) sized(width: i32, height: i32): Canvas {
   }
   free_layer(c);
   gl_viewport(0, 0, width, height);
+  gl_use_program(c.text.program);
+  gl_uniform2f(c.text.screen, width as f32, height as f32);
+  gl_use_program(c.program);
   gl_uniform2f(c.places.screen, width as f32, height as f32);
   let tex = blank(width, height);
   let fb = 0;
@@ -774,5 +800,164 @@ function (c: Canvas) quad_of(id: i32, to: Part, u0: f32, v0: f32, u1: f32, v1: f
   gl_uniform1f(c.places.alpha, alpha as f32);
   gl_uniform4f(c.places.fade, fade.y0 as f32, fade.y1 as f32, fade.a0 as f32, fade.a1 as f32);
   gl_draw_arrays(5, 0, 4);
+}
+```
+
+### `glyphs`
+
+An `Atlas` holds the coverage of glyphs in pages of `size` by `size` texels, one byte for each texel. `add` puts a glyph on the shelf of the last page: the glyphs of a shelf go left to right, and a new shelf starts under the tallest glyph of the shelf above. When a glyph does not fit on the last page, `add` starts a new page. Each glyph has a border of one empty texel, so a glyph never shows the edge of its neighbour.
+
+`draw_glyphs` draws the glyphs of a text in one colour. It makes one draw call for each page that the glyphs are on, and then puts the quad program back.
+
+```fern
+<<glyphs>>=
+const GL_ALPHA: i32 = 6406;
+
+const GL_UNPACK_ALIGNMENT: i32 = 3317;
+
+const GL_TRIANGLES: i32 = 4;
+
+// Pages of glyph coverage. The cursor is at x and y on the last page, and
+// `row` is the height of the shelf there.
+pub struct Atlas { pages: i32[], size: i32, x: i32, y: i32, row: i32 }
+
+// Where a glyph of w by h is: on page `page`, at x and y.
+pub struct Slot { page: i32, x: i32, y: i32, w: i32, h: i32 }
+
+// The glyph in `slot` with its top left corner at x and y on the window.
+pub struct Glyph { slot: Slot, x: i32, y: i32 }
+
+// An atlas with no pages, which `add` makes pages of `size` by `size` for.
+pub function atlas(size: i32): Atlas {
+  return Atlas { pages: [], size: size, x: 0, y: 0, row: 0 };
+}
+
+// Frees each page of the atlas.
+pub function free_atlas(a: Atlas): void {
+  for id in a.pages {
+    free(Texture { id: id, width: a.size, height: a.size });
+  }
+}
+
+// The atlas with the coverage `cov` of w by h added, and its slot. A glyph
+// larger than a page gets a slot of no size.
+pub function (a: Atlas) add(w: i32, h: i32, cov: [u8]): (Atlas, Slot) {
+  if (w <= 0 || h <= 0 || w + 2 > a.size || h + 2 > a.size || cov.len() < w * h) {
+    return (a, Slot { page: 0, x: 0, y: 0, w: 0, h: 0 });
+  }
+  let at = a;
+  if (at.x + w + 2 > at.size) {
+    at = Atlas { ...at, x: 0, y: at.y + at.row, row: 0 };
+  }
+  if (at.pages.len() == 0 || at.y + h + 2 > at.size) {
+    at = Atlas { ...at, pages: at.pages.append(page(at.size)), x: 0, y: 0, row: 0 };
+  }
+  upload_glyph(at.pages[at.pages.len() - 1], at.x, at.y, w, h, cov);
+  let slot = Slot { page: at.pages.len() - 1, x: at.x + 1, y: at.y + 1, w: w, h: h };
+  return (Atlas { ...at, x: at.x + w + 2, row: at.row.max(h + 2) }, slot);
+}
+
+// A page of `size` by `size` texels.
+function page(size: i32): i32 {
+  let id = 0;
+  unsafe {
+    let out: usize = __alloc(8);
+    gl_gen_textures(1, out);
+    id = __load_i32(out);
+    __free(out, 8);
+  }
+  gl_bind_texture(GL_TEXTURE_2D, id);
+  gl_tex_parameter(GL_TEXTURE_2D, 10241, 9728);
+  gl_tex_parameter(GL_TEXTURE_2D, 10240, 9728);
+  gl_tex_parameter(GL_TEXTURE_2D, 10242, 33071);
+  gl_tex_parameter(GL_TEXTURE_2D, 10243, 33071);
+  gl_pixel_store(GL_UNPACK_ALIGNMENT, 1);
+  gl_tex_image(GL_TEXTURE_2D, 0, GL_ALPHA, size, size, 0, GL_ALPHA, GL_UNSIGNED_BYTE, 0 as usize);
+  gl_pixel_store(GL_UNPACK_ALIGNMENT, 4);
+  return id;
+}
+
+// Writes `cov` of w by h into page `id` with its border, from x and y.
+function upload_glyph(id: i32, x: i32, y: i32, w: i32, h: i32, cov: [u8]): void {
+  let bw = w + 2;
+  let bh = h + 2;
+  unsafe {
+    let buf: usize = __alloc(bw * bh);
+    for i in 0..bw * bh {
+      __store_u8(buf + i as usize, 0);
+    }
+    for row in 0..h {
+      for col in 0..w {
+        __store_u8(buf + ((row + 1) * bw + col + 1) as usize, cov[row * w + col] as i32);
+      }
+    }
+    gl_bind_texture(GL_TEXTURE_2D, id);
+    gl_pixel_store(GL_UNPACK_ALIGNMENT, 1);
+    gl_tex_sub_image(GL_TEXTURE_2D, 0, x, y, bw, bh, GL_ALPHA, GL_UNSIGNED_BYTE, buf);
+    gl_pixel_store(GL_UNPACK_ALIGNMENT, 4);
+    __free(buf, bw * bh);
+  }
+}
+
+// Draws the glyphs `gs` of the atlas `a` in `color`, with the alpha
+// `alpha`, on the rows from clip0 up to clip1.
+pub function (c: Canvas) draw_glyphs(a: Atlas, gs: Glyph[], color: i32, alpha: f64, clip0: i32, clip1: i32): void {
+  let top = clip0.max(0);
+  let bottom = clip1.min(c.height);
+  if (bottom <= top || alpha <= 0.0 || gs.len() == 0) {
+    return;
+  }
+  gl_scissor(0, c.height - bottom, c.width, bottom - top);
+  gl_use_program(c.text.program);
+  let k = (color >> 24 & 255) as f64 / 255.0 * alpha;
+  gl_uniform4f(c.text.color, ((color & 255) as f64 / 255.0 * k) as f32, ((color >> 8 & 255) as f64 / 255.0 * k) as f32, ((color >> 16 & 255) as f64 / 255.0 * k) as f32, k as f32);
+  gl_enable_attrib(1);
+  for pg in 0..a.pages.len() {
+    c.glyph_page(a, gs, pg);
+  }
+  gl_disable_attrib(1);
+  gl_use_program(c.program);
+  gl_attrib_pointer(0, 2, GL_FLOAT, 0, 0, c.quad);
+}
+
+// Draws the glyphs of `gs` on page `pg` in one draw call. Each glyph is six
+// corners of four floats: x and y on the window, and u and v in the atlas.
+function (c: Canvas) glyph_page(a: Atlas, gs: Glyph[], pg: i32): void {
+  let n = 0;
+  for g in gs {
+    if (g.slot.page == pg && g.slot.w > 0) {
+      n += 1;
+    }
+  }
+  if (n == 0) {
+    return;
+  }
+  let size = a.size as f32;
+  unsafe {
+    let buf: usize = __alloc(n * 96);
+    let at = 0;
+    for g in gs {
+      if (g.slot.page == pg && g.slot.w > 0) {
+        let x0 = g.x as f32;
+        let y0 = g.y as f32;
+        let x1 = (g.x + g.slot.w) as f32;
+        let y1 = (g.y + g.slot.h) as f32;
+        let u0 = g.slot.x as f32 / size;
+        let v0 = g.slot.y as f32 / size;
+        let u1 = (g.slot.x + g.slot.w) as f32 / size;
+        let v1 = (g.slot.y + g.slot.h) as f32 / size;
+        let corners = [x0, y0, u0, v0, x1, y0, u1, v0, x0, y1, u0, v1, x1, y0, u1, v0, x1, y1, u1, v1, x0, y1, u0, v1];
+        for i in 0..24 {
+          __store_i32(buf + (at + 4 * i) as usize, f32_bits(corners[i]));
+        }
+        at += 96;
+      }
+    }
+    gl_bind_texture(GL_TEXTURE_2D, a.pages[pg]);
+    gl_attrib_pointer(0, 2, GL_FLOAT, 0, 16, buf);
+    gl_attrib_pointer(1, 2, GL_FLOAT, 0, 16, buf + 8 as usize);
+    gl_draw_arrays(GL_TRIANGLES, 0, 6 * n);
+    __free(buf, n * 96);
+  }
 }
 ```
