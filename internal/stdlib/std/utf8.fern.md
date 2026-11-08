@@ -4,7 +4,10 @@ This module encodes, decodes, and validates UTF-8 code points.
 
 ## Model
 
-UTF-8 helpers convert between encoded bytes and Unicode scalar values. A decode-at operation returns both a scalar and the next byte position.
+UTF-8 helpers convert between encoded bytes and Unicode scalar values.
+`decode_at(s, offset)` returns `Some((scalar, byte_width))` for a valid scalar at that byte offset.
+The next byte position is `offset + byte_width`.
+For example, `decode_at("Aé€", 3)` returns `Some((8364, 3))`, so the next position is 6.
 
 ## Contracts
 
