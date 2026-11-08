@@ -1,7 +1,7 @@
 # ULC benchmarks
 
 Measured on 2026-11-08 with an Intel Xeon Platinum 8573C and a four-CPU container quota.
-Fern has lower median elapsed time in all 32 measured rows against the tuned upstream C tools.
+The default-block measurements below give Fern lower median elapsed time in all 32 rows against the tuned upstream C tools.
 The narrowest lead is 1.039× for long, single-worker noise decoding.
 These results cover the configurations below and do not establish a universal performance ranking.
 
@@ -149,6 +149,66 @@ The sanitizer unit run reports 191613 allocations, 191613 frees, and zero live b
 
 These synthetic inputs do not replace speech and music collections, other hardware, or listening panels.
 The measurements do not establish speed for other quality settings, block sizes, or rate-control modes.
+
+## Extended block-size measurements
+
+Source `c5ee7dbac904297c54e5e4acaec99bb2f55886c8` adds faster plan construction and deferred serial decoder plans.
+These measurements use the same C build, CPU affinity, quality, and alternating execution order as above.
+Each row has eleven repetitions and one worker.
+The endpoint inputs last ten seconds.
+The default-block inputs last 100 seconds.
+
+The results still show gaps for small-block encoding and large-block decoding.
+The default-block noise decode margin is narrow.
+These records preserve those losses and do not establish a universal speed ranking.
+
+| Block size | Input | Operation | C/Fern ratio |
+| ---: | --- | --- | ---: |
+| 256 | silence | encode | 1.447 |
+| 256 | silence | decode | 2.515 |
+| 256 | tone | encode | 0.985 |
+| 256 | tone | decode | 1.382 |
+| 256 | noise | encode | 0.965 |
+| 256 | noise | decode | 1.156 |
+| 256 | transients | encode | 0.986 |
+| 256 | transients | decode | 1.157 |
+| 2048 | silence | encode | 1.419 |
+| 2048 | silence | decode | 1.917 |
+| 2048 | tone | encode | 1.150 |
+| 2048 | tone | decode | 1.149 |
+| 2048 | noise | encode | 1.088 |
+| 2048 | noise | decode | 1.013 |
+| 2048 | transients | encode | 1.165 |
+| 2048 | transients | decode | 1.201 |
+| 32768 | silence | encode | 1.390 |
+| 32768 | silence | decode | 2.270 |
+| 32768 | tone | encode | 1.329 |
+| 32768 | tone | decode | 0.918 |
+| 32768 | noise | encode | 1.326 |
+| 32768 | noise | decode | 0.803 |
+| 32768 | transients | encode | 1.262 |
+| 32768 | transients | decode | 0.948 |
+
+Raw records: [256 samples](x86-64-setup-one-worker-256.json), [2048 samples](x86-64-setup-one-worker-2048.json), and [32768 samples](x86-64-setup-one-worker-32768.json).
+
+The optional `--oracle` argument selects `tests/reference64.fern`, which uses a double-precision FFT and overlap.
+The oracle runs outside the timed repetitions.
+The runner records each decoder's maximum and RMS error against this reference.
+It keeps the strict `1e-5` bound for Fern.
+Without this option, the runner keeps its original C/Fern comparison.
+
+At 32768 samples, tuned C differs from this reference by up to `3.11e-5` on the noise stream.
+Fern differs by at most `2.38e-7` across the endpoint fixtures.
+This check attributes the difference without accepting a wider Fern error bound.
+
+Build the oracle from the measured checkout:
+
+```sh
+/tmp/fern-ulc -target x86-64-linux -stdlib internal/stdlib \
+  -o /tmp/ulc-reference64 examples/ulc/tests/reference64.fern
+```
+
+Add `--oracle /tmp/ulc-reference64 --block-size 32768` to the benchmark command for the large-block comparison.
 
 ## Earlier measurements
 

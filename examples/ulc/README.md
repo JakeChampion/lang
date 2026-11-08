@@ -144,6 +144,7 @@ function example(input: u8[]): Result[f64[], string] {
 Save `block.state` for the next call.
 Advance the input offset to `block.next_byte`.
 Output samples are interleaved.
+Use `codec.decode_block_precise` for a double-precision FFT with the same state and offset contract.
 
 `encoder.create(block_size, channels, rate, mode)` creates an encoder state.
 Modes are `encoder.Vbr(quality)`, `encoder.Cbr(kbps)`, and `encoder.Abr(kbps, average_complexity)`.
@@ -189,6 +190,7 @@ Python 3 is necessary for the CLI tests.
 
 The example CI entry point is `examples/tests/ulc_codec.fern`.
 `TestSelfHostULCNativeCLI` runs the CLI integration suite on native CI.
+`TestSelfHostULCAccuracy` compares file output with the double-precision FFT at both block-size limits.
 `TestSelfHostULCCLIWASI` checks the portable CLI build and entry point.
 `TestSelfHostULCUnit` and `TestSelfHostULCUnitWASI` run the full codec unit suite.
 
