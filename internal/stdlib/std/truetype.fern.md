@@ -177,27 +177,35 @@ function cmap_subtable(b: [u8], cmap: i32): (i32, i32) {
 
 // The glyph of the code point `cp`, or 0, the glyph of a missing character.
 pub function (f: Font) glyph(cp: i32): i32 {
-  let b = f.data;
-  let t = f.cmap;
   if (f.cmap_format == 12) {
-    let lo = 0;
-    let hi = u32_at(b, t + 12) - 1;
-    while (lo <= hi) {
-      let mid = (lo + hi) / 2;
-      let g = t + 16 + 12 * mid;
-      if (cp < u32_at(b, g)) {
-        hi = mid - 1;
-      } else if (cp > u32_at(b, g + 4)) {
-        lo = mid + 1;
-      } else {
-        return u32_at(b, g + 8) + cp - u32_at(b, g);
-      }
-    }
-    return 0;
+    return groups_glyph(f.data, f.cmap, cp);
   }
   if (cp > 65535) {
     return 0;
   }
+  return segments_glyph(f.data, f.cmap, cp);
+}
+
+// The glyph of `cp` in the groups of a format 12 cmap subtable at `t`.
+function groups_glyph(b: u8[], t: i32, cp: i32): i32 {
+  let lo = 0;
+  let hi = u32_at(b, t + 12) - 1;
+  while (lo <= hi) {
+    let mid = (lo + hi) / 2;
+    let g = t + 16 + 12 * mid;
+    if (cp < u32_at(b, g)) {
+      hi = mid - 1;
+    } else if (cp > u32_at(b, g + 4)) {
+      lo = mid + 1;
+    } else {
+      return u32_at(b, g + 8) + cp - u32_at(b, g);
+    }
+  }
+  return 0;
+}
+
+// The glyph of `cp` in the segments of a format 4 cmap subtable at `t`.
+function segments_glyph(b: u8[], t: i32, cp: i32): i32 {
   let segs = u16_at(b, t + 6) / 2;
   let ends = t + 14;
   let starts = ends + 2 * segs + 2;
@@ -738,28 +746,7 @@ function curve(r: Raster, x0: f64, y0: f64, cx: f64, cy: f64, x1: f64, y1: f64):
 pub function (f: Font) render(g: i32, px: f64, dx: f64): Bitmap {
   let cs = contours(f, g, 0);
   let scale = px / (f.units_per_em as f64);
-  let minx = 1.0e9;
-  let miny = 1.0e9;
-  let maxx = -1.0e9;
-  let maxy = -1.0e9;
-  for c in cs {
-    for p in c {
-      let x = p.x * scale + dx;
-      let y = 0.0 - p.y * scale;
-      if (x < minx) {
-        minx = x;
-      }
-      if (x > maxx) {
-        maxx = x;
-      }
-      if (y < miny) {
-        miny = y;
-      }
-      if (y > maxy) {
-        maxy = y;
-      }
-    }
-  }
+  let (minx, miny, maxx, maxy) = bounds(cs, scale, dx);
   if (maxx <= minx || maxy <= miny) {
     return Bitmap { width: 0, height: 0, left: 0, top: 0, coverage: [] };
   }
@@ -777,20 +764,40 @@ pub function (f: Font) render(g: i32, px: f64, dx: f64): Bitmap {
   for c in cs {
     r = outline(r, c, scale, ox, oy);
   }
+  return Bitmap { width: w, height: h, left: left, top: top, coverage: shade(r) };
+}
+
+// The pixel edges of the contours `cs` at `scale`, moved `dx` to the
+// right, with y down: the least x and y, then the greatest.
+function bounds(cs: Point[][], scale: f64, dx: f64): (f64, f64, f64, f64) {
+  let minx = 1.0e9;
+  let miny = 1.0e9;
+  let maxx = -1.0e9;
+  let maxy = -1.0e9;
+  for c in cs {
+    for p in c {
+      let x = p.x * scale + dx;
+      let y = 0.0 - p.y * scale;
+      minx = minx.min(x);
+      maxx = maxx.max(x);
+      miny = miny.min(y);
+      maxy = maxy.max(y);
+    }
+  }
+  return (minx, miny, maxx, maxy);
+}
+
+// The coverage of each pixel: the running sum of the accumulated area,
+// with its size held to 1.
+function shade(r: Raster): u8[] {
   let cov: u8[] = [];
   let sum = 0.0;
-  for i in 0..w * h {
+  for i in 0..r.w * r.h {
     sum = sum + r.acc[i];
-    let a = sum;
-    if (a < 0.0) {
-      a = 0.0 - a;
-    }
-    if (a > 1.0) {
-      a = 1.0;
-    }
+    let a = sum.abs().min(1.0);
     cov = cov.append((a * 255.0 + 0.5) as u8);
   }
-  return Bitmap { width: w, height: h, left: left, top: top, coverage: cov };
+  return cov;
 }
 
 // Adds one contour: its lines and its curves, with the on-curve point

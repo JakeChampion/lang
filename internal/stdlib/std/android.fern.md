@@ -8,7 +8,7 @@ NativeActivity loads the app library and calls its `ANativeActivity_onCreate` ex
 
 The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`. The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
 
-The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
+The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
 Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
 
@@ -139,6 +139,12 @@ function c_asset_read(asset: usize, buf: usize, n: usize): i32;
 @import("libandroid.so", "AAsset_close")
 function c_asset_close(asset: usize): void;
 
+@import("libandroid.so", "AChoreographer_getInstance")
+function c_choreographer(): usize;
+
+@import("libandroid.so", "AChoreographer_postFrameCallback")
+function c_post_frame(choreographer: usize, callback: usize, data: usize): void;
+
 @import("libandroid.so", "AConfiguration_new")
 function c_config_new(): usize;
 
@@ -176,6 +182,8 @@ function c_pthread_detach(thread: usize): i32;
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. The keyboard of the system types through these events, because the activity has no text field.
 
+`Vsync` comes at the vsync after a call to `request_frame`, with the time of the frame on the monotonic clock in nanoseconds. Draw the frame of an animation for that time.
+
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk -apk-home` sets it.
 
 `Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and 24 belong to this module, and the kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 100 are free for the app.
@@ -196,6 +204,7 @@ pub enum Event {
   WindowRedraw(Window),
   WindowDestroyed(Window),
   ContentRect(i32, i32, i32, i32),
+  Vsync(i64),
   Touch(i32, f32, f32),
   Key(i32, i32),
   Char(i32),
@@ -281,7 +290,7 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread and the window flags: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, the JNIEnv at 32, and the flags at 40.
+The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle, the JNIEnv of the loop thread, the window flags and the frame state: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, the JNIEnv at 32, the flags at 40, the time of the last vsync at 48, the frame flags at 56, and the Choreographer of the loop thread at 64.
 
 Only the UI thread can change the views of the activity. `immersive` sets bit 0 for hidden bars and bit 1 for an explicit request. The focus callback applies the request through the JNIEnv of the UI thread at 16 of the activity. The window gets the focus after it shows, and again each time the user returns to it.
 
@@ -289,7 +298,12 @@ The offsets of the activity are the LP64 layout of `ANativeActivity`: the callba
 
 ```fern
 <<the UI thread>>=
-const CTX_SIZE: i32 = 48;
+const CTX_SIZE: i32 = 72;
+
+// The frame flags: a frame is requested, and a vsync came.
+const FRAME_REQUESTED: i32 = 1;
+
+const FRAME_ARRIVED: i32 = 2;
 
 const FLAG_IMMERSIVE: i32 = 1;
 
@@ -394,6 +408,9 @@ pub function start(activity: usize, thread_main: usize): void {
     let ctx: usize = __alloc(CTX_SIZE);
     __store_ptr(ctx + 32 as usize, 0 as usize);
     __store_i32(ctx + 40 as usize, 0);
+    __store_i64(ctx + 48 as usize, 0i64);
+    __store_i32(ctx + 56 as usize, 0);
+    __store_ptr(ctx + 64 as usize, 0 as usize);
     let ok: i32 = c_pipe2(ctx, 524288) | c_pipe2(ctx + 8 as usize, 524288);
     if (ok != 0) {
       c_activity_finish(activity);
@@ -555,6 +572,49 @@ const IDENT_INPUT: i32 = 2;
 
 const POLL_TIMEOUT: i32 = 0 - 3;
 
+@callback("on_vsync")
+function on_vsync_entry(): usize;
+
+// The frame callback of the Choreographer, on the loop thread inside
+// ALooper_pollOnce. `data` is the context.
+function on_vsync(nanos: i64, data: usize): void {
+  unsafe {
+    __store_i64(data + 48 as usize, nanos);
+    __store_i32(data + 56 as usize, FRAME_ARRIVED);
+  }
+}
+
+// Asks for a Vsync event at the next vsync. A second call before that
+// frame asks for no other. Call it on the loop thread.
+pub function request_frame(ctx: usize): void {
+  unsafe {
+    if ((__load_i32(ctx + 56 as usize) & FRAME_REQUESTED) != 0) {
+      return;
+    }
+    let choreographer: usize = __load_ptr(ctx + 64 as usize);
+    if (choreographer == 0 as usize) {
+      choreographer = c_choreographer();
+      __store_ptr(ctx + 64 as usize, choreographer);
+    }
+    if (choreographer == 0 as usize) {
+      return;
+    }
+    __store_i32(ctx + 56 as usize, FRAME_REQUESTED);
+    c_post_frame(choreographer, on_vsync_entry(), ctx);
+  }
+}
+
+// The Vsync event of a vsync that came, which clears it.
+function frame_event(ctx: usize): Option[Event] {
+  unsafe {
+    if ((__load_i32(ctx + 56 as usize) & FRAME_ARRIVED) == 0) {
+      return None;
+    }
+    __store_i32(ctx + 56 as usize, 0);
+    return Some(Vsync(__load_i64(ctx + 48 as usize)));
+  }
+}
+
 struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean }
 
 // Runs the loop of the app on the loop thread, from the context that `start`
@@ -578,6 +638,10 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
       state = input(lp, state, step);
     } else if (ident == POLL_TIMEOUT) {
       state = step(state, Tick);
+    }
+    // The frame callback can run in the same poll as another source.
+    if let Some(e) = frame_event(ctx) {
+      state = step(state, e);
     }
   }
   detach(vm);
