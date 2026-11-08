@@ -2965,7 +2965,7 @@ pub function capability_diags(merged: parser.Module, target: string): util.Diag[
   }
   let desc = platforms.for_target(target);
   let built = constfold.prune_literal_branches(constfold.fold_target_name(merged, desc.environment, desc.isa));
-  for v in platforms.enforce(treeshake.treeshake(built), target) {
+  for v in platforms.enforce(treeshake.treeshake(checker.annotate_module(built)), target) {
     out = out.append(platforms.violation_diag(v));
   }
   return out;

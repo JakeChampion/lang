@@ -606,8 +606,10 @@ check time, in the same mechanism that enforces the OS boundary today.
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver. **The driver exists:** `std/virtio` is the virtio-mmio
   version 2 transport with split virtqueues in `std/dma` buffers, and
-  `std/virtio_net` sends and receives Ethernet frames over it, by polling. The
-  stack above it is the open part.
+  `std/virtio_net` sends and receives Ethernet frames over it, by polling.
+  `std/ip` is Ethernet, ARP, IPv4, UDP and the TCP segments over the driver.
+  `std/tcp/conn` is the TCP connection, and `std/tcp` binds connections to an
+  interface. The `std/net` surface over it is the open part.
 - **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
   self-host-compiler internal, the floor of the runtime helpers. The public
   surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
@@ -737,8 +739,26 @@ environment over the FernOS syscalls can come later, as an improvement.
    microvm runs without ACPI so that its eight transports sit at
    `0xfeb00000`. The driver polls; its IRQ line through `std/async` comes
    with the stack.
-13. Beside those: the TCP/IP stack over the driver (#14259). The panic scope is
-   decided (#14257, see the north-star section).
+13. **The first layers of the stack exist** (#14259, second slice), as
+   `std/ip`: Ethernet framing, an ARP cache in a page of raw memory with
+   requests and replies, IPv4 and UDP, by polling the device.
+   `TestSelfHostKernelUDPEchoOnQemu` and `TestSelfHostKernelX86UDPEchoOnQemu`
+   run a UDP echo server on port 7 behind a forwarded host port. The host
+   sends three datagrams and reads each one back. qemu's user network asks
+   for the guest's MAC first, so the ARP reply is on the path.
+14. **TCP exists** (#14259, third slice). `std/tcp/conn` is the state machine
+   of one connection over `Segment` values and a clock the caller supplies,
+   in the core partition, so `tests/stdlib/tcp_conn_test.fern` drives it
+   with synthetic segments: the handshake, data in and out of order, the
+   window, retransmission with the doubled timeout, both closes and the
+   reset. `std/tcp` binds up to eight connections to a `std/ip` interface,
+   and `std/ip` parses and builds the segments with their checksums.
+   `TestSelfHostKernelHTTPOnQemu` and `TestSelfHostKernelX86HTTPOnQemu`
+   answer three requests from Go's HTTP client with `std/http` over it.
+15. Beside those: the `std/net` surface over `std/tcp`, so that `std/serve`
+   runs over it with no change, and the IRQ line of the device through
+   `std/async` (#14259). The panic scope is decided (#14257, see the
+   north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 
