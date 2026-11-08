@@ -1,6 +1,8 @@
 # An aioquic HTTP/3 client for scripts/net-quic-interop: a GET and a POST
 # of SIZE bytes on one connection, each response's status, body and
-# trailers printed, then a close.
+# trailers printed, then a close. Between the two the client moves to the
+# next connection ID the server issued and retires the first, so the POST
+# reaches the server on an ID it issued after the handshake.
 #   aioquic_h3_client.py PORT CA SIZE
 # An IPv4 datagram endpoint is made by hand: aioquic's connect() opens an
 # IPv6 socket, which a runner may lack.
@@ -61,6 +63,10 @@ async def main():
     proto.connect(addr)
     await proto.wait_connected()
     for method, path, body in ((b"GET", b"/hello", b""), (b"POST", b"/upload", b"x" * size)):
+        if method == b"POST":
+            before = conn._peer_cid.cid
+            conn.change_connection_id()
+            print("aioquic h3 client: changed connection id: %s" % (conn._peer_cid.cid != before), flush=True)
         heads, data = await proto.fetch(method, path, body)
         trailers = " ".join("%s=%s" % (k.decode(), v.decode()) for h in heads[1:] for k, v in h.items())
         print("aioquic h3 client: %s %s -> %s %s | %s" % (method.decode(), path.decode(), heads[0][b":status"].decode(), data.decode(), trailers), flush=True)
