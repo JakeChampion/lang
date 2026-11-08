@@ -169,6 +169,51 @@ function test_p256_mlkem_exchange(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// The curve half of each hybrid agrees with a server share on that curve alone, as a TLS 1.2 key exchange uses it.
+function test_classical_halves(): test.TestOutcome {
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      let k = c.classical();
+      if (k.group.code() != 0x001d || hex.encode(k.public) != hex.encode(cat(c.public[c.public.len() - 32:c.public.len()], []))) {
+        return test.fail("the X25519 half");
+      }
+      match (keyshare.server_share(keyshare.X25519, k.public, pattern(0x33, 32))) {
+        Ok(s) => {
+          if (shown(k.shared_secret(s.public)) != hex.encode(s.shared_secret)) {
+            return test.fail("the X25519 half does not agree");
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (keyshare.client_share(keyshare.Secp256r1MlKem768, cat(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"), pattern(0x40, 64)))) {
+    Ok(c) => {
+      let k = c.classical();
+      if (k.group.code() != 0x0017 || hex.encode(k.public) != rfc5903_gi()) {
+        return test.fail("the secp256r1 half");
+      }
+      match (keyshare.server_share(keyshare.Secp256r1, k.public, p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"))) {
+        Ok(s) => {
+          return test.assert_eq(shown(k.shared_secret(s.public)), rfc5903_shared());
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function p256_hybrid_client_public(): u8[] {
   match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
     Ok(c) => {
@@ -449,6 +494,7 @@ function main(): i32 {
   r = r.it("secp256r1 draws reduced", test_p256_reduction);
   r = r.it("secp256r1 refusals", test_p256_refusals);
   r = r.it("SecP256r1MLKEM768 exchange", test_p256_mlkem_exchange);
+  r = r.it("the curve halves of the hybrids", test_classical_halves);
   return r.finish();
 }
 

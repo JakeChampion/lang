@@ -1940,10 +1940,16 @@ function __key_exchange12(c: Client, raw: message.Raw, out: Out): Result[ClientR
   return Ok(ClientRun { client: Client { ...c, key_exchange: kx, state: C12_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
-// The client's share on the server's curve: the one the hello sent, or a new one from the spare entropy.
+// The client's share on the server's curve: a sent share or the curve half of a sent hybrid, which the TLS 1.3
+// handshake did not use, or a new one from the spare entropy.
 function __share12(c: Client): Result[keyshare.ClientShare, HandshakeError] {
-  if let Some(sh) = __sent_share(c, c.key_exchange.group) {
-    return Ok(sh);
+  if (c.share.classical().group.code() == c.key_exchange.group) {
+    return Ok(c.share.classical());
+  }
+  for sh in c.more_shares {
+    if (sh.classical().group.code() == c.key_exchange.group) {
+      return Ok(sh.classical());
+    }
   }
   let Some(g) = keyshare.group(c.key_exchange.group) else {
     return Err(Illegal("named_curve"));
