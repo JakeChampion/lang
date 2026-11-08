@@ -1,0 +1,37 @@
+import "std/audio/mp3/seek";
+import "std/hex";
+import "std/test";
+import "mp3_seek_smoke_vectors";
+
+function independent_slice(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_seek_smoke_vectors.INPUT) else {
+    return test.fail("reference bytes");
+  };
+  let Ok(index) = seek.inspect(bytes, seek.default_limits()) else {
+    return test.fail("frame index");
+  };
+  let Ok(cursor) = seek.reader(index).seek(bytes, mp3_seek_smoke_vectors.POSITION) else {
+    return test.fail("seek inside the independent frame");
+  };
+  let Ok((next, Some(audio))) = cursor.next(bytes) else {
+    return test.fail("sample slice");
+  };
+  if (audio.position != mp3_seek_smoke_vectors.POSITION || audio.samples.len() != mp3_seek_smoke_vectors.SAMPLE_BITS.len()) {
+    return test.fail("playable position or count");
+  }
+  for i in 0..audio.samples.len() {
+    if (f32_bits(audio.samples[i]) as u32 != mp3_seek_smoke_vectors.SAMPLE_BITS[i]) {
+      return test.fail("independent float bits");
+    }
+  }
+  let Ok((_, None())) = next.next(bytes) else {
+    return test.fail("track end");
+  };
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MP3 seek interpreter smoke");
+  runner = runner.it("exact frame slice against scalar minimp3", independent_slice);
+  return runner.finish();
+}

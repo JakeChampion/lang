@@ -97,7 +97,7 @@ It rejects Layer I, Layer II, and free-format bitrate headers.
 `decode_raw` retains all coded samples and codec delay.
 `decode` skips a Xing or Info metadata frame and applies recognized LAME delay and padding.
 `inspect_track` exposes those boundaries. It skips ID3v2.2 through ID3v2.4, ID3v1, and bounded trailing APE tags.
-The module does not expose tag contents or build a seek index.
+The module does not expose tag contents. `std/audio/mp3/seek` supplies a separate seek index.
 
 Zero-padding stream-copy tags are valid. Adjusted padding has a minimum of zero.
 
@@ -116,6 +116,32 @@ Use that result for decoder warmup after a seek. A decode error resets decoder s
 Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 960 synthesis floats.
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
+
+## Indexed MP3 and FLAC playback
+
+`std/audio/mp3/seek` and `std/audio/flac/seek` build bounded frame indexes.
+Each cursor returns at most one codec frame of PCM per `next` call.
+The output declares its playable position and frame count.
+The caller supplies the same immutable encoded input view to each call.
+These APIs do not perform file I/O.
+
+MP3 index construction scans frame headers without decoding PCM.
+The cursor applies recognized Xing/LAME delay and padding once.
+A seek restores up to 511 bytes of reservoir history before two complete frames warm the overlap and synthesis filters.
+FLAC index construction decodes frames to verify checksums, lengths, and sequence, without retaining their PCM.
+FLAC seeks use a binary search of sample positions and need no codec history.
+
+The logical MP3 index stores four bytes per audio frame.
+The logical FLAC index stores twelve bytes per frame.
+Array capacity, headers, and allocator overhead add to those counts.
+Input and index limits bound separate storage. The sample limit applies to each decoded frame.
+FLAC index construction needs an output budget for the STREAMINFO maximum block size.
+
+Tests compare repeated forward and backward seeks with slices of complete reference-qualified decode.
+They cover frame interiors, boundaries, the exact track end, MP3 gapless metadata, and fixed and variable FLAC blocks.
+Every compiled sample matches exactly.
+The independent MP3 interpreter smoke uses a float slice from hash-pinned scalar minimp3.
+Regenerate it with `scripts/gen-mp3-seek-smoke.py`.
 
 ## Ogg
 
