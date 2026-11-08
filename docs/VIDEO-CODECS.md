@@ -25,6 +25,26 @@ The adapter does not bundle FFmpeg or another external codec library.
 
 The native QTRLE codec uses Fern on every target.
 
+## Android player paths
+
+`std/android/player` provides complete platform A/V playback through Android `MediaPlayer`.
+It supports the platform containers and streams, with audio, video, pause, seek, and completion callbacks.
+The platform selects codecs and controls synchronization.
+Hardware use, format support, and stream support depend on the device.
+This path is available for an app that needs audio and video together.
+
+`std/android/video/player` provides explicit video codec policies and buffer control.
+It controls one video track and does not synchronize an audio track.
+The native Fern packet codecs remain independent of both platform players.
+An app can choose the path that supplies its required controls.
+
+The platform player exposes a media-time and monotonic-time anchor through `timestamp`.
+It returns `None` before an anchor is available.
+The anchor is a platform estimate, without the clock rate or a physical output latency measurement.
+Each operation bounds its JNI references, so repeated position queries do not retain local Java references.
+A failed construction releases partial resources.
+Long seeks retain their 64-bit position through JNI.
+
 ## Android packet path
 
 `std/android/video` configures an NDK MediaCodec decoder for an existing `ANativeWindow`.
@@ -123,7 +143,9 @@ Hardware-only policy refuses software recovery.
 Counters report scheduled and discarded frames, including final frames that also carry EOS.
 
 The app owns the file descriptor and surface until player close.
-The player controls one unencrypted video track. Audio and A/V synchronization remain future work.
+This lower-level player controls one unencrypted video track.
+Audio and A/V synchronization for this path remain future work.
+The separate `std/android/player` path delegates complete A/V playback to Android.
 
 Platform color metadata passes through the extractor and codec formats.
 Missing identifiers remain unspecified. The app must select a suitable display surface and HDR mode.
@@ -240,6 +262,18 @@ Use `HardwareOnly` for device measurements that require hardware.
 A hardware codec can reject a particular format or fail under resource pressure.
 Record the selected codec attributes and the exact media request with each result.
 
+The Android lane also runs `tests/android/player/app.fern` with an AVC and stereo AAC clip.
+It requires video output, stable pause position, accurate seek, timeline anchors, completion, repeated playback, and error callbacks.
+The fixture contains four seconds of 320 by 240 video and 48 kHz stereo audio.
+Artifacts include the fixture, its independent FFprobe metadata, logs, a screenshot, and Android media diagnostics.
+The test delegates A/V synchronization to Android. It does not measure acoustic lip-sync error or physical device power.
+
+```sh
+scripts/test-android-player
+bin/fern -apk build/android-player/fern-playertest.apk -apk-package dev.fern.playertest -apk-min-sdk 26 -apk-permission INTERNET -apk-cleartext tests/android/player/app.fern
+ANDROID_SERIAL=DEVICE python3 tests/android/player/emulator_check.py build/android-player/fern-playertest.apk build/android-player/device
+```
+
 ## Performance checkpoint
 
 The first measurement used x86-64 Linux and the pinned stage0 compiler.
@@ -259,7 +293,8 @@ It has no comparison with an established decoder and establishes no world-leadin
 
 The common playback priorities are H.264, HEVC, VP9, and AV1, followed by legacy formats.
 The Android path now supplies platform demux, timestamps, sync-sample seek, and surface playback control.
-A complete player still needs audio synchronization, lifecycle integration, and representative device qualification.
+The lower-level controller still needs audio synchronization and lifecycle integration.
+The separate platform player supplies A/V synchronization. Both paths need representative device qualification.
 
 Device tests must cover backpressure, resolution changes, EOS, flush, and playback after a seek.
 HDR requires correct metadata, surface configuration, and display support.

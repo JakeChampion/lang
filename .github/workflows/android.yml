@@ -16,6 +16,8 @@ name: Android
 # the loop thread, so the emulator runs with its audio on.
 # tests/android/video checks codec discovery, two encoder input paths, MP4
 # export, decoded pixels, and surface playback after pause and seek.
+# tests/android/player checks AAC+AVC playback, pause, seek, platform timestamps,
+# completion, repeated playback, and error callbacks.
 # tests/android/focus checks std/android/focus: two listeners of one @jni
 # class take the audio focus from each other.
 # tests/android/worker forks two workers from the loop thread and polls
@@ -66,6 +68,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-videotest.apk -apk-package dev.fern.videotest -apk-label "Fern Video Test" -apk-min-sdk 29 -apk-debuggable tests/android/video/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-playertest.apk -apk-package dev.fern.playertest -apk-min-sdk 26 -apk-permission INTERNET -apk-cleartext tests/android/player/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-focustest.apk -apk-package dev.fern.focustest -apk-min-sdk 28 tests/android/focus/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dnstest.apk -apk-package dev.fern.dnstest -apk-permission INTERNET tests/android/dns/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-workertest.apk -apk-package dev.fern.workertest -apk-permission INTERNET tests/android/worker/app.fern
@@ -85,6 +88,7 @@ jobs:
             build/android-stopwatch/fern-dextest.apk
             build/android-stopwatch/fern-audiotest.apk
             build/android-stopwatch/fern-videotest.apk
+            build/android-stopwatch/fern-playertest.apk
             build/android-stopwatch/fern-focustest.apk
             build/android-stopwatch/fern-dnstest.apk
             build/android-stopwatch/fern-workertest.apk
@@ -129,6 +133,7 @@ jobs:
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
             python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video
+            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker

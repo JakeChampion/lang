@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ -n "${FERN:-}" ]; then
+  player_compiler=$FERN
+else
+  make bin/fern-selfhost
+  player_compiler="$PWD/bin/fern-selfhost"
+fi
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-linux; android_target=x86-64-android ;;
+  'Linux aarch64') target=arm64-linux; android_target=arm64-android ;;
+  'Darwin arm64') target=arm64-darwin; android_target= ;;
+  *) echo 'unsupported host' >&2; exit 1 ;;
+esac
+mkdir -p build/android-player
+source=tests/stdlib/android_player_test.fern
+"$player_compiler" -check "$source" internal/stdlib
+"$player_compiler" -target "$target" -sanitize -o build/android-player/events "$source" internal/stdlib
+build/android-player/events
+"$player_compiler" -target wasm32-wasi -o build/android-player/events.wasm "$source" internal/stdlib
+wasmtime run build/android-player/events.wasm
+"$player_compiler" -target arm64-android -shared -export main -o build/android-player/abi-arm64.so tests/stdlib/android_player_mock_test.fern internal/stdlib
+if [ -n "$android_target" ]; then
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/android-player/libandroid.so scripts/player-reference/jni-mock.c
+  # Bionic names its C library libc.so. The host linker script is not an ELF file.
+  ln -sf "$(cc -print-file-name=libc.so.6)" build/android-player/libc.so
+  "$player_compiler" -target "$android_target" -shared -export main -o build/android-player/mock.so tests/stdlib/android_player_mock_test.fern internal/stdlib
+  LD_LIBRARY_PATH="$PWD/build/android-player${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PY'
+import ctypes
+result = ctypes.CDLL('./build/android-player/mock.so').main()
+if result != 0:
+    raise SystemExit(f'Android player JNI test failed at check {result}')
+print('Android player JNI lifecycle and exception checks passed')
+PY
+fi
