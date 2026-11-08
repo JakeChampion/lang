@@ -3701,7 +3701,7 @@ through the IR path end-to-end. **std/path** (`path.join` / `path.extension` /
 `path.file_name` / `path.parent`) and **std/math** (`range` / `range_step` /
 `pack_rgb` / `i32_max`) round out the batch. Coverage-only, no compiler change.
 Guarded by `TestSelfHost{Crypto,Path,Math}IR{X86_64,Wasm}` in
-`self_host_stdlib_concat_ir_test.go` (a shared concat-driver harness).
+`self_host_stdlib_ir_test.go` (one harness for the three modules).
 
 ### 2026-06-15 — fully-matched `Option[Result[T, E]]` on the self-host IR path (bug fix)
 
