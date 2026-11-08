@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify codec export and playback on a running Android emulator or device.
 
-Usage: emulator_check.py APK OUT_DIR
+Usage: emulator_check.py APK OUT_DIR [CONTENT_URI]
 Requires adb, FFmpeg, and ffprobe. OUT_DIR receives clips, logs, and metrics.
 Set ANDROID_SERIAL to select a physical device. The test requires API 29.
 """
@@ -56,14 +56,18 @@ def verify_screen(data):
     assert min(pixels) >= 105 and max(pixels) <= 150, (min(pixels), max(pixels))
 
 
-def main(apk, out_dir):
+def main(apk, out_dir, content_uri=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     assert int(adb("shell", "getprop", "ro.build.version.sdk").strip()) >= 29
     adb("install", "-r", apk)
     adb("shell", "am", "force-stop", PACKAGE)
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    command = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity"]
+    if content_uri is not None:
+        assert content_uri.startswith("content://"), content_uri
+        command += ["--es", "uri", content_uri, "--grant-read-uri-permission", "-d", content_uri]
+    adb(*command)
     log = ""
     try:
         deadline = time.monotonic() + 75
@@ -77,14 +81,17 @@ def main(apk, out_dir):
         assert "videotest: FAIL" not in log, log
         assert not re.search(r"Fatal signal|UnsatisfiedLinkError|FATAL EXCEPTION|fern: ", log), log
         assert "videotest: roundtrip complete" in log, "codec test timeout"
-        assert "export surface=false frames=12" in log, log
-        assert "export surface=true frames=12" in log, log
+        if content_uri is None:
+            assert "export surface=false frames=12" in log, log
+            assert "export surface=true frames=12" in log, log
+        else:
+            assert "videotest: source=content offset=" in log, log
         assert "decoder name=" in log, log
         directory = re.search(r"videotest: sdk=\d+ directory=(\S+)", log).group(1)
         metrics = {"build": adb("shell", "getprop", "ro.build.fingerprint").strip(),
                    "abi": adb("shell", "getprop", "ro.product.cpu.abi").strip(),
                    "clips": {}}
-        for name in ("byte", "surface"):
+        for name in (("byte", "surface") if content_uri is None else ()):
             path = out / (name + ".mp4")
             path.write_bytes(adb("exec-out", "run-as", PACKAGE, "cat", directory + "/" + name + ".mp4", binary=True))
             metrics["clips"][name] = verify_clip(path)
@@ -103,6 +110,6 @@ def main(apk, out_dir):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
     main(*sys.argv[1:])

@@ -130,6 +130,14 @@ Container codec restrictions and sample order still apply.
 
 `std/android/video/extractor` reads platform-supported containers from an explicit file range.
 Its API 28 sample-size query checks limits before a write into a decoder input buffer.
+`std/android/video/source` opens a granted content URI for this packet path.
+It duplicates the asset descriptor and preserves the provider's offset and length.
+An unknown length resolves from the seekable file's end. Non-seekable sources return `Unsupported`.
+A caller-supplied 64-bit limit bounds the source range, separately from packet limits.
+The adapter does not buffer the complete source or retain Java global references.
+Close the extractor or player before source close. Each source has one owner.
+The app needs a URI read grant, without broad storage permission.
+
 The extractor preserves the complete native track format, including codec and color metadata.
 It rejects encrypted and partial samples.
 

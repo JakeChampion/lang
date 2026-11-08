@@ -139,7 +139,7 @@ jobs:
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
             python3 tests/android/video/emulator_check.py build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video
-            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player
+            python3 tests/android/player/emulator_check.py build/android-stopwatch/fern-playertest.apk build/android-stopwatch/emulator/player build/android-stopwatch/fern-videotest.apk build/android-stopwatch/emulator/video/byte.mp4
             python3 tests/android/focus/emulator_check.py build/android-stopwatch/fern-focustest.apk build/android-stopwatch/emulator/focus
             python3 tests/android/dns/emulator_check.py build/android-stopwatch/fern-dnstest.apk build/android-stopwatch/emulator/dns
             python3 tests/android/worker/emulator_check.py build/android-stopwatch/fern-workertest.apk build/android-stopwatch/emulator/worker
