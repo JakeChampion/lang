@@ -40,6 +40,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | A raw free of an address outside the arena aborts | `TestSelfHostRawFreeOutsideHeap` | x86, arm64 |
 | Under `-sanitize`, a use after free, a double free and a leak are reported | `TestX86_64SanitizeUseAfterFreeReported`, `TestX86_64SanitizeDoubleFreeReported`, `TestX86_64SanitizeLeakVerdict` and their arm64 rows | x86, arm64 |
 | `crypto.erase` zeroes a secret before its block is reused | `TestSelfHostEraseZeroesStorage` | x86, arm64 |
+| HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, X25519 and Ed25519 leave no copy of the key material they used in the arena, and an erased `aes_gcm.Key` or `ed25519.PrivateKey` leaves zeros | `TestSelfHostPrimitivesEraseKeyMaterial` | x86, arm64 |
 | `-heap-limit` bounds the arena, and a program past it exits 125 | `TestSelfHostHeapLimit` | x86, arm64 |
 
 ## Stack, control flow and the image
