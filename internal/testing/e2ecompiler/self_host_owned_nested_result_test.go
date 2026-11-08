@@ -115,3 +115,56 @@ function main(): i32 { return work(0, true) + work(-1, true) + work(0, false) - 
 		})
 	}
 }
+
+func TestSelfHostOwnedNestedResultQualifiedRuns(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := e2eharness.BuildLangBinForInterp(t)
+	dir := t.TempDir()
+	for name, source := range map[string]string{
+		"helper.fern": `pub struct State { bytes: u8[] }
+function accepted(s: State): i32 { return s.bytes.len(); }
+pub function run(s: State, kind: i32): i32 {
+  match (Some(kind)) {
+    Some(k) => {
+      match ((Some(s), k)) {
+        (Some(value), 0) when accepted(value) > 0 => { return accepted(value); },
+        (Some(value), 1) => {
+          match (Some(value)) { Some(next) => { return accepted(next); }, _ => { return 0; } }
+        },
+        _ => { return 0; }
+      }
+    },
+    _ => { return 0; }
+  }
+}
+`,
+		"main.fern": `import "./helper";
+function accepted(own bytes: u8[]): i32 { return bytes.len(); }
+function main(): i32 {
+  let state = helper.State { bytes: [1u8, 2u8, 3u8] };
+  return helper.run(state, 0) + helper.run(state, 1) + helper.run(state, 2) - 6;
+}
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(dir, "main.fern")
+	if output, err := exec.Command(oracle, "-check", path).CombinedOutput(); err != nil {
+		t.Fatalf("Go checker: %v\n%s", err, output)
+	}
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			var command *exec.Cmd
+			if target == "wasm32-wasi" {
+				command = exec.Command(e2eharness.Wasmtime(t), "run", cli.wasmComponent(t, path, "FERN_STRICT_IR=1"))
+			} else {
+				command = runX86_64Bin(cli.runner, cli.x86Binary(t, path, "FERN_STRICT_IR=1", "FERN_SANITIZE=1"))
+			}
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("%s: %v\n%s", target, err, output)
+			}
+		})
+	}
+}
