@@ -1,0 +1,25 @@
+The native ALAC modules derive from Project Symphonia.
+Reference: Symphonia v0.5.5, commit 6d533f26150953a882a6a111ebd13f0abf7129d5.
+https://github.com/pdeljanov/Symphonia/tree/6d533f26150953a882a6a111ebd13f0abf7129d5/symphonia-codec-alac
+
+Copyright (c) 2019-2022 The Project Symphonia Developers.
+The covered Fern modules identify their MPL-2.0 license in each source file.
+The full license is in MPL-2.0.txt.
+
+Packet fixtures use independent Apple ALAC and FFmpeg decoders.
+Apple source pin: c38887c5c5e64a4b31108733bd79ca9b2496d987.
+https://github.com/macosforge/alac/tree/c38887c5c5e64a4b31108733bd79ca9b2496d987
+The Apple decoder has an Apache-2.0 license and is a reference-only dependency.
+scripts/audio-reference/alac-packets.cpp calls its public decoder interface.
+It is not part of the Fern runtime.
+
+The first-order predictor with order 31 terminates after its delta pass.
+Mode 15 runs the delta pass before the declared predictor, including order zero.
+These cases follow Apple's reference decoder.
+
+The reference harness maps ALAC channels to the documented WAVE speaker order.
+FFmpeg uses back-surround names for the same ALAC surround pair.
+The seven-channel and eight-channel cross-checks explicitly reorder these channels before comparison.
+The fixture generator changes no sample value.
+FFmpeg does not implement every synthetic case.
+Apple supplies independent 32-bit, two-pass, and ancillary-element PCM in those cases.

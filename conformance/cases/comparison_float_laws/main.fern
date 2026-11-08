@@ -1,5 +1,5 @@
-// spec: CM-01
-// spec: CM-02
+// spec: CL-01
+// spec: CL-02
 
 import "core/cmp";
 

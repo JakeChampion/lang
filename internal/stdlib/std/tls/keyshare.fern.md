@@ -514,6 +514,20 @@ function __p256_hybrid_server(client_public: [u8], entropy: [u8]): Result[Server
 
 ```fern
 <<17 pub function (c: ClientShare) shared_secret(server_public: [u8]): Result[u8[], KeyShareError]>>=
+// The classical part of a share as a share of its own: X25519 or P-256 alone, the curve half of a hybrid.
+pub function (c: ClientShare) classical(): ClientShare {
+  match (c.group) {
+    X25519MlKem768 => {
+      return ClientShare { group: X25519, public: __cat(c.public[c.public.len() - 32:c.public.len()], []), scalar: c.scalar, decapsulation_key: [] };
+    },
+    Secp256r1MlKem768 => {
+      return ClientShare { group: Secp256r1, public: __cat(c.public[0:65], []), scalar: c.scalar, decapsulation_key: [] };
+    },
+    _ => {}
+  }
+  return c;
+}
+
 pub function (c: ClientShare) shared_secret(server_public: [u8]): Result[u8[], KeyShareError] {
   if (server_public.len() != c.group.server_share_len()) {
     return Err(ShareLength(server_public.len(), c.group.server_share_len()));

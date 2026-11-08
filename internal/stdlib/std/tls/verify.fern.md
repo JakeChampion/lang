@@ -497,6 +497,8 @@ pub function signed(cert: x509.Certificate, scheme: i32, data: [u8], sig: [u8]):
 
 // The TLS 1.2 form of signed, for a ServerKeyExchange (RFC 5246 §7.4.1.4.1, RFC 8422 §5.4). An RSA key also takes
 // PKCS #1 v1.5, and an ECDSA scheme names only the hash, so it fits a key on any curve.
+// The TLS 1.2 signature scheme table dispatches by certificate key type.
+// fern-lint: allow cyclomatic-complexity
 pub function signed12(cert: x509.Certificate, scheme: i32, data: [u8], sig: [u8]): boolean {
   let alg = x509.OtherAlgorithm("");
   match (cert.key) {

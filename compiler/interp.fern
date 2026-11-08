@@ -3037,7 +3037,7 @@ function call_host_net(name: string, args: Value[]): Value {
   if (util.has_str(["udp_sendto", "udp_sendto_bytes", "udp_sendmmsg"], name)) {
     return call_host_udp_send(name, args);
   }
-  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom"], name)) {
+  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_recvmmsg"], name)) {
     return call_host_udp(name, args);
   }
   if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
@@ -3057,6 +3057,37 @@ function call_host_udp_send(name: string, args: Value[]): Value {
     return v_int(udp_sendmmsg_by_sendto(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3)));
   }
   return v_int(udp_sendto_bytes(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
+}
+
+// udp_recvmmsg_by_recvfrom answers udp_recvmmsg with one message, read by
+// udp_recvfrom into the first slot of the buffer, because the pinned stage0
+// compiler that builds this interpreter does not know the builtin.
+function udp_recvmmsg_by_recvfrom(sock: Socket, buf: u8[], froms: u8[], lens: i32[]): (i32, u8[], u8[], i32[]) {
+  let n = lens.len() / 3;
+  if (n == 0) {
+    return (0, buf, froms, lens);
+  }
+  let stride = buf.len() / n;
+  if (stride == 0) {
+    return (-22, buf, froms, lens);
+  }
+  let from = __alloc_u8(19);
+  let got = udp_recvfrom(sock, buf, from);
+  if (got < 0) {
+    return (got, buf, froms, lens);
+  }
+  if (got > stride) {
+    got = stride;
+  }
+  let out_froms = froms;
+  if (froms.len() >= 19) {
+    let k = 0;
+    while (k < 19) {
+      out_froms = out_froms.with(k, from[k]);
+      k += 1;
+    }
+  }
+  return (1, buf, out_froms, lens.with(0, got).with(1, 0).with(2, 0));
 }
 
 // udp_sendmmsg_by_sendto answers udp_sendmmsg with one udp_sendto_bytes per
@@ -3129,6 +3160,13 @@ function call_host_udp(name: string, args: Value[]): Value {
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
     arr_fill(arg_at(args, 2), bytes_as_i64s(from));
     return v_int(n);
+  }
+  if (name == "udp_recvmmsg") {
+    let r = udp_recvmmsg_by_recvfrom(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3));
+    arr_fill(arg_at(args, 1), bytes_as_i64s(r.1));
+    arr_fill(arg_at(args, 2), bytes_as_i64s(r.2));
+    arr_fill(arg_at(args, 3), i32s_as_i64s(r.3));
+    return v_int(r.0);
   }
   return v_int(udp_connect(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
 }

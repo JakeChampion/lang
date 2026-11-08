@@ -1,0 +1,173 @@
+{
+  "commit": "c38887c5c5e64a4b31108733bd79ca9b2496d987",
+  "files": [
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c9500ba9e08ad58e1dd52e3ab91dbdf5ac4cb296",
+      "size": 9112,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/c9500ba9e08ad58e1dd52e3ab91dbdf5ac4cb296"
+    },
+    {
+      "path": "codec/ALACAudioTypes.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f30e3342a841e82ca3d16aa650e330d58021b1c8",
+      "size": 5440,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/f30e3342a841e82ca3d16aa650e330d58021b1c8"
+    },
+    {
+      "path": "codec/ALACBitUtilities.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "941488976f3241f70824673094aa2eb1c5edc1b5",
+      "size": 5546,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/941488976f3241f70824673094aa2eb1c5edc1b5"
+    },
+    {
+      "path": "codec/ALACBitUtilities.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97e9ebe7029fac0cce3ce7143a68ae6f2110dfc4",
+      "size": 2996,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/97e9ebe7029fac0cce3ce7143a68ae6f2110dfc4"
+    },
+    {
+      "path": "codec/ALACDecoder.cpp",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ce3340dad3699283b5f92d04b91e11d61797f55b",
+      "size": 22049,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/ce3340dad3699283b5f92d04b91e11d61797f55b"
+    },
+    {
+      "path": "codec/ALACDecoder.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7802eab031f3302d1eeb4db542eb6f38ff510aba",
+      "size": 1694,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/7802eab031f3302d1eeb4db542eb6f38ff510aba"
+    },
+    {
+      "path": "codec/ALACEncoder.cpp",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1b71c2958fdb52cd34401155ba297a11177de447",
+      "size": 47443,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/1b71c2958fdb52cd34401155ba297a11177de447"
+    },
+    {
+      "path": "codec/ALACEncoder.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0e6c68904cec5c521d286becc82e3cdf4750de06",
+      "size": 3110,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/0e6c68904cec5c521d286becc82e3cdf4750de06"
+    },
+    {
+      "path": "codec/APPLE_LICENSE.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "71fe6fd79ce1fcf95157b4627fd864de0ae17897",
+      "size": 20108,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/71fe6fd79ce1fcf95157b4627fd864de0ae17897"
+    },
+    {
+      "path": "codec/EndianPortable.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5a7d5b89b30d1023e0d9209eb26be333adc4d204",
+      "size": 3406,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/5a7d5b89b30d1023e0d9209eb26be333adc4d204"
+    },
+    {
+      "path": "codec/EndianPortable.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f7f50a797f0a53a1facfbcd06d0938ee16ad15e6",
+      "size": 1421,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/f7f50a797f0a53a1facfbcd06d0938ee16ad15e6"
+    },
+    {
+      "path": "codec/ag_dec.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2214c9414a8a4bae7d632275c06a8f7d0d4d3510",
+      "size": 8373,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/2214c9414a8a4bae7d632275c06a8f7d0d4d3510"
+    },
+    {
+      "path": "codec/ag_enc.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2dfe999611b34a3a7b0db2882dd4f47f2bd03338",
+      "size": 8512,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/2dfe999611b34a3a7b0db2882dd4f47f2bd03338"
+    },
+    {
+      "path": "codec/aglib.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dc4ff8f2df57a8ae78f87c07889ad72dcb0c6e87",
+      "size": 2022,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/dc4ff8f2df57a8ae78f87c07889ad72dcb0c6e87"
+    },
+    {
+      "path": "codec/dp_dec.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d1530256b1defe1a70f2c7e9f4e69fb378e3889d",
+      "size": 8067,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/d1530256b1defe1a70f2c7e9f4e69fb378e3889d"
+    },
+    {
+      "path": "codec/dp_enc.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "869104c7e78979c5e33fd2c70439734d3c1ef69f",
+      "size": 8142,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/869104c7e78979c5e33fd2c70439734d3c1ef69f"
+    },
+    {
+      "path": "codec/dplib.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9a1ea5b2883baf2fc2b1ca668239df3f80add92b",
+      "size": 1656,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/9a1ea5b2883baf2fc2b1ca668239df3f80add92b"
+    },
+    {
+      "path": "codec/makefile",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ceea00949b8894a2b61d01bbc8489071ed180c18",
+      "size": 1545,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/ceea00949b8894a2b61d01bbc8489071ed180c18"
+    },
+    {
+      "path": "codec/matrix_dec.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b1889b92b3c2bd5630cc131f4783342efcf7df78",
+      "size": 9493,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/b1889b92b3c2bd5630cc131f4783342efcf7df78"
+    },
+    {
+      "path": "codec/matrix_enc.c",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e19433059ca65cfcbc6ee2f9d4d08d096b3431fd",
+      "size": 8273,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/e19433059ca65cfcbc6ee2f9d4d08d096b3431fd"
+    },
+    {
+      "path": "codec/matrixlib.h",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0a4f37187fffd4398d2f2907bb81c1186c609ccf",
+      "size": 3599,
+      "url": "https://api.github.com/repos/macosforge/alac/git/blobs/0a4f37187fffd4398d2f2907bb81c1186c609ccf"
+    }
+  ]
+}

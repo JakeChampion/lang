@@ -629,6 +629,8 @@ struct Wrote { conn: Conn, bytes: u8[] }
 
 ```fern
 <<18 function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError]>>=
+// Keep negotiated record protection and completed-wire accounting in one write operation.
+// fern-lint: allow cyclomatic-complexity
 function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError] {
   if (c.quic) {
     return __write_quic(c, t, content);
@@ -694,6 +696,8 @@ struct Absorbed { conn: Conn, out: Out }
 
 ```fern
 <<20 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, H...>>=
+// Dispatch record protection by version before the shared transcript and output updates.
+// fern-lint: allow cyclomatic-complexity
 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (c.tls12) {
     return __absorb12(c, r, app, out);
@@ -1267,6 +1271,8 @@ struct ClientRun { client: Client, out: Out }
 
 ```fern
 <<37 function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError]>>=
+// Validate the negotiated version before the version-specific ServerHello state transition.
+// fern-lint: allow cyclomatic-complexity
 function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
   let h = message.ServerHello { random: [], session_id: [], cipher_suite: 0, extensions: [] };
   match (__decode(raw)?) {
@@ -1674,6 +1680,8 @@ function __client_finish(c: Client, conn: Conn, flight: u8[], out: Out): Result[
 
 ```fern
 <<40 function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError]>>=
+// Dispatch the negotiated version before the shared client handshake message states.
+// fern-lint: allow cyclomatic-complexity
 function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
   if (c.state == C_WAIT_SERVER_HELLO) {
     return __server_hello(c, raw, out);
@@ -1829,6 +1837,8 @@ function __has_extension(exts: message.Extension[], kind: i32): boolean {
 }
 
 // A HelloRetryRequest commits the server to TLS 1.3, and a server that speaks TLS 1.3 marks a downgrade in its random.
+// Check the TLS 1.2 ServerHello extensions before the single committed state transition.
+// fern-lint: allow cyclomatic-complexity
 function __server_hello12(c: Client, raw: message.Raw, h: message.ServerHello, out: Out): Result[ClientRun, HandshakeError] {
   if (c.retry_suite != 0) {
     return Err(Illegal("TLS 1.2 after a HelloRetryRequest"));
@@ -1869,6 +1879,8 @@ function __server_hello12(c: Client, raw: message.Raw, h: message.ServerHello, o
   return Ok(ClientRun { client: Client { ...c, conn: conn, state: C12_WAIT_CERTIFICATE, extended: extended, alpn: alpn, server_random: h.random, peer_extensions: h.extensions }, out: out });
 }
 
+// Keep the ordered TLS 1.2 client message states and their transcript updates together.
+// fern-lint: allow cyclomatic-complexity
 function __client_message12(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
   if (c.state == C_CONNECTED) {
     if (raw.kind == message.HELLO_REQUEST && tls12.empty(raw.bytes)) {
@@ -1928,10 +1940,16 @@ function __key_exchange12(c: Client, raw: message.Raw, out: Out): Result[ClientR
   return Ok(ClientRun { client: Client { ...c, key_exchange: kx, state: C12_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
-// The client's share on the server's curve: the one the hello sent, or a new one from the spare entropy.
+// The client's share on the server's curve: a sent share or the curve half of a sent hybrid, which the TLS 1.3
+// handshake did not use, or a new one from the spare entropy.
 function __share12(c: Client): Result[keyshare.ClientShare, HandshakeError] {
-  if let Some(sh) = __sent_share(c, c.key_exchange.group) {
-    return Ok(sh);
+  if (c.share.classical().group.code() == c.key_exchange.group) {
+    return Ok(c.share.classical());
+  }
+  for sh in c.more_shares {
+    if (sh.classical().group.code() == c.key_exchange.group) {
+      return Ok(sh.classical());
+    }
   }
   let Some(g) = keyshare.group(c.key_exchange.group) else {
     return Err(Illegal("named_curve"));

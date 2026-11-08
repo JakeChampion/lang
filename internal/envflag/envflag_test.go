@@ -25,7 +25,10 @@ func TestValueOn(t *testing.T) {
 		{"quiet", true},
 		{"00", true},
 		{" 0", true},
-		{"no", true},
+		{"no", false},
+		{"NO", false},
+		{"No", false},
+		{"noo", true},
 		{"falſe", true},
 	} {
 		if got := ValueOn(tc.v); got != tc.on {
@@ -40,7 +43,7 @@ func TestOn(t *testing.T) {
 	if On(name) {
 		t.Error("an unset variable reads as on")
 	}
-	for v, want := range map[string]bool{"": false, "0": false, "Off": false, "1": true, "cpu": true} {
+	for v, want := range map[string]bool{"": false, "0": false, "Off": false, "no": false, "1": true, "cpu": true} {
 		t.Setenv(name, v)
 		if got := On(name); got != want {
 			t.Errorf("%s=%q: On = %v, want %v", name, v, got, want)

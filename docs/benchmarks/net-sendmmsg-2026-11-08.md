@@ -51,9 +51,9 @@ datagrams per request, because their acknowledgement timers fire while the
 server is busy. The nightly's h2load load does not do that. The outbox
 depends on the count per wake, not on the count per request.
 
-The receive side is unchanged: one `recvfrom` per datagram, and about as
-many `EAGAIN` reads as datagrams. GRO and `recvmmsg` are the other half of
-the slice.
+The receive side was unchanged here: one `recvfrom` per datagram, and about
+as many `EAGAIN` reads as datagrams. `docs/benchmarks/net-recvmmsg-2026-11-08.md`
+measures the other half of the slice.
 
 ## How to rerun
 
