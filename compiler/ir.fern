@@ -7474,6 +7474,7 @@ function strength_fixpoint(ops: Op[]): Op[] {
     cur = fold_const_binaries(r.ops);
     rounds += 1;
   }
+  util.report_unsettled("ir.strength_fixpoint", rounds, "");
   return cur;
 }
 

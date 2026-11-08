@@ -19480,8 +19480,9 @@ function collect_dropped_resources(stmts: ast.Stmt[], body: ast.Stmt[], resource
 
 pub function lower_defers_prepass_module(mod: Module): Module {
   let funcs = mod.funcs;
-  let pass = 0;
-  while (pass < 3) {
+  let changed = true;
+  while (changed) {
+    changed = false;
     let pi = 0;
     while (pi < funcs.len()) {
       let pfd = funcs[pi];
@@ -19489,11 +19490,11 @@ pub function lower_defers_prepass_module(mod: Module): Module {
         let inferred = irt_infer_func(pfd, funcs, mod.structs);
         if (inferred != "") {
           funcs = irt_set_ret(funcs, pi, inferred);
+          changed = true;
         }
       }
       pi += 1;
     }
-    pass += 1;
   }
   let resources = registered_resources(mod);
   let has_res = resources.len() > 0;
@@ -21417,8 +21418,9 @@ function irt_set_ret(funcs: FuncDecl[], idx: i32, rt: string): FuncDecl[] {
 
 pub function infer_ret_types_module(mod: Module): Module {
   let funcs = mod.funcs;
-  let pass = 0;
-  while (pass < 3) {
+  let changed = true;
+  while (changed) {
+    changed = false;
     let i = 0;
     while (i < funcs.len()) {
       let fd = funcs[i];
@@ -21426,17 +21428,18 @@ pub function infer_ret_types_module(mod: Module): Module {
         let inferred = irt_infer_func(fd, funcs, mod.structs);
         if (inferred != "") {
           funcs = irt_set_ret(funcs, i, inferred);
+          changed = true;
         }
       } else if (fd.ret_type == "i32" && fd.body.len() > 0 && fd.receiver_type.len() == 0
         && fd.all_type_params.len() == 0 && fd.name.len() > 6 && slice_unchecked(fd.name, 0, 6) == "__lam_") {
         let winf = irt_infer_func(fd, funcs, mod.structs);
         if (winf == "i64" || winf == "u64" || winf == "f64") {
           funcs = irt_set_ret(funcs, i, winf);
+          changed = true;
         }
       }
       i += 1;
     }
-    pass += 1;
   }
   return Module { ...mod, funcs: funcs };
 }
