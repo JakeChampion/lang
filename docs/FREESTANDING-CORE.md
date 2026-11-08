@@ -85,6 +85,7 @@ costs a silent failure on the first target that lacks it.
 | `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption. The `kernel` profile grants it too, so a kernel can put the heap on frames of its own (`std/frames`) |
 | `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
 | `privileged` | `__wfi`, `__hvc`, `__smc`, `__boot_info`, `__sysreg_read`, `__sysreg_write`, `__cache_clean`, `__cache_flush`, `__tlb_flush`, `__tlb_flush_all`, `__breakpoint`, `__irq_mask`, `__irq_unmask`, `__irq_wait`, `__irq_pending`, `__port_in8` … `__port_out32`, `__mem_load8` … `__mem_store64` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
+| `mmio` | `__mmio_load8` … `__mmio_load64`, `__mmio_store8` … `__mmio_store64` | device registers: a load or store that no pass removes, merges or moves. Granted by the `kernel` profile and by the freestanding `none` profile, since a guest library inside someone else's firmware drives devices too |
 | `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |
 
 ### Core
@@ -524,8 +525,8 @@ than an `unknown callee` out of the emitter:
 The three are enumerated in both hosted profiles and granted by neither wasi
 profile nor by `none`. A freestanding target could in principle honour `cabi` — a
 calling convention is an ISA property, and nothing about a kernel forbids one — but
-`none` grants nothing at all by construction. Revisit it when a freestanding embedder
-needs a C call.
+`none` grants `mmio` alone, for the device registers a guest library drives. Revisit
+it when a freestanding embedder needs a C call.
 
 **A handle method reports only what its target can measure, and `flags()` is
 where that bit.** `r.flags()` / `w.flags()` (#9219) answer three bits about how
@@ -871,7 +872,7 @@ capability is a property of the target, never of one compiler's codegen: an entr
 encodes "my backend can't do this yet" reads as a target property forever after.
 
 Note the **second, independent** capability system: `internal/pkg/caps` governs what a
-*package* may reach (`net`, `fs`, `env`, `random`, `subprocess`, `time`, `privileged`) for dependency
+*package* may reach (`net`, `fs`, `env`, `random`, `subprocess`, `time`, `privileged`, `mmio`) for dependency
 grants, documented in `docs/PACKAGE-CAPABILITIES-BRIEF.md`. It has its own completeness
 tests and its own vocabulary — `print` is ungated there on purpose, because stdio is a
 channel the invoker already handed the process rather than ambient authority a
