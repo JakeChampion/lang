@@ -23748,6 +23748,20 @@ function ow_value_elem_params(fn: parser.FuncDecl, borrowed: string[], ofuncs: O
   return out;
 }
 
+function ow_value_element_iter(e: ast.Expr, values: string[]): boolean {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return util.has_str(values, id.name);
+    },
+    ast.ExprSlice(sl) => {
+      return ow_value_element_iter(sl.array, values);
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
 // A variant constructor carries its payload, so its result borrows what the
 // payload borrows.
 function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
@@ -23909,10 +23923,9 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
         name = a.target;
         init = a.value;
       }
-      // The element a `for` binds borrows from what the loop walks. A range
-      // and a pattern bind no such element.
+      // Scalar elements are copies. Other elements retain the iterable borrow.
       if let ast.StmtFor(f) = st {
-        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter)) {
+        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
           name = f.var_name;
           init = f.iter;
         }

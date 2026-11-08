@@ -1,19 +1,24 @@
-# RIFF WAVE PCM
+# RIFF WAVE integer and float PCM
 
 The decoder supports integer PCM at 8, 16, 24, and 32 bits, including WAVE_FORMAT_EXTENSIBLE PCM.
 Eight-bit WAVE samples are unsigned on disk. The API converts them to signed PCM.
+
+`inspect_linear` also accepts IEEE float at 32 or 64 bits, including its extensible subformat.
+Its linear index supports exact frame ranges and reusable integer or float output.
+Float reads preserve finite values without clipping. Integer reads reject float input.
 
 `inspect` validates chunk bounds and format fields without sample allocation.
 `decode_range` reads a frame range. `decode` reads the complete data chunk.
 
 The encoder writes PCM WAVE with standard channel masks for multichannel audio.
-Custom channel masks return `Unsupported`. Float, compressed WAVE, RIFX, and RF64 return `Unsupported`.
+Custom channel masks return `Unsupported`. Compressed WAVE, RIFX, and RF64 return `Unsupported`.
 
 ```fern
 <<*>>=
-// Read and write bounded RIFF WAVE files with integer PCM audio.
+// Read bounded integer and float WAVE samples and write integer PCM files.
 
 import "std/audio/pcm";
+import "std/audio/linear";
 import "std/array";
 import "std/audio/wire";
 
@@ -23,7 +28,7 @@ const CHANNEL_MASK: u64[] = [0u64, 4u64, 3u64, 7u64, 51u64, 55u64, 63u64, 1807u6
 
 // fern-lint: allow cyclomatic-complexity
 // One check per field of the format chunk and its extensible form.
-function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.AudioError] {
+function parse_format(input: [u8], at: i32, size: i32): Result[linear.Format, pcm.AudioError] {
   if (size < 16) {
     return Err(pcm.Header);
   }
@@ -46,7 +51,8 @@ function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.A
       return Err(pcm.Unsupported);
     }
     let guid: u8[] = [1, 0, 0, 0, 0, 0, 16, 0, 128, 0, 0, 170, 0, 56, 155, 113];
-    for i in 0..16 {
+    kind = wire.le(input, at + 24, 4) as i32;
+    for i in 4..16 {
       if (input[at + 24 + i] != guid[i]) {
         return Err(pcm.Unsupported);
       }
@@ -66,26 +72,28 @@ function parse_format(input: [u8], at: i32, size: i32): Result[pcm.Format, pcm.A
         return Err(pcm.Unsupported);
       }
     }
-  } else if (kind != 1) {
+  }
+  if (kind != 1 && kind != 3) {
     return Err(pcm.Unsupported);
   }
-  if (bits != 8 && bits != 16 && bits != 24 && bits != 32) {
+  if (kind == 1 && bits != 8 && bits != 16 && bits != 24 && bits != 32
+    || kind == 3 && bits != 32 && bits != 64) {
     return Err(pcm.Unsupported);
   }
-  if (rate > 16777215u64) {
+  if (rate < 1u64 || rate > 16777215u64) {
     return Err(pcm.Header);
   }
-  let format = pcm.Format { sample_rate: rate as i32, channels: channels, bits_per_sample: bits };
-  if (!pcm.valid(format) || align != channels * (bits / 8)
+  if (align != channels * (bits / 8)
     || byte_rate != rate * (align as u64)) {
     return Err(pcm.Header);
   }
-  return Ok(format);
+  let encoding = if (kind == 3) { linear.Float } else if (bits == 8) { linear.Unsigned } else { linear.Signed };
+  return Ok(linear.Format { sample_rate: rate as i32, channels: channels, bits: bits, storage_bits: bits, little_endian: true, kind: encoding });
 }
 
 // fern-lint: allow cyclomatic-complexity
 // One arm per RIFF chunk kind, and one check per header field.
-pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioError] {
+pub function inspect_linear(input: [u8], limits: pcm.Limits): Result[linear.Index, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (input.len() < 12) {
     return Err(pcm.Truncated);
@@ -104,7 +112,7 @@ pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioE
     return Err(pcm.Header);
   }
   let at = 12;
-  let format = pcm.Format { sample_rate: 0, channels: 0, bits_per_sample: 0 };
+  let format = linear.Format { sample_rate: 0, channels: 0, bits: 0, storage_bits: 0, little_endian: true, kind: linear.Signed };
   let have_format = false;
   let data_at = -1;
   let data_bytes = 0;
@@ -142,38 +150,32 @@ pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioE
   if (!have_format || data_at < 0) {
     return Err(pcm.Header);
   }
-  let stride = format.channels * (format.bits_per_sample / 8);
-  if (data_bytes % stride != 0) {
-    return Err(pcm.Header);
+  return linear.create(input, data_at, data_bytes, format, limits);
+}
+
+pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioError] {
+  let index = inspect_linear(input, limits)?;
+  let info = index.information();
+  if (info.format.kind == linear.Float) {
+    return Err(pcm.Unsupported);
   }
-  return Ok(Header { format: format, frames: data_bytes / stride, data_offset: data_at, data_bytes: data_bytes });
+  let format = pcm.Format { sample_rate: info.format.sample_rate, channels: info.format.channels, bits_per_sample: info.format.bits };
+  return Ok(Header { format: format, frames: info.frames, data_offset: index.data_offset(), data_bytes: index.data_bytes() });
 }
 
 pub function decode_range(input: [u8], start: i32, frames: i32, limits: pcm.Limits): Result[pcm.Block, pcm.AudioError] {
-  let header = inspect(input, limits)?;
-  if (start < 0 || start > header.frames || frames < 0 || frames > header.frames - start) {
-    return Err(pcm.Header);
-  }
-  let count = pcm.sample_count(frames, header.format.channels, limits)?;
-  let bytes = header.format.bits_per_sample / 8;
-  let at = header.data_offset + start * header.format.channels * bytes;
-  let samples: i32[] = [];
-  for i in 0..count {
-    let value = wire.le(input, at + i * bytes, bytes) as i32;
-    if (bytes == 1) {
-      value -= 128;
-    } else if (bytes < 4) {
-      let shift = 32 - bytes * 8;
-      value = value << shift >> shift;
-    }
-    samples = samples.append(value);
-  }
-  return Ok(pcm.Block { format: header.format, samples: samples });
+  let index = inspect_linear(input, limits)?;
+  return index.read_integer(input, start, frames, limits);
 }
 
 pub function decode(input: [u8], limits: pcm.Limits): Result[pcm.Block, pcm.AudioError] {
-  let header = inspect(input, limits)?;
-  return decode_range(input, 0, header.frames, limits);
+  let index = inspect_linear(input, limits)?;
+  return index.read_integer(input, 0, index.information().frames, limits);
+}
+
+pub function decode_float(input: [u8], limits: pcm.Limits): Result[linear.Floats, pcm.AudioError] {
+  let index = inspect_linear(input, limits)?;
+  return index.read_float(input, 0, index.information().frames, limits);
 }
 
 // fern-lint: allow cyclomatic-complexity
