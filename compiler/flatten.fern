@@ -958,11 +958,15 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
       for pat in pv.nested {
         nested = nested.append(rewrite_pattern(pat, ctx));
       }
+      let tuple_patterns: ast.Pattern[] = [];
+      for pat in pv.tup_pats {
+        tuple_patterns = tuple_patterns.append(rewrite_pattern(pat, ctx));
+      }
       let cond = pv.lit_cond;
       if (pv.has_lit_cond) {
         cond = rewrite_expr(cond, ctx);
       }
-      return ast.PatVariant { ...pv, type_name: rewrite_variant_name(pv.type_name, ctx), nested: nested, lit_cond: cond };
+      return ast.PatVariant { ...pv, type_name: rewrite_variant_name(pv.type_name, ctx), nested: nested, tup_pats: tuple_patterns, lit_cond: cond };
     },
     _ => {
       return p;
@@ -1159,7 +1163,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
         cond: rewrite_expr(f.cond, ctx),
         then_body: rewrite_block(f.then_body, ctx),
         else_body: rewrite_block(f.else_body, ctx),
-        sugar: rewrite_record_sugar(f.sugar, ctx),
+        sugar: rewrite_match_sugar(f.sugar, ctx),
       };
     },
     ast.StmtWhile(w) => {
@@ -1177,11 +1181,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       };
     },
     ast.StmtMatch(m) => {
-      let sugar = m.sugar;
-      if (has_record_arms(sugar)) {
-        sugar = rewrite_match_arms(sugar, ctx);
-      }
-      return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: rewrite_match_arms(m.arms, ctx), sugar: sugar };
+      return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: rewrite_match_arms(m.arms, ctx), sugar: rewrite_match_arms(m.sugar, ctx) };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error, line: d.line };
@@ -1191,29 +1191,6 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
     }
   }
   return st;
-}
-
-function has_record_arms(arms: ast.MatchArm[]): boolean {
-  for arm in arms {
-    if (pattern_has_record(arm.pattern)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function pattern_has_record(p: ast.Pattern): boolean {
-  if let ast.PatVariant(pv) = p {
-    if (parser.is_record_pattern(pv)) {
-      return true;
-    }
-    for nested in pv.nested {
-      if (pattern_has_record(nested)) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm[] {
@@ -1226,11 +1203,34 @@ function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm
   return out;
 }
 
-function rewrite_record_sugar(sg: ast.MatchSugar, ctx: RewriteCtx): ast.MatchSugar {
-  if (!has_record_arms(sg.arms)) {
+function rewrite_tuple_arm(arm: ast.TupArm, ctx: RewriteCtx): ast.TupArm {
+  let locals = util.append_all(ctx.locals, []);
+  locals = astwalk.append_bound_name(locals, arm.at_binding);
+  for name in arm.binds {
+    locals = astwalk.append_bound_name(locals, name);
+  }
+  let patterns: ast.Pattern[] = [];
+  for pattern in arm.elem_pats {
+    locals = astwalk.pattern_binders(pattern, locals);
+    patterns = patterns.append(rewrite_pattern(pattern, ctx));
+  }
+  let literals: ast.Expr[] = [];
+  for literal in arm.lits {
+    literals = literals.append(rewrite_expr(literal, ctx));
+  }
+  let actx = RewriteCtx { ...ctx, locals: locals };
+  return ast.TupArm { ...arm, elem_pats: patterns, lits: literals, body: rewrite_block(arm.body, actx), guard: rewrite_expr(arm.guard, actx) };
+}
+
+function rewrite_match_sugar(sg: ast.MatchSugar, ctx: RewriteCtx): ast.MatchSugar {
+  if (sg.arms.len() == 0 && sg.tup.len() == 0) {
     return sg;
   }
-  return ast.MatchSugar { ...sg, scrut: rewrite_expr(sg.scrut, ctx), arms: rewrite_match_arms(sg.arms, ctx) };
+  let tuples: ast.TupArm[] = [];
+  for arm in sg.tup {
+    tuples = tuples.append(rewrite_tuple_arm(arm, ctx));
+  }
+  return ast.MatchSugar { ...sg, scrut: rewrite_expr(sg.scrut, ctx), arms: rewrite_match_arms(sg.arms, ctx), tup: tuples };
 }
 
 function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl[] {
