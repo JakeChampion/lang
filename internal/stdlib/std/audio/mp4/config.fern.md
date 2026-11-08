@@ -13,6 +13,7 @@ The AAC configuration reader identifies unsupported AAC profiles explicitly.
 
 import "std/audio/aac/config" as aac;
 import "std/audio/mp4/boxes";
+import "std/audio/mp4/entries";
 import "std/audio/pcm";
 import "std/audio/wire";
 
@@ -121,22 +122,9 @@ function esds(input: [u8], box: boxes.Box, limits: pcm.Limits): Result[aac.Confi
 
 // Accept the two audio-entry headers and their direct or wave-wrapped descriptor.
 // fern-lint: allow cyclomatic-complexity
-function sample_entry(input: [u8], entry: boxes.Box, budget: boxes.Budget, limits: pcm.Limits): Result[(boxes.Budget, aac.Config), pcm.AudioError] {
-  if (entry.kind != boxes.tag("mp4a")) {
-    return Err(pcm.Unsupported);
-  }
-  if (entry.end - entry.data < 28) {
-    return Err(pcm.Truncated);
-  }
-  if (wire.be(input, entry.data, 6) != 0u64 || wire.be(input, entry.data + 6, 2) != 1u64) {
-    return Err(pcm.Unsupported);
-  }
-  let version = wire.be(input, entry.data + 8, 2);
-  let header = if (version == 0u64) { 28 } else if (version == 1u64) { 44 } else { return Err(pcm.Unsupported); };
-  if (header > entry.end - entry.data) {
-    return Err(pcm.Truncated);
-  }
-  let (next, children) = boxes.children(input, entry.data + header, entry.end, budget)?;
+pub function sample_entry(input: [u8], entry: boxes.Box, budget: boxes.Budget, limits: pcm.Limits): Result[(boxes.Budget, aac.Config), pcm.AudioError] {
+  let child_start = entries.header(input, entry, boxes.tag("mp4a"))?;
+  let (next, children) = boxes.children(input, child_start, entry.end, budget)?;
   if let Some(descriptor) = boxes.one(children, "esds")? {
     return Ok((next, esds(input, descriptor, limits)?));
   }
@@ -171,23 +159,5 @@ pub function descriptions(input: [u8], box: boxes.Box, budget: boxes.Budget, max
   return Ok((budget, out));
 }
 
-// Prove that the single sample data reference identifies this same file.
-// fern-lint: allow cyclomatic-complexity
-pub function data_reference(input: [u8], minf: [boxes.Box], budget: boxes.Budget): Result[boxes.Budget, pcm.AudioError] {
-  let dinf = boxes.required(minf, "dinf")?;
-  let (b1, children) = boxes.children(input, dinf.data, dinf.end, budget)?;
-  let dref = boxes.required(children, "dref")?;
-  if (boxes.full(input, dref, 8)? != 0 || wire.be(input, dref.data + 4, 4) != 1u64) {
-    return Err(pcm.Unsupported);
-  }
-  let (b2, references) = boxes.children(input, dref.data + 8, dref.end, b1)?;
-  if (references.len() != 1) {
-    return Err(pcm.Header);
-  }
-  let reference = references[0];
-  if (reference.kind != boxes.tag("url ") || reference.end - reference.data != 4 || wire.be(input, reference.data, 4) != 1u64) {
-    return Err(pcm.Unsupported);
-  }
-  return Ok(b2);
-}
+pub use "std/audio/mp4/entries".{data_reference};
 ```
