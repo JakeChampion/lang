@@ -130,6 +130,14 @@ Container codec restrictions and sample order still apply.
 
 `std/android/video/extractor` reads platform-supported containers from an explicit file range.
 Its API 28 sample-size query checks limits before a write into a decoder input buffer.
+`std/android/video/source` opens a granted content URI for this packet path.
+It duplicates the asset descriptor and preserves the provider's offset and length.
+An unknown length resolves from the seekable file's end. Non-seekable sources return `Unsupported`.
+A caller-supplied 64-bit limit bounds the source range, separately from packet limits.
+The adapter does not buffer the complete source or retain Java global references.
+Close the extractor or player before source close. Each source has one owner.
+The app needs a URI read grant, without broad storage permission.
+
 The extractor preserves the complete native track format, including codec and color metadata.
 It rejects encrypted and partial samples.
 
@@ -243,15 +251,18 @@ It also builds ARM64 Android shared libraries.
 On Linux, it executes the MediaCodec ABI test through a shared library for the host architecture.
 The unit workflow runs this script on x86-64 and ARM64 hosts.
 
-The compiler differential suite includes the native video and codec-policy tests.
+The compiler differential suite includes the native video, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
+The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
 These mocks do not decode video.
 
 The Android workflow builds `tests/android/video/app.fern` and runs it on the API 34 emulator.
 It requires AVC exports through both byte-buffer input and an EGL surface producer.
 FFmpeg independently decodes all exported frames and checks their dimensions, count, and gray pixels.
 The test requires surface playback, pause, resume, seek, and a gray screenshot.
+The workflow also copies the byte-buffer export into MediaStore and grants the video APK access to that item.
+The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
 
 Emulator results do not establish physical hardware throughput or battery consumption.

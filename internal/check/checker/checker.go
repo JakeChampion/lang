@@ -2434,6 +2434,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[n+"_f32"] = &ast.FuncType{Params: ps32, Result: ast.FloatType{Width: 32}}
 		c.info.FuncSigs[n+"_f64"] = &ast.FuncType{Params: ps64, Result: ast.FloatType{Width: 64}}
 	}
+	c.info.FuncSigs["__c_callv"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, usizeT, usizeT, ast.NumberType{Width: 32, Signed: true}},
+		Result: usizeT,
+	}
 	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{Width: 64, Signed: true},
@@ -9423,6 +9427,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
 	"__c_call5": true, "__c_call5_f32": true, "__c_call5_f64": true,
 	"__c_call6": true, "__c_call6_f32": true, "__c_call6_f64": true,
+	"__c_callv":  true,
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,

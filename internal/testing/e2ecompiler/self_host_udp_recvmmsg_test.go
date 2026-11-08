@@ -66,14 +66,9 @@ const udpRecvmmsgProgram = `function main(): i32 {
 }
 `
 
-// What the native bodies report: the train arrives as one message of 350
-// bytes with a segment size of 100, and every message carries the TOS byte.
-const udpRecvmmsgNative = "5 0 2 1 5\n350 100 2 0 98\n0 0 2 0 0\n7 0 2 7 13\n"
-
-// What the interpreter reports: the pinned stage0 compiler that builds it
-// has no socket ops 10 to 12, so the kernel splits the train into its four
-// datagrams, and no message carries a segment size or a TOS byte.
-const udpRecvmmsgInterp = "5 0 0 1 5\n100 0 0 0 99\n100 0 0 100 199\n100 0 0 200 48\n50 0 0 49 98\n0 0 0 0 0\n7 0 0 7 13\n"
+// What every engine reports: the train arrives as one message of 350 bytes
+// with a segment size of 100, and every message carries the TOS byte.
+const udpRecvmmsgWant = "5 0 2 1 5\n350 100 2 0 98\n0 0 2 0 0\n7 0 2 7 13\n"
 
 func TestSelfHostUDPRecvmmsg(t *testing.T) {
 	primary, stdlib := witSelfHostCLI(t)
@@ -94,18 +89,18 @@ func TestSelfHostUDPRecvmmsg(t *testing.T) {
 					}
 					return runX86_64Bin(target.runner, bin)
 				}
-				checkUDPRecvmmsgFamilies(t, compile, udpRecvmmsgNative, compiler.name == "primary")
+				checkUDPRecvmmsgFamilies(t, compile, compiler.name == "primary")
 			})
 		}
 	}
 	t.Run("bootstrap/interpreter", func(t *testing.T) {
 		checkUDPRecvmmsgFamilies(t, func(src, _ string) *exec.Cmd {
 			return exec.Command(bootstrap, "-interp", src)
-		}, udpRecvmmsgInterp, false)
+		}, false)
 	})
 }
 
-func checkUDPRecvmmsgFamilies(t *testing.T, compile func(string, string) *exec.Cmd, want string, census bool) {
+func checkUDPRecvmmsgFamilies(t *testing.T, compile func(string, string) *exec.Cmd, census bool) {
 	t.Helper()
 	for _, family := range []struct {
 		network, host, address, fam string
@@ -147,8 +142,8 @@ func checkUDPRecvmmsgFamilies(t *testing.T, compile func(string, string) *exec.C
 			if runErr != nil {
 				t.Fatalf("receive: %v\nstdout:\n%s\nstderr:\n%s", runErr, stdout.String(), stderr.String())
 			}
-			if got := stdout.String(); got != want {
-				t.Fatalf("messages:\n%s\nwant:\n%s\nstderr:\n%s", got, want, stderr.String())
+			if got := stdout.String(); got != udpRecvmmsgWant {
+				t.Fatalf("messages:\n%s\nwant:\n%s\nstderr:\n%s", got, udpRecvmmsgWant, stderr.String())
 			}
 			if census {
 				assertBalancedCensus(t, stderr.String())

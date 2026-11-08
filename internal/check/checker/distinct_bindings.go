@@ -6,12 +6,16 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// distinctBindings gives a new name to each binding in fn that repeats the
-// name of an earlier binding, and to each read of it. The last-use analysis
-// keys its facts by name, so two values with one name mix. The returned
-// function restores every name.
+// distinctBindings separates local bindings from global names and other
+// locals with the same name. The returned function restores every name.
 func distinctBindings(fn *ast.FuncDecl) func() {
 	r := &bindingRenamer{seen: map[string]int{}}
+	ast.Walk(fn.Body, func(node ast.Node) bool {
+		if id, ok := node.(*ast.Ident); ok && !id.Local {
+			r.seen[id.Name] = 1
+		}
+		return true
+	})
 	r.function(fn.Params, fn.Body, false)
 	return func() {
 		for i := len(r.undo) - 1; i >= 0; i-- {

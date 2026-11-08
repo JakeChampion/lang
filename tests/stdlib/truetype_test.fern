@@ -1,0 +1,87 @@
+import "std/test";
+import "std/truetype";
+import "./image_vectors";
+
+// The test font has 1000 units to the em: "A" is a square of 500, "V" is
+// 500 by 700 at x 100, "O" is a quarter curve, "Á" is "A" moved 250 to the
+// right, and the kern feature moves "V" 120 units towards "A".
+function font(): truetype.Font {
+  if let Some(f) = truetype.parse(image_vectors.font()) {
+    return f;
+  }
+  return truetype.Font { data: [], cmap: 0, cmap_format: 0, loca: 0, glyf: 0, hmtx: 0, hmetrics: 1, glyphs: 0, long_loca: false, units_per_em: 1000, ascender: 0, descender: 0, line_gap: 0, pairs: [] };
+}
+
+function test_metrics(): test.TestOutcome {
+  let f = font();
+  return test.assert_eq(f.units_per_em.to_string() + " " + f.ascender.to_string() + " " + f.descender.to_string(), "1000 800 -200");
+}
+
+function test_glyphs_and_advances(): test.TestOutcome {
+  let f = font();
+  let a = f.glyph(65);
+  let got = a.to_string() + " " + f.glyph(86).to_string() + " " + f.glyph(193).to_string() + " " + f.glyph(66).to_string() + " " + f.advance(a).to_string() + " " + f.advance(f.glyph(193)).to_string();
+  return test.assert_eq(got, "1 2 4 0 600 850");
+}
+
+function test_kerning(): test.TestOutcome {
+  let f = font();
+  let a = f.glyph(65);
+  let v = f.glyph(86);
+  return test.assert_eq(f.kerning(a, v).to_string() + " " + f.kerning(v, a).to_string(), "-120 0");
+}
+
+function test_square(): test.TestOutcome {
+  // At 100 pixels to the em, "A" is a square of 50 pixels on the baseline.
+  let b = font().render(1, 100.0, 0.0);
+  let inside = b.coverage[b.height / 2 * b.width + b.width / 2];
+  let total = 0;
+  for c in b.coverage {
+    total = total + c as i32;
+  }
+  return test.assert_eq(b.left.to_string() + " " + (b.top + b.height).to_string() + " " + inside.to_string() + " " + (total / 255).to_string(), "0 1 255 2500");
+}
+
+function test_half_pixel_edge(): test.TestOutcome {
+  // Half a pixel to the right, the first column of the square is half
+  // covered.
+  let b = font().render(1, 100.0, 0.5);
+  return test.assert_eq(b.coverage[b.height / 2 * b.width], 128 as u8);
+}
+
+function test_curve(): test.TestOutcome {
+  // The quarter curve and the two edges cover 5/6 of their box of 100 by
+  // 100 pixels: the triangle under the chord, and 2/3 of the triangle of
+  // the curve.
+  let b = font().render(3, 100.0, 0.0);
+  let total = 0;
+  for c in b.coverage {
+    total = total + c as i32;
+  }
+  let area = total / 255;
+  // Curves become lines, which cut inside the curve a little.
+  return test.assert_eq(area >= 8290 && area <= 8376, true);
+}
+
+function test_composite(): test.TestOutcome {
+  let f = font();
+  let b = f.render(f.glyph(193), 100.0, 0.0);
+  return test.assert_eq(b.left.to_string() + " " + b.width.to_string(), "25 51");
+}
+
+function test_not_a_font(): test.TestOutcome {
+  return test.assert_eq(truetype.parse([0 as u8, 1 as u8, 0 as u8]).is_none(), true);
+}
+
+function main(): i32 {
+  let r = test.new("std/truetype");
+  r = r.it("metrics", test_metrics);
+  r = r.it("glyphs and advances", test_glyphs_and_advances);
+  r = r.it("kerning", test_kerning);
+  r = r.it("a square", test_square);
+  r = r.it("an edge half a pixel in", test_half_pixel_edge);
+  r = r.it("a curve", test_curve);
+  r = r.it("a composite glyph", test_composite);
+  r = r.it("not a font", test_not_a_font);
+  return r.finish();
+}

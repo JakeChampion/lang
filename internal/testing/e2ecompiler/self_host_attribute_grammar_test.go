@@ -27,6 +27,7 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@inline\nfip function f(x: i32): i32 { return x; }" + main,
 		"@import(\"a:b/c\", \"d\")\nfunction f(): void;" + main,
 		"@import(\"a:b/c\", \"d\")\nresource R;" + main,
+		"@import(\"libm.so.6\", \"ldexp\", weak)\nfunction f(x: f64, e: i32): f64;" + main,
 		"@export(\"a:b/c\", \"d\")\nfunction f(): void {}" + main,
 	}
 	rejected := []string{
@@ -49,6 +50,11 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@import(\"a:b/c\")\nfunction f(): void;",
 		"@import(1, \"d\")\nfunction f(): void;",
 		"@import(\"a:b/c\", \"d\"\nfunction f(): void;",
+		"@import(\"a:b/c\", \"d\", weak)\nfunction f(): void;",
+		"@import(\"libm.so.6\", \"d\", strong)\nfunction f(): void;",
+		"@import(\"libm.so.6\", \"d\", weak, weak)\nfunction f(): void;",
+		"@import(\"libm.so.6\", \"d\", weak\nfunction f(): void;",
+		"@export(\"a:b/c\", \"d\", weak)\nfunction f(): void {}",
 		"@export\nfunction f(): void {}",
 		"@derive(Eq)",
 		"@derive(Eq)\nconst X: i32 = 1;",

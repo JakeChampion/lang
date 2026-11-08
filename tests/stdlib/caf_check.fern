@@ -1,0 +1,75 @@
+import "std/audio/caf";
+import "std/audio/pcm";
+import "aac_kernel_check" as ref;
+
+pub struct Reference { rate: i32, channels: i32, depth: i32, trim: i32, frames: i32, mask: u32, order: i32[] }
+
+pub function samples(actual: [i32], start: i32, frames: i32, position: i64, expected: [u8], channels: i32, vector: Reference): Result[void, string] {
+  if (start < 0 || frames < 0 || position < 0i64 || position + frames as i64 > vector.frames as i64 || (start + frames) * channels > actual.len()) {
+    return Err("PCM range extent");
+  }
+  for i in 0..frames {
+    for channel in 0..channels {
+      let at = (vector.trim + position as i32 + i) * channels + vector.order[channel];
+      let golden = ref.word(expected, 4 * at);
+      let value = actual[(start + i) * channels + channel];
+      if (value != golden) {
+        return Err("sample " + at.to_string() + ": actual " + value.to_string() + ", expected " + golden.to_string());
+      }
+    }
+  }
+  return Ok(());
+}
+
+function audio(value: caf.Audio, vector: Reference, expected: [u8], position: i64): Result[void, string] {
+  if (value.position != position || value.format.sample_rate != vector.rate || value.format.channels != vector.channels || value.format.bits_per_sample != vector.depth || value.channel_mask != vector.mask || value.frames < 1) {
+    return Err("audio position or format");
+  }
+  return samples(value.samples, value.start, value.frames, position, expected, vector.channels, vector);
+}
+
+pub function run(encoded: [u8], expected: [u8], vector: Reference): Result[void, string] {
+  let index = match (caf.inspect(encoded, caf.default_limits())) { Ok(value) => value, Err(e) => { return Err("index: " + e.message()); } };
+  let info = index.information();
+  if (info.frames != vector.frames as i64 || info.priming != vector.trim as i64 || info.channel_mask != vector.mask || info.format.sample_rate != vector.rate || info.format.channels != vector.channels || info.format.bits_per_sample != vector.depth) {
+    return Err("indexed information");
+  }
+  let state = match (caf.cursor(index)) { Ok(value) => value, Err(e) => { return Err("cursor: " + e.message()); } };
+  let position = 0i64;
+  while (true) {
+    let (next, event) = match (state.next(encoded)) { Ok(value) => value, Err(e) => { return Err("read: " + e.message()); } };
+    state = next;
+    let Some(value) = event else {
+      break;
+    };
+    audio(value, vector, expected, position)?;
+    position += value.frames as i64;
+  }
+  if (position != info.frames) {
+    return Err("complete cursor length");
+  }
+  let decoded = match (caf.decode(encoded, caf.default_limits())) { Ok(value) => value, Err(e) => { return Err("complete decode: " + e.message()); } };
+  if (decoded.samples.len() != vector.frames * vector.channels) {
+    return Err("complete PCM length");
+  }
+  samples(decoded.samples, 0, vector.frames, 0i64, expected, vector.channels, vector)?;
+  for target in [info.frames, 0i64, info.frames - 1i64, 1i64, 17i64, 4094i64, 4095i64, 4096i64, 4097i64, info.frames / 2i64, 0i64] {
+    if (target < 0i64 || target > info.frames) {
+      continue;
+    }
+    state = match (state.seek(target)) { Ok(value) => value, Err(e) => { return Err("seek: " + e.message()); } };
+    let (next, event) = match (state.next(encoded)) { Ok(value) => value, Err(e) => { return Err("seek read: " + e.message()); } };
+    state = next;
+    match (event) {
+      Some(value) => {
+        audio(value, vector, expected, target)?;
+      },
+      None => {
+        if (target != info.frames) {
+          return Err("early seek completion");
+        }
+      }
+    }
+  }
+  return Ok(());
+}

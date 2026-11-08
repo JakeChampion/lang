@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import random
+import re
 import statistics
 import struct
 import subprocess
@@ -81,6 +82,8 @@ def main():
     parser.add_argument("--channels", type=int, default=2)
     parser.add_argument("--sample-rate", type=int, default=44100)
     parser.add_argument("--quality", type=float, default=75)
+    parser.add_argument("--rate-mode", choices=("vbr", "cbr", "abr"), default="vbr")
+    parser.add_argument("--bitrate", type=float, default=96)
     parser.add_argument("--output-format", choices=("PCM8", "PCM16", "PCM24", "FLOAT32"), default="FLOAT32")
     parser.add_argument("--direction", choices=("encode", "decode", "both"), default="both")
     args = parser.parse_args()
@@ -88,6 +91,8 @@ def main():
         parser.error("use positive seconds and at least three repetitions")
     if not 1 <= args.channels <= 255 or not 1 <= args.sample_rate <= 384000 or not 0 < args.quality <= 100:
         parser.error("use channels 1..255, sample rate 1..384000, and quality in (0, 100]")
+    if not math.isfinite(args.bitrate) or args.bitrate <= 0:
+        parser.error("use a finite positive bitrate")
     if args.cpu is not None and args.cpus is not None:
         parser.error("select --cpu or --cpus")
     if args.cpu is not None:
@@ -104,13 +109,16 @@ def main():
     report = {"threads": args.threads, "platform": platform.platform(), "cpu": cpu,
               "affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
               "seconds": args.seconds, "repetitions": args.repetitions,
-              "reference_label": args.reference_label, "quality": args.quality, "block_size": args.block_size,
+              "reference_label": args.reference_label, "quality": args.quality if args.rate_mode == "vbr" else None,
+              "rate_mode": args.rate_mode, "bitrate_kbps": args.bitrate if args.rate_mode != "vbr" else None,
+              "block_size": args.block_size,
               "channels": args.channels, "sample_rate": args.sample_rate,
               "output_format": args.output_format, "direction": args.direction,
               "fern_binary_sha256": hashlib.sha256(fern.read_bytes()).hexdigest(),
               "reference_encoder_sha256": hashlib.sha256((reference / "ulcencodetool").read_bytes()).hexdigest(),
               "reference_decoder_sha256": hashlib.sha256((reference / "ulcdecodetool").read_bytes()).hexdigest(),
               "source_commit": args.source_commit,
+              "benchmark_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "results": []}
     if args.compiler:
         compiler = args.compiler.resolve()
@@ -125,8 +133,24 @@ def main():
             source = root / "input.wav"
             checksum = fixture(source, kind, args.seconds, args.channels, args.sample_rate)
             encoded = {name: root / f"{name}.ulc" for name in ("C", "Fern")}
-            commands = {"C": [reference / "ulcencodetool", source, encoded["C"], f"-{args.quality:g}", f"-blocksize:{args.block_size}"],
-                        "Fern": [fern, "encode", source, encoded["Fern"], f"{args.quality:g}", str(args.block_size)]}
+            average = None
+            fern_mode, fern_rate, c_rate = "encode", f"{args.quality:g}", f"-{args.quality:g}"
+            if args.rate_mode != "vbr":
+                fern_mode = "encode-" + args.rate_mode
+                fern_rate = c_rate = f"{args.bitrate:g}"
+            if args.rate_mode == "abr":
+                analysis = run([reference / "ulcencodetool", source, encoded["C"], "-75", f"-blocksize:{args.block_size}"])
+                match = re.search(r"Avg complexity = ([0-9.]+)", analysis.stdout.decode())
+                if match is None:
+                    raise ValueError("C complexity analysis is missing")
+                average = float(match[1]) or 1.0
+                if not 0 < average <= 1:
+                    raise ValueError("C complexity is outside (0, 1]")
+                c_rate += f",{average:.5f}"
+            commands = {"C": [reference / "ulcencodetool", source, encoded["C"], c_rate, f"-blocksize:{args.block_size}"],
+                        "Fern": [fern, fern_mode, source, encoded["Fern"], fern_rate, str(args.block_size)]}
+            if average is not None:
+                commands["Fern"].append(f"{average:.5f}")
             for command in commands.values():
                 run(command)
             sizes = {name: path.stat().st_size for name, path in encoded.items()}
@@ -148,6 +172,26 @@ def main():
                           "seconds": elapsed, "median_seconds": medians,
                           "fern_speed_ratio": medians["C"] / medians["Fern"],
                           "encoded_bytes": sizes}
+                if average is not None:
+                    result["average_complexity"] = average
+                    result["complexity_source"] = "C VBR 75 analysis outside timing"
+                if direction == "encode" and oracle:
+                    with wave.open(str(source), "rb") as wav:
+                        original = tuple(value / 32768 for value in struct.unpack(
+                            f"<{wav.getnframes() * args.channels}h", wav.readframes(wav.getnframes())))
+                    power = sum(value * value for value in original) / max(1, len(original))
+                    expected_count = (math.ceil(len(original) / (args.channels * args.block_size)) + 2) * args.block_size * args.channels
+                    for name in ("C", "Fern"):
+                        run([oracle, encoded[name], outputs[name]])
+                        decoded = samples(outputs[name])
+                        assert len(decoded) == expected_count
+                        assert all(math.isfinite(value) for value in decoded)
+                        aligned = decoded[2 * args.block_size * args.channels:]
+                        mse = sum((actual - expected) ** 2 for actual, expected in zip(aligned, original)) / max(1, len(original))
+                        result[f"{name.lower()}_rms_error"] = math.sqrt(mse)
+                        result[f"{name.lower()}_snr_db"] = 10 * math.log10(power / mse) if power > 0 and mse > 0 else None
+                        result[f"{name.lower()}_file_kbps"] = sizes[name] * 8 / args.seconds / 1000
+                    del original, decoded, aligned
                 if direction == "decode":
                     a, b = samples(outputs["C"], args.output_format), samples(outputs["Fern"], args.output_format)
                     assert len(a) == len(b)
@@ -169,11 +213,13 @@ def main():
                             result[f"{name.lower()}_oracle_max_error"] = max(errors, default=0)
                             result[f"{name.lower()}_oracle_rms_error"] = (sum(x * x for x in errors) / max(1, len(errors))) ** 0.5
                         assert result["fern_oracle_max_error"] < 0.00001 + quantization_error, result["fern_oracle_max_error"]
+                        del truth, errors
                     else:
                         tolerance = 0.00002
                         if args.output_format != "FLOAT32":
                             tolerance += 1 / (1 << (int(args.output_format[3:]) - 1))
                         assert error < tolerance, error
+                    del a, b
                 report["results"].append(result)
                 print(f"{kind:10} {direction:6} C={medians['C']:.4f}s Fern={medians['Fern']:.4f}s "
                       f"C/Fern={result['fern_speed_ratio']:.3f}", flush=True)

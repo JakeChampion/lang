@@ -88,6 +88,10 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// The full CAF corpus includes repeated seeks. Independent trim smoke stays here.
+	"caf": true, "caf_shard1": true, "caf_shard2": true, "caf_shard3": true,
+	// The CAF boundary campaign takes 89 seconds. Exact trim smoke stays here.
+	"caf_boundary": true,
 	// The full lossless reference corpus uses compiled gates. Exact ALAC smoke stays here.
 	"alac": true,
 	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
@@ -343,6 +347,12 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_compress", langSrcAbs(t, "tests/stdlib/http_compress_test.fern"), ""},
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
+		{"caf", langSrcAbs(t, "tests/stdlib/caf_test.fern"), ""},
+		{"caf_shard1", langSrcAbs(t, "tests/stdlib/caf_shard1_test.fern"), ""},
+		{"caf_shard2", langSrcAbs(t, "tests/stdlib/caf_shard2_test.fern"), ""},
+		{"caf_shard3", langSrcAbs(t, "tests/stdlib/caf_shard3_test.fern"), ""},
+		{"caf_boundary", langSrcAbs(t, "tests/stdlib/caf_boundary_test.fern"), ""},
+		{"caf_smoke", langSrcAbs(t, "tests/stdlib/caf_smoke_test.fern"), ""},
 		{"alac", langSrcAbs(t, "tests/stdlib/alac_test.fern"), ""},
 		{"alac_boundary", langSrcAbs(t, "tests/stdlib/alac_boundary_test.fern"), ""},
 		{"alac_smoke", langSrcAbs(t, "tests/stdlib/alac_smoke_test.fern"), ""},
@@ -372,6 +382,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"video", langSrcAbs(t, "tests/stdlib/video_test.fern"), ""},
 		{"android_player", langSrcAbs(t, "tests/stdlib/android_player_test.fern"), ""},
 		{"android_video_policy", langSrcAbs(t, "tests/stdlib/android_video_policy_test.fern"), ""},
+		{"android_video_source", langSrcAbs(t, "tests/stdlib/android_video_source_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
 		{"mp3_file", langSrcAbs(t, "tests/stdlib/mp3_file_test.fern"), ""},
 		{"mp3_file_smoke", langSrcAbs(t, "tests/stdlib/mp3_file_smoke_test.fern"), ""},
@@ -423,6 +434,8 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"opus_pitch_doubling", langSrcAbs(t, "tests/stdlib/opus_pitch_doubling_test.fern"), ""},
 		{"net_broadcast", langSrcAbs(t, "tests/stdlib/net_broadcast_test.fern"), ""},
 		{"android_draw", langSrcAbs(t, "tests/stdlib/android_draw_test.fern"), ""},
+		{"jpeg", langSrcAbs(t, "tests/stdlib/jpeg_test.fern"), ""},
+		{"truetype", langSrcAbs(t, "tests/stdlib/truetype_test.fern"), ""},
 		{"android_property", langSrcAbs(t, "tests/stdlib/android_property_test.fern"), ""},
 		{"http_forwarded", langSrcAbs(t, "tests/stdlib/http_forwarded_test.fern"), ""},
 		{"http_trace", langSrcAbs(t, "tests/stdlib/http_trace_test.fern"), ""},

@@ -326,6 +326,7 @@ func (p *parser) parseProgram() *ast.Program {
 		}
 		var derives []string
 		var importIface, importWIT string
+		importWeak := false
 		var exportIface, exportWIT string
 		var jniClass, jniDecl string
 		mustConsume := false
@@ -348,6 +349,7 @@ func (p *parser) parseProgram() *ast.Program {
 			derives = attr.derives
 			importIface = attr.importIface
 			importWIT = attr.importWIT
+			importWeak = attr.importWeak
 			exportIface = attr.exportIface
 			exportWIT = attr.exportWIT
 			jniClass = attr.jniClass
@@ -643,6 +645,7 @@ func (p *parser) parseProgram() *ast.Program {
 				}
 				fn.ImportIface = importIface
 				fn.ImportWITName = importWIT
+				fn.ImportWeak = importWeak
 			} else if exportIface != "" {
 				if fn.Body == nil {
 					p.errors = append(p.errors, p.errorf(fn.P,
@@ -1133,6 +1136,7 @@ type declAttr struct {
 	derives     []string
 	importIface string
 	importWIT   string
+	importWeak  bool
 	exportIface string
 	exportWIT   string
 	jniClass    string
@@ -1188,13 +1192,16 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		return declAttr{name: attr, inlineHint: ast.InlineHintNever}, nil
 	case "norc":
 		return declAttr{name: attr, noRC: true}, nil
-	case "import", "export", "jni":
-		iface, name, err := p.parseIfaceNamePair()
+	case "import":
+		iface, name, weak, err := p.parseImportArgs()
 		if err != nil {
 			return declAttr{}, err
 		}
-		if attr == "import" {
-			return declAttr{name: attr, importIface: iface, importWIT: name}, nil
+		return declAttr{name: attr, importIface: iface, importWIT: name, importWeak: weak}, nil
+	case "export", "jni":
+		iface, name, err := p.parseIfaceNamePair()
+		if err != nil {
+			return declAttr{}, err
 		}
 		if attr == "jni" {
 			return declAttr{name: attr, jniClass: iface, jniDecl: name}, nil
@@ -1273,6 +1280,39 @@ func (p *parser) parseStringArg() (string, error) {
 		return "", err
 	}
 	return t.Text, nil
+}
+
+// parseImportArgs reads @import(iface, name) or @import(library, symbol, weak).
+// A WIT interface has no weak form.
+func (p *parser) parseImportArgs() (iface, name string, weak bool, err error) {
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return "", "", false, err
+	}
+	it, err := p.expect(lexer.String, "")
+	if err != nil {
+		return "", "", false, err
+	}
+	if _, err := p.expect(lexer.Punct, ","); err != nil {
+		return "", "", false, err
+	}
+	nt, err := p.expect(lexer.String, "")
+	if err != nil {
+		return "", "", false, err
+	}
+	if _, ok := p.accept(lexer.Punct, ","); ok {
+		wt, err := p.expect(lexer.Ident, "weak")
+		if err != nil {
+			return "", "", false, err
+		}
+		if strings.Contains(it.Text, ":") {
+			return "", "", false, p.errorfCode(wt.Pos, "P001", "@import(..., weak) applies to a C library; the WIT interface %s has no weak import", it.Text)
+		}
+		weak = true
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return "", "", false, err
+	}
+	return it.Text, nt.Text, weak, nil
 }
 
 func (p *parser) parseIfaceNamePair() (iface, name string, err error) {
