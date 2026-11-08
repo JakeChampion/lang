@@ -453,3 +453,7 @@ cache_flush=503
 tlb_flush=504
 tlb_flush_all=505
 breakpoint=506
+irq_mask=507
+irq_unmask=508
+irq_wait=509
+irq_pending=510

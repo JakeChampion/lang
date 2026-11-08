@@ -1803,7 +1803,7 @@ pub function freestanding_roots(merged: parser.Module, export_list: string): (pa
 // runtime calls it, as an embedder calls an -export entry.
 pub function provider_entries(m: parser.Module, target: string): parser.Module {
   for pv in parser.marked(m, "provide") {
-    if (!platforms.has_capability(target, pv.arg)) {
+    if (platforms.provider_used(target, pv.arg)) {
       m = parser.Module { ...m, exports: m.exports.append(parser.ExportBinding { func_name: pv.func_name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
     }
   }
