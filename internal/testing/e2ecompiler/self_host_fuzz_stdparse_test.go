@@ -2,6 +2,10 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"strings"
@@ -13,8 +17,8 @@ import (
 // The targets here feed hostile bytes to the network-facing parsers of the
 // standard library through tests/fuzz/stdparse.fern: the HTTP/1 request
 // framer and its chunked-body decoder, the HTTP/2 frame reader and server
-// connection, the HPACK and QPACK decoders, the JSON parser, and the URL and
-// query parsers. A server reads these bytes from its peers.
+// connection, the HPACK and QPACK decoders, the QUIC packet and frame readers,
+// the JSON parser, and the URL and query parsers. A server reads these bytes from its peers.
 // The shipped CLI builds the program, so the targets fuzz the standard
 // library as this tree compiles it. Each parser refuses malformed bytes with
 // an error value, so the one accepted outcome is exit 0 with a summary.
@@ -141,6 +145,98 @@ func FuzzSelfHostStdQPACK(f *testing.F) {
 		hexSeed(f, "01000000"),
 		hexSeed(f, "0000"),
 		hexSeed(f, "00"),
+		[]byte(""),
+	})
+}
+
+// quicInitial seals payload as a QUIC version 1 client Initial packet for
+// dcid, with a 4-byte packet number 0, as RFC 9001 sections 5.2 to 5.4 lay out.
+func quicInitial(f *testing.F, dcid, payload []byte) []byte {
+	salt := hexSeed(f, "38762cf7f55934b34d179ae6a4c80cadccbb7f0a")
+	expand := func(secret []byte, label string, n int) []byte {
+		full := "tls13 " + label
+		info := append([]byte{byte(n >> 8), byte(n), byte(len(full))}, full...)
+		out, err := hkdf.Expand(sha256.New, secret, string(append(info, 0)), n)
+		if err != nil {
+			f.Fatal(err)
+		}
+		return out
+	}
+	initial, err := hkdf.Extract(sha256.New, dcid, salt)
+	if err != nil {
+		f.Fatal(err)
+	}
+	client := expand(initial, "client in", 32)
+	key, iv, hp := expand(client, "quic key", 16), expand(client, "quic iv", 12), expand(client, "quic hp", 16)
+	header := []byte{0xc3, 0, 0, 0, 1, byte(len(dcid))}
+	header = append(header, dcid...)
+	n := 4 + len(payload) + 16
+	header = append(header, 0, 0, 0x40|byte(n>>8), byte(n), 0, 0, 0, 0)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		f.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		f.Fatal(err)
+	}
+	sealed := gcm.Seal(nil, iv, payload, header)
+	hpBlock, err := aes.NewCipher(hp)
+	if err != nil {
+		f.Fatal(err)
+	}
+	mask := make([]byte, 16)
+	hpBlock.Encrypt(mask, sealed[:16])
+	header[0] ^= mask[0] & 0x0f
+	for i := 0; i < 4; i++ {
+		header[len(header)-4+i] ^= mask[1+i]
+	}
+	return append(header, sealed...)
+}
+
+// FuzzSelfHostStdQUIC feeds hostile datagrams to the QUIC packet reader: it
+// walks the coalesced packets and opens each Initial packet with the client
+// Initial keys of its destination connection ID.
+func FuzzSelfHostStdQUIC(f *testing.F) {
+	dcid := hexSeed(f, "8394c8f03e515708")
+	payload := append([]byte{6, 0, 5, 'h', 'e', 'l', 'l', 'o', 1}, make([]byte, 40)...)
+	initial := quicInitial(f, dcid, payload)
+	fuzzStdParser(f, "quic", [][]byte{
+		initial,
+		append(append([]byte{}, initial...), initial...),
+		append(append([]byte{}, initial[:len(initial)-1]...), initial[len(initial)-1]^1),
+		initial[:30],
+		append([]byte{0x40}, append(dcid, make([]byte, 24)...)...),
+		append([]byte{0x80, 0, 0, 0, 0, 8}, append(dcid, 0, 0, 0, 0, 1, 0xff, 0, 0, 1)...),
+		append([]byte{0xf0, 0, 0, 0, 1, 8}, append(dcid, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)...),
+		{0xc0, 0, 0, 0, 1, 21},
+		{0x80, 0, 0, 0, 1, 0, 0, 0, 0x7f, 0xff},
+		append([]byte{0xc3, 0, 0, 0, 1, 8}, append(dcid, 0, 0, 0x5f, 0xff, 0, 0, 0, 0)...),
+		{0xc3, 0xfa, 0xce, 0xb0, 0x0c, 0, 0},
+		[]byte(""),
+	})
+}
+
+// FuzzSelfHostStdQUICFrames feeds hostile packet payloads to the QUIC frame
+// reader.
+func FuzzSelfHostStdQUICFrames(f *testing.F) {
+	fuzzStdParser(f, "frames", [][]byte{
+		{0, 0, 1},
+		{2, 10, 0, 1, 5, 2, 3, 1, 1},
+		{3, 10, 0, 0, 5, 1, 2, 3},
+		{2, 0x80, 0, 0, 0, 0, 0x3f, 0xff, 0xff, 0},
+		{6, 0, 5, 'h', 'e', 'l', 'l', 'o'},
+		{0x0f, 4, 0x40, 0x10, 3, 'a', 'b', 'c'},
+		{0x08, 4, 'a', 'b'},
+		{0x0e, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xc0, 0, 0, 0, 0, 0, 0, 1, 1, 'x'},
+		{4, 4, 7, 100},
+		{0x10, 0x7f, 0xff},
+		{0x18, 1, 0, 21, 1, 2, 3},
+		{0x18, 1, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		{0x1c, 10, 0, 3, 0xff, 0xfe, 0xfd},
+		{0x1e},
+		{0x40, 0x50, 0},
+		{0x15, 0x40},
 		[]byte(""),
 	})
 }
