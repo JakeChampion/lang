@@ -264,6 +264,8 @@ Record the selected codec attributes and the exact media request with each resul
 
 The Android lane also runs `tests/android/player/app.fern` with an AVC and stereo AAC clip.
 It requires video output, stable pause position, accurate seek, timeline anchors, completion, repeated playback, and error callbacks.
+
+The error callback for a missing HTTP source comes after the retries of the platform, about 30 seconds after the request.
 The fixture contains four seconds of 320 by 240 video and 48 kHz stereo audio.
 Artifacts include the fixture, its independent FFprobe metadata, logs, a screenshot, and Android media diagnostics.
 The test delegates A/V synchronization to Android. It does not measure acoustic lip-sync error or physical device power.
