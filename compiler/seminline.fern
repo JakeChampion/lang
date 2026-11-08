@@ -2820,7 +2820,7 @@ function drop_unread(f: ssasem.Func): Rewrite {
   if (built.len() == 0 && !has_static_closure(g)) {
     return Rewrite { f: f, changed: false };
   }
-  let reads = read_counts(f);
+  let reads = ssa.use_counts(f.graph);
   if (!any_unread(f, built, reads)) {
     return Rewrite { f: f, changed: false };
   }
@@ -2867,7 +2867,7 @@ function unread_closure(f: ssasem.Func, built: typeinfo.Type[], reads0: i32[]): 
   return gone;
 }
 
-// read_counts without the reads the gone instructions make.
+// ssa.use_counts without the reads the gone instructions make.
 function read_counts_outside(f: ssasem.Func, gone: boolean[]): i32[] {
   let g = f.graph;
   let reads = __alloc_i32(g.nvals);
@@ -2974,30 +2974,6 @@ function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
     }
   }
   return built;
-}
-
-function read_counts(f: ssasem.Func): i32[] {
-  let g = f.graph;
-  let reads: i32[] = [];
-  let v = 0;
-  while (v < g.nvals) {
-    reads = reads.append(0);
-    v += 1;
-  }
-  for b in g.blocks {
-    for ins in b.insts {
-      for a in ins.args {
-        reads = counted(reads, a);
-      }
-    }
-    if (b.term.kind_tag == ssa.TERM_RET) {
-      reads = counted(reads, b.term.value);
-    }
-    if (b.term.kind_tag == ssa.TERM_BRIF) {
-      reads = counted(reads, b.term.cond);
-    }
-  }
-  return reads;
 }
 
 function counted(own reads: i32[], v: i32): i32[] {

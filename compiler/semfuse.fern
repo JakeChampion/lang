@@ -288,7 +288,7 @@ function no_chain(): Chain {
 
 @noinline
 function find_chain(f: ssasem.Func, cx: Context): Chain {
-  let uses = use_counts(f.graph);
+  let uses = ssa.use_counts(f.graph);
   let defs = defs_of(f.graph);
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
@@ -554,7 +554,7 @@ function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
 @noinline
 function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boolean): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
-  let uses = use_counts(f.graph);
+  let uses = ssa.use_counts(f.graph);
   let defs = defs_of(f.graph);
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
@@ -644,24 +644,6 @@ function first_pos(c: Chain): i32 {
 
 function removed(c: Chain, p: i32): boolean {
   return index_of(c.stages, p) >= 0 || index_of(c.roots, p) >= 0;
-}
-
-function use_counts(g: ssa.SFunc): i32[] {
-  let out = __alloc_i32(g.nvals);
-  for b in g.blocks {
-    for ins in b.insts {
-      for a in ins.args {
-        out = out.with(a, out[a] + 1);
-      }
-    }
-    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
-      out = out.with(b.term.value, out[b.term.value] + 1);
-    }
-    if (b.term.kind_tag == ssa.TERM_BRIF) {
-      out = out.with(b.term.cond, out[b.term.cond] + 1);
-    }
-  }
-  return out;
 }
 
 function defs_of(g: ssa.SFunc): Def[] {
