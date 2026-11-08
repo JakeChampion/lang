@@ -10,6 +10,8 @@ Fragmented media, encrypted entries, external references, and non-AAC tracks are
 
 ```fern
 <<*>>=
+// Index and decode the AAC tracks of a complete MP4 or M4A byte view.
+
 import "std/audio/aac";
 import "std/audio/aac/config" as aac_config;
 import "std/audio/aac/dsp";

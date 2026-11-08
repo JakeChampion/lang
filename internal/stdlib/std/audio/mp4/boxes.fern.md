@@ -9,6 +9,8 @@ Extended lengths are checked before conversion. They cannot address bytes outsid
 
 ```fern
 <<*>>=
+// Read bounded ISO base media box boundaries from a complete byte view.
+
 import "std/audio/pcm";
 import "std/audio/wire";
 

@@ -9,6 +9,8 @@ An explicit packet limit bounds arrays before allocation.
 
 ```fern
 <<*>>=
+// Validate the sample size, chunk, offset and decoding time tables of an ISO audio track.
+
 import "std/audio/mp4/boxes";
 import "std/audio/pcm";
 import "std/audio/wire";

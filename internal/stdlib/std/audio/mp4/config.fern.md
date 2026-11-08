@@ -9,6 +9,8 @@ The AAC configuration reader identifies unsupported AAC profiles explicitly.
 
 ```fern
 <<*>>=
+// Read mp4a sample descriptions and their AAC decoder configuration.
+
 import "std/audio/aac/config" as aac;
 import "std/audio/mp4/boxes";
 import "std/audio/pcm";
