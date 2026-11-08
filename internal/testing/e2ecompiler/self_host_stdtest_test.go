@@ -95,7 +95,7 @@ var interpSlowStdTests = map[string]bool{
 	"opus_celt_frame": true, "opus_celt_prefilter": true, "opus_energy": true,
 	"opus_mdct": true, "opus_packet": true, "opus_pitch_doubling": true, "opus_pvq": true,
 	"opus_rate": true, "opus_vq": true, "ordmap": true, "p256": true, "parse_limits": true,
-	"pmap": true, "publicsuffix": true, "pvec": true, "quic_conn": true, "rsa": true,
+	"pmap": true, "publicsuffix": true, "pvec": true, "quic_conn": true, "rsa": true, "sim_fetch_h3": true,
 	"tls_client": true, "tls_handshake": true, "tls_keyshare": true, "tls_mozilla": true,
 	"tls_roots": true, "tls_server": true, "tls_verify": true, "wycheproof_ed25519": true,
 	"wycheproof_x25519": true, "x25519": true, "zstd": true,
