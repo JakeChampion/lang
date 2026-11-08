@@ -1037,6 +1037,10 @@ pub function op_tcp_accept_with(): Op {
   return op0(511);
 }
 
+pub function op_udp_sendmmsg(): Op {
+  return op0(516);
+}
+
 pub function op_tcp_local_port(): Op {
   return op0(320);
 }
@@ -3690,6 +3694,9 @@ function kind_id_len12(name: string): i32 {
   if (c == b'u' && name == "udp_recvfrom") {
     return 337;
   }
+  if (c == b'u' && name == "udp_sendmmsg") {
+    return 516;
+  }
   if (c == b'u' && name == "unix_connect") {
     return 340;
   }
@@ -4648,6 +4655,9 @@ function kind_name_4a(id: i32): string {
   }
   if (id == 511) {
     return "tcp_accept_with";
+  }
+  if (id == 516) {
+    return "udp_sendmmsg";
   }
   if (id == 320) {
     return "tcp_local_port";
@@ -5635,7 +5645,7 @@ function kind_pops(t: i32): i32 {
   if (t == 332) {
     return 4;
   }
-  if (t == 336 || t == 355) {
+  if (t == 336 || t == 355 || t == 516) {
     return 4;
   }
   if (t == 342 || t == 435 || t == 437 || t == 439) {

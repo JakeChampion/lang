@@ -4909,6 +4909,12 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   let g = parts(arms);
   let s = arms.s;
   pv = unqualified(pv, owner);
+  // The checker admits a bare variant name against a generic enum's instance
+  // when the scrutinee's type reaches it in generic form, as the type of a
+  // name a struct pattern binds does. The scrutinee is the instance here, so
+  // the arm takes the instance's variant, by declaration order as a literal
+  // pattern does.
+  pv = ast.PatVariant { ...pv, type_name: literal_variant_name(s, s.values[scrut], pv.type_name) };
   let shape: Payloads = match (pattern_payloads(a, pv, arm_payloads(s, s.values[scrut], pv.type_name, layout), layout)) { Ok(value) => value, Err(why) => { return gathered(fail(s, why), g); } };
   if (closing) {
     return closing_arm(a, pv, scrut, shape, s, g, entry, join, count, scope, layout, ty);
@@ -7559,6 +7565,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "udp_connect", params: [t_handle("Socket"), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
     ssasem.Contract { name: "udp_sendto", params: [t_handle("Socket"), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
     ssasem.Contract { name: "udp_sendto_bytes", params: [t_handle("Socket"), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },
+    ssasem.Contract { name: "udp_sendmmsg", params: [t_handle("Socket"), bytes, bytes, fds], modes: [v, b, b, b], result: t_i32() },
     ssasem.Contract { name: "udp_recvfrom", params: [t_handle("Socket"), bytes, bytes], modes: [v, b, b], result: t_i32() },
     ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_handle("Socket") },
     ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_handle("Socket") },

@@ -135,3 +135,29 @@ func selfHostBuiltinSigRows(t *testing.T) map[string]string {
 	}
 	return out
 }
+
+// builtin_row binary-searches the rows for a name followed by "(", so the
+// table must stay in byte order; a row out of place hides every neighbour the
+// search steps over.
+func TestSelfHostBuiltinSigsSorted(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "builtinsigs.fern"))
+	if err != nil {
+		t.Fatalf("read self-host builtinsigs.fern: %v", err)
+	}
+	m := selfHostBuiltinSigsRE.FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("cannot find builtin_sigs() in compiler/builtinsigs.fern")
+	}
+	var rows []string
+	for _, q := range sigRowRE.FindAllStringSubmatch(m[1], -1) {
+		rows = append(rows, q[1])
+	}
+	if len(rows) < 100 {
+		t.Fatalf("builtin_sigs() parsed to %d rows; the pattern no longer matches", len(rows))
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1] >= rows[i] {
+			t.Errorf("builtin_sigs() row %q sorts before its predecessor %q; builtin_row's binary search needs byte order", rows[i], rows[i-1])
+		}
+	}
+}
