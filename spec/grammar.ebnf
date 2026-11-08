@@ -133,8 +133,9 @@ TypeSlot    = RecvBound | Type ;
 # `own` opening a function type's parameter slot marks it consuming.
 FnParam     = 'own' Type | Type ;
 SliceType   = '[' TypeSlot ']' { TypeSuffix }
-            | PrimaryType { TypeSuffix }
+            | PrimaryType { '::' IDENT } { TypeSuffix }
             ;
+# `T::Item` names an associated type of T (docs/ASSOCIATED-TYPES.md).
 TypeSuffix  = '[' ']' ;
 
 PrimaryType = HandleType
