@@ -30,7 +30,7 @@ const R_METHOD: i32 = 6;
 struct Target { kind: i32, name: string, owner: string, fd: i32, at_line: i32, at_col: i32, spelled: string, decl: Option[lspquery.SourceSpan] }
 
 function named_target(kind: i32, name: string, decl: Option[lspquery.SourceSpan]): Target {
-  return Target { kind: kind, name: name, owner: "", fd: 0 - 1, at_line: 0, at_col: 0, spelled: "", decl: decl };
+  return Target { kind: kind, name: name, owner: "", fd: -1, at_line: 0, at_col: 0, spelled: "", decl: decl };
 }
 
 function target_at(p: lspquery.Program, line: i32, col: i32): Option[Target] {

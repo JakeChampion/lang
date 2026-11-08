@@ -3891,7 +3891,7 @@ function truth_constants(f: SFunc): i32[] {
 
 function bool_join_at(f: SFunc, at: i32[], uses: i32[], j: i32): BoolJoin {
   let blk = f.blocks[j];
-  let none = BoolJoin { ok: false, j: j, k: 0 - 1, t: 0, f: 0 };
+  let none = BoolJoin { ok: false, j: j, k: -1, t: 0, f: 0 };
   if (blk.insts.len() != 1 || blk.insts[0].kind_tag != 8 || uses[blk.insts[0].result] != 1 || !entered_forward(f, at, j)) {
     return none;
   }
@@ -4111,7 +4111,7 @@ function drop_arm(r: Flattening, arm: i32): Flattening {
 }
 
 function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
-  let none = Diamond { ok: false, head: p, t: 0 - 1, f: 0 - 1, join: 0 - 1 };
+  let none = Diamond { ok: false, head: p, t: -1, f: -1, join: -1 };
   let head = f.blocks[p];
   let br = head.term;
   if (!two_way(head)) {
@@ -4128,7 +4128,7 @@ function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
     return none;
   }
   if (returns_picked(f, fl, at_t) && returns_picked(f, fl, at_f)) {
-    return Diamond { ok: true, head: p, t: tp, f: fp, join: 0 - 1 };
+    return Diamond { ok: true, head: p, t: tp, f: fp, join: -1 };
   }
   let jp = join_of(f, at, p, tp, at_t, fp, at_f);
   if (jp < 0 || !select_join(f, fl, f.blocks[jp], arm_source(f, head, at_t), arm_source(f, head, at_f))) {
@@ -5369,7 +5369,7 @@ function const_one(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
 
 function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   if (v < 0 || v >= def_b.len() || def_b[v] < 0) {
-    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   }
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
@@ -5475,7 +5475,7 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
 }
 
 function no_inst(): SInst {
-  return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function inst_defs(f: SFunc): SInst[] {
@@ -5838,7 +5838,7 @@ function zero_extends_u32(ins: SInst): boolean {
 
 function def_of(defs: SInst[], v: i32): SInst {
   if (v < 0 || v >= defs.len()) {
-    return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   }
   return defs[v];
 }

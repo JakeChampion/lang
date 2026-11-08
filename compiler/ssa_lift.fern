@@ -1991,7 +1991,7 @@ struct LoopFall { falls: boolean, tail: i32, cont: i32, next_blk: i32 }
 
 function loop_fall(dead: boolean, term: ssa.STerm, id: i32, next_blk: i32): LoopFall {
   if (dead || term.kind_tag != ssa.TERM_NONE) {
-    return LoopFall { falls: false, tail: id, cont: 0 - 1, next_blk: next_blk };
+    return LoopFall { falls: false, tail: id, cont: -1, next_blk: next_blk };
   }
   return LoopFall { falls: true, tail: id, cont: next_blk, next_blk: next_blk + 1 };
 }

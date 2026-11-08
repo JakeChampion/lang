@@ -629,7 +629,7 @@ pub function new_state(): EmitState {
     lane_consts: false,
     ssa_lane_slots: [],
     ssa_trap_suffix: "",
-    ssa_x0: 0 - 1,
+    ssa_x0: -1,
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
     float_abi_masks: [],
@@ -4475,7 +4475,7 @@ pub function (l: Lab) text(): string {
 pub struct LabNew { state: EmitState, lab: Lab }
 
 pub function lab_new(s: EmitState, name: string): LabNew {
-  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, pre: name, n: 0 - 1 } };
+  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, pre: name, n: -1 } };
 }
 
 pub function (s: EmitState) lab_take(n: i32): EmitState {

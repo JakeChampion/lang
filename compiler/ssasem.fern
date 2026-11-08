@@ -3360,7 +3360,7 @@ pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultA
 }
 
 function definitions(f: Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
   let i = 0;
   while (i < f.values.len()) {

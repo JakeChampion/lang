@@ -135,7 +135,7 @@ function depth(): i32 {
 
 function graph_of(f: ssasem.Func): Graph {
   let n = f.values.len();
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let defs: ssa.SInst[] = [];
   let home: i32[] = [];
   let i32s: boolean[] = [];
@@ -999,7 +999,7 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
 
 function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let defs: ssa.SInst[] = [];
   let v = 0;
   while (v < f.values.len()) {
@@ -1453,7 +1453,7 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   let off = 0;
   let a = defs[x];
   if (a.kind_tag == 1) {
-    return Some(WordByte { arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift });
+    return Some(WordByte { arr: g.args[0], x: -1, off: a.imm, shift: shift });
   }
   if (a.kind_tag == 9 && a.str == "+") {
     let c = defs[a.args[1]];

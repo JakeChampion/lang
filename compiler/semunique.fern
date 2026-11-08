@@ -171,7 +171,7 @@ function def_of(f: ssasem.Func, v: i32): ssa.SInst {
       }
     }
   }
-  return ssa.SInst { kind_tag: 0 - 1000, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0 - 1000, result: -1, args: [], imm: 0, str: "" };
 }
 
 function owned_array(t: typeinfo.Type): boolean {

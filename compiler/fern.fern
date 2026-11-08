@@ -691,7 +691,7 @@ function comp_dir(): string {
 }
 
 function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean, pie: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
+  let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
   }
@@ -777,7 +777,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
 }
 
 function arm64_elf_binary_pie(asm: string, words: u8[], harden: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
+  let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
   }
@@ -2003,7 +2003,7 @@ function export_widen_arm64(x: string, w: string, t: string): string {
 }
 
 function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module, note: boolean): string {
-  let p = arm64_native.arm64_gas_program_words(asm, words, 0 - 1);
+  let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
   }
@@ -5279,7 +5279,7 @@ function lsp_identifier(name: string): boolean {
 struct RefDoc { m: i32, uri: string, text: lsp.Text, stdlib: boolean }
 
 function ref_doc_none(): RefDoc {
-  return RefDoc { m: 0 - 1, uri: "", text: lsp.text_of(""), stdlib: false };
+  return RefDoc { m: -1, uri: "", text: lsp.text_of(""), stdlib: false };
 }
 
 function lsp_ref_doc(s: Server, q: Asked, at: RefDoc, m: i32): RefDoc {

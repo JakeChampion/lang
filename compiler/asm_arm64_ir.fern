@@ -2159,7 +2159,7 @@ function ssa_blab(fr: SsaFrame, lp: string, id: i32): asmcore.Lab {
 }
 
 function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
-  return asmcore.EmitState { ...s, ssa_x0: 0 - 1 };
+  return asmcore.EmitState { ...s, ssa_x0: -1 };
 }
 
 function ssa_dst(reg_of: i32[], v: i32): string {

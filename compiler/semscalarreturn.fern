@@ -127,7 +127,7 @@ function call(b: Build, name: string, arg: i32, from: typeinfo.Type, to: typeinf
 }
 
 function lower_return(f: ssasem.Func, b: ssa.SBlock, parts: Parts): Build {
-  let out = Build { f: f, insts: b.insts, result: 0 - 1 };
+  let out = Build { f: f, insts: b.insts, result: -1 };
   let primary: i32 = -1;
   for i in 0..parts.types.len() {
     let t = parts.types[i];
@@ -329,7 +329,7 @@ pub function set_lanes(f: ssasem.Func, insts: ssa.SInst[], payload: i32, t: type
     out = call(out, set_prefix() + util.i32_to_string(i), out.result, word_type(), dummy_type());
     i += 1;
   }
-  return Lanes { f: out.f, insts: out.insts, value: 0 - 1 };
+  return Lanes { f: out.f, insts: out.insts, value: -1 };
 }
 
 pub function tag_word(f: ssasem.Func, insts: ssa.SInst[], at: i32): Lanes {
@@ -346,7 +346,7 @@ pub function word_tag(f: ssasem.Func, insts: ssa.SInst[], w: i32): Lanes {
 
 pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typeinfo.Type): Lanes {
   let parts = lanes_of(t);
-  let out = Build { f: f, insts: insts, result: 0 - 1 };
+  let out = Build { f: f, insts: insts, result: -1 };
   let args: i32[] = [];
   let i = 0;
   while (i < parts.len()) {
@@ -366,7 +366,7 @@ pub function from_lanes(f: ssasem.Func, insts: ssa.SInst[], words: i32[], t: typ
 pub function lane_set(f: ssasem.Func, insts: ssa.SInst[], v: i32, t: typeinfo.Type, k: i32): Lanes {
   let out = call(Build { f: f, insts: insts, result: v }, conversion(bits_name(), t), v, t, word_type());
   out = call(out, set_prefix() + util.i32_to_string(k), out.result, word_type(), dummy_type());
-  return Lanes { f: out.f, insts: out.insts, value: 0 - 1 };
+  return Lanes { f: out.f, insts: out.insts, value: -1 };
 }
 
 pub function lane_as(f: ssasem.Func, insts: ssa.SInst[], w: i32, t: typeinfo.Type): Lanes {
@@ -611,7 +611,7 @@ pub function split_operands(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract,
     }
     let types = param_parts(f, c.params[pos]);
     let payload = option_payload(f, c.params[pos]);
-    let words = Words { b: Build { f: f, insts: insts, result: 0 - 1 }, args: args };
+    let words = Words { b: Build { f: f, insts: insts, result: -1 }, args: args };
     let gi = util.index_of_i32(given.at, pos);
     if (gi >= 0) {
       words = Words { ...words, args: util.append_all(args, given.parts[gi]) };
@@ -707,15 +707,15 @@ pub struct Branch { f: ssasem.Func, head: ssa.SInst[], flag: i32, some: ssa.SIns
 
 pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {
   let payload = option_payload(f0, ty)[0];
-  let w = emitted(Words { b: Build { f: f0, insts: [], result: 0 - 1 }, args: [] }, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssasem.variant_is(), result: 0, args: [a], imm: 0, str: "Some" });
+  let w = emitted(Words { b: Build { f: f0, insts: [], result: -1 }, args: [] }, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssasem.variant_is(), result: 0, args: [a], imm: 0, str: "Some" });
   let flag = w.b.result;
   let head = w.b.insts;
-  let read = emitted(Words { b: Build { f: w.b.f, insts: [], result: 0 - 1 }, args: [] }, payload, ssa.SInst { kind_tag: ssasem.variant_get(), result: 0, args: [a], imm: 0, str: "Some" });
+  let read = emitted(Words { b: Build { f: w.b.f, insts: [], result: -1 }, args: [] }, payload, ssa.SInst { kind_tag: ssasem.variant_get(), result: 0, args: [a], imm: 0, str: "Some" });
   let some = Words { b: read.b, args: [read.b.result] };
   if (!scalar(payload)) {
     some = record_words(Words { b: read.b, args: [] }, read.b.result, payload, []);
   }
-  let none = Words { b: Build { f: some.b.f, insts: [], result: 0 - 1 }, args: [] };
+  let none = Words { b: Build { f: some.b.f, insts: [], result: -1 }, args: [] };
   for v in some.args {
     none = emitted(none, none.b.f.values[v], ssa.SInst { kind_tag: ssasem.zero(), result: 0, args: [], imm: 0, str: "" });
   }
@@ -743,7 +743,7 @@ pub function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
     x = d.args[0];
     steps += 1;
   }
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function flag_constant(b: Build): Build {

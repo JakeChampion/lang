@@ -1432,7 +1432,7 @@ function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32)
   if (i >= 0) {
     return p.steps[i];
   }
-  return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
+  return ssaunits.Step { block: -1, point: point, target: -1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
 function successors(t: ssa.STerm): i32[] {
@@ -4390,7 +4390,7 @@ function append_linked(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
 
 function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with() && ins.kind_tag != ssasem.arr_concat() && ins.kind_tag != ssasem.truncate()) {
-    return Link { root: 0 - 1, out: false };
+    return Link { root: -1, out: false };
   }
   let root: i32 = -1;
   if (ins.args[0] >= f.graph.nparams) {
@@ -7075,7 +7075,7 @@ function defining(f: ssasem.Func, v: i32): ssa.SInst {
       }
     }
   }
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {

@@ -223,7 +223,7 @@ struct Rewritten { func: ssasem.Func, changed: boolean, sites: semarrayreport.Si
 struct Plan { factor: Factor, ctor: i32, join: i32, check: i32, adapter: i32, reason: i32 }
 
 function no_plan(reason: i32): Plan {
-  return Plan { factor: no_factor(reason), ctor: 0 - 1, join: 0 - 1, check: 0 - 1, adapter: 0 - 1, reason: reason };
+  return Plan { factor: no_factor(reason), ctor: -1, join: -1, check: -1, adapter: -1, reason: reason };
 }
 
 function site_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
@@ -269,7 +269,7 @@ function scale_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (!enabled) {
     return no_plan(semarrayreport.kernel_disabled());
   }
-  return Plan { factor: k, ctor: ctor, join: 0 - 1, check: 0 - 1, adapter: 0 - 1, reason: semarrayreport.kernel_scale_kernel() };
+  return Plan { factor: k, ctor: ctor, join: -1, check: -1, adapter: -1, reason: semarrayreport.kernel_scale_kernel() };
 }
 
 function outer_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {
@@ -325,7 +325,7 @@ function outer_plan(f: ssasem.Func, ins: ssa.SInst, funcs: ssasem.Func[], index:
   if (!enabled) {
     return no_plan(semarrayreport.kernel_disabled());
   }
-  return Plan { factor: k, ctor: ctor, join: join, check: check, adapter: 0 - 1, reason: semarrayreport.kernel_outer_mul_kernel() };
+  return Plan { factor: k, ctor: ctor, join: join, check: check, adapter: -1, reason: semarrayreport.kernel_outer_mul_kernel() };
 }
 
 function inner_refusal(f: ssasem.Func, ins: ssa.SInst, layouts: i32[]): i32 {

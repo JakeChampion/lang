@@ -132,7 +132,7 @@ function first_counted(f: ssasem.Func): i32 {
 }
 
 function no_loop(): Counted {
-  return Counted { head: 0 - 1, heads: [], bodies: [], exit: 0 - 1, iv: 0 - 1, entry: 0 - 1, latch: 0 - 1, start: 0, step: 0, test: 0 - 1, offset: 0, trips: 0 - 1 };
+  return Counted { head: -1, heads: [], bodies: [], exit: -1, iv: -1, entry: -1, latch: -1, start: 0, step: 0, test: -1, offset: 0, trips: -1 };
 }
 
 function counted_at(f: ssasem.Func, d: Defs, hi: i32): Counted {

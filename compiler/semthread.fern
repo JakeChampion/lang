@@ -236,7 +236,7 @@ function test_of(f: ssasem.Func, defs: ssa.SInst[], cond: i32): Test {
     hops += 1;
   }
   if (d.kind_tag != ssasem.variant_is() || d.args.len() != 1 || d.args[0] < 0) {
-    return Test { ok: false, root: 0 - 1, path: "", variant: "", ty: f.values[0], yes: false };
+    return Test { ok: false, root: -1, path: "", variant: "", ty: f.values[0], yes: false };
   }
   let k = key_of(defs, d.args[0]);
   return Test { ok: true, root: k.root, path: k.path, variant: d.str, ty: f.values[d.args[0]], yes: yes };
@@ -406,7 +406,7 @@ function untested(g: ssa.SFunc): ssa.SBlock[] {
 }
 
 function definitions(g: ssa.SFunc): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
   while (out.len() < g.nvals) {
     out = out.append(none);
@@ -847,7 +847,7 @@ function return_in_predecessors(g: ssa.SFunc, at: i32[], ri: i32): ssa.SFunc {
 struct Join { ok: boolean, j: i32, chain: i32[], b: i32, picks: i32[], t: i32, f: i32 }
 
 function no_join(ji: i32): Join {
-  return Join { ok: false, j: ji, chain: [], b: ji, picks: [], t: 0 - 1, f: 0 - 1 };
+  return Join { ok: false, j: ji, chain: [], b: ji, picks: [], t: -1, f: -1 };
 }
 
 function split_round(f: ssasem.Func): Joined {
@@ -978,7 +978,7 @@ function phi_of(b: ssa.SBlock, v: i32): ssa.SInst {
       return ins;
     }
   }
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 // An arm is entered from the branch alone, holds no phi, and is neither the

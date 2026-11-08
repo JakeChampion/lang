@@ -1365,7 +1365,7 @@ function scrutinee_reads(f: ssasem.Func): ssasem.Func {
 // For each value that narrows a struct-union to a member, its definition;
 // a definition with no result for every other value.
 function narrowings(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
   while (out.len() < f.graph.nvals) {
     out = out.append(none);
@@ -2106,7 +2106,7 @@ function splice_in_place(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Fun
   let blocks = g.blocks.with(bi, ssa.SBlock { ...b, insts: insts });
   let out = with_values(ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals } }, callee.values);
   if (swap.len() == 0) {
-    return InPlace { f: out, from: 0 - 1, to: 0 - 1 };
+    return InPlace { f: out, from: -1, to: -1 };
   }
   return InPlace { f: out, from: call.result, to: ret_vals[0] };
 }
@@ -2216,7 +2216,7 @@ function position_of(at: i32[], id: i32): i32 {
 struct Defs { insts: ssa.SInst[], blocks: i32[] }
 
 function no_inst(): ssa.SInst {
-  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function defs_of(g: ssa.SFunc): Defs {
@@ -2255,7 +2255,7 @@ function builds(k: i32): boolean {
 struct Part { ok: boolean, value: i32, flag: i32, filler: boolean }
 
 function part(built: ssa.SInst, read: ssa.SInst): Part {
-  let none = Part { ok: false, value: 0 - 1, flag: 0 - 1, filler: false };
+  let none = Part { ok: false, value: -1, flag: -1, filler: false };
   let k = read.kind_tag;
   if (k == ssasem.variant_is()) {
     if (built.kind_tag != ssasem.variant_new()) {
@@ -2265,7 +2265,7 @@ function part(built: ssa.SInst, read: ssa.SInst): Part {
     if (built.str == read.str) {
       flag = 1;
     }
-    return Part { ok: true, value: 0 - 1, flag: flag, filler: false };
+    return Part { ok: true, value: -1, flag: flag, filler: false };
   }
   let fits: boolean = k == ssasem.tuple_get() && built.kind_tag == ssasem.tuple_new()
     || k == ssasem.record_get() && built.kind_tag == ssasem.record_new()
@@ -2274,12 +2274,12 @@ function part(built: ssa.SInst, read: ssa.SInst): Part {
     return none;
   }
   if (k == ssasem.variant_get() && built.str != read.str) {
-    return Part { ok: true, value: 0 - 1, flag: 0 - 1, filler: true };
+    return Part { ok: true, value: -1, flag: -1, filler: true };
   }
   if (read.imm < 0 || read.imm >= built.args.len()) {
     return none;
   }
-  return Part { ok: true, value: built.args[read.imm], flag: 0 - 1, filler: false };
+  return Part { ok: true, value: built.args[read.imm], flag: -1, filler: false };
 }
 
 struct Head { block: i32, ins: ssa.SInst, of: i32, read: ssa.SInst }
@@ -2449,7 +2449,7 @@ function resolve(f: ssasem.Func, own e: Edits, read: ssa.SInst): Edits {
   if (!feasible.0) {
     return e;
   }
-  let w = part_of(f, Walk { e: e, value: 0 - 1, phis: [], parts: [] }, read, read.args[0], 0);
+  let w = part_of(f, Walk { e: e, value: -1, phis: [], parts: [] }, read, read.args[0], 0);
   return Edits { ...w.e, swap: w.e.swap.with(read.result, w.value) };
 }
 
@@ -2487,7 +2487,7 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
   let x = through_copies(w.e.defs, v);
   let d = def_inst(w.e.defs, x);
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
-    let p = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
+    let p = Part { ok: true, value: -1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
     if (builds(d.kind_tag)) {
       p = part(d, read);
     }
@@ -2507,7 +2507,7 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
   let pb = d0.blocks[x];
   let cur: Walk = Walk {
     e: Edits { ...e0, defs: Defs { insts: d0.insts.append(no_inst()), blocks: d0.blocks.append(pb) }, added: e0.added.append(ty) },
-    value: 0 - 1, phis: w.phis.append(x), parts: w.parts.append(nv),
+    value: -1, phis: w.phis.append(x), parts: w.parts.append(nv),
   };
   let args: i32[] = [];
   for a in d.args {

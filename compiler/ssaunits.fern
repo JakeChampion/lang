@@ -981,7 +981,7 @@ function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[])
 }
 
 function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
   let out: ssa.SInst[] = [];
   let i = 0;
   while (i < f.graph.nvals) {
@@ -4224,7 +4224,7 @@ function indexed_step(p: Plan, i: i32, point: i32): Step {
   if (i >= 0) {
     return p.steps[i];
   }
-  return Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
+  return Step { block: -1, point: point, target: -1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
 function record_fields(t: typeinfo.Type, f: ssasem.Func): semrecords.Field[] {

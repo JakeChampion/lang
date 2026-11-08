@@ -6866,7 +6866,7 @@ function ssa_test_imm(s: asmcore.EmitState, imm: i32, reg: string): asmcore.Emit
 }
 
 function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
-  return asmcore.EmitState { ...s, ssa_x0: 0 - 1 };
+  return asmcore.EmitState { ...s, ssa_x0: -1 };
 }
 
 function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {

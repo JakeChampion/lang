@@ -2562,7 +2562,7 @@ function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i3
   if let Some(le) = stream_lex_error(toks) {
     return (e_unknown_at(lex_error_kind(le), le.line, le.col), p, true);
   }
-  let sub = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false };
+  let sub = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false };
   let (r_expr, r_p) = parse_expr(sub);
   let outer = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
   if (!r_p.at_end()) {
@@ -6776,7 +6776,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
   if let Some(le) = stream_lex_error(toks) {
     return [s_unknown_at(lex_error_kind(le), le.line, le.col)];
   }
-  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
+  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -12174,7 +12174,7 @@ function inst_struct(ot: string, funcs: MFns): InstStruct {
     }
   }
   if (si < 0 || cts.len() != funcs.structs[si].type_params.len()) {
-    return InstStruct { at: 0 - 1, cts: [] };
+    return InstStruct { at: -1, cts: [] };
   }
   return InstStruct { at: si, cts: cts };
 }
@@ -25907,7 +25907,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   if let Some(le) = stream_lex_error(toks) {
     return lex_error_module(le);
   }
-  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
+  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];
