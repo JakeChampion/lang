@@ -266,6 +266,7 @@ pub struct Config {
   ktls: boolean,
   h3: boolean,
   h3_sock: i32,
+  h3_retry_above: i32,
 }
 ```
 
@@ -274,7 +275,7 @@ pub struct Config {
 ```fern
 <<5 pub function config(): Config>>=
 pub function config(): Config {
-  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1 };
+  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32 };
 }
 
 pub function (c: Config) with_tls(cfg: server.Config): Config {
@@ -358,7 +359,10 @@ function __serve_listener(port: i32, opts: Config): __Listen {
 
 ```fern
 <<11 struct __Listen>>=
-struct __Listen { sock: Socket, inherited: boolean }
+// h3_key seals the address-validation tokens the HTTP/3 listener's Retry
+// packets carry. One serve.run picks it, so every worker it forks accepts
+// the tokens any of them issued.
+struct __Listen { sock: Socket, inherited: boolean, h3_key: u8[] }
 
 // __listen_release closes a listener serve bound itself. An inherited
 // LISTEN_FDS listener stays open, so a caller can retry on it.
@@ -428,7 +432,7 @@ function __listener_of(port: i32, opts: Config): __Listen {
       match (i32.parse_i32_radix(n, 10)) {
         Ok(count) => {
           if (count >= 1) {
-            return __Listen { sock: __adopt(3), inherited: true };
+            return __Listen { sock: __adopt(3), inherited: true, h3_key: random_bytes(32) };
           }
         },
         Err(_) => {}
@@ -439,10 +443,10 @@ function __listener_of(port: i32, opts: Config): __Listen {
   if (target_os() != "wasi") {
     let both = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
     if (both.fd >= 0 || !net.error_from_host(both.fd).ipv6_unavailable()) {
-      return __Listen { sock: both, inherited: false };
+      return __Listen { sock: both, inherited: false, h3_key: random_bytes(32) };
     }
   }
-  return __Listen { sock: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), inherited: false };
+  return __Listen { sock: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), inherited: false, h3_key: random_bytes(32) };
 }
 ```
 
@@ -4957,7 +4961,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
   let clk = __Clock { sec: 0 as i64, date: "", line: "" };
   let events = async.event_room(64);
   let start = (f: http.HttpFramed, kept: boolean, st: __Stop, host: platform.Host): __Started => __started_again(__serve_start(handler, host, f.request, f.version, kept, Idle, opts, st));
-  conns = __Conns { ...conns, quic: __quic_open(drv, listener, opts) };
+  conns = __Conns { ...conns, quic: __quic_open(drv, l, opts) };
   while (true) {
     let now = monotonic_ns();
     events = __with_backlog(conns, drv.wait_into(events, time.millis_timeout(__snapshot_timeout(snap, __stop_timeout(stop, opts, now, __least_timeout(__least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)), __quic_timeout(conns.quic, now)))))));
@@ -5159,7 +5163,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
   let scratch = __recv_scratch();
   let clk = __Clock { sec: 0 as i64, date: "", line: "" };
   let events = async.event_room(64);
-  conns = __Conns { ...conns, quic: __quic_open(drv, listener, opts) };
+  conns = __Conns { ...conns, quic: __quic_open(drv, l, opts) };
   while (true) {
     let now = monotonic_ns();
     events = __with_backlog(conns, drv.wait_into(events, time.millis_timeout(__snapshot_timeout(snap, __stop_timeout(stop, opts, now, __least_timeout(__least_timeout(__conns_timeout(conns, now), __flights_timeout(flights, now)), __quic_timeout(conns.quic, now)))))));
@@ -5336,7 +5340,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     workers = 1;
   }
   let resolved = Config { ...opts, workers: workers };
-  let shared = __Listen { sock: __adopt(-1), inherited: false };
+  let shared = __Listen { sock: __adopt(-1), inherited: false, h3_key: random_bytes(32) };
   let pool: i32[] = [];
   if (__per_worker_listeners(resolved)) {
     match (__worker_pool(port, resolved)) {
@@ -5736,7 +5740,7 @@ function __worker_listen(shared: __Listen, sup: __Supervisor): __Listen {
   if (shared.sock.fd >= 0 || sup.tcp_free.len() == 0) {
     return shared;
   }
-  return __Listen { sock: __adopt(sup.tcp_free[0]), inherited: false };
+  return __Listen { sock: __adopt(sup.tcp_free[0]), inherited: false, h3_key: shared.h3_key };
 }
 
 function __supervisor_release(shared: __Listen, sup: __Supervisor): void {
@@ -5937,7 +5941,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
 // keys[i] is every connection ID connection i answers to, read again when
 // its cids_version moves; paths[i] is the address it is sent to, as the
 // socket reported it, and peers[i] the same address parsed.
-struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
+struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, key: u8[], conns: h3q.Conn[], keys: u8[][][], versions: i64[], origs: u8[][], peers: net.SocketAddr[], paths: u8[][], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5955,7 +5959,7 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: None, port: 0, cfg: quic.config([]), conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
+  return __Quic { sock: None, port: 0, cfg: quic.config([]), key: [], conns: [], keys: [], versions: [], origs: [], peers: [], paths: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
 }
 
 function __quic_socket(port: i32): Socket {
@@ -6005,14 +6009,14 @@ function __pool_close(pool: i32[], keep: i32): void {
   }
 }
 
-function __quic_open[D: async.Driver](drv: D, listener: Socket, opts: Config): __Quic {
+function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic {
   let Some(t) = opts.tls else {
     return __quic_none();
   };
   if (!opts.h3) {
     return __quic_none();
   }
-  let port = tcp_local_port(listener);
+  let port = tcp_local_port(l.sock);
   let sock = __adopt(opts.h3_sock);
   if (sock.fd < 0) {
     sock = __quic_socket(port);
@@ -6025,7 +6029,7 @@ function __quic_open[D: async.Driver](drv: D, listener: Socket, opts: Config): _
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), buf: __alloc_u8(65536), from: __alloc_u8(net.SENDER_BYTES) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), key: l.h3_key, buf: __alloc_u8(65536), from: __alloc_u8(net.SENDER_BYTES) };
 }
 
 function __quic_on(c: __Conns): boolean {
@@ -6257,25 +6261,71 @@ function __h3_from_ip(q: __Quic, ip: net.IpAddr): i32 {
 function __h3_accept(c: __Conns, h: packet.Header, d: [u8], path: [u8], opts: Config, stop: __Stop, host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, i32) {
   let q = c.quic;
   let from = net.sender(path);
-  let initial = false;
-  match (h.kind) {
-    packet.Initial => {
-      initial = true;
-    },
-    _ => {}
-  }
-  if (!initial || d.len() < packet.MIN_INITIAL_DATAGRAM || q.stopping || __serve_stopping(stop) || q.conns.len() >= opts.max_connections) {
+  if (!__h3_initial(h) || d.len() < packet.MIN_INITIAL_DATAGRAM || q.stopping || __serve_stopping(stop) || q.conns.len() >= opts.max_connections) {
     return (c, -1);
   }
   if (opts.max_connections_per_ip > 0 && __h3_from_ip(q, from.ip) >= opts.max_connections_per_ip) {
     return (c, -1);
   }
-  let Ok(made) = quic.accept(q.cfg, random_bytes(quic.server_entropy(q.cfg)), h, clock.instant()) else {
+  let Ok(made) = __h3_admitted(q, h, path, from, opts) else {
     return (c, -1);
   };
   let conn = h3q.server(made, h3.config()).with_max_body(opts.limits.body as i64);
   let grown = __Quic { ...q, conns: q.conns.append(conn), keys: q.keys.append(made.local_cids()), versions: q.versions.append(made.cids_version()), origs: q.origs.append(h.dcid), peers: q.peers.append(from), paths: q.paths.append(__bytes_range(path, 0, path.len())), hosts: q.hosts.append(host_for(Some(from))), serials: q.serials.append(q.next), next: q.next + 1 };
   return (__Conns { ...c, quic: grown }, grown.conns.len() - 1);
+}
+
+// __h3_retry_wanted is whether a new client must prove its address with a
+// Retry before the server keeps state for it: when h3_retry_above or more
+// connections are still in their handshake. Under a flood of Initials from
+// spoofed addresses the handshakes never complete, so that count is what
+// grows.
+function __h3_retry_wanted(q: __Quic, opts: Config): boolean {
+  if (opts.h3_retry_above < 0) {
+    return false;
+  }
+  let n = 0;
+  for c in q.conns {
+    if (c.quic().handshaking()) {
+      n += 1;
+    }
+  }
+  return n >= opts.h3_retry_above;
+}
+
+function __h3_initial(h: packet.Header): boolean {
+  match (h.kind) {
+    packet.Initial => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// __h3_admitted opens the connection for an Initial the server admits.
+// Without a token, a client the server wants validated first is answered
+// with a Retry and nothing is kept for it. With one, the token must be one
+// a Retry issued for this address and connection ID, and the connection
+// continues the client's first Initial; any other token is answered with
+// INVALID_TOKEN.
+function __h3_admitted(q: __Quic, h: packet.Header, path: [u8], from: net.SocketAddr, opts: Config): Result[quic.Conn, string] {
+  let Some(sock) = q.sock else {
+    return Err("no socket");
+  };
+  if (h.token.len() == 0) {
+    if (__h3_retry_wanted(q, opts)) {
+      __h3_sent(sock, [quic.retry(q.cfg, q.key, random_bytes(quic.retry_entropy(q.cfg)), h, path, clock.now())], from);
+      return Err("retry sent");
+    }
+    return quic.accept(q.cfg, random_bytes(quic.server_entropy(q.cfg)), h, clock.instant());
+  }
+  let Some(odcid) = quic.validated(q.key, h, path, clock.now()) else {
+    __h3_sent(sock, [quic.invalid_token(h)], from);
+    return Err("token refused");
+  };
+  return quic.accept_validated(q.cfg, random_bytes(quic.server_entropy(q.cfg)), h, odcid, clock.instant());
 }
 
 function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst) {
