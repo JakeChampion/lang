@@ -19,16 +19,16 @@ ARCHIVE_SHA = '3267aa969b2b26542417f57819a5bc25d5079355300307dd2dddc7c704aed418'
 TABLES = runpy.run_path(str(Path(__file__).with_name('gen-silk-tables.py')))
 
 
-def reference(archive, cmake, helper='silk_loss.c', calls=None):
+def reference(archive, cmake, helper='silk_loss.c', calls=None, *, pin=PIN, archive_sha=ARCHIVE_SHA):
     data = archive.read_bytes() if archive else urllib.request.urlopen(
-        f'https://codeload.github.com/xiph/opus/tar.gz/{PIN}', timeout=60).read()
-    if hashlib.sha256(data).hexdigest() != ARCHIVE_SHA:
+        f'https://codeload.github.com/xiph/opus/tar.gz/{pin}', timeout=60).read()
+    if hashlib.sha256(data).hexdigest() != archive_sha:
         raise ValueError('libopus archive hash mismatch')
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         with tarfile.open(fileobj=io.BytesIO(data)) as tar:
             tar.extractall(root, filter='data')
-        source, build = root/('opus-'+PIN), root/'build'
+        source, build = root/('opus-'+pin), root/'build'
         subprocess.run([cmake, '-S', str(source), '-B', str(build), '-DCMAKE_BUILD_TYPE=Release',
                         '-DOPUS_DISABLE_INTRINSICS=ON', '-DOPUS_ASSERTIONS=ON',
                         '-DOPUS_BUILD_TESTING=OFF', '-DOPUS_BUILD_PROGRAMS=OFF',

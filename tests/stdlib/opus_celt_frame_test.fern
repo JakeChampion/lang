@@ -1,6 +1,7 @@
 import "std/hash/crc32";
 import "std/opus/celt_encoder";
 import "std/test";
+import "opus_encoder_vectors";
 
 // Each case makes a new encoder with a random channel count, rate mode,
 // bitrate, complexity, loss rate and frame size. Then it codes a few
@@ -120,17 +121,17 @@ function trace(seed: u32, cases: i32, upsample: i32, end: i32): u32 {
 }
 
 function test_short_trace(): test.TestOutcome {
-  return test.assert_eq(trace(1u32, 6, 1, 21), 3891627298u32);
+  return test.assert_eq(trace(1u32, 6, 1, 21), opus_encoder_vectors.ENCODE_SHORT);
 }
 
 function test_long_trace(): test.TestOutcome {
-  return test.assert_eq(trace(7u32, 120, 1, 21), 4054495625u32);
+  return test.assert_eq(trace(7u32, 120, 1, 21), opus_encoder_vectors.ENCODE_LONG);
 }
 
 // The encoder of an Opus stream at 16 kHz takes every third sample of a
 // 48 kHz frame, and codes the bands to 8 kHz.
 function test_wideband_trace(): test.TestOutcome {
-  return test.assert_eq(trace(11u32, 120, 3, 17), 1170571747u32);
+  return test.assert_eq(trace(11u32, 120, 3, 17), opus_encoder_vectors.ENCODE_WIDEBAND);
 }
 
 function main(): i32 {

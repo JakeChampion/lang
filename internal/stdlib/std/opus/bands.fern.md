@@ -106,7 +106,7 @@ pub struct Bands { x: f32[], y: f32[], norm: f32[], scratch: f32[] }
 
 pub struct Ref { buf: i32, at: i32 }
 
-pub struct Ctx { encode: boolean, resynth: boolean, i: i32, intensity: i32, spread: i32, tf_change: i32, remaining_bits: i32, seed: u32, theta_round: i32, disable_inv: boolean, avoid_split_noise: boolean }
+pub struct Ctx { encode: boolean, legacy_encoder: boolean, resynth: boolean, i: i32, intensity: i32, spread: i32, tf_change: i32, remaining_bits: i32, seed: u32, theta_round: i32, disable_inv: boolean, avoid_split_noise: boolean }
 
 pub struct Work { c: range.Coder, b: Bands, ctx: Ctx, band_e: f32[] }
 
@@ -611,7 +611,7 @@ function compute_theta(own w: Work, x: Ref, y: Ref, n: i32, b0: i32, big_b: i32,
   let qn = theta_steps(w, n, b0, lm, stereo);
   let itheta = 0;
   if (w.ctx.encode) {
-    itheta = vq.stereo_itheta(take(w, x, n), take(w, y, n), stereo, n);
+    itheta = if (w.ctx.legacy_encoder) { vq.stereo_itheta_encoder(take(w, x, n), take(w, y, n), stereo, n) } else { vq.stereo_itheta(take(w, x, n), take(w, y, n), stereo, n) };
   }
   let tell = w.c.tell_frac();
   let inv = false;
@@ -733,7 +733,7 @@ function code_shape(own w: Work, x: Ref, n: i32, k: i32, big_b: i32, gain: f32):
   let Work { c, b, ctx, band_e } = w;
   match (c) {
     range.Encoding(e) => {
-      let q = vq.alg_quant(e, v, n, k, ctx.spread, big_b, gain, ctx.resynth);
+      let q = if (ctx.legacy_encoder) { vq.alg_quant_encoder(e, v, n, k, ctx.spread, big_b, gain, ctx.resynth) } else { vq.alg_quant(e, v, n, k, ctx.spread, big_b, gain, ctx.resynth) };
       let vq.Quant { e: e1, x: xs, mask } = q;
       return (put(Work { c: range.Encoding(e1), b: b, ctx: ctx, band_e: band_e }, x, xs, n), mask);
     },
@@ -1126,15 +1126,23 @@ function band_bits(r: Request, i: i32, balance: i32, remaining: i32): i32 {
 
 struct Loop { w: Work, masks: i32[], balance: i32, lowband_offset: i32, update_lowband: boolean, dual_stereo: boolean }
 
-// Codes the normalised spectrum of the bands from `start` to `end`.
 pub function quant_all_bands(own c: range.Coder, r: Request, own x: f32[], own y: f32[], band_e: [f32]): Result {
+  return quant_reference(c, r, x, y, band_e, false);
+}
+
+pub function quant_all_bands_encoder(own c: range.Coder, r: Request, own x: f32[], own y: f32[], band_e: [f32]): Result {
+  return quant_reference(c, r, x, y, band_e, true);
+}
+
+// Codes the normalised spectrum of the bands from `start` to `end`.
+function quant_reference(own c: range.Coder, r: Request, own x: f32[], own y: f32[], band_e: [f32], legacy_encoder: boolean): Result {
   let fr = frame_of(c, r);
   let tail = fr.m * (modes.EBANDS[modes.BANDS] - modes.EBANDS[modes.BANDS - 1]);
   let band_e_copy: f32[] = [];
   for v in band_e {
     band_e_copy = band_e_copy.append(v);
   }
-  let ctx = Ctx { encode: c.encoding(), resynth: fr.resynth, i: 0, intensity: r.intensity, spread: r.spread, tf_change: 0, remaining_bits: 0, seed: r.seed, theta_round: 0, disable_inv: r.disable_inv, avoid_split_noise: fr.big_b > 1 };
+  let ctx = Ctx { encode: c.encoding(), legacy_encoder: legacy_encoder, resynth: fr.resynth, i: 0, intensity: r.intensity, spread: r.spread, tf_change: 0, remaining_bits: 0, seed: r.seed, theta_round: 0, disable_inv: r.disable_inv, avoid_split_noise: fr.big_b > 1 };
   let masks: i32[] = [];
   for i in 0..r.channels * modes.BANDS {
     masks = masks.append(0);
