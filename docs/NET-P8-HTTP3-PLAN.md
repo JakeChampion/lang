@@ -48,8 +48,12 @@ The modules, each importable on its own and sans-IO, so each runs under
   Negotiation, and recognising a stateless reset landed in slices 2–3.
   Key updates use cached current, next and previous receive generations,
   with handshake/acknowledgement gates and bounded old-key retention.
-  Connection IDs beyond the first and path validation remain slice 4b;
-  issuing a Retry is slice 7's.
+  Connection IDs beyond the first and path validation landed in slice 4b.
+  Issuing a Retry (`retry`, `validated`, `accept_validated`,
+  `invalid_token`) landed with #12513: the token is HMAC-SHA256 over the
+  client's address, the Retry's connection ID, the issue time and the ID
+  the client's first Initial named, under a key the caller holds, so the
+  server keeps no state until the token comes back.
 - `std/quic/streams` — streams: each one's send and receive halves,
   reassembly (CRYPTO's too), the limits on how many each side opens, flow
   control per stream and for the connection, RESET_STREAM and
@@ -211,6 +215,22 @@ Each is a bound with a test that crosses it.
    missing/invalid/empty files, bodyless statuses and trailers. The x86-64
    transfer exceeds three times the cap and compares every byte by SHA-256.
    ARM64 under QEMU is correctness coverage, not native performance.
+
+   Under load (#12513): once `Config.h3_retry_above` connections are still
+   in their handshake, a new client's Initial is answered with a Retry and
+   no state is kept. The default is 32. A value of 0 asks every client, and
+   a negative value never asks. The Initial that echoes the token is
+   accepted with the client's first connection ID as
+   `original_destination_connection_id` and the Retry's as
+   `retry_source_connection_id`. A token the server did not issue, or one
+   older than ten seconds, is answered with a CONNECTION_CLOSE that carries
+   INVALID_TOKEN (section 8.1.3), sealed with the Initial keys of the ID it
+   named. One `serve.run` picks the token key, so every worker it forks
+   accepts the tokens any of them issued. Gate: `TestServeH3RetryX86_64`
+   sends a spoofed Initial that gets a Retry alone, a forged token that is
+   closed with INVALID_TOKEN, and a client that is served through the
+   Retry. `scripts/net-quic-interop` has aioquic's HTTP/3 client answer
+   the Fern server's Retry.
 8. **Interop nightly.** h3spec on `scripts/net-h3spec`, every case
    against `std/serve` with HTTP/3 on, landed (#12511). More HTTP/3 peers
    beside aioquic (`scripts/net-quic-interop` has carried HTTP/3 both ways

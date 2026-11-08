@@ -207,6 +207,8 @@ and its wait from the server, so the same handler also runs under
 | `stream_bodies` | `false` | Start handlers before the body has arrived — [Streaming](../streaming/) |
 | `tls` | `None` | Serve HTTPS — use `with_tls` ([HTTPS, HTTP/2 and gRPC](../protocols/)) |
 | `h2` | `false` | Serve HTTP/2 too — use `with_h2()` |
+| `h3` | `false` | Serve HTTP/3 on a UDP socket beside the listener — use `with_h3()` |
+| `h3_retry_above` | 32 | Half-open HTTP/3 connections before a new client must prove its address with a Retry before the server keeps state for it — `0` asks every client, a negative value never asks |
 | `ktls` / `io_uring` | `false` | Kernel TLS and the io_uring event loop, on Linux — `with_ktls()`, `with_io_uring()` |
 | `http_allow` | `None` | An allow list for `plat.http` |
 | `cookie_jar` | `false` | Give `plat.http` a cookie jar |

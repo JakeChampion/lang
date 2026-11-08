@@ -77,7 +77,7 @@ function entropy(seed: i32, n: i32): u8[] {
   return out;
 }
 
-struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean, client_path: u8[], drop_client: i32 }
+struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean, client_path: u8[], drop_client: i32, retry_key: u8[] }
 
 function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
   return start_at(cc, sc, WALL_MS);
@@ -85,7 +85,7 @@ function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
 
 function start_at(cc: conn.Config, sc: conn.Config, unix_ms: i64): Result[Pair, string] {
   let c = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(unix_ms))?;
-  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false, client_path: [1u8], drop_client: 0 });
+  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false, client_path: [1u8], drop_client: 0, retry_key: [] });
 }
 
 function noted(who: string, c: conn.Conn): string {
@@ -130,14 +130,7 @@ function to_server(p: Pair, d: u8[]): Pair {
     None => {
       match (packet.parse(d, 0, 8)) {
         Ok(h) => {
-          match (conn.accept(p.server_cfg, entropy(2, conn.server_entropy(p.server_cfg)), h, at_ns(p.now))) {
-            Ok(s) => {
-              return to_server(Pair { ...p, server: Some(s) }, d);
-            },
-            Err(e) => {
-              return Pair { ...p, log: p.log + "accept: " + e + "; " };
-            }
-          }
+          return first_initial(p, h, d);
         },
         Err(e) => {
           return Pair { ...p, log: p.log + "parse: " + e.message() + "; " };
@@ -145,6 +138,43 @@ function to_server(p: Pair, d: u8[]): Pair {
       }
     }
   }
+}
+
+// first_initial opens the server for the client's first Initial. With a
+// retry_key the server answers an Initial without a token with a Retry,
+// and refuses a token it did not issue.
+function first_initial(p: Pair, h: packet.Header, d: u8[]): Pair {
+  let odcid = h.dcid;
+  if (p.retry_key.len() > 0 && h.token.len() == 0) {
+    let r = conn.retry(p.server_cfg, p.retry_key, entropy(3, conn.retry_entropy(p.server_cfg)), h, p.client_path, wall_at(p));
+    return to_client(Pair { ...p, log: p.log + "server retried; " }, r);
+  }
+  if (h.token.len() > 0) {
+    let Some(o) = conn.validated(p.retry_key, h, p.client_path, wall_at(p)) else {
+      return to_client(Pair { ...p, log: p.log + "server refused the token; " }, conn.invalid_token(h));
+    };
+    odcid = o;
+  }
+  match (accepted(p, h, odcid)) {
+    Ok(s) => {
+      return to_server(Pair { ...p, server: Some(s) }, d);
+    },
+    Err(e) => {
+      return Pair { ...p, log: p.log + "accept: " + e + "; " };
+    }
+  }
+}
+
+function accepted(p: Pair, h: packet.Header, odcid: u8[]): Result[conn.Conn, string] {
+  let e = entropy(2, conn.server_entropy(p.server_cfg));
+  if (h.token.len() > 0) {
+    return conn.accept_validated(p.server_cfg, e, h, odcid, at_ns(p.now));
+  }
+  return conn.accept(p.server_cfg, e, h, at_ns(p.now));
+}
+
+function wall_at(p: Pair): time.Timestamp {
+  return time.timestamp_from_unix_millis(WALL_MS + p.now / MS);
 }
 
 // SERVER_PATH is the server's address as the client sees it.
@@ -422,6 +452,112 @@ function test_retry(): test.TestOutcome {
         }
       }
       return test.assert_eq(hex.encode(again.dcid) + " " + unsafe { string_from_bytes_unchecked(again.token) } + " " + opened, "0102030405060708 fern-token pn 2");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// The client's first flight is two Initial datagrams (its key shares do not
+// fit one), and a server that keeps no state answers each with a Retry; the
+// client follows the first and ignores the second.
+function test_server_retry(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p = settle(Pair { ...p0, retry_key: entropy(9, 32) }, 12, 10000 * MS);
+      let s = server_of(p);
+      let odcid = "-";
+      if let Some(pp) = p.client.peer_params() {
+        if let Some(o) = pp.original_destination_connection_id {
+          odcid = hex.encode(o);
+        }
+      }
+      return test.assert_eq(p.log + "| " + p.client.connected().to_string() + " " + s.connected().to_string() + " retried " + p.client.retried().to_string() + " " + s.retried().to_string() + " odcid " + (odcid == hex.encode(p.client.odcid)).to_string() + " dcid " + hex.encode(p.client.dcid) + " " + hex.encode(s.scid), "server retried; server retried; client connected; server connected; | true true retried true true odcid true dcid " + hex.encode(s.scid) + " " + hex.encode(s.scid));
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function test_retry_token_checks(): test.TestOutcome {
+  let cc = client_config("tls.example", ["h3"]);
+  let sc = server_config(["h3"]);
+  match (start(cc, sc)) {
+    Ok(p0) => {
+      let c = p0.client.transmit(at_ns(0 as i64));
+      let first = header_of(c.datagrams()[0]);
+      let key = entropy(9, 32);
+      let at = time.timestamp_from_unix_millis(WALL_MS);
+      let r = header_of(conn.retry(sc, key, entropy(3, conn.retry_entropy(sc)), first, [1u8], at));
+      let kind = "other";
+      match (r.kind) {
+        packet.Retry => {
+          kind = "retry";
+        },
+        _ => {}
+      }
+      let next = packet.Header { ...first, dcid: r.scid, token: r.token };
+      let out = kind + " scid differs " + (hex.encode(r.scid) != hex.encode(first.dcid)).to_string() + " dcid kept " + (hex.encode(r.dcid) == hex.encode(first.scid)).to_string();
+      out = out + " | same " + odcid_of(conn.validated(key, next, [1u8], at), first.dcid);
+      out = out + " path " + odcid_of(conn.validated(key, next, [2u8], at), first.dcid);
+      out = out + " key " + odcid_of(conn.validated(entropy(10, 32), next, [1u8], at), first.dcid);
+      out = out + " dcid " + odcid_of(conn.validated(key, packet.Header { ...next, dcid: first.dcid }, [1u8], at), first.dcid);
+      out = out + " tampered " + odcid_of(conn.validated(key, packet.Header { ...next, token: r.token.with(12, (r.token[12] as i32 ^ 1) as u8) }, [1u8], at), first.dcid);
+      out = out + " short " + odcid_of(conn.validated(key, packet.Header { ...next, token: __bytes_owned(r.token[0:r.token.len() - 1]) }, [1u8], at), first.dcid);
+      out = out + " empty " + odcid_of(conn.validated(key, first, [1u8], at), first.dcid);
+      out = out + " 10s " + odcid_of(conn.validated(key, next, [1u8], time.timestamp_from_unix_millis(WALL_MS + 10000 as i64)), first.dcid);
+      out = out + " 10.001s " + odcid_of(conn.validated(key, next, [1u8], time.timestamp_from_unix_millis(WALL_MS + 10001 as i64)), first.dcid);
+      out = out + " early " + odcid_of(conn.validated(key, next, [1u8], time.timestamp_from_unix_millis(WALL_MS - 1 as i64)), first.dcid);
+      return test.assert_eq(out, "retry scid differs true dcid kept true | same odcid path none key none dcid none tampered none short none empty none 10s odcid 10.001s none early none");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function odcid_of(v: Option[u8[]], want: u8[]): string {
+  match (v) {
+    Some(o) => {
+      if (hex.encode(o) == hex.encode(want)) {
+        return "odcid";
+      }
+      return "other";
+    },
+    None => {
+      return "none";
+    }
+  }
+}
+
+function test_invalid_token_closes(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let c = p0.client.transmit(at_ns(0 as i64));
+      let first = header_of(c.datagrams()[0]);
+      c = c.sent();
+      let forged = packet.retry(first.scid, __codec_bytes(hex.decode("0102030405060708")), first.dcid, "nope".bytes());
+      let p = Pair { ...p0, client: c.receive(forged, at_ns(0 as i64)), retry_key: entropy(9, 32) };
+      p = settle(p, 3, 1000 * MS);
+      return test.assert_eq(p.log + "| " + p.server.is_some().to_string(), "server refused the token; client closed remote 11 the token is not one this server issued; server refused the token; | false");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function test_retry_naming_own_dcid_ignored(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let c = p0.client.transmit(at_ns(0 as i64));
+      let first = header_of(c.datagrams()[0]);
+      c = c.sent();
+      let same = packet.retry(first.scid, first.dcid, first.dcid, "fern-token".bytes());
+      let c2 = c.receive(same, at_ns(0 as i64));
+      return test.assert_eq(c2.retried().to_string() + " " + hex.encode(c2.dcid), "false " + hex.encode(first.dcid));
     },
     Err(e) => {
       return test.fail(e);
@@ -1026,6 +1162,10 @@ function main(): i32 {
   r = r.it("no protocol in common", test_no_protocol);
   r = r.it("closing", test_close);
   r = r.it("following a Retry", test_retry);
+  r = r.it("a server issuing a Retry", test_server_retry);
+  r = r.it("the Retry token's checks", test_retry_token_checks);
+  r = r.it("a token the server did not issue", test_invalid_token_closes);
+  r = r.it("a Retry naming the client's own connection ID", test_retry_naming_own_dcid_ignored);
   r = r.it("the idle timeout", test_idle);
   r = r.it("a stream echoed through small windows", test_stream_echo);
   r = r.it("a stream echoed through loss and reordering", test_stream_echo_lossy);
