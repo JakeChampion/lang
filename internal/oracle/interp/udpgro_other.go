@@ -1,7 +1,10 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package interp
 
-// udpGRO is unset: the host has no UDP_GRO, so socket op 10 answers
-// -ENOPROTOOPT.
-const udpGRO = -1
+// No UDP_GRO and no TOS option here: socket op 10 answers -ENOPROTOOPT,
+// and the socket layer itself answers -ENOSYS.
+const (
+	udpGRO    = -1
+	ipRecvTOS = 0
+)

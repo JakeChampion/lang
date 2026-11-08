@@ -14,7 +14,6 @@ const (
 	ipprotoIP      = 0
 	ipprotoUDP     = 0
 	ipTOS          = 0
-	ipRecvTOS      = 0
 	ipv6Tclass     = 0
 	ipv6RecvTclass = 0
 )

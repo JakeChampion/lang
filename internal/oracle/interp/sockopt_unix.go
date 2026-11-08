@@ -14,7 +14,6 @@ const (
 	ipprotoIP      = syscall.IPPROTO_IP
 	ipprotoUDP     = syscall.IPPROTO_UDP
 	ipTOS          = syscall.IP_TOS
-	ipRecvTOS      = syscall.IP_RECVTOS
 	ipv6Tclass     = syscall.IPV6_TCLASS
 	ipv6RecvTclass = syscall.IPV6_RECVTCLASS
 )
