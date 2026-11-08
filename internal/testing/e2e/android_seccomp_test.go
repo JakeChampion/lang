@@ -15,9 +15,11 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The jeq rows of a sandbox filter after the architecture check: each k is
-// one syscall that the image makes (asmcore.emit_seccomp_filter).
-var seccompRow = regexp.MustCompile(`(?m)^\s*\.long (\d+), (\d+)$`)
+// The rows of a sandbox filter (asmcore.emit_seccomp_filter): four header
+// rows, then one jeq row per syscall the image makes, then the kill that the
+// list falls through to. The argument rules that follow the kill compare
+// argument words, not syscall numbers.
+var seccompRow = regexp.MustCompile(`(?m)^\s*\.long (\d+), (0x[0-9A-Fa-f]+|\d+)$`)
 
 // filterSyscalls reads the syscall numbers from the `.Lseccomp_filter` rows of
 // an image built with FERN_SANDBOX=1.
@@ -27,19 +29,28 @@ func filterSyscalls(asm string) ([]int, bool) {
 		return nil, false
 	}
 	var out []int
-	for _, m := range seccompRow.FindAllStringSubmatch(asm[at:], -1) {
+	for i, m := range seccompRow.FindAllStringSubmatch(asm[at:], -1) {
+		if i < 4 {
+			continue
+		}
 		code, _ := strconv.Atoi(m[1])
+		if code&0xffff == 6 {
+			break
+		}
 		if code&0xffff != 21 {
 			continue
 		}
-		k, _ := strconv.Atoi(m[2])
-		out = append(out, k)
+		k, _ := strconv.ParseInt(m[2], 0, 64)
+		out = append(out, int(k))
 	}
 	return out, true
 }
 
 func TestFilterSyscallsReadsTheJeqRows(t *testing.T) {
-	asm := ".Lseccomp_filter:\n    .long 32, 4\n    .long 65557, 0xC00000B7\n    .long 6, 0x80000000\n    .long 32, 0\n    .long 196629, 64\n    .long 131093, 93\n    .long 65557, 94\n    .long 6, 0x80000000\n    .long 6, 0x7FFF0000\n"
+	// The rows after the kill are the argument rule of a socket call: a load
+	// of the domain word and one jeq per admitted value, whose k is not a
+	// syscall number.
+	asm := ".Lseccomp_filter:\n    .long 32, 4\n    .long 65557, 0xC00000B7\n    .long 6, 0x80000000\n    .long 32, 0\n    .long 196629, 64\n    .long 131093, 93\n    .long 65557, 94\n    .long 6, 0x80000000\n    .long 32, 20\n    .long 131093, 0\n    .long 32, 16\n    .long 65557, 2\n    .long 6, 0x80000000\n    .long 6, 0x7FFF0000\n"
 	got, ok := filterSyscalls(asm)
 	if !ok || fmt.Sprint(got) != "[64 93 94]" {
 		t.Fatalf("filterSyscalls = %v, %v; want [64 93 94]", got, ok)
