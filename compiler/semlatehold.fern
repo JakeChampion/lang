@@ -52,7 +52,7 @@ function graph_of(g: ssa.SFunc): Graph {
         defs = defs.with(ins.result, k);
         def_block = def_block.with(ins.result, bi);
       }
-      if (ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.PHI) {
         joined = marked(joined, ins.args);
       }
     }
@@ -234,7 +234,7 @@ function renamed_blocks(g: ssa.SFunc, gr: Graph, cands: Cand[], blocks: ssa.SBlo
     let k = 0;
     for ins in b.insts {
       let at = original_at(cands, bi, k);
-      if (at >= 0 && ins.kind_tag == 8) {
+      if (at >= 0 && ins.kind_tag == ssa.PHI) {
         insts = insts.append(ssa.SInst { ...ins, args: renamed_phi_args(g, gr, cands, fresh, b, ins.args) });
       } else if (at >= 0) {
         insts = insts.append(ssa.SInst { ...ins, args: renamed_args(gr, cands, fresh, bi, at, ins.args) });

@@ -262,7 +262,7 @@ function spent_by(f: ssasem.Func, lent: boolean, parent: boolean[], deps: i32[][
       }
       spent = spend(spent, parent, ssasem.update_base(ins), bi);
     }
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       spent = spend(spent, parent, b.term.value, bi);
     }
     spent = spend_phi_inputs(g, pos, b, spent, parent, bi);
@@ -352,7 +352,7 @@ function reads_across(g: ssa.SFunc, b: ssa.SBlock, ins: ssa.SInst, at: i32[]): b
   for a in ins.args {
     if (a >= 0 && a < at.len() && at[a] >= 0) {
       let from = b.id;
-      if (ins.kind_tag == 8 && slot < b.preds.len()) {
+      if (ins.kind_tag == ssa.PHI && slot < b.preds.len()) {
         from = b.preds[slot];
       }
       if (g.blocks[at[a]].id != from) {
@@ -366,7 +366,7 @@ function reads_across(g: ssa.SFunc, b: ssa.SBlock, ins: ssa.SInst, at: i32[]): b
 
 function returns_across(b: ssa.SBlock, at: i32[], bi: i32): boolean {
   let v = b.term.value;
-  return b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi;
+  return b.term.kind_tag == ssa.TERM_RET && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi;
 }
 
 function projection_blocks(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
@@ -423,7 +423,7 @@ function repeats_one(reads: ssa.SInst[], seen: i32[], ins: ssa.SInst, at: i32[])
 
 function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
   for ins in b.insts {
-    if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
       for a in ins.args {
         if (read_above(rd, bi, a)) {
           return true;
@@ -431,7 +431,7 @@ function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
       }
     }
   }
-  if (b.term.kind_tag == 1 && read_above(rd, bi, b.term.value)) {
+  if (b.term.kind_tag == ssa.TERM_RET && read_above(rd, bi, b.term.value)) {
     return true;
   }
   for sid in successors(b.term) {
@@ -454,7 +454,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
   let r = Rereads { old: [], fresh: [], insts: [], values: values };
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
-    if (ins.kind_tag == 6 || ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI) {
       insts = insts.append(ins);
     } else {
       let args: i32[] = [];
@@ -466,7 +466,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
     }
   }
   let term = b.term;
-  if (b.term.kind_tag == 1) {
+  if (b.term.kind_tag == ssa.TERM_RET) {
     r = reread(rd, g, bi, r, b.term.value);
     term = ssa.STerm { ...term, value: standing(r, b.term.value) };
   }

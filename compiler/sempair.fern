@@ -119,7 +119,7 @@ function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, p
         inner = marked_all(inner, ins.args);
       }
     }
-    if (b.term.kind_tag == 1 && returns_whole) {
+    if (b.term.kind_tag == ssa.TERM_RET && returns_whole) {
       inner = marked_all(inner, [b.term.value]);
     }
   }
@@ -129,7 +129,7 @@ function payloads_whole(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, p
 function returned_constructions(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       let d = semscalarreturn.through_copies(defs, b.term.value);
       if (d.kind_tag == ssasem.variant_new() && d.result >= 0 && semtypes.equal(f.values[d.result], f.result)) {
         out = out.with(d.result, true);
@@ -169,10 +169,10 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
   for b in g.blocks {
     for ins in b.insts {
       let apart = reads_apart(ins.kind_tag) || ins.result >= 0 && ins.result < returned.len() && returned[ins.result];
-      if (!apart && ins.kind_tag != 7 && ins.kind_tag != 8) {
+      if (!apart && ins.kind_tag != ssa.COPY && ins.kind_tag != ssa.PHI) {
         whole = marked_all(whole, ins.args);
       }
-      if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok, split)) {
+      if (ins.kind_tag == ssa.PHI && !joins_apart(ins, defs, ix, ok, split)) {
         whole = marked_all(whole, [ins.result]);
       }
       let donor = ssasem.update_base(ins);
@@ -180,7 +180,7 @@ function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boole
         whole = marked_all(whole, [donor]);
       }
     }
-    if (b.term.kind_tag == 1 && !paired) {
+    if (b.term.kind_tag == ssa.TERM_RET && !paired) {
       whole = marked_all(whole, [b.term.value]);
     }
   }
@@ -205,7 +205,7 @@ function through_joins(defs: ssa.SInst[], whole0: boolean[]): boolean[] {
       continue;
     }
     let ins = defs[w];
-    if (ins.kind_tag != 7 && ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.COPY && ins.kind_tag != ssa.PHI) {
       continue;
     }
     for a in ins.args {
@@ -474,7 +474,7 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   let bi = 0;
   while (bi < n) {
     let b = f.graph.blocks[bi];
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       let d = semscalarreturn.through_copies(defs, b.term.value);
       if (sh.pair) {
         f = pair_return(f, bi, sh, defs);
@@ -572,7 +572,7 @@ function arm_return(a0: Arm, sh: Shape, at: i32, payload: i32[], defs: ssa.SInst
   }
   let tag = f.values.len();
   f = with_value(f, t_i32());
-  insts = insts.append(ssa.SInst { kind_tag: 1, result: tag, args: [], imm: at, str: "" });
+  insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: tag, args: [], imm: at, str: "" });
   return Arm { f: f, insts: insts, tag: tag };
 }
 
@@ -822,7 +822,7 @@ function dispatched(bi: i32, k: i32, sh: Shape, c: Captured, callee: ssasem.Func
     arms = arms.append(first + i);
     i += 1;
   }
-  let joined: ssa.SInst[] = [ssa.SInst { kind_tag: 8, result: call.result, args: built, imm: 0, str: "" }];
+  let joined: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: call.result, args: built, imm: 0, str: "" }];
   f = with_new_block(f, ssa.SBlock { id: join, insts: util.append_all(joined, after(b.insts, k)), term: b.term, preds: arms });
   f = repointed(f, term_targets(b.term), b.id, join);
   f = with_block(f, bi, ssa.SBlock { ...f.graph.blocks[bi], insts: head });
@@ -911,7 +911,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   while (p < b.insts.len()) {
     if (p == k) {
       insts = insts.append(ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1, 0) });
-      insts = insts.append(ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: zero, args: [], imm: 0, str: "" });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name(0) });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w], imm: 0, str: word_as_name(sh.payloads[1]) });
       insts = insts.append(ssa.SInst { kind_tag: kind, result: call.result, args: [first, second], imm: 0, str: "" });
@@ -943,7 +943,7 @@ function rebuild_reference_tail(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ss
   let f = with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), t_i32()), t_usize()), semscalarreturn.word_type()), sh.payloads[1]);
   let pre: ssa.SInst[] = [
     ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1, 2) },
-    ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssa.CONST_INT, result: zero, args: [], imm: 0, str: "" },
     ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name(0) },
     ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [zero], imm: 0, str: pair_lane_name(1) },
     ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w], imm: 0, str: word_as_name(sh.payloads[1]) },
@@ -992,7 +992,7 @@ function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): 
   let f = with_value(with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), t_i32()), t_usize()), t_usize()), sh.payloads[1]), sh.payloads[2]);
   let pre: ssa.SInst[] = [
     ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w0, 2, 0) },
-    ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssa.CONST_INT, result: zero, args: [], imm: 0, str: "" },
     ssa.SInst { kind_tag: ssasem.call(), result: w0, args: [zero], imm: 0, str: pair_word_name(0) },
     ssa.SInst { kind_tag: ssasem.call(), result: w1, args: [zero], imm: 0, str: pair_word_name(1) },
     ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w0], imm: 0, str: word_as_name(sh.payloads[1]) },
@@ -1050,7 +1050,7 @@ function tests_on(f0: ssasem.Func, bi: i32, tests: i32[], first: i32, n: i32, v:
       next = tests[j + 1];
     }
     let t = test(f, v, j, sh);
-    let term = ssa.STerm { kind_tag: 3, cond: t.cond, target: 0, t: first + j, f: next, value: 0 };
+    let term = ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: t.cond, target: 0, t: first + j, f: next, value: 0 };
     f = t.f;
     if (j == 0) {
       let b = f.graph.blocks[bi];
@@ -1076,8 +1076,8 @@ function test(f0: ssasem.Func, v: i32, j: i32, sh: Shape): Test {
   cond = c + 1;
   f = with_value(with_value(f, t_i32()), t_bool());
   let insts: ssa.SInst[] = [
-    ssa.SInst { kind_tag: 1, result: c, args: [], imm: j, str: "" },
-    ssa.SInst { kind_tag: 9, result: cond, args: [v, c], imm: 0, str: "==" },
+    ssa.SInst { kind_tag: ssa.CONST_INT, result: c, args: [], imm: j, str: "" },
+    ssa.SInst { kind_tag: ssa.BINARY, result: cond, args: [v, c], imm: 0, str: "==" },
   ];
   return Test { f: f, insts: insts, cond: cond };
 }
@@ -1173,11 +1173,11 @@ function t_bool(): typeinfo.Type {
 }
 
 function ret(value: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: value };
 }
 
 function br(target: i32): ssa.STerm {
-  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: target, t: 0, f: 0, value: 0 };
 }
 
 function term_targets(t: ssa.STerm): i32[] {
@@ -1522,7 +1522,7 @@ function branched_block(f0: ssasem.Func, bi: i32, b: ssa.SBlock, head: ssa.SInst
     tail = tail.append(b.insts[k]);
   }
   let f = repointed(f0, term_targets(b.term), b.id, join_id);
-  let start = ssa.SBlock { ...b, insts: head, term: ssa.STerm { kind_tag: 3, cond: branch.flag, target: 0, t: some_id, f: none_id, value: 0 } };
+  let start = ssa.SBlock { ...b, insts: head, term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: branch.flag, target: 0, t: some_id, f: none_id, value: 0 } };
   f = with_block(f, bi, start);
   f = with_new_block(f, ssa.SBlock { id: some_id, insts: branch.some, term: br(join_id), preds: [b.id] });
   f = with_new_block(f, ssa.SBlock { id: none_id, insts: branch.none, term: br(join_id), preds: [b.id] });

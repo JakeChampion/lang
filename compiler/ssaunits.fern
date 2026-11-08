@@ -387,10 +387,10 @@ function step(block: i32, point: i32, target: i32): Step {
 }
 
 function successor_count(b: ssa.SBlock): i32 {
-  if (b.term.kind_tag == 2) {
+  if (b.term.kind_tag == ssa.TERM_BR) {
     return 1;
   }
-  if (b.term.kind_tag == 3) {
+  if (b.term.kind_tag == ssa.TERM_BRIF) {
     if (b.term.t == b.term.f) {
       return 1;
     }
@@ -649,7 +649,7 @@ function literals(f: ssasem.Func): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == 5 || ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.CONST_STR || ins.kind_tag == ssa.PHI) {
         out = out.with(ins.result, true);
       }
     }
@@ -659,7 +659,7 @@ function literals(f: ssasem.Func): boolean[] {
     changed = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        if (ins.kind_tag != 8 || !out[ins.result]) {
+        if (ins.kind_tag != ssa.PHI || !out[ins.result]) {
           continue;
         }
         let lit = true;
@@ -684,10 +684,10 @@ function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[
   for b in f.graph.blocks {
     for ins in b.insts {
       let owns = false;
-      if (ins.kind_tag == 6) {
+      if (ins.kind_tag == ssa.PARAM) {
         owns = modes[ins.imm] == counted_mode();
       }
-      if (ins.kind_tag != 8 && fresh_unit(ins.kind_tag)) {
+      if (ins.kind_tag != ssa.PHI && fresh_unit(ins.kind_tag)) {
         owns = ssasem.reference(f.values[ins.result]) && !(ins.kind_tag == ssasem.cell_get() && ssasem.cell_borrowed(cells, ins.result));
       }
       out = out.with(ins.result, owns);
@@ -700,7 +700,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
   let out = owned;
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag != 8 || !ssasem.reference(f.values[ins.result])) {
+      if (ins.kind_tag != ssa.PHI || !ssasem.reference(f.values[ins.result])) {
         continue;
       }
       let lent = true;
@@ -727,7 +727,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
     grown = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        if (ins.kind_tag != 8 || out[ins.result] || !ssasem.reference(f.values[ins.result])) {
+        if (ins.kind_tag != ssa.PHI || out[ins.result] || !ssasem.reference(f.values[ins.result])) {
           continue;
         }
         for a in ins.args {
@@ -834,7 +834,7 @@ function supply_table(f: ssasem.Func): SupplyTable {
   for b in f.graph.blocks {
     from = from.append(rows.len());
     for ins in b.insts {
-      if (ins.kind_tag == 6 || ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI) {
         rows = rows.append([]);
       } else {
         rows = rows.append(operation_supplies(f, ins));
@@ -852,7 +852,7 @@ pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.append_range()) {
     return true;
   }
-  return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
+  return ins.kind_tag == ssa.BINARY && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
 }
 
 function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
@@ -957,7 +957,7 @@ pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
 }
 
 function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
-  if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) {
+  if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) {
     return [Supply { value: b.term.value, slot: 0, mode: 0 }];
   }
   return [];
@@ -972,7 +972,7 @@ function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[])
   let out: Supply[] = [];
   let i = 0;
   for ins in succ.insts {
-    if (ins.kind_tag == 8 && owned[ins.result]) {
+    if (ins.kind_tag == ssa.PHI && owned[ins.result]) {
       out = out.append(Supply { value: ins.args[pi], slot: i, mode: 0 });
     }
     i += 1;
@@ -1021,7 +1021,7 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
         i += 1;
       }
     }
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       let ret = lent_view(f, defs, b.term.value);
       if (ret >= 0) {
         out = out.with(ret, false);
@@ -1048,7 +1048,7 @@ function text_lens(f: ssasem.Func): i32[] {
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == 5 && ins.result >= 0) {
+      if (ins.kind_tag == ssa.CONST_STR && ins.result >= 0) {
         out = out.with(ins.result, ins.str.len());
       }
     }
@@ -1566,7 +1566,7 @@ function constant_cast_arg(ins: ssa.SInst): i32 {
 }
 
 function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (ins.kind_tag != 1 || ins.result < 0 || ins.result >= f.values.len()) {
+  if (ins.kind_tag != ssa.CONST_INT || ins.result < 0 || ins.result >= f.values.len()) {
     return false;
   }
   let from = f.values[ins.result];
@@ -2285,7 +2285,7 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows:
     let pos = 0;
     while (pos < b.insts.len()) {
       let ins = b.insts[pos];
-      if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+      if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
         out = hold_at(f, a, defs, flows, consumed, owned, out, ins, bi, pos, sup.at(bi, pos));
       }
       pos += 1;
@@ -2395,18 +2395,18 @@ function consumed_values(f: ssasem.Func, owned: boolean[], sup: SupplyTable): bo
   for b in f.graph.blocks {
     let pos = 0;
     for ins in b.insts {
-      if (ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.PHI) {
         if (owned[ins.result]) {
           out = mark_all(out, ins.args);
         }
-      } else if (ins.kind_tag != 6) {
+      } else if (ins.kind_tag != ssa.PARAM) {
         for got in sup.at(bi, pos) {
           out = out.with(got.value, true);
         }
       }
       pos += 1;
     }
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
       out = out.with(b.term.value, true);
     }
     bi += 1;
@@ -2898,7 +2898,7 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
     changed = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.result >= 0 && ins.result < out.len() && out[ins.result]) {
+        if ((ins.kind_tag == ssa.COPY || ins.kind_tag == ssa.PHI) && ins.result >= 0 && ins.result < out.len() && out[ins.result]) {
           for arg in ins.args {
             if (arg >= 0 && arg < out.len() && !out[arg] && out[ins.result]) {
               out = out.with(ins.result, false);
@@ -3164,10 +3164,10 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
     let b = f.graph.blocks[bi];
     if (reachable[bi]) {
       let term_uses: i32[] = [];
-      if (b.term.kind_tag == 1) {
+      if (b.term.kind_tag == ssa.TERM_RET) {
         term_uses = use_ids(b.term.value, analysis.dependencies);
       }
-      if (b.term.kind_tag == 3) {
+      if (b.term.kind_tag == ssa.TERM_BRIF) {
         term_uses = use_ids(b.term.cond, analysis.dependencies);
       }
       let touched = ssalive.live_out_ids(analysis.flow, bi);
@@ -3180,7 +3180,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
       let pos = b.insts.len() - 1;
       while (pos >= 0) {
         let ins = b.insts[pos];
-        if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+        if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
           let dead: i32[] = [];
           if (box_update(ins) && live[ins.args[0]]) {
             kept = kept.with(ins.result, true);
@@ -3217,7 +3217,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
       }
       let entry_dead: i32[] = [];
       for ins in b.insts {
-        if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) {
+        if ((ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI) && owned[ins.result] && !live[ins.result]) {
           entry_dead = entry_dead.append(ins.result);
         }
       }
@@ -3225,7 +3225,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
         live = live.with(v, false);
       }
       steps = steps.append(choose_ids(step(b.id, entry_point(), -1), [], entry_dead, owned, ids, []));
-      if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
+      if (b.term.kind_tag == ssa.TERM_RET || b.term.kind_tag == ssa.TERM_UNREACHABLE) {
         steps = steps.append(choose_ids(step(b.id, return_point(), -1), return_supplies(f, b), term_uses, owned, ids, []));
       }
       for which in 0..successor_count(b) {
@@ -3372,7 +3372,7 @@ function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows): i32 {
 function returns_arrays(f: ssasem.Func): boolean {
   let returns = 0;
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       if (b.term.value < 0 || !is_array(f.values[b.term.value])) {
         return false;
       }
@@ -3384,7 +3384,7 @@ function returns_arrays(f: ssasem.Func): boolean {
 
 function returns_sole(f: ssasem.Func, sole: boolean[]): boolean {
   for b in f.graph.blocks {
-    if (b.term.kind_tag == 1 && !sole[b.term.value]) {
+    if (b.term.kind_tag == ssa.TERM_RET && !sole[b.term.value]) {
       return false;
     }
   }
@@ -3469,14 +3469,14 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
         pass = pass.with(ins.result, k);
         links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result), phi: links.phi.append(false) };
       }
-      if (ins.kind_tag == 8) {
+      if (ins.kind_tag == ssa.PHI) {
         for a in ins.args {
           if (a >= 0) {
             links = SoleLinks { from: links.from.append(a), to: links.to.append(ins.result), phi: links.phi.append(true) };
           }
         }
       }
-      if (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() && !lent[ins.result] || k >= 0 || fresh_array(ins, consts, fresh)) {
+      if (ins.kind_tag == ssa.PHI || ins.kind_tag == ssasem.with() && !lent[ins.result] || k >= 0 || fresh_array(ins, consts, fresh)) {
         sole = sole.with(ins.result, true);
       }
     }
@@ -3570,7 +3570,7 @@ function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i3
     pi += 1;
   }
   for ins in succ.insts {
-    if (ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.PHI) {
       continue;
     }
     let v = ins.args[pi];
@@ -3606,7 +3606,7 @@ function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow
     }
   }
   for ins in f.graph.blocks[bi].insts {
-    if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result] && !state[ins.result]) {
+    if ((ins.kind_tag == ssa.PHI || ins.kind_tag == ssa.PARAM) && owned[ins.result] && !state[ins.result]) {
       state = state.with(ins.result, true);
       held += 1;
     }
@@ -3625,7 +3625,7 @@ function holds_invariant(state: boolean[], held: i32, f: ssasem.Func, bi: i32, o
     }
   }
   for ins in f.graph.blocks[bi].insts {
-    if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result] && !ssalive.live_in_has(flow, bi, ins.result)) {
+    if ((ins.kind_tag == ssa.PHI || ins.kind_tag == ssa.PARAM) && owned[ins.result] && !ssalive.live_in_has(flow, bi, ins.result)) {
       if (!state[ins.result]) {
         return false;
       }
@@ -3759,10 +3759,10 @@ function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
   }
   if (point == edge_point()) {
     let edge = b.insts.len() + 2;
-    if (b.term.kind_tag == 2 && target == b.term.target) {
+    if (b.term.kind_tag == ssa.TERM_BR && target == b.term.target) {
       return edge;
     }
-    if (b.term.kind_tag == 3) {
+    if (b.term.kind_tag == ssa.TERM_BRIF) {
       if (target == b.term.t) {
         return edge;
       }
@@ -3920,7 +3920,7 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
   let count = 0;
   let pos = 0;
   for ins in b.insts {
-    if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
       for arg in ins.args {
         let why = read_error(next, arg, owned, deps);
         if (why != "") {
@@ -3991,7 +3991,7 @@ function step_clears(s: Step, value: i32, owned: boolean[], ids: i32[]): boolean
 }
 
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, state: boolean[], owned: boolean[], ids: i32[], deps: i32[][]): string {
-  if (b.term.kind_tag == 1) {
+  if (b.term.kind_tag == ssa.TERM_RET) {
     let why = read_error(state, b.term.value, owned, deps);
     if (why != "") {
       return why;
@@ -4017,7 +4017,7 @@ function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex,
 
 function enter_phis(b: ssa.SBlock, own state: boolean[], held: i32, owned: boolean[]): Ledger {
   for ins in b.insts {
-    if (ins.kind_tag == 8 && owned[ins.result]) {
+    if (ins.kind_tag == ssa.PHI && owned[ins.result]) {
       if (state[ins.result]) {
         return rejected("phi unit already present");
       }
@@ -4060,14 +4060,14 @@ function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: ReplayIndex, owned:
   }
   let state = operations.state;
   let count = 1 + operations.count;
-  if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
+  if (b.term.kind_tag == ssa.TERM_RET || b.term.kind_tag == ssa.TERM_UNREACHABLE) {
     let why = verify_return(f, b, p, idx, state, owned, ids, analysis.dependencies);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
     count += 1;
   }
-  if (b.term.kind_tag == 3) {
+  if (b.term.kind_tag == ssa.TERM_BRIF) {
     let why = read_error(state, b.term.cond, owned, analysis.dependencies);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
@@ -4443,7 +4443,7 @@ function first_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32): i32
   let pos = 0;
   while (pos < b.insts.len()) {
     let ins = b.insts[pos];
-    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots) {
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI && recipient_slots(f, p, ins) == slots) {
       return pos;
     }
     pos += 1;
@@ -4756,7 +4756,7 @@ function served_in_block(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads
   let local = reuse_pairs(f, p, idx, vr, b, false, no_carry());
   for pos in at..b.insts.len() {
     let ins = b.insts[pos];
-    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots && local.builds[pos] < 0 && local.selfs[pos] < 0) {
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI && recipient_slots(f, p, ins) == slots && local.builds[pos] < 0 && local.selfs[pos] < 0) {
       return false;
     }
   }
@@ -4836,7 +4836,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
     let ins = b.insts[pos];
     if (into >= 0 && carry.build_at[into] == pos) {
       selfs = selfs.with(pos, carry.donor[into]);
-    } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+    } else if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
       let step = step_of(p, idx, b.id, pos, -1);
       let claims = recipient_slots(f, p, ins);
       if (off) {
@@ -5424,7 +5424,7 @@ function link_kind(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.call()) {
     return is_array_type(f.values[ins.result]) && !ssasem.is_dyn_call(ins.str);
   }
-  return ins.kind_tag == 8 && is_array_type(f.values[ins.result]);
+  return ins.kind_tag == ssa.PHI && is_array_type(f.values[ins.result]);
 }
 
 function is_array_type(t: typeinfo.Type): boolean {
@@ -5574,7 +5574,7 @@ function linked_supply(f: ssasem.Func, p: Plan, at: i32[], state: i32[], step: S
   }
   let b = f.graph.blocks[at[step.block]];
   if (step.point == return_point()) {
-    return b.term.kind_tag == 1 && b.term.value == supply.value;
+    return b.term.kind_tag == ssa.TERM_RET && b.term.value == supply.value;
   }
   if (step.point == edge_point()) {
     let dest = f.graph.blocks[at[step.target]];
@@ -5641,7 +5641,7 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: ReplayIndex, bi: i32,
   let pos = 0;
   while (pos < b.insts.len()) {
     let ins = b.insts[pos];
-    if (ins.kind_tag == 6 || ins.kind_tag == 8) {
+    if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI) {
       if (pr.tokens[pos] >= 0 || pr.builds[pos] >= 0 || pr.selfs[pos] >= 0) {
         return "a token at a parameter or a phi";
       }

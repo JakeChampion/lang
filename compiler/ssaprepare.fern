@@ -165,7 +165,7 @@ function source_value(own out: SourceLines, value: i32, repl: i32[], pos: source
 function first_source(own out: SourceLines, f: ssa.SFunc, pos: sourcepos.SourcePos): SourceLines {
   for b in f.blocks {
     for ins in b.insts {
-      if (ins.result >= 0 && ins.kind_tag != 6 && ins.kind_tag != 8) {
+      if (ins.result >= 0 && ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
         return SourceLines { ...out, values: out.values.with(ins.result, pos) };
       }
     }

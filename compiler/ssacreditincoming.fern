@@ -154,11 +154,11 @@ function input_case(f: ssa.SFunc, checked: graph.Graph, consumer: string, input:
           return s;
         }
       }
-      if (b.term.kind_tag == 1) {
+      if (b.term.kind_tag == ssa.TERM_RET) {
         return State { ...empty, error: "incoming consumer call missing" };
       }
       let destination = b.term.target;
-      if (b.term.kind_tag == 3) {
+      if (b.term.kind_tag == ssa.TERM_BRIF) {
         let condition = s.values[util.index_of_i32(s.ids, b.term.cond)];
         if (condition.kind != 0 || condition.identity < 0 || condition.identity > 1) {
           return State { ...empty, error: "exact incoming Boolean required" };

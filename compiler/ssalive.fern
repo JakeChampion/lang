@@ -187,13 +187,13 @@ pub function graph_error(f: ssa.SFunc): string {
     if (b.id < 0 || block_index(at, b.id) != bi) {
       return "duplicate or negative block id";
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 4) {
+    if (b.term.kind_tag < ssa.TERM_RET || b.term.kind_tag > ssa.TERM_UNREACHABLE) {
       return "invalid terminator";
     }
-    if (b.term.kind_tag == 1 && (b.term.value < -1 || b.term.value >= f.nvals)) {
+    if (b.term.kind_tag == ssa.TERM_RET && (b.term.value < -1 || b.term.value >= f.nvals)) {
       return "return value out of range";
     }
-    if (b.term.kind_tag == 3 && (b.term.cond < 0 || b.term.cond >= f.nvals)) {
+    if (b.term.kind_tag == ssa.TERM_BRIF && (b.term.cond < 0 || b.term.cond >= f.nvals)) {
       return "condition value out of range";
     }
     let pi = 0;
@@ -212,7 +212,7 @@ pub function graph_error(f: ssa.SFunc): string {
       if (ins.result < -1 || ins.result >= f.nvals) {
         return "result value out of range";
       }
-      if (ins.kind_tag == 8 && ins.args.len() != b.preds.len()) {
+      if (ins.kind_tag == ssa.PHI && ins.args.len() != b.preds.len()) {
         return "phi predecessor arity";
       }
       for arg in ins.args {
@@ -232,7 +232,7 @@ pub function graph_error(f: ssa.SFunc): string {
         if (pred_index(f.blocks[sb], b.id) < 0) {
           return "missing predecessor edge";
         }
-      } else if (b.term.kind_tag == 3 || b.term.kind_tag == 2 && si == 0) {
+      } else if (b.term.kind_tag == ssa.TERM_BRIF || b.term.kind_tag == ssa.TERM_BR && si == 0) {
         return "negative successor";
       }
       si += 1;
@@ -322,7 +322,7 @@ function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, h
     if (start + k < hard.len() && hard[start + k]) {
       out = marked_live(out, live, seen);
     }
-    if (ins.kind_tag != 8) {
+    if (ins.kind_tag != ssa.PHI) {
       for arg in ins.args {
         if (arg >= 0 && !live[arg]) {
           live = live.with(arg, true);
@@ -430,7 +430,7 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
     phi_from = phi_from.append(phi_at.len());
     let k = 0;
     for ins in b.insts {
-      if (ins.kind_tag != 8) {
+      if (ins.kind_tag != ssa.PHI) {
         for arg in ins.args {
           up = exposed(up, def_b, def_k, bi, k, arg, dependencies);
         }
@@ -442,10 +442,10 @@ pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boo
       }
       k += 1;
     }
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == ssa.TERM_RET) {
       up = exposed(up, def_b, def_k, bi, b.insts.len(), b.term.value, dependencies);
     }
-    if (b.term.kind_tag == 3) {
+    if (b.term.kind_tag == ssa.TERM_BRIF) {
       up = exposed(up, def_b, def_k, bi, b.insts.len(), b.term.cond, dependencies);
     }
     bi += 1;

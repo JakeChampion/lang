@@ -96,11 +96,11 @@ function offset(ix: Index, v: i32, counter: i32, l: Loop): i32 {
 }
 
 function addition(ins: ssa.SInst): boolean {
-  return ins.kind_tag == 9 && ins.str == "+" && ins.args.len() == 2;
+  return ins.kind_tag == ssa.BINARY && ins.str == "+" && ins.args.len() == 2;
 }
 
 function loop_edges(h: ssa.SBlock, body: ssa.SBlock, exit: ssa.SBlock): boolean {
-  return body.term.kind_tag == 2 && body.preds.len() == 1 && body.preds[0] == h.id
+  return body.term.kind_tag == ssa.TERM_BR && body.preds.len() == 1 && body.preds[0] == h.id
     && exit.preds.len() == 1 && exit.preds[0] == h.id;
 }
 
@@ -111,7 +111,7 @@ function latch(f: ssasem.Func, ix: Index, h: ssa.SBlock, body: ssa.SBlock): i32 
     return body.id;
   }
   let step = f.graph.blocks[ix.blocks[body.term.target]];
-  if (step.term.kind_tag == 2 && step.term.target == h.id && step.preds.len() == 1 && step.preds[0] == body.id) {
+  if (step.term.kind_tag == ssa.TERM_BR && step.term.target == h.id && step.preds.len() == 1 && step.preds[0] == body.id) {
     return step.id;
   }
   return -1;
@@ -121,7 +121,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
   let array = none();
   let counter = none();
   for ins in h.insts {
-    if (ins.kind_tag == 8 && ins.args.len() == 2) {
+    if (ins.kind_tag == ssa.PHI && ins.args.len() == 2) {
       if (bytes(f.values[ins.result]) && array.result < 0) {
         array = ins;
       } else if (ssasem.is_i32(f.values[ins.result]) && counter.result < 0) {
@@ -129,7 +129,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
       } else {
         return no_loop();
       }
-    } else if (ins.result != h.term.cond && util.index_of_i32(chain, ins.result) < 0 && ins.kind_tag != 35) {
+    } else if (ins.result != h.term.cond && util.index_of_i32(chain, ins.result) < 0 && ins.kind_tag != ssa.LINE) {
       return no_loop();
     }
   }
@@ -137,7 +137,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
 }
 
 function loop_compare(ins: ssa.SInst): boolean {
-  return ins.kind_tag == 9 && ins.str == "<" && ins.args.len() == 2;
+  return ins.kind_tag == ssa.BINARY && ins.str == "<" && ins.args.len() == 2;
 }
 
 struct Chain { ok: boolean, values: i32[] }
@@ -178,7 +178,7 @@ function chain_binary(op: string): boolean {
 
 function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
   let no = no_loop();
-  if (h.term.kind_tag != 3 || h.preds.len() != 2) {
+  if (h.term.kind_tag != ssa.TERM_BRIF || h.preds.len() != 2) {
     return no;
   }
   let body = f.graph.blocks[ix.blocks[h.term.t]];
@@ -241,7 +241,7 @@ function pure_body(f: ssasem.Func, ix: Index, l: Loop, allowed: i32[]): boolean 
 
 function pure_block(b: ssa.SBlock, allowed: i32[]): boolean {
   for ins in b.insts {
-    if (ins.kind_tag != 35 && util.index_of_i32(allowed, ins.result) < 0) {
+    if (ins.kind_tag != ssa.LINE && util.index_of_i32(allowed, ins.result) < 0) {
       return false;
     }
   }
@@ -354,7 +354,7 @@ function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
 }
 
 function increment(ix: Index, ins: ssa.SInst, counter: i32): boolean {
-  return ins.kind_tag == 9 && ins.str == "+" && ins.args.len() == 2 && ins.args[0] == counter && literal(ix, ins.args[1], 1);
+  return ins.kind_tag == ssa.BINARY && ins.str == "+" && ins.args.len() == 2 && ins.args[0] == counter && literal(ix, ins.args[1], 1);
 }
 
 // No block outside the loop reads a value the body or the step block defines.
@@ -376,10 +376,10 @@ function body_escapes(b: ssa.SBlock, ix: Index, l: Loop): boolean {
     }
   }
   let v = b.term.value;
-  if (b.term.kind_tag == 3) {
+  if (b.term.kind_tag == ssa.TERM_BRIF) {
     v = b.term.cond;
   }
-  return (b.term.kind_tag == 1 || b.term.kind_tag == 3) && in_loop_body(ix, v, l);
+  return (b.term.kind_tag == ssa.TERM_RET || b.term.kind_tag == ssa.TERM_BRIF) && in_loop_body(ix, v, l);
 }
 
 function in_loop_body(ix: Index, v: i32, l: Loop): boolean {
@@ -428,7 +428,7 @@ function may_have_copy_loop(g: ssa.SFunc): boolean {
     return false;
   }
   for b in g.blocks {
-    if (b.term.kind_tag == 3 && b.preds.len() == 2) {
+    if (b.term.kind_tag == ssa.TERM_BRIF && b.preds.len() == 2) {
       return true;
     }
   }
@@ -436,7 +436,7 @@ function may_have_copy_loop(g: ssa.SFunc): boolean {
 }
 
 function copy(result: i32, v: i32): ssa.SInst {
-  return ssa.SInst { kind_tag: 7, result: result, args: [v], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [v], imm: 0, str: "" };
 }
 
 function replacement(v: i32, l: Loop, fresh: i32): i32 {
@@ -450,7 +450,7 @@ function outside(blk: ssa.SBlock, l: Loop, fresh: i32): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for old in blk.insts {
     let ins = old;
-    if (blk.id == l.exit && ins.kind_tag == 8) {
+    if (blk.id == l.exit && ins.kind_tag == ssa.PHI) {
       ins = copy(ins.result, ins.args[0]);
     }
     let args: i32[] = [];
@@ -509,7 +509,7 @@ function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.
     } else {
       b = outside(b, l, fresh);
       if (b.id == l.exit) {
-        let phis = [ssa.SInst { kind_tag: 8, result: fresh, args: [zero, l.count], imm: 0, str: "" }];
+        let phis = [ssa.SInst { kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" }];
         b = ssa.SBlock { ...b, preds: [l.head, l.body], insts: util.append_all(phis, b.insts) };
       }
     }
@@ -531,7 +531,7 @@ function rebased_distance(l: Loop, receiver: i32, next: i32): ssa.SInst[] {
   if (l.from < 0) {
     return [len];
   }
-  return [len, ssa.SInst { kind_tag: 9, result: next + 1, args: [next, l.from], imm: 0, str: "-" }];
+  return [len, ssa.SInst { kind_tag: ssa.BINARY, result: next + 1, args: [next, l.from], imm: 0, str: "-" }];
 }
 
 function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32, distance: ssa.SInst[]): ssa.SBlock {

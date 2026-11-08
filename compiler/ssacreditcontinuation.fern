@@ -92,11 +92,11 @@ function input_case(f: ssa.SFunc, checked: graph.Graph, site: incoming.Site): st
           return s.error;
         }
       }
-      if (b.term.kind_tag == 1) {
+      if (b.term.kind_tag == ssa.TERM_RET) {
         return returned(s, b.term.value);
       }
       let destination = b.term.target;
-      if (b.term.kind_tag == 3) {
+      if (b.term.kind_tag == ssa.TERM_BRIF) {
         let condition = s.values[util.index_of_i32(s.ids, b.term.cond)];
         if (condition.kind != 0 || condition.scalar < 0 || condition.scalar > 1) {
           return "exact continuation Boolean required";
