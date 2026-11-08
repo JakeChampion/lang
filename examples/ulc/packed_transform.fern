@@ -3,7 +3,7 @@ import "std/array";
 import "std/f64";
 import "./transform";
 
-pub struct Plan { shape: transform.Plan, cosine: u8[], sine: u8[], pre_cos: u8[], pre_sin: u8[], merge_cos: u8[], merge_sin: u8[], post_cos: u8[], post_sin: u8[], window_cos: u8[], window_sin: u8[] }
+pub struct Plan { shape: transform.Plan, cosine: u8[], sine: u8[], triple_cos: u8[], triple_sin: u8[], pre_cos: u8[], pre_sin: u8[], merge_cos: u8[], merge_sin: u8[], post_cos: u8[], post_sin: u8[], window_cos: u8[], window_sin: u8[] }
 
 pub struct Scratch { re: u8[], im: u8[], transformed: f64[], samples: f64[] }
 
@@ -28,9 +28,15 @@ pub function plan(n: i32): Plan {
   let quarter = n / 8;
   let cosine = __alloc_u8((quarter - 1) * 16);
   let sine = __alloc_u8((quarter - 1) * 16);
+  let triple_cos = __alloc_u8((quarter - 1) * 16);
+  let triple_sin = __alloc_u8((quarter - 1) * 16);
   for k in 0..quarter - 1 {
     cosine = __f32x4_with_bytes(cosine, 16 * k, __f32x4_splat(p.fft_cos[k] as f32));
     sine = __f32x4_with_bytes(sine, 16 * k, __f32x4_splat(p.fft_sin[k] as f32));
+    let c = p.fft_cos[k];
+    let t = p.fft_sin[k];
+    triple_cos = __f32x4_with_bytes(triple_cos, 16 * k, __f32x4_splat((c * (c * c - 3.0 * t * t)) as f32));
+    triple_sin = __f32x4_with_bytes(triple_sin, 16 * k, __f32x4_splat((t * (3.0 * c * c - t * t)) as f32));
   }
   let merge_cos = __alloc_u8(quarter * 16);
   let merge_sin = __alloc_u8(quarter * 16);
@@ -43,7 +49,7 @@ pub function plan(n: i32): Plan {
     post_cos = __f32x4_with_bytes(post_cos, 16 * k, __f32x4_of(p.post_cos[k] as f32, p.post_cos[k + 2 * quarter] as f32, p.post_cos[k + quarter] as f32, p.post_cos[k + 3 * quarter] as f32));
     post_sin = __f32x4_with_bytes(post_sin, 16 * k, __f32x4_of(p.post_sin[k] as f32, p.post_sin[k + 2 * quarter] as f32, p.post_sin[k + quarter] as f32, p.post_sin[k + 3 * quarter] as f32));
   }
-  return Plan { shape: p, cosine: cosine, sine: sine, pre_cos: pack(p.pre_cos), pre_sin: pack(p.pre_sin), merge_cos: merge_cos, merge_sin: merge_sin, post_cos: post_cos, post_sin: post_sin, window_cos: pack(p.window_cos), window_sin: pack(p.window_sin) };
+  return Plan { shape: p, cosine: cosine, sine: sine, triple_cos: triple_cos, triple_sin: triple_sin, pre_cos: pack(p.pre_cos), pre_sin: pack(p.pre_sin), merge_cos: merge_cos, merge_sin: merge_sin, post_cos: post_cos, post_sin: post_sin, window_cos: pack(p.window_cos), window_sin: pack(p.window_sin) };
 }
 
 pub function scratch(n: i32): Scratch {
@@ -69,7 +75,7 @@ pub function dct4(input: [f64], p: Plan, own work: Scratch, scaled: boolean = fa
   let n = p.shape.n;
   let half = n / 2;
   let quarter = half / 4;
-  if (n < 16 || n > 32768 || (n & n - 1) != 0 || input.len() < n || transformed.len() < n || re.len() < 2 * n || im.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
+  if (n < 16 || n > 32768 || (n & n - 1) != 0 || input.len() < n || transformed.len() < n || re.len() < 2 * n || im.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.triple_cos.len() < 16 * (quarter - 1) || p.triple_sin.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
     eprint("invalid packed FFT dimensions");
     exit(1);
   }
@@ -117,6 +123,11 @@ function execute[const PACKED: i32](p: Plan, re_address: usize, im_address: usiz
     let merge_sin_address = p.merge_sin as usize + 8 as usize;
     let width = if (packed) { 4 } else { 2 };
     while (width <= quarter) {
+      if (packed && width * 2 <= quarter) {
+        radix4(p, re_address, im_address, width);
+        width *= 4;
+        continue;
+      }
       let twiddle = width / 2 - 1;
       let base = 0;
       while (base < quarter) {
@@ -180,12 +191,99 @@ function execute[const PACKED: i32](p: Plan, re_address: usize, im_address: usiz
   }
 }
 
+@inline
+function radix4_zero(re: usize, im: usize, step: i32): void {
+  unsafe {
+    let ar = __f32x4_load_ptr(re);
+    let ai = __f32x4_load_ptr(im);
+    let br = __f32x4_load_ptr(re + step as usize);
+    let bi = __f32x4_load_ptr(im + step as usize);
+    let er = ar + br;
+    let ei = ai + bi;
+    let fr = ar - br;
+    let fi = ai - bi;
+    let cr = __f32x4_load_ptr(re + (2 * step) as usize);
+    let ci = __f32x4_load_ptr(im + (2 * step) as usize);
+    let dr = __f32x4_load_ptr(re + (3 * step) as usize);
+    let di = __f32x4_load_ptr(im + (3 * step) as usize);
+    let gr = cr + dr;
+    let gi = ci + di;
+    let hr = cr - dr;
+    let hi = ci - di;
+    __f32x4_store(re, er + gr);
+    __f32x4_store(im, ei + gi);
+    __f32x4_store(re + (2 * step) as usize, er - gr);
+    __f32x4_store(im + (2 * step) as usize, ei - gi);
+    __f32x4_store(re + step as usize, fr - hi);
+    __f32x4_store(im + step as usize, fi + hr);
+    __f32x4_store(re + (3 * step) as usize, fr + hi);
+    __f32x4_store(im + (3 * step) as usize, fi - hr);
+  }
+}
+
+// Two FFT levels share their loads and need three complex rotations.
+function radix4(p: Plan, re_address: usize, im_address: usize, width: i32): void {
+  unsafe {
+    let cosine = p.cosine as usize + 8 as usize;
+    let sine = p.sine as usize + 8 as usize;
+    let triple_cos = p.triple_cos as usize + 8 as usize;
+    let triple_sin = p.triple_sin as usize + 8 as usize;
+    let base = 0;
+    while (base < p.shape.n / 8) {
+      radix4_zero(re_address + (16 * base) as usize, im_address + (16 * base) as usize, 8 * width);
+      for k in 1..width / 2 {
+        let a = 16 * (base + k);
+        let b = a + 8 * width;
+        let c = a + 16 * width;
+        let d = a + 24 * width;
+        let c2 = __f32x4_load_ptr(cosine + (16 * (width / 2 - 1 + k)) as usize);
+        let t2 = __f32x4_load_ptr(sine + (16 * (width / 2 - 1 + k)) as usize);
+        let br = __f32x4_load_ptr(re_address + b as usize);
+        let bi = __f32x4_load_ptr(im_address + b as usize);
+        let vr = __f32x4_mul_add(br, c2, -(bi * t2));
+        let vi = __f32x4_mul_add(br, t2, bi * c2);
+        let ar = __f32x4_load_ptr(re_address + a as usize);
+        let ai = __f32x4_load_ptr(im_address + a as usize);
+        let er = ar + vr;
+        let ei = ai + vi;
+        let fr = ar - vr;
+        let fi = ai - vi;
+        let c1 = __f32x4_load_ptr(cosine + (16 * (width - 1 + k)) as usize);
+        let t1 = __f32x4_load_ptr(sine + (16 * (width - 1 + k)) as usize);
+        let cr = __f32x4_load_ptr(re_address + c as usize);
+        let ci = __f32x4_load_ptr(im_address + c as usize);
+        let wr = __f32x4_mul_add(cr, c1, -(ci * t1));
+        let wi = __f32x4_mul_add(cr, t1, ci * c1);
+        let c3 = __f32x4_load_ptr(triple_cos + (16 * (width - 1 + k)) as usize);
+        let t3 = __f32x4_load_ptr(triple_sin + (16 * (width - 1 + k)) as usize);
+        let dr = __f32x4_load_ptr(re_address + d as usize);
+        let di = __f32x4_load_ptr(im_address + d as usize);
+        let zr = __f32x4_mul_add(dr, c3, -(di * t3));
+        let zi = __f32x4_mul_add(dr, t3, di * c3);
+        let gr = wr + zr;
+        let gi = wi + zi;
+        let hr = wr - zr;
+        let hi = wi - zi;
+        __f32x4_store(re_address + a as usize, er + gr);
+        __f32x4_store(im_address + a as usize, ei + gi);
+        __f32x4_store(re_address + c as usize, er - gr);
+        __f32x4_store(im_address + c as usize, ei - gi);
+        __f32x4_store(re_address + b as usize, fr - hi);
+        __f32x4_store(im_address + b as usize, fi + hr);
+        __f32x4_store(re_address + d as usize, fr + hi);
+        __f32x4_store(im_address + d as usize, fi - hr);
+      }
+      base += width * 2;
+    }
+  }
+}
+
 // The caller owns n input floats, n output floats, and two FFT spans of 2 * n bytes.
 pub unsafe function dct4_packed(input: usize, output: usize, re_address: usize, im_address: usize, p: Plan): void {
   let n = p.shape.n;
   let half = n / 2;
   let quarter = n / 8;
-  if (n < 16 || n > 32768 || (n & n - 1) != 0 || p.shape.reversal.len() < quarter || p.pre_cos.len() < 2 * n || p.pre_sin.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
+  if (n < 16 || n > 32768 || (n & n - 1) != 0 || p.shape.reversal.len() < quarter || p.pre_cos.len() < 2 * n || p.pre_sin.len() < 2 * n || p.cosine.len() < 16 * (quarter - 1) || p.sine.len() < 16 * (quarter - 1) || p.triple_cos.len() < 16 * (quarter - 1) || p.triple_sin.len() < 16 * (quarter - 1) || p.merge_cos.len() < 2 * n || p.merge_sin.len() < 2 * n || p.post_cos.len() < 2 * n || p.post_sin.len() < 2 * n) {
     eprint("invalid packed FFT dimensions");
     exit(1);
   }
