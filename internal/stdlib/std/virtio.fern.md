@@ -4,7 +4,7 @@ A virtio device is the device model of qemu, Firecracker and Cloud Hypervisor: a
 
 A device sits at a base address with 512 bytes of registers. The driver probes the magic, the version and the device id. It negotiates features, builds its queues, and then starts the device. Every ring word goes through `std/raw`, so no pass moves an access. `__fence` orders the ring updates against the notification.
 
-The device reads the rings on its own. The driver tells it about a new buffer with a write to the notify register. The driver learns about a used buffer from the used ring. This module polls the used ring. The IRQ line of the device, through `std/async`, comes later.
+The device reads the rings on its own. The driver tells it about a new buffer with a write to the notify register. The driver learns about a used buffer from the used ring, which this module polls. The device also raises its IRQ line for a used buffer, until the driver acknowledges it with `interrupt_ack`. A bottom half that waits on the line with `async.irq` acknowledges the device first and then takes the used buffers: a buffer the device returns after that raises the line again.
 
 ## Module assembly
 

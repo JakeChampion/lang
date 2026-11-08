@@ -737,8 +737,7 @@ environment over the FernOS syscalls can come later, as an improvement.
    echo to the gateway of qemu's user network and receive both replies. qemu
    needs `-global virtio-mmio.force-legacy=false` for version 2, and the
    microvm runs without ACPI so that its eight transports sit at
-   `0xfeb00000`. The driver polls; its IRQ line through `std/async` comes
-   with the stack.
+   `0xfeb00000`. The driver polls, and step 15 adds its IRQ line.
 13. **The first layers of the stack exist** (#14259, second slice), as
    `std/ip`: Ethernet framing, an ARP cache in a page of raw memory with
    requests and replies, IPv4 and UDP, by polling the device.
@@ -755,10 +754,19 @@ environment over the FernOS syscalls can come later, as an improvement.
    and `std/ip` parses and builds the segments with their checksums.
    `TestSelfHostKernelHTTPOnQemu` and `TestSelfHostKernelX86HTTPOnQemu`
    answer three requests from Go's HTTP client with `std/http` over it.
-15. Beside those: the `std/net` surface over `std/tcp`, so that `std/serve`
-   runs over it with no change, and the IRQ line of the device through
-   `std/async` (#14259). The panic scope is decided (#14257, see the
-   north-star section).
+15. **The device's IRQ line drives the stack** (#14259, fourth slice).
+   `TestSelfHostKernelHTTPByInterruptOnQemu` and
+   `TestSelfHostKernelX86HTTPByInterruptOnQemu` answer the same requests
+   from wakes in `async.race` on the device's line and the timer's line. The
+   device tree gives the SPI on arm64, and the `virtio_mmio.device=...:GSI`
+   entry of the command line gives the IOAPIC input on x86-64. Both lines
+   are edge-triggered. The bottom half acknowledges the device with
+   `interrupt` of `std/virtio_net` and then drains the listener with `poll`
+   of `std/tcp`. A buffer the device returns after the acknowledgement
+   raises the line again, so nothing is lost.
+16. Beside those: the `std/net` surface over `std/tcp`, so that `std/serve`
+   runs over it with no change (#14259). The panic scope is decided (#14257,
+   see the north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 

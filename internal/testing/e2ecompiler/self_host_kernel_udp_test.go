@@ -146,8 +146,9 @@ function main(): i32 {
 }
 
 // kernelNetX86Main is kernelNetMain for qemu microvm: the RAM comes from the
-// PVH memory map, and the device is on one of the eight virtio-mmio
-// transports. main returns 16, so qemu exits with 33 from isa-debug-exit.
+// PVH memory map, the command line is in `cmdline`, and the device is on one
+// of the eight virtio-mmio transports. main returns 16, so qemu exits with 33
+// from isa-debug-exit.
 func kernelNetX86Main(imports, body, run string) string {
 	return `import "./board";
 import "std/frames";
@@ -208,6 +209,12 @@ function main(): i32 {
   };
   let Ok(regions) = pvh.parse_memmap(board.memmap(info), info.memmap_entries) else {
     print("no memory map");
+    return 1;
+  };
+  // The command line lives outside the RAM the memory map lists, so it is
+  // read before the kernel mapping replaces the identity map.
+  let Ok(cmdline) = pvh.command_line(board.command_line(info)) else {
+    print("no command line");
     return 1;
   };
   let heap_frames = f.free_count() - 256 as usize;

@@ -61,6 +61,21 @@ pub function gic_init(): void {
   }
 }
 
+// Enables the SPI line id (32 or more) at the distributor: group 1, priority
+// 0x80, edge-triggered, routed to this core.
+pub function gic_enable(id: i32): void {
+  unsafe {
+    let word = (id / 32 * 4) as usize;
+    let bit = 1 << id % 32;
+    __mmio_store32(GICD + 0x80 + word, __mmio_load32(GICD + 0x80 + word) | bit);
+    __mmio_store8(GICD + 0x400 + id as usize, 0x80);
+    let cfg = GICD + 0xc00 + (id / 16 * 4) as usize;
+    __mmio_store32(cfg, __mmio_load32(cfg) | (2 << id % 16 * 2));
+    __mmio_store64(GICD + 0x6000 + (id * 8) as usize, 0i64);
+    __mmio_store32(GICD + 0x100 + word, bit);
+  }
+}
+
 // The timer period: one millisecond of the counter.
 @norc
 pub function timer_period(): i64 {
@@ -385,6 +400,33 @@ function on_timer(): void {
     let word = __irq_pending() + (TIMER_IRQ / 32 * 4) as usize;
     __mmio_store32(word, __mmio_load32(word) | (1 << (TIMER_IRQ % 32)));
     __sysreg_write("kernel_gs_base", __sysreg_read("kernel_gs_base") + 1i64);
+    __mmio_store32(LAPIC + 0xb0, 0);
+  }
+}
+
+// The vector of the network device, and the IOAPIC that routes its GSI there.
+pub const NET_IRQ: i32 = 33;
+
+const IOAPIC: usize = 0xfec00000;
+
+// Routes the IOAPIC input gsi to NET_IRQ on this core, edge-triggered,
+// active high and unmasked.
+pub function ioapic_route(gsi: i32): void {
+  unsafe {
+    __mmio_store32(IOAPIC, 0x11 + 2 * gsi);
+    __mmio_store32(IOAPIC + 0x10, 0);
+    __mmio_store32(IOAPIC, 0x10 + 2 * gsi);
+    __mmio_store32(IOAPIC + 0x10, NET_IRQ);
+  }
+}
+
+// The top half of the network interrupt: it sets the vector's bit in the IRQ
+// region and signals the end of interrupt.
+@interrupt("33")
+function on_net(): void {
+  unsafe {
+    let word = __irq_pending() + (NET_IRQ / 32 * 4) as usize;
+    __mmio_store32(word, __mmio_load32(word) | (1 << (NET_IRQ % 32)));
     __mmio_store32(LAPIC + 0xb0, 0);
   }
 }
