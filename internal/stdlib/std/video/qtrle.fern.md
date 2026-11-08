@@ -44,6 +44,8 @@ function pixel(input: [u8], at: i32, bpp: i32): u32 {
   return 4278190080u32 | wire.be(input, at, 3) as u32;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// The packet walk has one arm per run code and per pixel depth.
 pub function decode_into(input: [u8], format: frame.Format, depth: i32, own pixels: u32[], limits: frame.Limits): Result[frame.Frame, frame.VideoError] {
   frame.check_packet(input, limits)?;
   let count = frame.pixel_count(format, limits)?;
@@ -175,6 +177,8 @@ function row_equal(a: [u32], b: [u32], row: i32, width: i32): boolean {
   return true;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// The run search has one arm per run kind and per pixel depth.
 function encode_row(own out: u8[], pixels: [u32], previous: [u32], row: i32, width: i32, bpp: i32, budget: i32): Result[u8[], frame.VideoError] {
   let at = row * width;
   let end = at + width;
@@ -224,6 +228,8 @@ function encode_row(own out: u8[], pixels: [u32], previous: [u32], row: i32, wid
   return Ok(out.append(255));
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per frame field, and one arm per pixel depth.
 pub function encode(pixels: [u32], previous: [u32], format: frame.Format, depth: i32, limits: frame.Limits): Result[u8[], frame.VideoError] {
   let count = frame.pixel_count(format, limits)?;
   let bpp = bytes_per_pixel(depth)?;

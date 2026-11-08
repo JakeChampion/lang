@@ -73,6 +73,8 @@ pub function to_annex_b(input: [u8], prefix_bytes: i32, limits: frame.Limits): R
   return Ok(output);
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per field of a unit header.
 function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boolean, own output: u8[], budget: i32): Result[Units, frame.VideoError] {
   let pos = at;
   for _ in 0..count {
@@ -100,10 +102,14 @@ function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boole
   return Ok(Units { bytes: output, next_offset: pos });
 }
 
+// fern-lint: allow cyclomatic-complexity
+// A table: one arm per high profile index.
 function extended_profile(profile: u8): boolean {
   return profile == 100 || profile == 110 || profile == 122 || profile == 144 || profile == 244 || profile == 44 || profile == 83 || profile == 86 || profile == 118 || profile == 128 || profile == 138 || profile == 139 || profile == 134 || profile == 135;
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per field of the AVC configuration record.
 pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
   frame.check_packet(input, limits)?;
   if (input.len() < 7) {
@@ -153,6 +159,8 @@ pub function avc_config(input: [u8], limits: frame.Limits): Result[Config, frame
   return Ok(Config { length_size: prefix, csd0: csd0, csd1: pps.bytes });
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per field of the HEVC configuration record.
 pub function hevc_config(input: [u8], limits: frame.Limits): Result[Config, frame.VideoError] {
   frame.check_packet(input, limits)?;
   if (input.len() < 23) {

@@ -259,6 +259,8 @@ pub function (decoder: Decoder) input(timeout_us: i64): Result[Option[InputBuffe
   }
 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per buffer and flag field of the MediaCodec call.
 pub function (decoder: Decoder) submit(slot: InputBuffer, bytes: [u8], presentation_time_us: i64, flags: u32): Result[void, frame.VideoError] {
   if (slot.index < 0 || slot.data == 0 as usize || slot.capacity < 0 || presentation_time_us < 0i64 || (flags & 4294967288u32) != 0u32) {
     return Err(frame.Header);

@@ -24,6 +24,8 @@ pub struct Header { codec: Codec, format: frame.Format, rate: u32, scale: u32, f
 
 pub struct Packet { offset: i32, size: i32, timestamp: u64, next_offset: i32 }
 
+// fern-lint: allow cyclomatic-complexity
+// One check per field of the IVF header.
 pub function inspect(input: [u8], limits: frame.Limits): Result[Header, frame.VideoError] {
   if (input.len() < 32) {
     return Err(frame.Truncated);
