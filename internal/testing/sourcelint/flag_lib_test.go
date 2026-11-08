@@ -27,7 +27,7 @@ func TestFlagLibAgreesWithEnvflag(t *testing.T) {
 		t.Fatalf("fern_flag %v: %v\n%s", args, err, out)
 		return false
 	}
-	for _, v := range []string{"", "0", "false", "FALSE", "Off", "off", "1", "true", "yes", "quiet", "00", " 0", "no"} {
+	for _, v := range []string{"", "0", "false", "FALSE", "Off", "off", "1", "true", "yes", "quiet", "00", " 0", "no", "NO", "No", "noo"} {
 		if got, want := run([]string{"FERN_FLAG_LIB_TEST=" + v}, "FERN_FLAG_LIB_TEST"), envflag.ValueOn(v); got != want {
 			t.Errorf("FERN_FLAG_LIB_TEST=%q: fern_flag = %v, envflag.ValueOn = %v", v, got, want)
 		}
