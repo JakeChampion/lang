@@ -1,0 +1,54 @@
+import "std/android/video/source";
+import "std/video/frame";
+import "std/test";
+
+function ranges(): test.TestOutcome {
+  let range = match (source.checked_range(8i64, 16i64, 40i64, 16i64)) { Ok(value) => value, _ => { return test.fail("known range rejected"); } };
+  if (range.offset != 8i64 || range.length != 16i64) {
+    return test.fail("asset subrange");
+  }
+  let unknown = match (source.checked_range(8i64, -1i64, 40i64, 32i64)) { Ok(value) => value, _ => { return test.fail("unknown range rejected"); } };
+  if (unknown.offset != 8i64 || unknown.length != 32i64) {
+    return test.fail("unknown asset length");
+  }
+  let large = match (source.checked_range(5000000000i64, -1i64, 10000000000i64, 5000000000i64)) { Ok(value) => value, _ => { return test.fail("large range rejected"); } };
+  if (large.length != 5000000000i64) {
+    return test.fail("64-bit source range");
+  }
+  return test.assert_true(true);
+}
+
+function invalid(): test.TestOutcome {
+  for (offset, length, size, maximum, expected) in [
+    (-1i64, 16i64, 40i64, 40i64, frame.Header),
+    (8i64, -2i64, 40i64, 40i64, frame.Header),
+    (0i64, 1i64, -1i64, 40i64, frame.Header),
+    (8i64, 16i64, 40i64, 0i64, frame.Limit),
+    (8i64, 16i64, 40i64, 15i64, frame.Limit),
+    (8i64, -1i64, 40i64, 31i64, frame.Limit),
+    (41i64, -1i64, 40i64, 40i64, frame.Truncated),
+    (8i64, 33i64, 40i64, 40i64, frame.Truncated),
+    (40i64, -1i64, 40i64, 40i64, frame.Header),
+    (0i64, 0i64, 40i64, 40i64, frame.Header),
+    (1i64, 9223372036854775807i64, 9223372036854775807i64, 9223372036854775807i64, frame.Limit),
+  ] {
+    match (source.checked_range(offset, length, size, maximum)) {
+      Err(error) => {
+        if (error != expected) {
+          return test.fail("range error category");
+        }
+      },
+      _ => {
+        return test.fail("invalid range accepted");
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let runner = test.new("Android video source ranges");
+  runner = runner.it("asset ranges, unknown lengths, and large sources", ranges);
+  runner = runner.it("invalid, truncated, oversized, and overflowing ranges", invalid);
+  return runner.finish();
+}

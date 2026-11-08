@@ -206,6 +206,13 @@ Both checkers report the same code at the same position for each row.
 A handle an `open_*` builtin returns borrows nothing from its path argument, so it is a fresh local.
 A directory or a file opened under another directory (`Dir.open_dir`, `Dir.open_reader`, `Dir.open_writer` and their forms with a flag word) is fresh the same way.
 
+## Names and ownership
+
+A local declaration takes effect after its initializer.
+A global callee in that initializer has a separate identity from the new local with the same name.
+The global call does not count as an alias of that local.
+The `field_holder_shadows_callee` case checks field transfers from such a local.
+
 ## Commands
 
 ```

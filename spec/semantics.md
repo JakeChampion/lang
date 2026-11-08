@@ -215,6 +215,7 @@ of them.
 | `RH-35` | `docs/security/HANDLE-AUDIT.md` | A handle read out of a borrowed structure cannot pass to an `own` parameter, not even at its last use (`E051`) | `diag_e051_handle_local_read_from_borrowed_struct` |
 | `RH-36` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a fresh value or an `own` parameter is an owned name that moves once when its type can hold a handle, and a fresh local when it cannot | `payload_binding_is_a_local` |
 | `RH-37` | `docs/security/HANDLE-AUDIT.md` | A fresh local that an assignment gives a borrowed handle, and an alias of a borrowed parameter, cannot pass to an `own` parameter or to a consuming method (`E051`) | `diag_e051_fresh_local_reassigned_from_a_borrow` |
+| `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
 
 ## Every gap this index opened with is now closed
 

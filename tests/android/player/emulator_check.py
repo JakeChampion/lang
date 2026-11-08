@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check AAC+AVC platform playback on an Android emulator or device.
 
-Usage: emulator_check.py APK OUT_DIR
+Usage: emulator_check.py APK OUT_DIR [VIDEO_APK BYTE_FIXTURE]
 Requires adb, FFmpeg, and ffprobe. Set ANDROID_SERIAL for a physical device.
 """
 
@@ -169,7 +169,7 @@ def write_media(uri, path):
     assert hashlib.sha256(actual).digest() == hashlib.sha256(data).digest(), "MediaStore fixture differs"
 
 
-def main(apk, directory):
+def main(apk, directory, video_apk=None, byte_fixture=None):
     out = Path(directory).resolve()
     out.mkdir(parents=True, exist_ok=True)
     write_fixture(out)
@@ -178,6 +178,7 @@ def main(apk, directory):
     port = str(server.server_address[1])
     mapped = False
     media_uri = None
+    video_uri = None
     try:
         adb("install", "-r", apk)
         adb("reverse", "tcp:" + port, "tcp:" + port)
@@ -188,10 +189,21 @@ def main(apk, directory):
         write_media(media_uri, out / "av.mp4")
         (out / "content-uri.txt").write_text(media_uri + "\n")
         run_playback(media_uri, uri + ".missing", out / "content")
+        if video_apk is not None:
+            video_uri = insert_media()
+            write_media(video_uri, Path(byte_fixture))
+            (out / "video-content-uri.txt").write_text(video_uri + "\n")
+            runner = Path(__file__).resolve().parents[1] / "video" / "emulator_check.py"
+            subprocess.run([sys.executable, str(runner), video_apk,
+                            str(out / "video-content"), video_uri], check=True, timeout=180)
     finally:
         try:
-            if media_uri is not None:
-                adb("shell", "content", "delete", "--uri", media_uri)
+            try:
+                if video_uri is not None:
+                    adb("shell", "content", "delete", "--uri", video_uri)
+            finally:
+                if media_uri is not None:
+                    adb("shell", "content", "delete", "--uri", media_uri)
         finally:
             try:
                 if mapped:
@@ -203,6 +215,6 @@ def main(apk, directory):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 5):
         sys.exit(__doc__)
     main(*sys.argv[1:])
