@@ -606,7 +606,9 @@ aarch64/perceus_rbtree_ck.ir	56271318
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
 # ARM64 measurements: CI job 128531950401. x86-64 measurements: local current compiler and callgrind.
-x86_64/video_qtrle.text 5738
+# 2026-11-08: #14770. The corrected display roots remove unused numeric formatters.
+# Pin the measured x86-64 reduction. No performance limit increases.
+x86_64/video_qtrle.text 5680
 x86_64/video_qtrle.ir 1812209299
 aarch64/video_qtrle.text 6080
 aarch64/video_qtrle.ir 1662057925
