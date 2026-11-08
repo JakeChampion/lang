@@ -20,7 +20,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | MP4/M4A | AAC-LC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Complete byte views only. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF supplies file playback. Compressed stereo requires at most 32 predictor bits. M4A remains open. |
-| CAF | ALAC | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
+| CAF | ALAC, PCM, float, G.711 | No | Version-one files, packet tables, bounded playback, exact sample seeks, and initial and final trim. Complete immutable byte views only. |
 | HE-AAC, WavPack | No | No | No implementation in these modules. |
 
 QOA is Quite OK Audio, the audio counterpart of QOI.
@@ -129,7 +129,19 @@ The generator records the reference version and SHA-256 values for encoded bytes
 python3 scripts/gen-linear-audio-vectors.py --check
 ```
 
-The codecs perform no file I/O. Reader integration, CAF PCM, floating-point WAVE, and container encoders remain open under #14687.
+The codecs perform no file I/O. Reader integration, floating-point WAVE, and container encoders remain open under #14687.
+
+`std/audio/caf/linear` supplies CAF integer PCM, IEEE float, and G.711 playback through the same linear index.
+Integer PCM uses 8, 16, 24, or 32 bits in either byte order.
+Float PCM uses 32 or 64 bits in either byte order.
+Constant packet tables can declare initial and final trim without an extra PCM copy.
+The opaque index contains only the playable range.
+ALAC playback retains its packet API in the parent CAF module.
+
+The 36 additional CAF references retain every integer sample and normalized float bit pattern.
+They cover all eight channel counts, both byte orders, float values outside unity, every G.711 code word, and unknown data size.
+The trim case compares the playable slice of independent FFmpeg PCM.
+Seven CAF boundary groups check descriptions, signed table fields, trim, empty presentations, limits, float errors, and every-byte mutations.
 
 ## ALAC
 
