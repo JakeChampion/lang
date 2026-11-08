@@ -1,0 +1,21 @@
+import "std/audio/mp3";
+import "std/audio/pcm";
+import "std/io";
+
+function main(): i32 {
+  let argv = args();
+  let Ok(input) = io.read_input_bytes(argv[1]) else {
+    return 1;
+  };
+  let checksum = 0u32;
+  for _ in 0..100 {
+    let Ok(audio) = mp3.decode_raw(input, pcm.default_limits()) else {
+      return 2;
+    };
+    for i in [0, audio.samples.len() / 2, audio.samples.len() - 1] {
+      checksum += ((audio.samples[i] * 1024.0f32) as i32) as u32;
+    }
+  }
+  print(checksum.to_string());
+  return 0;
+}
