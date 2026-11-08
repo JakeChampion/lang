@@ -30,7 +30,7 @@ func lookup(b *strings.Builder, fn, ret string, rows []string) {
 	for _, r := range rows {
 		fmt.Fprintf(b, "        %s,\n", r)
 	}
-	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
+	b.WriteString("        _ => { return -1; }\n    }\n}\n")
 }
 
 func genTable(t arm64tbl.VecTable) string {
@@ -77,7 +77,7 @@ func genFamily(b *strings.Builder) {
 	for _, n := range lens {
 		fmt.Fprintf(b, "    if (n == %d) { return arm64_gas_family_len%d(mnem); }\n", n, n)
 	}
-	b.WriteString("    return 0 - 1;\n}\n")
+	b.WriteString("    return -1;\n}\n")
 	for _, n := range lens {
 		genFamilyGroup(b, fmt.Sprintf("arm64_gas_family_len%d", n), 0, byLen[n])
 	}
@@ -91,7 +91,7 @@ func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling
 		for _, s := range group {
 			fmt.Fprintf(b, "    if (mnem == %q) { return %s(); }\n", s.mnem, familyID(arm64tbl.Scalar[s.fam]))
 		}
-		b.WriteString("    return 0 - 1;\n}\n")
+		b.WriteString("    return -1;\n}\n")
 		return
 	}
 	byByte := map[byte][]spelling{}
@@ -128,7 +128,7 @@ func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling
 		fmt.Fprintf(b, "    if (c == b'%c') { return %s(mnem); }\n", c, subName)
 		subs = append(subs, step{subName, sub})
 	}
-	b.WriteString("    return 0 - 1;\n}\n")
+	b.WriteString("    return -1;\n}\n")
 	for _, s := range subs {
 		genFamilyGroup(b, s.name, depth+1, s.group)
 	}

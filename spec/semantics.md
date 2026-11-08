@@ -150,10 +150,10 @@ of them.
 | `EO-02` | `docs/EVALUATION-ORDER.md` | Named arguments evaluate in parameter declaration order, and omitted arguments use constant defaults | `evaluation_order_effects` |
 | `EO-03` | `docs/EVALUATION-ORDER.md` | Operands, indices, slices, and aggregate contents follow the specified evaluation order | `evaluation_order_effects` |
 | `EO-04` | `docs/EVALUATION-ORDER.md` | Boolean operators short-circuit, and conditional expressions evaluate only the selected arm | `evaluation_order_effects` |
-| `CL-01` | `internal/stdlib/core/cmp.fern.md` | Float Eq, Ord, and Hash satisfy equivalence, total order, and equal-hash laws | `comparison_float_laws` |
-| `CL-02` | `internal/stdlib/core/cmp.fern.md` | Float collection traits equate signed zeros and all NaNs, and order NaNs after numbers | `comparison_float_laws` |
-| `CL-03` | `internal/stdlib/std/string.fern.md` | String chunks preserve scalar boundaries and return one nonempty chunk at nonpositive sizes, while array chunks return none | `collection_edge_policies` |
-| `CL-04` | `internal/stdlib/std/i32.fern.md` | Signed abs_diff returns a wrapping result at its result width, including a negative result when the mathematical distance exceeds MAX | `collection_edge_policies` |
+| `CM-01` | `internal/stdlib/core/cmp.fern.md` | Float Eq, Ord, and Hash satisfy equivalence, total order, and equal-hash laws | `comparison_float_laws` |
+| `CM-02` | `internal/stdlib/core/cmp.fern.md` | Float collection traits equate signed zeros and all NaNs, and order NaNs after numbers | `comparison_float_laws` |
+| `SR-01` | `internal/stdlib/std/string.fern.md` | String chunks preserve scalar boundaries and return one nonempty chunk at nonpositive sizes, while array chunks return none | `collection_edge_policies` |
+| `IT-01` | `internal/stdlib/std/i32.fern.md` | Signed abs_diff returns a wrapping result at its result width, including a negative result when the mathematical distance exceeds MAX | `collection_edge_policies` |
 | `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
 | `MC-03` | `docs/MUST-CONSUME.md` | A consuming call inside a `match` scrutinee is a consuming use | `must_consume_in_match_tag` |
