@@ -618,6 +618,10 @@ check time, in the same mechanism that enforces the OS boundary today.
   intrinsics. The `privileged` capability gates the intrinsics, so a hosted
   program fails with E066, and a dependency needs the `privileged` package
   capability (`docs/PACKAGE-CAPABILITIES-BRIEF.md`).
+- **A filesystem** (#14264). The first one is a read-only cpio archive, the
+  format of a Linux initramfs: `std/cpio` reads it. A VMM loads it as the
+  initrd, or a virtio-blk disk holds it, and `std/virtio_blk` reads the disk.
+  A writable filesystem comes later, on the same driver.
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
   Fern already ships, which emit ELF rather than shelling out to one. `std/elf`
   reads the header and the program headers of an ELF64 image, and
@@ -785,7 +789,20 @@ environment over the FernOS syscalls can come later, as an improvement.
    answers match but for the date header. `std/serve` itself over `std/tcp`
    waits for the Linux ABI of milestone 4: then `std/serve` is a user
    program and the kernel implements its `tcp_*` syscalls over `std/tcp`.
-17. Beside those: the panic scope is decided (#14257, see the north-star
+17. **A read-only filesystem exists** (#14264, the filesystem half of
+   milestone 5). `std/cpio` reads a cpio archive in the `newc` format, the
+   format of a Linux initramfs. `std/virtio_blk` reads and writes the
+   sectors of a virtio-blk disk over `std/virtio`, and it sends a flush.
+   qemu-virt loads no initrd for an arm64 ELF image, so a disk is the one
+   way to give that image a file. On x86-64, qemu and Firecracker load the
+   initrd as module 0 of the PVH start info, and `std/pvh` reads the module
+   list. `TestSelfHostKernelVirtioBlkOnQemu` and
+   `TestSelfHostKernelX86VirtioBlkOnQemu` read an archive from the disk,
+   find a file by its path and sum a file of 100000 bytes, which takes two
+   requests. The x86-64 image also reads the same archive as its initrd.
+   Then both images write the last sector, and the Go test reads it in the
+   disk file. The ELF loader is the other half of the milestone.
+18. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
