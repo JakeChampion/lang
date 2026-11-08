@@ -1,3 +1,4 @@
+# 2026-11-08: Three generic and must_consume fixtures measured with RC trace; all clean.
 # 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
 # The handler fan-out retains two task-pool blocks. The task deadline case
 # retains four blocks. The pool records and their backing storage survive task-id reuse.
