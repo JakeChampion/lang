@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The checker rows grow with the counted call roots of the tree shaker (#14747), which each body keeps for each method call, and with the drift of main since the last bank. Both are pinned at their measured values.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. The checker rows moved with the drift of main since the last bank, not with this change. Both are pinned at their measured values.
 # 2026-11-07: PR #14407, after #14376 and #14384. The copies that grew the cliff since 2026-11-05 are gone
 # (#14179): a local FERN_CLIFF_REPORT run on the PR head measures 36,773,408 bytes and 372,426 crossings.
@@ -150,5 +151,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	31471432
-x86_64/checker.cliff_count	371633
+x86_64/checker.cliff_bytes	39495544
+x86_64/checker.cliff_count	395555
