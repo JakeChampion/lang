@@ -31,3 +31,4 @@ sum_for 55
 upload 0
 ulc_codec 0
 packed_simd 0
+lane_permute 0
