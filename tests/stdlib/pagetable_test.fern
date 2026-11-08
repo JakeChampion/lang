@@ -1,0 +1,121 @@
+import "std/test";
+import "std/frames";
+import "std/pagetable";
+import "std/option";
+
+// A region of 64 frames plus one of slack. The first frame holds the header
+// and the bitmap of the frames, and the root table takes the second.
+const REGION_BYTES: usize = 266240;
+
+function region(): frames.Frames {
+  unsafe {
+    let Some(f) = frames.new(__alloc(REGION_BYTES as i32), REGION_BYTES) else {
+      eprint("no frames\n");
+      exit(98);
+      return frames.Frames { base: 0 as usize };
+    };
+    return f;
+  }
+}
+
+// The entry of `table` at `index`.
+function entry(table: usize, index: usize): i64 {
+  unsafe {
+    return __load_i64(table + index * 8 as usize);
+  }
+}
+
+// The table that an entry points at.
+function table_of(e: i64): usize {
+  return (e as usize) & (0xfffffffff000 as usize);
+}
+
+// The attribute bits of a block or a page: the entry without its address.
+function attr_of(e: i64): i64 {
+  return e & (0xffff000000000fffu64 as i64);
+}
+
+function test_block(): test.TestOutcome {
+  let f = region();
+  let Some(t) = pagetable.new(f) else {
+    return test.fail("no tables");
+  };
+  if (!t.map_normal(0x40000000 as usize, pagetable.BLOCK_BYTES)) {
+    return test.fail("map_normal refused a block");
+  }
+  // 0x40000000 is entry 0 of level 0, entry 1 of level 1, entry 0 of level 2.
+  let l1 = table_of(entry(t.root, 0 as usize));
+  let l2 = table_of(entry(l1, 1 as usize));
+  if (l1 == 0 as usize || l2 == 0 as usize || (entry(t.root, 0 as usize) & 3i64) != 3i64 || (entry(l1, 1 as usize) & 3i64) != 3i64) {
+    return test.fail("the walk to level 2 has no table entries");
+  }
+  let block = entry(l2, 0 as usize);
+  if (table_of(block) != 0x40000000 as usize) {
+    return test.fail("the block does not map 0x40000000");
+  }
+  if (target_arch() == "arm64" && attr_of(block) != 0x40000000000705i64) {
+    return test.fail("arm64 block attributes " + attr_of(block).to_string());
+  }
+  if (target_arch() == "x86-64" && attr_of(block) != 0x83i64) {
+    return test.fail("x86-64 block attributes " + attr_of(block).to_string());
+  }
+  // The root, one level 1 table and one level 2 table came from the frames.
+  return test.assert_eq((63 as usize - f.free_count()) as i64, 3i64);
+}
+
+function test_page(): test.TestOutcome {
+  let f = region();
+  let Some(t) = pagetable.new(f) else {
+    return test.fail("no tables");
+  };
+  if (!t.map_device(0x09000000 as usize, pagetable.PAGE_BYTES)) {
+    return test.fail("map_device refused a page");
+  }
+  let l1 = table_of(entry(t.root, 0 as usize));
+  let l2 = table_of(entry(l1, 0 as usize));
+  // 0x09000000 is entry 72 of level 2 and entry 0 of level 3.
+  let l3 = table_of(entry(l2, 72 as usize));
+  let page = entry(l3, 0 as usize);
+  if (table_of(page) != 0x09000000 as usize) {
+    return test.fail("the page does not map 0x09000000");
+  }
+  if (target_arch() == "arm64" && attr_of(page) != 0x60000000000403i64) {
+    return test.fail("arm64 page attributes " + attr_of(page).to_string());
+  }
+  if (target_arch() == "x86-64" && attr_of(page) != 0x1bi64) {
+    return test.fail("x86-64 page attributes " + attr_of(page).to_string());
+  }
+  return test.assert_eq((63 as usize - f.free_count()) as i64, 4i64);
+}
+
+// A range that is not page aligned is refused, and a range longer than the
+// frames can describe stops when they run out.
+function test_refusals(): test.TestOutcome {
+  let f = region();
+  let Some(t) = pagetable.new(f) else {
+    return test.fail("no tables");
+  };
+  if (t.map_normal(0x40000100 as usize, pagetable.PAGE_BYTES) || t.map_normal(0x40000000 as usize, 100 as usize)) {
+    return test.fail("an unaligned range was accepted");
+  }
+  // 4 KiB pages at distinct level 2 slots each need a level 3 table: 70 of
+  // them need more tables than 62 frames hold.
+  let i = 0 as usize;
+  let ok = true;
+  while (ok && i < 70 as usize) {
+    ok = t.map_normal(i * pagetable.BLOCK_BYTES, pagetable.PAGE_BYTES);
+    i += 1 as usize;
+  }
+  if (ok) {
+    return test.fail("map_normal did not run out of frames");
+  }
+  return test.assert_eq(f.free_count() as i64, 0i64);
+}
+
+function main(): i32 {
+  let r = test.new("std/pagetable");
+  r = r.it("maps a 2 MiB block through three tables", test_block);
+  r = r.it("maps a 4 KiB device page through four tables", test_page);
+  r = r.it("refuses unaligned ranges and stops when the frames run out", test_refusals);
+  return r.finish();
+}

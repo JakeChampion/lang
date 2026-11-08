@@ -240,6 +240,7 @@ which ones.
 | `AUDIO-CODECS.md` | [reference] | Audio codec APIs, supported formats, bounded buffers, conformance checks, and performance measurements. |
 | `ARRAY-SHAPES.md` | [policy] | Normative rules for std/ndarray: a counted handle with shape, strides and offset, views, shape mismatch, and when a view materializes. |
 | `CURSOR-IDIOM.md` | [policy] | The immutable read-and-advance cursor idiom for stdlib parsers and readers. |
+| `VIDEO-CODECS.md` | [reference] | Native QTRLE, IVF packets, AVC/HEVC conversion, and the Android MediaCodec adapter. |
 | `CRASH-ONLY-SERVE.md` | [reference] | Crash-only serving in std/serve: the trap taxonomy, the supervisor with a prefork worker pool, and its test bar. |
 | `DST-PLATFORM-BRIEF.md` | [reference] | Deterministic simulation testing in std/sim, std/sim_platform and std/sim_fetch: a virtual clock and seeded fault injection. |
 | `PERSISTENT-COLLECTIONS.md` | [reference] | std/ordmap, ordset, pmap, pset and pvec: design, measurements, and what the compiler still owes them. |

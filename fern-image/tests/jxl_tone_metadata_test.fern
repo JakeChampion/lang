@@ -1,0 +1,131 @@
+import "../packages/codecs/jxl/bits";
+import "../packages/codecs/jxl/tone_metadata";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function mapping(intensity: f32, minimum: f32, relative: boolean, linear: f32): tone_metadata.Mapping {
+  return tone_metadata.Mapping { intensity_target: intensity, min_nits: minimum, relative_to_max_display: relative, linear_below: linear };
+}
+
+function raw(intensity: u64, minimum: u64, relative: u64, linear: u64): u8[] {
+  let Ok(packed) = bits.pack([bits.Field { value: 0u64, width: 1 }, bits.Field { value: intensity, width: 16 }, bits.Field { value: minimum, width: 16 }, bits.Field { value: relative, width: 1 }, bits.Field { value: linear, width: 16 }], 7, never) else {
+    return [];
+  };
+  return packed.bytes;
+}
+
+function goldens(): test.TestOutcome {
+  for (value, expected, size) in [(mapping(255.0f32, 0.0f32, false, 0.0f32), [1u8], 1i64), (mapping(1000.0f32, 0.5f32, true, 0.25f32), [160u8, 199u8, 0u8, 112u8, 2u8, 208u8, 0u8], 50i64), (mapping(65504.0f32, 1.0f32, false, 10.0f32), [254u8, 247u8, 0u8, 120u8, 0u8, 36u8, 1u8], 50i64)] {
+    let Ok(fields) = tone_metadata.fields(value) else {
+      return test.fail("valid reference metadata fields");
+    };
+    let Ok(packed) = bits.pack(fields, 7, never) else {
+      return test.fail("bounded reference metadata output");
+    };
+    if (packed.bits != size || packed.bytes != expected) {
+      return test.fail("original class output bytes and exact field size");
+    }
+    let Ok(result) = tone_metadata.read(expected, 0i64, size) else {
+      return test.fail("complete original metadata input");
+    };
+    let actual = result.mapping;
+    if (actual.intensity_target != value.intensity_target || actual.min_nits != value.min_nits || actual.relative_to_max_display != value.relative_to_max_display || actual.linear_below != value.linear_below || result.next != size) {
+      return test.fail("exact original metadata values and next position");
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  for value in [mapping(0.0f32, 0.0f32, false, 0.0f32), mapping(-1.0f32, 0.0f32, false, 0.0f32), mapping(1.0f32, -1.0f32, false, 0.0f32), mapping(1.0f32, 2.0f32, false, 0.0f32), mapping(1.0f32, 0.0f32, false, -1.0f32), mapping(1.0f32, 0.0f32, true, 1.01f32), mapping(65505.0f32, 0.0f32, false, 0.0f32), mapping(f32_from_bits(0x7f800000), 0.0f32, false, 0.0f32), mapping(255.0f32, f32_from_bits(0x7fc00000), false, 0.0f32)] {
+    if (tone_metadata.fields(value).is_ok()) {
+      return test.fail("invalid relations and nonfinite metadata fail before output");
+    }
+  }
+  for (intensity, minimum, relative, linear) in [(0u64, 0u64, 0u64, 0u64), (0xbc00u64, 0u64, 0u64, 0u64), (0x3c00u64, 0xbc00u64, 0u64, 0u64), (0x3c00u64, 0x4000u64, 0u64, 0u64), (0x3c00u64, 0u64, 0u64, 0xbc00u64), (0x3c00u64, 0u64, 1u64, 0x4000u64), (0x7c00u64, 0u64, 0u64, 0u64), (0x3c00u64, 0x7e00u64, 0u64, 0u64), (0x3c00u64, 0u64, 0u64, 0xffffu64)] {
+    if (tone_metadata.read(raw(intensity, minimum, relative, linear), 0i64, 50i64).is_ok()) {
+      return test.fail("malformed original field relations fail on input");
+    }
+  }
+  return test.pass();
+}
+
+function precise_defaults(): test.TestOutcome {
+  for word in [1u32, 0x337fffffu32] {
+    if (tone_metadata.fields(mapping(f32_from_bits(word as i32), 0.0f32, false, 0.0f32)).is_ok()) {
+      return test.fail("positive intensity cannot truncate to unreadable zero");
+    }
+  }
+  for word in [0x80000001u32, 0xb3800000u32] {
+    if (tone_metadata.fields(mapping(255.0f32, f32_from_bits(word as i32), false, 0.0f32)).is_ok()) {
+      return test.fail("default selection does not bypass negative metadata");
+    }
+  }
+  for minimum in [f32_from_bits(0x33800000), 0.0000001f32] {
+    let Ok(fields) = tone_metadata.fields(mapping(255.0f32, minimum, false, 0.0f32)) else {
+      return test.fail("finite subnormal minimum output");
+    };
+    let Ok(packed) = bits.pack(fields, 7, never) else {
+      return test.fail("finite subnormal minimum bytes");
+    };
+    let Ok(result) = tone_metadata.read(packed.bytes, 0i64, packed.bits) else {
+      return test.fail("finite subnormal minimum input");
+    };
+    if (packed.bits != 50i64 || f32_bits(result.mapping.min_nits) as u32 != 0x33800000u32) {
+      return test.fail("explicit values survive the original approximate-default case");
+    }
+  }
+  let Ok(result) = tone_metadata.read(raw(0x3c00u64, 0x8000u64, 0u64, 0x8000u64), 0i64, 50i64) else {
+    return test.fail("signed-zero metadata input");
+  };
+  if (f32_bits(result.mapping.min_nits) as u32 != 0x80000000u32 || f32_bits(result.mapping.linear_below) as u32 != 0x80000000u32) {
+    return test.fail("read preserves signed zeros");
+  }
+  return test.pass();
+}
+
+function extents(): test.TestOutcome {
+  let value = mapping(1000.0f32, 0.5f32, true, 0.25f32);
+  let Ok(fields) = tone_metadata.fields(value) else {
+    return test.fail("metadata fields");
+  };
+  for offset in 0..8 {
+    let all = [bits.Field { value: 0u64, width: offset }].concat(fields);
+    let Ok(packed) = bits.pack(all, 8, never) else {
+      return test.fail("unaligned metadata bytes");
+    };
+    let alias = packed.bytes;
+    let Ok(result) = tone_metadata.read(alias, offset as i64, packed.bits) else {
+      return test.fail("unaligned borrowed metadata");
+    };
+    if (result.next != packed.bits || alias != packed.bytes) {
+      return test.fail("exact next position and borrowed input");
+    }
+    for cut in offset..offset + 50 {
+      if (tone_metadata.read(alias, offset as i64, cut as i64).is_ok()) {
+        return test.fail("every incomplete bit extent fails");
+      }
+    }
+  }
+  if (!match (bits.pack(fields, 6, never)) { Err(bits.Limit) => true, _ => false }) {
+    return test.fail("exact output byte budget");
+  }
+  for (position, extent) in [(-1i64, 1i64), (0i64, 9i64), (0i64, -1i64), (9223372036854775807i64, 1i64)] {
+    if (!match (tone_metadata.read([1u8], position, extent)) { Err(tone_metadata.Input(bits.Bounds)) => true, _ => false }) {
+      return test.fail("closed logical metadata bounds");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let suite = test.new("JPEG XL complete tone metadata descriptor");
+  suite = suite.it("original compact and explicit metadata goldens", goldens);
+  suite = suite.it("field relations and malformed values", invalid);
+  suite = suite.it("safe intensity and exact finite defaults", precise_defaults);
+  suite = suite.it("borrowed input, unaligned fields and every cut", extents);
+  return suite.finish();
+}

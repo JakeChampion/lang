@@ -1,0 +1,81 @@
+import "./bits";
+import "./f16_fields";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum ToneError { Value, Input(bits.BitError), Float(f16_fields.FloatError) }
+
+pub struct Mapping { intensity_target: f32, min_nits: f32, relative_to_max_display: boolean, linear_below: f32 }
+
+pub struct Read { mapping: Mapping, next: i64 }
+
+function number(input: [u8], position: i64, extent: i64): Result[f16_fields.Read, ToneError] {
+  return match (f16_fields.read(input, position, extent)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(ToneError.Float(error)),
+  };
+}
+
+function flag(input: [u8], position: i64, extent: i64): Result[bits.Read, ToneError] {
+  return match (bits.read(input, position, 1, extent)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(ToneError.Input(error)),
+  };
+}
+
+function valid(mapping: Mapping): boolean {
+  return mapping.intensity_target > 0.0f32 && mapping.min_nits >= 0.0f32 && mapping.min_nits <= mapping.intensity_target && mapping.linear_below >= 0.0f32 && (!mapping.relative_to_max_display || mapping.linear_below <= 1.0f32);
+}
+
+function explicit(input: [u8], position: i64, extent: i64): Result[Read, ToneError] {
+  let intensity = number(input, position, extent)?;
+  if (intensity.value <= 0.0f32) {
+    return Err(ToneError.Value);
+  }
+  let minimum = number(input, intensity.next, extent)?;
+  if (minimum.value < 0.0f32 || minimum.value > intensity.value) {
+    return Err(ToneError.Value);
+  }
+  let relative = flag(input, minimum.next, extent)?;
+  let linear = number(input, relative.next, extent)?;
+  let mapping = Mapping { intensity_target: intensity.value, min_nits: minimum.value, relative_to_max_display: relative.value != 0u64, linear_below: linear.value };
+  if (!valid(mapping)) {
+    return Err(ToneError.Value);
+  }
+  return Ok(Read { mapping: mapping, next: linear.next });
+}
+
+pub function read(input: [u8], position: i64, extent: i64): Result[Read, ToneError] {
+  let default = flag(input, position, extent)?;
+  if (default.value != 0u64) {
+    return Ok(Read { mapping: Mapping { intensity_target: 255.0f32, min_nits: 0.0f32, relative_to_max_display: false, linear_below: 0.0f32 }, next: default.next });
+  }
+  return explicit(input, default.next, extent);
+}
+
+function field(value: f32): Result[bits.Field, ToneError] {
+  return match (f16_fields.field(value)) {
+    Ok(value) => Ok(value),
+    Err(error) => Err(ToneError.Float(error)),
+  };
+}
+
+function defaults(intensity: bits.Field, minimum: bits.Field, relative: boolean, linear: bits.Field): boolean {
+  return intensity.value == 0x5bf8u64 && minimum.value == 0u64 && linear.value == 0u64 && !relative;
+}
+
+pub function fields(mapping: Mapping): Result[bits.Field[], ToneError] {
+  if (!valid(mapping)) {
+    return Err(ToneError.Value);
+  }
+  let intensity = field(mapping.intensity_target)?;
+  let minimum = field(mapping.min_nits)?;
+  let linear = field(mapping.linear_below)?;
+  if (intensity.value == 0u64) {
+    return Err(ToneError.Value);
+  }
+  if (defaults(intensity, minimum, mapping.relative_to_max_display, linear)) {
+    return Ok([bits.Field { value: 1u64, width: 1 }]);
+  }
+  return Ok([bits.Field { value: 0u64, width: 1 }, intensity, minimum, bits.Field { value: if (mapping.relative_to_max_display) { 1u64 } else { 0u64 }, width: 1 }, linear]);
+}

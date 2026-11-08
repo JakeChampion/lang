@@ -28,18 +28,18 @@ The suites that pin the detectors run on both native targets and under the sanit
 ## What the detectors do not see
 
 - A raw read after free. `__load_*` through a dangling raw pointer touches no count, so the quarantine never sees it. The quarantine fills the payload with the poison pattern, so the read returns the pattern and not the bytes the block held ([QUARANTINE.md](QUARANTINE.md)).
-- A raw write past a block. There are no redzones, so the write lands in the next block's header or payload. The next release or increment of that block then reports an over-release or nothing at all.
+- A raw write more than 16 bytes past a raw block, or any write past a typed box. The redzone after a raw block is 16 bytes, and the `__free` of the block reads it. A write beyond it lands in the next block's header or payload. The next release or increment of that block then reports an over-release or nothing at all.
 - An uninitialised raw read. `__alloc` does not zero its block, and the sanitizer has no shadow memory to tell a written byte from an unwritten one.
 - A misaligned raw access. The native targets tolerate a misaligned ordinary load and store, and no check exists for the atomic operations that require alignment.
 - A reference cycle. The census reports it as live bytes without attribution.
 - A stale reference that is only read through raw builtins, which is the first case again.
 
 Each of these needs shadow memory, which tracks a state per byte of the arena, or redzones, which cost space per block.
-Both are the AddressSanitizer design, and neither is built.
-Shadow memory costs one bit to one byte per arena byte and a check on every raw access, which the raw builtins emit. Redzones cost a guard region per block in every size class.
+Both are the AddressSanitizer design. The redzone exists for a raw block, 16 bytes of poison after its rounded size that its `__free` checks, and nothing else is built.
+Shadow memory costs one bit to one byte per arena byte and a check on every raw access, which the raw builtins emit. A redzone on every typed box costs a guard region per block in every size class.
 
 ## Remaining limits
 
-- The three detectors cover reference-counted misuse only. Raw memory misuse through the raw builtins is the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md). Its detectors are the arena-bounds check of `__free` and, under `-sanitize`, the abort on a second `__free` of a quarantined block ([ALLOCATOR-AUDIT.md](ALLOCATOR-AUDIT.md)).
+- The three detectors cover reference-counted misuse only. Raw memory misuse through the raw builtins is the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md). Its detectors are the arena-bounds check of `__free` and, under `-sanitize`, two more. One is the abort on a second `__free` of a quarantined block, and one is the redzone check at every `__free` ([ALLOCATOR-AUDIT.md](ALLOCATOR-AUDIT.md)).
 - The quarantine holds a byte budget, 64 MiB unless `-quarantine SIZE` gives another. A use after free older than the budget is a silent reuse again ([QUARANTINE.md](QUARANTINE.md)).
 - There is no source-span attribution beyond the backtrace. A report names the function, not the line, unless `-g` and `addr2line` resolve it.

@@ -63,6 +63,7 @@ var stdModuleReach = map[string]string{
 	"std/pvh":           "",
 	"std/ordmap":        "",
 	"std/ordset":        "",
+	"std/pagetable":     "privileged",
 	"std/number_parse":  "",
 	"std/f32":           "",
 	"std/path":          "",
