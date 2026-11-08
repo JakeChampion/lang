@@ -19153,7 +19153,11 @@ struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
-struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean }
+struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, forks: LuFork[] }
+
+// A match or an if outside every loop, with the occurrences in each arm. One
+// run takes one arm, so an occurrence in one arm is not after one in another.
+struct LuFork { arms: LuOcc[][] }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -20104,11 +20108,71 @@ function lu_base_admitted(fx: LuFn, name: string): boolean {
 
 function lu_is_last(fx: LuFn, id: ast.ExprIdent): boolean {
   for o in fx.facts.occ {
-    if (o.name == id.name && (o.line > id.line || o.line == id.line && o.col > id.col)) {
+    if (o.name == id.name && (o.line > id.line || o.line == id.line && o.col > id.col) && !lu_apart(fx.forks, id, o)) {
       return false;
     }
   }
   return true;
+}
+
+// The forks of `stmts`. A loop body can take each arm in turn, so the forks
+// inside a loop are not collected.
+function lu_forks(stmts: ast.Stmt[], own acc: LuFork[]): LuFork[] {
+  for st in stmts {
+    match (st) {
+      ast.StmtIf(f) => {
+        acc = acc.append(LuFork { arms: [lu_arm_occ(f.then_body), lu_arm_occ(f.else_body)] });
+        acc = lu_forks(f.else_body, lu_forks(f.then_body, acc));
+      },
+      ast.StmtMatch(m) => {
+        let arms: LuOcc[][] = [];
+        for arm in m.arms {
+          arms = arms.append(lu_arm_occ(arm.body));
+        }
+        acc = acc.append(LuFork { arms: arms });
+        for arm in m.arms {
+          acc = lu_forks(arm.body, acc);
+        }
+      },
+      _ => {}
+    }
+  }
+  return acc;
+}
+
+function lu_arm_occ(body: ast.Stmt[]): LuOcc[] {
+  let f = lu_empty_facts();
+  for st in body {
+    f = astwalk.fold_stmt_nodes(st, f, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  }
+  return f.occ;
+}
+
+// Whether `id` and `o` are in two arms of one fork.
+function lu_apart(forks: LuFork[], id: ast.ExprIdent, o: LuOcc): boolean {
+  for fork in forks {
+    let a = lu_arm_at(fork, id.line, id.col);
+    if (a >= 0) {
+      let b = lu_arm_at(fork, o.line, o.col);
+      if (b >= 0 && b != a) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function lu_arm_at(fork: LuFork, line: i32, col: i32): i32 {
+  let i = 0;
+  while (i < fork.arms.len()) {
+    for o in fork.arms[i] {
+      if (o.line == line && o.col == col) {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  return -1;
 }
 
 function lu_mentions(st: ast.Stmt, name: string): i32 {
@@ -21643,7 +21707,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_lambda, lu_outside_lambda);
   }
-  let fx0 = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false };
+  let fx0 = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
