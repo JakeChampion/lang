@@ -1,0 +1,116 @@
+import "std/audio/opusfile";
+import "std/audio/opusfile/input";
+import "opus_file_check";
+
+function copied(bytes: [u8], first: i32, count: i32): u8[] {
+  let result: u8[] = [];
+  for i in first..first + count {
+    result = result.append(bytes[i]);
+  }
+  return result;
+}
+
+function source(bytes: u8[], position: Cell[i32], calls: Cell[i32], partial: boolean): (i32) => Result[u8[], IoError] {
+  return (requested: i32): Result[u8[], IoError] => {
+    let sizes = [1, 3, 27, 255, 4096];
+    let count = if (partial && requested > sizes[calls.get() % sizes.len()]) { sizes[calls.get() % sizes.len()] } else { requested };
+    let remaining = bytes.len() - position.get();
+    count = if (count > remaining) { remaining } else { count };
+    let result = copied(bytes, position.get(), count);
+    position.set(position.get() + count);
+    calls.set(calls.get() + 1);
+    return Ok(result);
+  };
+}
+
+function no_more_reads(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function completed(own state: input.Input): Result[void, string] {
+  let (next, value) = match (state.step_with(no_more_reads)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if let input.Finished = value {
+    let (_, end) = match (next.next_with(no_more_reads)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    if let None = end {
+      return Ok(());
+    }
+  }
+  return Err("completed input read again");
+}
+
+function checked_step(own state: input.Input, read: (i32) => Result[u8[], IoError], calls: Cell[i32]): Result[(input.Input, input.ReadEvent), string] {
+  let previous = calls.get();
+  let drain = state.drain;
+  let (next, event) = match (state.step_with(read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (calls.get() - previous > 1 || drain && calls.get() != previous) {
+    return Err("source read count or pending output backpressure");
+  }
+  if (next.chunk.len() > next.chunk_size || next.position > next.chunk.len()) {
+    return Err("bounded input buffer");
+  }
+  return Ok((next, event));
+}
+
+pub function progress_event(own event: input.ReadEvent, ref: opus_file_check.Reference, progress: opus_file_check.Progress): Result[(opus_file_check.Progress, boolean), string] {
+  match (event) {
+    input.Output(value) => {
+      return Ok((opus_file_check.event_progress(Some(value), ref, progress)?, false));
+    },
+    input.Pending => {
+      return Ok((progress, false));
+    },
+    input.Finished => {
+      return Ok((progress, true));
+    }
+  }
+}
+
+function complete_progress(ref: opus_file_check.Reference, progress: opus_file_check.Progress, position: i32): boolean {
+  return progress.link == ref.links.len() && progress.stage == 0 && position == ref.bytes.len();
+}
+
+pub function run(ref: opus_file_check.Reference, chunk_size: i32, partial: boolean): Result[void, string] {
+  let state = match (input.create(opusfile.default_limits(), chunk_size)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let read = source(ref.bytes, position, calls, partial);
+  let progress = opus_file_check.Progress { link: 0, stage: 0, samples: 0 };
+  let turns = 0;
+  while (true) {
+    let (next, event) = checked_step(state, read, calls)?;
+    state = next;
+    let (current, finished) = progress_event(event, ref, progress)?;
+    progress = current;
+    if (finished) {
+      break;
+    }
+    turns += 1;
+    if (turns > ref.bytes.len() * 3 + 128) {
+      return Err("input does not advance");
+    }
+  }
+  if (!complete_progress(ref, progress, position.get())) {
+    return Err("complete PCM, metadata, or input count");
+  }
+  return completed(state);
+}
+
+pub function run_next(ref: opus_file_check.Reference): Result[void, string] {
+  let state = match (input.create(opusfile.default_limits(), 17)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let position = cell_new(0);
+  let calls = cell_new(0);
+  let read = source(ref.bytes, position, calls, true);
+  let progress = opus_file_check.Progress { link: 0, stage: 0, samples: 0 };
+  while (true) {
+    let (next, event) = match (state.next_with(read)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    state = next;
+    if let None = event {
+      break;
+    }
+    progress = opus_file_check.event_progress(event, ref, progress)?;
+  }
+  if (progress.link != ref.links.len()) {
+    return Err("complete output from next");
+  }
+  return completed(state);
+}
