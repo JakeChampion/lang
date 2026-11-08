@@ -621,7 +621,7 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__alloc") {
     return t_usize();
   }
-  if (argc == 1 && name == "__alloc_u8") {
+  if (argc == 1 && (name == "__alloc_u8" || name == "__alloc_u8_uninit")) {
     return typeinfo.TypeArray { elem: t_u8(), view: false };
   }
   if (argc == 1 && name == "__alloc_i32") {
@@ -869,7 +869,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (util.has_str(["__alloc", "__fd_close", "__socket_from_fd"], name)) {
     return ([t_i32()], true);
   }
-  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
+  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     return ([t_i32()], true);
   }
   if (name == "__free") {
@@ -10260,7 +10260,7 @@ function is_unsafe_builtin_method(key: string, field: string): boolean {
 // internal/check/checker's UnsafeIntrinsics holds the same set.
 pub function unsafe_intrinsics(): string[] {
   return [
-    "__alloc", "__alloc_reuse", "__free",
+    "__alloc", "__alloc_reuse", "__alloc_u8_uninit", "__free",
     "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
     "__store_u8", "__store_i32", "__store_i64", "__store_ptr", "__f32x4_store", "__f32x4_load_ptr", "__f64x2_store", "__f64x2_load_ptr",
     "__mmio_load8", "__mmio_load16", "__mmio_load32", "__mmio_load64",
@@ -18222,7 +18222,7 @@ function registered_intrinsics(): string[] {
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
     "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
@@ -23522,7 +23522,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
+    "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_u8", "__alloc_u8_uninit", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",

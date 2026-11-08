@@ -6386,6 +6386,9 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__alloc_u8") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_alloc_u8())) };
   }
+  if (ins.str == "__alloc_u8_uninit") {
+    return Lowered { found: true, r: emit(r, ir.op_alloc_uninit()) };
+  }
   if (ins.str == "__alloc_i32") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(32)) };
   }

@@ -29,10 +29,11 @@ function read(own r: BitReader): BitReader {
 
 @inline
 function nybble(data: u8[], pos: i32): i32 {
-  if (pos < 0 || pos / 2 >= data.len()) {
+  let index = pos >> 1;
+  if (index as u32 >= data.len() as u32) {
     return -1;
   }
-  return data[pos / 2] as i32 >> (pos & 1) * 4 & 15;
+  return data[index] as i32 >> (pos & 1) * 4 & 15;
 }
 
 // The high word holds the cursor. The signed low word holds the quantizer.
@@ -119,7 +120,7 @@ pub struct CoefficientCursor { reader: BitReader, noise_samples: i32, silent: bo
 function store_coefficient(address: usize, n: i32, value: f64, packed: boolean): void {
   unsafe {
     if (packed) {
-      __store_i32(address + (4 * n) as usize, f32_bits((value * 79228162514264337593543950336.0) as f32));
+      __store_i32(address + (4 * n) as usize, f32_bits(value as f32));
     } else {
       __store_i64(address + (8 * n) as usize, f64_bits(value));
     }
@@ -127,25 +128,48 @@ function store_coefficient(address: usize, n: i32, value: f64, packed: boolean):
 }
 
 @inline
-function store_noise(address: usize, n: i32, magnitude: u32, sign: u32, packed: boolean): void {
+function noise_word(magnitude: u32, packed: boolean): u32 {
+  let bits = magnitude;
+  if (packed) {
+    if (bits >= 8388608u32) {
+      bits += 805306368u32;
+    } else if (bits != 0u32) {
+      let shift = __clz32(bits) - 8;
+      bits = bits << shift as u32 & 8388607u32 | (97 - shift) as u32 << 23u32;
+    }
+  }
+  return bits;
+}
+
+@inline
+function store_noise_word(address: usize, n: i32, magnitude: u32, sign: u32, packed: boolean): void {
   unsafe {
     if (packed) {
-      let bits = magnitude;
-      if (bits >= 8388608u32) {
-        bits += 805306368u32;
-      } else if (bits != 0u32) {
-        let shift = __clz32(bits) - 8;
-        bits = bits << shift as u32 & 8388607u32 | (97 - shift) as u32 << 23u32;
-      }
-      __store_i32(address + (4 * n) as usize, (bits ^ sign) as i32);
+      __store_i32(address + (4 * n) as usize, (magnitude ^ sign) as i32);
     } else {
       __store_i64(address + (8 * n) as usize, f64_bits(f32_from_bits((magnitude ^ sign) as i32) as f64));
     }
   }
 }
 
+@inline
+function store_noise(address: usize, n: i32, magnitude: u32, sign: u32, packed: boolean): void {
+  store_noise_word(address, n, noise_word(magnitude, packed), sign, packed);
+}
+
 // The caller owns size zeroed floats or doubles at output_address. Packed floats use a scale of 2^96.
+@inline
 pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_address: usize, packed: boolean): Result[CoefficientCursor, string] {
+  unsafe {
+    if (packed) {
+      return coefficient_impl[1](r, size, output_address);
+    }
+    return coefficient_impl[0](r, size, output_address);
+  }
+}
+
+unsafe function coefficient_impl[const PACKED: i32](own r: BitReader, size: i32, output_address: usize): Result[CoefficientCursor, string] {
+  let packed = PACKED != 0;
   if (size < 16 || size > 32768 || r.error) {
     return Err("invalid subblock size or reader state");
   }
@@ -163,6 +187,7 @@ pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_addre
   }
   let seed = r.seed;
   let quant = scale(quantizer_value(initial));
+  let direct_quant = if (packed) { quant * 79228162514264337593543950336.0 } else { quant };
   let n = 0;
   while (n < size) {
     let code = nybble(data, pos);
@@ -173,7 +198,7 @@ pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_addre
     if (code != 0 && code != 1 && code != 8 && code != 15) {
       silent = false;
       unsafe {
-        store_coefficient(output_address, n, SIGNED_SQUARES[code] * quant, packed);
+        store_coefficient(output_address, n, SIGNED_SQUARES[code] * direct_quant, packed);
       }
       n += 1;
     } else if (code == 0 || code == 1 || code == 8) {
@@ -210,12 +235,12 @@ pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_addre
         noise_samples += count;
       }
       if (code == 8) {
-        let magnitude = f32_bits(level as f32) as u32;
+        let magnitude = noise_word(f32_bits(level as f32) as u32, packed);
         let sign = 0u32;
         for i in 0..count {
           seed = random(seed);
           sign ^= seed & 2147483648u32;
-          store_noise(output_address, n, magnitude, sign, packed);
+          store_noise_word(output_address, n, magnitude, sign, packed);
           n += 1;
         }
       } else {
@@ -229,6 +254,7 @@ pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_addre
       }
       if (quantizer_value(next_quant) >= 0) {
         quant = scale(quantizer_value(next_quant));
+        direct_quant = if (packed) { quant * 79228162514264337593543950336.0 } else { quant };
       } else if (quantizer_value(next_quant) == -1) {
         n = size;
       } else {
@@ -272,10 +298,11 @@ pub unsafe function coefficient_buffer(own r: BitReader, size: i32, output_addre
             magnitude = next;
           }
         }
+        let word = noise_word(magnitude, packed);
         while (n < size) {
           seed = random(seed);
           sign ^= seed & 2147483648u32;
-          store_noise(output_address, n, magnitude, sign, packed);
+          store_noise_word(output_address, n, word, sign, packed);
           n += 1;
         }
         needs_scale = needs_scale || magnitude != 0u32 && magnitude < 8388608u32;
