@@ -1,0 +1,34 @@
+import "std/audio/file";
+import "std/audio/source";
+
+function range(reader: Reader): Result[void, string] {
+  let window = match (file.create(8589934592i64, 3, source.Limits { chunk_size: 1, max_buffer_bytes: 3 })) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  while (!window.ready) {
+    window = match (window.step(reader)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  }
+  let bytes = window.view();
+  if (bytes.len() != 3 || bytes[0] != 1u8 || bytes[1] != 2u8 || bytes[2] != 3u8) {
+    return Err("64-bit range bytes");
+  }
+  let offset = match (reader.seek(0i64, 1)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  if (offset != 8589934595i64) {
+    return Err("64-bit file position");
+  }
+  return Ok(());
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let result = range(reader);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(e) => { eprint(e.message()); return 1; } },
+    Err(message) => { eprint(message); return 1; },
+  };
+}

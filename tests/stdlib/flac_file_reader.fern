@@ -1,0 +1,63 @@
+import "std/audio/flac";
+import "std/audio/flac/file";
+import "std/audio/pcm";
+import "std/hex";
+import "audio_vectors";
+import "flac_file_check";
+
+function tail(own cursor: file.Cursor, reader: Reader, ref: pcm.Block, position: i64): Result[file.Cursor, string] {
+  let at = position;
+  while (true) {
+    let (next, value) = match (cursor.next(reader)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = next;
+    match (value) {
+      Some(audio) => {
+        if (!flac_file_check.same(audio, ref, at)) {
+          return Err("selected file PCM");
+        }
+        at += audio.frames as i64;
+      },
+      None => {
+        if (at != cursor.index.frames) {
+          return Err("incomplete file tail");
+        }
+        return Ok(cursor);
+      }
+    }
+  }
+}
+
+function decode(reader: Reader, ref: pcm.Block): Result[void, string] {
+  let _ = match (reader.seek(17i64, 0)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let index = match (file.inspect(reader, file.default_limits())) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let frames = index.frames;
+  let cursor = file.reader(index);
+  for position in [frames, 0i64, 1i64, frames - 1i64, frames / 2i64, 128i64, 127i64, 256i64] {
+    cursor = match (cursor.seek(position)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+    cursor = tail(cursor, reader, ref, position)?;
+  }
+  let _ = match (reader.seek(0i64, 1)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  return Ok(());
+}
+
+function read_file(path: string, ref: pcm.Block): Result[void, string] {
+  let reader = match (open_reader(path)) { Ok(value) => value, Err(e) => { return Err(e.message()); } };
+  let result = decode(reader, ref);
+  let closed = reader.close();
+  result?;
+  return match (closed) { Ok(_) => Ok(()), Err(e) => Err(e.message()) };
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(bytes) = hex.decode(audio_vectors.flacs()[16].bytes) else {
+    return 3;
+  };
+  let Ok(ref) = flac.decode(bytes, pcm.default_limits()) else {
+    return 4;
+  };
+  return match (read_file(argv[1], ref)) { Ok(_) => 0, Err(message) => { eprint(message); return 1; } };
+}
