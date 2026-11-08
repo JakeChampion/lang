@@ -118,11 +118,13 @@ def main(apk, directory):
         adb("logcat", "-c")
         adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
             "--es", "uri", "http://127.0.0.1:" + port + "/av.mp4")
-        deadline = time.monotonic() + 45
+        # Two playback rounds take about 12 seconds. The error round waits for
+        # the retries of the platform's HTTP source, about 30 seconds more.
+        deadline = time.monotonic() + 120
         screen = None
         audio_dump = False
         while time.monotonic() < deadline:
-            log = adb("logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "*:F")
+            log = adb("logcat", "-d", "-v", "time", "fern:I", "AndroidRuntime:E", "*:F")
             if "playertest: FAIL" in log or "playertest: passed" in log:
                 break
             if "playertest: paused position_ms=" in log and screen is None:

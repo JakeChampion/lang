@@ -200,7 +200,9 @@ function complete(own s: App): App {
   let Some(bad) = player.new(s.ctx, CLASS) else {
     return fail(s, "error player construction");
   };
-  s = App { ...s, media: Some(bad), phase: 5 };
+  // Android retries an HTTP source for about 30 seconds before it reports
+  // the error.
+  s = App { ...s, media: Some(bad), phase: 5, deadline_ns: monotonic_ns() + 60000000000i64 };
   if (!player.open(s.ctx, bad, s.uri + ".missing")) {
     return fail(s, "error source preparation");
   }
