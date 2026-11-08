@@ -19025,12 +19025,12 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   return ow_is_owned_expr(e, ctx);
 }
 
-// A method call whose result is a kernel descriptor: a directory or a file
-// opened under another directory.
+// A method result that is fresh by signature, or a fresh kernel descriptor.
 function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
   if let ast.ExprFieldAccess(mfa) = c.callee {
     for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
-      if (util.has_str(ow_fresh_builtin_methods(), ns + "." + mfa.field)) {
+      let name = ns + "." + mfa.field;
+      if (util.has_str(ow_fresh_builtin_methods(), name) || util.has_str(ctx.fresh_scrut, name)) {
         return true;
       }
     }
@@ -23783,7 +23783,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let fresh = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let noret = lu_no_return_funcs(mod);
-  let fresh_scrut = ow_signature_fresh_owners(mod, ofuncs, builtins, decls);
+  let fresh_scrut = ow_signature_fresh_owners(result_mod, collect_own_funcs(result_mod), builtins, decls);
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
   let lenders = ow_lenders(mod, ofuncs, decls);
   let out: util.Diag[] = [];

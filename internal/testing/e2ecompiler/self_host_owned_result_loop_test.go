@@ -14,6 +14,9 @@ func ownedResultLoopCases(t *testing.T, bin string, runner []string, dir string)
 enum Failure { Bad }
 function make(): Result[State, Failure] { return Ok(State { n: 0 }); }
 function (own s: State) step(): Result[(State, i32), Failure] { return Ok((State { n: s.n + 1 }, 1)); }
+function (s: State) lend(): Result[State, Failure] { return Ok(s); }
+struct Borrower { state: State }
+function (b: Borrower) step(): Result[State, Failure] { return Ok(b.state); }
 function take(own s: State): i32 { return s.n; }
 `
 	const init = `let state = match (make()) { Ok(value) => value, Err(_) => { return 1; } };`
@@ -24,6 +27,9 @@ function take(own s: State): i32 { return s.n; }
 		{"match-while", init + `let i = 0; while (i < 2) { ` + unpack + ` state = next; i += used; } return state.n - 2;`, ""},
 		{"let-else-for", `let Ok(state) = make() else { return 1; }; for i in 0..2 { let Ok((next, used)) = state.step() else { return 2; }; state = next; } return state.n - 2;`, ""},
 		{"let-else-while", `let Ok(state) = make() else { return 1; }; let i = 0; while (i < 2) { let Ok((next, used)) = state.step() else { return 2; }; state = next; i += used; } return state.n - 2;`, ""},
+		{"consume-method-payload", `let Ok(state) = make() else { return 1; }; let Ok((next, used)) = state.step() else { return 2; }; let Ok((done, count)) = next.step() else { return 3; }; return done.n - 2;`, ""},
+		{"borrowed-method-payload", `let Ok(state) = make() else { return 1; }; let Ok(next) = state.lend() else { return 2; }; let Ok((done, count)) = next.step() else { return 3; }; return done.n;`, "E051"},
+		{"same-name-borrowed-method", `let borrower = Borrower { state: State { n: 0 } }; let Ok(next) = borrower.step() else { return 1; }; let Ok((done, count)) = next.step() else { return 2; }; return done.n;`, "E051"},
 		{"missing-rebind", init + `for i in 0..2 { ` + unpack + ` } return 0;`, "E051"},
 		{"owned-missing-rebind", `let Ok(state) = make() else { return 1; }; for i in 0..2 { let Ok((next, used)) = state.step() else { return 2; }; } return 0;`, "E050"},
 		{"conditional-rebind", init + `for i in 0..2 { ` + unpack + ` if (i == 0) { state = next; } } return 0;`, "E051"},
