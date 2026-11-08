@@ -1310,7 +1310,6 @@ function assign_target_into(st: ast.Stmt, own acc: string[]): string[] {
       return acc;
     }
   }
-  return acc;
 }
 
 pub function is_iife_callee(c: ast.ExprCall): boolean {

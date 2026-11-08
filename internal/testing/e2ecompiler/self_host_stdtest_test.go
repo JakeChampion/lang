@@ -88,9 +88,9 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
-	"brotli": true, "deflate": true, "ed25519": true, "http_compress": true,
+	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
-	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
+	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
 	"opus_bands": true, "opus_celt": true, "opus_celt_encoder": true,
 	"opus_celt_frame": true, "opus_celt_prefilter": true, "opus_energy": true,
 	// Full PCM corpora use the compiled gates. Independent smoke suites stay here.
@@ -333,12 +333,19 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
 		{"audio", langSrcAbs(t, "tests/stdlib/audio_test.fern"), ""},
+		{"audio_source", langSrcAbs(t, "tests/stdlib/audio_source_test.fern"), ""},
 		{"audio_ogg", langSrcAbs(t, "tests/stdlib/audio_ogg_test.fern"), ""},
 		{"video", langSrcAbs(t, "tests/stdlib/video_test.fern"), ""},
 		{"android_video_policy", langSrcAbs(t, "tests/stdlib/android_video_policy_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
+		{"mp3_input", langSrcAbs(t, "tests/stdlib/mp3_input_test.fern"), ""},
+		{"mp3_input_smoke", langSrcAbs(t, "tests/stdlib/mp3_input_smoke_test.fern"), ""},
 		{"mp3_seek", langSrcAbs(t, "tests/stdlib/mp3_seek_test.fern"), ""},
 		{"mp3_seek_smoke", langSrcAbs(t, "tests/stdlib/mp3_seek_smoke_test.fern"), ""},
+		{"flac_file", langSrcAbs(t, "tests/stdlib/flac_file_test.fern"), ""},
+		{"flac_file_smoke", langSrcAbs(t, "tests/stdlib/flac_file_smoke_test.fern"), ""},
+		{"flac_input", langSrcAbs(t, "tests/stdlib/flac_input_test.fern"), ""},
+		{"flac_input_smoke", langSrcAbs(t, "tests/stdlib/flac_input_smoke_test.fern"), ""},
 		{"flac_seek", langSrcAbs(t, "tests/stdlib/flac_seek_test.fern"), ""},
 		{"opus", langSrcAbs(t, "tests/stdlib/opus_test.fern"), ""},
 		{"opus_range", langSrcAbs(t, "tests/stdlib/opus_range_test.fern"), ""},

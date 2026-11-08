@@ -455,7 +455,6 @@ pub function spelling(t: Type): string {
       return "";
     }
   }
-  return "";
 }
 
 function param_list_spelling(f: TypeFunc): string {

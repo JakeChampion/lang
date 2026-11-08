@@ -56,5 +56,4 @@ function download(url: string): (u8[], string) {
       return ([], "fetch " + url + ": " + e.message());
     }
   }
-  return ([], "fetch " + url + ": no response");
 }

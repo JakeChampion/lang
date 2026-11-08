@@ -304,7 +304,6 @@ function binary_values(op: string, left: Scalar, right: Scalar, ty: string): Val
       return fail("binary `" + op + "` operands aren't both numbers");
     }
   }
-  return empty();
 }
 
 function unary(op: string, v: Value, ty: string): Value {
@@ -395,7 +394,6 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
       return empty();
     }
   }
-  return empty();
 }
 
 pub function settle(v: Value, ty: string): Value {

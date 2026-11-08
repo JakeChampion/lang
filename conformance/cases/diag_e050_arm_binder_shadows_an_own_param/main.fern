@@ -1,0 +1,20 @@
+// The arm binds a new `w` that shadows the own parameter `w`. The arm moves
+// its own `w`. The second take after the match uses the parameter again.
+@must_consume
+struct Res { v: i32 }
+
+function take(own r: Res): i32 {
+  return r.v;
+}
+
+function run(own w: Res, own b: Option[Res]): i32 {
+  let y = match (b) {
+    Some(w) => take(w),
+    None => 0,
+  };
+  return y + take(w) + take(w);
+}
+
+function main(): void {
+  print(run(Res { v: 1 }, Some(Res { v: 2 })));
+}

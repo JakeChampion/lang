@@ -141,7 +141,6 @@ function append_tok(own out: Tok[], t: lexer.Token): Tok[] {
       return out.append(Tok { text: "", ident: false, line: e.line, col: e.col });
     }
   }
-  return out;
 }
 
 pub function quals_of(v: View, m: i32): flatten.Qualifiers {
@@ -453,7 +452,6 @@ function scope_in_stmt(st: ast.Stmt, s: checker.Scope, site: Site): checker.Scop
       return s;
     }
   }
-  return s;
 }
 
 function scope_in_match(m: ast.StmtMatch, s: checker.Scope, site: Site): checker.Scope {

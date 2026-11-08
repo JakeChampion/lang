@@ -1,0 +1,1 @@
+main.fern:15:29: error[E050]: use of owned parameter "w" after it was consumed

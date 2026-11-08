@@ -6002,3 +6002,66 @@ function eval_binary(op: string, l: i32, r: i32): i32 {
   }
   return 0;
 }
+
+pub function only_phis(b: SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag != 8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function view_slots(f: SFunc): i32[] {
+  let out: i32[] = [];
+  let n = 0;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 51) {
+        if (out.len() == 0) {
+          out = util.minus_ones(f.nvals);
+        }
+        if (ins.imm >= 1) {
+          out = out.with(ins.result, n);
+          n += 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+pub function view_count(views: i32[]): i32 {
+  let n = 0;
+  for v in views {
+    if (v >= 0) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+pub function unique_test(ins: SInst): boolean {
+  return rc_inlined(ins) && ins.str == "__fern_rc_is_unique";
+}
+
+// A select past the first instruction, which the select fusion can read.
+pub function select_at(blk: SBlock, ii: i32): boolean {
+  return ii >= 1 && ii < blk.insts.len() && blk.insts[ii].kind_tag == 36;
+}
+
+pub function runtime_helper_name(op: string): string {
+  return match (op) {
+    "str_from_bytes" => "string_from_bytes",
+    "str_from_bytes_u8" => "string_from_bytes_u8",
+    "str_from_bytes_range_u8" => "string_from_bytes_range_u8",
+    "read_chunk" => "reader_read_chunk",
+    "write_bytes" => "writer_write_bytes",
+    "write_bytes_u8" => "writer_write_bytes_u8",
+    "write_some_bytes" => "writer_write_some_bytes",
+    "write_some_bytes_u8" => "writer_write_some_bytes_u8",
+    "read_chunk_bytes" => "reader_read_chunk_bytes",
+    "read_chunk_bytes_u8" => "reader_read_chunk_bytes_u8",
+    _ => op,
+  };
+}

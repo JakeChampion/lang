@@ -64,7 +64,6 @@ function as_int_lit(e: ast.Expr): Option[IntLiteral] {
       return None;
     }
   }
-  return None;
 }
 
 pub function fold_expr(e: ast.Expr): ast.Expr {
@@ -83,7 +82,6 @@ function fold_node(e: ast.Expr): ast.Expr {
       return e;
     }
   }
-  return e;
 }
 
 function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Expr): ast.Expr {
@@ -512,7 +510,6 @@ function keep_expr(e: ast.Expr, a: i32): (ast.Expr, i32, boolean) {
       return (e, a, false);
     }
   }
-  return (e, a, false);
 }
 
 function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
@@ -538,7 +535,6 @@ function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
       return out;
     }
   }
-  return out;
 }
 
 function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
@@ -550,7 +546,6 @@ function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
       return (s, a, false);
     }
   }
-  return (s, a, false);
 }
 
 function pruned_if(f: ast.StmtIf): ast.Stmt {
@@ -621,7 +616,6 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
       return (e, a, false);
     }
   }
-  return (e, a, false);
 }
 
 pub function elide_asserts(mod: parser.Module): parser.Module {
@@ -667,7 +661,6 @@ function drop_assert(st: ast.Stmt): ast.Stmt[] {
       return keep;
     }
   }
-  return keep;
 }
 
 function is_binary_init(mod: parser.Module, op: string): boolean {

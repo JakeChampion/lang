@@ -972,7 +972,6 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
       return p;
     }
   }
-  return p;
 }
 
 pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
