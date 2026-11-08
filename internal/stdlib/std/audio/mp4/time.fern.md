@@ -9,6 +9,8 @@ Unknown-duration clock fields do not replace the packet-table duration.
 
 ```fern
 <<*>>=
+// Read the movie and media clocks, track identifiers and edit lists of an ISO audio track.
+
 import "std/audio/mp4/boxes";
 import "std/audio/pcm";
 import "std/audio/wire";
