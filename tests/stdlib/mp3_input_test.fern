@@ -1,0 +1,156 @@
+import "std/audio/mp3";
+import "std/audio/mp3/input";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "mp3_vectors";
+import "mp3_input_check";
+import "mp3_input_data";
+
+function references(): test.TestOutcome {
+  for v in mp3_vectors.cases() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("reference input");
+    };
+    let Ok(full) = mp3.decode(bytes, pcm.default_limits()) else {
+      return test.fail(v.name + ": whole decode");
+    };
+    let ref = mp3_input_check.Reference { sample_rate: full.sample_rate, channels: full.channels, frames: (full.samples.len() / full.channels) as i64, start: 0i64, samples: full.samples };
+    for chunk in [1, 17, 16384] {
+      if let Err(message) = mp3_input_check.run(bytes, ref, chunk, chunk != 1) {
+        return test.fail(v.name + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function tag_case(index: i32): Result[void, string] {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[index].bytes) else {
+    return Err("reference input");
+  };
+  let Ok(full) = mp3.decode(bytes, pcm.default_limits()) else {
+    return Err("reference PCM");
+  };
+  let ref = mp3_input_check.Reference { sample_rate: full.sample_rate, channels: full.channels, frames: (full.samples.len() / full.channels) as i64, start: 0i64, samples: full.samples };
+  for footer in [false, true] {
+    for header in [false, true] {
+      let prefix = mp3_input_data.id3(if (footer) { 1048579 } else { 259 }, footer);
+      let ape = mp3_input_data.ape(mp3_input_data.pattern(65537), header);
+      let tagged = mp3_input_data.concat(mp3_input_data.concat(mp3_input_data.concat(prefix, bytes), ape), mp3_input_data.id3v1());
+      mp3_input_check.run(tagged, ref, 4096, true)?;
+    }
+  }
+  return Ok(());
+}
+
+function tags(): test.TestOutcome {
+  for index in [0, 9] {
+    if let Err(message) = tag_case(index) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+function ambiguous_ape(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[9].bytes) else {
+    return test.fail("reference input");
+  };
+  let Ok(full) = mp3.decode(bytes, pcm.default_limits()) else {
+    return test.fail("reference PCM");
+  };
+  let Ok(track) = mp3.inspect_track(bytes, pcm.default_limits()) else {
+    return test.fail("reference boundaries");
+  };
+  let Ok(header) = mp3.inspect(bytes, track.data_offset, pcm.default_limits()) else {
+    return test.fail("reference frame");
+  };
+  let trailer = mp3_input_data.ape(bytes[track.data_offset:track.data_offset + header.bytes], false);
+  let tagged = mp3_input_data.concat(bytes, trailer);
+  let ref = mp3_input_check.Reference { sample_rate: full.sample_rate, channels: full.channels, frames: (full.samples.len() / full.channels) as i64, start: 0i64, samples: full.samples };
+  return match (mp3_input_check.run(tagged, ref, 17, true)) { Ok(_) => test.pass(), Err(message) => test.fail(message) };
+}
+
+function rejected(bytes: u8[], limits: input.Limits, expected: pcm.AudioError): boolean {
+  let state = match (input.create(limits)) { Ok(value) => value, Err(source.ReadAudio(e)) => { return e == expected; }, Err(_) => { return false; } };
+  let read = mp3_input_check.bytes_reader(bytes, cell_new(0), cell_new(0), true);
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(_))) => {
+        state = next;
+      },
+      Err(source.ReadAudio(e)) => {
+        return e == expected;
+      },
+      _ => {
+        return false;
+      }
+    }
+  }
+}
+
+function bad_input(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[15].bytes) else {
+    return test.fail("protected reference input");
+  };
+  let limits = input.default_limits();
+  let small = input.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_samples: 1 } };
+  if (!rejected(bytes, small, pcm.Limit) || !rejected(bytes.with(4, bytes[4] ^ 1u8), limits, pcm.Checksum)) {
+    return test.fail("sample budget or frame checksum");
+  }
+  let short: u8[] = [];
+  for i in 0..bytes.len() - 1 {
+    short = short.append(bytes[i]);
+  }
+  if (!rejected(short, limits, pcm.Truncated)) {
+    return test.fail("incomplete final frame");
+  }
+  let prefix = mp3_input_data.id3(259, true);
+  let tagged = mp3_input_data.concat(prefix, bytes);
+  let bounded = input.Limits { ...limits, max_metadata_bytes: 278i64 };
+  if (!rejected(tagged, bounded, pcm.Limit) || !rejected(tagged.with(prefix.len() - 1, 1u8), limits, pcm.Header)) {
+    return test.fail("metadata budget or footer validation");
+  }
+  return test.pass();
+}
+
+function late_io_error(): test.TestOutcome {
+  let Ok(bytes) = hex.decode(mp3_vectors.cases()[0].bytes) else {
+    return test.fail("reference input");
+  };
+  let Ok(state) = input.create(input.default_limits()) else {
+    return test.fail("create input");
+  };
+  let calls = cell_new(0);
+  let read = (_: i32): Result[u8[], IoError] => {
+    calls.set(calls.get() + 1);
+    return if (calls.get() == 1) { Ok(bytes) } else { Err(IoError.Interrupted) };
+  };
+  let events = 0;
+  while (true) {
+    match (state.next_with(read)) {
+      Ok((next, Some(_))) => {
+        state = next;
+        events += 1;
+      },
+      Err(source.ReadIo(Interrupted())) => {
+        return test.assert_true(calls.get() == 2 && events == 4);
+      },
+      _ => {
+        return test.fail("I/O error must not become successful EOF");
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let runner = test.new("Bounded MP3 byte sources");
+  runner = runner.it("exact PCM, reservoir state, gapless samples, and short reads", references);
+  runner = runner.it("large ID3 payloads, footers, APE tags, and ID3v1", tags);
+  runner = runner.it("Xing frame counts separate encoded APE payloads from audio", ambiguous_ape);
+  runner = runner.it("PCM and metadata budgets, checksums, and truncation", bad_input);
+  runner = runner.it("a source error after PCM remains an I/O error", late_io_error);
+  return runner.finish();
+}

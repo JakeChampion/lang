@@ -117,6 +117,30 @@ Decoder history contains at most 511 reservoir bytes, 576 overlap floats, and 96
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
 
+## Sequential MP3 input
+
+`std/audio/mp3/input` accepts a borrowed `Reader` or a bounded source callback.
+It decodes a track without retaining all encoded bytes or decoded samples.
+The caller closes the reader after success or failure.
+
+`step` performs at most one source read or one frame decode.
+`next` continues until `Begin`, `Samples`, `End`, or completion.
+Sample events identify their playable position after recognized Xing/LAME delay and padding.
+
+Input limits bound the encoded window and individual frames.
+The metadata budget covers skipped ID3 payloads and trailing tags.
+The reader retains at most 192 metadata bytes for trailing ID3v1 and APE validation.
+An APE payload that starts with complete MP3 frames needs a Xing frame count on non-seekable input.
+
+Empty source reads mean permanent EOF. I/O errors retain their own error category.
+Checksums, declared counts, and trailing metadata can fail after earlier PCM events.
+`End` confirms complete validation. Completion performs no further source reads.
+
+The tests use all 16 reference tracks with three input chunk sizes.
+They also cover large metadata, one-byte reads, gapless output, limits, and late I/O failures.
+The independent interpreter smoke uses the pinned scalar minimp3 PCM fixture.
+Native and WASI file tests verify caller ownership of the open reader.
+
 ## Indexed MP3 and FLAC playback
 
 `std/audio/mp3/seek` and `std/audio/flac/seek` build bounded frame indexes.
