@@ -11241,7 +11241,7 @@ function generic_base(t: string, funcs: MFns): string {
 }
 
 function stamped_type(tag: string): string {
-  if (str_in(["i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "string", "boolean"], tag)) {
+  if (util.has_str(["i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "string", "boolean"], tag)) {
     return tag;
   }
   let elem = array_method_element(tag);
@@ -13195,7 +13195,7 @@ function is_generic_map_method(fd: FuncDecl): boolean {
   }
   let k = 0;
   while (k < fd.type_params.len()) {
-    if (!str_in(tvs, fd.type_params[k])) {
+    if (!util.has_str(tvs, fd.type_params[k])) {
       return false;
     }
     k += 1;
@@ -13251,7 +13251,7 @@ pub function register_map_method_generics(mod: Module): Module {
 
 function collect_tvars(name: string, acc: string[]): string[] {
   if (looks_type_var(name)) {
-    if (str_in(acc, name)) {
+    if (util.has_str(acc, name)) {
       return acc;
     }
     return acc.append(name);
@@ -13339,7 +13339,7 @@ function smm_own_typevars(fd: FuncDecl, recv_vars: string[]): string[] {
   let own: string[] = [];
   let j = 0;
   while (j < all.len()) {
-    if (!str_in(recv_vars, all[j])) {
+    if (!util.has_str(recv_vars, all[j])) {
       own = own.append(all[j]);
     }
     j += 1;
@@ -13378,7 +13378,7 @@ function is_generic_method_own_tps(fd: FuncDecl, structs: StructDecl[], enums: E
   let k = 0;
   while (k < fd.type_params.len()) {
     let tp = fd.type_params[k];
-    if (!str_in(recv_vars, tp) && !str_in(own, tp)) {
+    if (!util.has_str(recv_vars, tp) && !util.has_str(own, tp)) {
       return false;
     }
     k += 1;
@@ -13395,7 +13395,7 @@ function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDec
   }
   let own = smm_own_typevars(fd, []);
   for tp in fd.type_params {
-    if (!str_in(own, tp)) {
+    if (!util.has_str(own, tp)) {
       return false;
     }
   }
@@ -14148,7 +14148,7 @@ function drop_bg_templates(funcs: FuncDecl[], keep: string[]): FuncDecl[] {
   let out: FuncDecl[] = [];
   let i = 0;
   while (i < funcs.len()) {
-    if (!is_free_bg_template(funcs[i]) || str_in(keep, funcs[i].name)) {
+    if (!is_free_bg_template(funcs[i]) || util.has_str(keep, funcs[i].name)) {
       out = out.append(funcs[i]);
     }
     i += 1;
@@ -15174,7 +15174,7 @@ pub function monomorphize_enum_structs(mod: Module): Module {
 function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
   let out: string[] = [];
   for sd in mod.structs {
-    if (sd.enum_owner.len() == 0 || genum_index(mod.enums, sd.enum_owner) < 0 || str_in(out, sd.enum_owner)) {
+    if (sd.enum_owner.len() == 0 || genum_index(mod.enums, sd.enum_owner) < 0 || util.has_str(out, sd.enum_owner)) {
       continue;
     }
     if (mod.enums[genum_index(mod.enums, sd.enum_owner)].type_params.len() == 0) {
@@ -15195,7 +15195,7 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
   }
   for fd in mod.funcs {
     let owner = strip_struct_base(fd.receiver_type);
-    if (fd.receiver_type.len() == 0 || genum_index(mod.enums, owner) < 0 || str_in(out, owner)) {
+    if (fd.receiver_type.len() == 0 || genum_index(mod.enums, owner) < 0 || util.has_str(out, owner)) {
       continue;
     }
     if (mod.enums[genum_index(mod.enums, owner)].type_params.len() == 0) {
@@ -15305,9 +15305,9 @@ function ms_names_gstruct(ty: string, gstructs: StructDecl[]): boolean {
 
 function ms_deferred_owner(sd_owner: string, receiver_type: string, deferred: string[]): boolean {
   if (sd_owner.len() > 0) {
-    return str_in(deferred, sd_owner);
+    return util.has_str(deferred, sd_owner);
   }
-  return receiver_type.len() > 0 && str_in(deferred, strip_struct_base(receiver_type));
+  return receiver_type.len() > 0 && util.has_str(deferred, strip_struct_base(receiver_type));
 }
 
 function plain_struct_named(structs: StructDecl[], name: string): boolean {
@@ -16913,7 +16913,7 @@ function enum_bg_templates(funcs: FuncDecl[], refs: string[], keep: boolean): Fu
   }
   let out: FuncDecl[] = [];
   for fd in funcs {
-    if (is_free_bg_template(fd) && str_in(refs, fd.name)) {
+    if (is_free_bg_template(fd) && util.has_str(refs, fd.name)) {
       out = out.append(fd);
     }
   }
@@ -16948,7 +16948,7 @@ function bg_refs_expr(e: ast.Expr, own r: BgRefs): BgRefs {
 }
 
 function bg_ref_hit(own r: BgRefs, name: string): BgRefs {
-  if (str_in(r.names, name) && !str_in(r.hit, name)) {
+  if (util.has_str(r.names, name) && !util.has_str(r.hit, name)) {
     return BgRefs { ...r, hit: r.hit.append(name) };
   }
   return r;
@@ -17042,7 +17042,7 @@ function me_use_ref(r: TypeRef, own u: MeUses): MeUses {
     let base = slice_unchecked(t, 0, first_bracket(t)) + "";
     let gi = genum_index(u.enums, base);
     let generic = mono_ty_mentions_var(t) || gi >= 0 && names_const_param(split_top_commas(slice_unchecked(t, first_bracket(t) + 1, t.len() - 1)), u.enums[gi]);
-    if (gi >= 0 && !str_in(u.bases, base) && !generic && genum_key_from_anno(t, base, u.enums).len() == 0) {
+    if (gi >= 0 && !util.has_str(u.bases, base) && !generic && genum_key_from_anno(t, base, u.enums).len() == 0) {
       u = MeUses { ...u, bases: u.bases.append(base) };
     }
   }
@@ -17111,7 +17111,7 @@ function me_mono_enums(mod: Module): EnumDecl[] {
   let unkeyable = me_unkeyable_bases(mod);
   let out: EnumDecl[] = [];
   for ed in mod.enums {
-    if (!str_in(unkeyable, ed.name)) {
+    if (!util.has_str(unkeyable, ed.name)) {
       out = out.append(ed);
     }
   }
@@ -17255,7 +17255,7 @@ pub function monomorphize_enums(mod: Module): Module {
         }
         mi += 1;
       }
-      if (!str_in(instantiated, base)) {
+      if (!util.has_str(instantiated, base)) {
         instantiated = instantiated.append(base);
       }
     }
@@ -17278,10 +17278,10 @@ pub function monomorphize_enums(mod: Module): Module {
   let osi = 0;
   while (osi < mod.structs.len()) {
     let sd = mod.structs[osi];
-    if (sd.enum_owner.len() > 0 && str_in(instantiated, sd.enum_owner)) {
+    if (sd.enum_owner.len() > 0 && util.has_str(instantiated, sd.enum_owner)) {
       out_structs = out_structs.append(sd);
     }
-    if (sd.enum_owner.len() == 0 || !str_in(instantiated, sd.enum_owner)) {
+    if (sd.enum_owner.len() == 0 || !util.has_str(instantiated, sd.enum_owner)) {
       let rf: StructFieldDecl[] = [];
       let rfj = 0;
       while (rfj < sd.fields.len()) {
@@ -17305,17 +17305,6 @@ pub function monomorphize_enums(mod: Module): Module {
   }
 
   return Module { ...mod, funcs: nfuncs, structs: out_structs, top_stmts: tr.rstmts, enums: out_enums };
-}
-
-function str_in(xs: string[], s: string): boolean {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == s) {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
 }
 
 function dl_itoa(n: i32): string {
@@ -22497,7 +22486,7 @@ function tvar_respellings(vars: string[], written: boolean): string[] {
 function add_tvars(acc: string[], vars: string[]): string[] {
   let out = acc;
   for v in vars {
-    if (!str_in(out, v)) {
+    if (!util.has_str(out, v)) {
       out = out.append(v);
     }
   }
@@ -22666,7 +22655,7 @@ function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[], mvals:
   }
   let values: string[] = [];
   for v in vars {
-    if (str_in(mvals, v)) {
+    if (util.has_str(mvals, v)) {
       values = values.append(v);
     }
   }
@@ -22799,10 +22788,10 @@ function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
 function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
   if let ast.ExprIdent(id) = e {
     let k = tp_index(id.name, sc.vars);
-    if (k >= 0 && !str_in(sc.values, id.name) && sc.lits && is_const_arg(sc.cts[k])) {
+    if (k >= 0 && !util.has_str(sc.values, id.name) && sc.lits && is_const_arg(sc.cts[k])) {
       return ast.ExprNumber { text: sc.cts[k], suffix: "", raw: "", is_float: false, bits: 0, line: id.line, col: id.col };
     }
-    if (k >= 0 && !str_in(sc.values, id.name)) {
+    if (k >= 0 && !util.has_str(sc.values, id.name)) {
       return ast.ExprIdent { ...id, name: sc.cts[k] };
     }
   }
@@ -24951,7 +24940,7 @@ pub function inherit_default(m: FuncDecl, trait_params: string[], trait_consts: 
   for v in m.all_type_params {
     let fresh = v;
     let n = 1;
-    while (str_in(im.all_type_params, fresh) || str_in(args, fresh) || fresh != v && str_in(m.all_type_params, fresh)) {
+    while (util.has_str(im.all_type_params, fresh) || util.has_str(args, fresh) || fresh != v && util.has_str(m.all_type_params, fresh)) {
       fresh = v + util.i32_to_string(n);
       n += 1;
     }
