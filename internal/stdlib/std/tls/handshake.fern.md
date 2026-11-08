@@ -1,10 +1,12 @@
-# TLS 1.3 handshake state
+# TLS handshake state
 
-This module implements TLS 1.3 handshake state without I/O.
+This module implements TLS 1.3 handshake state without I/O, and the TLS 1.2 client handshake.
 
 ## Model
 
 Handshake state coordinates message transcripts, key shares, authentication, and traffic secrets. Crypto flights identify the protocol level for output bytes.
+
+A client whose configuration sets `tls12` also offers TLS 1.2, for a server that does not speak TLS 1.3. The server and QUIC speak only TLS 1.3. A TLS 1.2 connection cannot be saved, offloaded to the kernel or rekeyed.
 
 ## Contracts
 
@@ -96,6 +98,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<40 function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError]>>
 
+<<40a the TLS 1.2 client>>
+
 <<41 function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, HandshakeError]>>
 
 <<42 pub function (c: Client) read(input: [u8]): Result[ClientStep, HandshakeError]>>
@@ -149,7 +153,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module implements TLS 1.3 handshake state without I/O.
+// This module implements TLS 1.3 handshake state without I/O, and the TLS 1.2 client handshake.
 ```
 
 ### `dependencies 2`
@@ -161,6 +165,7 @@ import "std/tls/keyschedule";
 import "std/tls/keyshare";
 import "std/tls/message";
 import "std/tls/record";
+import "std/tls/tls12";
 import "std/utf8";
 import "core/error";
 import "core/cmp";
@@ -414,7 +419,8 @@ pub struct Resumed { index: i32, psk: u8[] }
 
 pub struct Resumption { identity: u8[], psk: u8[], suite: keyschedule.CipherSuite, obfuscated_age: u32 }
 
-pub struct Verification { chain: u8[][], scheme: i32, signed: u8[], signature: u8[] }
+// tls12 marks the signature of a TLS 1.2 ServerKeyExchange, whose schemes allow RSA-PKCS1 and any ECDSA curve.
+pub struct Verification { chain: u8[][], scheme: i32, signed: u8[], signature: u8[], tls12: boolean }
 
 pub struct Signing { scheme: i32, signed: u8[] }
 ```
@@ -524,6 +530,8 @@ struct Conn {
   kernel: boolean,
   crypto: CryptoFlight[],
   secrets: TrafficSecret[],
+  tls12: boolean,
+  next_read: Option[record.Protection],
 }
 ```
 
@@ -533,7 +541,7 @@ struct Conn {
 <<12 function __conn(): Conn>>=
 function __conn(): Conn {
   let none = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64, gcm: None, chacha: None };
-  return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, kernel: false, crypto: [], secrets: [] };
+  return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, kernel: false, crypto: [], secrets: [], tls12: false, next_read: None };
 }
 
 function __conn_for(quic: boolean): Conn {
@@ -636,7 +644,7 @@ function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, H
     if (to - from > 16384) {
       to = from + 16384;
     }
-    match (p.seal(t, content[from:to], 0)) {
+    match (__seal(c.tls12, p, t, content[from:to])) {
       Ok(s) => {
         if (out.len() == 0) {
           out = s.record;
@@ -655,6 +663,13 @@ function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, H
     }
   }
   return Ok(Wrote { conn: Conn { ...c, write: p }, bytes: out });
+}
+
+function __seal(legacy: boolean, p: record.Protection, t: record.ContentType, content: [u8]): Result[record.Sealed, record.RecordError] {
+  if (legacy) {
+    return tls12.seal(p, t, content);
+  }
+  return p.seal(t, content, 0);
 }
 
 function __write_quic(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError] {
@@ -680,6 +695,9 @@ struct Absorbed { conn: Conn, out: Out }
 ```fern
 <<20 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, H...>>=
 function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
+  if (c.tls12) {
+    return __absorb12(c, r, app, out);
+  }
   if (r.content_type.code() == 20) {
     if (ccs && r.fragment.len() == 1 && r.fragment[0] == 1) {
       return Ok(Absorbed { conn: c, out: out });
@@ -693,6 +711,35 @@ function __absorb(c: Conn, own r: record.Record, ccs: boolean, app: boolean, out
     return Err(UnexpectedRecord(r.content_type.code()));
   }
   match (c.read.open(r)) {
+    Ok(o) => {
+      return __opened(Conn { ...c, read: o.next }, o, app, out);
+    },
+    Err(e) => {
+      return Err(Record(e));
+    }
+  }
+  return Err(UnexpectedRecord(23));
+}
+
+// A TLS 1.2 record. The server's ChangeCipherSpec turns on the read protection that the client's flight armed,
+// and each record after it is protected whatever its type.
+function __absorb12(c: Conn, own r: record.Record, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
+  if (r.content_type.code() == 20) {
+    let Some(p) = c.next_read else {
+      return Err(UnexpectedRecord(20));
+    };
+    if (r.fragment.len() != 1 || r.fragment[0] != 1) {
+      return Err(Message(message.DecodeError("change_cipher_spec")));
+    }
+    if (c.pending.len() != 0) {
+      return Err(UnexpectedRecord(20));
+    }
+    return Ok(Absorbed { conn: Conn { ...c, read: p, reading: 1, next_read: None }, out: out });
+  }
+  if (c.reading == 0) {
+    return __content(c, r.content_type.code(), r.fragment, app, out);
+  }
+  match (tls12.open(c.read, r)) {
     Ok(o) => {
       return __opened(Conn { ...c, read: o.next }, o, app, out);
     },
@@ -872,10 +919,10 @@ pub function (earlier: KernelKeys) then(later: KernelKeys): KernelKeys {
 ```fern
 <<27 function __alert_record(c: Conn, e: HandshakeError): u8[]>>=
 function __alert_record(c: Conn, e: HandshakeError): u8[] {
-  return __sealed_alert(c.write, c.writing == 0 || c.kernel, c.quic, e);
+  return __sealed_alert(c.write, c.writing == 0 || c.kernel, c.quic, c.tls12, e);
 }
 
-function __sealed_alert(p: record.Protection, plain: boolean, quic: boolean, e: HandshakeError): u8[] {
+function __sealed_alert(p: record.Protection, plain: boolean, quic: boolean, legacy: boolean, e: HandshakeError): u8[] {
   if (e.alert() == 0 || quic) {
     return [];
   }
@@ -883,7 +930,7 @@ function __sealed_alert(p: record.Protection, plain: boolean, quic: boolean, e: 
   if (plain) {
     return record.frame(record.Alert, 0x0303, alert);
   }
-  match (p.seal(record.Alert, alert, 0)) {
+  match (__seal(legacy, p, record.Alert, alert)) {
     Ok(s) => {
       return s.record;
     },
@@ -921,7 +968,7 @@ function __has_string(v: string[], x: string): boolean {
 
 ```fern
 <<28 pub struct ClientConfig>>=
-pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], shares: i32, schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[], quic: boolean, extensions: message.Extension[] }
+pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], shares: i32, schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[], quic: boolean, extensions: message.Extension[], tls12: boolean }
 ```
 
 ### `29 pub function client_config(server_name: string): ClientConfig`
@@ -929,7 +976,7 @@ pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedu
 ```fern
 <<29 pub function client_config(server_name: string): ClientConfig>>=
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [] };
+  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [], tls12: false };
 }
 ```
 
@@ -956,6 +1003,17 @@ const C_CONNECTED: i32 = 7;
 const C_CLOSED: i32 = 8;
 
 const C_WAIT_SIGNATURE: i32 = 9;
+
+// The states of a TLS 1.2 handshake, after a ServerHello that picks TLS 1.2.
+const C12_WAIT_CERTIFICATE: i32 = 10;
+
+const C12_WAIT_KEY_EXCHANGE: i32 = 11;
+
+const C12_WAIT_VERDICT: i32 = 12;
+
+const C12_WAIT_HELLO_DONE: i32 = 13;
+
+const C12_WAIT_FINISHED: i32 = 14;
 
 pub struct Client {
   conn: Conn,
@@ -984,6 +1042,11 @@ pub struct Client {
   client_ap: u8[],
   server_ap: u8[],
   peer_extensions: message.Extension[],
+  tls12: boolean,
+  extended: boolean,
+  server_random: u8[],
+  key_exchange: tls12.KeyExchange,
+  master12: u8[],
 }
 
 pub struct ClientStep { client: Client, output: u8[], data: u8[], events: Event[] }
@@ -1004,6 +1067,11 @@ function __offers(config: ClientConfig): i32[] {
   while (i < config.suites.len()) {
     out = out.append(config.suites[i].code());
     i += 1;
+  }
+  if (config.tls12) {
+    for code in tls12.SUITES {
+      out = out.append(code);
+    }
   }
   return out;
 }
@@ -1064,7 +1132,16 @@ function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]
   if (config.server_name.len() > 0) {
     exts = exts.append(message.ext_server_name(config.server_name));
   }
-  exts = exts.append(message.ext_supported_versions([message.TLS13])).append(message.ext_supported_groups(__group_codes(config))).append(message.ext_key_shares(entries)).append(message.ext_signature_algorithms(config.schemes));
+  let versions = [message.TLS13];
+  if (config.tls12) {
+    versions = versions.append(tls12.VERSION);
+  }
+  exts = exts.append(message.ext_supported_versions(versions)).append(message.ext_supported_groups(__group_codes(config))).append(message.ext_key_shares(entries)).append(message.ext_signature_algorithms(config.schemes));
+  if (config.tls12) {
+    for e in tls12.hello_extensions() {
+      exts = exts.append(e);
+    }
+  }
   if (config.alpn.len() > 0) {
     exts = exts.append(message.ext_alpn(config.alpn));
   }
@@ -1174,7 +1251,7 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
   let bytes = message.encode(message.ClientHelloMsg(hello));
   let w = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
   let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [] };
+  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [] };
   return Ok(__client_step(c, Out { ...__out(), output: w.bytes }));
 }
 ```
@@ -1202,6 +1279,9 @@ function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun
   }
   if (h.is_retry()) {
     return __hello_retry(c, raw, h, out);
+  }
+  if (c.tls12 && !__has_extension(h.extensions, message.EXT_SUPPORTED_VERSIONS)) {
+    return __server_hello12(c, raw, h, out);
   }
   let suite = __check_server_hello(c, h)?;
   if (c.retry_suite != 0 && h.cipher_suite != c.retry_suite) {
@@ -1598,6 +1678,9 @@ function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientR
   if (c.state == C_WAIT_SERVER_HELLO) {
     return __server_hello(c, raw, out);
   }
+  if (c.conn.tls12) {
+    return __client_message12(c, raw, out);
+  }
   let m = __decode(raw)?;
   if (c.state == C_CONNECTED) {
     return __client_after(c, raw.kind, m, out);
@@ -1678,7 +1761,7 @@ function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.
         return Err(Illegal("signature scheme"));
       }
       let signed = certificate_verify_content(true, __hash(c.conn));
-      let ev = VerifyServer(Verification { chain: c.chain, scheme: v.scheme, signed: signed, signature: v.signature });
+      let ev = VerifyServer(Verification { chain: c.chain, scheme: v.scheme, signed: signed, signature: v.signature, tls12: false });
       return Ok(ClientRun { client: Client { ...next, state: C_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
     },
     _ => {
@@ -1705,7 +1788,7 @@ function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Res
 }
 
 function __client_parked(state: i32): boolean {
-  return state == C_WAIT_VERDICT || state == C_WAIT_SIGNATURE || state == C_CLOSED;
+  return state == C_WAIT_VERDICT || state == C12_WAIT_VERDICT || state == C_WAIT_SIGNATURE || state == C_CLOSED;
 }
 
 function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] {
@@ -1720,6 +1803,204 @@ function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] 
     out = r.out;
   }
   return Ok(ClientRun { client: client, out: out });
+}
+```
+
+### `40a the TLS 1.2 client`
+
+A client whose configuration sets `tls12` offers TLS 1.2 beside TLS 1.3. A ServerHello with no `supported_versions` picks TLS 1.2, and the client then follows RFC 5246 §7.3 with an ECDHE suite. The certificate chain and the signature of the ServerKeyExchange go to the caller in one `VerifyServer` event, marked `tls12`. The client answers a CertificateRequest with an empty certificate, and it ignores a HelloRequest after the handshake, so it does not renegotiate.
+
+```fern
+<<40a the TLS 1.2 client>>=
+function __no_key_exchange(): tls12.KeyExchange {
+  return tls12.KeyExchange { group: 0, public: [], params: [], scheme: 0, signature: [] };
+}
+
+function __has_extension(exts: message.Extension[], kind: i32): boolean {
+  match (message.find(exts, kind)) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// A HelloRetryRequest commits the server to TLS 1.3, and a server that speaks TLS 1.3 marks a downgrade in its random.
+function __server_hello12(c: Client, raw: message.Raw, h: message.ServerHello, out: Out): Result[ClientRun, HandshakeError] {
+  if (c.retry_suite != 0) {
+    return Err(Illegal("TLS 1.2 after a HelloRetryRequest"));
+  }
+  if (tls12.downgraded(h.random)) {
+    return Err(Illegal("a downgrade to TLS 1.2"));
+  }
+  if (!__has(c.hello.cipher_suites, h.cipher_suite)) {
+    return Err(Illegal("cipher suite"));
+  }
+  let Some(suite) = tls12.suite(h.cipher_suite) else {
+    return Err(Illegal("cipher suite"));
+  };
+  let extended = false;
+  let alpn = "";
+  for e in h.extensions {
+    if (e.kind == tls12.EXT_EXTENDED_MASTER_SECRET) {
+      if (e.data.len() != 0) {
+        return Err(Illegal("extended_master_secret"));
+      }
+      extended = true;
+    } else if (e.kind == tls12.EXT_RENEGOTIATION_INFO) {
+      if (e.data.len() != 1 || e.data[0] != 0 as u8) {
+        return Err(Illegal("renegotiation_info"));
+      }
+    } else if (e.kind == message.EXT_ALPN) {
+      alpn = __chosen_alpn(c, e.data)?;
+    } else if (e.kind == message.EXT_SERVER_NAME) {
+      // RFC 6066 §3: an empty server_name says that the server used the name the client sent.
+      if (e.data.len() != 0 || !__has_extension(c.hello.extensions, message.EXT_SERVER_NAME)) {
+        return Err(UnsupportedExtension(e.kind));
+      }
+    } else if (e.kind != tls12.EXT_EC_POINT_FORMATS) {
+      return Err(UnsupportedExtension(e.kind));
+    }
+  }
+  let conn = Conn { ...c.conn, suite: suite, tls12: true, transcript: __join(c.conn.transcript, raw.bytes) };
+  return Ok(ClientRun { client: Client { ...c, conn: conn, state: C12_WAIT_CERTIFICATE, extended: extended, alpn: alpn, server_random: h.random, peer_extensions: h.extensions }, out: out });
+}
+
+function __client_message12(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
+  if (c.state == C_CONNECTED) {
+    if (raw.kind == message.HELLO_REQUEST && tls12.empty(raw.bytes)) {
+      return Ok(ClientRun { client: c, out: out });
+    }
+    return Err(OutOfOrder(raw.kind));
+  }
+  if (c.state == C12_WAIT_FINISHED) {
+    return __server_finished12(c, raw, out);
+  }
+  let next = Client { ...c, conn: Conn { ...c.conn, transcript: __join(c.conn.transcript, raw.bytes) } };
+  if (c.state == C12_WAIT_CERTIFICATE && raw.kind == message.CERTIFICATE) {
+    match (tls12.certificate_chain(raw.bytes)) {
+      Ok(chain) => {
+        return Ok(ClientRun { client: Client { ...next, chain: chain, state: C12_WAIT_KEY_EXCHANGE }, out: out });
+      },
+      Err(e) => {
+        return Err(Message(e));
+      }
+    }
+  }
+  if (c.state == C12_WAIT_KEY_EXCHANGE && raw.kind == message.SERVER_KEY_EXCHANGE) {
+    return __key_exchange12(next, raw, out);
+  }
+  if (c.state == C12_WAIT_HELLO_DONE && raw.kind == message.CERTIFICATE_REQUEST && !c.requested) {
+    return Ok(ClientRun { client: Client { ...next, requested: true }, out: out });
+  }
+  if (c.state == C12_WAIT_HELLO_DONE && raw.kind == message.SERVER_HELLO_DONE) {
+    if (!tls12.empty(raw.bytes)) {
+      return Err(Message(message.DecodeError("server_hello_done")));
+    }
+    return __client_flight12(next, out);
+  }
+  return Err(OutOfOrder(raw.kind));
+}
+
+// The server's ECDHE parameters: an offered curve with no post-quantum part, signed with an offered scheme.
+function __key_exchange12(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
+  let kx = __no_key_exchange();
+  match (tls12.key_exchange(raw.bytes)) {
+    Ok(k) => {
+      kx = k;
+    },
+    Err(e) => {
+      return Err(Message(e));
+    }
+  }
+  let offered = __codes(message.supported_groups(__ext(c.hello.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
+  if (!__has(offered, kx.group) || kx.group != keyshare.X25519.code() && kx.group != keyshare.Secp256r1.code()) {
+    return Err(Illegal("named_curve"));
+  }
+  if (!__has(__offered_schemes(c), kx.scheme)) {
+    return Err(Illegal("signature scheme"));
+  }
+  let signed = __cat(__join(c.hello.random, c.server_random), kx.params);
+  let ev = VerifyServer(Verification { chain: c.chain, scheme: kx.scheme, signed: signed, signature: kx.signature, tls12: true });
+  return Ok(ClientRun { client: Client { ...c, key_exchange: kx, state: C12_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
+}
+
+// The client's share on the server's curve: the one the hello sent, or a new one from the spare entropy.
+function __share12(c: Client): Result[keyshare.ClientShare, HandshakeError] {
+  if let Some(sh) = __sent_share(c, c.key_exchange.group) {
+    return Ok(sh);
+  }
+  let Some(g) = keyshare.group(c.key_exchange.group) else {
+    return Err(Illegal("named_curve"));
+  };
+  if (c.spare.len() < g.client_entropy()) {
+    return Err(Entropy(c.spare.len(), g.client_entropy()));
+  }
+  match (keyshare.client_share(g, c.spare[0:g.client_entropy()])) {
+    Ok(sh) => {
+      return Ok(sh);
+    },
+    Err(e) => {
+      return Err(KeyShare(e));
+    }
+  }
+  return Err(Illegal("named_curve"));
+}
+
+// After the ServerHelloDone: an empty certificate when the server asked for one, the ClientKeyExchange, the
+// ChangeCipherSpec, and the Finished under the client's key. The server's key waits for its ChangeCipherSpec.
+function __client_flight12(c: Client, out: Out): Result[ClientRun, HandshakeError] {
+  let share = __share12(c)?;
+  let pre_master: u8[] = [];
+  match (share.shared_secret(c.key_exchange.public)) {
+    Ok(secret) => {
+      pre_master = secret;
+    },
+    Err(e) => {
+      return Err(KeyShare(e));
+    }
+  }
+  let flight: u8[] = [];
+  if (c.requested) {
+    flight = tls12.handshake_message(message.CERTIFICATE, [0 as u8, 0 as u8, 0 as u8]);
+  }
+  flight = __cat(flight, tls12.client_key_exchange(share.public));
+  let conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, flight) };
+  let h = conn.suite.hash();
+  let master = tls12.master_secret(h, pre_master, c.extended, __hash(conn), c.hello.random, c.server_random);
+  let keys = tls12.keys(conn.suite, master, c.hello.random, c.server_random);
+  let fin = tls12.handshake_message(message.FINISHED, tls12.verify_data(h, master, "client finished", __hash(conn)));
+  let plain = __write(conn, record.Handshake, flight)?;
+  let ccs = __write(plain.conn, record.ChangeCipherSpec, [1 as u8])?;
+  let sealed = __write(Conn { ...ccs.conn, write: keys.client, writing: 2, transcript: __join(ccs.conn.transcript, fin) }, record.Handshake, fin)?;
+  let bytes = __cat(__cat(plain.bytes, ccs.bytes), sealed.bytes);
+  let armed = Conn { ...sealed.conn, next_read: Some(keys.server) };
+  return Ok(ClientRun { client: Client { ...c, conn: armed, state: C12_WAIT_FINISHED, master12: master }, out: Out { ...out, output: __join(out.output, bytes) } });
+}
+
+// The server's Finished, which must come under its key, over the transcript through the client's Finished.
+function __server_finished12(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
+  if (raw.kind != message.FINISHED || c.conn.reading == 0) {
+    return Err(OutOfOrder(raw.kind));
+  }
+  let got: u8[] = [];
+  match (tls12.finished(raw.bytes)) {
+    Ok(v) => {
+      got = v;
+    },
+    Err(e) => {
+      return Err(Message(e));
+    }
+  }
+  let want = tls12.verify_data(c.conn.suite.hash(), c.master12, "server finished", __hash(c.conn));
+  if (!crypto.consteq(got, want)) {
+    return Err(DecryptError);
+  }
+  let conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, raw.bytes), reading: 2 };
+  return Ok(ClientRun { client: Client { ...c, conn: conn, state: C_CONNECTED, master12: [] }, out: Out { ...out, events: out.events.append(Connected) } });
 }
 ```
 
@@ -1858,11 +2139,14 @@ pub function (c: Client) peer_extensions(): message.Extension[] {
 }
 
 pub function (c: Client) verdict(ok: boolean): Result[ClientStep, HandshakeError] {
-  if (c.state != C_WAIT_VERDICT) {
+  if (c.state != C_WAIT_VERDICT && c.state != C12_WAIT_VERDICT) {
     return Err(Misuse("verdict"));
   }
   if (!ok) {
     return Err(BadCertificate);
+  }
+  if (c.state == C12_WAIT_VERDICT) {
+    return __client_run(Client { ...c, state: C12_WAIT_HELLO_DONE }, [], __out());
   }
   return __client_run(Client { ...c, state: C_WAIT_FINISHED }, [], __out());
 }
@@ -1899,7 +2183,7 @@ pub function (c: Client) connected(): boolean {
 }
 
 pub function (c: Client) update_keys(request: boolean): Result[ClientStep, HandshakeError] {
-  if (c.state != C_CONNECTED) {
+  if (c.state != C_CONNECTED || c.conn.tls12) {
     return Err(Misuse("update_keys"));
   }
   let w = __update(c.conn, request)?;
@@ -1923,7 +2207,7 @@ pub struct ClientOffload { client: Client, keys: KernelKeys }
 ```fern
 <<44 pub function (c: Client) offload(): Option[ClientOffload]>>=
 pub function (c: Client) offload(): Option[ClientOffload] {
-  if (c.state != C_CONNECTED) {
+  if (c.state != C_CONNECTED || c.conn.tls12) {
     return None;
   }
   match (__offload(c.conn)) {
@@ -1960,6 +2244,9 @@ pub function (c: Client) save(): Result[u8[], HandshakeError] {
   }
   if (c.conn.kernel) {
     return Err(Misuse("save once offloaded"));
+  }
+  if (c.conn.tls12) {
+    return Err(Misuse("save of a TLS 1.2 session"));
   }
   if (c.state != C_CONNECTED || c.conn.held.len() > 0) {
     return Err(Misuse("save"));
@@ -2002,7 +2289,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [] });
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, extended: false, server_random: [], key_exchange: __no_key_exchange(), master12: [] });
 }
 ```
 
@@ -2596,7 +2883,7 @@ function __client_certificate(s: Server, raw: message.Raw, cert: message.Certifi
   }
   let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
   if (cert.entries.len() == 0) {
-    let ev = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [] });
+    let ev = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false });
     return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
   }
   let chain: u8[][] = [];
@@ -2612,7 +2899,7 @@ function __client_verify(s: Server, raw: message.Raw, v: message.CertificateVeri
   }
   let signed = certificate_verify_content(false, __hash(s.conn));
   let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
-  let ev = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature });
+  let ev = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature, tls12: false });
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
@@ -2733,7 +3020,7 @@ pub function (s: Server) read_alerting(input: [u8]): Result[ServerStep, Refusal]
       return Ok(step);
     },
     Err(e) => {
-      let alert = __sealed_alert(keys, plain, quic, e);
+      let alert = __sealed_alert(keys, plain, quic, false, e);
       return Err(Refusal { error: e, alert: alert });
     }
   }

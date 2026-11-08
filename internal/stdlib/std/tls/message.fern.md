@@ -83,6 +83,10 @@ import "core/cmp";
 
 ```fern
 <<2 pub const CLIENT_HELLO: i32>>=
+// HelloRequest, ServerKeyExchange, ServerHelloDone and ClientKeyExchange are TLS 1.2 messages: split and head
+// frame them for the TLS 1.2 client, and decode refuses them.
+pub const HELLO_REQUEST: i32 = 0;
+
 pub const CLIENT_HELLO: i32 = 1;
 
 pub const SERVER_HELLO: i32 = 2;
@@ -95,9 +99,15 @@ pub const ENCRYPTED_EXTENSIONS: i32 = 8;
 
 pub const CERTIFICATE: i32 = 11;
 
+pub const SERVER_KEY_EXCHANGE: i32 = 12;
+
 pub const CERTIFICATE_REQUEST: i32 = 13;
 
+pub const SERVER_HELLO_DONE: i32 = 14;
+
 pub const CERTIFICATE_VERIFY: i32 = 15;
+
+pub const CLIENT_KEY_EXCHANGE: i32 = 16;
 
 pub const FINISHED: i32 = 20;
 
@@ -549,11 +559,16 @@ function __server_hello(b: [u8]): Result[Message, MsgError] {
   if (b[sid.to + 2] != 0) {
     return Err(IllegalParameter("legacy_compression_method"));
   }
-  let ext = __vec(b, sid.to + 3, 2, 6, 65535, "ServerHello extensions")?;
+  let suite = __get16(b, sid.to);
+  // A TLS 1.2 ServerHello may leave out its extensions (RFC 5246 §7.4.1.3).
+  if (sid.to + 3 == b.len()) {
+    return Ok(ServerHelloMsg(ServerHello { random: __copy(b, 2, 34), session_id: __copy(b, sid.from, sid.to), cipher_suite: suite, extensions: [] }));
+  }
+  let ext = __vec(b, sid.to + 3, 2, 0, 65535, "ServerHello extensions")?;
   if (ext.to != b.len()) {
     return Err(__decode_error("ServerHello"));
   }
-  return Ok(ServerHelloMsg(ServerHello { random: __copy(b, 2, 34), session_id: __copy(b, sid.from, sid.to), cipher_suite: __get16(b, sid.to), extensions: __read_exts(b[ext.from:ext.to])? }));
+  return Ok(ServerHelloMsg(ServerHello { random: __copy(b, 2, 34), session_id: __copy(b, sid.from, sid.to), cipher_suite: suite, extensions: __read_exts(b[ext.from:ext.to])? }));
 }
 ```
 
@@ -677,7 +692,7 @@ pub function decode(r: Raw): Result[Message, MsgError] {
 <<17 pub struct Split>>=
 pub struct Split { messages: Raw[], rest: u8[] }
 
-const KINDS: i32[] = [CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EARLY_DATA, ENCRYPTED_EXTENSIONS, CERTIFICATE, CERTIFICATE_REQUEST, CERTIFICATE_VERIFY, FINISHED, KEY_UPDATE];
+const KINDS: i32[] = [HELLO_REQUEST, CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EARLY_DATA, ENCRYPTED_EXTENSIONS, CERTIFICATE, SERVER_KEY_EXCHANGE, CERTIFICATE_REQUEST, SERVER_HELLO_DONE, CERTIFICATE_VERIFY, CLIENT_KEY_EXCHANGE, FINISHED, KEY_UPDATE];
 ```
 
 ### `18 function __known(kind: i32): boolean`

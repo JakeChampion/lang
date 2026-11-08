@@ -494,6 +494,60 @@ pub function signed(cert: x509.Certificate, scheme: i32, data: [u8], sig: [u8]):
   }
   return false;
 }
+
+// The TLS 1.2 form of signed, for a ServerKeyExchange (RFC 5246 §7.4.1.4.1, RFC 8422 §5.4). An RSA key also takes
+// PKCS #1 v1.5, and an ECDSA scheme names only the hash, so it fits a key on any curve.
+pub function signed12(cert: x509.Certificate, scheme: i32, data: [u8], sig: [u8]): boolean {
+  let alg = x509.OtherAlgorithm("");
+  match (cert.key) {
+    x509.RsaKey(_, _) => {
+      if (scheme == 0x0401) {
+        alg = x509.RsaPkcs1Sha256;
+      } else if (scheme == 0x0501) {
+        alg = x509.RsaPkcs1Sha384;
+      } else if (scheme == 0x0601) {
+        alg = x509.RsaPkcs1Sha512;
+      } else if (scheme == 0x0804) {
+        alg = x509.RsaPssSha256;
+      } else if (scheme == 0x0805) {
+        alg = x509.RsaPssSha384;
+      } else if (scheme == 0x0806) {
+        alg = x509.RsaPssSha512;
+      } else {
+        return false;
+      }
+    },
+    x509.EcKey(_, _) => {
+      if (scheme == 0x0403) {
+        alg = x509.EcdsaSha256;
+      } else if (scheme == 0x0503) {
+        alg = x509.EcdsaSha384;
+      } else if (scheme == 0x0603) {
+        alg = x509.EcdsaSha512;
+      } else {
+        return false;
+      }
+    },
+    x509.Ed25519Key(_) => {
+      if (scheme != 0x0807) {
+        return false;
+      }
+      alg = x509.Ed25519;
+    },
+    x509.OtherKey(_) => {
+      return false;
+    }
+  }
+  match (signature_ok(cert.key, alg, data, sig)) {
+    Ok(ok) => {
+      return ok;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
 ```
 
 ### `15 function __usable(c: x509.Certificate, at: i32, now: i64): Result[boolean, VerifyError]`
