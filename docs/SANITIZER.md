@@ -78,8 +78,9 @@ Real, and the reason this is opt-in:
 - Every `inc`/`dec` takes the out-of-line helper (the inline rc fast path is
   bypassed, since it is the helper that carries the poison check).
 - **A raw block carries a redzone.** `__alloc(n)` takes 16 bytes more and
-  fills the two words after `n` rounded to 8 with the poison pattern, and
-  the leak census counts them with the block. `__free(p, n)` reads them
+  fills the two words after `n` rounded to 8 with the poison pattern. The
+  leak census counts the block without them, so a block the typed runtime
+  releases balances. `__free(p, n)` reads them
   back, and a word that lost the pattern reports
   `fern-sanitizer: heap-buffer-overflow` with exit 124. A write inside the
   rounding of `n`, past the redzone, or past a typed box is not seen.
