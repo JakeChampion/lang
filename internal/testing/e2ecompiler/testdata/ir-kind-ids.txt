@@ -457,6 +457,7 @@ irq_mask=507
 irq_unmask=508
 irq_wait=509
 irq_pending=510
+user_run=518
 tcp_accept_with=511
 vpack=512
 vpermute=513

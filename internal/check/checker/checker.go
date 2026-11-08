@@ -2466,6 +2466,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}
 	}
 	c.info.FuncSigs["__irq_pending"] = &ast.FuncType{Params: []ast.Type{}, Result: usizeT}
+	c.info.FuncSigs["__user_run"] = &ast.FuncType{Params: []ast.Type{usizeT}, Result: i64T}
 	for _, name := range []string{"__hvc", "__smc"} {
 		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{i64T, i64T, i64T, i64T}, Result: i64T}
 	}

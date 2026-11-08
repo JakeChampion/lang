@@ -431,6 +431,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__irq_unmask", capability: "privileged" },
     Gate { builtin: "__irq_wait", capability: "privileged" },
     Gate { builtin: "__irq_pending", capability: "privileged" },
+    Gate { builtin: "__user_run", capability: "privileged" },
     Gate { builtin: "__port_in8", capability: "privileged" },
     Gate { builtin: "__port_in16", capability: "privileged" },
     Gate { builtin: "__port_in32", capability: "privileged" },

@@ -280,7 +280,7 @@ function kind_facts(): KindFacts {
     "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
     "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
-    "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "port_in", "port_out",
+    "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "port_in", "port_out",
   ];
   let f64_un: string[] = [
     "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
