@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,36 +23,88 @@ const sandboxSocketProg = `function main(): i32 {
 }
 `
 
+// sandboxRuleProg reaches every call the filter checks an argument of: socket
+// and setsockopt through tcp_listen, ioctl through isatty, prctl through
+// disable_core_dumps, and clone through proc_fork on arm64. It is compiled,
+// never run.
+const sandboxRuleProg = `function main(): i32 {
+    let fd: Socket = tcp_listen(0);
+    if (fd.fd < 0) { return 1; }
+    tcp_close(fd);
+    if (isatty(0)) { return 2; }
+    if (!disable_core_dumps()) { return 3; }
+    let pid: i32 = proc_fork();
+    if (pid == 0) { exit(0); }
+    return 0;
+}
+`
+
+// sandboxRule is one argument rule of the filter, with an argument that
+// passes and arguments that the filter must kill.
+type sandboxRule struct {
+	nr   uint32
+	arg  int
+	good uint64
+	bad  []uint64
+}
+
 // sandboxTarget is one target the sandbox exists on, with the constants its
 // filter and installer carry.
 type sandboxTarget struct {
 	name      string
-	arch      uint32   // the AUDIT_ARCH_* word the filter checks first
-	installer []uint32 // prctl and seccomp: issued before the filter applies, so never allowed
-	program   []uint32 // the calls sandboxSocketProg makes on this target
-	mapping   []uint32 // mmap, mprotect and pkey_mprotect: allowed only without PROT_EXEC
-	install   string   // the call of the installer in _start
-	mainCall  string   // the call of main, which the installer must precede
+	arch      uint32        // the AUDIT_ARCH_* word the filter checks first
+	installer []uint32      // seccomp: issued before the filter applies, so never allowed
+	program   []uint32      // calls sandboxRuleProg makes on this target that carry no rule
+	denied    []uint32      // calls no runtime path makes: execve and ptrace
+	rules     []sandboxRule // the argument rules of asmcore.arg_rules for this target
+	install   string        // the call of the installer in _start
+	mainCall  string        // the call of main, which the installer must precede
+	lenInsn   string        // the installer's load of the filter length, before the count
 }
+
+// The ioctl requests the runtime passes: TCGETS, TCSETS, TCSETSW, TCSETSF,
+// TIOCOUTQ, TIOCGWINSZ, TIOCSWINSZ and FICLONE. TIOCSTI is the denied probe.
+var sandboxIoctl = sandboxRule{arg: 1, good: 21505, bad: []uint64{21522, 0x5401 << 32}}
 
 var sandboxTargets = []sandboxTarget{
 	{
 		name:      e2eharness.TargetX86_64Linux,
 		arch:      0xC000003E,
-		installer: []uint32{157, 317},
-		program:   []uint32{3, 41, 49, 50, 51, 231},
-		mapping:   []uint32{9, 10, 329},
-		install:   "    call __fern_seccomp_install\n",
-		mainCall:  "    call __fn_main\n",
+		installer: []uint32{317},
+		program:   []uint32{3, 49, 50, 57, 231},
+		denied:    []uint32{59, 101},
+		rules: []sandboxRule{
+			{nr: 9, arg: 2, good: 3, bad: []uint64{7, 4}},
+			{nr: 10, arg: 2, good: 3, bad: []uint64{7, 4}},
+			{nr: 329, arg: 2, good: 3, bad: []uint64{7, 4}},
+			{nr: 16, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
+			{nr: 41, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
+			{nr: 54, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 157, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
+		},
+		install:  "    call __fern_seccomp_install\n",
+		mainCall: "    call __fn_main\n",
+		lenInsn:  "    movq $",
 	},
 	{
 		name:      e2eharness.TargetArm64Linux,
 		arch:      0xC00000B7,
-		installer: []uint32{167, 277},
-		program:   []uint32{57, 94, 198, 200, 201, 204},
-		mapping:   []uint32{222, 226, 288},
-		install:   "    bl __fern_seccomp_install\n",
-		mainCall:  "    bl __fn_main\n",
+		installer: []uint32{277},
+		program:   []uint32{57, 200, 201, 94},
+		denied:    []uint32{221, 117},
+		rules: []sandboxRule{
+			{nr: 222, arg: 2, good: 3, bad: []uint64{7, 4}},
+			{nr: 226, arg: 2, good: 3, bad: []uint64{7, 4}},
+			{nr: 288, arg: 2, good: 3, bad: []uint64{7, 4}},
+			{nr: 29, arg: sandboxIoctl.arg, good: sandboxIoctl.good, bad: sandboxIoctl.bad},
+			{nr: 198, arg: 0, good: 2, bad: []uint64{16, 17, 1<<32 | 2}},
+			{nr: 208, arg: 1, good: 1, bad: []uint64{270, 0}},
+			{nr: 167, arg: 0, good: 4, bad: []uint64{35, 22, 38, 0x59616d61}},
+			{nr: 220, arg: 0, good: 17, bad: []uint64{0x10000000 | 17, 0x20000 | 17, 17 | 1<<32}},
+		},
+		install:  "    bl __fern_seccomp_install\n",
+		mainCall: "    bl __fn_main\n",
+		lenInsn:  "    mov x0, #",
 	},
 }
 
@@ -124,6 +177,55 @@ func parseSandboxFilter(t *testing.T, asm string) []sandboxBPF {
 	return out
 }
 
+const (
+	sandboxKill  = 0x80000000
+	sandboxAllow = 0x7FFF0000
+)
+
+// runSandboxFilter runs the classic BPF program over one seccomp_data record,
+// as the kernel does, and returns the action word.
+func runSandboxFilter(t *testing.T, f []sandboxBPF, arch, nr uint32, args [6]uint64) uint32 {
+	t.Helper()
+	var data [64]byte
+	binary.LittleEndian.PutUint32(data[0:], nr)
+	binary.LittleEndian.PutUint32(data[4:], arch)
+	for i, a := range args {
+		binary.LittleEndian.PutUint64(data[16+8*i:], a)
+	}
+	const ldWAbs, jeqK, jsetK, retK = 0x20, 0x15, 0x45, 0x06
+	var acc uint32
+	for pc, steps := 0, 0; ; steps++ {
+		if pc < 0 || pc >= len(f) || steps > len(f) {
+			t.Fatalf("filter ran off its end at pc %d after %d steps", pc, steps)
+		}
+		in := f[pc]
+		switch in.code {
+		case ldWAbs:
+			if in.k+4 > uint32(len(data)) {
+				t.Fatalf("insn %d loads past seccomp_data: %+v", pc, in)
+			}
+			acc = binary.LittleEndian.Uint32(data[in.k:])
+			pc++
+		case jeqK:
+			if acc == in.k {
+				pc += 1 + in.jt
+			} else {
+				pc += 1 + in.jf
+			}
+		case jsetK:
+			if acc&in.k != 0 {
+				pc += 1 + in.jt
+			} else {
+				pc += 1 + in.jf
+			}
+		case retK:
+			return in.k
+		default:
+			t.Fatalf("insn %d has code %#x, which the filter does not use", pc, in.code)
+		}
+	}
+}
+
 func TestSelfHostSandboxFilterShape(t *testing.T) {
 	for _, tgt := range sandboxTargets {
 		t.Run(tgt.name, func(t *testing.T) {
@@ -133,92 +235,98 @@ func TestSelfHostSandboxFilterShape(t *testing.T) {
 }
 
 func checkSandboxFilterShape(t *testing.T, tgt sandboxTarget) {
-	f := parseSandboxFilter(t, sandboxAsm(t, tgt.name, sandboxSocketProg, true))
+	asm := sandboxAsm(t, tgt.name, sandboxRuleProg, true)
+	f := parseSandboxFilter(t, asm)
 	if len(f) < 7 {
 		t.Fatalf("filter has %d instructions, too few to be well-formed: %+v", len(f), f)
 	}
 	const ldWAbs, jeqK, retK = 0x20, 0x15, 0x06
-	const kill, allow = 0x80000000, 0x7FFF0000
 	if f[0] != (sandboxBPF{code: ldWAbs, k: 4}) {
 		t.Errorf("insn 0 = %+v, want a load of seccomp_data.arch", f[0])
 	}
 	if f[1] != (sandboxBPF{code: jeqK, jt: 1, k: tgt.arch}) {
 		t.Errorf("insn 1 = %+v, want JEQ on the audit arch %#x skipping the kill", f[1], tgt.arch)
 	}
-	if f[2] != (sandboxBPF{code: retK, k: kill}) {
+	if f[2] != (sandboxBPF{code: retK, k: sandboxKill}) {
 		t.Errorf("insn 2 = %+v, want RET KILL_PROCESS on another arch", f[2])
 	}
 	if f[3] != (sandboxBPF{code: ldWAbs, k: 0}) {
 		t.Errorf("insn 3 = %+v, want a load of seccomp_data.nr", f[3])
 	}
-	last := len(f) - 1
-	if f[last] != (sandboxBPF{code: retK, k: allow}) {
-		t.Errorf("final insn = %+v, want RET ALLOW", f[last])
+	if f[len(f)-1] != (sandboxBPF{code: retK, k: sandboxAllow}) {
+		t.Errorf("final insn = %+v, want RET ALLOW", f[len(f)-1])
 	}
-	// The list ends at the first RET KILL: the fall-through denies. A
-	// mapping call in the list jumps to the check block behind that kill,
-	// which loads the protection word and kills a request with PROT_EXEC.
-	const jsetK = 0x45
+	// The installer hands the kernel the count of the instructions emitted.
+	install := strings.Index(asm, "__fern_seccomp_install:\n")
+	if install < 0 {
+		t.Fatal("no __fern_seccomp_install in the emitted asm")
+	}
+	if !strings.Contains(asm[install:], tgt.lenInsn+strconv.Itoa(len(f))+"\n") && !strings.Contains(asm[install:], tgt.lenInsn+strconv.Itoa(len(f))+",") {
+		t.Errorf("the installer does not load the filter length %d", len(f))
+	}
+	// The list of allowed numbers is ascending and unique, and it ends at the
+	// first RET KILL: the fall-through denies.
+	allowed := map[uint32]bool{}
 	killAt := -1
-	for i := 4; i < last; i++ {
-		if f[i].code == retK && f[i].k == kill {
+	for i := 4; i < len(f)-1; i++ {
+		if f[i].code == retK && f[i].k == sandboxKill {
 			killAt = i
 			break
 		}
-	}
-	if killAt < 0 {
-		t.Fatalf("no RET KILL_PROCESS after the list: the fall-through must deny: %+v", f)
-	}
-	checked := killAt+1 != last
-	if checked {
-		if last != killAt+4 {
-			t.Fatalf("the check block spans insns %d to %d, want three instructions before the ALLOW", killAt+1, last-1)
-		}
-		if f[killAt+1] != (sandboxBPF{code: ldWAbs, k: 32}) {
-			t.Errorf("insn %d = %+v, want a load of seccomp_data.args[2], the protection word", killAt+1, f[killAt+1])
-		}
-		if f[killAt+2] != (sandboxBPF{code: jsetK, jt: 0, jf: 1, k: 4}) {
-			t.Errorf("insn %d = %+v, want JSET PROT_EXEC falling through to the kill and skipping it otherwise", killAt+2, f[killAt+2])
-		}
-		if f[killAt+3] != (sandboxBPF{code: retK, k: kill}) {
-			t.Errorf("insn %d = %+v, want RET KILL_PROCESS for an executable mapping", killAt+3, f[killAt+3])
-		}
-	}
-	mapping := map[uint32]bool{}
-	for _, nr := range tgt.mapping {
-		mapping[nr] = true
-	}
-	allowed := map[uint32]bool{}
-	for i := 4; i < killAt; i++ {
 		if f[i].code != jeqK || f[i].jf != 0 {
 			t.Fatalf("insn %d = %+v, want a JEQ falling through to the next comparison", i, f[i])
-		}
-		want, where := last, "the ALLOW"
-		if mapping[f[i].k] {
-			if !checked {
-				t.Fatalf("insn %d allows the mapping call %d without a check block", i, f[i].k)
-			}
-			want, where = killAt+1, "the protection check"
-		}
-		if target := i + 1 + f[i].jt; target != want {
-			t.Errorf("insn %d (allow %d) jumps to %d, want %d (%s)", i, f[i].k, target, want, where)
 		}
 		if i > 4 && f[i].k <= f[i-1].k {
 			t.Errorf("insn %d allows %d after %d: the list is not ascending and unique", i, f[i].k, f[i-1].k)
 		}
 		allowed[f[i].k] = true
 	}
-	if !checked {
-		t.Errorf("the program maps its heap, so the filter must carry the protection check")
+	if killAt < 0 {
+		t.Fatalf("no RET KILL_PROCESS after the list: the fall-through must deny: %+v", f)
+	}
+	run := func(nr uint32, args [6]uint64) uint32 {
+		return runSandboxFilter(t, f, tgt.arch, nr, args)
+	}
+	if got := run(tgt.program[0], [6]uint64{}); got != sandboxAllow {
+		t.Errorf("call %d from another architecture word: filter on this arch gave %#x", tgt.program[0], got)
+	}
+	if got := runSandboxFilter(t, f, tgt.arch^1, tgt.program[0], [6]uint64{}); got != sandboxKill {
+		t.Errorf("call %d from another architecture = %#x, want KILL", tgt.program[0], got)
 	}
 	for _, nr := range tgt.program {
-		if !allowed[nr] {
-			t.Errorf("syscall %d is issued by the program but not allowed: the binary would be killed on a legitimate path", nr)
+		if got := run(nr, [6]uint64{}); got != sandboxAllow {
+			t.Errorf("syscall %d is issued by the program but the filter gives %#x: the binary would be killed on a legitimate path", nr, got)
 		}
 	}
-	for _, nr := range tgt.installer {
+	for _, nr := range append(append([]uint32{}, tgt.installer...), tgt.denied...) {
 		if allowed[nr] {
-			t.Errorf("syscall %d (prctl / seccomp) is allowed: both run before the filter applies, so allowing them only lets hijacked code install a filter of its own", nr)
+			t.Errorf("syscall %d is on the list: the installer's seccomp call runs before the filter applies, and no runtime path makes the others", nr)
+		}
+		if got := run(nr, [6]uint64{}); got != sandboxKill {
+			t.Errorf("syscall %d = %#x, want KILL", nr, got)
+		}
+	}
+	for _, r := range tgt.rules {
+		if !allowed[r.nr] {
+			// pkey_mprotect is the one call with a rule that the program does
+			// not reach. Off the list, it is killed whatever its arguments.
+			var args [6]uint64
+			args[r.arg] = r.good
+			if got := run(r.nr, args); got != sandboxKill {
+				t.Errorf("syscall %d is off the list but the filter gives %#x, want KILL", r.nr, got)
+			}
+			continue
+		}
+		var args [6]uint64
+		args[r.arg] = r.good
+		if got := run(r.nr, args); got != sandboxAllow {
+			t.Errorf("syscall %d with argument %d = %#x: filter gave %#x, want ALLOW", r.nr, r.arg, r.good, got)
+		}
+		for _, bad := range r.bad {
+			args[r.arg] = bad
+			if got := run(r.nr, args); got != sandboxKill {
+				t.Errorf("syscall %d with argument %d = %#x: filter gave %#x, want KILL", r.nr, r.arg, bad, got)
+			}
 		}
 	}
 }

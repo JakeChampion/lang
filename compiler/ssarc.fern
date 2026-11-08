@@ -3241,6 +3241,9 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
     return emit(r, ir.op_str_index());
   }
   if (ins.kind_tag == ssasem.array_get()) {
+    if (ins.str == "lane_bytes") {
+      return emit(r, ir.Op { ...arr_get_op(f.values[ins.result], false), unsigned: true });
+    }
     if (array_view(f.values[ins.args[0]]) && ins.imm == ssasem.check_only()) {
       return emit(r, ssabytes.check(ins.args[0]));
     }
@@ -4633,7 +4636,7 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
 
 function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
   if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
-    return ir.op_lane("vset", l.width);
+    return ir.Op { ...ir.op_lane("vset", l.width), unsigned: ins.str == "lane_bytes" };
   }
   if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));
@@ -6216,7 +6219,11 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   let verb = typeinfo.lane_builtin_verb(ins.str);
   let op = irtables.lane_builtin_op(verb);
   if (op != "") {
-    return emit(r, ir.op_lane(op, w));
+    r = emit(r, ir.op_lane(op, w));
+    if (verb == "store") {
+      return emit(r, ir.op_const_i32(0));
+    }
+    return r;
   }
   if (verb == "lane") {
     r = emit(r, ir.op_drop());

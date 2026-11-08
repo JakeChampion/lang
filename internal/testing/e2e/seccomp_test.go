@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -291,6 +292,101 @@ func injectMprotect(prot int) func(string) string {
 			call = "    mov x0, sp\n    and x0, x0, #-4096\n    mov x1, #4096\n    mov x2, #" + strconv.Itoa(prot) + "\n    mov x8, #226\n    svc #0\n"
 		}
 		return strings.Replace(asm, label, label+call, 1)
+	}
+}
+
+// injectSyscall splices one system call at the top of main, in the host's own
+// instruction set, with the given arguments. A value above 32 bits is
+// composed in full, so a probe can set the high word of an argument.
+func injectSyscall(nr int, args ...uint64) func(string) string {
+	return func(asm string) string {
+		label := symname.Fn("main") + ":\n"
+		var b strings.Builder
+		if runtime.GOARCH == "arm64" {
+			for i, a := range args {
+				reg := "x" + strconv.Itoa(i)
+				fmt.Fprintf(&b, "    movz %s, #%d\n", reg, a&0xffff)
+				for shift := 16; shift < 64; shift += 16 {
+					fmt.Fprintf(&b, "    movk %s, #%d, lsl #%d\n", reg, (a>>shift)&0xffff, shift)
+				}
+			}
+			fmt.Fprintf(&b, "    mov x8, #%d\n    svc #0\n", nr)
+		} else {
+			regs := []string{"%rdi", "%rsi", "%rdx", "%r10", "%r8", "%r9"}
+			for i, a := range args {
+				fmt.Fprintf(&b, "    movabs $%d, %s\n", a, regs[i])
+			}
+			fmt.Fprintf(&b, "    movq $%d, %%rax\n    syscall\n", nr)
+		}
+		return strings.Replace(asm, label, label+b.String(), 1)
+	}
+}
+
+// sandboxArgProg reaches every call the filter checks an argument of: socket
+// and setsockopt through tcp_listen, ioctl through isatty, prctl through
+// disable_core_dumps, and on arm64 clone through proc_fork.
+const sandboxArgProg = `function main(): i32 {
+    let fd: Socket = tcp_listen(0);
+    if (fd.fd < 0) { return 1; }
+    tcp_close(fd);
+    if (isatty(0)) { return 2; }
+    if (!disable_core_dumps()) { return 3; }
+    let pid: i32 = proc_fork();
+    if (pid == 0) { exit(0); }
+    return 0;
+}`
+
+// The filter admits each of these calls by number, because the program's own
+// path makes it, and still kills the call with an argument no runtime path
+// passes (SEC-039). The good probe passes the same argument the runtime does,
+// and the bad probe fails without the sandbox too, so the control run shows
+// that the kill is the filter's.
+func TestSeccompDeniesArguments(t *testing.T) {
+	type probe struct {
+		name      string
+		nr        int
+		good, bad []uint64
+	}
+	const minusOne = ^uint64(0)
+	var probes []probe
+	if runtime.GOARCH == "arm64" {
+		probes = []probe{
+			{"socket domain", 198, []uint64{2, 1, 0}, []uint64{16, 3, 0}},
+			{"socket domain high word", 198, nil, []uint64{1<<32 | 2, 1, 0}},
+			{"ioctl request", 29, []uint64{0, 21505, 0}, []uint64{0, 21522, 0}},
+			{"prctl option", 167, []uint64{4, 1, 0}, []uint64{35, 0, 0}},
+			{"setsockopt level", 208, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
+			{"clone flags", 220, nil, []uint64{0x10000000 | 0x200 | 17, 0, 0, 0, 0}},
+		}
+	} else {
+		probes = []probe{
+			{"socket domain", 41, []uint64{2, 1, 0}, []uint64{16, 3, 0}},
+			{"socket domain high word", 41, nil, []uint64{1<<32 | 2, 1, 0}},
+			{"ioctl request", 16, []uint64{0, 21505, 0}, []uint64{0, 21522, 0}},
+			{"prctl option", 157, []uint64{4, 1, 0}, []uint64{35, 0, 0}},
+			{"setsockopt level", 54, []uint64{minusOne, 1, 2, 0, 0}, []uint64{minusOne, 270, 1, 0, 0}},
+		}
+	}
+	for _, p := range probes {
+		t.Run(p.name, func(t *testing.T) {
+			bad := exec.Command(buildSandboxedPatched(t, sandboxArgProg, true, injectSyscall(p.nr, p.bad...)))
+			_ = bad.Run()
+			if ws, ok := bad.ProcessState.Sys().(syscall.WaitStatus); !ok || !ws.Signaled() || ws.Signal() != syscall.SIGSYS {
+				t.Errorf("sandboxed call %d with %v: %v, want SIGSYS", p.nr, p.bad, bad.ProcessState)
+			}
+			if p.good != nil {
+				good := exec.Command(buildSandboxedPatched(t, sandboxArgProg, true, injectSyscall(p.nr, p.good...)))
+				_ = good.Run()
+				if ws, ok := good.ProcessState.Sys().(syscall.WaitStatus); !ok || ws.Signaled() || good.ProcessState.ExitCode() != 0 {
+					t.Errorf("sandboxed call %d with %v: %v, want exit 0: the argument is the runtime's own", p.nr, p.good, good.ProcessState)
+				}
+			}
+			plain := exec.Command(buildSandboxedPatched(t, sandboxArgProg, false, injectSyscall(p.nr, p.bad...)))
+			_ = plain.Run()
+			if ws, ok := plain.ProcessState.Sys().(syscall.WaitStatus); !ok || ws.Signaled() || plain.ProcessState.ExitCode() != 0 {
+				t.Errorf("control call %d with %v: %v, want exit 0: without the sandbox the call only fails", p.nr, p.bad, plain.ProcessState)
+			}
+		})
 	}
 }
 

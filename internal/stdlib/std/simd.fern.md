@@ -18,6 +18,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
+<<packed float memory>>
+
 <<dependencies 2>>
 
 <<3 pub trait Lanes: ops.Num + ops.Neg>>
@@ -923,5 +925,38 @@ impl[T: Math] Math for DoubleDouble[T] {
   function pow(self: DoubleDouble[T], y: DoubleDouble[T]): DoubleDouble[T] {
     return (y * self.log()).exp();
   }
+}
+```
+
+## Packed float memory
+
+Packed memory uses IEEE floats in little-endian byte order.
+Each load and store accesses 16 bytes at the byte offset.
+The offset can be unaligned.
+An access outside the byte array stops the program.
+A store returns a new array value and preserves aliases of the input.
+The caller retains the returned array.
+`pack_f32x4` converts two double vectors to one float vector, with the low vector first.
+
+```fern
+<<packed float memory>>=
+pub function load_f32x4_le(bytes: u8[], offset: i32): f32x4 {
+  return __f32x4_load_bytes(bytes, offset);
+}
+
+pub function with_f32x4_le(own bytes: u8[], offset: i32, value: f32x4): u8[] {
+  return __f32x4_with_bytes(bytes, offset, value);
+}
+
+pub function load_f64x2_le(bytes: u8[], offset: i32): f64x2 {
+  return __f64x2_load_bytes(bytes, offset);
+}
+
+pub function with_f64x2_le(own bytes: u8[], offset: i32, value: f64x2): u8[] {
+  return __f64x2_with_bytes(bytes, offset, value);
+}
+
+pub function pack_f32x4(low: f64x2, high: f64x2): f32x4 {
+  return __f32x4_pack(low, high);
 }
 ```

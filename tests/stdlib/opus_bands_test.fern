@@ -5,11 +5,11 @@ import "std/opus/modes";
 import "std/opus/range";
 import "std/opus/rate";
 import "std/test";
+import "opus_kernel_vectors";
 
 // Each script codes random frames of random band shapes: it allocates the bits,
 // codes the bands, and then decodes the frame from its bytes. The trace holds
-// the bits of each value, each collapse mask and the seed. libopus 1.4, in its
-// float build, gave the CRC-32 of each trace, from a C program that makes the
+// the bits of each value, each collapse mask and the seed. the pinned libopus float build, gave the CRC-32 of each trace, from a C program that makes the
 // same calls.
 
 const TF: i32[] = [0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -2, 1, 0, 1, -1, 0, -2, 0, -3, 2, 0, 1, -1, 0, -2, 0, -3, 3, 0, 1, -1];
@@ -202,11 +202,11 @@ function trace(seed0: u32, cases: i32): u32 {
 }
 
 function test_short_script(): test.TestOutcome {
-  return test.assert_eq(trace(2u32, 50), 2843130025u32);
+  return test.assert_eq(trace(2u32, 50), opus_kernel_vectors.BANDS_SHORT);
 }
 
 function test_long_script(): test.TestOutcome {
-  return test.assert_eq(trace(3u32, 200), 1604355642u32);
+  return test.assert_eq(trace(3u32, 200), opus_kernel_vectors.BANDS_LONG);
 }
 
 function test_bitexact_helpers(): test.TestOutcome {

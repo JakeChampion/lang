@@ -1,0 +1,352 @@
+import "std/audio/ogg";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/base64";
+import "std/deflate";
+import "std/hash/crc32";
+import "std/test";
+import "audio_ogg_vectors";
+
+struct Reference { raw: u8[], records: u8[], metadata: i32[], starts: i32[] }
+
+function word(bytes: [u8], at: i32): i32 {
+  return wire.le(bytes, at, 4) as i32;
+}
+
+function reference(index: i32): Result[Reference, pcm.AudioError] {
+  let packed = match (base64.decode(audio_ogg_vectors.CASES[index])) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let data = match (deflate.zlib_decode(packed, 1048576)) { Ok(value) => value, Err(_) => { return Err(pcm.Header); } };
+  let raw: u8[] = [];
+  let metadata: i32[] = [];
+  let starts: i32[] = [];
+  let at = 4;
+  for _ in 0..word(data, 0) {
+    let size = word(data, at);
+    starts = starts.append(raw.len());
+    for i in 0..size {
+      raw = raw.append(data[at + 4 + i]);
+    }
+    at += size + 4;
+    metadata = metadata.append(at);
+    at += 32 + 24 * word(data, at + 28);
+  }
+  return Ok(Reference { raw: raw, records: data, metadata: metadata, starts: starts });
+}
+
+function compare_packets(packets: [ogg.Packet], data: [u8], own at: i32): test.TestOutcome {
+  for packet in packets {
+    if (packet.bytes.len() != word(data, at) || crc32.of(packet.bytes) != word(data, at + 4) as u32) {
+      return test.fail("packet length or bytes");
+    }
+    if (packet.offset != wire.le(data, at + 8, 8) as i64 || packet.page_offset != wire.le(data, at + 16, 8) as i64) {
+      return test.fail("packet byte or page offset");
+    }
+    at += 24;
+  }
+  return test.pass();
+}
+
+function valid_flags(page: ogg.Page, flags: i32): boolean {
+  return page.bos == ((flags & 2) != 0) && page.eos == ((flags & 4) != 0) && page.continued == ((flags & 1) != 0);
+}
+
+function compare(page: ogg.Page, expected: Reference, index: i32): test.TestOutcome {
+  let data = expected.records;
+  let at = expected.metadata[index];
+  let flags = word(data, at + 16);
+  if (page.serial != word(data, at) as u32 || page.sequence != word(data, at + 4) as u32 || page.granule != wire.le(data, at + 8, 8) as i64) {
+    return test.fail("page serial, sequence, or granule");
+  }
+  if (!valid_flags(page, flags)) {
+    return test.fail("page flags");
+  }
+  if (page.offset != wire.le(data, at + 20, 8) as i64 || page.packets.len() != word(data, at + 28)) {
+    return test.fail("page offset or packet count");
+  }
+  return compare_packets(page.packets, data, at + 32);
+}
+
+function chunk_size(remaining: i32, total: i32, mode: i32, turn: i32): i32 {
+  if (mode == 0) {
+    return remaining;
+  }
+  let sizes: i32[] = [1, 26, 255, 4096, 65536];
+  let limit = if (total < 2048) { 1 } else { sizes[turn % sizes.len()] };
+  return if (remaining > limit) { limit } else { remaining };
+}
+
+function valid_progress(state: ogg.Decoder, used: i32, count: i32): boolean {
+  return used > 0 && used <= count && state.buffer.len() <= ogg.MAX_PAGE_BYTES && state.pending_bytes <= state.limits.max_pending_bytes;
+}
+
+function compare_event(actual: Option[ogg.Page], expected: Reference, pages: i32): (i32, test.TestOutcome) {
+  match (actual) {
+    Some(page) => {
+      return (pages + 1, compare(page, expected, pages));
+    },
+    None => {
+      return (pages, test.pass());
+    }
+  }
+}
+
+function complete(state: ogg.Decoder, actual: i32, expected: i32): test.TestOutcome {
+  match (state.finish()) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("complete stream rejected");
+    }
+  }
+  return test.assert_eq(actual, expected);
+}
+
+function read_case(expected: Reference, mode: i32): test.TestOutcome {
+  let state = match (ogg.decoder(ogg.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("Ogg decoder creation"); } };
+  let at = 0;
+  let pages = 0;
+  let turn = 0;
+  while (at < expected.raw.len()) {
+    let count = chunk_size(expected.raw.len() - at, expected.raw.len(), mode, turn);
+    let (next, used, page) = match (state.feed(expected.raw[at:at + count])) { Ok(value) => value, Err(error) => { return test.fail("Ogg reference rejected: " + error.to_string()); } };
+    state = next;
+    if (!valid_progress(state, used, count)) {
+      return test.fail("input progress or storage bound");
+    }
+    let (total, outcome) = compare_event(page, expected, pages);
+    match (outcome) {
+      test.Pass => {},
+      test.Fail(message) => {
+        return test.fail("page " + pages.to_string() + ": " + message);
+      }
+    }
+    pages = total;
+    at += used;
+    turn += 1;
+  }
+  return complete(state, pages, expected.metadata.len());
+}
+
+function references(): test.TestOutcome {
+  for index in 0..audio_ogg_vectors.CASES.len() {
+    let expected = match (reference(index)) { Ok(value) => value, Err(_) => { return test.fail("reference data"); } };
+    for mode in 0..2 {
+      match (read_case(expected, mode)) {
+        test.Pass => {},
+        test.Fail(message) => {
+          return test.fail("case " + index.to_string() + ": " + message);
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+// Use a bitwise checksum here, independent of the decoder's table.
+function seal(bytes: u8[]): u8[] {
+  bytes = bytes.with(22, 0u8).with(23, 0u8).with(24, 0u8).with(25, 0u8);
+  let crc = 0u32;
+  for byte in bytes {
+    crc = crc ^ byte as u32 << 24u32;
+    for _ in 0..8 {
+      crc = if ((crc & 2147483648u32) != 0u32) { crc << 1u32 ^ 79764919u32 } else { crc << 1u32 };
+    }
+  }
+  for i in 0..4 {
+    bytes = bytes.with(22 + i, (crc >> (i * 8) as u32) as u8);
+  }
+  return bytes;
+}
+
+function make_page(serial: u32, sequence: u32, flags: u8, granule: i64, laces: [u8], payload: [u8]): u8[] {
+  let bytes: u8[] = [79, 103, 103, 83, 0, flags];
+  bytes = wire.put_le(bytes, granule as u64, 8);
+  bytes = wire.put_le(bytes, serial as u64, 4);
+  bytes = wire.put_le(bytes, sequence as u64, 4);
+  bytes = wire.put_le(bytes, 0u64, 4).append(laces.len() as u8);
+  for byte in laces {
+    bytes = bytes.append(byte);
+  }
+  for byte in payload {
+    bytes = bytes.append(byte);
+  }
+  return seal(bytes);
+}
+
+function joined(a: [u8], b: [u8]): u8[] {
+  let out: u8[] = [];
+  for byte in a {
+    out = out.append(byte);
+  }
+  for byte in b {
+    out = out.append(byte);
+  }
+  return out;
+}
+
+function check_stream(input: [u8], limits: ogg.Limits): Result[void, pcm.AudioError] {
+  let state = ogg.decoder(limits)?;
+  let at = 0;
+  while (at < input.len()) {
+    let (next, used, _) = state.feed(input[at:])?;
+    state = next;
+    if (used <= 0) {
+      return Err(pcm.Buffer);
+    }
+    at += used;
+  }
+  return state.finish();
+}
+
+function expect_error(input: [u8], limits: ogg.Limits, expected: pcm.AudioError): boolean {
+  match (check_stream(input, limits)) {
+    Err(actual) => {
+      return actual == expected;
+    },
+    Ok(_) => {
+      return false;
+    }
+  }
+}
+
+function headers(): test.TestOutcome {
+  let page = make_page(42u32, 0u32, 6u8, 3i64, [3u8], [1u8, 2u8, 3u8]);
+  let cases: u8[][] = [page.with(0, 0), seal(page.with(4, 1)), seal(page.with(5, 14)), page.with(29, 99), seal(page.with(6, 254).with(7, 255).with(8, 255).with(9, 255).with(10, 255).with(11, 255).with(12, 255).with(13, 255))];
+  let errors = [pcm.Header, pcm.Unsupported, pcm.Header, pcm.Checksum, pcm.Header];
+  for i in 0..cases.len() {
+    if (!expect_error(cases[i], ogg.default_limits(), errors[i])) {
+      return test.fail("header error " + i.to_string());
+    }
+  }
+  for length in 1..page.len() {
+    if (!expect_error(page[:length], ogg.default_limits(), pcm.Truncated)) {
+      return test.fail("truncated page " + length.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function stream_rules(): test.TestOutcome {
+  let first = make_page(42u32, 0u32, 2u8, 0i64, [0u8], []);
+  let cases: u8[][] = [make_page(42u32, 0u32, 4u8, 0i64, [], []), make_page(42u32, 0u32, 3u8, 0i64, [], []), make_page(42u32, 1u32, 6u8, 0i64, [], [])];
+  for page in cases {
+    if (!expect_error(page, ogg.default_limits(), pcm.Header)) {
+      return test.fail("invalid first page");
+    }
+  }
+  let tails: u8[][] = [make_page(42u32, 0u32, 4u8, 0i64, [], []), make_page(42u32, 2u32, 4u8, 0i64, [], []), make_page(42u32, 1u32, 6u8, 0i64, [], []), make_page(42u32, 1u32, 5u8, 0i64, [0u8], []), make_page(43u32, 1u32, 4u8, 0i64, [], [])];
+  for tail in tails {
+    if (!expect_error(joined(first, tail), ogg.default_limits(), pcm.Header)) {
+      return test.fail("sequence, BOS, serial, or continuation");
+    }
+  }
+  return test.assert_true(expect_error(first, ogg.default_limits(), pcm.Truncated));
+}
+
+function repeated(count: i32): u8[] {
+  let bytes: u8[] = [];
+  for i in 0..count {
+    bytes = bytes.append(i as u8);
+  }
+  return bytes;
+}
+
+function continuation(): test.TestOutcome {
+  let first = make_page(42u32, 0u32, 2u8, -1i64, [255u8], repeated(255));
+  let end = make_page(42u32, 1u32, 5u8, 1i64, [0u8], []);
+  if let Err(_) = check_stream(joined(first, end), ogg.default_limits()) {
+    return test.fail("exact multiple of 255 across pages");
+  }
+  if (!expect_error(joined(first, make_page(42u32, 1u32, 4u8, 1i64, [0u8], [])), ogg.default_limits(), pcm.Header)) {
+    return test.fail("missing continuation flag");
+  }
+  if (!expect_error(make_page(42u32, 0u32, 6u8, -1i64, [255u8], repeated(255)), ogg.default_limits(), pcm.Header)) {
+    return test.fail("EOS with incomplete packet");
+  }
+  return test.assert_true(expect_error(first, ogg.default_limits(), pcm.Truncated));
+}
+
+function limits(): test.TestOutcome {
+  let small = ogg.Limits { max_streams: 1, max_packet_bytes: 255, max_pending_bytes: 255 };
+  let exact = make_page(42u32, 0u32, 6u8, 1i64, [255u8, 0u8], repeated(255));
+  if let Err(_) = check_stream(exact, small) {
+    return test.fail("packet at its exact limit");
+  }
+  if (!expect_error(make_page(42u32, 0u32, 6u8, 1i64, [255u8, 1u8], repeated(256)), small, pcm.Limit)) {
+    return test.fail("packet limit");
+  }
+  let first = make_page(42u32, 0u32, 2u8, -1i64, [255u8], repeated(255));
+  let second = make_page(43u32, 0u32, 2u8, -1i64, [255u8], repeated(255));
+  if (!expect_error(joined(first, second), small, pcm.Limit)) {
+    return test.fail("active stream limit");
+  }
+  let aggregate = ogg.Limits { max_streams: 2, max_packet_bytes: 300, max_pending_bytes: 400 };
+  if (!expect_error(joined(first, second), aggregate, pcm.Limit)) {
+    return test.fail("aggregate incomplete packet limit");
+  }
+  let empty = ogg.Limits { max_streams: 1, max_packet_bytes: 0, max_pending_bytes: 0 };
+  if let Err(_) = check_stream(make_page(42u32, 0u32, 6u8, 0i64, [0u8], []), empty) {
+    return test.fail("empty packets with zero payload limit");
+  }
+  return test.assert_true(expect_error(make_page(42u32, 0u32, 6u8, 1i64, [1u8], [0u8]), empty, pcm.Limit));
+}
+
+function invalid_limits(): test.TestOutcome {
+  let cases = [ogg.Limits { max_streams: 0, max_packet_bytes: 1, max_pending_bytes: 1 }, ogg.Limits { max_streams: 257, max_packet_bytes: 1, max_pending_bytes: 1 }, ogg.Limits { max_streams: 1, max_packet_bytes: -1, max_pending_bytes: 1 }, ogg.Limits { max_streams: 1, max_packet_bytes: 2, max_pending_bytes: 1 }];
+  for limits in cases {
+    match (ogg.decoder(limits)) {
+      Err(pcm.Limit) => {},
+      _ => {
+        return test.fail("invalid decoder limits");
+      }
+    }
+  }
+  let Ok(state) = ogg.decoder(ogg.default_limits()) else {
+    return test.fail("decoder creation");
+  };
+  state = ogg.Decoder { ...state, offset: 9223372036854775800i64 };
+  match (state.feed(make_page(42u32, 0u32, 6u8, 0i64, [], []))) {
+    Err(pcm.Limit) => {},
+    _ => {
+      return test.fail("byte offset overflow");
+    }
+  }
+  return test.pass();
+}
+
+function sequence_wrap(): test.TestOutcome {
+  let Ok(state) = ogg.decoder(ogg.default_limits()) else {
+    return test.fail("decoder creation");
+  };
+  let Ok((empty, used, event)) = state.feed([]) else {
+    return test.fail("empty input");
+  };
+  if (used != 0) {
+    return test.fail("empty input consumes no bytes");
+  }
+  if let Some(_) = event {
+    return test.fail("empty input emits no page");
+  }
+  let Ok((started, _, _)) = empty.feed(make_page(42u32, 0u32, 2u8, 0i64, [], [])) else {
+    return test.fail("BOS page");
+  };
+  started = ogg.Decoder { ...started, streams: [ogg.Stream { ...started.streams[0], next_sequence: 4294967295u32 }] };
+  let Ok((wrapped, _, _)) = started.feed(make_page(42u32, 4294967295u32, 0u8, 0i64, [], [])) else {
+    return test.fail("last sequence before wrap");
+  };
+  let Ok((done, _, _)) = wrapped.feed(make_page(42u32, 0u32, 4u8, 0i64, [], [])) else {
+    return test.fail("sequence wraps to zero");
+  };
+  return complete(done, 3, 3);
+}
+
+function main(): i32 {
+  let runner = test.new("incremental Ogg against libogg");
+  runner = runner.it("pages, lacing, continuation, multiplexed streams, and chains", references);
+  runner = runner.it("headers, checksums, and every truncated page prefix", headers);
+  runner = runner.it("stream start, sequence, and continuation rules", stream_rules);
+  runner = runner.it("continued packets and exact multiples of 255 bytes", continuation);
+  runner = runner.it("packet, stream, and aggregate memory limits", limits);
+  runner = runner.it("invalid limits and byte offset overflow", invalid_limits);
+  runner = runner.it("empty input and sequence number wrap", sequence_wrap);
+  return runner.finish();
+}

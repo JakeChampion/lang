@@ -41,6 +41,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Under `-sanitize`, a use after free, a double free and a leak are reported | `TestX86_64SanitizeUseAfterFreeReported`, `TestX86_64SanitizeDoubleFreeReported`, `TestX86_64SanitizeLeakVerdict` and their arm64 rows | x86, arm64 |
 | Under `-sanitize`, a raw write up to 16 bytes past a raw block is reported at the block's free | `TestSelfHostQuarantinePolicy` | x86, arm64 |
 | `crypto.erase` zeroes a secret before its block is reused | `TestSelfHostEraseZeroesStorage` | x86, arm64 |
+| HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, X25519 and Ed25519 leave no copy of the key material they used in the arena, and an erased `aes_gcm.Key` or `ed25519.PrivateKey` leaves zeros | `TestSelfHostPrimitivesEraseKeyMaterial` | x86, arm64 |
 | `-heap-limit` bounds the arena, and a program past it exits 125 | `TestSelfHostHeapLimit` | x86, arm64 |
 
 ## Stack, control flow and the image
@@ -67,6 +68,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | A temporary name comes from kernel entropy, and no descriptor leaks to a child | `TestSelfHostTempFiles` | x86, arm64 |
 | A JSON document deeper than 128 levels, an invalid UTF-8 sequence and a format width past one million are refused or saturated | `tests/stdlib/parse_limits_test.fern` | x86, arm64, oracle |
 | A sandboxed program cannot gain privilege through a setuid helper, and a system call outside the allowlist is `SIGSYS` | `TestSeccompNoNewPrivsBlocksSetuidEscalation`, `TestSeccompFilterDenies` | x86, native arm64 |
+| A sandboxed program cannot open a socket outside `AF_UNIX`, `AF_INET` and `AF_INET6`, reach a foreign `ioctl` request, `setsockopt` level or `prctl` option, or make a namespace through `clone` | `TestSeccompDeniesArguments`, `TestSelfHostSandboxFilterShape` | x86, native arm64 |
 | `std/mitigations` reports hardware mitigations from the kernel's records only | `TestSelfHostMitigationsReport` | x86, arm64 |
 
 ## Toolchain and packages

@@ -2,6 +2,9 @@
 
 This module decodes CELT frames (RFC 6716, section 4.3). It is a port of the float build of `celt_decoder.c` from libopus 1.4, with the parts of `celt.c` and `bands.c` that the decoder uses.
 
+Loss recovery, overlap handling, and transform tables follow libopus commit `22244de5a79bd1d6d623c32e72bf1954b56235be`.
+The reference generator checks all sample bits and final ranges against that decoder.
+
 ## Model
 
 A `Decoder` keeps the state between frames: the energy of each band, the synthesis memory of each channel, the pitch postfilter, and the de-emphasis filter. Each call to `decode` reads one frame from a range decoder and gives its samples.
@@ -15,7 +18,7 @@ The Opus layer can set some values for each frame: the number of channels in the
 - `decoder` takes a sample rate of 48000, 24000, 16000, 12000 or 8000, and 1 or 2 channels. At a rate below 48000, the decoder keeps one sample in each `48000 / rate`.
 - `Frame.frame_size` is the number of samples at the sample rate of the decoder.
 - The packet of a frame has at most 1275 bytes. A packet of 0 or 1 byte is a lost frame, and the decoder conceals it.
-- The samples are f32 values in the range -1 to 1, and the channels are interleaved.
+- The samples are interleaved f32 values. Output can exceed -1 to 1. Clip at the device conversion boundary.
 - The arithmetic is in f32, in the same order as libopus, so the results are the same bits. The decoder calls `exp` and `sqrt` of `std/f64` where libopus calls the C library.
 
 ## Module assembly
@@ -141,6 +144,7 @@ pub struct Decoder {
   last_pitch_index: i32,
   loss_duration: i32,
   skip_plc: boolean,
+  fold_overlap: boolean,
   postfilter_period: i32,
   postfilter_period_old: i32,
   postfilter_gain: f32,
@@ -200,7 +204,7 @@ pub function decoder(rate: i32, channels: i32): Result[Decoder, CeltError] {
 
 function reset(channels: i32, downsample: i32): Decoder {
   let bands = 2 * modes.BANDS;
-  return Decoder { channels: channels, downsample: downsample, disable_inv: channels == 1, rng: 0u32, error: false, last_pitch_index: 0, loss_duration: 0, skip_plc: true, postfilter_period: 0, postfilter_period_old: 0, postfilter_gain: 0.0f32, postfilter_gain_old: 0.0f32, postfilter_tapset: 0, postfilter_tapset_old: 0, preemph_mem: filled(2, 0.0f32), mem: filled(channels * MEM, 0.0f32), lpc: filled(channels * LPC_ORDER, 0.0f32), old_band_e: filled(bands, 0.0f32), old_log_e: filled(bands, NO_ENERGY), old_log_e2: filled(bands, NO_ENERGY), background_log_e: filled(bands, 0.0f32) };
+  return Decoder { channels: channels, downsample: downsample, disable_inv: channels == 1, rng: 0u32, error: false, last_pitch_index: 0, loss_duration: 0, skip_plc: true, fold_overlap: false, postfilter_period: 0, postfilter_period_old: 0, postfilter_gain: 0.0f32, postfilter_gain_old: 0.0f32, postfilter_tapset: 0, postfilter_tapset_old: 0, preemph_mem: filled(2, 0.0f32), mem: filled(channels * MEM, 0.0f32), lpc: filled(channels * LPC_ORDER, 0.0f32), old_band_e: filled(bands, 0.0f32), old_log_e: filled(bands, NO_ENERGY), old_log_e2: filled(bands, NO_ENERGY), background_log_e: filled(bands, 0.0f32) };
 }
 
 // The decoder of `st` in the state of a new decoder.
@@ -634,6 +638,9 @@ function inverse(freq: [f32], own mem: f32[], at: i32, s: Synthesis): f32[] {
 function synthesis(own st: Decoder, x: [f32], y: [f32], s: Synthesis): Decoder {
   let m = 1 << s.lm;
   let n = modes.SHORT_MDCT_SIZE << s.lm;
+  if (st.fold_overlap) {
+    st = fold_overlap(st, n);
+  }
   let syn = DECODE_BUFFER_SIZE - n;
   let freq = denormalise_bands(x, st.old_band_e, 0, s.start, s.end, m, st.downsample, s.silence);
   if (st.channels == 1 && s.channels == 2) {
@@ -679,7 +686,9 @@ function deemphasis(own st: Decoder, n: i32): (Decoder, f32[]) {
 
 A lost frame continues the signal. For the first frames of a loss, the decoder finds the pitch period of the last output. It repeats the last period of the prediction error with a decay. Then the prediction filter makes a signal of that error. The energy of the result is at most the energy of the period that it repeats. The comb filter of the last frame and a mirror of the overlap let the next frame blend in.
 
-The decoder makes noise at the energy of each band in three cases. These are a loss of 100 ms or more, a loss at the start of a stream, and a hybrid frame. A loss can start with a hybrid frame and continue with a CELT frame. Then the decoder has no pitch period, and it also makes noise. In that case libopus reads past the end of its excitation buffer.
+The decoder makes noise after a loss of 100 ms, at stream startup, or in a hybrid frame.
+A loss can start with a hybrid frame and continue with a CELT frame.
+The decoder continues with noise until two consecutive packets restore its pitch history.
 
 In the noise, the energy falls by 1.5 dB in the first lost frame, and by 0.5 dB in each frame after it. It does not fall below the background noise.
 
@@ -747,7 +756,9 @@ function conceal_noise(own st: Decoder, f: Frame, lm: i32): Decoder {
     y = noise_bands(x.seed, f.start, eff_end, lm);
   }
   let syn = Synthesis { start: f.start, end: eff_end, channels: st.channels, transient: false, lm: lm, silence: false };
-  return synthesis(Decoder { ...st, mem: mem, rng: y.seed, old_band_e: old }, x.x, y.x, syn);
+  let parameters = Postfilter { pitch: st.postfilter_period, gain: st.postfilter_gain, tapset: st.postfilter_tapset };
+  let decoded = synthesis(Decoder { ...st, mem: mem, rng: y.seed, old_band_e: old }, x.x, y.x, syn);
+  return Decoder { ...apply_postfilter(decoded, parameters, lm), skip_plc: true, fold_overlap: false };
 }
 
 // The prediction error of the last `MAX_PERIOD` samples of one channel, from
@@ -826,8 +837,8 @@ function limit_energy(own buf: f32[], at: i32, len: i32, s1: f32): f32[] {
 
 // The comb filter of the last frame, applied in the opposite sense to the
 // overlap, then the mirror of the overlap for the next frame.
-function blend_overlap(own buf: f32[], at: i32, st: Decoder): f32[] {
-  let x = at + DECODE_BUFFER_SIZE;
+function blend_overlap(own buf: f32[], at: i32, n: i32, st: Decoder): f32[] {
+  let x = at + DECODE_BUFFER_SIZE - n;
   let etmp: f32[] = [];
   let g = -st.postfilter_gain;
   let t = st.postfilter_period;
@@ -849,6 +860,14 @@ function blend_overlap(own buf: f32[], at: i32, st: Decoder): f32[] {
     buf = buf.with(x + i, modes.WINDOW[i] * etmp[modes.OVERLAP - 1 - i] + modes.WINDOW[modes.OVERLAP - i - 1] * etmp[i]);
   }
   return buf;
+}
+
+function fold_overlap(own st: Decoder, n: i32): Decoder {
+  let mem = st.mem;
+  for c in 0..st.channels {
+    mem = blend_overlap(mem, c * MEM, n, st);
+  }
+  return Decoder { ...st, mem: mem };
 }
 
 // One channel of the pitch-based concealment.
@@ -887,7 +906,6 @@ function conceal_channel(own st: Decoder, c: i32, n: i32, pitch_index: i32, fade
     buf = buf.with(at + DECODE_BUFFER_SIZE - n + i, out.y[i]);
   }
   buf = limit_energy(buf, at + DECODE_BUFFER_SIZE - n, len, s1);
-  buf = blend_overlap(buf, at, st);
   let lpc = st.lpc;
   for i in 0..LPC_ORDER {
     lpc = lpc.with(c * LPC_ORDER + i, e.lpc[i]);
@@ -915,7 +933,7 @@ function conceal(own st: Decoder, f: Frame, lm: i32): Decoder {
   for c in 0..st.channels {
     out = conceal_channel(out, c, n, pitch_index, fade);
   }
-  return Decoder { ...out, loss_duration: duration };
+  return Decoder { ...out, loss_duration: duration, fold_overlap: true };
 }
 ```
 
@@ -1027,7 +1045,7 @@ function keep_energy(own st: Decoder, channels: i32, transient: boolean, m: i32,
 
 // The pitch postfilter of each channel, from the filter of the last frame to
 // the filter of this frame.
-function apply_postfilter(own st: Decoder, h: Header, lm: i32): Decoder {
+function apply_postfilter(own st: Decoder, h: Postfilter, lm: i32): Decoder {
   let n = modes.SHORT_MDCT_SIZE << lm;
   let period = st.postfilter_period;
   let period_old = st.postfilter_period_old;
@@ -1055,7 +1073,7 @@ function apply_postfilter(own st: Decoder, h: Header, lm: i32): Decoder {
 function age(own mem: f32[], channels: i32, n: i32): f32[] {
   for c in 0..channels {
     let at = c * MEM;
-    for i in 0..DECODE_BUFFER_SIZE - n + modes.OVERLAP / 2 {
+    for i in 0..DECODE_BUFFER_SIZE - n + modes.OVERLAP {
       mem = mem.with(at + i, mem[at + i + n]);
     }
   }
@@ -1063,6 +1081,36 @@ function age(own mem: f32[], channels: i32, n: i32): f32[] {
 }
 
 struct Shapes { d: range.Decoder, st: Decoder, h: Header, x: f32[], y: f32[] }
+
+function recovery_energy(st: Decoder, own old: f32[], f: Frame, lm: i32, intra: boolean): f32[] {
+  if (intra || st.loss_duration == 0) {
+    return old;
+  }
+  let missing = st.loss_duration >> lm;
+  if (missing > 10) {
+    missing = 10;
+  }
+  let safety = if (lm == 0) { 1.5f32 } else if (lm == 1) { 0.5f32 } else { 0.0f32 };
+  for c in 0..f.stream_channels {
+    for i in f.start..f.end {
+      let at = c * modes.BANDS + i;
+      let current = old[at];
+      let first = st.old_log_e[at];
+      let second = st.old_log_e2[at];
+      if (current < max16(first, second)) {
+        let slope = max16(first - current, 0.5f32 * (second - current));
+        if (slope > 2.0f32) {
+          slope = 2.0f32;
+        }
+        current = max16(-20.0f32, current - max16(0.0f32, (1 + missing) as f32 * slope));
+      } else {
+        current = min16(min16(current, first), second);
+      }
+      old = old.with(at, current - safety);
+    }
+  }
+  return old;
+}
 
 // The frame up to its band shapes and energies.
 // fern-lint: allow cyclomatic-complexity
@@ -1079,6 +1127,7 @@ function shapes(own st: Decoder, own d0: range.Decoder, len: i32, f: Frame, lm: 
   }
   let total_bits = len * 8;
   let (d1, h) = header(d0, total_bits, f.start, lm);
+  old = recovery_energy(st, old, f, lm, h.intra);
   let (d2, old1) = energy.unquant_coarse_energy(d1, f.start, f.end, old, h.intra, c, lm);
   let (d3, tf_res) = tf_decode(d2, f.start, f.end, h.transient, lm);
   let spread = vq.SPREAD_NORMAL;
@@ -1161,13 +1210,14 @@ pub function (own st: Decoder) decode_with(own d: range.Decoder, len: i32, f: Fr
     let (st0, pcm0) = deemphasis(conceal(st, f, lm), n);
     return (st0, Ok(pcm0));
   }
-  let skip = st.loss_duration != 0;
+  let skip = st.skip_plc && st.loss_duration != 0;
   let s = shapes(Decoder { ...st, skip_plc: skip }, d, len, f, lm);
   let h = s.h;
   let syn = Synthesis { start: f.start, end: f.end, channels: f.stream_channels, transient: h.transient, lm: lm, silence: h.silence };
-  let st1 = apply_postfilter(synthesis(s.st, s.x, s.y, syn), h, lm);
+  let parameters = Postfilter { pitch: h.pitch, gain: h.gain, tapset: h.tapset };
+  let st1 = apply_postfilter(synthesis(s.st, s.x, s.y, syn), parameters, lm);
   let st2 = keep_energy(st1, f.stream_channels, h.transient, 1 << lm, f.start, f.end);
-  let (st3, pcm) = deemphasis(Decoder { ...st2, rng: s.d.rng, loss_duration: 0 }, n);
+  let (st3, pcm) = deemphasis(Decoder { ...st2, rng: s.d.rng, loss_duration: 0, fold_overlap: false }, n);
   if (s.d.tell() > 8 * len) {
     return (st3, Err(InternalError));
   }

@@ -3953,7 +3953,7 @@ function exiting(name: string, v: Value): Value {
 
 function lane_memory_call(name: string, c: ast.ExprCall): boolean {
   let verb = typeinfo.lane_builtin_verb(name);
-  return verb == "load" && c.args.len() == 2 || verb == "with" && c.args.len() == 3;
+  return (verb == "load" || verb == "load_bytes") && c.args.len() == 2 || (verb == "with" || verb == "with_bytes") && c.args.len() == 3;
 }
 
 function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
@@ -3969,15 +3969,17 @@ function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
   if (!at.s.ok || !is_i32(at.s.values[at.id])) {
     return refused(at.s, "lane index type");
   }
-  if (typeinfo.lane_builtin_verb(name) == "load") {
-    return define(at.s, ssasem.array_get(), [xs.id, at.id], 0, "", typeinfo.lane_builtin_result(name));
+  let verb = typeinfo.lane_builtin_verb(name);
+  let marker = if (verb == "load_bytes" || verb == "with_bytes") { "lane_bytes" } else { "" };
+  if (verb == "load" || verb == "load_bytes") {
+    return define(at.s, ssasem.array_get(), [xs.id, at.id], 0, marker, typeinfo.lane_builtin_result(name));
   }
   let lt = typeinfo.lane_builtin_params(name)[2];
   let v = expr(c.args[2], at.s, lt);
   if (!v.s.ok || !semtypes.equal(v.s.values[v.id], lt)) {
     return refused(v.s, "lane value type");
   }
-  return define(v.s, ssasem.with(), [xs.id, at.id, v.id], 0, "", arr);
+  return define(v.s, ssasem.with(), [xs.id, at.id, v.id], 0, marker, arr);
 }
 
 function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State, written: ssasem.Binding, seed: ssasem.Binding): Value {
@@ -7770,10 +7772,10 @@ function lane_contracts(): ssasem.Contract[] {
   let names: string[] = [
     "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
-    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
+    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr",
     "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
-    "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
+    "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
   ];
   let out: ssasem.Contract[] = [];
   for n in names {
@@ -7788,10 +7790,10 @@ function lane_contracts(): ssasem.Contract[] {
 }
 
 function lane_param_mode(name: string, at: i32): i32 {
-  if (at == 0 && typeinfo.lane_builtin_verb(name) == "with") {
+  if (at == 0 && (typeinfo.lane_builtin_verb(name) == "with" || typeinfo.lane_builtin_verb(name) == "with_bytes")) {
     return ssaunits.counted_mode();
   }
-  if (at == 0 && typeinfo.lane_builtin_verb(name) == "load") {
+  if (at == 0 && (typeinfo.lane_builtin_verb(name) == "load" || typeinfo.lane_builtin_verb(name) == "load_bytes")) {
     return ssaunits.borrow_mode();
   }
   return ssaunits.value_mode();

@@ -172,6 +172,11 @@ the whole suite runs in ~5 seconds.
    known-gaps list: if the grammar stops deriving something, the answer
    is to fix the grammar.
 
+   The corpus includes `.fern` files and programs from `.fern.md` documents.
+   The literate reader expands root chunks and each output of a multi-module document.
+   Display examples without a program root do not define modules.
+   A failure names the source document and, where applicable, its output module.
+
 3. **Rule coverage** — every rule must be exercised by some real
    program. This is the check that matters most for a *normative*
    document, and it is the one that is easy to leave out. The first

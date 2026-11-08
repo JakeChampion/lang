@@ -446,6 +446,11 @@ pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] 
   }
   return Ok(PrivateKey { curve: curve, d: __copy(d) });
 }
+
+// Zeroes the scalar before its release. The key is consumed.
+pub function (own key: PrivateKey) erase(): void {
+  crypto.erase(key.d);
+}
 ```
 
 ### `16 function __scalar_ok(curve: Curve, d: [u8]): boolean`
@@ -553,9 +558,12 @@ function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64,
       __ct_public(rs.0);
       __ct_public(rs.1);
       if (!__all_zero(rs.0) && !__all_zero(rs.1)) {
+        crypto.erase(k);
+        __drbg_erase(drbg);
         return __der(rs.0, rs.1);
       }
     }
+    crypto.erase(k);
     drbg = __drbg_reseed(drbg);
   }
   return [];
@@ -735,39 +743,61 @@ function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
   return out;
 }
 
+// The DRBG's key, its value and every message it feeds the MAC carry the private
+// key or the nonce, so each one is zeroed as soon as its successor exists.
 function __drbg_new(h: sha2.Hash, x: [u8], h1: [u8]): Drbg {
   let size = h.size();
-  let v: u8[] = [];
-  let k: u8[] = [];
+  let v0: u8[] = [];
+  let k0: u8[] = [];
   let i = 0;
   while (i < size) {
-    v = v.append(1 as u8);
-    k = k.append(0 as u8);
+    v0 = v0.append(1 as u8);
+    k0 = k0.append(0 as u8);
     i += 1;
   }
-  k = __mac(h, k, __cat3(v, 0, x, h1));
-  v = __mac(h, k, v);
-  k = __mac(h, k, __cat3(v, 1, x, h1));
-  v = __mac(h, k, v);
-  return Drbg { hash: h, k: k, v: v };
+  let m0 = __cat3(v0, 0, x, h1);
+  let k1 = __mac(h, k0, m0);
+  crypto.erase(m0);
+  let v1 = __mac(h, k1, v0);
+  let m1 = __cat3(v1, 1, x, h1);
+  let k2 = __mac(h, k1, m1);
+  crypto.erase(m1);
+  crypto.erase(k1);
+  let v2 = __mac(h, k2, v1);
+  crypto.erase(v1);
+  return Drbg { hash: h, k: k2, v: v2 };
 }
 
-function __drbg_next(g: Drbg, bytes: i32): (Drbg, u8[]) {
-  let v = g.v;
+function __drbg_next(own g: Drbg, bytes: i32): (Drbg, u8[]) {
+  let Drbg { hash, k, v } = g;
   let t: u8[] = [];
   while (t.len() < bytes) {
-    v = __mac(g.hash, g.k, v);
+    let nv = __mac(hash, k, v);
+    crypto.erase(v);
+    v = nv;
     for x in v {
       if (t.len() < bytes) {
         t = t.append(x);
       }
     }
   }
-  return (Drbg { ...g, v: v }, t);
+  return (Drbg { hash: hash, k: k, v: v }, t);
 }
 
-function __drbg_reseed(g: Drbg): Drbg {
-  let k = __mac(g.hash, g.k, __cat3(g.v, 0, [], []));
-  return Drbg { ...g, k: k, v: __mac(g.hash, k, g.v) };
+function __drbg_reseed(own g: Drbg): Drbg {
+  let Drbg { hash, k, v } = g;
+  let m = __cat3(v, 0, [], []);
+  let nk = __mac(hash, k, m);
+  crypto.erase(m);
+  crypto.erase(k);
+  let nv = __mac(hash, nk, v);
+  crypto.erase(v);
+  return Drbg { hash: hash, k: nk, v: nv };
+}
+
+function __drbg_erase(own g: Drbg): void {
+  let Drbg { hash: _, k, v } = g;
+  crypto.erase(k);
+  crypto.erase(v);
 }
 ```

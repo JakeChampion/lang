@@ -4407,6 +4407,9 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   let sh = wasm_lane_shape(o.width);
   let vtmp = util.i32_to_string(cx.base + 5);
   let vtmp2 = util.i32_to_string(cx.base + 6);
+  if (k == "vpack") {
+    return "    local.set " + vtmp + "\n    f32x4.demote_f64x2_zero\n    local.get " + vtmp + "\n    f32x4.demote_f64x2_zero\n    f64x2.extract_lane 0\n    f64x2.replace_lane 1\n";
+  }
   if (k == "vsplat") {
     if (o.width == 32) {
       return "    f32.demote_f64\n    f32x4.splat\n";
@@ -4434,12 +4437,12 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     return emit_wasm_lane_round(o.width, sh, vtmp, vtmp2);
   }
   if (util.has_str(["vget", "vset"], k)) {
-    return emit_wasm_lane_group(o.width, cx.base, k == "vset");
+    return emit_wasm_lane_group(o.width, cx.base, k == "vset", o.unsigned);
   }
   return "    " + wasm_lane_verb(k, sh) + "\n";
 }
 
-function emit_wasm_lane_group(width: i32, base: i32, set: boolean): string {
+function emit_wasm_lane_group(width: i32, base: i32, set: boolean, packed: boolean): string {
   let arr = util.i32_to_string(base);
   let at = "    local.get " + util.i32_to_string(base + 4) + "\n";
   let v = "    local.get " + util.i32_to_string(base + 5) + "\n";
@@ -4448,6 +4451,14 @@ function emit_wasm_lane_group(width: i32, base: i32, set: boolean): string {
     out = "    local.set " + util.i32_to_string(base + 5) + "\n";
   }
   out = out + "    local.set " + util.i32_to_string(base + 4) + "\n" + wasm_arr_index_trap(base, base + 4, "arr");
+  if (packed) {
+    out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.sub\n    i32.const 16\n    i32.lt_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
+    out = out + "    local.get " + arr + "\n" + at + "    i32.add\n    i32.const 8\n    i32.add\n";
+    if (set) {
+      return out + v + "    v128.store\n";
+    }
+    return out + "    v128.load\n";
+  }
   out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
   out = out + "    local.get " + arr + "\n" + at + "    i32.const 8\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
   let hi = at + "    i32.const 16\n    i32.add\n";

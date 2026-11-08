@@ -1,11 +1,12 @@
 import "std/hash/crc32";
 import "std/opus/mdct";
 import "std/test";
+import "opus_kernel_vectors";
 
 // Each script runs the forward MDCT of a random block at a random size,
 // stride and offset, then the inverse MDCT of the result over a random
 // synthesis buffer, then the FFT of random complex values. The trace holds
-// the bits of each value. libopus 1.4, in its float build, gave the CRC-32 of
+// the bits of each value. the pinned libopus float build, gave the CRC-32 of
 // each trace, from a C program that makes the same calls.
 
 struct Gen { x: u32 }
@@ -91,11 +92,11 @@ function trace(seed: u32, cases: i32): u32 {
 }
 
 function test_short_script(): test.TestOutcome {
-  return test.assert_eq(trace(1u32, 12), 4174967540u32);
+  return test.assert_eq(trace(1u32, 12), opus_kernel_vectors.MDCT_SHORT);
 }
 
 function test_long_script(): test.TestOutcome {
-  return test.assert_eq(trace(2u32, 100), 3191413574u32);
+  return test.assert_eq(trace(2u32, 100), opus_kernel_vectors.MDCT_LONG);
 }
 
 function main(): i32 {

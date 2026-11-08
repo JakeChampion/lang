@@ -285,6 +285,74 @@ func (i *Interp) registerLaneBuiltins() {
 			}
 			return out, nil
 		}}
+		i.Builtins[p+"load_ptr"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("vector load requires an address")
+			}
+			address, ok := args[0].(Number)
+			if !ok {
+				return nil, fmt.Errorf("vector load requires an address")
+			}
+			bytes, err := ip.raw.span(p+"load_ptr", int64(address), 16)
+			if err != nil {
+				return nil, err
+			}
+			out := Lanes{Width: width, Bits: make([]uint64, lanes)}
+			for k := 0; k < 16; k++ {
+				out.Bits[k/(width/8)] |= uint64(bytes[k]) << ((k % (width / 8)) * 8)
+			}
+			return out, nil
+		}}
+		i.Builtins[p+"store"] = &Builtin{Fn: func(ip *Interp, args []Value) (Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("vector store requires an address and lanes")
+			}
+			address, ok := args[0].(Number)
+			l, valid := args[1].(Lanes)
+			if !ok || !valid || l.Width != width {
+				return nil, fmt.Errorf("vector store requires matching lanes")
+			}
+			bytes, err := ip.raw.span(p+"store", int64(address), 16)
+			if err != nil {
+				return nil, err
+			}
+			for k := 0; k < 16; k++ {
+				bytes[k] = byte(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8))
+			}
+			return Void{}, nil
+		}}
+
+		i.Builtins[p+"load_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			a, at, err := laneWindow(p+"load_bytes", args[0], args[1], 16)
+			if err != nil {
+				return nil, err
+			}
+			out := Lanes{Width: width, Bits: make([]uint64, lanes)}
+			for k := 0; k < 16; k++ {
+				n, ok := a.Elems()[at+k].(Number)
+				if !ok {
+					return nil, fmt.Errorf("packed lane load requires bytes")
+				}
+				out.Bits[k/(width/8)] |= uint64(uint8(n)) << ((k % (width / 8)) * 8)
+			}
+			return out, nil
+		}}
+		i.Builtins[p+"with_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			a, at, err := laneWindow(p+"with_bytes", args[0], args[1], 16)
+			if err != nil {
+				return nil, err
+			}
+			l, ok := args[2].(Lanes)
+			if !ok || l.Width != width {
+				return nil, fmt.Errorf("packed lane store requires matching lanes")
+			}
+			e := append([]Value(nil), a.Elems()...)
+			for k := 0; k < 16; k++ {
+				e[at+k] = Number(uint8(l.Bits[k/(width/8)] >> ((k % (width / 8)) * 8)))
+			}
+			return arrayOf(e...), nil
+		}}
+
 		i.Builtins[p+"with"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			if len(args) != 3 {
 				return nil, fmt.Errorf("%swith: expected 3 args, got %d", p, len(args))
@@ -305,6 +373,17 @@ func (i *Interp) registerLaneBuiltins() {
 			return arrayOf(e...), nil
 		}}
 	}
+	i.Builtins["__f32x4_pack"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		ls, err := laneArgs("pack", args, 2)
+		if err != nil {
+			return nil, err
+		}
+		out := Lanes{Width: 32, Bits: make([]uint64, 4)}
+		for k := 0; k < 4; k++ {
+			out.Bits[k] = laneBits(32, ls[k/2].lane(k%2).V)
+		}
+		return out, nil
+	}}
 }
 
 func pickLanes(a, b Lanes, takeB func(a, b float64) bool) Lanes {

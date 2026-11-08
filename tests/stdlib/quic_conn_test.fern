@@ -638,6 +638,31 @@ function updated_ack(p: Pair, datagrams: u8[][]): boolean {
   return false;
 }
 
+function peer_frame(p: Pair, payload: u8[]): u8[] {
+  let Some(k) = p.client.spaces[2].send else {
+    return [];
+  };
+  return packet.seal_short(server_of(p).scid, p.client.spaces[2].next_pn, 2, false, false, payload, k);
+}
+
+function refused_by_server(payload: u8[]): string {
+  let (cc, sc) = stream_configs();
+  let Ok(p0) = start(cc, sc) else {
+    return "start failed; ";
+  };
+  let p = settle(p0, 12, 10000 * MS);
+  let step = server_of(p).receive(peer_frame(p, payload), at_ns(p.now));
+  return noted("server", step);
+}
+
+function test_refused_frames(): test.TestOutcome {
+  let out = refused_by_server(frames.encode(frames.RetireConnectionId(100000 as i64)));
+  out += refused_by_server(frames.encode(frames.RetireConnectionId(0 as i64)));
+  out += refused_by_server(frames.encode(frames.Crypto(100000000 as i64, [120u8])));
+  out += refused_by_server(frames.encode(frames.Crypto(0 as i64, [24u8, 0u8, 0u8, 1u8, 1u8])));
+  return test.assert_eq(out, "server closed local 10 RETIRE_CONNECTION_ID for a sequence number never issued; server closed local 13 CRYPTO data past what this side holds out of order; server closed local 266 tls handshake: unexpected handshake message 24; ");
+}
+
 function test_peer_key_update_ack(): test.TestOutcome {
   let (cc, sc) = stream_configs();
   let Ok(p0) = start(cc, sc) else {
@@ -889,6 +914,7 @@ function main(): i32 {
   r = r.it("the cumulative authentication limit closes the connection", test_key_authentication_limit);
   r = r.it("the encryption limit rotates or closes before overuse", test_key_encryption_limit);
   r = r.it("the ChaCha authentication limit is cumulative", test_chacha_authentication_limit);
+  r = r.it("frames a server refuses in 1-RTT", test_refused_frames);
   return r.finish();
 }
 

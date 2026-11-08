@@ -54,6 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "std/crypto";
 import "std/crypto/aead";
 ```
 
@@ -274,6 +275,7 @@ function __xor_block(own out: u8[], at: i32, len: i32, k0: u32, k1: u32, k2: u32
     out = out.with(at + i, out[at + i] ^ (w & 255) as u8);
     i += 1;
   }
+  crypto.erase(ks);
   return out;
 }
 ```
@@ -512,7 +514,12 @@ function __aead_tag(k: Stream, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
   lens = __put_le32(lens, 8, len as u32);
   lens = __put_le32(lens, 12, 0);
   p = __poly_blocks(p, lens, 0, 16, false);
-  return __poly_finish(p, __le32(otk, 16), __le32(otk, 20), __le32(otk, 24), __le32(otk, 28));
+  let s0 = __le32(otk, 16);
+  let s1 = __le32(otk, 20);
+  let s2 = __le32(otk, 24);
+  let s3 = __le32(otk, 28);
+  crypto.erase(otk);
+  return __poly_finish(p, s0, s1, s2, s3);
 }
 ```
 

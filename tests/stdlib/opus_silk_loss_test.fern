@@ -1,0 +1,66 @@
+import "std/hash/crc32";
+import "std/opus/range";
+import "std/opus/silk";
+import "std/test";
+import "opus_silk_loss_vectors";
+
+function references(): test.TestOutcome {
+  let rows = opus_silk_loss_vectors.PACKETS;
+  let state = silk.decoder();
+  let at = 0;
+  let step = 0;
+  while (at < rows.len()) {
+    if (step % 9 == 0) {
+      state = silk.decoder();
+    }
+    let rate = rows[at];
+    let channels = rows[at + 1];
+    let duration = rows[at + 2];
+    let stream = rows[at + 3];
+    let lost = rows[at + 4] == 1;
+    let size = rows[at + 5];
+    let bytes: u8[] = [];
+    for i in 0..size {
+      bytes = bytes.append(rows[at + 6 + i] as u8);
+    }
+    at += size + 6;
+    let samples: i32[] = [];
+    if (lost) {
+      let (next, output) = match (silk.decode_lost(state, rate, duration, stream, channels)) { Ok(values) => values, Err(_) => { return test.fail("lost frame rejected"); } };
+      state = next;
+      samples = output;
+    } else {
+      let (next, _, output) = match (silk.decode_range(state, range.decoder(bytes), rate, duration, stream, channels)) { Ok(values) => values, Err(_) => { return test.fail("received frame rejected"); } };
+      state = next;
+      samples = output;
+    }
+    let count = rows[at];
+    if (samples.len() != count) {
+      return test.fail("loss output length");
+    }
+    let pcm: u8[] = [];
+    for value in samples {
+      pcm = pcm.append((value & 255) as u8).append((value >> 8 & 255) as u8);
+    }
+    if (crc32.of(pcm) != rows[at + 1] as u32) {
+      return test.fail("loss PCM checksum step " + step.to_string());
+    }
+    if (state.mid.recovery.count != rows[at + 2]) {
+      return test.fail("loss count");
+    }
+    for i in 0..8 {
+      if (samples[i] != rows[at + 3 + i] || samples[count - 8 + i] != rows[at + 11 + i]) {
+        return test.fail("loss boundary samples");
+      }
+    }
+    at += 19;
+    step += 1;
+  }
+  return test.assert_eq(step, 54);
+}
+
+function main(): i32 {
+  let runner = test.new("SILK loss and recovery reference");
+  runner = runner.it("startup, loss bursts, comfort noise, and received recovery", references);
+  return runner.finish();
+}

@@ -851,6 +851,9 @@ pub function (s: string) is_json_like(): boolean {
 ```
 ### `15 pub function (s: string) common_prefix(other: string): string`
 
+`common_prefix` and `common_suffix` return the longest shared sequence of complete UTF-8 scalars at the specified end.
+A shared fragment of a scalar contributes no bytes to the result.
+
 ```fern
 <<15 pub function (s: string) common_prefix(other: string): string>>=
 pub function (s: string) common_prefix(other: string): string {
@@ -880,7 +883,7 @@ pub function (s: string) common_suffix(other: string): string {
   let i = 0;
   while (i < cap) {
     if (s[n - 1 - i] != other[m - 1 - i]) {
-      return s.drop(n - i);
+      return s.drop(__ceil_boundary(s, n - i));
     }
     i += 1;
   }

@@ -322,6 +322,15 @@ function test_in_place_refuses(): test.TestOutcome {
   return test.assert_eq(shown(k.seal_in_place(zeros(8), seq4(), laid4(), 0, 20, 20, 60)), "aead: the nonce is 8 bytes, want 12");
 }
 
+function test_erase_key(): test.TestOutcome {
+  let Ok(k) = aes_gcm.key(__codec_bytes(hex.decode(k3()))) else {
+    return test.fail("a 16-byte key was refused");
+  };
+  let sealed = shown(k.seal(iv3(), p60(), aad3()));
+  k.erase();
+  return test.assert_eq(sealed, sealed4());
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/aes_gcm");
   r = r.it("aes-128 block, FIPS-197 C.1", test_block128);
@@ -345,6 +354,7 @@ function main(): i32 {
   r = r.it("a key prepared once", test_prepared_key);
   r = r.it("seal and open in place, GCM test case 4 under a sequence number", test_in_place);
   r = r.it("open in place refuses a forgery", test_in_place_refuses);
+  r = r.it("erase consumes a prepared key", test_erase_key);
   return r.finish();
 }
 

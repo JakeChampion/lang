@@ -58,10 +58,14 @@ It does not support WAVE_FORMAT_EXTENSIBLE or RF64.
 - `bitstream.fern` selects quantizer zones and emits coefficient commands.
 - `transform.fern` implements DCT-IV through an N/2-point complex FFT and the sine-window transforms.
 - `audio.fern` implements WAV and ULC2 containers.
+- `packed_transform.fern` implements four parallel FFTs with packed float SIMD.
+- `file_decoder.fern` and `file_encoder.fern` manage parallel file operations.
 - `ulc.fern` implements command-line file I/O.
 
 The transform cost is `O(N log N)`.
 Each decoder owns its xorshift seed and overlap buffers.
+Packed float SIMD computes the FFT. Window and overlap operations retain double precision.
+
 Each decoder starts with seed 1234567.
 The reference decoder uses a global seed for the process.
 Different trigonometric functions and operation order cause small sample differences from the reference decoder.
@@ -87,6 +91,19 @@ ULC2 does not store the original sample count.
 File output preserves the initial delay and final padding, as the reference tools do.
 The encoder adds two blocks to the input length after rounding to a complete block.
 The reconstructed input starts two blocks into the decoded audio.
+
+On Linux, the encoder uses up to four workers for files with at least 32 blocks.
+File decode uses workers for at least four blocks and 65,536 samples.
+The CPU affinity limits the default worker count.
+Set `ULC_THREADS=1`, `2`, or `4` to select it explicitly.
+The final decode argument also accepts this count after the output format.
+The serial and parallel paths produce identical bytes.
+
+Encoder workers use exact detector checkpoints and two blocks of overlap preroll.
+Decoder workers use a syntax index, a noise-seed jump, and one block of overlap preroll.
+Linux file decode writes disjoint ranges of one shared mapping.
+All workers join before the mapping leaves the address space.
+Other targets use the serial CLI by default.
 
 The CLI reads complete files into memory.
 ULC2 input and output must be smaller than 1 GiB.
@@ -157,9 +174,13 @@ They check compatibility in both directions.
 They check every window pattern at all eight overlap scales, with noise and silence.
 Python 3 is necessary for the CLI tests.
 The example CI entry point is `examples/tests/ulc_codec.fern`.
+`TestSelfHostULCNativeCLI` runs the CLI integration suite on native CI.
+`TestSelfHostULCCLIWASI` checks the portable CLI build and entry point.
 
 Validation used x86-64 Linux and the compiler from this checkout.
-It also used Fern nightly `e8033eacb25d`.
+WASI unit and CLI tests also pass.
+ARM64 Linux and Darwin builds pass.
+
 The reference version is ulc-codec `b47df8d50c2ef2d765e5dbec0bf567b5e558173a`.
 The reference checkout used its pinned libfourier submodule.
 The maximum FLOAT32 sample difference across all windows was `2.38e-6`.
