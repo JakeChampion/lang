@@ -1,0 +1,30 @@
+import "std/test";
+import "aac_kernel_check" as ref;
+import "alac_check";
+import "alac_vectors";
+
+function references(): test.TestOutcome {
+  for value in alac_vectors.vectors() {
+    let Ok(configuration) = ref.unpack(value.configuration) else {
+      return test.fail("configuration fixture");
+    };
+    let Ok(packets) = ref.unpack(value.packets) else {
+      return test.fail("packet fixture");
+    };
+    let Ok(expected) = ref.unpack(value.pcm) else {
+      return test.fail("PCM fixture");
+    };
+    for reuse in [false, true] {
+      if let Err(e) = alac_check.run(configuration, packets, expected, value.rate, value.channels, value.depth, value.frames, reuse) {
+        return test.fail(value.name + ": " + e);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Independent exact ALAC packet PCM");
+  runner = runner.it("compressed and raw packets, layouts, predictor modes, low bits, and buffer reuse", references);
+  return runner.finish();
+}
