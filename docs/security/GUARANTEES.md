@@ -47,7 +47,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Claim | Test or case | Hosts |
 |---|---|---|
 | Unbounded recursion and a frame larger than the guard report a stack overflow | `TestSelfHostStackOverflow`, `TestSelfHostFrameProbes` | x86, arm64 |
-| A startup call the kernel refuses stops the program before `main` with its cause | `TestSelfHostStackGuardDenial`, `TestSelfHostSignalStackMapDenial`, `TestSelfHostSignalStackDenial`, `TestSelfHostFaultHandlerDenial` | x86, arm64 |
+| A startup call the kernel refuses stops the program before `main` with its cause | `TestSelfHostStackMapDenial`, `TestSelfHostStackGuardDenial`, `TestSelfHostSignalStackMapDenial`, `TestSelfHostSignalStackDenial`, `TestSelfHostFaultHandlerDenial` | x86, arm64 |
 | Under `-harden`, a write over a frame's saved registers reports a canary mismatch | `TestSelfHostStackCanary` | x86, arm64 |
 | Under `-harden`, an indirect call to an address that is not an address-taken function aborts | `TestSelfHostForwardEdgeCFI` | x86, arm64 |
 | Under `-harden`, a call through a typed function value to a function of another signature aborts | `TestSelfHostForwardEdgeCFI` | x86, arm64 |
