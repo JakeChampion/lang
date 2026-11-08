@@ -85,7 +85,8 @@ pub function encode(source: audio.Audio, mode: encoder.Mode, n: i32, threads: i3
   let frames = source.samples.len() / source.channels;
   let blocks = (frames + n - 1) / n + 2;
   if (threads == 1 || blocks < 32 || target_os() != "linux") {
-    return audio.encode_mode(source, mode, n);
+    let encoded = part(source, template, 0, blocks)?;
+    return finish([encoded], source, n, blocks);
   }
   let half = blocks / 2;
   if (threads == 2) {
