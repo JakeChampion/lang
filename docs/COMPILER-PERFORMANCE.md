@@ -1,6 +1,6 @@
 # Compiler performance
 
-Status: [plan] measurement process and priorities, updated 2026-11-07.
+Status: [plan] measurement process and priorities, updated 2026-11-08.
 
 Fern aims to have one of the fastest parsers and self-hosted compilers in the world.
 Correct diagnostics, ownership proofs, and generated code remain requirements.
@@ -65,6 +65,12 @@ It retains the proof rules and computes fresh results for each extracted graph.
 The [fixed-input comparison](benchmarks/compiler-graphs-2026-11-07/README.md) records 45,563 fewer cold allocation events and 13,342,618 fewer warm instructions.
 These are small reductions of 0.0875% and 0.0448%, respectively.
 The wall-time samples do not establish a speedup.
+
+The [inliner comparison](benchmarks/compiler-inliner-2026-11-08/README.md) adds direct mask allocation and cached value classification.
+The combined changes remove 88,545 cold allocation events and 354,975,385 warm instructions from the original fixed checker comparison.
+These reductions are 0.1700% and 1.1925%, respectively, with identical generated output.
+The inliner comparison retains the rejected worklist trial and the direct-allocation control.
+Fresh heap growth remains unchanged relative to the graph-only parent.
 
 ## Priorities
 

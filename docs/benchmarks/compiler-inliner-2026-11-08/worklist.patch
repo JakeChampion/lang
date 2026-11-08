@@ -1,0 +1,55 @@
+diff --git a/compiler/seminline.fern b/compiler/seminline.fern
+index e7146b3102..20527b5cd4 100644
+--- a/compiler/seminline.fern
++++ b/compiler/seminline.fern
+@@ -349,16 +349,43 @@ function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameInd
+     return [];
+   }
+   let read = none_of(f.values.len());
+-  let more = true;
+-  while (more) {
+-    more = false;
+-    for b in f.graph.blocks {
+-      for ins in b.insts {
+-        if (ins.result >= 0 && !read[ins.result] && can_hold_word(f.values[ins.result]) && !copied_load(ins, f) && (memory_read(ins, f, funcs, ix, words, owners) || reads_any(ins.args, read))) {
++  let users = util.minus_ones(f.values.len());
++  let edge_value: i32[] = [];
++  let edge_next: i32[] = [];
++  let queue: i32[] = [];
++  for b in f.graph.blocks {
++    for ins in b.insts {
++      if (ins.result < 0 || !can_hold_word(f.values[ins.result]) || copied_load(ins, f)) {
++        continue;
++      }
++      if (memory_read(ins, f, funcs, ix, words, owners)) {
++        if (!read[ins.result]) {
+           read = read.with(ins.result, true);
+-          more = true;
++          queue = queue.append(ins.result);
+         }
++        continue;
++      }
++      for a in ins.args {
++        if (a >= 0) {
++          let edge = edge_value.len();
++          edge_value = edge_value.append(ins.result);
++          edge_next = edge_next.append(users[a]);
++          users = users.with(a, edge);
++        }
++      }
++    }
++  }
++  let head = 0;
++  while (head < queue.len()) {
++    let edge = users[queue[head]];
++    head += 1;
++    while (edge >= 0) {
++      let value = edge_value[edge];
++      if (!read[value]) {
++        read = read.with(value, true);
++        queue = queue.append(value);
+       }
++      edge = edge_next[edge];
+     }
+   }
+   return read;

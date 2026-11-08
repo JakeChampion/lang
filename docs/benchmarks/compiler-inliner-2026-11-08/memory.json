@@ -1,0 +1,20 @@
+{
+  "parent_allocations": 52050468,
+  "parent_fresh_heap_growth": 562524216,
+  "candidate_allocations": 52007486,
+  "candidate_fresh_heap_growth": 562524216,
+  "assembly_sha256": "e961f3d9f4fdccc89dd5fe756d886d4db0375972c8371db5c156bb7b33a241f5",
+  "compiler_sha256": "ec5a1a82aeb1fb24e4361cef2b52bfe3aa45834fd3fcf976b4d61666f1fdcfca",
+  "command": [
+    "/workspace/lang/build/compiler-profile/fern-stats",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/workspace/lang/build/compiler-profile/stats-checker.s",
+    "/workspace/lang-compiler-baseline/compiler/checker.fern",
+    "/workspace/lang-compiler-baseline/internal/stdlib"
+  ],
+  "executable": "/workspace/lang/build/compiler-profile/fern-flags-stats"
+}
