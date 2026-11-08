@@ -493,3 +493,8 @@ aarch64/utf8_ingest_validated.text	8735
 aarch64/utf8_ingest_validated.ir	6178521
 aarch64/video_qtrle.text	6096
 aarch64/video_qtrle.ir	1669557998
+
+# lane: net-h3spec
+h3spec/passed	85
+h3spec/failed	0
+h3spec/pending	1
