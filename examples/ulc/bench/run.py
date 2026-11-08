@@ -44,13 +44,21 @@ def fixture(path, kind, seconds, channels=2, rate=44100):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def samples(path):
+def samples(path, output_format="FLOAT32"):
     data = path.read_bytes()
     at = 12
     while at + 8 <= len(data):
         tag, size = struct.unpack_from("<4sI", data, at)
         if tag == b"data":
-            return struct.unpack(f"<{size // 4}f", data[at + 8:at + 8 + size])
+            payload = data[at + 8:at + 8 + size]
+            if output_format == "PCM8":
+                return tuple((value - 128) / 128 for value in payload)
+            if output_format == "PCM16":
+                return tuple(value / 32768 for value in struct.unpack(f"<{size // 2}h", payload))
+            if output_format == "PCM24":
+                return tuple(int.from_bytes(payload[i:i + 3], "little", signed=True) / 8388608
+                             for i in range(0, size, 3))
+            return struct.unpack(f"<{size // 4}f", payload)
         at += 8 + size + size % 2
     raise ValueError("WAV data missing")
 
@@ -73,6 +81,8 @@ def main():
     parser.add_argument("--channels", type=int, default=2)
     parser.add_argument("--sample-rate", type=int, default=44100)
     parser.add_argument("--quality", type=float, default=75)
+    parser.add_argument("--output-format", choices=("PCM8", "PCM16", "PCM24", "FLOAT32"), default="FLOAT32")
+    parser.add_argument("--direction", choices=("encode", "decode", "both"), default="both")
     args = parser.parse_args()
     if args.seconds <= 0 or args.repetitions < 3:
         parser.error("use positive seconds and at least three repetitions")
@@ -96,6 +106,7 @@ def main():
               "seconds": args.seconds, "repetitions": args.repetitions,
               "reference_label": args.reference_label, "quality": args.quality, "block_size": args.block_size,
               "channels": args.channels, "sample_rate": args.sample_rate,
+              "output_format": args.output_format, "direction": args.direction,
               "fern_binary_sha256": hashlib.sha256(fern.read_bytes()).hexdigest(),
               "reference_encoder_sha256": hashlib.sha256((reference / "ulcencodetool").read_bytes()).hexdigest(),
               "reference_decoder_sha256": hashlib.sha256((reference / "ulcdecodetool").read_bytes()).hexdigest(),
@@ -119,11 +130,12 @@ def main():
             for command in commands.values():
                 run(command)
             sizes = {name: path.stat().st_size for name, path in encoded.items()}
-            for direction in ("encode", "decode"):
+            directions = ("encode", "decode") if args.direction == "both" else (args.direction,)
+            for direction in directions:
                 outputs = {name: root / f"{name}.wav" for name in commands}
                 if direction == "decode":
-                    commands = {"C": [reference / "ulcdecodetool", encoded["C"], outputs["C"], "-format:FLOAT32"],
-                                "Fern": [fern, "decode", encoded["C"], outputs["Fern"], "FLOAT32"]}
+                    commands = {"C": [reference / "ulcdecodetool", encoded["C"], outputs["C"], f"-format:{args.output_format}"],
+                                "Fern": [fern, "decode", encoded["C"], outputs["Fern"], args.output_format]}
                 elapsed = {name: [] for name in commands}
                 # Alternate process order to reduce cache and frequency bias.
                 for repetition in range(args.repetitions):
@@ -137,7 +149,7 @@ def main():
                           "fern_speed_ratio": medians["C"] / medians["Fern"],
                           "encoded_bytes": sizes}
                 if direction == "decode":
-                    a, b = samples(outputs["C"]), samples(outputs["Fern"])
+                    a, b = samples(outputs["C"], args.output_format), samples(outputs["Fern"], args.output_format)
                     assert len(a) == len(b)
                     error = max((abs(x - y) for x, y in zip(a, b)), default=0)
                     result["max_sample_error"] = error
@@ -146,13 +158,22 @@ def main():
                         run([oracle, encoded["C"], expected])
                         truth = samples(expected)
                         assert len(truth) == len(b)
+                        quantization_error = 0.0
+                        if args.output_format != "FLOAT32":
+                            scale = 1 << (int(args.output_format[3:]) - 1)
+                            truth = tuple(max(-1.0, min(1.0 - 1 / scale, value)) for value in truth)
+                            quantization_error = 0.5 / scale
+                            result["oracle_reference"] = "float64 FFT clipped to PCM range"
                         for name, values in (("C", a), ("Fern", b)):
                             errors = [abs(x - y) for x, y in zip(values, truth)]
                             result[f"{name.lower()}_oracle_max_error"] = max(errors, default=0)
                             result[f"{name.lower()}_oracle_rms_error"] = (sum(x * x for x in errors) / max(1, len(errors))) ** 0.5
-                        assert result["fern_oracle_max_error"] < 0.00001, result["fern_oracle_max_error"]
+                        assert result["fern_oracle_max_error"] < 0.00001 + quantization_error, result["fern_oracle_max_error"]
                     else:
-                        assert error < 0.00002, error
+                        tolerance = 0.00002
+                        if args.output_format != "FLOAT32":
+                            tolerance += 1 / (1 << (int(args.output_format[3:]) - 1))
+                        assert error < tolerance, error
                 report["results"].append(result)
                 print(f"{kind:10} {direction:6} C={medians['C']:.4f}s Fern={medians['Fern']:.4f}s "
                       f"C/Fern={result['fern_speed_ratio']:.3f}", flush=True)

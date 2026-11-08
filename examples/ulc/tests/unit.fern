@@ -840,6 +840,60 @@ function packed_file_tests(): void {
   }
 }
 
+function pcm_output_tests(): void {
+  for bits in [8, 16, 24] {
+    let scale = (1 << bits - 1) as f64;
+    let edges = [-2.0, -1.0, -1.0 + 0.5 / scale, -1.5 / scale, -0.5 / scale, -0.0, 0.0, 0.5 / scale, 1.5 / scale, 1.0 - 0.5 / scale, 0.000000000000000055511151231257827 / scale, 2.0, 1.0, -0.000000000000000055511151231257827 / scale];
+    for channels in 1..5 {
+      for frames in 0..16 {
+        let source = __alloc_u8(4 * channels * frames);
+        let floats = transform.zeros(channels * frames);
+        unsafe {
+          let input = source as usize + 8 as usize;
+          for channel in 0..channels {
+            for i in 0..frames {
+              __store_i32(input + (4 * (channel * frames + i)) as usize, f32_bits((edges[(i + 3 * channel) % edges.len()] * 79228162514264337593543950336.0) as f32));
+            }
+          }
+          for i in 0..frames {
+            for channel in 0..channels {
+              let a = f32_from_bits(__load_i32(input + (4 * ((channel & ~1) * frames + i)) as usize)) as f64;
+              let value = a;
+              if ((channel | 1) < channels) {
+                let b = f32_from_bits(__load_i32(input + (4 * ((channel | 1) * frames + i)) as usize)) as f64;
+                value = if ((channel & 1) == 0) { a + b } else { a - b };
+              }
+              floats = floats.with(i * channels + channel, value * 1.2621774483536189e-29);
+            }
+          }
+        }
+        let size = channels * frames * (bits / 8);
+        let buffer = __alloc_u8(size + 7);
+        let alias = buffer;
+        let Ok(actual) = packed_decoder.write_samples(buffer, 3, source, channels, bits) else {
+          exit(1);
+        };
+        let Ok(expected) = audio.write_samples(__alloc_u8(size + 7), 3, floats, bits) else {
+          exit(1);
+        };
+        for i in 0..actual.len() {
+          require(actual[i] == expected[i], "direct PCM preserves scalar rounding, clipping, and output bounds");
+          require(alias[i] == 0u8, "direct PCM preserves retained output aliases");
+        }
+      }
+      for bad in [2139095040, -8388608, 2143289345] {
+        for i in 0..channels * 4 {
+          let source = __alloc_u8(16 * channels);
+          unsafe {
+            __store_i32(source as usize + 8 as usize + (4 * i) as usize, bad);
+          }
+          require(packed_decoder.write_samples(__alloc_u8(16 * channels), 0, source, channels, bits).is_err(), "direct PCM rejects every nonfinite input lane");
+        }
+      }
+    }
+  }
+}
+
 pub function run_tests(): i32 {
   plan_grid_tests();
   deferred_plan_tests();
@@ -850,6 +904,7 @@ pub function run_tests(): i32 {
   coefficient_parser_tests();
   parser_properties();
   packed_file_tests();
+  pcm_output_tests();
   print("ok - packed FFT, noise index, and seed jumps");
   syntax_tests();
   print("ok - coefficient syntax and validation");
