@@ -1,0 +1,25 @@
+import "std/base64";
+import "std/deflate";
+import "std/test";
+import "opus_multistream_check";
+import "opus_multistream_vectors";
+
+function references(): test.TestOutcome {
+  for encoded in opus_multistream_vectors.SMOKE {
+    let packed = match (base64.decode(encoded)) { Ok(value) => value, Err(_) => { return test.fail("reference base64"); } };
+    let bytes = match (deflate.zlib_decode(packed, 1048576)) { Ok(value) => value, Err(_) => { return test.fail("reference zlib"); } };
+    match (opus_multistream_check.check_case(bytes, false)) {
+      test.Pass => {},
+      test.Fail(message) => {
+        return test.fail(message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Opus multistream interpreter smoke");
+  runner = runner.it("independent PCM with repeated, silent, and omitted channels", references);
+  return runner.finish();
+}

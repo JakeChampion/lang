@@ -1,0 +1,117 @@
+import "std/audio/pcm";
+import "std/base64";
+import "std/deflate";
+import "std/opus/multistream";
+import "std/test";
+import "opus_multistream_vectors";
+import "opus_multistream_check";
+
+function references(): test.TestOutcome {
+  for i in 0..opus_multistream_vectors.CASES.len() {
+    let packed = match (base64.decode(opus_multistream_vectors.CASES[i])) { Ok(value) => value, Err(_) => { return test.fail("reference base64"); } };
+    let bytes = match (deflate.zlib_decode(packed, 1048576)) { Ok(value) => value, Err(_) => { return test.fail("reference zlib"); } };
+    match (opus_multistream_check.check_case(bytes, i % 2 == 1)) {
+      test.Pass => {},
+      test.Fail(message) => {
+        return test.fail("case " + i.to_string() + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function stereo(): multistream.Config {
+  return multistream.Config { sample_rate: 48000, channels: 2, streams: 1, coupled: 1, mapping: [0u8, 1u8] };
+}
+
+function configurations(): test.TestOutcome {
+  let base = stereo();
+  let cases = [multistream.Config { ...base, channels: 0 }, multistream.Config { ...base, channels: 256 }, multistream.Config { ...base, mapping: [0u8] }, multistream.Config { ...base, streams: 0 }, multistream.Config { ...base, coupled: 2 }, multistream.Config { ...base, streams: 255 }, multistream.Config { ...base, mapping: [0u8, 2u8] }];
+  for config in cases {
+    match (multistream.decoder(config, multistream.default_limits())) {
+      Err(pcm.Header) => {},
+      _ => {
+        return test.fail("invalid multistream configuration");
+      }
+    }
+  }
+  match (multistream.decoder(multistream.Config { ...base, sample_rate: 44100 }, multistream.default_limits())) {
+    Err(pcm.Unsupported) => {},
+    _ => {
+      return test.fail("unsupported output sample rate");
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let base = multistream.default_limits();
+  let cases = [multistream.Limits { ...base, max_streams: 0 }, multistream.Limits { ...base, max_streams: 256 }, multistream.Limits { ...base, max_samples: -1 }, multistream.Limits { ...base, max_input_bytes: -1 }];
+  for limits in cases {
+    if let Err(pcm.Limit) = multistream.decoder(stereo(), limits) {} else {
+      return test.fail("invalid resource limits");
+    }
+  }
+  if let Err(pcm.Limit) = multistream.decoder(multistream.Config { ...stereo(), streams: 2, coupled: 0 }, multistream.Limits { ...base, max_streams: 1 }) {} else {
+    return test.fail("active stream count limit");
+  }
+  let state = match (multistream.decoder(stereo(), multistream.Limits { ...base, max_input_bytes: 1 })) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+  if let Err(pcm.Limit) = state.decode([128u8, 0u8]) {} else {
+    return test.fail("input byte limit");
+  }
+  let sample_limited = match (multistream.decoder(stereo(), multistream.Limits { ...base, max_samples: 239 })) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+  if let Err(pcm.Limit) = sample_limited.decode([128u8]) {} else {
+    return test.fail("output sample limit");
+  }
+  return test.pass();
+}
+
+function packet_errors(): test.TestOutcome {
+  for bytes in [[], [131u8, 0u8]] {
+    let state = match (multistream.decoder(stereo(), multistream.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+    if let Err(pcm.Header) = state.decode(bytes) {} else {
+      return test.fail("invalid packet accepted");
+    }
+  }
+  let config = multistream.Config { ...stereo(), streams: 2, coupled: 0 };
+  for bytes in [[128u8], [128u8, 0u8, 0u8]] {
+    let state = match (multistream.decoder(config, multistream.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+    if let Err(pcm.Header) = state.decode(bytes) {} else {
+      return test.fail("truncated or mismatched stream durations");
+    }
+  }
+  return test.pass();
+}
+
+function output_errors(): test.TestOutcome {
+  for frames in [-120, 0, 1, 121, 5880] {
+    let state = match (multistream.decoder(stereo(), multistream.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+    if let Err(pcm.Header) = state.decode_lost(frames) {} else {
+      return test.fail("invalid loss duration");
+    }
+  }
+  let state = match (multistream.decoder(stereo(), multistream.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+  if let Err(pcm.Buffer) = state.decode_into([128u8], [0.0f32]) {} else {
+    return test.fail("short output buffer");
+  }
+  return test.pass();
+}
+
+function fec_bounds(): test.TestOutcome {
+  let state = match (multistream.decoder(stereo(), multistream.default_limits())) { Ok(value) => value, Err(_) => { return test.fail("decoder creation"); } };
+  if let Err(pcm.Buffer) = state.decode_fec([0u8], 120) {} else {
+    return test.fail("FEC duration shorter than the next multistream packet");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Opus multistream against libopus");
+  runner = runner.it("605 steps with surround maps, repeated and silent channels, PLC, FEC, and buffer reuse", references);
+  runner = runner.it("invalid channel maps and output rates", configurations);
+  runner = runner.it("input, stream, and output limits", limits);
+  runner = runner.it("invalid framing and mismatched stream durations", packet_errors);
+  runner = runner.it("loss durations and short buffers", output_errors);
+  runner = runner.it("FEC duration shorter than its input packet", fec_bounds);
+  return runner.finish();
+}
