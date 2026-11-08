@@ -383,6 +383,7 @@ generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
 generic_enum_payload_settles_its_parameter           0
+generic_enum_payload_struct_at_option_instances      0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
@@ -400,6 +401,7 @@ generic_receiver_array_drop                          0
 generic_receiver_methods                             0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
+generic_struct_argument_from_a_some_literal          0
 generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_struct_method_map_arg                        0
@@ -602,6 +604,7 @@ module_scoped_variant                                0
 multi_file                                           0
 multi_hop_alias                                      0
 multiline_stdin                                      0
+must_consume_destructure_in_one_arm_moves            0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0
