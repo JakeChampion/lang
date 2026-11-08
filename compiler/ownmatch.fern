@@ -1,0 +1,61 @@
+// Recover source match branches for ownership control flow.
+
+import "./ast";
+import "./astwalk";
+import "./parser";
+
+function tuple_pattern(a: ast.TupArm): ast.Pattern {
+  if (a.is_wild) {
+    return ast.PatWildcard { tag: 0 };
+  }
+  return ast.PatVariant {
+    type_name: "", binding: "", extra_bindings: [], nested: [], at_binding: a.at_binding,
+    field_names: [], lit_cond: parser.e_bool(true), has_lit_cond: false,
+    tup_kinds: a.elem_kinds, tup_binds: a.binds, tup_lits: a.lits, tup_pats: a.elem_pats,
+    bare_name: false, scalar_binding: false, scalar_cells: [], rest_written: false,
+  };
+}
+
+function match_source(scrut: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
+  let normalized: ast.MatchArm[] = [];
+  for arm in arms {
+    normalized = normalized.append(ast.MatchArm { ...arm, body: source(arm.body), guard: expression(arm.guard) });
+  }
+  return ast.StmtMatch { scrutinee: expression(scrut), arms: normalized, sugar: [], line: line, col: col, origin: origin, else_chained: false, arms_open: 0 };
+}
+
+function expression(value: ast.Expr): ast.Expr {
+  let (result, _, _) = astwalk.map_expr_where(value, 0, visit, keep, astwalk.descend_all);
+  return result;
+}
+
+function visit(st: ast.Stmt, count: i32): (ast.Stmt, i32, boolean) {
+  if let ast.StmtMatch(m) = st {
+    if (m.sugar.len() > 0) {
+      return (match_source(m.scrutinee, m.sugar, m.line, m.col, m.origin), count, true);
+    }
+  }
+  if let ast.StmtIf(f) = st {
+    let sg = f.sugar;
+    if (sg.arms.len() > 0) {
+      return (match_source(sg.scrut, sg.arms, sg.line, sg.col, sg.origin), count, true);
+    }
+    if (sg.tup.len() > 0) {
+      let arms: ast.MatchArm[] = [];
+      for a in sg.tup {
+        arms = arms.append(ast.MatchArm { pattern: tuple_pattern(a), body: a.body, guard: a.guard, has_guard: a.has_guard, line: a.line, col: a.col, alt_cont: a.alt_cont });
+      }
+      return (match_source(sg.scrut, arms, sg.line, sg.col, sg.origin), count, true);
+    }
+  }
+  return (st, count, false);
+}
+
+function keep(e: ast.Expr, count: i32): (ast.Expr, i32, boolean) {
+  return (e, count, false);
+}
+
+pub function source(body: ast.Stmt[]): ast.Stmt[] {
+  let (result, _) = astwalk.map_stmts_where(body, 0, visit, keep, astwalk.descend_all);
+  return result;
+}

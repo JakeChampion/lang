@@ -4,6 +4,7 @@ import "./lexer";
 import "./parser";
 import "./astwalk";
 import "./lexical";
+import "./ownmatch";
 import "./builtinsigs";
 import "./typeinfo";
 import "./decltypes";
@@ -19225,9 +19226,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
     ast.StmtMatch(m) => {
       let matched = f.matched;
       for arm in m.arms {
-        for name in astwalk.pattern_binders(arm.pattern, []) {
-          matched = matched.append(LuVar { name: name, init: m.scrutinee });
-        }
+        matched = lu_pattern_values(arm.pattern, m.scrutinee, matched);
       }
       return LuFacts { ...f, matched: matched };
     },
@@ -19236,6 +19235,37 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
     }
   }
   return f;
+}
+
+function lu_pattern_values(pat: ast.Pattern, value: ast.Expr, own matched: LuVar[]): LuVar[] {
+  if let ast.PatVariant(pv) = pat {
+    if (pv.type_name.len() == 0 && pv.tup_kinds.len() > 0) {
+      if let ast.ExprTuple(tuple) = value {
+        return lu_tuple_pattern_values(pv, tuple, matched);
+      }
+    }
+  }
+  for name in astwalk.pattern_binders(pat, []) {
+    matched = matched.append(LuVar { name: name, init: value });
+  }
+  return matched;
+}
+
+function lu_tuple_pattern_values(pv: ast.PatVariant, tuple: ast.ExprTuple, own matched: LuVar[]): LuVar[] {
+  for i in 0..pv.tup_kinds.len() {
+    if (i >= tuple.elements.len()) {
+      break;
+    }
+    if (pv.tup_kinds[i] == 0 && i < pv.tup_binds.len()) {
+      matched = matched.append(LuVar { name: pv.tup_binds[i], init: tuple.elements[i] });
+    } else if (i < pv.tup_pats.len()) {
+      matched = lu_pattern_values(pv.tup_pats[i], tuple.elements[i], matched);
+    }
+  }
+  if (pv.at_binding.len() > 0) {
+    matched = matched.append(LuVar { name: pv.at_binding, init: ast.ExprTuple(tuple) });
+  }
+  return matched;
 }
 
 // A deferred action runs at the exit, so a path it mentions is live until
@@ -22700,7 +22730,7 @@ function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnW
   if let ast.ExprIdent(sid) = m.scrutinee {
     let takes = false;
     for arm in m.arms {
-      takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern, whole);
+      takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: ow_pattern_scope(arm.pattern, ctx.scope, whole) }, arm.pattern, whole);
     }
     if (!takes) {
       rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -22709,14 +22739,21 @@ function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnW
   let branches: MovedEntry[][] = [];
   let runs_on: boolean[] = [];
   let d = rs.diags;
+  let pending = rs.moved;
   let taken = ow_takes_scrutinee(m.scrutinee, ctx);
   for arm in m.arms {
     let names = astwalk.pattern_binders(arm.pattern, []);
     let actx = ow_arm_bind_ctx(ctx, arm.pattern);
-    actx = ow_arm_ctx(OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern, whole, m.scrutinee, taken, scrut_owned);
-    let start = ow_moves_without(rs.moved, names);
+    actx = ow_arm_ctx(OwnCtx { ...actx, scope: ow_pattern_scope(arm.pattern, ctx.scope, whole) }, arm.pattern, whole, m.scrutinee, taken, scrut_owned);
+    let start = ow_moves_without(pending, names);
     if (names.len() == 0) {
-      start = ow_restore_tag(rs.moved, moved, m.scrutinee);
+      start = ow_restore_tag(pending, moved, m.scrutinee);
+    }
+    if (arm.has_guard) {
+      let guarded = ru_expr(arm.guard, start, actx);
+      start = guarded.moved;
+      d = util.append_diags(d, guarded.diags);
+      pending = ow_moved_join(pending, ow_scope_moves(start, pending, names), false);
     }
     let ra = ow_stmts(arm.body, start, actx);
     ow_arm_finish_ctx(actx, ctx, names);
@@ -22725,6 +22762,47 @@ function ow_match_stmt(m: ast.StmtMatch, moved: MovedEntry[], ctx: OwnCtx): OwnW
     runs_on = runs_on.append(!ow_block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern), ctx.noret));
   }
   return OwnWalk { moved: ow_settle(rs.moved, branches, runs_on), diags: d };
+}
+
+function ow_tuple_scope(pv: ast.PatVariant, scope: Scope, whole: typeinfo.Type): Scope {
+  let typeinfo.TypeTuple(tuple) = whole else {
+    return scope;
+  };
+  let out = scope;
+  for i in 0..pv.tup_kinds.len() {
+    if (i >= tuple.elements.len()) {
+      break;
+    }
+    let ty = tuple.elements[i];
+    if (pv.tup_kinds[i] == 0 && i < pv.tup_binds.len()) {
+      out = out.bind(pv.tup_binds[i], ty);
+    } else if (i < pv.tup_pats.len()) {
+      out = ow_pattern_scope(pv.tup_pats[i], out, ty);
+    }
+  }
+  if (pv.at_binding.len() > 0) {
+    out = out.bind(pv.at_binding, whole);
+  }
+  return out;
+}
+
+function ow_pattern_scope(pat: ast.Pattern, scope: Scope, whole: typeinfo.Type): Scope {
+  let ast.PatVariant(pv) = pat else {
+    return scope;
+  };
+  if (pv.type_name.len() == 0) {
+    return ow_tuple_scope(pv, scope, whole);
+  }
+  let arm = ast.MatchArm { pattern: pat, body: [], guard: parser.e_bool(true), has_guard: false, line: 0, col: 0, alt_cont: false };
+  let out = annotate_arm_scope(arm, scope, whole);
+  let payload = variant_pattern_payload_type(scope, pv.type_name, whole, 0);
+  if (pv.tup_kinds.len() > 0) {
+    out = ow_tuple_scope(pv, out, payload);
+  }
+  for i in 0..pv.nested.len() {
+    out = ow_pattern_scope(pv.nested[i], out, variant_pattern_payload_type(scope, pv.type_name, whole, i));
+  }
+  return out;
 }
 
 function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
@@ -22841,19 +22919,13 @@ function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
 }
 
 function ow_arm_lent_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
-  if let ast.PatVariant(pv) = pat {
-    let borrowed = ctx.borrowed;
-    if (pv.binding.len() > 0 && pv.binding != "_" && !util.has_str(borrowed, pv.binding)) {
-      borrowed = borrowed.append(pv.binding);
+  let borrowed = ctx.borrowed;
+  for name in astwalk.pattern_binders(pat, []) {
+    if (name.len() > 0 && name != "_" && !util.has_str(borrowed, name)) {
+      borrowed = borrowed.append(name);
     }
-    for extra in pv.extra_bindings {
-      if (extra.len() > 0 && extra != "_" && !util.has_str(borrowed, extra)) {
-        borrowed = borrowed.append(extra);
-      }
-    }
-    return OwnCtx { ...ctx, borrowed: borrowed };
   }
-  return ctx;
+  return OwnCtx { ...ctx, borrowed: borrowed };
 }
 
 // A taken scrutinee gives fresh locals, neither owned nor lent. An owned one
@@ -22926,6 +22998,17 @@ function ow_arm_handle_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type):
 }
 
 function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {
+  if let ast.PatVariant(pv) = pat {
+    if (pv.tup_kinds.len() > 0 || pv.nested.len() > 0) {
+      let names = ctx.owned;
+      for name in astwalk.pattern_binders(pat, []) {
+        if (name != "_" && !util.has_str(names, name) && ow_type_is_pointer(typeinfo.spelling(ctx.scope.lookup(name)), ctx.ofuncs)) {
+          names = names.append(name);
+        }
+      }
+      return OwnCtx { ...ctx, owned: names };
+    }
+  }
   if let ast.PatVariant(pv) = pat {
     let vname = ow_last_segment(util.base_type_name(pv.type_name));
     let binds: string[] = [];
@@ -23962,6 +24045,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
     if (!in_focus(focus, fn)) {
       continue;
     }
+    fn = parser.FuncDecl { ...fn, body: ownmatch.source(fn.body) };
     let owned: string[] = [];
     let borrowed: string[] = [];
     if (fn.receiver_own && ow_ownable_type(fn.receiver_type)) {
