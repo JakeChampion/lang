@@ -23212,7 +23212,7 @@ function ow_holds_no_handle(tn: string, dx: OwnDecls): boolean {
 // other parts.
 function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[]): boolean {
   let n = tn.len();
-  if (tn == "fn" || util.index_of_sub(tn, "=>") >= 0) {
+  if (tn == "fn" || parser.top_arrow_at(tn) >= 0) {
     return true;
   }
   if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
