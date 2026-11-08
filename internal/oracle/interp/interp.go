@@ -1996,7 +1996,7 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 9 {
+	if op < 1 || op > 12 {
 		return Number(-22), nil
 	}
 	if op == 8 {

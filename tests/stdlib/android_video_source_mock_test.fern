@@ -1,0 +1,123 @@
+import "std/android/video/source";
+import "std/video/frame";
+
+@import("libandroid.so", "mock_source_env")
+function env(): usize;
+
+@import("libandroid.so", "mock_source_context")
+function context(): usize;
+
+@import("libandroid.so", "mock_source_mode")
+function mode(value: i32): void;
+
+@import("libandroid.so", "mock_source_clean")
+function clean(): i32;
+
+@import("libandroid.so", "mock_source_closed")
+function closed(): i32;
+
+@import("libandroid.so", "mock_source_descriptors")
+function descriptors(): i32;
+
+@import("libandroid.so", "mock_source_verify")
+function verify(fd: i32, offset: i64, length: i64): i32;
+
+function errors(e: usize, ctx: usize): i32 {
+  for value in 1..21 {
+    mode(value);
+    let before = descriptors();
+    let expected_error = match (value) { 15 => frame.Header, 16 => frame.Header, 17 => frame.Truncated, 18 => frame.Unsupported, _ => frame.Platform };
+    match (source.open(e, ctx, "content://mock/video", 40i64)) {
+      Err(error) => {
+        if (error != expected_error) {
+          return 600 + value;
+        }
+      },
+      Ok(src) => {
+        let _ = src.close();
+        return 100 + value;
+      }
+    }
+    if (clean() != 1 || descriptors() != before) {
+      return 200 + value;
+    }
+    let expected = if (value >= 11) { 1 } else { 0 };
+    if (closed() != expected) {
+      return 300 + value;
+    }
+  }
+  mode(0);
+  let before = descriptors();
+  match (source.open(e, ctx, "content://mock/video", 15i64)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return 401;
+    }
+  }
+  if (clean() != 1 || closed() != 1 || descriptors() != before) {
+    return 402;
+  }
+  return 0;
+}
+
+function success(e: usize, ctx: usize): i32 {
+  let before = descriptors();
+  for _ in 0..1000 {
+    for value in [0, 21] {
+      mode(value);
+      let src = match (source.open(e, ctx, "content://mock/video", 40i64)) {
+        Ok(result) => result,
+        Err(_) => { return 501; },
+      };
+      if (clean() != 1 || closed() != 1 || descriptors() != before + 1 || verify(src.fd, src.offset, src.length) != 1) {
+        return 502;
+      }
+      match (src.close()) {
+        Ok(_) => {},
+        _ => {
+          return 503;
+        }
+      }
+      if (descriptors() != before) {
+        return 504;
+      }
+    }
+  }
+  return 0;
+}
+
+function preflight(e: usize, ctx: usize): i32 {
+  mode(0);
+  for uri in ["", "content://", "file:///mock.mp4", "https://mock/video", "content://mock/\x00bad"] {
+    match (source.open(e, ctx, uri, 40i64)) {
+      Err(frame.Header) => {},
+      _ => {
+        return 701;
+      }
+    }
+  }
+  match (source.open(e, ctx, "content://mock/video", 0i64)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return 702;
+    }
+  }
+  if (clean() != 1 || closed() != 0) {
+    return 703;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let e = env();
+  let ctx = context();
+  let first = preflight(e, ctx);
+  if (first != 0) {
+    return first;
+  }
+  let result = errors(e, ctx);
+  if (result != 0) {
+    return result;
+  }
+  return success(e, ctx);
+}

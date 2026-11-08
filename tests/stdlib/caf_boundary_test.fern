@@ -1,0 +1,278 @@
+import "std/audio/caf";
+import "std/audio/caf/chunks";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "caf_smoke_vectors";
+import "caf_vectors";
+
+function fixture(): Result[u8[], string] {
+  return ref.unpack(caf_smoke_vectors.vector().encoded);
+}
+
+function field(input: [u8], at: i32, bytes: i32, value: u64): u8[] {
+  let output: u8[] = [];
+  for byte in input {
+    output = output.append(byte);
+  }
+  for i in 0..bytes {
+    output = output.with(at + i, (value >> ((bytes - i - 1) * 8) as u64) as u8);
+  }
+  return output;
+}
+
+function prefixes(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  for cut in 0..input.len() {
+    if let Err(_) = caf.inspect(input[:cut], caf.default_limits()) {} else {
+      return test.fail("incomplete CAF byte prefix");
+    }
+  }
+  return test.pass();
+}
+
+function chunk_fields(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(file) = chunks.inspect(input, 16) else {
+    return test.fail("chunks");
+  };
+  for changed in [
+    field(input, 0, 4, 0u64), field(input, 4, 2, 2u64), field(input, 6, 2, 1u64),
+    field(input, 12, 8, 18446744073709551615u64), field(input, 12, 8, 18446744073709551614u64),
+    field(input, 12, 8, 9223372036854775807u64), field(input, file.data.start - 4, 4, 1u64), input.append(0u8),
+  ] {
+    if let Err(_) = caf.inspect(changed, caf.default_limits()) {} else {
+      return test.fail("invalid chunk header, extent, or edit count");
+    }
+  }
+  let duplicate: u8[] = [];
+  for byte in input[:file.description.end] {
+    duplicate = duplicate.append(byte);
+  }
+  for byte in input[file.description.start - 12:file.description.end] {
+    duplicate = duplicate.append(byte);
+  }
+  for byte in input[file.description.end:] {
+    duplicate = duplicate.append(byte);
+  }
+  if let Err(pcm.Header) = caf.inspect(duplicate, caf.default_limits()) {} else {
+    return test.fail("duplicate description");
+  }
+  return test.pass();
+}
+
+function configuration(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(file) = chunks.inspect(input, 16) else {
+    return test.fail("chunks");
+  };
+  let Some(cookie) = file.cookie else {
+    return test.fail("cookie");
+  };
+  let start = file.description.start;
+  for changed in [
+    field(input, start, 8, 0u64), field(input, start, 8, 9221120237041090560u64),
+    field(input, start, 8, 4609434218613702656u64), field(input, start + 8, 4, 1819304813u64),
+    field(input, start + 12, 4, 1u64), field(input, start + 24, 4, 2u64),
+    field(input, start + 20, 4, 31u64), field(input, start + 28, 4, 24u64),
+    field(input, cookie.start + 4, 1, 1u64), field(input, cookie.start + 9, 1, 2u64),
+  ] {
+    if let Err(_) = caf.inspect(changed, caf.default_limits()) {} else {
+      return test.fail("invalid or conflicting description and configuration");
+    }
+  }
+  return test.pass();
+}
+
+function packet_table(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(file) = chunks.inspect(input, 16) else {
+    return test.fail("chunks");
+  };
+  let Some(table) = file.packets else {
+    return test.fail("packet table");
+  };
+  for changed in [
+    field(input, table.start, 8, 0u64), field(input, table.start, 8, 2u64),
+    field(input, table.start, 8, 1048577u64), field(input, table.start + 8, 8, 18446744073709551615u64),
+    field(input, table.start + 8, 8, 33u64), field(input, table.start + 16, 4, 2147483648u64),
+    field(input, table.start + 20, 4, 2147483648u64), field(input, table.start + 24, 1, 0u64),
+    field(input, table.start + 24, 1, 128u64),
+  ] {
+    if let Err(_) = caf.inspect(changed, caf.default_limits()) {} else {
+      return test.fail("invalid packet table extent or presentation clock");
+    }
+  }
+  let overflow = field(input, table.start + 8, 8, 9223372036854775807u64);
+  if let Err(pcm.Limit) = caf.inspect(overflow, caf.default_limits()) {} else {
+    return test.fail("presentation clock overflow");
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let limits = caf.default_limits();
+  for bound in [
+    caf.Limits { ...limits, max_chunks: 3 }, caf.Limits { ...limits, max_packets: 0 },
+    caf.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_input_bytes: input.len() - 1 } },
+    caf.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_samples: 31 } },
+  ] {
+    if let Err(pcm.Limit) = caf.inspect(input, bound) {} else {
+      return test.fail("input, chunk, packet, or frame budget");
+    }
+  }
+  if let Err(_) = caf.inspect(input, caf.Limits { ...limits, max_chunks: 4, max_packets: 1, audio: pcm.Limits { max_input_bytes: input.len(), max_samples: 32 } }) {
+    return test.fail("exact file budgets");
+  }
+  for vector in caf_vectors.vectors() {
+    if (vector.name != "direct-encoded-1ch-16bit") {
+      continue;
+    }
+    let Ok(encoded) = ref.unpack(vector.encoded) else {
+      return test.fail("long fixture");
+    };
+    let bounded = caf.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_samples: 4096 } };
+    let Ok(index) = caf.inspect(encoded, bounded) else {
+      return test.fail("per-packet stream budget");
+    };
+    if let Err(pcm.Limit) = caf.decode(encoded, bounded) {} else {
+      return test.fail("cumulative complete-file PCM budget");
+    }
+    let Ok(state) = caf.cursor(index) else {
+      return test.fail("cursor");
+    };
+    let Ok(seeked) = state.seek(4096i64) else {
+      return test.fail("seek");
+    };
+    let Ok((_, event)) = seeked.next(encoded) else {
+      return test.fail("bounded stream read");
+    };
+    let Some(audio) = event else {
+      return test.fail("final partial packet");
+    };
+    if (audio.position != 4096i64 || audio.frames != 7) {
+      return test.fail("partial final packet within per-frame limit");
+    }
+  }
+  return test.pass();
+}
+
+function positions(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let Ok(index) = caf.inspect(input, caf.default_limits()) else {
+    return test.fail("index");
+  };
+  for position in [-1i64, 12i64] {
+    let Ok(state) = caf.cursor(index) else {
+      return test.fail("cursor");
+    };
+    if let Err(pcm.Header) = state.seek(position) {} else {
+      return test.fail("invalid playable position");
+    }
+  }
+  let Ok(state) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  let Ok((next, event)) = state.step(input) else {
+    return test.fail("one packet step");
+  };
+  let caf.Samples(audio) = event else {
+    return test.fail("one step must produce the selected packet");
+  };
+  if (audio.start != 5 || audio.frames != 11 || audio.samples.len() != 19 || audio.position != 0i64) {
+    return test.fail("trim must retain the original PCM buffer");
+  }
+  let Ok((finished, done)) = next.step(input) else {
+    return test.fail("completion");
+  };
+  if let caf.Finished = done {} else {
+    return test.fail("one packet completion");
+  }
+  let Ok((_, again)) = finished.step(input) else {
+    return test.fail("repeated completion");
+  };
+  if let caf.Finished = again {} else {
+    return test.fail("stable completion");
+  }
+  let Ok(another) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  if let Err(pcm.Header) = another.step(input[:input.len() - 1]) {} else {
+    return test.fail("changed view extent");
+  }
+  return test.pass();
+}
+
+function payloads(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let changed = input.with(input.len() - 1, input[input.len() - 1] | 1u8);
+  let Ok(index) = caf.inspect(changed, caf.default_limits()) else {
+    return test.fail("inspection must use packet headers without entropy decode");
+  };
+  let Ok(state) = caf.cursor(index) else {
+    return test.fail("cursor");
+  };
+  if let Err(pcm.Header) = state.next(changed) {} else {
+    return test.fail("read must validate packet padding");
+  }
+  return test.pass();
+}
+
+function mutations(): test.TestOutcome {
+  let Ok(input) = fixture() else {
+    return test.fail("fixture");
+  };
+  let limits = caf.default_limits();
+  let bounded = caf.Limits { ...limits, max_chunks: 8, max_packets: 8, audio: pcm.Limits { ...limits.audio, max_samples: 64 } };
+  for at in 0..input.len() {
+    for mask in [1u8, 255u8] {
+      let changed = input.with(at, input[at] ^ mask);
+      let Ok(index) = caf.inspect(changed, bounded) else {
+        continue;
+      };
+      let Ok(state) = caf.cursor(index) else {
+        continue;
+      };
+      for _ in 0..index.packet_count() + 1 {
+        let result = state.step(changed);
+        let Ok((next, event)) = result else {
+          break;
+        };
+        state = next;
+        if let caf.Finished = event {
+          break;
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("CAF chunk, packet, clock, and seek boundaries");
+  runner = runner.it("every incomplete byte prefix", prefixes);
+  runner = runner.it("chunk headers, signed sizes, edit counts, and duplicate descriptions", chunk_fields);
+  runner = runner.it("sample rate, codec, and configuration conflicts", configuration);
+  runner = runner.it("packet table extents and checked presentation clocks", packet_table);
+  runner = runner.it("exact resource limits and bounded long-track reads", budgets);
+  runner = runner.it("invalid positions, one-packet work, retained trim storage, and completion", positions);
+  runner = runner.it("header inspection defers payload validation to reads", payloads);
+  runner = runner.it("every-byte mutations remain within explicit budgets", mutations);
+  return runner.finish();
+}

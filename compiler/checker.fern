@@ -21979,12 +21979,8 @@ function lu_own_names(fn: parser.FuncDecl): string[] {
   return out;
 }
 
-// Two bindings of one name, as in sibling scopes, get different names, so
-// the pass can key each local by its name.
+// Each local has its own name, separate from other locals and global names.
 function lu_resolved(fn: parser.FuncDecl): parser.FuncDecl {
-  if (!lexical.binds_a_name_twice(fn)) {
-    return fn;
-  }
   return lexical.resolve_func(fn).func;
 }
 

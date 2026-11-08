@@ -1,0 +1,12 @@
+import "std/test";
+import "caf_case_check";
+
+function references(): test.TestOutcome {
+  return caf_case_check.run(2);
+}
+
+function main(): i32 {
+  let runner = test.new("CAF ALAC independent PCM and seek shard 3 of 4");
+  runner = runner.it("all reference samples and repeated seek positions in this shard", references);
+  return runner.finish();
+}

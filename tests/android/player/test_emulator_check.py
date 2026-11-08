@@ -2,9 +2,10 @@
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("player_check", Path(__file__).with_name("emulator_check.py"))
 check = importlib.util.module_from_spec(spec)
@@ -30,6 +31,29 @@ class ContentSourceTests(unittest.TestCase):
             with self.subTest(output=output), patch.object(check, "adb", side_effect=["", output]):
                 with self.assertRaises(AssertionError):
                     check.insert_media()
+
+    def test_video_failure_removes_only_the_two_created_items(self):
+        first = "content://media/external/video/media/42"
+        second = "content://media/external/video/media/43"
+        server = Mock(server_address=("127.0.0.1", 12345))
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(check, "write_fixture"), \
+                patch.object(check, "handler_for"), \
+                patch.object(check, "ThreadingHTTPServer", return_value=server), \
+                patch.object(check.threading, "Thread"), \
+                patch.object(check, "run_playback"), \
+                patch.object(check, "insert_media", side_effect=[first, second]), \
+                patch.object(check, "write_media"), \
+                patch.object(check, "adb") as device, \
+                patch.object(check.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "video")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                check.main("player.apk", directory, "video.apk", "byte.mp4")
+            deletions = [call.args[-1] for call in device.call_args_list
+                         if call.args[:3] == ("shell", "content", "delete")]
+            self.assertEqual(deletions, [second, first])
+            device.assert_any_call("reverse", "--remove", "tcp:12345")
+            server.shutdown.assert_called_once()
+            server.server_close.assert_called_once()
 
     def test_binary_upload_requires_exact_provider_readback(self):
         data = bytes(range(256)) + b"\x00\r\n\xff"
