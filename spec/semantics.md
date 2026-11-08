@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**125 of 128** claims are pinned by a conformance case. The remaining
+**134 of 137** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -145,6 +145,15 @@ of them.
 | `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | `diag_e068` |
 | `ML-07` | `docs/MODE-LATTICE.md` | A closure may not capture a value holding a borrowed view (`E082`) | `diag_e082` |
 | `ML-08` | `docs/MODE-LATTICE.md` | An `if` or `match` expression whose arms build fresh arrays can be lent as a view, and the chosen arm's storage lives until the view's last use | `view_of_branch_value` |
+| `ML-09` | `docs/MODE-LATTICE.md` | A local array view accepts a matching owned array, literal, or temporary and preserves its contents across owner updates | `local_array_views_keep_their_storage` |
+| `EO-01` | `docs/EVALUATION-ORDER.md` | A call evaluates its callee or receiver before arguments, then evaluates positional arguments from left to right | `evaluation_order_effects` |
+| `EO-02` | `docs/EVALUATION-ORDER.md` | Named arguments evaluate in parameter declaration order, and omitted arguments use constant defaults | `evaluation_order_effects` |
+| `EO-03` | `docs/EVALUATION-ORDER.md` | Operands, indices, slices, and aggregate contents follow the specified evaluation order | `evaluation_order_effects` |
+| `EO-04` | `docs/EVALUATION-ORDER.md` | Boolean operators short-circuit, and conditional expressions evaluate only the selected arm | `evaluation_order_effects` |
+| `CL-01` | `internal/stdlib/core/cmp.fern.md` | Float Eq, Ord, and Hash satisfy equivalence, total order, and equal-hash laws | `comparison_float_laws` |
+| `CL-02` | `internal/stdlib/core/cmp.fern.md` | Float collection traits equate signed zeros and all NaNs, and order NaNs after numbers | `comparison_float_laws` |
+| `CL-03` | `internal/stdlib/std/string.fern.md` | String chunks preserve scalar boundaries and return one nonempty chunk at nonpositive sizes, while array chunks return none | `collection_edge_policies` |
+| `CL-04` | `internal/stdlib/std/i32.fern.md` | Signed abs_diff returns a wrapping result at its result width, including a negative result when the mathematical distance exceeds MAX | `collection_edge_policies` |
 | `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
 | `MC-03` | `docs/MUST-CONSUME.md` | A consuming call inside a `match` scrutinee is a consuming use | `must_consume_in_match_tag` |
@@ -260,9 +269,8 @@ per iteration where x86-64 and arm64 are flat (#6423).
 The claims above are the ones the policy docs happen to state. They are
 not a semantics: there is no typing rule, no memory model, and — beyond
 the allocation-shape claims — no statement of when a value is freed.
-`AL-06` is the only evaluation-order claim, and it covers one
-construct: where every other expression evaluates its parts is still
-whatever the compiler and the interpreter happen to agree on.
+`docs/EVALUATION-ORDER.md` defines expression evaluation order.
+The `EO-*` cases check observable effects separately from allocation timing.
 
 Read this file as a list of the promises that have been written down,
 not as the set of promises Fern makes.

@@ -88,6 +88,12 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
+	// Full Vorbis PCM and transform corpora use compiled gates. Nonzero smoke stays here.
+	"vorbis": true, "vorbis_kernel": true, "vorbis_boundary": true,
+	// Full MP4 corpora exceed a minute. Independent M4A smoke stays here.
+	"mp4": true, "mp4_boundary": true,
+	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
+	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
 	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_file": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
@@ -332,6 +338,18 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_compress", langSrcAbs(t, "tests/stdlib/http_compress_test.fern"), ""},
 		{"zstd", langSrcAbs(t, "tests/stdlib/zstd_test.fern"), ""},
 		{"brotli", langSrcAbs(t, "tests/stdlib/brotli_test.fern"), ""},
+		{"vorbis", langSrcAbs(t, "tests/stdlib/vorbis_test.fern"), ""},
+		{"vorbis_boundary", langSrcAbs(t, "tests/stdlib/vorbis_boundary_test.fern"), ""},
+		{"vorbis_codebook", langSrcAbs(t, "tests/stdlib/vorbis_codebook_test.fern"), ""},
+		{"vorbis_kernel", langSrcAbs(t, "tests/stdlib/vorbis_kernel_test.fern"), ""},
+		{"vorbis_smoke", langSrcAbs(t, "tests/stdlib/vorbis_smoke_test.fern"), ""},
+		{"mp4", langSrcAbs(t, "tests/stdlib/mp4_test.fern"), ""},
+		{"mp4_boundary", langSrcAbs(t, "tests/stdlib/mp4_boundary_test.fern"), ""},
+		{"mp4_smoke", langSrcAbs(t, "tests/stdlib/mp4_smoke_test.fern"), ""},
+		{"aac", langSrcAbs(t, "tests/stdlib/aac_test.fern"), ""},
+		{"aac_boundary", langSrcAbs(t, "tests/stdlib/aac_boundary_test.fern"), ""},
+		{"aac_kernel", langSrcAbs(t, "tests/stdlib/aac_kernel_test.fern"), ""},
+		{"aac_smoke", langSrcAbs(t, "tests/stdlib/aac_smoke_test.fern"), ""},
 		{"audio", langSrcAbs(t, "tests/stdlib/audio_test.fern"), ""},
 		{"audio_source", langSrcAbs(t, "tests/stdlib/audio_source_test.fern"), ""},
 		{"audio_ogg", langSrcAbs(t, "tests/stdlib/audio_ogg_test.fern"), ""},

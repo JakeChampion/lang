@@ -1,0 +1,249 @@
+import "std/audio/mp4";
+import "std/audio/mp4/boxes";
+import "std/audio/mp4/time";
+import "std/audio/mp4/tables" as table;
+import "std/audio/pcm";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "mp4_vectors";
+
+function fixture(name: string): Result[u8[], string] {
+  for v in mp4_vectors.vectors() {
+    if (v.name == name) {
+      return ref.unpack(v.bytes);
+    }
+  }
+  return Err("missing MP4 fixture");
+}
+
+function locate(input: [u8], path: [string]): Result[boxes.Box, pcm.AudioError] {
+  let found = boxes.Box { kind: 0u32, start: 0, data: 0, end: input.len() };
+  let budget = boxes.Budget { boxes: 0, maximum: 1024 };
+  for tag in path {
+    let (next, children) = boxes.children(input, found.data, found.end, budget)?;
+    budget = next;
+    found = boxes.required(children, tag)?;
+  }
+  return Ok(found);
+}
+
+function word(bytes: u8[], at: i32, value: u32): u8[] {
+  for i in 0..4 {
+    bytes = bytes.with(at + i, (value >> ((3 - i) * 8) as u32) as u8);
+  }
+  return bytes;
+}
+
+function boundaries(): test.TestOutcome {
+  let Ok(bytes) = fixture("mono") else {
+    return test.fail("reference");
+  };
+  for cut in 0..bytes.len() {
+    if let Err(_) = mp4.inspect(bytes[:cut], mp4.default_limits()) {} else {
+      return test.fail("incomplete container prefix " + cut.to_string());
+    }
+  }
+  for bad in [word(bytes, 0, 4u32), word(bytes, 0, 4294967295u32), word(bytes, 0, 1u32), word(bytes, 0, 0u32)] {
+    if let Err(_) = mp4.inspect(bad, mp4.default_limits()) {} else {
+      return test.fail("invalid box size");
+    }
+  }
+  return test.pass();
+}
+
+function tables(): test.TestOutcome {
+  let Ok(bytes) = fixture("mono") else {
+    return test.fail("reference");
+  };
+  let Ok(size) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stsz"]) else {
+    return test.fail("size box");
+  };
+  let Ok(offset) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stco"]) else {
+    return test.fail("offset box");
+  };
+  let Ok(chunks) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stsc"]) else {
+    return test.fail("chunk box");
+  };
+  let Ok(times) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stts"]) else {
+    return test.fail("time box");
+  };
+  for bad in [word(bytes, size.data + 8, 99u32), word(bytes, offset.data + 8, 0u32), word(bytes, offset.data + 8, 4294967295u32), word(bytes, chunks.data + 8, 2u32), word(bytes, chunks.data + 12, 0u32), word(bytes, chunks.data + 16, 2u32), word(bytes, times.data + 8, 0u32), word(bytes, times.data + 12, 0u32)] {
+    if let Err(_) = mp4.inspect(bad, mp4.default_limits()) {} else {
+      return test.fail("inconsistent sample table or packet outside mdat");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let Ok(bytes) = fixture("mono") else {
+    return test.fail("reference");
+  };
+  let limits = mp4.default_limits();
+  for constrained in [mp4.Limits { ...limits, max_boxes: 1 }, mp4.Limits { ...limits, max_tracks: 0 }, mp4.Limits { ...limits, max_packets: 1 }, mp4.Limits { ...limits, max_descriptions: 0 }, mp4.Limits { ...limits, max_edits: 0 }, mp4.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_input_bytes: bytes.len() - 1 } }] {
+    if let Err(pcm.Limit) = mp4.inspect(bytes, constrained) {} else {
+      return test.fail("metadata or input budget");
+    }
+  }
+  if let Err(pcm.Limit) = mp4.decode(bytes, mp4.Limits { ...limits, audio: pcm.Limits { ...limits.audio, max_samples: 2028 } }) {} else {
+    return test.fail("presentation sample budget");
+  }
+  return test.pass();
+}
+
+function clocks(): test.TestOutcome {
+  if let Ok(2028i64) = time.rescale(46i64, 44100u32, 1000u32) {} else {
+    return test.fail("floor clock conversion");
+  }
+  if let Ok(2029i64) = time.nearest(46i64, 44100u32, 1000u32) {} else {
+    return test.fail("nearest sample duration");
+  }
+  if let Ok(1i64) = time.nearest(1i64, 1u32, 2u32) {} else {
+    return test.fail("duration half tie");
+  }
+  if let Ok(9223372036854775807i64) = time.rescale(9223372036854775807i64, 4294967295u32, 4294967295u32) {} else {
+    return test.fail("wide exact clock conversion");
+  }
+  if let Err(pcm.Limit) = time.rescale(9223372036854775807i64, 2u32, 1u32) {} else {
+    return test.fail("clock overflow");
+  }
+  if let Err(pcm.Header) = time.nearest(0i64, 1u32, 0u32) {} else {
+    return test.fail("zero clock denominator");
+  }
+  return test.pass();
+}
+
+function wide_offsets(): test.TestOutcome {
+  let bytes: u8[] = [0u8, 0u8, 0u8, 24u8, 99u8, 111u8, 54u8, 52u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 2u8, 0u8, 0u8, 0u8, 7u8];
+  let Ok(box) = boxes.read(bytes, 0, bytes.len()) else {
+    return test.fail("co64 box");
+  };
+  let Ok(offsets) = table.offsets(bytes, box, 1, 8589934604i64) else {
+    return test.fail("wide chunk offset");
+  };
+  let Ok(packets) = table.packets([5], offsets, [table.Run { first: 1, count: 1, description: 0 }], [table.Time { count: 1, duration: 1024u32 }], [table.Media { start: 8589934592i64, end: 8589934604i64 }], 1) else {
+    return test.fail("wide packet range");
+  };
+  if (packets.len() != 1 || packets[0].offset != 8589934599i64 || packets[0].bytes != 5) {
+    return test.fail("wide offset narrowing");
+  }
+  if let Err(pcm.Truncated) = table.offsets(bytes, box, 1, 8589934598i64) {} else {
+    return test.fail("wide file boundary");
+  }
+  return test.pass();
+}
+
+function selection(): test.TestOutcome {
+  let Ok(bytes) = fixture("two-audio-tracks") else {
+    return test.fail("reference");
+  };
+  let limits = mp4.default_limits();
+  let Ok(index) = mp4.inspect(bytes, limits) else {
+    return test.fail("two tracks");
+  };
+  if (index.tracks.len() != 2 || index.tracks[0].id == index.tracks[1].id) {
+    return test.fail("independent track identifiers");
+  }
+  let count = index.tracks[0].packets.len() + index.tracks[1].packets.len();
+  if let Err(pcm.Limit) = mp4.inspect(bytes, mp4.Limits { ...limits, max_packets: count - 1 }) {} else {
+    return test.fail("shared packet-index budget across tracks");
+  }
+  let Ok(first) = mp4.decode_track(bytes, index, 0, limits) else {
+    return test.fail("first track");
+  };
+  let Ok(second) = mp4.decode_track(bytes, index, 1, limits) else {
+    return test.fail("second track");
+  };
+  if (first.samples != second.samples || first.frames != second.frames) {
+    return test.fail("second independently encoded track PCM");
+  }
+  if let Err(pcm.Header) = mp4.decode_track(bytes, index, 2, limits) {} else {
+    return test.fail("invalid track selection");
+  }
+  return test.pass();
+}
+
+function unsupported(): test.TestOutcome {
+  let Ok(bytes) = fixture("mono") else {
+    return test.fail("reference");
+  };
+  let fragmented = bytes;
+  for byte in [0u8, 0u8, 0u8, 8u8, 109u8, 111u8, 111u8, 102u8] {
+    fragmented = fragmented.append(byte);
+  }
+  if let Err(pcm.Unsupported) = mp4.inspect(fragmented, mp4.default_limits()) {} else {
+    return test.fail("fragmented media requires its own demux path");
+  }
+  let Ok(stsd) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stsd"]) else {
+    return test.fail("description box");
+  };
+  let encrypted = word(bytes, stsd.data + 12, boxes.tag("enca"));
+  if let Err(pcm.Unsupported) = mp4.inspect(encrypted, mp4.default_limits()) {} else {
+    return test.fail("encrypted sample entry");
+  }
+  let Ok(dref) = locate(bytes, ["moov", "trak", "mdia", "minf", "dinf", "dref"]) else {
+    return test.fail("reference box");
+  };
+  let external = word(bytes, dref.data + 16, 0u32);
+  if let Err(pcm.Unsupported) = mp4.inspect(external, mp4.default_limits()) {} else {
+    return test.fail("external data reference");
+  }
+  return test.pass();
+}
+
+function edit_rounding(): test.TestOutcome {
+  let Ok(bytes) = fixture("mono") else {
+    return test.fail("reference");
+  };
+  let limits = mp4.default_limits();
+  let Ok(index) = mp4.inspect(bytes, limits) else {
+    return test.fail("index");
+  };
+  let original = index.tracks[0];
+  let repeated = mp4.Track { ...original, edits: [time.Edit { duration: 46i64, media_time: 1024i64 }, time.Edit { duration: 46i64, media_time: 1024i64 }] };
+  let repeated_index = mp4.Index { ...index, tracks: [repeated] };
+  let Ok(value) = mp4.decode_track(bytes, repeated_index, 0, limits) else {
+    return test.fail("repeated edit");
+  };
+  // Ninety-two movie ticks are 4,057.2 samples, rounded once at each boundary.
+  if (value.frames != 4057i64) {
+    return test.fail("cumulative edit rounding");
+  }
+  for i in 0..2028 {
+    if (value.samples[i] != value.samples[2029 + i]) {
+      return test.fail("repeated media range");
+    }
+  }
+  let delayed = mp4.Track { ...original, edits: [time.Edit { duration: 10i64, media_time: -1i64 }, time.Edit { duration: 46i64, media_time: 1024i64 }] };
+  let delayed_index = mp4.Index { ...index, tracks: [delayed] };
+  let Ok(silence) = mp4.decode_track(bytes, delayed_index, 0, limits) else {
+    return test.fail("empty edit");
+  };
+  if (silence.frames != 2470i64) {
+    return test.fail("empty edit duration");
+  }
+  for i in 0..441 {
+    if (silence.samples[i] != 0.0f32) {
+      return test.fail("empty edit PCM");
+    }
+  }
+  for i in 0..2029 {
+    if (silence.samples[441 + i] != value.samples[i]) {
+      return test.fail("media after empty edit");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MP4 bounds, metadata, and resource limits");
+  runner = runner.it("incomplete prefixes and invalid box lengths", boundaries);
+  runner = runner.it("inconsistent tables and packet ranges outside media payload", tables);
+  runner = runner.it("box, track, packet, description, edit, input, and output budgets", budgets);
+  runner = runner.it("sample rounding, wide clock values, and overflow", clocks);
+  runner = runner.it("64-bit chunks and packet ranges beyond eight GiB", wide_offsets);
+  runner = runner.it("independent audio track selection and PCM", selection);
+  runner = runner.it("fragmented, encrypted, and external media return explicit errors", unsupported);
+  runner = runner.it("empty and repeated edits retain the cumulative movie clock", edit_rounding);
+  return runner.finish();
+}

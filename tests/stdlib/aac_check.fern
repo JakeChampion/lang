@@ -1,0 +1,22 @@
+import "std/audio/aac";
+import "std/audio/pcm";
+import "std/f64";
+import "aac_kernel_check" as ref;
+import "aac_vectors";
+
+pub function reference(v: aac_vectors.Vector): Result[void, string] {
+  let input = ref.unpack(v.bytes)?;
+  let expected = ref.unpack(v.pcm)?;
+  let value = match (aac.decode(input, pcm.default_limits())) { Ok(value) => value, Err(e) => { return Err(v.name + " decode: " + e.message()); } };
+  if (value.sample_rate != v.rate || value.channels != v.channels || value.samples.len() != v.count || expected.len() != 4 * v.count) {
+    return Err(v.name + " format or sample count");
+  }
+  for i in 0..v.count {
+    let sample = f32_from_bits(ref.word(expected, 4 * i));
+    let error = value.samples[i] - sample;
+    if (!value.samples[i].is_finite() || error > 0.000001f32 || error < -0.000001f32) {
+      return Err(v.name + " sample " + i.to_string() + ": actual " + value.samples[i].to_string() + ", expected " + sample.to_string());
+    }
+  }
+  return Ok(());
+}

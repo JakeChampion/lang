@@ -10,6 +10,11 @@ String methods cover search, slices, transformations, byte views, and numeric te
 
 Byte offsets must follow each method contract. Optional conversions retain invalid-input outcomes. Numeric validation uses the shared numeric parser.
 
+`chunks(size)` measures size in bytes and preserves UTF-8 scalar boundaries.
+A scalar wider than the size occupies one larger chunk.
+A zero or negative size returns the whole nonempty string as one chunk.
+An empty string returns no chunks. Array `chunks` returns no chunks for a nonpositive size.
+
 ## Executable example
 
 ```fern test name=std-string-example
@@ -1855,6 +1860,9 @@ pub function (s: string) slice_snap(a: i32, b: i32): string {
   return slice_unchecked(s, lo, hi) + "";
 }
 
+// The size is a byte count. A chunk never splits a UTF-8 scalar.
+// A nonpositive size returns the whole nonempty string as one chunk.
+// An empty string returns no chunks at every size.
 pub function (s: string) chunks(size: i32): string[] {
   let sLen = s.len();
   let out: string[] = [];

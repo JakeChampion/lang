@@ -462,3 +462,4 @@ vpack=512
 vpermute=513
 vextract_bits=514
 alloc_uninit=515
+udp_sendmmsg=516

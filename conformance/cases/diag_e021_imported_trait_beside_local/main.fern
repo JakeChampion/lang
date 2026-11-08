@@ -1,0 +1,4 @@
+import "core/cmp";
+trait Eq { function same(self: Self, n: i32): boolean; }
+function reject(value: dyn cmp.Eq): i32 { return 0; }
+function main(): i32 { return 0; }

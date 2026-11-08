@@ -365,3 +365,91 @@ func builtinUnixConnect(i *Interp, args []Value) (Value, error) {
 	i.tcpConns[i.tcpNextHandle] = conn
 	return Number(i.tcpNextHandle), nil
 }
+
+// senderSockaddr reads the 19-byte address udp_recvfrom writes: the family
+// as 4 or 6, sixteen address bytes, then the port in network order.
+func senderSockaddr(b []byte) syscall.Sockaddr {
+	port := int(b[17])<<8 | int(b[18])
+	if b[0] == 6 {
+		sa := &syscall.SockaddrInet6{Port: port}
+		copy(sa.Addr[:], b[1:17])
+		return sa
+	}
+	sa := &syscall.SockaddrInet4{Port: port}
+	copy(sa.Addr[:], b[1:5])
+	return sa
+}
+
+// builtinUdpSendmmsg answers udp_sendmmsg(sock, addrs, data, lens): each
+// message's bytes go to its address in one datagram, or in one datagram per
+// segment when its segment size is set, as the kernel splits a UDP_SEGMENT
+// message. Messages sent, or -errno when the first one fails.
+func builtinUdpSendmmsg(i *Interp, args []Value) (Value, error) {
+	const name = "udp_sendmmsg"
+	if len(args) != 4 {
+		return nil, fmt.Errorf("%s: expected 4 args, got %d", name, len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected number fd arg, got %T", name, args[0])
+	}
+	addrs, err := udpPayload(name, args[1])
+	if err != nil {
+		return nil, err
+	}
+	data, err := udpPayload(name, args[2])
+	if err != nil {
+		return nil, err
+	}
+	lens, ok := args[3].(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected i32[] lens arg, got %T", name, args[3])
+	}
+	fd, ok := i.udpSocks[int64(id)]
+	if !ok {
+		return Number(-int64(syscall.EBADF)), nil
+	}
+	elems := lens.Elems()
+	off, sent := 0, 0
+	for m := 0; 2*m+1 < len(elems); m++ {
+		size, ok1 := elems[2*m].(Number)
+		seg, ok2 := elems[2*m+1].(Number)
+		if !ok1 || !ok2 {
+			return nil, fmt.Errorf("%s: expected number lens elements", name)
+		}
+		if size < 0 || off+int(size) > len(data) {
+			if sent > 0 {
+				return Number(sent), nil
+			}
+			return Number(-int64(syscall.EINVAL)), nil
+		}
+		var to syscall.Sockaddr
+		if len(addrs) >= 19*(m+1) {
+			to = senderSockaddr(addrs[19*m : 19*m+19])
+		}
+		payload := data[off : off+int(size)]
+		step := len(payload)
+		if seg > 0 && int(seg) < step {
+			step = int(seg)
+		}
+		for at := 0; ; {
+			end := at + step
+			if end > len(payload) {
+				end = len(payload)
+			}
+			if err := syscall.Sendto(fd, payload[at:end], 0, to); err != nil {
+				if sent > 0 {
+					return Number(sent), nil
+				}
+				return negErrno(err), nil
+			}
+			at = end
+			if at >= len(payload) {
+				break
+			}
+		}
+		off += int(size)
+		sent++
+	}
+	return Number(sent), nil
+}

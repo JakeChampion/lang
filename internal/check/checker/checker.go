@@ -59,6 +59,9 @@ type Info struct {
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
+	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
+	CallSignatureBorrows func(*ast.Call) bool
+	TypeHoldsNoHandle    func(ast.Type) bool
 	// CallBorrowsBeside reports a plain call whose result can borrow from
 	// an argument other than the plain name given.
 	CallBorrowsBeside func(*ast.Call, string) bool
@@ -1422,6 +1425,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["udp_sendto_bytes"] = &ast.FuncType{
 		Params: []ast.Type{sock, u8s, ast.NumberType{}, u8s},
+		Result: ast.NumberType{},
+	}
+	// udp_sendmmsg(sock, addrs, data, lens): sendmmsg. addrs holds one 19-byte
+	// address per message as udp_recvfrom writes it, or nothing for a
+	// connected socket; data holds every message's bytes in order; lens holds
+	// each message's byte count and its UDP_SEGMENT size, 0 for one datagram.
+	// Messages sent, or -errno.
+	c.info.FuncSigs["udp_sendmmsg"] = &ast.FuncType{
+		Params: []ast.Type{sock, u8s, u8s, ast.ArrayType{Elem: ast.NumberType{}}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["udp_recvfrom"] = &ast.FuncType{
@@ -3033,6 +3045,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.OwnFuncs = c.ownFuncs
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
+	c.info.TypeHoldsNoHandle = c.holdsNoHandle
+	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
+		if id, ok := call.Callee.(*ast.Ident); ok {
+			return c.signatureResultBorrows(id.Name)
+		}
+		return true
+	}
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.NoReturn = NoReturnFuncs(prog)
 
@@ -10658,6 +10677,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
+				if x.Method != nil && (id.Name == "__method_Array_set" || id.Name == "__method_Array_push" || id.Name == "__method_Array_truncate") {
+					if array, ok := x.Method.Receiver.(ast.ArrayType); ok && c.holdsNoHandle(array.Elem) {
+						return true
+					}
+				}
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true
 				}

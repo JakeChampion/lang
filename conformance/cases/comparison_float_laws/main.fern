@@ -1,0 +1,54 @@
+// spec: CL-01
+// spec: CL-02
+
+import "core/cmp";
+
+function laws[T: cmp.Eq + cmp.Ord + cmp.Hash](values: T[]): i32 {
+  for a in values {
+    if (!a.eq(a) || a.cmp(a) != 0) { return 1; }
+    for b in values {
+      if (a.eq(b) != b.eq(a)) { return 2; }
+      if (a.eq(b) != (a.cmp(b) == 0)) { return 3; }
+      if (a.eq(b) && a.hash() != b.hash()) { return 4; }
+      if ((a.cmp(b) < 0) != (b.cmp(a) > 0)) { return 5; }
+      for c in values {
+        if (a.eq(b) && b.eq(c) && !a.eq(c)) { return 6; }
+        if (a.cmp(b) <= 0 && b.cmp(c) <= 0 && a.cmp(c) > 0) { return 7; }
+      }
+    }
+  }
+  return 0;
+}
+
+struct Bucket { n: i32 }
+impl cmp.Eq for Bucket {
+  function eq(self: Self, other: Self): boolean { return (self.n & 1) == (other.n & 1); }
+}
+impl cmp.Ord for Bucket {
+  function cmp(self: Self, other: Self): i32 { return (self.n & 1).cmp(other.n & 1); }
+}
+impl cmp.Hash for Bucket {
+  function hash(self: Self): i32 { return (self.n & 1).hash(); }
+}
+
+function main(): i32 {
+  let nan_a = f64_from_bits(0x7ff8000000000001i64);
+  let nan_b = f64_from_bits(-2251799813685246i64);
+  let inf = 1.0 / 0.0;
+  let zeros: f64[] = [f64_from_bits(-9223372036854775807i64 - 1i64), 0.0];
+  if (nan_a == nan_a || nan_b == nan_b || !nan_a.eq(nan_b)) { return 10; }
+  if (nan_a.cmp(inf) <= 0 || inf.cmp(nan_b) >= 0 || !zeros[0].eq(zeros[1])) { return 11; }
+  let wide = laws([-inf, -1.0, zeros[0], zeros[1], 1.0, inf, nan_a, nan_b]);
+  if (wide != 0) { return 20 + wide; }
+  let nan32_a = f32_from_bits(0x7fc00001);
+  let nan32_b = f32_from_bits(0xffc00002u32 as i32);
+  let inf32 = inf as f32;
+  let zero32 = f32_from_bits(-2147483647 - 1);
+  if (nan32_a == nan32_a || nan32_b == nan32_b || !nan32_a.eq(nan32_b)) { return 30; }
+  if (nan32_a.cmp(inf32) <= 0 || !zero32.eq(0.0 as f32)) { return 31; }
+  let narrow = laws([-inf32, -1.0 as f32, zero32, 0.0 as f32, 1.0 as f32, inf32, nan32_a, nan32_b]);
+  if (narrow != 0) { return 40 + narrow; }
+  let custom = laws([Bucket { n: -1 }, Bucket { n: 0 }, Bucket { n: 1 }, Bucket { n: 2 }]);
+  if (custom != 0) { return 50 + custom; }
+  return 0;
+}

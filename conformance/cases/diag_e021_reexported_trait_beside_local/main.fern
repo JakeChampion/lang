@@ -1,0 +1,4 @@
+import "./facade" as f;
+trait Choice { function combine(self: Self, n: i32): i32; }
+function reject(value: dyn f.Choice): i32 { return 0; }
+function main(): i32 { return 0; }

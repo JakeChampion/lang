@@ -3157,7 +3157,7 @@ function call_host_net(name: string, args: Value[]): Value {
   if (name == "__socket_from_fd") {
     return arg_at(args, 0);
   }
-  if (util.has_str(["udp_sendto", "udp_sendto_bytes"], name)) {
+  if (util.has_str(["udp_sendto", "udp_sendto_bytes", "udp_sendmmsg"], name)) {
     return call_host_udp_send(name, args);
   }
   if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom"], name)) {
@@ -3176,7 +3176,66 @@ function call_host_udp_send(name: string, args: Value[]): Value {
   if (name == "udp_sendto") {
     return v_int(udp_sendto(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_str(args, 3)));
   }
+  if (name == "udp_sendmmsg") {
+    return v_int(udp_sendmmsg_by_sendto(host_socket(args, 0), arg_bytes(args, 1), arg_bytes(args, 2), arg_i32s(args, 3)));
+  }
   return v_int(udp_sendto_bytes(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
+}
+
+// udp_sendmmsg_by_sendto answers udp_sendmmsg with one udp_sendto_bytes per
+// datagram, a message whose segment size is set as one datagram per segment.
+// The pinned stage0 compiler builds this interpreter, so it cannot call the
+// builtin itself until a stage0 that knows it is published.
+function udp_sendmmsg_by_sendto(sock: Socket, addrs: u8[], data: u8[], lens: i32[]): i32 {
+  let n = lens.len() / 2;
+  let off = 0;
+  let sent = 0;
+  let m = 0;
+  while (m < n) {
+    let size = lens[2 * m];
+    let seg = lens[2 * m + 1];
+    if (size < 0 || off + size > data.len()) {
+      if (sent > 0) {
+        return sent;
+      }
+      return -22;
+    }
+    let addr: u8[] = [];
+    let port = 0;
+    if (addrs.len() >= 19 * (m + 1)) {
+      let n_addr = 4;
+      if (addrs[19 * m] == 6u8) {
+        n_addr = 16;
+      }
+      addr = __bytes_owned(addrs[19 * m + 1:19 * m + 1 + n_addr]);
+      port = addrs[19 * m + 17] as i32 << 8 | addrs[19 * m + 18] as i32;
+    }
+    let step = size;
+    if (seg > 0 && seg < size) {
+      step = seg;
+    }
+    let at = 0;
+    let first = true;
+    while (first || at < size) {
+      first = false;
+      let end = at + step;
+      if (end > size) {
+        end = size;
+      }
+      let r = udp_sendto_bytes(sock, addr, port, __bytes_owned(data[off + at:off + end]));
+      if (r < 0) {
+        if (sent > 0) {
+          return sent;
+        }
+        return r;
+      }
+      at = end;
+    }
+    off += size;
+    sent += 1;
+    m += 1;
+  }
+  return sent;
 }
 
 function call_host_udp(name: string, args: Value[]): Value {

@@ -1,0 +1,279 @@
+import "std/audio/vorbis";
+import "std/audio/vorbis/bits";
+import "std/audio/vorbis/dsp";
+import "std/audio/vorbis/floor0";
+import "std/audio/vorbis/floor1";
+import "std/audio/vorbis/headers";
+import "std/audio/vorbis/packet";
+import "std/audio/vorbis/residue";
+import "std/audio/vorbis/setup";
+import "std/audio/vorbis/types";
+import "std/audio/pcm";
+import "std/hex";
+import "std/test";
+import "aac_kernel_check" as ref;
+import "vorbis_smoke_vectors";
+
+function identification(): test.TestOutcome {
+  let Ok(bytes) = ref.unpack(vorbis_smoke_vectors.vector().identification) else {
+    return test.fail("identification fixture");
+  };
+  let limits = types.default_limits();
+  for cut in 0..bytes.len() {
+    if let Err(pcm.Truncated) = headers.identification(bytes[:cut], limits) {} else {
+      return test.fail("identification byte prefix");
+    }
+  }
+  if let Err(pcm.Header) = headers.identification(bytes.append(0u8), limits) {} else {
+    return test.fail("identification extent");
+  }
+  for field in [(11, 0u8), (28, 85u8), (28, 110u8), (29, 0u8)] {
+    let (at, value) = field;
+    if let Err(pcm.Header) = headers.identification(bytes.with(at, value), limits) {} else {
+      return test.fail("identification invariant");
+    }
+  }
+  if let Err(pcm.Unsupported) = headers.identification(bytes.with(11, 9u8), limits) {} else {
+    return test.fail("channel limit");
+  }
+  if let Err(pcm.Unsupported) = headers.identification(bytes.with(7, 1u8), limits) {} else {
+    return test.fail("version");
+  }
+  return test.pass();
+}
+
+function comments(): test.TestOutcome {
+  let Ok(bytes) = hex.decode("03766f7262697301000000ff0300000003000000413d8003000000613d7803000000423d790100") else {
+    return test.fail("comments fixture");
+  };
+  let limits = types.default_limits();
+  let Ok(tags) = headers.comments(bytes, limits) else {
+    return test.fail("byte metadata");
+  };
+  if (tags.vendor != [255u8] || tags.comments.len() != 3 || headers.values(tags, "a") != [[128u8], [120u8]] || headers.values(tags, "B") != [[121u8]]) {
+    return test.fail("exact metadata and case-insensitive names");
+  }
+  for cut in 0..bytes.len() - 1 {
+    if let Err(_) = headers.comments(bytes[:cut], limits) {} else {
+      return test.fail("comment prefix");
+    }
+  }
+  if let Err(pcm.Header) = headers.comments(bytes.with(bytes.len() - 2, 0u8), limits) {} else {
+    return test.fail("comment framing");
+  }
+  if let Err(pcm.Limit) = headers.comments(bytes, types.Limits { ...limits, max_comments: 2 }) {} else {
+    return test.fail("comment count budget");
+  }
+  if let Err(pcm.Limit) = headers.comments(bytes, types.Limits { ...limits, max_comment_bytes: bytes.len() - 1 }) {} else {
+    return test.fail("comment byte budget");
+  }
+  return test.pass();
+}
+
+function setup_limits(): test.TestOutcome {
+  let v = vorbis_smoke_vectors.vector();
+  let Ok(ident) = ref.unpack(v.identification) else {
+    return test.fail("ident fixture");
+  };
+  let Ok(bytes) = ref.unpack(v.setup) else {
+    return test.fail("setup fixture");
+  };
+  let limits = types.default_limits();
+  for cut in 0..bytes.len() {
+    if let Err(_) = vorbis.create(ident, bytes[:cut], limits) {} else {
+      return test.fail("setup prefix " + cut.to_string());
+    }
+  }
+  for reduced in [types.Limits { ...limits, max_setup_bytes: bytes.len() - 1 }, types.Limits { ...limits, max_entries: 5 }, types.Limits { ...limits, max_vectors: 3 }, types.Limits { ...limits, max_nodes: 2 }, types.Limits { ...limits, audio: pcm.Limits { max_input_bytes: 8, max_samples: 1024 } }] {
+    if let Err(pcm.Limit) = vorbis.create(ident, bytes, reduced) {} else {
+      return test.fail("shared setup allocation budget");
+    }
+  }
+  // Mutate every setup bit under small allocation budgets. Valid changes can decode.
+  let bounded = types.Limits { ...limits, max_entries: 1024, max_vectors: 4096, max_nodes: 2048 };
+  let Ok(audio) = ref.unpack(v.packets) else {
+    return test.fail("audio fixture");
+  };
+  let size = ref.word(audio, 0);
+  for at in 0..bytes.len() {
+    for bit in 0..8 {
+      let changed = bytes.with(at, bytes[at] ^ 1u8 << bit as u8);
+      if let Ok(codec) = vorbis.create(ident, changed, bounded) {
+        let _ = codec.decode_packet(audio[4:4 + size], limits.audio);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function reusable(): test.TestOutcome {
+  let v = vorbis_smoke_vectors.vector();
+  let Ok(ident) = ref.unpack(v.identification) else {
+    return test.fail("ident fixture");
+  };
+  let Ok(setup) = ref.unpack(v.setup) else {
+    return test.fail("setup fixture");
+  };
+  let Ok(packets) = ref.unpack(v.packets) else {
+    return test.fail("packet fixture");
+  };
+  let Ok(expected) = ref.unpack(v.pcm) else {
+    return test.fail("PCM fixture");
+  };
+  let limits = types.default_limits();
+  let Ok(codec) = vorbis.create(ident, setup, limits) else {
+    return test.fail("create");
+  };
+  let buffer: f32[] = [];
+  for _ in 0..40 {
+    buffer = buffer.append(123.0f32);
+  }
+  for round in 0..2 {
+    let at = 0;
+    let rendered = 0;
+    while (at < packets.len()) {
+      let size = ref.word(packets, at);
+      at += 4;
+      let Ok(count) = codec.packet_frames(packets[at:at + size], limits.audio) else {
+        return test.fail("packet duration");
+      };
+      let Ok((next, frame)) = codec.decode_packet_into(packets[at:at + size], buffer, limits.audio) else {
+        return test.fail("reusable decode");
+      };
+      codec = next;
+      at += size;
+      if (frame.frames != count || !ref.compare(frame.samples, count, expected, rendered * 4)) {
+        return test.fail("reused or reset PCM");
+      }
+      for i in 32..40 {
+        if (frame.samples[i] != 123.0f32) {
+          return test.fail("storage tail");
+        }
+      }
+      rendered += count;
+      buffer = frame.samples;
+    }
+    codec = codec.reset();
+  }
+  if let Err(pcm.Truncated) = codec.packet_frames([], limits.audio) {} else {
+    return test.fail("empty mode header");
+  }
+  if let Err(pcm.Header) = codec.packet_frames([1u8], limits.audio) {} else {
+    return test.fail("header packet in audio");
+  }
+  return test.pass();
+}
+
+function coupling(): test.TestOutcome {
+  let pairs: setup.Couple[] = [setup.Couple { magnitude: 0, angle: 1 }, setup.Couple { magnitude: 1, angle: 2 }];
+  let Ok(values) = packet.uncouple([10.0f32, 4.0f32, 1.0f32], pairs, 3, 1, 1) else {
+    return test.fail("shared channel coupling");
+  };
+  if (values != [10.0f32, 6.0f32, 3.0f32]) {
+    return test.fail("coupling steps must run in reverse");
+  }
+  let Ok(quadrants) = packet.uncouple([10.0f32, 10.0f32, -10.0f32, -10.0f32, 4.0f32, -4.0f32, 4.0f32, -4.0f32], pairs[:1], 2, 4, 4) else {
+    return test.fail("quadrant coupling");
+  };
+  if (quadrants != [10.0f32, 6.0f32, -10.0f32, -6.0f32, 6.0f32, 10.0f32, -6.0f32, -10.0f32]) {
+    return test.fail("coupling sign quadrants");
+  }
+  return test.pass();
+}
+
+function floor_bounds(): test.TestOutcome {
+  let config = floor1.Setup { partitions: [], classes: [], multiplier: 3, x: [0, 32768], low: [0, 0], high: [1, 1], order: [0, 1] };
+  let output: f32[] = [];
+  for _ in 0..32 {
+    output = output.append(0.0f32);
+  }
+  if let Err(pcm.Header) = floor1.synth(floor1.Data { used: true, y: [86, 0] }, config, 32, dsp.zeros(32)) {} else {
+    return test.fail("multiplier-three range");
+  }
+  let Ok(values) = floor1.synth(floor1.Data { used: true, y: [85, 85] }, config, 32, output) else {
+    return test.fail("floor extent beyond spectral block");
+  };
+  if (values[0] != 1.0f32 || values[31] != 1.0f32) {
+    return test.fail("constant maximum floor");
+  }
+  let bytes: u8[] = [255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 127u8];
+  let Ok((end, amplitude)) = bits.wide(bytes, bits.create(), 63) else {
+    return test.fail("63-bit floor amplitude");
+  };
+  if (amplitude != 9223372036854775807u64 || end.at != 7 || end.bit != 7) {
+    return test.fail("full-width amplitude");
+  }
+  if let Err(pcm.Truncated) = bits.wide(bytes[:7], bits.create(), 63) {} else {
+    return test.fail("truncated wide input");
+  }
+  let v = vorbis_smoke_vectors.vector();
+  let Ok(ident) = ref.unpack(v.identification) else {
+    return test.fail("wide ident");
+  };
+  let Ok(header) = ref.unpack(v.setup) else {
+    return test.fail("wide setup");
+  };
+  let Ok(info) = headers.identification(ident, types.default_limits()) else {
+    return test.fail("wide info");
+  };
+  let Ok(parsed) = setup.read(header, info, types.default_limits()) else {
+    return test.fail("wide config");
+  };
+  let base = match (parsed.floors[0]) { setup.Zero(value) => value, _ => { return test.fail("type-zero floor fixture"); } };
+  let Ok(narrow) = floor0.synth(floor0.Data { amplitude: 255u64, coefficients: [1.0806046f32] }, base, 6, dsp.zeros(32)) else {
+    return test.fail("narrow amplitude scale");
+  };
+  let Ok(wide) = floor0.synth(floor0.Data { amplitude: 9223372036854775807u64, coefficients: [1.0806046f32] }, floor0.Setup { ...base, amplitude_bits: 63 }, 6, dsp.zeros(32)) else {
+    return test.fail("wide amplitude scale");
+  };
+  if (narrow != wide) {
+    return test.fail("amplitude ratio must not overflow an integer product");
+  }
+  return test.pass();
+}
+
+function residue_end(): test.TestOutcome {
+  let v = vorbis_smoke_vectors.vector();
+  let Ok(ident) = ref.unpack(v.identification) else {
+    return test.fail("residue ident");
+  };
+  let Ok(header) = ref.unpack(v.setup) else {
+    return test.fail("residue setup");
+  };
+  let limits = types.default_limits();
+  let Ok(info) = headers.identification(ident, limits) else {
+    return test.fail("residue info");
+  };
+  let Ok(config) = setup.read(header, info, limits) else {
+    return test.fail("residue config");
+  };
+  for kind in 0..3 {
+    let original = config.residues[0];
+    let current = residue.Setup { ...original, kind: kind };
+    let Ok(work) = residue.read([0u8], bits.create(), current, config.books, [0], [1], 32, 32, dsp.zeros(32)) else {
+      return test.fail("legal residue packet end");
+    };
+    if (!work.eof || work.reader.at != 1 || work.reader.bit != 0) {
+      return test.fail("residue end cursor");
+    }
+    for i in 0..32 {
+      let expected = if (i < 7) { config.books[2].vectors[0] } else { 0.0f32 };
+      if (work.output[i] != expected) {
+        return test.fail("preserved residue prefix and zero remainder");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Vorbis malformed inputs and decoder state");
+  runner = runner.it("identification fields and every byte prefix", identification);
+  runner = runner.it("exact comment bytes, names, framing, and budgets", comments);
+  runner = runner.it("setup prefixes, shared budgets, and every bit mutation", setup_limits);
+  runner = runner.it("caller buffer tails and independent reset history", reusable);
+  runner = runner.it("reverse shared coupling and all sign quadrants", coupling);
+  runner = runner.it("floor extent, amplitude range, and full-width input", floor_bounds);
+  runner = runner.it("legal residue ends preserve complete values for all types", residue_end);
+  return runner.finish();
+}

@@ -159,6 +159,7 @@ base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bitwise_not                                          0
 bitwise_precedence                                   0
+block_expression_function_assignments               0
 bool_in_tuple_with_i64                               0
 bool_match_true_false_closes                         0
 bool_to_string                                       0
@@ -212,6 +213,8 @@ closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
 codec_errors                                         0
+collection_edge_policies                            0
+comparison_float_laws                               0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
@@ -294,6 +297,7 @@ divmod_inline                                        0
 dyn_bound_satisfied                                  0
 dyn_dispatch_tells_a_struct_from_its_namesake_variant 0
 dyn_downcast_of_a_scalar_is_none                     0
+dyn_local_trait_shadows_imported                    0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
@@ -314,6 +318,7 @@ eq_struct_enum                                       0
 erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
+evaluation_order_effects                            0
 exit                                                 0
 exit_42                                              0
 exit_code                                            0
