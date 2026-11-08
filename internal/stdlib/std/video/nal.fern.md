@@ -111,7 +111,12 @@ function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boole
 
 // The AVC profiles whose avcC record may carry the extension block.
 function extended_profile(profile: u8): boolean {
-  return [100u8, 110u8, 122u8, 144u8, 244u8, 44u8, 83u8, 86u8, 118u8, 128u8, 138u8, 139u8, 134u8, 135u8].contains(profile);
+  for p in [100, 110, 122, 144, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135] {
+    if (p == profile as i32) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct Sets { prefix: i32, sps: u8[], pps: u8[], at: i32 }
@@ -198,7 +203,10 @@ function hevc_array_kind(input: [u8], at: i32): Result[i32, frame.VideoError] {
 // The arrays of an hvcC record from offset 23, each into its own buffer,
 // within one budget for all four.
 function hevc_arrays(input: [u8], limits: frame.Limits): Result[Arrays, frame.VideoError] {
-  let a = Arrays { vps: [], sps: [], pps: [], sei: [] };
+  let vps: u8[] = [];
+  let sps: u8[] = [];
+  let pps: u8[] = [];
+  let sei: u8[] = [];
   let at = 23;
   for _ in 0..input[22] as i32 {
     if (input.len() - at < 3) {
@@ -206,29 +214,33 @@ function hevc_arrays(input: [u8], limits: frame.Limits): Result[Arrays, frame.Vi
     }
     let kind = hevc_array_kind(input, at)?;
     let count = wire.be(input, at + 1, 2) as i32;
-    let used = a.vps.len() + a.sps.len() + a.pps.len() + a.sei.len();
+    let used = vps.len() + sps.len() + pps.len() + sei.len();
     if (kind == 32) {
-      let units = read_units(input, at + 3, count, kind, true, a.vps, limits.max_packet_bytes - used + a.vps.len())?;
-      a = Arrays { ...a, vps: units.bytes };
+      let budget = limits.max_packet_bytes - used + vps.len();
+      let units = read_units(input, at + 3, count, kind, true, vps, budget)?;
+      vps = units.bytes;
       at = units.next_offset;
     } else if (kind == 33) {
-      let units = read_units(input, at + 3, count, kind, true, a.sps, limits.max_packet_bytes - used + a.sps.len())?;
-      a = Arrays { ...a, sps: units.bytes };
+      let budget = limits.max_packet_bytes - used + sps.len();
+      let units = read_units(input, at + 3, count, kind, true, sps, budget)?;
+      sps = units.bytes;
       at = units.next_offset;
     } else if (kind == 34) {
-      let units = read_units(input, at + 3, count, kind, true, a.pps, limits.max_packet_bytes - used + a.pps.len())?;
-      a = Arrays { ...a, pps: units.bytes };
+      let budget = limits.max_packet_bytes - used + pps.len();
+      let units = read_units(input, at + 3, count, kind, true, pps, budget)?;
+      pps = units.bytes;
       at = units.next_offset;
     } else {
-      let units = read_units(input, at + 3, count, kind, true, a.sei, limits.max_packet_bytes - used + a.sei.len())?;
-      a = Arrays { ...a, sei: units.bytes };
+      let budget = limits.max_packet_bytes - used + sei.len();
+      let units = read_units(input, at + 3, count, kind, true, sei, budget)?;
+      sei = units.bytes;
       at = units.next_offset;
     }
   }
   if (at != input.len()) {
     return Err(frame.Header);
   }
-  return Ok(a);
+  return Ok(Arrays { vps: vps, sps: sps, pps: pps, sei: sei });
 }
 
 // The arrays in VPS, SPS, PPS, SEI order as one buffer.
