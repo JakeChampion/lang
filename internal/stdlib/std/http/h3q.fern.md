@@ -126,6 +126,18 @@ pub function (c: Conn) events_taken(): Conn {
   return Conn { ...c, events: [] };
 }
 
+// Parked is a connection between requests, without its events, so a client
+// pool can keep it in a cell. The events are read before it is parked.
+pub struct Parked { quic: conn.Conn, session: h3.Session, started: boolean, stopping: boolean, max_body: i64, partials: Partial[], next: i64, parked: i64[], date: string, date_line: u8[] }
+
+pub function (c: Conn) park(): Parked {
+  return Parked { quic: c.quic, session: c.session, started: c.started, stopping: c.stopping, max_body: c.max_body, partials: c.partials, next: c.next, parked: c.parked, date: c.date, date_line: c.date_line };
+}
+
+pub function unpark(p: Parked): Conn {
+  return Conn { quic: p.quic, session: p.session, started: p.started, stopping: p.stopping, max_body: p.max_body, partials: p.partials, next: p.next, parked: p.parked, events: [], date: p.date, date_line: p.date_line };
+}
+
 pub function (c: Conn) datagrams(): u8[][] {
   return c.quic.out;
 }

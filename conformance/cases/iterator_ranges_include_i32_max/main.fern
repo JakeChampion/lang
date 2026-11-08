@@ -1,0 +1,55 @@
+import "core/iter";
+
+function matches(r: iter.Range, expected: i32[]): boolean {
+  let rest = r;
+  for want in expected {
+    match (rest.next()) {
+      Some(pair) => {
+        let value: i32 = pair.0;
+        if (value != want) { return false; }
+        rest = pair.1;
+      },
+      None => { return false; }
+    }
+  }
+  match (rest.next()) {
+    Some(_) => { return false; },
+    None => {}
+  }
+  match (rest.next()) {
+    Some(_) => { return false; },
+    None => { return true; }
+  }
+}
+
+function main(): i32 {
+  let max = 2147483647;
+  let min = -2147483647 - 1;
+  if (!matches(iter.range_incl(max, max), [max])) { return 1; }
+  if (!matches(iter.range_incl(max - 1, max), [max - 1, max])) { return 2; }
+  if (!matches(iter.range_incl(min, min), [min])) { return 3; }
+  if (!matches(iter.range_incl(min, min + 1), [min, min + 1])) { return 4; }
+  if (!matches(iter.range_incl(max, max - 1), [])) { return 5; }
+  if (!matches(iter.range_incl(0, min), [])) { return 6; }
+  if (!matches(iter.range(max - 1, max), [max - 1])) { return 7; }
+  if (!matches(iter.range(max, max), [])) { return 8; }
+  if (!matches(iter.range(min, min), [])) { return 9; }
+  if (!matches(iter.range(min, min + 1), [min])) { return 10; }
+  if (!matches(iter.range_incl(-1, 1), [-1, 0, 1])) { return 11; }
+  if (!matches(max..=max, [max])) { return 12; }
+  if (!matches(max..max, [])) { return 13; }
+
+  let prefix = iter.range_incl(min, max).take(3).collect();
+  if (prefix.len() != 3 || prefix[0] != min || prefix[1] != min + 1 || prefix[2] != min + 2) { return 14; }
+
+  let count = 0;
+  for value in (max - 1)..=max {
+    if (value != max - 1 + count) { return 15; }
+    count += 1;
+    if (count > 2) { return 16; }
+    continue;
+  }
+  if (count != 2) { return 17; }
+  print("iterator range boundaries ok");
+  return 0;
+}

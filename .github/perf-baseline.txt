@@ -1,3 +1,4 @@
+# 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: the pool and its kept connections carry the HTTP/3 fields, so http_hello.text grows 1.09% on x86_64 and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb. video_qtrle.ir falls with the split codec and is pinned at its measured value.
 # 2026-11-08: PR #14507, perf-aarch64 job 128621787370 on 3318c8cb, and the same bin/fern run on x86_64 here.
 # std/video/qtrle is split into helpers for the complexity ratchet, so video_qtrle.text rises on both ISAs. Pinned at the measured values.
@@ -242,7 +243,7 @@ x86_64/deflate_encode.text	7168
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15069
+x86_64/http_hello.text	15233
 x86_64/http_hello.ir	21796408
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077

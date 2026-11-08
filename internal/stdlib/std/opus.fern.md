@@ -7,6 +7,10 @@ The decoder accepts SILK, hybrid, and CELT packets at all five Opus output sampl
 It accepts every packet frame-count code, including multiple frames and padding.
 It handles mode transitions, packet loss, and in-band error correction.
 
+Input is borrowed. Frame sizes, frame count, and duration bound decoder storage.
+Padding can exceed the coded frame data without increasing decoded output.
+A transport or container must enforce its encoded input budget.
+
 Samples are interleaved `f32` values. The encoder requires finite values between -1 and 1.
 Decoder output can exceed that interval. Apply clipping at the device conversion boundary.
 

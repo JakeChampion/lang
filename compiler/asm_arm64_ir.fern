@@ -2758,6 +2758,19 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
+  if (b == "vpermute") {
+    return ssa_vpermute(ins, reg_of, s);
+  }
+  if (b == "vextract_bits") {
+    s = ssa_fread(reg_of, ins.args[0], "d1", s);
+    let ar = ssa_fsrc(reg_of, ins.args[0], "d1");
+    let a = "v" + slice_unchecked(ar, 1, ar.len());
+    let d = ssa_dst(reg_of, ins.result);
+    let target = if (ins.imm == 32) { ssa_wreg(d) } else { d };
+    let lane = if (ins.imm == 32) { ".s[" } else { ".d[" };
+    s = s.write("    umov " + target + ", " + a + lane + util.i32_to_string(ssa_lane_index(ins.str)) + "]\n");
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (b == "vbitmask") {
     return ssa_vbitmask(ins, reg_of, s);
   }
@@ -2830,6 +2843,29 @@ function ssa_vq_lane(d: string, width: i32, lane: i32): string {
     t = ".s[";
   }
   return "v" + slice_unchecked(d, 1, d.len()) + t + util.i32_to_string(lane) + "]";
+}
+
+function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let ar = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let a = "v" + slice_unchecked(ar, 1, ar.len());
+  let mode = ssa_lane_index(ins.str);
+  if (mode == 0 || mode == 3) {
+    s = s.write("    mov v0.16b, " + a + ".16b\n");
+    if (ins.imm == 32 && mode == 0) {
+      s = s.write("    rev64 v0.4s, v0.4s\n");
+    }
+    s = s.write("    ext v0.16b, v0.16b, v0.16b, #8\n");
+  } else {
+    s = ssa_fread(reg_of, ins.args[1], "d2", s);
+    let br = ssa_fsrc(reg_of, ins.args[1], "d2");
+    let b = "v" + slice_unchecked(br, 1, br.len());
+    let shape = if (ins.imm == 32) { ".4s" } else { ".2d" };
+    s = s.write("    zip" + util.i32_to_string(mode) + " v0" + shape + ", " + a + shape + ", " + b + shape + "\n");
+  }
+  let d = ssa_fdst(reg_of, ins.result);
+  s = s.write("    mov v" + slice_unchecked(d, 1, d.len()) + ".16b, v0.16b\n");
+  return ssa_fput(reg_of, ins.result, d, s);
 }
 
 function ssa_vextract(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -8423,8 +8459,9 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x24, x24, :lo12:__fern_bt_floor\n");
   s = s.write("    ldr x22, [x24]\n");
   s = s.write("    str xzr, [x24]\n");
+  s = s.write("    add x23, x20, #8\n");
   s = s.write("    cmp x22, #0\n");
-  s = s.write("    csel x22, x20, x22, eq\n");
+  s = s.write("    csel x22, x23, x22, eq\n");
   s = s.write("    ldr x20, [x20]\n");
   s = s.write("    adrp x24, __fern_stack_top\n");
   s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");

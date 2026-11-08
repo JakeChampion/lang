@@ -206,3 +206,40 @@ func TestUngatedBuiltinsAreNotCapabilities(t *testing.T) {
 		}
 	}
 }
+
+// A raw memory access is a privileged use: a dependency that reads memory the
+// kernel owns needs the privileged grant.
+func TestAnalyzeRawMemoryAccessIsPrivileged(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"main.fern": `import "./tables";
+function main(): i32 {
+  return tables.entry(4096 as usize) as i32;
+}`,
+		"tables.fern": `pub function entry(at: usize): i64 {
+  unsafe {
+    return __mem_load64(at);
+  }
+}`,
+	})
+	prog := loadChecked(t, filepath.Join(root, "main.fern"))
+	pkgOf := func(module string) string {
+		switch {
+		case strings.HasPrefix(module, "stdlib://"):
+			return ""
+		case strings.HasSuffix(module, "tables.fern"):
+			return "tables"
+		default:
+			return "(root)"
+		}
+	}
+	rows := caps.Analyze(prog, pkgOf)
+	if len(rows) != 2 || rows[1].Package != "tables" {
+		t.Fatalf("want (root) + tables rows, got %+v", rows)
+	}
+	if len(rows[1].Uses) != 1 || rows[1].Uses[0].Capability != "privileged" {
+		t.Fatalf("want privileged on tables, got %+v", rows[1].Uses)
+	}
+	if got := strings.Join(rows[1].Uses[0].Chain, "|"); got != "tables__entry|__mem_load64" {
+		t.Fatalf("tables chain: got %v", got)
+	}
+}

@@ -538,7 +538,18 @@ is the number of slots it leaves.
 | `irq_pending` | 510 | 0 | 1 |
 | `tcp_accept_with` | 511 | 2 | 1 |
 | `vpack` | 512 | 2 | 1 |
+| `vpermute` | 513 | 2 | 1 |
+| `vextract_bits` | 514 | 1 | 1 |
 <!-- END ir_effects_run -->
+
+`vpermute` preserves all lane bits in two 128-bit inputs.
+Its immediate selects lane reversal (0), low-half interleave (1), high-half interleave (2), or 64-bit half exchange (3).
+Reversal and half exchange use the first input only.
+The width is 32 or 64 bits per lane.
+
+`vextract_bits` reads the indexed lane as an unsigned integer of the same width.
+Its immediate is a lane index from zero to the lane count minus one.
+It preserves NaN payloads and signed zero without a float conversion.
 
 ## How this is kept true
 

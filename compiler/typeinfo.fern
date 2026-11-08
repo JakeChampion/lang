@@ -275,6 +275,12 @@ pub function lane_builtin_params(name: string): Type[] {
   let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   let arr: Type = TypeArray { elem: e, view: false };
   let v = lane_builtin_verb(name);
+  if (v == "reverse" || v == "swap_halves") {
+    return [lt];
+  }
+  if (v == "zip_lo" || v == "zip_hi") {
+    return [lt, lt];
+  }
   if (v == "load_ptr") {
     return [TypeI32 { is_char: false, width: -1, unsigned: true, polymorphic: false }];
   }
@@ -294,7 +300,7 @@ pub function lane_builtin_params(name: string): Type[] {
     }
     return out;
   }
-  if (v == "lane") {
+  if (v == "lane" || v == "lane_bits") {
     return [lt, i];
   }
   if (v == "load_bytes" || v == "with_bytes") {
@@ -326,6 +332,9 @@ function lane_operands(v: string, lt: Type): Type[] {
 pub function lane_builtin_result(name: string): Type {
   let w = lane_builtin_width(name);
   let v = lane_builtin_verb(name);
+  if (v == "lane_bits") {
+    return TypeI32 { is_char: false, width: w, unsigned: true, polymorphic: false };
+  }
   if (v == "store") {
     return TypeVoid { tag: 0 };
   }

@@ -180,9 +180,20 @@ Each is a bound with a test that crosses it.
    against `std/serve` with HTTP/3 on, landed (#12511). More HTTP/3 peers
    beside aioquic (`scripts/net-quic-interop` has carried HTTP/3 both ways
    since 7a) are open. Gate: the nightly jobs.
-9. **Client.** `std/fetch` speaks HTTP/3 to an origin that offers it by
-   Alt-Svc, and `std/sim_fetch` scripts datagrams. Gate: fetch against
-   aioquic's server, and the simulated network.
+9. **Client (landed, #12510).** `std/fetch` speaks HTTP/3 to an origin
+   that offers it. An Alt-Svc field on a TLS response from the origin
+   itself names the UDP port (`fetch.alt_svc` reads the value, the pool's
+   `note_alt_svc` ages it, `offer_h3` seeds it). The next request to that
+   origin dials QUIC through two datagram functions on `fetch.Transport`,
+   drives `std/http/h3q` as it drives `std/http/h2`, and keeps the
+   connection in the pool (`h3q.Parked`, the connection without its
+   events). A QUIC connection that cannot be made forgets the alternative
+   and the request goes over TCP (RFC 9114 section 3.1). `std/sim_fetch`
+   hosts an HTTP/3 endpoint in memory (`serve_h3`) and carries the datagrams
+   with a delay and a loss schedule. Gate: `tests/stdlib/sim_fetch_h3_test.fern`
+   on the simulated network, `TestFetchH3X86_64` and `TestFetchH3Interp`
+   against `std/serve` with HTTP/3 on, discovered by Alt-Svc, and
+   `scripts/net-quic-interop` against aioquic's server on the nightly.
 10. **Speed.** Measured first (`docs/benchmarks/net-h3-2026-10-16.md`):
     632 allocations per hello request in the serve loop against HTTP/1.1's
     zero and HTTP/2's 60, and one datagram sent per response. The gate is

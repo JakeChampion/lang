@@ -3914,6 +3914,9 @@ function builtin_i32_names(): string[] {
     "__mmio_load8",
     "__mmio_load16",
     "__mmio_load32",
+    "__mem_load8",
+    "__mem_load16",
+    "__mem_load32",
     "buf_new",
     "buf_len",
     "exit",
@@ -4122,7 +4125,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__fern_str_eq") {
     return ty_bool();
   }
-  if (id.name == "__load_i64" || id.name == "__mmio_load64") {
+  if (id.name == "__load_i64" || id.name == "__mmio_load64" || id.name == "__mem_load64") {
     return ty_i64();
   }
   if (id.name == "__heap_bump_bytes") {
@@ -4155,6 +4158,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   if (id.name == "__alloc_i64") {
     return ty_array_i64();
+  }
+  if (id.name == "__alloc_f64") {
+    return ty_array();
   }
   if (id.name == "random_bytes") {
     return ty_array_i32();

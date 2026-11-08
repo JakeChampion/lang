@@ -579,7 +579,11 @@ check time, in the same mechanism that enforces the OS boundary today.
   driver requirement the list above genuinely misses. TamaGo keeps DMA regions
   outside the Go runtime, so that the GC never touches them. For Fern, DMA memory
   is a second region that the RC machinery never sees, used through the
-  `__raw_*` surface. It is not a flag on ordinary boxes.
+  `__raw_*` surface. It is not a flag on ordinary boxes. `std/dma` is that
+  region: a buffer is a run of frames from `std/frames`, which `std/pagetable`
+  remaps as device memory, outside the run that holds the heap. The buffer
+  carries its virtual and its physical address, equal under the identity
+  mapping. A virtio driver that uses it is part of the network stack (#14259).
 - **Panic scope** (#14257, decided). A Fern panic stops the program:
   `__fern_report` exits the process, and off the process entry it is a trap. Fern
   has no unwind, so the scope of a panic is the heap that the panicking code can
@@ -601,12 +605,13 @@ check time, in the same mechanism that enforces the OS boundary today.
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver.
-- **A sanctioned raw-pointer surface** (#14256). `__raw_*` is a **self-host-compiler
-  internal**. In `internal/`, only the capability tables of
-  `internal/pkg/platforms` name it. An OS needs it as a
-  *language* surface, capability-gated. Being self-host-only is the right side of
-  `docs/NATIVE-CONVERGENCE.md` (new surface lands self-host-first), so this is a
-  promotion to public surface rather than a port.
+- **A sanctioned raw-pointer surface** (#14256) — **done.** `__raw_*` stays a
+  self-host-compiler internal, the floor of the runtime helpers. The public
+  surface is `std/raw`: an address is a `usize`, and `load_u8` to `load_u64`
+  and `store_u8` to `store_u64` are `@norc` functions over the `__mem_*`
+  intrinsics. The `privileged` capability gates the intrinsics, so a hosted
+  program fails with E066, and a dependency needs the `privileged` package
+  capability (`docs/PACKAGE-CAPABILITIES-BRIEF.md`).
 - **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
   Fern already ships, which emit ELF rather than shelling out to one.
 - **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
@@ -703,10 +708,22 @@ environment over the FernOS syscalls can come later, as an improvement.
    `TestSelfHostKernelX86MapsOnQemu`). The tick program runs on the new
    mapping, and a `FERN_LEAKCHECK` image prints a balanced census. The reset
    entry still seeds a bootstrap heap from `-ram`, and the frames start above
-   its cursor. The DMA region (#14255) is the next piece of the memory story.
-10. Beside those: the DMA region (#14255), the raw-pointer surface (#14256) and a
-   TCP/IP stack in Fern (#14259). The panic scope is decided (#14257, see the
-   north-star section).
+   its cursor.
+10. **The DMA region exists** (#14255), as `std/dma` (the DMA item of the
+   north-star section). `std/pagetable` splits a 2 MiB block into pages when
+   one page inside it changes. Thus a buffer in the middle of the RAM becomes
+   device memory on its own. `TestSelfHostKernelDMAOnQemu` and
+   `TestSelfHostKernelX86DMAOnQemu` write a pattern into a buffer, churn the
+   heap through the tick program, and find the pattern intact and the frames
+   returned. The issue stays open until a virtio driver uses the region.
+11. **The raw-pointer surface exists** (#14256), as `std/raw` (the raw-pointer
+   item of the north-star section). `TestSelfHostKernelRawOnQemu` and
+   `TestSelfHostKernelX86RawOnQemu` store and load a frame at every width and
+   see the bytes of each value where the little-endian layout puts them. The
+   same program fails with E066 on a hosted target, and a dependency without
+   the `privileged` grant fails at the package gate.
+12. Beside those: a TCP/IP stack in Fern (#14259). The panic scope is decided
+   (#14257, see the north-star section).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 

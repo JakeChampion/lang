@@ -15,7 +15,7 @@ import "core/cmp";
 import "core/error";
 
 @derive(cmp.Eq, cmp.Debug)
-pub enum VideoError { Header, Truncated, Unsupported, Limit, Buffer, Platform }
+pub enum VideoError { Header, Truncated, Unsupported, Limit, Buffer, Platform, State }
 
 impl error.Error for VideoError {}
 
@@ -29,6 +29,7 @@ pub function (e: VideoError) message(): string {
     Limit => "video exceeds the configured limit",
     Buffer => "video buffer is too small",
     Platform => "platform video operation failed",
+    State => "invalid video codec state",
   };
 }
 

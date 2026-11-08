@@ -9,6 +9,38 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
+func TestSelfHostULCUnit(t *testing.T) {
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("no native self-host target")
+	}
+	runULCUnit(t, target)
+}
+
+func TestSelfHostULCUnitWASI(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime is unavailable")
+	}
+	runULCUnit(t, e2eharness.TargetWasm32Wasi)
+}
+
+func runULCUnit(t *testing.T, target string) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "ulc-unit")
+	cmd := e2eharness.SelfHostCompileCmd(t, target, e2eharness.RepoPath("examples", "ulc", "tests", "unit.fern"), bin)
+	cmd.Env = e2eharness.SelfHostChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile codec units: %v\n%s", err, out)
+	}
+	run := exec.Command(bin)
+	if target == e2eharness.TargetWasm32Wasi {
+		run = e2eharness.RunWasmCore(t, bin)
+	}
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("codec units: %v\n%s", err, out)
+	}
+}
+
 func TestSelfHostULCCLIWASI(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime is unavailable")

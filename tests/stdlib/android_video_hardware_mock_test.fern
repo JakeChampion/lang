@@ -1,0 +1,718 @@
+import "std/android/video";
+import "std/android/video/capabilities";
+import "std/android/video/muxer";
+import "std/android/video/extractor";
+import "std/android/video/player";
+import "std/option";
+import "std/video/frame";
+
+@import("libmediandk.so", "mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "mock_live")
+function live(): i32;
+
+@import("libmediandk.so", "mock_queued")
+function queued(): i32;
+
+@import("libmediandk.so", "mock_parameters")
+function parameters(): i32;
+
+@import("libmediandk.so", "mock_muxer_writes")
+function writes(): i32;
+
+@import("libmediandk.so", "mock_fail_next_queue")
+function fail_queue(): void;
+
+@import("libmediandk.so", "mock_jni_env")
+function jni_env(): usize;
+
+@import("libmediandk.so", "mock_jni_mode")
+function jni_mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_frames")
+function jni_frames(): i32;
+
+@import("libmediandk.so", "mock_jni_pending")
+function jni_pending(): i32;
+
+@import("libmediandk.so", "mock_jni_hardware_queries")
+function hardware_queries(): i32;
+
+@import("libmediandk.so", "mock_sample_reads")
+function reads(): i32;
+
+function config(): video.Config {
+  return video.Config { codec: video.H264, format: frame.Format { width: 16, height: 8 }, csd0: [0, 0, 0, 1, 103], csd1: [0, 0, 0, 1, 103] };
+}
+
+function discovery(): i32 {
+  let env = jni_env();
+  let request = video.decoder_request(config(), 0, 0, 0);
+  jni_mode(0);
+  let Ok(infos) = capabilities.discover(env, 29, request, capabilities.default_limits()) else {
+    return 101;
+  };
+  if (infos.len() != 3 || infos[0].implementation != capabilities.Hardware || infos[1].implementation != capabilities.Software || !infos[0].vendor || !infos[2].alias) {
+    return 102;
+  }
+  if (infos[0].profiles != [capabilities.ProfileLevel { profile: 1, level: 256 }] || infos[0].color_formats != [19, video.COLOR_SURFACE]) {
+    return 103;
+  }
+  if (capabilities.ordered(infos, request, capabilities.PreferHardware).len() != 2 || jni_frames() != 0 || jni_pending() != 0) {
+    return 104;
+  }
+  jni_mode(0);
+  let Ok(old) = capabilities.discover(env, 28, request, capabilities.default_limits()) else {
+    return 105;
+  };
+  if (hardware_queries() != 0 || capabilities.ordered(old, request, capabilities.HardwareOnly).len() != 0) {
+    return 106;
+  }
+  for i in old {
+    if (i.implementation != capabilities.Unknown) {
+      return 107;
+    }
+  }
+  for failure in [1, 2] {
+    jni_mode(failure);
+    let Ok(filtered) = capabilities.discover(env, 29, request, capabilities.default_limits()) else {
+      return 108;
+    };
+    let selected = capabilities.ordered(filtered, request, capabilities.PreferHardware);
+    if (selected.len() != 1 || selected[0].implementation != capabilities.Software || jni_pending() != 0 || jni_frames() != 0) {
+      return 109;
+    }
+  }
+  for failure in [3, 4, 5] {
+    jni_mode(failure);
+    match (capabilities.discover(env, 29, request, capabilities.default_limits())) {
+      Err(_) => {},
+      _ => {
+        return 110;
+      }
+    }
+    if (jni_pending() != 0 || jni_frames() != 0) {
+      return 111;
+    }
+  }
+  jni_mode(6);
+  match (capabilities.discover(env, 29, request, capabilities.default_limits())) {
+    Err(frame.Platform) => {},
+    _ => {
+      return 112;
+    }
+  }
+  if (jni_pending() != 1 || jni_frames() != 0) {
+    return 113;
+  }
+  jni_mode(0);
+  match (capabilities.discover(env, 29, request, capabilities.Limits { max_codecs: 5, max_profiles: 256, max_color_formats: 256 })) {
+    Err(frame.Limit) => {},
+    _ => {
+      return 114;
+    }
+  }
+  if (jni_frames() != 0) {
+    return 115;
+  }
+  return 0;
+}
+
+function fallback(): i32 {
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 64 };
+  mode(0);
+  jni_mode(0);
+  let Ok(selected) = video.open_preferred(jni_env(), 29, config(), 123 as usize, limits) else {
+    return 201;
+  };
+  if (selected.info.implementation != capabilities.Software || selected.attempts.len() != 1 || selected.attempts[0].error != frame.Platform) {
+    return 202;
+  }
+  let Ok(_) = selected.decoder.close() else {
+    return 203;
+  };
+  if (live() != 0) {
+    return 204;
+  }
+  mode(10);
+  let request = video.decoder_request(config(), 0, 0, 0);
+  let Ok(infos) = capabilities.discover(jni_env(), 29, request, capabilities.default_limits()) else {
+    return 205;
+  };
+  let Ok(hardware) = video.open_selected(config(), 123 as usize, request, infos, capabilities.HardwareOnly, limits) else {
+    return 206;
+  };
+  if (hardware.info.implementation != capabilities.Hardware) {
+    return 207;
+  }
+  let Ok(Some(slot)) = hardware.decoder.input(1i64) else {
+    return 208;
+  };
+  fail_queue();
+  match (hardware.decoder.submit(slot, [1, 2, 3], 123456i64, video.FLAG_KEY_FRAME)) {
+    Err(frame.Platform) => {},
+    _ => {
+      return 209;
+    }
+  }
+  let Ok(software) = video.fallback_to_software(config(), 123 as usize, hardware, infos, limits) else {
+    return 210;
+  };
+  if (software.info.implementation != capabilities.Software) {
+    return 211;
+  }
+  let Ok(_) = software.decoder.close() else {
+    return 212;
+  };
+  if (live() != 0) {
+    return 213;
+  }
+  mode(0);
+  match (video.open_selected(config(), 123 as usize, request, infos, capabilities.HardwareOnly, limits)) {
+    Err(failure) => {
+      if (failure.attempts.len() != 1 || failure.error != frame.Unsupported) {
+        return 214;
+      }
+    },
+    _ => {
+      return 215;
+    }
+  }
+  if (live() != 0) {
+    return 216;
+  }
+  return 0;
+}
+
+function encode_and_mux(): i32 {
+  mode(0);
+  jni_mode(0);
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  let config = video.default_encoder_config(video.H264, frame.Format { width: 16, height: 8 }, 100000, 30);
+  let request = video.encoder_request(config);
+  let Ok(infos) = capabilities.discover(jni_env(), 29, request, capabilities.default_limits()) else {
+    return 301;
+  };
+  if (infos.len() != 2) {
+    return 302;
+  }
+  let Ok(selected) = video.select_encoder(config, infos, capabilities.PreferHardware, limits) else {
+    return 303;
+  };
+  if (selected.info.implementation != capabilities.Software || selected.attempts.len() != 1) {
+    return 304;
+  }
+  let encoder = selected.encoder;
+  let Ok(_) = encoder.request_keyframe() else {
+    return 305;
+  };
+  let Ok(_) = encoder.set_bitrate(200000) else {
+    return 306;
+  };
+  if (parameters() != 2) {
+    return 307;
+  }
+  let Ok(Some(slot)) = encoder.input(1i64) else {
+    return 308;
+  };
+  let pixels: u8[] = [];
+  for i in 0..192 {
+    pixels = pixels.append(if (i < 128) { 16u8 } else { 128u8 });
+  }
+  match (encoder.submit(slot, pixels[:191], 1000i64, 0u32)) {
+    Err(frame.Header) => {},
+    _ => {
+      return 309;
+    }
+  }
+  if (queued() != 0) {
+    return 310;
+  }
+  let Ok(_) = encoder.submit(slot, pixels, 1000i64, 0u32) else {
+    return 311;
+  };
+  let Ok(Some(eos)) = encoder.input(1i64) else {
+    return 312;
+  };
+  match (encoder.submit(eos, pixels, 1000i64, 0u32)) {
+    Err(frame.Header) => {},
+    _ => {
+      return 313;
+    }
+  }
+  let Ok(_) = encoder.submit(eos, [], 1000i64, video.FLAG_END_OF_STREAM) else {
+    return 314;
+  };
+  match (encoder.input(1i64)) {
+    Err(frame.State) => {},
+    _ => {
+      return 315;
+    }
+  }
+  match (encoder.set_bitrate(100000)) {
+    Err(frame.State) => {},
+    _ => {
+      return 316;
+    }
+  }
+  match (encoder.output(0i64)) {
+    Ok(video.EncodingRetry) => {},
+    _ => {
+      return 317;
+    }
+  }
+  let Ok(video.EncodingFormat(format)) = encoder.output(0i64) else {
+    return 318;
+  };
+  let Ok(csd) = format.buffer("csd-0", 5) else {
+    return 319;
+  };
+  if (csd != [0u8, 0, 0, 1, 103] || format.integer("width", 0) != 16) {
+    return 320;
+  }
+  match (format.buffer("csd-0", 4)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return 321;
+    }
+  }
+  let Ok(writer) = muxer.create(77, muxer.MP4, 512) else {
+    return 322;
+  };
+  match (writer.start()) {
+    Err(frame.State) => {},
+    _ => {
+      return 323;
+    }
+  }
+  let Ok(_) = writer.orientation(90) else {
+    return 324;
+  };
+  let Ok(track) = writer.add_track(format) else {
+    return 325;
+  };
+  let Ok(_) = format.close() else {
+    return 326;
+  };
+  let Ok(_) = writer.start() else {
+    return 327;
+  };
+  match (encoder.output(0i64)) {
+    Ok(video.EncodingBuffersChanged) => {},
+    _ => {
+      return 328;
+    }
+  }
+  let Ok(video.EncodedBuffer(buffer)) = encoder.output(0i64) else {
+    return 329;
+  };
+  let Ok(copy) = encoder.copy_output(buffer, [0u8, 0, 0, 88]) else {
+    return 330;
+  };
+  if (copy.bytes != [1u8, 2, 3, 88] || copy.size != 3 || copy.flags != video.FLAG_KEY_FRAME || copy.presentation_time_us != 123456i64) {
+    return 331;
+  }
+  match (encoder.copy_output(buffer, [0u8, 0])) {
+    Err(frame.Buffer) => {},
+    _ => {
+      return 332;
+    }
+  }
+  match (encoder.output_view(video.OutputBuffer { ...buffer, offset: 6 })) {
+    Err(frame.Platform) => {},
+    _ => {
+      return 333;
+    }
+  }
+  let Ok(view) = encoder.output_view(buffer) else {
+    return 334;
+  };
+  match (writer.write_view(track, view, buffer.presentation_time_us, video.FLAG_CODEC_CONFIG)) {
+    Err(frame.Header) => {},
+    _ => {
+      return 335;
+    }
+  }
+  let Ok(_) = writer.write_view(track, view, buffer.presentation_time_us, buffer.flags) else {
+    return 336;
+  };
+  if (writes() != 1) {
+    return 337;
+  }
+  let Ok(_) = encoder.release(buffer) else {
+    return 338;
+  };
+  let Ok(_) = writer.stop() else {
+    return 339;
+  };
+  match (writer.start()) {
+    Err(frame.State) => {},
+    _ => {
+      return 340;
+    }
+  }
+  let Ok(_) = writer.close() else {
+    return 341;
+  };
+  let Ok(_) = encoder.close() else {
+    return 342;
+  };
+  if (live() != 0) {
+    return 343;
+  }
+  return 0;
+}
+
+function surfaces(): i32 {
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  let config = video.EncoderConfig { ...video.default_encoder_config(video.H264, frame.Format { width: 16, height: 8 }, 100000, 30), color_format: video.COLOR_SURFACE };
+  mode(0);
+  let Ok(encoder) = video.open_surface_encoder(config, "c2.android.avc.encoder", limits) else {
+    return 401;
+  };
+  if (encoder.input_surface == 0 as usize) {
+    return 402;
+  }
+  match (encoder.input(0i64)) {
+    Err(frame.State) => {},
+    _ => {
+      return 403;
+    }
+  }
+  let Ok(_) = encoder.signal_end_of_input() else {
+    return 404;
+  };
+  match (encoder.signal_end_of_input()) {
+    Err(frame.State) => {},
+    _ => {
+      return 405;
+    }
+  }
+  let Ok(_) = encoder.close() else {
+    return 406;
+  };
+  if (live() != 0) {
+    return 407;
+  }
+  for failure in [4, 7] {
+    mode(failure);
+    match (video.open_surface_encoder(config, "c2.android.avc.encoder", limits)) {
+      Err(frame.Platform) => {},
+      _ => {
+        return 408;
+      }
+    }
+    if (live() != 0) {
+      return 409;
+    }
+  }
+  return 0;
+}
+
+function extract(): i32 {
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 64 };
+  for failure in [11, 12] {
+    mode(failure);
+    match (extractor.open(77, 0i64, 100i64, 512)) {
+      Err(_) => {},
+      _ => {
+        return 501;
+      }
+    }
+    if (live() != 0) {
+      return 502;
+    }
+  }
+  mode(0);
+  jni_mode(0);
+  let Ok(reader) = extractor.open(77, 0i64, 100i64, 512) else {
+    return 503;
+  };
+  if (reader.tracks != 1) {
+    return 504;
+  }
+  let Ok(format) = reader.track_format(0) else {
+    return 505;
+  };
+  let request = video.decoder_request(config(), 0, 0, 0);
+  let Ok(infos) = capabilities.discover(jni_env(), 29, request, capabilities.default_limits()) else {
+    return 506;
+  };
+  let Ok(selected) = video.select_format(format, 123 as usize, request, infos, capabilities.PreferHardware, limits) else {
+    return 507;
+  };
+  let Ok(_) = format.close() else {
+    return 508;
+  };
+  let Ok(_) = reader.select_track(0) else {
+    return 509;
+  };
+  let decoder = selected.decoder;
+  let Ok(Some(slot)) = decoder.input(1i64) else {
+    return 510;
+  };
+  match (reader.read_into(video.InputBuffer { ...slot, capacity: 2 })) {
+    Err(frame.Buffer) => {},
+    _ => {
+      return 511;
+    }
+  }
+  if (reads() != 0) {
+    return 512;
+  }
+  let Ok(Some(sample)) = reader.read_into(slot) else {
+    return 513;
+  };
+  if (sample.size != 3 || sample.presentation_time_us != 123456i64 || sample.flags != 1u32 || sample.track != 0) {
+    return 514;
+  }
+  let Ok(_) = decoder.submit_input(slot, sample.size, sample.presentation_time_us, sample.flags) else {
+    return 515;
+  };
+  if (!reader.advance() || reader.advance()) {
+    return 516;
+  }
+  let Ok(Some(last)) = decoder.input(1i64) else {
+    return 517;
+  };
+  match (reader.read_into(last)) {
+    Ok(None()) => {},
+    _ => {
+      return 518;
+    }
+  }
+  let Ok(_) = decoder.submit_input(last, 0, 123456i64, video.FLAG_END_OF_STREAM) else {
+    return 519;
+  };
+  let Ok(_) = reader.seek(200000i64, extractor.PreviousSync) else {
+    return 520;
+  };
+  let Ok(_) = reader.close() else {
+    return 521;
+  };
+  let Ok(_) = decoder.close() else {
+    return 522;
+  };
+  if (live() != 0) {
+    return 523;
+  }
+  for failure in [13, 14, 15] {
+    mode(failure);
+    let Ok(r) = extractor.open(77, 0i64, 100i64, 512) else {
+      return 524;
+    };
+    let Ok(d) = video.open(config(), 123 as usize, limits) else {
+      return 525;
+    };
+    let Ok(Some(input)) = d.input(1i64) else {
+      return 526;
+    };
+    match (r.read_into(input)) {
+      Err(_) => {},
+      _ => {
+        return 527;
+      }
+    }
+    if (failure != 15 && reads() != 0) {
+      return 528;
+    }
+    let Ok(_) = r.close() else {
+      return 529;
+    };
+    let Ok(_) = d.close() else {
+      return 530;
+    };
+    if (live() != 0) {
+      return 531;
+    }
+  }
+  return 0;
+}
+
+function playback(): i32 {
+  mode(16);
+  jni_mode(0);
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  let Ok(p) = player.open(jni_env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, limits) else {
+    return 601;
+  };
+  let paused = p.pause(9876543210i64);
+  if (!paused.player.paused) {
+    return 602;
+  }
+  let idle = paused.player.tick(9876543210i64);
+  if (queued() != 0) {
+    return 603;
+  }
+  let resumed = idle.player.resume(9876543210i64);
+  p = resumed.player;
+  for _ in 0..4 {
+    let step = p.tick(9876543210i64);
+    match (step.event) {
+      player.Failure(_) => {
+        return 604;
+      },
+      _ => {}
+    }
+    p = step.player;
+  }
+  if (!p.output_eos || p.scheduled_frames != 1 || queued() != 3) {
+    return 605;
+  }
+  let seek = p.seek(200000i64);
+  if (seek.player.pending.is_some() || seek.player.input_eos || seek.player.output_eos || seek.player.config_next != 0) {
+    return 606;
+  }
+  p = seek.player;
+  for _ in 0..4 {
+    let step = p.tick(9876543210i64);
+    match (step.event) {
+      player.Failure(_) => {
+        return 607;
+      },
+      _ => {}
+    }
+    p = step.player;
+  }
+  if (!p.output_eos || p.dropped_frames != 1 || p.scheduled_frames != 1) {
+    return 608;
+  }
+  let Ok(_) = p.close() else {
+    return 609;
+  };
+  if (live() != 0) {
+    return 610;
+  }
+  mode(10);
+  let Ok(hw) = player.open(jni_env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, limits) else {
+    return 611;
+  };
+  if (hw.info.implementation != capabilities.Hardware) {
+    return 612;
+  }
+  let recovered = hw.recover_software(jni_env(), 29);
+  match (recovered.event) {
+    player.Recovered(info) => {
+      if (info.implementation != capabilities.Software) {
+        return 613;
+      }
+    },
+    _ => {
+      return 614;
+    }
+  }
+  let twice = recovered.player.recover_software(jni_env(), 29);
+  match (twice.event) {
+    player.Failure(frame.Unsupported) => {},
+    _ => {
+      return 615;
+    }
+  }
+  let Ok(_) = twice.player.close() else {
+    return 616;
+  };
+  if (live() != 0) {
+    return 617;
+  }
+  return 0;
+}
+
+function scheduled_output(): i32 {
+  let limits = frame.Limits { max_pixels: 128, max_packet_bytes: 512 };
+  for delayed in [false, true] {
+    mode(17);
+    jni_mode(0);
+    let Ok(p) = player.open(jni_env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, limits) else {
+      return 701;
+    };
+    for _ in 0..4 {
+      let step = p.tick(9876543210i64);
+      p = step.player;
+    }
+    if (p.scheduled_frames != 1i64 || p.output_eos) {
+      return 702;
+    }
+    let pending = p.tick(9876543210i64);
+    p = pending.player;
+    if (p.pending.is_none() || p.scheduled_frames != 1i64) {
+      return 703;
+    }
+    if (delayed) {
+      let dropped = p.tick(10126543210i64);
+      p = dropped.player;
+      match (dropped.event) {
+        player.FrameDropped(223456i64) => {},
+        _ => {
+          return 704;
+        }
+      }
+      if (p.pending.is_some() || p.dropped_frames != 1i64) {
+        return 705;
+      }
+    } else {
+      let paused = p.pause(9876543210i64);
+      let resumed = paused.player.resume(10876543210i64);
+      let waiting = resumed.player.tick(10876543210i64);
+      if (waiting.player.pending.is_none() || waiting.player.scheduled_frames != 1i64) {
+        return 706;
+      }
+      let due = waiting.player.tick(10976543210i64);
+      p = due.player;
+      match (due.event) {
+        player.FrameScheduled(223456i64) => {},
+        _ => {
+          return 707;
+        }
+      }
+      if (p.pending.is_some() || p.scheduled_frames != 2i64 || p.dropped_frames != 0i64) {
+        return 708;
+      }
+    }
+    let ended = p.tick(10976543210i64);
+    match (ended.event) {
+      player.End => {},
+      _ => {
+        return 709;
+      }
+    }
+    if (!ended.player.output_eos) {
+      return 710;
+    }
+    let Ok(_) = ended.player.close() else {
+      return 711;
+    };
+    if (live() != 0) {
+      return 712;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let result = discovery();
+  if (result != 0) {
+    return result;
+  }
+  result = fallback();
+  if (result != 0) {
+    return result;
+  }
+  result = encode_and_mux();
+  if (result != 0) {
+    return result;
+  }
+  result = surfaces();
+  if (result != 0) {
+    return result;
+  }
+  result = extract();
+  if (result != 0) {
+    return result;
+  }
+  result = playback();
+  if (result != 0) {
+    return result;
+  }
+  return scheduled_output();
+}

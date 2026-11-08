@@ -144,6 +144,33 @@ func (i *Interp) registerLaneBuiltins() {
 		p := fmt.Sprintf("__f%dx%d_", w, 128/w)
 		lanes := 128 / w
 		width := w
+		for _, verb := range []string{"swap_halves", "reverse", "zip_lo", "zip_hi"} {
+			i.Builtins[p+verb] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+				argc := 2
+				if verb == "reverse" || verb == "swap_halves" {
+					argc = 1
+				}
+				ls, err := laneArgs(p+verb, args, argc)
+				if err != nil {
+					return nil, err
+				}
+				out := Lanes{Width: width, Bits: make([]uint64, lanes)}
+				for k := range out.Bits {
+					src, at := k&1, k/2
+					if verb == "reverse" {
+						src, at = 0, lanes-1-k
+					}
+					if verb == "swap_halves" {
+						src, at = 0, (k+lanes/2)%lanes
+					}
+					if verb == "zip_hi" {
+						at += lanes / 2
+					}
+					out.Bits[k] = ls[src].Bits[at]
+				}
+				return out, nil
+			}}
+		}
 		i.Builtins[p+"splat"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			f, ok := args[0].(Float)
 			if len(args) != 1 || !ok {
@@ -176,6 +203,17 @@ func (i *Interp) registerLaneBuiltins() {
 				return nil, fmt.Errorf("%slane: expected a lane value and an index below %d", p, lanes)
 			}
 			return l.lane(int(n)), nil
+		}}
+		i.Builtins[p+"lane_bits"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("%slane_bits: expected two arguments", p)
+			}
+			l, ok := args[0].(Lanes)
+			n, nok := args[1].(Number)
+			if !ok || !nok || int(n) < 0 || int(n) >= lanes {
+				return nil, fmt.Errorf("%slane_bits: invalid lane index", p)
+			}
+			return Number(int64(l.Bits[int(n)])), nil
 		}}
 		i.Builtins[p+"bitmask"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			ls, err := laneArgs(p+"bitmask", args, 1)

@@ -394,7 +394,7 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
 }
 
 function sized_alloc(name: string): boolean {
-  return name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool";
+  return name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool";
 }
 
 function binary(d: ssa.SInst, op: string): boolean {

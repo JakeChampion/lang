@@ -20,6 +20,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<packed float memory>>
 
+<<lane permutations>>
+
 <<dependencies 2>>
 
 <<3 pub trait Lanes: ops.Num + ops.Neg>>
@@ -932,10 +934,11 @@ impl[T: Math] Math for DoubleDouble[T] {
 
 Packed memory uses IEEE floats in little-endian byte order.
 Each load and store accesses 16 bytes at the byte offset.
-The offset can be unaligned.
+Loads and stores permit an unaligned byte offset.
 An access outside the byte array stops the program.
 A store returns a new array value and preserves aliases of the input.
 The caller retains the returned array.
+
 `pack_f32x4` converts two double vectors to one float vector, with the low vector first.
 
 ```fern
@@ -958,5 +961,46 @@ pub function with_f64x2_le(own bytes: u8[], offset: i32, value: f64x2): u8[] {
 
 pub function pack_f32x4(low: f64x2, high: f64x2): f32x4 {
   return __f32x4_pack(low, high);
+}
+```
+
+## Lane permutations
+
+These operations preserve all bits, such as NaN payloads and signed zero.
+`reverse` reverses the lane order.
+`swap_halves` exchanges the low and high 64-bit halves.
+`zip_lo` interleaves lanes from the low halves of two vectors.
+`zip_hi` interleaves lanes from the high halves of two vectors.
+The first output lane comes from the first input.
+
+The intrinsics `__f32x4_lane_bits` and `__f64x2_lane_bits` read one lane as an unsigned integer.
+Their lane index is an integer literal, as with `__f32x4_lane` and `__f64x2_lane`.
+They preserve the original bits and perform no float conversion.
+
+```fern
+<<lane permutations>>=
+pub function reverse_f32x4(value: f32x4): f32x4 {
+  return __f32x4_reverse(value);
+}
+pub function reverse_f64x2(value: f64x2): f64x2 {
+  return __f64x2_reverse(value);
+}
+pub function swap_halves_f32x4(value: f32x4): f32x4 {
+  return __f32x4_swap_halves(value);
+}
+pub function swap_halves_f64x2(value: f64x2): f64x2 {
+  return __f64x2_swap_halves(value);
+}
+pub function zip_lo_f32x4(a: f32x4, b: f32x4): f32x4 {
+  return __f32x4_zip_lo(a, b);
+}
+pub function zip_lo_f64x2(a: f64x2, b: f64x2): f64x2 {
+  return __f64x2_zip_lo(a, b);
+}
+pub function zip_hi_f32x4(a: f32x4, b: f32x4): f32x4 {
+  return __f32x4_zip_hi(a, b);
+}
+pub function zip_hi_f64x2(a: f64x2, b: f64x2): f64x2 {
+  return __f64x2_zip_hi(a, b);
 }
 ```
