@@ -10,6 +10,13 @@ const (
 	tcpNodelay  = 0
 	ipprotoIPv6 = 0
 	ipv6V6only  = 0
+
+	ipprotoIP      = 0
+	ipprotoUDP     = 0
+	ipTOS          = 0
+	ipRecvTOS      = 0
+	ipv6Tclass     = 0
+	ipv6RecvTclass = 0
 )
 
 func getsockname(fd int) (syscall.Sockaddr, error) {

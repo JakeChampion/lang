@@ -1603,6 +1603,7 @@ func New() *Interp {
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
 	i.Builtins["udp_sendto_bytes"] = &Builtin{Fn: builtinUdpSendtoBytes}
 	i.Builtins["udp_sendmmsg"] = &Builtin{Fn: builtinUdpSendmmsg}
+	i.Builtins["udp_recvmmsg"] = &Builtin{Fn: builtinUdpRecvmmsg}
 	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}

@@ -147,7 +147,7 @@ pub function need_ops(): string[] {
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
     "str_split", "tcp_accept", "tcp_accept_with", "tcp_close", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_send_bytes", "tcp_socket_ctl", "tcp_addr_into", "temp_dir",
-    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes", "udp_sendmmsg", "tcp_connect_with", "wasm_block",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes", "udp_sendmmsg", "udp_recvmmsg", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile", "tcp_send_buf",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
@@ -13103,7 +13103,7 @@ function socket_builtins(): string[] {
   return [
     "tcp_accept", "tcp_accept_with", "tcp_close", "__tcp_close_unchecked", "__fd_close", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv_into", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl", "tcp_addr_into",
-    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes", "udp_sendmmsg",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes", "udp_sendmmsg", "udp_recvmmsg",
   ];
 }
 

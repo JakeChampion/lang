@@ -1,0 +1,108 @@
+function __fern_udp_recvmmsg(fd: i32, buf: i32[], froms: i32[], lens: i32[]): i32 {
+  let n = lens.len() / 3;
+  if (n == 0) {
+    return 0;
+  }
+  let stride = buf.len() / n;
+  if (stride == 0) {
+    return -22;
+  }
+  // The table: one 64-byte mmsghdr per message, then per message a 16-byte
+  // iovec, a 32-byte sockaddr and a 48-byte control block, then the bytes
+  // packed. The box becomes an array only after the call, because an array
+  // is released at its last use, and the kernel writes the table during the
+  // call.
+  let total = stride * n;
+  let slots = 20 * n + (total + 7) / 8 + 1;
+  let p = __raw_arr_box(slots + 1);
+  __store_i64(p, slots as i64);
+  let base = p + 8;
+  let z = 0;
+  while (z < 20 * n) {
+    __raw_store_ptr(base, z, 0 as usize);
+    z += 1;
+  }
+  let bytes = base + (160 * n) as usize;
+  let extra = base + 64 * n;
+  let i = 0;
+  while (i < n) {
+    let hdr = base + 64 * i;
+    let iov = extra + 96 * i;
+    __raw_store_ptr(iov, 0, bytes + (stride * i) as usize);
+    __raw_store_ptr(iov, 1, stride as usize);
+    __raw_store_ptr(hdr, 0, iov + 16);
+    __raw_store_ptr(hdr, 1, 28 as usize);
+    __raw_store_ptr(hdr, 2, iov);
+    __raw_store_ptr(hdr, 3, 1 as usize);
+    __raw_store_ptr(hdr, 4, iov + 48);
+    __raw_store_ptr(hdr, 5, 48 as usize);
+    i += 1;
+  }
+  let rc = __syscall5(243, fd as i64, base as i64, n as i64, 65536, 0) as i32;
+  let b = __raw_arr_ptr(buf);
+  let fp = __raw_arr_ptr(froms);
+  let named = froms.len();
+  let lp = __raw_arr_ptr(lens);
+  i = 0;
+  while (i < rc) {
+    let hdr = base + 64 * i;
+    let sa = extra + 96 * i + 16;
+    let cm = sa + 32;
+    let got = (__raw_load_ptr(hdr, 7) as i64 & 4294967295) as i32;
+    let j = 0;
+    while (j < got) {
+      __raw_store_ptr(b, stride * i + j + 1, __raw_load8(bytes, stride * i + j) as usize);
+      j += 1;
+    }
+    let seg = 0;
+    let tos = 0;
+    let clen = __raw_load_ptr(hdr, 5) as i32;
+    let off = 0;
+    while (off + 16 <= clen) {
+      let len = __raw_load_ptr(cm, off / 8) as i32;
+      if (len < 16) {
+        break;
+      }
+      let level = __raw_load8(cm, off + 8) | __raw_load8(cm, off + 9) << 8;
+      let kind = __raw_load8(cm, off + 12) | __raw_load8(cm, off + 13) << 8;
+      if (level == 17 && kind == 104) {
+        seg = __raw_load8(cm, off + 16) | __raw_load8(cm, off + 17) << 8;
+      }
+      if (level == 0 && kind == 1 || level == 41 && kind == 67) {
+        tos = __raw_load8(cm, off + 16);
+      }
+      off += (len + 7) / 8 * 8;
+    }
+    if (named >= 19 * (i + 1)) {
+      z = 0;
+      while (z < 19) {
+        __raw_store_ptr(fp, 19 * i + z + 1, 0 as usize);
+        z += 1;
+      }
+      let fam = __raw_load8(sa, 0) | __raw_load8(sa, 1) << 8;
+      let n_addr = 0;
+      let at = 4;
+      if (fam == 2) {
+        __raw_store_ptr(fp, 19 * i + 1, 4 as usize);
+        n_addr = 4;
+      } else if (fam == 10) {
+        __raw_store_ptr(fp, 19 * i + 1, 6 as usize);
+        n_addr = 16;
+        at = 8;
+      }
+      let k = 0;
+      while (k < n_addr) {
+        __raw_store_ptr(fp, 19 * i + 1 + k + 1, __raw_load8(sa, at + k) as usize);
+        k += 1;
+      }
+      __raw_store_ptr(fp, 19 * i + 17 + 1, __raw_load8(sa, 2) as usize);
+      __raw_store_ptr(fp, 19 * i + 18 + 1, __raw_load8(sa, 3) as usize);
+    }
+    __raw_store_ptr(lp, 3 * i + 1, got as usize);
+    __raw_store_ptr(lp, 3 * i + 2, seg as usize);
+    __raw_store_ptr(lp, 3 * i + 3, tos as usize);
+    i += 1;
+  }
+  let table: i32[] = __raw_array(p);
+  return rc;
+}
