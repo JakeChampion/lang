@@ -6480,10 +6480,10 @@ function device_op(name: string): ir.Op {
   if (util.str_has_prefix(name, "__port_out")) {
     return ir.op_port_out(util.digits_to_i32(slice_unchecked(name, 10, name.len()) + ""));
   }
-  if (util.str_has_prefix(name, "__mmio_load")) {
-    return ir.op_mmio_load(util.digits_to_i32(slice_unchecked(name, 11, name.len()) + ""));
+  if (builtinsigs.access_store(name)) {
+    return ir.op_mmio_store(builtinsigs.access_width(name));
   }
-  return ir.op_mmio_store(util.digits_to_i32(slice_unchecked(name, 12, name.len()) + ""));
+  return ir.op_mmio_load(builtinsigs.access_width(name));
 }
 
 // The IR kind of a privileged intrinsic such as __wfi, or 0 for any other name.

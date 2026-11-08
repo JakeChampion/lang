@@ -98,7 +98,7 @@ func TestParseDepCapabilitiesUnknownName(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an unknown-capability error, got none")
 	}
-	want := `unknown capability "network" (valid capabilities: env, fs, net, random, subprocess, time)`
+	want := `unknown capability "network" (valid capabilities: env, fs, net, privileged, random, subprocess, time)`
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not name the vocabulary (want substring %q)", err, want)
 	}
