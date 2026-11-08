@@ -1,0 +1,4 @@
+import "./helper" as h;
+trait Holder { function get(self: Self): i32; }
+function reject(value: dyn h.Holder): i32 { return 0; }
+function main(): i32 { return 0; }
