@@ -49,7 +49,7 @@ function main(): i32 {
     return 0;
 }
 `
-	edir := t.TempDir()
+	edir := writeSelfHostAsmProject(t)
 	if err := os.WriteFile(filepath.Join(edir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+driverMain), 0o644); err != nil {
 		t.Fatalf("write driver: %v", err)
 	}
@@ -73,7 +73,7 @@ function main(): i32 {
     return 0;
 }
 `
-	pdir := t.TempDir()
+	pdir := writeSelfHostAsmProject(t)
 	if err := os.WriteFile(filepath.Join(pdir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+pieDriverMain), 0o644); err != nil {
 		t.Fatalf("write pie driver: %v", err)
 	}
