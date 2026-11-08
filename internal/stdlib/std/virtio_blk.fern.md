@@ -2,7 +2,7 @@
 
 A virtio-blk device is a disk: a sequence of 512-byte sectors that the host keeps in a file. This module is the driver. It opens the device over `std/virtio`, and it reads and writes whole sectors. A kernel reads its filesystem image from the disk, for example a `std/cpio` archive, and writes its results back (milestone 5 of `docs/BARE-METAL-PLAN.md`, #14264).
 
-qemu and Firecracker give a guest this device on both ISAs. qemu-virt gives no initramfs to a kernel that it loads as an ELF image, but it gives that kernel a disk.
+qemu and Firecracker give a guest this device on both ISAs. A disk also reaches a kernel that qemu-virt loads as an ELF image, which gets no initramfs.
 
 The driver negotiates three features: virtio 1.0, the read-only flag and the flush command. The capacity of the disk, in sectors, is the first field of the configuration space.
 
