@@ -903,7 +903,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(h_mix + ":\n");
     s = s.write("    eor x2, x2, x1\n    mul x2, x2, x4\n");
     s = s.write(h_fin + ":\n");
-    s = s.write("    lsr x7, x2, #32\n    eor x2, x2, x7\n");
+    s = s.write("    lsr x7, x2, #33\n    eor x2, x2, x7\n");
+    s = s.write("    movz x7, #0x8ccd\n    movk x7, #0xed55, lsl #16\n    movk x7, #0xafd7, lsl #32\n    movk x7, #0xff51, lsl #48\n    mul x2, x2, x7\n");
+    s = s.write("    lsr x7, x2, #33\n    eor x2, x2, x7\n");
+    s = s.write("    movz x7, #0xec53\n    movk x7, #0x1a85, lsl #16\n    movk x7, #0xb9fe, lsl #32\n    movk x7, #0xc4ce, lsl #48\n    mul x2, x2, x7\n");
+    s = s.write("    lsr x7, x2, #33\n    eor x2, x2, x7\n");
     s = s.write("    sxtw x2, w2\n    str x2, [sp, #-16]!\n");
     return s;
   }

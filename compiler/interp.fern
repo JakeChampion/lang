@@ -8125,7 +8125,11 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         h = (h ^ str_hash_word(hs, 0, hn)) * 1099511628211i64;
       }
     }
-    h = h ^ (h as u64 >> 32u64) as i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
+    h = h * -49064778989728563i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
+    h = h * -4265267296055464877i64;
+    h = h ^ (h as u64 >> 33u64) as i64;
     return v_int(str_hash_low32(h));
   }
   if (name == "__count_runs") {

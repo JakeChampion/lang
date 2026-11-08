@@ -5470,7 +5470,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(h_mix + ":\n");
     s = s.write("    xorq %r11, %rdx\n    imulq %r9, %rdx\n");
     s = s.write(h_fin + ":\n");
-    s = s.write("    movq %rdx, %rcx\n    shrq $32, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $33, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movabsq $-49064778989728563, %rcx\n    imulq %rcx, %rdx\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $33, %rcx\n    xorq %rcx, %rdx\n");
+    s = s.write("    movabsq $-4265267296055464877, %rcx\n    imulq %rcx, %rdx\n");
+    s = s.write("    movq %rdx, %rcx\n    shrq $33, %rcx\n    xorq %rcx, %rdx\n");
     s = s.write("    movslq %edx, %rdx\n    pushq %rdx\n");
     return s;
   }
