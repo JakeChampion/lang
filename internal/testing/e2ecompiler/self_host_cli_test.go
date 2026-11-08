@@ -912,6 +912,26 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("check-shared-variant-by-array-method-ok", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "shared_variant_array_method.fern")
+		src := "enum A { Foo, Bar }\n" +
+			"enum B { Foo, Baz }\n" +
+			"struct Log { rows: A[] }\n" +
+			"function main(): i32 {\n" +
+			"    let xs: A[] = [Bar];\n" +
+			"    xs = xs.append(Foo);\n" +
+			"    xs = xs.with(0, Foo);\n" +
+			"    let log = Log { rows: xs.append(Foo) };\n" +
+			"    return log.rows.len() - 3;\n" +
+			"}\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if out, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a program whose array methods take a shared variant exited %d, want 0:\n%s", code, out)
+		}
+	})
+
 	t.Run("check-option-result-value-ok", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "option_result_value.fern")
 		src := "function main(): i32 {\n" +

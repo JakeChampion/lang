@@ -4066,6 +4066,8 @@ func TestBareVariantResolvesAgainstExpectedType(t *testing.T) {
 		"method argument":  `function f(): i32 { return K { n: 1 }.take(Foo); }`,
 		"struct field":     `function f(): Pair { return Pair { a: Foo }; }`,
 		"array element":    `function f(): i32 { let xs: A[] = [Foo, Bar]; return 0; }`,
+		"append argument":  `function f(): i32 { let xs: A[] = []; xs = xs.append(Foo); return 0; }`,
+		"with argument":    `function f(): i32 { let xs: A[] = [Bar]; xs = xs.with(0, Foo); return 0; }`,
 		"Option payload":   `function f(): Option[A] { return Some(Foo); }`,
 		"variant payload":  `function f(): A { return Box(1); }`,
 		"if-expression":    `function f(): i32 { let a: A = if (on()) { Foo } else { Bar }; return 0; }`,

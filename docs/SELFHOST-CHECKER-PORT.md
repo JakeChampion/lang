@@ -220,7 +220,12 @@ same code(s) the Go checker does — restricted to
   one enum the module sees declares it; otherwise the reference keeps its
   module's own spelling for the checker to report. Patterns are left to
   the scrutinee, as in Go. A bare reference at a position whose expected
-  type names one of the candidate enums is not ambiguous (#12701).
+  type names one of the candidate enums is not ambiguous (#12701). The
+  positions are a `let` with a type, an assignment, a return, a call's or
+  a method call's argument, a struct field, an array or tuple element and
+  a payload. An array's builtin `append` and `with` are method calls too:
+  their argument expects the element type (#12510 found `std/http/h2`'s
+  bare `Closed` flagged once `std/fetch` imported `std/quic/conn`).
   `qualify_variants_in` rewrites it to the qualified `Enum.Variant` form
   before the check passes and again in `annotate_module`, so every later
   pass reads the qualified form. `TestSelfHostCheckerVariantScopeDifferentialX86_64`
