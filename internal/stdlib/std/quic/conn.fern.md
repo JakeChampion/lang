@@ -1828,6 +1828,9 @@ function (c: Conn) __transmit(now: i64): Conn {
 ```fern
 <<30 function (c: Conn) __datagram_sent(now: i64): Conn>>=
 function (c: Conn) __datagram_sent(now: i64): Conn {
+  if (c.validated && c.probe.is_none()) {
+    return c.__datagram_out(now);
+  }
   let next = c.__datagram_out(now);
   if (!c.validated && next.sent_bytes > 3 * next.received_bytes) {
     return c;

@@ -1,11 +1,15 @@
 import "std/http";
+import "std/http/h2";
+import "std/http/h2/frame";
 import "std/http/hpack";
+import "std/http/qpack";
 import "std/json";
 import "std/url";
 
 // Feeds a file to one network-facing parser of the standard library: the
-// HTTP/1 request framer and its chunked-body decoder, the HPACK decoder, the
-// JSON parser, or the URL and query parsers. Each refuses malformed bytes with
+// HTTP/1 request framer and its chunked-body decoder, the HTTP/2 frame reader
+// and server connection, the HPACK or QPACK decoder, the JSON parser, or the
+// URL and query parsers. Each refuses malformed bytes with
 // an error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
@@ -84,6 +88,72 @@ function hpack_summary(raw: u8[]): string {
   return "hpack fields " + fields.to_string() + " table " + d.table_size().to_string();
 }
 
+// Reads frames until the bytes run out or a frame is refused, then feeds the
+// client preface and the same bytes in pieces of nine to a server connection.
+function h2_summary(raw: u8[]): string {
+  let frames = 0;
+  let at = 0;
+  let refused = 0;
+  while (refused == 0) {
+    match (frame.read(raw, at, frame.MIN_FRAME_SIZE)) {
+      Ok(frame.Got(_, used)) => {
+        frames += 1;
+        at += used;
+      },
+      Ok(frame.More) => {
+        break;
+      },
+      Err(e) => {
+        refused = e.code + 1;
+      }
+    }
+  }
+  let step = h2.server(h2.config());
+  let output = step.output.len();
+  let events = step.events.len();
+  step = step.conn.read(frame.preface());
+  output += step.output.len();
+  events += step.events.len();
+  let from = 0;
+  while (from < raw.len()) {
+    let end = from + 9;
+    if (end > raw.len()) {
+      end = raw.len();
+    }
+    step = step.conn.read(__bytes_range(raw, from, end));
+    output += step.output.len();
+    events += step.events.len();
+    from = end;
+  }
+  return "h2 frames " + frames.to_string() + " refused " + refused.to_string() + " events " + events.to_string() + " output " + output.to_string();
+}
+
+// The first byte gives the length of the encoder-stream bytes that follow it,
+// and the rest is one header section on stream 0.
+function qpack_summary(raw: u8[]): string {
+  let d = qpack.decoder(4096i64, 16i64, 65536i64);
+  if (raw.len() == 0) {
+    return "qpack empty";
+  }
+  let split = 1 + raw[0] as i32;
+  if (split > raw.len()) {
+    split = raw.len();
+  }
+  match (d.on_encoder_stream(__bytes_range(raw, 1, split))) {
+    Ok(next) => {
+      d = next;
+    },
+    Err(e) => {
+      return "qpack encoder refused " + e.message().len().to_string();
+    }
+  }
+  d = d.decode(0i64, __bytes_range(raw, split, raw.len()));
+  if let Some(e) = d.failed {
+    return "qpack refused " + e.message().len().to_string();
+  }
+  return "qpack fields " + d.fields.len().to_string() + " waiting " + d.waiting.to_string() + " inserts " + d.insert_count().to_string();
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -110,7 +180,7 @@ function url_summary(src: string): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|hpack|json|url FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|json|url FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -129,6 +199,14 @@ function main(): i32 {
   }
   if (av[1] == "hpack") {
     print(hpack_summary(raw));
+    return 0;
+  }
+  if (av[1] == "h2") {
+    print(h2_summary(raw));
+    return 0;
+  }
+  if (av[1] == "qpack") {
+    print(qpack_summary(raw));
     return 0;
   }
   if (av[1] == "json") {

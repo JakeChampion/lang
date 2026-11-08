@@ -16,7 +16,8 @@ import (
 // one size rides one UDP_SEGMENT message of at most 64 segments and 65,535
 // bytes, a shorter datagram closes the run as its last segment, and a lone
 // datagram is a plain message. The receiver sees every datagram, whole and
-// in order, and the program reports how many messages each flight took.
+// in order, and the program reports how many messages each flight took. A
+// batch sent and filled again sends only its new datagram.
 func TestNetSendManyX86_64(t *testing.T) {
 	fern := buildFernCLI(t)
 	qemu := x86QemuOrEmpty(t)
@@ -44,6 +45,7 @@ func TestNetSendManyX86_64(t *testing.T) {
 		want = append(want, bytes.Repeat([]byte{byte(n)}, n))
 	}
 	want = append(want, []byte{})
+	want = append(want, bytes.Repeat([]byte{7}, 7), bytes.Repeat([]byte{9}, 9))
 	if err := peer.SetReadDeadline(time.Now().Add(20 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +69,7 @@ func TestNetSendManyX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send_many: %v\n%s", err, out)
 	}
-	if got, w := string(out), "messages 2 3 1\n"; got != w {
+	if got, w := string(out), "messages 2 3 1 1 1\n"; got != w {
 		t.Errorf("send_many reported %q, want %q", got, w)
 	}
 	if err := <-received; err != nil {
@@ -105,7 +107,11 @@ function main(): i32 {
   let Ok(b) = net.send_many(sock, to, [filled(10, 10u8), filled(20, 20u8), filled(20, 20u8), filled(5, 5u8), filled(5, 5u8)]) else { return 5; };
   let empty: u8[] = [];
   let Ok(c) = net.send_many(sock, to, [empty]) else { return 6; };
-  print("messages " + a.to_string() + " " + b.to_string() + " " + c.to_string());
+  let first = net.batch().add(to, [filled(7, 7u8)]).send(sock);
+  let Ok(d) = first.1 else { return 7; };
+  let second = first.0.add(to, [filled(9, 9u8)]).send(sock);
+  let Ok(e) = second.1 else { return 8; };
+  print("messages " + a.to_string() + " " + b.to_string() + " " + c.to_string() + " " + d.to_string() + " " + e.to_string());
   return 0;
 }
 `
