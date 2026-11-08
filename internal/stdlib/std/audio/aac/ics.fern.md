@@ -47,6 +47,8 @@ pub function valid_info(i: Info, rate: i32): boolean {
   return true;
 }
 
+// Keep window grouping and prediction-field validation in syntax order.
+// fern-lint: allow cyclomatic-complexity
 pub function info(input: [u8], reader: bits.Reader, rate: i32): Result[(bits.Reader, Info), pcm.AudioError] {
   if (rate < 0 || rate >= 13) {
     return Err(pcm.Header);
@@ -125,6 +127,8 @@ function sections(input: [u8], reader: bits.Reader, i: Info): Result[(bits.Reade
   return Ok((reader, books));
 }
 
+// Keep separate spectral, intensity, and noise scale accumulators in syntax order.
+// fern-lint: allow cyclomatic-complexity
 function scale(input: [u8], reader: bits.Reader, book: i32, state: Scales): Result[(bits.Reader, Scales, f32), pcm.AudioError] {
   if (book == 0) {
     return Ok((reader, state, 0.0f32));
@@ -215,6 +219,8 @@ function escaped(input: [u8], reader: bits.Reader): Result[(bits.Reader, i32), p
   return Ok((end, (1 << width) + value as i32));
 }
 
+// Decode one signed spectral pair with its escape and range checks.
+// fern-lint: allow cyclomatic-complexity
 function pair(input: [u8], reader: bits.Reader, book: i32, symbol: i32): Result[(bits.Reader, i32, i32), pcm.AudioError] {
   let radix = if (book < 7) { 9 } else if (book < 9) { 8 } else if (book < 11) { 13 } else { 17 };
   let a = symbol / radix;
@@ -308,6 +314,8 @@ function spectrum(input: [u8], reader: bits.Reader, i: Info, books: i32[], rate:
   return Ok((reader, values));
 }
 
+// Check pulse positions and quantized amplitudes before dequantization.
+// fern-lint: allow cyclomatic-complexity
 function apply_pulse(own values: i32[], p: Option[Pulse], i: Info, books: i32[], rate: i32): Result[i32[], pcm.AudioError] {
   let Some(pulse) = p else {
     return Ok(values);
