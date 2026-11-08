@@ -194,6 +194,13 @@ def colors_in(width, height, px, box):
     return len(out)
 
 
+def video_colors(width, height, px):
+    # The test pattern has flat bars in its center and a gradient near its bottom.
+    # Include that gradient and exclude the outer edge of the window.
+    return colors_in(width, height, px, (width // 20, height // 20,
+                                        width * 19 // 20, height * 19 // 20))
+
+
 def start(port, play=""):
     adb("shell", "am", "force-stop", PACKAGE)
     args = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity",
@@ -233,8 +240,8 @@ def check_video(out, port):
         return fail("the video did not go on the window: " + " | ".join(l for l in logcat().splitlines() if "plex" in l))
     time.sleep(2)
     width, height, px = screen(out, "video")
-    colors = colors_in(width, height, px, (width // 4, height // 3, 3 * width // 4, 2 * height // 3))
-    print(f"video: {colors} colours in the middle of the screen", flush=True)
+    colors = video_colors(width, height, px)
+    print(f"video: {colors} colours inside the screen edges", flush=True)
     if colors < 12:
         fail(f"the video shows {colors} colours")
     adb("shell", "input", "tap", str(width // 2), str(height // 2))
