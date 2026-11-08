@@ -21,18 +21,18 @@ function region(): frames.Frames {
 // The entry of `table` at `index`.
 function entry(table: usize, index: usize): i64 {
   unsafe {
-    return __load_i64(table + index * 8 as usize);
+    return __load_i64(table + index * (8 as usize));
   }
 }
 
 // The table that an entry points at.
 function table_of(e: i64): usize {
-  return (e as usize) & (0xfffffffff000 as usize);
+  return e as usize & 0xfffffffff000 as usize;
 }
 
 // The attribute bits of a block or a page: the entry without its address.
 function attr_of(e: i64): i64 {
-  return e & (0xffff000000000fffu64 as i64);
+  return e & 0xffff000000000fffu64 as i64;
 }
 
 function test_block(): test.TestOutcome {
