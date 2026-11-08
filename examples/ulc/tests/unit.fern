@@ -5,6 +5,7 @@ import "std/string";
 import "std/i32";
 import "../transform";
 import "../packed_transform";
+import "../packed_decoder";
 import "../codec";
 import "../encoder";
 import "../analysis";
@@ -329,20 +330,33 @@ function packed_tests(): void {
     }
   }
   require(error < peak * 0.000003, "scaled FFT retains tiny coefficients");
-  for code in [0, 255] {
-    let decoded = get([0, 15, 15, 0, code >> 4, code & 15], 32768);
-    let seed = 1234567u32;
-    let level = (1.0 / 512.0) as f32;
-    let decay = (1.0 - (code * code) as f64 / 524288.0) as f32;
-    for i in 0..32768 {
-      seed ^= seed << 13u32;
-      seed ^= seed >> 17u32;
-      seed ^= seed << 5u32;
-      if ((seed & 2147483648u32) != 0u32) {
-        level = -level;
+  for q in [0, 26] {
+    for code in 0..256 {
+      let prefix = if (q == 0) { [0] } else { [14, 12] };
+      let codes = prefix.concat([15, 15, 0, code >> 4, code & 15]);
+      let decoded = get(codes, 32768);
+      let packed = __alloc_u8(4 * 32768);
+      unsafe {
+        let parsed = codec.coefficient_buffer(codec.reader(nybbles(codes), 0, 1234567u32), 32768, packed as usize + 8 as usize, true);
+        require(parsed.is_ok(), "packed noise tail accepts every decay code");
       }
-      require(f64_bits(decoded.values[i]) == f64_bits(level as f64), "stable noise tail preserves every rounded value");
-      level *= decay;
+      let seed = 1234567u32;
+      let level = (1.0 / ((1u64 << (9 + q) as u64) as f64)) as f32;
+      let decay = (1.0 - (code * code) as f64 / 524288.0) as f32;
+      for i in 0..32768 {
+        seed ^= seed << 13u32;
+        seed ^= seed >> 17u32;
+        seed ^= seed << 5u32;
+        if ((seed & 2147483648u32) != 0u32) {
+          level = -level;
+        }
+        require(f64_bits(decoded.values[i]) == f64_bits(level as f64), "noise tail preserves every rounded value");
+        unsafe {
+          let bits = __load_i32(packed as usize + 8 as usize + (4 * i) as usize);
+          require(bits == f32_bits((level as f64 * 79228162514264337593543950336.0) as f32), "packed noise tail preserves exact binary scaling");
+        }
+        level *= decay;
+      }
     }
   }
   let seed = 1234567u32;
@@ -435,12 +449,73 @@ function parser_properties(): void {
   require(back.samples[0] == 0.5 && back.samples[1] == -0.5 && back.samples[4] == 0.0, "unaligned float stores include the scalar tail");
 }
 
+function packed_file_tests(): void {
+  let Ok(template) = packed_decoder.decoder(256, 1) else {
+    exit(1);
+  };
+  let Ok(first) = packed_decoder.decode_block(packed_decoder.Decoder { ...template }, nybbles([0, 0, 15, 15, 0, 0, 0]), 0) else {
+    exit(1);
+  };
+  for bytes in [template.lap, template.coefs, template.re, template.im, template.temp, template.samples, template.output] {
+    for value in bytes {
+      require(value == 0u8, "packed decoder preserves retained state buffers");
+    }
+  }
+  let retained = first.samples;
+  let saved = __alloc_u8(retained.len());
+  unsafe {
+    __memcpy(saved as usize + 8 as usize, retained as usize + 8 as usize, retained.len());
+  }
+  let silence = nybbles([0, 14, 15]);
+  let Ok(second) = packed_decoder.decode_block(first.state, silence, 0) else {
+    exit(1);
+  };
+  require(!second.silent, "silent coefficients retain the previous overlap");
+  let Ok(third) = packed_decoder.decode_block(second.state, silence, 0) else {
+    exit(1);
+  };
+  require(third.silent, "two silent blocks clear the overlap");
+  for byte in third.samples {
+    require(byte == 0u8, "silent packed blocks contain zero samples");
+  }
+  for i in 0..retained.len() {
+    require(retained[i] == saved[i], "packed decoder preserves retained output blocks");
+  }
+  require(packed_decoder.decode_block(packed_decoder.Decoder { ...template, coefs: [] }, silence, 0).is_err(), "packed decoder validates its buffer dimensions");
+  let source = __alloc_u8(20);
+  unsafe {
+    __f32x4_store(source as usize + 8 as usize, __f32x4_of(39614081257132168796771975168.0 as f32, -(39614081257132168796771975168.0 as f32), 0.0 as f32, 0.0 as f32));
+  }
+  let Ok(buffer) = audio.wav_buffer(44100, 1, 32, 5) else {
+    exit(1);
+  };
+  let alias = buffer;
+  let Ok(changed) = packed_decoder.write_samples(buffer, 44, source, 1, 32) else {
+    exit(1);
+  };
+  for i in 44..64 {
+    require(alias[i] == 0u8, "packed WAV stores preserve byte-buffer aliases");
+  }
+  let Ok(back) = audio.read_wav(changed) else {
+    exit(1);
+  };
+  require(back.samples[0] == 0.5 && back.samples[1] == -0.5 && back.samples[4] == 0.0, "packed WAV stores include unaligned scalar tails");
+  require(packed_decoder.write_samples(__alloc_u8(64), -1, source, 1, 32).is_err(), "packed WAV stores reject negative offsets");
+  require(packed_decoder.write_samples(__alloc_u8(64), 44, source, 0, 32).is_err(), "packed WAV stores reject invalid channel counts");
+  let nonfinite = __alloc_u8(16);
+  unsafe {
+    __store_i32(nonfinite as usize + 8 as usize, 2139095040);
+  }
+  require(packed_decoder.write_samples(__alloc_u8(64), 44, nonfinite, 1, 32).is_err(), "packed WAV stores reject nonfinite samples");
+}
+
 pub function run_tests(): i32 {
   window_cache_tests();
   transform_tests();
   print("ok - transform definition and lapping");
   packed_tests();
   parser_properties();
+  packed_file_tests();
   print("ok - packed FFT, noise index, and seed jumps");
   syntax_tests();
   print("ok - coefficient syntax and validation");

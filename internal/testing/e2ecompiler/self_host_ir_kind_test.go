@@ -18,7 +18,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_ok=162\n" +
 		"bijection_failures=0\n" +
 		"retired=26\n" +
-		"ext_ok=299\n" +
+		"ext_ok=301\n" +
 		"ext_failures=0\n" +
 		"neg_ok=15\n" +
 		"neg_failures=0\n" +

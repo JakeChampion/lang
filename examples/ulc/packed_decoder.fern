@@ -1,0 +1,299 @@
+// File decoding keeps planar floats at a scale of 2^96 until the WAV write.
+import "std/array";
+import "std/f64";
+import "std/result";
+import "./codec";
+import "./packed_transform";
+import "./windows";
+import "./audio";
+
+const INVERSE_SCALE: f64 = 1.2621774483536189e-29;
+
+pub struct Decoder { block_size: i32, channels: i32, last_size: i32, seed: u32, plans: packed_transform.Plan[], lap: u8[], coefs: u8[], re: u8[], im: u8[], temp: u8[], samples: u8[], output: u8[], zero_samples: u8[], lap_zero: boolean }
+
+pub struct Block { state: Decoder, samples: u8[], next_byte: i32, silent: boolean }
+
+pub function decoder(n: i32, channels: i32): Result[Decoder, string] {
+  if (!codec.valid_config(n, channels)) {
+    return Err("invalid decoder configuration");
+  }
+  let plans: packed_transform.Plan[] = [];
+  for shift in 0..4 {
+    plans = plans.append(packed_transform.plan(n >> shift));
+  }
+  let output = __alloc_u8(4 * n * channels);
+  return Ok(Decoder { block_size: n, channels: channels, last_size: 0, seed: 1234567u32, plans: plans, lap: __alloc_u8(2 * n * channels), coefs: __alloc_u8(4 * n), re: __alloc_u8(2 * n), im: __alloc_u8(2 * n), temp: __alloc_u8(4 * n), samples: __alloc_u8(4 * n), output: output, zero_samples: output, lap_zero: true });
+}
+
+@inline
+function unique(own bytes: u8[]): u8[] {
+  unsafe {
+    if (__load_i32(bytes as usize - 8 as usize) != 1) {
+      bytes = __send_copy(bytes);
+    }
+  }
+  return bytes;
+}
+
+@inline
+function get(address: usize, index: i32): f64 {
+  unsafe {
+    return f32_from_bits(__load_i32(address + (4 * index) as usize)) as f64;
+  }
+}
+
+@inline
+function put(address: usize, index: i32, value: f64): void {
+  unsafe {
+    __store_i32(address + (4 * index) as usize, f32_bits(value as f32));
+  }
+}
+
+function reverse_copy(destination: usize, source: usize, count: i32): void {
+  unsafe {
+    let i = 0;
+    while (i + 4 <= count) {
+      let value = __f32x4_load_ptr(source + (4 * (count - 4 - i)) as usize);
+      __f32x4_store(destination + (4 * i) as usize, __f32x4_reverse(value));
+      i += 4;
+    }
+    while (i < count) {
+      put(destination, i, get(source, count - 1 - i));
+      i += 1;
+    }
+  }
+}
+
+function move_right(destination: usize, source: usize, count: i32): void {
+  unsafe {
+    let i = count;
+    while (i >= 4) {
+      i -= 4;
+      __f32x4_store(destination + (4 * i) as usize, __f32x4_load_ptr(source + (4 * i) as usize));
+    }
+    while (i > 0) {
+      i -= 1;
+      put(destination, i, get(source, i));
+    }
+  }
+}
+
+function inverse(lap: usize, temp: usize, out: usize, overlap: i32, p: packed_transform.Plan): void {
+  let n = p.shape.n;
+  let half = n / 2;
+  let flat = (n - overlap) / 2;
+  unsafe {
+    let i = 0;
+    while (i + 4 <= flat) {
+      let a = __f32x4_reverse(__f32x4_load_ptr(lap + (4 * (half - 4 - i)) as usize));
+      let b = __f32x4_load_ptr(temp + (4 * (half + i)) as usize);
+      __f32x4_store(out + (4 * i) as usize, a);
+      __f32x4_store(out + (4 * (n - 4 - i)) as usize, __f32x4_reverse(b));
+      i += 4;
+    }
+    while (i < flat) {
+      put(out, i, get(lap, half - 1 - i));
+      put(out, n - 1 - i, get(temp, half + i));
+      i += 1;
+    }
+    while (i + 4 <= half) {
+      let a = __f32x4_reverse(__f32x4_load_ptr(lap + (4 * (half - 4 - i)) as usize));
+      let b = __f32x4_load_ptr(temp + (4 * (half + i)) as usize);
+      let c = __f32x4_load_bytes(p.window_cos, 4 * (n - overlap + i - flat));
+      let s = __f32x4_load_bytes(p.window_sin, 4 * (n - overlap + i - flat));
+      __f32x4_store(out + (4 * i) as usize, c * a - s * b);
+      __f32x4_store(out + (4 * (n - 4 - i)) as usize, __f32x4_reverse(s * a + c * b));
+      i += 4;
+    }
+    while (i < half) {
+      let a = get(lap, half - 1 - i);
+      let b = get(temp, half + i);
+      let c = p.shape.window_cos[n - overlap + i - flat];
+      let s = p.shape.window_sin[n - overlap + i - flat];
+      put(out, i, c * a - s * b);
+      put(out, n - 1 - i, s * a + c * b);
+      i += 1;
+    }
+    __memcpy(lap, temp, 2 * n);
+  }
+}
+
+pub function decode_block(own state: Decoder, data: u8[], offset: i32): Result[Block, string] {
+  let n = state.block_size;
+  let channels = state.channels;
+  if (!codec.valid_config(n, channels) || state.last_size < 0 || state.last_size > n || state.plans.len() != 4 || state.lap.len() != 2 * n * channels || state.coefs.len() != 4 * n || state.re.len() != 2 * n || state.im.len() != 2 * n || state.temp.len() != 4 * n || state.samples.len() != 4 * n || state.output.len() != 4 * n * channels || state.zero_samples.len() != 4 * n * channels) {
+    return Err("invalid packed decoder state");
+  }
+  if (offset < 0 || offset >= data.len() || data.len() > 1073741823) {
+    return Err("missing block data");
+  }
+  if (state.lap_zero) {
+    let parsed = codec.scan_block(data, offset, n, channels)?;
+    if (parsed.silent) {
+      return Ok(Block { state: Decoder { ...state, last_size: parsed.last_size }, samples: state.zero_samples, next_byte: parsed.next_byte, silent: true });
+    }
+  }
+  let Decoder { block_size: _, channels: _, last_size: previous_size, seed, plans, lap, coefs, re, im, temp, samples, output, zero_samples, lap_zero: _ } = state;
+  lap = unique(lap);
+  coefs = unique(coefs);
+  re = unique(re);
+  im = unique(im);
+  temp = unique(temp);
+  samples = unique(samples);
+  output = unique(output);
+  let control = data[offset] as i32 & 15;
+  let pattern_index = if ((control & 8) != 0) { data[offset] as i32 >> 4 } else { 1 };
+  if (pattern_index < 1 || (control & 8) != 0 && pattern_index < 2) {
+    return Err("reserved window pattern");
+  }
+  let r = codec.reader(data, offset, seed);
+  r = codec.BitReader { ...r, pos: r.pos + (if ((control & 8) != 0) { 2 } else { 1 }) };
+  let last = previous_size;
+  let silent = true;
+  unsafe {
+    let coefficient_address = coefs as usize + 8 as usize;
+    let temp_address = temp as usize + 8 as usize;
+    let sample_address = samples as usize + 8 as usize;
+    for channel in 0..channels {
+      let lap_address = lap as usize + 8 as usize + (2 * n * channel) as usize;
+      let out_address = output as usize + 8 as usize + (4 * n * channel) as usize;
+      last = previous_size;
+      let pattern = windows.pattern(pattern_index << 4 | control);
+      let at = 0;
+      while (pattern != 0) {
+        let shift = pattern & 7;
+        let size = n >> shift;
+        if (shift > 3 || plans[shift].shape.n != size || plans[shift].window_cos.len() < 4 * size || plans[shift].window_sin.len() < 4 * size) {
+          return Err("invalid packed transform plan");
+        }
+        __memset(coefficient_address, 0, 4 * size);
+        let decoded = codec.coefficient_buffer(r, size, coefficient_address, true)?;
+        r = decoded.reader;
+        silent = silent && decoded.silent;
+        let overlap = if ((pattern & 8) != 0) { size >> (control & 7) } else { size };
+        if (overlap > last) {
+          overlap = last;
+        }
+        last = size;
+        if (decoded.silent) {
+          __memset(temp_address, 0, 4 * size);
+        } else {
+          packed_transform.dct4_packed(coefficient_address, temp_address, re as usize + 8 as usize, im as usize + 8 as usize, plans[shift]);
+        }
+        inverse(lap_address, temp_address, sample_address, overlap, plans[shift]);
+        if (size == n) {
+          __memcpy(out_address, sample_address, 4 * n);
+        } else {
+          let available = (n - size) / 2;
+          if (size <= available) {
+            reverse_copy(out_address + (4 * at) as usize, lap_address + (4 * (n / 2 - size)) as usize, size);
+            move_right(lap_address + (4 * (n / 2 - available + size)) as usize, lap_address + (4 * (n / 2 - available)) as usize, available - size);
+            reverse_copy(lap_address + (4 * (n / 2 - available)) as usize, sample_address, size);
+          } else {
+            reverse_copy(out_address + (4 * at) as usize, lap_address + (4 * (n / 2 - available)) as usize, available);
+            __memcpy(out_address + (4 * (at + available)) as usize, sample_address, 4 * (size - available));
+            reverse_copy(lap_address + (4 * (n / 2 - available)) as usize, sample_address + (4 * (size - available)) as usize, available);
+          }
+        }
+        at += size;
+        pattern >>= 4;
+      }
+    }
+  }
+  return Ok(Block { state: Decoder { block_size: n, channels: channels, last_size: last, seed: r.seed, plans: plans, lap: lap, coefs: coefs, re: re, im: im, temp: temp, samples: samples, output: output, zero_samples: zero_samples, lap_zero: silent }, samples: output, next_byte: (r.pos + 1) / 2, silent: false });
+}
+
+@inline
+function store_vector(destination: usize, value: f32x4): Result[void, string] {
+  let infinity = __f32x4_splat(f32_from_bits(2139095040));
+  if (__f32x4_bitmask(__f32x4_lt(__f32x4_abs(value), infinity)) != 15) {
+    return Err("nonfinite output sample");
+  }
+  unsafe {
+    __f32x4_store(destination, value);
+  }
+  return Ok(());
+}
+
+// The destination has samples.len() writable bytes. The input contains scaled planar floats.
+pub unsafe function store_float_samples(destination: usize, samples: u8[], channels: i32): Result[void, string] {
+  if (channels < 1 || channels > 255 || samples.len() % (4 * channels) != 0) {
+    return Err("invalid packed sample dimensions");
+  }
+  let n = samples.len() / (4 * channels);
+  let scale = __f32x4_splat(INVERSE_SCALE as f32);
+  unsafe {
+    let source = samples as usize + 8 as usize;
+    if ((channels == 1 || channels == 2) && n % 4 == 0) {
+      for group in 0..n / 4 {
+        let i = 4 * group;
+        let a = __f32x4_load_ptr(source + (4 * i) as usize);
+        if (channels == 1) {
+          store_vector(destination + (4 * i) as usize, a * scale)?;
+        } else {
+          let b = __f32x4_load_ptr(source + (4 * (n + i)) as usize);
+          let left = (a + b) * scale;
+          let right = (a - b) * scale;
+          store_vector(destination + (8 * i) as usize, __f32x4_zip_lo(left, right))?;
+          store_vector(destination + (8 * i + 16) as usize, __f32x4_zip_hi(left, right))?;
+        }
+      }
+    } else {
+      for i in 0..n {
+        for channel in 0..channels {
+          let a = get(source, (channel & ~1) * n + i);
+          let value = a;
+          if ((channel | 1) < channels) {
+            let b = get(source, (channel | 1) * n + i);
+            value = if ((channel & 1) == 0) { a + b } else { a - b };
+          }
+          if (!value.is_finite()) {
+            return Err("nonfinite output sample");
+          }
+          put(destination, i * channels + channel, value * INVERSE_SCALE);
+        }
+      }
+    }
+  }
+  return Ok(());
+}
+
+pub function write_samples(own out: u8[], at: i32, samples: u8[], channels: i32, bits: i32): Result[u8[], string] {
+  if (at < 0 || at > out.len() || channels < 1 || channels > 255 || samples.len() % (4 * channels) != 0) {
+    return Err("invalid packed sample dimensions");
+  }
+  let count = samples.len() / 4;
+  if (bits != 8 && bits != 16 && bits != 24 && bits != 32) {
+    return Err("invalid WAV output format");
+  }
+  if (count as u64 * ((bits / 8) as u64) > (out.len() - at) as u64) {
+    return Err("sample output exceeds WAV buffer bounds");
+  }
+  if (bits == 32) {
+    if (count == 0) {
+      return Ok(out);
+    }
+    out = unique(out);
+    unsafe {
+      store_float_samples(out as usize + 8 as usize + at as usize, samples, channels)?;
+    }
+    return Ok(out);
+  }
+  let floats = __alloc_f64(count);
+  let n = count / channels;
+  unsafe {
+    let source = samples as usize + 8 as usize;
+    for i in 0..n {
+      for channel in 0..channels {
+        let a = get(source, (channel & ~1) * n + i);
+        let value = a;
+        if ((channel | 1) < channels) {
+          let b = get(source, (channel | 1) * n + i);
+          value = if ((channel & 1) == 0) { a + b } else { a - b };
+        }
+        floats = floats.with(i * channels + channel, value * INVERSE_SCALE);
+      }
+    }
+  }
+  return audio.write_samples(out, at, floats, bits);
+}

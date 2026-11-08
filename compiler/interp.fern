@@ -2675,6 +2675,25 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
 
 function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb = typeinfo.lane_builtin_verb(name);
+  if (verb == "lane_bits") {
+    let lanes = lane_args([args[0]]);
+    let at = vint_bits(args[1]);
+    if (lanes.len() != 1 || at < 0 || at >= 128 / width) {
+      return v_err("invalid vector lane index");
+    }
+    return if (width == 32) { v_uint(lanes[0].bits[at] as i32) } else { v_uint64(lanes[0].bits[at]) };
+  }
+  if (verb == "reverse" || verb == "swap_halves" || verb == "zip_lo" || verb == "zip_hi") {
+    let lanes = lane_args(args);
+    let count = 128 / width;
+    let bits: i64[] = [];
+    for i in 0..count {
+      let source = if (verb == "reverse" || verb == "swap_halves") { 0 } else { i & 1 };
+      let at = if (verb == "swap_halves") { (i + count / 2) % count } else if (verb == "reverse") { count - 1 - i } else { i / 2 + (if (verb == "zip_hi") { count / 2 } else { 0 }) };
+      bits = bits.append(lanes[source].bits[at]);
+    }
+    return VLanes { width: width, bits: bits };
+  }
   if (verb == "load_ptr") {
     let address = vint_as_i64(args[0]) as usize;
     let bits: i64[] = [];
@@ -7826,7 +7845,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
   }
-  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
+  if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg (n)");
     }
@@ -7840,6 +7859,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     let zero = v_int(0);
     if (name == "__alloc_i64") {
       zero = v_int64(0i64);
+    }
+    if (name == "__alloc_f64") {
+      zero = v_float(0.0);
     }
     if (name == "__alloc_bool") {
       zero = v_bool(false);

@@ -348,7 +348,7 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   }
   stack = drop_n(stack, argc);
   let what = k;
-  if (k == "vextract" || k == "vreplace") {
+  if (k == "vextract" || k == "vextract_bits" || k == "vreplace" || k == "vpermute") {
     what = k + ":" + util.i32_to_string(op.i32_imm);
   }
   if ((k == "vget" || k == "vset") && op.unsigned) {

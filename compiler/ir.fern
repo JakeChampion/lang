@@ -159,6 +159,10 @@ pub const LANE_KIND_LAST: i32 = 479;
 
 pub const K_VPACK: i32 = 512;
 
+pub const K_VPERMUTE: i32 = 513;
+
+pub const K_VEXTRACT_BITS: i32 = 514;
+
 pub function lane_kind_names(): string[] {
   return [
     "vsplat", "vextract", "vreplace",
@@ -166,7 +170,7 @@ pub function lane_kind_names(): string[] {
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround",
     "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
-    "vget", "vset", "vbitmask", "vpack",
+    "vget", "vset", "vbitmask", "vpack", "vpermute", "vextract_bits",
   ];
 }
 
@@ -179,10 +183,16 @@ pub function lane_writes(id: i32): boolean {
 }
 
 pub function is_lane_kind(id: i32): boolean {
-  return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST || id == K_VPACK;
+  return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST || id == K_VPACK || id == K_VPERMUTE || id == K_VEXTRACT_BITS;
 }
 
 function kind_id_lane(name: string): i32 {
+  if (name == "vextract_bits") {
+    return K_VEXTRACT_BITS;
+  }
+  if (name == "vpermute") {
+    return K_VPERMUTE;
+  }
   if (name == "vpack") {
     return K_VPACK;
   }
@@ -5073,6 +5083,12 @@ function buf_kind_name(id: i32): string {
 }
 
 pub function kind_name(id: i32): string {
+  if (id == K_VEXTRACT_BITS) {
+    return "vextract_bits";
+  }
+  if (id == K_VPERMUTE) {
+    return "vpermute";
+  }
   if (id == K_VPACK) {
     return "vpack";
   }
@@ -5567,7 +5583,10 @@ function pops_of(fixed: i32, o: Op): i32 {
 }
 
 function kind_pops(t: i32): i32 {
-  if (t == K_VPACK) {
+  if (t == K_VEXTRACT_BITS) {
+    return 1;
+  }
+  if (t == K_VPACK || t == K_VPERMUTE) {
     return 2;
   }
   if (is_lane_kind(t)) {

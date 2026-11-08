@@ -2305,6 +2305,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
 	}
+	c.info.FuncSigs["__alloc_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+	}
 	c.info.FuncSigs["__alloc_bool"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.BoolType{}},
@@ -8946,6 +8950,8 @@ var fipNonAllocBuiltins = map[string]bool{
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,
 	"__f64x2_of":   true, "__f64x2_splat": true, "__f64x2_lane": true,
+	"__f64x2_reverse": true, "__f64x2_swap_halves": true, "__f64x2_zip_lo": true, "__f64x2_zip_hi": true, "__f64x2_lane_bits": true,
+	"__f32x4_reverse": true, "__f32x4_swap_halves": true, "__f32x4_zip_lo": true, "__f32x4_zip_hi": true, "__f32x4_lane_bits": true,
 	"__f64x2_lt": true, "__f64x2_ne": true, "__f64x2_bitmask": true, "__f32x4_bitmask": true,
 }
 
@@ -17756,7 +17762,7 @@ func isFloat(t ast.Type) bool {
 	return ok
 }
 
-var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with", "load_bytes", "with_bytes", "store", "load_ptr"}
+var laneBuiltinVerbs = []string{"swap_halves", "reverse", "zip_lo", "zip_hi", "splat", "of", "lane_bits", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with", "load_bytes", "with_bytes", "store", "load_ptr"}
 
 func (c *checker) registerLaneBuiltins() {
 	i32 := ast.NumberType{}
@@ -17773,6 +17779,7 @@ func (c *checker) registerLaneBuiltins() {
 			"splat":      {Params: []ast.Type{e}, Result: lt},
 			"of":         {Params: of, Result: lt},
 			"lane":       {Params: []ast.Type{lt, i32}, Result: e},
+			"lane_bits":  {Params: []ast.Type{lt, i32}, Result: ast.NumberType{Width: lt.Width, Signed: false}},
 			"bitmask":    {Params: []ast.Type{lt}, Result: i32},
 			"mul_add":    {Params: []ast.Type{lt, lt, lt}, Result: lt},
 			"select":     {Params: []ast.Type{lt, lt, lt}, Result: lt},
@@ -17783,10 +17790,10 @@ func (c *checker) registerLaneBuiltins() {
 			"load_ptr":   {Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}}, Result: lt},
 			"store":      {Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}, lt}, Result: ast.VoidType{}},
 		}
-		for _, v := range []string{"sqrt", "abs", "floor", "round"} {
+		for _, v := range []string{"swap_halves", "reverse", "sqrt", "abs", "floor", "round"} {
 			sigs[v] = &ast.FuncType{Params: []ast.Type{lt}, Result: lt}
 		}
-		for _, v := range []string{"min", "max", "lt", "ne"} {
+		for _, v := range []string{"zip_lo", "zip_hi", "min", "max", "lt", "ne"} {
 			sigs[v] = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
 		}
 		for _, v := range laneBuiltinVerbs {
@@ -17818,9 +17825,9 @@ func (c *checker) laneIndexArg(n *ast.Call) {
 	}
 	lanes := int64(0)
 	switch id.Name {
-	case "__f64x2_lane":
+	case "__f64x2_lane", "__f64x2_lane_bits":
 		lanes = 2
-	case "__f32x4_lane":
+	case "__f32x4_lane", "__f32x4_lane_bits":
 		lanes = 4
 	default:
 		return

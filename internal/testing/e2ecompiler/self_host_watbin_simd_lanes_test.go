@@ -53,6 +53,18 @@ func TestSelfHostWatbinSimdLanes(t *testing.T) {
 	if !strings.Contains(string(out), "lane index out of range: f64x2.extract_lane 2") {
 		t.Errorf("watbin refused the module for another reason\n%s", out)
 	}
+	for _, bad := range []string{"32", "-1", "x"} {
+		invalid := `(module (memory 1) (func (export "_start")
+f64.const 1.0 f64x2.splat f64.const 2.0 f64x2.splat
+i8x16.shuffle ` + bad + ` 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 drop))`
+		if err := os.WriteFile(watPath, []byte(invalid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "shuffle byte index") {
+			t.Fatalf("shuffle index %q: %v\n%s", bad, err, out)
+		}
+	}
 }
 
 const simdLaneOutOfRangeWat = `(module
@@ -83,6 +95,16 @@ const simdLanesWat = `(module
     local.set $b
     local.get $a
     local.get $b
+    i8x16.shuffle 8 9 10 11 12 13 14 15 24 25 26 27 28 29 30 31
+    f64x2.extract_lane 0
+    f64.const -2.5
+    f64.ne
+    if
+      i32.const 35
+      call $fail
+    end
+    local.get $a
+    local.get $b
     f64x2.add
     f64x2.extract_lane 0
     f64.const 4.5
@@ -106,6 +128,7 @@ const simdLanesWat = `(module
     (local $a v128) (local $b v128) (local $m v128) (local $c v128) (local $s v128)
     (local.set $a (f64x2.replace_lane 1 (f64x2.splat (f64.const 3.0)) (f64.const -2.5)))
     (local.set $b (f64x2.replace_lane 1 (f64x2.splat (f64.const 1.5)) (f64.const 4.0)))
+    (if (i32.eqz (call $f64_eq (f64x2.extract_lane 1 (i8x16.shuffle 8 9 10 11 12 13 14 15 24 25 26 27 28 29 30 31 (local.get $a) (local.get $b))) (f64.const 4.0))) (then (call $fail (i32.const 36))))
     (if (i32.eqz (call $f64_eq (f64x2.extract_lane 0 (f64x2.add (local.get $a) (local.get $b))) (f64.const 4.5))) (then (call $fail (i32.const 1))))
     (if (i32.eqz (call $f64_eq (f64x2.extract_lane 1 (f64x2.add (local.get $a) (local.get $b))) (f64.const 1.5))) (then (call $fail (i32.const 1))))
     (if (i32.eqz (call $f64_eq (f64x2.extract_lane 1 (f64x2.sub (local.get $a) (local.get $b))) (f64.const -6.5))) (then (call $fail (i32.const 2))))
