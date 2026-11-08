@@ -1,0 +1,80 @@
+// Tests of std/android/motion. The fling values come from the formulas of
+// Android's OverScroller, worked out apart from the module.
+import "std/android/motion";
+import "std/f64";
+import "std/test";
+
+function near(a: f64, b: f64, tolerance: f64): boolean {
+  return (a - b).abs() <= tolerance;
+}
+
+function test_velocity(): test.TestOutcome {
+  let s: motion.Sample[] = [];
+  for i in 0..10 {
+    s = motion.track(s, motion.Sample { t: (i * 16) as i64 * 1000000i64, y: 1000.0 - (i * 32) as f64 });
+  }
+  // 32 pixels every 16 ms is 2000 pixels per second, upward.
+  let v = motion.velocity(s);
+  let one = motion.velocity([motion.Sample { t: 0i64, y: 5.0 }]);
+  return test.assert_eq(near(v, -2000.0, 0.5).to_string() + " " + one.to_string(), "true 0");
+}
+
+function test_track_keeps_100ms(): test.TestOutcome {
+  let s: motion.Sample[] = [];
+  for i in 0..20 {
+    s = motion.track(s, motion.Sample { t: (i * 10) as i64 * 1000000i64, y: 0.0 });
+  }
+  // The samples at 90 ms to 190 ms are within 100 ms of the last one.
+  return test.assert_eq(s.len(), 11);
+}
+
+function test_fling_matches_overscroller(): test.TestOutcome {
+  let f = motion.fling(0, 3000.0, 2.75, 0i64);
+  let g = motion.fling(100, -1000.0, 2.0, 0i64);
+  let got = near(f.distance, 621.508, 0.01).to_string() + " " + near(f.dur as f64 / 1.0e6, 591.913, 0.01).to_string() + " " + near(g.distance, -116.645, 0.01).to_string() + " " + near(g.dur as f64 / 1.0e6, 333.270, 0.01).to_string();
+  return test.assert_eq(got, "true true true true");
+}
+
+function test_fling_limits(): test.TestOutcome {
+  let slow = motion.fling(0, 100.0, 2.75, 0i64);
+  let fast = motion.fling(0, 30000.0, 2.75, 0i64);
+  let top = motion.fling(0, 22000.0, 2.75, 0i64);
+  return test.assert_eq(motion.moving(slow).to_string() + " " + (fast.distance == top.distance).to_string(), "false true");
+}
+
+function test_fling_position(): test.TestOutcome {
+  let f = motion.fling(0, 3000.0, 2.75, 1000i64);
+  let (p0, e0) = motion.position(f, 1000i64);
+  let (pm, em) = motion.position(f, 1000i64 + f.dur / 2i64);
+  let (pe, ee) = motion.position(f, 1000i64 + f.dur);
+  // A fling covers more than half of its distance in half of its time.
+  let got = near(p0, 0.0, 0.05).to_string() + " " + e0.to_string() + " " + (pm > f.distance / 2.0 && pm < f.distance).to_string() + " " + em.to_string() + " " + near(pe, f.distance, 0.001).to_string() + " " + ee.to_string();
+  return test.assert_eq(got, "true false true false true true");
+}
+
+function test_spring(): test.TestOutcome {
+  let s = motion.spring(100.0, 0.0, 0.0, 0i64);
+  let (a, ea) = motion.spring_position(s, 50000000i64);
+  let (b, eb) = motion.spring_position(s, 100000000i64);
+  let (c, ec) = motion.spring_position(s, 400000000i64);
+  let got = near(a, 42.347, 0.01).to_string() + " " + ea.to_string() + " " + near(b, 10.134, 0.01).to_string() + " " + eb.to_string() + " " + c.to_string() + " " + ec.to_string();
+  return test.assert_eq(got, "true false true false 0 true");
+}
+
+function test_curves(): test.TestOutcome {
+  let ends = motion.ease(0.0).to_string() + motion.ease(1.0).to_string() + motion.decelerate(-1.0).to_string() + motion.decelerate(2.0).to_string() + motion.fast_out_slow_in(0.0).to_string() + motion.fast_out_slow_in(1.0).to_string();
+  let mid = near(motion.ease(0.5), 0.5, 1.0e-9).to_string() + " " + near(motion.decelerate(0.5), 0.75, 1.0e-9).to_string() + " " + near(motion.fast_out_slow_in(0.5), 0.775561, 1.0e-5).to_string() + " " + near(motion.linear_out_slow_in(0.5), 0.839245, 1.0e-5).to_string() + " " + near(motion.fast_out_linear_in(0.5), 0.324815, 1.0e-5).to_string();
+  return test.assert_eq(ends + " " + mid, "010101 true true true true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/motion");
+  r = r.it("velocity is the slope of the samples", test_velocity);
+  r = r.it("track keeps the last 100 ms", test_track_keeps_100ms);
+  r = r.it("a fling goes as far and as long as OverScroller", test_fling_matches_overscroller);
+  r = r.it("a fling has the speed limits of ViewConfiguration", test_fling_limits);
+  r = r.it("a fling starts at its start and ends at its distance", test_fling_position);
+  r = r.it("a spring comes to rest with no bounce", test_spring);
+  r = r.it("each curve has its ends and its middle", test_curves);
+  return r.finish();
+}

@@ -4,11 +4,11 @@
 // the phone, and control_test.fern gives one that records what the app does.
 import "std/android";
 import "std/android/draw";
+import "std/android/motion";
 import "std/option";
 import "std/worker";
 import "./face";
 import "./gpu";
-import "./motion";
 import "./paper";
 import "./ui";
 

@@ -46,7 +46,6 @@ Paper also does these things:
 | `face.fern` | The text: Roboto in five weights, which `std/truetype` draws at the size of each piece of text. |
 | `ui.fern` | The look of each screen, with the sizes of Android views in dp and sp. `nodes` lays out a screen, `raster` draws one node into an image, `render` draws a screen on the CPU, and `hit` finds the node under a touch. |
 | `gpu.fern` | The pixels on the GPU, through `std/android/gl`. Each node becomes an image once, and each frame draws the images at their places. |
-| `motion.fern` | The speed of a finger, and the fling and easing curves of Android. |
 | `control.fern` | The behaviour on each event: the touches, the keys, the timers and the files. Each input and output goes through a `Device`. |
 | `app.fern` | The NativeActivity, the `Device` of the phone through JNI, and the three Java classes of the app: the activity, a task that sets the system bars, and the notification listener. |
 | `paper_test.fern`, `ui_test.fern`, `control_test.fern` | The tests of the rules, of each screen and of the behaviour, on the host. |
