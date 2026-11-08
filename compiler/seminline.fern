@@ -770,7 +770,7 @@ function returns_boxes(f: ssasem.Func): boolean {
 struct Returned { ok: boolean, boxed: boolean }
 
 function returned(defs: Defs, v: i32, depth: i32): Returned {
-  let d = def_inst(defs, through_copies(defs, v));
+  let d = def_inst(defs, ssa.copy_root(defs.insts, v));
   if (d.kind_tag == 8 && depth < 8) {
     let boxed = false;
     for a in d.args {
@@ -792,7 +792,7 @@ function returned(defs: Defs, v: i32, depth: i32): Returned {
 
 function holds_construction(defs: Defs, d: ssa.SInst): boolean {
   for a in d.args {
-    if (construction_kind(def_inst(defs, through_copies(defs, a)).kind_tag)) {
+    if (construction_kind(def_inst(defs, ssa.copy_root(defs.insts, a)).kind_tag)) {
       return true;
     }
   }
@@ -2349,25 +2349,11 @@ function reads_parts(g: ssa.SFunc): boolean {
 }
 
 function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
-  let k = def_inst(defs, through_copies(defs, v)).kind_tag;
+  let k = def_inst(defs, ssa.copy_root(defs.insts, v)).kind_tag;
   if (!builds(k) && k != 8) {
     return false;
   }
   return !ssasem.holds_view(f, f.values[v]) && !ssasem.has_finalizer(f, f.values[v]);
-}
-
-function through_copies(defs: Defs, v: i32): i32 {
-  let x = v;
-  let steps = 0;
-  while (steps < 64) {
-    let d = def_inst(defs, x);
-    if (d.kind_tag != 7 || d.args.len() != 1) {
-      return x;
-    }
-    x = d.args[0];
-    steps += 1;
-  }
-  return x;
 }
 
 function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
@@ -2454,7 +2440,7 @@ function resolve(f: ssasem.Func, own e: Edits, read: ssa.SInst): Edits {
 }
 
 function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i32, phis: i32[]): (boolean, i32[]) {
-  let x = through_copies(e.defs, v);
+  let x = ssa.copy_root(e.defs.insts, v);
   let d = def_inst(e.defs, x);
   if (depth > 32 || blocked(f, e, read, x)) {
     return (false, phis);
@@ -2484,7 +2470,7 @@ struct Walk { e: Edits, value: i32, phis: i32[], parts: i32[] }
 
 function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i32): Walk {
   let ty = f.values[read.result];
-  let x = through_copies(w.e.defs, v);
+  let x = ssa.copy_root(w.e.defs.insts, v);
   let d = def_inst(w.e.defs, x);
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
     let p = Part { ok: true, value: -1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
@@ -2568,11 +2554,11 @@ function rebuilt_values(f: ssasem.Func, defs: Defs): boolean[] {
 }
 
 function rebuilt_from(f: ssasem.Func, defs: Defs, a: i32, built: i32): i32 {
-  let src = def_inst(defs, through_copies(defs, a));
+  let src = def_inst(defs, ssa.copy_root(defs.insts, a));
   if (!sempair.reads_apart(src.kind_tag) || src.args.len() != 1 || !semtypes.equal(f.values[src.args[0]], f.values[built])) {
     return -1;
   }
-  return through_copies(defs, src.args[0]);
+  return ssa.copy_root(defs.insts, src.args[0]);
 }
 
 function part_value(own w: Walk, p: Part, ty: typeinfo.Type): Walk {

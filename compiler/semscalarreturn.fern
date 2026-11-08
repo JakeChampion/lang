@@ -643,7 +643,7 @@ function emitted(w: Words, t: typeinfo.Type, ins: ssa.SInst): Words {
 // of any other record.
 function record_words(w0: Words, a: i32, ty: typeinfo.Type, defs: ssa.SInst[]): Words {
   let parts = parts_of(w0.b.f, ty);
-  let d = through_copies(defs, a);
+  let d = ssa.copy_source(defs, a);
   if (d.kind_tag == ssasem.record_new() && d.args.len() == parts.types.len() && ssasem.update_base(d) < 0) {
     return Words { ...w0, args: util.append_all(w0.args, d.args) };
   }
@@ -659,7 +659,7 @@ function record_words(w0: Words, a: i32, ty: typeinfo.Type, defs: ssa.SInst[]): 
 // parts (a split parameter, or a read of a field laid out in place), and the
 // rewrite of those turns these reads into its parts.
 function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst[]): Words {
-  let d = through_copies(defs, a);
+  let d = ssa.copy_source(defs, a);
   let w = w0;
   if (d.kind_tag == ssasem.variant_new() && d.str == "None") {
     w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { kind_tag: ssa.CONST_BOOL, result: 0, args: [], imm: 0, str: "" });
@@ -694,7 +694,7 @@ pub function needs_branch(f: ssasem.Func, defs: ssa.SInst[], ty: typeinfo.Type, 
   if (option_payload(f, ty).len() == 0) {
     return false;
   }
-  if (through_copies(defs, a).kind_tag == ssasem.variant_new()) {
+  if (ssa.copy_source(defs, a).kind_tag == ssasem.variant_new()) {
     return false;
   }
   return !(a >= 0 && a < own.len() && own[a]);
@@ -729,21 +729,6 @@ pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {
     parts = parts.append(v);
   }
   return Branch { f: f, head: head, flag: flag, some: some.b.insts, none: none.b.insts, joins: joins, parts: parts };
-}
-
-// The instruction defining `v`, seen through copies.
-pub function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
-  let x = v;
-  let steps = 0;
-  while (x >= 0 && x < defs.len() && steps < 64) {
-    let d = defs[x];
-    if (d.kind_tag != 7 || d.args.len() != 1) {
-      return d;
-    }
-    x = d.args[0];
-    steps += 1;
-  }
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
 function flag_constant(b: Build): Build {

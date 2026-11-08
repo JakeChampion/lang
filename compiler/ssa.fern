@@ -5696,7 +5696,7 @@ function is_top_bit(defs: SInst[], ins: SInst): boolean {
 }
 
 function is_const(defs: SInst[], v: i32, want: i64): boolean {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 1) {
     return d.imm as i64 == want;
   }
@@ -5704,7 +5704,7 @@ function is_const(defs: SInst[], v: i32, want: i64): boolean {
 }
 
 function bin_of(defs: SInst[], v: i32, op: string): SInst {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 9 && d.str == op && d.args.len() == 2) {
     return d;
   }
@@ -5737,7 +5737,7 @@ function same_pair(defs: SInst[], a: i32, b: i32, x: i32, y: i32): boolean {
 }
 
 function zero_one(defs: SInst[], v: i32): boolean {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 37 || is_top_bit(defs, d)) {
     return true;
   }
@@ -5864,7 +5864,8 @@ function shift_width(imm: i32): i32 {
   return 32;
 }
 
-function copy_root(defs: SInst[], v: i32): i32 {
+// The first value of the chain of copies that ends at v.
+pub function copy_root(defs: SInst[], v: i32): i32 {
   let r = v;
   let steps = 0;
   while (steps < defs.len()) {
@@ -5878,8 +5879,13 @@ function copy_root(defs: SInst[], v: i32): i32 {
   return r;
 }
 
+// The definition of copy_root(defs, v).
+pub function copy_source(defs: SInst[], v: i32): SInst {
+  return def_of(defs, copy_root(defs, v));
+}
+
 function const_value(defs: SInst[], v: i32): i64 {
-  let d = def_of(defs, copy_root(defs, v));
+  let d = copy_source(defs, v);
   if (d.kind_tag == 1) {
     return d.imm as i64;
   }

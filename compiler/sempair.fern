@@ -130,7 +130,7 @@ function returned_constructions(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
-      let d = semscalarreturn.through_copies(defs, b.term.value);
+      let d = ssa.copy_source(defs, b.term.value);
       if (d.kind_tag == ssasem.variant_new() && d.result >= 0 && semtypes.equal(f.values[d.result], f.result)) {
         out = out.with(d.result, true);
       }
@@ -224,7 +224,7 @@ pub function reads_apart(k: i32): boolean {
 
 function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], split: boolean[]): boolean {
   for a in phi.args {
-    let d = semscalarreturn.through_copies(defs, a);
+    let d = ssa.copy_source(defs, a);
     let k = d.kind_tag;
     if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0 && !split_payload(d, defs, ix, split)) {
       return false;
@@ -234,7 +234,7 @@ function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: 
 }
 
 function split_payload(d: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, split: boolean[]): boolean {
-  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(semscalarreturn.through_copies(defs, d.args[0]), ix, split) >= 0;
+  return split.len() > 0 && d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && paired_callee(ssa.copy_source(defs, d.args[0]), ix, split) >= 0;
 }
 
 function marked_all(own flags: boolean[], vs: i32[]): boolean[] {
@@ -475,7 +475,7 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   while (bi < n) {
     let b = f.graph.blocks[bi];
     if (b.term.kind_tag == ssa.TERM_RET && b.term.value >= 0) {
-      let d = semscalarreturn.through_copies(defs, b.term.value);
+      let d = ssa.copy_source(defs, b.term.value);
       if (sh.pair) {
         f = pair_return(f, bi, sh, defs);
       } else if (d.kind_tag == ssasem.variant_new() && semtypes.equal(f.values[d.result], sh.ty)) {
@@ -581,7 +581,7 @@ struct Parts { a: Arm, words: i32[] }
 // A two-word payload's parts: a construction's arguments, or else read out of
 // the payload.
 function parts_of(a: Arm, v: i32, ty: typeinfo.Type, ts: typeinfo.Type[], defs: ssa.SInst[]): Parts {
-  let d = semscalarreturn.through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   let built = d.kind_tag == ssasem.record_new() || d.kind_tag == ssasem.tuple_new();
   if (built && d.args.len() == 2 && semtypes.equal(a.f.values[d.result], ty)) {
     return Parts { a: a, words: d.args };

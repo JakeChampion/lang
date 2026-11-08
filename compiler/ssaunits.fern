@@ -1141,7 +1141,7 @@ function literal_word(defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
   }
-  let d = through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   if (d.kind_tag != 5 || d.result < 0) {
     return "";
   }
@@ -1152,7 +1152,7 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
   }
-  let d = through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   if (d.kind_tag != ssasem.variant_new() || d.args.len() != 0 || d.result < 0) {
     return "";
   }
@@ -1167,7 +1167,7 @@ function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): 
   if (v < 0) {
     return -1;
   }
-  let d = through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   if (d.result < 0 || raw_literal(raw, d) || !built_fields(f, d).ok) {
     return -1;
   }
@@ -1506,7 +1506,7 @@ function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Ty
   if (!narrow_scalar(t)) {
     return "";
   }
-  let d = through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   let arg = constant_cast_arg(d);
   if (arg >= 0) {
     return cast_word(f, defs, arg, t);
@@ -1527,7 +1527,7 @@ function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   if (!ssasem.is_u8(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
     return "";
   }
-  let src = through_copies(defs, v);
+  let src = ssa.copy_source(defs, v);
   if (!integer_literal(f, src)) {
     return "";
   }
@@ -1569,11 +1569,11 @@ function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
   if (!ssasem.is_wide(t)) {
     return "";
   }
-  let d = through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   let neg = false;
   if (d.kind_tag == 10 && d.str == "-" && d.args.len() == 1 && d.args[0] >= 0) {
     neg = true;
-    d = through_copies(defs, d.args[0]);
+    d = ssa.copy_source(defs, d.args[0]);
   }
   d = wide_literal(f, defs, d);
   if (d.kind_tag != 1) {
@@ -1594,7 +1594,7 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
     return None;
   }
   budget.set(budget.get() - 1);
-  let d = through_copies(defs, v);
+  let d = ssa.copy_source(defs, v);
   if (d.result < 0 || !ssasem.is_float(f.values[d.result])) {
     return None;
   }
@@ -1665,19 +1665,9 @@ function wide_literal(f: ssasem.Func, defs: ssa.SInst[], d: ssa.SInst): ssa.SIns
   if (arg < 0) {
     return d;
   }
-  let src = through_copies(defs, arg);
+  let src = ssa.copy_source(defs, arg);
   if (integer_literal(f, src)) {
     return src;
-  }
-  return d;
-}
-
-function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
-  let d = defs[v];
-  let hops = 0;
-  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
-    d = defs[d.args[0]];
-    hops += 1;
   }
   return d;
 }
