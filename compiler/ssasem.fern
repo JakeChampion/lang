@@ -3348,7 +3348,7 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
 pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[], escape_kind: i32 }
 
 pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultAnchor {
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let seen = __alloc_bool(defs.len());
   let acc = ViewSources { params: [], escapes: false, pending: false, seen: seen, escape_kind: 0 };
   for b in f.graph.blocks {
@@ -3357,24 +3357,6 @@ pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultA
     }
   }
   return ResultAnchor { escapes: acc.escapes, pending: !acc.escapes && acc.pending, params: acc.params, escape_kind: acc.escape_kind };
-}
-
-function definitions(f: Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
-  let out: ssa.SInst[] = [];
-  let i = 0;
-  while (i < f.values.len()) {
-    out = out.append(none);
-    i += 1;
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.result >= 0 && ins.result < out.len()) {
-        out = out.with(ins.result, ins);
-      }
-    }
-  }
-  return out;
 }
 
 function sole_successor(f: Func, at: i32[], target: i32, from: i32): i32 {
@@ -3560,7 +3542,7 @@ function twin_of(g: Guards, v: i32): i32 {
 }
 
 function guards_of(f: Func): Guards {
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let tests: i32[] = [];
   let pi = 0;
   while (pi < f.graph.blocks.len()) {
@@ -3767,7 +3749,7 @@ function gathers_views(kind: i32): boolean {
 }
 
 function view_roots(f: Func, parents: i32[][]): i32[][] {
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let none = __alloc_bool(f.graph.nvals);
   let out = parents;
   for b in f.graph.blocks {
@@ -4975,7 +4957,7 @@ pub function merge_copies(f: Func): MergePlan {
     return plan;
   }
   let none = __alloc_bool(f.values.len());
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let m = MergeScan { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
   let bi = 0;
   while (bi < f.graph.blocks.len()) {
@@ -5112,7 +5094,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
     return f;
   }
   let parents = borrow_parents(f);
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let kinds = back_kinds(f, name, nparams, parents, defs);
   let hole = agreed_hole(f, kinds, name, nparams, parents, defs);
   if (hole < 0) {
@@ -5429,7 +5411,7 @@ function sliced_on_back_edge(f: Func, rows: i32[][], p: i32): boolean {
   if (!is_view(f.values[p])) {
     return false;
   }
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   for row in rows {
     let v = row[p];
     if (v >= 0 && v < defs.len() && defs[v].kind_tag == slice()) {

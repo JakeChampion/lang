@@ -980,24 +980,6 @@ function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[])
   return out;
 }
 
-function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
-  let out: ssa.SInst[] = [];
-  let i = 0;
-  while (i < f.graph.nvals) {
-    out = out.append(none);
-    i += 1;
-  }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.result >= 0 && ins.result < out.len()) {
-        out = out.with(ins.result, ins);
-      }
-    }
-  }
-  return out;
-}
-
 function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
@@ -1397,7 +1379,7 @@ pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
       continue;
     }
     if (defs[i].len() == 0) {
-      defs = defs.with(i, definitions(funcs[i]));
+      defs = defs.with(i, ssa.inst_defs(funcs[i].graph));
     }
     let reach = ssarawflow.reached(funcs[i], defs[i], seeds, result);
     out = WriteRows { ...out, raw: out.raw.with(i, reach.values) };
@@ -3135,7 +3117,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   if (why != "") {
     return bad(why);
   }
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let owned = owned_values(f, modes, defs);
   let reachable = ssadeps.reachable_blocks(f.graph);
   let sup = supply_table(f);
@@ -4126,7 +4108,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   let defs = p.defs;
   if (whole) {
     why = contract_error(f, modes, no_view());
-    defs = definitions(f);
+    defs = ssa.inst_defs(f.graph);
   } else if (modes.len() != f.params.len()) {
     why = "parameter mode dimensions";
   } else {

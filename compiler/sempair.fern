@@ -82,7 +82,7 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
         for ins in b.insts {
           let at = paired_callee(ins, ix, ok);
           if (at >= 0 && !computed) {
-            let defs = defs_of(funcs[j].graph);
+            let defs = ssa.inst_defs(funcs[j].graph);
             whole = whole_values(funcs[j], ix, ok, ok[j]);
             scalar_whole = semscalarreturn.donors(funcs[j], defs, whole);
             inner = payloads_whole(funcs[j], defs, ix, Pairing { ok: ok, split: split }, ok[j], ok[j] && !split[j]);
@@ -155,7 +155,7 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 }
 
 pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
-  let defs = defs_of(f.graph);
+  let defs = ssa.inst_defs(f.graph);
   let none: boolean[] = [];
   return through_joins(defs, seeded(f, defs, ix, ok, none, paired, []));
 }
@@ -469,7 +469,7 @@ function word_types(sh: Shape, at: i32): typeinfo.Type[] {
 
 function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   let f = f0;
-  let defs = defs_of(f.graph);
+  let defs = ssa.inst_defs(f.graph);
   let n = f.graph.blocks.len();
   let bi = 0;
   while (bi < n) {
@@ -1249,23 +1249,6 @@ function with_contract(calls: ssasem.Contract[], c: ssasem.Contract): ssasem.Con
   return calls.append(c);
 }
 
-function defs_of(g: ssa.SFunc): ssa.SInst[] {
-  let out: ssa.SInst[] = [];
-  let v = 0;
-  while (v < g.nvals) {
-    out = out.append(ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" });
-    v += 1;
-  }
-  for b in g.blocks {
-    for ins in b.insts {
-      if (ins.result >= 0 && ins.result < out.len()) {
-        out = out.with(ins.result, ins);
-      }
-    }
-  }
-  return out;
-}
-
 pub struct Scalarized { funcs: ssasem.Func[], modes: i32[][], changed: boolean[] }
 
 // Passes a record parameter of scalar fields as its fields when every call
@@ -1451,7 +1434,7 @@ function split_callee(ins: ssa.SInst, ix: util.NameIndex, split: boolean[][]): i
 // block already rewritten.
 function split_calls(f0: ssasem.Func, sites: Sites, own: boolean[]): ssasem.Func {
   let f = f0;
-  let defs = defs_of(f.graph);
+  let defs = ssa.inst_defs(f.graph);
   let done: i32[] = [];
   let pending: semscalarreturn.Given[] = [];
   for b in f.graph.blocks {
@@ -1844,7 +1827,7 @@ struct Narrowed { lay: Layout, changed: boolean }
 function apart_in(lay0: Layout, f: ssasem.Func): Narrowed {
   let lay = lay0;
   let changed = false;
-  let defs = defs_of(f.graph);
+  let defs = ssa.inst_defs(f.graph);
   for b in f.graph.blocks {
     for ins in b.insts {
       for pos in 0..ins.args.len() {

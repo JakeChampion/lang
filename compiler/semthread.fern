@@ -94,7 +94,7 @@ struct Seen { at: i32[], defs: ssa.SInst[], uses: i32[], facts: Facts, head: i32
 function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
   let n = g.blocks.len();
   let none = util.minus_ones(n);
-  let s = Seen { at: ssa.block_positions(g), defs: definitions(g), uses: ssa.use_counts(g), facts: no_facts(), head: none, on_t: none, on_f: none };
+  let s = Seen { at: ssa.block_positions(g), defs: ssa.inst_defs(g), uses: ssa.use_counts(g), facts: no_facts(), head: none, on_t: none, on_f: none };
   s = block_facts(f, g, s);
   let blocks = g.blocks;
   let changed = 0;
@@ -401,22 +401,6 @@ function untested(g: ssa.SFunc): ssa.SBlock[] {
       }
     }
     out = out.append(ssa.SBlock { ...b, insts: insts });
-  }
-  return out;
-}
-
-function definitions(g: ssa.SFunc): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
-  let out: ssa.SInst[] = [];
-  while (out.len() < g.nvals) {
-    out = out.append(none);
-  }
-  for b in g.blocks {
-    for ins in b.insts {
-      if (ins.result >= 0 && ins.result < out.len()) {
-        out = out.with(ins.result, ins);
-      }
-    }
   }
   return out;
 }
@@ -762,7 +746,7 @@ function returns_in_predecessors(f: ssasem.Func): Forwarded {
 }
 
 function first_returning_join(f: ssasem.Func, g: ssa.SFunc, at: i32[]): i32 {
-  let defs = definitions(g);
+  let defs = ssa.inst_defs(g);
   for ri in 0..g.blocks.len() {
     if (returning_join(f, g, at, defs, ri)) {
       return ri;
@@ -854,7 +838,7 @@ function split_round(f: ssasem.Func): Joined {
   let g = f.graph;
   let at = ssa.block_positions(g);
   let uses = ssa.use_counts(g);
-  let defs = definitions(g);
+  let defs = ssa.inst_defs(g);
   let dom = ssadeps.dominates(g);
   for ji in 0..g.blocks.len() {
     if (!has_phi(g.blocks[ji])) {
@@ -1176,7 +1160,7 @@ function arm_needs(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join, ti: i32):
 
 function split_join(f: ssasem.Func, at: i32[], dom: ssadeps.Dom, c: Join): ssasem.Func {
   let g = f.graph;
-  let defs = definitions(g);
+  let defs = ssa.inst_defs(g);
   let jb = g.blocks[c.j];
   let is_phi = join_phis(g, c);
   let s = Split { f: f, blocks: g.blocks, val: util.minus_ones(g.nvals) };

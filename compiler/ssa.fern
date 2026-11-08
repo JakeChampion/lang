@@ -4853,9 +4853,9 @@ pub function fold_extensions(f: SFunc): Formed {
   return Formed { f: rewrite_through(f, flat.repl), repl: flat.repl };
 }
 
-struct DefSites { blk: i32[], at: i32[] }
+pub struct DefSites { block: i32[], at: i32[] }
 
-function def_sites_of(f: SFunc): DefSites {
+pub function def_sites_of(f: SFunc): DefSites {
   let blk = util.minus_ones(f.nvals);
   let at = util.minus_ones(f.nvals);
   for bi in 0..f.blocks.len() {
@@ -4867,14 +4867,14 @@ function def_sites_of(f: SFunc): DefSites {
       }
     }
   }
-  return DefSites { blk: blk, at: at };
+  return DefSites { block: blk, at: at };
 }
 
 // The fixed point, or [] when 64 rounds do not settle it.
 function ext_facts(f: SFunc, d: DefSites): i32[] {
   let facts = __alloc_i32(f.nvals);
   for v in 0..f.nvals {
-    if (d.blk[v] >= 0) {
+    if (d.block[v] >= 0) {
       facts = facts.with(v, EXT_BYTE);
     }
   }
@@ -4895,7 +4895,7 @@ function ext_round(f: SFunc, d: DefSites, facts: i32[]): i32[] {
     for ins in blk.insts {
       let r = ins.result;
       if (r >= 0 && r < f.nvals) {
-        let x = ext_transfer(f, d.blk, d.at, facts, ins) & facts[r];
+        let x = ext_transfer(f, d.block, d.at, facts, ins) & facts[r];
         changed = changed || x != facts[r];
         facts = facts.with(r, x);
       }
@@ -5492,7 +5492,7 @@ function no_inst(): SInst {
   return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
 }
 
-function inst_defs(f: SFunc): SInst[] {
+pub function inst_defs(f: SFunc): SInst[] {
   let defs: SInst[] = [];
   let i = 0;
   while (i < f.nvals) {

@@ -934,7 +934,7 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
   }
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;
@@ -997,24 +997,6 @@ pub function grouped_reads(f: ssasem.Func): ssasem.Func {
 }
 
 struct Probes { at: i32[], x: i32[], lo: i32[], span: i32[], unchecked: boolean[], any: boolean }
-
-function definitions(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
-  let defs: ssa.SInst[] = [];
-  let v = 0;
-  while (v < f.values.len()) {
-    defs = defs.append(none);
-    v += 1;
-  }
-  for blk in f.graph.blocks {
-    for ins in blk.insts {
-      if (ins.result >= 0 && ins.result < defs.len()) {
-        defs = defs.with(ins.result, ins);
-      }
-    }
-  }
-  return defs;
-}
 
 function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
   let out = Probes { at: [], x: [], lo: [], span: [], unchecked: __alloc_bool(insts.len()), any: false };
@@ -1158,7 +1140,7 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
   if (!any_index_read(f)) {
     return f;
   }
-  let defs = definitions(f);
+  let defs = ssa.inst_defs(f.graph);
   let values = f.values;
   let blocks: ssa.SBlock[] = [];
   let changed = false;

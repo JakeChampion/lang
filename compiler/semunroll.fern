@@ -42,25 +42,7 @@ pub function unroll(f: ssasem.Func): Unrolled {
 // induction variable plus `offset`.
 struct Counted { head: i32, heads: i32[], bodies: i32[], exit: i32, iv: i32, entry: i32, latch: i32, start: i32, step: i32, test: i32, offset: i32, trips: i32 }
 
-struct Defs { block: i32[], at: i32[] }
-
-function defs_of(g: ssa.SFunc): Defs {
-  let block = util.minus_ones(g.nvals);
-  let at = util.minus_ones(g.nvals);
-  for bi in 0..g.blocks.len() {
-    let insts = g.blocks[bi].insts;
-    for ii in 0..insts.len() {
-      let r = insts[ii].result;
-      if (r >= 0 && r < g.nvals) {
-        block = block.with(r, bi);
-        at = at.with(r, ii);
-      }
-    }
-  }
-  return Defs { block: block, at: at };
-}
-
-function def_inst(g: ssa.SFunc, d: Defs, v: i32): Option[ssa.SInst] {
+function def_inst(g: ssa.SFunc, d: ssa.DefSites, v: i32): Option[ssa.SInst] {
   if (v < 0 || v >= g.nvals || d.block[v] < 0) {
     return None;
   }
@@ -73,7 +55,7 @@ function small_constant(f: ssasem.Func, ins: ssa.SInst): boolean {
 }
 
 // An i32 constant, through copies, or a sum, difference or product of two.
-function constant_of(f: ssasem.Func, d: Defs, v: i32): Option[i32] {
+function constant_of(f: ssasem.Func, d: ssa.DefSites, v: i32): Option[i32] {
   if let Some(ins) = def_inst(f.graph, d, v) {
     if (ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && ssasem.is_i32(f.values[v])) {
       if let Some(a) = literal_of(f, d, ins.args[0]) {
@@ -90,7 +72,7 @@ function constant_of(f: ssasem.Func, d: Defs, v: i32): Option[i32] {
   return literal_of(f, d, v);
 }
 
-function literal_of(f: ssasem.Func, d: Defs, v: i32): Option[i32] {
+function literal_of(f: ssasem.Func, d: ssa.DefSites, v: i32): Option[i32] {
   if let Some(ins) = def_inst(f.graph, d, v) {
     if (small_constant(f, ins)) {
       return Some(ins.imm);
@@ -122,7 +104,7 @@ function has_loop_head(g: ssa.SFunc): boolean {
 }
 
 function first_counted(f: ssasem.Func): i32 {
-  let d = defs_of(f.graph);
+  let d = ssa.def_sites_of(f.graph);
   for bi in 0..f.graph.blocks.len() {
     if (counted_at(f, d, bi).trips >= 0) {
       return bi;
@@ -135,7 +117,7 @@ function no_loop(): Counted {
   return Counted { head: -1, heads: [], bodies: [], exit: -1, iv: -1, entry: -1, latch: -1, start: 0, step: 0, test: -1, offset: 0, trips: -1 };
 }
 
-function counted_at(f: ssasem.Func, d: Defs, hi: i32): Counted {
+function counted_at(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
   let g = f.graph;
   let shape = loop_shape(f, d, hi);
   if (shape.bodies.len() == 0) {
@@ -158,7 +140,7 @@ function counted_at(f: ssasem.Func, d: Defs, hi: i32): Counted {
 
 // A body that reads the induction variable only to step and test it gains
 // nothing from a constant in each copy, so its loop stays a loop.
-function reads_counter(g: ssa.SFunc, d: Defs, c: Counted): boolean {
+function reads_counter(g: ssa.SFunc, d: ssa.DefSites, c: Counted): boolean {
   let cond = test_block(g, c).term.cond;
   let step: i32 = -1;
   for ins in g.blocks[c.head].insts {
@@ -192,7 +174,7 @@ function insts_in(g: ssa.SFunc, bis: i32[]): i32 {
 // A header with two predecessors that runs straight to a test, which branches
 // either to the body or out of the loop, and a body that runs straight back to
 // the header.
-function loop_shape(f: ssasem.Func, d: Defs, hi: i32): Counted {
+function loop_shape(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
   let g = f.graph;
   let h = g.blocks[hi];
   if (h.preds.len() != 2 || h.id == g.entry) {
@@ -218,7 +200,7 @@ function loop_shape(f: ssasem.Func, d: Defs, hi: i32): Counted {
 
 // The position `bi` and the positions of the blocks it jumps through, each the
 // only way into the next.
-function straight_run(f: ssasem.Func, d: Defs, bi: i32, head_id: i32): i32[] {
+function straight_run(f: ssasem.Func, d: ssa.DefSites, bi: i32, head_id: i32): i32[] {
   let g = f.graph;
   let run: i32[] = [bi];
   let cur = g.blocks[bi];
@@ -236,7 +218,7 @@ function straight_run(f: ssasem.Func, d: Defs, bi: i32, head_id: i32): i32[] {
 }
 
 // The one block a branch can go to, or -1. A branch on a constant goes to one.
-function jump_target(f: ssasem.Func, d: Defs, t: ssa.STerm): i32 {
+function jump_target(f: ssasem.Func, d: ssa.DefSites, t: ssa.STerm): i32 {
   if (t.kind_tag == 2) {
     return t.target;
   }
@@ -257,7 +239,7 @@ function straight_after(b: ssa.SBlock, pred_id: i32, head_id: i32): boolean {
 
 // The body blocks from the test's successor `id`, when they run straight back
 // to the header.
-function body_run(f: ssasem.Func, d: Defs, test_id: i32, head_id: i32, id: i32): i32[] {
+function body_run(f: ssasem.Func, d: ssa.DefSites, test_id: i32, head_id: i32, id: i32): i32[] {
   let g = f.graph;
   let bi = block_at(g, id);
   if (bi < 0 || !straight_after(g.blocks[bi], test_id, head_id)) {
@@ -272,7 +254,7 @@ function body_run(f: ssasem.Func, d: Defs, test_id: i32, head_id: i32, id: i32):
 
 // The header phi that the loop test compares, directly or plus a constant,
 // when it starts at a constant and the loop steps it by a constant.
-function induction(f: ssasem.Func, d: Defs, shape: Counted): Counted {
+function induction(f: ssasem.Func, d: ssa.DefSites, shape: Counted): Counted {
   let g = f.graph;
   if let Some(c) = def_inst(g, d, test_block(g, shape).term.cond) {
     if (c.kind_tag == 9 && c.args.len() == 2 && util.index_of_i32(shape.heads, d.block[c.result]) >= 0 && compares(c.str)) {
@@ -286,7 +268,7 @@ function induction(f: ssasem.Func, d: Defs, shape: Counted): Counted {
   return no_loop();
 }
 
-function phi_induction(f: ssasem.Func, d: Defs, shape: Counted, test: i32): Counted {
+function phi_induction(f: ssasem.Func, d: ssa.DefSites, shape: Counted, test: i32): Counted {
   let iv = test;
   let offset = 0;
   if let Some(st) = stepped(f, d, shape, test) {
@@ -311,7 +293,7 @@ function phi_induction(f: ssasem.Func, d: Defs, shape: Counted, test: i32): Coun
 struct Step { from: i32, by: i32 }
 
 // The header phi that `v` adds a constant to, when the loop computes `v`.
-function stepped(f: ssasem.Func, d: Defs, shape: Counted, v: i32): Option[Step] {
+function stepped(f: ssasem.Func, d: ssa.DefSites, shape: Counted, v: i32): Option[Step] {
   if let Some(ins) = def_inst(f.graph, d, v) {
     let inside = util.index_of_i32(shape.heads, d.block[v]) >= 0 || util.index_of_i32(shape.bodies, d.block[v]) >= 0;
     if (ins.kind_tag == ssa.BINARY && inside && ins.args.len() == 2 && header_phi(f, d, shape, ins.args[0])) {
@@ -325,7 +307,7 @@ function stepped(f: ssasem.Func, d: Defs, shape: Counted, v: i32): Option[Step] 
   return None;
 }
 
-function header_phi(f: ssasem.Func, d: Defs, shape: Counted, v: i32): boolean {
+function header_phi(f: ssasem.Func, d: ssa.DefSites, shape: Counted, v: i32): boolean {
   if let Some(p) = def_inst(f.graph, d, v) {
     return p.kind_tag == 8 && d.block[v] == shape.head;
   }
@@ -370,7 +352,7 @@ function fits_i32(v: i64): boolean {
 }
 
 // The number of times the body runs, or -1 when it is not a small constant.
-function trip_count(f: ssasem.Func, d: Defs, t: ssa.SBlock, c: Counted, on_true: boolean): i32 {
+function trip_count(f: ssasem.Func, d: ssa.DefSites, t: ssa.SBlock, c: Counted, on_true: boolean): i32 {
   if let Some(ins) = def_inst(f.graph, d, t.term.cond) {
     let side = 0;
     if (ins.args[1] == c.test) {
@@ -456,7 +438,7 @@ function reads_any(b: ssa.SBlock, inner: boolean[]): boolean {
 struct Copy { insts: ssa.SInst[], values: ssasem.Func, map: i32[], known: boolean[], konst: i32[], nvals: i32 }
 
 function unrolled_at(f: ssasem.Func, hi: i32): ssasem.Func {
-  let d = defs_of(f.graph);
+  let d = ssa.def_sites_of(f.graph);
   let c = counted_at(f, d, hi);
   let g = f.graph;
   let h = g.blocks[hi];
@@ -532,7 +514,7 @@ function renamed_block(b: ssa.SBlock, finals: i32[], test_id: i32, head_id: i32)
   return ssa.SBlock { ...b, insts: insts, preds: preds, term: ssa.STerm { ...b.term, cond: renamed(finals, b.term.cond), value: renamed(finals, b.term.value) } };
 }
 
-function known_constants(f: ssasem.Func, d: Defs): Copy {
+function known_constants(f: ssasem.Func, d: ssa.DefSites): Copy {
   let n = f.graph.nvals;
   let known = __alloc_bool(n);
   let konst = util.minus_ones(n);
@@ -721,7 +703,7 @@ pub function fold_constants(f: ssasem.Func): Constants {
   let g = f.graph;
   let st = Fold { blocks: g.blocks, known: __alloc_bool(g.nvals), konst: util.minus_ones(g.nvals), folded: 0, changed: true };
   let rounds = 0;
-  let d = defs_of(g);
+  let d = ssa.def_sites_of(g);
   while (st.changed && rounds < 8) {
     st = Fold { ...st, changed: false };
     for bi in 0..st.blocks.len() {
@@ -735,7 +717,7 @@ pub function fold_constants(f: ssasem.Func): Constants {
   return Constants { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: st.blocks } }, folded: st.folded };
 }
 
-function fold_block(f: ssasem.Func, d: Defs, st: Fold, bi: i32): Fold {
+function fold_block(f: ssasem.Func, d: ssa.DefSites, st: Fold, bi: i32): Fold {
   let insts = st.blocks[bi].insts;
   let touched = false;
   for ii in 0..insts.len() {
@@ -767,7 +749,7 @@ function fold_block(f: ssasem.Func, d: Defs, st: Fold, bi: i32): Fold {
 }
 
 // The operand `b` that `__f64x2_lane(__f64x2_of(a, b), 1)` reads, or -1.
-function lane_operand(f: ssasem.Func, d: Defs, ins: ssa.SInst): i32 {
+function lane_operand(f: ssasem.Func, d: ssa.DefSites, ins: ssa.SInst): i32 {
   if (ins.kind_tag != ssasem.call() || ins.args.len() != 2) {
     return -1;
   }
@@ -790,7 +772,7 @@ function lane_operand(f: ssasem.Func, d: Defs, ins: ssa.SInst): i32 {
 }
 
 // The value that `v` passes on unchanged through copies and one-operand phis.
-function forwarded(f: ssasem.Func, d: Defs, v: i32): i32 {
+function forwarded(f: ssasem.Func, d: ssa.DefSites, v: i32): i32 {
   let at = v;
   let steps = 0;
   while (steps < f.graph.nvals) {
