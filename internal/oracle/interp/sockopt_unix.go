@@ -10,6 +10,12 @@ const (
 	tcpNodelay  = syscall.TCP_NODELAY
 	ipprotoIPv6 = syscall.IPPROTO_IPV6
 	ipv6V6only  = syscall.IPV6_V6ONLY
+
+	ipprotoIP      = syscall.IPPROTO_IP
+	ipprotoUDP     = syscall.IPPROTO_UDP
+	ipTOS          = syscall.IP_TOS
+	ipv6Tclass     = syscall.IPV6_TCLASS
+	ipv6RecvTclass = syscall.IPV6_RECVTCLASS
 )
 
 func getsockname(fd int) (syscall.Sockaddr, error) {

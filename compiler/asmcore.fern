@@ -3858,6 +3858,7 @@ function builtin_i32_names(): string[] {
     "tcp_send_buf",
     "udp_sendto_bytes",
     "udp_sendmmsg",
+    "udp_recvmmsg",
     "tcp_close",
     "__tcp_close_unchecked",
     "__fd_close",
